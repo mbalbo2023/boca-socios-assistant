@@ -33,14 +33,20 @@
       ingestion with source provenance.
 - [ ] Redacted structured event traces and visibility/notification SLA.
 
-## Milestone F3 — isolated browser testing
+## Milestone F3 — navegador real con límites explícitos
 
 - [ ] Playwright worker as separately profiled container with strict CPU
       and memory quota; no broad parallel session launch on a shared host.
 - [ ] Isolated BrowserContext per approved session, bounded by config.
-- [ ] Session lifetimes and cleanup tests against a local synthetic site.
-- [ ] Queue adapter with replaceable transport, timeouts and kill switch.
-- [ ] Capacity tests on separate worker environment, not on Boca.
+- [ ] CI comprueba arranque y cierre de Chromium sin egress; no lo cuenta como
+      prueba funcional de reserva ni visita Boca desde cada PR.
+- [ ] Observación opt-in de una sola portada **real y pública** de Boca (#27,
+      #32), con egress acotado, plazo, stop-on-block y salida redactada.
+- [ ] Queue adapter con transporte reemplazable, límites y kill switch; ninguna
+      evasión de fila/CAPTCHA ni sesión autenticada sin su gate de aprobación.
+- [ ] Medir recursos de **una sesión** en entorno separado (#11). Un test de
+      carga sobre Boca necesita autorización explícita distinta y condiciones
+      del proveedor; no se infiere capacidad desde una página ficticia.
 
 ## Milestone F4 — authorized observation
 
@@ -54,7 +60,8 @@
 
 ## Work sequencing
 
-One issue and feature branch at a time for security/db, simulator, API,
-Telegram and browser modules respectively. PRs with independent contracts
-and tests. No production deploy during F0-F3.
+Un issue y una rama por alcance, contratos y pruebas verificables. Las ramas
+apiladas #36 → #38 → #40 siguen en borrador: cada PR fuente requiere revisión
+humana y CI exacta antes de una fusión. No hay despliegue durante F0-F3 ni
+credenciales reales hasta completar alta privada, identidad, respaldo y clave.
 

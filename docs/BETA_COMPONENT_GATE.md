@@ -3,6 +3,11 @@
 **Fecha:** 2026-10-28 (America/Argentina/Buenos_Aires). **Estado:** rama de
 verificación, sin merge a `main`, despliegue ni acceso autenticado a Boca.
 
+**Actualización de continuidad:** [PR #36](https://github.com/mbalbo2023/boca-socios-assistant/pull/36)
+integra componentes; [PR #38](https://github.com/mbalbo2023/boca-socios-assistant/pull/38)
+añade el guard de intento único y [PR #40](https://github.com/mbalbo2023/boca-socios-assistant/pull/40)
+el recifrado interno. Son **borradores apilados**, no una versión fusionada.
+
 ## Candidatos incorporados
 
 | PR | HEAD | Función validada en el árbol combinado |
@@ -12,6 +17,9 @@ verificación, sin merge a `main`, despliegue ni acceso autenticado a Boca.
 | #29 | `6b1784c715a0b71ef28f8d0785bab2bc138eb42e` | HTML accesible de estados ficticios |
 | #28 + #31 | `64452c18a3a74a5b35c81f45d8a42463de140e1f` + `5050c88ea236994abf25c432ab5bfac73f514b70` | Diseño y servicio interno de alta cifrada |
 | #33 | `0f68e16698dc8d4aca5998b152669a2f94d51788` | Observador público opt-in, **no ejecutado contra Boca** |
+| #36 | `3e754275e4e26884186b9b037b09c6981eda4f72` | Integración cruzada de los componentes de arriba |
+| #38 | `3df9d73fcb85d00123988dc1d4528ad8e66792f0` | Concesión local única, vencimiento sin reintento, conciliación manual |
+| #40 | `ce1b4aecdd97949b96943c3911cd21482f36e5e1` | Recifrado transaccional y trigger contra escritores de clave antigua |
 
 La integración de estos snapshots no tuvo conflictos de código. El PR #34
 partió de una HEAD anterior de #30; la regresión posterior del vault de #30
@@ -28,11 +36,35 @@ contraseña. La base conserva una única fila con cantidad 1 y estado `planned`.
 La aceptación local del aviso no significa entrega a Telegram. El panel
 repite que no existe una reserva real.
 
-**Calidad local:** `uv sync --locked`, Ruff lint/formato, mypy strict (25
-módulos), pytest **144 passed**, política de aislamiento PASS. La rama de
-verificación necesita sus propios dos jobs de GitHub Actions en la HEAD
-exacta. No hay Docker local, navegador Chromium real ni prueba de rendimiento
-medida aquí.
+**Calidad de la integración #36:** `uv sync --locked`, Ruff lint/formato,
+mypy strict (25 módulos), pytest **144 passed**, aislamiento PASS; Actions
+[40763679861](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40763679861)
+SUCCESS en `quality-and-tests` e `image-build` para su HEAD exacta. En el
+árbol apilado #40: `uv sync --frozen`, Ruff, mypy strict (27 módulos), pytest
+**157 passed** y aislamiento PASS; Actions
+[40770471612](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40770471612)
+SUCCESS en ambos jobs. #38 pasó
+[40769224759](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40769224759)
+en ambos jobs. El build es del controlador, no un worker Chromium. No hay
+Docker local, prueba del script observador contra Boca, navegador Chromium
+medido ni prueba de rendimiento real aquí.
+
+## Dependencias y siguiente decisión revisable
+
+| Orden | Gate | Estado / efecto |
+| --- | --- | --- |
+| 1 | Revisión humana de #28 y seguridad de identidad/admin/TLS | Pendiente; bloquea formulario expuesto y claves reales |
+| 2 | Revisión de cada PR fuente y activación verificable de protección `main` (#10) | Pendiente; bloquea merge de borradores |
+| 3 | #36 → #38 → #40 y CI de la HEAD de integración final | CI verde en cada HEAD; revisión humana pendiente; no habilita operaciones externas |
+| 4 | Worker aislado #27 y una observación **anónima** de la portada real con egress acotado | Pendiente; #33 ya define contrato, pero no ejecutó su script |
+| 5 | Canal privado, identidad externa única, backup/restore, cuenta autorizada y reconciliación de Boca | Pendiente; impide credenciales reales y reserva |
+| 6 | Despliegue Docker exclusivo Boca por Actions | Requiere aprobación específica posterior con SHA, digest y recursos |
+
+El dueño pidió trabajar sobre Boca Socios real en vez de un laboratorio
+funcional con página ficticia. Los tests de componentes permanecen offline y
+**no se cuentan como prueba del sitio**. #27 fue reorientado al worker para la
+portada pública y #11 mantiene la medición de una sesión sin carga a Boca.
+No se simularán varias visitas a la web del tercero para extrapolar capacidad.
 
 ## Límites antes de una BETA operativa
 
@@ -45,6 +77,9 @@ medida aquí.
 3. El outbox #34 es local y durable, pero no entrega Telegram ni comparte una
    transacción con la intención de ticket. Requiere retención/purga acotada y
    reconciliación ante resultados ambiguos.
+   #38 impide una **segunda concesión local** tras un intento ambiguo, pero
+   no puede impedir llamadas externas fuera del guard ni confirmar una compra
+   en Boca. Falta vincular una sola identidad de socio real al ID interno.
 4. #33 es un observador anónimo opt-in. Puede devolver `unknown` si Boca
    renderiza el login con JavaScript, y no se corrió el script contra el
    servicio real. La única observación real fue la portada anónima documentada
@@ -54,6 +89,10 @@ medida aquí.
    medida de un worker de navegador, canal privado de credenciales, scan de
    imagen ni workflow de despliegue aprobado. #10 no tiene protección de
    `main` verificada. Ningún PR tiene revisión humana registrada.
+6. #40 permite recifrar datos sintéticos y rechazar escritores con versión
+   vieja. No se ha probado backup/restore cifrado, custodia, compatibilidad de
+   arranque con versión nueva ni retiro seguro de claves. El runtime por
+   defecto continúa en versión `v1` y el servicio de recifrado está apagado.
 
 **GO:** desarrollo, revisión y CI en ramas. **NO-GO:** credenciales reales,
 reservas, notificaciones externas, merge sin revisión o despliegue. El dueño
@@ -63,7 +102,10 @@ por GitHub Actions exclusivo de Boca.
 
 ## Revisión accesible
 
-Abrir los PRs de la tabla en orden de dependencia, consultar «Files changed»
-y los checks de la HEAD actual, y dejar la decisión de revisión en cada PR.
+Abrir primero [#28](https://github.com/mbalbo2023/boca-socios-assistant/pull/28)
+para revisar el diseño de alta, luego los PRs de la tabla en orden de
+dependencia. En cada PR usar «Files changed» y «Checks» y registrar la
+aprobación humana de una persona distinta del autor. La CI apilada no sustituye
+la revisión del PR fuente.
 No hace falta ejecutar comandos en el droplet ni copiar datos de socios al
 portapapeles para esta revisión.
