@@ -39,9 +39,11 @@
       and memory quota; no broad parallel session launch on a shared host.
 - [ ] Isolated BrowserContext per approved session, bounded by config.
 - [ ] CI comprueba arranque y cierre de Chromium sin egress; no lo cuenta como
-      prueba funcional de reserva ni visita Boca desde cada PR.
+      prueba funcional de reserva ni visita Boca desde cada PR. Candidato #43
+      pasó el smoke de Actions; pendiente revisión/merge y medición de recursos.
 - [ ] Observación opt-in de una sola portada **real y pública** de Boca (#27,
-      #32), con egress acotado, plazo, stop-on-block y salida redactada.
+      #32), con egress acotado, plazo, stop-on-block y salida redactada. La ruta
+      pública `/auth/login` se vio manualmente; el script #33 no fue ejecutado.
 - [ ] Queue adapter con transporte reemplazable, límites y kill switch; ninguna
       evasión de fila/CAPTCHA ni sesión autenticada sin su gate de aprobación.
 - [ ] Medir recursos de **una sesión** en entorno separado (#11). Un test de

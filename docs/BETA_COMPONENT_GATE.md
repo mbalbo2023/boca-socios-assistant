@@ -7,6 +7,10 @@ verificación, sin merge a `main`, despliegue ni acceso autenticado a Boca.
 integra componentes; [PR #38](https://github.com/mbalbo2023/boca-socios-assistant/pull/38)
 añade el guard de intento único y [PR #40](https://github.com/mbalbo2023/boca-socios-assistant/pull/40)
 el recifrado interno. Son **borradores apilados**, no una versión fusionada.
+En otra rama, [PR #33](https://github.com/mbalbo2023/boca-socios-assistant/pull/33)
+corrige la ruta pública y [PR #43](https://github.com/mbalbo2023/boca-socios-assistant/pull/43)
+construye el worker Chromium. Esos cambios **no** están incorporados en el
+árbol de esta rama ni en sus 157 pruebas.
 
 ## Candidatos incorporados
 
@@ -45,9 +49,14 @@ SUCCESS en `quality-and-tests` e `image-build` para su HEAD exacta. En el
 [40770471612](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40770471612)
 SUCCESS en ambos jobs. #38 pasó
 [40769224759](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40769224759)
-en ambos jobs. El build es del controlador, no un worker Chromium. No hay
-Docker local, prueba del script observador contra Boca, navegador Chromium
-medido ni prueba de rendimiento real aquí.
+en ambos jobs. En **esta rama** el build sigue siendo sólo del controlador.
+Por separado, #33 HEAD `577c52656cbd90d2f6f308340405c456b065a9ce`
+pasó [40777337319](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40777337319)
+(42 tests locales) y #43 HEAD `9a6311d2be22de76d8f5cf609cba0f46c9e67eb2`
+pasó [40779396413](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40779396413)
+(45 tests locales, build y arranque/cierre de Chromium **sin red**). No hay
+Docker local, prueba del script observador contra Boca, recursos de una sesión
+medidos ni prueba de rendimiento real.
 
 ## Dependencias y siguiente decisión revisable
 
@@ -56,14 +65,15 @@ medido ni prueba de rendimiento real aquí.
 | 1 | Revisión humana de #28 y seguridad de identidad/admin/TLS | Pendiente; bloquea formulario expuesto y claves reales |
 | 2 | Revisión de cada PR fuente y activación verificable de protección `main` (#10) | Pendiente; bloquea merge de borradores |
 | 3 | #36 → #38 → #40 y CI de la HEAD de integración final | CI verde en cada HEAD; revisión humana pendiente; no habilita operaciones externas |
-| 4 | Worker aislado #27 y una observación **anónima** de la portada real con egress acotado | Pendiente; #33 ya define contrato, pero no ejecutó su script |
+| 4 | Worker aislado #27 y una observación **anónima** de la portada real con egress acotado | #43 pasa smoke offline y #33 apunta a `/auth/login`; falta ejecución del script con egress de sistema acotado |
 | 5 | Canal privado, identidad externa única, backup/restore, cuenta autorizada y reconciliación de Boca | Pendiente; impide credenciales reales y reserva |
 | 6 | Despliegue Docker exclusivo Boca por Actions | Requiere aprobación específica posterior con SHA, digest y recursos |
 
 El dueño pidió trabajar sobre Boca Socios real en vez de un laboratorio
 funcional con página ficticia. Los tests de componentes permanecen offline y
-**no se cuentan como prueba del sitio**. #27 fue reorientado al worker para la
-portada pública y #11 mantiene la medición de una sesión sin carga a Boca.
+**no se cuentan como prueba del sitio**. #27 tiene un worker en borrador con
+Chromium arrancado en CI sin red; #11 mantiene pendiente la medición de una
+sesión sin carga a Boca.
 No se simularán varias visitas a la web del tercero para extrapolar capacidad.
 
 ## Límites antes de una BETA operativa
@@ -80,14 +90,15 @@ No se simularán varias visitas a la web del tercero para extrapolar capacidad.
    #38 impide una **segunda concesión local** tras un intento ambiguo, pero
    no puede impedir llamadas externas fuera del guard ni confirmar una compra
    en Boca. Falta vincular una sola identidad de socio real al ID interno.
-4. #33 es un observador anónimo opt-in. Puede devolver `unknown` si Boca
-   renderiza el login con JavaScript, y no se corrió el script contra el
-   servicio real. La única observación real fue la portada anónima documentada
-   en `BOCA_PUBLIC_OBSERVATION_2026-10-28.md`. Cola, login, elegibilidad,
-   sector y reserva siguen sin validar.
-5. Docker CI construye el controlador independiente, pero no existe imagen
-   medida de un worker de navegador, canal privado de credenciales, scan de
-   imagen ni workflow de despliegue aprobado. #10 no tiene protección de
+4. #33 es un observador anónimo opt-in corregido para visitar exactamente
+   `/auth/login`. Una visita manual directa con navegador normal mostró ese
+   formulario sin completar datos, pero **el script con JavaScript deshabilitado
+   no se ejecutó contra Boca**. Puede devolver `unknown`; cola, acceso
+   autenticado, elegibilidad, sector y reserva siguen sin validar.
+5. Docker CI construye el controlador y, en #43, una imagen worker separada
+   cuyo Chromium arrancó y cerró sin red. Todavía no se midieron recursos de
+   una sesión, sandbox en el kernel de destino, egress acotado, scan de imagen,
+   canal privado de credenciales ni workflow de despliegue aprobado. #10 no tiene protección de
    `main` verificada. Ningún PR tiene revisión humana registrada.
 6. #40 permite recifrar datos sintéticos y rechazar escritores con versión
    vieja. No se ha probado backup/restore cifrado, custodia, compatibilidad de
