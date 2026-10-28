@@ -82,3 +82,10 @@ def test_master_key_file_requires_absolute_regular_file(tmp_path: Path) -> None:
         CredentialVault.from_secret_file(Path("relative-secret"))
     with pytest.raises(ValueError, match="regular file|unavailable or inaccessible"):
         CredentialVault.from_secret_file(tmp_path)
+
+
+def test_fifo_secret_path_fails_without_blocking(tmp_path: Path) -> None:
+    path = tmp_path / "fake-secret-pipe"
+    os.mkfifo(path, mode=0o600)
+    with pytest.raises(ValueError, match="regular file"):
+        CredentialVault.from_secret_file(path)
