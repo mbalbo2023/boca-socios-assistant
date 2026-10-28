@@ -160,6 +160,26 @@ def test_duplicate_session_id_for_other_member_is_rejected() -> None:
         queue.snapshot("unknown-session")
 
 
+@pytest.mark.parametrize("operation", ["join", "cancel", "finish", "fail"])
+def test_unknown_alias_rejected_without_advanced_clock_side_effect(operation: str) -> None:
+    queue = simulator()
+    queue.create_session("member-a", "known", BASE)
+    queue.join("known", BASE)
+    assert queue.snapshot("known").state is QueueState.PREQUEUE
+    with pytest.raises(KeyError, match="unknown logical session"):
+        getattr(queue, operation)("unknown", CLOSE + timedelta(seconds=1))
+    assert queue.snapshot("known").state is QueueState.PREQUEUE
+
+
+def test_reassigning_alias_cannot_expire_another_member() -> None:
+    queue = simulator()
+    queue.create_session("member-a", "known", BASE)
+    queue.join("known", BASE)
+    with pytest.raises(ValueError, match="another member"):
+        queue.create_session("member-b", "known", CLOSE + timedelta(seconds=1))
+    assert queue.snapshot("known").state is QueueState.PREQUEUE
+
+
 def test_configurable_strict_member_identity_rejects_new_session_aliases() -> None:
     queue = simulator(identity_policy=IdentityPolicy.SINGLE_SESSION)
     first = queue.create_session("member", "first", BASE)
