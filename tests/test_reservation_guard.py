@@ -115,7 +115,9 @@ def test_missing_cancelled_and_invalid_inputs_fail_closed(tmp_path: Path) -> Non
     with pytest.raises(ValueError):
         guard.claim(str(uuid4()), now=1000)
     with database.connection() as connection, connection:
-        connection.execute("UPDATE ticket_requests SET status='cancelled' WHERE request_id=?", (request_id,))
+        connection.execute(
+            "UPDATE ticket_requests SET status='cancelled' WHERE request_id=?", (request_id,)
+        )
     with pytest.raises(ValueError):
         guard.claim(request_id, now=1000)
     assert guard.get(request_id) is None
