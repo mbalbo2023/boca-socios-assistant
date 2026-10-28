@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import os
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from cryptography.exceptions import InvalidTag
 
 from boca_socios.browser.contracts import SimulationOutcome
 from boca_socios.domain.policy import TicketIntent
 from boca_socios.integration import OfflineSimulation
 from boca_socios.notify import DeliveryState, NotificationOutbox
 from boca_socios.queue import InvalidStateTransition, OfflineQueueSimulator, SimulatorConfig
+from boca_socios.security.credential_vault import CredentialVault
 from boca_socios.storage.database import Database
 
 START = datetime(2026, 10, 28, 18, tzinfo=UTC)
@@ -60,7 +64,7 @@ def test_all_modules_share_one_intent_and_safe_notice(tmp_path: Path) -> None:
     lab, database, queue, outbox, browser = setup_lab(tmp_path)
     intent = TicketIntent("member-1", "event-1")
     receipt = asyncio.run(
-        lab.run_admitted(intent, session_id="session-2", at=START, monotonic_now=0)
+        lab.run_admitted(intent, session_id="session-2", at=START, notification_at_seconds=0)
     )
 
     assert receipt.outcome is SimulationOutcome.RESERVED_IN_SIMULATOR
@@ -81,7 +85,9 @@ def test_all_modules_share_one_intent_and_safe_notice(tmp_path: Path) -> None:
     assert outbox.records()[0].state is DeliveryState.ACCEPTED
 
     with pytest.raises(InvalidStateTransition):
-        asyncio.run(lab.run_admitted(intent, session_id="session-1", at=START, monotonic_now=2))
+        asyncio.run(
+            lab.run_admitted(intent, session_id="session-1", at=START, notification_at_seconds=2)
+        )
     assert browser.calls == 1
     assert len(outbox.records()) == 1
 
@@ -90,13 +96,15 @@ def test_retry_after_fake_browser_failure_reuses_only_one_intent(tmp_path: Path)
     lab, database, queue, outbox, browser = setup_lab(tmp_path, fail_first=True)
     intent = TicketIntent("member-1", "event-1")
     with pytest.raises(RuntimeError, match="synthetic screen failed"):
-        asyncio.run(lab.run_admitted(intent, session_id="session-1", at=START, monotonic_now=0))
+        asyncio.run(
+            lab.run_admitted(intent, session_id="session-1", at=START, notification_at_seconds=0)
+        )
     assert outbox.records() == ()
     assert queue.snapshot("session-1").state.value == "admitted"
     original_id = database.request_ticket(intent)
 
     receipt = asyncio.run(
-        lab.run_admitted(intent, session_id="session-2", at=START, monotonic_now=1)
+        lab.run_admitted(intent, session_id="session-2", at=START, notification_at_seconds=1)
     )
     assert receipt.request_id == original_id
     assert browser.calls == 2
@@ -113,14 +121,16 @@ def test_unadmitted_wrong_member_expired_and_invalid_quantity_fail_closed(tmp_pa
         (TicketIntent("member-1", "event-1", quantity=2), START),
     ):
         with pytest.raises((ValueError, InvalidStateTransition)):
-            asyncio.run(lab.run_admitted(intent, session_id="session-1", at=at, monotonic_now=0))
+            asyncio.run(
+                lab.run_admitted(intent, session_id="session-1", at=at, notification_at_seconds=0)
+            )
     with pytest.raises(InvalidStateTransition):
         asyncio.run(
             lab.run_admitted(
                 TicketIntent("member-1", "event-1"),
                 session_id="session-1",
                 at=START + timedelta(minutes=6),
-                monotonic_now=1,
+                notification_at_seconds=1,
             )
         )
     assert browser.calls == 0
@@ -133,3 +143,31 @@ def test_unadmitted_wrong_member_expired_and_invalid_quantity_fail_closed(tmp_pa
                 "INSERT INTO ticket_requests(request_id, member_id, event_id, quantity) "
                 "VALUES ('invalid', 'member-1', 'event-1', 2)"
             )
+
+
+def test_vault_and_database_survive_restart_with_separate_key(tmp_path: Path) -> None:
+    key_dir = tmp_path / "private-key"
+    key_dir.mkdir(mode=0o700)
+    key_path = key_dir / "master"
+    key_path.write_bytes(base64.b64encode(os.urandom(32)))
+    key_path.chmod(0o600)
+    first_vault = CredentialVault.from_secret_file(key_path)
+    db_path = tmp_path / "data" / "boca.sqlite3"
+    first_database = Database(db_path)
+    first_database.migrate()
+    first_database.create_member("member-1", "example@invalid.test", "2026-10-28T00:00:00Z")
+    first_database.save_credential(
+        "member-1", first_vault.seal("only-a-test-value", member_id="member-1")
+    )
+
+    reopened = Database(db_path).get_credential("member-1")
+    assert reopened is not None
+    assert b"only-a-test-value" not in reopened.ciphertext
+    assert CredentialVault.from_secret_file(key_path).open(reopened, member_id="member-1") == (
+        "only-a-test-value"
+    )
+    with pytest.raises(InvalidTag):
+        CredentialVault(os.urandom(32)).open(reopened, member_id="member-1")
+    key_path.chmod(0o644)
+    with pytest.raises(ValueError, match="readable by other identities"):
+        CredentialVault.from_secret_file(key_path)

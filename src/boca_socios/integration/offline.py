@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Protocol
 from uuid import NAMESPACE_OID, UUID, uuid5
 
 from boca_socios.browser.contracts import (
@@ -17,7 +18,7 @@ from boca_socios.browser.contracts import (
     SyntheticBrowserWorkflow,
 )
 from boca_socios.domain.policy import TicketIntent
-from boca_socios.notify import NoticeKind, NotificationOutbox, NotificationRequest
+from boca_socios.notify import NoticeKind, NotificationRecord, NotificationRequest
 from boca_socios.queue import InvalidStateTransition, OfflineQueueSimulator, QueueState
 from boca_socios.storage.database import Database
 
@@ -30,11 +31,17 @@ class SqliteIntentAdapter:
         return self.database.request_ticket(intent)
 
 
+class LocalNoticeStore(Protocol):
+    """Shared safe enqueue contract for memory and SQLite implementations."""
+
+    def enqueue(self, request: NotificationRequest, *, now: float) -> NotificationRecord: ...
+
+
 @dataclass(frozen=True, slots=True)
 class StaticOutboxAdapter:
     """A stable, safe local notice key; no member details enter the outbox."""
 
-    outbox: NotificationOutbox
+    outbox: LocalNoticeStore
     now: float
 
     def publish_simulation_notice(self, notice: SimulationNotice) -> None:
@@ -60,7 +67,7 @@ class OfflineSimulation:
         *,
         database: Database,
         queue: OfflineQueueSimulator,
-        outbox: NotificationOutbox,
+        outbox: LocalNoticeStore,
         browser: SyntheticBrowserPort,
     ) -> None:
         self._database = database
@@ -74,7 +81,7 @@ class OfflineSimulation:
         *,
         session_id: str,
         at: datetime,
-        monotonic_now: float,
+        notification_at_seconds: float,
     ) -> SimulationReceipt:
         intent.validate()
         if intent.event_id != self._queue.config.event_id:
@@ -86,7 +93,7 @@ class OfflineSimulation:
         workflow = SyntheticBrowserWorkflow(
             intents=SqliteIntentAdapter(self._database),
             browser=self._browser,
-            notifications=StaticOutboxAdapter(self._outbox, monotonic_now),
+            notifications=StaticOutboxAdapter(self._outbox, notification_at_seconds),
         )
         receipt = await workflow.run(intent)
         self._queue.finish(session_id, at)
