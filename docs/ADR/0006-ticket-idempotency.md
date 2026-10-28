@@ -38,10 +38,13 @@ is performed by this method.
 
 ## Verification
 
-Tests require 36 simultaneous logical retry attempts to produce the same
-UUID and exactly one DB row, require a second member to receive a different
-UUID, reject `quantity=True` and `quantity=2`, and retain FK + SQL-level
-quantity constraints. The test performs zero network traffic or purchases.
+Tests require 36 attempts coordinated in waves by a thread barrier to produce
+the same UUID and exactly one DB row, require a second member to receive a
+different UUID, and reject `quantity=True` and `quantity=2`. A deliberately
+held `BEGIN IMMEDIATE` lock plus short busy timeout must fail without a row;
+after lock release, retry must create and retrieve the same single intent.
+An existing queued status/timestamp must not change on retry. FK and SQL
+quantity constraints stay in force. Tests perform no network or purchases.
 
 This ADR does not authorize any live Queue-it/Boca adapter, login, checkout
 or deployment. Changes require review and passing GitHub Actions checks.
