@@ -10,7 +10,8 @@ el recifrado interno. Son **borradores apilados**, no una versión fusionada.
 En otra rama, [PR #33](https://github.com/mbalbo2023/boca-socios-assistant/pull/33)
 corrige la ruta pública y [PR #43](https://github.com/mbalbo2023/boca-socios-assistant/pull/43)
 construye el worker Chromium. Esos cambios **no** están incorporados en el
-árbol de esta rama ni en sus 157 pruebas.
+árbol de esta rama ni en sus 157 pruebas. [PR #44](https://github.com/mbalbo2023/boca-socios-assistant/pull/44)
+mide un único arranque offline de ese worker en otra rama apilada.
 
 ## Candidatos incorporados
 
@@ -54,9 +55,13 @@ Por separado, #33 HEAD `577c52656cbd90d2f6f308340405c456b065a9ce`
 pasó [40777337319](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40777337319)
 (42 tests locales) y #43 HEAD `9a6311d2be22de76d8f5cf609cba0f46c9e67eb2`
 pasó [40779396413](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40779396413)
-(45 tests locales, build y arranque/cierre de Chromium **sin red**). No hay
-Docker local, prueba del script observador contra Boca, recursos de una sesión
-medidos ni prueba de rendimiento real.
+(45 tests locales, build y arranque/cierre de Chromium **sin red**). #44
+HEAD `7106210be6c7d007af45ce547ee116b5c91bfd4a` pasó
+[40780641087](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40780641087)
+(53 tests locales); su único arranque offline en CI registró 185,2 MiB
+de memoria pico, 76 tareas pico, 714 ms de CPU y 834 ms transcurridos.
+No hay Docker local, prueba del script observador contra Boca ni prueba de
+rendimiento de Boca o del droplet.
 
 ## Dependencias y siguiente decisión revisable
 
@@ -96,8 +101,9 @@ No se simularán varias visitas a la web del tercero para extrapolar capacidad.
    no se ejecutó contra Boca**. Puede devolver `unknown`; cola, acceso
    autenticado, elegibilidad, sector y reserva siguen sin validar.
 5. Docker CI construye el controlador y, en #43, una imagen worker separada
-   cuyo Chromium arrancó y cerró sin red. Todavía no se midieron recursos de
-   una sesión, sandbox en el kernel de destino, egress acotado, scan de imagen,
+   cuyo Chromium arrancó y cerró sin red. #44 midió **un arranque offline**
+   en CI, sin inferir el consumo de una visita real ni del droplet. Faltan
+   sandbox en el kernel de destino, egress acotado, scan de imagen,
    canal privado de credenciales ni workflow de despliegue aprobado. #10 no tiene protección de
    `main` verificada. Ningún PR tiene revisión humana registrada.
 6. #40 permite recifrar datos sintéticos y rechazar escritores con versión

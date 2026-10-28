@@ -40,7 +40,8 @@
 - [ ] Isolated BrowserContext per approved session, bounded by config.
 - [ ] CI comprueba arranque y cierre de Chromium sin egress; no lo cuenta como
       prueba funcional de reserva ni visita Boca desde cada PR. Candidato #43
-      pasó el smoke de Actions; pendiente revisión/merge y medición de recursos.
+      pasó el smoke de Actions y #44 midió un arranque offline; pendiente
+      revisión/merge y medición de la visita real.
 - [ ] Observación opt-in de una sola portada **real y pública** de Boca (#27,
       #32), con egress acotado, plazo, stop-on-block y salida redactada. La ruta
       pública `/auth/login` se vio manualmente; el script #33 no fue ejecutado.
