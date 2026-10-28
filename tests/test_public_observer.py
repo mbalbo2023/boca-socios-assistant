@@ -36,6 +36,7 @@ def test_request_allowlist_is_exact_and_one_document(url: str, kind: str, allowe
     module = observer()
     previous = url == module.HOME_URL and kind == "document" and not allowed
     assert module.allow_request(url, "GET", kind, int(previous)) is allowed
+    assert not module.allow_request(url, "POST", kind, 0)
 
 
 @pytest.mark.parametrize(
@@ -70,6 +71,24 @@ def test_classification_stops_before_claiming_any_reservation(
     assert observer().classify(status, url, text) == expected
 
 
+@pytest.mark.parametrize(
+    "url,method,kind,expected",
+    [
+        ("https://bocasocios.bocajuniors.com.ar/_next/static/app.css", "GET", "stylesheet", True),
+        ("https://bocasocios.bocajuniors.com.ar/_next/image?width=48", "GET", "image", True),
+        ("https://bocasocios.bocajuniors.com.ar/favicon.ico", "GET", "other", True),
+        ("https://bocasocios.bocajuniors.com.ar/", "GET", "document", False),
+        ("https://bocasocios.bocajuniors.com.ar/_next/static/app.js", "POST", "script", False),
+        ("https://assets.other.example/app.css", "GET", "stylesheet", False),
+        ("https://bocasocios.bocajuniors.com.ar/queue", "GET", "image", False),
+    ],
+)
+def test_only_same_origin_display_assets_are_expected_discards(
+    url: str, method: str, kind: str, expected: bool
+) -> None:
+    assert observer().expected_discarded_asset(url, method, kind) is expected
+
+
 def test_opt_in_gate_rejects_arguments_and_disabled_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     module = observer()
     monkeypatch.delenv("BOCA_PUBLIC_OBSERVATION", raising=False)
@@ -95,15 +114,16 @@ def test_browser_context_closes_on_block_and_never_navigates_again() -> None:
 
             class Request:
                 method = "GET"
-                resource_type = "document"
 
-                def __init__(self, target: str) -> None:
+                def __init__(self, target: str, kind: str) -> None:
                     self.url = target
+                    self.resource_type = kind
 
             class Route:
-                def __init__(self, target: str) -> None:
-                    self.request = Request(target)
+                def __init__(self, target: str, kind: str) -> None:
+                    self.request = Request(target, kind)
                     self.fulfilled = False
+                    self.aborted = False
 
                 async def fetch(self, *, max_redirects: int, timeout: float) -> Response:
                     assert max_redirects == 0 and timeout == 5_000
@@ -114,11 +134,14 @@ def test_browser_context_closes_on_block_and_never_navigates_again() -> None:
                     self.fulfilled = True
 
                 async def abort(self) -> None:
-                    raise AssertionError("first root document must be allowed")
+                    self.aborted = True
 
-            route = Route(url)
-            await context.handler(route)
-            assert route.fulfilled
+            document = Route(url, "document")
+            await context.handler(document)
+            assert document.fulfilled and not document.aborted
+            asset = Route(module.HOME_URL + "_next/static/app.css", "stylesheet")
+            await context.handler(asset)
+            assert asset.aborted and not asset.fulfilled
             return Response()
 
         async def inner_text(self, _selector: str) -> str:
@@ -235,3 +258,80 @@ def test_redirect_response_is_aborted_without_followup_navigation() -> None:
     assert asyncio.run(module.observe(API())) == "blocked"
     assert route.aborted
     assert requests == [module.HOME_URL]
+
+
+@pytest.mark.parametrize(
+    "url,method,kind",
+    [
+        ("https://bocasocios.bocajuniors.com.ar/", "GET", "document"),
+        ("https://bocasocios.bocajuniors.com.ar/", "POST", "fetch"),
+        ("https://assets.other.example/app.css", "GET", "stylesheet"),
+    ],
+)
+def test_second_navigation_post_and_foreign_domain_stop_observation(
+    url: str, method: str, kind: str
+) -> None:
+    module = observer()
+    fetched: list[str] = []
+
+    class Response:
+        status = 200
+
+    class Route:
+        def __init__(self, target: str, verb: str, resource: str) -> None:
+            self.request = type(
+                "Request", (), {"url": target, "method": verb, "resource_type": resource}
+            )()
+            self.aborted = False
+
+        async def fetch(self, *, max_redirects: int, timeout: float) -> Response:
+            fetched.append(self.request.url)
+            return Response()
+
+        async def fulfill(self, *, response: Response) -> None:
+            assert response.status == 200
+
+        async def abort(self) -> None:
+            self.aborted = True
+
+    class Page:
+        url = module.HOME_URL
+
+        async def goto(self, _url: str, **_kwargs: object) -> Response:
+            await context.handler(Route(module.HOME_URL, "GET", "document"))
+            unsafe = Route(url, method, kind)
+            await context.handler(unsafe)
+            assert unsafe.aborted
+            return Response()
+
+        async def inner_text(self, _selector: str) -> str:
+            return "Ingresá a Boca Socios. Iniciar sesión"
+
+    class Context:
+        async def route(self, _pattern: str, handler: object) -> None:
+            self.handler = handler
+
+        async def new_page(self) -> Page:
+            return Page()
+
+        async def close(self) -> None:
+            pass
+
+    context = Context()
+
+    class Browser:
+        async def new_context(self, **_kwargs: object) -> Context:
+            return context
+
+        async def close(self) -> None:
+            pass
+
+    class Chromium:
+        async def launch(self, **_kwargs: object) -> Browser:
+            return Browser()
+
+    class API:
+        chromium = Chromium()
+
+    assert asyncio.run(module.observe(API())) == "blocked"
+    assert fetched == [module.HOME_URL]
