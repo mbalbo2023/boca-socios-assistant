@@ -18,15 +18,17 @@ def worker():  # type: ignore[no-untyped-def]
 
 
 def test_worker_rejects_root_even_with_browser_binary(tmp_path: Path) -> None:
+    module = worker()
     browser = tmp_path / "chrome"
     browser.touch()
-    with pytest.raises(worker().WorkerPreflightError, match="nonroot"):
-        worker().validate_worker_identity(0, browser)
+    with pytest.raises(module.WorkerPreflightError, match="nonroot"):
+        module.validate_worker_identity(0, browser)
 
 
 def test_worker_rejects_missing_browser_binary(tmp_path: Path) -> None:
-    with pytest.raises(worker().WorkerPreflightError, match="browser_missing"):
-        worker().validate_worker_identity(10002, tmp_path / "missing")
+    module = worker()
+    with pytest.raises(module.WorkerPreflightError, match="browser_missing"):
+        module.validate_worker_identity(10002, tmp_path / "missing")
 
 
 def test_worker_accepts_installed_browser_under_nonroot_identity(tmp_path: Path) -> None:

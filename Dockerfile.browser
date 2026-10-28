@@ -1,0 +1,22 @@
+# This is a review-only, offline-smoke image; never deployed by this workflow.
+# Pin the image index digest after CI reports it and before claiming worker GO.
+FROM mcr.microsoft.com/playwright/python:v1.64.1-noble
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH=/app/.venv/bin:$PATH \
+    HOME=/home/boca-browser \
+    BOCA_OBSERVER_STOP=1
+
+WORKDIR /app
+RUN python -m pip install --disable-pip-version-check --no-cache-dir uv==0.13.4
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --locked --only-group browser --no-editable
+
+RUN groupadd --gid 10002 boca-browser && \
+    useradd --uid 10002 --gid 10002 --create-home --shell /usr/sbin/nologin boca-browser
+COPY scripts/verify_chromium_worker.py scripts/observe_public_home.py ./scripts/
+USER 10002:10002
+
+# A browser startup check, never an automatic visit to Boca.
+CMD ["python", "scripts/verify_chromium_worker.py"]
