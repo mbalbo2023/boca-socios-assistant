@@ -5,8 +5,10 @@ from __future__ import annotations
 import base64
 import os
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Event
 
 import pytest
 from cryptography.exceptions import InvalidTag
@@ -17,7 +19,7 @@ from boca_socios.security.credential_rewrap import (
     verify_active_credentials,
 )
 from boca_socios.security.credential_vault import CredentialVault
-from boca_socios.security.enrollment import MemberEnrollmentService
+from boca_socios.security.enrollment import EnrollmentConflict, MemberEnrollmentService
 from boca_socios.storage.database import Database
 
 
@@ -66,10 +68,18 @@ def test_atomic_rotation_restart_verification_and_stale_writer_is_fenced(tmp_pat
     assert b"synthetic-secret" not in database.path.read_bytes()
 
     # The old process may still hold its key, but its next DB write is rejected.
-    with pytest.raises(sqlite3.IntegrityError, match="key version"):
+    with pytest.raises(ValueError, match="unavailable key version"):
         MemberEnrollmentService(database, old).rotate_password(members[0], "stale-writer")
     with pytest.raises(sqlite3.IntegrityError, match="key version"):
         database.save_credential(members[0], old.seal("stale-writer", member_id=members[0]))
+    with pytest.raises(EnrollmentConflict):
+        MemberEnrollmentService(database, old).enroll(
+            email="stale-new@invalid.test",
+            password="test-only",
+            consent_recorded_at=datetime(2026, 10, 28, tzinfo=UTC),
+        )
+    with database.connection() as connection:
+        assert connection.execute("SELECT count(*) FROM members").fetchone() == (2,)
     reopened = Database(database.path)
     fresh_key = CredentialVault.from_secret_file(tmp_path / "new.key", key_id="v2")
     assert verify_active_credentials(reopened, fresh_key) == len(members)
@@ -102,7 +112,7 @@ def test_missing_or_wrong_key_and_oversized_batch_fail_closed(tmp_path: Path) ->
         CredentialKeyRewrapper(database, old, new, max_records=1).rotate()
     assert all(database.get_credential(member).key_id == "v1" for member in members)
     with pytest.raises(KeyPolicyMismatch):
-        CredentialKeyRewrapper(database, CredentialVault(os.urandom(32)), new).rotate()
+        CredentialKeyRewrapper(database, CredentialVault(os.urandom(32), key_id="v9"), new).rotate()
     with pytest.raises(InvalidTag):
         CredentialKeyRewrapper(database, CredentialVault(os.urandom(32), key_id="v1"), new).rotate()
     with pytest.raises(KeyPolicyMismatch):
@@ -141,5 +151,46 @@ def test_migration_checksum_and_no_preexisting_mixed_versions(tmp_path: Path) ->
     with pytest.raises(KeyPolicyMismatch):
         CredentialKeyRewrapper(separate_db, old, new).migrate()
     with separate_db.connection() as connection:
-        assert connection.execute("SELECT count(*) FROM schema_migrations WHERE version=4").fetchone() == (0,)
+        assert connection.execute(
+            "SELECT count(*) FROM schema_migrations WHERE version=4"
+        ).fetchone() == (0,)
     assert len(members) == 2
+
+
+def test_competing_old_writer_cannot_commit_after_rotation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database, old, new, migration, members = setup_rotation(tmp_path, count=1)
+    entered = Event()
+    release = Event()
+    original_seal = new.seal
+
+    def pause_during_rotation(password: str, *, member_id: str) -> object:
+        entered.set()
+        if not release.wait(timeout=5):
+            raise RuntimeError("test release missing")
+        return original_seal(password, member_id=member_id)
+
+    monkeypatch.setattr(new, "seal", pause_during_rotation)
+    old_record = old.seal("stale", member_id=members[0])
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        rotating = pool.submit(migration.rotate)
+        assert entered.wait(timeout=5)
+        stale_write = pool.submit(database.save_credential, members[0], old_record)
+        release.set()
+        assert rotating.result(timeout=10) == 1
+        with pytest.raises(sqlite3.IntegrityError, match="key version"):
+            stale_write.result(timeout=10)
+    assert database.get_credential(members[0]).key_id == "v2"
+
+
+def test_missing_version_trigger_stops_rotation(tmp_path: Path) -> None:
+    database, old, new, migration, members = setup_rotation(tmp_path, count=1)
+    before = database.get_credential(members[0])
+    with database.connection() as connection, connection:
+        connection.execute("DROP TRIGGER credential_key_update")
+    with pytest.raises(KeyPolicyMismatch, match="guard"):
+        migration.rotate()
+    with pytest.raises(KeyPolicyMismatch, match="guard"):
+        CredentialKeyRewrapper(database, old, new).migrate()
+    assert database.get_credential(members[0]) == before
