@@ -3,6 +3,10 @@
 **Fecha:** 2026-10-28 (America/Argentina/Buenos_Aires). **Estado:** rama de
 verificación, sin merge a `main`, despliegue ni acceso autenticado a Boca.
 
+Para un agente nuevo, empezar por
+[AGENT_HANDOFF_2026-10-28.md](AGENT_HANDOFF_2026-10-28.md), que incluye
+procedencia de PRs, evidencias, dependencias y decisiones pendientes.
+
 **Actualización de continuidad:** [PR #36](https://github.com/mbalbo2023/boca-socios-assistant/pull/36)
 integra componentes; [PR #38](https://github.com/mbalbo2023/boca-socios-assistant/pull/38)
 añade el guard de intento único y [PR #40](https://github.com/mbalbo2023/boca-socios-assistant/pull/40)
