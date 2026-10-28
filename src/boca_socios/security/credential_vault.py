@@ -44,12 +44,10 @@ class CredentialVault:
         """
         if not file_path.is_absolute():
             raise ValueError("master key path must be absolute")
-        flags = (
-            os.O_RDONLY
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_NONBLOCK", 0)
-        )
+        no_follow = getattr(os, "O_NOFOLLOW", None)
+        if no_follow is None:
+            raise ValueError("platform cannot securely open master key without no-follow")
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | no_follow | getattr(os, "O_NONBLOCK", 0)
         try:
             descriptor = os.open(file_path, flags)
             with os.fdopen(descriptor, "rb") as source:
@@ -63,9 +61,7 @@ class CredentialVault:
                     raise ValueError("master key file is writable/executable by others")
                 # Only the exact read-only Compose 0444 mount is compatible;
                 # never permit a writable 0644/0604 source via this exception.
-                docker_secret = (
-                    file_path == Path("/run/secrets/boca_master_key") and permissions == 0o444
-                )
+                docker_secret = cls._is_readonly_docker_secret(file_path, permissions)
                 if permissions & 0o044 and not docker_secret:
                     raise ValueError("master key file is readable by other identities")
                 encoded = source.read(129)
@@ -78,6 +74,11 @@ class CredentialVault:
         except (ValueError, binascii.Error) as exc:
             raise ValueError("invalid master key encoding") from exc
         return cls(key, key_id=key_id)
+
+    @staticmethod
+    def _is_readonly_docker_secret(file_path: Path, permissions: int) -> bool:
+        """Only one exact path and exact read-only mount mode qualify."""
+        return file_path == Path("/run/secrets/boca_master_key") and permissions == 0o444
 
     @staticmethod
     def _aad(member_id: str) -> bytes:
