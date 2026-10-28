@@ -41,6 +41,16 @@ jobs:
         run: uv run pytest -q
       - name: Repository isolation gate
         run: uv run python scripts/check_repo_policy.py
+      - name: Audit GitHub Actions security (offline)
+        uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
+        with:
+          version: "1.31.1"
+          advanced-security: false
+          annotations: true
+          online-audits: false
+          persona: regular
+          min-severity: medium
+          min-confidence: high
 
   image:
     name: image-build
