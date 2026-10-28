@@ -1,26 +1,27 @@
-# Pin the base image digest during the first controlled deployment.
+# Official multi-architecture Python image index, pinned for reproducibility.
 # No deployment is authorized by creating or modifying this Dockerfile.
-FROM python:3.12-slim-bookworm AS build
+FROM python:3.12.15-alpine3.24@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d AS build
 
 WORKDIR /build
 COPY pyproject.toml README.md ./
 COPY src ./src
 RUN python -m pip wheel --disable-pip-version-check --no-cache-dir --wheel-dir /wheels .
 
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.12.15-alpine3.24@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     BOCA_RUNTIME_MODE=simulation \
     BOCA_DB_PATH=/data/boca.sqlite3 \
     BOCA_MASTER_KEY_FILE=/run/secrets/boca_master_key
 
-RUN groupadd --gid 10001 boca && \
-    useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin boca && \
+RUN addgroup -S -g 10001 boca && \
+    adduser -S -D -H -u 10001 -G boca -s /sbin/nologin boca && \
     mkdir -p /data && chown boca:boca /data
 COPY --from=build /wheels /wheels
 RUN python -m pip install --disable-pip-version-check --no-cache-dir --no-index \
     --find-links=/wheels boca-socios-assistant && \
-    rm -rf /wheels
+    rm -rf /wheels && \
+    python -c "import sqlite3; from cryptography.hazmat.primitives.ciphers.aead import AESGCM; from boca_socios.security.credential_vault import CredentialVault"
 WORKDIR /app
 USER 10001:10001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
