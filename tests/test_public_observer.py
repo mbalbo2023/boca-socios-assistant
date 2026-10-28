@@ -49,7 +49,12 @@ def test_request_allowlist_is_exact_and_one_document(url: str, kind: str, allowe
             "Ingresá a Boca Socios. Iniciar sesión",
             "login_visible",
         ),
-        (403, "https://bocasocios.bocajuniors.com.ar/auth/login", "Ingresá a Boca Socios", "blocked"),
+        (
+            403,
+            "https://bocasocios.bocajuniors.com.ar/auth/login",
+            "Ingresá a Boca Socios",
+            "blocked",
+        ),
         (
             200,
             "https://bocasocios.bocajuniors.com.ar/auth/login",

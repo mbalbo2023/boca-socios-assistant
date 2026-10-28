@@ -1,4 +1,4 @@
-"""Opt-in, single anonymous public-home observation; never logs page content.
+"""Opt-in, single anonymous public-login observation; never logs page content.
 
 This is not part of the controller, CI, Docker runtime or any reservation flow.
 No credentials, queue page, CAPTCHA, checkout or user-supplied URL is accepted.
@@ -14,6 +14,7 @@ from typing import Protocol
 from urllib.parse import urlsplit
 
 HOME_URL = "https://bocasocios.bocajuniors.com.ar/"
+LOGIN_URL = HOME_URL + "auth/login"
 HOST = "bocasocios.bocajuniors.com.ar"
 CHALLENGE_MARKERS = (
     "captcha",
@@ -51,7 +52,7 @@ class RoutePort(Protocol):
 
 
 def allow_request(url: str, method: str, kind: str, document_count: int) -> bool:
-    """Allow only the first exact root document, with no active page assets."""
+    """Allow only the first exact public-login document, with no active assets."""
     parsed = urlsplit(url)
     if (
         method != "GET"
@@ -63,7 +64,7 @@ def allow_request(url: str, method: str, kind: str, document_count: int) -> bool
         or "%" in parsed.path
     ):
         return False
-    return kind == "document" and document_count == 0 and url == HOME_URL
+    return kind == "document" and document_count == 0 and url == LOGIN_URL
 
 
 def expected_discarded_asset(url: str, method: str, kind: str) -> bool:
@@ -80,7 +81,7 @@ def expected_discarded_asset(url: str, method: str, kind: str) -> bool:
 
 def classify(status: int, url: str, visible_text: str) -> str:
     """Discard text after classification; never include it in output or errors."""
-    if status != 200 or url != HOME_URL:
+    if status != 200 or url != LOGIN_URL:
         return "blocked"
     text = visible_text.casefold()
     if any(marker in text for marker in CHALLENGE_MARKERS):
@@ -132,7 +133,7 @@ async def observe(api: object) -> str:
 
             await context.route("**/*", route_request)
             page = await context.new_page()
-            response = await page.goto(HOME_URL, wait_until="domcontentloaded", timeout=12_000)
+            response = await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=12_000)
             if blocked or document_count != 1 or response is None:
                 return "blocked"
             visible_text = await asyncio.wait_for(page.inner_text("body"), timeout=3)
@@ -166,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
         if state != "login_visible":
             print(f"public_observer_stopped: {state}", file=sys.stderr)
             return 1
-        print(json.dumps({"mode": "public_home_only", "state": state}))
+        print(json.dumps({"mode": "public_login_only", "state": state}))
         return 0
     except (Exception, KeyboardInterrupt) as error:
         # Exception messages can contain URLs, headers or browser state.
