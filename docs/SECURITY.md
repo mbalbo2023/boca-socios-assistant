@@ -15,6 +15,15 @@ encryption**, not an ordinary password hash.
   password column or secret-bearing audit log.
 - Master key: base64 32-byte random secret mounted via Compose secrets at
   /run/secrets/boca_master_key; never in DB/repo/Docker image or Actions logs.
+- The vault opens the exact file with `O_NOFOLLOW` where supported, checks
+  regular-file type, ownership, bounded length and safe permissions using
+  the opened descriptor. Ordinary files must be owner-only (0600/0400).
+  Some Compose file-secret implementations expose a read-only **0444 mount**;
+  this is accepted **only** at the exact `/run/secrets/boca_master_key`
+  container path. It is not proof that the host-side source is secure.
+- Before any real enrollment, verify that the host-side source is owner-only,
+  that only the Boca container can mount it, and that no untrusted process
+  shares this container. Never rewrite/chmod the mounted secret in runtime.
 - Key file provisioned at an owner-controlled path outside the source tree,
   never shared with another application. Access limited to the Boca identity.
 - Key version is part of each record; key rotation requires a tested,
@@ -42,6 +51,11 @@ The owner will authorize a separate one-time deployment secret workflow.
   Telegram, untrusted browser tools or GitHub Actions artifacts.
 - Prepare deletion of member + credential + audit redaction and documented
   backup-retention before enabling real user enrollment.
+- Docker images must build runtime Python dependencies from the repository's
+  pinned `uv.lock` and a reviewed base image manifest digest; modifying
+  the digest or dependency graph requires an isolated CI review. This is a
+  **reproducible dependency selection**, not a guarantee of bit-for-bit
+  identical images or a substitute for vulnerability scanning.
 - Rotate any real password that has previously been disclosed outside the
   approved encrypted enrollment channel before using it in production.
 
