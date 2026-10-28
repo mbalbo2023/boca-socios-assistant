@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=75,<83"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "boca-socios-assistant"
+version = "0.1.0"
+description = "Isolated, consent-based Boca Socios ticket workflow foundation"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "cryptography>=44,<48",
+]
+
+[dependency-groups]
+dev = [
+  "mypy>=1.18,<2",
+  "pytest>=9,<10",
+  "ruff>=0.14,<1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"boca_socios.storage.migrations" = ["*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "UP", "S"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S105", "S106", "S311"]
+
+[tool.mypy]
+python_version = "3.12"
+mypy_path = "src"
+strict = true
+warn_unused_ignores = true
+show_error_codes = true
+files = ["src"]
+

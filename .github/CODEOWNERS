@@ -1,0 +1,8 @@
+# Every production-affecting file requires explicit owner review when a ruleset enforces it.
+* @mbalbo2023
+/.github/ @mbalbo2023
+/Dockerfile @mbalbo2023
+/compose.yaml @mbalbo2023
+/src/boca_socios/security/ @mbalbo2023
+/src/boca_socios/storage/ @mbalbo2023
+

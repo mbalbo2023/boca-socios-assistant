@@ -1,0 +1,52 @@
+# The only Docker Compose project name authorized for this repository.
+# Never combine with or extend any unrelated Compose project.
+name: boca-socios
+
+services:
+  controller:
+    image: ${BOCA_IMAGE:-boca-socios:development}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    environment:
+      BOCA_ENVIRONMENT: ${BOCA_ENVIRONMENT:-development}
+      BOCA_RUNTIME_MODE: simulation
+      BOCA_DB_PATH: /data/boca.sqlite3
+      BOCA_MASTER_KEY_FILE: /run/secrets/boca_master_key
+    secrets:
+      - boca_master_key
+    volumes:
+      - boca_data:/data
+    networks:
+      - boca_private
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.50
+    healthcheck:
+      test: ["CMD", "python", "-m", "boca_socios.healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    # Deliberately no host port, privileged mode, Docker socket or host mounts.
+
+secrets:
+  boca_master_key:
+    file: ${BOCA_MASTER_KEY_SOURCE:?BOCA_MASTER_KEY_SOURCE_is_required}
+
+volumes:
+  boca_data: {}
+
+networks:
+  boca_private:
+    driver: bridge
+
