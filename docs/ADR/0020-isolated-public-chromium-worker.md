@@ -19,8 +19,9 @@ reservation is possible.
   volume, controller import, queue client or scheduler is introduced.
 - Run the CI smoke with `--network none`, nonroot UID 10002, Chromium sandbox
   requested, the upstream Playwright seccomp profile, read-only filesystem,
-  private `/dev/shm`, private writable `/tmp` and home tmpfs, dropped capabilities, no new
-  privileges and limits of 1 CPU, 768 MiB and 128 PIDs. No `ipc: host`,
+  private `/dev/shm`, private writable `/tmp` and home tmpfs, all capabilities
+  dropped except `SYS_CHROOT`, no new privileges and limits of 1 CPU, 768 MiB
+  and 128 PIDs. No `ipc: host`,
   Docker socket or access to unrelated Compose projects. `about:blank` and a
   basic JS expression show that Chromium started; this is **not** a fake
   reservation page and does not validate the real site.
@@ -39,8 +40,13 @@ stopped with `TargetClosedError` under the configured isolation. The revised
 smoke reports only the failed phase and exception class; it does not print a
   browser error payload. A later attempt will also give the nonroot browser a
   bounded private home tmpfs and temporarily log Chromium startup diagnostics
-  in this **offline, no-credential** CI step only. GitHub Actions must now
-  start and close Chromium offline and retain
+  in this **offline, no-credential** CI step only. Run 40778923578 revealed
+  `sys_chroot("/proc/self/fdinfo/")` failing inside Chromium's sandbox
+  zygote. The next attempt gives the browser only `SYS_CHROOT` within its
+  isolated container, while retaining all other caps dropped, seccomp,
+  nonroot, read-only FS and no network. This is a specific exception needed
+  for sandbox startup, not permission to use host paths. GitHub Actions must
+  now start and close Chromium offline and retain
 the existing controller CI jobs. A successful `chromium_sandbox=True` launch
 does not by itself attest every sandbox layer or prove the droplet's kernel
 allows this profile. The host must be checked through a later authorized
