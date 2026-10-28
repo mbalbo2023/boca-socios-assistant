@@ -39,14 +39,16 @@ Unit tests refuse root and a missing browser binary. The first Actions run
 stopped with `TargetClosedError` under the configured isolation. The revised
 smoke reports only the failed phase and exception class; it does not print a
   browser error payload. A later attempt will also give the nonroot browser a
-  bounded private home tmpfs and temporarily log Chromium startup diagnostics
-  in this **offline, no-credential** CI step only. Run 40778923578 revealed
+  bounded private home tmpfs and temporarily logged Chromium startup diagnostics
+  in the **offline, no-credential** CI step. Run 40778923578 revealed
   `sys_chroot("/proc/self/fdinfo/")` failing inside Chromium's sandbox
   zygote. The next attempt gives the browser only `SYS_CHROOT` within its
   isolated container, while retaining all other caps dropped, seccomp,
   nonroot, read-only FS and no network. This is a specific exception needed
-  for sandbox startup, not permission to use host paths. GitHub Actions must
-  now start and close Chromium offline and retain
+  for sandbox startup, not permission to use host paths. Run 40779164540
+  then built the pinned image and started/closed Chromium successfully with
+  both jobs green. The temporary browser diagnostic output was removed from
+  the final candidate; its CI must remain green and retain
 the existing controller CI jobs. A successful `chromium_sandbox=True` launch
 does not by itself attest every sandbox layer or prove the droplet's kernel
 allows this profile. The host must be checked through a later authorized
