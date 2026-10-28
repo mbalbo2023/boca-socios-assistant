@@ -41,6 +41,10 @@ PRs fueron corregidas con commits posteriores; sólo valen sus HEAD actuales.
 
 - Baseline combinado local: `uv sync --locked`, Ruff, mypy strict, política
   de aislamiento y **94 pruebas** verdes antes de los nuevos adaptadores.
+- Con los adaptadores, **97 pruebas** locales pasaron; la CI de GitHub Actions
+  para el candidato `f5392603a5c5222420c8bc803650cc0f21f5a4d2` terminó
+  **success** en el run `40761344117`: jobs `quality-and-tests` e
+  `image-build` completos. Este resultado no constituye revisión humana.
 - La integración de `OfflineSimulation` enlaza el `TicketIntent` idempotente
   de SQLite, una admisión del modelo en memoria, el puerto de navegador y un
   aviso estático deduplicado en memoria. Las regresiones adicionales comprueban
@@ -53,8 +57,8 @@ PRs fueron corregidas con commits posteriores; sólo valen sus HEAD actuales.
   **no son un laboratorio de integración real**. El usuario pidió priorizar
   Boca Socios directamente; no se ejecutará un smoke fake como sustituto de
   la prueba real.
-- El entorno local carece de Docker; `image-build` de GitHub Actions debe
-  validar la rama exacta. No hay benchmark Chromium con resultado medido ni
+- El entorno local carece de Docker; `image-build` de GitHub Actions validó
+  el candidato indicado. No hay benchmark Chromium con resultado medido ni
   capacidad demostrada del droplet.
 - La lectura de rulesets devolvió lista vacía y la protección de `main` no
   fue legible con la integración (403). Por tanto, la aplicación efectiva de
@@ -68,7 +72,9 @@ seguir con tests internos y un observador público acotado. **NO-GO de BETA
 operativa:** faltan alta segura aprobada y expuesta, autenticación del dueño,
 outbox durable, flujo real observado de login/cola/reserva, reconciliación de
 resultado incierto, pruebas del navegador real, rendimiento en entorno
-aislado, scan de imagen, CI integrada exacta y protección/revisión humana.
+  aislado, scan de imagen y protección/revisión humana. La CI integrada
+  exacta de la versión anterior de esta rama está verde; cualquier nuevo
+  commit requiere repetirla.
 
 **NO-GO de despliegue:** no existe autorización para un SHA/digest y servicio
 concretos. Todo cambio futuro en el droplet se hará por GitHub Actions de
