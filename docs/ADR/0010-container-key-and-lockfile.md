@@ -7,7 +7,7 @@ Status: Proposed for issue #8, 2026-10-28. Simulation mode only.
 Pin the official Python 3.12.15 slim-bookworm base by **multi-architecture
 image index digest** in both Docker build and runtime stages. Build the
 installed Python virtual environment using the repository's `uv.lock` with
-`uv sync --frozen --no-dev --no-editable`, and copy the non-editable venv to
+`uv sync --locked --no-dev --no-editable`, and copy the non-editable venv to
 runtime. Pin the `uv` installer version. The runtime remains non-root,
 read-only at the Compose layer and free of `pip install` network resolution.
 
@@ -15,11 +15,14 @@ Use `O_NOFOLLOW` (when present) and `fstat` on an opened descriptor to reduce
 symlink races and check the key file is regular, safely owned and not
 group/world-writable. Reject group/world-readable ordinary source files;
 only the exact `/run/secrets/boca_master_key` path permits a read-only
-0444 mount to match practical Compose file-secret behavior. In that case
+0444 mount (exact permissions; no mixed owner-writable 0644) to match
+practical Compose file-secret behavior. In that case
 operator preflight **must** check the source key's owner-only permissions
 outside this image and that no other service can mount the secret. A
 Docker secret mount must never be modified in place to adjust permissions.
-Bound the encoded key read to 128 bytes and reject malformed/oversized
+Open using `O_NONBLOCK` as well so special files like FIFOs cannot block
+before regular-file verification. Bound the encoded key read to 128 bytes
+and reject malformed/oversized
 content before interpreting it as an AES-256 key. Avoid placing passwords
 or key contents in exception messages, code, logs or CI.
 
