@@ -15,7 +15,7 @@ encryption**, not an ordinary password hash.
   password column or secret-bearing audit log.
 - Master key: base64 32-byte random secret mounted via Compose secrets at
   /run/secrets/boca_master_key; never in DB/repo/Docker image or Actions logs.
-- The vault opens the exact file with `O_NOFOLLOW` where supported, checks
+- The Linux-targeted vault requires `O_NOFOLLOW` (fails closed if absent), checks
   regular-file type, ownership, bounded length and safe permissions using
   the opened descriptor. Ordinary files must be owner-only (0600/0400).
   Some Compose file-secret implementations expose a read-only **0444 mount**;
