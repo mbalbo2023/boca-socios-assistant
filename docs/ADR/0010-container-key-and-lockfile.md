@@ -11,11 +11,12 @@ installed Python virtual environment using the repository's `uv.lock` with
 runtime. Pin the `uv` installer version. The runtime remains non-root,
 read-only at the Compose layer and free of `pip install` network resolution.
 
-Use `O_NOFOLLOW` (when present) and `fstat` on an opened descriptor to reduce
+Require platform support for `O_NOFOLLOW` (fail closed if unavailable), and
+use `fstat` on an opened descriptor to reduce
 symlink races and check the key file is regular, safely owned and not
 group/world-writable. Reject group/world-readable ordinary source files;
 only the exact `/run/secrets/boca_master_key` path permits a read-only
-0444 mount (exact permissions; no mixed owner-writable 0644) to match
+0444 mount (exact permissions; no mixed owner-writable 0644/0640/0604) to match
 practical Compose file-secret behavior. In that case
 operator preflight **must** check the source key's owner-only permissions
 outside this image and that no other service can mount the secret. A
