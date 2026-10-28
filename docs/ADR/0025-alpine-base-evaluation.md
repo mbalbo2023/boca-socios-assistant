@@ -10,9 +10,10 @@ Python 3.12.15 Alpine 3.24 image, pinned to its multi-architecture index:
 The digest came from Docker Hub's tag API; it is not the amd64 child digest.
 
 Alpine uses musl rather than glibc. The Python cryptography project publishes
-musllinux wheels, but this repository must actually build, import the vault,
-exercise SQLite and run tests in the resulting image before considering the
-variant. The Dockerfile changes the user/group creation to BusyBox's
+musllinux wheels, but this repository must actually build and exercise the
+vault encryption round trip and an in-memory SQLite query in the resulting
+image, alongside the source unit tests, before considering the variant.
+The Dockerfile changes the user/group creation to BusyBox's
 `addgroup` and `adduser`; nonroot UID/GID 10001, no published port and
 simulation-only runtime remain unchanged. The strict Trivy scan of the final
 image still fails on any HIGH or CRITICAL OS/library finding. A smaller

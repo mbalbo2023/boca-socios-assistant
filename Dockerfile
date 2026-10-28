@@ -21,7 +21,7 @@ COPY --from=build /wheels /wheels
 RUN python -m pip install --disable-pip-version-check --no-cache-dir --no-index \
     --find-links=/wheels boca-socios-assistant && \
     rm -rf /wheels && \
-    python -c "import sqlite3; from cryptography.hazmat.primitives.ciphers.aead import AESGCM; from boca_socios.security.credential_vault import CredentialVault"
+    python -c "import sqlite3; from boca_socios.security.credential_vault import CredentialVault; assert sqlite3.connect(':memory:').execute('select 1').fetchone() == (1,); vault = CredentialVault(bytes(32)); assert vault.open(vault.seal('smoke', member_id='smoke'), member_id='smoke') == 'smoke'"
 WORKDIR /app
 USER 10001:10001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
