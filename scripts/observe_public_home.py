@@ -19,6 +19,7 @@ CHALLENGE_MARKERS = (
     "captcha",
     "queue-it",
     "queueit",
+    "queue",
     "waiting room",
     "sala de espera",
     "en fila",
@@ -65,6 +66,18 @@ def allow_request(url: str, method: str, kind: str, document_count: int) -> bool
     return kind == "document" and document_count == 0 and url == HOME_URL
 
 
+def expected_discarded_asset(url: str, method: str, kind: str) -> bool:
+    """Discard ordinary same-origin display assets without treating them as navigation."""
+    parsed = urlsplit(url)
+    if method != "GET" or parsed.scheme != "https" or parsed.netloc != HOST:
+        return False
+    if any(marker in (parsed.path + parsed.query).casefold() for marker in CHALLENGE_MARKERS):
+        return False
+    if kind in {"script", "stylesheet", "font", "image", "media"}:
+        return True
+    return kind == "other" and parsed.path == "/favicon.ico" and not parsed.query
+
+
 def classify(status: int, url: str, visible_text: str) -> str:
     """Discard text after classification; never include it in output or errors."""
     if status != 200 or url != HOME_URL:
@@ -100,7 +113,10 @@ async def observe(api: object) -> str:
                 if not allow_request(
                     request.url, request.method, request.resource_type, document_count
                 ):
-                    blocked = True
+                    if not expected_discarded_asset(
+                        request.url, request.method, request.resource_type
+                    ):
+                        blocked = True
                     await route.abort()
                     return
                 if request.resource_type == "document":
