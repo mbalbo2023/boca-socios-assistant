@@ -100,3 +100,21 @@ atomic enrollment, verified identity, administrator login, CSRF protection,
 rotation, deletion or an accessible panel. This ADR intentionally leaves
 those capabilities unavailable. Once its design is approved, implementation
 can proceed in small PRs, keeping enrollment disabled until all gates pass.
+
+### Internal service candidate (stacked PR after this design)
+
+An internal `MemberEnrollmentService` can create member, sealed credential
+and metadata-only audit in one SQLite `BEGIN IMMEDIATE` transaction. Password
+rotation decrypts the prior record first to fail closed on stale/missing keys,
+then replaces it with a fresh nonce in one transaction. Credential revocation
+deletes ciphertext while retaining the opaque member and ticket requests so
+that a later re-enrollment cannot silently reset the per-event local quota.
+This is credential revocation, **not** a promise of complete personal-data
+erasure. The service has no route, runtime import, live login, verified member
+identity or administrative access mechanism. Its tests use only fake values.
+
+Master-key re-encryption, process coordination during key changes, backup
+deletion, and external identity uniqueness need separate schema and operations
+review; the password-rotation method does not solve those tasks. The current
+`CredentialVault.from_secret_file` must receive the reviewed hardening from
+PR #23 before any real secret mount is used.
