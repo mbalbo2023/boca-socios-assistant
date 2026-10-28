@@ -13,11 +13,7 @@ import pytest
 # Load it by path so `uv run pytest` works even when the repository root is not
 # inserted into sys.path by the pytest console entrypoint.
 _script = runpy.run_path(
-    str(
-        Path(__file__).resolve().parents[1]
-        / "scripts"
-        / "benchmark_browser_contexts.py"
-    )
+    str(Path(__file__).resolve().parents[1] / "scripts" / "benchmark_browser_contexts.py")
 )
 MiB = _script["MiB"]
 ResourceSnapshot = _script["ResourceSnapshot"]
@@ -88,14 +84,9 @@ def test_cgroup_budget_stops_on_delta_or_headroom() -> None:
         budget_violation(baseline, snapshot(memory=1700 * MiB), 1000, 384)
         == "insufficient_cgroup_headroom"
     )
-    assert (
-        budget_violation(snapshot(memory=None), snapshot(memory=None), 512, 384) is None
-    )
+    assert budget_violation(snapshot(memory=None), snapshot(memory=None), 512, 384) is None
     nearly_full_pids = replace(baseline, pids_current=51)
-    assert (
-        budget_violation(baseline, nearly_full_pids, 512, 384, 16)
-        == "insufficient_pid_headroom"
-    )
+    assert budget_violation(baseline, nearly_full_pids, 512, 384, 16) == "insufficient_pid_headroom"
 
 
 def test_cgroup_accounting_does_not_claim_browser_specific_metrics() -> None:
