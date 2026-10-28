@@ -1,13 +1,13 @@
-# Pin the base image digest during the first controlled deployment.
+# Official Python 3.12.15 slim-Trixie multiarch index; review before refresh.
 # No deployment is authorized by creating or modifying this Dockerfile.
-FROM python:3.12-slim-bookworm AS build
+FROM python:3.12.15-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS build
 
 WORKDIR /build
 COPY pyproject.toml README.md ./
 COPY src ./src
 RUN python -m pip wheel --disable-pip-version-check --no-cache-dir --wheel-dir /wheels .
 
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.12.15-slim-trixie@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     BOCA_RUNTIME_MODE=simulation \
