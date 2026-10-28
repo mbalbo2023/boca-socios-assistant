@@ -23,8 +23,14 @@ instead of silently reporting a process-only estimate.
 
 ## Next gates
 
-Record the actual Actions run values and investigate any resource headroom
-below the container caps. A real public observer visit needs a separate
+Actions [run 40780362578](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40780362578)
+passed both jobs on the first candidate. Its one offline startup reported
+**185.3 MiB** memory peak, **76** peak cgroup tasks, **921 ms** CPU usage
+delta and **1142 ms** elapsed. These are CI runner observations under the
+768 MiB/128 PID/1 CPU caps, not a resource budget for a real Boca visit or
+another kernel. The final documentation commit must pass its own CI.
+
+A real public observer visit needs a separate
 one-shot network policy and approved nonproduction environment; an
 authenticated account and ticket step need further authorization. Measuring
 2/4/8 sessions or sending repeated traffic to Boca requires a different
