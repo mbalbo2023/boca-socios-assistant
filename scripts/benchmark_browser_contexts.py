@@ -136,9 +136,7 @@ def parse_counts(raw: str) -> tuple[int, ...]:
     try:
         counts = tuple(int(part.strip()) for part in raw.split(","))
     except ValueError as error:
-        raise argparse.ArgumentTypeError(
-            "Counts must be comma-separated integers"
-        ) from error
+        raise argparse.ArgumentTypeError("Counts must be comma-separated integers") from error
     if not counts or len(counts) > 4 or any(count < 1 or count > 8 for count in counts):
         raise argparse.ArgumentTypeError("Supply 1–4 counts, each in 1..8")
     if len(set(counts)) != len(counts) or list(counts) != sorted(counts):
@@ -176,11 +174,7 @@ def budget_violation(
     used = current.memory_current_bytes
     baseline = before.memory_current_bytes
     limit = current.memory_limit_bytes
-    if (
-        used is not None
-        and baseline is not None
-        and used - baseline > max_delta_mib * MiB
-    ):
+    if used is not None and baseline is not None and used - baseline > max_delta_mib * MiB:
         return "measured_cgroup_delta_exceeded"
     if used is not None and limit is not None and limit - used < min_headroom_mib * MiB:
         return "insufficient_cgroup_headroom"
@@ -213,13 +207,9 @@ def is_allowed_page_request(url: str, server_port: int) -> bool:
 def summarize_resources(
     before: ResourceSnapshot, samples: list[ResourceSnapshot], after: ResourceSnapshot
 ) -> dict[str, Any]:
-    sampled_memory = [
-        v.memory_current_bytes for v in samples if v.memory_current_bytes is not None
-    ]
+    sampled_memory = [v.memory_current_bytes for v in samples if v.memory_current_bytes is not None]
     sampled_pids = [v.pids_current for v in samples if v.pids_current is not None]
-    sampled_shm = [
-        v.shm_available_bytes for v in samples if v.shm_available_bytes is not None
-    ]
+    sampled_shm = [v.shm_available_bytes for v in samples if v.shm_available_bytes is not None]
     peak_memory = max(sampled_memory) if sampled_memory else None
     peak_pids = max(sampled_pids) if sampled_pids else None
     min_shm = min(sampled_shm) if sampled_shm else None
@@ -234,12 +224,8 @@ def summarize_resources(
             before.memory_current_bytes, after.memory_current_bytes
         ),
         "cpu_usage_delta_usec": _delta(before.cpu_usage_usec, after.cpu_usage_usec),
-        "cpu_throttled_delta_usec": _delta(
-            before.cpu_throttled_usec, after.cpu_throttled_usec
-        ),
-        "cpu_nr_throttled_delta": _delta(
-            before.cpu_nr_throttled, after.cpu_nr_throttled
-        ),
+        "cpu_throttled_delta_usec": _delta(before.cpu_throttled_usec, after.cpu_throttled_usec),
+        "cpu_nr_throttled_delta": _delta(before.cpu_nr_throttled, after.cpu_nr_throttled),
         "after_cleanup": asdict(after),
     }
 
@@ -362,9 +348,7 @@ async def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), SyntheticPageHandler)
     port = server.server_address[1]
-    thread = threading.Thread(
-        target=server.serve_forever, name="synthetic-server", daemon=True
-    )
+    thread = threading.Thread(target=server.serve_forever, name="synthetic-server", daemon=True)
     thread.start()
     report: dict[str, Any] = {
         "schema_version": 1,
@@ -426,9 +410,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--repeats", type=_bounded_int(1, 5), default=2)
     parser.add_argument("--dom-nodes", type=_bounded_int(50, 2000), default=400)
     parser.add_argument("--hold-ms", type=_bounded_int(100, 10_000), default=500)
-    parser.add_argument(
-        "--timeout-ms", type=_bounded_int(1_000, 30_000), default=10_000
-    )
+    parser.add_argument("--timeout-ms", type=_bounded_int(1_000, 30_000), default=10_000)
     parser.add_argument("--max-delta-mib", type=_bounded_int(128, 2048), default=512)
     parser.add_argument("--min-headroom-mib", type=_bounded_int(64, 4096), default=384)
     parser.add_argument("--min-pid-headroom", type=_bounded_int(4, 256), default=16)
