@@ -8,8 +8,11 @@ reservation is possible.
 
 - Build `Dockerfile.browser` separately from the simulation controller.
   Playwright Python 1.64.1 is selected through the locked `browser` group and
-  the matching official Chromium image. The image tag's immutable digest must
-  be obtained from the CI report, pinned and reviewed before worker GO.
+  the matching official Chromium image. Actions run 40778220081 reported the
+  multi-platform image index digest
+  `sha256:330d401ae23c905896a0c26c66c36fc971b621519e7b11b435a8328d7bf6e031`,
+  now pinned in the Dockerfile. The platform manifest is also recorded in that
+  run; any later digest update needs review and a new smoke.
 - Copy the reviewed issue #32 observer into this worker but keep the default
   command offline. The public observer still needs explicit command and
   environment acknowledgement. No Compose service, host port, credential,
@@ -30,8 +33,11 @@ reservation is possible.
 
 ## Evidence and remaining gate
 
-Unit tests refuse root and a missing browser binary. GitHub Actions must
-build the actual browser image, start and close Chromium offline and retain
+Unit tests refuse root and a missing browser binary. The first Actions run
+40778220081 built the image and passed quality tests, but the offline smoke
+stopped with `TargetClosedError` under the configured isolation. The revised
+smoke reports only the failed phase and exception class; it does not print a
+browser error payload. GitHub Actions must now start and close Chromium offline and retain
 the existing controller CI jobs. A successful `chromium_sandbox=True` launch
 does not by itself attest every sandbox layer or prove the droplet's kernel
 allows this profile. The host must be checked through a later authorized

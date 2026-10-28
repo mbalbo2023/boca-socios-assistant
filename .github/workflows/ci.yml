@@ -53,8 +53,6 @@ jobs:
           persist-credentials: false
       - name: Build isolated image without deploying
         run: docker build --tag boca-socios-ci:${{ github.sha }} .
-      - name: Report public browser base digest for review
-        run: docker buildx imagetools inspect mcr.microsoft.com/playwright/python:v1.64.1-noble | sed -n '1,8p'
       - name: Build isolated Chromium worker without deploying
         run: docker build --file Dockerfile.browser --tag boca-browser-ci:${{ github.sha }} .
       - name: Start and close Chromium offline under resource caps

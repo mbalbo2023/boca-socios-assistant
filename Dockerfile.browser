@@ -1,6 +1,6 @@
-# This is a review-only, offline-smoke image; never deployed by this workflow.
-# Pin the image index digest after CI reports it and before claiming worker GO.
-FROM mcr.microsoft.com/playwright/python:v1.64.1-noble
+# Review-only offline smoke; no deployment. Index digest reported by Actions
+# run 40778220081, then fixed here for both build and review.
+FROM mcr.microsoft.com/playwright/python:v1.64.1-noble@sha256:330d401ae23c905896a0c26c66c36fc971b621519e7b11b435a8328d7bf6e031
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
