@@ -32,6 +32,11 @@ record their logical instant even if the caller jumps over several
 deadlines: waiting expiry precedes sale close only when the waiting
 deadline is no later than sale close. Already-admitted entries retain
 their own TTL across sale close; they expire at its exact boundary.
+Unknown session IDs and attempted reassignment of an alias are rejected
+**before advancing** the shared synthetic clock, so malformed requests
+cannot expire unrelated entries. A valid, known session operation can
+still advance time and reveal a deadline, even if its requested business
+transition is subsequently disallowed.
 
 The request key is `(event_id, opaque member_id)`; all logical session IDs
 for that member/event are **aliases of one queue request**, never independent
