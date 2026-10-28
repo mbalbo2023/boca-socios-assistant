@@ -19,7 +19,7 @@ reservation is possible.
   volume, controller import, queue client or scheduler is introduced.
 - Run the CI smoke with `--network none`, nonroot UID 10002, Chromium sandbox
   requested, the upstream Playwright seccomp profile, read-only filesystem,
-  private `/dev/shm`, private writable `/tmp`, dropped capabilities, no new
+  private `/dev/shm`, private writable `/tmp` and home tmpfs, dropped capabilities, no new
   privileges and limits of 1 CPU, 768 MiB and 128 PIDs. No `ipc: host`,
   Docker socket or access to unrelated Compose projects. `about:blank` and a
   basic JS expression show that Chromium started; this is **not** a fake
@@ -37,7 +37,10 @@ Unit tests refuse root and a missing browser binary. The first Actions run
 40778220081 built the image and passed quality tests, but the offline smoke
 stopped with `TargetClosedError` under the configured isolation. The revised
 smoke reports only the failed phase and exception class; it does not print a
-browser error payload. GitHub Actions must now start and close Chromium offline and retain
+  browser error payload. A later attempt will also give the nonroot browser a
+  bounded private home tmpfs and temporarily log Chromium startup diagnostics
+  in this **offline, no-credential** CI step only. GitHub Actions must now
+  start and close Chromium offline and retain
 the existing controller CI jobs. A successful `chromium_sandbox=True` launch
 does not by itself attest every sandbox layer or prove the droplet's kernel
 allows this profile. The host must be checked through a later authorized

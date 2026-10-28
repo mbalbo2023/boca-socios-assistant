@@ -5,7 +5,6 @@ FROM mcr.microsoft.com/playwright/python:v1.64.1-noble@sha256:330d401ae23c905896
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH=/app/.venv/bin:$PATH \
-    HOME=/home/boca-browser \
     BOCA_OBSERVER_STOP=1
 
 WORKDIR /app
@@ -16,6 +15,9 @@ RUN uv sync --locked --only-group browser --no-editable
 RUN groupadd --gid 10002 boca-browser && \
     useradd --uid 10002 --gid 10002 --create-home --shell /usr/sbin/nologin boca-browser
 COPY scripts/verify_chromium_worker.py scripts/observe_public_home.py ./scripts/
+ENV HOME=/home/boca-browser \
+    XDG_CACHE_HOME=/tmp/browser-cache \
+    XDG_CONFIG_HOME=/tmp/browser-config
 USER 10002:10002
 
 # A browser startup check, never an automatic visit to Boca.
