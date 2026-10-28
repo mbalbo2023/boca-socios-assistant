@@ -110,7 +110,9 @@ def resource_snapshot() -> ResourceSnapshot:
     """Return None for unavailable host metrics; never invent measurements."""
     cpu = _cpu_stat()
     try:
-        shm = os.statvfs("/dev/shm")
+        # Read-only stats for the Linux shared-memory mount, not a temporary
+        # file, directory creation or storage of sensitive information.
+        shm = os.statvfs("/dev/shm")  # noqa: S108
         shm_available = shm.f_bavail * shm.f_frsize
         shm_total = shm.f_blocks * shm.f_frsize
     except OSError:
