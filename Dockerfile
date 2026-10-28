@@ -7,7 +7,7 @@ WORKDIR /app
 RUN python -m pip install --disable-pip-version-check --no-cache-dir uv==0.13.4
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
-RUN uv sync --frozen --no-dev --no-editable
+RUN uv sync --locked --no-dev --no-editable
 
 FROM python:3.12.15-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70 AS runtime
 ENV PYTHONUNBUFFERED=1 \
@@ -21,6 +21,7 @@ RUN groupadd --gid 10001 boca && \
     useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin boca && \
     mkdir -p /data && chown boca:boca /data
 COPY --from=build /app/.venv /app/.venv
+RUN /app/.venv/bin/python -c "import boca_socios.security.credential_vault; import boca_socios.storage.database"
 WORKDIR /app
 USER 10001:10001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
