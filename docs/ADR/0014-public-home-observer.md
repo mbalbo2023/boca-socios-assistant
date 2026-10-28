@@ -20,7 +20,10 @@ downloads disabled, Chromium sandbox enabled, and one `page.goto`.
 
 The context route allows only one GET for the exact root document. It uses
 `route.fetch(max_redirects=0)` and fulfills only HTTP 200, then aborts every
-asset, POST, popup document, redirect or other destination. Playwright's
+asset, POST, popup document, redirect or other destination. Expected
+same-origin CSS, images, fonts, scripts and favicon are discarded without
+invalidating the one document; a second document, POST, foreign domain or
+queue/challenge path stops the observation. Playwright's
 `route.continue_` is deliberately avoided because redirects can proceed
 without another route callback. The program checks the final URL and visible
 text in memory; it emits only the fixed `login_visible` classification. A
@@ -31,6 +34,9 @@ header, response body, query parameter or page text is written to output.
 The normal CI suite tests request filters, classification and browser cleanup
 with doubles. No scheduled or PR workflow makes a request to Boca. Playwright
 is deliberately absent from the controller dependency lock and Docker image.
+JavaScript is disabled; if the public portal renders its login only in the
+client, the observer will return `unknown` and stop. The fake tests cannot
+establish which rendering mode the current public site uses.
 
 ## Gate for any future real execution
 
