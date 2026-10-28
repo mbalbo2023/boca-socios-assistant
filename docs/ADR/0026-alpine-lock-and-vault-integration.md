@@ -9,6 +9,8 @@ security PR #23 as a second parent. Preserve #23's hardened key-file reader,
 tests and security policy as-is; only reconcile the conflicting Dockerfile.
 Its two stages must use #55's official Python 3.12.15 Alpine 3.24 image index
 digest, `sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d`.
+This supersedes only ADR 0010's Bookworm base choice; its lockfile and key
+reader decisions still apply.
 Keep #23's `uv==0.13.4` bootstrap, `uv sync --locked --no-dev --no-editable`
 against `uv.lock`, copy of the resulting virtual environment and import
 smoke check. Alpine needs its native user/group commands; retain UID/GID
