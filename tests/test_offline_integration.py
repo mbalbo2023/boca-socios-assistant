@@ -1,0 +1,135 @@
+"""Cross-PR regression checks for the opt-in, entirely local simulation."""
+
+from __future__ import annotations
+
+import asyncio
+import sqlite3
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+from boca_socios.browser.contracts import SimulationOutcome
+from boca_socios.domain.policy import TicketIntent
+from boca_socios.integration import OfflineSimulation
+from boca_socios.notify import DeliveryState, NotificationOutbox
+from boca_socios.queue import InvalidStateTransition, OfflineQueueSimulator, SimulatorConfig
+from boca_socios.storage.database import Database
+
+START = datetime(2026, 10, 28, 18, tzinfo=UTC)
+
+
+class FakeBrowser:
+    def __init__(self, *, fail_first: bool = False) -> None:
+        self.calls = 0
+        self.fail_first = fail_first
+
+    async def simulate_general_reservation(self) -> SimulationOutcome:
+        self.calls += 1
+        if self.fail_first and self.calls == 1:
+            raise RuntimeError("synthetic screen failed")
+        return SimulationOutcome.RESERVED_IN_SIMULATOR
+
+
+def setup_lab(
+    tmp_path: Path, *, fail_first: bool = False
+) -> tuple[OfflineSimulation, Database, OfflineQueueSimulator, NotificationOutbox, FakeBrowser]:
+    database = Database(tmp_path / "simulated.sqlite3")
+    database.migrate()
+    database.create_member("member-1", "example@invalid.test", "2026-10-28T18:00:00Z")
+    database.create_event("event-1", "Partido ficticio")
+    queue = OfflineQueueSimulator(
+        SimulatorConfig(event_id="event-1", opens_at=START, closes_at=START + timedelta(hours=1))
+    )
+    queue.create_session("member-1", "session-1", START)
+    queue.create_session("member-1", "session-2", START)
+    queue.join("session-1", START)
+    assert queue.admit_next(START) is not None
+    outbox = NotificationOutbox()
+    browser = FakeBrowser(fail_first=fail_first)
+    return (
+        OfflineSimulation(database=database, queue=queue, outbox=outbox, browser=browser),
+        database,
+        queue,
+        outbox,
+        browser,
+    )
+
+
+def test_all_modules_share_one_intent_and_safe_notice(tmp_path: Path) -> None:
+    lab, database, queue, outbox, browser = setup_lab(tmp_path)
+    intent = TicketIntent("member-1", "event-1")
+    receipt = asyncio.run(
+        lab.run_admitted(intent, session_id="session-2", at=START, monotonic_now=0)
+    )
+
+    assert receipt.outcome is SimulationOutcome.RESERVED_IN_SIMULATOR
+    assert queue.request_count == 1
+    assert queue.session_count == 2
+    assert browser.calls == 1
+    assert database.request_ticket(intent) == receipt.request_id
+    with database.connection() as connection:
+        rows = connection.execute(
+            "SELECT request_id, quantity, status FROM ticket_requests"
+        ).fetchall()
+    assert rows == [(receipt.request_id, 1, "planned")]
+    assert len(outbox.records()) == 1
+    claims = outbox.run_dry_run(now=1)
+    assert len(claims) == 1
+    assert "Simulación" in claims[0].message
+    assert "member-1" not in claims[0].message
+    assert outbox.records()[0].state is DeliveryState.ACCEPTED
+
+    with pytest.raises(InvalidStateTransition):
+        asyncio.run(lab.run_admitted(intent, session_id="session-1", at=START, monotonic_now=2))
+    assert browser.calls == 1
+    assert len(outbox.records()) == 1
+
+
+def test_retry_after_fake_browser_failure_reuses_only_one_intent(tmp_path: Path) -> None:
+    lab, database, queue, outbox, browser = setup_lab(tmp_path, fail_first=True)
+    intent = TicketIntent("member-1", "event-1")
+    with pytest.raises(RuntimeError, match="synthetic screen failed"):
+        asyncio.run(lab.run_admitted(intent, session_id="session-1", at=START, monotonic_now=0))
+    assert outbox.records() == ()
+    assert queue.snapshot("session-1").state.value == "admitted"
+    original_id = database.request_ticket(intent)
+
+    receipt = asyncio.run(
+        lab.run_admitted(intent, session_id="session-2", at=START, monotonic_now=1)
+    )
+    assert receipt.request_id == original_id
+    assert browser.calls == 2
+    assert len(outbox.records()) == 1
+    with database.connection() as connection:
+        assert connection.execute("SELECT count(*) FROM ticket_requests").fetchone() == (1,)
+
+
+def test_unadmitted_wrong_member_expired_and_invalid_quantity_fail_closed(tmp_path: Path) -> None:
+    lab, database, queue, outbox, browser = setup_lab(tmp_path)
+    for intent, at in (
+        (TicketIntent("member-1", "other-event"), START),
+        (TicketIntent("different-member", "event-1"), START),
+        (TicketIntent("member-1", "event-1", quantity=2), START),
+    ):
+        with pytest.raises((ValueError, InvalidStateTransition)):
+            asyncio.run(lab.run_admitted(intent, session_id="session-1", at=at, monotonic_now=0))
+    with pytest.raises(InvalidStateTransition):
+        asyncio.run(
+            lab.run_admitted(
+                TicketIntent("member-1", "event-1"),
+                session_id="session-1",
+                at=START + timedelta(minutes=6),
+                monotonic_now=1,
+            )
+        )
+    assert browser.calls == 0
+    assert outbox.records() == ()
+    assert queue.request_count == 1
+    with database.connection() as connection:
+        assert connection.execute("SELECT count(*) FROM ticket_requests").fetchone() == (0,)
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO ticket_requests(request_id, member_id, event_id, quantity) "
+                "VALUES ('invalid', 'member-1', 'event-1', 2)"
+            )

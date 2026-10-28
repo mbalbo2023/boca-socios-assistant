@@ -29,6 +29,11 @@ approve their own PR.
 5. Security → secret scanning, push protection, Dependabot alerts and code
    scanning if plan supports them. Do not substitute unavailable plan features
    with a false claim of enforcement.
+   On public repositories, GitHub documents automatic secret scanning and
+   free push protection, but **push protection must still be verified as
+   enabled** for this specific repository. Sources:
+   [secret scanning scope](https://docs.github.com/en/code-security/reference/secret-security/secret-scanning-scope)
+   and [public push protection](https://github.blog/changelog/2023-05-09-secret-scannings-push-protection-is-available-on-public-repositories-for-free/).
 6. Environments: add staging and production **only** if deployment is later
    approved. Production must require reviewer approval and run only from main.
 7. Do NOT add deployment secrets yet; first review a dedicated deployment
@@ -39,6 +44,25 @@ Until protection is actually activated and verified in GitHub Settings,
 changes must go through PR and exact-SHA CI by policy. Disclose if a rule
 is still unenforced. Do not falsely claim that merely adding this document
 or CODEOWNERS has locked main.
+
+## Verified administrative state on 2026-10-28
+
+- The new repository is **public**, contains a clean initial history and
+  GitHub-hosted `quality-and-tests` / `image-build` checks succeeded.
+- `main` ruleset enforcement is **not yet active**. GitHub requested account
+  re-verification while creating `protect-main`; authorization was not
+  completed. The maintainer must finish that process explicitly through
+  GitHub's ordinary UI before this control can be described as enforced.
+- The observed Actions policy had a read-only default `GITHUB_TOKEN` and
+  disallowed Actions-created or approved PRs; the setting that requires
+  all third-party actions to be pinned to complete SHAs was **not** enabled.
+  The current CI uses pinned action SHAs, but this is not equivalent to a
+  repository-wide enforced policy.
+- Secret-scanning/push-protection settings are **unverified**; do not mark
+  them complete based solely on GitHub's public-repository entitlement.
+- The CI-based `zizmor` security audit proposed in ADR 0009 is preventive
+  static analysis. It does not replace human review, provider-side branch
+  protection or GitHub secret scanning.
 
 ## Repository access
 
