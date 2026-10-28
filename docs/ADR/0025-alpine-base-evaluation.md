@@ -19,8 +19,10 @@ simulation-only runtime remain unchanged. The strict Trivy scan of the final
 image still fails on any HIGH or CRITICAL OS/library finding. A smaller
 finding count is an observation, not a security approval.
 
-This branch is stacked on scanner #49 and corrected lock #51/#2 to reuse
-their changes, not duplicate them. #23's independent Dockerfile hardening
+This branch includes the scanner from #49 and is stacked directly on the
+corrected lock #51/#2, so the scanner and viable base can pass as one review
+candidate. #49's standalone Bookworm scan remains evidence of a failed gate.
+#23's independent Dockerfile hardening
 and lock-based build are not part of this experiment. If Alpine is selected
 after review, those controls need a separate compatible integration and
 image scan on the final exact SHA/digest. There is no deploy or real Boca
