@@ -19,7 +19,7 @@ encryption**, not an ordinary password hash.
   regular-file type, ownership, bounded length and safe permissions using
   the opened descriptor. Ordinary files must be owner-only (0600/0400).
   Some Compose file-secret implementations expose a read-only **0444 mount**;
-  this is accepted **only** at the exact `/run/secrets/boca_master_key`
+  this exact permission mode is accepted **only** at `/run/secrets/boca_master_key`
   container path. It is not proof that the host-side source is secure.
 - Before any real enrollment, verify that the host-side source is owner-only,
   that only the Boca container can mount it, and that no untrusted process
@@ -51,8 +51,8 @@ The owner will authorize a separate one-time deployment secret workflow.
   Telegram, untrusted browser tools or GitHub Actions artifacts.
 - Prepare deletion of member + credential + audit redaction and documented
   backup-retention before enabling real user enrollment.
-- Docker images must build runtime Python dependencies from the repository's
-  pinned `uv.lock` and a reviewed base image manifest digest; modifying
+- Docker images must build runtime Python dependencies using `uv sync --locked`
+  (also reject lock/pyproject divergence) and a reviewed base image manifest digest; modifying
   the digest or dependency graph requires an isolated CI review. This is a
   **reproducible dependency selection**, not a guarantee of bit-for-bit
   identical images or a substitute for vulnerability scanning.
