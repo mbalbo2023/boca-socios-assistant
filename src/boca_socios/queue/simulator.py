@@ -152,12 +152,14 @@ class OfflineQueueSimulator:
         if not member_id.strip() or not session_id.strip():
             raise ValueError("member_id and session_id must be nonblank")
         TicketIntent(member_id=member_id, event_id=self.config.event_id).validate()
+        # Reject a reassigned alias before advancing the global synthetic
+        # clock: a malformed request must not expire other members' entries.
+        bound_member = self._sessions.get(session_id)
+        if bound_member is not None and bound_member != member_id:
+            raise ValueError("session_id already belongs to another member")
         self.advance(at)
 
-        bound_member = self._sessions.get(session_id)
         if bound_member is not None:
-            if bound_member != member_id:
-                raise ValueError("session_id already belongs to another member")
             return self.snapshot(session_id)
 
         if at >= self.config.closes_at:
@@ -182,8 +184,8 @@ class OfflineQueueSimulator:
 
     def join(self, session_id: str, at: datetime) -> QueueSnapshot:
         """Request one queue position, shared across every logical session."""
-        self.advance(at)
         entry = self._entry_for(session_id)
+        self.advance(at)
         if entry.state is QueueState.CREATED:
             entry.joined_at = at
             if at < self.config.opens_at:
@@ -260,8 +262,8 @@ class OfflineQueueSimulator:
 
     def cancel(self, session_id: str, at: datetime) -> QueueSnapshot:
         """Cancel the single request for all of a member's local sessions."""
-        self.advance(at)
         entry = self._entry_for(session_id)
+        self.advance(at)
         if entry.state is not QueueState.CANCELLED:
             entry.transition(QueueState.CANCELLED)
             entry.ended_at = at
@@ -270,8 +272,8 @@ class OfflineQueueSimulator:
 
     def finish(self, session_id: str, at: datetime) -> QueueSnapshot:
         """End an admitted synthetic session; does NOT reserve a ticket."""
-        self.advance(at)
         entry = self._entry_for(session_id)
+        self.advance(at)
         if entry.state is not QueueState.ADMITTED:
             raise InvalidStateTransition("only an admitted entry can be finished")
         entry.transition(QueueState.CLOSED)
@@ -280,8 +282,8 @@ class OfflineQueueSimulator:
 
     def fail(self, session_id: str, at: datetime) -> QueueSnapshot:
         """Record a terminal simulated error without an unsafe retry."""
-        self.advance(at)
         entry = self._entry_for(session_id)
+        self.advance(at)
         entry.transition(QueueState.ERROR)
         entry.ended_at = at
         self._remove_from_lines(entry.member_id)
