@@ -1,0 +1,97 @@
+name: Boca image release
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boca-image-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pr-validation:
+    if: github.event_name == 'pull_request'
+    name: release-image-pr-validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout merge candidate without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build one local controller image
+        run: docker build --tag boca-release-validation:${{ github.sha }} .
+      - name: Scan before any image publication
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: boca-release-validation:${{ github.sha }}
+          version: v0.76.1
+          cache: "false"
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: "false"
+          exit-code: "1"
+          format: table
+          timeout: 10m
+
+  publish:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'mbalbo2023/boca-socios-assistant' && github.actor == 'mbalbo2023'
+    name: publish-reviewed-image
+    environment: boca-image-release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Require verified protected release environment
+        env:
+          BOCA_RELEASE_ENV_READY: ${{ vars.BOCA_RELEASE_ENV_READY }}
+        run: test "$BOCA_RELEASE_ENV_READY" = 'ready'
+      - name: Checkout exact main commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build one local controller image
+        env:
+          IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
+        run: docker build --tag "$IMAGE" .
+      - name: Scan the image that will be published
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
+          version: v0.76.1
+          cache: "false"
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: "false"
+          exit-code: "1"
+          format: table
+          timeout: 10m
+      - name: Log in only after successful scan
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
+      - name: Publish scanned image and record immutable digest
+        id: publish
+        env:
+          IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
+          PYTHONPATH: src
+        run: |
+          docker push "$IMAGE" | tee "$RUNNER_TEMP/boca-push.log"
+          image_ref="$(python scripts/parse_image_digest.py "$RUNNER_TEMP/boca-push.log" "$GITHUB_SHA")"
+          printf 'image_ref=%s\n' "$image_ref" >> "$GITHUB_OUTPUT"
+          {
+            printf 'Commit: `%s`\n\n' "$GITHUB_SHA"
+            printf 'Immutable image: `%s`\n\n' "$image_ref"
+            printf 'Actions run: `%s`\n' "$GITHUB_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Log out from registry
+        if: always()
+        run: docker logout ghcr.io || true

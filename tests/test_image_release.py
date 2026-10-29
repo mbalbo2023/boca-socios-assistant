@@ -10,9 +10,7 @@ DIGEST = "sha256:" + "b" * 64
 
 def test_exact_push_digest_is_bound_to_commit() -> None:
     output = f"layer: Pushed\nsha-{SHA}: digest: {DIGEST} size: 1234\n"
-    assert parse_push_digest(output, SHA) == (
-        f"ghcr.io/mbalbo2023/boca-socios-assistant@{DIGEST}"
-    )
+    assert parse_push_digest(output, SHA) == (f"ghcr.io/mbalbo2023/boca-socios-assistant@{DIGEST}")
 
 
 @pytest.mark.parametrize(
