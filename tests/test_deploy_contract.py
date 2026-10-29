@@ -35,11 +35,16 @@ def model() -> dict[str, object]:
                     "BOCA_DB_PATH": "/data/boca.sqlite3",
                     "BOCA_MASTER_KEY_FILE": "/run/secrets/boca_master_key",
                 },
-                "volumes": [{"type": "volume", "source": "boca_data", "target": "/data"}],
-                "networks": {"boca_private": None},
-                "secrets": [
-                    {"source": "boca_master_key", "target": "/run/secrets/boca_master_key"}
+                "volumes": [
+                    {"type": "volume", "source": "boca_data", "target": "/data"},
+                    {
+                        "type": "volume",
+                        "source": "boca_key",
+                        "target": "/run/secrets",
+                        "read_only": True,
+                    },
                 ],
+                "networks": {"boca_private": None},
                 "tmpfs": ["/tmp:rw,noexec,nosuid,size=16m"],  # noqa: S108 - mount contract
                 "healthcheck": {
                     "test": ["CMD", "python", "-m", "boca_socios.healthcheck"],
@@ -50,18 +55,15 @@ def model() -> dict[str, object]:
                 },
             }
         },
-        "volumes": {"boca_data": {"name": "boca-socios_boca_data"}},
+        "volumes": {
+            "boca_data": {"name": "boca-socios_boca_data"},
+            "boca_key": {"name": "boca-socios_boca_key"},
+        },
         "networks": {
             "boca_private": {
                 "name": "boca-socios_boca_private",
                 "driver": "bridge",
                 "ipam": {},
-            }
-        },
-        "secrets": {
-            "boca_master_key": {
-                "name": "boca-socios_boca_master_key",
-                "file": "/srv/boca-socios/secrets/master.key",
             }
         },
     }
@@ -105,14 +107,21 @@ def test_host_or_live_escape_is_rejected(location: str, field: str, value: objec
         validate_contract(candidate, IMAGE)
 
 
-def test_additional_service_and_shared_secret_are_rejected() -> None:
+def test_additional_service_and_unsafe_key_mount_are_rejected() -> None:
     candidate = model()
     candidate["services"]["worker"] = {"image": IMAGE}  # type: ignore[index]
     with pytest.raises(ContractError):
         validate_contract(candidate, IMAGE)
 
     candidate = model()
-    candidate["secrets"]["boca_master_key"]["file"] = "/var/shared"  # type: ignore[index]
+    candidate["services"]["controller"]["volumes"][1]["read_only"] = False  # type: ignore[index]
+    with pytest.raises(ContractError):
+        validate_contract(candidate, IMAGE)
+
+    candidate = model()
+    candidate["services"]["controller"]["volumes"][1] = {  # type: ignore[index]
+        "type": "bind", "source": "/var/shared", "target": "/run/secrets", "read_only": True
+    }
     with pytest.raises(ContractError):
         validate_contract(candidate, IMAGE)
 
