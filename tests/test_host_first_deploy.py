@@ -142,6 +142,26 @@ def test_first_deploy_preflight_passes_only_with_free_boca_namespace() -> None:
     validate_snapshot(safe_snapshot())
 
 
+def test_read_only_preflight_needs_no_image_or_release_and_does_not_mutate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    host.COMPOSE.unlink()  # A preflight precedes staging on the host.
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker mutation"))
+    host.phase("preflight", "", SOURCE_SHA, digest)
+    assert "BOCA_PREFLIGHT_PASS" in capsys.readouterr().out
+    assert not (host.ROOT / "secrets").exists()
+
+
+def test_effectful_phase_still_requires_immutable_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker mutation"))
+    with pytest.raises(PreflightError, match="coordinates"):
+        host.phase("apply", "", SOURCE_SHA, digest)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
