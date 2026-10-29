@@ -244,3 +244,19 @@ def test_diagnostic_phase_uses_only_read_only_boca_queries(
     assert not any(
         token in command for command in commands for token in ("pull", "up", "stop", "rm")
     )
+
+
+@pytest.mark.parametrize("symlink", [False, True])
+def test_diagnostic_rejects_missing_or_symlinked_key_without_reading_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, symlink: bool
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    host.SECRET_DIR.mkdir(mode=0o700)
+    if symlink:
+        host.KEY.symlink_to(tmp_path / "outside")
+    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
+    monkeypatch.setattr(
+        host.pwd, "getpwuid", lambda _uid: type("Account", (), {"pw_name": "boca-deploy"})()
+    )
+    with pytest.raises(PreflightError):
+        host._diagnostic_files(digest)
