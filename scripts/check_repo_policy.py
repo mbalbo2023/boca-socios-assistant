@@ -55,6 +55,7 @@ def check_policy(root: Path) -> list[str]:
                 "github.actor == 'mbalbo2023'",
                 "boca-first-deploy\n  cancel-in-progress: false",
                 "python3 - preflight",
+                "python3 - observe",
                 "python3 - apply",
             ):
                 if required not in data:

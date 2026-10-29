@@ -172,6 +172,16 @@ def test_effectful_phase_still_requires_immutable_image(
         host.phase("apply", "", SOURCE_SHA, digest)
 
 
+@pytest.mark.parametrize(("phase_name", "image"), [("observe", IMAGE), ("preflight", "")])
+def test_host_preflight_modes_reject_swapped_image_contracts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase_name: str, image: str
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker mutation"))
+    with pytest.raises(PreflightError, match="coordinates"):
+        host.phase(phase_name, image, SOURCE_SHA, digest)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
