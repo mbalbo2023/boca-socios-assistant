@@ -367,11 +367,13 @@ def _create_key(image: str) -> None:
         raise PreflightError("Boca key is not readable by the controller identity")
 
 
-def _validate_coordinates(image: str, source_sha: str, compose_sha: str) -> None:
+def _validate_coordinates(
+    image: str, source_sha: str, compose_sha: str, *, read_only_preflight: bool = False
+) -> None:
     if (
-        not IMAGE_PATTERN.fullmatch(image)
-        or not SHA_PATTERN.fullmatch(source_sha)
+        not SHA_PATTERN.fullmatch(source_sha)
         or not DIGEST_PATTERN.fullmatch(compose_sha)
+        or (image != "" if read_only_preflight else not IMAGE_PATTERN.fullmatch(image))
     ):
         raise PreflightError("invalid immutable deployment coordinates")
 
@@ -503,7 +505,9 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
 
 
 def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> None:
-    _validate_coordinates(image, source_sha, compose_sha)
+    _validate_coordinates(
+        image, source_sha, compose_sha, read_only_preflight=phase_name == "observe"
+    )
     _validate_docker_boundary()
     if phase_name in {"diagnostic-config", "diagnostic"}:
         _diagnostic_files(compose_sha)
@@ -518,7 +522,7 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
         )
         return
     validate_snapshot(host_snapshot := collect_snapshot())
-    if phase_name == "preflight":
+    if phase_name in {"observe", "preflight"}:
         if COMPOSE.exists() or COMPOSE.is_symlink():
             raise PreflightError("Boca Compose already staged")
         print(
@@ -596,7 +600,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Boca-only first-install host gate")
     parser.add_argument(
         "phase",
-        choices=("preflight", "stage", "config", "apply", "diagnostic-config", "diagnostic"),
+        choices=(
+            "observe",
+            "preflight",
+            "stage",
+            "config",
+            "apply",
+            "diagnostic-config",
+            "diagnostic",
+        ),
     )
     parser.add_argument("image")
     parser.add_argument("source_sha")

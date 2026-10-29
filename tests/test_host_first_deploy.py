@@ -142,6 +142,46 @@ def test_first_deploy_preflight_passes_only_with_free_boca_namespace() -> None:
     validate_snapshot(safe_snapshot())
 
 
+def test_read_only_preflight_needs_no_image_or_release_and_does_not_mutate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    host.COMPOSE.unlink()  # A preflight precedes staging on the host.
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker mutation"))
+    host.phase("observe", "", SOURCE_SHA, digest)
+    assert "BOCA_PREFLIGHT_PASS" in capsys.readouterr().out
+    assert not (host.ROOT / "secrets").exists()
+
+
+def test_first_install_preflight_still_accepts_approved_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    host.COMPOSE.unlink()
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker mutation"))
+    host.phase("preflight", IMAGE, SOURCE_SHA, digest)
+    assert "BOCA_PREFLIGHT_PASS" in capsys.readouterr().out
+
+
+def test_effectful_phase_still_requires_immutable_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker mutation"))
+    with pytest.raises(PreflightError, match="coordinates"):
+        host.phase("apply", "", SOURCE_SHA, digest)
+
+
+@pytest.mark.parametrize(("phase_name", "image"), [("observe", IMAGE), ("preflight", "")])
+def test_host_preflight_modes_reject_swapped_image_contracts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase_name: str, image: str
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker mutation"))
+    with pytest.raises(PreflightError, match="coordinates"):
+        host.phase(phase_name, image, SOURCE_SHA, digest)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -184,7 +224,8 @@ def _staged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 @pytest.mark.parametrize(
-    "phase_name", ["preflight", "stage", "config", "apply", "diagnostic-config", "diagnostic"]
+    "phase_name",
+    ["observe", "preflight", "stage", "config", "apply", "diagnostic-config", "diagnostic"],
 )
 def test_unverified_docker_boundary_stops_every_host_phase_before_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase_name: str
@@ -199,7 +240,7 @@ def test_unverified_docker_boundary_stops_every_host_phase_before_mutation(
         host, "_run", lambda *args, **kwargs: pytest.fail("Docker command executed")
     )
     with pytest.raises(PreflightError, match="daemon boundary"):
-        host.phase(phase_name, IMAGE, SOURCE_SHA, digest)
+        host.phase(phase_name, "" if phase_name == "observe" else IMAGE, SOURCE_SHA, digest)
     assert not (host.ROOT / "secrets").exists()
 
 

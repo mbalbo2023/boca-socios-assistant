@@ -66,6 +66,16 @@ only bounded status and immutable coordinates. A mismatch is NO-GO and
 requires a reviewed diagnosis; it is not a reason to retry the first install
 or alter another workload. This code has not been dispatched to a host.
 
+## Proposed read-only host preflight (issue #84)
+
+Before an image release or first install, the same protected manual workflow
+can check the Boca rootless socket, cgroup delegation, dedicated identity,
+empty Boca namespace and aggregate capacity with `operation=preflight`. Its
+image and release-run fields must be blank. This operation has no stage,
+pull, key, volume, container or site effect and is unavailable on PRs. It
+requires the protected environment and pinned SSH identity; no host operation
+has been dispatched. See [ADR 0035](ADR/0035-readonly-host-preflight.md).
+
 ## Proposed isolated deployment layout
 
 | Item | Boca project | Unrelated workloads |
