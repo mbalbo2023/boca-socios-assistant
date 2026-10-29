@@ -133,10 +133,10 @@ def collect_snapshot() -> HostSnapshot:
     disk = os.statvfs(str(ROOT))
     containers = _run(
         "docker", "ps", "-a", "-q", "--filter", "label=com.docker.compose.project=boca-socios"
-    )
-    # Exact resource names are checked even if a resource lacks Compose labels.
-    volumes = _names("volume", "name=^boca-socios_boca_data$")
-    networks = _names("network", "name=^boca-socios_boca_private$")
+    ) or _run("docker", "ps", "-a", "-q", "--filter", "name=^/boca-socios-")
+    # Check the whole Boca namespace, including resources missing Compose labels.
+    volumes = _names("volume", "name=^boca-socios_")
+    networks = _names("network", "name=^boca-socios_")
     return HostSnapshot(
         arch=platform.machine(),
         uid=os.getuid(),

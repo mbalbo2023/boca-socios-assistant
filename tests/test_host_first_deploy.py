@@ -114,4 +114,5 @@ def test_failed_start_stops_only_controller_and_preserves_owner_only_key(
     assert [command[-2:] for command in commands if "stop" in command] == [("stop", "controller")]
     assert len(base64.b64decode(host.KEY.read_bytes().strip(), validate=True)) == 32
     assert stat.S_IMODE(host.KEY.stat().st_mode) == 0o400
+    assert not host._root_ready()  # A failed first install cannot retry over its retained key.
     assert not any("down" in command or "prune" in command for command in commands)
