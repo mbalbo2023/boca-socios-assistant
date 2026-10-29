@@ -50,7 +50,9 @@ def _equal(value: object, expected: object, field: str) -> None:
 
 def _keys(value: Mapping[str, object], expected: set[str], field: str) -> None:
     if set(value) != expected:
-        raise ContractError(f"invalid {field} keys")
+        missing = ",".join(sorted(expected - set(value)))
+        extra = ",".join(sorted(set(value) - expected))
+        raise ContractError(f"invalid {field} keys (missing={missing}; extra={extra})")
 
 
 def _volume(service: Mapping[str, object]) -> None:
