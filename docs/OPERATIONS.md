@@ -28,6 +28,17 @@ not part of this PR. Confirm the GHCR package is accessible by the host
 without placing registry credentials on it. If any prerequisite is absent,
 stop before dispatch and record NO-GO; do not improvise a host change.
 
+**Security correction #78:** Docker access must be to a dedicated rootless
+socket at `/run/user/10001/docker.sock`; access to the shared rootful daemon
+is NO-GO. The helper now pins that endpoint and rejects missing rootless/cgroup
+evidence before any first-install or diagnostic phase. This still does not
+make the current Compose/key layout deployable: the host-owned 0400 key is
+mapped to container root under rootless Docker, while the controller runs as
+container UID 10001. The key and volume custody design, delegated CPU limit,
+host account privileges and actual resource limits require an isolated test
+and independent review. Do not dispatch merely because the preflight passes.
+See [ADR 0033](ADR/0033-rootless-daemon-boundary.md).
+
 The workflow first validates dispatch inputs and the successful manual image
 release run for the same current `main` SHA. It validates the resolved Compose
 contract on the runner, reads aggregate host capacity and Boca-only resource

@@ -25,6 +25,11 @@ COMPOSE = ROOT / "compose.yaml"
 SECRET_DIR = ROOT / "secrets"
 KEY = SECRET_DIR / "master.key"
 PROJECT = "boca-socios"
+ROOTLESS_SOCKET = Path("/run/user/10001/docker.sock")
+ROOTFUL_SOCKET = Path("/var/run/docker.sock")
+CGROUP_CONTROLLERS = Path(
+    "/sys/fs/cgroup/user.slice/user-10001.slice/user@10001.service/cgroup.controllers"
+)
 IMAGE_PATTERN = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z")
 SHA_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
@@ -46,6 +51,16 @@ class HostSnapshot:
     boca_volume: bool
     boca_network: bool
     cpu_headroom: float = 1.0
+
+
+@dataclass(frozen=True)
+class DockerBoundarySnapshot:
+    socket_secure: bool
+    rootful_socket_inaccessible: bool
+    daemon_rootless: bool
+    cgroup_version: str
+    cgroup_driver: str
+    controllers: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -115,10 +130,30 @@ def validate_snapshot(snapshot: HostSnapshot) -> None:
         raise PreflightError("existing Boca namespace requires separate recovery review")
 
 
+def validate_docker_boundary(snapshot: DockerBoundarySnapshot) -> None:
+    if snapshot.socket_secure is not True or snapshot.rootful_socket_inaccessible is not True:
+        raise PreflightError("dedicated rootless socket or rootful Docker access is unsafe")
+    if snapshot.daemon_rootless is not True:
+        raise PreflightError("Docker daemon must be rootless for the dedicated Boca identity")
+    if snapshot.cgroup_version != "2" or snapshot.cgroup_driver != "systemd":
+        raise PreflightError("rootless Docker cannot prove enforceable cgroup limits")
+    if not {"cpu", "memory", "pids"} <= snapshot.controllers:
+        raise PreflightError("rootless CPU, memory and PID controllers must be delegated")
+
+
 def _run(*args: str, env: dict[str, str] | None = None) -> str:
+    run_env = env
+    if args[0] == "docker":
+        # SSH environment and Docker CLI context must never redirect host
+        # operations to the shared rootful daemon or a remote endpoint.
+        run_env = dict(os.environ if env is None else env)
+        run_env.pop("DOCKER_CONTEXT", None)
+        run_env.pop("DOCKER_TLS_VERIFY", None)
+        run_env.pop("DOCKER_CERT_PATH", None)
+        run_env["DOCKER_HOST"] = f"unix://{ROOTLESS_SOCKET}"
     try:
         result = subprocess.run(  # noqa: S603 - validated coordinates; fixed argv, no shell
-            args, check=True, text=True, capture_output=True, timeout=120, env=env
+            args, check=True, text=True, capture_output=True, timeout=120, env=run_env
         )
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         # Suppress subprocess stderr: it may include paths or registry diagnostics.
@@ -135,6 +170,43 @@ def _safe_dir(path: Path, *, mode: int = 0o700) -> bool:
         stat.S_ISDIR(metadata.st_mode)
         and metadata.st_uid == 10001
         and stat.S_IMODE(metadata.st_mode) == mode
+    )
+
+
+def _rootless_socket_secure() -> bool:
+    if not _safe_dir(ROOTLESS_SOCKET.parent):
+        return False
+    try:
+        metadata = ROOTLESS_SOCKET.lstat()
+    except FileNotFoundError:
+        return False
+    return stat.S_ISSOCK(metadata.st_mode) and metadata.st_uid == 10001
+
+
+def _rootful_socket_inaccessible() -> bool:
+    return not os.access(ROOTFUL_SOCKET, os.W_OK)
+
+
+def _validate_docker_boundary() -> None:
+    socket_secure = _rootless_socket_secure()
+    rootful_inaccessible = _rootful_socket_inaccessible()
+    if not socket_secure or not rootful_inaccessible:
+        raise PreflightError("dedicated rootless Docker socket is unproven")
+    info = _json_object(_run("docker", "info", "--format", "{{json .}}"), "daemon info")
+    options = info.get("SecurityOptions")
+    try:
+        controllers = frozenset(CGROUP_CONTROLLERS.read_text(encoding="ascii").split())
+    except OSError as exc:
+        raise PreflightError("rootless cgroup delegation is unavailable") from exc
+    validate_docker_boundary(
+        DockerBoundarySnapshot(
+            socket_secure=socket_secure,
+            rootful_socket_inaccessible=rootful_inaccessible,
+            daemon_rootless=isinstance(options, list) and "name=rootless" in options,
+            cgroup_version=str(info.get("CgroupVersion", "")),
+            cgroup_driver=str(info.get("CgroupDriver", "")),
+            controllers=controllers,
+        )
     )
 
 
@@ -348,6 +420,7 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
 
 def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> None:
     _validate_coordinates(image, source_sha, compose_sha)
+    _validate_docker_boundary()
     if phase_name in {"diagnostic-config", "diagnostic"}:
         _diagnostic_files(compose_sha)
         if phase_name == "diagnostic-config":

@@ -12,14 +12,118 @@ import pytest
 from boca_socios import host_first_deploy as host
 from boca_socios.host_first_deploy import (
     DiagnosticSnapshot,
+    DockerBoundarySnapshot,
     HostSnapshot,
     PreflightError,
     validate_diagnostic,
+    validate_docker_boundary,
     validate_snapshot,
 )
 
 SOURCE_SHA = "a" * 40
 IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64
+
+
+def safe_boundary() -> DockerBoundarySnapshot:
+    return DockerBoundarySnapshot(
+        socket_secure=True,
+        rootful_socket_inaccessible=True,
+        daemon_rootless=True,
+        cgroup_version="2",
+        cgroup_driver="systemd",
+        controllers=frozenset({"cpu", "memory", "pids"}),
+    )
+
+
+def test_dedicated_rootless_daemon_with_delegated_limits_is_accepted() -> None:
+    validate_docker_boundary(safe_boundary())
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("socket_secure", False),
+        ("rootful_socket_inaccessible", False),
+        ("daemon_rootless", False),
+        ("cgroup_version", "1"),
+        ("cgroup_driver", "none"),
+        ("controllers", frozenset({"memory", "pids"})),
+        ("controllers", frozenset({"cpu", "memory"})),
+    ],
+)
+def test_unproven_daemon_boundary_is_no_go(field: str, value: object) -> None:
+    with pytest.raises(PreflightError):
+        validate_docker_boundary(replace(safe_boundary(), **{field: value}))
+
+
+@pytest.mark.parametrize(
+    "info",
+    [
+        {
+            "SecurityOptions": ["name=seccomp,profile=builtin"],
+            "CgroupVersion": "2",
+            "CgroupDriver": "systemd",
+        },
+        {"SecurityOptions": ["name=rootless"], "CgroupVersion": "2", "CgroupDriver": "none"},
+        {"SecurityOptions": "name=rootless", "CgroupVersion": "2", "CgroupDriver": "systemd"},
+        {},
+    ],
+)
+def test_daemon_info_must_prove_rootless_and_cgroups(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, info: dict[str, object]
+) -> None:
+    controllers = tmp_path / "cgroup.controllers"
+    controllers.write_text("cpu memory pids\n")
+    monkeypatch.setattr(host, "CGROUP_CONTROLLERS", controllers)
+    monkeypatch.setattr(host, "_rootless_socket_secure", lambda: True)
+    monkeypatch.setattr(host, "_rootful_socket_inaccessible", lambda: True)
+    monkeypatch.setattr(host, "_run", lambda *args: json.dumps(info))
+    with pytest.raises(PreflightError):
+        host._validate_docker_boundary()
+
+
+def test_rootless_daemon_info_and_delegation_are_checked_together(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    controllers = tmp_path / "cgroup.controllers"
+    controllers.write_text("cpu io memory pids\n")
+    monkeypatch.setattr(host, "CGROUP_CONTROLLERS", controllers)
+    monkeypatch.setattr(host, "_rootless_socket_secure", lambda: True)
+    monkeypatch.setattr(host, "_rootful_socket_inaccessible", lambda: True)
+    monkeypatch.setattr(
+        host,
+        "_run",
+        lambda *args: json.dumps(
+            {
+                "SecurityOptions": ["name=seccomp,profile=builtin", "name=rootless"],
+                "CgroupVersion": "2",
+                "CgroupDriver": "systemd",
+            }
+        ),
+    )
+    host._validate_docker_boundary()
+
+
+def test_docker_commands_cannot_use_inherited_rootful_or_remote_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[dict[str, str]] = []
+
+    def fake_subprocess(*args: object, **kwargs: object) -> object:
+        environment = kwargs["env"]
+        assert isinstance(environment, dict)
+        captured.append(environment)
+        return type("Result", (), {"stdout": "ok"})()
+
+    monkeypatch.setattr(host.subprocess, "run", fake_subprocess)
+    assert (
+        host._run(
+            "docker", "info", env={"DOCKER_HOST": "tcp://remote:2375", "DOCKER_CONTEXT": "rootful"}
+        )
+        == "ok"
+    )
+    assert captured[0]["DOCKER_HOST"] == "unix:///run/user/10001/docker.sock"
+    assert "DOCKER_CONTEXT" not in captured[0]
 
 
 def safe_snapshot() -> HostSnapshot:
@@ -70,6 +174,7 @@ def _staged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     monkeypatch.setattr(host, "SECRET_DIR", root / "secrets")
     monkeypatch.setattr(host, "KEY", root / "secrets/master.key")
     monkeypatch.setattr(host, "collect_snapshot", safe_snapshot)
+    monkeypatch.setattr(host, "_validate_docker_boundary", lambda: None)
     # The test may run with a different UID; all other staging checks remain real.
     monkeypatch.setattr(host, "_safe_dir", lambda _path: True)
     digest = hashlib.sha256(compose.read_bytes()).hexdigest()
@@ -80,6 +185,26 @@ def _staged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
 
     monkeypatch.setattr(host, "_verify_compose", verify_compose)
     return digest
+
+
+@pytest.mark.parametrize(
+    "phase_name", ["preflight", "stage", "config", "apply", "diagnostic-config", "diagnostic"]
+)
+def test_unverified_docker_boundary_stops_every_host_phase_before_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase_name: str
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        host,
+        "_validate_docker_boundary",
+        lambda: (_ for _ in ()).throw(PreflightError("daemon boundary")),
+    )
+    monkeypatch.setattr(
+        host, "_run", lambda *args, **kwargs: pytest.fail("Docker command executed")
+    )
+    with pytest.raises(PreflightError, match="daemon boundary"):
+        host.phase(phase_name, IMAGE, SOURCE_SHA, digest)
+    assert not host.KEY.exists()
 
 
 def test_bad_image_revision_fails_before_creating_key(
