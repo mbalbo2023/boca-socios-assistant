@@ -159,7 +159,9 @@ def test_first_install_requires_strict_postflight_before_reporting_pass(
     assert "BOCA_DEPLOY_PASS" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("failure", [PreflightError("engine on"), ValueError("bad JSON"), OSError("missing key")])
+@pytest.mark.parametrize(
+    "failure", [PreflightError("engine on"), ValueError("bad JSON"), OSError("missing key")]
+)
 def test_postflight_failure_stops_only_controller_and_preserves_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
 ) -> None:

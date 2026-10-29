@@ -422,7 +422,11 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
             != "healthy"
         ):
             raise PreflightError("Boca controller did not become healthy")
-    except PreflightError:
+        # The same strict contract used by the later read-only diagnostic must
+        # hold before the first install can claim success.
+        _diagnostic_files(compose_sha)
+        collect_diagnostic(image, source_sha)
+    except (ValueError, OSError):
         try:
             _run(*_compose_args("stop", "controller"), env=_compose_env(image))
         except PreflightError:

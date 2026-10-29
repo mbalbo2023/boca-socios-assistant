@@ -33,12 +33,14 @@ release run for the same current `main` SHA. It validates the resolved Compose
 contract on the runner, reads aggregate host capacity and Boca-only resource
 names, stages and hashes one Compose file, then validates the host-resolved
 model before pulling the exact digest. Only then can it create an owner-only
-random key and start the simulation-only controller. A startup failure stops
-only that service, preserves the key and volume, and requires separate
-diagnosis before another attempt. An existing Boca key, container, volume,
-network or staged file blocks a fresh installation; this flow is not a
-recovery or upgrade procedure. The CPU snapshot is an estimate, so a human
-capacity review is still required before authorization.
+random key and start the simulation-only controller. Before reporting success,
+it reuses the read-only diagnostic contract to verify the actual container,
+image, dormant engine, resource limits and key metadata. A startup or
+postflight failure stops only that service, preserves the key and volume, and
+requires separate diagnosis before another attempt. An existing Boca key,
+container, volume, network or staged file blocks a fresh installation; this
+flow is not a recovery or upgrade procedure. The CPU snapshot is an estimate,
+so a human capacity review is still required before authorization.
 
 ## Proposed read-only diagnostic under demand (issue #68)
 
