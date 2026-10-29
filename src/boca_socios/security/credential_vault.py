@@ -47,10 +47,7 @@ class CredentialVault:
     def from_secret_file(cls, file_path: Path, *, key_id: str = "v1") -> CredentialVault:
         """Read a bounded key through a non-following file descriptor.
 
-        Owner-only files are required except for the exact Docker-managed
-        secret mount, which some Compose implementations expose as 0444.
-        In that special case container boundaries and host-source permissions
-        must be verified separately before any real credential enrollment.
+        The Boca key volume presents an owner-only 0400 file to UID 10001.
         """
         if not file_path.is_absolute():
             raise ValueError("master key path must be absolute")
@@ -69,10 +66,7 @@ class CredentialVault:
                 permissions = stat.S_IMODE(metadata.st_mode)
                 if permissions & 0o133:
                     raise ValueError("master key file is writable/executable by others")
-                # Only the exact read-only Compose 0444 mount is compatible;
-                # never permit a writable 0644/0604 source via this exception.
-                docker_secret = cls._is_readonly_docker_secret(file_path, permissions)
-                if permissions & 0o044 and not docker_secret:
+                if permissions & 0o044:
                     raise ValueError("master key file is readable by other identities")
                 encoded = source.read(129)
                 if len(encoded) > 128:
@@ -84,11 +78,6 @@ class CredentialVault:
         except (ValueError, binascii.Error) as exc:
             raise ValueError("invalid master key encoding") from exc
         return cls(key, key_id=key_id)
-
-    @staticmethod
-    def _is_readonly_docker_secret(file_path: Path, permissions: int) -> bool:
-        """Only one exact path and exact read-only mount mode qualify."""
-        return file_path == Path("/run/secrets/boca_master_key") and permissions == 0o444
 
     @staticmethod
     def _aad(member_id: str) -> bytes:
