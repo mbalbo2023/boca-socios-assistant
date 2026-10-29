@@ -31,6 +31,7 @@ def model() -> dict[str, object]:
                 "environment": {
                     "BOCA_ENVIRONMENT": "staging",
                     "BOCA_RUNTIME_MODE": "simulation",
+                    "BOCA_ENGINE_MODE": "off",
                     "BOCA_DB_PATH": "/data/boca.sqlite3",
                     "BOCA_MASTER_KEY_FILE": "/run/secrets/boca_master_key",
                 },
@@ -68,6 +69,13 @@ def model() -> dict[str, object]:
 
 def test_exact_isolated_controller_passes() -> None:
     validate_contract(model(), IMAGE)
+
+
+def test_engine_activation_in_compose_is_rejected() -> None:
+    candidate = model()
+    candidate["services"]["controller"]["environment"]["BOCA_ENGINE_MODE"] = "on"  # type: ignore[index]
+    with pytest.raises(ContractError):
+        validate_contract(candidate, IMAGE)
 
 
 @pytest.mark.parametrize(
