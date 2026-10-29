@@ -9,7 +9,13 @@ from pathlib import Path
 import pytest
 
 from boca_socios import host_first_deploy as host
-from boca_socios.host_first_deploy import HostSnapshot, PreflightError, validate_snapshot
+from boca_socios.host_first_deploy import (
+    DiagnosticSnapshot,
+    HostSnapshot,
+    PreflightError,
+    validate_diagnostic,
+    validate_snapshot,
+)
 
 SOURCE_SHA = "a" * 40
 IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64
@@ -116,3 +122,56 @@ def test_failed_start_stops_only_controller_and_preserves_owner_only_key(
     assert stat.S_IMODE(host.KEY.stat().st_mode) == 0o400
     assert not host._root_ready()  # A failed first install cannot retry over its retained key.
     assert not any("down" in command or "prune" in command for command in commands)
+
+
+def healthy_diagnostic() -> DiagnosticSnapshot:
+    return DiagnosticSnapshot(
+        uid=10001,
+        key_secure=True,
+        container_id="c" * 64,
+        health="healthy",
+        image_ref=IMAGE,
+        revision=SOURCE_SHA,
+        project="boca-socios",
+        service="controller",
+        user="10001:10001",
+        runtime_mode="simulation",
+        engine_mode="off",
+        cpu_nano=500_000_000,
+        memory_bytes=268_435_456,
+        pids_limit=64,
+        read_only=True,
+        privileged=False,
+        has_ports=False,
+    )
+
+
+def test_diagnostic_accepts_only_dormant_healthy_boca_controller() -> None:
+    validate_diagnostic(healthy_diagnostic(), IMAGE, SOURCE_SHA)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("uid", 0),
+        ("key_secure", False),
+        ("container_id", "unexpected"),
+        ("health", "unhealthy"),
+        ("image_ref", "other"),
+        ("revision", "b" * 40),
+        ("project", "other"),
+        ("service", "worker"),
+        ("user", "0:0"),
+        ("runtime_mode", "live"),
+        ("engine_mode", "on"),
+        ("cpu_nano", 1_000_000_000),
+        ("memory_bytes", 1_000_000_000),
+        ("pids_limit", 1_000),
+        ("read_only", False),
+        ("privileged", True),
+        ("has_ports", True),
+    ],
+)
+def test_diagnostic_deviation_is_no_go(field: str, value: object) -> None:
+    with pytest.raises(PreflightError):
+        validate_diagnostic(replace(healthy_diagnostic(), **{field: value}), IMAGE, SOURCE_SHA)
