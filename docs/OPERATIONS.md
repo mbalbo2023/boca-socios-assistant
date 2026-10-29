@@ -41,7 +41,10 @@ smoke passes. See [ADR 0033](ADR/0033-rootless-daemon-boundary.md) and
 [ADR 0034](ADR/0034-rootless-key-custody.md).
 
 The workflow first validates dispatch inputs and the successful manual image
-release run for the same current `main` SHA. It validates the resolved Compose
+release run for the same current `main` SHA. It downloads that run's immutable
+manifest and requires the selected image digest, SHA and run ID to match
+before opening SSH; an absent or expired artifact blocks installation. See
+[ADR 0036](ADR/0036-release-digest-binding.md). It validates the resolved Compose
 contract on the runner, reads aggregate host capacity and Boca-only resource
 names, stages and hashes one Compose file, then validates the host-resolved
 model before pulling the exact digest. Only then can it create an owner-only
