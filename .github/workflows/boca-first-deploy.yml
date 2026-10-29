@@ -55,7 +55,7 @@ jobs:
           uv sync --frozen
       - name: Check dispatch and first-install boundaries offline
         run: |
-          uv run pytest -q tests/test_deploy_inputs.py tests/test_host_first_deploy.py
+          uv run pytest -q tests/test_deploy_inputs.py tests/test_host_first_deploy.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
 
   deploy:
@@ -91,9 +91,8 @@ jobs:
         run: |
           python scripts/check_deploy_inputs.py "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_SERVICE" "$BOCA_BUDGET" "$BOCA_RELEASE_RUN_ID"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BOCA_RELEASE_RUN_ID" \
-            --jq '[.name, .event, .head_sha, .head_branch, .status, .conclusion, .actor.login, (.path | split("@")[0])] | @tsv' > "$RUNNER_TEMP/boca-release-run.tsv"
-          expected="Boca image release"$'\t'"workflow_dispatch"$'\t'"$BOCA_SOURCE_SHA"$'\t'"main"$'\t'"completed"$'\t'"success"$'\t'"mbalbo2023"$'\t'".github/workflows/release-image.yml"
-          test "$(cat "$RUNNER_TEMP/boca-release-run.tsv")" = "$expected"
+            > "$RUNNER_TEMP/boca-release-run.json"
+          python scripts/check_release_run.py "$RUNNER_TEMP/boca-release-run.json" "$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID"
       - name: Validate reviewed runner Compose model
         env:
           BOCA_IMAGE: ${{ inputs.image_ref }}
