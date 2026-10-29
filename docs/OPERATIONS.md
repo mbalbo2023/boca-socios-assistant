@@ -6,6 +6,40 @@ Repository foundation only. All existing hosts and workloads must be left
 untouched. No GitHub workflow in this release has remote-host credentials,
 and CI never deploys.
 
+## Proposed first installation (issue #62)
+
+The draft `boca-first-deploy.yml` adds a manual, environment-gated path; it
+is not on `main` and has not been run. `pull_request` only runs tests and the
+isolation policy, with no host credentials. A manual dispatch is allowed only
+from the exact current `main` commit by the repository owner after an
+independent review and separate authorization recording the commit, complete
+GHCR digest, successful release run, `controller`, resource budget and time
+window. The reviewer must verify that the `boca-first-deploy` GitHub
+environment has required reviewers, deployment branch restrictions and only
+the Boca-specific credentials/variables. The readiness variable alone is
+insufficient evidence of environment protection.
+
+The proposed host prerequisite is a dedicated `boca-deploy` identity with UID
+10001 and access to Docker, Python 3.10+, and an already provisioned empty
+`/srv/boca-socios` directory owned by that UID with mode 0700. A reviewer
+must verify SSH host identity out of band and pin it in the environment's
+known-hosts secret; the workflow has no `ssh-keyscan` fallback. Host setup is
+not part of this PR. Confirm the GHCR package is accessible by the host
+without placing registry credentials on it. If any prerequisite is absent,
+stop before dispatch and record NO-GO; do not improvise a host change.
+
+The workflow first validates dispatch inputs and the successful manual image
+release run for the same current `main` SHA. It validates the resolved Compose
+contract on the runner, reads aggregate host capacity and Boca-only resource
+names, stages and hashes one Compose file, then validates the host-resolved
+model before pulling the exact digest. Only then can it create an owner-only
+random key and start the simulation-only controller. A startup failure stops
+only that service, preserves the key and volume, and requires separate
+diagnosis before another attempt. An existing Boca key, container, volume,
+network or staged file blocks a fresh installation; this flow is not a
+recovery or upgrade procedure. The CPU snapshot is an estimate, so a human
+capacity review is still required before authorization.
+
 ## Proposed isolated deployment layout
 
 | Item | Boca project | Unrelated workloads |

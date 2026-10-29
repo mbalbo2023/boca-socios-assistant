@@ -12,17 +12,23 @@ against a separate authorization record. Workflow inputs alone cannot prove
 that authorization exists. No push, PR or documentation change deploys.
 
 Before mutation, validate Compose's resolved model in the runner and check
-the host read-only: amd64, nonroot dedicated deploy identity, Docker/Compose,
-at least 4 GiB available disk, 768 MiB available memory and 50,000 free
-inodes, a Boca-owned path and **no existing Boca container, volume or
-network**. These conservative thresholds can reject a constrained host;
+the host read-only: amd64, dedicated `boca-deploy` UID 10001, Python 3.10+,
+Docker/Compose, at least 4 GiB available disk, 768 MiB available memory,
+0.5 approximate CPU headroom and 50,000 free inodes, a Boca-owned path and
+**no existing Boca container, volume or network**. The Boca directory must
+already exist at `/srv/boca-socios`, be owned by UID 10001 with mode 0700,
+and have no Compose file or key. Preparing this account, directory,
+Docker access and pinned SSH host identity is a separately reviewed host
+prerequisite; this PR never provisions them. Conservative thresholds can reject a constrained host;
 that is NO-GO, not a reason to free resources from another workload. The
 preflight does not read another workload's data or name.
 
 After that gate, stage only the reviewed Compose file in the Boca directory,
 verify its SHA-256, pull only the exact digest and compare its OCI source
 revision label to the dispatch SHA. Create a new 32-byte random master key
-on the host only when no Boca data exists; never log, transfer or rotate it.
+on the host only when no Boca data exists; write it as base64 with mode 0400
+and owner UID 10001 so the nonroot container can read the bind-mounted file
+without widening host-source permissions. Never log, transfer or rotate it.
 Start only `controller` using Compose `--no-build --no-deps --wait`; on a
 startup failure, stop only that service and preserve the key, volume and
 image for diagnosis. No automatic retry, broad rollback, prune, restart of
