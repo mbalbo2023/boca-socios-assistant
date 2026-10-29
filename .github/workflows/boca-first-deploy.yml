@@ -202,8 +202,12 @@ jobs:
             printf '  ForwardAgent no\n'
           } > "$RUNNER_TEMP/boca-ssh/config"
           chmod 600 "$RUNNER_TEMP/boca-ssh/config"
-      - name: Read-only host capacity and Boca namespace preflight
-        if: inputs.operation == 'preflight' || inputs.operation == 'first-install'
+      - name: Observe host capacity and Boca namespace without an image
+        if: inputs.operation == 'preflight'
+        run: |
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - observe "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py
+      - name: Read-only host capacity and Boca namespace before first install
+        if: inputs.operation == 'first-install'
         run: |
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - preflight "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py
       - name: Record read-only preflight result

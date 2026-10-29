@@ -10,7 +10,10 @@ the protected `boca-first-deploy` environment, pinned SSH host identity and
 fixed `controller` / 0.5 CPU, 256 MiB, 64 PID budget. It requires **blank**
 image and release-run inputs, so it cannot publish or pull an image.
 
-The preflight executes the existing host helper's read-only phase. It checks
+The standalone operation calls the helper's `observe` phase with no image;
+`first-install` still calls its original `preflight` phase with a verified
+digest. This separation prevents one mode from weakening the other's input
+gate. Both check
 the dedicated UID/path, Docker rootless socket, cgroup v2/systemd delegation,
 architecture, aggregate free capacity and an empty Boca namespace. It does
 not stage Compose, create a volume or key, pull an image, start a container,
