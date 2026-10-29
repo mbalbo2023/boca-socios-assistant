@@ -26,12 +26,21 @@ que no se pudo observar. Las propuestas de PR aún no están en `main`.
   [release 40939697150](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40939697150)
   y [deploy smoke 40939697151](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40939697151)
   exitosos en sus jobs de PR; publicación y operación de host omitidas.
-- Ensayo local, **sin Actions propia del árbol combinado**: #71 + #42 + #44 +
+- Ensayo local inicial: #71 + #42 + #44 +
   #47. Merge limpio; inicialmente 1 test falló y 272 pasaron por contaminación
   del `umask` global en tests de runtime. [#72/#73](https://github.com/mbalbo2023/boca-socios-assistant/pull/73)
   aísla la llamada sin modificar el runtime. Repetición: `uv sync --frozen`,
   Ruff, mypy de 33 módulos, política de aislamiento y **273 tests PASS**.
-  Es compatibilidad local, no release integrado ni recorrido de Boca.
+  La composición se publicó después como
+  [PR draft #77](https://github.com/mbalbo2023/boca-socios-assistant/pull/77),
+  HEAD `803996176f3b5dfa858e0bb967df23cad9d74eee`:
+  [CI 40940923866](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40940923866)
+  validó tests, Compose, lint, tipos, política, auditoría de Actions,
+  imagen controller y worker Chromium offline; [scan 40940923880](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40940923880),
+  [release PR 40940923843](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40940923843)
+  y [deploy smoke 40940923944](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40940923944)
+  también pasaron; publish y host quedaron omitidos. Es CI del árbol
+  combinado, no release en `main` ni recorrido de Boca.
 
 ## Controles y brechas
 
@@ -56,7 +65,7 @@ Las capacidades de proveedores no prueban que el droplet ya las aplique.
 | Línea | Existe en PR draft | Conectado al controller que instalaría #63/#71 |
 | --- | --- | --- |
 | Vault/SQLite y salud | Sí; `runtime.py` abre clave, migra DB y espera señal. | Sí, en modo `simulation`, motor `off`. |
-| Simulador/estado, intención, guard y outbox | #42 y dependencias, probados offline. | No. El entrypoint no crea ni invoca esos servicios. |
+| Simulador/estado, intención, guard y outbox | #42 y dependencias, probados offline y en CI combinada #77. | No. El entrypoint no crea ni invoca esos servicios. |
 | Panel accesible/Telegram/alta privada | Panel de estados simulados #29, servicio interno #31, outbox #34; diseño #28 pendiente. | No hay servidor autenticado/TLS ni canal de alta/avisos externos. |
 | Chromium/observador | #33→#43→#44, imagen separada y smoke offline. | No hay worker en Compose ni sesión abierta; nunca se probó login/cola/reserva real. |
 | Backup cifrado | #47 offline. | Sin scheduler, almacenamiento ni recuperación operativa aprobada. |
