@@ -66,7 +66,7 @@ jobs:
     env:
       BOCA_IMAGE: boca-first-install-smoke:${{ github.sha }}
       BOCA_ENVIRONMENT: staging
-      BOCA_MASTER_KEY_SOURCE: ${{ runner.temp }}/boca-smoke/master.key
+      BOCA_MASTER_KEY_SOURCE: /tmp/boca-smoke/master.key
     steps:
       - name: Checkout proposed runtime without persisted credentials
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
