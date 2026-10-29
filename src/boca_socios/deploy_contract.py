@@ -125,6 +125,7 @@ def validate_contract(model: object, expected_image: str) -> None:
         {
             "BOCA_ENVIRONMENT": "staging",
             "BOCA_RUNTIME_MODE": "simulation",
+            "BOCA_ENGINE_MODE": "off",
             "BOCA_DB_PATH": "/data/boca.sqlite3",
             "BOCA_MASTER_KEY_FILE": "/run/secrets/boca_master_key",
         },

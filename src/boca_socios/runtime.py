@@ -22,10 +22,13 @@ def main() -> int:
     stopping = Event()
     signal.signal(signal.SIGINT, lambda _sig, _frame: stopping.set())
     signal.signal(signal.SIGTERM, lambda _sig, _frame: stopping.set())
-    print(json.dumps({"event": "started", "mode": "simulation", "site_calls": 0}), flush=True)
+    print(
+        json.dumps({"event": "started", "mode": "simulation", "engine": "off", "site_calls": 0}),
+        flush=True,
+    )
     while not stopping.wait(timeout=30):
         pass
-    print(json.dumps({"event": "stopped", "mode": "simulation"}), flush=True)
+    print(json.dumps({"event": "stopped", "mode": "simulation", "engine": "off"}), flush=True)
     return 0
 
 

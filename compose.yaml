@@ -11,6 +11,7 @@ services:
     environment:
       BOCA_ENVIRONMENT: ${BOCA_ENVIRONMENT:-development}
       BOCA_RUNTIME_MODE: simulation
+      BOCA_ENGINE_MODE: "off"
       BOCA_DB_PATH: /data/boca.sqlite3
       BOCA_MASTER_KEY_FILE: /run/secrets/boca_master_key
     secrets:
