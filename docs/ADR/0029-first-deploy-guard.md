@@ -34,9 +34,13 @@ startup failure, stop only that service and preserve the key, volume and
 image for diagnosis. No automatic retry, broad rollback, prune, restart of
 Docker or touch of another project. An unexpected condition is NO-GO.
 
-This branch can test the pure preflight and command boundary offline. It
-cannot establish GitHub environment reviewer settings, SSH host identity,
-GHCR access, actual host capacity, key mount semantics or production health.
+The PR validates the pure preflight and command boundary offline and starts
+the exact Compose service with a synthetic owner-only key on a disposable
+GitHub-hosted runner. This tests secret mount compatibility, SQLite migration
+and controller health without a production host or third-party traffic; only
+synthetic Boca resources on that runner are removed after the test. It cannot
+establish GitHub environment reviewer settings, SSH host identity, GHCR
+access, actual droplet capacity or production health.
 Those must be checked under the later specific authorization before running
 the workflow. The controller remains simulation-only and has no real Boca
 reservation capability.

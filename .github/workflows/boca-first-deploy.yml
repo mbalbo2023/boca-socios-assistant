@@ -58,6 +58,53 @@ jobs:
           uv run pytest -q tests/test_deploy_inputs.py tests/test_host_first_deploy.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
 
+  pr-runtime-smoke:
+    if: github.event_name == 'pull_request'
+    name: first-deploy-runtime-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      BOCA_IMAGE: boca-first-install-smoke:${{ github.sha }}
+      BOCA_ENVIRONMENT: staging
+      BOCA_MASTER_KEY_SOURCE: ${{ runner.temp }}/boca-smoke/master.key
+    steps:
+      - name: Checkout proposed runtime without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build local simulation image only
+        run: docker build --tag "$BOCA_IMAGE" .
+      - name: Create synthetic owner-only key in disposable runner
+        run: |
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          source = Path(os.environ["BOCA_MASTER_KEY_SOURCE"])
+          source.parent.mkdir(mode=0o700)
+          source.write_bytes(base64.b64encode(os.urandom(32)) + b"\n")
+          source.chmod(0o400)
+          PY
+          docker run --rm --user 0:0 --entrypoint chown \
+            --mount "type=bind,source=$BOCA_MASTER_KEY_SOURCE,target=/fixture" \
+            "$BOCA_IMAGE" 10001:10001 /fixture
+          test "$(stat -c '%u:%a' "$BOCA_MASTER_KEY_SOURCE")" = '10001:400'
+      - name: Start isolated Compose controller and verify health without third-party traffic
+        run: |
+          docker compose -p boca-socios -f compose.yaml up --no-build --no-deps --wait --wait-timeout 90 -d controller
+          container="$(docker compose -p boca-socios -f compose.yaml ps -q controller)"
+          test -n "$container"
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$container")" = healthy
+          docker logs "$container" | python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin if x.strip()]; assert rows == [{"event": "started", "mode": "simulation", "site_calls": 0}]'
+      - name: Remove only synthetic Boca resources from disposable runner
+        if: always()
+        run: |
+          docker compose -p boca-socios -f compose.yaml stop controller || true
+          docker compose -p boca-socios -f compose.yaml rm -sf controller || true
+          docker volume rm boca-socios_boca_data || true
+          docker network rm boca-socios_boca_private || true
+
   deploy:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'mbalbo2023/boca-socios-assistant' && github.actor == 'mbalbo2023'
     name: approved-boca-first-install
