@@ -79,6 +79,18 @@ pull, key, volume, container or site effect and is unavailable on PRs. It
 requires the protected environment and pinned SSH identity; no host operation
 has been dispatched. See [ADR 0035](ADR/0035-readonly-host-preflight.md).
 
+## Proposed prerequisite inspection after false-negative socket checks (issue #90)
+
+The same manual workflow adds `operation=inspect-prerequisites`, with blank
+image and release-run fields. It checks socket and cgroup **metadata as UID
+10001**, differentiating `absent` from `unavailable`, without running Docker
+or altering the host. A failed job reports unproven prerequisites; a metadata
+candidate is not proof that a Docker daemon is rootless or healthy. The
+existing `preflight` remains mandatory before any release/install decision.
+The environment must first be reviewed and marked ready as an **environment**
+(pinned identity, main-only branch rule and reviewer control), independently
+of the daemon's readiness. See [ADR 0037](ADR/0037-host-prerequisite-inspection.md).
+
 ## Proposed isolated deployment layout
 
 | Item | Boca project | Unrelated workloads |

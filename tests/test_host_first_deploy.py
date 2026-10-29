@@ -2,8 +2,11 @@
 
 import hashlib
 import json
+import os
+import stat
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -151,6 +154,107 @@ def test_read_only_preflight_needs_no_image_or_release_and_does_not_mutate(
     host.phase("observe", "", SOURCE_SHA, digest)
     assert "BOCA_PREFLIGHT_PASS" in capsys.readouterr().out
     assert not (host.ROOT / "secrets").exists()
+
+
+def test_prerequisite_inspection_refuses_uid_1000_before_private_path_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host.os, "getuid", lambda: 1000)
+    monkeypatch.setattr(
+        host, "_socket_state", lambda _path: pytest.fail("UID1000 probed Boca private path")
+    )
+    with pytest.raises(PreflightError, match="dedicated boca-deploy"):
+        host.phase("inspect-prerequisites", "", SOURCE_SHA, "b" * 64)
+
+
+def test_socket_probe_distinguishes_present_absent_unsafe_and_denied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_dir = tmp_path / "private"
+    private_dir.mkdir(mode=0o700)
+    socket_path = private_dir / "bus"
+    socket_path.touch()
+    (private_dir / "link").symlink_to(socket_path)
+    restricted = private_dir / "restricted"
+    original_lstat = Path.lstat
+
+    def fake_lstat(path: Path) -> os.stat_result | SimpleNamespace:
+        if path == socket_path:
+            return SimpleNamespace(st_mode=stat.S_IFSOCK | 0o600, st_uid=os.getuid())
+        if path == restricted:
+            raise PermissionError("permission denied")
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", fake_lstat)
+    assert host._socket_state(socket_path, expected_uid=os.getuid()) == "owned"
+    assert host._socket_state(private_dir / "missing", expected_uid=os.getuid()) == "absent"
+    assert host._socket_state(private_dir / "link", expected_uid=os.getuid()) == "unsafe"
+    assert host._socket_state(restricted, expected_uid=os.getuid()) == "unavailable"
+
+
+def test_inspection_reports_unproven_rootless_without_docker_or_host_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
+    monkeypatch.setattr(host.pwd, "getpwuid", lambda _uid: SimpleNamespace(pw_name="boca-deploy"))
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    monkeypatch.setattr(host, "ROOTLESS_SOCKET", runtime / "docker.sock")
+    monkeypatch.setattr(host, "PRIVATE_MANAGER_SOCKET", runtime / "systemd" / "private")
+    monkeypatch.setattr(host, "USER_BUS_SOCKET", runtime / "bus")
+    monkeypatch.setattr(host, "ROOTFUL_SOCKET", tmp_path / "rootful-absent")
+    monkeypatch.setattr(host, "_safe_dir", lambda _path: True)
+    controllers = tmp_path / "controllers"
+    controllers.write_text("cpu memory pids\n")
+    monkeypatch.setattr(host, "CGROUP_CONTROLLERS", controllers)
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker used"))
+    with pytest.raises(PreflightError, match="metadata unproven"):
+        host.phase("inspect-prerequisites", "", SOURCE_SHA, "b" * 64)
+    report = capsys.readouterr().out
+    assert "BOCA_HOST_INSPECT" in report
+    assert "rootless=absent" in report
+    assert "state=PREREQUISITES_UNPROVEN" in report
+
+
+def test_inspection_under_boca_uid_reports_only_metadata_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
+    monkeypatch.setattr(host.pwd, "getpwuid", lambda _uid: SimpleNamespace(pw_name="boca-deploy"))
+    runtime = tmp_path / "runtime"
+    sockets = {runtime / "systemd" / "private", runtime / "bus", runtime / "docker.sock"}
+    monkeypatch.setattr(host, "ROOTLESS_SOCKET", runtime / "docker.sock")
+    monkeypatch.setattr(host, "PRIVATE_MANAGER_SOCKET", runtime / "systemd" / "private")
+    monkeypatch.setattr(host, "USER_BUS_SOCKET", runtime / "bus")
+    monkeypatch.setattr(host, "ROOTFUL_SOCKET", tmp_path / "rootful-absent")
+    original_lstat = Path.lstat
+
+    def boca_lstat(path: Path) -> os.stat_result | SimpleNamespace:
+        if path == runtime:
+            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=10001)
+        if path in sockets:
+            return SimpleNamespace(st_mode=stat.S_IFSOCK | 0o600, st_uid=10001)
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", boca_lstat)
+    controllers = tmp_path / "controllers"
+    controllers.write_text("cpu io memory pids\n")
+    monkeypatch.setattr(host, "CGROUP_CONTROLLERS", controllers)
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker used"))
+    host.phase("inspect-prerequisites", "", SOURCE_SHA, "b" * 64)
+    report = capsys.readouterr().out
+    assert "state=METADATA_CANDIDATE" in report
+    assert "private=owned bus=owned rootless=owned" in report
+    assert "rootful=absent controllers=cpu,memory,pids" in report
+
+
+def test_inspection_has_empty_image_contract_and_does_not_weaken_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
+    monkeypatch.setattr(host, "inspect_prerequisites", lambda: pytest.fail("probed host"))
+    with pytest.raises(PreflightError, match="coordinates"):
+        host.phase("inspect-prerequisites", IMAGE, SOURCE_SHA, "b" * 64)
 
 
 def test_first_install_preflight_still_accepts_approved_digest(

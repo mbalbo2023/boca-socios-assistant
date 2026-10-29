@@ -24,6 +24,8 @@ COMPOSE = ROOT / "compose.yaml"
 PROJECT = "boca-socios"
 KEY_VOLUME = "boca-socios_boca_key"
 ROOTLESS_SOCKET = Path("/run/user/10001/docker.sock")
+PRIVATE_MANAGER_SOCKET = Path("/run/user/10001/systemd/private")
+USER_BUS_SOCKET = Path("/run/user/10001/bus")
 ROOTFUL_SOCKET = Path("/var/run/docker.sock")
 CGROUP_CONTROLLERS = Path(
     "/sys/fs/cgroup/user.slice/user-10001.slice/user@10001.service/cgroup.controllers"
@@ -180,6 +182,62 @@ def _rootless_socket_secure() -> bool:
     except FileNotFoundError:
         return False
     return stat.S_ISSOCK(metadata.st_mode) and metadata.st_uid == 10001
+
+
+def _socket_state(path: Path, *, expected_uid: int = 10001) -> str:
+    """Classify metadata as the dedicated user; never infer absence on EACCES."""
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        return "unavailable"
+    return (
+        "owned" if stat.S_ISSOCK(metadata.st_mode) and metadata.st_uid == expected_uid else "unsafe"
+    )
+
+
+def inspect_prerequisites() -> None:
+    """Observe only Boca's private runtime; metadata is not a Docker preflight."""
+    uid = os.getuid()
+    try:
+        account = pwd.getpwuid(uid).pw_name
+    except KeyError as exc:
+        raise PreflightError("expected dedicated boca-deploy account") from exc
+    if uid != 10001 or account != "boca-deploy":
+        raise PreflightError("expected dedicated boca-deploy account")
+
+    try:
+        runtime_safe = _safe_dir(ROOTLESS_SOCKET.parent)
+    except OSError:
+        runtime_safe = False
+    private = _socket_state(PRIVATE_MANAGER_SOCKET) if runtime_safe else "not_checked"
+    bus = _socket_state(USER_BUS_SOCKET) if runtime_safe else "not_checked"
+    rootless = _socket_state(ROOTLESS_SOCKET) if runtime_safe else "not_checked"
+    rootful = _socket_state(ROOTFUL_SOCKET, expected_uid=0)
+    if rootful == "owned":
+        rootful = "writable" if os.access(ROOTFUL_SOCKET, os.W_OK) else "not_writable"
+    try:
+        available = set(CGROUP_CONTROLLERS.read_text(encoding="ascii").split())
+        controllers = ",".join(sorted({"cpu", "memory", "pids"} & available)) or "none"
+    except OSError:
+        controllers = "unavailable"
+    state = (
+        "METADATA_CANDIDATE"
+        if runtime_safe
+        and private == bus == rootless == "owned"
+        and controllers == "cpu,memory,pids"
+        and rootful in {"absent", "not_writable"}
+        else "PREREQUISITES_UNPROVEN"
+    )
+    print(
+        f"BOCA_HOST_INSPECT state={state} uid={uid}"
+        f" runtime={'owned_private' if runtime_safe else 'unsafe_or_unavailable'}"
+        f" private={private} bus={bus} rootless={rootless}"
+        f" rootful={rootful} controllers={controllers}"
+    )
+    if state != "METADATA_CANDIDATE":
+        raise PreflightError("prerequisite metadata unproven; no Docker operation attempted")
 
 
 def _rootful_socket_inaccessible() -> bool:
@@ -506,8 +564,14 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
 
 def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> None:
     _validate_coordinates(
-        image, source_sha, compose_sha, read_only_preflight=phase_name == "observe"
+        image,
+        source_sha,
+        compose_sha,
+        read_only_preflight=phase_name in {"observe", "inspect-prerequisites"},
     )
+    if phase_name == "inspect-prerequisites":
+        inspect_prerequisites()
+        return
     _validate_docker_boundary()
     if phase_name in {"diagnostic-config", "diagnostic"}:
         _diagnostic_files(compose_sha)
@@ -601,6 +665,7 @@ def main() -> int:
     parser.add_argument(
         "phase",
         choices=(
+            "inspect-prerequisites",
             "observe",
             "preflight",
             "stage",

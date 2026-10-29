@@ -5,20 +5,20 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Read-only host preflight, first installation, or dormant-controller diagnostic
+        description: Inspect prerequisites, preflight, first installation, or dormant-controller diagnostic
         required: true
         type: choice
-        options: [preflight, first-install, diagnostic]
+        options: [inspect-prerequisites, preflight, first-install, diagnostic]
       source_sha:
         description: Exact current main commit approved for the operation
         required: true
         type: string
       image_ref:
-        description: Full reviewed GHCR digest for install/diagnostic; blank for preflight
+        description: Full reviewed GHCR digest for install/diagnostic; blank for inspection/preflight
         required: false
         type: string
       release_run_id:
-        description: Reviewed image release run ID for install/diagnostic; blank for preflight
+        description: Reviewed image release run ID for install/diagnostic; blank for inspection/preflight
         required: false
         type: string
       service:
@@ -133,10 +133,10 @@ jobs:
         run: |
           test "$BOCA_DEPLOY_ENV_READY" = ready
           test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"
-          [[ "$BOCA_OPERATION" = preflight || "$BOCA_OPERATION" = first-install || "$BOCA_OPERATION" = diagnostic ]]
+          [[ "$BOCA_OPERATION" = inspect-prerequisites || "$BOCA_OPERATION" = preflight || "$BOCA_OPERATION" = first-install || "$BOCA_OPERATION" = diagnostic ]]
           test "$BOCA_SERVICE" = controller
           test "$BOCA_BUDGET" = 0.5cpu-256m-64pids
-          if [[ "$BOCA_OPERATION" = preflight ]]; then
+          if [[ "$BOCA_OPERATION" = inspect-prerequisites || "$BOCA_OPERATION" = preflight ]]; then
             test -z "$BOCA_IMAGE_REF"
             test -z "$BOCA_RELEASE_RUN_ID"
           else
@@ -148,7 +148,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Validate immutable inputs and successful matching release
-        if: inputs.operation != 'preflight'
+        if: inputs.operation != 'preflight' && inputs.operation != 'inspect-prerequisites'
         env:
           PYTHONPATH: src
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -165,7 +165,7 @@ jobs:
       - name: Hash reviewed Boca Compose file
         run: sha256sum compose.yaml | cut -d' ' -f1 > "$RUNNER_TEMP/boca-compose.sha"
       - name: Validate reviewed runner Compose model
-        if: inputs.operation != 'preflight'
+        if: inputs.operation != 'preflight' && inputs.operation != 'inspect-prerequisites'
         env:
           BOCA_IMAGE: ${{ inputs.image_ref }}
           BOCA_ENVIRONMENT: staging
@@ -207,6 +207,10 @@ jobs:
             printf '  ForwardAgent no\n'
           } > "$RUNNER_TEMP/boca-ssh/config"
           chmod 600 "$RUNNER_TEMP/boca-ssh/config"
+      - name: Inspect dedicated user prerequisites without Docker
+        if: inputs.operation == 'inspect-prerequisites'
+        run: |
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - inspect-prerequisites "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py
       - name: Observe host capacity and Boca namespace without an image
         if: inputs.operation == 'preflight'
         run: |
@@ -222,6 +226,10 @@ jobs:
             printf 'Boca host preflight: rootless boundary and capacity gate PASS; no installation performed\n\n'
             printf 'Commit: `%s`\n\nService: `controller`\n\nBudget: `0.5cpu-256m-64pids`\n' "$BOCA_SOURCE_SHA"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Record inspection scope
+        if: always() && inputs.operation == 'inspect-prerequisites'
+        run: |
+          printf 'Boca prerequisite inspection only; metadata status is in the preceding SSH step. No Docker operation or installation was requested. This is not deployment approval.\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Stage only reviewed Boca Compose file
         if: inputs.operation == 'first-install'
         run: |
