@@ -1,0 +1,26 @@
+# ADR 0035: owner-dispatched read-only host preflight
+
+**Status:** Proposed for issue #84, 2026-10-29. No host operation performed.
+
+The rootless Docker boundary and host capacity cannot be inferred from a
+GitHub-hosted runner. The single protected Boca workflow gains a manual
+`preflight` operation, separate from `first-install` and `diagnostic`. It is
+available only on the exact current `main` SHA to the repository owner, with
+the protected `boca-first-deploy` environment, pinned SSH host identity and
+fixed `controller` / 0.5 CPU, 256 MiB, 64 PID budget. It requires **blank**
+image and release-run inputs, so it cannot publish or pull an image.
+
+The preflight executes the existing host helper's read-only phase. It checks
+the dedicated UID/path, Docker rootless socket, cgroup v2/systemd delegation,
+architecture, aggregate free capacity and an empty Boca namespace. It does
+not stage Compose, create a volume or key, pull an image, start a container,
+read another workload, visit Boca or run a reservation. Its output has bounded
+capacity facts and a PASS/NO-GO marker without secrets or database rows. The
+workflow's other operations still require matching image digest and successful
+release run and cannot use an empty image. A successful preflight is one
+observation at one instant; it does not grant a subsequent install, prove
+effective cgroup limits or substitute for SSH privilege review.
+
+This operation remains undispatched until the environment and identity are
+reviewed. Protection of `main` (#10), independent PR review, an exact owner
+record and an authorized time window still gate any future host operation.

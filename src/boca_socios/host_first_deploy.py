@@ -367,11 +367,13 @@ def _create_key(image: str) -> None:
         raise PreflightError("Boca key is not readable by the controller identity")
 
 
-def _validate_coordinates(image: str, source_sha: str, compose_sha: str) -> None:
+def _validate_coordinates(
+    image: str, source_sha: str, compose_sha: str, *, read_only_preflight: bool = False
+) -> None:
     if (
-        not IMAGE_PATTERN.fullmatch(image)
-        or not SHA_PATTERN.fullmatch(source_sha)
+        not SHA_PATTERN.fullmatch(source_sha)
         or not DIGEST_PATTERN.fullmatch(compose_sha)
+        or (image != "" if read_only_preflight else not IMAGE_PATTERN.fullmatch(image))
     ):
         raise PreflightError("invalid immutable deployment coordinates")
 
@@ -503,7 +505,9 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
 
 
 def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> None:
-    _validate_coordinates(image, source_sha, compose_sha)
+    _validate_coordinates(
+        image, source_sha, compose_sha, read_only_preflight=phase_name == "preflight"
+    )
     _validate_docker_boundary()
     if phase_name in {"diagnostic-config", "diagnostic"}:
         _diagnostic_files(compose_sha)

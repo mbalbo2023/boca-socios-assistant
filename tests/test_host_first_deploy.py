@@ -219,7 +219,7 @@ def test_unverified_docker_boundary_stops_every_host_phase_before_mutation(
         host, "_run", lambda *args, **kwargs: pytest.fail("Docker command executed")
     )
     with pytest.raises(PreflightError, match="daemon boundary"):
-        host.phase(phase_name, IMAGE, SOURCE_SHA, digest)
+        host.phase(phase_name, "" if phase_name == "preflight" else IMAGE, SOURCE_SHA, digest)
     assert not (host.ROOT / "secrets").exists()
 
 
