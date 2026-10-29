@@ -40,6 +40,18 @@ network or staged file blocks a fresh installation; this flow is not a
 recovery or upgrade procedure. The CPU snapshot is an estimate, so a human
 capacity review is still required before authorization.
 
+## Proposed read-only diagnostic under demand (issue #68)
+
+The same protected workflow offers a manual `diagnostic` choice for a Boca
+controller already installed from the exact current `main` SHA. After a
+separate authorization and environment review, it checks only Boca Compose,
+key **metadata**, immutable image identity, resource limits, health and
+`BOCA_ENGINE_MODE=off`. It never reads the key value or database rows, starts
+the motor, visits the site or changes a container. The run summary contains
+only bounded status and immutable coordinates. A mismatch is NO-GO and
+requires a reviewed diagnosis; it is not a reason to retry the first install
+or alter another workload. This code has not been dispatched to a host.
+
 ## Proposed isolated deployment layout
 
 | Item | Boca project | Unrelated workloads |
