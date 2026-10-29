@@ -44,6 +44,10 @@ No merge, image release or droplet operation is authorized by this ADR. The
 remaining #10, independent PR/environment reviews, exact digest/SHA/service,
 capacity and window gates still apply.
 
+Issue #80 / [ADR 0034](0034-rootless-key-custody.md) proposes a separate
+key-volume design for the identified UID mismatch. Its runner smoke is not
+evidence of the actual droplet's rootless storage or delegated limits.
+
 Primary references: [Docker rootless](https://docs.docker.com/engine/security/rootless/),
 [rootless cgroup limits](https://docs.docker.com/engine/security/rootless/tips/#limiting-resources),
 [UID/GID mapping](https://docs.docker.com/engine/security/rootless/uid-gid-mapping/),

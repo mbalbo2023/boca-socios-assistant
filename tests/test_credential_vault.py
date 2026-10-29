@@ -91,12 +91,12 @@ def test_fifo_secret_path_fails_without_blocking(tmp_path: Path) -> None:
         CredentialVault.from_secret_file(path)
 
 
-def test_docker_secret_exception_is_exactly_readonly_0444() -> None:
-    secret = Path("/run/secrets/boca_master_key")
-    assert CredentialVault._is_readonly_docker_secret(secret, 0o444)
-    for mode in (0o644, 0o640, 0o604, 0o440, 0o400, 0o600):
-        assert not CredentialVault._is_readonly_docker_secret(secret, mode)
-    assert not CredentialVault._is_readonly_docker_secret(Path("/run/secrets/other"), 0o444)
+def test_world_readable_key_has_no_mount_exception(tmp_path: Path) -> None:
+    path = tmp_path / "boca_master_key"
+    path.write_bytes(base64.b64encode(os.urandom(32)))
+    path.chmod(0o444)
+    with pytest.raises(ValueError, match="readable by other identities"):
+        CredentialVault.from_secret_file(path)
 
 
 def test_missing_platform_nofollow_fails_closed(

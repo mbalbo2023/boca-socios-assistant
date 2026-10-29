@@ -19,7 +19,6 @@ _SERVICE_FIELDS = {
     "init",
     "restart",
     "environment",
-    "secrets",
     "volumes",
     "networks",
     "read_only",
@@ -59,37 +58,19 @@ def _keys(value: Mapping[str, object], expected: set[str], field: str) -> None:
 
 def _volume(service: Mapping[str, object]) -> None:
     mounts = _list(service.get("volumes"), "controller volumes")
-    if len(mounts) != 1:
+    if len(mounts) != 2:
         raise ContractError("invalid controller volumes")
-    mount = _mapping(mounts[0], "controller volume")
-    if set(mount) - {"type", "source", "target", "read_only", "volume"}:
-        raise ContractError("invalid controller volume fields")
-    for key, expected in {
-        "type": "volume",
-        "source": "boca_data",
-        "target": "/data",
-    }.items():
-        _equal(mount.get(key), expected, f"controller volume {key}")
-    if mount.get("read_only", False) is not False:
-        raise ContractError("invalid controller volume read_only")
-    if "volume" in mount and _mapping(mount["volume"], "volume options"):
-        raise ContractError("invalid controller volume options")
-
-
-def _secret(service: Mapping[str, object]) -> None:
-    mounts = _list(service.get("secrets"), "controller secrets")
-    if len(mounts) != 1:
-        raise ContractError("invalid controller secrets")
-    mount = _mapping(mounts[0], "controller secret")
-    if set(mount) - {"source", "target", "uid", "gid", "mode"}:
-        raise ContractError("invalid controller secret fields")
-    _equal(mount.get("source"), "boca_master_key", "controller secret source")
-    _equal(mount.get("target"), "/run/secrets/boca_master_key", "controller secret target")
-    for key in ("uid", "gid"):
-        if key in mount and str(mount[key]) != "0":
-            raise ContractError(f"invalid controller secret {key}")
-    if "mode" in mount and mount["mode"] not in (292, "0444"):
-        raise ContractError("invalid controller secret mode")
+    for index, (source, target, read_only) in enumerate(
+        (("boca_data", "/data", False), ("boca_key", "/run/secrets", True))
+    ):
+        mount = _mapping(mounts[index], "controller volume")
+        if set(mount) - {"type", "source", "target", "read_only", "volume"}:
+            raise ContractError("invalid controller volume fields")
+        for key, expected in {"type": "volume", "source": source, "target": target}.items():
+            _equal(mount.get(key), expected, f"controller volume {key}")
+        _equal(mount.get("read_only", False), read_only, "controller volume read_only")
+        if "volume" in mount and _mapping(mount["volume"], "volume options"):
+            raise ContractError("invalid controller volume options")
 
 
 def validate_contract(model: object, expected_image: str) -> None:
@@ -97,7 +78,7 @@ def validate_contract(model: object, expected_image: str) -> None:
     if not _IMAGE.fullmatch(expected_image):
         raise ContractError("invalid approved image digest")
     root = _mapping(model, "Compose model")
-    _keys(root, {"name", "services", "volumes", "networks", "secrets"}, "Compose")
+    _keys(root, {"name", "services", "volumes", "networks"}, "Compose")
     _equal(root["name"], "boca-socios", "Compose project")
 
     services = _mapping(root["services"], "services")
@@ -132,7 +113,6 @@ def validate_contract(model: object, expected_image: str) -> None:
         "controller environment",
     )
     _volume(service)
-    _secret(service)
     health = _mapping(service["healthcheck"], "controller healthcheck")
     _keys(health, {"test", "interval", "timeout", "retries", "start_period"}, "healthcheck")
     for key, expected in {
@@ -145,10 +125,11 @@ def validate_contract(model: object, expected_image: str) -> None:
         _equal(health[key], expected, f"controller healthcheck {key}")
 
     volumes = _mapping(root["volumes"], "volumes")
-    _keys(volumes, {"boca_data"}, "volumes")
-    volume = _mapping(volumes["boca_data"], "boca volume")
-    _keys(volume, {"name"}, "boca volume")
-    _equal(volume["name"], "boca-socios_boca_data", "boca volume name")
+    _keys(volumes, {"boca_data", "boca_key"}, "volumes")
+    for name in ("boca_data", "boca_key"):
+        volume = _mapping(volumes[name], "boca volume")
+        _keys(volume, {"name"}, "boca volume")
+        _equal(volume["name"], f"boca-socios_{name}", "boca volume name")
 
     networks = _mapping(root["networks"], "networks")
     _keys(networks, {"boca_private"}, "networks")
@@ -158,12 +139,3 @@ def validate_contract(model: object, expected_image: str) -> None:
     _equal(network["driver"], "bridge", "boca network driver")
     _equal(network["ipam"], {}, "boca network IPAM")
     _equal(service["networks"], {"boca_private": None}, "controller networks")
-
-    secrets = _mapping(root["secrets"], "secrets")
-    _keys(secrets, {"boca_master_key"}, "secrets")
-    secret = _mapping(secrets["boca_master_key"], "boca secret")
-    if set(secret) - {"file", "name"}:
-        raise ContractError("invalid boca secret fields")
-    _equal(secret.get("file"), "/srv/boca-socios/secrets/master.key", "boca secret source")
-    if "name" in secret:
-        _equal(secret["name"], "boca-socios_boca_master_key", "boca secret name")

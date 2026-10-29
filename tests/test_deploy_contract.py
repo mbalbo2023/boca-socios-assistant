@@ -120,7 +120,10 @@ def test_additional_service_and_unsafe_key_mount_are_rejected() -> None:
 
     candidate = model()
     candidate["services"]["controller"]["volumes"][1] = {  # type: ignore[index]
-        "type": "bind", "source": "/var/shared", "target": "/run/secrets", "read_only": True
+        "type": "bind",
+        "source": "/var/shared",
+        "target": "/run/secrets",
+        "read_only": True,
     }
     with pytest.raises(ContractError):
         validate_contract(candidate, IMAGE)
