@@ -37,19 +37,13 @@ def model() -> dict[str, object]:
                 "secrets": [
                     {"source": "boca_master_key", "target": "/run/secrets/boca_master_key"}
                 ],
-                "tmpfs": ["/tmp:rw,noexec,nosuid,size=16m"],
-                "healthcheck": {
-                    "test": ["CMD", "python", "-m", "boca_socios.healthcheck"]
-                },
+                "tmpfs": ["/tmp:rw,noexec,nosuid,size=16m"],  # noqa: S108 - mount contract
+                "healthcheck": {"test": ["CMD", "python", "-m", "boca_socios.healthcheck"]},
             }
         },
         "volumes": {"boca_data": {"name": "boca-socios_boca_data"}},
-        "networks": {
-            "boca_private": {"name": "boca-socios_boca_private", "driver": "bridge"}
-        },
-        "secrets": {
-            "boca_master_key": {"file": "/srv/boca-socios/secrets/master.key"}
-        },
+        "networks": {"boca_private": {"name": "boca-socios_boca_private", "driver": "bridge"}},
+        "secrets": {"boca_master_key": {"file": "/srv/boca-socios/secrets/master.key"}},
     }
 
 
@@ -89,6 +83,6 @@ def test_additional_service_and_shared_secret_are_rejected() -> None:
         validate_contract(candidate, IMAGE)
 
     candidate = model()
-    candidate["secrets"]["boca_master_key"]["file"] = "/tmp/shared"  # type: ignore[index]
+    candidate["secrets"]["boca_master_key"]["file"] = "/var/shared"  # type: ignore[index]
     with pytest.raises(ContractError):
         validate_contract(candidate, IMAGE)
