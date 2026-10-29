@@ -24,7 +24,7 @@ def model() -> dict[str, object]:
                 "restart": "unless-stopped",
                 "read_only": True,
                 "cpus": 0.5,
-                "mem_limit": 268435456,
+                "mem_limit": "268435456",
                 "pids_limit": 64,
                 "cap_drop": ["ALL"],
                 "security_opt": ["no-new-privileges:true"],
@@ -40,12 +40,29 @@ def model() -> dict[str, object]:
                     {"source": "boca_master_key", "target": "/run/secrets/boca_master_key"}
                 ],
                 "tmpfs": ["/tmp:rw,noexec,nosuid,size=16m"],  # noqa: S108 - mount contract
-                "healthcheck": {"test": ["CMD", "python", "-m", "boca_socios.healthcheck"]},
+                "healthcheck": {
+                    "test": ["CMD", "python", "-m", "boca_socios.healthcheck"],
+                    "interval": "30s",
+                    "timeout": "5s",
+                    "retries": 3,
+                    "start_period": "15s",
+                },
             }
         },
         "volumes": {"boca_data": {"name": "boca-socios_boca_data"}},
-        "networks": {"boca_private": {"name": "boca-socios_boca_private", "driver": "bridge"}},
-        "secrets": {"boca_master_key": {"file": "/srv/boca-socios/secrets/master.key"}},
+        "networks": {
+            "boca_private": {
+                "name": "boca-socios_boca_private",
+                "driver": "bridge",
+                "ipam": {},
+            }
+        },
+        "secrets": {
+            "boca_master_key": {
+                "name": "boca-socios_boca_master_key",
+                "file": "/srv/boca-socios/secrets/master.key",
+            }
+        },
     }
 
 
@@ -64,7 +81,7 @@ def test_exact_isolated_controller_passes() -> None:
         ("service", "ports", [{"published": 8000, "target": 8000}]),
         ("service", "privileged", True),
         ("service", "user", "0:0"),
-        ("service", "mem_limit", 536870912),
+        ("service", "mem_limit", "536870912"),
         ("service", "cap_add", ["ALL"]),
         ("service", "network_mode", "host"),
         ("service", "volumes", [{"type": "bind", "source": "/", "target": "/data"}]),
@@ -88,5 +105,17 @@ def test_additional_service_and_shared_secret_are_rejected() -> None:
 
     candidate = model()
     candidate["secrets"]["boca_master_key"]["file"] = "/var/shared"  # type: ignore[index]
+    with pytest.raises(ContractError):
+        validate_contract(candidate, IMAGE)
+
+
+def test_changed_healthcheck_or_network_is_rejected() -> None:
+    candidate = model()
+    candidate["services"]["controller"]["healthcheck"]["timeout"] = "60s"  # type: ignore[index]
+    with pytest.raises(ContractError):
+        validate_contract(candidate, IMAGE)
+
+    candidate = model()
+    candidate["networks"]["boca_private"]["ipam"] = {"config": [{"subnet": "0.0.0.0/0"}]}  # type: ignore[index]
     with pytest.raises(ContractError):
         validate_contract(candidate, IMAGE)

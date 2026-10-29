@@ -38,7 +38,6 @@ jobs:
           BOCA_ENVIRONMENT: staging
         run: |
           docker compose -f compose.yaml config --format json > "$RUNNER_TEMP/boca-compose.json"
-          cat "$RUNNER_TEMP/boca-compose.json"
           uv run python scripts/check_deploy_contract.py "$RUNNER_TEMP/boca-compose.json" "$BOCA_IMAGE"
       - name: Lint
         run: uv run ruff check .

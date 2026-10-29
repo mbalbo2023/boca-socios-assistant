@@ -113,7 +113,7 @@ def validate_contract(model: object, expected_image: str) -> None:
         "restart": "unless-stopped",
         "read_only": True,
         "cpus": 0.5,
-        "mem_limit": 268435456,
+        "mem_limit": "268435456",
         "pids_limit": 64,
         "cap_drop": ["ALL"],
         "security_opt": ["no-new-privileges:true"],
@@ -133,13 +133,15 @@ def validate_contract(model: object, expected_image: str) -> None:
     _volume(service)
     _secret(service)
     health = _mapping(service["healthcheck"], "controller healthcheck")
-    if set(health) - {"test", "interval", "timeout", "retries", "start_period"}:
-        raise ContractError("invalid controller healthcheck fields")
-    _equal(
-        health.get("test"),
-        ["CMD", "python", "-m", "boca_socios.healthcheck"],
-        "controller healthcheck",
-    )
+    _keys(health, {"test", "interval", "timeout", "retries", "start_period"}, "healthcheck")
+    for key, expected in {
+        "test": ["CMD", "python", "-m", "boca_socios.healthcheck"],
+        "interval": "30s",
+        "timeout": "5s",
+        "retries": 3,
+        "start_period": "15s",
+    }.items():
+        _equal(health[key], expected, f"controller healthcheck {key}")
 
     volumes = _mapping(root["volumes"], "volumes")
     _keys(volumes, {"boca_data"}, "volumes")
@@ -150,9 +152,10 @@ def validate_contract(model: object, expected_image: str) -> None:
     networks = _mapping(root["networks"], "networks")
     _keys(networks, {"boca_private"}, "networks")
     network = _mapping(networks["boca_private"], "boca network")
-    _keys(network, {"name", "driver"}, "boca network")
+    _keys(network, {"name", "driver", "ipam"}, "boca network")
     _equal(network["name"], "boca-socios_boca_private", "boca network name")
     _equal(network["driver"], "bridge", "boca network driver")
+    _equal(network["ipam"], {}, "boca network IPAM")
     _equal(service["networks"], {"boca_private": None}, "controller networks")
 
     secrets = _mapping(root["secrets"], "secrets")
