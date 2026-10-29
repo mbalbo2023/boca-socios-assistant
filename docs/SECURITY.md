@@ -13,19 +13,17 @@ encryption**, not an ordinary password hash.
 - Bind ciphertext to the member_id through authenticated additional data.
 - SQLite holds: member_id, key_id, nonce and ciphertext. No plaintext
   password column or secret-bearing audit log.
-- Master key: base64 32-byte random secret mounted via Compose secrets at
-  /run/secrets/boca_master_key; never in DB/repo/Docker image or Actions logs.
+- Master key: base64 32-byte random secret created once in a Boca-only Docker
+  volume and mounted read-only at /run/secrets/boca_master_key; never in DB,
+  repository, image or Actions logs.
 - The Linux-targeted vault requires `O_NOFOLLOW` (fails closed if absent), checks
-  regular-file type, ownership, bounded length and safe permissions using
-  the opened descriptor. Ordinary files must be owner-only (0600/0400).
-  Some Compose file-secret implementations expose a read-only **0444 mount**;
-  this exact permission mode is accepted **only** at `/run/secrets/boca_master_key`
-  container path. It is not proof that the host-side source is secure.
-- Before any real enrollment, verify that the host-side source is owner-only,
-  that only the Boca container can mount it, and that no untrusted process
-  shares this container. Never rewrite/chmod the mounted secret in runtime.
-- Key file provisioned at an owner-controlled path outside the source tree,
-  never shared with another application. Access limited to the Boca identity.
+  regular-file type, ownership, bounded length and owner-only permissions
+  using the opened descriptor. The previous 0444 file-secret exception is
+  removed. The approved key volume has a 0400 file owned by container UID
+  10001 and is separate from the database volume.
+- Before real enrollment, prove actual rootless UID mapping, read-only mount,
+  metadata, backup custody and recovery on the target. Never rewrite or chmod
+  the mounted key in the controller.
 - Key version is part of each record; key rotation requires a tested,
   explicit migration with old/new keys and recovery verification.
 - Database file permissions 0600, private parent directory, distinct
@@ -37,7 +35,9 @@ encryption**, not an ordinary password hash.
 Loss of the encryption key makes stored passwords unrecoverable; leak of
 both database and key exposes passwords. Do not put the encryption key
 beside the database in a backup. Do not give the key to a coding agent.
-The owner will authorize a separate one-time deployment secret workflow.
+The first-install workflow generates the key inside the isolated rootless
+namespace; a separate, reviewed key-volume recovery plan is needed before
+real credentials can be stored.
 
 ## Access policy
 

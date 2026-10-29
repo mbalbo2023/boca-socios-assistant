@@ -20,7 +20,7 @@ the Boca-specific credentials/variables. The readiness variable alone is
 insufficient evidence of environment protection.
 
 The proposed host prerequisite is a dedicated `boca-deploy` identity with UID
-10001 and access to Docker, Python 3.10+, and an already provisioned empty
+10001 and access only to its rootless Docker socket, Python 3.10+, and an already provisioned empty
 `/srv/boca-socios` directory owned by that UID with mode 0700. A reviewer
 must verify SSH host identity out of band and pin it in the environment's
 known-hosts secret; the workflow has no `ssh-keyscan` fallback. Host setup is
@@ -28,17 +28,29 @@ not part of this PR. Confirm the GHCR package is accessible by the host
 without placing registry credentials on it. If any prerequisite is absent,
 stop before dispatch and record NO-GO; do not improvise a host change.
 
+**Security correction #78:** Docker access must be to a dedicated rootless
+socket at `/run/user/10001/docker.sock`; access to the shared rootful daemon
+is NO-GO. The helper now pins that endpoint and rejects missing rootless/cgroup
+evidence before any first-install or diagnostic phase. **Correction #80:**
+the proposed key is generated within a Boca-only volume by the approved image
+and mounted read-only by the UID 10001 controller. No host file secret or 0444
+permission is used. This design still requires an isolated **rootless** trial
+to prove actual key access and delegated CPU/memory/PID limits, host account
+privileges and restart behavior. Do not dispatch merely because the runner
+smoke passes. See [ADR 0033](ADR/0033-rootless-daemon-boundary.md) and
+[ADR 0034](ADR/0034-rootless-key-custody.md).
+
 The workflow first validates dispatch inputs and the successful manual image
 release run for the same current `main` SHA. It validates the resolved Compose
 contract on the runner, reads aggregate host capacity and Boca-only resource
 names, stages and hashes one Compose file, then validates the host-resolved
 model before pulling the exact digest. Only then can it create an owner-only
-random key and start the simulation-only controller. Before reporting success,
-it reuses the read-only diagnostic contract to verify the actual container,
-image, dormant engine, resource limits and key metadata. A startup or
-postflight failure stops only that service, preserves the key and volume, and
+random key in a separate rootless volume and start the simulation-only controller. Before reporting success,
+it reuses the diagnostic contract to verify the actual container,
+image, dormant engine, resource limits, volume mounts and key metadata. A startup or
+postflight failure stops only that service, preserves the key and both volumes, and
 requires separate diagnosis before another attempt. An existing Boca key,
-container, volume, network or staged file blocks a fresh installation; this
+container, either volume, network or staged file blocks a fresh installation; this
 flow is not a recovery or upgrade procedure. The CPU snapshot is an estimate,
 so a human capacity review is still required before authorization.
 
@@ -47,7 +59,7 @@ so a human capacity review is still required before authorization.
 The same protected workflow offers a manual `diagnostic` choice for a Boca
 controller already installed from the exact current `main` SHA. After a
 separate authorization and environment review, it checks only Boca Compose,
-key **metadata**, immutable image identity, resource limits, health and
+key **metadata** through a fixed in-container Python probe, immutable image identity, resource limits, health and
 `BOCA_ENGINE_MODE=off`. It never reads the key value or database rows, starts
 the motor, visits the site or changes a container. The run summary contains
 only bounded status and immutable coordinates. A mismatch is NO-GO and
@@ -63,7 +75,7 @@ or alter another workload. This code has not been dispatched to a host.
 | Directory | Assigned only in a separately approved deployment | No shared subtree |
 | Database | Boca-only named volume | No shared database |
 | Network | Boca-only bridge | No shared network |
-| Secrets | Boca-only source and file | No copied/reused keys |
+| Secrets | Boca-only key volume, separate from DB | No copied/reused keys |
 | Image | Boca-only tag + digest | No reused images |
 | Host ports | None initially | None altered |
 | CPU/RAM controller | 0.5 vCPU / 256 MiB | Existing capacity protected |

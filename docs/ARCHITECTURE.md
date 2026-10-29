@@ -42,7 +42,8 @@ quantity remains 1 independently of the number of sessions observed.
 
 ## Resource isolation
 
-Compose project name boca-socios, volume boca_data, network boca_private,
+Compose project name boca-socios, separate volumes boca_data and boca_key,
+network boca_private,
 no host port, no shared mount, no Docker socket, no privileged container.
 Controller is capped at 0.5 vCPU, 256 MiB RAM, 64 PIDs, nonroot and
 read-only filesystem. Future workers require separate resource budgets,

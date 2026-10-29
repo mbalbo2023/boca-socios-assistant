@@ -2,6 +2,10 @@
 
 Status: Proposed for issue #8, 2026-10-28. Simulation mode only.
 
+The 0444 file-secret compatibility exception described below is superseded
+by [ADR 0034](0034-rootless-key-custody.md) for the rootless deployment
+candidate; the implementation now requires owner-only key permissions.
+
 ## Decision
 
 Pin the official Python 3.12.15 slim-bookworm base by **multi-architecture
