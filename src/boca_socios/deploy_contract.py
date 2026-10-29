@@ -13,6 +13,8 @@ class ContractError(ValueError):
 _IMAGE = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z")
 _SERVICE_FIELDS = {
     "image",
+    "command",
+    "entrypoint",
     "user",
     "init",
     "restart",
@@ -102,6 +104,8 @@ def validate_contract(model: object, expected_image: str) -> None:
     _keys(services, {"controller"}, "services")
     service = _mapping(services["controller"], "controller")
     _keys(service, _SERVICE_FIELDS, "controller")
+    _equal(service["command"], None, "controller command override")
+    _equal(service["entrypoint"], None, "controller entrypoint override")
     for key, expected in {
         "image": expected_image,
         "user": "10001:10001",

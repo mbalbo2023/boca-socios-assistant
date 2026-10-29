@@ -17,6 +17,8 @@ def model() -> dict[str, object]:
         "services": {
             "controller": {
                 "image": IMAGE,
+                "command": None,
+                "entrypoint": None,
                 "user": "10001:10001",
                 "init": True,
                 "restart": "unless-stopped",
@@ -57,6 +59,8 @@ def test_exact_isolated_controller_passes() -> None:
         ("top", "name", "other"),
         ("service", "image", "ghcr.io/mbalbo2023/boca-socios-assistant:latest"),
         ("service", "build", {"context": "."}),
+        ("service", "entrypoint", ["sh"]),
+        ("service", "command", ["sh"]),
         ("service", "ports", [{"published": 8000, "target": 8000}]),
         ("service", "privileged", True),
         ("service", "user", "0:0"),
