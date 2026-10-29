@@ -23,7 +23,15 @@ jobs:
         with:
           persist-credentials: false
       - name: Build one local controller image
-        run: docker build --tag boca-release-validation:${{ github.sha }} .
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          IMAGE: boca-release-validation:${{ github.sha }}
+        run: docker build --label "org.opencontainers.image.revision=$SOURCE_SHA" --tag "$IMAGE" .
+      - name: Verify source revision label
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          IMAGE: boca-release-validation:${{ github.sha }}
+        run: test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
       - name: Scan before any image publication
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -59,7 +67,13 @@ jobs:
       - name: Build one local controller image
         env:
           IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
-        run: docker build --tag "$IMAGE" .
+          SOURCE_SHA: ${{ github.sha }}
+        run: docker build --label "org.opencontainers.image.revision=$SOURCE_SHA" --tag "$IMAGE" .
+      - name: Verify source revision label
+        env:
+          IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
       - name: Scan the image that will be published
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
