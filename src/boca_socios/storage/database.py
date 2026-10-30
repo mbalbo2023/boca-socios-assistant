@@ -106,6 +106,12 @@ class Database:
             )
 
     def request_ticket(self, intent: TicketIntent) -> str:
+        """Create or return the single durable logical intent for member/event.
+
+        INSERT with a targeted uniqueness conflict is atomic under SQLite's
+        one-writer transaction model, including when callers race. This is
+        local intent idempotency, NOT external Boca reservation idempotency.
+        """
         intent.validate()
         request_id = str(uuid.uuid4())
         with self.connection() as connection, connection:
@@ -113,7 +119,17 @@ class Database:
                 """
                 INSERT INTO ticket_requests(request_id, member_id, event_id, quantity)
                 VALUES (?, ?, ?, ?)
+                ON CONFLICT(member_id, event_id) DO NOTHING
                 """,
                 (request_id, intent.member_id, intent.event_id, intent.quantity),
             )
-        return request_id
+            row = connection.execute(
+                """
+                SELECT request_id FROM ticket_requests
+                WHERE member_id = ? AND event_id = ?
+                """,
+                (intent.member_id, intent.event_id),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("ticket intent was not persisted")
+            return str(row[0])

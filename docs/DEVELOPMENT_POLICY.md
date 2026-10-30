@@ -6,13 +6,15 @@ Past incident classes include accidental deploy on documentation changes,
 overlapping writers and deployment leases, status gates being skipped,
 SQLite writer contention, excessive disk/memory pressure and the danger
 of mistaking a green CI unit test for a verified live deployment.
-This new repository has deliberately no autonomous production deploy path.
+The current main has no remote deployment workflow. A reviewed, manual Boca
+Actions workflow may later run autonomously under the owner's standing
+direction after its objective gates are satisfied.
 
 ## Branch protection contract
 
 - Default branch: main; no direct pushes, branch deletion or force-pushes.
-- Require a PR, 1 approving review and code owner review.
-- Dismiss approvals on new commits; require resolution of conversations.
+- Require a PR and a recorded agent technical review; no human approving
+  review or code-owner approval is required. Resolve review conversations.
 - Required contexts: CI / quality-and-tests and CI / image-build,
   after the first workflow run.
 - No merge of draft PRs, skipped tests or unknown candidate SHAs.
@@ -27,19 +29,30 @@ main is protected before verifying GitHub's **actual ruleset state**. See
 
 ## Work protocol
 
-1. Each issue has explicit owner and narrow scope; no concurrent overlapping
-   source writers. Single candidate SHA per decision.
+1. Each issue has explicit owner and narrow scope; parallelize independent
+   issues and read-only checks, with no concurrent overlapping source writers.
+   Single candidate SHA per decision.
 2. First commit includes tests/contract, implementation follows in small
    increments. A red test triggers root cause analysis, not a weaker guard.
-3. CI is read-only against third parties and needs no Boca credentials.
+3. CI needs no Boca credentials and does not probe third parties. A separate,
+   bounded read-only Actions source diagnostic may check a public endpoint
+   when needed; its outage result is advisory, not a required deploy check.
 4. Use dependency lock, pinned Actions, no CI jobs on untrusted self-hosted
    runners, no broad GITHUB_TOKEN scopes or unreviewed scripts.
-5. Do not merge until the exact SHA is green and reviewed. Main pushes rerun
-   CI but must **never** deploy.
-6. Releases are signed/tagged and build-once with immutable image digest.
-   Deployment of digest and tag requires an independent human-approved
-   manual GitHub Actions workflow and a Boca-only resource preflight.
+5. Do not merge until the exact SHA is green and has a documented agent
+   technical review. Main pushes rerun CI but must **never** deploy.
+6. Releases are build-once with immutable image digest and verified source
+   provenance. An installation uses the sole manual GitHub Actions workflow,
+   exact SHA/digest/service inputs and a Boca-only resource preflight. The
+   owner has delegated this gated operation without another human approval.
 7. On any unexpected condition, stop/fail closed, record NO_GO and fix forward.
+8. If a host operation fails, inventory Boca-only disposable artifacts and
+   disk/inodes before and after a narrowly scoped Actions cleanup. Preserve
+   key/data volumes and uncertain resources; never use host-wide prune.
+9. Diagnose source failures through Actions before deciding on code changes.
+   Report source health as a timestamped semaphore. A source outage cannot
+   turn a safe dormant-controller deploy into NO_GO or justify redeployment;
+   a demonstrated code defect can justify a new PR and deploy.
 
 ## No parallel deployment paths
 

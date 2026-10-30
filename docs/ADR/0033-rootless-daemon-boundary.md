@@ -11,14 +11,16 @@ deployment identity could obtain host root authority despite the script's
 Boca-only commands. The actual droplet daemon and SSH permissions have **not**
 been observed. This is a conditional threat, not a claim about the host.
 
-All first-install phases and the read-only diagnostic now fail before their
-other actions unless the dedicated UID 10001 owns the private runtime
+All first-install phases and the read-only diagnostic now check real/effective
+UID and GID and the dedicated `boca-deploy` account before reading private
+socket or key metadata. They fail before other actions unless UID 10001 owns the private runtime
 directory and rootless Unix socket, cannot write the conventional rootful
 socket, and `docker info` on the **explicit** rootless socket reports
 `name=rootless`, cgroup v2 and the systemd driver. The user service's
 `cgroup.controllers` must list `cpu`, `memory` and `pids`. Every Docker command
-in the helper pins `DOCKER_HOST` to that socket and discards an inherited
-Docker context/TLS target. Absent or malformed evidence is NO-GO. The checks
+in the helper pins `DOCKER_HOST` to that socket and discards inherited
+Docker context, client config and TLS variables, including `DOCKER_TLS`.
+Absent or malformed evidence is NO-GO. The checks
 read metadata only; they do not enumerate or change another workload.
 
 ## Limits and next review

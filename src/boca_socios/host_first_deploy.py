@@ -148,6 +148,8 @@ def _run(*args: str, env: dict[str, str] | None = None) -> str:
         # operations to the shared rootful daemon or a remote endpoint.
         run_env = dict(os.environ if env is None else env)
         run_env.pop("DOCKER_CONTEXT", None)
+        run_env.pop("DOCKER_CONFIG", None)
+        run_env.pop("DOCKER_TLS", None)
         run_env.pop("DOCKER_TLS_VERIFY", None)
         run_env.pop("DOCKER_CERT_PATH", None)
         run_env["DOCKER_HOST"] = f"unix://{ROOTLESS_SOCKET}"
@@ -187,7 +189,20 @@ def _rootful_socket_inaccessible() -> bool:
     return not os.access(ROOTFUL_SOCKET, os.W_OK)
 
 
+def _require_dedicated_identity() -> None:
+    uid = os.getuid()
+    if uid != 10001 or os.geteuid() != uid or os.getegid() != os.getgid():
+        raise PreflightError("expected dedicated Boca identity")
+    try:
+        account = pwd.getpwuid(uid).pw_name
+    except KeyError as exc:
+        raise PreflightError("dedicated Boca identity is unavailable") from exc
+    if account != "boca-deploy":
+        raise PreflightError("expected dedicated boca-deploy account")
+
+
 def _validate_docker_boundary() -> None:
+    _require_dedicated_identity()
     socket_secure = _rootless_socket_secure()
     rootful_inaccessible = _rootful_socket_inaccessible()
     if not socket_secure or not rootful_inaccessible:
@@ -322,12 +337,7 @@ def _validate_coordinates(image: str, source_sha: str, compose_sha: str) -> None
 
 
 def _diagnostic_files(expected_sha: str) -> None:
-    try:
-        account = pwd.getpwuid(os.getuid()).pw_name
-    except KeyError as exc:
-        raise PreflightError("dedicated Boca identity is unavailable") from exc
-    if os.getuid() != 10001 or account != "boca-deploy":
-        raise PreflightError("expected dedicated boca-deploy account")
+    _require_dedicated_identity()
     if not _safe_dir(ROOT) or not _safe_dir(SECRET_DIR):
         raise PreflightError("Boca directory ownership or permissions changed")
     if {child.name for child in ROOT.iterdir()} != {"compose.yaml", "secrets"}:
@@ -363,6 +373,11 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
         _run("docker", "inspect", "--format", "{{json .HostConfig}}", container),
         "container host config",
     )
+    port_bindings = host.get("PortBindings")
+    if not isinstance(port_bindings, dict):
+        raise PreflightError("missing or malformed Boca port bindings")
+    if host.get("PublishAllPorts") is not False:
+        raise PreflightError("Boca automatic port publishing is not disabled")
     labels = config.get("Labels")
     entries = config.get("Env")
     if not isinstance(labels, dict) or not isinstance(entries, list):
@@ -412,7 +427,7 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
         pids_limit=host.get("PidsLimit"),  # type: ignore[arg-type]
         read_only=host.get("ReadonlyRootfs"),  # type: ignore[arg-type]
         privileged=host.get("Privileged"),  # type: ignore[arg-type]
-        has_ports=bool(host.get("PortBindings")),
+        has_ports=bool(port_bindings),
     )
     validate_diagnostic(snapshot, image, source_sha)
     return snapshot
@@ -499,7 +514,7 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
         # hold before the first install can claim success.
         _diagnostic_files(compose_sha)
         collect_diagnostic(image, source_sha)
-    except (ValueError, OSError):
+    except (ValueError, OSError, TypeError, KeyError):
         try:
             _run(*_compose_args("stop", "controller"), env=_compose_env(image))
         except PreflightError:
@@ -520,7 +535,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         phase(args.phase, args.image, args.source_sha, args.compose_sha)
-    except (PreflightError, OSError, ValueError) as exc:
+    except (PreflightError, OSError, ValueError, TypeError, KeyError) as exc:
         print(f"BOCA_NO_GO: {exc}", file=sys.stderr)
         return 1
     return 0

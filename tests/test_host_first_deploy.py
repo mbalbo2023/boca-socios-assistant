@@ -22,6 +22,15 @@ from boca_socios.host_first_deploy import (
 
 SOURCE_SHA = "a" * 40
 IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64
+GOOD_HOST_CONFIG = {
+    "NanoCpus": 500_000_000,
+    "Memory": 268_435_456,
+    "PidsLimit": 64,
+    "ReadonlyRootfs": True,
+    "Privileged": False,
+    "PortBindings": {},
+    "PublishAllPorts": False,
+}
 
 
 def safe_boundary() -> DockerBoundarySnapshot:
@@ -32,6 +41,16 @@ def safe_boundary() -> DockerBoundarySnapshot:
         cgroup_version="2",
         cgroup_driver="systemd",
         controllers=frozenset({"cpu", "memory", "pids"}),
+    )
+
+
+def _dedicated_test_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
+    monkeypatch.setattr(host.os, "geteuid", lambda: 10001)
+    monkeypatch.setattr(host.os, "getgid", lambda: 10001)
+    monkeypatch.setattr(host.os, "getegid", lambda: 10001)
+    monkeypatch.setattr(
+        host.pwd, "getpwuid", lambda _uid: type("Account", (), {"pw_name": "boca-deploy"})()
     )
 
 
@@ -72,6 +91,7 @@ def test_unproven_daemon_boundary_is_no_go(field: str, value: object) -> None:
 def test_daemon_info_must_prove_rootless_and_cgroups(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, info: dict[str, object]
 ) -> None:
+    _dedicated_test_identity(monkeypatch)
     controllers = tmp_path / "cgroup.controllers"
     controllers.write_text("cpu memory pids\n")
     monkeypatch.setattr(host, "CGROUP_CONTROLLERS", controllers)
@@ -85,6 +105,7 @@ def test_daemon_info_must_prove_rootless_and_cgroups(
 def test_rootless_daemon_info_and_delegation_are_checked_together(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    _dedicated_test_identity(monkeypatch)
     controllers = tmp_path / "cgroup.controllers"
     controllers.write_text("cpu io memory pids\n")
     monkeypatch.setattr(host, "CGROUP_CONTROLLERS", controllers)
@@ -104,6 +125,33 @@ def test_rootless_daemon_info_and_delegation_are_checked_together(
     host._validate_docker_boundary()
 
 
+@pytest.mark.parametrize(
+    ("identity_method", "value"),
+    [("getuid", 0), ("geteuid", 0), ("getgid", 10002), ("getegid", 10002)],
+)
+def test_docker_boundary_checks_effective_identity_before_private_socket_metadata(
+    monkeypatch: pytest.MonkeyPatch, identity_method: str, value: int
+) -> None:
+    _dedicated_test_identity(monkeypatch)
+    monkeypatch.setattr(host.os, identity_method, lambda: value)
+    monkeypatch.setattr(host, "_rootless_socket_secure", lambda: pytest.fail("socket read"))
+    monkeypatch.setattr(host, "_rootful_socket_inaccessible", lambda: pytest.fail("rootful read"))
+    with pytest.raises(PreflightError, match="dedicated Boca identity"):
+        host._validate_docker_boundary()
+
+
+def test_docker_boundary_rejects_wrong_account_before_socket_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _dedicated_test_identity(monkeypatch)
+    monkeypatch.setattr(
+        host.pwd, "getpwuid", lambda _uid: type("Account", (), {"pw_name": "other"})()
+    )
+    monkeypatch.setattr(host, "_rootless_socket_secure", lambda: pytest.fail("socket read"))
+    with pytest.raises(PreflightError, match="dedicated boca-deploy account"):
+        host._validate_docker_boundary()
+
+
 def test_docker_commands_cannot_use_inherited_rootful_or_remote_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -118,12 +166,36 @@ def test_docker_commands_cannot_use_inherited_rootful_or_remote_context(
     monkeypatch.setattr(host.subprocess, "run", fake_subprocess)
     assert (
         host._run(
-            "docker", "info", env={"DOCKER_HOST": "tcp://remote:2375", "DOCKER_CONTEXT": "rootful"}
+            "docker",
+            "info",
+            env={
+                "DOCKER_HOST": "tcp://remote:2375",
+                "DOCKER_CONTEXT": "rootful",
+                "DOCKER_CONFIG": "/var/remote-context",
+                "DOCKER_TLS": "1",
+                "DOCKER_TLS_VERIFY": "1",
+                "DOCKER_CERT_PATH": "/var/remote-certs",
+            },
         )
         == "ok"
     )
     assert captured[0]["DOCKER_HOST"] == "unix:///run/user/10001/docker.sock"
-    assert "DOCKER_CONTEXT" not in captured[0]
+    for variable in (
+        "DOCKER_CONTEXT",
+        "DOCKER_CONFIG",
+        "DOCKER_TLS",
+        "DOCKER_TLS_VERIFY",
+        "DOCKER_CERT_PATH",
+    ):
+        assert variable not in captured[0]
+
+    monkeypatch.setenv("DOCKER_HOST", "ssh://remote")
+    monkeypatch.setenv("DOCKER_CONTEXT", "rootful")
+    monkeypatch.setenv("DOCKER_TLS", "1")
+    assert host._run("docker", "info") == "ok"
+    assert captured[1]["DOCKER_HOST"] == "unix:///run/user/10001/docker.sock"
+    assert "DOCKER_CONTEXT" not in captured[1]
+    assert "DOCKER_TLS" not in captured[1]
 
 
 def safe_snapshot() -> HostSnapshot:
@@ -285,7 +357,14 @@ def test_first_install_requires_strict_postflight_before_reporting_pass(
 
 
 @pytest.mark.parametrize(
-    "failure", [PreflightError("engine on"), ValueError("bad JSON"), OSError("missing key")]
+    "failure",
+    [
+        PreflightError("engine on"),
+        ValueError("bad JSON"),
+        OSError("missing key"),
+        TypeError("unexpected Docker metadata type"),
+        KeyError("missing Docker metadata field"),
+    ],
 )
 def test_postflight_failure_stops_only_controller_and_preserves_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
@@ -311,6 +390,94 @@ def test_postflight_failure_stops_only_controller_and_preserves_key(
     monkeypatch.setattr(host, "collect_diagnostic", fail_postflight)
     with pytest.raises(type(failure)):
         host.phase("apply", IMAGE, SOURCE_SHA, digest)
+    assert [command[-2:] for command in commands if "stop" in command] == [("stop", "controller")]
+    assert len(base64.b64decode(host.KEY.read_bytes().strip(), validate=True)) == 32
+    assert stat.S_IMODE(host.KEY.stat().st_mode) == 0o400
+    assert not any("down" in command or "prune" in command for command in commands)
+
+
+@pytest.mark.parametrize(
+    ("field", "payload"),
+    [
+        ("{{json .Config}}", "{"),
+        ("{{json .Config}}", "[]"),
+        ("{{json .Config}}", '{"Labels": {}, "Env": [12]}'),
+        ("{{json .HostConfig}}", "null"),
+        (
+            "{{json .HostConfig}}",
+            json.dumps(
+                {key: value for key, value in GOOD_HOST_CONFIG.items() if key != "PortBindings"}
+            ),
+        ),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "PortBindings": None})),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "PortBindings": []})),
+        (
+            "{{json .HostConfig}}",
+            json.dumps(
+                {key: value for key, value in GOOD_HOST_CONFIG.items() if key != "PublishAllPorts"}
+            ),
+        ),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "PublishAllPorts": True})),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "PublishAllPorts": "false"})),
+        (
+            "{{json .HostConfig}}",
+            json.dumps({**GOOD_HOST_CONFIG, "PortBindings": {"80/tcp": [{"HostPort": "8080"}]}}),
+        ),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "NanoCpus": {}})),
+    ],
+)
+def test_malformed_docker_postflight_stops_controller_without_removing_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    field: str,
+    payload: str,
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str, env: dict[str, str] | None = None) -> str:
+        commands.append(args)
+        if args[:3] == ("docker", "image", "inspect"):
+            return json.dumps([IMAGE]) if "RepoDigests" in args[4] else SOURCE_SHA
+        if "ps" in args:
+            return "c" * 64
+        if args[:2] == ("docker", "inspect"):
+            if args[3] == "{{.State.Health.Status}}":
+                return "healthy"
+            if args[3] == field:
+                return payload
+            if args[3] == "{{json .Config}}":
+                return json.dumps(
+                    {
+                        "Image": IMAGE,
+                        "User": "10001:10001",
+                        "Labels": {
+                            "com.docker.compose.project": "boca-socios",
+                            "com.docker.compose.service": "controller",
+                        },
+                        "Env": [
+                            "BOCA_ENVIRONMENT=staging",
+                            "BOCA_DB_PATH=/data/boca.sqlite3",
+                            "BOCA_MASTER_KEY_FILE=/run/secrets/boca_master_key",
+                            "BOCA_RUNTIME_MODE=simulation",
+                            "BOCA_ENGINE_MODE=off",
+                        ],
+                    }
+                )
+            if args[3] == "{{json .HostConfig}}":
+                return json.dumps(GOOD_HOST_CONFIG)
+            raise AssertionError("unexpected Docker inspection")
+        return ""
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    monkeypatch.setattr(host, "_diagnostic_files", lambda _sha: None)
+
+    with pytest.raises(ValueError):
+        host.phase("apply", IMAGE, SOURCE_SHA, digest)
+
+    assert "BOCA_DEPLOY_PASS" not in capsys.readouterr().out
+    assert any(command[3] == field for command in commands if command[:2] == ("docker", "inspect"))
     assert [command[-2:] for command in commands if "stop" in command] == [("stop", "controller")]
     assert len(base64.b64decode(host.KEY.read_bytes().strip(), validate=True)) == 32
     assert stat.S_IMODE(host.KEY.stat().st_mode) == 0o400
@@ -418,6 +585,7 @@ def test_diagnostic_phase_uses_only_read_only_boca_queries(
                             "ReadonlyRootfs": True,
                             "Privileged": False,
                             "PortBindings": {},
+                            "PublishAllPorts": False,
                         }
                     )
                 case "{{.State.Health.Status}}":
@@ -438,6 +606,20 @@ def test_diagnostic_phase_uses_only_read_only_boca_queries(
     )
 
 
+@pytest.mark.parametrize("mismatch", ["real_uid", "effective_uid", "effective_gid"])
+def test_diagnostic_rejects_setid_before_private_metadata(
+    monkeypatch: pytest.MonkeyPatch, mismatch: str
+) -> None:
+    uid = 1000 if mismatch == "real_uid" else 10001
+    monkeypatch.setattr(host.os, "getuid", lambda: uid)
+    monkeypatch.setattr(host.os, "geteuid", lambda: 0 if mismatch == "effective_uid" else uid)
+    monkeypatch.setattr(host.os, "getgid", lambda: 10001)
+    monkeypatch.setattr(host.os, "getegid", lambda: 0 if mismatch == "effective_gid" else 10001)
+    monkeypatch.setattr(host, "_safe_dir", lambda _path: pytest.fail("private path was read"))
+    with pytest.raises(PreflightError, match="dedicated Boca identity"):
+        host._diagnostic_files("c" * 64)
+
+
 @pytest.mark.parametrize("symlink", [False, True])
 def test_diagnostic_rejects_missing_or_symlinked_key_without_reading_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, symlink: bool
@@ -447,8 +629,11 @@ def test_diagnostic_rejects_missing_or_symlinked_key_without_reading_it(
     if symlink:
         host.KEY.symlink_to(tmp_path / "outside")
     monkeypatch.setattr(host.os, "getuid", lambda: 10001)
+    monkeypatch.setattr(host.os, "geteuid", lambda: 10001)
+    monkeypatch.setattr(host.os, "getgid", lambda: 10001)
+    monkeypatch.setattr(host.os, "getegid", lambda: 10001)
     monkeypatch.setattr(
         host.pwd, "getpwuid", lambda _uid: type("Account", (), {"pw_name": "boca-deploy"})()
     )
-    with pytest.raises(PreflightError):
+    with pytest.raises(PreflightError, match="secret directory entries|key metadata"):
         host._diagnostic_files(digest)
