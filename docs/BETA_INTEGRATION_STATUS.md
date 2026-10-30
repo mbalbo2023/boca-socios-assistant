@@ -1,13 +1,39 @@
 # Estado de integración BETA
 
-**Corte:** 2026-10-29 (America/Argentina/Buenos_Aires). Base de esta revisión: `main`
-`bfe4a3c830cff963e1668add05f50c50d0cbf2e8`. Issue #24, PR #30.
-Este documento describe el candidato offline; no acredita una BETA operativa.
+## Estado vigente — 2026-10-30 (America/Argentina/Buenos_Aires)
 
-**Revalidación del 2026-10-30 (UTC):** #30 se integró en `main`, junto con el
-outbox durable #34 y el worker Chromium offline #43. Los PRs #36, #38, #40 y
-#44 siguen en borrador; sus checks históricos no acreditan una integración
-actual. El semáforo y los límites de este documento siguen excluyendo
+Base verificada: `main` `9aeb005b9dddec663d5e8ecfcf703044205d5be6`.
+La release sigue en **simulación solamente**. Los merges no demuestran un host
+apto ni habilitan login, credenciales, cola, Telegram o reserva real.
+
+| Área | Estado vigente | Evidencia y límite |
+| --- | --- | --- |
+| Componentes offline | GO para revisión y pruebas sintéticas | #30/#34/#36 integraron contratos y outbox durable; #36 impide dos ejecuciones del navegador ficticio en una misma instancia; #38 agregó una concesión local SQLite, aún sin conexión a un flujo externo de reserva |
+| Panel y alta privada | NO_GO operativo | #29 sólo renderiza estados inyectados; #31 es un servicio interno sin endpoint; #110 es una vista previa sintética en PR draft. No hay ruta privada autenticada, TLS, sesión ni CSRF verificados |
+| Chromium y fuente pública | Sólo prueba offline y observación pública acotada | #43 arrancó/cerró Chromium sin egress y #44 midió un arranque, no capacidad del droplet ni visita real. #33 no se ejecutó contra Boca en este gate; #96 ofrece un semáforo manual asesor, no prueba de flujo autenticado |
+| Claves y recuperación | NO_GO para credenciales reales | #40 continúa draft. #47 incorporó una biblioteca offline de snapshot/restore cifrado, pero el dueño difirió todo trabajo de backup/restore hasta una versión productiva fiable. No bloquea esta simulación; antes de ingresar contraseñas reales siguen los requisitos de ADR 0012/0022, canal privado, identidad y custodia |
+| Controlador y host | NO_GO para dispatch | #63 incorporó un workflow manual, #66 mantiene motor `off`, #69 añadió diagnóstico sólo lectura y #71 postflight estricto. El diagnóstico no verifica aún el daemon rootless; faltan #79/#81/#89/#91/#97 y los gates de imagen, SSH, aislamiento, recursos y capacidad. Ninguna operación de host se acredita aquí |
+| Reserva real | NO_GO | No hay cuenta autorizada, orden real de login/cola/eligibilidad, confirmación de Boca ni conciliación externa de un resultado ambiguo; una intención local `planned` no es ticket |
+
+Cada PR necesita revisión técnica registrada del agente, checks exactos y
+conversaciones resueltas. ADR 0038 no exige una aprobación humana adicional.
+La única operación futura de host sería manual por Actions con sus gates
+comprobados; un merge o un semáforo público no la dispara. La BETA de
+simulación y el alta real tienen puertas distintas: postergar backup/restore
+no convierte la primera en un bloqueo ni autoriza la segunda.
+
+## Registro histórico del candidato #24
+
+**Corte original:** 2026-10-29 (America/Argentina/Buenos_Aires). Base de esta
+revisión: `main`
+`bfe4a3c830cff963e1668add05f50c50d0cbf2e8`. Issue #24, PR #30.
+Todo el texto bajo este título describe aquel candidato offline; no acredita
+el estado vigente ni una BETA operativa.
+
+**Revalidación intermedia del 2026-10-30 (UTC):** #30 se integró en `main`,
+junto con el outbox durable #34 y el worker Chromium offline #43. Los PRs
+#36, #38, #40 y #44 seguían en borrador; sus checks históricos no acreditan
+una integración actual. El semáforo y los límites de aquel corte excluían
 credenciales, reserva real y despliegue por un merge.
 
 ## Integración efectivamente realizada

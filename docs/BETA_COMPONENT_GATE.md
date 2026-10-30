@@ -1,4 +1,29 @@
-# BETA de componentes: registro histórico del gate #35
+# BETA de componentes: estado vigente y registro histórico del gate #35
+
+## Estado vigente — 2026-10-30 (America/Argentina/Buenos_Aires)
+
+Base verificada: `main` `9aeb005b9dddec663d5e8ecfcf703044205d5be6`.
+La integración de componentes **offline** permite revisar una simulación; no
+acredita una BETA operativa, credenciales reales, reserva ni estado del host.
+Todo el texto bajo «Registro histórico» documenta cortes anteriores, no la
+HEAD actual ni una prueba de Boca.
+
+| Alcance | Evidencia en esta base | Decisión actual |
+| --- | --- | --- |
+| Simulación e intento local | #36 y #38 integrados: coordinación de una sola ejecución por socio dentro de una instancia, y concesión durable SQLite para un intento local | GO para pruebas sintéticas; #38 no está conectado a una reserva externa ni garantiza exactamente una vez en Boca |
+| Panel y alta | #29 renderiza estados inyectados y #31 ofrece alta interna; #110 sigue draft como artefacto sintético de vista previa | NO_GO para interfaz privada: faltan ruta servida, autenticación administrativa y controles de sesión/TLS/CSRF |
+| Navegador y fuente pública | #43 arrancó/cerró Chromium sin egress; #44 midió un solo arranque offline; #33 es opt-in y #96 informa un semáforo público manual | No hay prueba de login, cola, elegibilidad o reserva; el script #33 no fue ejecutado contra Boca en este gate ni se midió una visita real |
+| Claves y credenciales | #40 continúa draft; el vault y #31 no exponen un canal seguro de ingreso | NO_GO para contraseñas reales; falta completar y revisar el ciclo de claves, identidad única y alta privada |
+| Host | #63 incorporó el workflow manual; #66 exige motor `off`; #69 añadió diagnóstico de sólo lectura; #71 incorporó postflight estricto | NO_GO para dispatch: #69 aún no demuestra rootless; faltan #79, #81, #89, #91, #97 y los gates de release, host y capacidad. No hubo operación del host en este corte |
+| Backup/restore | El dueño difirió este trabajo hasta contar con una versión productiva fiable | No bloquea esta BETA de simulación ni habilita credenciales reales; antes de un alta real siguen pendientes los requisitos de recuperación/custodia de ADR 0012 y ADR 0022 |
+
+Para cada nuevo PR se registra revisión técnica del agente, checks exactos y
+conversaciones resueltas. ADR 0038 sustituyó la antigua exigencia de otra
+aprobación humana; fusionar no activa un despliegue. Un futuro dispatch requiere
+evidencia de todos los gates objetivos de la única Actions Boca. Una señal
+pública adversa se informa como alerta y no sustituye esos gates.
+
+## Registro histórico — cortes del 2026-10-28 y 2026-10-29
 
 **Fecha:** 2026-10-28 (America/Argentina/Buenos_Aires). **Estado:** rama de
 verificación, sin merge a `main`, despliegue ni acceso autenticado a Boca.
@@ -11,11 +36,12 @@ revisión técnica registrada del agente y CI exacta, sin aprobación humana
 adicional. El diseño #28 se revisó y fusionó el 2026-10-29 en horario de
 Argentina, sin habilitar alta real. Revalidar PRs, main y gates antes de operar.
 
-**Revalidación del 2026-10-30 (UTC):** #30, #34, #33 y #43 ya están en `main`.
-#36, #38, #40 y #44 permanecen como borradores; #42 se rehízo como PR
+**Revalidación intermedia del 2026-10-30 (UTC):** #30, #34, #33 y #43 ya
+estaban en `main`.
+#36, #38, #40 y #44 permanecían como borradores; #42 se rehízo como PR
 documental directo a `main`. El árbol y las CI de 157 pruebas descritos abajo
-son históricos, no el estado del actual PR #42. El smoke offline de Chromium
-integrado no prueba el sitio ni habilita reserva o despliegue.
+son históricos, no el estado de #42 ni de la base vigente indicada arriba. El
+smoke offline de Chromium no prueba el sitio ni habilita reserva o despliegue.
 
 Para un agente nuevo, empezar por
 [AGENT_HANDOFF_2026-10-28.md](AGENT_HANDOFF_2026-10-28.md), que incluye
