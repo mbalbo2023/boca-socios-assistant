@@ -1,6 +1,12 @@
 # ADR 0040: manual Actions semaphore for the anonymous public source
 
-**Status:** Proposed for issue #94, 2026-10-29. No live source check dispatched.
+**Status:** Implemented for issue #94 in PR #96, 2026-10-29
+(America/Argentina/Buenos_Aires). The first manual dispatch
+[40984386263](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40984386263)
+completed on 2026-10-30 at 01:12:10 UTC, attempt 1. Its bounded observation
+at 01:12:06 UTC reported `GREEN`, HTTP 200, `http_200_unverified` from the
+anonymous public login URL. This confirms only that single response from a
+GitHub runner; login, queue, eligibility and reservation remain unverified.
 
 ## Decision
 
