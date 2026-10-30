@@ -39,6 +39,9 @@ removed. The CLI inspect-to-run interval is not atomic against another writer
 with access to the same rootless daemon; the dedicated identity and serialized
 operation remain mandatory, and an isolated rootless trial must verify this
 boundary before any host use.
+After init, the helper rechecks volume identity before verification. A
+failed second init must retain the original key; the disposable runner smoke
+checks that behavior without exposing key bytes.
 
 ## Limits and gates
 

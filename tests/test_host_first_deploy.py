@@ -334,13 +334,53 @@ def test_key_volume_is_created_once_and_verified_without_host_secret(
     monkeypatch.setattr(host, "_run", fake_run)
     host._create_key(IMAGE)
     assert commands[0][:3] == ("docker", "volume", "create")
-    init, verify = commands[-2:]
+    init, verify = (command for command in commands if command[:2] == ("docker", "run"))
     assert init[-1] == "init" and verify[-1] == "verify"
     assert "--network" in init and init[init.index("--network") + 1] == "none"
     assert "CHOWN" in init and "CHOWN" not in verify
     assert "--user" in verify and verify[verify.index("--user") + 1] == "10001:10001"
     assert "readonly" in verify[verify.index("--mount") + 1]
     assert not any("bind" in value for command in commands for value in command)
+
+
+def test_changed_key_volume_after_initialization_blocks_verify_and_preserves_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _docker_root(tmp_path)
+    inspections = 0
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str) -> str:
+        nonlocal inspections
+        commands.append(args)
+        if args[:3] == ("docker", "volume", "create"):
+            return host.KEY_VOLUME
+        if args[:3] == ("docker", "volume", "inspect"):
+            inspections += 1
+            return json.dumps(
+                {
+                    "Name": host.KEY_VOLUME,
+                    "Driver": "local",
+                    "Scope": "local",
+                    "Labels": {
+                        "com.docker.compose.project": "boca-socios",
+                        "com.docker.compose.volume": "boca_key",
+                    },
+                    "Options": {} if inspections == 1 else {"type": "none", "o": "bind"},
+                    "Mountpoint": str(root / "volumes" / host.KEY_VOLUME / "_data"),
+                }
+            )
+        if args[:2] == ("docker", "info"):
+            return str(root)
+        if args[:2] == ("docker", "run") and args[-1] == "init":
+            return "BOCA_KEY_READY"
+        raise AssertionError("verify must not run after volume changed")
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    with pytest.raises(PreflightError, match="volume identity"):
+        host._create_key(IMAGE)
+    assert inspections == 2
+    assert not any(command[:3] == ("docker", "volume", "rm") for command in commands)
 
 
 def test_existing_or_foreign_key_volume_is_no_go_before_initializer(

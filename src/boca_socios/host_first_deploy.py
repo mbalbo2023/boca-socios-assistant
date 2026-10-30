@@ -392,6 +392,9 @@ def _create_key(image: str) -> None:
     _validate_key_volume()
     if _run(*_key_container(image, "init")) != "BOCA_KEY_READY":
         raise PreflightError("Boca key initialization did not confirm completion")
+    # Volume creation/inspection is not atomic with a container run; reject a
+    # changed named volume before treating the initialized key as usable.
+    _validate_key_volume()
     if _run(*_key_container(image, "verify")) != "BOCA_KEY_READY":
         raise PreflightError("Boca key is not readable by the controller identity")
 
