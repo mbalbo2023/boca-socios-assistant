@@ -96,7 +96,7 @@ jobs:
           container="$(docker compose -p boca-socios -f compose.yaml ps -q controller)"
           test -n "$container"
           test "$(docker inspect --format '{{.State.Health.Status}}' "$container")" = healthy
-          docker logs "$container" | python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin if x.strip()]; assert rows == [{"event": "started", "mode": "simulation", "site_calls": 0}]'
+          docker logs "$container" | python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin if x.strip()]; assert rows == [{"event": "started", "mode": "simulation", "engine": "off", "site_calls": 0}]'
       - name: Remove only synthetic Boca resources from disposable runner
         if: always()
         run: |
