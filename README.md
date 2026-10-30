@@ -39,8 +39,10 @@ infrastructure**.
   no exposed ports and no host Docker socket.
 - CI: pinned checkout/setup actions, frozen dependency lock, lint, format,
   strict typing, tests, image build and repository-isolation checks.
-- Delivery: small PRs, owner review, status checks, immutable release artifacts,
-  controlled/manual deployment after a **separate** authorization.
+- Delivery: small PRs, recorded agent technical review, exact-SHA status
+  checks and immutable release artifacts. Future Boca-only host operations
+  use the manual Actions workflow under the owner's standing direction once
+  its exact-input and isolation gates are proven.
 
 ## Read before contributing
 
@@ -66,15 +68,14 @@ uv run pytest -q
 uv run python scripts/check_repo_policy.py
 ~~~
 
-No manual terminal commands on a production host are required or
-authorized by the instructions above. Actions deployment is a future,
-owner-approved workflow.
+No manual terminal commands on a production host are required by these
+instructions. Future host operations use only the gated Boca Actions workflow.
 
 ## Lifecycle
 
-**Foundation → simulation → controlled test → review → separate deploy
-authorization.** This initial work is foundation-only. A green CI run is
-necessary but **not sufficient** evidence for deployment.
+**Foundation → simulation → controlled test → recorded technical review →
+gated Actions operation.** This initial work is foundation-only. A green CI
+run is necessary but **not sufficient** evidence for deployment.
 
 **Public-repository governance:** GitHub Free supports enforced branch rules
 and free standard GitHub-hosted Actions runners on public repositories. The

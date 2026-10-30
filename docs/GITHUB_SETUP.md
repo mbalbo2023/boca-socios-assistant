@@ -2,12 +2,10 @@
 
 Creating CODEOWNERS and CI files is not enough to enforce policy.
 
-**Public repository target, 2026-10-28:** GitHub Free supports enforced
-protection of public branches. The steps below are **target-state
-requirements**, not claims that any setting is already enabled. Document
-each actual control's visible state after configuration. A separate
-reviewer identity is needed before requiring approvals: authors cannot
-approve their own PR.
+**Public repository target, 2026-10-29:** GitHub Free supports enforced
+protection of public branches. The owner directs the agent to do and record
+technical review without requiring a different human account. Verify each
+control's actual state in Settings rather than inferring it from this file.
 
 1. Confirm repository is PUBLIC with a **new sanitized initial history**
    and the default branch is main. Verify branch and job names directly.
@@ -15,9 +13,8 @@ approve their own PR.
    - Name: protect-main
    - Enforcement: Active; target: default branch (main).
    - Block deletion and force pushes.
-   - Require pull requests. Add one independent approval and mandatory
-     code-owner review **only after** a distinct reviewer exists.
-   - Dismiss stale reviews and require conversation resolution.
+   - Require pull requests and conversation resolution; zero required GitHub
+     approvals. Record the agent's technical review and exact-SHA CI in the PR.
    - Require status checks `quality-and-tests` and `image-build`, after
      CI first reports their exact GitHub check context names.
    - Prevent bypass except for a documented break-glass owner decision.
@@ -29,16 +26,28 @@ approve their own PR.
 5. Security → secret scanning, push protection, Dependabot alerts and code
    scanning if plan supports them. Do not substitute unavailable plan features
    with a false claim of enforcement.
-6. Environments: add staging and production **only** if deployment is later
-   approved. Production must require reviewer approval and run only from main.
-7. Do NOT add deployment secrets yet; first review a dedicated deployment
-   workflow PR and verify capacity on the intended host.
+6. Environments for future Boca host operations must restrict deployment to
+   main, hold a dedicated SSH identity and pinned host key, and be marked ready
+   only after those settings are verified. No required human reviewer.
+7. Do not recreate or rotate the existing SSH key secret while reconciling
+   settings. A pin configured in GitHub is not evidence of host connectivity.
 8. Run and verify CI; then activate required status checks.
 
-Until protection is actually activated and verified in GitHub Settings,
-changes must go through PR and exact-SHA CI by policy. Disclose if a rule
-is still unenforced. Do not falsely claim that merely adding this document
-or CODEOWNERS has locked main.
+## Revalidated state on 2026-10-29
+
+- `protect-main` ruleset 26163295 is active on the default branch. It
+  requires a PR, linear history and exact required `quality-and-tests` and
+  `image-build` checks; required approving review count is zero.
+- `main` still contains only `ci.yml`. The manual Boca host workflow exists
+  only in draft PRs, so it cannot be dispatched from the default branch yet.
+- The private `boca-first-deploy` environment has the pre-existing SSH key
+  secret and separately authorized host/key pin. Its branch restriction is
+  main-only; required reviewers are off, administrative bypass is available,
+  and its readiness variable remains absent. Host readiness and other
+  privileged paths are unverified. Do not call this environment ready yet.
+
+Record any subsequent settings changes as observed facts; neither this
+document nor CODEOWNERS enforces GitHub settings by itself.
 
 ## Repository access
 
