@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
+from pathlib import Path
 
 import pytest
 from cryptography.exceptions import InvalidTag
@@ -38,9 +39,72 @@ def test_tampering_is_rejected() -> None:
         vault.open(modified, member_id="member-a")
 
 
-def test_external_master_key_file(tmp_path: object) -> None:
-    from pathlib import Path
-
-    path = Path(str(tmp_path)) / "key"
+def test_external_master_key_file(tmp_path: Path) -> None:
+    path = tmp_path / "key"
     path.write_bytes(base64.b64encode(os.urandom(32)))
+    path.chmod(0o600)
     assert CredentialVault.from_secret_file(path)
+
+
+def test_master_key_file_rejects_world_readable_and_symlink(tmp_path: Path) -> None:
+    path = tmp_path / "master-key"
+    path.write_bytes(base64.b64encode(os.urandom(32)))
+    path.chmod(0o644)
+    with pytest.raises(ValueError, match="readable by other identities"):
+        CredentialVault.from_secret_file(path)
+
+    path.chmod(0o600)
+    alias = tmp_path / "symlink"
+    alias.symlink_to(path)
+    with pytest.raises(ValueError, match="unavailable or inaccessible"):
+        CredentialVault.from_secret_file(alias)
+
+
+def test_master_key_file_fails_closed_on_unexpected_contents(tmp_path: Path) -> None:
+    path = tmp_path / "master-key"
+    path.write_bytes(b"invalid-base64-content")
+    path.chmod(0o600)
+    with pytest.raises(ValueError, match="encoding"):
+        CredentialVault.from_secret_file(path)
+
+    path.write_bytes(b"A" * 300)
+    with pytest.raises(ValueError, match="unexpectedly large"):
+        CredentialVault.from_secret_file(path)
+
+    path.write_bytes(base64.b64encode(os.urandom(32)))
+    path.chmod(0o622)
+    with pytest.raises(ValueError, match="writable/executable"):
+        CredentialVault.from_secret_file(path)
+
+
+def test_master_key_file_requires_absolute_regular_file(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="absolute"):
+        CredentialVault.from_secret_file(Path("relative-secret"))
+    with pytest.raises(ValueError, match="regular file|unavailable or inaccessible"):
+        CredentialVault.from_secret_file(tmp_path)
+
+
+def test_fifo_secret_path_fails_without_blocking(tmp_path: Path) -> None:
+    path = tmp_path / "fake-secret-pipe"
+    os.mkfifo(path, mode=0o600)
+    with pytest.raises(ValueError, match="regular file"):
+        CredentialVault.from_secret_file(path)
+
+
+def test_docker_secret_exception_is_exactly_readonly_0444() -> None:
+    secret = Path("/run/secrets/boca_master_key")
+    assert CredentialVault._is_readonly_docker_secret(secret, 0o444)
+    for mode in (0o644, 0o640, 0o604, 0o440, 0o400, 0o600):
+        assert not CredentialVault._is_readonly_docker_secret(secret, mode)
+    assert not CredentialVault._is_readonly_docker_secret(Path("/run/secrets/other"), 0o444)
+
+
+def test_missing_platform_nofollow_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "key"
+    path.write_bytes(base64.b64encode(os.urandom(32)))
+    path.chmod(0o600)
+    monkeypatch.delattr(os, "O_NOFOLLOW", raising=False)
+    with pytest.raises(ValueError, match="no-follow"):
+        CredentialVault.from_secret_file(path)

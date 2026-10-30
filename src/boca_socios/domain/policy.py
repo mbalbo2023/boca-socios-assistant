@@ -12,7 +12,12 @@ class TicketIntent:
     quantity: int = 1
 
     def validate(self) -> None:
-        if not self.member_id or not self.event_id:
+        if (
+            not isinstance(self.member_id, str)
+            or not self.member_id.strip()
+            or not isinstance(self.event_id, str)
+            or not self.event_id.strip()
+        ):
             raise ValueError("member_id and event_id are required")
-        if self.quantity != 1:
+        if type(self.quantity) is not int or self.quantity != 1:
             raise ValueError("exactly one ticket per member and event is permitted")
