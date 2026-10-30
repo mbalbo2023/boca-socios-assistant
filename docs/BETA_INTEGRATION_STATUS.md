@@ -1,7 +1,7 @@
 # Estado de integración BETA
 
 **Corte:** 2026-10-30 UTC. Base de esta revisión: `main`
-`881119e915b62377c87056a9ed687d91ce784a2f`. Issue #24, PR #30.
+`31c368ca07e095694f06528d746fecb83cfe3fb8`. Issue #24, PR #30.
 Este documento describe el candidato offline; no acredita una BETA operativa.
 
 ## Integración efectivamente realizada
@@ -16,6 +16,7 @@ Este documento describe el candidato offline; no acredita una BETA operativa.
 | #26 | Flujo de navegador ficticio | Integrado; aviso sin ID de socio/evento, Chromium real no probado en CI |
 | #19 | Instrumento de benchmark opcional | Integrado; sin cifra medida de capacidad |
 | #28 | Diseño de alta privada | Integrado como ADR, sin interfaz operativa |
+| #29 | Renderizador accesible de estados ficticios | Integrado offline; sin endpoint privado ni prueba manual de lector de pantalla |
 | #96 | Diagnóstico público manual por Actions (issue #94) | Integrado como semáforo asesor, separado de CI y despliegue |
 | #51 | Dependencia cryptography y lockfile | Integrado con CI exacta |
 
@@ -56,7 +57,7 @@ se registra en la conversación de PR #30 antes de cualquier merge.
 | Librerías offline | GO para integración revisada | Tests cruzados y CI exacta del candidato |
 | Portada pública | Observación histórica acotada | [Registro del 2026-10-28](BOCA_PUBLIC_OBSERVATION_2026-10-28.md); no revela flujo autenticado |
 | Fuente externa | Asesor, no gate de despliegue | `boca-source-status.yml` manual en Actions; informar color, UTC y run o UNKNOWN |
-| BETA operativa | NO_GO | Alta privada #31, panel #29, outbox durable #34, guardia #38, rotación #40 y wiring siguen pendientes |
+| BETA operativa | NO_GO | Alta privada #31, endpoint autenticado del panel, outbox durable #34, guardia #38, rotación #40 y wiring siguen pendientes |
 | Reserva real | NO_GO | Sin identidad verificada, autorización de sitio, flujo observado ni reconciliación de resultado ambiguo |
 | Capacidad del host | No verificada | #19 no ejecutó Chromium real; preflight rootless/cgroup/disco debe venir de Actions |
 | Despliegue | No ejecutado | Sólo workflow manual Boca en `main` y gates de SHA/digest/aislamiento/recursos pueden habilitarlo |
@@ -67,8 +68,9 @@ despliegue seguro del controlador dormido ni justifica uno nuevo. Un defecto
 de código probado requiere PR y CI nueva. Nunca se habilita login, cola o
 checkout real por una señal de salud pública.
 
-El protocolo de observación #15 permanece separado. El panel #29 y la
-interfaz privada #31 son PR draft al corte. Las PR encadenadas #34/#36/#38/#40
+El protocolo de observación #15 permanece separado. El renderizador del
+panel #29 está integrado, pero la interfaz privada #31 es PR draft al corte.
+Las PR encadenadas #34/#36/#38/#40
 necesitan revisión propia y actualización sobre `main` en orden; su mera
 existencia no completa el runtime. No hay credenciales, tráfico autenticado,
 reserva, Telegram, cambios del droplet ni de otros proyectos en este candidato.
