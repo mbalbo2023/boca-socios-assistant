@@ -50,16 +50,17 @@ installation. See [ADR 0036](ADR/0036-release-digest-binding.md). It validates
 the resolved Compose contract on the runner, reads aggregate host capacity
 and Boca-only resource names, stages and hashes one Compose file, then
 validates the host-resolved model before pulling the exact digest. It then
-creates an owner-only key once
-inside a separate rootless volume and starts the simulation-only controller.
+creates an owner-only key once inside a separate rootless volume and starts
+the simulation-only controller.
 Before reporting success, the helper reuses the read-only diagnostic contract
 to check the actual container, image, dormant engine, resource limits, both
 mounts and key metadata. Startup or postflight failure stops only the Boca
 controller and preserves the key and both volumes for separate diagnosis. An
 existing Boca key, container, volume, network or staged file blocks a fresh
 installation; this flow is not recovery or upgrade. The CPU snapshot is an
-estimate; #91 adds measurement of staging and rootless image storage. #91,
-#97 and #99 remain pending gates. An external source failure is reported by
+estimate; this gate now measures staging and rootless image storage separately,
+while #106 still needs post-pull capacity proof. #97 and #99 remain pending
+gates. An external source failure is reported by
 Actions as an alert, not a deploy blocker for the simulation-only controller.
 
 ## Read-only diagnostic under demand (issue #68)
@@ -76,8 +77,8 @@ The run summary contains only bounded status and immutable coordinates. A
 mismatch is NO-GO and requires diagnosis; it is not a reason to retry the
 first install or alter another workload. The helper checks real/effective
 UID/GID before private metadata and pins rootless Docker transport. It must
-remain uninvoked until #91 hardens the whole workflow's identity and main
-checks. No host diagnostic has run yet.
+remain uninvoked until the environment, identity and host prerequisites are
+verified under the objective gates. No host diagnostic has run yet.
 
 ## Proposed read-only host preflight (issue #84)
 
@@ -88,6 +89,31 @@ image and release-run fields must be blank. This operation has no stage,
 pull, key, volume, container or site effect and is unavailable on PRs. It
 requires the protected environment and pinned SSH identity; no host operation
 has been dispatched. See [ADR 0035](ADR/0035-readonly-host-preflight.md).
+
+## Proposed prerequisite inspection after false-negative socket checks (issue #90)
+
+The same manual workflow adds `operation=inspect-prerequisites`, with blank
+image and release-run fields. It checks socket and cgroup **metadata as UID
+10001**, differentiating `absent` from `unavailable`, without running Docker
+or altering the host. A failed job reports unproven prerequisites; a metadata
+candidate is not proof that a Docker daemon is rootless or healthy. The
+existing `preflight` remains mandatory before any release/install decision.
+The environment must first be verified and marked ready as an **environment**
+(pinned identity and main-only branch rule), independently
+of the daemon's readiness. See [ADR 0037](ADR/0037-host-prerequisite-inspection.md).
+
+The manual host workflow rejects reruns and verifies the current `main` ref
+through the GitHub API before SSH. First installation repeats that check
+before staging Compose and again immediately before applying the reviewed
+image; the host helper refuses a real/effective UID or GID mismatch before
+private-path or Docker checks. A queued
+run whose source SHA is no longer current fails closed. These controls do
+not prove the SSH account has no other privileged route on the host.
+The read-only capacity gate checks free bytes and inodes separately on the
+Boca staging directory and the dedicated rootless daemon's verified
+`DockerRootDir` beneath the private Boca home. Unknown storage location,
+ownership or available capacity is NO-GO; a healthy staging filesystem alone
+cannot establish that image storage has headroom.
 
 ## Proposed isolated deployment layout
 

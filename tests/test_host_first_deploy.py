@@ -2,8 +2,11 @@
 
 import hashlib
 import json
+import os
+import stat
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -203,6 +206,8 @@ def safe_snapshot() -> HostSnapshot:
         available_memory_kib=1024 * 1024,
         available_disk_bytes=8 * 1024**3,
         available_inodes=100_000,
+        docker_disk_bytes=8 * 1024**3,
+        docker_inodes=100_000,
         root_ready=True,
         boca_containers=False,
         boca_volume=False,
@@ -233,6 +238,9 @@ def test_observe_uses_only_bounded_read_only_docker_queries(
     root.mkdir(mode=0o700)
     monkeypatch.setattr(host, "ROOT", root)
     monkeypatch.setattr(host, "COMPOSE", root / "compose.yaml")
+    # The storage path guard has separate path/backend tests below; keep this
+    # regression focused on the actual Docker command inventory in observe.
+    monkeypatch.setattr(host, "_checked_docker_storage_dir", lambda: root)
     monkeypatch.setattr(host, "_safe_dir", lambda _path: True)
     monkeypatch.setattr(host, "_rootless_socket_secure", lambda: True)
     monkeypatch.setattr(host, "_rootful_socket_inaccessible", lambda: True)
@@ -283,6 +291,149 @@ def test_observe_uses_only_bounded_read_only_docker_queries(
     assert list(root.iterdir()) == []
 
 
+def test_prerequisite_inspection_refuses_uid_1000_before_private_path_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host.os, "getuid", lambda: 1000)
+    monkeypatch.setattr(
+        host, "_socket_state", lambda _path: pytest.fail("UID1000 probed Boca private path")
+    )
+    with pytest.raises(PreflightError, match="dedicated Boca identity"):
+        host.phase("inspect-prerequisites", "", SOURCE_SHA, "b" * 64)
+
+
+def test_prerequisite_inspection_refuses_elevated_effective_uid_before_private_path_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
+    monkeypatch.setattr(host.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(host.pwd, "getpwuid", lambda _uid: SimpleNamespace(pw_name="boca-deploy"))
+    monkeypatch.setattr(
+        host, "_socket_state", lambda _path: pytest.fail("elevated process probed host socket")
+    )
+    monkeypatch.setattr(
+        host, "_safe_dir", lambda _path: pytest.fail("elevated process probed runtime")
+    )
+    with pytest.raises(PreflightError, match="dedicated Boca identity"):
+        host.phase("inspect-prerequisites", "", SOURCE_SHA, "b" * 64)
+
+
+def test_rootless_boundary_refuses_elevated_effective_uid_before_docker_or_socket_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
+    monkeypatch.setattr(host.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(
+        host, "_rootless_socket_secure", lambda: pytest.fail("elevated process probed socket")
+    )
+    monkeypatch.setattr(host, "_run", lambda *args: pytest.fail("elevated process ran Docker"))
+    with pytest.raises(PreflightError, match="dedicated Boca identity"):
+        host._validate_docker_boundary()
+
+
+def test_rootless_boundary_refuses_changed_effective_group_before_socket_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _dedicated_test_identity(monkeypatch)
+    monkeypatch.setattr(host.os, "getegid", lambda: 999)
+    monkeypatch.setattr(
+        host, "_rootless_socket_secure", lambda: pytest.fail("setgid process probed socket")
+    )
+    with pytest.raises(PreflightError, match="dedicated Boca identity"):
+        host._validate_docker_boundary()
+
+
+def test_socket_probe_distinguishes_present_absent_unsafe_and_denied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private_dir = tmp_path / "private"
+    private_dir.mkdir(mode=0o700)
+    socket_path = private_dir / "bus"
+    socket_path.touch()
+    (private_dir / "link").symlink_to(socket_path)
+    restricted = private_dir / "restricted"
+    original_lstat = Path.lstat
+
+    def fake_lstat(path: Path) -> os.stat_result | SimpleNamespace:
+        if path == socket_path:
+            return SimpleNamespace(st_mode=stat.S_IFSOCK | 0o600, st_uid=os.getuid())
+        if path == restricted:
+            raise PermissionError("permission denied")
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", fake_lstat)
+    assert host._socket_state(socket_path, expected_uid=os.getuid()) == "owned"
+    assert host._socket_state(private_dir / "missing", expected_uid=os.getuid()) == "absent"
+    assert host._socket_state(private_dir / "link", expected_uid=os.getuid()) == "unsafe"
+    assert host._socket_state(restricted, expected_uid=os.getuid()) == "unavailable"
+
+
+def test_inspection_reports_unproven_rootless_without_docker_or_host_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _dedicated_test_identity(monkeypatch)
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    monkeypatch.setattr(host, "ROOTLESS_SOCKET", runtime / "docker.sock")
+    monkeypatch.setattr(host, "PRIVATE_MANAGER_SOCKET", runtime / "systemd" / "private")
+    monkeypatch.setattr(host, "USER_BUS_SOCKET", runtime / "bus")
+    monkeypatch.setattr(host, "ROOTFUL_SOCKET", tmp_path / "rootful-absent")
+    monkeypatch.setattr(host, "_safe_dir", lambda _path: True)
+    controllers = tmp_path / "controllers"
+    controllers.write_text("cpu memory pids\n")
+    monkeypatch.setattr(host, "CGROUP_CONTROLLERS", controllers)
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker used"))
+    with pytest.raises(PreflightError, match="metadata unproven"):
+        host.phase("inspect-prerequisites", "", SOURCE_SHA, "b" * 64)
+    report = capsys.readouterr().out
+    assert "BOCA_HOST_INSPECT" in report
+    assert "rootless=absent" in report
+    assert "state=PREREQUISITES_UNPROVEN" in report
+
+
+def test_inspection_under_boca_uid_reports_only_metadata_candidate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _dedicated_test_identity(monkeypatch)
+    runtime = tmp_path / "runtime"
+    sockets = {runtime / "systemd" / "private", runtime / "bus", runtime / "docker.sock"}
+    monkeypatch.setattr(host, "ROOTLESS_SOCKET", runtime / "docker.sock")
+    monkeypatch.setattr(host, "PRIVATE_MANAGER_SOCKET", runtime / "systemd" / "private")
+    monkeypatch.setattr(host, "USER_BUS_SOCKET", runtime / "bus")
+    monkeypatch.setattr(host, "ROOTFUL_SOCKET", tmp_path / "rootful-absent")
+    original_lstat = Path.lstat
+
+    def boca_lstat(path: Path) -> os.stat_result | SimpleNamespace:
+        if path == runtime:
+            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=10001)
+        if path in sockets:
+            return SimpleNamespace(st_mode=stat.S_IFSOCK | 0o600, st_uid=10001)
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", boca_lstat)
+    controllers = tmp_path / "controllers"
+    controllers.write_text("cpu io memory pids\n")
+    monkeypatch.setattr(host, "CGROUP_CONTROLLERS", controllers)
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker used"))
+    monkeypatch.setenv("BOCA_DEPLOY_SSH_KEY", "secret-sentinel")
+    host.phase("inspect-prerequisites", "", SOURCE_SHA, "b" * 64)
+    report = capsys.readouterr().out
+    assert "state=METADATA_CANDIDATE" in report
+    assert "private=owned bus=owned rootless=owned" in report
+    assert "rootful=absent controllers=cpu,memory,pids" in report
+    assert "secret-sentinel" not in report
+    assert str(runtime) not in report
+
+
+def test_inspection_has_empty_image_contract_and_does_not_weaken_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
+    monkeypatch.setattr(host, "inspect_prerequisites", lambda: pytest.fail("probed host"))
+    with pytest.raises(PreflightError, match="coordinates"):
+        host.phase("inspect-prerequisites", IMAGE, SOURCE_SHA, "b" * 64)
+
+
 def test_first_install_preflight_still_accepts_approved_digest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -320,6 +471,8 @@ def test_host_preflight_modes_reject_swapped_image_contracts(
         ("available_memory_kib", 400_000),
         ("available_disk_bytes", 2 * 1024**3),
         ("available_inodes", 1_000),
+        ("docker_disk_bytes", 2 * 1024**3),
+        ("docker_inodes", 1_000),
         ("root_ready", False),
         ("boca_containers", True),
         ("boca_volume", True),
@@ -330,6 +483,144 @@ def test_host_preflight_modes_reject_swapped_image_contracts(
 def test_unsafe_host_snapshot_is_no_go(field: str, value: object) -> None:
     with pytest.raises(PreflightError):
         validate_snapshot(replace(safe_snapshot(), **{field: value}))
+
+
+@pytest.mark.parametrize("unsafe", ["outside", "symlink", "unowned", "writable", "missing"])
+def test_docker_storage_path_must_be_boca_owned_under_private_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unsafe: str
+) -> None:
+    home = tmp_path / "boca-home"
+    home.mkdir(mode=0o700)
+    storage = home / ".local" / "share" / "docker"
+    storage.mkdir(parents=True)
+    outside = tmp_path / "other-workload"
+    outside.mkdir()
+    if unsafe == "symlink":
+        storage.rmdir()
+        storage.symlink_to(outside, target_is_directory=True)
+    if unsafe == "missing":
+        storage.rmdir()
+    if unsafe == "writable":
+        storage.chmod(0o777)
+    target = outside if unsafe == "outside" else storage
+    monkeypatch.setattr(
+        host.pwd,
+        "getpwuid",
+        lambda _uid: SimpleNamespace(pw_name="boca-deploy", pw_dir=str(home)),
+    )
+    monkeypatch.setattr(
+        host,
+        "_run",
+        lambda *args: json.dumps(
+            {"DockerRootDir": str(target), "Driver": "overlay2", "DriverStatus": []}
+        ),
+    )
+    original_lstat = Path.lstat
+
+    def boca_lstat(path: Path) -> os.stat_result | SimpleNamespace:
+        result = original_lstat(path)
+        if path == home or home in path.parents:
+            uid = 0 if unsafe == "unowned" and path == storage else 10001
+            return SimpleNamespace(st_mode=result.st_mode, st_uid=uid)
+        return result
+
+    monkeypatch.setattr(Path, "lstat", boca_lstat)
+    with pytest.raises(PreflightError, match="rootless Docker storage"):
+        host._checked_docker_storage_dir()
+
+
+def test_owned_rootless_docker_storage_path_is_accepted_without_listing_other_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "boca-home"
+    home.mkdir(mode=0o700)
+    storage = home / ".local" / "share" / "docker"
+    storage.mkdir(parents=True)
+    monkeypatch.setattr(
+        host.pwd,
+        "getpwuid",
+        lambda _uid: SimpleNamespace(pw_name="boca-deploy", pw_dir=str(home)),
+    )
+    monkeypatch.setattr(
+        host,
+        "_run",
+        lambda *args: json.dumps(
+            {"DockerRootDir": str(storage), "Driver": "overlay2", "DriverStatus": []}
+        ),
+    )
+    original_lstat = Path.lstat
+    inspected: list[Path] = []
+
+    def boca_lstat(path: Path) -> os.stat_result | SimpleNamespace:
+        inspected.append(path)
+        result = original_lstat(path)
+        if path == home or home in path.parents:
+            return SimpleNamespace(st_mode=result.st_mode, st_uid=10001)
+        return result
+
+    monkeypatch.setattr(Path, "lstat", boca_lstat)
+    assert host._checked_docker_storage_dir() == storage
+    assert set(inspected) == {home, home / ".local", home / ".local" / "share", storage}
+
+
+@pytest.mark.parametrize(
+    "backend",
+    [
+        {"Driver": "overlayfs", "DriverStatus": [["driver-type", "io.containerd.snapshotter.v1"]]},
+        {"Driver": "overlay2", "DriverStatus": [["driver-type", "io.containerd.snapshotter.v1"]]},
+        {"Driver": "overlay2"},
+    ],
+)
+def test_containerd_or_unknown_storage_backend_is_no_go_before_path_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: dict[str, object]
+) -> None:
+    monkeypatch.setattr(
+        host,
+        "_run",
+        lambda *args: json.dumps({"DockerRootDir": str(tmp_path), **backend}),
+    )
+    monkeypatch.setattr(host.pwd, "getpwuid", lambda _uid: pytest.fail("probed home"))
+    with pytest.raises(PreflightError, match="storage backend"):
+        host._checked_docker_storage_dir()
+
+
+def test_snapshot_measures_staging_and_rootless_docker_filesystems_separately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "boca-stage"
+    root.mkdir()
+    data_root = tmp_path / "boca-home" / ".local" / "share" / "docker"
+    data_root.mkdir(parents=True)
+    monkeypatch.setattr(host, "ROOT", root)
+    monkeypatch.setattr(host, "_require_dedicated_identity", lambda: 10001)
+    monkeypatch.setattr(host, "_root_ready", lambda: True)
+    monkeypatch.setattr(host, "_checked_docker_storage_dir", lambda: data_root)
+    monkeypatch.setattr(host.os, "sched_getaffinity", lambda _pid: {0})
+    monkeypatch.setattr(host.os, "getloadavg", lambda: (0.0, 0.0, 0.0))
+
+    def read_only_docker(*args: str) -> str:
+        assert args[0] == "docker"
+        if args[1:4] == ("compose", "up", "--help"):
+            return "--no-build --no-deps --wait"
+        if args[1:4] == ("compose", "config", "--help"):
+            return "--format"
+        return ""
+
+    monkeypatch.setattr(host, "_run", read_only_docker)
+    measured: list[Path] = []
+
+    def capacity(path: str | Path) -> SimpleNamespace:
+        measured.append(Path(path))
+        gib = 8 if Path(path) == root else 2
+        return SimpleNamespace(f_bavail=gib * 1024**3, f_frsize=1, f_favail=100_000)
+
+    monkeypatch.setattr(host.os, "statvfs", capacity)
+    snapshot = host.collect_snapshot()
+    assert measured == [root, data_root]
+    assert snapshot.available_disk_bytes == 8 * 1024**3
+    assert snapshot.docker_disk_bytes == 2 * 1024**3
+    with pytest.raises(PreflightError, match="storage"):
+        validate_snapshot(snapshot)
 
 
 def _staged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
@@ -993,13 +1284,7 @@ def test_diagnostic_rejects_missing_or_unowned_key_volume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, labels: object
 ) -> None:
     digest = _staged(tmp_path, monkeypatch)
-    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
-    monkeypatch.setattr(host.os, "geteuid", lambda: 10001)
-    monkeypatch.setattr(host.os, "getgid", lambda: 10001)
-    monkeypatch.setattr(host.os, "getegid", lambda: 10001)
-    monkeypatch.setattr(
-        host.pwd, "getpwuid", lambda _uid: type("Account", (), {"pw_name": "boca-deploy"})()
-    )
+    _dedicated_test_identity(monkeypatch)
     monkeypatch.setattr(
         host,
         "_run",

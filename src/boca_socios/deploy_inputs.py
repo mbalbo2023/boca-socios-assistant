@@ -27,3 +27,22 @@ def validate_deploy_inputs(
         raise DeployInputError("invalid resource budget")
     if not _RUN.fullmatch(release_run_id):
         raise DeployInputError("invalid release run ID")
+
+
+def validate_main_ref(main_ref: object, source_sha: str) -> None:
+    """A dispatched SHA must still be the current main HEAD before SSH."""
+    if (
+        not isinstance(main_ref, dict)
+        or main_ref.get("ref") != "refs/heads/main"
+        or not isinstance(main_ref.get("object"), dict)
+    ):
+        raise DeployInputError("current main ref is unavailable")
+    object_ref = main_ref["object"]
+    sha = object_ref.get("sha")
+    if (
+        object_ref.get("type") != "commit"
+        or not isinstance(sha, str)
+        or not _SHA.fullmatch(sha)
+        or sha != source_sha
+    ):
+        raise DeployInputError("current main HEAD differs from dispatch SHA")
