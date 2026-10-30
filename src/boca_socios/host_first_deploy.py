@@ -48,6 +48,56 @@ class HostSnapshot:
     cpu_headroom: float = 1.0
 
 
+@dataclass(frozen=True)
+class DiagnosticSnapshot:
+    uid: int
+    key_secure: bool
+    container_id: str
+    health: str
+    image_ref: str
+    revision: str
+    project: str
+    service: str
+    user: str
+    runtime_mode: str
+    engine_mode: str
+    cpu_nano: int
+    memory_bytes: int
+    pids_limit: int
+    read_only: bool
+    privileged: bool
+    has_ports: bool
+
+
+def validate_diagnostic(snapshot: DiagnosticSnapshot, image: str, source_sha: str) -> None:
+    if snapshot.uid != 10001 or not snapshot.key_secure:
+        raise PreflightError("dedicated Boca identity or key metadata is unsafe")
+    if not re.fullmatch(r"[0-9a-f]{64}", snapshot.container_id):
+        raise PreflightError("expected exactly one Boca controller ID")
+    for actual, expected, field in (
+        (snapshot.health, "healthy", "health"),
+        (snapshot.image_ref, image, "image"),
+        (snapshot.revision, source_sha, "revision"),
+        (snapshot.project, PROJECT, "project"),
+        (snapshot.service, "controller", "service"),
+        (snapshot.user, "10001:10001", "user"),
+        (snapshot.runtime_mode, "simulation", "runtime mode"),
+        (snapshot.engine_mode, "off", "engine mode"),
+    ):
+        if actual != expected:
+            raise PreflightError(f"Boca diagnostic {field} mismatch")
+    for bounded_actual, bounded_expected, bounded_field in (
+        (snapshot.cpu_nano, 500_000_000, "CPU"),
+        (snapshot.memory_bytes, 268_435_456, "memory"),
+        (snapshot.pids_limit, 64, "PIDs"),
+        (snapshot.read_only, True, "read-only root"),
+        (snapshot.privileged, False, "privileged"),
+        (snapshot.has_ports, False, "published ports"),
+    ):
+        if type(bounded_actual) is not type(bounded_expected) or bounded_actual != bounded_expected:
+            raise PreflightError(f"Boca diagnostic {bounded_field} mismatch")
+
+
 def validate_snapshot(snapshot: HostSnapshot) -> None:
     if snapshot.arch != "x86_64":
         raise PreflightError("host architecture must be x86_64")
@@ -199,18 +249,130 @@ def _validate_coordinates(image: str, source_sha: str, compose_sha: str) -> None
         raise PreflightError("invalid immutable deployment coordinates")
 
 
+def _diagnostic_files(expected_sha: str) -> None:
+    uid = os.getuid()
+    if uid != 10001 or os.geteuid() != uid or os.getegid() != os.getgid():
+        raise PreflightError("expected dedicated Boca identity")
+    try:
+        account = pwd.getpwuid(uid).pw_name
+    except KeyError as exc:
+        raise PreflightError("dedicated Boca identity is unavailable") from exc
+    if account != "boca-deploy":
+        raise PreflightError("expected dedicated boca-deploy account")
+    if not _safe_dir(ROOT) or not _safe_dir(SECRET_DIR):
+        raise PreflightError("Boca directory ownership or permissions changed")
+    if {child.name for child in ROOT.iterdir()} != {"compose.yaml", "secrets"}:
+        raise PreflightError("unexpected Boca directory entries")
+    if {child.name for child in SECRET_DIR.iterdir()} != {"master.key"}:
+        raise PreflightError("unexpected Boca secret directory entries")
+    key_stat = KEY.lstat()
+    if (
+        not stat.S_ISREG(key_stat.st_mode)
+        or key_stat.st_uid != 10001
+        or stat.S_IMODE(key_stat.st_mode) != 0o400
+        or not 1 <= key_stat.st_size <= 128
+    ):
+        raise PreflightError("Boca key metadata changed")
+    _verify_compose(expected_sha)
+
+
+def _json_object(value: str, field: str) -> dict[str, object]:
+    data = json.loads(value)
+    if not isinstance(data, dict):
+        raise PreflightError(f"invalid Boca {field} metadata")
+    return data
+
+
+def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
+    container = _run(*_compose_args("ps", "-q", "controller"), env=_compose_env(image))
+    if not re.fullmatch(r"[0-9a-f]{64}", container):
+        raise PreflightError("expected exactly one Boca controller")
+    config = _json_object(
+        _run("docker", "inspect", "--format", "{{json .Config}}", container), "container config"
+    )
+    host = _json_object(
+        _run("docker", "inspect", "--format", "{{json .HostConfig}}", container),
+        "container host config",
+    )
+    labels = config.get("Labels")
+    entries = config.get("Env")
+    if not isinstance(labels, dict) or not isinstance(entries, list):
+        raise PreflightError("missing Boca labels or environment")
+    environment: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, str) or "=" not in entry:
+            raise PreflightError("invalid Boca environment metadata")
+        name, value = entry.split("=", 1)
+        if name in environment:
+            raise PreflightError("duplicate Boca environment variable")
+        environment[name] = value
+    for name, expected in {
+        "BOCA_ENVIRONMENT": "staging",
+        "BOCA_DB_PATH": "/data/boca.sqlite3",
+        "BOCA_MASTER_KEY_FILE": "/run/secrets/boca_master_key",
+    }.items():
+        if environment.get(name) != expected:
+            raise PreflightError(f"Boca diagnostic {name} mismatch")
+    repo_digests = json.loads(
+        _run("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image)
+    )
+    if not isinstance(repo_digests, list) or image not in repo_digests:
+        raise PreflightError("Boca image digest mismatch")
+    revision = _run(
+        "docker",
+        "image",
+        "inspect",
+        "--format",
+        '{{index .Config.Labels "org.opencontainers.image.revision"}}',
+        image,
+    )
+    snapshot = DiagnosticSnapshot(
+        uid=os.getuid(),
+        key_secure=True,  # _diagnostic_files checked metadata without reading key contents.
+        container_id=container,
+        health=_run("docker", "inspect", "--format", "{{.State.Health.Status}}", container),
+        image_ref=str(config.get("Image")),
+        revision=revision,
+        project=str(labels.get("com.docker.compose.project")),
+        service=str(labels.get("com.docker.compose.service")),
+        user=str(config.get("User")),
+        runtime_mode=environment.get("BOCA_RUNTIME_MODE", ""),
+        engine_mode=environment.get("BOCA_ENGINE_MODE", ""),
+        cpu_nano=host.get("NanoCpus"),  # type: ignore[arg-type]
+        memory_bytes=host.get("Memory"),  # type: ignore[arg-type]
+        pids_limit=host.get("PidsLimit"),  # type: ignore[arg-type]
+        read_only=host.get("ReadonlyRootfs"),  # type: ignore[arg-type]
+        privileged=host.get("Privileged"),  # type: ignore[arg-type]
+        has_ports=bool(host.get("PortBindings")),
+    )
+    validate_diagnostic(snapshot, image, source_sha)
+    return snapshot
+
+
 def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> None:
     _validate_coordinates(image, source_sha, compose_sha)
-    validate_snapshot(snapshot := collect_snapshot())
+    if phase_name in {"diagnostic-config", "diagnostic"}:
+        _diagnostic_files(compose_sha)
+        if phase_name == "diagnostic-config":
+            print(_run(*_compose_args("config", "--format", "json"), env=_compose_env(image)))
+            return
+        diagnostic_snapshot = collect_diagnostic(image, source_sha)
+        print(
+            "BOCA_DIAGNOSTIC_PASS"
+            f" image={image} source_sha={source_sha}"
+            f" health={diagnostic_snapshot.health} engine={diagnostic_snapshot.engine_mode} service=controller"
+        )
+        return
+    validate_snapshot(host_snapshot := collect_snapshot())
     if phase_name == "preflight":
         if COMPOSE.exists() or COMPOSE.is_symlink():
             raise PreflightError("Boca Compose already staged")
         print(
             "BOCA_PREFLIGHT_PASS"
-            f" arch={snapshot.arch} uid={snapshot.uid}"
-            f" mem_kib={snapshot.available_memory_kib}"
-            f" disk_bytes={snapshot.available_disk_bytes} inodes={snapshot.available_inodes}"
-            f" cpu_headroom={snapshot.cpu_headroom:.2f}"
+            f" arch={host_snapshot.arch} uid={host_snapshot.uid}"
+            f" mem_kib={host_snapshot.available_memory_kib}"
+            f" disk_bytes={host_snapshot.available_disk_bytes} inodes={host_snapshot.available_inodes}"
+            f" cpu_headroom={host_snapshot.cpu_headroom:.2f}"
             " namespace=empty"
         )
         return
@@ -274,7 +436,10 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Boca-only first-install host gate")
-    parser.add_argument("phase", choices=("preflight", "stage", "config", "apply"))
+    parser.add_argument(
+        "phase",
+        choices=("preflight", "stage", "config", "apply", "diagnostic-config", "diagnostic"),
+    )
     parser.add_argument("image")
     parser.add_argument("source_sha")
     parser.add_argument("compose_sha")

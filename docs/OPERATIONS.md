@@ -45,6 +45,24 @@ separate measurement of staging and rootless image storage. #79, #81, #89,
 failure is reported by Actions as an alert, not a deploy blocker for the
 simulation-only controller.
 
+## Read-only diagnostic under demand (issue #68)
+
+The same protected workflow proposes a manual `diagnostic` choice for a Boca
+controller already installed from the exact current `main` SHA. Under the
+owner's standing direction, its recorded gates and environment restrictions
+must match the exact operation, SHA, digest, service and budget. It checks
+only Boca Compose, key **metadata**, immutable image identity, resource
+limits, health and `BOCA_ENGINE_MODE=off`. It never reads the key value or
+database rows, starts the motor, visits the site or changes a container.
+The run summary contains only bounded status and immutable coordinates. A
+mismatch is NO-GO and requires diagnosis; it is not a reason to retry the
+first install or alter another workload. This draft checks real/effective
+UID and GID before private metadata, but still inherits Docker transport/
+context settings. It must remain uninvoked until #79 pins the rootless
+daemon and #91 hardens the whole workflow's identity and main checks. #81
+resolves key custody separately. No host diagnostic has
+run yet.
+
 ## Proposed isolated deployment layout
 
 | Item | Boca project | Unrelated workloads |

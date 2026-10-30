@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import json
 import stat
 from dataclasses import replace
 from pathlib import Path
@@ -9,7 +10,13 @@ from pathlib import Path
 import pytest
 
 from boca_socios import host_first_deploy as host
-from boca_socios.host_first_deploy import HostSnapshot, PreflightError, validate_snapshot
+from boca_socios.host_first_deploy import (
+    DiagnosticSnapshot,
+    HostSnapshot,
+    PreflightError,
+    validate_diagnostic,
+    validate_snapshot,
+)
 
 SOURCE_SHA = "a" * 40
 IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64
@@ -116,3 +123,157 @@ def test_failed_start_stops_only_controller_and_preserves_owner_only_key(
     assert stat.S_IMODE(host.KEY.stat().st_mode) == 0o400
     assert not host._root_ready()  # A failed first install cannot retry over its retained key.
     assert not any("down" in command or "prune" in command for command in commands)
+
+
+def healthy_diagnostic() -> DiagnosticSnapshot:
+    return DiagnosticSnapshot(
+        uid=10001,
+        key_secure=True,
+        container_id="c" * 64,
+        health="healthy",
+        image_ref=IMAGE,
+        revision=SOURCE_SHA,
+        project="boca-socios",
+        service="controller",
+        user="10001:10001",
+        runtime_mode="simulation",
+        engine_mode="off",
+        cpu_nano=500_000_000,
+        memory_bytes=268_435_456,
+        pids_limit=64,
+        read_only=True,
+        privileged=False,
+        has_ports=False,
+    )
+
+
+def test_diagnostic_accepts_only_dormant_healthy_boca_controller() -> None:
+    validate_diagnostic(healthy_diagnostic(), IMAGE, SOURCE_SHA)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("uid", 0),
+        ("key_secure", False),
+        ("container_id", "unexpected"),
+        ("health", "unhealthy"),
+        ("image_ref", "other"),
+        ("revision", "b" * 40),
+        ("project", "other"),
+        ("service", "worker"),
+        ("user", "0:0"),
+        ("runtime_mode", "live"),
+        ("engine_mode", "on"),
+        ("cpu_nano", 1_000_000_000),
+        ("memory_bytes", 1_000_000_000),
+        ("pids_limit", 1_000),
+        ("read_only", False),
+        ("privileged", True),
+        ("has_ports", True),
+    ],
+)
+def test_diagnostic_deviation_is_no_go(field: str, value: object) -> None:
+    with pytest.raises(PreflightError):
+        validate_diagnostic(replace(healthy_diagnostic(), **{field: value}), IMAGE, SOURCE_SHA)
+
+
+@pytest.mark.parametrize("engine", ["off", "on"])
+def test_diagnostic_phase_uses_only_read_only_boca_queries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    engine: str,
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    monkeypatch.setattr(host, "_diagnostic_files", lambda _sha: None)
+    monkeypatch.setattr(host, "collect_snapshot", lambda: pytest.fail("first-install path used"))
+    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str, env: dict[str, str] | None = None) -> str:
+        commands.append(args)
+        if args[0:2] == ("docker", "compose") and "ps" in args:
+            return "c" * 64
+        if args[0:3] == ("docker", "image", "inspect"):
+            return json.dumps([IMAGE]) if "RepoDigests" in args[4] else SOURCE_SHA
+        if args[0:2] == ("docker", "inspect"):
+            match args[3]:
+                case "{{json .Config}}":
+                    return json.dumps(
+                        {
+                            "Image": IMAGE,
+                            "User": "10001:10001",
+                            "Labels": {
+                                "com.docker.compose.project": "boca-socios",
+                                "com.docker.compose.service": "controller",
+                            },
+                            "Env": [
+                                "BOCA_ENVIRONMENT=staging",
+                                "BOCA_DB_PATH=/data/boca.sqlite3",
+                                "BOCA_MASTER_KEY_FILE=/run/secrets/boca_master_key",
+                                "BOCA_RUNTIME_MODE=simulation",
+                                f"BOCA_ENGINE_MODE={engine}",
+                            ],
+                        }
+                    )
+                case "{{json .HostConfig}}":
+                    return json.dumps(
+                        {
+                            "NanoCpus": 500_000_000,
+                            "Memory": 268_435_456,
+                            "PidsLimit": 64,
+                            "ReadonlyRootfs": True,
+                            "Privileged": False,
+                            "PortBindings": {},
+                        }
+                    )
+                case "{{.State.Health.Status}}":
+                    return "healthy"
+        raise AssertionError("unexpected host command")
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    if engine == "off":
+        host.phase("diagnostic", IMAGE, SOURCE_SHA, digest)
+        assert "BOCA_DIAGNOSTIC_PASS" in capsys.readouterr().out
+    else:
+        with pytest.raises(PreflightError, match="engine mode"):
+            host.phase("diagnostic", IMAGE, SOURCE_SHA, digest)
+    assert commands
+    assert all(command[0] == "docker" for command in commands)
+    assert not any(
+        token in command for command in commands for token in ("pull", "up", "stop", "rm")
+    )
+
+
+@pytest.mark.parametrize("mismatch", ["real_uid", "effective_uid", "effective_gid"])
+def test_diagnostic_rejects_setid_before_private_metadata(
+    monkeypatch: pytest.MonkeyPatch, mismatch: str
+) -> None:
+    uid = 1000 if mismatch == "real_uid" else 10001
+    monkeypatch.setattr(host.os, "getuid", lambda: uid)
+    monkeypatch.setattr(host.os, "geteuid", lambda: 0 if mismatch == "effective_uid" else uid)
+    monkeypatch.setattr(host.os, "getgid", lambda: 10001)
+    monkeypatch.setattr(host.os, "getegid", lambda: 0 if mismatch == "effective_gid" else 10001)
+    monkeypatch.setattr(host, "_safe_dir", lambda _path: pytest.fail("private path was read"))
+    with pytest.raises(PreflightError, match="dedicated Boca identity"):
+        host._diagnostic_files("c" * 64)
+
+
+@pytest.mark.parametrize("symlink", [False, True])
+def test_diagnostic_rejects_missing_or_symlinked_key_without_reading_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, symlink: bool
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    host.SECRET_DIR.mkdir(mode=0o700)
+    if symlink:
+        host.KEY.symlink_to(tmp_path / "outside")
+    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
+    monkeypatch.setattr(host.os, "geteuid", lambda: 10001)
+    monkeypatch.setattr(host.os, "getgid", lambda: 10001)
+    monkeypatch.setattr(host.os, "getegid", lambda: 10001)
+    monkeypatch.setattr(
+        host.pwd, "getpwuid", lambda _uid: type("Account", (), {"pw_name": "boca-deploy"})()
+    )
+    with pytest.raises(PreflightError, match="secret directory entries|key metadata"):
+        host._diagnostic_files(digest)
