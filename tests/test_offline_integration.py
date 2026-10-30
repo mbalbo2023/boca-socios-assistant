@@ -139,6 +139,56 @@ def test_unadmitted_wrong_member_expired_and_invalid_quantity_fail_closed(tmp_pa
             )
 
 
+def test_invalid_session_or_identity_does_not_advance_shared_clock(tmp_path: Path) -> None:
+    lab, database, queue, outbox, browser = setup_lab(tmp_path)
+    for intent, session_id in (
+        (TicketIntent("member-1", "event-1"), "unknown-session"),
+        (TicketIntent("different-member", "event-1"), "session-1"),
+    ):
+        with pytest.raises((KeyError, InvalidStateTransition)):
+            asyncio.run(
+                lab.run_admitted(
+                    intent,
+                    session_id=session_id,
+                    at=START + timedelta(minutes=6),
+                    monotonic_now=0,
+                )
+            )
+        assert queue.snapshot("session-1").state.value == "admitted"
+        assert browser.calls == 0
+        assert outbox.records() == ()
+    with database.connection() as connection:
+        assert connection.execute("SELECT count(*) FROM ticket_requests").fetchone() == (0,)
+    assert (
+        asyncio.run(
+            lab.run_admitted(
+                TicketIntent("member-1", "event-1"),
+                session_id="session-2",
+                at=START,
+                monotonic_now=0,
+            )
+        ).outcome
+        is SimulationOutcome.RESERVED_IN_SIMULATOR
+    )
+
+
+def test_invalid_notification_time_fails_before_browser_or_database(tmp_path: Path) -> None:
+    lab, database, queue, outbox, browser = setup_lab(tmp_path)
+    with pytest.raises(ValueError, match="notification time"):
+        asyncio.run(
+            lab.run_admitted(
+                TicketIntent("member-1", "event-1"),
+                session_id="session-1",
+                at=START,
+                monotonic_now=float("nan"),
+            )
+        )
+    assert queue.snapshot("session-1").state.value == "admitted"
+    assert browser.calls == 0 and outbox.records() == ()
+    with database.connection() as connection:
+        assert connection.execute("SELECT count(*) FROM ticket_requests").fetchone() == (0,)
+
+
 def test_vault_and_database_survive_restart_with_separate_key(tmp_path: Path) -> None:
     key_dir = tmp_path / "private-key"
     key_dir.mkdir(mode=0o700)
