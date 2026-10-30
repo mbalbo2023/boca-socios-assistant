@@ -34,7 +34,6 @@ jobs:
       - name: Validate resolved Boca-only Compose model
         env:
           BOCA_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-          BOCA_MASTER_KEY_SOURCE: /srv/boca-socios/secrets/master.key
           BOCA_ENVIRONMENT: staging
         run: |
           docker compose -f compose.yaml config --format json > "$RUNNER_TEMP/boca-compose.json"

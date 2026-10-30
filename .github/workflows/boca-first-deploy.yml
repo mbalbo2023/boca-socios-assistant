@@ -60,7 +60,7 @@ jobs:
           uv sync --frozen
       - name: Check dispatch and first-install boundaries offline
         run: |
-          uv run pytest -q tests/test_deploy_inputs.py tests/test_host_first_deploy.py tests/test_release_run.py
+          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_host_first_deploy.py tests/test_key_custody.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
 
   pr-runtime-smoke:
@@ -71,7 +71,6 @@ jobs:
     env:
       BOCA_IMAGE: boca-first-install-smoke:${{ github.sha }}
       BOCA_ENVIRONMENT: staging
-      BOCA_MASTER_KEY_SOURCE: /tmp/boca-smoke/master.key
     steps:
       - name: Checkout proposed runtime without persisted credentials
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -79,29 +78,37 @@ jobs:
           persist-credentials: false
       - name: Build local simulation image only
         run: docker build --tag "$BOCA_IMAGE" .
-      - name: Create synthetic owner-only key in disposable runner
+      - name: Provision separate owner-only key volume on disposable runner
         run: |
-          python3 - <<'PY'
-          import base64
-          import os
-          from pathlib import Path
-
-          source = Path(os.environ["BOCA_MASTER_KEY_SOURCE"])
-          source.parent.mkdir(mode=0o700)
-          source.write_bytes(base64.b64encode(os.urandom(32)) + b"\n")
-          source.chmod(0o400)
-          PY
-          docker run --rm --user 0:0 --entrypoint chown \
-            --mount "type=bind,source=$BOCA_MASTER_KEY_SOURCE,target=/fixture" \
-            "$BOCA_IMAGE" 10001:10001 /fixture
-          test "$(stat -c '%u:%a' "$BOCA_MASTER_KEY_SOURCE")" = '10001:400'
+          docker volume create --driver local \
+            --label com.docker.compose.project=boca-socios \
+            --label com.docker.compose.volume=boca_key boca-socios_boca_key
+          docker run --rm --pull never --user 0:0 --network none --read-only \
+            --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges \
+            --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_key,target=/run/secrets,volume-nocopy \
+            "$BOCA_IMAGE" python -m boca_socios.security.key_custody init
+          if docker run --rm --pull never --user 0:0 --network none --read-only \
+            --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges \
+            --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_key,target=/run/secrets,volume-nocopy \
+            "$BOCA_IMAGE" python -m boca_socios.security.key_custody init >/dev/null 2>&1; then
+            exit 1
+          fi
+          docker run --rm --pull never --user 10001:10001 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_key,target=/run/secrets,volume-nocopy,readonly \
+            "$BOCA_IMAGE" python -m boca_socios.security.key_custody verify
       - name: Start isolated Compose controller and verify health without third-party traffic
         run: |
           docker compose -p boca-socios -f compose.yaml up --no-build --no-deps --wait --wait-timeout 90 -d controller
           container="$(docker compose -p boca-socios -f compose.yaml ps -q controller)"
           test -n "$container"
           test "$(docker inspect --format '{{.State.Health.Status}}' "$container")" = healthy
-          docker inspect --format '{{json .HostConfig}}' "$container" | python3 -c 'import json,sys; h=json.load(sys.stdin); assert (h["NanoCpus"], h["Memory"], h["PidsLimit"], h["ReadonlyRootfs"], h["Privileged"], bool(h["PortBindings"])) == (500000000, 268435456, 64, True, False, False)'
+          test "$(docker exec --user 10001:10001 "$container" python -m boca_socios.security.key_custody inspect)" = BOCA_KEY_READY
+          docker inspect --format '{{json .HostConfig}}' "$container" | python3 -c 'import json,sys; h=json.load(sys.stdin); assert (h["NanoCpus"], h["Memory"], h["PidsLimit"], h["ReadonlyRootfs"], h["Privileged"], h["PortBindings"], h["PublishAllPorts"]) == (500000000, 268435456, 64, True, False, {}, False)'
+          docker inspect --format '{{json .Mounts}}' "$container" | python3 -c 'import json,sys; m=json.load(sys.stdin); assert {(x["Type"], x["Name"], x["Destination"], x["RW"]) for x in m} == {("volume", "boca-socios_boca_data", "/data", True), ("volume", "boca-socios_boca_key", "/run/secrets", False)}'
           docker logs "$container" | python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin if x.strip()]; assert rows == [{"event": "started", "mode": "simulation", "engine": "off", "site_calls": 0}]'
       - name: Remove only synthetic Boca resources from disposable runner
         if: always()
@@ -109,6 +116,7 @@ jobs:
           docker compose -p boca-socios -f compose.yaml stop controller || true
           docker compose -p boca-socios -f compose.yaml rm -sf controller || true
           docker volume rm boca-socios_boca_data || true
+          docker volume rm boca-socios_boca_key || true
           docker network rm boca-socios_boca_private || true
 
   deploy:
@@ -152,7 +160,6 @@ jobs:
         env:
           BOCA_IMAGE: ${{ inputs.image_ref }}
           BOCA_ENVIRONMENT: staging
-          BOCA_MASTER_KEY_SOURCE: /srv/boca-socios/secrets/master.key
           PYTHONPATH: src
         run: |
           docker compose -p boca-socios -f compose.yaml config --format json > "$RUNNER_TEMP/boca-runner-model.json"

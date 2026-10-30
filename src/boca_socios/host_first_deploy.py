@@ -7,7 +7,6 @@ Each invocation is a single phase; a failed phase is not retried automatically.
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import json
 import os
@@ -22,9 +21,8 @@ from pathlib import Path
 
 ROOT = Path("/srv/boca-socios")
 COMPOSE = ROOT / "compose.yaml"
-SECRET_DIR = ROOT / "secrets"
-KEY = SECRET_DIR / "master.key"
 PROJECT = "boca-socios"
+KEY_VOLUME = "boca-socios_boca_key"
 ROOTLESS_SOCKET = Path("/run/user/10001/docker.sock")
 ROOTFUL_SOCKET = Path("/var/run/docker.sock")
 CGROUP_CONTROLLERS = Path(
@@ -67,6 +65,7 @@ class DockerBoundarySnapshot:
 class DiagnosticSnapshot:
     uid: int
     key_secure: bool
+    mounts_secure: bool
     container_id: str
     health: str
     image_ref: str
@@ -85,8 +84,8 @@ class DiagnosticSnapshot:
 
 
 def validate_diagnostic(snapshot: DiagnosticSnapshot, image: str, source_sha: str) -> None:
-    if snapshot.uid != 10001 or not snapshot.key_secure:
-        raise PreflightError("dedicated Boca identity or key metadata is unsafe")
+    if snapshot.uid != 10001 or not snapshot.key_secure or not snapshot.mounts_secure:
+        raise PreflightError("dedicated Boca identity, key or mounts are unsafe")
     if not re.fullmatch(r"[0-9a-f]{64}", snapshot.container_id):
         raise PreflightError("expected exactly one Boca controller ID")
     for actual, expected, field in (
@@ -228,13 +227,8 @@ def _validate_docker_boundary() -> None:
 def _root_ready() -> bool:
     if not _safe_dir(ROOT):
         return False
-    if any(child.name not in {"compose.yaml", "secrets"} for child in ROOT.iterdir()):
+    if any(child.name != "compose.yaml" for child in ROOT.iterdir()):
         return False
-    if SECRET_DIR.exists() or SECRET_DIR.is_symlink():
-        if not _safe_dir(SECRET_DIR) or KEY.exists() or KEY.is_symlink():
-            return False
-        if any(SECRET_DIR.iterdir()):
-            return False
     if COMPOSE.is_symlink():
         return False
     return os.access(ROOT, os.W_OK)
@@ -245,8 +239,8 @@ def _names(kind: str, label: str) -> set[str]:
 
 
 def collect_snapshot() -> HostSnapshot:
-    # The deployment identity is dedicated to Boca; matching container UID
-    # keeps the owner-only bind-mounted secret readable without 0444 on host.
+    # The deployment identity owns only the rootless Docker endpoint; the key
+    # is generated in a separate named volume within the container UID map.
     try:
         dedicated = pwd.getpwuid(os.getuid()).pw_name == "boca-deploy"
     except KeyError:
@@ -305,7 +299,6 @@ def _compose_env(image: str) -> dict[str, str]:
         **os.environ,
         "BOCA_IMAGE": image,
         "BOCA_ENVIRONMENT": "staging",
-        "BOCA_MASTER_KEY_SOURCE": str(KEY),
     }
 
 
@@ -313,18 +306,97 @@ def _compose_args(*args: str) -> tuple[str, ...]:
     return ("docker", "compose", "-p", PROJECT, "-f", str(COMPOSE), *args)
 
 
-def _create_key() -> None:
-    if SECRET_DIR.exists() or SECRET_DIR.is_symlink():
-        if not _safe_dir(SECRET_DIR):
-            raise PreflightError("unsafe Boca secret directory")
-    else:
-        SECRET_DIR.mkdir(mode=0o700)
-    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC
-    descriptor = os.open(KEY, flags, 0o400)
-    with os.fdopen(descriptor, "wb") as output:
-        output.write(base64.b64encode(os.urandom(32)) + b"\n")
-        output.flush()
-        os.fsync(output.fileno())
+def _validate_key_volume() -> None:
+    volume = _json_object(
+        _run("docker", "volume", "inspect", "--format", "{{json .}}", KEY_VOLUME),
+        "key volume",
+    )
+    root = Path(_run("docker", "info", "--format", "{{.DockerRootDir}}"))
+    mountpoint = volume.get("Mountpoint")
+    expected = root / "volumes" / KEY_VOLUME / "_data"
+    labels = volume.get("Labels")
+    if (
+        volume.get("Name") != KEY_VOLUME
+        or volume.get("Driver") != "local"
+        or volume.get("Scope") != "local"
+        or volume.get("Options") not in (None, {})
+        or not root.is_absolute()
+        or root == Path("/")
+        or mountpoint != str(expected)
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.volume") != "boca_key"
+    ):
+        raise PreflightError("Boca key volume identity is unsafe")
+    # A local driver can otherwise conceal a bind source behind the expected
+    # volume name. Refuse path redirects even when Docker's labels match.
+    try:
+        if root.resolve(strict=True) != root or expected.resolve(strict=True) != expected:
+            raise PreflightError("Boca key volume mountpoint is redirected")
+    except (OSError, RuntimeError) as exc:
+        raise PreflightError("Boca key volume mountpoint is unavailable") from exc
+
+
+def _key_container(image: str, operation: str) -> tuple[str, ...]:
+    if operation not in {"init", "verify"}:
+        raise PreflightError("invalid key custody operation")
+    init = operation == "init"
+    return (
+        "docker",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--user",
+        "0:0" if init else "10001:10001",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        *(("--cap-add", "CHOWN") if init else ()),
+        "--security-opt",
+        "no-new-privileges",
+        "--pids-limit",
+        "16",
+        "--memory",
+        "64m",
+        "--cpus",
+        "0.25",
+        "--mount",
+        f"type=volume,source={KEY_VOLUME},target=/run/secrets,volume-nocopy"
+        + ("" if init else ",readonly"),
+        image,
+        "python",
+        "-m",
+        "boca_socios.security.key_custody",
+        operation,
+    )
+
+
+def _create_key(image: str) -> None:
+    created = _run(
+        "docker",
+        "volume",
+        "create",
+        "--driver",
+        "local",
+        "--label",
+        f"com.docker.compose.project={PROJECT}",
+        "--label",
+        "com.docker.compose.volume=boca_key",
+        KEY_VOLUME,
+    )
+    if created != KEY_VOLUME:
+        raise PreflightError("unexpected Boca key volume creation")
+    _validate_key_volume()
+    if _run(*_key_container(image, "init")) != "BOCA_KEY_READY":
+        raise PreflightError("Boca key initialization did not confirm completion")
+    # Volume creation/inspection is not atomic with a container run; reject a
+    # changed named volume before treating the initialized key as usable.
+    _validate_key_volume()
+    if _run(*_key_container(image, "verify")) != "BOCA_KEY_READY":
+        raise PreflightError("Boca key is not readable by the controller identity")
 
 
 def _validate_coordinates(image: str, source_sha: str, compose_sha: str) -> None:
@@ -338,20 +410,11 @@ def _validate_coordinates(image: str, source_sha: str, compose_sha: str) -> None
 
 def _diagnostic_files(expected_sha: str) -> None:
     _require_dedicated_identity()
-    if not _safe_dir(ROOT) or not _safe_dir(SECRET_DIR):
+    if not _safe_dir(ROOT):
         raise PreflightError("Boca directory ownership or permissions changed")
-    if {child.name for child in ROOT.iterdir()} != {"compose.yaml", "secrets"}:
+    if {child.name for child in ROOT.iterdir()} != {"compose.yaml"}:
         raise PreflightError("unexpected Boca directory entries")
-    if {child.name for child in SECRET_DIR.iterdir()} != {"master.key"}:
-        raise PreflightError("unexpected Boca secret directory entries")
-    key_stat = KEY.lstat()
-    if (
-        not stat.S_ISREG(key_stat.st_mode)
-        or key_stat.st_uid != 10001
-        or stat.S_IMODE(key_stat.st_mode) != 0o400
-        or not 1 <= key_stat.st_size <= 128
-    ):
-        raise PreflightError("Boca key metadata changed")
+    _validate_key_volume()
     _verify_compose(expected_sha)
 
 
@@ -378,6 +441,31 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
         raise PreflightError("missing or malformed Boca port bindings")
     if host.get("PublishAllPorts") is not False:
         raise PreflightError("Boca automatic port publishing is not disabled")
+    mounts = json.loads(_run("docker", "inspect", "--format", "{{json .Mounts}}", container))
+    if not isinstance(mounts, list) or len(mounts) != 2:
+        raise PreflightError("unexpected Boca controller mounts")
+    expected_mounts = {
+        ("boca-socios_boca_data", "/data", True),
+        (KEY_VOLUME, "/run/secrets", False),
+    }
+    actual_mounts: set[tuple[str, str, bool]] = set()
+    for mount in mounts:
+        if (
+            not isinstance(mount, dict)
+            or mount.get("Type") != "volume"
+            or mount.get("Driver") != "local"
+        ):
+            raise PreflightError("unsafe Boca controller mount")
+        name, destination, writable = mount.get("Name"), mount.get("Destination"), mount.get("RW")
+        if (
+            not isinstance(name, str)
+            or not isinstance(destination, str)
+            or type(writable) is not bool
+        ):
+            raise PreflightError("invalid Boca controller mount metadata")
+        actual_mounts.add((name, destination, writable))
+    if actual_mounts != expected_mounts:
+        raise PreflightError("Boca controller volume boundary changed")
     labels = config.get("Labels")
     entries = config.get("Env")
     if not isinstance(labels, dict) or not isinstance(entries, list):
@@ -412,7 +500,20 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
     )
     snapshot = DiagnosticSnapshot(
         uid=os.getuid(),
-        key_secure=True,  # _diagnostic_files checked metadata without reading key contents.
+        # The fixed in-container probe reads metadata only and emits no key bytes.
+        key_secure=_run(
+            "docker",
+            "exec",
+            "--user",
+            "10001:10001",
+            container,
+            "python",
+            "-m",
+            "boca_socios.security.key_custody",
+            "inspect",
+        )
+        == "BOCA_KEY_READY",
+        mounts_secure=True,
         container_id=container,
         health=_run("docker", "inspect", "--format", "{{.State.Health.Status}}", container),
         image_ref=str(config.get("Image")),
@@ -487,7 +588,7 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
     )
     if not isinstance(repo_digests, list) or image not in repo_digests or revision != source_sha:
         raise PreflightError("pulled image digest or source revision differs from authorization")
-    _create_key()
+    _create_key(image)
     try:
         _run(
             *_compose_args(

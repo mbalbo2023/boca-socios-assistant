@@ -33,21 +33,23 @@ host identity review is still required. Nor does a successful `docker info`
 prove that Compose enforces the limits after a container starts. A separate
 isolated-host run must inspect actual cgroup limits and health.
 
-**Rootless secret incompatibility:** the current Compose file mounts a host
-UID 10001, mode 0400 key as a file and runs the container as UID 10001.
-Docker's rootless UID map makes host UID 10001 appear as container UID 0;
-container UID 10001 maps to a subordinate host UID. Compose file-backed
-secrets do not remap ownership or mode. The controller therefore may not be
-able to read the key under rootless Docker. Do not relax mode to 0444, pass the
-key through Actions or claim deploy readiness. Design and test a dedicated
-rootless-compatible key/volume custody path in a separate reviewed PR before
-any dispatch. CPU delegation also needs a real host check, not a fixture.
+**Original rootless secret incompatibility:** the former Compose file mounted
+a host UID 10001, mode 0400 key and ran the controller as container UID 10001.
+Rootless Docker maps that host UID to container UID 0, while container UID
+10001 maps to a subordinate host UID. Compose file secrets do not remap owner
+or mode. ADR 0034 proposes a dedicated key volume instead; do not relax mode
+to 0444, pass the key through Actions or claim host readiness from a runner
+smoke. CPU delegation and key access need a real isolated rootless check.
 
 This ADR does not authorize a merge, image release or droplet operation. The
 owner's standing delegation still requires exact-SHA CI and recorded agent
 technical review, verified main/environment restrictions, immutable digest,
 service, host identity, capacity and window gates. No additional human
 approval is required once those objective gates are proven.
+
+Issue #80 / [ADR 0034](0034-rootless-key-custody.md) uses a separate key
+volume for the identified UID mismatch. Its runner smoke is not
+evidence of the actual droplet's rootless storage or delegated limits.
 
 Primary references: [Docker rootless](https://docs.docker.com/engine/security/rootless/),
 [rootless cgroup limits](https://docs.docker.com/engine/security/rootless/tips/#limiting-resources),

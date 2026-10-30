@@ -34,30 +34,29 @@ socket at `/run/user/10001/docker.sock`; access to the shared rootful daemon
 is NO-GO. The helper checks real/effective UID/GID before private paths, pins
 that endpoint, strips inherited context/TLS client settings and rejects
 missing rootless/cgroup evidence before any first-install or diagnostic phase.
-This still does not make the current Compose/key layout deployable: the
-host-owned 0400 key is mapped to container root under rootless Docker, while
-the controller runs as container UID 10001. The key and volume custody design,
-delegated CPU limit,
-host account privileges and actual resource limits require an isolated test
-and independent review. Do not dispatch merely because the preflight passes.
-See [ADR 0033](ADR/0033-rootless-daemon-boundary.md).
+**Correction #80:** The key is generated inside a separate Boca-only volume
+under the container UID map and mounted read-only by the UID 10001 controller.
+No host file secret or 0444 permission is used. An isolated rootless trial
+must still prove key access, delegated CPU/memory/PID limits, host account
+privileges and restart/retention. Do not dispatch merely because the runner
+smoke passes. See [ADR 0033](ADR/0033-rootless-daemon-boundary.md) and
+[ADR 0034](ADR/0034-rootless-key-custody.md).
 
 The workflow first validates dispatch inputs and the successful manual image
 release run for the same current `main` SHA. It validates the resolved Compose
 contract on the runner, reads aggregate host capacity and Boca-only resource
 names, stages and hashes one Compose file, then validates the host-resolved
-model before pulling the exact digest. Before reporting success, the helper
-reuses the read-only diagnostic contract to check the actual container,
-image, dormant engine, resource limits and key metadata. Startup or postflight
-failure stops only the Boca controller and preserves the key and volume for
-separate diagnosis. An existing Boca key, container, volume, network or staged
-file blocks a fresh installation; this flow is not a recovery or upgrade
-procedure. The draft's host-side key file is not proven readable under
-rootless UID mapping; #81 must replace that custody path before any host
-install. The CPU snapshot is an estimate; #91 adds separate measurement of
-staging and rootless image storage. #79, #81, #89, #91 and #97 remain pending
-gates. An external source failure is reported by Actions as an alert, not a
-deploy blocker for the simulation-only controller.
+model before pulling the exact digest. It then creates an owner-only key once
+inside a separate rootless volume and starts the simulation-only controller.
+Before reporting success, the helper reuses the read-only diagnostic contract
+to check the actual container, image, dormant engine, resource limits, both
+mounts and key metadata. Startup or postflight failure stops only the Boca
+controller and preserves the key and both volumes for separate diagnosis. An
+existing Boca key, container, volume, network or staged file blocks a fresh
+installation; this flow is not recovery or upgrade. The CPU snapshot is an
+estimate; #91 adds measurement of staging and rootless image storage. #89,
+#91 and #97 remain pending gates. An external source failure is reported by
+Actions as an alert, not a deploy blocker for the simulation-only controller.
 
 ## Read-only diagnostic under demand (issue #68)
 
@@ -66,16 +65,15 @@ controller already installed from the exact current `main` SHA. Under the
 owner's standing direction, its recorded gates and environment restrictions
 must match the exact operation, SHA, digest, service and budget. It checks
 only Boca Compose, key **metadata**, immutable image identity, resource
-limits, health and `BOCA_ENGINE_MODE=off`. It never reads the key value or
-database rows, starts the motor, visits the site or changes a container.
+limits, both mounts, health and `BOCA_ENGINE_MODE=off`. A fixed in-container
+probe checks key metadata without printing bytes. It never reads the key
+value or database rows, starts the motor, visits the site or changes a container.
 The run summary contains only bounded status and immutable coordinates. A
 mismatch is NO-GO and requires diagnosis; it is not a reason to retry the
-first install or alter another workload. This draft checks real/effective
-UID and GID before private metadata, but still inherits Docker transport/
-context settings. It must remain uninvoked until #79 pins the rootless
-daemon and #91 hardens the whole workflow's identity and main checks. #81
-resolves key custody separately. No host diagnostic has
-run yet.
+first install or alter another workload. The helper checks real/effective
+UID/GID before private metadata and pins rootless Docker transport. It must
+remain uninvoked until #91 hardens the whole workflow's identity and main
+checks. No host diagnostic has run yet.
 
 ## Proposed isolated deployment layout
 
@@ -86,7 +84,7 @@ run yet.
 | Directory | Dedicated Boca-owned path after gated Actions preflight | No shared subtree |
 | Database | Boca-only named volume | No shared database |
 | Network | Boca-only bridge | No shared network |
-| Secrets | Boca-only source and file | No copied/reused keys |
+| Secrets | Boca-only key volume, separate from DB | No copied/reused keys |
 | Image | Boca-only tag + digest | No reused images |
 | Host ports | None initially | None altered |
 | CPU/RAM controller | 0.5 vCPU / 256 MiB | Existing capacity protected |

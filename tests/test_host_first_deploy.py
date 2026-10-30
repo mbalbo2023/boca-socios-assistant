@@ -1,9 +1,7 @@
 """Host preflight and failure boundary are testable without Docker or SSH."""
 
-import base64
 import hashlib
 import json
-import stat
 from dataclasses import replace
 from pathlib import Path
 
@@ -243,8 +241,6 @@ def _staged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     compose.write_text("name: boca-socios\n")
     monkeypatch.setattr(host, "ROOT", root)
     monkeypatch.setattr(host, "COMPOSE", compose)
-    monkeypatch.setattr(host, "SECRET_DIR", root / "secrets")
-    monkeypatch.setattr(host, "KEY", root / "secrets/master.key")
     monkeypatch.setattr(host, "collect_snapshot", safe_snapshot)
     monkeypatch.setattr(host, "_validate_docker_boundary", lambda: None)
     # The test may run with a different UID; all other staging checks remain real.
@@ -257,6 +253,12 @@ def _staged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
 
     monkeypatch.setattr(host, "_verify_compose", verify_compose)
     return digest
+
+
+def _docker_root(tmp_path: Path) -> Path:
+    root = tmp_path / "rootless-docker"
+    (root / "volumes" / host.KEY_VOLUME / "_data").mkdir(parents=True)
+    return root
 
 
 @pytest.mark.parametrize(
@@ -276,7 +278,7 @@ def test_unverified_docker_boundary_stops_every_host_phase_before_mutation(
     )
     with pytest.raises(PreflightError, match="daemon boundary"):
         host.phase(phase_name, IMAGE, SOURCE_SHA, digest)
-    assert not host.KEY.exists()
+    assert not (host.ROOT / "secrets").exists()
 
 
 def test_bad_image_revision_fails_before_creating_key(
@@ -294,11 +296,172 @@ def test_bad_image_revision_fails_before_creating_key(
     monkeypatch.setattr(host, "_run", fake_run)
     with pytest.raises(PreflightError, match="differs from authorization"):
         host.phase("apply", IMAGE, SOURCE_SHA, digest)
-    assert not host.KEY.exists()
+    assert not any(command[:3] == ("docker", "volume", "create") for command in commands)
     assert not any("up" in command for command in commands)
 
 
-def test_failed_start_stops_only_controller_and_preserves_owner_only_key(
+def test_key_volume_is_created_once_and_verified_without_host_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    commands: list[tuple[str, ...]] = []
+    root = _docker_root(tmp_path)
+
+    def fake_run(*args: str) -> str:
+        commands.append(args)
+        if args[:3] == ("docker", "volume", "create"):
+            return host.KEY_VOLUME
+        if args[:2] == ("docker", "info"):
+            return str(root)
+        if args[:3] == ("docker", "volume", "inspect"):
+            return json.dumps(
+                {
+                    "Name": host.KEY_VOLUME,
+                    "Driver": "local",
+                    "Scope": "local",
+                    "Options": {},
+                    "Mountpoint": str(root / "volumes" / host.KEY_VOLUME / "_data"),
+                    "Labels": {
+                        "com.docker.compose.project": "boca-socios",
+                        "com.docker.compose.volume": "boca_key",
+                    },
+                }
+            )
+        if args[:2] == ("docker", "run"):
+            return "BOCA_KEY_READY"
+        raise AssertionError("unexpected Docker operation")
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    host._create_key(IMAGE)
+    assert commands[0][:3] == ("docker", "volume", "create")
+    init, verify = (command for command in commands if command[:2] == ("docker", "run"))
+    assert init[-1] == "init" and verify[-1] == "verify"
+    assert "--network" in init and init[init.index("--network") + 1] == "none"
+    assert "CHOWN" in init and "CHOWN" not in verify
+    assert "--user" in verify and verify[verify.index("--user") + 1] == "10001:10001"
+    assert "readonly" in verify[verify.index("--mount") + 1]
+    assert not any("bind" in value for command in commands for value in command)
+
+
+def test_changed_key_volume_after_initialization_blocks_verify_and_preserves_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root = _docker_root(tmp_path)
+    inspections = 0
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str) -> str:
+        nonlocal inspections
+        commands.append(args)
+        if args[:3] == ("docker", "volume", "create"):
+            return host.KEY_VOLUME
+        if args[:3] == ("docker", "volume", "inspect"):
+            inspections += 1
+            return json.dumps(
+                {
+                    "Name": host.KEY_VOLUME,
+                    "Driver": "local",
+                    "Scope": "local",
+                    "Labels": {
+                        "com.docker.compose.project": "boca-socios",
+                        "com.docker.compose.volume": "boca_key",
+                    },
+                    "Options": {} if inspections == 1 else {"type": "none", "o": "bind"},
+                    "Mountpoint": str(root / "volumes" / host.KEY_VOLUME / "_data"),
+                }
+            )
+        if args[:2] == ("docker", "info"):
+            return str(root)
+        if args[:2] == ("docker", "run") and args[-1] == "init":
+            return "BOCA_KEY_READY"
+        raise AssertionError("verify must not run after volume changed")
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    with pytest.raises(PreflightError, match="volume identity"):
+        host._create_key(IMAGE)
+    assert inspections == 2
+    assert not any(command[:3] == ("docker", "volume", "rm") for command in commands)
+
+
+def test_existing_or_foreign_key_volume_is_no_go_before_initializer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    commands: list[tuple[str, ...]] = []
+    root = _docker_root(tmp_path)
+
+    def fake_run(*args: str) -> str:
+        commands.append(args)
+        if args[:3] == ("docker", "volume", "create"):
+            return host.KEY_VOLUME
+        if args[:2] == ("docker", "info"):
+            return str(root)
+        if args[:3] == ("docker", "volume", "inspect"):
+            return json.dumps(
+                {
+                    "Name": host.KEY_VOLUME,
+                    "Driver": "local",
+                    "Scope": "local",
+                    "Options": {},
+                    "Mountpoint": str(root / "volumes" / host.KEY_VOLUME / "_data"),
+                    "Labels": {},
+                }
+            )
+        raise AssertionError("initializer must not run")
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    with pytest.raises(PreflightError, match="volume identity"):
+        host._create_key(IMAGE)
+    assert not any(command[:2] == ("docker", "run") for command in commands)
+
+
+@pytest.mark.parametrize("escape", ["bind-options", "foreign-mountpoint", "symlink"])
+def test_labeled_local_volume_cannot_redirect_key_initialization(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, escape: str
+) -> None:
+    root = _docker_root(tmp_path)
+    expected = root / "volumes" / host.KEY_VOLUME / "_data"
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    if escape == "symlink":
+        expected.rmdir()
+        expected.symlink_to(foreign, target_is_directory=True)
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str) -> str:
+        commands.append(args)
+        if args[:3] == ("docker", "volume", "create"):
+            return host.KEY_VOLUME
+        if args[:3] == ("docker", "volume", "inspect"):
+            return json.dumps(
+                {
+                    "Name": host.KEY_VOLUME,
+                    "Driver": "local",
+                    "Scope": "local",
+                    "Labels": {
+                        "com.docker.compose.project": "boca-socios",
+                        "com.docker.compose.volume": "boca_key",
+                    },
+                    "Options": (
+                        {"type": "none", "o": "bind", "device": str(foreign)}
+                        if escape == "bind-options"
+                        else {}
+                    ),
+                    "Mountpoint": str(foreign if escape == "foreign-mountpoint" else expected),
+                }
+            )
+        if args[:2] == ("docker", "info"):
+            return str(root)
+        raise AssertionError("initializer must not run")
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    with pytest.raises(PreflightError, match="volume identity|mountpoint"):
+        host._create_key(IMAGE)
+    assert not any(command[:2] == ("docker", "run") for command in commands)
+    assert list(foreign.iterdir()) == []
+
+
+def test_failed_start_stops_only_controller_and_preserves_key_volume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     digest = _staged(tmp_path, monkeypatch)
@@ -313,13 +476,15 @@ def test_failed_start_stops_only_controller_and_preserves_owner_only_key(
         return ""
 
     monkeypatch.setattr(host, "_run", fake_run)
+    monkeypatch.setattr(
+        host, "_create_key", lambda _image: commands.append(("key-volume", "create"))
+    )
     with pytest.raises(PreflightError, match="unhealthy"):
         host.phase("apply", IMAGE, SOURCE_SHA, digest)
     assert [command[-2:] for command in commands if "stop" in command] == [("stop", "controller")]
-    assert len(base64.b64decode(host.KEY.read_bytes().strip(), validate=True)) == 32
-    assert stat.S_IMODE(host.KEY.stat().st_mode) == 0o400
-    assert not host._root_ready()  # A failed first install cannot retry over its retained key.
+    assert ("key-volume", "create") in commands
     assert not any("down" in command or "prune" in command for command in commands)
+    assert not any(command[:3] == ("docker", "volume", "rm") for command in commands)
 
 
 def test_first_install_requires_strict_postflight_before_reporting_pass(
@@ -339,7 +504,6 @@ def test_first_install_requires_strict_postflight_before_reporting_pass(
 
     def verify_files(expected: str) -> None:
         assert expected == digest
-        assert host.KEY.exists()
         checks.append("key-and-compose")
 
     def inspect_runtime(image: str, source_sha: str) -> DiagnosticSnapshot:
@@ -348,11 +512,12 @@ def test_first_install_requires_strict_postflight_before_reporting_pass(
         return healthy_diagnostic()
 
     monkeypatch.setattr(host, "_run", fake_run)
+    monkeypatch.setattr(host, "_create_key", lambda _image: checks.append("key-created"))
     monkeypatch.setattr(host, "_diagnostic_files", verify_files)
     monkeypatch.setattr(host, "collect_diagnostic", inspect_runtime)
 
     host.phase("apply", IMAGE, SOURCE_SHA, digest)
-    assert checks == ["key-and-compose", "runtime"]
+    assert checks == ["key-created", "key-and-compose", "runtime"]
     assert "BOCA_DEPLOY_PASS" in capsys.readouterr().out
 
 
@@ -386,14 +551,17 @@ def test_postflight_failure_stops_only_controller_and_preserves_key(
         raise failure
 
     monkeypatch.setattr(host, "_run", fake_run)
+    monkeypatch.setattr(
+        host, "_create_key", lambda _image: commands.append(("key-volume", "create"))
+    )
     monkeypatch.setattr(host, "_diagnostic_files", lambda _sha: None)
     monkeypatch.setattr(host, "collect_diagnostic", fail_postflight)
     with pytest.raises(type(failure)):
         host.phase("apply", IMAGE, SOURCE_SHA, digest)
     assert [command[-2:] for command in commands if "stop" in command] == [("stop", "controller")]
-    assert len(base64.b64decode(host.KEY.read_bytes().strip(), validate=True)) == 32
-    assert stat.S_IMODE(host.KEY.stat().st_mode) == 0o400
+    assert ("key-volume", "create") in commands
     assert not any("down" in command or "prune" in command for command in commands)
+    assert not any(command[:3] == ("docker", "volume", "rm") for command in commands)
 
 
 @pytest.mark.parametrize(
@@ -467,10 +635,32 @@ def test_malformed_docker_postflight_stops_controller_without_removing_key(
                 )
             if args[3] == "{{json .HostConfig}}":
                 return json.dumps(GOOD_HOST_CONFIG)
+            if args[3] == "{{json .Mounts}}":
+                return json.dumps(
+                    [
+                        {
+                            "Type": "volume",
+                            "Driver": "local",
+                            "Name": "boca-socios_boca_data",
+                            "Destination": "/data",
+                            "RW": True,
+                        },
+                        {
+                            "Type": "volume",
+                            "Driver": "local",
+                            "Name": host.KEY_VOLUME,
+                            "Destination": "/run/secrets",
+                            "RW": False,
+                        },
+                    ]
+                )
             raise AssertionError("unexpected Docker inspection")
         return ""
 
     monkeypatch.setattr(host, "_run", fake_run)
+    monkeypatch.setattr(
+        host, "_create_key", lambda _image: commands.append(("key-volume", "create"))
+    )
     monkeypatch.setattr(host, "_diagnostic_files", lambda _sha: None)
 
     with pytest.raises(ValueError):
@@ -479,15 +669,16 @@ def test_malformed_docker_postflight_stops_controller_without_removing_key(
     assert "BOCA_DEPLOY_PASS" not in capsys.readouterr().out
     assert any(command[3] == field for command in commands if command[:2] == ("docker", "inspect"))
     assert [command[-2:] for command in commands if "stop" in command] == [("stop", "controller")]
-    assert len(base64.b64decode(host.KEY.read_bytes().strip(), validate=True)) == 32
-    assert stat.S_IMODE(host.KEY.stat().st_mode) == 0o400
+    assert ("key-volume", "create") in commands
     assert not any("down" in command or "prune" in command for command in commands)
+    assert not any(command[:3] == ("docker", "volume", "rm") for command in commands)
 
 
 def healthy_diagnostic() -> DiagnosticSnapshot:
     return DiagnosticSnapshot(
         uid=10001,
         key_secure=True,
+        mounts_secure=True,
         container_id="c" * 64,
         health="healthy",
         image_ref=IMAGE,
@@ -515,6 +706,7 @@ def test_diagnostic_accepts_only_dormant_healthy_boca_controller() -> None:
     [
         ("uid", 0),
         ("key_secure", False),
+        ("mounts_secure", False),
         ("container_id", "unexpected"),
         ("health", "unhealthy"),
         ("image_ref", "other"),
@@ -535,6 +727,59 @@ def test_diagnostic_accepts_only_dormant_healthy_boca_controller() -> None:
 def test_diagnostic_deviation_is_no_go(field: str, value: object) -> None:
     with pytest.raises(PreflightError):
         validate_diagnostic(replace(healthy_diagnostic(), **{field: value}), IMAGE, SOURCE_SHA)
+
+
+@pytest.mark.parametrize(
+    "key_mount",
+    [
+        {
+            "Type": "volume",
+            "Driver": "local",
+            "Name": host.KEY_VOLUME,
+            "Destination": "/run/secrets",
+            "RW": True,
+        },
+        {
+            "Type": "bind",
+            "Driver": "local",
+            "Name": host.KEY_VOLUME,
+            "Destination": "/run/secrets",
+            "RW": False,
+        },
+    ],
+)
+def test_diagnostic_rejects_writable_or_bind_key_before_in_container_probe(
+    monkeypatch: pytest.MonkeyPatch, key_mount: dict[str, object]
+) -> None:
+    container = "c" * 64
+
+    def fake_run(*args: str, env: dict[str, str] | None = None) -> str:
+        if args[:2] == ("docker", "exec"):
+            pytest.fail("key probe must not run for an unsafe mount")
+        if "ps" in args:
+            return container
+        if args[:2] == ("docker", "inspect"):
+            if args[3] == "{{json .Mounts}}":
+                return json.dumps(
+                    [
+                        {
+                            "Type": "volume",
+                            "Driver": "local",
+                            "Name": "boca-socios_boca_data",
+                            "Destination": "/data",
+                            "RW": True,
+                        },
+                        key_mount,
+                    ]
+                )
+            if args[3] == "{{json .HostConfig}}":
+                return json.dumps(GOOD_HOST_CONFIG)
+            return "{}"
+        raise AssertionError("unexpected Docker operation")
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    with pytest.raises(PreflightError, match="mount|volume boundary"):
+        host.collect_diagnostic(IMAGE, SOURCE_SHA)
 
 
 @pytest.mark.parametrize("engine", ["off", "on"])
@@ -588,8 +833,29 @@ def test_diagnostic_phase_uses_only_read_only_boca_queries(
                             "PublishAllPorts": False,
                         }
                     )
+                case "{{json .Mounts}}":
+                    return json.dumps(
+                        [
+                            {
+                                "Type": "volume",
+                                "Driver": "local",
+                                "Name": "boca-socios_boca_data",
+                                "Destination": "/data",
+                                "RW": True,
+                            },
+                            {
+                                "Type": "volume",
+                                "Driver": "local",
+                                "Name": host.KEY_VOLUME,
+                                "Destination": "/run/secrets",
+                                "RW": False,
+                            },
+                        ]
+                    )
                 case "{{.State.Health.Status}}":
                     return "healthy"
+        if args[0:2] == ("docker", "exec"):
+            return "BOCA_KEY_READY"
         raise AssertionError("unexpected host command")
 
     monkeypatch.setattr(host, "_run", fake_run)
@@ -620,14 +886,14 @@ def test_diagnostic_rejects_setid_before_private_metadata(
         host._diagnostic_files("c" * 64)
 
 
-@pytest.mark.parametrize("symlink", [False, True])
-def test_diagnostic_rejects_missing_or_symlinked_key_without_reading_it(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, symlink: bool
+@pytest.mark.parametrize(
+    "labels",
+    [None, {"com.docker.compose.project": "other", "com.docker.compose.volume": "boca_key"}],
+)
+def test_diagnostic_rejects_missing_or_unowned_key_volume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, labels: object
 ) -> None:
     digest = _staged(tmp_path, monkeypatch)
-    host.SECRET_DIR.mkdir(mode=0o700)
-    if symlink:
-        host.KEY.symlink_to(tmp_path / "outside")
     monkeypatch.setattr(host.os, "getuid", lambda: 10001)
     monkeypatch.setattr(host.os, "geteuid", lambda: 10001)
     monkeypatch.setattr(host.os, "getgid", lambda: 10001)
@@ -635,5 +901,17 @@ def test_diagnostic_rejects_missing_or_symlinked_key_without_reading_it(
     monkeypatch.setattr(
         host.pwd, "getpwuid", lambda _uid: type("Account", (), {"pw_name": "boca-deploy"})()
     )
-    with pytest.raises(PreflightError, match="secret directory entries|key metadata"):
+    monkeypatch.setattr(
+        host,
+        "_run",
+        lambda *args: json.dumps(
+            {
+                "Name": host.KEY_VOLUME,
+                "Driver": "local",
+                "Scope": "local",
+                "Labels": labels,
+            }
+        ),
+    )
+    with pytest.raises(PreflightError, match="volume identity"):
         host._diagnostic_files(digest)
