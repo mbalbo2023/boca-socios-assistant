@@ -214,6 +214,104 @@ def test_first_deploy_preflight_passes_only_with_free_boca_namespace() -> None:
     validate_snapshot(safe_snapshot())
 
 
+def test_read_only_preflight_needs_no_image_or_release_and_does_not_mutate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    host.COMPOSE.unlink()  # A preflight precedes staging on the host.
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker mutation"))
+    host.phase("observe", "", SOURCE_SHA, digest)
+    assert "BOCA_PREFLIGHT_PASS" in capsys.readouterr().out
+    assert not (host.ROOT / "secrets").exists()
+
+
+def test_observe_uses_only_bounded_read_only_docker_queries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _dedicated_test_identity(monkeypatch)
+    root = tmp_path / "boca-socios"
+    root.mkdir(mode=0o700)
+    monkeypatch.setattr(host, "ROOT", root)
+    monkeypatch.setattr(host, "COMPOSE", root / "compose.yaml")
+    monkeypatch.setattr(host, "_safe_dir", lambda _path: True)
+    monkeypatch.setattr(host, "_rootless_socket_secure", lambda: True)
+    monkeypatch.setattr(host, "_rootful_socket_inaccessible", lambda: True)
+    controllers = tmp_path / "cgroup.controllers"
+    controllers.write_text("cpu memory pids\n")
+    monkeypatch.setattr(host, "CGROUP_CONTROLLERS", controllers)
+    # Capacity thresholds are covered separately; retain the real collection
+    # and daemon boundary while making this test independent of runner load.
+    monkeypatch.setattr(host, "validate_snapshot", lambda _snapshot: None)
+    allowed = {
+        ("docker", "info", "--format", "{{json .}}"): json.dumps(
+            {
+                "SecurityOptions": ["name=rootless"],
+                "CgroupVersion": "2",
+                "CgroupDriver": "systemd",
+            }
+        ),
+        ("docker", "version", "--format", "{{.Server.Version}}"): "27.0",
+        ("docker", "compose", "version", "--short"): "2.0",
+        ("docker", "compose", "up", "--help"): "--no-build --no-deps --wait",
+        ("docker", "compose", "config", "--help"): "--format",
+        (
+            "docker",
+            "ps",
+            "-a",
+            "-q",
+            "--filter",
+            "label=com.docker.compose.project=boca-socios",
+        ): "",
+        ("docker", "ps", "-a", "-q", "--filter", "name=^/boca-socios-"): "",
+        ("docker", "volume", "ls", "-q", "--filter", "name=^boca-socios_"): "",
+        ("docker", "network", "ls", "-q", "--filter", "name=^boca-socios_"): "",
+    }
+    observed: list[tuple[str, ...]] = []
+
+    def read_only_docker(*args: str) -> str:
+        assert args in allowed, f"unexpected Docker operation in read-only preflight: {args}"
+        observed.append(args)
+        return allowed[args]
+
+    monkeypatch.setattr(host, "_run", read_only_docker)
+    monkeypatch.setenv("BOCA_DEPLOY_SSH_KEY", "secret-sentinel")
+    host.phase("observe", "", SOURCE_SHA, "c" * 64)
+    output = capsys.readouterr().out
+    assert "BOCA_PREFLIGHT_PASS" in output
+    assert "secret-sentinel" not in output
+    assert observed == list(allowed)
+    assert list(root.iterdir()) == []
+
+
+def test_first_install_preflight_still_accepts_approved_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    host.COMPOSE.unlink()
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker mutation"))
+    host.phase("preflight", IMAGE, SOURCE_SHA, digest)
+    assert "BOCA_PREFLIGHT_PASS" in capsys.readouterr().out
+
+
+def test_effectful_phase_still_requires_immutable_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker mutation"))
+    with pytest.raises(PreflightError, match="coordinates"):
+        host.phase("apply", "", SOURCE_SHA, digest)
+
+
+@pytest.mark.parametrize(("phase_name", "image"), [("observe", IMAGE), ("preflight", "")])
+def test_host_preflight_modes_reject_swapped_image_contracts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase_name: str, image: str
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker mutation"))
+    with pytest.raises(PreflightError, match="coordinates"):
+        host.phase(phase_name, image, SOURCE_SHA, digest)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -262,7 +360,8 @@ def _docker_root(tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize(
-    "phase_name", ["preflight", "stage", "config", "apply", "diagnostic-config", "diagnostic"]
+    "phase_name",
+    ["observe", "preflight", "stage", "config", "apply", "diagnostic-config", "diagnostic"],
 )
 def test_unverified_docker_boundary_stops_every_host_phase_before_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase_name: str
@@ -277,7 +376,7 @@ def test_unverified_docker_boundary_stops_every_host_phase_before_mutation(
         host, "_run", lambda *args, **kwargs: pytest.fail("Docker command executed")
     )
     with pytest.raises(PreflightError, match="daemon boundary"):
-        host.phase(phase_name, IMAGE, SOURCE_SHA, digest)
+        host.phase(phase_name, "" if phase_name == "observe" else IMAGE, SOURCE_SHA, digest)
     assert not (host.ROOT / "secrets").exists()
 
 

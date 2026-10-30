@@ -75,6 +75,16 @@ UID/GID before private metadata and pins rootless Docker transport. It must
 remain uninvoked until #91 hardens the whole workflow's identity and main
 checks. No host diagnostic has run yet.
 
+## Proposed read-only host preflight (issue #84)
+
+Before an image release or first install, the same protected manual workflow
+can check the Boca rootless socket, cgroup delegation, dedicated identity,
+empty Boca namespace and aggregate capacity with `operation=preflight`. Its
+image and release-run fields must be blank. This operation has no stage,
+pull, key, volume, container or site effect and is unavailable on PRs. It
+requires the protected environment and pinned SSH identity; no host operation
+has been dispatched. See [ADR 0035](ADR/0035-readonly-host-preflight.md).
+
 ## Proposed isolated deployment layout
 
 | Item | Boca project | Unrelated workloads |
