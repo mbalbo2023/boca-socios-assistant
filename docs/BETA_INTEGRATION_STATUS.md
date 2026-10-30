@@ -1,8 +1,14 @@
 # Estado de integración BETA
 
-**Corte:** 2026-10-30 UTC. Base de esta revisión: `main`
+**Corte:** 2026-10-29 (America/Argentina/Buenos_Aires). Base de esta revisión: `main`
 `bfe4a3c830cff963e1668add05f50c50d0cbf2e8`. Issue #24, PR #30.
 Este documento describe el candidato offline; no acredita una BETA operativa.
+
+**Revalidación del 2026-10-30 (UTC):** #30 se integró en `main`, junto con el
+outbox durable #34 y el worker Chromium offline #43. Los PRs #36, #38, #40 y
+#44 siguen en borrador; sus checks históricos no acreditan una integración
+actual. El semáforo y los límites de este documento siguen excluyendo
+credenciales, reserva real y despliegue por un merge.
 
 ## Integración efectivamente realizada
 
