@@ -6,8 +6,7 @@ import sys
 from pathlib import Path
 
 
-def main() -> int:
-    root = Path(__file__).resolve().parents[1]
+def check_policy(root: Path) -> list[str]:
     compose = (root / "compose.yaml").read_text(encoding="utf-8")
     workflow_files = list((root / ".github" / "workflows").glob("*.yml"))
     failures: list[str] = []
@@ -39,14 +38,39 @@ def main() -> int:
             "runs-on: self-hosted",
             "docker system prune",
             "docker volume prune",
-            "ssh ",
-            "scp ",
         ):
             if forbidden in data:
                 failures.append(f"forbidden workflow pattern in {workflow.name}: {forbidden}")
+        if workflow.name == "boca-first-deploy.yml":
+            # This single, manual workflow is the only reviewed host path.
+            # Keep the generic SSH ban in every other workflow.
+            for required in (
+                "workflow_dispatch:",
+                "environment: boca-first-deploy",
+                "BOCA_DEPLOY_ENV_READY",
+                "StrictHostKeyChecking yes",
+                "BatchMode yes",
+                "BOCA_DEPLOY_KNOWN_HOSTS",
+                "github.ref == 'refs/heads/main'",
+                "github.actor == 'mbalbo2023'",
+                "boca-first-deploy\n  cancel-in-progress: false",
+                "python3 - preflight",
+                "python3 - apply",
+            ):
+                if required not in data:
+                    failures.append(f"first-deploy workflow missing gate: {required}")
+        else:
+            for forbidden in ("ssh ", "scp "):
+                if forbidden in data:
+                    failures.append(f"forbidden workflow pattern in {workflow.name}: {forbidden}")
     for relative in ("AGENTS.md", ".github/CODEOWNERS", ".github/pull_request_template.md"):
         if not (root / relative).is_file():
             failures.append(f"missing governance file: {relative}")
+    return failures
+
+
+def main() -> int:
+    failures = check_policy(Path(__file__).resolve().parents[1])
     for finding in failures:
         print(f"POLICY_FAIL: {finding}", file=sys.stderr)
     if failures:
