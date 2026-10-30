@@ -24,6 +24,9 @@ release run and cannot use an empty image. A successful preflight is one
 observation at one instant; it does not grant a subsequent install, prove
 effective cgroup limits or substitute for SSH privilege review.
 
-This operation remains undispatched until the environment and identity are
-reviewed. Protection of `main` (#10), independent PR review, an exact owner
-record and an authorized time window still gate any future host operation.
+This operation remains undispatched until the objective gates are verified:
+protected `main` and environment restrictions, exact-SHA green checks and
+recorded agent technical review, a dedicated account and pinned SSH host
+identity, capacity, and an authorized time window. The readiness variable
+alone is insufficient. The owner's standing direction requires no additional
+human approval once these gates pass; #91 still blocks any host dispatch.

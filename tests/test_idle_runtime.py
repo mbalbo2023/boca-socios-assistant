@@ -15,6 +15,8 @@ class StopImmediately:
 def test_idle_startup_has_no_motor_or_site_calls(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # Do not leak runtime's process-global umask into later module tests.
+    monkeypatch.setattr(runtime.os, "umask", lambda _mask: None)
     monkeypatch.setenv("BOCA_ENGINE_MODE", "off")
     monkeypatch.setattr(runtime.CredentialVault, "from_secret_file", lambda _path: object())
     monkeypatch.setattr(runtime.Database, "migrate", lambda _self: None)

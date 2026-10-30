@@ -21,6 +21,8 @@ def test_simulation_is_valid() -> None:
 def test_engine_defaults_to_off_and_on_fails_before_key_access(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Runtime sets a process-global umask; this test only needs the engine gate.
+    monkeypatch.setattr(runtime.os, "umask", lambda _mask: None)
     monkeypatch.delenv("BOCA_ENGINE_MODE", raising=False)
     assert Settings.from_environment().engine_mode == "off"
     monkeypatch.setenv("BOCA_ENGINE_MODE", "on")
