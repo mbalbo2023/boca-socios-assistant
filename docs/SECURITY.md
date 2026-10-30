@@ -18,12 +18,11 @@ encryption**, not an ordinary password hash.
   repository, image or Actions logs.
 - The Linux-targeted vault requires `O_NOFOLLOW` (fails closed if absent), checks
   regular-file type, ownership, bounded length and owner-only permissions
-  using the opened descriptor. The previous 0444 file-secret exception is
-  removed. The approved key volume has a 0400 file owned by container UID
-  10001 and is separate from the database volume.
-- Before real enrollment, prove actual rootless UID mapping, read-only mount,
-  metadata, backup custody and recovery on the target. Never rewrite or chmod
-  the mounted key in the controller.
+  using the opened descriptor. The former 0444 file-secret exception is
+  removed; the key volume has a 0400 file owned by container UID 10001.
+- Before real enrollment, prove actual rootless UID mapping, read-only mount
+  and key metadata on the target. Never rewrite/chmod the mounted key in the
+  controller. Recovery custody is a later milestone after a reliable product.
 - Key version is part of each record; key rotation requires a tested,
   explicit migration with old/new keys and recovery verification.
 - Database file permissions 0600, private parent directory, distinct
@@ -35,9 +34,10 @@ encryption**, not an ordinary password hash.
 Loss of the encryption key makes stored passwords unrecoverable; leak of
 both database and key exposes passwords. Do not put the encryption key
 beside the database in a backup. Do not give the key to a coding agent.
-The first-install workflow generates the key inside the isolated rootless
-namespace; a separate, reviewed key-volume recovery plan is needed before
-real credentials can be stored.
+Any future master-key provisioning is a separate, technically reviewed
+milestone. The proposed first-install workflow generates the key inside the
+isolated rootless namespace; this simulation-only gate does not enable real
+credential enrollment. Do not recreate the existing SSH deployment secret.
 
 ## Access policy
 
@@ -63,5 +63,6 @@ real credentials can be stored.
 
 Do not manufacture signed Queue-it tokens, change queue proof, bypass WAF or
 CAPTCHA, probe nonpublic endpoints or run synthetic load against Boca.
-Live interactions require a separate signed-off test plan and resource cap.
+Live interactions remain disabled until a separate technically reviewed,
+consented test milestone with a resource cap.
 
