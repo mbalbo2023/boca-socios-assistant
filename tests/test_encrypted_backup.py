@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from boca_socios.domain.policy import TicketIntent
 from boca_socios.security.credential_vault import CredentialVault
 from boca_socios.storage.database import Database
+from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
 from boca_socios.storage.encrypted_backup import (
     MAGIC,
     BackupError,
@@ -215,6 +216,77 @@ def test_inconsistent_source_is_not_backed_up(tmp_path: Path, corruption: str) -
     with pytest.raises(BackupError):
         backup_database(source.path, archive, os.urandom(32))
     assert not archive.exists()
+
+
+def _change_migration(connection: sqlite3.Connection, change: str) -> None:
+    if change == "v2_checksum":
+        connection.execute("UPDATE schema_migrations SET checksum = 'wrong' WHERE version = 2")
+    elif change == "unknown_v3":
+        connection.execute(
+            "INSERT INTO schema_migrations(version, checksum) VALUES (3, 'unknown')"
+        )
+    elif change == "v2_table_missing":
+        connection.execute("DROP TABLE notification_claim_windows")
+    else:
+        connection.execute("DELETE FROM schema_migrations WHERE version = 2")
+
+
+@pytest.mark.parametrize(
+    "change", ["v2_checksum", "unknown_v3", "v2_record_missing", "v2_table_missing"]
+)
+def test_backup_rejects_untrusted_migration_chain(tmp_path: Path, change: str) -> None:
+    source, _, _ = _source(tmp_path / "source.db")
+    SqliteNotificationOutbox(source.path).migrate()
+    with source.connection() as connection, connection:
+        _change_migration(connection, change)
+    archive = tmp_path / "snapshot.enc"
+    with pytest.raises(BackupError, match="migration"):
+        backup_database(source.path, archive, os.urandom(32))
+    assert not archive.exists()
+    assert not list(tmp_path.glob(".boca-backup-*"))
+
+
+@pytest.mark.parametrize(
+    "change", ["v2_checksum", "unknown_v3", "v2_record_missing", "v2_table_missing"]
+)
+def test_restore_rejects_authenticated_invalid_migration_chain(
+    tmp_path: Path, change: str
+) -> None:
+    source, _, _ = _source(tmp_path / "source.db")
+    SqliteNotificationOutbox(source.path).migrate()
+    archive = tmp_path / "snapshot.enc"
+    restored = tmp_path / "restored.db"
+    key = os.urandom(32)
+    backup_database(source.path, archive, key)
+    payload = archive.read_bytes()
+    header, nonce = payload[: len(MAGIC) + 12], payload[len(MAGIC) : len(MAGIC) + 12]
+    image = AESGCM(key).decrypt(nonce, payload[len(header) :], header)
+    with sqlite3.connect(":memory:") as snapshot:
+        snapshot.deserialize(image)
+        with snapshot:
+            _change_migration(snapshot, change)
+        altered = snapshot.serialize()
+    archive.write_bytes(header + AESGCM(key).encrypt(nonce, altered, header))
+
+    with pytest.raises(BackupError, match="migration"):
+        restore_database(archive, restored, key)
+    assert not restored.exists()
+    assert not list(tmp_path.glob(".boca-restore-*"))
+
+
+def test_wal_snapshot_with_outbox_v2_restores_compatible_schema(tmp_path: Path) -> None:
+    source, _, _ = _source(tmp_path / "source.db")
+    SqliteNotificationOutbox(source.path).migrate()
+    archive = tmp_path / "snapshot.enc"
+    restored = tmp_path / "restored.db"
+    key = os.urandom(32)
+    backup_database(source.path, archive, key)
+    restore_database(archive, restored, key)
+    SqliteNotificationOutbox(restored).migrate()
+    with Database(restored).connection() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM notification_outbox"
+        ).fetchone() == (0,)
 
 
 def test_backup_key_and_private_directory_are_required(tmp_path: Path) -> None:
