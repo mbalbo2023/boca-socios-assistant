@@ -14,7 +14,8 @@ def main() -> int:
         print("usage: check_main_ref.py MAIN_REF_JSON SOURCE_SHA", file=sys.stderr)
         return 2
     try:
-        raw = Path(sys.argv[1]).read_bytes()
+        with Path(sys.argv[1]).open("rb") as response:
+            raw = response.read(8193)
         if len(raw) > 8192:
             raise DeployInputError("current main ref response is too large")
         validate_main_ref(json.loads(raw), sys.argv[2])

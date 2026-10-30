@@ -2,9 +2,9 @@
 
 Status: Proposed for issue #8, 2026-10-28. Simulation mode only.
 
-The 0444 file-secret compatibility exception described below is superseded
-by [ADR 0034](0034-rootless-key-custody.md) for the rootless deployment
-candidate; the implementation now requires owner-only key permissions.
+The former 0444 file-secret exception was removed by
+[ADR 0034](0034-rootless-key-custody.md); the implementation requires
+owner-only key permissions.
 
 ## Decision
 
@@ -16,15 +16,10 @@ runtime. Pin the `uv` installer version. The runtime remains non-root,
 read-only at the Compose layer and free of `pip install` network resolution.
 
 Require platform support for `O_NOFOLLOW` (fail closed if unavailable), and
-use `fstat` on an opened descriptor to reduce
-symlink races and check the key file is regular, safely owned and not
-group/world-writable. Reject group/world-readable ordinary source files;
-only the exact `/run/secrets/boca_master_key` path permits a read-only
-0444 mount (exact permissions; no mixed owner-writable 0644/0640/0604) to match
-practical Compose file-secret behavior. In that case
-operator preflight **must** check the source key's owner-only permissions
-outside this image and that no other service can mount the secret. A
-Docker secret mount must never be modified in place to adjust permissions.
+use `fstat` on an opened descriptor to reduce symlink races and check the key
+file is regular, safely owned and not group/world-readable or writable.
+The dedicated key volume presents a 0400 file to container UID 10001;
+the controller must never modify its read-only mount.
 Open using `O_NONBLOCK` as well so special files like FIFOs cannot block
 before regular-file verification. Bound the encoded key read to 128 bytes
 and reject malformed/oversized
@@ -40,10 +35,8 @@ or key contents in exception messages, code, logs or CI.
   installer bootstrap and underlying build toolchain are not attested by
   this repository as a bitwise reproducible build. Future deployment needs
   SBOM, provenance and container vulnerability scanning as a separate gate.
-- Docker bind/file-secret mount permission behavior varies. Allowing 0444
-  for the exact in-container path is a **conditional compatibility choice**,
-  not an endorsement of a host key readable by everyone. No real secrets
-  may be enrolled until explicit host mount and permission preflight passes.
+- The rootless volume design still needs an isolated trial of actual UID
+  mapping, mount mode and key access before host installation.
 - A single process that can decrypt stored credentials remains powerful:
   DB and key disclosure together expose them. Keep storage, encryption key,
   backup and operator UI access strictly separated.

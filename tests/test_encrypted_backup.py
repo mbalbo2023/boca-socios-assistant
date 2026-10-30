@@ -99,6 +99,57 @@ def test_refuses_to_overwrite_backup_or_existing_database(tmp_path: Path) -> Non
     assert restored.read_bytes() == b"existing database"
 
 
+@pytest.mark.parametrize("operation", ["backup", "restore"])
+def test_directory_sync_failure_does_not_publish_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    source, _, _ = _source(tmp_path / "source.db")
+    key = os.urandom(32)
+    archive = tmp_path / "snapshot.enc"
+    if operation == "restore":
+        backup_database(source.path, archive, key)
+    target = archive if operation == "backup" else tmp_path / "restored.db"
+
+    original_fsync = os.fsync
+
+    def fail_directory_sync(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise OSError("synthetic directory sync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", fail_directory_sync)
+    with pytest.raises(BackupError, match="published"):
+        if operation == "backup":
+            backup_database(source.path, archive, key)
+        else:
+            restore_database(archive, target, key)
+    assert not target.exists()
+    assert not list(tmp_path.glob(".boca-backup-*"))
+    assert not list(tmp_path.glob(".boca-restore-*"))
+
+
+def test_failed_publication_preserves_a_replaced_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, _, _ = _source(tmp_path / "source.db")
+    archive = tmp_path / "snapshot.enc"
+    replacement = b"another writer's file"
+    original_fsync = os.fsync
+
+    def replace_before_failure(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            archive.unlink()
+            archive.write_bytes(replacement)
+            raise OSError("synthetic directory sync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", replace_before_failure)
+    with pytest.raises(BackupError, match="manual recovery"):
+        backup_database(source.path, archive, os.urandom(32))
+    assert archive.read_bytes() == replacement
+    assert not list(tmp_path.glob(".boca-backup-*"))
+
+
 def test_refuses_symlink_sources_and_destinations(tmp_path: Path) -> None:
     source, _, _ = _source(tmp_path / "source.db")
     key = os.urandom(32)

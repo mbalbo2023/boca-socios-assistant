@@ -300,6 +300,8 @@ async def _run_group(
                 errors.append(type(response).__name__)
             else:
                 navigation_ms.append(response)
+        if blocked_requests:
+            errors.append("external_page_request_blocked")
         check_budget()
         await asyncio.sleep(args.hold_ms / 1000)
         check_budget()

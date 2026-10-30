@@ -45,20 +45,26 @@ root page is not evidence that this exact script succeeds.
 
 ## Gate for any future real execution
 
-One authorized manual observation must use an environment whose egress policy
-permits only the exact public host over HTTPS, with no proxy bypass, and a
-nonproduction browser worker. The network policy and browser sandbox must be
+Any manual observation under the owner's standing direction must use an
+Actions environment whose egress policy permits only the exact public host
+over HTTPS, with no proxy bypass, and a nonproduction browser worker. The
+network policy and browser sandbox must be
 verified before execution; **Playwright routing alone is not an OS firewall**,
 and browser internals may issue traffic outside the routed page. The script
 has not been run against the live site in this PR. No production droplet
-command is provided; any future droplet operation must use an owner-approved
-GitHub Actions workflow, independently reviewed and authorized.
+command is provided; any future droplet operation must use the dedicated Boca
+Actions workflow and its objective security and resource gates. The agent
+must record its technical review and exact-SHA CI. The owner does not require
+a second human approval for this component.
 
 The observer stops at the public login form. Credentials, CAPTCHA, waiting
 room, Queue-it passes, authenticated screens, eligibility, booking and payment
-are outside this issue. Issue #27 remains a separate, uncompleted synthetic
-container/Chromium smoke task. A live reservation adapter requires its own
-policy, consent, reliability and owner-approval gates.
+are outside this issue. Issue #27 has draft PR #43 for an isolated Chromium
+startup/teardown smoke with network disabled; that test does not run this
+observer against Boca. A live reservation adapter requires its own policy,
+consent, reliability and controlled technical gates. The separate source
+semaphore proposed in issue #94 checks only a public HTTP status, not this
+browser flow or its safety boundary.
 
 References: [Playwright routing and redirect behavior](https://playwright.dev/python/docs/network),
 [Playwright Route.fetch](https://playwright.dev/python/docs/api/class-route),

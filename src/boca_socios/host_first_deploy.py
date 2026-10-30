@@ -154,6 +154,8 @@ def _run(*args: str, env: dict[str, str] | None = None) -> str:
         # operations to the shared rootful daemon or a remote endpoint.
         run_env = dict(os.environ if env is None else env)
         run_env.pop("DOCKER_CONTEXT", None)
+        run_env.pop("DOCKER_CONFIG", None)
+        run_env.pop("DOCKER_TLS", None)
         run_env.pop("DOCKER_TLS_VERIFY", None)
         run_env.pop("DOCKER_CERT_PATH", None)
         run_env["DOCKER_HOST"] = f"unix://{ROOTLESS_SOCKET}"
@@ -202,20 +204,6 @@ def _socket_state(path: Path, *, expected_uid: int = 10001) -> str:
     )
 
 
-def _require_dedicated_identity() -> int:
-    """Refuse setuid/wrapper privilege changes before probing any host path."""
-    uid = os.getuid()
-    if uid != 10001 or os.geteuid() != uid or os.getegid() != os.getgid():
-        raise PreflightError("expected dedicated boca-deploy account")
-    try:
-        account = pwd.getpwuid(uid).pw_name
-    except KeyError as exc:
-        raise PreflightError("expected dedicated boca-deploy account") from exc
-    if account != "boca-deploy":
-        raise PreflightError("expected dedicated boca-deploy account")
-    return uid
-
-
 def inspect_prerequisites() -> None:
     """Observe only Boca's private runtime; metadata is not a Docker preflight."""
     uid = _require_dedicated_identity()
@@ -255,6 +243,20 @@ def inspect_prerequisites() -> None:
 
 def _rootful_socket_inaccessible() -> bool:
     return not os.access(ROOTFUL_SOCKET, os.W_OK)
+
+
+def _require_dedicated_identity() -> int:
+    """Refuse setuid/wrapper privilege changes before probing any host path."""
+    uid = os.getuid()
+    if uid != 10001 or os.geteuid() != uid or os.getegid() != os.getgid():
+        raise PreflightError("expected dedicated Boca identity")
+    try:
+        account = pwd.getpwuid(uid).pw_name
+    except KeyError as exc:
+        raise PreflightError("dedicated Boca identity is unavailable") from exc
+    if account != "boca-deploy":
+        raise PreflightError("expected dedicated boca-deploy account")
+    return uid
 
 
 def _validate_docker_boundary() -> None:
@@ -426,16 +428,30 @@ def _validate_key_volume() -> None:
         _run("docker", "volume", "inspect", "--format", "{{json .}}", KEY_VOLUME),
         "key volume",
     )
+    root = Path(_run("docker", "info", "--format", "{{.DockerRootDir}}"))
+    mountpoint = volume.get("Mountpoint")
+    expected = root / "volumes" / KEY_VOLUME / "_data"
     labels = volume.get("Labels")
     if (
         volume.get("Name") != KEY_VOLUME
         or volume.get("Driver") != "local"
         or volume.get("Scope") != "local"
+        or volume.get("Options") not in (None, {})
+        or not root.is_absolute()
+        or root == Path("/")
+        or mountpoint != str(expected)
         or not isinstance(labels, dict)
         or labels.get("com.docker.compose.project") != PROJECT
         or labels.get("com.docker.compose.volume") != "boca_key"
     ):
         raise PreflightError("Boca key volume identity is unsafe")
+    # A local driver can otherwise conceal a bind source behind the expected
+    # volume name. Refuse path redirects even when Docker's labels match.
+    try:
+        if root.resolve(strict=True) != root or expected.resolve(strict=True) != expected:
+            raise PreflightError("Boca key volume mountpoint is redirected")
+    except (OSError, RuntimeError) as exc:
+        raise PreflightError("Boca key volume mountpoint is unavailable") from exc
 
 
 def _key_container(image: str, operation: str) -> tuple[str, ...]:
@@ -493,6 +509,9 @@ def _create_key(image: str) -> None:
     _validate_key_volume()
     if _run(*_key_container(image, "init")) != "BOCA_KEY_READY":
         raise PreflightError("Boca key initialization did not confirm completion")
+    # Volume creation/inspection is not atomic with a container run; reject a
+    # changed named volume before treating the initialized key as usable.
+    _validate_key_volume()
     if _run(*_key_container(image, "verify")) != "BOCA_KEY_READY":
         raise PreflightError("Boca key is not readable by the controller identity")
 
@@ -536,6 +555,11 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
         _run("docker", "inspect", "--format", "{{json .HostConfig}}", container),
         "container host config",
     )
+    port_bindings = host.get("PortBindings")
+    if not isinstance(port_bindings, dict):
+        raise PreflightError("missing or malformed Boca port bindings")
+    if host.get("PublishAllPorts") is not False:
+        raise PreflightError("Boca automatic port publishing is not disabled")
     mounts = json.loads(_run("docker", "inspect", "--format", "{{json .Mounts}}", container))
     if not isinstance(mounts, list) or len(mounts) != 2:
         raise PreflightError("unexpected Boca controller mounts")
@@ -623,7 +647,7 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
         pids_limit=host.get("PidsLimit"),  # type: ignore[arg-type]
         read_only=host.get("ReadonlyRootfs"),  # type: ignore[arg-type]
         privileged=host.get("Privileged"),  # type: ignore[arg-type]
-        has_ports=bool(host.get("PortBindings")),
+        has_ports=bool(port_bindings),
     )
     validate_diagnostic(snapshot, image, source_sha)
     return snapshot
@@ -721,7 +745,7 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
         # hold before the first install can claim success.
         _diagnostic_files(compose_sha)
         collect_diagnostic(image, source_sha)
-    except (ValueError, OSError):
+    except (ValueError, OSError, TypeError, KeyError):
         try:
             _run(*_compose_args("stop", "controller"), env=_compose_env(image))
         except PreflightError:
@@ -751,7 +775,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         phase(args.phase, args.image, args.source_sha, args.compose_sha)
-    except (PreflightError, OSError, ValueError) as exc:
+    except (PreflightError, OSError, ValueError, TypeError, KeyError) as exc:
         print(f"BOCA_NO_GO: {exc}", file=sys.stderr)
         return 1
     return 0

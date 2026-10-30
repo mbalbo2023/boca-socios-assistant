@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from math import isfinite
+from threading import Lock
 from typing import Protocol
 from uuid import NAMESPACE_OID, UUID, uuid5
 
@@ -58,8 +60,9 @@ class StaticOutboxAdapter:
 class OfflineSimulation:
     """Run an already-admitted fake queue entry once in this process.
 
-    The queue is process-local. Another worker, restart, or ambiguous external
-    result would require a durable claim and reconciliation before live use.
+    A per-coordinator local claim prevents two aliases from running the fake
+    browser concurrently. Another coordinator, worker, restart, or ambiguous
+    external result still requires a durable guard and reconciliation.
     """
 
     def __init__(
@@ -74,6 +77,8 @@ class OfflineSimulation:
         self._queue = queue
         self._outbox = outbox
         self._browser = browser
+        self._claim_lock = Lock()
+        self._active_members: set[str] = set()
 
     async def run_admitted(
         self,
@@ -84,17 +89,38 @@ class OfflineSimulation:
         notification_at_seconds: float,
     ) -> SimulationReceipt:
         intent.validate()
+        if (
+            not isinstance(notification_at_seconds, (int, float))
+            or not isfinite(notification_at_seconds)
+            or notification_at_seconds < 0
+        ):
+            raise ValueError("notification time must be finite and nonnegative")
         if intent.event_id != self._queue.config.event_id:
             raise ValueError("intent belongs to a different simulated event")
-        self._queue.advance(at)
-        snapshot = self._queue.snapshot(session_id)
-        if snapshot.member_id != intent.member_id or snapshot.state is not QueueState.ADMITTED:
+        # Validate the alias and its owner before time can expire any other
+        # member's entry. Invalid input must have no global clock side effect.
+        original = self._queue.snapshot(session_id)
+        if original.member_id != intent.member_id:
             raise InvalidStateTransition("synthetic admission is required for this member")
-        workflow = SyntheticBrowserWorkflow(
-            intents=SqliteIntentAdapter(self._database),
-            browser=self._browser,
-            notifications=StaticOutboxAdapter(self._outbox, notification_at_seconds),
-        )
-        receipt = await workflow.run(intent)
-        self._queue.finish(session_id, at)
-        return receipt
+        # Hold the threading lock only while claiming; never across an await.
+        # This fences aliases within this coordinator, not separate processes.
+        with self._claim_lock:
+            if intent.member_id in self._active_members:
+                raise InvalidStateTransition("synthetic request already in progress")
+            self._active_members.add(intent.member_id)
+        try:
+            self._queue.advance(at)
+            snapshot = self._queue.snapshot(session_id)
+            if snapshot.state is not QueueState.ADMITTED:
+                raise InvalidStateTransition("synthetic admission is required for this member")
+            workflow = SyntheticBrowserWorkflow(
+                intents=SqliteIntentAdapter(self._database),
+                browser=self._browser,
+                notifications=StaticOutboxAdapter(self._outbox, notification_at_seconds),
+            )
+            receipt = await workflow.run(intent)
+            self._queue.finish(session_id, at)
+            return receipt
+        finally:
+            with self._claim_lock:
+                self._active_members.remove(intent.member_id)

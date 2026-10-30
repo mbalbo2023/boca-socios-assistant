@@ -13,6 +13,9 @@ reservation is possible.
   `sha256:330d401ae23c905896a0c26c66c36fc971b621519e7b11b435a8328d7bf6e031`,
   now pinned in the Dockerfile. The platform manifest is also recorded in that
   run; any later digest update needs review and a new smoke.
+- Install the browser dependency group without keeping the package manager's
+  download cache in the image layer. Runtime browser caches use the bounded
+  private `/tmp` and home tmpfs in the offline CI smoke.
 - Copy the reviewed issue #32 observer into this worker but keep the default
   command offline. The public observer still needs explicit command and
   environment acknowledgement. No Compose service, host port, credential,
@@ -34,7 +37,9 @@ reservation is possible.
 
 ## Evidence and remaining gate
 
-Unit tests refuse root and a missing browser binary. The first Actions run
+Unit tests refuse root, an unexpected nonroot UID and a missing browser binary.
+The worker preflight requires UID 10002, matching the Dockerfile and CI run.
+The first Actions run
 40778220081 built the image and passed quality tests, but the offline smoke
 stopped with `TargetClosedError` under the configured isolation. The revised
 smoke reports only the failed phase and exception class; it does not print a
@@ -56,10 +61,12 @@ Boca-only Actions preflight. This image is not a deployed worker yet.
 
 One manual anonymous request to the exact public `/auth/login` can only run
 later in a nonproduction worker whose OS/network egress policy permits only
-that public host over HTTPS. Playwright route filters are not a firewall.
+that public host over HTTPS, following recorded technical review and objective
+Actions gates. Playwright route filters are not a firewall.
 JavaScript is off, redirects are blocked, and an unknown page stops; no
 account, Queue-it, CAPTCHA, booking or payment interaction belongs here.
-Every live authenticated step needs its own reviewed design and owner gate.
+Every live authenticated step needs its own reviewed design and controlled
+milestone. The owner does not require a second human approval.
 
 Sources: [Playwright Python Docker guidance](https://playwright.dev/python/docs/docker),
 [issue #27](https://github.com/mbalbo2023/boca-socios-assistant/issues/27).
