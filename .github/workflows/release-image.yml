@@ -102,11 +102,21 @@ jobs:
           docker push "$IMAGE" | tee "$RUNNER_TEMP/boca-push.log"
           image_ref="$(python scripts/parse_image_digest.py "$RUNNER_TEMP/boca-push.log" "$GITHUB_SHA")"
           printf 'image_ref=%s\n' "$image_ref" >> "$GITHUB_OUTPUT"
+          python -m boca_socios.release_manifest write "$image_ref" "$GITHUB_SHA" "$GITHUB_RUN_ID" \
+            > "$RUNNER_TEMP/boca-release-manifest.json"
           {
             printf 'Commit: `%s`\n\n' "$GITHUB_SHA"
             printf 'Immutable image: `%s`\n\n' "$image_ref"
             printf 'Actions run: `%s`\n' "$GITHUB_RUN_ID"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve exact published digest for the guarded install
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: boca-release-manifest
+          path: ${{ runner.temp }}/boca-release-manifest.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 30
       - name: Log out from registry
         if: always()
         run: docker logout ghcr.io || true

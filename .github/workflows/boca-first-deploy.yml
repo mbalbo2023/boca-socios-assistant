@@ -166,6 +166,11 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BOCA_RELEASE_RUN_ID" \
             > "$RUNNER_TEMP/boca-release-run.json"
           python scripts/check_release_run.py "$RUNNER_TEMP/boca-release-run.json" "$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID"
+          gh run download "$BOCA_RELEASE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name boca-release-manifest --dir "$RUNNER_TEMP/boca-release-manifest"
+          python -m boca_socios.release_manifest verify \
+            "$RUNNER_TEMP/boca-release-manifest/boca-release-manifest.json" \
+            "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID"
       - name: Hash reviewed Boca Compose file
         run: sha256sum compose.yaml | cut -d' ' -f1 > "$RUNNER_TEMP/boca-compose.sha"
       - name: Validate reviewed runner Compose model

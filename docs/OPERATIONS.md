@@ -43,10 +43,14 @@ smoke passes. See [ADR 0033](ADR/0033-rootless-daemon-boundary.md) and
 [ADR 0034](ADR/0034-rootless-key-custody.md).
 
 The workflow first validates dispatch inputs and the successful manual image
-release run for the same current `main` SHA. It validates the resolved Compose
-contract on the runner, reads aggregate host capacity and Boca-only resource
-names, stages and hashes one Compose file, then validates the host-resolved
-model before pulling the exact digest. It then creates an owner-only key once
+release run for the same current `main` SHA. It downloads that run's immutable
+manifest and requires the selected image digest, SHA and run ID to match
+before opening SSH; an absent or expired artifact or any rerun attempt blocks
+installation. See [ADR 0036](ADR/0036-release-digest-binding.md). It validates
+the resolved Compose contract on the runner, reads aggregate host capacity
+and Boca-only resource names, stages and hashes one Compose file, then
+validates the host-resolved model before pulling the exact digest. It then
+creates an owner-only key once
 inside a separate rootless volume and starts the simulation-only controller.
 Before reporting success, the helper reuses the read-only diagnostic contract
 to check the actual container, image, dormant engine, resource limits, both
@@ -54,8 +58,8 @@ mounts and key metadata. Startup or postflight failure stops only the Boca
 controller and preserves the key and both volumes for separate diagnosis. An
 existing Boca key, container, volume, network or staged file blocks a fresh
 installation; this flow is not recovery or upgrade. The CPU snapshot is an
-estimate; #91 adds measurement of staging and rootless image storage. #89,
-#91 and #97 remain pending gates. An external source failure is reported by
+estimate; #91 adds measurement of staging and rootless image storage. #91,
+#97 and #99 remain pending gates. An external source failure is reported by
 Actions as an alert, not a deploy blocker for the simulation-only controller.
 
 ## Read-only diagnostic under demand (issue #68)

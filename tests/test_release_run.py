@@ -12,6 +12,7 @@ SOURCE_SHA = "a" * 40
 def valid_run() -> dict[str, object]:
     return {
         "id": 123456,
+        "run_attempt": 1,
         "name": "Boca image release",
         "path": ".github/workflows/release-image.yml@refs/heads/main",
         "event": "workflow_dispatch",
@@ -32,6 +33,9 @@ def test_matching_successful_run_passes() -> None:
     ("key", "value"),
     [
         ("id", 123457),
+        ("run_attempt", 2),
+        ("run_attempt", True),
+        ("run_attempt", None),
         ("name", "Other release"),
         ("path", ".github/workflows/other.yml@main"),
         ("event", "pull_request"),
@@ -53,4 +57,11 @@ def test_wrong_release_run_is_no_go(key: str, value: object) -> None:
 @pytest.mark.parametrize("run", [None, [], {}, {"id": True}])
 def test_malformed_release_metadata_is_no_go(run: object) -> None:
     with pytest.raises(ReleaseRunError):
+        validate_release_run(run, SOURCE_SHA, "123456")
+
+
+def test_missing_run_attempt_is_no_go() -> None:
+    run = valid_run()
+    del run["run_attempt"]
+    with pytest.raises(ReleaseRunError, match="first attempt"):
         validate_release_run(run, SOURCE_SHA, "123456")
