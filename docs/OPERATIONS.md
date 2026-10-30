@@ -56,7 +56,11 @@ limits, health and `BOCA_ENGINE_MODE=off`. It never reads the key value or
 database rows, starts the motor, visits the site or changes a container.
 The run summary contains only bounded status and immutable coordinates. A
 mismatch is NO-GO and requires diagnosis; it is not a reason to retry the
-first install or alter another workload. No host diagnostic has run yet.
+first install or alter another workload. This draft still inherits Docker
+transport/context settings and checks only the real UID; it must remain
+uninvoked until #79 pins the rootless daemon and #91 hardens identity and
+main checks. #81 resolves key custody separately. No host diagnostic has
+run yet.
 
 ## Proposed isolated deployment layout
 

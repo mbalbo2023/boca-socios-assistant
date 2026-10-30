@@ -27,3 +27,14 @@ closed. An upgrade or recovery needs its own design/review, not a disguised
 first-install retry or diagnostic override. A passing local test cannot
 establish actual droplet state; the manual job stays uninvoked until the
 isolation, image, capacity, SSH and environment gates are proven.
+
+## Boundary still missing in this candidate
+
+This version of `diagnostic` does not yet prove that Docker is the dedicated
+rootless daemon. `_compose_env` can inherit Docker transport/context settings,
+and the helper checks the real UID without independently rejecting an
+elevated effective UID or GID. It must not be dispatched even if an
+environment readiness variable is set. #79 must pin and verify the rootless
+socket for every phase, and #91 must harden the identity and current-main
+checks before any host operation. #81 separately resolves rootless key
+custody. This ADR is evidence for code review, not a host GO receipt.
