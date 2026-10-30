@@ -165,6 +165,7 @@ class _Entry:
     state: DeliveryState = DeliveryState.PENDING
     attempts: int = 0
     lease_deadline: float | None = None
+    active_claim: DeliveryClaim | None = None
     accepted_at: float | None = None
 
     def snapshot(self) -> NotificationRecord:
@@ -276,15 +277,15 @@ class NotificationOutbox:
                 entry.attempts += 1
                 entry.lease_deadline = now + self._policy.lease_seconds
                 self._claim_times.append(now)
-                claimed.append(
-                    DeliveryClaim(
-                        idempotency_key=entry.idempotency_key,
-                        kind=entry.kind,
-                        priority=entry.priority,
-                        message=entry.message,
-                        attempt_number=entry.attempts,
-                    )
+                claim = DeliveryClaim(
+                    idempotency_key=entry.idempotency_key,
+                    kind=entry.kind,
+                    priority=entry.priority,
+                    message=entry.message,
+                    attempt_number=entry.attempts,
                 )
+                entry.active_claim = claim
+                claimed.append(claim)
             return tuple(claimed)
 
     def accept(self, claim: DeliveryClaim, *, now: float) -> NotificationRecord:
@@ -295,6 +296,7 @@ class NotificationOutbox:
             entry = self._require_claim(claim, now)
             entry.state = DeliveryState.ACCEPTED
             entry.lease_deadline = None
+            entry.active_claim = None
             entry.accepted_at = now
             return entry.snapshot()
 
@@ -360,6 +362,7 @@ class NotificationOutbox:
         if (
             entry is None
             or entry.state is not DeliveryState.CLAIMED
+            or entry.active_claim is not claim
             or entry.attempts != claim.attempt_number
             or entry.kind != claim.kind
             or entry.priority != claim.priority
@@ -387,6 +390,7 @@ class NotificationOutbox:
         retry_after_seconds: float | None,
     ) -> None:
         entry.lease_deadline = None
+        entry.active_claim = None
         if not retryable or entry.attempts >= self._policy.max_attempts:
             entry.state = DeliveryState.EXHAUSTED
             entry.next_attempt_at = None
