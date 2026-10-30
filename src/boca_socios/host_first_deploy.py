@@ -46,6 +46,8 @@ class HostSnapshot:
     available_memory_kib: int
     available_disk_bytes: int
     available_inodes: int
+    docker_disk_bytes: int
+    docker_inodes: int
     root_ready: bool
     boca_containers: bool
     boca_volume: bool
@@ -123,8 +125,11 @@ def validate_snapshot(snapshot: HostSnapshot) -> None:
         raise PreflightError("insufficient available host memory")
     if snapshot.cpu_headroom < 0.5:
         raise PreflightError("insufficient approximate host CPU headroom")
-    if snapshot.available_disk_bytes < 4 * 1024**3 or snapshot.available_inodes < 50_000:
-        raise PreflightError("insufficient free host storage")
+    if (
+        min(snapshot.available_disk_bytes, snapshot.docker_disk_bytes) < 4 * 1024**3
+        or min(snapshot.available_inodes, snapshot.docker_inodes) < 50_000
+    ):
+        raise PreflightError("insufficient Boca staging or rootless Docker storage")
     if not snapshot.root_ready:
         raise PreflightError("Boca-owned directory is unavailable or unsafe")
     if snapshot.boca_containers or snapshot.boca_volume or snapshot.boca_network:
@@ -290,6 +295,62 @@ def _names(kind: str, label: str) -> set[str]:
     return set(_run("docker", kind, "ls", "-q", "--filter", label).splitlines())
 
 
+def _checked_docker_storage_dir() -> Path:
+    """Limit capacity probes to the dedicated user's owned rootless data path."""
+    try:
+        info = json.loads(_run("docker", "info", "--format", "{{json .}}"))
+        if not isinstance(info, dict):
+            raise PreflightError("rootless Docker storage backend is unproven")
+        # The containerd image store can keep layers on another filesystem.
+        # Until its dedicated root is proven, only classic drivers can pass.
+        driver_status = info.get("DriverStatus")
+        if (
+            info.get("Driver") not in {"overlay2", "fuse-overlayfs", "vfs"}
+            or not isinstance(driver_status, list)
+            or any(
+                not isinstance(item, list)
+                or len(item) != 2
+                or not all(isinstance(value, str) for value in item)
+                or item[0] == "driver-type"
+                for item in driver_status
+            )
+        ):
+            raise PreflightError("rootless Docker storage backend is unproven")
+        reported = info.get("DockerRootDir")
+        home = Path(pwd.getpwuid(10001).pw_dir)
+        if not isinstance(reported, str) or len(reported) > 4096:
+            raise PreflightError("rootless Docker storage path is unproven")
+        storage = Path(reported)
+        if (
+            not home.is_absolute()
+            or home == Path("/")
+            or not storage.is_absolute()
+            or ".." in storage.parts
+            or str(storage) != reported
+            or home.resolve(strict=True) != home
+            or not _safe_dir(home)
+        ):
+            raise PreflightError("rootless Docker storage path is unproven")
+        relative = storage.relative_to(home)
+        if not relative.parts:
+            raise PreflightError("rootless Docker storage path is unproven")
+        current = home
+        for part in relative.parts:
+            current /= part
+            metadata = current.lstat()
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != 10001
+                or stat.S_IMODE(metadata.st_mode) & 0o022
+            ):
+                raise PreflightError("rootless Docker storage path is unproven")
+    except PreflightError:
+        raise
+    except (OSError, ValueError, KeyError, AttributeError, TypeError) as exc:
+        raise PreflightError("rootless Docker storage path is unproven") from exc
+    return storage
+
+
 def collect_snapshot() -> HostSnapshot:
     # The deployment identity owns only the rootless Docker endpoint; the key
     # is generated in a separate named volume within the container UID map.
@@ -308,7 +369,12 @@ def collect_snapshot() -> HostSnapshot:
     match = re.search(r"^MemAvailable:\s+(\d+) kB$", meminfo, re.MULTILINE)
     if match is None:
         raise PreflightError("MemAvailable is unavailable")
-    disk = os.statvfs(str(ROOT))
+    storage_dir = _checked_docker_storage_dir()
+    try:
+        stage_disk = os.statvfs(ROOT)
+        docker_disk = os.statvfs(storage_dir)
+    except OSError as exc:
+        raise PreflightError("Boca capacity filesystems are unavailable") from exc
     containers = _run(
         "docker", "ps", "-a", "-q", "--filter", "label=com.docker.compose.project=boca-socios"
     ) or _run("docker", "ps", "-a", "-q", "--filter", "name=^/boca-socios-")
@@ -319,8 +385,10 @@ def collect_snapshot() -> HostSnapshot:
         arch=platform.machine(),
         uid=uid,
         available_memory_kib=int(match.group(1)),
-        available_disk_bytes=disk.f_bavail * disk.f_frsize,
-        available_inodes=disk.f_favail,
+        available_disk_bytes=stage_disk.f_bavail * stage_disk.f_frsize,
+        available_inodes=stage_disk.f_favail,
+        docker_disk_bytes=docker_disk.f_bavail * docker_disk.f_frsize,
+        docker_inodes=docker_disk.f_favail,
         root_ready=True,
         boca_containers=bool(containers),
         boca_volume=bool(volumes),
@@ -592,7 +660,10 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
             "BOCA_PREFLIGHT_PASS"
             f" arch={host_snapshot.arch} uid={host_snapshot.uid}"
             f" mem_kib={host_snapshot.available_memory_kib}"
-            f" disk_bytes={host_snapshot.available_disk_bytes} inodes={host_snapshot.available_inodes}"
+            f" stage_disk_bytes={host_snapshot.available_disk_bytes}"
+            f" stage_inodes={host_snapshot.available_inodes}"
+            f" docker_disk_bytes={host_snapshot.docker_disk_bytes}"
+            f" docker_inodes={host_snapshot.docker_inodes}"
             f" cpu_headroom={host_snapshot.cpu_headroom:.2f}"
             " namespace=empty"
         )

@@ -49,3 +49,28 @@ passing a real-ID-only access check while a subprocess has elevated access.
 The parent directory of the rootless
 socket remains required to be owned by UID 10001 and mode 0700; socket mode
 alone is not used as an unsupported claim about other users' access.
+
+## Capacity correction before integration
+
+The earlier preflight measured free bytes and inodes only on
+`/srv/boca-socios`, where Compose is staged. Rootless Docker normally stores
+pulled layers under the dedicated account's home, which may be on another
+filesystem. A passing staging measurement could therefore miss a full image
+store. After the rootless daemon boundary check, the preflight now asks that
+same pinned daemon for `DockerRootDir`. It accepts only a real directory below
+the UID 10001 `boca-deploy` home (mode 0700), with Boca-owned, non-writable-by-
+others path components and no symlink traversal. Unknown, missing or external
+storage paths are NO-GO without probing another workload. It measures free
+bytes and inodes on **both** the staging path and that verified rootless Docker
+data root, and requires at least 4 GiB and 50,000 free inodes on each. If they
+share a filesystem, these are two observations of the same capacity, not an
+additive amount. This remains a point-in-time estimate; it cannot reserve
+space against unrelated activity or prove post-pull consumption.
+
+Docker Engine's containerd image store may keep image layers on a separate
+filesystem outside `DockerRootDir`. The capacity gate therefore accepts only
+a proven classic `overlay2`, `fuse-overlayfs` or `vfs` driver and refuses
+containerd or missing/unknown driver status until the separate store can be
+located safely. A modern fresh daemon may consequently report NO-GO. See the
+[Docker data directory](https://docs.docker.com/engine/daemon/#daemon-data-directory)
+and [containerd image store](https://docs.docker.com/engine/storage/containerd/#disk-space-usage).

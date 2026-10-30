@@ -144,6 +144,8 @@ def safe_snapshot() -> HostSnapshot:
         available_memory_kib=1024 * 1024,
         available_disk_bytes=8 * 1024**3,
         available_inodes=100_000,
+        docker_disk_bytes=8 * 1024**3,
+        docker_inodes=100_000,
         root_ready=True,
         boca_containers=False,
         boca_volume=False,
@@ -343,6 +345,8 @@ def test_host_preflight_modes_reject_swapped_image_contracts(
         ("available_memory_kib", 400_000),
         ("available_disk_bytes", 2 * 1024**3),
         ("available_inodes", 1_000),
+        ("docker_disk_bytes", 2 * 1024**3),
+        ("docker_inodes", 1_000),
         ("root_ready", False),
         ("boca_containers", True),
         ("boca_volume", True),
@@ -353,6 +357,144 @@ def test_host_preflight_modes_reject_swapped_image_contracts(
 def test_unsafe_host_snapshot_is_no_go(field: str, value: object) -> None:
     with pytest.raises(PreflightError):
         validate_snapshot(replace(safe_snapshot(), **{field: value}))
+
+
+@pytest.mark.parametrize("unsafe", ["outside", "symlink", "unowned", "writable", "missing"])
+def test_docker_storage_path_must_be_boca_owned_under_private_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unsafe: str
+) -> None:
+    home = tmp_path / "boca-home"
+    home.mkdir(mode=0o700)
+    storage = home / ".local" / "share" / "docker"
+    storage.mkdir(parents=True)
+    outside = tmp_path / "other-workload"
+    outside.mkdir()
+    if unsafe == "symlink":
+        storage.rmdir()
+        storage.symlink_to(outside, target_is_directory=True)
+    if unsafe == "missing":
+        storage.rmdir()
+    if unsafe == "writable":
+        storage.chmod(0o777)
+    target = outside if unsafe == "outside" else storage
+    monkeypatch.setattr(
+        host.pwd,
+        "getpwuid",
+        lambda _uid: SimpleNamespace(pw_name="boca-deploy", pw_dir=str(home)),
+    )
+    monkeypatch.setattr(
+        host,
+        "_run",
+        lambda *args: json.dumps(
+            {"DockerRootDir": str(target), "Driver": "overlay2", "DriverStatus": []}
+        ),
+    )
+    original_lstat = Path.lstat
+
+    def boca_lstat(path: Path) -> os.stat_result | SimpleNamespace:
+        result = original_lstat(path)
+        if path == home or home in path.parents:
+            uid = 0 if unsafe == "unowned" and path == storage else 10001
+            return SimpleNamespace(st_mode=result.st_mode, st_uid=uid)
+        return result
+
+    monkeypatch.setattr(Path, "lstat", boca_lstat)
+    with pytest.raises(PreflightError, match="rootless Docker storage"):
+        host._checked_docker_storage_dir()
+
+
+def test_owned_rootless_docker_storage_path_is_accepted_without_listing_other_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "boca-home"
+    home.mkdir(mode=0o700)
+    storage = home / ".local" / "share" / "docker"
+    storage.mkdir(parents=True)
+    monkeypatch.setattr(
+        host.pwd,
+        "getpwuid",
+        lambda _uid: SimpleNamespace(pw_name="boca-deploy", pw_dir=str(home)),
+    )
+    monkeypatch.setattr(
+        host,
+        "_run",
+        lambda *args: json.dumps(
+            {"DockerRootDir": str(storage), "Driver": "overlay2", "DriverStatus": []}
+        ),
+    )
+    original_lstat = Path.lstat
+    inspected: list[Path] = []
+
+    def boca_lstat(path: Path) -> os.stat_result | SimpleNamespace:
+        inspected.append(path)
+        result = original_lstat(path)
+        if path == home or home in path.parents:
+            return SimpleNamespace(st_mode=result.st_mode, st_uid=10001)
+        return result
+
+    monkeypatch.setattr(Path, "lstat", boca_lstat)
+    assert host._checked_docker_storage_dir() == storage
+    assert set(inspected) == {home, home / ".local", home / ".local" / "share", storage}
+
+
+@pytest.mark.parametrize(
+    "backend",
+    [
+        {"Driver": "overlayfs", "DriverStatus": [["driver-type", "io.containerd.snapshotter.v1"]]},
+        {"Driver": "overlay2", "DriverStatus": [["driver-type", "io.containerd.snapshotter.v1"]]},
+        {"Driver": "overlay2"},
+    ],
+)
+def test_containerd_or_unknown_storage_backend_is_no_go_before_path_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: dict[str, object]
+) -> None:
+    monkeypatch.setattr(
+        host,
+        "_run",
+        lambda *args: json.dumps({"DockerRootDir": str(tmp_path), **backend}),
+    )
+    monkeypatch.setattr(host.pwd, "getpwuid", lambda _uid: pytest.fail("probed home"))
+    with pytest.raises(PreflightError, match="storage backend"):
+        host._checked_docker_storage_dir()
+
+
+def test_snapshot_measures_staging_and_rootless_docker_filesystems_separately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "boca-stage"
+    root.mkdir()
+    data_root = tmp_path / "boca-home" / ".local" / "share" / "docker"
+    data_root.mkdir(parents=True)
+    monkeypatch.setattr(host, "ROOT", root)
+    monkeypatch.setattr(host, "_require_dedicated_identity", lambda: 10001)
+    monkeypatch.setattr(host, "_root_ready", lambda: True)
+    monkeypatch.setattr(host, "_checked_docker_storage_dir", lambda: data_root)
+    monkeypatch.setattr(host.os, "sched_getaffinity", lambda _pid: {0})
+    monkeypatch.setattr(host.os, "getloadavg", lambda: (0.0, 0.0, 0.0))
+
+    def read_only_docker(*args: str) -> str:
+        assert args[0] == "docker"
+        if args[1:4] == ("compose", "up", "--help"):
+            return "--no-build --no-deps --wait"
+        if args[1:4] == ("compose", "config", "--help"):
+            return "--format"
+        return ""
+
+    monkeypatch.setattr(host, "_run", read_only_docker)
+    measured: list[Path] = []
+
+    def capacity(path: str | Path) -> SimpleNamespace:
+        measured.append(Path(path))
+        gib = 8 if Path(path) == root else 2
+        return SimpleNamespace(f_bavail=gib * 1024**3, f_frsize=1, f_favail=100_000)
+
+    monkeypatch.setattr(host.os, "statvfs", capacity)
+    snapshot = host.collect_snapshot()
+    assert measured == [root, data_root]
+    assert snapshot.available_disk_bytes == 8 * 1024**3
+    assert snapshot.docker_disk_bytes == 2 * 1024**3
+    with pytest.raises(PreflightError, match="storage"):
+        validate_snapshot(snapshot)
 
 
 def _staged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:

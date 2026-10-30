@@ -97,6 +97,11 @@ immediately before applying the reviewed image; the host helper refuses a
 real/effective UID or GID mismatch before private-path or Docker checks. A queued
 run whose source SHA is no longer current fails closed. These controls do
 not prove the SSH account has no other privileged route on the host.
+The read-only capacity gate checks free bytes and inodes separately on the
+Boca staging directory and the dedicated rootless daemon's verified
+`DockerRootDir` beneath the private Boca home. Unknown storage location,
+ownership or available capacity is NO-GO; a healthy staging filesystem alone
+cannot establish that image storage has headroom.
 
 ## Proposed isolated deployment layout
 
