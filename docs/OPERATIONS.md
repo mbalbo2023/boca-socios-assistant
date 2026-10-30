@@ -2,9 +2,10 @@
 
 ## Current state
 
-Repository foundation only. All existing hosts and workloads must be left
-untouched. No GitHub workflow in this release has remote-host credentials,
-and CI never deploys.
+Repository main is foundation only and CI never deploys. A future Boca-only
+manual workflow is proposed in draft PRs; its private environment already
+contains the pre-existing SSH identity and an authorized host-key pin. No
+host operation has run through it.
 
 ## Proposed isolated deployment layout
 
@@ -12,7 +13,7 @@ and CI never deploys.
 | --- | --- | --- |
 | Repository | mbalbo2023/boca-socios-assistant | Existing repos, untouched |
 | Compose project | boca-socios | Unknown existing names, never inspect destructively |
-| Directory | Assigned only in a separately approved deployment | No shared subtree |
+| Directory | Dedicated Boca-owned path after gated Actions preflight | No shared subtree |
 | Database | Boca-only named volume | No shared database |
 | Network | Boca-only bridge | No shared network |
 | Secrets | Boca-only source and file | No copied/reused keys |
@@ -23,9 +24,11 @@ and CI never deploys.
 
 ## Gate before any future live Docker deployment
 
-1. Explicit owner permission for a particular commit SHA, immutable image
-   digest, Compose service, expected CPU/RAM/disk and time window.
-2. Controlled GitHub Actions environment with required approval.
+1. Under the owner's standing direction, record the exact current commit SHA,
+   immutable image digest for an install, Compose service, CPU/RAM/disk budget
+   and operation before autonomous dispatch. A merge never deploys by itself.
+2. Controlled GitHub Actions environment, main-only branch restriction,
+   dedicated SSH identity and pinned host key; no required human approval.
 3. Check spare host disk/inodes/CPU/memory and existing service health using
    non-mutating observations. If capacity is insufficient: NO_GO.
 4. Confirm Compose project is boca-socios; no host mounts, published ports,
@@ -33,10 +36,18 @@ and CI never deploys.
 5. Build once in CI, scan and publish image by digest. Deploy exact digest,
    never rebuild on the production host.
 6. Serialize deployment with a Boca-only lock, never parallel retry.
-7. Record pre/post health for Boca and observed absence of effects on every
-   unrelated service; never touch or stop an existing workload.
-8. On failure: stop Boca only, retain data, no destructive Docker prune,
-   no blanket docker compose down and no deletion of volumes.
+7. Record Boca-only pre/post health and disk/inode capacity; never touch or
+   stop an existing workload or enumerate unrelated services destructively.
+8. On failure: inventory the Boca attempt through the same Actions workflow,
+   stop Boca only, then remove positively identified unused disposable Boca
+   image/container/network/staging remnants with before/after measurements.
+   Retain key/data volumes and uncertain resources. No destructive Docker
+   prune, blanket compose down, or volume deletion.
+9. Diagnose any external-source failure via bounded read-only Actions before
+   proposing a new deploy. Report green/yellow/red/unknown with timestamp;
+   source failure is an alert, not a NO_GO for the simulation-only controller.
+   A demonstrated code defect may be fixed in a new PR. Security, image,
+   capacity and isolation gates remain strict.
 
 ## Explicitly prohibited
 
