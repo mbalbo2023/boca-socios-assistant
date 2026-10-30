@@ -55,7 +55,7 @@ jobs:
   image:
     name: image-build
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout exact source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,4 +63,15 @@ jobs:
           persist-credentials: false
       - name: Build isolated image without deploying
         run: docker build --tag boca-socios-ci:${{ github.sha }} .
+      - name: Build isolated Chromium worker without deploying
+        run: docker build --file Dockerfile.browser --tag boca-browser-ci:${{ github.sha }} .
+      - name: Start and close Chromium offline under resource caps
+        run: >-
+          docker run --rm --init --network none --read-only
+          --tmpfs /tmp:rw,nosuid,nodev,size=128m,mode=1777
+          --tmpfs /home/boca-browser:rw,nosuid,nodev,noexec,size=32m,uid=10002,gid=10002,mode=700
+          --shm-size=128m --pids-limit=128 --memory=768m --cpus=1
+          --security-opt seccomp=docker/seccomp_profile.json
+          --security-opt no-new-privileges --cap-drop ALL --cap-add SYS_CHROOT
+          --user 10002:10002 boca-browser-ci:${{ github.sha }}
 
