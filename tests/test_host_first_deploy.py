@@ -28,6 +28,8 @@ IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64
 def _boca_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(host.os, "getuid", lambda: 10001)
     monkeypatch.setattr(host.os, "geteuid", lambda: 10001)
+    monkeypatch.setattr(host.os, "getgid", lambda: 10001)
+    monkeypatch.setattr(host.os, "getegid", lambda: 10001)
     monkeypatch.setattr(host.pwd, "getpwuid", lambda _uid: SimpleNamespace(pw_name="boca-deploy"))
 
 
@@ -200,6 +202,18 @@ def test_rootless_boundary_refuses_elevated_effective_uid_before_docker_or_socke
         host, "_rootless_socket_secure", lambda: pytest.fail("elevated process probed socket")
     )
     monkeypatch.setattr(host, "_run", lambda *args: pytest.fail("elevated process ran Docker"))
+    with pytest.raises(PreflightError, match="dedicated boca-deploy"):
+        host._validate_docker_boundary()
+
+
+def test_rootless_boundary_refuses_changed_effective_group_before_socket_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _boca_identity(monkeypatch)
+    monkeypatch.setattr(host.os, "getegid", lambda: 999)
+    monkeypatch.setattr(
+        host, "_rootless_socket_secure", lambda: pytest.fail("setgid process probed socket")
+    )
     with pytest.raises(PreflightError, match="dedicated boca-deploy"):
         host._validate_docker_boundary()
 

@@ -94,7 +94,7 @@ of the daemon's readiness. See [ADR 0037](ADR/0037-host-prerequisite-inspection.
 The manual host workflow rejects reruns and verifies the current `main` ref
 through the GitHub API before SSH. First installation repeats that check
 immediately before applying the reviewed image; the host helper refuses a
-real/effective UID mismatch before private-path or Docker checks. A queued
+real/effective UID or GID mismatch before private-path or Docker checks. A queued
 run whose source SHA is no longer current fails closed. These controls do
 not prove the SSH account has no other privileged route on the host.
 

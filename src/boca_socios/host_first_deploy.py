@@ -200,7 +200,7 @@ def _socket_state(path: Path, *, expected_uid: int = 10001) -> str:
 def _require_dedicated_identity() -> int:
     """Refuse setuid/wrapper privilege changes before probing any host path."""
     uid = os.getuid()
-    if uid != 10001 or os.geteuid() != uid:
+    if uid != 10001 or os.geteuid() != uid or os.getegid() != os.getgid():
         raise PreflightError("expected dedicated boca-deploy account")
     try:
         account = pwd.getpwuid(uid).pw_name

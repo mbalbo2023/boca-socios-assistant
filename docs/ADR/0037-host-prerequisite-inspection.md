@@ -43,8 +43,9 @@ Before configuring SSH, the job reads the current `main` ref through the
 read-only GitHub API and requires the exact dispatch SHA. `first-install`
 rechecks that ref immediately before the effectful apply phase. API failure,
 malformed evidence or a moved ref is NO-GO. The host helper checks both real
-and effective UID 10001 and the `boca-deploy` account before any socket or
-Docker probe. This avoids a setuid process passing a real-UID-only check
-while a subprocess has elevated access. The parent directory of the rootless
+and effective UID 10001, matching real/effective GID, and the `boca-deploy`
+account before any socket or Docker probe. This avoids a setuid/setgid process
+passing a real-ID-only access check while a subprocess has elevated access.
+The parent directory of the rootless
 socket remains required to be owned by UID 10001 and mode 0700; socket mode
 alone is not used as an unsupported claim about other users' access.
