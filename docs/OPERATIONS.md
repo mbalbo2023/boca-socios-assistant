@@ -58,6 +58,10 @@ marked. It removes an exact unreferenced image without force if no container
 uses it, even when key/data volumes remain. It removes the matching staged
 Compose file only when **no Boca container, volume or network exists**; otherwise
 it retains that file and all volumes/networks and reports PARTIAL or RETAINED.
+The bounded receipt records staging and rootless Docker data free space/inodes
+before and after, plus whether they are the same filesystem. It never treats
+virtual image size or an observed free-space change as proven bytes reclaimed.
+Unknown storage backends/paths stop before deletion.
 If cleanup itself fails or its receipt cannot be verified, Actions reports
 `NO_GO INDETERMINADO`: a partial deletion may already have occurred and only
 a new Boca-only inventory can establish what remains. The original install

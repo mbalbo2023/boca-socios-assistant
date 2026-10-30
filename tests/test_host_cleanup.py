@@ -19,6 +19,24 @@ IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "a" * 64
 SOURCE_SHA = "b" * 40
 
 
+def capacity_snapshot(
+    stage_mib: int = 5120,
+    docker_mib: int = 5120,
+    *,
+    stage_device: int = 1,
+    docker_device: int = 2,
+) -> cleanup.CapacitySnapshot:
+    return cleanup.CapacitySnapshot(
+        docker_root=Path("/home/boca-deploy/.local/share/docker"),
+        stage_device=stage_device,
+        docker_device=docker_device,
+        stage_free_bytes=stage_mib * 1024**2,
+        stage_inodes=100_000,
+        docker_free_bytes=docker_mib * 1024**2,
+        docker_inodes=80_000,
+    )
+
+
 def test_uid_1000_is_rejected_before_docker_or_private_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -53,7 +71,7 @@ def test_existing_state_is_preserved_without_mutating_commands(
     monkeypatch.setattr(cleanup, "_check_identity", lambda: None)
     monkeypatch.setattr(cleanup, "_check_rootless_boundary", lambda: None)
     monkeypatch.setattr(cleanup, "_checked_stage", lambda _sha: False)
-    monkeypatch.setattr(cleanup, "_capacity", lambda: (5 * 1024**3, 100_000))
+    monkeypatch.setattr(cleanup, "_capacity", capacity_snapshot)
     calls: list[tuple[str, ...]] = []
 
     def docker(*args: str) -> str:
@@ -102,7 +120,7 @@ def test_exact_unreferenced_image_can_be_removed_while_key_data_or_network_remai
     monkeypatch.setattr(cleanup, "_check_identity", lambda: None)
     monkeypatch.setattr(cleanup, "_check_rootless_boundary", lambda: None)
     monkeypatch.setattr(cleanup, "_checked_stage", lambda _sha: compose.is_file())
-    monkeypatch.setattr(cleanup, "_capacity", lambda: (5 * 1024**3, 100_000))
+    monkeypatch.setattr(cleanup, "_capacity", capacity_snapshot)
     calls: list[tuple[str, ...]] = []
 
     def docker(*args: str) -> str:
@@ -187,7 +205,7 @@ def test_exact_failed_image_and_stage_are_removed_with_bounded_disk_receipt(
     monkeypatch.setattr(
         cleanup, "_checked_stage", lambda _sha: compose.is_file() and not compose.is_symlink()
     )
-    capacities = iter([(5 * 1024**3, 100_000), (5 * 1024**3 + 128 * 1024**2, 101_000)])
+    capacities = iter([capacity_snapshot(), capacity_snapshot(5121, 5250)])
     monkeypatch.setattr(cleanup, "_capacity", lambda: next(capacities))
     calls: list[tuple[str, ...]] = []
 
@@ -210,7 +228,10 @@ def test_exact_failed_image_and_stage_are_removed_with_bounded_disk_receipt(
     assert not compose.exists()
     assert ("image", "rm", "--no-prune", IMAGE) in calls
     assert not any("prune" == part or "down" == part for args in calls for part in args)
-    assert "hostdir_free_mib_before=5120 hostdir_free_mib_after=5248" in capsys.readouterr().out
+    receipt = capsys.readouterr().out
+    assert "stage_free_mib_before=5120 stage_free_mib_after=5121" in receipt
+    assert "docker_free_mib_before=5120 docker_free_mib_after=5250" in receipt
+    assert "same_fs=no" in receipt
 
 
 def test_failed_image_removal_preserves_stage_for_diagnosis(
@@ -227,7 +248,7 @@ def test_failed_image_removal_preserves_stage_for_diagnosis(
     monkeypatch.setattr(cleanup, "_check_rootless_boundary", lambda: None)
     monkeypatch.setattr(cleanup, "_checked_root", lambda: None)
     monkeypatch.setattr(cleanup, "_checked_stage", lambda _sha: compose.is_file())
-    monkeypatch.setattr(cleanup, "_capacity", lambda: (5 * 1024**3, 100_000))
+    monkeypatch.setattr(cleanup, "_capacity", capacity_snapshot)
 
     def docker(*args: str) -> str:
         if args[:2] == ("image", "inspect"):
@@ -249,7 +270,7 @@ def test_failed_image_removal_preserves_stage_for_diagnosis(
     assert compose.exists()
 
 
-@pytest.mark.parametrize("later_failure", ["stage_recheck", "capacity_after"])
+@pytest.mark.parametrize("later_failure", ["stage_recheck", "capacity_after", "device_after"])
 def test_post_image_removal_failure_reports_indeterminate_state(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -268,12 +289,14 @@ def test_post_image_removal_failure_reports_indeterminate_state(
             raise cleanup.CleanupError("staged Compose changed during cleanup")
         return later_failure == "stage_recheck"
 
-    def capacity() -> tuple[int, int]:
+    def capacity() -> cleanup.CapacitySnapshot:
         nonlocal measurements
         measurements += 1
         if later_failure == "capacity_after" and measurements == 2:
             raise cleanup.CleanupError("aggregate free storage is unavailable")
-        return 5 * 1024**3, 100_000
+        if later_failure == "device_after" and measurements == 2:
+            return capacity_snapshot(docker_device=3)
+        return capacity_snapshot()
 
     def docker(*args: str) -> str:
         if args[:2] == ("image", "inspect"):
@@ -297,6 +320,148 @@ def test_post_image_removal_failure_reports_indeterminate_state(
     assert removals == [("image", "rm", "--no-prune", IMAGE)]
     assert "BOCA_CLEANUP state=CLEANED" not in out.out
     assert "BOCA_CLEANUP_INDETERMINADO" in out.err
+
+
+def test_capacity_reads_staging_and_rootless_image_filesystems_separately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stage = tmp_path / "boca-stage"
+    docker_root = tmp_path / "boca-home" / "docker"
+    stage.mkdir()
+    docker_root.mkdir(parents=True)
+    monkeypatch.setattr(cleanup, "ROOT", stage)
+    monkeypatch.setattr(cleanup, "_checked_docker_storage_dir", lambda: docker_root)
+    original_stat = Path.stat
+
+    def device(path: Path, *args: object, **kwargs: object) -> SimpleNamespace | os.stat_result:
+        if path == stage:
+            return SimpleNamespace(st_dev=11)
+        if path == docker_root:
+            return SimpleNamespace(st_dev=22)
+        return original_stat(path, *args, **kwargs)
+
+    measured: list[Path] = []
+
+    def capacity(path: Path) -> SimpleNamespace:
+        measured.append(path)
+        mib = 9000 if path == stage else 250
+        return SimpleNamespace(f_bavail=mib * 1024**2, f_frsize=1, f_favail=90000)
+
+    monkeypatch.setattr(Path, "stat", device)
+    monkeypatch.setattr(cleanup.os, "statvfs", capacity)
+    snapshot = cleanup._capacity()
+    assert measured == [stage, docker_root]
+    assert snapshot.stage_device == 11 and snapshot.docker_device == 22
+    assert snapshot.stage_free_bytes == 9000 * 1024**2
+    assert snapshot.docker_free_bytes == 250 * 1024**2
+
+
+@pytest.mark.parametrize(
+    "backend",
+    [
+        {"Driver": "overlayfs", "DriverStatus": [["driver-type", "io.containerd.snapshotter.v1"]]},
+        {"Driver": "overlay2", "DriverStatus": [["driver-type", "io.containerd.snapshotter.v1"]]},
+        {"Driver": "overlay2"},
+    ],
+)
+def test_unknown_image_store_blocks_cleanup_before_mutation(
+    monkeypatch: pytest.MonkeyPatch, backend: dict[str, object]
+) -> None:
+    monkeypatch.setattr(cleanup, "_check_identity", lambda: None)
+    monkeypatch.setattr(cleanup, "_check_rootless_boundary", lambda: None)
+    monkeypatch.setattr(cleanup, "_checked_stage", lambda _sha: False)
+    calls: list[tuple[str, ...]] = []
+
+    def docker(*args: str) -> str:
+        calls.append(args)
+        if args[:2] == ("image", "inspect"):
+            return json.dumps(
+                {
+                    "Size": 128 * 1024**2,
+                    "RepoDigests": [IMAGE],
+                    "RepoTags": [],
+                    "Config": {"Labels": {"org.opencontainers.image.revision": SOURCE_SHA}},
+                }
+            )
+        if args[:2] == ("info", "--format"):
+            return json.dumps({"DockerRootDir": "/home/boca-deploy/.local/share/docker", **backend})
+        return ""
+
+    monkeypatch.setattr(cleanup, "_run", docker)
+    monkeypatch.setattr(cleanup.pwd, "getpwuid", lambda _uid: pytest.fail("probed home"))
+    with pytest.raises(cleanup.CleanupError, match="storage backend"):
+        cleanup.clean_failed_install(IMAGE, SOURCE_SHA, "c" * 64)
+    assert not any(args[:2] == ("image", "rm") for args in calls)
+
+
+@pytest.mark.parametrize("unsafe", ["outside", "symlink"])
+def test_cleanup_rejects_docker_storage_outside_private_boca_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unsafe: str
+) -> None:
+    home = tmp_path / "boca-home"
+    home.mkdir(mode=0o700)
+    storage = home / ".local" / "share" / "docker"
+    storage.mkdir(parents=True)
+    outside = tmp_path / "other-workload"
+    outside.mkdir()
+    if unsafe == "symlink":
+        storage.rmdir()
+        storage.symlink_to(outside, target_is_directory=True)
+    target = outside if unsafe == "outside" else storage
+    monkeypatch.setattr(
+        cleanup.pwd,
+        "getpwuid",
+        lambda _uid: SimpleNamespace(pw_name="boca-deploy", pw_dir=str(home)),
+    )
+    monkeypatch.setattr(
+        cleanup,
+        "_run",
+        lambda *args: json.dumps(
+            {"DockerRootDir": str(target), "Driver": "overlay2", "DriverStatus": []}
+        ),
+    )
+    original_lstat = Path.lstat
+
+    def boca_lstat(path: Path) -> os.stat_result | SimpleNamespace:
+        result = original_lstat(path)
+        if path == home or home in path.parents:
+            return SimpleNamespace(st_mode=result.st_mode, st_uid=10001)
+        return result
+
+    monkeypatch.setattr(Path, "lstat", boca_lstat)
+    with pytest.raises(cleanup.CleanupError, match="storage path"):
+        cleanup._checked_docker_storage_dir()
+
+
+def test_cleanup_accepts_owned_rootless_data_root_under_private_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "boca-home"
+    home.mkdir(mode=0o700)
+    storage = home / ".local" / "share" / "docker"
+    storage.mkdir(parents=True)
+    monkeypatch.setattr(
+        cleanup.pwd,
+        "getpwuid",
+        lambda _uid: SimpleNamespace(pw_name="boca-deploy", pw_dir=str(home)),
+    )
+    monkeypatch.setattr(
+        cleanup,
+        "_run",
+        lambda *args: json.dumps(
+            {"DockerRootDir": str(storage), "Driver": "overlay2", "DriverStatus": []}
+        ),
+    )
+    original_lstat = Path.lstat
+
+    def boca_lstat(path: Path) -> os.stat_result | SimpleNamespace:
+        result = original_lstat(path)
+        if path == home or home in path.parents:
+            return SimpleNamespace(st_mode=result.st_mode, st_uid=10001)
+        return result
+
+    monkeypatch.setattr(Path, "lstat", boca_lstat)
+    assert cleanup._checked_docker_storage_dir() == storage
 
 
 def test_private_runtime_must_be_owned_and_rootless_before_docker(
@@ -336,7 +501,11 @@ def test_already_clean_is_idempotent_without_docker_mutation(
     monkeypatch.setattr(cleanup, "_check_identity", lambda: None)
     monkeypatch.setattr(cleanup, "_check_rootless_boundary", lambda: None)
     monkeypatch.setattr(cleanup, "_checked_stage", lambda _sha: False)
-    monkeypatch.setattr(cleanup, "_capacity", lambda: (5 * 1024**3, 100_000))
+    monkeypatch.setattr(
+        cleanup,
+        "_capacity",
+        lambda: capacity_snapshot(stage_device=1, docker_device=1),
+    )
 
     def docker(*args: str) -> str:
         if args[:2] == ("image", "inspect"):
@@ -348,7 +517,9 @@ def test_already_clean_is_idempotent_without_docker_mutation(
     monkeypatch.setattr(cleanup, "_run", docker)
     result = cleanup.clean_failed_install(IMAGE, SOURCE_SHA, "c" * 64)
     assert not result.removed_image and not result.removed_stage
-    assert "state=ALREADY_CLEAN" in capsys.readouterr().out
+    receipt = capsys.readouterr().out
+    assert "state=ALREADY_CLEAN" in receipt
+    assert "same_fs=yes" in receipt
 
 
 def test_regular_stage_with_correct_hash_can_be_identified(
@@ -435,8 +606,11 @@ def test_cleanup_failure_hook_redacts_ssh_output_and_keeps_original_failure(
             "FAKE_SSH_RC": "0" if successful else "17",
             "FAKE_SSH_STDOUT": (
                 "BOCA_CLEANUP state=PARTIAL image=removed stage=retained retained=yes "
-                "image_logical_mib=128 hostdir_free_mib_before=5120 hostdir_free_mib_after=5140 "
-                "inodes_before=100000 inodes_after=100001"
+                "image_logical_mib=128 same_fs=no "
+                "stage_free_mib_before=5120 stage_free_mib_after=5120 "
+                "docker_free_mib_before=5120 docker_free_mib_after=5140 "
+                "stage_inodes_before=100000 stage_inodes_after=100000 "
+                "docker_inodes_before=80000 docker_inodes_after=80001"
                 if successful
                 else "host=1.2.3.4 secret=NEVER"
             ),

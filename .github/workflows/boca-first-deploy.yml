@@ -282,8 +282,8 @@ jobs:
           if [[ "$cleanup_rc" -eq 0 ]]; then
             receipt="$(cat "$RUNNER_TEMP/boca-cleanup.receipt")"
           fi
-          receipt_pattern='^BOCA_CLEANUP state=(CLEANED|ALREADY_CLEAN|PARTIAL|RETAINED) image=(removed|absent) stage=(removed|absent|retained) retained=(yes|no) image_logical_mib=[0-9]+ hostdir_free_mib_before=[0-9]+ hostdir_free_mib_after=[0-9]+ inodes_before=[0-9]+ inodes_after=[0-9]+$'
-          if [[ "$cleanup_rc" -eq 0 && ${#receipt} -le 256 && "$receipt" =~ $receipt_pattern ]]; then
+          receipt_pattern='^BOCA_CLEANUP state=(CLEANED|ALREADY_CLEAN|PARTIAL|RETAINED) image=(removed|absent) stage=(removed|absent|retained) retained=(yes|no) image_logical_mib=[0-9]+ same_fs=(yes|no) stage_free_mib_before=[0-9]+ stage_free_mib_after=[0-9]+ docker_free_mib_before=[0-9]+ docker_free_mib_after=[0-9]+ stage_inodes_before=[0-9]+ stage_inodes_after=[0-9]+ docker_inodes_before=[0-9]+ docker_inodes_after=[0-9]+$'
+          if [[ "$cleanup_rc" -eq 0 && ${#receipt} -le 384 && "$receipt" =~ $receipt_pattern ]]; then
             printf 'Boca first-install failed; original failure remains NO_GO. Selective cleanup: `%s`.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
           else
             printf 'Boca first-install failed; original failure remains NO_GO. Selective cleanup: NO_GO INDETERMINADO; Boca state may have changed. Re-inventory Boca before retry.\n' >> "$GITHUB_STEP_SUMMARY"

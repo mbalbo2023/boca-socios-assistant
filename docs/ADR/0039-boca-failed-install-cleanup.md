@@ -32,10 +32,13 @@ container, volume or network exists**. With retained key/data or network,
 the receipt reports `PARTIAL` or `RETAINED` and never claims a clean install.
 A failed image removal leaves the file for diagnosis. Repeated
 execution on an already clean Boca namespace is idempotent. It records
-aggregate free bytes/inodes before and after; the image size is a logical
-image estimate, not a guarantee of physical space reclaimed because layers
-may be shared. It never prints a Docker environment, other project name,
-secret, database row or registry token.
+free bytes/inodes before and after on both the Boca staging filesystem and
+the rootless Docker data filesystem. `same_fs` says whether they share a
+device; those figures are correlated and must not be added when they do.
+The image size is a logical estimate, not a guarantee of physical space
+reclaimed because layers may be shared. A free-space delta is an observation,
+not proof that the image deletion caused it. It never prints a Docker
+environment, other project name, secret, database row or registry token.
 
 ## Explicit limits
 
@@ -65,8 +68,12 @@ after creation: those states may contain valuable encrypted data and cannot
 be proven disposable from the current host metadata. They need a separate
 recovery design and an Actions diagnostic, not deletion by this helper. A partially
 copied Compose file with a different hash is also preserved. Space measured
-on `/srv/boca-socios` may differ from the rootless daemon data filesystem;
-the future workflow must verify device topology before interpreting a delta.
+on `/srv/boca-socios` may differ from rootless Docker data. The helper asks
+the pinned daemon for `DockerRootDir` and accepts only a real Boca-owned path
+under the private UID10001 home with a proven classic storage driver. As in
+the preflight contract in ADR 0037, containerd/unknown backends are NO-GO:
+image layers could be on another filesystem. A changed data root or device
+between measurements makes the outcome INDETERMINADO if deletion began.
 No `docker system/image/volume prune`, `compose down`, daemon restart,
 automatic retry, volume removal or host-wide cleanup is permitted.
 

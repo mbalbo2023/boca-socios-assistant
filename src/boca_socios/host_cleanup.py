@@ -44,14 +44,23 @@ class CleanupIndeterminate(CleanupError):
 
 
 @dataclass(frozen=True)
+class CapacitySnapshot:
+    docker_root: Path
+    stage_device: int
+    docker_device: int
+    stage_free_bytes: int
+    stage_inodes: int
+    docker_free_bytes: int
+    docker_inodes: int
+
+
+@dataclass(frozen=True)
 class CleanupResult:
     removed_image: bool
     removed_stage: bool
     retained_state: bool
-    free_bytes_before: int
-    free_bytes_after: int
-    inodes_before: int
-    inodes_after: int
+    before: CapacitySnapshot
+    after: CapacitySnapshot
     image_size_bytes: int
 
 
@@ -207,12 +216,84 @@ def validate_image(metadata: object, image: str, source_sha: str) -> int:
     return size
 
 
-def _capacity() -> tuple[int, int]:
+def _checked_docker_storage_dir() -> Path:
+    """Use the same conservative data-root contract as the standalone preflight."""
     try:
-        current = os.statvfs(ROOT)
+        info = json.loads(_run("info", "--format", "{{json .}}"))
+        if not isinstance(info, dict):
+            raise CleanupError("rootless Docker storage backend is unproven")
+        driver_status = info.get("DriverStatus")
+        if (
+            info.get("Driver") not in {"overlay2", "fuse-overlayfs", "vfs"}
+            or not isinstance(driver_status, list)
+            or any(
+                not isinstance(item, list)
+                or len(item) != 2
+                or not all(isinstance(value, str) for value in item)
+                or item[0] == "driver-type"
+                for item in driver_status
+            )
+        ):
+            raise CleanupError("rootless Docker storage backend is unproven")
+        reported = info.get("DockerRootDir")
+        home = Path(pwd.getpwuid(10001).pw_dir)
+        if not isinstance(reported, str) or len(reported) > 4096:
+            raise CleanupError("rootless Docker storage path is unproven")
+        storage = Path(reported)
+        if (
+            not home.is_absolute()
+            or home == Path("/")
+            or not storage.is_absolute()
+            or ".." in storage.parts
+            or str(storage) != reported
+            or home.resolve(strict=True) != home
+        ):
+            raise CleanupError("rootless Docker storage path is unproven")
+        home_meta = home.lstat()
+        if (
+            not stat.S_ISDIR(home_meta.st_mode)
+            or home_meta.st_uid != 10001
+            or stat.S_IMODE(home_meta.st_mode) != 0o700
+        ):
+            raise CleanupError("rootless Docker storage path is unproven")
+        relative = storage.relative_to(home)
+        if not relative.parts:
+            raise CleanupError("rootless Docker storage path is unproven")
+        current = home
+        for part in relative.parts:
+            current /= part
+            metadata = current.lstat()
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != 10001
+                or stat.S_IMODE(metadata.st_mode) & 0o022
+            ):
+                raise CleanupError("rootless Docker storage path is unproven")
+    except CleanupError:
+        raise
+    except (OSError, ValueError, KeyError, AttributeError, TypeError) as exc:
+        raise CleanupError("rootless Docker storage path is unproven") from exc
+    return storage
+
+
+def _capacity() -> CapacitySnapshot:
+    docker_root = _checked_docker_storage_dir()
+    try:
+        stage_device = ROOT.stat().st_dev
+        docker_device = docker_root.stat().st_dev
+        stage = os.statvfs(ROOT)
+        docker = os.statvfs(docker_root)
     except OSError as exc:
-        raise CleanupError("aggregate free storage is unavailable") from exc
-    return current.f_bavail * current.f_frsize, current.f_favail
+        raise CleanupError("Boca staging or rootless Docker capacity is unavailable") from exc
+    return CapacitySnapshot(
+        docker_root=docker_root,
+        stage_device=stage_device,
+        docker_device=docker_device,
+        stage_free_bytes=stage.f_bavail * stage.f_frsize,
+        stage_inodes=stage.f_favail,
+        docker_free_bytes=docker.f_bavail * docker.f_frsize,
+        docker_inodes=docker.f_favail,
+    )
 
 
 def _retained_boca_state() -> bool:
@@ -246,7 +327,7 @@ def clean_failed_install(image: str, source_sha: str, compose_sha: str) -> Clean
         has_image = True
         if _run("ps", "-a", "-q", "--filter", f"ancestor={image}"):
             raise CleanupError("exact Boca image is referenced by a container")
-    before_bytes, before_inodes = _capacity()
+    before = _capacity()
     mutation_attempted = False
     try:
         if has_image:
@@ -257,7 +338,13 @@ def clean_failed_install(image: str, source_sha: str, compose_sha: str) -> Clean
                 raise CleanupError("staged Compose changed during cleanup")
             mutation_attempted = True
             COMPOSE.unlink()  # The private directory and exact regular file were rechecked.
-        after_bytes, after_inodes = _capacity()
+        after = _capacity()
+        if (
+            before.docker_root != after.docker_root
+            or before.stage_device != after.stage_device
+            or before.docker_device != after.docker_device
+        ):
+            raise CleanupError("Boca storage topology changed during cleanup")
     except (CleanupError, OSError) as exc:
         if mutation_attempted:
             raise CleanupIndeterminate("bounded Boca cleanup outcome is unverified") from exc
@@ -266,10 +353,8 @@ def clean_failed_install(image: str, source_sha: str, compose_sha: str) -> Clean
         removed_image=has_image,
         removed_stage=staged and not retained_state,
         retained_state=retained_state,
-        free_bytes_before=before_bytes,
-        free_bytes_after=after_bytes,
-        inodes_before=before_inodes,
-        inodes_after=after_inodes,
+        before=before,
+        after=after,
         image_size_bytes=image_size,
     )
     if retained_state:
@@ -283,9 +368,15 @@ def clean_failed_install(image: str, source_sha: str, compose_sha: str) -> Clean
         f" stage={'retained' if staged and retained_state else 'removed' if staged else 'absent'}"
         f" retained={'yes' if retained_state else 'no'}"
         f" image_logical_mib={image_size // 1024**2}"
-        f" hostdir_free_mib_before={before_bytes // 1024**2}"
-        f" hostdir_free_mib_after={after_bytes // 1024**2}"
-        f" inodes_before={before_inodes} inodes_after={after_inodes}"
+        f" same_fs={'yes' if before.stage_device == before.docker_device else 'no'}"
+        f" stage_free_mib_before={before.stage_free_bytes // 1024**2}"
+        f" stage_free_mib_after={after.stage_free_bytes // 1024**2}"
+        f" docker_free_mib_before={before.docker_free_bytes // 1024**2}"
+        f" docker_free_mib_after={after.docker_free_bytes // 1024**2}"
+        f" stage_inodes_before={before.stage_inodes}"
+        f" stage_inodes_after={after.stage_inodes}"
+        f" docker_inodes_before={before.docker_inodes}"
+        f" docker_inodes_after={after.docker_inodes}"
     )
     return result
 
