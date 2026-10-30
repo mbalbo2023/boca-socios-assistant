@@ -8,17 +8,17 @@ import stat
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from boca_socios.domain.policy import TicketIntent
+from boca_socios.security.credential_vault import CredentialVault
+from boca_socios.storage.database import Database
 from boca_socios.storage.encrypted_backup import (
     MAGIC,
     BackupError,
     backup_database,
     restore_database,
 )
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-from boca_socios.domain.policy import TicketIntent
-from boca_socios.security.credential_vault import CredentialVault
-from boca_socios.storage.database import Database
 
 
 def _source(path: Path) -> tuple[Database, CredentialVault, str]:
