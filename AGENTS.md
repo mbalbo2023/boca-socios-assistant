@@ -29,7 +29,9 @@ every unrelated service, host configuration and application repository.
 1. Recover exact main HEAD, open PRs, open work items, CI status and current
    project release state **before** starting. Do not duplicate completed work.
 2. Claim exactly one narrow issue with one scoped writer. State files/paths
-   being modified. If another agent owns the same scope, stop and coordinate.
+   being modified. Parallelize independent audits and nonoverlapping issues
+   whenever possible; never use concurrent writers on the same scope. If
+   another agent owns the same scope, stop and coordinate.
 3. Create branch feature/<issue>-<slug> from current main HEAD, and open a
    small, reviewable draft PR; no direct push to protected main.
 4. Edit only task-relevant files, keep unrelated work intact. Add regression
@@ -39,13 +41,19 @@ every unrelated service, host configuration and application repository.
    affecting required gates is NO_GO. Never weaken a guard to make CI green.
 6. Provide exact candidate SHA, base SHA, changed paths, test evidence,
    known limitations and explicit go/no-go in PR description.
-7. Human review + green required checks precede merge. No deployment side
-   effects from push to any branch or from documentation-only changes.
-8. Deployment requires separate owner authorization tied to exact image
-   digest, commit SHA, service and isolation preflight. Never assume a
-   successful merge authorizes a deploy. No retries or concurrent deployment
-   writers after a failed gate; diagnose and fix forward in a new PR.
-9. On NO_GO, leave production unchanged and produce actionable RCA.
+7. The agent performs and records technical review; exact-SHA green required
+   checks precede merge. No second human approval is required by the owner.
+   No deployment side effects from push or documentation-only changes.
+8. The owner's standing direction permits autonomous Boca operations through
+   the dedicated manual Actions workflow once exact commit, immutable image
+   digest (for an installation), service, isolation, capacity and environment
+   gates are proven and recorded. A merge alone never triggers deployment.
+   Serialize host operations; no automatic retry after a failed gate.
+9. On failure, record RCA and Boca-only disk/inode inventory. Through Actions,
+   remove only positively identified disposable Boca remnants after verifying
+   they are unused; preserve key/data volumes and uncertain artifacts. Never
+   prune host-wide resources or touch another workload. Fix code defects in a
+   new PR; do not redeploy merely because an external source failed.
 10. Use YYYY-MM-DD in America/Argentina/Buenos_Aires for user-facing times.
 
 ## Code design principles
@@ -60,7 +68,14 @@ every unrelated service, host configuration and application repository.
   identifiable data. Use stable opaque internal member IDs.
 - External I/O must be bounded with explicit timeouts, backoff and stop-on-block;
   simulated tests must not issue public website traffic.
-- Live automation is a separate design review and approval milestone.
+- Check any external-source incident through a dedicated read-only Actions
+  diagnostic before proposing a new deploy. Show timestamped green/yellow/red/
+  unknown source health in the operation summary. Source outages are alerts,
+  not blockers for a safe simulation-only deploy. Code defects and security,
+  image or host-resource gates remain blockers. No live behavior is enabled by
+  a source-health result.
+- Live automation is a separate technical review and controlled milestone;
+  the current runtime remains simulation-only with its engine off.
 
 ## Handoff checklist
 
