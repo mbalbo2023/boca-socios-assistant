@@ -20,7 +20,9 @@ Priority is fixed per notice kind: `ACTION_REQUIRED` (critical),
 messages are claimed by priority, then FIFO within a priority. A rolling
 window limits claims; an explicit record budget fails closed when full.
 Atomic in-process leases prevent simultaneous duplicate claims and make
-unacknowledged attempts eligible for bounded retry after lease expiry.
+unacknowledged attempts eligible for bounded retry after lease expiry. A
+claim object is valid only for the issuing outbox instance and its active
+lease; a copied or identically valued claim cannot acknowledge another one.
 
 Failures take only a boolean retryability decision and optional nonnegative
 `retry_after_seconds`, never an exception or remote response payload. The
@@ -67,5 +69,5 @@ finite input bounds, dry-run latency, and synthetic secret-like payloads and
 exception messages never appearing in records, rendered text or logs.
 
 This ADR requires review alongside the existing isolation and credential
-policy before any live adapter is proposed. The current PR must not merge or
-deploy without the independent governance gates.
+policy before any live adapter is proposed. The current PR must pass exact-head
+CI and an agent technical review before merge. It does not authorize deploy.

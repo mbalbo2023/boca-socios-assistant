@@ -1,6 +1,7 @@
 # ADR 0016: Durable synthetic notification outbox
 
-Status: Proposed for review, 2026-10-28. Partial issue #16; stacked on PR #30.
+Status: Proposed for review, updated 2026-10-30. Partial issue #16; #30
+integrated before this candidate.
 
 ## Decision
 
@@ -17,8 +18,10 @@ body, member ID, email, link, token or exception text is stored or sent.
 
 One `BEGIN IMMEDIATE` writer transaction protects enqueue deduplication,
 priority/FIFO claim selection, durable rate slots and lease assignment. A
-fresh random lease token and incremented attempt number fence a stale worker
-after expiry or restart. At lease expiry, retry backoff starts at the
+fresh random lease token, persisted claim start and incremented attempt number
+fence a stale worker after expiry or restart. A backward wall-clock value
+cannot acknowledge or fail a claim before its persisted start. At lease expiry,
+retry backoff starts at the
 observed recovery time; retry-after is a delay floor. Max attempts, TTL and
 capacity fail closed. Terminal rows remain as dedupe tombstones; no automatic
 pruning may quietly permit a repeated logical notice. The table contains no
@@ -27,8 +30,10 @@ policy still require separate review before storing real personal data.
 
 Unlike the in-process outbox's monotonic clock, this adapter requires caller-
 supplied Unix seconds so leases persist across process restart. Wall clock
-changes and multi-host skew are operational risks; it is not a distributed
+changes and multi-host skew remain operational risks; it is not a distributed
 exactly-once delivery guarantee. SQLite `busy_timeout` bounds contention.
+The version-2 migration checksum includes the persisted claim start; no
+version-2 database was deployed before this PR.
 
 ## Gate and evidence
 

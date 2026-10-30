@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from math import isfinite
 from uuid import NAMESPACE_OID, UUID, uuid5
 
 from boca_socios.browser.contracts import (
@@ -77,11 +78,22 @@ class OfflineSimulation:
         monotonic_now: float,
     ) -> SimulationReceipt:
         intent.validate()
+        if (
+            not isinstance(monotonic_now, (int, float))
+            or not isfinite(monotonic_now)
+            or monotonic_now < 0
+        ):
+            raise ValueError("notification time must be finite and nonnegative")
         if intent.event_id != self._queue.config.event_id:
             raise ValueError("intent belongs to a different simulated event")
+        # Validate the alias and its owner before time can expire any other
+        # member's entry. Invalid input must have no global clock side effect.
+        original = self._queue.snapshot(session_id)
+        if original.member_id != intent.member_id:
+            raise InvalidStateTransition("synthetic admission is required for this member")
         self._queue.advance(at)
         snapshot = self._queue.snapshot(session_id)
-        if snapshot.member_id != intent.member_id or snapshot.state is not QueueState.ADMITTED:
+        if snapshot.state is not QueueState.ADMITTED:
             raise InvalidStateTransition("synthetic admission is required for this member")
         workflow = SyntheticBrowserWorkflow(
             intents=SqliteIntentAdapter(self._database),

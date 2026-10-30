@@ -1,96 +1,80 @@
-# Plan de integración y estado de BETA
+# Estado de integración BETA
 
-**Corte:** 2026-10-28, America/Argentina/Buenos_Aires. **Base inmutable:**
-`main` `09f390e483a9ad93caf460cb6e161fee22e6bd8d`. Rama de verificación
-`feature/24-offline-integration`, issue #24. Ningún PR de la matriz se ha
-fusionado a `main` ni desplegado.
+**Corte:** 2026-10-30 UTC. Base de esta revisión: `main`
+`bfe4a3c830cff963e1668add05f50c50d0cbf2e8`. Issue #24, PR #30.
+Este documento describe el candidato offline; no acredita una BETA operativa.
 
-## Recuperación del trabajo existente
+## Integración efectivamente realizada
 
-| PR | HEAD recuperada | Componente | Estado de integración |
-| --- | --- | --- | --- |
-| #18 | `b145273dd3b04223ef4456aa2106b49a17d2df04` | Auditoría CI y Dependabot | Incorporado a rama de verificación |
-| #23 | `d4786aa60ad94622621a399cf098c42b5ac35b46` | Imagen y lectura de clave | Incorporado |
-| #22 | `5442616e7a03c713755ccb3dbd1157d59906494d` | Intención SQLite idempotente | Incorporado |
-| #21 | `d8120eb8ccba669eadedac237ed6109cb46b1273` | Cola offline | Incorporado como modelo, nunca como Queue-it real |
-| #20 | `b7d28a4860c4481e973d0a2339fe885dc32c04ae` | Avisos en memoria | Incorporado; no hay entrega Telegram |
-| #19 | `c85f33e05e8bce743d1c2a76413e364ff4dcb72f` | Instrumento de benchmark opt-in | Código recuperado; sin capacidad medida |
-| #26 | `97334bd266823f0926a24ea3dcd33ddd12e385d7` | Contratos/navegación HTML ficticia | Código de prueba recuperado; **no valida Boca** |
+| PR | Componente | Estado al corte |
+| --- | --- | --- |
+| #18 | Auditoría de Actions y Dependabot | Integrado en `main` |
+| #22 | Intención SQLite, única por socio y evento | Integrado |
+| #23 | Imagen fijada y lectura defensiva de clave | Integrado; 0444 sólo compatibilidad transitoria, sin secretos reales |
+| #21 | Cola determinista en memoria | Integrado como modelo, no Queue-it |
+| #20 | Outbox seguro en memoria | Integrado; claim ligado a su instancia, sin Telegram ni persistencia |
+| #26 | Flujo de navegador ficticio | Integrado; aviso sin ID de socio/evento, Chromium real no probado en CI |
+| #19 | Instrumento de benchmark opcional | Integrado; sin cifra medida de capacidad |
+| #28 | Diseño de alta privada | Integrado como ADR, sin interfaz operativa |
+| #29 | Renderizador accesible de estados ficticios | Integrado offline; sin endpoint privado ni prueba manual de lector de pantalla |
+| #33 | Observador público opt-in | Integrado como script; nunca ejecutado contra Boca en este gate |
+| #96 | Diagnóstico público manual por Actions (issue #94) | Integrado como semáforo asesor, separado de CI y despliegue |
+| #51 | Dependencia cryptography y lockfile | Integrado con CI exacta |
+| #104 | Actions oficiales fijadas a Node 24 | Integrado en CI y semáforo público |
+| #31 | Servicio interno de alta de socios | Integrado como biblioteca transaccional; sin endpoint ni enrolamiento real |
 
-El PR #15 de protocolo de observación y los cinco PRs automáticos de
-Dependabot (#1–#5) siguen abiertos para revisión independiente. #28 propone
-el diseño de alta privada (#17); #29 propone un panel accesible de lectura
-offline (#16). No se duplican sus módulos en esta rama. Los PRs de trabajo
-anteriores tienen CI verde en sus HEAD exactas, pero **ninguno tiene una
-aprobación humana registrada**. Las primeras ejecuciones fallidas de algunos
-PRs fueron corregidas con commits posteriores; sólo valen sus HEAD actuales.
+Las PR fundacionales fueron revisadas por el agente y pasaron los jobs
+`quality-and-tests` e `image-build` para sus HEAD exactas. El ruleset
+`protect-main` activo exige PR, checks y conversaciones resueltas, con cero
+aprobaciones humanas requeridas, según la revalidación en
+[GITHUB_SETUP.md](GITHUB_SETUP.md). ADR 0038 reemplaza el lenguaje histórico
+de aprobación humana en issues y ADR previos.
 
-## Dependencias y prioridad
+PR #30 conserva su historia original de verificación, pero el árbol candidato
+añade **únicamente** seis rutas propias de #24 sobre el `main` actual:
+`src/boca_socios/integration/{__init__,offline}.py`,
+`tests/test_offline_integration.py`, ADR 0015, este estado y el registro
+histórico de observación pública. No vuelve a introducir versiones antiguas
+de los siete componentes.
 
-| Orden | Entrega | Depende de | Gate para avanzar |
-| --- | --- | --- | --- |
-| P0 | Revisión humana, checks exactos y protección efectiva de `main` (#10) | #18 y configuración del dueño | Ruleset activo verificable; hoy la API del conector devuelve 403 al leer protección |
-| P1 | Base cifrada e idempotencia, integración de cola y avisos | #23, #22, #21, #20, #26 | Tests cruzados, imagen CI y revisión de cada PR |
-| P2 | Observador Playwright de Boca de una sola sesión y sin reserva | Observación pública, política del sitio, #17 | Prueba limitada real documentada; stop ante barreras |
-| P2 | Panel privado y alta accesible | #28, #29, autenticación propia, TLS | Diseño #17 aprobado antes de exponer endpoint; pruebas de acceso indebido |
-| P3 | Outbox durable, backup/restore y rotación de claves | #22, #20, #17 | Reinicios, carreras, retención y recuperación verificados |
-| P3 | Docker independiente y medición de recursos | #23 y worker aislado | Build/scan, presupuesto real; sin tocar otro Compose |
-| P4 | Integración de reserva real y notificaciones externas | Observación legítima, consentimiento, términos y reconciliación | Revisión humana separada, evidencia de Boca y autorización específica |
+## Contrato cruzado
 
-## Evidencia y límites actuales
+`OfflineSimulation` requiere una admisión sintética vigente de la misma
+identidad/evento, valida el alias antes de mover el reloj compartido, registra
+una única intención local de cantidad 1 en SQLite, ejecuta el puerto de
+navegador ficticio y crea una notificación estática deduplicada por ID opaco.
+Un fallo de navegador no envía éxito; el intento local puede reutilizar el
+mismo ID. La fila de DB sigue en estado `planned`. La cola y el outbox son
+volátiles y no comparten transacción con la DB: no se promete una reserva
+externa exactamente una vez ni entrega después de un reinicio.
 
-- Baseline combinado local: `uv sync --locked`, Ruff, mypy strict, política
-  de aislamiento y **94 pruebas** verdes antes de los nuevos adaptadores.
-- Con los adaptadores, **97 pruebas** locales pasaron; la CI de GitHub Actions
-  para el candidato `f5392603a5c5222420c8bc803650cc0f21f5a4d2` terminó
-  **success** en el run `40761344117`: jobs `quality-and-tests` e
-  `image-build` completos. Este resultado no constituye revisión humana.
-- La integración de `OfflineSimulation` enlaza el `TicketIntent` idempotente
-  de SQLite, una admisión del modelo en memoria, el puerto de navegador y un
-  aviso estático deduplicado en memoria. Las regresiones adicionales comprueban
-  identidad, cantidad 1, TTL, fallo del navegador y reintento local. El estado
-  de la DB queda `planned`: jamás se marca una compra externa.
-- La observación de la portada pública está en
-  [BOCA_PUBLIC_OBSERVATION_2026-10-28.md](BOCA_PUBLIC_OBSERVATION_2026-10-28.md).
-  No se ha visto un flujo autenticado ni se han probado reservas en Boca.
-- Las pruebas con dobles y HTML ficticio verifican contratos internos;
-  **no son un laboratorio de integración real**. El usuario pidió priorizar
-  Boca Socios directamente; no se ejecutará un smoke fake como sustituto de
-  la prueba real.
-- El entorno local carece de Docker; `image-build` de GitHub Actions validó
-  el candidato indicado. No hay benchmark Chromium con resultado medido ni
-  capacidad demostrada del droplet.
-- La lectura de rulesets devolvió lista vacía y la protección de `main` no
-  fue legible con la integración (403). Por tanto, la aplicación efectiva de
-  la regla **no está verificada**. La política del repositorio sigue exigiendo
-  PR, checks y revisión humana.
+Las pruebas cruzadas cubren alias duplicados, socio/evento y cantidad
+inválidos, TTL, fallos/reintentos, cifrado AES-GCM tras reabrir SQLite y
+fallo cerrado ante clave mal montada. La CI del SHA exacto del candidato
+se registra en la conversación de PR #30 antes de cualquier merge.
 
-## GO / NO-GO
+## Semáforo de alcance
 
-**GO de desarrollo:** revisar PRs separados, corregir conflictos en rama,
-seguir con tests internos y un observador público acotado. **NO-GO de BETA
-operativa:** faltan alta segura aprobada y expuesta, autenticación del dueño,
-outbox durable, flujo real observado de login/cola/reserva, reconciliación de
-resultado incierto, pruebas del navegador real, rendimiento en entorno
-  aislado, scan de imagen y protección/revisión humana. La CI integrada
-  exacta de la versión anterior de esta rama está verde; cualquier nuevo
-  commit requiere repetirla.
+| Área | Estado | Evidencia o pendiente |
+| --- | --- | --- |
+| Librerías offline | GO para integración revisada | Tests cruzados y CI exacta del candidato |
+| Portada pública | Observación histórica acotada | [Registro del 2026-10-28](BOCA_PUBLIC_OBSERVATION_2026-10-28.md); no revela flujo autenticado |
+| Fuente externa | Asesor, no gate de despliegue | `boca-source-status.yml` manual en Actions; informar color, UTC y run o UNKNOWN |
+| BETA operativa | NO_GO | El servicio #31 no tiene endpoint; faltan endpoint autenticado del panel, outbox durable #34, guardia #38, rotación #40 y wiring |
+| Reserva real | NO_GO | Sin identidad verificada, autorización de sitio, flujo observado ni reconciliación de resultado ambiguo |
+| Capacidad del host | No verificada | #19 no ejecutó Chromium real; preflight rootless/cgroup/disco debe venir de Actions |
+| Despliegue | No ejecutado | Sólo workflow manual Boca en `main` y gates de SHA/digest/aislamiento/recursos pueden habilitarlo |
 
-**NO-GO de despliegue:** no existe autorización para un SHA/digest y servicio
-concretos. Todo cambio futuro en el droplet se hará por GitHub Actions de
-Boca, con preflight de aislamiento; Porota Trading y PPI Watch quedan fuera
-del alcance.
+Un incidente de fuente externa se diagnostica primero con el workflow manual
+de Actions y se informa como semáforo. Su fallo no bloquea por sí solo un
+despliegue seguro del controlador dormido ni justifica uno nuevo. Un defecto
+de código probado requiere PR y CI nueva. Nunca se habilita login, cola o
+checkout real por una señal de salud pública.
 
-## Instrucciones accesibles para la revisión
-
-1. Abrir cada PR desde la lista del repositorio y leer su sección «Files
-   changed» y el resultado de los dos checks, `quality-and-tests` e
-   `image-build`, para la HEAD indicada.
-2. Revisar el diseño de alta segura en #28 antes de habilitar cualquier
-   pantalla de credenciales. **No enviar usuarios ni contraseñas por chat**.
-3. Registrar la aprobación o cambios pedidos en el PR correspondiente; no
-   fusionar esta rama de verificación directamente como reemplazo de las
-   revisiones individuales.
-4. Una CI verde o una portada pública visible no habilitan despliegue ni
-   reserva. La aprobación de despliegue se solicitará después con SHA,
-   digest, recursos y workflow específicos; no hay comandos para el droplet.
+El protocolo de observación #15 permanece separado. El renderizador del
+panel #29 y el servicio interno #31 están integrados, sin interfaz privada
+operativa. El observador #33 no fue ejecutado contra Boca en este gate.
+Las PR encadenadas #34/#36/#38/#40
+necesitan revisión propia y actualización sobre `main` en orden; su mera
+existencia no completa el runtime. No hay credenciales reales, tráfico autenticado,
+reserva, Telegram, cambios del droplet ni de otros proyectos en este candidato.
