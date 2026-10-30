@@ -31,6 +31,14 @@ jobs:
         run: python -m pip install --disable-pip-version-check uv==0.13.4
       - name: Verify immutable dependency graph
         run: uv sync --frozen
+      - name: Validate resolved Boca-only Compose model
+        env:
+          BOCA_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          BOCA_MASTER_KEY_SOURCE: /srv/boca-socios/secrets/master.key
+          BOCA_ENVIRONMENT: staging
+        run: |
+          docker compose -f compose.yaml config --format json > "$RUNNER_TEMP/boca-compose.json"
+          uv run python scripts/check_deploy_contract.py "$RUNNER_TEMP/boca-compose.json" "$BOCA_IMAGE"
       - name: Lint
         run: uv run ruff check .
       - name: Format
