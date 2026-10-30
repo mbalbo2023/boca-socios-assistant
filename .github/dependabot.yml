@@ -1,9 +1,13 @@
 version: 2
 updates:
-  - package-ecosystem: pip
+  # The project is locked with uv.lock, not requirements.txt.
+  - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly
+    # Delay normal version bumps while keeping security updates immediate.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 3
     labels:
       - dependencies
@@ -11,6 +15,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 3
     labels:
       - dependencies
@@ -18,6 +24,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 3
     labels:
       - dependencies

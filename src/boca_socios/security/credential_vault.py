@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,16 +35,50 @@ class CredentialVault:
 
     @classmethod
     def from_secret_file(cls, file_path: Path, *, key_id: str = "v1") -> CredentialVault:
-        # Symlink-following and group/world readable key files are forbidden.
-        if file_path.is_symlink() or not file_path.is_file():
-            raise ValueError("secret file must be a regular file")
-        # Docker Compose secrets may be mounted as 0444, so permission
-        # checks are enforced on the host-side source during provisioning.
+        """Read a bounded key through a non-following file descriptor.
+
+        Owner-only files are required except for the exact Docker-managed
+        secret mount, which some Compose implementations expose as 0444.
+        In that special case container boundaries and host-source permissions
+        must be verified separately before any real credential enrollment.
+        """
+        if not file_path.is_absolute():
+            raise ValueError("master key path must be absolute")
+        no_follow = getattr(os, "O_NOFOLLOW", None)
+        if no_follow is None:
+            raise ValueError("platform cannot securely open master key without no-follow")
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | no_follow | getattr(os, "O_NONBLOCK", 0)
         try:
-            key = base64.b64decode(file_path.read_bytes().strip(), validate=True)
+            descriptor = os.open(file_path, flags)
+            with os.fdopen(descriptor, "rb") as source:
+                metadata = os.fstat(source.fileno())
+                if not stat.S_ISREG(metadata.st_mode):
+                    raise ValueError("master key must be a regular file")
+                if metadata.st_uid not in {0, os.geteuid()}:
+                    raise ValueError("master key file has unexpected owner")
+                permissions = stat.S_IMODE(metadata.st_mode)
+                if permissions & 0o133:
+                    raise ValueError("master key file is writable/executable by others")
+                # Only the exact read-only Compose 0444 mount is compatible;
+                # never permit a writable 0644/0604 source via this exception.
+                docker_secret = cls._is_readonly_docker_secret(file_path, permissions)
+                if permissions & 0o044 and not docker_secret:
+                    raise ValueError("master key file is readable by other identities")
+                encoded = source.read(129)
+                if len(encoded) > 128:
+                    raise ValueError("master key file is unexpectedly large")
+        except OSError as exc:
+            raise ValueError("master key file is unavailable or inaccessible") from exc
+        try:
+            key = base64.b64decode(encoded.strip(), validate=True)
         except (ValueError, binascii.Error) as exc:
             raise ValueError("invalid master key encoding") from exc
         return cls(key, key_id=key_id)
+
+    @staticmethod
+    def _is_readonly_docker_secret(file_path: Path, permissions: int) -> bool:
+        """Only one exact path and exact read-only mount mode qualify."""
+        return file_path == Path("/run/secrets/boca_master_key") and permissions == 0o444
 
     @staticmethod
     def _aad(member_id: str) -> bytes:
