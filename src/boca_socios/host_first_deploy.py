@@ -294,6 +294,11 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
         _run("docker", "inspect", "--format", "{{json .HostConfig}}", container),
         "container host config",
     )
+    port_bindings = host.get("PortBindings")
+    if not isinstance(port_bindings, dict):
+        raise PreflightError("missing or malformed Boca port bindings")
+    if host.get("PublishAllPorts") is not False:
+        raise PreflightError("Boca automatic port publishing is not disabled")
     labels = config.get("Labels")
     entries = config.get("Env")
     if not isinstance(labels, dict) or not isinstance(entries, list):
@@ -343,7 +348,7 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
         pids_limit=host.get("PidsLimit"),  # type: ignore[arg-type]
         read_only=host.get("ReadonlyRootfs"),  # type: ignore[arg-type]
         privileged=host.get("Privileged"),  # type: ignore[arg-type]
-        has_ports=bool(host.get("PortBindings")),
+        has_ports=bool(port_bindings),
     )
     validate_diagnostic(snapshot, image, source_sha)
     return snapshot
@@ -425,7 +430,11 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
             != "healthy"
         ):
             raise PreflightError("Boca controller did not become healthy")
-    except PreflightError:
+        # The same strict contract used by the later read-only diagnostic must
+        # hold before the first install can claim success.
+        _diagnostic_files(compose_sha)
+        collect_diagnostic(image, source_sha)
+    except (ValueError, OSError, TypeError, KeyError):
         try:
             _run(*_compose_args("stop", "controller"), env=_compose_env(image))
         except PreflightError:
@@ -446,7 +455,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         phase(args.phase, args.image, args.source_sha, args.compose_sha)
-    except (PreflightError, OSError, ValueError) as exc:
+    except (PreflightError, OSError, ValueError, TypeError, KeyError) as exc:
         print(f"BOCA_NO_GO: {exc}", file=sys.stderr)
         return 1
     return 0

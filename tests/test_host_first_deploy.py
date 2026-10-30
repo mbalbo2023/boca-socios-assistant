@@ -20,6 +20,15 @@ from boca_socios.host_first_deploy import (
 
 SOURCE_SHA = "a" * 40
 IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64
+GOOD_HOST_CONFIG = {
+    "NanoCpus": 500_000_000,
+    "Memory": 268_435_456,
+    "PidsLimit": 64,
+    "ReadonlyRootfs": True,
+    "Privileged": False,
+    "PortBindings": {},
+    "PublishAllPorts": False,
+}
 
 
 def safe_snapshot() -> HostSnapshot:
@@ -125,6 +134,168 @@ def test_failed_start_stops_only_controller_and_preserves_owner_only_key(
     assert not any("down" in command or "prune" in command for command in commands)
 
 
+def test_first_install_requires_strict_postflight_before_reporting_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    checks: list[str] = []
+
+    def fake_run(*args: str, env: dict[str, str] | None = None) -> str:
+        if args[:3] == ("docker", "image", "inspect"):
+            return json.dumps([IMAGE]) if "RepoDigests" in args[4] else SOURCE_SHA
+        if "ps" in args:
+            return "c" * 64
+        if args[:2] == ("docker", "inspect"):
+            return "healthy"
+        return ""
+
+    def verify_files(expected: str) -> None:
+        assert expected == digest
+        assert host.KEY.exists()
+        checks.append("key-and-compose")
+
+    def inspect_runtime(image: str, source_sha: str) -> DiagnosticSnapshot:
+        assert (image, source_sha) == (IMAGE, SOURCE_SHA)
+        checks.append("runtime")
+        return healthy_diagnostic()
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    monkeypatch.setattr(host, "_diagnostic_files", verify_files)
+    monkeypatch.setattr(host, "collect_diagnostic", inspect_runtime)
+
+    host.phase("apply", IMAGE, SOURCE_SHA, digest)
+    assert checks == ["key-and-compose", "runtime"]
+    assert "BOCA_DEPLOY_PASS" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        PreflightError("engine on"),
+        ValueError("bad JSON"),
+        OSError("missing key"),
+        TypeError("unexpected Docker metadata type"),
+        KeyError("missing Docker metadata field"),
+    ],
+)
+def test_postflight_failure_stops_only_controller_and_preserves_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str, env: dict[str, str] | None = None) -> str:
+        commands.append(args)
+        if args[:3] == ("docker", "image", "inspect"):
+            return json.dumps([IMAGE]) if "RepoDigests" in args[4] else SOURCE_SHA
+        if "ps" in args:
+            return "c" * 64
+        if args[:2] == ("docker", "inspect"):
+            return "healthy"
+        return ""
+
+    def fail_postflight(_image: str, _sha: str) -> DiagnosticSnapshot:
+        raise failure
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    monkeypatch.setattr(host, "_diagnostic_files", lambda _sha: None)
+    monkeypatch.setattr(host, "collect_diagnostic", fail_postflight)
+    with pytest.raises(type(failure)):
+        host.phase("apply", IMAGE, SOURCE_SHA, digest)
+    assert [command[-2:] for command in commands if "stop" in command] == [("stop", "controller")]
+    assert len(base64.b64decode(host.KEY.read_bytes().strip(), validate=True)) == 32
+    assert stat.S_IMODE(host.KEY.stat().st_mode) == 0o400
+    assert not any("down" in command or "prune" in command for command in commands)
+
+
+@pytest.mark.parametrize(
+    ("field", "payload"),
+    [
+        ("{{json .Config}}", "{"),
+        ("{{json .Config}}", "[]"),
+        ("{{json .Config}}", '{"Labels": {}, "Env": [12]}'),
+        ("{{json .HostConfig}}", "null"),
+        (
+            "{{json .HostConfig}}",
+            json.dumps(
+                {key: value for key, value in GOOD_HOST_CONFIG.items() if key != "PortBindings"}
+            ),
+        ),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "PortBindings": None})),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "PortBindings": []})),
+        (
+            "{{json .HostConfig}}",
+            json.dumps(
+                {key: value for key, value in GOOD_HOST_CONFIG.items() if key != "PublishAllPorts"}
+            ),
+        ),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "PublishAllPorts": True})),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "PublishAllPorts": "false"})),
+        (
+            "{{json .HostConfig}}",
+            json.dumps({**GOOD_HOST_CONFIG, "PortBindings": {"80/tcp": [{"HostPort": "8080"}]}}),
+        ),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "NanoCpus": {}})),
+    ],
+)
+def test_malformed_docker_postflight_stops_controller_without_removing_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    field: str,
+    payload: str,
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str, env: dict[str, str] | None = None) -> str:
+        commands.append(args)
+        if args[:3] == ("docker", "image", "inspect"):
+            return json.dumps([IMAGE]) if "RepoDigests" in args[4] else SOURCE_SHA
+        if "ps" in args:
+            return "c" * 64
+        if args[:2] == ("docker", "inspect"):
+            if args[3] == "{{.State.Health.Status}}":
+                return "healthy"
+            if args[3] == field:
+                return payload
+            if args[3] == "{{json .Config}}":
+                return json.dumps(
+                    {
+                        "Image": IMAGE,
+                        "User": "10001:10001",
+                        "Labels": {
+                            "com.docker.compose.project": "boca-socios",
+                            "com.docker.compose.service": "controller",
+                        },
+                        "Env": [
+                            "BOCA_ENVIRONMENT=staging",
+                            "BOCA_DB_PATH=/data/boca.sqlite3",
+                            "BOCA_MASTER_KEY_FILE=/run/secrets/boca_master_key",
+                            "BOCA_RUNTIME_MODE=simulation",
+                            "BOCA_ENGINE_MODE=off",
+                        ],
+                    }
+                )
+            if args[3] == "{{json .HostConfig}}":
+                return json.dumps(GOOD_HOST_CONFIG)
+            raise AssertionError("unexpected Docker inspection")
+        return ""
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    monkeypatch.setattr(host, "_diagnostic_files", lambda _sha: None)
+
+    with pytest.raises(ValueError):
+        host.phase("apply", IMAGE, SOURCE_SHA, digest)
+
+    assert "BOCA_DEPLOY_PASS" not in capsys.readouterr().out
+    assert any(command[3] == field for command in commands if command[:2] == ("docker", "inspect"))
+    assert [command[-2:] for command in commands if "stop" in command] == [("stop", "controller")]
+    assert len(base64.b64decode(host.KEY.read_bytes().strip(), validate=True)) == 32
+    assert stat.S_IMODE(host.KEY.stat().st_mode) == 0o400
+    assert not any("down" in command or "prune" in command for command in commands)
+
+
 def healthy_diagnostic() -> DiagnosticSnapshot:
     return DiagnosticSnapshot(
         uid=10001,
@@ -226,6 +397,7 @@ def test_diagnostic_phase_uses_only_read_only_boca_queries(
                             "ReadonlyRootfs": True,
                             "Privileged": False,
                             "PortBindings": {},
+                            "PublishAllPorts": False,
                         }
                     )
                 case "{{.State.Health.Status}}":

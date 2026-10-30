@@ -33,17 +33,18 @@ The workflow first validates dispatch inputs and the successful manual image
 release run for the same current `main` SHA. It validates the resolved Compose
 contract on the runner, reads aggregate host capacity and Boca-only resource
 names, stages and hashes one Compose file, then validates the host-resolved
-model before pulling the exact digest. The current draft's host-side key file
-is not proven readable under rootless UID mapping; #81 must replace that
-custody path before any host install. A startup failure stops only the Boca
-service, preserves the key and volume, and requires separate
-diagnosis before another attempt. An existing Boca key, container, volume,
-network or staged file blocks a fresh installation; this flow is not a
-recovery or upgrade procedure. The CPU snapshot is an estimate; #91 adds
-separate measurement of staging and rootless image storage. #79, #81, #89,
-#91, #97 and the strict postflight remain pending gates. An external source
-failure is reported by Actions as an alert, not a deploy blocker for the
-simulation-only controller.
+model before pulling the exact digest. Before reporting success, the helper
+reuses the read-only diagnostic contract to check the actual container,
+image, dormant engine, resource limits and key metadata. Startup or postflight
+failure stops only the Boca controller and preserves the key and volume for
+separate diagnosis. An existing Boca key, container, volume, network or staged
+file blocks a fresh installation; this flow is not a recovery or upgrade
+procedure. The draft's host-side key file is not proven readable under
+rootless UID mapping; #81 must replace that custody path before any host
+install. The CPU snapshot is an estimate; #91 adds separate measurement of
+staging and rootless image storage. #79, #81, #89, #91 and #97 remain pending
+gates. An external source failure is reported by Actions as an alert, not a
+deploy blocker for the simulation-only controller.
 
 ## Read-only diagnostic under demand (issue #68)
 
