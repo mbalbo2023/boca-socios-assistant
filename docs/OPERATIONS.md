@@ -2,27 +2,28 @@
 
 ## Current state
 
-Repository foundation only. All existing hosts and workloads must be left
-untouched. No GitHub workflow in this release has remote-host credentials,
-and CI never deploys.
+The runtime is foundation-only, and CI never deploys. The Boca-only manual
+workflow is being integrated behind objective gates; its private environment
+already contains the pre-existing SSH identity and an authorized host-key pin.
+No host operation has run through it.
 
 ## Proposed first installation (issue #62)
 
-The draft `boca-first-deploy.yml` adds a manual, environment-gated path; it
-is not on `main` and has not been run. `pull_request` only runs tests and the
-isolation policy, with no host credentials. A manual dispatch is allowed only
-from the exact current `main` commit by the repository owner after an
-independent review and separate authorization recording the commit, complete
-GHCR digest, successful release run, `controller`, resource budget and time
-window. The reviewer must verify that the `boca-first-deploy` GitHub
-environment has required reviewers, deployment branch restrictions and only
-the Boca-specific credentials/variables. The readiness variable alone is
-insufficient evidence of environment protection.
+The proposed `boca-first-deploy.yml` adds a manual, environment-gated path; it
+has not run on the host. `pull_request` only runs tests and the isolation
+policy, with no host credentials. A manual dispatch is allowed only from
+the exact current `main` commit by the repository owner after agent technical
+review, green exact-SHA checks and a recorded gate receipt for the commit,
+complete GHCR digest, successful release run, `controller` and resource
+budget. The protected `boca-first-deploy` GitHub environment must restrict
+deployment to `main` and contain only Boca-specific credentials/variables.
+The owner's standing direction requires no additional human approval. The
+readiness variable alone is insufficient evidence of environment protection.
 
 The proposed host prerequisite is a dedicated `boca-deploy` identity with UID
-10001 and access to Docker, Python 3.10+, and an already provisioned empty
-`/srv/boca-socios` directory owned by that UID with mode 0700. A reviewer
-must verify SSH host identity out of band and pin it in the environment's
+10001, dedicated rootless Docker, Python 3.10+, and an already provisioned empty
+`/srv/boca-socios` directory owned by that UID with mode 0700. The SSH host
+identity must be independently verified and pinned in the environment's
 known-hosts secret; the workflow has no `ssh-keyscan` fallback. Host setup is
 not part of this PR. Confirm the GHCR package is accessible by the host
 without placing registry credentials on it. If any prerequisite is absent,
@@ -32,27 +33,36 @@ The workflow first validates dispatch inputs and the successful manual image
 release run for the same current `main` SHA. It validates the resolved Compose
 contract on the runner, reads aggregate host capacity and Boca-only resource
 names, stages and hashes one Compose file, then validates the host-resolved
-model before pulling the exact digest. Only then can it create an owner-only
-random key and start the simulation-only controller. Before reporting success,
-it reuses the read-only diagnostic contract to verify the actual container,
-image, dormant engine, resource limits and key metadata. A startup or
-postflight failure stops only that service, preserves the key and volume, and
-requires separate diagnosis before another attempt. An existing Boca key,
-container, volume, network or staged file blocks a fresh installation; this
-flow is not a recovery or upgrade procedure. The CPU snapshot is an estimate,
-so a human capacity review is still required before authorization.
+model before pulling the exact digest. Before reporting success, the helper
+reuses the read-only diagnostic contract to check the actual container,
+image, dormant engine, resource limits and key metadata. Startup or postflight
+failure stops only the Boca controller and preserves the key and volume for
+separate diagnosis. An existing Boca key, container, volume, network or staged
+file blocks a fresh installation; this flow is not a recovery or upgrade
+procedure. The draft's host-side key file is not proven readable under
+rootless UID mapping; #81 must replace that custody path before any host
+install. The CPU snapshot is an estimate; #91 adds separate measurement of
+staging and rootless image storage. #79, #81, #89, #91 and #97 remain pending
+gates. An external source failure is reported by Actions as an alert, not a
+deploy blocker for the simulation-only controller.
 
-## Proposed read-only diagnostic under demand (issue #68)
+## Read-only diagnostic under demand (issue #68)
 
-The same protected workflow offers a manual `diagnostic` choice for a Boca
-controller already installed from the exact current `main` SHA. After a
-separate authorization and environment review, it checks only Boca Compose,
-key **metadata**, immutable image identity, resource limits, health and
-`BOCA_ENGINE_MODE=off`. It never reads the key value or database rows, starts
-the motor, visits the site or changes a container. The run summary contains
-only bounded status and immutable coordinates. A mismatch is NO-GO and
-requires a reviewed diagnosis; it is not a reason to retry the first install
-or alter another workload. This code has not been dispatched to a host.
+The same protected workflow proposes a manual `diagnostic` choice for a Boca
+controller already installed from the exact current `main` SHA. Under the
+owner's standing direction, its recorded gates and environment restrictions
+must match the exact operation, SHA, digest, service and budget. It checks
+only Boca Compose, key **metadata**, immutable image identity, resource
+limits, health and `BOCA_ENGINE_MODE=off`. It never reads the key value or
+database rows, starts the motor, visits the site or changes a container.
+The run summary contains only bounded status and immutable coordinates. A
+mismatch is NO-GO and requires diagnosis; it is not a reason to retry the
+first install or alter another workload. This draft checks real/effective
+UID and GID before private metadata, but still inherits Docker transport/
+context settings. It must remain uninvoked until #79 pins the rootless
+daemon and #91 hardens the whole workflow's identity and main checks. #81
+resolves key custody separately. No host diagnostic has
+run yet.
 
 ## Proposed isolated deployment layout
 
@@ -60,7 +70,7 @@ or alter another workload. This code has not been dispatched to a host.
 | --- | --- | --- |
 | Repository | mbalbo2023/boca-socios-assistant | Existing repos, untouched |
 | Compose project | boca-socios | Unknown existing names, never inspect destructively |
-| Directory | Assigned only in a separately approved deployment | No shared subtree |
+| Directory | Dedicated Boca-owned path after gated Actions preflight | No shared subtree |
 | Database | Boca-only named volume | No shared database |
 | Network | Boca-only bridge | No shared network |
 | Secrets | Boca-only source and file | No copied/reused keys |
@@ -71,9 +81,11 @@ or alter another workload. This code has not been dispatched to a host.
 
 ## Gate before any future live Docker deployment
 
-1. Explicit owner permission for a particular commit SHA, immutable image
-   digest, Compose service, expected CPU/RAM/disk and time window.
-2. Controlled GitHub Actions environment with required approval.
+1. Under the owner's standing direction, record the exact current commit SHA,
+   immutable image digest for an install, Compose service, CPU/RAM/disk budget
+   and operation before autonomous dispatch. A merge never deploys by itself.
+2. Controlled GitHub Actions environment, main-only branch restriction,
+   dedicated SSH identity and pinned host key; no required human approval.
 3. Check spare host disk/inodes/CPU/memory and existing service health using
    non-mutating observations. If capacity is insufficient: NO_GO.
 4. Confirm Compose project is boca-socios; no host mounts, published ports,
@@ -81,10 +93,18 @@ or alter another workload. This code has not been dispatched to a host.
 5. Build once in CI, scan and publish image by digest. Deploy exact digest,
    never rebuild on the production host.
 6. Serialize deployment with a Boca-only lock, never parallel retry.
-7. Record pre/post health for Boca and observed absence of effects on every
-   unrelated service; never touch or stop an existing workload.
-8. On failure: stop Boca only, retain data, no destructive Docker prune,
-   no blanket docker compose down and no deletion of volumes.
+7. Record Boca-only pre/post health and disk/inode capacity; never touch or
+   stop an existing workload or enumerate unrelated services destructively.
+8. On failure: inventory the Boca attempt through the same Actions workflow,
+   stop Boca only, then remove positively identified unused disposable Boca
+   image/container/network/staging remnants with before/after measurements.
+   Retain key/data volumes and uncertain resources. No destructive Docker
+   prune, blanket compose down, or volume deletion.
+9. Diagnose any external-source failure via bounded read-only Actions before
+   proposing a new deploy. Report green/yellow/red/unknown with timestamp;
+   source failure is an alert, not a NO_GO for the simulation-only controller.
+   A demonstrated code defect may be fixed in a new PR. Security, image,
+   capacity and isolation gates remain strict.
 
 ## Explicitly prohibited
 
