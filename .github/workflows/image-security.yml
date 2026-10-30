@@ -1,0 +1,40 @@
+name: Image security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: image-security-scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build local controller image without publishing
+        run: docker build --tag boca-socios-scan:${{ github.sha }} .
+      - name: Scan OS and library vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: boca-socios-scan:${{ github.sha }}
+          version: v0.76.1
+          cache: "false"
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: "false"
+          exit-code: "1"
+          format: table
+          timeout: 10m

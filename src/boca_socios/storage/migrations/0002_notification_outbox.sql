@@ -11,16 +11,17 @@ CREATE TABLE notification_outbox (
   expires_at REAL NOT NULL CHECK (expires_at > created_at),
   next_attempt_at REAL,
   lease_token TEXT,
+  claimed_at REAL,
   lease_until REAL,
   accepted_at REAL,
   CHECK ((state = 'pending' AND next_attempt_at IS NOT NULL AND lease_token IS NULL
-      AND lease_until IS NULL AND accepted_at IS NULL)
+      AND claimed_at IS NULL AND lease_until IS NULL AND accepted_at IS NULL)
     OR (state = 'claimed' AND next_attempt_at IS NULL AND lease_token IS NOT NULL
-      AND lease_until IS NOT NULL AND accepted_at IS NULL)
+      AND claimed_at IS NOT NULL AND lease_until > claimed_at AND accepted_at IS NULL)
     OR (state = 'accepted' AND next_attempt_at IS NULL AND lease_token IS NULL
-      AND lease_until IS NULL AND accepted_at IS NOT NULL)
+      AND claimed_at IS NULL AND lease_until IS NULL AND accepted_at IS NOT NULL)
     OR (state = 'exhausted' AND next_attempt_at IS NULL AND lease_token IS NULL
-      AND lease_until IS NULL AND accepted_at IS NULL))
+      AND claimed_at IS NULL AND lease_until IS NULL AND accepted_at IS NULL))
 );
 
 CREATE INDEX idx_notification_due

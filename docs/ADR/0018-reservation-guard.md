@@ -1,6 +1,6 @@
 # ADR 0018: una concesión local antes de cualquier intento externo
 
-**Estado:** Propuesto, 2026-10-28. Issue #37; PR apilado sobre #36. No se
+**Estado:** Propuesto, actualizado 2026-10-29 ART. Issue #37; PR #38 depende de #36. No se
 habilita ningún adaptador real.
 
 ## Decisión
@@ -41,5 +41,6 @@ Pruebas locales de 12 competidores, reinicio, vencimiento sin reintento,
 fencing, resolución contradictoria, FK, cancelación y checksum. Todos los
 casos usan SQLite y datos ficticios, sin abrir páginas sintéticas ni Boca.
 La migración es aditiva y no se ejecuta en el runtime actual. CI y revisión
-humana de SHA exacto preceden cualquier merge; despliegue tiene su autorización
-independiente.
+técnica del agente de SHA exacto, registradas según ADR 0038, preceden el
+merge. El despliegue de simulación conserva sus gates de Actions y capacidad;
+esta pieza no constituye un intento externo ni cambia el semáforo de fuentes.
