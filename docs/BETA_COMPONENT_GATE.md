@@ -152,3 +152,23 @@ a eso aprobación humana independiente. La CI apilada no sustituye la
 revisión del PR fuente.
 No hace falta ejecutar comandos en el droplet ni copiar datos de socios al
 portapapeles para esta revisión.
+
+## Revalidación del contrato #35 — 2026-10-29 ART
+
+Sobre `main` `37a1b6199f86e9011b7a2dcc73535c76585964e3`, la PR #36 añade
+el puerto estructural que acepta outbox en memoria o SQLite, conserva las
+validaciones previas de alias y tiempo, y prueba alta interna ficticia,
+intención única, aviso durable y panel redactado. Una regresión concurrente
+demostró dos invocaciones del navegador ficticio con alias de un socio; el
+coordinador ahora concede una sola ejecución local por socio y rechaza la
+segunda antes de ese navegador. La barrera se libera también ante fallo.
+Esta protección vive sólo en esa instancia; #38 todavía no está integrada ni
+conectada al flujo y no se afirma intento único externo o entre procesos.
+
+La medición offline de Chromium #44 y el scan de imagen #55 ya forman parte
+de `main` en este corte. Ninguno prueba la capacidad del droplet o una
+reserva de Boca. El dueño difirió todo trabajo de backup/restore hasta una
+versión productiva fiable; no forma parte de #36 ni de la primera instalación
+de simulación. Las credenciales reales siguen deshabilitadas. La evidencia
+de pruebas y Actions de la HEAD exacta de #36 queda en su PR; los SHA y
+cifras anteriores de este archivo siguen como registro histórico.

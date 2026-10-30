@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 from cryptography.exceptions import InvalidTag
 
-from boca_socios.browser.contracts import SimulationOutcome
+from boca_socios.browser.contracts import SimulationOutcome, SimulationReceipt
 from boca_socios.domain.policy import TicketIntent
 from boca_socios.integration import OfflineSimulation
 from boca_socios.notify import DeliveryState, NotificationOutbox
@@ -64,7 +64,7 @@ def test_all_modules_share_one_intent_and_safe_notice(tmp_path: Path) -> None:
     lab, database, queue, outbox, browser = setup_lab(tmp_path)
     intent = TicketIntent("member-1", "event-1")
     receipt = asyncio.run(
-        lab.run_admitted(intent, session_id="session-2", at=START, monotonic_now=0)
+        lab.run_admitted(intent, session_id="session-2", at=START, notification_at_seconds=0)
     )
 
     assert receipt.outcome is SimulationOutcome.RESERVED_IN_SIMULATOR
@@ -85,7 +85,9 @@ def test_all_modules_share_one_intent_and_safe_notice(tmp_path: Path) -> None:
     assert outbox.records()[0].state is DeliveryState.ACCEPTED
 
     with pytest.raises(InvalidStateTransition):
-        asyncio.run(lab.run_admitted(intent, session_id="session-1", at=START, monotonic_now=2))
+        asyncio.run(
+            lab.run_admitted(intent, session_id="session-1", at=START, notification_at_seconds=2)
+        )
     assert browser.calls == 1
     assert len(outbox.records()) == 1
 
@@ -94,13 +96,15 @@ def test_retry_after_fake_browser_failure_reuses_only_one_intent(tmp_path: Path)
     lab, database, queue, outbox, browser = setup_lab(tmp_path, fail_first=True)
     intent = TicketIntent("member-1", "event-1")
     with pytest.raises(RuntimeError, match="synthetic screen failed"):
-        asyncio.run(lab.run_admitted(intent, session_id="session-1", at=START, monotonic_now=0))
+        asyncio.run(
+            lab.run_admitted(intent, session_id="session-1", at=START, notification_at_seconds=0)
+        )
     assert outbox.records() == ()
     assert queue.snapshot("session-1").state.value == "admitted"
     original_id = database.request_ticket(intent)
 
     receipt = asyncio.run(
-        lab.run_admitted(intent, session_id="session-2", at=START, monotonic_now=1)
+        lab.run_admitted(intent, session_id="session-2", at=START, notification_at_seconds=1)
     )
     assert receipt.request_id == original_id
     assert browser.calls == 2
@@ -117,14 +121,16 @@ def test_unadmitted_wrong_member_expired_and_invalid_quantity_fail_closed(tmp_pa
         (TicketIntent("member-1", "event-1", quantity=2), START),
     ):
         with pytest.raises((ValueError, InvalidStateTransition)):
-            asyncio.run(lab.run_admitted(intent, session_id="session-1", at=at, monotonic_now=0))
+            asyncio.run(
+                lab.run_admitted(intent, session_id="session-1", at=at, notification_at_seconds=0)
+            )
     with pytest.raises(InvalidStateTransition):
         asyncio.run(
             lab.run_admitted(
                 TicketIntent("member-1", "event-1"),
                 session_id="session-1",
                 at=START + timedelta(minutes=6),
-                monotonic_now=1,
+                notification_at_seconds=1,
             )
         )
     assert browser.calls == 0
@@ -151,7 +157,7 @@ def test_invalid_session_or_identity_does_not_advance_shared_clock(tmp_path: Pat
                     intent,
                     session_id=session_id,
                     at=START + timedelta(minutes=6),
-                    monotonic_now=0,
+                    notification_at_seconds=0,
                 )
             )
         assert queue.snapshot("session-1").state.value == "admitted"
@@ -165,7 +171,7 @@ def test_invalid_session_or_identity_does_not_advance_shared_clock(tmp_path: Pat
                 TicketIntent("member-1", "event-1"),
                 session_id="session-2",
                 at=START,
-                monotonic_now=0,
+                notification_at_seconds=0,
             )
         ).outcome
         is SimulationOutcome.RESERVED_IN_SIMULATOR
@@ -180,13 +186,56 @@ def test_invalid_notification_time_fails_before_browser_or_database(tmp_path: Pa
                 TicketIntent("member-1", "event-1"),
                 session_id="session-1",
                 at=START,
-                monotonic_now=float("nan"),
+                notification_at_seconds=float("nan"),
             )
         )
     assert queue.snapshot("session-1").state.value == "admitted"
     assert browser.calls == 0 and outbox.records() == ()
     with database.connection() as connection:
         assert connection.execute("SELECT count(*) FROM ticket_requests").fetchone() == (0,)
+
+
+def test_two_aliases_cannot_run_the_same_local_browser_attempt_concurrently(
+    tmp_path: Path,
+) -> None:
+    _, database, queue, outbox, _ = setup_lab(tmp_path)
+
+    class PausingBrowser:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.entered = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def simulate_general_reservation(self) -> SimulationOutcome:
+            self.calls += 1
+            self.entered.set()
+            await self.release.wait()
+            return SimulationOutcome.RESERVED_IN_SIMULATOR
+
+    browser = PausingBrowser()
+    lab = OfflineSimulation(database=database, queue=queue, outbox=outbox, browser=browser)
+    intent = TicketIntent("member-1", "event-1")
+
+    async def race() -> list[object]:
+        first = asyncio.create_task(
+            lab.run_admitted(intent, session_id="session-1", at=START, notification_at_seconds=0)
+        )
+        await asyncio.wait_for(browser.entered.wait(), timeout=5)
+        second = asyncio.create_task(
+            lab.run_admitted(intent, session_id="session-2", at=START, notification_at_seconds=0)
+        )
+        await asyncio.sleep(0)
+        browser.release.set()
+        return await asyncio.gather(first, second, return_exceptions=True)
+
+    results = asyncio.run(race())
+    assert browser.calls == 1
+    assert sum(isinstance(item, InvalidStateTransition) for item in results) == 1
+    assert sum(isinstance(item, SimulationReceipt) for item in results) == 1
+    assert queue.snapshot("session-1").state.value == "closed"
+    assert len(outbox.records()) == 1
+    with database.connection() as connection:
+        assert connection.execute("SELECT count(*) FROM ticket_requests").fetchone() == (1,)
 
 
 def test_vault_and_database_survive_restart_with_separate_key(tmp_path: Path) -> None:
