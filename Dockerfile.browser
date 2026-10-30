@@ -14,7 +14,7 @@ RUN uv sync --locked --only-group browser --no-editable --no-cache
 
 RUN groupadd --gid 10002 boca-browser && \
     useradd --uid 10002 --gid 10002 --create-home --shell /usr/sbin/nologin boca-browser
-COPY scripts/verify_chromium_worker.py scripts/observe_public_home.py ./scripts/
+COPY scripts/__init__.py scripts/verify_chromium_worker.py scripts/observe_public_home.py scripts/measure_browser_budget.py ./scripts/
 ENV HOME=/home/boca-browser \
     XDG_CACHE_HOME=/tmp/browser-cache \
     XDG_CONFIG_HOME=/tmp/browser-config
