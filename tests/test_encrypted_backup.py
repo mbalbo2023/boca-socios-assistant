@@ -11,9 +11,9 @@ import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from boca_socios.domain.policy import TicketIntent
+from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
 from boca_socios.security.credential_vault import CredentialVault
 from boca_socios.storage.database import Database
-from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
 from boca_socios.storage.encrypted_backup import (
     MAGIC,
     BackupError,
@@ -222,9 +222,7 @@ def _change_migration(connection: sqlite3.Connection, change: str) -> None:
     if change == "v2_checksum":
         connection.execute("UPDATE schema_migrations SET checksum = 'wrong' WHERE version = 2")
     elif change == "unknown_v3":
-        connection.execute(
-            "INSERT INTO schema_migrations(version, checksum) VALUES (3, 'unknown')"
-        )
+        connection.execute("INSERT INTO schema_migrations(version, checksum) VALUES (3, 'unknown')")
     elif change == "v2_table_missing":
         connection.execute("DROP TABLE notification_claim_windows")
     else:
@@ -249,9 +247,7 @@ def test_backup_rejects_untrusted_migration_chain(tmp_path: Path, change: str) -
 @pytest.mark.parametrize(
     "change", ["v2_checksum", "unknown_v3", "v2_record_missing", "v2_table_missing"]
 )
-def test_restore_rejects_authenticated_invalid_migration_chain(
-    tmp_path: Path, change: str
-) -> None:
+def test_restore_rejects_authenticated_invalid_migration_chain(tmp_path: Path, change: str) -> None:
     source, _, _ = _source(tmp_path / "source.db")
     SqliteNotificationOutbox(source.path).migrate()
     archive = tmp_path / "snapshot.enc"
@@ -284,9 +280,7 @@ def test_wal_snapshot_with_outbox_v2_restores_compatible_schema(tmp_path: Path) 
     restore_database(archive, restored, key)
     SqliteNotificationOutbox(restored).migrate()
     with Database(restored).connection() as connection:
-        assert connection.execute(
-            "SELECT COUNT(*) FROM notification_outbox"
-        ).fetchone() == (0,)
+        assert connection.execute("SELECT COUNT(*) FROM notification_outbox").fetchone() == (0,)
 
 
 def test_backup_key_and_private_directory_are_required(tmp_path: Path) -> None:

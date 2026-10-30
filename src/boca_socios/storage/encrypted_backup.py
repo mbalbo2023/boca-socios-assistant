@@ -27,6 +27,8 @@ _NONCE_BYTES = 12
 _TAG_BYTES = 16
 _HEADER_BYTES = len(MAGIC) + _NONCE_BYTES
 _DEADLINE_SECONDS = 10.0
+_KNOWN_MIGRATIONS = ("0001_initial.sql", "0002_notification_outbox.sql")
+_OUTBOX_TABLES = frozenset({"notification_outbox", "notification_claim_windows"})
 
 
 class BackupError(Exception):
@@ -65,17 +67,28 @@ def _validate_sqlite(connection: sqlite3.Connection) -> None:
             _fail("SQLite integrity check failed")
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             _fail("SQLite foreign key check failed")
-        migration = (
-            files("boca_socios.storage.migrations")
-            .joinpath("0001_initial.sql")
-            .read_text(encoding="utf-8")
-        )
-        expected = hashlib.sha256(migration.encode("utf-8")).hexdigest()
-        row = connection.execute(
-            "SELECT checksum FROM schema_migrations WHERE version = 1"
-        ).fetchone()
-        if row != (expected,):
-            _fail("SQLite foundation migration mismatch")
+        rows = connection.execute(
+            "SELECT version, checksum FROM schema_migrations ORDER BY version"
+        ).fetchall()
+        if not rows or len(rows) > len(_KNOWN_MIGRATIONS):
+            _fail("SQLite migration chain is unsupported")
+        migrations = files("boca_socios.storage.migrations")
+        for version, (stored_version, checksum) in enumerate(rows, start=1):
+            if stored_version != version:
+                _fail("SQLite migration chain is incomplete or unsupported")
+            script = migrations.joinpath(_KNOWN_MIGRATIONS[version - 1]).read_text(encoding="utf-8")
+            expected = hashlib.sha256(script.encode("utf-8")).hexdigest()
+            if checksum != expected:
+                _fail("SQLite migration checksum mismatch")
+        outbox_tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_schema WHERE type='table' "
+                "AND name IN ('notification_outbox', 'notification_claim_windows')"
+            )
+        }
+        if outbox_tables != (_OUTBOX_TABLES if len(rows) == 2 else set()):
+            _fail("SQLite migration schema is incomplete")
     except sqlite3.DatabaseError:
         _fail("SQLite snapshot is invalid")
 

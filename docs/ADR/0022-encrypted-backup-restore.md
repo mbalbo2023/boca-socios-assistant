@@ -7,7 +7,7 @@ import, Docker mount or deployment path.
 ## Decision
 
 Use SQLite's online backup API to capture a consistent WAL snapshot into
-memory. Check integrity, foreign keys and the foundation migration checksum
+memory. Check integrity, foreign keys and known applied migration checksums
 and run `VACUUM` to normalize the WAL header in the memory copy before
 encrypting the entire image with AES-256-GCM. SQLite's backup API otherwise
 leaves WAL header bytes that cannot be deserialized without a WAL sidecar.
@@ -49,8 +49,14 @@ with the archive. The SQLite image contains personal data and encrypted
 credential rows. Restore does not verify possession of each historical
 credential master key; a separate offline rehearsal must verify decryption
 after restart, especially around PR #40's key-version migration. The code
-checks the foundation checksum and permits later migration versions, which
-must be checked by the corresponding runtime before operational use.
+checks the applied v1/v2 migration checksums in order and rejects unknown
+versions, gaps and a v2 record/table mismatch. It performs these checks on
+backup and restore before publication without running DDL. A v1-only source
+remains supported. The recorded checksum and presence of v2 table names
+cannot prove every actual column, index and constraint matches the application
+schema: a separately reviewed operational recovery rehearsal must reopen all
+enabled subsystems and verify their data and key behavior. Adding a new
+migration requires updating this validator and its round-trip tests first.
 
 Private directories, backup retention, deletion propagation, encrypted
 off-host custody, restore coordination and key recovery remain operational
