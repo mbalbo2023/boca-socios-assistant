@@ -27,6 +27,7 @@ GOOD_HOST_CONFIG = {
     "ReadonlyRootfs": True,
     "Privileged": False,
     "PortBindings": {},
+    "PublishAllPorts": False,
 }
 
 
@@ -224,6 +225,14 @@ def test_postflight_failure_stops_only_controller_and_preserves_key(
         ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "PortBindings": []})),
         (
             "{{json .HostConfig}}",
+            json.dumps(
+                {key: value for key, value in GOOD_HOST_CONFIG.items() if key != "PublishAllPorts"}
+            ),
+        ),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "PublishAllPorts": True})),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "PublishAllPorts": "false"})),
+        (
+            "{{json .HostConfig}}",
             json.dumps({**GOOD_HOST_CONFIG, "PortBindings": {"80/tcp": [{"HostPort": "8080"}]}}),
         ),
         ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "NanoCpus": {}})),
@@ -388,6 +397,7 @@ def test_diagnostic_phase_uses_only_read_only_boca_queries(
                             "ReadonlyRootfs": True,
                             "Privileged": False,
                             "PortBindings": {},
+                            "PublishAllPorts": False,
                         }
                     )
                 case "{{.State.Health.Status}}":

@@ -297,6 +297,8 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
     port_bindings = host.get("PortBindings")
     if not isinstance(port_bindings, dict):
         raise PreflightError("missing or malformed Boca port bindings")
+    if host.get("PublishAllPorts") is not False:
+        raise PreflightError("Boca automatic port publishing is not disabled")
     labels = config.get("Labels")
     entries = config.get("Env")
     if not isinstance(labels, dict) or not isinstance(entries, list):

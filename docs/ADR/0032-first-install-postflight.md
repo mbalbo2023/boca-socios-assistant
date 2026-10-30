@@ -14,8 +14,9 @@ read-only inspection used by the manual diagnostic (#68): check the staged
 Compose hash and owner-only key metadata without reading the key, then
 validate the running container ID, image digest and revision, project/service
 labels, nonroot UID, simulation and engine-off environment, health, CPU/RAM/PID
-limits, read-only root, an explicit empty port-binding map and no privileged
-mode. Missing or malformed port metadata is NO-GO. Only
+limits, read-only root, an explicit empty port-binding map, disabled automatic
+port publishing and no privileged mode. Missing or malformed port metadata is
+NO-GO. Only
 then print `BOCA_DEPLOY_PASS`.
 
 If a command, metadata read, JSON parse, unexpected metadata type/field or
