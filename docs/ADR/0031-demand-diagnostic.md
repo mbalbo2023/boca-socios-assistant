@@ -30,11 +30,11 @@ isolation, image, capacity, SSH and environment gates are proven.
 
 ## Boundary still missing in this candidate
 
-This version of `diagnostic` does not yet prove that Docker is the dedicated
-rootless daemon. `_compose_env` can inherit Docker transport/context settings,
-and the helper checks the real UID without independently rejecting an
-elevated effective UID or GID. It must not be dispatched even if an
-environment readiness variable is set. #79 must pin and verify the rootless
-socket for every phase, and #91 must harden the identity and current-main
-checks before any host operation. #81 separately resolves rootless key
+This version of `diagnostic` checks real/effective UID and GID before reading
+private metadata, but does not yet prove that Docker is the dedicated
+rootless daemon. `_compose_env` can inherit Docker transport/context settings.
+It must not be dispatched even if an environment readiness variable is set.
+#79 must pin and verify the rootless socket for every phase, and #91 must
+harden the identity and current-main checks for the whole manual workflow
+before any host operation. #81 separately resolves rootless key
 custody. This ADR is evidence for code review, not a host GO receipt.

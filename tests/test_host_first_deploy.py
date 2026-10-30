@@ -246,6 +246,20 @@ def test_diagnostic_phase_uses_only_read_only_boca_queries(
     )
 
 
+@pytest.mark.parametrize("mismatch", ["real_uid", "effective_uid", "effective_gid"])
+def test_diagnostic_rejects_setid_before_private_metadata(
+    monkeypatch: pytest.MonkeyPatch, mismatch: str
+) -> None:
+    uid = 1000 if mismatch == "real_uid" else 10001
+    monkeypatch.setattr(host.os, "getuid", lambda: uid)
+    monkeypatch.setattr(host.os, "geteuid", lambda: 0 if mismatch == "effective_uid" else uid)
+    monkeypatch.setattr(host.os, "getgid", lambda: 10001)
+    monkeypatch.setattr(host.os, "getegid", lambda: 0 if mismatch == "effective_gid" else 10001)
+    monkeypatch.setattr(host, "_safe_dir", lambda _path: pytest.fail("private path was read"))
+    with pytest.raises(PreflightError, match="dedicated Boca identity"):
+        host._diagnostic_files("c" * 64)
+
+
 @pytest.mark.parametrize("symlink", [False, True])
 def test_diagnostic_rejects_missing_or_symlinked_key_without_reading_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, symlink: bool
@@ -255,8 +269,11 @@ def test_diagnostic_rejects_missing_or_symlinked_key_without_reading_it(
     if symlink:
         host.KEY.symlink_to(tmp_path / "outside")
     monkeypatch.setattr(host.os, "getuid", lambda: 10001)
+    monkeypatch.setattr(host.os, "geteuid", lambda: 10001)
+    monkeypatch.setattr(host.os, "getgid", lambda: 10001)
+    monkeypatch.setattr(host.os, "getegid", lambda: 10001)
     monkeypatch.setattr(
         host.pwd, "getpwuid", lambda _uid: type("Account", (), {"pw_name": "boca-deploy"})()
     )
-    with pytest.raises(PreflightError):
+    with pytest.raises(PreflightError, match="secret directory entries|key metadata"):
         host._diagnostic_files(digest)

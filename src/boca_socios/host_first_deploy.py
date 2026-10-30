@@ -250,11 +250,14 @@ def _validate_coordinates(image: str, source_sha: str, compose_sha: str) -> None
 
 
 def _diagnostic_files(expected_sha: str) -> None:
+    uid = os.getuid()
+    if uid != 10001 or os.geteuid() != uid or os.getegid() != os.getgid():
+        raise PreflightError("expected dedicated Boca identity")
     try:
-        account = pwd.getpwuid(os.getuid()).pw_name
+        account = pwd.getpwuid(uid).pw_name
     except KeyError as exc:
         raise PreflightError("dedicated Boca identity is unavailable") from exc
-    if os.getuid() != 10001 or account != "boca-deploy":
+    if account != "boca-deploy":
         raise PreflightError("expected dedicated boca-deploy account")
     if not _safe_dir(ROOT) or not _safe_dir(SECRET_DIR):
         raise PreflightError("Boca directory ownership or permissions changed")
