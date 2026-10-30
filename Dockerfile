@@ -21,9 +21,9 @@ RUN addgroup -S -g 10001 boca && \
     adduser -S -D -H -u 10001 -G boca -s /sbin/nologin boca && \
     mkdir -p /data && chown boca:boca /data
 COPY --from=build /app/.venv /app/.venv
-RUN /app/.venv/bin/python -c "import sqlite3; from boca_socios.security.credential_vault import CredentialVault; import boca_socios.storage.database; assert sqlite3.connect(':memory:').execute('select 1').fetchone() == (1,); vault = CredentialVault(bytes(32)); assert vault.open(vault.seal('smoke', member_id='smoke'), member_id='smoke') == 'smoke'"
 WORKDIR /app
 USER 10001:10001
+RUN /app/.venv/bin/python -c "import os, sqlite3; from boca_socios.security.credential_vault import CredentialVault; import boca_socios.storage.database; assert os.getuid() == os.geteuid() == 10001; assert os.getgid() == os.getegid() == 10001; assert sqlite3.connect(':memory:').execute('select 1').fetchone() == (1,); vault = CredentialVault(bytes(32)); assert vault.open(vault.seal('smoke', member_id='smoke'), member_id='smoke') == 'smoke'"
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD ["python", "-m", "boca_socios.healthcheck"]
 CMD ["python", "-m", "boca_socios.runtime"]

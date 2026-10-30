@@ -1,6 +1,6 @@
 # ADR 0017: Outbox durable como puerto local de simulación
 
-Status: Proposed, updated 2026-10-30. Issue #35.
+Status: Proposed, updated 2026-10-29 (America/Argentina/Buenos_Aires). Issue #35.
 
 `OfflineSimulation` recibe un `LocalNoticeStore` estructural con `enqueue`.
 Tanto el outbox en memoria como el SQLite implementan este contrato. El

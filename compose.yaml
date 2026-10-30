@@ -4,10 +4,8 @@ name: boca-socios
 
 services:
   controller:
-    image: ${BOCA_IMAGE:-boca-socios:development}
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${BOCA_IMAGE:?BOCA_IMAGE_digest_is_required}
+    user: "10001:10001"
     restart: unless-stopped
     init: true
     environment:
