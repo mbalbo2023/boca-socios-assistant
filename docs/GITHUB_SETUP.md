@@ -26,6 +26,11 @@ control's actual state in Settings rather than inferring it from this file.
 5. Security → secret scanning, push protection, Dependabot alerts and code
    scanning if plan supports them. Do not substitute unavailable plan features
    with a false claim of enforcement.
+   On public repositories, GitHub documents automatic secret scanning and
+   free push protection, but **push protection must still be verified as
+   enabled** for this specific repository. Sources:
+   [secret scanning scope](https://docs.github.com/en/code-security/reference/secret-security/secret-scanning-scope)
+   and [public push protection](https://github.blog/changelog/2023-05-09-secret-scannings-push-protection-is-available-on-public-repositories-for-free/).
 6. Environments for future Boca host operations must restrict deployment to
    main, hold a dedicated SSH identity and pinned host key, and be marked ready
    only after those settings are verified. No required human reviewer.
@@ -48,6 +53,24 @@ control's actual state in Settings rather than inferring it from this file.
 
 Record any subsequent settings changes as observed facts; neither this
 document nor CODEOWNERS enforces GitHub settings by itself.
+
+## Historical administrative observation on 2026-10-28
+
+- The new repository is **public**, contains a clean initial history and
+  GitHub-hosted `quality-and-tests` / `image-build` checks succeeded.
+- At that time `main` ruleset enforcement was **not yet active**. GitHub
+  requested account re-verification. The revalidation above supersedes this
+  historical state.
+- The observed Actions policy had a read-only default `GITHUB_TOKEN` and
+  disallowed Actions-created or approved PRs; the setting that requires
+  all third-party actions to be pinned to complete SHAs was **not** enabled.
+  The current CI uses pinned action SHAs, but this is not equivalent to a
+  repository-wide enforced policy.
+- Secret-scanning/push-protection settings are **unverified**; do not mark
+  them complete based solely on GitHub's public-repository entitlement.
+- The CI-based `zizmor` security audit proposed in ADR 0009 is preventive
+  static analysis. It does not replace recorded agent technical review,
+  provider-side branch protection or GitHub secret scanning.
 
 ## Repository access
 
