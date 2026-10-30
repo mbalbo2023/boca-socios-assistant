@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import stat
 import sys
 from pathlib import Path
@@ -31,12 +32,27 @@ def validate_manifest(value: object, image_ref: str, source_sha: str, run_id: st
         raise ReleaseManifestError("release manifest does not match approved digest and run")
 
 
+def _unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    fields: dict[str, object] = {}
+    for key, value in pairs:
+        if key in fields:
+            raise ReleaseManifestError("duplicate release manifest field")
+        fields[key] = value
+    return fields
+
+
 def read_manifest(path: Path) -> object:
     try:
-        metadata = path.lstat()
-        if not stat.S_ISREG(metadata.st_mode) or not 0 < metadata.st_size <= 1024:
-            raise ReleaseManifestError("release manifest is not a bounded regular file")
-        return json.loads(path.read_text(encoding="utf-8"))
+        # Open once without following a symlink, then bound the same file that
+        # is parsed. This prevents metadata/read races on downloaded artifacts.
+        with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC), "rb") as stream:
+            metadata = os.fstat(stream.fileno())
+            if not stat.S_ISREG(metadata.st_mode) or not 0 < metadata.st_size <= 1024:
+                raise ReleaseManifestError("release manifest is not a bounded regular file")
+            data = stream.read(1025)
+            if len(data) != metadata.st_size:
+                raise ReleaseManifestError("release manifest changed while reading")
+        return json.loads(data.decode("utf-8"), object_pairs_hook=_unique_fields)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ReleaseManifestError("release manifest cannot be read") from exc
 

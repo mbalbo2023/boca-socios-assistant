@@ -88,6 +88,13 @@ jobs:
             --pids-limit 16 --memory 64m --cpus 0.25 \
             --mount type=volume,source=boca-socios_boca_key,target=/run/secrets,volume-nocopy \
             "$BOCA_IMAGE" python -m boca_socios.security.key_custody init
+          if docker run --rm --pull never --user 0:0 --network none --read-only \
+            --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges \
+            --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_key,target=/run/secrets,volume-nocopy \
+            "$BOCA_IMAGE" python -m boca_socios.security.key_custody init >/dev/null 2>&1; then
+            exit 1
+          fi
           docker run --rm --pull never --user 10001:10001 --network none --read-only \
             --cap-drop ALL --security-opt no-new-privileges \
             --pids-limit 16 --memory 64m --cpus 0.25 \
@@ -99,7 +106,9 @@ jobs:
           container="$(docker compose -p boca-socios -f compose.yaml ps -q controller)"
           test -n "$container"
           test "$(docker inspect --format '{{.State.Health.Status}}' "$container")" = healthy
-          docker inspect --format '{{json .HostConfig}}' "$container" | python3 -c 'import json,sys; h=json.load(sys.stdin); assert (h["NanoCpus"], h["Memory"], h["PidsLimit"], h["ReadonlyRootfs"], h["Privileged"], bool(h["PortBindings"])) == (500000000, 268435456, 64, True, False, False)'
+          test "$(docker exec --user 10001:10001 "$container" python -m boca_socios.security.key_custody inspect)" = BOCA_KEY_READY
+          docker inspect --format '{{json .HostConfig}}' "$container" | python3 -c 'import json,sys; h=json.load(sys.stdin); assert (h["NanoCpus"], h["Memory"], h["PidsLimit"], h["ReadonlyRootfs"], h["Privileged"], h["PortBindings"], h["PublishAllPorts"]) == (500000000, 268435456, 64, True, False, {}, False)'
+          docker inspect --format '{{json .Mounts}}' "$container" | python3 -c 'import json,sys; m=json.load(sys.stdin); assert {(x["Type"], x["Name"], x["Destination"], x["RW"]) for x in m} == {("volume", "boca-socios_boca_data", "/data", True), ("volume", "boca-socios_boca_key", "/run/secrets", False)}'
           docker logs "$container" | python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin if x.strip()]; assert rows == [{"event": "started", "mode": "simulation", "engine": "off", "site_calls": 0}]'
       - name: Remove only synthetic Boca resources from disposable runner
         if: always()

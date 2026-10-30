@@ -1,8 +1,10 @@
 """Internal member credential lifecycle; no HTTP route or live-login wiring.
 
-This module stores a synthetic/consented record atomically in the existing
-SQLite schema. It does not establish Boca eligibility or a unique external
-membership identity. Real enrollment remains disabled pending ADR 0012 review.
+This module stores a caller-supplied consent timestamp and sealed credential
+atomically in the existing SQLite schema. It cannot verify consent, Boca
+eligibility or a unique external membership identity. No endpoint exists; real
+enrollment still needs owner authentication, TLS, session/CSRF protection,
+identity and consent verification, and reviewed backup and key recovery.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 # ADR 0009: audit GitHub Actions workflow definitions on each change
 
-**Status:** Proposed until its exact public PR passes CI and is reviewed.
+**Status:** Proposed pending exact updated-PR CI and recorded agent technical review.
 
 ## Context
 
@@ -36,7 +36,7 @@ Select:
   ecosystem, with a seven-day cooldown for ordinary version updates. GitHub
   explicitly states that security updates are **not** held by this cooldown.
 
-This placement uses the future `quality-and-tests` required status context
+This placement uses the existing `quality-and-tests` required status context
 and avoids introducing an unprotected additional GitHub check name.
 
 ## Consequences and limits
@@ -49,11 +49,11 @@ and avoids introducing an unprotected additional GitHub check name.
 - The pinned Action resolves the upstream distribution of the selected
   `zizmor` version from its upstream source; its entire transitive supply
   chain is **not** independently reproduced by this repository.
-- Because `main` branch enforcement awaits GitHub re-verification, this
-  source-code check cannot itself prevent a repository administrator from
-  pushing directly until the ruleset is actually activated.
-- As a defense-in-depth control, retain independent human review and audit
-  future changes to GitHub Actions/third-party Action pins.
+- The `protect-main` ruleset is active with PR and required-check rules as
+  revalidated on 2026-10-29; this static scan cannot enforce GitHub Settings
+  or substitute for those provider-side controls.
+- As a defense-in-depth control, retain the recorded agent technical review
+  from ADR 0038 and audit future GitHub Actions and third-party Action pins.
 
 ## Source of truth
 

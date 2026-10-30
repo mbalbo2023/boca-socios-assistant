@@ -100,6 +100,7 @@ def _stage(directory_fd: int, prefix: str) -> tuple[str, int]:
 
 def _publish(directory_fd: int, staged: str, target: str) -> None:
     try:
+        staged_stat = os.stat(staged, dir_fd=directory_fd, follow_symlinks=False)
         os.link(
             staged,
             target,
@@ -107,8 +108,23 @@ def _publish(directory_fd: int, staged: str, target: str) -> None:
             dst_dir_fd=directory_fd,
             follow_symlinks=False,
         )
+    except OSError:
+        _fail("destination exists or cannot be published")
+    try:
         os.fsync(directory_fd)
     except OSError:
+        # The link is already visible. Revoke only the inode that we staged;
+        # another writer's replacement must be left for manual recovery.
+        try:
+            published_stat = os.stat(target, dir_fd=directory_fd, follow_symlinks=False)
+            if (published_stat.st_dev, published_stat.st_ino) != (
+                staged_stat.st_dev,
+                staged_stat.st_ino,
+            ):
+                _fail("published destination changed; manual recovery required")
+            os.unlink(target, dir_fd=directory_fd)
+        except OSError:
+            _fail("published destination could not be removed")
         _fail("destination exists or cannot be published")
 
 

@@ -65,6 +65,16 @@ def test_symlink_or_oversized_artifact_is_no_go(tmp_path: Path) -> None:
         read_manifest(target)
 
 
+def test_duplicate_digest_field_is_ambiguous_and_no_go(tmp_path: Path) -> None:
+    path = tmp_path / "release.json"
+    path.write_text(
+        '{"image_ref":"first","image_ref":"second",'
+        f'"source_sha":"{SHA}","release_run_id":"{RUN}"}}'
+    )
+    with pytest.raises(ReleaseManifestError, match="duplicate"):
+        read_manifest(path)
+
+
 def test_workflow_checks_artifact_before_host_credentials() -> None:
     root = Path(__file__).resolve().parents[1]
     deploy = (root / ".github/workflows/boca-first-deploy.yml").read_text()
@@ -73,6 +83,8 @@ def test_workflow_checks_artifact_before_host_credentials() -> None:
         "uses: actions/upload-artifact@"
     )
     assert "if-no-files-found: error" in release
+    assert "overwrite: false" in release
+    assert deploy.index("python scripts/check_release_run.py") < deploy.index("gh run download")
     assert (
         deploy.index("gh run download")
         < deploy.index("python -m boca_socios.release_manifest verify")

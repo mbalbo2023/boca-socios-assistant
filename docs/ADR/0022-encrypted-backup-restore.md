@@ -1,6 +1,6 @@
 # ADR 0022: bounded encrypted SQLite backup and offline restore
 
-**Status:** Proposed for issue #46 and human review, 2026-10-28. This is an
+**Status:** Proposed for issue #46 and agent technical review, 2026-10-28. This is an
 internal, opt-in module only. It has no CLI, endpoint, scheduled job, runtime
 import, Docker mount or deployment path.
 
@@ -15,6 +15,18 @@ The original database is never vacuumed. The format has a fixed
 version marker and fresh 96-bit nonce; the header is authenticated as AAD.
 Only the ciphertext is written to a private, 0600 staging file and linked
 atomically to a previously absent archive name. Never overwrite an archive.
+If syncing the directory fails after the link becomes visible, the publisher
+checks the destination inode before removal and reports failure. That check and
+unlink are separate operations: a concurrent writer with the same UID could
+replace the name between them. The offline caller must own the private directory
+exclusively and serialize writers. A detected replacement or failed removal is
+left for manual recovery; the code cannot claim crash durability when directory
+sync itself fails.
+The directory is synced before unlinking the temporary hard link, so a crash
+at that boundary could leave a hidden staging name behind (a plaintext SQLite
+copy during restore). An operational recovery procedure must inventory and
+remove only identified stale Boca staging files after verifying the destination
+and before retrying; the offline function does not perform startup cleanup.
 
 Restore authenticates the file with the independently held backup key before
 parsing SQLite. Repeat the DB checks, restore into a private 0600 staging
@@ -47,3 +59,11 @@ credential; restoring it must not silently reactivate a person or reset the
 one-ticket quota. Do not wire this module into Actions or a live host until
 the complete plan, capacity and exact release are reviewed. No real members,
 credentials, reservations or droplet operations are enabled by this PR.
+The source file is checked before SQLite opens it by path, and restore opens
+its staging file by path after creating it through a directory descriptor. A
+process permitted to replace either file or ancestor can race those steps.
+Directory mode 0700 is checked, but ownership and ancestor custody are not.
+Operational use requires Boca-exclusive ownership of source and destination
+directories, a single writer, and a separate review of those filesystem
+boundaries. If a detected destination race occurs, inspect the path manually
+before another backup or restore attempt.
