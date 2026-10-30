@@ -40,6 +40,36 @@ def _classify_status(status: int) -> tuple[str, str]:
     return "YELLOW", "unexpected_status"
 
 
+def validate_report(report: object) -> Observation:
+    """Fail the Actions job if its semaphore is malformed or internally inconsistent."""
+    if (
+        not isinstance(report, dict)
+        or set(report) != {"target", "observed_at", "color", "reason", "http_status"}
+        or report["target"] != "boca_public_login"
+    ):
+        raise ValueError("invalid source report")
+    observed_at = report["observed_at"]
+    if not isinstance(observed_at, str):
+        raise ValueError("invalid source report")
+    try:
+        parsed_at = datetime.strptime(observed_at, "%Y-%m-%dT%H:%M:%S+00:00")
+    except ValueError as exc:
+        raise ValueError("invalid source report") from exc
+    if parsed_at.strftime("%Y-%m-%dT%H:%M:%S+00:00") != observed_at:
+        raise ValueError("invalid source report")
+
+    status = report["http_status"]
+    if status is None:
+        expected = {("RED", "timeout"), ("RED", "tls_error"), ("RED", "transport_error")}
+    elif type(status) is int and 100 <= status <= 599:
+        expected = {_classify_status(status)}
+    else:
+        raise ValueError("invalid source report")
+    if (report["color"], report["reason"]) not in expected:
+        raise ValueError("invalid source report")
+    return Observation(observed_at, report["color"], report["reason"], status)
+
+
 def observe(*, now: Callable[[], datetime] = lambda: datetime.now(UTC)) -> Observation:
     """Send one GET to a fixed path; TLS verification and direct connection are mandatory.
 

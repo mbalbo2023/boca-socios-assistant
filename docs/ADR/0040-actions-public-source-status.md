@@ -7,7 +7,8 @@
 A separate `workflow_dispatch` in the Boca repository checks the fixed public
 `/auth/login` path from one GitHub-hosted runner. Only the repository owner can
 run it from the `main` commit selected at dispatch. A standard-library client
-issues one anonymous HTTPS GET with an eight-second timeout, certificate
+issues one anonymous HTTPS GET with an eight-second timeout per socket
+operation and a three-minute Actions job limit, certificate
 verification and no redirect following. It sends no cookie, authorization
 header, account value or request
 body. It never reads or emits the response body or headers. The script has no
@@ -26,7 +27,9 @@ fixed target, HTTP status when available, and a semaphore:
   discarded and must not reveal URLs, headers or environment information.
 
 External-source failures produce an alert and a successful Actions job; a
-script, contract or workflow error still fails the job. A source outage alone
+script, malformed semaphore, contract or workflow error still fails the job.
+The operation report must cite the source run, timestamp and color, or show
+`UNKNOWN` if the check did not produce a valid report. A source outage alone
 does not trigger a new image or block an otherwise isolated simulation-only
 controller deployment. Code defects require a separate fix and exact CI. Image,
 release digest, host isolation, resource and credential gates remain required.

@@ -5,7 +5,9 @@ from __future__ import annotations
 import importlib.util
 import json
 import ssl
+import subprocess
 import sys
+import textwrap
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -117,6 +119,37 @@ def test_cli_source_failure_reports_semaphore_and_exits_success(
         "reason": "timeout",
         "target": "boca_public_login",
     }
+    assert source.validate_report(report) == source.Observation(
+        "2026-10-30T00:00:00+00:00", "RED", "timeout", None
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"target": "other"},
+        {"observed_at": "not-a-date"},
+        {"observed_at": "2026-10-30T00:00:00+03:00"},
+        {"observed_at": "2026-02-30T00:00:00+00:00"},
+        {"color": "GREEN"},
+        {"reason": "http_200_unverified"},
+        {"http_status": True},
+        {"http_status": 200},
+    ],
+)
+def test_malformed_or_inconsistent_source_report_cannot_claim_a_valid_semaphore(
+    change: dict[str, object],
+) -> None:
+    report: dict[str, object] = {
+        "target": "boca_public_login",
+        "observed_at": "2026-10-30T00:00:00+00:00",
+        "color": "RED",
+        "reason": "timeout",
+        "http_status": None,
+    }
+    report.update(change)
+    with pytest.raises(ValueError, match="invalid source report"):
+        source.validate_report(report)
 
 
 def test_live_source_workflow_is_manual_main_only_and_has_no_host_or_secret_path() -> None:
@@ -140,3 +173,34 @@ def test_live_source_workflow_is_manual_main_only_and_has_no_host_or_secret_path
         "continue-on-error:",
     ):
         assert forbidden not in workflow
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_actions_summary_accepts_only_a_consistent_report(tmp_path: Path, valid: bool) -> None:
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github/workflows/boca-source-status.yml").read_text(encoding="utf-8")
+    summary_script = textwrap.dedent(workflow.split("<<'PY'\n", 1)[1].split("\n          PY", 1)[0])
+    report = {
+        "target": "boca_public_login",
+        "observed_at": "2026-10-30T00:00:00+00:00",
+        "color": "RED",
+        "reason": "timeout",
+        "http_status": None,
+    }
+    if not valid:
+        report["color"] = "GREEN"
+    report_file = tmp_path / "report.json"
+    summary_file = tmp_path / "summary.md"
+    report_file.write_text(json.dumps(report), encoding="utf-8")
+    result = subprocess.run(  # noqa: S603 - fixed Python interpreter and local fixture
+        [sys.executable, "-c", summary_script, str(report_file), str(summary_file)],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        timeout=5,
+        check=False,
+    )
+    assert (result.returncode == 0) is valid
+    assert summary_file.exists() is valid
+    if valid:
+        assert "Semaphore: `RED`" in summary_file.read_text(encoding="utf-8")

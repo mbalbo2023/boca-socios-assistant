@@ -37,17 +37,16 @@ jobs:
           import pathlib
           import sys
 
+          from scripts.check_public_source import validate_report
+
           report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-          if (set(report) != {"target", "observed_at", "color", "reason", "http_status"}
-              or report["target"] != "boca_public_login"
-              or report["color"] not in {"GREEN", "YELLOW", "RED"}):
-              raise ValueError("unexpected source report")
+          observation = validate_report(report)
           with pathlib.Path(sys.argv[2]).open("a", encoding="utf-8") as summary:
               summary.write("### Boca public source status\n\n")
-              summary.write(f"- Semaphore: `{report['color']}`\n")
-              summary.write(f"- Observed UTC: `{report['observed_at']}`\n")
+              summary.write(f"- Semaphore: `{observation.color}`\n")
+              summary.write(f"- Observed UTC: `{observation.observed_at}`\n")
               summary.write(f"- Fixed target: `boca_public_login`\n")
-              summary.write(f"- HTTP status: `{report['http_status']}`\n")
-              summary.write(f"- Reason: `{report['reason']}`\n\n")
+              summary.write(f"- HTTP status: `{observation.http_status}`\n")
+              summary.write(f"- Reason: `{observation.reason}`\n\n")
               summary.write("One public request from a GitHub runner. No login, queue or reservation was checked. External source status is an alert, not deployment authorization.\n")
           PY
