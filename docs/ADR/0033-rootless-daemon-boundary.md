@@ -13,15 +13,16 @@ been observed. This is a conditional threat, not a claim about the host.
 
 All first-install phases and the read-only diagnostic now check real/effective
 UID and GID and the dedicated `boca-deploy` account before reading private
-socket or key metadata. They fail before other actions unless UID 10001 owns the private runtime
-directory and rootless Unix socket, cannot write the conventional rootful
-socket, and `docker info` on the **explicit** rootless socket reports
+socket or key metadata. They fail before other actions unless UID 10001 owns
+the private runtime directory and rootless Unix socket, cannot write the
+conventional rootful socket, and `docker info` on the **explicit** rootless
+socket reports
 `name=rootless`, cgroup v2 and the systemd driver. The user service's
 `cgroup.controllers` must list `cpu`, `memory` and `pids`. Every Docker command
 in the helper pins `DOCKER_HOST` to that socket and discards inherited
 Docker context, client config and TLS variables, including `DOCKER_TLS`.
-Absent or malformed evidence is NO-GO. The checks
-read metadata only; they do not enumerate or change another workload.
+Absent or malformed evidence is NO-GO. The checks read metadata only; they do
+not enumerate or change another workload.
 
 ## Limits and next review
 
@@ -42,9 +43,11 @@ key through Actions or claim deploy readiness. Design and test a dedicated
 rootless-compatible key/volume custody path in a separate reviewed PR before
 any dispatch. CPU delegation also needs a real host check, not a fixture.
 
-No merge, image release or droplet operation is authorized by this ADR. The
-remaining #10, independent PR/environment reviews, exact digest/SHA/service,
-capacity and window gates still apply.
+This ADR does not authorize a merge, image release or droplet operation. The
+owner's standing delegation still requires exact-SHA CI and recorded agent
+technical review, verified main/environment restrictions, immutable digest,
+service, host identity, capacity and window gates. No additional human
+approval is required once those objective gates are proven.
 
 Primary references: [Docker rootless](https://docs.docker.com/engine/security/rootless/),
 [rootless cgroup limits](https://docs.docker.com/engine/security/rootless/tips/#limiting-resources),

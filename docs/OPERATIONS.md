@@ -34,10 +34,10 @@ socket at `/run/user/10001/docker.sock`; access to the shared rootful daemon
 is NO-GO. The helper checks real/effective UID/GID before private paths, pins
 that endpoint, strips inherited context/TLS client settings and rejects
 missing rootless/cgroup evidence before any first-install or diagnostic phase.
-This still does not
-make the current Compose/key layout deployable: the host-owned 0400 key is
-mapped to container root under rootless Docker, while the controller runs as
-container UID 10001. The key and volume custody design, delegated CPU limit,
+This still does not make the current Compose/key layout deployable: the
+host-owned 0400 key is mapped to container root under rootless Docker, while
+the controller runs as container UID 10001. The key and volume custody design,
+delegated CPU limit,
 host account privileges and actual resource limits require an isolated test
 and independent review. Do not dispatch merely because the preflight passes.
 See [ADR 0033](ADR/0033-rootless-daemon-boundary.md).
