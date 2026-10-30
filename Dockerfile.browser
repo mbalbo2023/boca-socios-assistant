@@ -10,7 +10,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 RUN python -m pip install --disable-pip-version-check --no-cache-dir uv==0.13.4
 COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --locked --only-group browser --no-editable
+RUN uv sync --locked --only-group browser --no-editable --no-cache
 
 RUN groupadd --gid 10002 boca-browser && \
     useradd --uid 10002 --gid 10002 --create-home --shell /usr/sbin/nologin boca-browser
