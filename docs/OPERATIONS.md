@@ -51,7 +51,22 @@ model before pulling the exact digest. Only then can it create an owner-only
 random key in a separate rootless volume and start the simulation-only controller. Before reporting success,
 it reuses the diagnostic contract to verify the actual container,
 image, dormant engine, resource limits, volume mounts and key metadata. A startup or
-postflight failure stops only that service, preserves the key and both volumes, and
+postflight failure stops only that service and preserves the key and both volumes.
+After a failed first-install, the same Actions job attempts a **selective**
+cleanup only if the read-only host preflight passed and the staging attempt was
+marked. It removes an exact unreferenced image without force if no container
+uses it, even when key/data volumes remain. It removes the matching staged
+Compose file only when **no Boca container, volume or network exists**; otherwise
+it retains that file and all volumes/networks and reports PARTIAL or RETAINED.
+The bounded receipt records staging and rootless Docker data free space/inodes
+before and after, plus whether they are the same filesystem. It never treats
+virtual image size or an observed free-space change as proven bytes reclaimed.
+Unknown storage backends/paths stop before deletion.
+If cleanup itself fails or its receipt cannot be verified, Actions reports
+`NO_GO INDETERMINADO`: a partial deletion may already have occurred and only
+a new Boca-only inventory can establish what remains. The original install
+failure stays failed. See
+[ADR 0039](ADR/0039-boca-failed-install-cleanup.md). Any retained state
 requires separate diagnosis before another attempt. An existing Boca key,
 container, either volume, network or staged file blocks a fresh installation; this
 flow is not a recovery or upgrade procedure. The CPU snapshot is an estimate,
@@ -132,8 +147,9 @@ cannot establish that image storage has headroom.
 6. Serialize deployment with a Boca-only lock, never parallel retry.
 7. Record pre/post health for Boca and observed absence of effects on every
    unrelated service; never touch or stop an existing workload.
-8. On failure: stop Boca only, retain data, no destructive Docker prune,
-   no blanket docker compose down and no deletion of volumes.
+8. On failure: stop Boca only, retain data and key; clean only Boca artifacts
+   whose exact identity and lack of use were verified. No Docker prune, blanket
+   `docker compose down` or deletion of volumes.
 
 ## Explicitly prohibited
 

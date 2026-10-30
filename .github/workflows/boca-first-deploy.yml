@@ -60,7 +60,7 @@ jobs:
           uv sync --frozen
       - name: Check dispatch and first-install boundaries offline
         run: |
-          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_host_first_deploy.py tests/test_key_custody.py tests/test_release_run.py
+          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_cleanup.py tests/test_key_custody.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
 
   pr-runtime-smoke:
@@ -238,6 +238,10 @@ jobs:
         if: always() && inputs.operation == 'inspect-prerequisites'
         run: |
           printf 'Boca prerequisite inspection only; metadata status is in the preceding SSH step. No Docker operation or installation was requested. This is not deployment approval.\n' >> "$GITHUB_STEP_SUMMARY"
+      - name: Mark Boca staging attempt after read-only preflight
+        id: boca_stage_attempt
+        if: inputs.operation == 'first-install'
+        run: printf 'started=true\n' >> "$GITHUB_OUTPUT"
       - name: Stage only reviewed Boca Compose file
         if: inputs.operation == 'first-install'
         run: |
@@ -266,6 +270,24 @@ jobs:
             printf 'Boca first install: simulation-only controller healthy\n\n'
             printf 'Commit: `%s`\n\nImage: `%s`\n\nRelease run: `%s`\n\nService: `controller`\n\nBudget: `0.5cpu-256m-64pids`\n' "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" "$BOCA_RELEASE_RUN_ID"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Clean only proven disposable Boca artifacts after failure
+        if: failure() && inputs.operation == 'first-install' && steps.boca_stage_attempt.outputs.started == 'true'
+        run: |
+          # Preserve the first-install failure. Never echo unsanitized SSH output.
+          set +e
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_cleanup.py > "$RUNNER_TEMP/boca-cleanup.receipt" 2>/dev/null
+          cleanup_rc=$?
+          set -e
+          receipt=''
+          if [[ "$cleanup_rc" -eq 0 ]]; then
+            receipt="$(cat "$RUNNER_TEMP/boca-cleanup.receipt")"
+          fi
+          receipt_pattern='^BOCA_CLEANUP state=(CLEANED|ALREADY_CLEAN|PARTIAL|RETAINED) image=(removed|absent) stage=(removed|absent|retained) retained=(yes|no) image_logical_mib=[0-9]+ same_fs=(yes|no) stage_free_mib_before=[0-9]+ stage_free_mib_after=[0-9]+ docker_free_mib_before=[0-9]+ docker_free_mib_after=[0-9]+ stage_inodes_before=[0-9]+ stage_inodes_after=[0-9]+ docker_inodes_before=[0-9]+ docker_inodes_after=[0-9]+$'
+          if [[ "$cleanup_rc" -eq 0 && ${#receipt} -le 384 && "$receipt" =~ $receipt_pattern ]]; then
+            printf 'Boca first-install failed; original failure remains NO_GO. Selective cleanup: `%s`.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'Boca first-install failed; original failure remains NO_GO. Selective cleanup: NO_GO INDETERMINADO; Boca state may have changed. Re-inventory Boca before retry.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Validate host Compose model for read-only diagnostic
         if: inputs.operation == 'diagnostic'
         env:
