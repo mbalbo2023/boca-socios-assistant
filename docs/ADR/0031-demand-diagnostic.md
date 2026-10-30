@@ -2,13 +2,14 @@
 
 **Status:** Proposed for issue #68, 2026-10-29. No host operation performed.
 
-The controller remains on with `BOCA_ENGINE_MODE=off` after a separately
-approved first installation. `boca-first-deploy.yml` gains a manual choice:
+The controller remains on with `BOCA_ENGINE_MODE=off` after a gated first
+installation. `boca-first-deploy.yml` gains a manual choice:
 `first-install` or `diagnostic`. Both require the same protected environment,
 owner, exact current `main` SHA, successful image release run, immutable
 digest, fixed service/budget, pinned SSH identity and Boca-only serialization.
-The reviewer must approve each operation for the exact coordinates and
-window. A push or PR cannot invoke either host operation.
+The agent records the proven gates for each operation and its exact
+coordinates under the owner's standing direction; no additional human
+approval is required. A push or PR cannot invoke either host operation.
 
 `diagnostic` is read-only. It checks the reviewed Compose SHA and resolved
 host model, dedicated UID/path/key metadata without reading key contents,
@@ -24,5 +25,5 @@ This is a diagnostic for the **same currently approved main commit** as the
 installed image. If main or Compose changed after installation, it fails
 closed. An upgrade or recovery needs its own design/review, not a disguised
 first-install retry or diagnostic override. A passing local test cannot
-establish actual droplet state; the manual job stays uninvoked until all
-human and environment gates are proven.
+establish actual droplet state; the manual job stays uninvoked until the
+isolation, image, capacity, SSH and environment gates are proven.

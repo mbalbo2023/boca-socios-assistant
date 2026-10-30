@@ -20,11 +20,11 @@ jobs:
     timeout-minutes: 12
     steps:
       - name: Checkout exactly the requested commit
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Install pinned package manager
@@ -49,16 +49,38 @@ jobs:
         run: uv run pytest -q
       - name: Repository isolation gate
         run: uv run python scripts/check_repo_policy.py
+      - name: Audit GitHub Actions security (offline)
+        uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
+        with:
+          version: "1.31.1"
+          advanced-security: false
+          annotations: true
+          online-audits: false
+          persona: regular
+          min-severity: medium
+          min-confidence: high
 
   image:
     name: image-build
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Checkout exact source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Build isolated image without deploying
         run: docker build --tag boca-socios-ci:${{ github.sha }} .
+      - name: Build isolated Chromium worker without deploying
+        run: docker build --file Dockerfile.browser --tag boca-browser-ci:${{ github.sha }} .
+      - name: Measure one offline Chromium startup under resource caps
+        run: >-
+          docker run --rm --init --network none --cgroupns=private --read-only
+          --tmpfs /tmp:rw,nosuid,nodev,size=128m,mode=1777
+          --tmpfs /home/boca-browser:rw,nosuid,nodev,noexec,size=32m,uid=10002,gid=10002,mode=700
+          --shm-size=128m --pids-limit=128 --memory=768m --cpus=1
+          --security-opt seccomp=docker/seccomp_profile.json
+          --security-opt no-new-privileges --cap-drop ALL --cap-add SYS_CHROOT
+          --user 10002:10002 boca-browser-ci:${{ github.sha }}
+          python -m scripts.measure_browser_budget
 
