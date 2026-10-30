@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import base64
 import os
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Barrier
 
 import pytest
+from cryptography.exceptions import InvalidTag
 
 from boca_socios.domain.policy import TicketIntent
 from boca_socios.security.credential_vault import CredentialVault
@@ -80,7 +82,9 @@ def test_duplicate_and_invalid_enrollment_leave_no_partial_record(tmp_path: Path
     assert credentials == [(one,)]
 
 
-def test_vault_failure_rolls_back_member_and_audit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_vault_failure_rolls_back_member_and_audit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     db, vault, service = setup_service(tmp_path)
 
     def fail_seal(_password: str, *, member_id: str) -> None:
@@ -94,8 +98,32 @@ def test_vault_failure_rolls_back_member_and_audit(tmp_path: Path, monkeypatch: 
             consent_recorded_at=datetime.now(UTC),
         )
     with db.connection() as connection:
-        for table in ("members", "credentials", "audit_events"):
-            assert connection.execute(f"SELECT count(*) FROM {table}").fetchone() == (0,)
+        for statement in (
+            "SELECT count(*) FROM members",
+            "SELECT count(*) FROM credentials",
+            "SELECT count(*) FROM audit_events",
+        ):
+            assert connection.execute(statement).fetchone() == (0,)
+
+
+def test_audit_failure_rolls_back_credential_and_member(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db, _, service = setup_service(tmp_path)
+
+    def fail_audit(_connection: sqlite3.Connection, _action: str, _member_id: str) -> None:
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(MemberEnrollmentService, "_audit", staticmethod(fail_audit))
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        service.enroll(
+            email="rollback@example.test",
+            password="synthetic-only",
+            consent_recorded_at=datetime.now(UTC),
+        )
+    with db.connection() as connection:
+        assert connection.execute("SELECT count(*) FROM members").fetchone() == (0,)
+        assert connection.execute("SELECT count(*) FROM credentials").fetchone() == (0,)
 
 
 def test_atomic_password_rotation_and_revocation_preserve_ticket_intent(tmp_path: Path) -> None:
@@ -123,9 +151,7 @@ def test_atomic_password_rotation_and_revocation_preserve_ticket_intent(tmp_path
             (member_id,),
         ).fetchone() == (request_id, 1)
         assert connection.execute("SELECT count(*) FROM members").fetchone() == (1,)
-        assert connection.execute(
-            "SELECT action FROM audit_events ORDER BY rowid"
-        ).fetchall() == [
+        assert connection.execute("SELECT action FROM audit_events ORDER BY rowid").fetchall() == [
             ("member.enrolled",),
             ("credential.rotated",),
             ("credential.revoked",),
@@ -150,9 +176,19 @@ def test_restart_uses_external_key_and_invalid_mount_fails_closed(tmp_path: Path
     restarted.rotate_password(member_id, "synthetic-after-restart")
     sealed = db.get_credential(member_id)
     assert sealed is not None
-    assert CredentialVault.from_secret_file(key_path).open(
-        sealed, member_id=member_id
-    ) == "synthetic-after-restart"
+    assert (
+        CredentialVault.from_secret_file(key_path).open(sealed, member_id=member_id)
+        == "synthetic-after-restart"
+    )
+    stale = MemberEnrollmentService(db, CredentialVault(os.urandom(32)))
+    with pytest.raises(InvalidTag):
+        stale.rotate_password(member_id, "synthetic-wrong-key")
+    unchanged = db.get_credential(member_id)
+    assert unchanged is not None
+    assert (
+        CredentialVault.from_secret_file(key_path).open(unchanged, member_id=member_id)
+        == "synthetic-after-restart"
+    )
     key_path.unlink()
     with pytest.raises(ValueError):
         CredentialVault.from_secret_file(key_path)
