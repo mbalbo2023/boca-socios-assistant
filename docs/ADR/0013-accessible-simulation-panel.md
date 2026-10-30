@@ -32,3 +32,23 @@ module is enabled in the default Compose runtime.
 Automated tests cover semantic controls, redaction, timezone conversion,
 duplicate/quantity guards and bounded data. Manual Android/iOS voice and
 screen-reader testing remains necessary once the owner-only route exists.
+
+## Synthetic tablet preview, issue #16
+
+The separate `Boca panel preview` Actions workflow renders four fixed sample
+states using this existing renderer. Same-repository PR runs validate the
+rendering without uploading HTML. Only a manual run from the exact `main`
+commit by the owner uploads a short-lived artifact for tablet inspection.
+The workflow accepts no
+member, event, password or database input; it has read-only repository
+permissions and no SSH, host operation, public site client or service port.
+A preview artifact in this public repository must never contain actual owner
+data.
+
+This is a preview of **our own status panel**, not a replacement Boca page or
+an exercise of login, queue, ticket reservation or Telegram delivery. The
+sample timestamp is deliberately old; all entries remain labelled fictitious.
+The artifact can help check touch targets and voice control on a tablet, but
+automated HTML checks cannot establish real device accessibility. No panel
+route or real enrollment is enabled; owner authentication, TLS, CSRF, privacy
+review and manual device testing still gate a future served interface.
