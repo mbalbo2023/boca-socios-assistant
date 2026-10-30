@@ -37,7 +37,9 @@ encryption**, not an ordinary password hash.
 Loss of the encryption key makes stored passwords unrecoverable; leak of
 both database and key exposes passwords. Do not put the encryption key
 beside the database in a backup. Do not give the key to a coding agent.
-The owner will authorize a separate one-time deployment secret workflow.
+Any future master-key provisioning is a separate, technically reviewed
+milestone. A future simulation-only deployment gate does not enable real
+credential enrollment. Do not recreate the existing SSH deployment secret.
 
 ## Access policy
 
@@ -63,5 +65,6 @@ The owner will authorize a separate one-time deployment secret workflow.
 
 Do not manufacture signed Queue-it tokens, change queue proof, bypass WAF or
 CAPTCHA, probe nonpublic endpoints or run synthetic load against Boca.
-Live interactions require a separate signed-off test plan and resource cap.
+Live interactions remain disabled until a separate technically reviewed,
+consented test milestone with a resource cap.
 
