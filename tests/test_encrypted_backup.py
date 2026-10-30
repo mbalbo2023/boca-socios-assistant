@@ -99,6 +99,35 @@ def test_refuses_to_overwrite_backup_or_existing_database(tmp_path: Path) -> Non
     assert restored.read_bytes() == b"existing database"
 
 
+@pytest.mark.parametrize("operation", ["backup", "restore"])
+def test_directory_sync_failure_does_not_publish_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    source, _, _ = _source(tmp_path / "source.db")
+    key = os.urandom(32)
+    archive = tmp_path / "snapshot.enc"
+    if operation == "restore":
+        backup_database(source.path, archive, key)
+    target = archive if operation == "backup" else tmp_path / "restored.db"
+
+    original_fsync = os.fsync
+
+    def fail_directory_sync(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise OSError("synthetic directory sync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", fail_directory_sync)
+    with pytest.raises(BackupError, match="published"):
+        if operation == "backup":
+            backup_database(source.path, archive, key)
+        else:
+            restore_database(archive, target, key)
+    assert not target.exists()
+    assert not list(tmp_path.glob(".boca-backup-*"))
+    assert not list(tmp_path.glob(".boca-restore-*"))
+
+
 def test_refuses_symlink_sources_and_destinations(tmp_path: Path) -> None:
     source, _, _ = _source(tmp_path / "source.db")
     key = os.urandom(32)
