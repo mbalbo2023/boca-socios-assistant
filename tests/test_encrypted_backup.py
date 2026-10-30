@@ -128,6 +128,28 @@ def test_directory_sync_failure_does_not_publish_target(
     assert not list(tmp_path.glob(".boca-restore-*"))
 
 
+def test_failed_publication_preserves_a_replaced_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, _, _ = _source(tmp_path / "source.db")
+    archive = tmp_path / "snapshot.enc"
+    replacement = b"another writer's file"
+    original_fsync = os.fsync
+
+    def replace_before_failure(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            archive.unlink()
+            archive.write_bytes(replacement)
+            raise OSError("synthetic directory sync failure")
+        original_fsync(descriptor)
+
+    monkeypatch.setattr(os, "fsync", replace_before_failure)
+    with pytest.raises(BackupError, match="manual recovery"):
+        backup_database(source.path, archive, os.urandom(32))
+    assert archive.read_bytes() == replacement
+    assert not list(tmp_path.glob(".boca-backup-*"))
+
+
 def test_refuses_symlink_sources_and_destinations(tmp_path: Path) -> None:
     source, _, _ = _source(tmp_path / "source.db")
     key = os.urandom(32)
