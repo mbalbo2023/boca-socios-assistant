@@ -197,15 +197,23 @@ def _socket_state(path: Path, *, expected_uid: int = 10001) -> str:
     )
 
 
-def inspect_prerequisites() -> None:
-    """Observe only Boca's private runtime; metadata is not a Docker preflight."""
+def _require_dedicated_identity() -> int:
+    """Refuse setuid/wrapper privilege changes before probing any host path."""
     uid = os.getuid()
+    if uid != 10001 or os.geteuid() != uid:
+        raise PreflightError("expected dedicated boca-deploy account")
     try:
         account = pwd.getpwuid(uid).pw_name
     except KeyError as exc:
         raise PreflightError("expected dedicated boca-deploy account") from exc
-    if uid != 10001 or account != "boca-deploy":
+    if account != "boca-deploy":
         raise PreflightError("expected dedicated boca-deploy account")
+    return uid
+
+
+def inspect_prerequisites() -> None:
+    """Observe only Boca's private runtime; metadata is not a Docker preflight."""
+    uid = _require_dedicated_identity()
 
     try:
         runtime_safe = _safe_dir(ROOTLESS_SOCKET.parent)
@@ -245,6 +253,7 @@ def _rootful_socket_inaccessible() -> bool:
 
 
 def _validate_docker_boundary() -> None:
+    _require_dedicated_identity()
     socket_secure = _rootless_socket_secure()
     rootful_inaccessible = _rootful_socket_inaccessible()
     if not socket_secure or not rootful_inaccessible:
@@ -284,12 +293,7 @@ def _names(kind: str, label: str) -> set[str]:
 def collect_snapshot() -> HostSnapshot:
     # The deployment identity owns only the rootless Docker endpoint; the key
     # is generated in a separate named volume within the container UID map.
-    try:
-        dedicated = pwd.getpwuid(os.getuid()).pw_name == "boca-deploy"
-    except KeyError:
-        dedicated = False
-    if not dedicated:
-        raise PreflightError("expected dedicated boca-deploy account")
+    uid = _require_dedicated_identity()
     if not _root_ready():
         raise PreflightError("Boca-owned directory is unavailable or unsafe")
     _run("docker", "version", "--format", "{{.Server.Version}}")
@@ -313,7 +317,7 @@ def collect_snapshot() -> HostSnapshot:
     networks = _names("network", "name=^boca-socios_")
     return HostSnapshot(
         arch=platform.machine(),
-        uid=os.getuid(),
+        uid=uid,
         available_memory_kib=int(match.group(1)),
         available_disk_bytes=disk.f_bavail * disk.f_frsize,
         available_inodes=disk.f_favail,
@@ -437,12 +441,7 @@ def _validate_coordinates(
 
 
 def _diagnostic_files(expected_sha: str) -> None:
-    try:
-        account = pwd.getpwuid(os.getuid()).pw_name
-    except KeyError as exc:
-        raise PreflightError("dedicated Boca identity is unavailable") from exc
-    if os.getuid() != 10001 or account != "boca-deploy":
-        raise PreflightError("expected dedicated boca-deploy account")
+    _require_dedicated_identity()
     if not _safe_dir(ROOT):
         raise PreflightError("Boca directory ownership or permissions changed")
     if {child.name for child in ROOT.iterdir()} != {"compose.yaml"}:

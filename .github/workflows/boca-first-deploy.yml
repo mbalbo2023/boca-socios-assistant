@@ -132,6 +132,7 @@ jobs:
           BOCA_DEPLOY_ENV_READY: ${{ vars.BOCA_DEPLOY_ENV_READY }}
         run: |
           test "$BOCA_DEPLOY_ENV_READY" = ready
+          test "$GITHUB_RUN_ATTEMPT" = 1
           test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"
           [[ "$BOCA_OPERATION" = inspect-prerequisites || "$BOCA_OPERATION" = preflight || "$BOCA_OPERATION" = first-install || "$BOCA_OPERATION" = diagnostic ]]
           test "$BOCA_SERVICE" = controller
@@ -147,6 +148,13 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - name: Confirm current main HEAD before host access
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref.json" "$BOCA_SOURCE_SHA"
       - name: Validate immutable inputs and successful matching release
         if: inputs.operation != 'preflight' && inputs.operation != 'inspect-prerequisites'
         env:
@@ -242,6 +250,14 @@ jobs:
         run: |
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - config "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-host-model.json"
           python scripts/check_deploy_contract.py "$RUNNER_TEMP/boca-host-model.json" "$BOCA_IMAGE_REF"
+      - name: Recheck current main HEAD before effectful install
+        if: inputs.operation == 'first-install'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-apply.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-apply.json" "$BOCA_SOURCE_SHA"
       - name: Pull verified digest and start only Boca controller
         if: inputs.operation == 'first-install'
         run: |

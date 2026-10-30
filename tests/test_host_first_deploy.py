@@ -25,6 +25,12 @@ SOURCE_SHA = "a" * 40
 IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64
 
 
+def _boca_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
+    monkeypatch.setattr(host.os, "geteuid", lambda: 10001)
+    monkeypatch.setattr(host.pwd, "getpwuid", lambda _uid: SimpleNamespace(pw_name="boca-deploy"))
+
+
 def safe_boundary() -> DockerBoundarySnapshot:
     return DockerBoundarySnapshot(
         socket_secure=True,
@@ -73,6 +79,7 @@ def test_unproven_daemon_boundary_is_no_go(field: str, value: object) -> None:
 def test_daemon_info_must_prove_rootless_and_cgroups(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, info: dict[str, object]
 ) -> None:
+    _boca_identity(monkeypatch)
     controllers = tmp_path / "cgroup.controllers"
     controllers.write_text("cpu memory pids\n")
     monkeypatch.setattr(host, "CGROUP_CONTROLLERS", controllers)
@@ -86,6 +93,7 @@ def test_daemon_info_must_prove_rootless_and_cgroups(
 def test_rootless_daemon_info_and_delegation_are_checked_together(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    _boca_identity(monkeypatch)
     controllers = tmp_path / "cgroup.controllers"
     controllers.write_text("cpu io memory pids\n")
     monkeypatch.setattr(host, "CGROUP_CONTROLLERS", controllers)
@@ -167,6 +175,35 @@ def test_prerequisite_inspection_refuses_uid_1000_before_private_path_probe(
         host.phase("inspect-prerequisites", "", SOURCE_SHA, "b" * 64)
 
 
+def test_prerequisite_inspection_refuses_elevated_effective_uid_before_private_path_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
+    monkeypatch.setattr(host.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(host.pwd, "getpwuid", lambda _uid: SimpleNamespace(pw_name="boca-deploy"))
+    monkeypatch.setattr(
+        host, "_socket_state", lambda _path: pytest.fail("elevated process probed host socket")
+    )
+    monkeypatch.setattr(
+        host, "_safe_dir", lambda _path: pytest.fail("elevated process probed runtime")
+    )
+    with pytest.raises(PreflightError, match="dedicated boca-deploy"):
+        host.phase("inspect-prerequisites", "", SOURCE_SHA, "b" * 64)
+
+
+def test_rootless_boundary_refuses_elevated_effective_uid_before_docker_or_socket_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
+    monkeypatch.setattr(host.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(
+        host, "_rootless_socket_secure", lambda: pytest.fail("elevated process probed socket")
+    )
+    monkeypatch.setattr(host, "_run", lambda *args: pytest.fail("elevated process ran Docker"))
+    with pytest.raises(PreflightError, match="dedicated boca-deploy"):
+        host._validate_docker_boundary()
+
+
 def test_socket_probe_distinguishes_present_absent_unsafe_and_denied(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -195,8 +232,7 @@ def test_socket_probe_distinguishes_present_absent_unsafe_and_denied(
 def test_inspection_reports_unproven_rootless_without_docker_or_host_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
-    monkeypatch.setattr(host.pwd, "getpwuid", lambda _uid: SimpleNamespace(pw_name="boca-deploy"))
+    _boca_identity(monkeypatch)
     runtime = tmp_path / "runtime"
     runtime.mkdir(mode=0o700)
     monkeypatch.setattr(host, "ROOTLESS_SOCKET", runtime / "docker.sock")
@@ -219,8 +255,7 @@ def test_inspection_reports_unproven_rootless_without_docker_or_host_mutation(
 def test_inspection_under_boca_uid_reports_only_metadata_candidate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
-    monkeypatch.setattr(host.pwd, "getpwuid", lambda _uid: SimpleNamespace(pw_name="boca-deploy"))
+    _boca_identity(monkeypatch)
     runtime = tmp_path / "runtime"
     sockets = {runtime / "systemd" / "private", runtime / "bus", runtime / "docker.sock"}
     monkeypatch.setattr(host, "ROOTLESS_SOCKET", runtime / "docker.sock")
@@ -724,10 +759,7 @@ def test_diagnostic_rejects_missing_or_unowned_key_volume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, labels: object
 ) -> None:
     digest = _staged(tmp_path, monkeypatch)
-    monkeypatch.setattr(host.os, "getuid", lambda: 10001)
-    monkeypatch.setattr(
-        host.pwd, "getpwuid", lambda _uid: type("Account", (), {"pw_name": "boca-deploy"})()
-    )
+    _boca_identity(monkeypatch)
     monkeypatch.setattr(
         host,
         "_run",

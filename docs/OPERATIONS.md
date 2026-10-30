@@ -87,9 +87,16 @@ image and release-run fields. It checks socket and cgroup **metadata as UID
 or altering the host. A failed job reports unproven prerequisites; a metadata
 candidate is not proof that a Docker daemon is rootless or healthy. The
 existing `preflight` remains mandatory before any release/install decision.
-The environment must first be reviewed and marked ready as an **environment**
-(pinned identity, main-only branch rule and reviewer control), independently
+The environment must first be verified and marked ready as an **environment**
+(pinned identity and main-only branch rule), independently
 of the daemon's readiness. See [ADR 0037](ADR/0037-host-prerequisite-inspection.md).
+
+The manual host workflow rejects reruns and verifies the current `main` ref
+through the GitHub API before SSH. First installation repeats that check
+immediately before applying the reviewed image; the host helper refuses a
+real/effective UID mismatch before private-path or Docker checks. A queued
+run whose source SHA is no longer current fails closed. These controls do
+not prove the SSH account has no other privileged route on the host.
 
 ## Proposed isolated deployment layout
 
