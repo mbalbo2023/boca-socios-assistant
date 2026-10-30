@@ -104,9 +104,11 @@ def test_cli_source_failure_reports_semaphore_and_exits_success(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(
-        source, "observe", lambda: source.Observation("2026-10-30T00:00:00+00:00", "RED", "timeout", None)
+        source,
+        "observe",
+        lambda: source.Observation("2026-10-30T00:00:00+00:00", "RED", "timeout", None),
     )
-    assert source.main() == 0
+    assert source.main([]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report == {
         "color": "RED",
@@ -115,3 +117,22 @@ def test_cli_source_failure_reports_semaphore_and_exits_success(
         "reason": "timeout",
         "target": "boca_public_login",
     }
+
+
+def test_live_source_workflow_is_manual_main_only_and_has_no_host_or_secret_path() -> None:
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/boca-source-status.yml"
+    ).read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in workflow
+    assert "github.ref == 'refs/heads/main'" in workflow
+    assert "github.actor == 'mbalbo2023'" in workflow
+    for forbidden in (
+        "pull_request:",
+        "push:",
+        "schedule:",
+        "ssh ",
+        "docker ",
+        "secrets.",
+        "continue-on-error:",
+    ):
+        assert forbidden not in workflow
