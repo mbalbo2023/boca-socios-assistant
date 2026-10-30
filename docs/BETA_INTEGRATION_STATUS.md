@@ -1,7 +1,7 @@
 # Estado de integración BETA
 
 **Corte:** 2026-10-30 UTC. Base de esta revisión: `main`
-`31c368ca07e095694f06528d746fecb83cfe3fb8`. Issue #24, PR #30.
+`bfe4a3c830cff963e1668add05f50c50d0cbf2e8`. Issue #24, PR #30.
 Este documento describe el candidato offline; no acredita una BETA operativa.
 
 ## Integración efectivamente realizada
@@ -17,8 +17,11 @@ Este documento describe el candidato offline; no acredita una BETA operativa.
 | #19 | Instrumento de benchmark opcional | Integrado; sin cifra medida de capacidad |
 | #28 | Diseño de alta privada | Integrado como ADR, sin interfaz operativa |
 | #29 | Renderizador accesible de estados ficticios | Integrado offline; sin endpoint privado ni prueba manual de lector de pantalla |
+| #33 | Observador público opt-in | Integrado como script; nunca ejecutado contra Boca en este gate |
 | #96 | Diagnóstico público manual por Actions (issue #94) | Integrado como semáforo asesor, separado de CI y despliegue |
 | #51 | Dependencia cryptography y lockfile | Integrado con CI exacta |
+| #104 | Actions oficiales fijadas a Node 24 | Integrado en CI y semáforo público |
+| #31 | Servicio interno de alta de socios | Integrado como biblioteca transaccional; sin endpoint ni enrolamiento real |
 
 Las PR fundacionales fueron revisadas por el agente y pasaron los jobs
 `quality-and-tests` e `image-build` para sus HEAD exactas. El ruleset
@@ -57,7 +60,7 @@ se registra en la conversación de PR #30 antes de cualquier merge.
 | Librerías offline | GO para integración revisada | Tests cruzados y CI exacta del candidato |
 | Portada pública | Observación histórica acotada | [Registro del 2026-10-28](BOCA_PUBLIC_OBSERVATION_2026-10-28.md); no revela flujo autenticado |
 | Fuente externa | Asesor, no gate de despliegue | `boca-source-status.yml` manual en Actions; informar color, UTC y run o UNKNOWN |
-| BETA operativa | NO_GO | Alta privada #31, endpoint autenticado del panel, outbox durable #34, guardia #38, rotación #40 y wiring siguen pendientes |
+| BETA operativa | NO_GO | El servicio #31 no tiene endpoint; faltan endpoint autenticado del panel, outbox durable #34, guardia #38, rotación #40 y wiring |
 | Reserva real | NO_GO | Sin identidad verificada, autorización de sitio, flujo observado ni reconciliación de resultado ambiguo |
 | Capacidad del host | No verificada | #19 no ejecutó Chromium real; preflight rootless/cgroup/disco debe venir de Actions |
 | Despliegue | No ejecutado | Sólo workflow manual Boca en `main` y gates de SHA/digest/aislamiento/recursos pueden habilitarlo |
@@ -69,8 +72,9 @@ de código probado requiere PR y CI nueva. Nunca se habilita login, cola o
 checkout real por una señal de salud pública.
 
 El protocolo de observación #15 permanece separado. El renderizador del
-panel #29 está integrado, pero la interfaz privada #31 es PR draft al corte.
+panel #29 y el servicio interno #31 están integrados, sin interfaz privada
+operativa. El observador #33 no fue ejecutado contra Boca en este gate.
 Las PR encadenadas #34/#36/#38/#40
 necesitan revisión propia y actualización sobre `main` en orden; su mera
-existencia no completa el runtime. No hay credenciales, tráfico autenticado,
+existencia no completa el runtime. No hay credenciales reales, tráfico autenticado,
 reserva, Telegram, cambios del droplet ni de otros proyectos en este candidato.
