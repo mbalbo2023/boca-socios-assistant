@@ -37,7 +37,8 @@ panel de simulación no se modifican y no se confirma ninguna entrada real.
 
 ## Verificación
 
-Pruebas locales de 12 competidores, reinicio, vencimiento sin reintento,
+Pruebas locales de 12 hilos y dos procesos separados sobre el mismo SQLite,
+reinicio, vencimiento sin reintento,
 fencing, resolución contradictoria, FK, cancelación y checksum. Todos los
 casos usan SQLite y datos ficticios, sin abrir páginas sintéticas ni Boca.
 La migración es aditiva y no se ejecuta en el runtime actual. CI y revisión
