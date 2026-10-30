@@ -126,6 +126,10 @@ def test_live_source_workflow_is_manual_main_only_and_has_no_host_or_secret_path
     assert "workflow_dispatch:" in workflow
     assert "github.ref == 'refs/heads/main'" in workflow
     assert "github.actor == 'mbalbo2023'" in workflow
+    assert 'test "$GITHUB_RUN_ATTEMPT" = 1' in workflow
+    assert workflow.index('test "$GITHUB_RUN_ATTEMPT" = 1') < workflow.index(
+        "python3 scripts/check_public_source.py"
+    )
     for forbidden in (
         "pull_request:",
         "push:",

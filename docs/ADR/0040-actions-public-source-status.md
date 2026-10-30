@@ -6,11 +6,14 @@
 
 A separate `workflow_dispatch` in the Boca repository checks the fixed public
 `/auth/login` path from one GitHub-hosted runner. Only the repository owner can
-run it on exact `main`. A standard-library client issues one anonymous HTTPS
-GET with an eight-second timeout, certificate verification and no redirect
-following. It sends no cookie, authorization header, account value or request
+run it from the `main` commit selected at dispatch. A standard-library client
+issues one anonymous HTTPS GET with an eight-second timeout, certificate
+verification and no redirect following. It sends no cookie, authorization
+header, account value or request
 body. It never reads or emits the response body or headers. The script has no
 URL or account input and uses no Docker, SSH, secrets or production host.
+The workflow rejects `GITHUB_RUN_ATTEMPT` other than `1` before its GET, so
+rerunning the same dispatch cannot silently make another public request.
 
 The output is a bounded JSON record and Actions summary with UTC timestamp,
 fixed target, HTTP status when available, and a semaphore:
@@ -29,6 +32,9 @@ controller deployment. Code defects require a separate fix and exact CI. Image,
 release digest, host isolation, resource and credential gates remain required.
 The controller's operational health is a separate local signal; no live
 reservation readiness is inferred from this public status observation.
+`UNKNOWN` is the operator's interpretation when there is no valid completed
+observation, including a rejected rerun or a failed job. It is not a result
+emitted by the script and cannot be presented as a green or red site status.
 
 ## Execution boundary and limits
 
