@@ -32,7 +32,7 @@ DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 
 
 class CleanupError(ValueError):
-    """The artifact cannot be proven disposable; retain it for diagnosis."""
+    """The artifact or the cleanup outcome cannot be proven safe."""
 
 
 class ImageAbsent(CleanupError):

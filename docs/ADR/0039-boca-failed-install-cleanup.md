@@ -73,5 +73,6 @@ automatic retry, volume removal or host-wide cleanup is permitted.
 The helper and failure step remain in an unmerged draft; no SSH, host or
 Docker operation was performed while writing or testing this candidate.
 Actions uses the existing Boca-only serialization lock and rejects a manual
-run attempt greater than one. The workflow treats uncertain state or
-unverified disk measurement as NO-GO and preserves it.
+run attempt greater than one. The workflow treats uncertain state or an
+unverified disk measurement as NO-GO. If a mutation began, the result is
+INDETERMINADO until a fresh Boca-only inventory proves what remains.
