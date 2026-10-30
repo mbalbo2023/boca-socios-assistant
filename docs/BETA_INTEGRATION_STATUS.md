@@ -1,6 +1,6 @@
 # Estado de integración BETA
 
-## Estado vigente — 2026-10-29 (America/Argentina/Buenos_Aires)
+## Estado vigente — 2026-10-30 (America/Argentina/Buenos_Aires)
 
 Base verificada: `main` `9aeb005b9dddec663d5e8ecfcf703044205d5be6`.
 La release sigue en **simulación solamente**. Los merges no demuestran un host

@@ -1,6 +1,6 @@
 # BETA de componentes: estado vigente y registro histórico del gate #35
 
-## Estado vigente — 2026-10-29 (America/Argentina/Buenos_Aires)
+## Estado vigente — 2026-10-30 (America/Argentina/Buenos_Aires)
 
 Base verificada: `main` `9aeb005b9dddec663d5e8ecfcf703044205d5be6`.
 La integración de componentes **offline** permite revisar una simulación; no

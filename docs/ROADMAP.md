@@ -1,6 +1,6 @@
 # Development backlog and agent work order
 
-**Corte vigente:** 2026-10-29 (America/Argentina/Buenos_Aires), `main`
+**Corte vigente:** 2026-10-30 (America/Argentina/Buenos_Aires), `main`
 `9aeb005b9dddec663d5e8ecfcf703044205d5be6`. Las casillas indican el
 hito completo; un componente integrado no valida por sí solo el uso real de
 Boca, la interfaz privada ni el host.
