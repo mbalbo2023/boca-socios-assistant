@@ -46,6 +46,8 @@ class HostSnapshot:
     available_memory_kib: int
     available_disk_bytes: int
     available_inodes: int
+    docker_disk_bytes: int
+    docker_inodes: int
     root_ready: bool
     boca_containers: bool
     boca_volume: bool
@@ -123,8 +125,11 @@ def validate_snapshot(snapshot: HostSnapshot) -> None:
         raise PreflightError("insufficient available host memory")
     if snapshot.cpu_headroom < 0.5:
         raise PreflightError("insufficient approximate host CPU headroom")
-    if snapshot.available_disk_bytes < 4 * 1024**3 or snapshot.available_inodes < 50_000:
-        raise PreflightError("insufficient free host storage")
+    if (
+        min(snapshot.available_disk_bytes, snapshot.docker_disk_bytes) < 4 * 1024**3
+        or min(snapshot.available_inodes, snapshot.docker_inodes) < 50_000
+    ):
+        raise PreflightError("insufficient Boca staging or rootless Docker storage")
     if not snapshot.root_ready:
         raise PreflightError("Boca-owned directory is unavailable or unsafe")
     if snapshot.boca_containers or snapshot.boca_volume or snapshot.boca_network:
@@ -149,6 +154,8 @@ def _run(*args: str, env: dict[str, str] | None = None) -> str:
         # operations to the shared rootful daemon or a remote endpoint.
         run_env = dict(os.environ if env is None else env)
         run_env.pop("DOCKER_CONTEXT", None)
+        run_env.pop("DOCKER_CONFIG", None)
+        run_env.pop("DOCKER_TLS", None)
         run_env.pop("DOCKER_TLS_VERIFY", None)
         run_env.pop("DOCKER_CERT_PATH", None)
         run_env["DOCKER_HOST"] = f"unix://{ROOTLESS_SOCKET}"
@@ -197,20 +204,6 @@ def _socket_state(path: Path, *, expected_uid: int = 10001) -> str:
     )
 
 
-def _require_dedicated_identity() -> int:
-    """Refuse setuid/wrapper privilege changes before probing any host path."""
-    uid = os.getuid()
-    if uid != 10001 or os.geteuid() != uid or os.getegid() != os.getgid():
-        raise PreflightError("expected dedicated boca-deploy account")
-    try:
-        account = pwd.getpwuid(uid).pw_name
-    except KeyError as exc:
-        raise PreflightError("expected dedicated boca-deploy account") from exc
-    if account != "boca-deploy":
-        raise PreflightError("expected dedicated boca-deploy account")
-    return uid
-
-
 def inspect_prerequisites() -> None:
     """Observe only Boca's private runtime; metadata is not a Docker preflight."""
     uid = _require_dedicated_identity()
@@ -252,6 +245,20 @@ def _rootful_socket_inaccessible() -> bool:
     return not os.access(ROOTFUL_SOCKET, os.W_OK)
 
 
+def _require_dedicated_identity() -> int:
+    """Refuse setuid/wrapper privilege changes before probing any host path."""
+    uid = os.getuid()
+    if uid != 10001 or os.geteuid() != uid or os.getegid() != os.getgid():
+        raise PreflightError("expected dedicated Boca identity")
+    try:
+        account = pwd.getpwuid(uid).pw_name
+    except KeyError as exc:
+        raise PreflightError("dedicated Boca identity is unavailable") from exc
+    if account != "boca-deploy":
+        raise PreflightError("expected dedicated boca-deploy account")
+    return uid
+
+
 def _validate_docker_boundary() -> None:
     _require_dedicated_identity()
     socket_secure = _rootless_socket_secure()
@@ -290,6 +297,62 @@ def _names(kind: str, label: str) -> set[str]:
     return set(_run("docker", kind, "ls", "-q", "--filter", label).splitlines())
 
 
+def _checked_docker_storage_dir() -> Path:
+    """Limit capacity probes to the dedicated user's owned rootless data path."""
+    try:
+        info = json.loads(_run("docker", "info", "--format", "{{json .}}"))
+        if not isinstance(info, dict):
+            raise PreflightError("rootless Docker storage backend is unproven")
+        # The containerd image store can keep layers on another filesystem.
+        # Until its dedicated root is proven, only classic drivers can pass.
+        driver_status = info.get("DriverStatus")
+        if (
+            info.get("Driver") not in {"overlay2", "fuse-overlayfs", "vfs"}
+            or not isinstance(driver_status, list)
+            or any(
+                not isinstance(item, list)
+                or len(item) != 2
+                or not all(isinstance(value, str) for value in item)
+                or item[0] == "driver-type"
+                for item in driver_status
+            )
+        ):
+            raise PreflightError("rootless Docker storage backend is unproven")
+        reported = info.get("DockerRootDir")
+        home = Path(pwd.getpwuid(10001).pw_dir)
+        if not isinstance(reported, str) or len(reported) > 4096:
+            raise PreflightError("rootless Docker storage path is unproven")
+        storage = Path(reported)
+        if (
+            not home.is_absolute()
+            or home == Path("/")
+            or not storage.is_absolute()
+            or ".." in storage.parts
+            or str(storage) != reported
+            or home.resolve(strict=True) != home
+            or not _safe_dir(home)
+        ):
+            raise PreflightError("rootless Docker storage path is unproven")
+        relative = storage.relative_to(home)
+        if not relative.parts:
+            raise PreflightError("rootless Docker storage path is unproven")
+        current = home
+        for part in relative.parts:
+            current /= part
+            metadata = current.lstat()
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != 10001
+                or stat.S_IMODE(metadata.st_mode) & 0o022
+            ):
+                raise PreflightError("rootless Docker storage path is unproven")
+    except PreflightError:
+        raise
+    except (OSError, ValueError, KeyError, AttributeError, TypeError) as exc:
+        raise PreflightError("rootless Docker storage path is unproven") from exc
+    return storage
+
+
 def collect_snapshot() -> HostSnapshot:
     # The deployment identity owns only the rootless Docker endpoint; the key
     # is generated in a separate named volume within the container UID map.
@@ -308,7 +371,12 @@ def collect_snapshot() -> HostSnapshot:
     match = re.search(r"^MemAvailable:\s+(\d+) kB$", meminfo, re.MULTILINE)
     if match is None:
         raise PreflightError("MemAvailable is unavailable")
-    disk = os.statvfs(str(ROOT))
+    storage_dir = _checked_docker_storage_dir()
+    try:
+        stage_disk = os.statvfs(ROOT)
+        docker_disk = os.statvfs(storage_dir)
+    except OSError as exc:
+        raise PreflightError("Boca capacity filesystems are unavailable") from exc
     containers = _run(
         "docker", "ps", "-a", "-q", "--filter", "label=com.docker.compose.project=boca-socios"
     ) or _run("docker", "ps", "-a", "-q", "--filter", "name=^/boca-socios-")
@@ -319,8 +387,10 @@ def collect_snapshot() -> HostSnapshot:
         arch=platform.machine(),
         uid=uid,
         available_memory_kib=int(match.group(1)),
-        available_disk_bytes=disk.f_bavail * disk.f_frsize,
-        available_inodes=disk.f_favail,
+        available_disk_bytes=stage_disk.f_bavail * stage_disk.f_frsize,
+        available_inodes=stage_disk.f_favail,
+        docker_disk_bytes=docker_disk.f_bavail * docker_disk.f_frsize,
+        docker_inodes=docker_disk.f_favail,
         root_ready=True,
         boca_containers=bool(containers),
         boca_volume=bool(volumes),
@@ -358,16 +428,30 @@ def _validate_key_volume() -> None:
         _run("docker", "volume", "inspect", "--format", "{{json .}}", KEY_VOLUME),
         "key volume",
     )
+    root = Path(_run("docker", "info", "--format", "{{.DockerRootDir}}"))
+    mountpoint = volume.get("Mountpoint")
+    expected = root / "volumes" / KEY_VOLUME / "_data"
     labels = volume.get("Labels")
     if (
         volume.get("Name") != KEY_VOLUME
         or volume.get("Driver") != "local"
         or volume.get("Scope") != "local"
+        or volume.get("Options") not in (None, {})
+        or not root.is_absolute()
+        or root == Path("/")
+        or mountpoint != str(expected)
         or not isinstance(labels, dict)
         or labels.get("com.docker.compose.project") != PROJECT
         or labels.get("com.docker.compose.volume") != "boca_key"
     ):
         raise PreflightError("Boca key volume identity is unsafe")
+    # A local driver can otherwise conceal a bind source behind the expected
+    # volume name. Refuse path redirects even when Docker's labels match.
+    try:
+        if root.resolve(strict=True) != root or expected.resolve(strict=True) != expected:
+            raise PreflightError("Boca key volume mountpoint is redirected")
+    except (OSError, RuntimeError) as exc:
+        raise PreflightError("Boca key volume mountpoint is unavailable") from exc
 
 
 def _key_container(image: str, operation: str) -> tuple[str, ...]:
@@ -425,6 +509,9 @@ def _create_key(image: str) -> None:
     _validate_key_volume()
     if _run(*_key_container(image, "init")) != "BOCA_KEY_READY":
         raise PreflightError("Boca key initialization did not confirm completion")
+    # Volume creation/inspection is not atomic with a container run; reject a
+    # changed named volume before treating the initialized key as usable.
+    _validate_key_volume()
     if _run(*_key_container(image, "verify")) != "BOCA_KEY_READY":
         raise PreflightError("Boca key is not readable by the controller identity")
 
@@ -468,6 +555,11 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
         _run("docker", "inspect", "--format", "{{json .HostConfig}}", container),
         "container host config",
     )
+    port_bindings = host.get("PortBindings")
+    if not isinstance(port_bindings, dict):
+        raise PreflightError("missing or malformed Boca port bindings")
+    if host.get("PublishAllPorts") is not False:
+        raise PreflightError("Boca automatic port publishing is not disabled")
     mounts = json.loads(_run("docker", "inspect", "--format", "{{json .Mounts}}", container))
     if not isinstance(mounts, list) or len(mounts) != 2:
         raise PreflightError("unexpected Boca controller mounts")
@@ -555,7 +647,7 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
         pids_limit=host.get("PidsLimit"),  # type: ignore[arg-type]
         read_only=host.get("ReadonlyRootfs"),  # type: ignore[arg-type]
         privileged=host.get("Privileged"),  # type: ignore[arg-type]
-        has_ports=bool(host.get("PortBindings")),
+        has_ports=bool(port_bindings),
     )
     validate_diagnostic(snapshot, image, source_sha)
     return snapshot
@@ -592,7 +684,10 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
             "BOCA_PREFLIGHT_PASS"
             f" arch={host_snapshot.arch} uid={host_snapshot.uid}"
             f" mem_kib={host_snapshot.available_memory_kib}"
-            f" disk_bytes={host_snapshot.available_disk_bytes} inodes={host_snapshot.available_inodes}"
+            f" stage_disk_bytes={host_snapshot.available_disk_bytes}"
+            f" stage_inodes={host_snapshot.available_inodes}"
+            f" docker_disk_bytes={host_snapshot.docker_disk_bytes}"
+            f" docker_inodes={host_snapshot.docker_inodes}"
             f" cpu_headroom={host_snapshot.cpu_headroom:.2f}"
             " namespace=empty"
         )
@@ -650,7 +745,7 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
         # hold before the first install can claim success.
         _diagnostic_files(compose_sha)
         collect_diagnostic(image, source_sha)
-    except (ValueError, OSError):
+    except (ValueError, OSError, TypeError, KeyError):
         try:
             _run(*_compose_args("stop", "controller"), env=_compose_env(image))
         except PreflightError:
@@ -680,7 +775,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         phase(args.phase, args.image, args.source_sha, args.compose_sha)
-    except (PreflightError, OSError, ValueError) as exc:
+    except (PreflightError, OSError, ValueError, TypeError, KeyError) as exc:
         print(f"BOCA_NO_GO: {exc}", file=sys.stderr)
         return 1
     return 0

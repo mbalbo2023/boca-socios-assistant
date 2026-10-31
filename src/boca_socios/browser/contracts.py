@@ -23,16 +23,14 @@ class SimulationReceipt:
 
 @dataclass(frozen=True, slots=True)
 class SimulationNotice:
-    """Safe metadata only: no credentials, queue IDs or browser state."""
+    """Internal correlation only: no member ID, event ID or browser state."""
 
     request_id: str
-    member_id: str
-    event_id: str
     outcome: SimulationOutcome
 
 
 class IntentRepositoryPort(Protocol):
-    """Eventually backed by the idempotent SQLite intent in PR #22."""
+    """May be backed by an idempotent SQLite intent in a later integration."""
 
     def ensure_ticket_intent(self, intent: TicketIntent) -> str: ...
 
@@ -74,8 +72,6 @@ class SyntheticBrowserWorkflow:
         self._notifications.publish_simulation_notice(
             SimulationNotice(
                 request_id=request_id,
-                member_id=intent.member_id,
-                event_id=intent.event_id,
                 outcome=outcome,
             )
         )

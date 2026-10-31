@@ -20,6 +20,8 @@ class WorkerPreflightError(RuntimeError):
 def validate_worker_identity(uid: int, executable_path: Path) -> None:
     if uid == 0:
         raise WorkerPreflightError("nonroot_required")
+    if uid != 10002:
+        raise WorkerPreflightError("worker_uid_mismatch")
     if not executable_path.is_file():
         raise WorkerPreflightError("browser_missing")
 

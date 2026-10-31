@@ -171,12 +171,14 @@ def test_distinct_members_have_distinct_local_intents() -> None:
     assert len(store.requests) == 2
 
 
-def test_notifications_contain_only_opaque_metadata() -> None:
+def test_notifications_exclude_member_and_event_identifiers() -> None:
     store, browser, notices = FakeIntentStore(), FakeBrowser(), FakeNotifications()
     workflow = SyntheticBrowserWorkflow(intents=store, browser=browser, notifications=notices)
     asyncio.run(workflow.run(TicketIntent("synthetic-a", "synthetic-match")))
     notice = notices.notices[0]
-    assert tuple(notice.__dataclass_fields__) == ("request_id", "member_id", "event_id", "outcome")
+    assert tuple(notice.__dataclass_fields__) == ("request_id", "outcome")
+    assert "synthetic-a" not in repr(notice)
+    assert "synthetic-match" not in repr(notice)
 
 
 @pytest.mark.parametrize("tamper,exit_code", [(False, 0), (True, 1)])

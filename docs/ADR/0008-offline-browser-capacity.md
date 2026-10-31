@@ -29,8 +29,9 @@ tool that:
    requests, and sampled cgroup v2 memory, CPU throttle, PIDs and `/dev/shm`.
 4. Enforces configurable memory-delta, remaining-cgroup-memory and PID
    headroom stop conditions after launch/context creation/navigation/hold.
-   Stops subsequent groups on **any** failure and closes all contexts and
-   Chromium in `finally`.
+   Stops subsequent groups on **any** failure, including an unexpected
+   blocked external page request, and closes all contexts and Chromium in
+   `finally`.
 5. Exports sanitized JSON, with explicit `null` for unavailable counters.
    The metrics describe the **entire current cgroup**, not just Chromium.
 
@@ -101,8 +102,9 @@ OS-level network isolation described above. No personal data is emitted.
   automatic Playwright installation to every push.
 - External cgroup monitor to observe sub-second peaks and forced worker
   termination; instrument file descriptors and Python event-loop lag.
-- Resource baseline and safe operating envelope measured *on the actual
-  dedicated test worker*, with owner approval, before any integration.
+- Resource baseline and safe operating envelope measured *on a dedicated
+  test worker* before integration, reviewed with exact-head CI and a technical
+  agent review. This optional local experiment is not a host-capacity gate.
 
 References:
 
