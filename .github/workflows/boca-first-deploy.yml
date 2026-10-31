@@ -143,21 +143,26 @@ jobs:
     steps:
       - name: Require verified protected environment and matching main commit
         env:
+          BOCA_HOST_READONLY_ENV_READY: ${{ vars.BOCA_HOST_READONLY_ENV_READY }}
           BOCA_DEPLOY_ENV_READY: ${{ vars.BOCA_DEPLOY_ENV_READY }}
         run: |
-          test "$BOCA_DEPLOY_ENV_READY" = ready
           test "$GITHUB_RUN_ATTEMPT" = 1
           test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"
-          [[ "$BOCA_OPERATION" = inspect-prerequisites || "$BOCA_OPERATION" = preflight || "$BOCA_OPERATION" = first-install || "$BOCA_OPERATION" = diagnostic ]]
           test "$BOCA_SERVICE" = controller
           test "$BOCA_BUDGET" = 0.5cpu-256m-64pids
-          if [[ "$BOCA_OPERATION" = inspect-prerequisites || "$BOCA_OPERATION" = preflight ]]; then
-            test -z "$BOCA_IMAGE_REF"
-            test -z "$BOCA_RELEASE_RUN_ID"
-          else
-            test -n "$BOCA_IMAGE_REF"
-            test -n "$BOCA_RELEASE_RUN_ID"
-          fi
+          case "$BOCA_OPERATION" in
+            inspect-prerequisites|preflight)
+              test "$BOCA_HOST_READONLY_ENV_READY" = ready
+              test -z "$BOCA_IMAGE_REF"
+              test -z "$BOCA_RELEASE_RUN_ID"
+              ;;
+            first-install|diagnostic)
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test -n "$BOCA_IMAGE_REF"
+              test -n "$BOCA_RELEASE_RUN_ID"
+              ;;
+            *) exit 1 ;;
+          esac
       - name: Checkout exact main commit without persisted credentials
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:

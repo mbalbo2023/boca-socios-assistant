@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -47,7 +48,10 @@ def check_policy(root: Path) -> list[str]:
             for required in (
                 "workflow_dispatch:",
                 "environment: boca-first-deploy",
+                "BOCA_HOST_READONLY_ENV_READY",
                 "BOCA_DEPLOY_ENV_READY",
+                'test "$BOCA_HOST_READONLY_ENV_READY" = ready',
+                'test "$BOCA_DEPLOY_ENV_READY" = ready',
                 'test "$GITHUB_RUN_ATTEMPT" = 1',
                 "python scripts/check_main_ref.py",
                 "StrictHostKeyChecking yes",
@@ -69,6 +73,15 @@ def check_policy(root: Path) -> list[str]:
     for relative in ("AGENTS.md", ".github/CODEOWNERS", ".github/pull_request_template.md"):
         if not (root / relative).is_file():
             failures.append(f"missing governance file: {relative}")
+    adr_numbers: set[str] = set()
+    for adr in (root / "docs/ADR").glob("*.md"):
+        match = re.fullmatch(r"(\d{4})-[a-z0-9-]+\.md", adr.name)
+        if match is None:
+            continue
+        number = match.group(1)
+        if number in adr_numbers:
+            failures.append(f"duplicate ADR number: {number}")
+        adr_numbers.add(number)
     return failures
 
 

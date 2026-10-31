@@ -69,6 +69,19 @@
         "tests/test_release_dispatch.py::test_duplicate_fresh_dispatch_is_no_go",
         "tests/test_release_dispatch.py::test_release_checks_unique_dispatch_before_build_and_before_push"
       ]
+    },
+    {
+      "id": "RCA-120",
+      "issue": 120,
+      "fix_pr": 122,
+      "root_cause": "The host workflow used deployment readiness before distinguishing read-only inspection from installation, so enabling observation also unlocked the initial install gate.",
+      "prevention": "Require an independent read-only environment marker and execute the first-step operation matrix before checkout or SSH, retaining a separate deployment marker for installation.",
+      "regression_tests": [
+        "tests/test_host_operation_gate.py::test_read_only_host_gate_does_not_require_deploy_ready",
+        "tests/test_host_operation_gate.py::test_read_only_host_ready_cannot_unlock_effectful_coordinates",
+        "tests/test_host_operation_gate.py::test_unknown_or_stale_host_dispatch_is_no_go",
+        "tests/test_host_operation_gate.py::test_host_gate_is_before_checkout_and_ssh"
+      ]
     }
   ]
 }
