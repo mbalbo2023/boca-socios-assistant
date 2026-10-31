@@ -37,11 +37,12 @@ screen-reader testing remains necessary once the owner-only route exists.
 
 The separate `Boca panel preview` Actions workflow renders four fixed sample
 states using this existing renderer. Same-repository PR runs validate the
-rendering without uploading HTML. Only a manual run from the exact `main`
-commit by the owner uploads a short-lived artifact for tablet inspection.
-The workflow accepts no
-member, event, password or database input; it has read-only repository
-permissions and no SSH, host operation, public site client or service port.
+rendering without uploading HTML. Only a manual run on `refs/heads/main` by
+the owner uploads a short-lived artifact for tablet inspection. Its source is
+the dispatch SHA; a queued preview is not proof of the current `main` HEAD.
+The workflow accepts no member, event, password or database input; it has
+read-only repository permissions and no SSH, host operation, public site
+client or service port.
 A preview artifact in this public repository must never contain actual owner
 data.
 

@@ -24,6 +24,8 @@ COMPOSE = ROOT / "compose.yaml"
 PROJECT = "boca-socios"
 KEY_VOLUME = "boca-socios_boca_key"
 ROOTLESS_SOCKET = Path("/run/user/10001/docker.sock")
+PRIVATE_MANAGER_SOCKET = Path("/run/user/10001/systemd/private")
+USER_BUS_SOCKET = Path("/run/user/10001/bus")
 ROOTFUL_SOCKET = Path("/var/run/docker.sock")
 CGROUP_CONTROLLERS = Path(
     "/sys/fs/cgroup/user.slice/user-10001.slice/user@10001.service/cgroup.controllers"
@@ -44,6 +46,8 @@ class HostSnapshot:
     available_memory_kib: int
     available_disk_bytes: int
     available_inodes: int
+    docker_disk_bytes: int
+    docker_inodes: int
     root_ready: bool
     boca_containers: bool
     boca_volume: bool
@@ -121,8 +125,11 @@ def validate_snapshot(snapshot: HostSnapshot) -> None:
         raise PreflightError("insufficient available host memory")
     if snapshot.cpu_headroom < 0.5:
         raise PreflightError("insufficient approximate host CPU headroom")
-    if snapshot.available_disk_bytes < 4 * 1024**3 or snapshot.available_inodes < 50_000:
-        raise PreflightError("insufficient free host storage")
+    if (
+        min(snapshot.available_disk_bytes, snapshot.docker_disk_bytes) < 4 * 1024**3
+        or min(snapshot.available_inodes, snapshot.docker_inodes) < 50_000
+    ):
+        raise PreflightError("insufficient Boca staging or rootless Docker storage")
     if not snapshot.root_ready:
         raise PreflightError("Boca-owned directory is unavailable or unsafe")
     if snapshot.boca_containers or snapshot.boca_volume or snapshot.boca_network:
@@ -184,11 +191,62 @@ def _rootless_socket_secure() -> bool:
     return stat.S_ISSOCK(metadata.st_mode) and metadata.st_uid == 10001
 
 
+def _socket_state(path: Path, *, expected_uid: int = 10001) -> str:
+    """Classify metadata as the dedicated user; never infer absence on EACCES."""
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        return "unavailable"
+    return (
+        "owned" if stat.S_ISSOCK(metadata.st_mode) and metadata.st_uid == expected_uid else "unsafe"
+    )
+
+
+def inspect_prerequisites() -> None:
+    """Observe only Boca's private runtime; metadata is not a Docker preflight."""
+    uid = _require_dedicated_identity()
+
+    try:
+        runtime_safe = _safe_dir(ROOTLESS_SOCKET.parent)
+    except OSError:
+        runtime_safe = False
+    private = _socket_state(PRIVATE_MANAGER_SOCKET) if runtime_safe else "not_checked"
+    bus = _socket_state(USER_BUS_SOCKET) if runtime_safe else "not_checked"
+    rootless = _socket_state(ROOTLESS_SOCKET) if runtime_safe else "not_checked"
+    rootful = _socket_state(ROOTFUL_SOCKET, expected_uid=0)
+    if rootful == "owned":
+        rootful = "writable" if os.access(ROOTFUL_SOCKET, os.W_OK) else "not_writable"
+    try:
+        available = set(CGROUP_CONTROLLERS.read_text(encoding="ascii").split())
+        controllers = ",".join(sorted({"cpu", "memory", "pids"} & available)) or "none"
+    except OSError:
+        controllers = "unavailable"
+    state = (
+        "METADATA_CANDIDATE"
+        if runtime_safe
+        and private == bus == rootless == "owned"
+        and controllers == "cpu,memory,pids"
+        and rootful in {"absent", "not_writable"}
+        else "PREREQUISITES_UNPROVEN"
+    )
+    print(
+        f"BOCA_HOST_INSPECT state={state} uid={uid}"
+        f" runtime={'owned_private' if runtime_safe else 'unsafe_or_unavailable'}"
+        f" private={private} bus={bus} rootless={rootless}"
+        f" rootful={rootful} controllers={controllers}"
+    )
+    if state != "METADATA_CANDIDATE":
+        raise PreflightError("prerequisite metadata unproven; no Docker operation attempted")
+
+
 def _rootful_socket_inaccessible() -> bool:
     return not os.access(ROOTFUL_SOCKET, os.W_OK)
 
 
-def _require_dedicated_identity() -> None:
+def _require_dedicated_identity() -> int:
+    """Refuse setuid/wrapper privilege changes before probing any host path."""
     uid = os.getuid()
     if uid != 10001 or os.geteuid() != uid or os.getegid() != os.getgid():
         raise PreflightError("expected dedicated Boca identity")
@@ -198,6 +256,7 @@ def _require_dedicated_identity() -> None:
         raise PreflightError("dedicated Boca identity is unavailable") from exc
     if account != "boca-deploy":
         raise PreflightError("expected dedicated boca-deploy account")
+    return uid
 
 
 def _validate_docker_boundary() -> None:
@@ -238,15 +297,66 @@ def _names(kind: str, label: str) -> set[str]:
     return set(_run("docker", kind, "ls", "-q", "--filter", label).splitlines())
 
 
+def _checked_docker_storage_dir() -> Path:
+    """Limit capacity probes to the dedicated user's owned rootless data path."""
+    try:
+        info = json.loads(_run("docker", "info", "--format", "{{json .}}"))
+        if not isinstance(info, dict):
+            raise PreflightError("rootless Docker storage backend is unproven")
+        # The containerd image store can keep layers on another filesystem.
+        # Until its dedicated root is proven, only classic drivers can pass.
+        driver_status = info.get("DriverStatus")
+        if (
+            info.get("Driver") not in {"overlay2", "fuse-overlayfs", "vfs"}
+            or not isinstance(driver_status, list)
+            or any(
+                not isinstance(item, list)
+                or len(item) != 2
+                or not all(isinstance(value, str) for value in item)
+                or item[0] == "driver-type"
+                for item in driver_status
+            )
+        ):
+            raise PreflightError("rootless Docker storage backend is unproven")
+        reported = info.get("DockerRootDir")
+        home = Path(pwd.getpwuid(10001).pw_dir)
+        if not isinstance(reported, str) or len(reported) > 4096:
+            raise PreflightError("rootless Docker storage path is unproven")
+        storage = Path(reported)
+        if (
+            not home.is_absolute()
+            or home == Path("/")
+            or not storage.is_absolute()
+            or ".." in storage.parts
+            or str(storage) != reported
+            or home.resolve(strict=True) != home
+            or not _safe_dir(home)
+        ):
+            raise PreflightError("rootless Docker storage path is unproven")
+        relative = storage.relative_to(home)
+        if not relative.parts:
+            raise PreflightError("rootless Docker storage path is unproven")
+        current = home
+        for part in relative.parts:
+            current /= part
+            metadata = current.lstat()
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != 10001
+                or stat.S_IMODE(metadata.st_mode) & 0o022
+            ):
+                raise PreflightError("rootless Docker storage path is unproven")
+    except PreflightError:
+        raise
+    except (OSError, ValueError, KeyError, AttributeError, TypeError) as exc:
+        raise PreflightError("rootless Docker storage path is unproven") from exc
+    return storage
+
+
 def collect_snapshot() -> HostSnapshot:
     # The deployment identity owns only the rootless Docker endpoint; the key
     # is generated in a separate named volume within the container UID map.
-    try:
-        dedicated = pwd.getpwuid(os.getuid()).pw_name == "boca-deploy"
-    except KeyError:
-        dedicated = False
-    if not dedicated:
-        raise PreflightError("expected dedicated boca-deploy account")
+    uid = _require_dedicated_identity()
     if not _root_ready():
         raise PreflightError("Boca-owned directory is unavailable or unsafe")
     _run("docker", "version", "--format", "{{.Server.Version}}")
@@ -261,7 +371,12 @@ def collect_snapshot() -> HostSnapshot:
     match = re.search(r"^MemAvailable:\s+(\d+) kB$", meminfo, re.MULTILINE)
     if match is None:
         raise PreflightError("MemAvailable is unavailable")
-    disk = os.statvfs(str(ROOT))
+    storage_dir = _checked_docker_storage_dir()
+    try:
+        stage_disk = os.statvfs(ROOT)
+        docker_disk = os.statvfs(storage_dir)
+    except OSError as exc:
+        raise PreflightError("Boca capacity filesystems are unavailable") from exc
     containers = _run(
         "docker", "ps", "-a", "-q", "--filter", "label=com.docker.compose.project=boca-socios"
     ) or _run("docker", "ps", "-a", "-q", "--filter", "name=^/boca-socios-")
@@ -270,10 +385,12 @@ def collect_snapshot() -> HostSnapshot:
     networks = _names("network", "name=^boca-socios_")
     return HostSnapshot(
         arch=platform.machine(),
-        uid=os.getuid(),
+        uid=uid,
         available_memory_kib=int(match.group(1)),
-        available_disk_bytes=disk.f_bavail * disk.f_frsize,
-        available_inodes=disk.f_favail,
+        available_disk_bytes=stage_disk.f_bavail * stage_disk.f_frsize,
+        available_inodes=stage_disk.f_favail,
+        docker_disk_bytes=docker_disk.f_bavail * docker_disk.f_frsize,
+        docker_inodes=docker_disk.f_favail,
         root_ready=True,
         boca_containers=bool(containers),
         boca_volume=bool(volumes),
@@ -399,11 +516,13 @@ def _create_key(image: str) -> None:
         raise PreflightError("Boca key is not readable by the controller identity")
 
 
-def _validate_coordinates(image: str, source_sha: str, compose_sha: str) -> None:
+def _validate_coordinates(
+    image: str, source_sha: str, compose_sha: str, *, read_only_preflight: bool = False
+) -> None:
     if (
-        not IMAGE_PATTERN.fullmatch(image)
-        or not SHA_PATTERN.fullmatch(source_sha)
+        not SHA_PATTERN.fullmatch(source_sha)
         or not DIGEST_PATTERN.fullmatch(compose_sha)
+        or (image != "" if read_only_preflight else not IMAGE_PATTERN.fullmatch(image))
     ):
         raise PreflightError("invalid immutable deployment coordinates")
 
@@ -535,7 +654,15 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
 
 
 def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> None:
-    _validate_coordinates(image, source_sha, compose_sha)
+    _validate_coordinates(
+        image,
+        source_sha,
+        compose_sha,
+        read_only_preflight=phase_name in {"observe", "inspect-prerequisites"},
+    )
+    if phase_name == "inspect-prerequisites":
+        inspect_prerequisites()
+        return
     _validate_docker_boundary()
     if phase_name in {"diagnostic-config", "diagnostic"}:
         _diagnostic_files(compose_sha)
@@ -550,14 +677,17 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
         )
         return
     validate_snapshot(host_snapshot := collect_snapshot())
-    if phase_name == "preflight":
+    if phase_name in {"observe", "preflight"}:
         if COMPOSE.exists() or COMPOSE.is_symlink():
             raise PreflightError("Boca Compose already staged")
         print(
             "BOCA_PREFLIGHT_PASS"
             f" arch={host_snapshot.arch} uid={host_snapshot.uid}"
             f" mem_kib={host_snapshot.available_memory_kib}"
-            f" disk_bytes={host_snapshot.available_disk_bytes} inodes={host_snapshot.available_inodes}"
+            f" stage_disk_bytes={host_snapshot.available_disk_bytes}"
+            f" stage_inodes={host_snapshot.available_inodes}"
+            f" docker_disk_bytes={host_snapshot.docker_disk_bytes}"
+            f" docker_inodes={host_snapshot.docker_inodes}"
             f" cpu_headroom={host_snapshot.cpu_headroom:.2f}"
             " namespace=empty"
         )
@@ -628,7 +758,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Boca-only first-install host gate")
     parser.add_argument(
         "phase",
-        choices=("preflight", "stage", "config", "apply", "diagnostic-config", "diagnostic"),
+        choices=(
+            "inspect-prerequisites",
+            "observe",
+            "preflight",
+            "stage",
+            "config",
+            "apply",
+            "diagnostic-config",
+            "diagnostic",
+        ),
     )
     parser.add_argument("image")
     parser.add_argument("source_sha")

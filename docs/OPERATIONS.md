@@ -43,20 +43,39 @@ smoke passes. See [ADR 0033](ADR/0033-rootless-daemon-boundary.md) and
 [ADR 0034](ADR/0034-rootless-key-custody.md).
 
 The workflow first validates dispatch inputs and the successful manual image
-release run for the same current `main` SHA. It validates the resolved Compose
-contract on the runner, reads aggregate host capacity and Boca-only resource
-names, stages and hashes one Compose file, then validates the host-resolved
-model before pulling the exact digest. It then creates an owner-only key once
-inside a separate rootless volume and starts the simulation-only controller.
+release run for the same current `main` SHA. It downloads that run's immutable
+manifest and requires the selected image digest, SHA and run ID to match
+before opening SSH; an absent or expired artifact or any rerun attempt blocks
+installation. See [ADR 0036](ADR/0036-release-digest-binding.md). It validates
+the resolved Compose contract on the runner, reads aggregate host capacity
+and Boca-only resource names, stages and hashes one Compose file, then
+validates the host-resolved model before pulling the exact digest. It then
+creates an owner-only key once inside a separate rootless volume and starts
+the simulation-only controller.
 Before reporting success, the helper reuses the read-only diagnostic contract
 to check the actual container, image, dormant engine, resource limits, both
 mounts and key metadata. Startup or postflight failure stops only the Boca
 controller and preserves the key and both volumes for separate diagnosis. An
 existing Boca key, container, volume, network or staged file blocks a fresh
 installation; this flow is not recovery or upgrade. The CPU snapshot is an
-estimate; #91 adds measurement of staging and rootless image storage. #89,
-#91 and #97 remain pending gates. An external source failure is reported by
-Actions as an alert, not a deploy blocker for the simulation-only controller.
+estimate; this gate now measures staging and rootless image storage separately,
+while #106 still needs post-pull capacity proof. #99 remains pending. An
+external source failure is reported by Actions as an alert, not a deploy
+blocker for the simulation-only controller.
+
+After a failed first-install, the same Actions job attempts selective cleanup
+only if the read-only preflight, current-main recheck and staging marker passed.
+It removes an exact unreferenced image without force if no container uses it,
+even when key/data volumes remain. It removes the matching staged Compose file
+only when no Boca container, volume or network exists; otherwise it retains
+that file and all volumes/networks and reports `PARTIAL` or `RETAINED`. The
+bounded receipt records staging and rootless Docker data free space/inodes
+before and after, plus whether they share a filesystem. Virtual image size
+and observed free-space changes are not proof of causal reclamation. Unknown
+storage backends or paths stop before deletion. A failed or unverified cleanup
+reports `NO_GO INDETERMINADO`: a partial deletion may have occurred, and a
+Boca-only inventory is required before any retry. The original install
+failure remains failed. See [ADR 0039](ADR/0039-boca-failed-install-cleanup.md).
 
 ## Read-only diagnostic under demand (issue #68)
 
@@ -72,8 +91,43 @@ The run summary contains only bounded status and immutable coordinates. A
 mismatch is NO-GO and requires diagnosis; it is not a reason to retry the
 first install or alter another workload. The helper checks real/effective
 UID/GID before private metadata and pins rootless Docker transport. It must
-remain uninvoked until #91 hardens the whole workflow's identity and main
-checks. No host diagnostic has run yet.
+remain uninvoked until the environment, identity and host prerequisites are
+verified under the objective gates. No host diagnostic has run yet.
+
+## Proposed read-only host preflight (issue #84)
+
+Before an image release or first install, the same protected manual workflow
+can check the Boca rootless socket, cgroup delegation, dedicated identity,
+empty Boca namespace and aggregate capacity with `operation=preflight`. Its
+image and release-run fields must be blank. This operation has no stage,
+pull, key, volume, container or site effect and is unavailable on PRs. It
+requires the protected environment and pinned SSH identity; no host operation
+has been dispatched. See [ADR 0035](ADR/0035-readonly-host-preflight.md).
+
+## Proposed prerequisite inspection after false-negative socket checks (issue #90)
+
+The same manual workflow adds `operation=inspect-prerequisites`, with blank
+image and release-run fields. It checks socket and cgroup **metadata as UID
+10001**, differentiating `absent` from `unavailable`, without running Docker
+or altering the host. A failed job reports unproven prerequisites; a metadata
+candidate is not proof that a Docker daemon is rootless or healthy. The
+existing `preflight` remains mandatory before any release/install decision.
+The environment must first be verified and marked ready as an **environment**
+(pinned identity and main-only branch rule), independently
+of the daemon's readiness. See [ADR 0037](ADR/0037-host-prerequisite-inspection.md).
+
+The manual host workflow rejects reruns and verifies the current `main` ref
+through the GitHub API before SSH. First installation repeats that check
+before staging Compose and again immediately before applying the reviewed
+image; the host helper refuses a real/effective UID or GID mismatch before
+private-path or Docker checks. A queued
+run whose source SHA is no longer current fails closed. These controls do
+not prove the SSH account has no other privileged route on the host.
+The read-only capacity gate checks free bytes and inodes separately on the
+Boca staging directory and the dedicated rootless daemon's verified
+`DockerRootDir` beneath the private Boca home. Unknown storage location,
+ownership or available capacity is NO-GO; a healthy staging filesystem alone
+cannot establish that image storage has headroom.
 
 ## Proposed isolated deployment layout
 
@@ -108,7 +162,7 @@ checks. No host diagnostic has run yet.
    stop an existing workload or enumerate unrelated services destructively.
 8. On failure: inventory the Boca attempt through the same Actions workflow,
    stop Boca only, then remove positively identified unused disposable Boca
-   image/container/network/staging remnants with before/after measurements.
+   image/staging remnants with before/after measurements.
    Retain key/data volumes and uncertain resources. No destructive Docker
    prune, blanket compose down, or volume deletion.
 9. Diagnose any external-source failure via bounded read-only Actions before
