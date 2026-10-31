@@ -50,18 +50,24 @@ installation. See [ADR 0036](ADR/0036-release-digest-binding.md). It validates
 the resolved Compose contract on the runner, reads aggregate host capacity
 and Boca-only resource names, stages and hashes one Compose file, then
 validates the host-resolved model before pulling the exact digest. It then
-creates an owner-only key once inside a separate rootless volume and starts
-the simulation-only controller.
+rechecks the Compose hash, rootless Docker backend/path/device and free
+bytes/inodes on staging and Docker storage **after the pull**, before creating
+an owner-only key once inside a separate rootless volume and starting the
+simulation-only controller.
 Before reporting success, the helper reuses the read-only diagnostic contract
 to check the actual container, image, dormant engine, resource limits, both
-mounts and key metadata. Startup or postflight failure stops only the Boca
-controller and preserves the key and both volumes for separate diagnosis. An
+mounts, network, capabilities, tmpfs, effective cgroup v2 limits and key
+metadata. It measures both capacities again before the PASS receipt. Startup
+or postflight failure attempts to stop only the Boca controller and preserves
+the key and both volumes for separate diagnosis. A failed stop leaves the
+controller state unverified: `BOCA_ROLLBACK_UNVERIFIED`, NO-GO and Boca-only
+inventory before retry. An
 existing Boca key, container, volume, network or staged file blocks a fresh
-installation; this flow is not recovery or upgrade. The CPU snapshot is an
-estimate; this gate now measures staging and rootless image storage separately,
-while #106 still needs post-pull capacity proof. #99 remains pending. An
-external source failure is reported by Actions as an alert, not a deploy
-blocker for the simulation-only controller.
+installation; this flow is not recovery or upgrade. The CPU snapshot remains
+an estimate and capacity cannot be reserved against another actor. See
+[ADR 0042](ADR/0042-effective-runtime-and-post-pull-capacity.md). An external
+source failure is reported by Actions as an alert, not a deploy blocker for
+the simulation-only controller.
 
 After a failed first-install, the same Actions job attempts selective cleanup
 only if the read-only preflight, current-main recheck and staging marker passed.
@@ -84,9 +90,11 @@ controller already installed from the exact current `main` SHA. Under the
 owner's standing direction, its recorded gates and environment restrictions
 must match the exact operation, SHA, digest, service and budget. It checks
 only Boca Compose, key **metadata**, immutable image identity, resource
-limits, both mounts, health and `BOCA_ENGINE_MODE=off`. A fixed in-container
-probe checks key metadata without printing bytes. It never reads the key
-value or database rows, starts the motor, visits the site or changes a container.
+limits, effective cgroup values, one Boca-only network, security flags,
+tmpfs, both mounts, health and `BOCA_ENGINE_MODE=off`. Fixed in-container
+probes check key metadata and cgroup files without printing key bytes. It
+never reads the key value or database rows, starts the motor, visits the site
+or changes a container.
 The run summary contains only bounded status and immutable coordinates. A
 mismatch is NO-GO and requires diagnosis; it is not a reason to retry the
 first install or alter another workload. The helper checks real/effective

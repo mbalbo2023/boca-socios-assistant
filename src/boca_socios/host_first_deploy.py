@@ -56,6 +56,23 @@ class HostSnapshot:
 
 
 @dataclass(frozen=True)
+class StorageSnapshot:
+    docker_root: Path
+    driver: str
+    driver_status: tuple[tuple[str, str], ...]
+    stage_device: int
+    docker_device: int
+    stage_inode: int
+    docker_inode: int
+    socket_device: int
+    socket_inode: int
+    stage_free_bytes: int
+    stage_inodes: int
+    docker_free_bytes: int
+    docker_inodes: int
+
+
+@dataclass(frozen=True)
 class DockerBoundarySnapshot:
     socket_secure: bool
     rootful_socket_inaccessible: bool
@@ -63,6 +80,14 @@ class DockerBoundarySnapshot:
     cgroup_version: str
     cgroup_driver: str
     controllers: frozenset[str]
+
+
+@dataclass(frozen=True)
+class CgroupLimits:
+    cpu_quota: int
+    cpu_period: int
+    memory_bytes: int
+    pids_limit: int
 
 
 @dataclass(frozen=True)
@@ -85,6 +110,16 @@ class DiagnosticSnapshot:
     read_only: bool
     privileged: bool
     has_ports: bool
+    network_mode: str
+    networks: frozenset[str]
+    network_id: str
+    network_ports: bool
+    cap_drop: tuple[str, ...]
+    cap_add: tuple[str, ...]
+    security_opt: tuple[str, ...]
+    tmpfs: tuple[tuple[str, str], ...]
+    cgroupns_mode: str
+    cgroup: CgroupLimits
 
 
 def validate_diagnostic(snapshot: DiagnosticSnapshot, image: str, source_sha: str) -> None:
@@ -111,9 +146,43 @@ def validate_diagnostic(snapshot: DiagnosticSnapshot, image: str, source_sha: st
         (snapshot.read_only, True, "read-only root"),
         (snapshot.privileged, False, "privileged"),
         (snapshot.has_ports, False, "published ports"),
+        (snapshot.network_mode, "boca-socios_boca_private", "network mode"),
+        (snapshot.networks, frozenset({"boca-socios_boca_private"}), "networks"),
+        (snapshot.network_ports, False, "network ports"),
+        (snapshot.cap_drop, ("ALL",), "dropped capabilities"),
+        (snapshot.cap_add, (), "added capabilities"),
+        (snapshot.security_opt, ("no-new-privileges:true",), "security options"),
+        (snapshot.tmpfs, (("/tmp", "rw,noexec,nosuid,size=16m"),), "tmpfs"),  # noqa: S108 - container tmpfs
     ):
         if type(bounded_actual) is not type(bounded_expected) or bounded_actual != bounded_expected:
             raise PreflightError(f"Boca diagnostic {bounded_field} mismatch")
+    if type(snapshot.network_id) is not str or not re.fullmatch(
+        r"[0-9a-f]{64}", snapshot.network_id
+    ):
+        raise PreflightError("Boca network identity is unavailable")
+    if type(snapshot.cgroupns_mode) is not str or snapshot.cgroupns_mode not in {
+        "private",
+        "",
+    }:
+        raise PreflightError("Boca private cgroup namespace is unproven")
+    limits = snapshot.cgroup
+    if (
+        not isinstance(limits, CgroupLimits)
+        or any(
+            type(value) is not int
+            for value in (
+                limits.cpu_quota,
+                limits.cpu_period,
+                limits.memory_bytes,
+                limits.pids_limit,
+            )
+        )
+        or not (0 < limits.cpu_period <= 1_000_000)
+        or limits.cpu_quota * 2 != limits.cpu_period
+        or limits.memory_bytes != 268_435_456
+        or limits.pids_limit != 64
+    ):
+        raise PreflightError("Boca effective cgroup limits are unproven")
 
 
 def validate_snapshot(snapshot: HostSnapshot) -> None:
@@ -297,12 +366,20 @@ def _names(kind: str, label: str) -> set[str]:
     return set(_run("docker", kind, "ls", "-q", "--filter", label).splitlines())
 
 
-def _checked_docker_storage_dir() -> Path:
-    """Limit capacity probes to the dedicated user's owned rootless data path."""
+def _checked_docker_storage_identity() -> tuple[Path, str, tuple[tuple[str, str], ...]]:
+    """Prove backend and data path before measuring the private Docker store."""
     try:
         info = json.loads(_run("docker", "info", "--format", "{{json .}}"))
         if not isinstance(info, dict):
             raise PreflightError("rootless Docker storage backend is unproven")
+        options = info.get("SecurityOptions")
+        if (
+            not isinstance(options, list)
+            or "name=rootless" not in options
+            or str(info.get("CgroupVersion")) != "2"
+            or info.get("CgroupDriver") != "systemd"
+        ):
+            raise PreflightError("rootless Docker boundary changed during storage check")
         # The containerd image store can keep layers on another filesystem.
         # Until its dedicated root is proven, only classic drivers can pass.
         driver_status = info.get("DriverStatus")
@@ -348,9 +425,71 @@ def _checked_docker_storage_dir() -> Path:
                 raise PreflightError("rootless Docker storage path is unproven")
     except PreflightError:
         raise
-    except (OSError, ValueError, KeyError, AttributeError, TypeError) as exc:
+    except (OSError, ValueError, KeyError, AttributeError, TypeError, RuntimeError) as exc:
         raise PreflightError("rootless Docker storage path is unproven") from exc
-    return storage
+    return storage, info["Driver"], tuple(sorted((item[0], item[1]) for item in driver_status))
+
+
+def _checked_docker_storage_dir() -> Path:
+    """Compatibility wrapper for the read-only preflight capacity snapshot."""
+    return _checked_docker_storage_identity()[0]
+
+
+def _storage_snapshot() -> StorageSnapshot:
+    """Observe both filesystems through the same validated rootless store."""
+    _validate_docker_boundary()
+    if not _safe_dir(ROOT):
+        raise PreflightError("Boca staging directory changed during installation")
+    docker_root, driver, driver_status = _checked_docker_storage_identity()
+    try:
+        stage_metadata = ROOT.stat()
+        docker_metadata = docker_root.stat()
+        socket_metadata = ROOTLESS_SOCKET.lstat()
+        if not stat.S_ISSOCK(socket_metadata.st_mode) or socket_metadata.st_uid != 10001:
+            raise PreflightError("Boca rootless Docker socket changed")
+        stage = os.statvfs(ROOT)
+        docker = os.statvfs(docker_root)
+    except OSError as exc:
+        raise PreflightError("Boca staging or rootless Docker capacity is unavailable") from exc
+    return StorageSnapshot(
+        docker_root=docker_root,
+        driver=driver,
+        driver_status=driver_status,
+        stage_device=stage_metadata.st_dev,
+        docker_device=docker_metadata.st_dev,
+        stage_inode=stage_metadata.st_ino,
+        docker_inode=docker_metadata.st_ino,
+        socket_device=socket_metadata.st_dev,
+        socket_inode=socket_metadata.st_ino,
+        stage_free_bytes=stage.f_bavail * stage.f_frsize,
+        stage_inodes=stage.f_favail,
+        docker_free_bytes=docker.f_bavail * docker.f_frsize,
+        docker_inodes=docker.f_favail,
+    )
+
+
+def _validate_storage_capacity(snapshot: StorageSnapshot) -> None:
+    if (
+        min(snapshot.stage_free_bytes, snapshot.docker_free_bytes) < 4 * 1024**3
+        or min(snapshot.stage_inodes, snapshot.docker_inodes) < 50_000
+    ):
+        raise PreflightError("insufficient Boca staging or rootless Docker storage")
+
+
+def _validate_storage_continuity(before: StorageSnapshot, after: StorageSnapshot) -> None:
+    if (
+        before.docker_root != after.docker_root
+        or before.driver != after.driver
+        or before.driver_status != after.driver_status
+        or before.stage_device != after.stage_device
+        or before.docker_device != after.docker_device
+        or before.stage_inode != after.stage_inode
+        or before.docker_inode != after.docker_inode
+        or before.socket_device != after.socket_device
+        or before.socket_inode != after.socket_inode
+    ):
+        raise PreflightError("Boca rootless Docker storage topology changed")
+    _validate_storage_capacity(after)
 
 
 def collect_snapshot() -> HostSnapshot:
@@ -544,6 +683,64 @@ def _json_object(value: str, field: str) -> dict[str, object]:
     return data
 
 
+def _string_tuple(value: object, field: str, *, nullable: bool = False) -> tuple[str, ...]:
+    if nullable and value is None:
+        return ()
+    if not isinstance(value, list) or any(type(item) is not str for item in value):
+        raise PreflightError(f"invalid Boca {field} metadata")
+    return tuple(value)
+
+
+def _cgroup_limits(container: str) -> CgroupLimits:
+    raw = _run(
+        "docker",
+        "exec",
+        "--user",
+        "10001:10001",
+        container,
+        "python",
+        "-m",
+        "boca_socios.runtime_probe",
+    )
+    if len(raw) > 256:
+        raise PreflightError("Boca cgroup receipt exceeds bounded output")
+    receipt = _json_object(raw, "cgroup")
+    if set(receipt) != {"cpu_quota", "cpu_period", "memory_bytes", "pids_limit"} or any(
+        type(value) is not int for value in receipt.values()
+    ):
+        raise PreflightError("invalid Boca cgroup receipt")
+    return CgroupLimits(
+        cpu_quota=receipt["cpu_quota"],  # type: ignore[arg-type]
+        cpu_period=receipt["cpu_period"],  # type: ignore[arg-type]
+        memory_bytes=receipt["memory_bytes"],  # type: ignore[arg-type]
+        pids_limit=receipt["pids_limit"],  # type: ignore[arg-type]
+    )
+
+
+def _validate_boca_network(container: str, network_id: str) -> None:
+    """Inspect only the attached network by its exact ID; reject foreign peers."""
+    raw = _run("docker", "network", "inspect", "--format", "{{json .}}", network_id)
+    if len(raw) > 16_384:
+        raise PreflightError("Boca network metadata exceeds bounded output")
+    network = _json_object(raw, "network")
+    labels, containers = network.get("Labels"), network.get("Containers")
+    if (
+        network.get("Id") != network_id
+        or network.get("Name") != "boca-socios_boca_private"
+        or network.get("Driver") != "bridge"
+        or network.get("Scope") != "local"
+        or network.get("Internal") is not False
+        or network.get("Attachable") is not False
+        or network.get("Ingress") is not False
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.network") != "boca_private"
+        or not isinstance(containers, dict)
+        or set(containers) != {container}
+    ):
+        raise PreflightError("Boca private network identity or peers changed")
+
+
 def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
     container = _run(*_compose_args("ps", "-q", "controller"), env=_compose_env(image))
     if not re.fullmatch(r"[0-9a-f]{64}", container):
@@ -555,11 +752,34 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
         _run("docker", "inspect", "--format", "{{json .HostConfig}}", container),
         "container host config",
     )
+    network = _json_object(
+        _run("docker", "inspect", "--format", "{{json .NetworkSettings}}", container),
+        "container network settings",
+    )
+    networks = network.get("Networks")
+    expected_network = "boca-socios_boca_private"
+    if not isinstance(networks, dict) or set(networks) != {expected_network}:
+        raise PreflightError("Boca controller network boundary changed")
+    endpoint = networks[expected_network]
+    if not isinstance(endpoint, dict) or type(endpoint.get("NetworkID")) is not str:
+        raise PreflightError("Boca controller network identity is unavailable")
+    network_id = endpoint["NetworkID"]
+    network_ports = network.get("Ports")
+    if not isinstance(network_ports, dict):
+        raise PreflightError("missing or malformed Boca network ports")
     port_bindings = host.get("PortBindings")
     if not isinstance(port_bindings, dict):
         raise PreflightError("missing or malformed Boca port bindings")
     if host.get("PublishAllPorts") is not False:
         raise PreflightError("Boca automatic port publishing is not disabled")
+    tmpfs = host.get("Tmpfs")
+    if not isinstance(tmpfs, dict) or any(
+        type(key) is not str or type(value) is not str for key, value in tmpfs.items()
+    ):
+        raise PreflightError("invalid Boca tmpfs metadata")
+    cgroupns_mode = host.get("CgroupnsMode")
+    if type(cgroupns_mode) is not str:
+        raise PreflightError("missing Boca cgroup namespace metadata")
     mounts = json.loads(_run("docker", "inspect", "--format", "{{json .Mounts}}", container))
     if not isinstance(mounts, list) or len(mounts) != 2:
         raise PreflightError("unexpected Boca controller mounts")
@@ -585,6 +805,7 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
         actual_mounts.add((name, destination, writable))
     if actual_mounts != expected_mounts:
         raise PreflightError("Boca controller volume boundary changed")
+    _validate_boca_network(container, network_id)
     labels = config.get("Labels")
     entries = config.get("Env")
     if not isinstance(labels, dict) or not isinstance(entries, list):
@@ -648,6 +869,16 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
         read_only=host.get("ReadonlyRootfs"),  # type: ignore[arg-type]
         privileged=host.get("Privileged"),  # type: ignore[arg-type]
         has_ports=bool(port_bindings),
+        network_mode=host.get("NetworkMode"),  # type: ignore[arg-type]
+        networks=frozenset(networks),
+        network_id=network_id,
+        network_ports=bool(network_ports),
+        cap_drop=_string_tuple(host.get("CapDrop"), "CapDrop"),
+        cap_add=_string_tuple(host.get("CapAdd"), "CapAdd", nullable=True),
+        security_opt=_string_tuple(host.get("SecurityOpt"), "SecurityOpt"),
+        tmpfs=tuple(sorted(tmpfs.items())),
+        cgroupns_mode=cgroupns_mode,
+        cgroup=_cgroup_limits(container),
     )
     validate_diagnostic(snapshot, image, source_sha)
     return snapshot
@@ -704,6 +935,8 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
     if phase_name != "apply":
         raise PreflightError("unknown deployment phase")
     _run(*_compose_args("config", "-q"), env=_compose_env(image))
+    before_pull = _storage_snapshot()
+    _validate_storage_capacity(before_pull)
     _run("docker", "pull", image)
     repo_digests = json.loads(
         _run("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image)
@@ -718,6 +951,9 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
     )
     if not isinstance(repo_digests, list) or image not in repo_digests or revision != source_sha:
         raise PreflightError("pulled image digest or source revision differs from authorization")
+    _verify_compose(compose_sha)
+    after_pull = _storage_snapshot()
+    _validate_storage_continuity(before_pull, after_pull)
     _create_key(image)
     try:
         _run(
@@ -745,13 +981,25 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
         # hold before the first install can claim success.
         _diagnostic_files(compose_sha)
         collect_diagnostic(image, source_sha)
+        final_capacity = _storage_snapshot()
+        _validate_storage_continuity(after_pull, final_capacity)
     except (ValueError, OSError, TypeError, KeyError):
         try:
             _run(*_compose_args("stop", "controller"), env=_compose_env(image))
         except PreflightError:
-            pass
+            print(
+                "BOCA_ROLLBACK_UNVERIFIED: controller stop failed; inventory Boca before retry",
+                file=sys.stderr,
+            )
         raise
-    print(f"BOCA_DEPLOY_PASS image={image} source_sha={source_sha} service=controller")
+    print(
+        f"BOCA_DEPLOY_PASS image={image} source_sha={source_sha} service=controller"
+        f" stage_free_bytes={final_capacity.stage_free_bytes}"
+        f" stage_inodes={final_capacity.stage_inodes}"
+        f" docker_free_bytes={final_capacity.docker_free_bytes}"
+        f" docker_inodes={final_capacity.docker_inodes}"
+        f" same_fs={'yes' if final_capacity.stage_device == final_capacity.docker_device else 'no'}"
+    )
 
 
 def main() -> int:

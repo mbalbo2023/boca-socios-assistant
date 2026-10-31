@@ -1,5 +1,7 @@
 """Host preflight and failure boundary are testable without Docker or SSH."""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import os
@@ -31,7 +33,41 @@ GOOD_HOST_CONFIG = {
     "Privileged": False,
     "PortBindings": {},
     "PublishAllPorts": False,
+    "NetworkMode": "boca-socios_boca_private",
+    "CapDrop": ["ALL"],
+    "CapAdd": None,
+    "SecurityOpt": ["no-new-privileges:true"],
+    "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=16m"},  # noqa: S108 - container tmpfs
+    "CgroupnsMode": "private",
 }
+
+GOOD_NETWORK_SETTINGS = {
+    "Networks": {"boca-socios_boca_private": {"NetworkID": "d" * 64}},
+    "Ports": {},
+}
+GOOD_NETWORK_INSPECT = {
+    "Id": "d" * 64,
+    "Name": "boca-socios_boca_private",
+    "Driver": "bridge",
+    "Scope": "local",
+    "Internal": False,
+    "Attachable": False,
+    "Ingress": False,
+    "Labels": {
+        "com.docker.compose.project": "boca-socios",
+        "com.docker.compose.network": "boca_private",
+    },
+    "Containers": {"c" * 64: {}},
+}
+ROOTLESS_INFO = {
+    "SecurityOptions": ["name=rootless"],
+    "CgroupVersion": "2",
+    "CgroupDriver": "systemd",
+}
+
+GOOD_CGROUP_RECEIPT = (
+    '{"cpu_quota":50000,"cpu_period":100000,"memory_bytes":268435456,"pids_limit":64}'
+)
 
 
 def safe_boundary() -> DockerBoundarySnapshot:
@@ -512,7 +548,12 @@ def test_docker_storage_path_must_be_boca_owned_under_private_home(
         host,
         "_run",
         lambda *args: json.dumps(
-            {"DockerRootDir": str(target), "Driver": "overlay2", "DriverStatus": []}
+            {
+                **ROOTLESS_INFO,
+                "DockerRootDir": str(target),
+                "Driver": "overlay2",
+                "DriverStatus": [],
+            }
         ),
     )
     original_lstat = Path.lstat
@@ -545,7 +586,12 @@ def test_owned_rootless_docker_storage_path_is_accepted_without_listing_other_pa
         host,
         "_run",
         lambda *args: json.dumps(
-            {"DockerRootDir": str(storage), "Driver": "overlay2", "DriverStatus": []}
+            {
+                **ROOTLESS_INFO,
+                "DockerRootDir": str(storage),
+                "Driver": "overlay2",
+                "DriverStatus": [],
+            }
         ),
     )
     original_lstat = Path.lstat
@@ -577,11 +623,45 @@ def test_containerd_or_unknown_storage_backend_is_no_go_before_path_probe(
     monkeypatch.setattr(
         host,
         "_run",
-        lambda *args: json.dumps({"DockerRootDir": str(tmp_path), **backend}),
+        lambda *args: json.dumps({**ROOTLESS_INFO, "DockerRootDir": str(tmp_path), **backend}),
     )
     monkeypatch.setattr(host.pwd, "getpwuid", lambda _uid: pytest.fail("probed home"))
     with pytest.raises(PreflightError, match="storage backend"):
         host._checked_docker_storage_dir()
+
+
+def test_changed_rootless_daemon_metadata_blocks_storage_before_path_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        host,
+        "_run",
+        lambda *args: json.dumps(
+            {
+                **ROOTLESS_INFO,
+                "SecurityOptions": [],
+                "DockerRootDir": str(tmp_path),
+                "Driver": "overlay2",
+                "DriverStatus": [],
+            }
+        ),
+    )
+    monkeypatch.setattr(host.pwd, "getpwuid", lambda _uid: pytest.fail("probed home"))
+    with pytest.raises(PreflightError, match="boundary changed"):
+        host._checked_docker_storage_identity()
+
+
+def test_storage_snapshot_rechecks_daemon_before_private_staging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        host,
+        "_validate_docker_boundary",
+        lambda: (_ for _ in ()).throw(PreflightError("rootless daemon changed")),
+    )
+    monkeypatch.setattr(host, "_safe_dir", lambda _root: pytest.fail("private staging probed"))
+    with pytest.raises(PreflightError, match="rootless daemon changed"):
+        host._storage_snapshot()
 
 
 def test_snapshot_measures_staging_and_rootless_docker_filesystems_separately(
@@ -631,6 +711,7 @@ def _staged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     monkeypatch.setattr(host, "ROOT", root)
     monkeypatch.setattr(host, "COMPOSE", compose)
     monkeypatch.setattr(host, "collect_snapshot", safe_snapshot)
+    monkeypatch.setattr(host, "_storage_snapshot", safe_storage)
     monkeypatch.setattr(host, "_validate_docker_boundary", lambda: None)
     # The test may run with a different UID; all other staging checks remain real.
     monkeypatch.setattr(host, "_safe_dir", lambda _path: True)
@@ -642,6 +723,24 @@ def _staged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
 
     monkeypatch.setattr(host, "_verify_compose", verify_compose)
     return digest
+
+
+def safe_storage() -> host.StorageSnapshot:
+    return host.StorageSnapshot(
+        docker_root=Path("/home/boca-deploy/.local/share/docker"),
+        driver="overlay2",
+        driver_status=(),
+        stage_device=11,
+        docker_device=12,
+        stage_inode=111,
+        docker_inode=222,
+        socket_device=13,
+        socket_inode=333,
+        stage_free_bytes=8 * 1024**3,
+        stage_inodes=100_000,
+        docker_free_bytes=8 * 1024**3,
+        docker_inodes=100_000,
+    )
 
 
 def _docker_root(tmp_path: Path) -> Path:
@@ -688,6 +787,124 @@ def test_bad_image_revision_fails_before_creating_key(
         host.phase("apply", IMAGE, SOURCE_SHA, digest)
     assert not any(command[:3] == ("docker", "volume", "create") for command in commands)
     assert not any("up" in command for command in commands)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("stage_free_bytes", 3 * 1024**3),
+        ("docker_free_bytes", 3 * 1024**3),
+        ("stage_inodes", 49_999),
+        ("docker_inodes", 49_999),
+        ("docker_root", Path("/home/boca-deploy/other-store")),
+        ("driver", "vfs"),
+        ("driver_status", (("Backing Filesystem", "other"),)),
+        ("stage_device", 99),
+        ("docker_device", 99),
+        ("stage_inode", 999),
+        ("docker_inode", 999),
+        ("socket_device", 99),
+        ("socket_inode", 999),
+    ],
+)
+def test_post_pull_capacity_or_store_drift_blocks_key_and_compose(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    capacities = iter((safe_storage(), replace(safe_storage(), **{field: value})))
+    monkeypatch.setattr(host, "_storage_snapshot", lambda: next(capacities))
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str, env: dict[str, str] | None = None) -> str:
+        commands.append(args)
+        if args[:3] == ("docker", "image", "inspect"):
+            return json.dumps([IMAGE]) if "RepoDigests" in args[4] else SOURCE_SHA
+        return ""
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    monkeypatch.setattr(host, "_create_key", lambda _image: pytest.fail("key created"))
+    with pytest.raises(PreflightError, match="storage|capacity"):
+        host.phase("apply", IMAGE, SOURCE_SHA, digest)
+    assert ("docker", "pull", IMAGE) in commands
+    assert not any("up" in command for command in commands)
+    assert not any("stop" in command for command in commands)
+
+
+def test_post_pull_capacity_measurement_failure_blocks_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    attempts = 0
+
+    def capacity() -> host.StorageSnapshot:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 2:
+            raise PreflightError("Docker capacity unavailable")
+        return safe_storage()
+
+    monkeypatch.setattr(host, "_storage_snapshot", capacity)
+    monkeypatch.setattr(
+        host,
+        "_run",
+        lambda *args, **kwargs: (
+            json.dumps([IMAGE])
+            if args[:3] == ("docker", "image", "inspect") and "RepoDigests" in args[4]
+            else SOURCE_SHA
+            if args[:3] == ("docker", "image", "inspect")
+            else ""
+        ),
+    )
+    monkeypatch.setattr(host, "_create_key", lambda _image: pytest.fail("key created"))
+    with pytest.raises(PreflightError, match="capacity unavailable"):
+        host.phase("apply", IMAGE, SOURCE_SHA, digest)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("docker_inodes", 49_999),
+        ("docker_device", 99),
+        ("docker_inode", 999),
+        ("socket_inode", 999),
+        ("driver", "vfs"),
+    ],
+)
+def test_final_capacity_or_topology_drift_stops_only_boca_after_postflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    field: str,
+    value: object,
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    capacities = iter((safe_storage(), safe_storage(), replace(safe_storage(), **{field: value})))
+    monkeypatch.setattr(host, "_storage_snapshot", lambda: next(capacities))
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str, env: dict[str, str] | None = None) -> str:
+        commands.append(args)
+        if args[:3] == ("docker", "image", "inspect"):
+            return json.dumps([IMAGE]) if "RepoDigests" in args[4] else SOURCE_SHA
+        if "ps" in args:
+            return "c" * 64
+        if args[:2] == ("docker", "inspect"):
+            return "healthy"
+        return ""
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    monkeypatch.setattr(host, "_create_key", lambda _image: commands.append(("key", "created")))
+    monkeypatch.setattr(host, "_diagnostic_files", lambda _sha: None)
+    monkeypatch.setattr(host, "collect_diagnostic", lambda _image, _sha: healthy_diagnostic())
+    with pytest.raises(PreflightError, match="storage"):
+        host.phase("apply", IMAGE, SOURCE_SHA, digest)
+    assert ("key", "created") in commands
+    assert [cmd[-2:] for cmd in commands if "stop" in cmd] == [("stop", "controller")]
+    assert not any("down" in cmd or "prune" in cmd for cmd in commands)
+    assert "BOCA_DEPLOY_PASS" not in capsys.readouterr().out
 
 
 def test_key_volume_is_created_once_and_verified_without_host_secret(
@@ -954,6 +1171,43 @@ def test_postflight_failure_stops_only_controller_and_preserves_key(
     assert not any(command[:3] == ("docker", "volume", "rm") for command in commands)
 
 
+def test_failed_controller_stop_reports_uncertain_rollback_without_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str, env: dict[str, str] | None = None) -> str:
+        commands.append(args)
+        if args[:3] == ("docker", "image", "inspect"):
+            return json.dumps([IMAGE]) if "RepoDigests" in args[4] else SOURCE_SHA
+        if "ps" in args:
+            return "c" * 64
+        if args[:2] == ("docker", "inspect"):
+            return "healthy"
+        if "stop" in args:
+            raise PreflightError("simulated stop failure")
+        return ""
+
+    def fail_postflight(_image: str, _sha: str) -> DiagnosticSnapshot:
+        raise PreflightError("engine on")
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    monkeypatch.setattr(host, "_create_key", lambda _image: commands.append(("key", "created")))
+    monkeypatch.setattr(host, "_diagnostic_files", lambda _sha: None)
+    monkeypatch.setattr(host, "collect_diagnostic", fail_postflight)
+    with pytest.raises(PreflightError, match="engine on"):
+        host.phase("apply", IMAGE, SOURCE_SHA, digest)
+    output = capsys.readouterr()
+    assert "BOCA_DEPLOY_PASS" not in output.out
+    assert "BOCA_ROLLBACK_UNVERIFIED" in output.err
+    assert [command[-2:] for command in commands if "stop" in command] == [("stop", "controller")]
+    assert not any("down" in command or "prune" in command for command in commands)
+    assert not any(command[:3] == ("docker", "volume", "rm") for command in commands)
+
+
 @pytest.mark.parametrize(
     ("field", "payload"),
     [
@@ -982,6 +1236,19 @@ def test_postflight_failure_stops_only_controller_and_preserves_key(
             json.dumps({**GOOD_HOST_CONFIG, "PortBindings": {"80/tcp": [{"HostPort": "8080"}]}}),
         ),
         ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "NanoCpus": {}})),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "NetworkMode": "host"})),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "CapDrop": []})),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "SecurityOpt": []})),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "Tmpfs": None})),
+        ("{{json .HostConfig}}", json.dumps({**GOOD_HOST_CONFIG, "CgroupnsMode": "host"})),
+        (
+            "{{json .NetworkSettings}}",
+            json.dumps({**GOOD_NETWORK_SETTINGS, "Networks": {"bridge": {}}}),
+        ),
+        (
+            "{{json .NetworkSettings}}",
+            json.dumps({**GOOD_NETWORK_SETTINGS, "Ports": {"80/tcp": []}}),
+        ),
     ],
 )
 def test_malformed_docker_postflight_stops_controller_without_removing_key(
@@ -996,6 +1263,8 @@ def test_malformed_docker_postflight_stops_controller_without_removing_key(
 
     def fake_run(*args: str, env: dict[str, str] | None = None) -> str:
         commands.append(args)
+        if args[:3] == ("docker", "network", "inspect"):
+            return json.dumps(GOOD_NETWORK_INSPECT)
         if args[:3] == ("docker", "image", "inspect"):
             return json.dumps([IMAGE]) if "RepoDigests" in args[4] else SOURCE_SHA
         if "ps" in args:
@@ -1025,6 +1294,8 @@ def test_malformed_docker_postflight_stops_controller_without_removing_key(
                 )
             if args[3] == "{{json .HostConfig}}":
                 return json.dumps(GOOD_HOST_CONFIG)
+            if args[3] == "{{json .NetworkSettings}}":
+                return json.dumps(GOOD_NETWORK_SETTINGS)
             if args[3] == "{{json .Mounts}}":
                 return json.dumps(
                     [
@@ -1045,6 +1316,12 @@ def test_malformed_docker_postflight_stops_controller_without_removing_key(
                     ]
                 )
             raise AssertionError("unexpected Docker inspection")
+        if args[:2] == ("docker", "exec"):
+            return (
+                "BOCA_KEY_READY"
+                if any("key_custody" in arg for arg in args)
+                else GOOD_CGROUP_RECEIPT
+            )
         return ""
 
     monkeypatch.setattr(host, "_run", fake_run)
@@ -1084,11 +1361,93 @@ def healthy_diagnostic() -> DiagnosticSnapshot:
         read_only=True,
         privileged=False,
         has_ports=False,
+        network_mode="boca-socios_boca_private",
+        networks=frozenset({"boca-socios_boca_private"}),
+        network_id="d" * 64,
+        network_ports=False,
+        cap_drop=("ALL",),
+        cap_add=(),
+        security_opt=("no-new-privileges:true",),
+        tmpfs=(("/tmp", "rw,noexec,nosuid,size=16m"),),  # noqa: S108 - container tmpfs
+        cgroupns_mode="private",
+        cgroup=host.CgroupLimits(
+            cpu_quota=50_000,
+            cpu_period=100_000,
+            memory_bytes=268_435_456,
+            pids_limit=64,
+        ),
     )
 
 
 def test_diagnostic_accepts_only_dormant_healthy_boca_controller() -> None:
     validate_diagnostic(healthy_diagnostic(), IMAGE, SOURCE_SHA)
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        "{}",
+        '{"cpu_quota":"50000","cpu_period":100000,"memory_bytes":268435456,"pids_limit":64}',
+        '{"cpu_quota":50000,"cpu_period":100000,"memory_bytes":268435456,"pids_limit":64,"extra":1}',
+        "{" * 257,
+    ],
+)
+def test_cgroup_receipt_refuses_malformed_or_unbounded_output(
+    monkeypatch: pytest.MonkeyPatch, receipt: str
+) -> None:
+    monkeypatch.setattr(host, "_run", lambda *args: receipt)
+    with pytest.raises(PreflightError, match="cgroup"):
+        host._cgroup_limits("c" * 64)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("Id", "e" * 64),
+        ("Driver", "host"),
+        ("Internal", True),
+        ("Attachable", True),
+        ("Labels", {}),
+        ("Containers", {"c" * 64: {}, "e" * 64: {}}),
+    ],
+)
+def test_foreign_or_reconfigured_boca_network_is_no_go(
+    monkeypatch: pytest.MonkeyPatch, field: str, value: object
+) -> None:
+    actual = {**GOOD_NETWORK_INSPECT, field: value}
+    monkeypatch.setattr(host, "_run", lambda *args: json.dumps(actual))
+    with pytest.raises(PreflightError, match="network"):
+        host._validate_boca_network("c" * 64, "d" * 64)
+
+
+def test_only_exact_boca_network_id_is_inspected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str) -> str:
+        commands.append(args)
+        return json.dumps(GOOD_NETWORK_INSPECT)
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    host._validate_boca_network("c" * 64, "d" * 64)
+    assert commands == [("docker", "network", "inspect", "--format", "{{json .}}", "d" * 64)]
+
+
+def test_runner_smoke_probes_effective_runtime_in_disposable_container() -> None:
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
+    ).read_text()
+    smoke = workflow.split("  pr-runtime-smoke:\n", 1)[1].split("  deploy:\n", 1)[0]
+    assert "docker inspect --format '{{json .NetworkSettings}}' \"$container\"" in smoke
+    assert "docker network inspect --format '{{json .}}' \"$network_id\"" in smoke
+    assert 'n["Id"] == nid' in smoke
+    assert (
+        'docker exec --user 10001:10001 "$container" python -m boca_socios.runtime_probe' in smoke
+    )
+    assert smoke.index("docker compose -p boca-socios -f compose.yaml up") < smoke.index(
+        "python -m boca_socios.runtime_probe"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1112,6 +1471,21 @@ def test_diagnostic_accepts_only_dormant_healthy_boca_controller() -> None:
         ("read_only", False),
         ("privileged", True),
         ("has_ports", True),
+        ("network_mode", "host"),
+        ("networks", frozenset({"bridge"})),
+        ("network_id", "bad"),
+        ("network_ports", True),
+        ("cap_drop", ()),
+        ("cap_add", ("SYS_ADMIN",)),
+        ("security_opt", ()),
+        ("tmpfs", (("/tmp", "rw,size=16m"),)),  # noqa: S108 - invalid container tmpfs
+        ("cgroupns_mode", "host"),
+        ("cgroupns_mode", []),
+        ("cgroup", None),
+        ("cgroup", host.CgroupLimits(0, 100_000, 268_435_456, 64)),
+        ("cgroup", host.CgroupLimits(100_000, 100_000, 268_435_456, 64)),
+        ("cgroup", host.CgroupLimits(50_000, 100_000, 0, 64)),
+        ("cgroup", host.CgroupLimits(50_000, 100_000, 268_435_456, -1)),
     ],
 )
 def test_diagnostic_deviation_is_no_go(field: str, value: object) -> None:
@@ -1149,6 +1523,8 @@ def test_diagnostic_rejects_writable_or_bind_key_before_in_container_probe(
         if "ps" in args:
             return container
         if args[:2] == ("docker", "inspect"):
+            if args[3] == "{{json .NetworkSettings}}":
+                return json.dumps(GOOD_NETWORK_SETTINGS)
             if args[3] == "{{json .Mounts}}":
                 return json.dumps(
                     [
@@ -1187,6 +1563,8 @@ def test_diagnostic_phase_uses_only_read_only_boca_queries(
 
     def fake_run(*args: str, env: dict[str, str] | None = None) -> str:
         commands.append(args)
+        if args[:3] == ("docker", "network", "inspect"):
+            return json.dumps(GOOD_NETWORK_INSPECT)
         if args[0:2] == ("docker", "compose") and "ps" in args:
             return "c" * 64
         if args[0:3] == ("docker", "image", "inspect"):
@@ -1212,17 +1590,9 @@ def test_diagnostic_phase_uses_only_read_only_boca_queries(
                         }
                     )
                 case "{{json .HostConfig}}":
-                    return json.dumps(
-                        {
-                            "NanoCpus": 500_000_000,
-                            "Memory": 268_435_456,
-                            "PidsLimit": 64,
-                            "ReadonlyRootfs": True,
-                            "Privileged": False,
-                            "PortBindings": {},
-                            "PublishAllPorts": False,
-                        }
-                    )
+                    return json.dumps(GOOD_HOST_CONFIG)
+                case "{{json .NetworkSettings}}":
+                    return json.dumps(GOOD_NETWORK_SETTINGS)
                 case "{{json .Mounts}}":
                     return json.dumps(
                         [
@@ -1245,7 +1615,11 @@ def test_diagnostic_phase_uses_only_read_only_boca_queries(
                 case "{{.State.Health.Status}}":
                     return "healthy"
         if args[0:2] == ("docker", "exec"):
-            return "BOCA_KEY_READY"
+            return (
+                "BOCA_KEY_READY"
+                if any("key_custody" in arg for arg in args)
+                else GOOD_CGROUP_RECEIPT
+            )
         raise AssertionError("unexpected host command")
 
     monkeypatch.setattr(host, "_run", fake_run)
