@@ -1,4 +1,30 @@
-# BETA de componentes: registro histórico del gate #35
+# BETA de componentes: estado vigente y registro histórico del gate #35
+
+## Estado vigente — 2026-10-31 (America/Argentina/Buenos_Aires)
+
+Base verificada: `main` `546fbb595b395fb32b3608879590fcc44c833086`.
+La integración de componentes **offline** permite revisar una simulación; no
+acredita una BETA operativa, credenciales reales, reserva ni estado del host.
+Todo el texto bajo «Registro histórico» documenta cortes anteriores, no la
+HEAD actual ni una prueba de Boca.
+
+| Alcance | Evidencia en esta base | Decisión actual |
+| --- | --- | --- |
+| Simulación e intento local | #36 y #38 integrados: coordinación de una sola ejecución por socio dentro de una instancia, y concesión durable SQLite para un intento local | GO para pruebas sintéticas; #38 no está conectado a una reserva externa ni garantiza exactamente una vez en Boca |
+| Panel y alta | #29 renderiza estados inyectados y #31 ofrece alta interna; #110 integró un artefacto sintético de vista previa, no una ruta servida. #113 define la futura consola ChatGPT Sites compartible | NO_GO para interfaz privada: faltan API Boca, autenticación administrativa y controles de sesión/TLS/CSRF. No se publicó un Site |
+| Navegador y fuente pública | #43 arrancó/cerró Chromium sin egress; #44 midió un solo arranque offline; #33 es opt-in y #96 informa un semáforo público manual | No hay prueba de login, cola, elegibilidad o reserva; el script #33 no fue ejecutado contra Boca en este gate ni se midió una visita real |
+| Claves y credenciales | #40 continúa draft; el vault y #31 no exponen un canal seguro de ingreso | NO_GO para contraseñas reales; falta completar y revisar el ciclo de claves, identidad única y alta privada |
+| Host y release | #79/#81 fijaron rootless y custodia de clave; #89 vinculó el digest escaneado; #91 inspecciona UID/capacidad; #97 añadió limpieza selectiva; #99/#117 rechazan reruns, main obsoleto y dispatches duplicados. #116 verifica red/cgroups efectivos y capacidad tras pull/up en CI | NO_GO para release/dispatch: faltan prueba real de entorno protegido, identidad SSH, daemon rootless, cgroups y capacidad del host. No hubo publicación GHCR ni operación del host en este corte |
+| RCA y continuidad | #114 integró el registro; #116 añadió RCA-105/106. CI exige 6 lecciones y 15 selectores de regresión ejecutados; #45 conserva el handoff | GO para retener regresiones de código; las nuevas lecciones requieren RCA, prueba y PR revisado. No hay autoedición ni deploy automático |
+| Backup/restore | El dueño difirió este trabajo hasta contar con una versión productiva fiable | No bloquea esta BETA de simulación ni habilita credenciales reales; antes de un alta real siguen pendientes los requisitos de recuperación/custodia de ADR 0012 y ADR 0022 |
+
+Para cada nuevo PR se registra revisión técnica del agente, checks exactos y
+conversaciones resueltas. ADR 0038 sustituyó la antigua exigencia de otra
+aprobación humana; fusionar no activa un despliegue. Un futuro dispatch requiere
+evidencia de todos los gates objetivos de la única Actions Boca. Una señal
+pública adversa se informa como alerta y no sustituye esos gates.
+
+## Registro histórico — cortes del 2026-10-28 y 2026-10-29
 
 **Fecha:** 2026-10-28 (America/Argentina/Buenos_Aires). **Estado:** rama de
 verificación, sin merge a `main`, despliegue ni acceso autenticado a Boca.
@@ -11,11 +37,12 @@ revisión técnica registrada del agente y CI exacta, sin aprobación humana
 adicional. El diseño #28 se revisó y fusionó el 2026-10-29 en horario de
 Argentina, sin habilitar alta real. Revalidar PRs, main y gates antes de operar.
 
-**Revalidación del 2026-10-30 (UTC):** #30, #34, #33 y #43 ya están en `main`.
-#36, #38, #40 y #44 permanecen como borradores; #42 se rehízo como PR
+**Revalidación intermedia del 2026-10-30 (UTC):** #30, #34, #33 y #43 ya
+estaban en `main`.
+#36, #38, #40 y #44 permanecían como borradores; #42 se rehízo como PR
 documental directo a `main`. El árbol y las CI de 157 pruebas descritos abajo
-son históricos, no el estado del actual PR #42. El smoke offline de Chromium
-integrado no prueba el sitio ni habilita reserva o despliegue.
+son históricos, no el estado de #42 ni de la base vigente indicada arriba. El
+smoke offline de Chromium no prueba el sitio ni habilita reserva o despliegue.
 
 Para un agente nuevo, empezar por
 [AGENT_HANDOFF_2026-10-28.md](AGENT_HANDOFF_2026-10-28.md), que incluye

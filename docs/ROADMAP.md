@@ -1,5 +1,10 @@
 # Development backlog and agent work order
 
+**Corte vigente:** 2026-10-31 (America/Argentina/Buenos_Aires), `main`
+`546fbb595b395fb32b3608879590fcc44c833086`. Las casillas indican el
+hito completo; un componente integrado no valida por sí solo el uso real de
+Boca, la interfaz privada ni el host.
+
 ## Milestone F0 — immutable foundation (current)
 
 - [x] Independent repository source snapshot with clean public history.
@@ -22,14 +27,20 @@
       simulator is not proof of Boca's configuration.
 - [ ] Identity, event and category models; one ticket quota.
 - [ ] Idempotency keys, transactional winner confirmation and
-      concurrency regression tests.
+      concurrency regression tests. #36 ya prueba una sola ejecución local
+      ante alias concurrentes y #38 integra una concesión durable SQLite;
+      faltan wiring y confirmación/conciliación de la reserva externa.
 - [ ] Retry policy, backpressure and observer-only diagnostics.
 
 ## Milestone F2 — owner-facing operations
 
-- [ ] Accessible tablet-first control panel and Telegram alerts.
+- [ ] Accessible tablet-first control panel and Telegram alerts. #110 integró
+      sólo una vista previa con datos ficticios; #113 define una posible
+      consola ChatGPT Sites con enlace compartible, sin Site publicado ni API
+      administrativa autenticada.
 - [ ] Explicit consent and owner-only secure credential enrollment UI.
-- [ ] Credential rotation, deletion, backup and restore tests.
+- [ ] Ciclo de claves y baja completa de credenciales: #40 (recifrado interno)
+      sigue draft; #31 no ofrece una interfaz privada de gestión.
 - [ ] Event timing in America/Argentina/Buenos_Aires and official notice
       ingestion with source provenance.
 - [ ] Redacted structured event traces and visibility/notification SLA.
@@ -41,8 +52,9 @@
 - [ ] Isolated BrowserContext per approved session, bounded by config.
 - [x] CI comprueba arranque y cierre de Chromium sin egress mediante #43,
       integrado en `main`; no lo cuenta como prueba funcional de reserva ni
-      visita Boca desde cada PR. #44 midió un arranque offline y sigue como
-      borrador; pendiente medición de una visita real autorizada.
+      visita Boca desde cada PR. #44 también está integrado y midió un solo
+      arranque offline; pendiente medición de una visita real autorizada y
+      de la capacidad del host.
 - [ ] Observación opt-in de una sola portada **real y pública** de Boca (#27,
       #32), con egress acotado, plazo, stop-on-block y salida redactada. La ruta
       pública `/auth/login` se vio manualmente; el script #33 no fue ejecutado.
@@ -65,11 +77,41 @@
 
 ## Work sequencing
 
-Un issue y una rama por alcance, contratos y pruebas verificables. Las ramas
-apiladas #36 → #38 → #40 deben revalidarse antes de fusionar: cada PR fuente
-requiere revisión técnica registrada y CI exacta. Un despliegue limitado a
-simulación puede proceder por el único workflow manual de despliegue con los
-gates de ADR 0038; no hay credenciales reales hasta completar alta privada,
-identidad, respaldo y clave. Una falla de fuente externa se diagnostica primero
-por Actions y se informa como alerta, sin bloquear por sí sola la simulación.
+Un issue y una rama por alcance, contratos y pruebas verificables. #36 y #38
+ya están integrados; #40 continúa draft y necesita revisión técnica y CI de
+su HEAD exacta antes de fusionar. #66 incorporó motor `off`, #69 diagnóstico
+de sólo lectura y #71 postflight estricto. #79/#81 fijaron el límite rootless
+y la clave; #89 el digest escaneado; #91 el UID y dos filesystems; #97 la
+limpieza selectiva. #99/#117 bloquean reruns, SHA obsoleto y duplicados de
+release. #116 integró pruebas de red/cgroups efectivos y capacidad después
+de pull/up en runner. Nada de esto acredita todavía identidad SSH, daemon
+rootless, cgroups, espacio o aislamiento reales en el host. Release y deploy
+siguen NO_GO; ningún merge dispara operación automática.
+
+Los alcances disjuntos avanzan en paralelo con un escritor por ruta. La
+integración se serializa sobre la HEAD exacta de `main`, con revisión técnica
+y checks nuevos del candidato reconciliado. #45 registra el handoff para no
+repetir operaciones ni confundir una CI histórica con evidencia vigente.
+
+#114/#116 registran 6 lecciones RCA aceptadas y CI exige sus 15 selectores;
+el aprendizaje nuevo se incorpora por una prueba y un PR revisado, sin
+autoeditar código.
+
+#29 y #31 no conforman aún una interfaz autenticada de tablet/alta; #110
+integró sólo una vista previa sintética. #113 documenta el camino a un Site
+compartible sin autorizar control operativo. CI verifica Chromium offline sin
+usar una página Boca ficticia como prueba funcional. Una futura prueba del
+flujo real requiere una sesión legítima, autorización y límites de tráfico
+separados. Una falla de la fuente pública se diagnostica por Actions y se
+informa como alerta, sin bloquear por sí sola la simulación ni justificar un
+nuevo despliegue.
+
+## Hito diferido por decisión del dueño
+
+Backup/restore y recuperación operativa se retoman después de contar con una
+versión productiva fiable. #47 incorporó una biblioteca offline; esto no
+equivale a custodia ni a un ensayo de restauración. El hito queda fuera del
+gate de la BETA de simulación. No se ingresan credenciales reales: ADR 0012/0022
+mantienen pendientes sus requisitos de recuperación y custodia antes del alta
+real, además del canal privado, identidad, TLS y ciclo de claves.
 
