@@ -2,7 +2,7 @@
 
 ## Estado vigente — 2026-10-31 (America/Argentina/Buenos_Aires)
 
-Base verificada: `main` `546fbb595b395fb32b3608879590fcc44c833086`.
+Base verificada: `main` `64fdda449045ed39bf3e2d152c97518eb7f835d0`.
 La release sigue en **simulación solamente**. Los merges no demuestran un host
 apto ni habilitan login, credenciales, cola, Telegram o reserva real.
 
@@ -11,7 +11,7 @@ apto ni habilitan login, credenciales, cola, Telegram o reserva real.
 | Componentes offline | GO para revisión y pruebas sintéticas | #30/#34/#36 integraron contratos y outbox durable; #36 impide dos ejecuciones del navegador ficticio en una misma instancia; #38 agregó una concesión local SQLite, aún sin conexión a un flujo externo de reserva |
 | Panel y alta privada | NO_GO operativo | #29 sólo renderiza estados inyectados; #31 es un servicio interno sin endpoint; #110 integró una vista previa sintética, sin publicar un Site ni servir una ruta privada. #113 describe la consola compartible futura, que exige API Boca, identidad, TLS, sesión y CSRF |
 | Chromium y fuente pública | Sólo prueba offline y observación pública acotada | #43 arrancó/cerró Chromium sin egress y #44 midió un arranque, no capacidad del droplet ni visita real. #33 no se ejecutó contra Boca en este gate; #96 ofrece un semáforo manual asesor, no prueba de flujo autenticado |
-| Claves y recuperación | NO_GO para credenciales reales | #40 continúa draft. #47 incorporó una biblioteca offline de snapshot/restore cifrado, pero el dueño difirió todo trabajo de backup/restore hasta una versión productiva fiable. No bloquea esta simulación; antes de ingresar contraseñas reales siguen los requisitos de ADR 0012/0022, canal privado, identidad y custodia |
+| Claves y recuperación | NO_GO para credenciales/rotación reales | #40 integró un recifrador interno dormido y migración 0004 opt-in; el runtime sigue en 0001. Pruebas sintéticas cubren transacción/rollback, escritor viejo, nueva clave, reinicio y DDL. Los triggers no cercan DELETE ni prueban por sí solos la posesión de la clave nueva; faltan coordinación de escritores y recuperación operativa. El dueño difirió backup/restore hasta versión productiva fiable; #47 es sólo biblioteca offline. Persisten canal privado, identidad y custodia de ADR 0012/0022 |
 | Controlador y host | NO_GO para dispatch | #79/#81 aislaron Docker rootless y clave; #89 ligó digest a release; #91 añadió inspección UID/capacidad; #97 limpieza selectiva. #116 verifica en CI red/cgroups efectivos y capacidad tras pull/up. Faltan identidad SSH, entorno protegido y pruebas reales de daemon, límites y espacio; ningún host se operó |
 | Release y calidad | GO sólo para CI offline | #99 rechaza reruns/main obsoleto; #117 rechaza dos dispatches nuevos del mismo SHA. #114/#116 exigen en CI 6 lecciones RCA y 15 selectores. No se publicó GHCR y un check verde no prueba el host |
 | Reserva real | NO_GO | No hay cuenta autorizada, orden real de login/cola/eligibilidad, confirmación de Boca ni conciliación externa de un resultado ambiguo; una intención local `planned` no es ticket |
