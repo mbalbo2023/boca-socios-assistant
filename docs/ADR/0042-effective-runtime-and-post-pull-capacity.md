@@ -15,19 +15,24 @@ rootless droplet's actual configuration.
 ## Decision
 
 The apply phase measures both Boca staging and the validated classic rootless
-Docker data root before and after pull. It compares root path, classic driver
-and status, and both directory device/inode identities. It rejects a changed
-backend, path, directory, unreadable filesystem or less than 4 GiB or 50,000
-free inodes on either filesystem **before creating the key**. It also rechecks the staged
-Compose hash after pull. A failed gate leaves the exact image and staged file
+Docker data root before and after pull. Each measurement revalidates the
+dedicated socket, rootful inaccessibility, rootless daemon, systemd cgroup v2
+and delegated controllers. It compares the socket identity, root path,
+classic driver and status, and both directory device/inode identities. It
+rejects a changed backend, path, socket, directory, unreadable filesystem or
+less than 4 GiB or 50,000 free inodes on either filesystem **before creating
+the key**. It also rechecks the staged Compose hash after pull. A failed gate
+leaves the exact image and staged file
 for the guarded #97 cleanup attempt; unknown or partial state is retained
 for Boca-only diagnosis. No prune or automatic retry is introduced.
 
 After the controller starts and passes the existing key, image and health
 checks, the same read-only diagnostic now inspects the exact controller ID.
 It requires one Boca private network, no network port mapping, the expected
-NetworkMode, no added capabilities, all capabilities dropped,
-no-new-privileges, the approved /tmp tmpfs and a private cgroup namespace.
+NetworkMode and the attached network's exact ID, Compose labels, bridge
+configuration and only the controller as a peer. It requires no added
+capabilities, all capabilities dropped, no-new-privileges, the approved /tmp
+tmpfs and a private cgroup namespace.
 A fixed module in the approved image runs as UID 10001 in that container;
 it reads only /proc/self/cgroup and the cgroup v2 cpu.max, memory.max and
 pids.max files. It requires the private namespace root and effective

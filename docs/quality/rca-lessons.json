@@ -39,11 +39,12 @@
       "issue": 105,
       "fix_pr": 116,
       "root_cause": "Configured Compose and HostConfig limits did not prove the running controller had only the Boca network, safe flags and effective rootless cgroup limits.",
-      "prevention": "Inspect the exact Boca controller network and security metadata, and read effective cgroup v2 limits with a fixed in-container probe before PASS.",
+      "prevention": "Inspect the attached network by exact ID, require Boca Compose labels and no foreign peers, verify security metadata, and read effective cgroup v2 limits with a fixed in-container probe before PASS.",
       "regression_tests": [
         "tests/test_host_first_deploy.py::test_malformed_docker_postflight_stops_controller_without_removing_key",
         "tests/test_runtime_probe.py::test_missing_or_relaxed_effective_limits_are_no_go",
-        "tests/test_host_first_deploy.py::test_runner_smoke_probes_effective_runtime_in_disposable_container"
+        "tests/test_host_first_deploy.py::test_runner_smoke_probes_effective_runtime_in_disposable_container",
+        "tests/test_host_first_deploy.py::test_foreign_or_reconfigured_boca_network_is_no_go"
       ]
     },
     {

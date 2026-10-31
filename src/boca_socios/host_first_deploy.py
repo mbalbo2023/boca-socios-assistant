@@ -64,6 +64,8 @@ class StorageSnapshot:
     docker_device: int
     stage_inode: int
     docker_inode: int
+    socket_device: int
+    socket_inode: int
     stage_free_bytes: int
     stage_inodes: int
     docker_free_bytes: int
@@ -370,6 +372,14 @@ def _checked_docker_storage_identity() -> tuple[Path, str, tuple[tuple[str, str]
         info = json.loads(_run("docker", "info", "--format", "{{json .}}"))
         if not isinstance(info, dict):
             raise PreflightError("rootless Docker storage backend is unproven")
+        options = info.get("SecurityOptions")
+        if (
+            not isinstance(options, list)
+            or "name=rootless" not in options
+            or str(info.get("CgroupVersion")) != "2"
+            or info.get("CgroupDriver") != "systemd"
+        ):
+            raise PreflightError("rootless Docker boundary changed during storage check")
         # The containerd image store can keep layers on another filesystem.
         # Until its dedicated root is proven, only classic drivers can pass.
         driver_status = info.get("DriverStatus")
@@ -427,12 +437,16 @@ def _checked_docker_storage_dir() -> Path:
 
 def _storage_snapshot() -> StorageSnapshot:
     """Observe both filesystems through the same validated rootless store."""
+    _validate_docker_boundary()
     if not _safe_dir(ROOT):
         raise PreflightError("Boca staging directory changed during installation")
     docker_root, driver, driver_status = _checked_docker_storage_identity()
     try:
         stage_metadata = ROOT.stat()
         docker_metadata = docker_root.stat()
+        socket_metadata = ROOTLESS_SOCKET.lstat()
+        if not stat.S_ISSOCK(socket_metadata.st_mode) or socket_metadata.st_uid != 10001:
+            raise PreflightError("Boca rootless Docker socket changed")
         stage = os.statvfs(ROOT)
         docker = os.statvfs(docker_root)
     except OSError as exc:
@@ -445,6 +459,8 @@ def _storage_snapshot() -> StorageSnapshot:
         docker_device=docker_metadata.st_dev,
         stage_inode=stage_metadata.st_ino,
         docker_inode=docker_metadata.st_ino,
+        socket_device=socket_metadata.st_dev,
+        socket_inode=socket_metadata.st_ino,
         stage_free_bytes=stage.f_bavail * stage.f_frsize,
         stage_inodes=stage.f_favail,
         docker_free_bytes=docker.f_bavail * docker.f_frsize,
@@ -469,6 +485,8 @@ def _validate_storage_continuity(before: StorageSnapshot, after: StorageSnapshot
         or before.docker_device != after.docker_device
         or before.stage_inode != after.stage_inode
         or before.docker_inode != after.docker_inode
+        or before.socket_device != after.socket_device
+        or before.socket_inode != after.socket_inode
     ):
         raise PreflightError("Boca rootless Docker storage topology changed")
     _validate_storage_capacity(after)
@@ -699,6 +717,30 @@ def _cgroup_limits(container: str) -> CgroupLimits:
     )
 
 
+def _validate_boca_network(container: str, network_id: str) -> None:
+    """Inspect only the attached network by its exact ID; reject foreign peers."""
+    raw = _run("docker", "network", "inspect", "--format", "{{json .}}", network_id)
+    if len(raw) > 16_384:
+        raise PreflightError("Boca network metadata exceeds bounded output")
+    network = _json_object(raw, "network")
+    labels, containers = network.get("Labels"), network.get("Containers")
+    if (
+        network.get("Id") != network_id
+        or network.get("Name") != "boca-socios_boca_private"
+        or network.get("Driver") != "bridge"
+        or network.get("Scope") != "local"
+        or network.get("Internal") is not False
+        or network.get("Attachable") is not False
+        or network.get("Ingress") is not False
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.network") != "boca_private"
+        or not isinstance(containers, dict)
+        or set(containers) != {container}
+    ):
+        raise PreflightError("Boca private network identity or peers changed")
+
+
 def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
     container = _run(*_compose_args("ps", "-q", "controller"), env=_compose_env(image))
     if not re.fullmatch(r"[0-9a-f]{64}", container):
@@ -763,6 +805,7 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
         actual_mounts.add((name, destination, writable))
     if actual_mounts != expected_mounts:
         raise PreflightError("Boca controller volume boundary changed")
+    _validate_boca_network(container, network_id)
     labels = config.get("Labels")
     entries = config.get("Env")
     if not isinstance(labels, dict) or not isinstance(entries, list):

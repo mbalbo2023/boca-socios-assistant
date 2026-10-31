@@ -45,6 +45,25 @@ GOOD_NETWORK_SETTINGS = {
     "Networks": {"boca-socios_boca_private": {"NetworkID": "d" * 64}},
     "Ports": {},
 }
+GOOD_NETWORK_INSPECT = {
+    "Id": "d" * 64,
+    "Name": "boca-socios_boca_private",
+    "Driver": "bridge",
+    "Scope": "local",
+    "Internal": False,
+    "Attachable": False,
+    "Ingress": False,
+    "Labels": {
+        "com.docker.compose.project": "boca-socios",
+        "com.docker.compose.network": "boca_private",
+    },
+    "Containers": {"c" * 64: {}},
+}
+ROOTLESS_INFO = {
+    "SecurityOptions": ["name=rootless"],
+    "CgroupVersion": "2",
+    "CgroupDriver": "systemd",
+}
 
 GOOD_CGROUP_RECEIPT = (
     '{"cpu_quota":50000,"cpu_period":100000,"memory_bytes":268435456,"pids_limit":64}'
@@ -529,7 +548,12 @@ def test_docker_storage_path_must_be_boca_owned_under_private_home(
         host,
         "_run",
         lambda *args: json.dumps(
-            {"DockerRootDir": str(target), "Driver": "overlay2", "DriverStatus": []}
+            {
+                **ROOTLESS_INFO,
+                "DockerRootDir": str(target),
+                "Driver": "overlay2",
+                "DriverStatus": [],
+            }
         ),
     )
     original_lstat = Path.lstat
@@ -562,7 +586,12 @@ def test_owned_rootless_docker_storage_path_is_accepted_without_listing_other_pa
         host,
         "_run",
         lambda *args: json.dumps(
-            {"DockerRootDir": str(storage), "Driver": "overlay2", "DriverStatus": []}
+            {
+                **ROOTLESS_INFO,
+                "DockerRootDir": str(storage),
+                "Driver": "overlay2",
+                "DriverStatus": [],
+            }
         ),
     )
     original_lstat = Path.lstat
@@ -594,11 +623,45 @@ def test_containerd_or_unknown_storage_backend_is_no_go_before_path_probe(
     monkeypatch.setattr(
         host,
         "_run",
-        lambda *args: json.dumps({"DockerRootDir": str(tmp_path), **backend}),
+        lambda *args: json.dumps({**ROOTLESS_INFO, "DockerRootDir": str(tmp_path), **backend}),
     )
     monkeypatch.setattr(host.pwd, "getpwuid", lambda _uid: pytest.fail("probed home"))
     with pytest.raises(PreflightError, match="storage backend"):
         host._checked_docker_storage_dir()
+
+
+def test_changed_rootless_daemon_metadata_blocks_storage_before_path_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        host,
+        "_run",
+        lambda *args: json.dumps(
+            {
+                **ROOTLESS_INFO,
+                "SecurityOptions": [],
+                "DockerRootDir": str(tmp_path),
+                "Driver": "overlay2",
+                "DriverStatus": [],
+            }
+        ),
+    )
+    monkeypatch.setattr(host.pwd, "getpwuid", lambda _uid: pytest.fail("probed home"))
+    with pytest.raises(PreflightError, match="boundary changed"):
+        host._checked_docker_storage_identity()
+
+
+def test_storage_snapshot_rechecks_daemon_before_private_staging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        host,
+        "_validate_docker_boundary",
+        lambda: (_ for _ in ()).throw(PreflightError("rootless daemon changed")),
+    )
+    monkeypatch.setattr(host, "_safe_dir", lambda _root: pytest.fail("private staging probed"))
+    with pytest.raises(PreflightError, match="rootless daemon changed"):
+        host._storage_snapshot()
 
 
 def test_snapshot_measures_staging_and_rootless_docker_filesystems_separately(
@@ -671,6 +734,8 @@ def safe_storage() -> host.StorageSnapshot:
         docker_device=12,
         stage_inode=111,
         docker_inode=222,
+        socket_device=13,
+        socket_inode=333,
         stage_free_bytes=8 * 1024**3,
         stage_inodes=100_000,
         docker_free_bytes=8 * 1024**3,
@@ -738,6 +803,8 @@ def test_bad_image_revision_fails_before_creating_key(
         ("docker_device", 99),
         ("stage_inode", 999),
         ("docker_inode", 999),
+        ("socket_device", 99),
+        ("socket_inode", 999),
     ],
 )
 def test_post_pull_capacity_or_store_drift_blocks_key_and_compose(
@@ -802,6 +869,7 @@ def test_post_pull_capacity_measurement_failure_blocks_key(
         ("docker_inodes", 49_999),
         ("docker_device", 99),
         ("docker_inode", 999),
+        ("socket_inode", 999),
         ("driver", "vfs"),
     ],
 )
@@ -1158,6 +1226,8 @@ def test_malformed_docker_postflight_stops_controller_without_removing_key(
 
     def fake_run(*args: str, env: dict[str, str] | None = None) -> str:
         commands.append(args)
+        if args[:3] == ("docker", "network", "inspect"):
+            return json.dumps(GOOD_NETWORK_INSPECT)
         if args[:3] == ("docker", "image", "inspect"):
             return json.dumps([IMAGE]) if "RepoDigests" in args[4] else SOURCE_SHA
         if "ps" in args:
@@ -1293,12 +1363,48 @@ def test_cgroup_receipt_refuses_malformed_or_unbounded_output(
         host._cgroup_limits("c" * 64)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("Id", "e" * 64),
+        ("Driver", "host"),
+        ("Internal", True),
+        ("Attachable", True),
+        ("Labels", {}),
+        ("Containers", {"c" * 64: {}, "e" * 64: {}}),
+    ],
+)
+def test_foreign_or_reconfigured_boca_network_is_no_go(
+    monkeypatch: pytest.MonkeyPatch, field: str, value: object
+) -> None:
+    actual = {**GOOD_NETWORK_INSPECT, field: value}
+    monkeypatch.setattr(host, "_run", lambda *args: json.dumps(actual))
+    with pytest.raises(PreflightError, match="network"):
+        host._validate_boca_network("c" * 64, "d" * 64)
+
+
+def test_only_exact_boca_network_id_is_inspected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str) -> str:
+        commands.append(args)
+        return json.dumps(GOOD_NETWORK_INSPECT)
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    host._validate_boca_network("c" * 64, "d" * 64)
+    assert commands == [("docker", "network", "inspect", "--format", "{{json .}}", "d" * 64)]
+
+
 def test_runner_smoke_probes_effective_runtime_in_disposable_container() -> None:
     workflow = (
         Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
     ).read_text()
     smoke = workflow.split("  pr-runtime-smoke:\n", 1)[1].split("  deploy:\n", 1)[0]
     assert "docker inspect --format '{{json .NetworkSettings}}' \"$container\"" in smoke
+    assert "docker network inspect --format '{{json .}}' \"$network_id\"" in smoke
+    assert 'n["Id"] == nid' in smoke
     assert (
         'docker exec --user 10001:10001 "$container" python -m boca_socios.runtime_probe' in smoke
     )
@@ -1420,6 +1526,8 @@ def test_diagnostic_phase_uses_only_read_only_boca_queries(
 
     def fake_run(*args: str, env: dict[str, str] | None = None) -> str:
         commands.append(args)
+        if args[:3] == ("docker", "network", "inspect"):
+            return json.dumps(GOOD_NETWORK_INSPECT)
         if args[0:2] == ("docker", "compose") and "ps" in args:
             return "c" * 64
         if args[0:3] == ("docker", "image", "inspect"):
