@@ -61,9 +61,31 @@ automatic push-based deployment, personal SSH procedures, host cron jobs,
 any unrelated deployment integration or Docker cleanup of another project.
 If a proposed feature requires any of those, stop for an architecture review.
 
+## Synthetic panel preview artifacts
+
+A manual Actions preview of the owner panel may upload a short-lived HTML
+artifact built only from fixed sample states in source. It must not accept a
+database, credential, member, event or host input, read runtime data, call
+Boca, publish a website or add a service port. The artifact is public-repo
+material, so it must contain no actual personal data. A preview checks the
+panel's presentation only; it is not an authenticated operating interface or
+evidence of a reservation. Real enrollment and status serving retain their
+separate security gates.
+
 ## Acceptance criteria per PR
 
 Explicit requirement, tests, redacted evidence, doc/ADR updates, security
 impact, resource budget, failure mode, idempotency and handoff. A screenshot
 or agent narrative alone never replaces a test report.
+
+## RCA lessons enforced by CI
+
+For a reproduced code or deployment-contract defect, preserve the failing
+case as a deterministic regression before the fix. Once reviewed and merged,
+record the issue, fixing PR, cause, prevention and test selectors in
+`docs/quality/rca-lessons.json`. The quality job reads the pytest report
+from its single full-suite run; a listed test that did not execute and pass,
+or a removed accepted lesson/test, fails the gate. A changed finding needs
+another reviewed PR with new evidence. No automated finding edits code,
+merges a PR or dispatches deployment. See ADR 0044.
 

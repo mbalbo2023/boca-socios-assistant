@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "lessons": [
+    {
+      "id": "RCA-80",
+      "issue": 80,
+      "fix_pr": 81,
+      "root_cause": "A private host-owned file is not readable by container UID 10001 under Docker rootless UID remapping.",
+      "prevention": "Keep the key in a Boca-only volume and prove ownership, mode and actual UID 10001 read access before starting.",
+      "regression_tests": [
+        "tests/test_host_first_deploy.py::test_key_volume_is_created_once_and_verified_without_host_secret",
+        "tests/test_host_first_deploy.py::test_labeled_local_volume_cannot_redirect_key_initialization"
+      ]
+    },
+    {
+      "id": "RCA-88",
+      "issue": 88,
+      "fix_pr": 89,
+      "root_cause": "A successful release run did not prove that the operator-supplied digest was the image scanned and published in that run.",
+      "prevention": "Bind the exact digest, source SHA and first-attempt run ID to the uploaded release manifest before host credentials.",
+      "regression_tests": [
+        "tests/test_release_manifest.py::test_other_image_run_or_extra_field_is_no_go",
+        "tests/test_release_manifest.py::test_workflow_checks_artifact_before_host_credentials"
+      ]
+    },
+    {
+      "id": "RCA-90",
+      "issue": 90,
+      "fix_pr": 91,
+      "root_cause": "A socket checked from UID 1000 could appear absent when it was merely inaccessible; staging capacity omitted the rootless image store.",
+      "prevention": "Inspect from the dedicated UID and check both staging and validated DockerRootDir capacity before any Boca mutation.",
+      "regression_tests": [
+        "tests/test_host_first_deploy.py::test_prerequisite_inspection_refuses_uid_1000_before_private_path_probe",
+        "tests/test_host_first_deploy.py::test_snapshot_measures_staging_and_rootless_docker_filesystems_separately"
+      ]
+    },
+    {
+      "id": "RCA-105",
+      "issue": 105,
+      "fix_pr": 116,
+      "root_cause": "Configured Compose and HostConfig limits did not prove the running controller had only the Boca network, safe flags and effective rootless cgroup limits.",
+      "prevention": "Inspect the exact Boca controller network and security metadata, and read effective cgroup v2 limits with a fixed in-container probe before PASS.",
+      "regression_tests": [
+        "tests/test_host_first_deploy.py::test_malformed_docker_postflight_stops_controller_without_removing_key",
+        "tests/test_runtime_probe.py::test_missing_or_relaxed_effective_limits_are_no_go",
+        "tests/test_host_first_deploy.py::test_runner_smoke_probes_effective_runtime_in_disposable_container"
+      ]
+    },
+    {
+      "id": "RCA-106",
+      "issue": 106,
+      "fix_pr": 116,
+      "root_cause": "Initial capacity could pass before an image pull consumed rootless Docker headroom, so key creation and startup were not gated by the post-pull reserve.",
+      "prevention": "Measure staging and verified Docker storage after pull and before key, then again before PASS; reject changed backend, directory or filesystem identity.",
+      "regression_tests": [
+        "tests/test_host_first_deploy.py::test_post_pull_capacity_or_store_drift_blocks_key_and_compose",
+        "tests/test_host_first_deploy.py::test_final_capacity_or_topology_drift_stops_only_boca_after_postflight"
+      ]
+    },
+    {
+      "id": "RCA-115",
+      "issue": 115,
+      "fix_pr": 117,
+      "root_cause": "Two fresh manual release dispatches for one SHA both had attempt 1 and could serially repush the mutable SHA tag.",
+      "prevention": "Require only the current first-attempt run in bounded workflow history before build and again before registry login.",
+      "regression_tests": [
+        "tests/test_release_dispatch.py::test_duplicate_fresh_dispatch_is_no_go",
+        "tests/test_release_dispatch.py::test_release_checks_unique_dispatch_before_build_and_before_push"
+      ]
+    }
+  ]
+}

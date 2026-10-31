@@ -37,7 +37,7 @@ GOOD_HOST_CONFIG = {
     "CapDrop": ["ALL"],
     "CapAdd": None,
     "SecurityOpt": ["no-new-privileges:true"],
-    "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=16m"},
+    "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=16m"},  # noqa: S108 - container tmpfs
     "CgroupnsMode": "private",
 }
 
@@ -47,8 +47,7 @@ GOOD_NETWORK_SETTINGS = {
 }
 
 GOOD_CGROUP_RECEIPT = (
-    '{"cpu_quota":50000,"cpu_period":100000,'
-    '"memory_bytes":268435456,"pids_limit":64}'
+    '{"cpu_quota":50000,"cpu_period":100000,"memory_bytes":268435456,"pids_limit":64}'
 )
 
 
@@ -670,6 +669,8 @@ def safe_storage() -> host.StorageSnapshot:
         driver_status=(),
         stage_device=11,
         docker_device=12,
+        stage_inode=111,
+        docker_inode=222,
         stage_free_bytes=8 * 1024**3,
         stage_inodes=100_000,
         docker_free_bytes=8 * 1024**3,
@@ -735,6 +736,8 @@ def test_bad_image_revision_fails_before_creating_key(
         ("driver_status", (("Backing Filesystem", "other"),)),
         ("stage_device", 99),
         ("docker_device", 99),
+        ("stage_inode", 999),
+        ("docker_inode", 999),
     ],
 )
 def test_post_pull_capacity_or_store_drift_blocks_key_and_compose(
@@ -780,24 +783,37 @@ def test_post_pull_capacity_measurement_failure_blocks_key(
     monkeypatch.setattr(
         host,
         "_run",
-        lambda *args, **kwargs: json.dumps([IMAGE])
-        if args[:3] == ("docker", "image", "inspect") and "RepoDigests" in args[4]
-        else SOURCE_SHA if args[:3] == ("docker", "image", "inspect") else "",
+        lambda *args, **kwargs: (
+            json.dumps([IMAGE])
+            if args[:3] == ("docker", "image", "inspect") and "RepoDigests" in args[4]
+            else SOURCE_SHA
+            if args[:3] == ("docker", "image", "inspect")
+            else ""
+        ),
     )
     monkeypatch.setattr(host, "_create_key", lambda _image: pytest.fail("key created"))
     with pytest.raises(PreflightError, match="capacity unavailable"):
         host.phase("apply", IMAGE, SOURCE_SHA, digest)
 
 
-def test_final_capacity_drop_stops_only_boca_after_postflight(
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("docker_inodes", 49_999),
+        ("docker_device", 99),
+        ("docker_inode", 999),
+        ("driver", "vfs"),
+    ],
+)
+def test_final_capacity_or_topology_drift_stops_only_boca_after_postflight(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    field: str,
+    value: object,
 ) -> None:
     digest = _staged(tmp_path, monkeypatch)
-    capacities = iter(
-        (safe_storage(), safe_storage(), replace(safe_storage(), docker_inodes=49_999))
-    )
+    capacities = iter((safe_storage(), safe_storage(), replace(safe_storage(), **{field: value})))
     monkeypatch.setattr(host, "_storage_snapshot", lambda: next(capacities))
     commands: list[tuple[str, ...]] = []
 
@@ -1196,7 +1212,7 @@ def test_malformed_docker_postflight_stops_controller_without_removing_key(
         if args[:2] == ("docker", "exec"):
             return (
                 "BOCA_KEY_READY"
-                if "key_custody" in args
+                if any("key_custody" in arg for arg in args)
                 else GOOD_CGROUP_RECEIPT
             )
         return ""
@@ -1245,7 +1261,7 @@ def healthy_diagnostic() -> DiagnosticSnapshot:
         cap_drop=("ALL",),
         cap_add=(),
         security_opt=("no-new-privileges:true",),
-        tmpfs=(("/tmp", "rw,noexec,nosuid,size=16m"),),
+        tmpfs=(("/tmp", "rw,noexec,nosuid,size=16m"),),  # noqa: S108 - container tmpfs
         cgroupns_mode="private",
         cgroup=host.CgroupLimits(
             cpu_quota=50_000,
@@ -1258,6 +1274,37 @@ def healthy_diagnostic() -> DiagnosticSnapshot:
 
 def test_diagnostic_accepts_only_dormant_healthy_boca_controller() -> None:
     validate_diagnostic(healthy_diagnostic(), IMAGE, SOURCE_SHA)
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    [
+        "{}",
+        '{"cpu_quota":"50000","cpu_period":100000,"memory_bytes":268435456,"pids_limit":64}',
+        '{"cpu_quota":50000,"cpu_period":100000,"memory_bytes":268435456,"pids_limit":64,"extra":1}',
+        "{" * 257,
+    ],
+)
+def test_cgroup_receipt_refuses_malformed_or_unbounded_output(
+    monkeypatch: pytest.MonkeyPatch, receipt: str
+) -> None:
+    monkeypatch.setattr(host, "_run", lambda *args: receipt)
+    with pytest.raises(PreflightError, match="cgroup"):
+        host._cgroup_limits("c" * 64)
+
+
+def test_runner_smoke_probes_effective_runtime_in_disposable_container() -> None:
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
+    ).read_text()
+    smoke = workflow.split("  pr-runtime-smoke:\n", 1)[1].split("  deploy:\n", 1)[0]
+    assert "docker inspect --format '{{json .NetworkSettings}}' \"$container\"" in smoke
+    assert (
+        'docker exec --user 10001:10001 "$container" python -m boca_socios.runtime_probe' in smoke
+    )
+    assert smoke.index("docker compose -p boca-socios -f compose.yaml up") < smoke.index(
+        "python -m boca_socios.runtime_probe"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1288,8 +1335,9 @@ def test_diagnostic_accepts_only_dormant_healthy_boca_controller() -> None:
         ("cap_drop", ()),
         ("cap_add", ("SYS_ADMIN",)),
         ("security_opt", ()),
-        ("tmpfs", (("/tmp", "rw,size=16m"),)),
+        ("tmpfs", (("/tmp", "rw,size=16m"),)),  # noqa: S108 - invalid container tmpfs
         ("cgroupns_mode", "host"),
+        ("cgroupns_mode", []),
         ("cgroup", None),
         ("cgroup", host.CgroupLimits(0, 100_000, 268_435_456, 64)),
         ("cgroup", host.CgroupLimits(100_000, 100_000, 268_435_456, 64)),
@@ -1332,6 +1380,8 @@ def test_diagnostic_rejects_writable_or_bind_key_before_in_container_probe(
         if "ps" in args:
             return container
         if args[:2] == ("docker", "inspect"):
+            if args[3] == "{{json .NetworkSettings}}":
+                return json.dumps(GOOD_NETWORK_SETTINGS)
             if args[3] == "{{json .Mounts}}":
                 return json.dumps(
                     [
@@ -1420,7 +1470,11 @@ def test_diagnostic_phase_uses_only_read_only_boca_queries(
                 case "{{.State.Health.Status}}":
                     return "healthy"
         if args[0:2] == ("docker", "exec"):
-            return "BOCA_KEY_READY" if "key_custody" in args else GOOD_CGROUP_RECEIPT
+            return (
+                "BOCA_KEY_READY"
+                if any("key_custody" in arg for arg in args)
+                else GOOD_CGROUP_RECEIPT
+            )
         raise AssertionError("unexpected host command")
 
     monkeypatch.setattr(host, "_run", fake_run)
