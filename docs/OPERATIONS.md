@@ -25,7 +25,7 @@ The manual job uses separate fail-closed environment variables: only
 or `diagnostic`. Both remain unset until their own evidence is reviewed;
 setting the read-only variable does not unlock installation. The two read-only
 choices require blank image and release-run inputs, and the install/diagnostic
-choices require both. See [ADR 0045](ADR/0045-readonly-host-readiness.md).
+choices require both. See [ADR 0046](ADR/0046-readonly-host-readiness.md).
 
 The proposed host prerequisite is a dedicated `boca-deploy` identity with UID
 10001, dedicated rootless Docker, Python 3.10+, and an already provisioned empty
@@ -131,7 +131,9 @@ The environment must first be verified and marked ready as an **environment**
 (pinned identity and main-only branch rule), independently
 of the daemon's readiness. See [ADR 0037](ADR/0037-host-prerequisite-inspection.md).
 That verification may enable only `BOCA_HOST_READONLY_ENV_READY` for the first
-inspection; it must not set `BOCA_DEPLOY_ENV_READY` or
+inspection, scoped to the protected `boca-first-deploy` environment after
+checking no repository-level variable of that name exists; the shell cannot
+prove variable scope. It must not set `BOCA_DEPLOY_ENV_READY` or
 `BOCA_RELEASE_ENV_READY`. The latter gates remain closed until separate
 release and deployment evidence exists. A successful metadata inspection
 permits considering the stricter read-only `preflight`; it is not host approval.

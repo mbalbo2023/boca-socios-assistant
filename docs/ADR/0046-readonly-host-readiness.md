@@ -1,4 +1,4 @@
-# ADR 0045: separate readiness for host inspection and installation
+# ADR 0046: separate readiness for host inspection and installation
 
 **Status:** Proposed, 2026-10-31. Issue #120, PR #122. No host dispatch.
 
@@ -30,6 +30,10 @@ known-hosts pin and host variable are checked. Keep the deploy value unset
 while inspecting. The release environment retains its own independent
 `BOCA_RELEASE_ENV_READY` and remains unset. No secret is created or copied by
 this code change.
+The Actions `vars` context can also resolve a repository variable. Before
+setting the read-only value, verify in GitHub Settings that the repository
+does not define it, and set it only on the protected `boca-first-deploy`
+environment. The shell cannot establish the variable's administrative scope.
 
 CI executes the actual first-step shell with synthetic variable matrices:
 read-only readiness must permit only inspection/preflight, and deploy readiness
