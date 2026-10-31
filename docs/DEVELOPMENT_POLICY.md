@@ -67,3 +67,14 @@ Explicit requirement, tests, redacted evidence, doc/ADR updates, security
 impact, resource budget, failure mode, idempotency and handoff. A screenshot
 or agent narrative alone never replaces a test report.
 
+## RCA lessons enforced by CI
+
+For a reproduced code or deployment-contract defect, preserve the failing
+case as a deterministic regression before the fix. Once reviewed and merged,
+record the issue, fixing PR, cause, prevention and test selectors in
+`docs/quality/rca-lessons.json`. The quality job reads the pytest report
+from its single full-suite run; a listed test that did not execute and pass,
+or a removed accepted lesson/test, fails the gate. A changed finding needs
+another reviewed PR with new evidence. No automated finding edits code,
+merges a PR or dispatches deployment. See ADR 0044.
+
