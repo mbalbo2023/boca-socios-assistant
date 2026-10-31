@@ -1,7 +1,7 @@
 # Development backlog and agent work order
 
 **Corte vigente:** 2026-10-31 (America/Argentina/Buenos_Aires), `main`
-`546fbb595b395fb32b3608879590fcc44c833086`. Las casillas indican el
+`64fdda449045ed39bf3e2d152c97518eb7f835d0`. Las casillas indican el
 hito completo; un componente integrado no valida por sí solo el uso real de
 Boca, la interfaz privada ni el host.
 
@@ -39,8 +39,9 @@ Boca, la interfaz privada ni el host.
       consola ChatGPT Sites con enlace compartible, sin Site publicado ni API
       administrativa autenticada.
 - [ ] Explicit consent and owner-only secure credential enrollment UI.
-- [ ] Ciclo de claves y baja completa de credenciales: #40 (recifrado interno)
-      sigue draft; #31 no ofrece una interfaz privada de gestión.
+- [ ] Ciclo de claves y baja completa de credenciales: #40 integró recifrado
+      interno dormido con migración 0004 opt-in; faltan coordinación de
+      escritores, bloqueo de DELETE, recuperación y canal privado de #31.
 - [ ] Event timing in America/Argentina/Buenos_Aires and official notice
       ingestion with source provenance.
 - [ ] Redacted structured event traces and visibility/notification SLA.
@@ -77,9 +78,9 @@ Boca, la interfaz privada ni el host.
 
 ## Work sequencing
 
-Un issue y una rama por alcance, contratos y pruebas verificables. #36 y #38
-ya están integrados; #40 continúa draft y necesita revisión técnica y CI de
-su HEAD exacta antes de fusionar. #66 incorporó motor `off`, #69 diagnóstico
+Un issue y una rama por alcance, contratos y pruebas verificables. #36/#38
+y #40 ya están integrados; el recifrado de #40 permanece desconectado del
+runtime y no autoriza rotación real. #66 incorporó motor `off`, #69 diagnóstico
 de sólo lectura y #71 postflight estricto. #79/#81 fijaron el límite rootless
 y la clave; #89 el digest escaneado; #91 el UID y dos filesystems; #97 la
 limpieza selectiva. #99/#117 bloquean reruns, SHA obsoleto y duplicados de
