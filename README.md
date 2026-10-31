@@ -33,7 +33,7 @@ infrastructure**.
 - Persistence: dedicated SQLite WAL database with migrations and DB-level
   uniqueness; future orchestration must use explicit transactions.
 - Security: AES-256-GCM credential vault with per-record random nonce,
-  authenticated member-specific binding, external master key, and key version.
+  authenticated member-specific binding, external key volume, and key version.
 - Runtime isolation: Compose project **boca-socios**; named volume and bridge
   network; nonroot, read-only container, dropped capabilities, CPU/memory caps,
   no exposed ports and no host Docker socket.

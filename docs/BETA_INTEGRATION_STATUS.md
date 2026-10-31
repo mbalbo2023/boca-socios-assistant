@@ -1,18 +1,19 @@
 # Estado de integración BETA
 
-## Estado vigente — 2026-10-30 (America/Argentina/Buenos_Aires)
+## Estado vigente — 2026-10-31 (America/Argentina/Buenos_Aires)
 
-Base verificada: `main` `9aeb005b9dddec663d5e8ecfcf703044205d5be6`.
+Base verificada: `main` `546fbb595b395fb32b3608879590fcc44c833086`.
 La release sigue en **simulación solamente**. Los merges no demuestran un host
 apto ni habilitan login, credenciales, cola, Telegram o reserva real.
 
 | Área | Estado vigente | Evidencia y límite |
 | --- | --- | --- |
 | Componentes offline | GO para revisión y pruebas sintéticas | #30/#34/#36 integraron contratos y outbox durable; #36 impide dos ejecuciones del navegador ficticio en una misma instancia; #38 agregó una concesión local SQLite, aún sin conexión a un flujo externo de reserva |
-| Panel y alta privada | NO_GO operativo | #29 sólo renderiza estados inyectados; #31 es un servicio interno sin endpoint; #110 es una vista previa sintética en PR draft. No hay ruta privada autenticada, TLS, sesión ni CSRF verificados |
+| Panel y alta privada | NO_GO operativo | #29 sólo renderiza estados inyectados; #31 es un servicio interno sin endpoint; #110 integró una vista previa sintética, sin publicar un Site ni servir una ruta privada. #113 describe la consola compartible futura, que exige API Boca, identidad, TLS, sesión y CSRF |
 | Chromium y fuente pública | Sólo prueba offline y observación pública acotada | #43 arrancó/cerró Chromium sin egress y #44 midió un arranque, no capacidad del droplet ni visita real. #33 no se ejecutó contra Boca en este gate; #96 ofrece un semáforo manual asesor, no prueba de flujo autenticado |
 | Claves y recuperación | NO_GO para credenciales reales | #40 continúa draft. #47 incorporó una biblioteca offline de snapshot/restore cifrado, pero el dueño difirió todo trabajo de backup/restore hasta una versión productiva fiable. No bloquea esta simulación; antes de ingresar contraseñas reales siguen los requisitos de ADR 0012/0022, canal privado, identidad y custodia |
-| Controlador y host | NO_GO para dispatch | #63 incorporó un workflow manual, #66 mantiene motor `off`, #69 añadió diagnóstico sólo lectura y #71 postflight estricto. El diagnóstico no verifica aún el daemon rootless; faltan #79/#81/#89/#91/#97 y los gates de imagen, SSH, aislamiento, recursos y capacidad. Ninguna operación de host se acredita aquí |
+| Controlador y host | NO_GO para dispatch | #79/#81 aislaron Docker rootless y clave; #89 ligó digest a release; #91 añadió inspección UID/capacidad; #97 limpieza selectiva. #116 verifica en CI red/cgroups efectivos y capacidad tras pull/up. Faltan identidad SSH, entorno protegido y pruebas reales de daemon, límites y espacio; ningún host se operó |
+| Release y calidad | GO sólo para CI offline | #99 rechaza reruns/main obsoleto; #117 rechaza dos dispatches nuevos del mismo SHA. #114/#116 exigen en CI 6 lecciones RCA y 15 selectores. No se publicó GHCR y un check verde no prueba el host |
 | Reserva real | NO_GO | No hay cuenta autorizada, orden real de login/cola/eligibilidad, confirmación de Boca ni conciliación externa de un resultado ambiguo; una intención local `planned` no es ticket |
 
 Cada PR necesita revisión técnica registrada del agente, checks exactos y

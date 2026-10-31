@@ -1,8 +1,8 @@
 # BETA de componentes: estado vigente y registro histórico del gate #35
 
-## Estado vigente — 2026-10-30 (America/Argentina/Buenos_Aires)
+## Estado vigente — 2026-10-31 (America/Argentina/Buenos_Aires)
 
-Base verificada: `main` `9aeb005b9dddec663d5e8ecfcf703044205d5be6`.
+Base verificada: `main` `546fbb595b395fb32b3608879590fcc44c833086`.
 La integración de componentes **offline** permite revisar una simulación; no
 acredita una BETA operativa, credenciales reales, reserva ni estado del host.
 Todo el texto bajo «Registro histórico» documenta cortes anteriores, no la
@@ -11,10 +11,11 @@ HEAD actual ni una prueba de Boca.
 | Alcance | Evidencia en esta base | Decisión actual |
 | --- | --- | --- |
 | Simulación e intento local | #36 y #38 integrados: coordinación de una sola ejecución por socio dentro de una instancia, y concesión durable SQLite para un intento local | GO para pruebas sintéticas; #38 no está conectado a una reserva externa ni garantiza exactamente una vez en Boca |
-| Panel y alta | #29 renderiza estados inyectados y #31 ofrece alta interna; #110 sigue draft como artefacto sintético de vista previa | NO_GO para interfaz privada: faltan ruta servida, autenticación administrativa y controles de sesión/TLS/CSRF |
+| Panel y alta | #29 renderiza estados inyectados y #31 ofrece alta interna; #110 integró un artefacto sintético de vista previa, no una ruta servida. #113 define la futura consola ChatGPT Sites compartible | NO_GO para interfaz privada: faltan API Boca, autenticación administrativa y controles de sesión/TLS/CSRF. No se publicó un Site |
 | Navegador y fuente pública | #43 arrancó/cerró Chromium sin egress; #44 midió un solo arranque offline; #33 es opt-in y #96 informa un semáforo público manual | No hay prueba de login, cola, elegibilidad o reserva; el script #33 no fue ejecutado contra Boca en este gate ni se midió una visita real |
 | Claves y credenciales | #40 continúa draft; el vault y #31 no exponen un canal seguro de ingreso | NO_GO para contraseñas reales; falta completar y revisar el ciclo de claves, identidad única y alta privada |
-| Host | #63 incorporó el workflow manual; #66 exige motor `off`; #69 añadió diagnóstico de sólo lectura; #71 incorporó postflight estricto | NO_GO para dispatch: #69 aún no demuestra rootless; faltan #79, #81, #89, #91, #97 y los gates de release, host y capacidad. No hubo operación del host en este corte |
+| Host y release | #79/#81 fijaron rootless y custodia de clave; #89 vinculó el digest escaneado; #91 inspecciona UID/capacidad; #97 añadió limpieza selectiva; #99/#117 rechazan reruns, main obsoleto y dispatches duplicados. #116 verifica red/cgroups efectivos y capacidad tras pull/up en CI | NO_GO para release/dispatch: faltan prueba real de entorno protegido, identidad SSH, daemon rootless, cgroups y capacidad del host. No hubo publicación GHCR ni operación del host en este corte |
+| RCA y continuidad | #114 integró el registro; #116 añadió RCA-105/106. CI exige 6 lecciones y 15 selectores de regresión ejecutados; #45 conserva el handoff | GO para retener regresiones de código; las nuevas lecciones requieren RCA, prueba y PR revisado. No hay autoedición ni deploy automático |
 | Backup/restore | El dueño difirió este trabajo hasta contar con una versión productiva fiable | No bloquea esta BETA de simulación ni habilita credenciales reales; antes de un alta real siguen pendientes los requisitos de recuperación/custodia de ADR 0012 y ADR 0022 |
 
 Para cada nuevo PR se registra revisión técnica del agente, checks exactos y

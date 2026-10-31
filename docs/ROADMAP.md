@@ -1,7 +1,7 @@
 # Development backlog and agent work order
 
-**Corte vigente:** 2026-10-30 (America/Argentina/Buenos_Aires), `main`
-`9aeb005b9dddec663d5e8ecfcf703044205d5be6`. Las casillas indican el
+**Corte vigente:** 2026-10-31 (America/Argentina/Buenos_Aires), `main`
+`546fbb595b395fb32b3608879590fcc44c833086`. Las casillas indican el
 hito completo; un componente integrado no valida por sí solo el uso real de
 Boca, la interfaz privada ni el host.
 
@@ -34,7 +34,10 @@ Boca, la interfaz privada ni el host.
 
 ## Milestone F2 — owner-facing operations
 
-- [ ] Accessible tablet-first control panel and Telegram alerts.
+- [ ] Accessible tablet-first control panel and Telegram alerts. #110 integró
+      sólo una vista previa con datos ficticios; #113 define una posible
+      consola ChatGPT Sites con enlace compartible, sin Site publicado ni API
+      administrativa autenticada.
 - [ ] Explicit consent and owner-only secure credential enrollment UI.
 - [ ] Ciclo de claves y baja completa de credenciales: #40 (recifrado interno)
       sigue draft; #31 no ofrece una interfaz privada de gestión.
@@ -76,19 +79,32 @@ Boca, la interfaz privada ni el host.
 
 Un issue y una rama por alcance, contratos y pruebas verificables. #36 y #38
 ya están integrados; #40 continúa draft y necesita revisión técnica y CI de
-su HEAD exacta antes de fusionar. #66 incorporó el contrato de motor `off` y
-#69 el diagnóstico sólo lectura y #71 el postflight estricto, pero ninguno
-acredita un host listo. Faltan #79/#81/#89/#91/#97 y los gates objetivos de
-release, SSH, rootless, recursos y capacidad antes de cualquier dispatch por
-el único workflow manual Boca. Sin operación automática por merge.
+su HEAD exacta antes de fusionar. #66 incorporó motor `off`, #69 diagnóstico
+de sólo lectura y #71 postflight estricto. #79/#81 fijaron el límite rootless
+y la clave; #89 el digest escaneado; #91 el UID y dos filesystems; #97 la
+limpieza selectiva. #99/#117 bloquean reruns, SHA obsoleto y duplicados de
+release. #116 integró pruebas de red/cgroups efectivos y capacidad después
+de pull/up en runner. Nada de esto acredita todavía identidad SSH, daemon
+rootless, cgroups, espacio o aislamiento reales en el host. Release y deploy
+siguen NO_GO; ningún merge dispara operación automática.
 
-#29 y #31 no conforman aún una interfaz autenticada de tablet/alta; #110 es
-una vista previa sintética en draft. CI verifica Chromium offline sin usar una
-página Boca ficticia como prueba funcional. Una futura prueba del flujo real
-requiere una sesión legítima, autorización y límites de tráfico separados.
-Una falla de la fuente pública se diagnostica por Actions y se informa como
-alerta, sin bloquear por sí sola la simulación ni justificar un nuevo
-despliegue.
+Los alcances disjuntos avanzan en paralelo con un escritor por ruta. La
+integración se serializa sobre la HEAD exacta de `main`, con revisión técnica
+y checks nuevos del candidato reconciliado. #45 registra el handoff para no
+repetir operaciones ni confundir una CI histórica con evidencia vigente.
+
+#114/#116 registran 6 lecciones RCA aceptadas y CI exige sus 15 selectores;
+el aprendizaje nuevo se incorpora por una prueba y un PR revisado, sin
+autoeditar código.
+
+#29 y #31 no conforman aún una interfaz autenticada de tablet/alta; #110
+integró sólo una vista previa sintética. #113 documenta el camino a un Site
+compartible sin autorizar control operativo. CI verifica Chromium offline sin
+usar una página Boca ficticia como prueba funcional. Una futura prueba del
+flujo real requiere una sesión legítima, autorización y límites de tráfico
+separados. Una falla de la fuente pública se diagnostica por Actions y se
+informa como alerta, sin bloquear por sí sola la simulación ni justificar un
+nuevo despliegue.
 
 ## Hito diferido por decisión del dueño
 

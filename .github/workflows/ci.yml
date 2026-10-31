@@ -23,6 +23,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -34,7 +35,6 @@ jobs:
       - name: Validate resolved Boca-only Compose model
         env:
           BOCA_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-          BOCA_MASTER_KEY_SOURCE: /srv/boca-socios/secrets/master.key
           BOCA_ENVIRONMENT: staging
         run: |
           docker compose -f compose.yaml config --format json > "$RUNNER_TEMP/boca-compose.json"
@@ -46,7 +46,9 @@ jobs:
       - name: Types
         run: uv run mypy src
       - name: Test
-        run: uv run pytest -q
+        run: uv run pytest -q --junitxml="$RUNNER_TEMP/rca-tests.xml"
+      - name: Enforce accepted RCA lessons against executed regressions
+        run: uv run python scripts/check_rca_lessons.py "$RUNNER_TEMP/rca-tests.xml"
       - name: Repository isolation gate
         run: uv run python scripts/check_repo_policy.py
       - name: Audit GitHub Actions security (offline)

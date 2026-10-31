@@ -48,6 +48,8 @@ def check_policy(root: Path) -> list[str]:
                 "workflow_dispatch:",
                 "environment: boca-first-deploy",
                 "BOCA_DEPLOY_ENV_READY",
+                'test "$GITHUB_RUN_ATTEMPT" = 1',
+                "python scripts/check_main_ref.py",
                 "StrictHostKeyChecking yes",
                 "BatchMode yes",
                 "BOCA_DEPLOY_KNOWN_HOSTS",
@@ -55,6 +57,7 @@ def check_policy(root: Path) -> list[str]:
                 "github.actor == 'mbalbo2023'",
                 "boca-first-deploy\n  cancel-in-progress: false",
                 "python3 - preflight",
+                "python3 - observe",
                 "python3 - apply",
             ):
                 if required not in data:

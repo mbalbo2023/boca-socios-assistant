@@ -14,10 +14,9 @@ services:
       BOCA_ENGINE_MODE: "off"
       BOCA_DB_PATH: /data/boca.sqlite3
       BOCA_MASTER_KEY_FILE: /run/secrets/boca_master_key
-    secrets:
-      - boca_master_key
     volumes:
       - boca_data:/data
+      - boca_key:/run/secrets:ro
     networks:
       - boca_private
     read_only: true
@@ -38,12 +37,9 @@ services:
       start_period: 15s
     # Deliberately no host port, privileged mode, Docker socket or host mounts.
 
-secrets:
-  boca_master_key:
-    file: ${BOCA_MASTER_KEY_SOURCE:?BOCA_MASTER_KEY_SOURCE_is_required}
-
 volumes:
   boca_data: {}
+  boca_key: {}
 
 networks:
   boca_private:

@@ -54,16 +54,33 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      actions: read
       packages: write
     steps:
       - name: Require verified protected release environment
         env:
           BOCA_RELEASE_ENV_READY: ${{ vars.BOCA_RELEASE_ENV_READY }}
-        run: test "$BOCA_RELEASE_ENV_READY" = 'ready'
+        run: |
+          test "$BOCA_RELEASE_ENV_READY" = 'ready'
+          test "$GITHUB_RUN_ATTEMPT" = 1
       - name: Checkout exact main commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Require current main source before release build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref.json" "$GITHUB_SHA"
+      - name: Require a unique first dispatch before release build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release-image.yml/runs?event=workflow_dispatch&head_sha=$GITHUB_SHA&per_page=2" > "$RUNNER_TEMP/boca-release-runs-build.json"
+          python scripts/check_release_dispatch.py "$RUNNER_TEMP/boca-release-runs-build.json" "$GITHUB_SHA" "$GITHUB_RUN_ID"
       - name: Build one local controller image
         env:
           IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
@@ -87,6 +104,20 @@ jobs:
           exit-code: "1"
           format: table
           timeout: 10m
+      - name: Recheck current main source before publication
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-publish.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-publish.json" "$GITHUB_SHA"
+      - name: Recheck unique dispatch before registry login
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release-image.yml/runs?event=workflow_dispatch&head_sha=$GITHUB_SHA&per_page=2" > "$RUNNER_TEMP/boca-release-runs-publish.json"
+          python scripts/check_release_dispatch.py "$RUNNER_TEMP/boca-release-runs-publish.json" "$GITHUB_SHA" "$GITHUB_RUN_ID"
       - name: Log in only after successful scan
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -102,11 +133,21 @@ jobs:
           docker push "$IMAGE" | tee "$RUNNER_TEMP/boca-push.log"
           image_ref="$(python scripts/parse_image_digest.py "$RUNNER_TEMP/boca-push.log" "$GITHUB_SHA")"
           printf 'image_ref=%s\n' "$image_ref" >> "$GITHUB_OUTPUT"
+          python -m boca_socios.release_manifest write "$image_ref" "$GITHUB_SHA" "$GITHUB_RUN_ID" \
+            > "$RUNNER_TEMP/boca-release-manifest.json"
           {
             printf 'Commit: `%s`\n\n' "$GITHUB_SHA"
             printf 'Immutable image: `%s`\n\n' "$image_ref"
             printf 'Actions run: `%s`\n' "$GITHUB_RUN_ID"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve exact published digest for the guarded install
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: boca-release-manifest
+          path: ${{ runner.temp }}/boca-release-manifest.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 30
       - name: Log out from registry
         if: always()
         run: docker logout ghcr.io || true
