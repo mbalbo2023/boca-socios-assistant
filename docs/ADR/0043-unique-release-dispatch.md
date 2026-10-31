@@ -35,3 +35,5 @@ PR validation builds and scans only a disposable runner image. Unit tests
 exercise 0/1/2 results, mismatches, malformed or oversized responses, and
 workflow ordering. No host, backup, real credentials or live reservation is
 part of this decision.
+The accepted RCA is also registered with its exact duplicate and workflow
+ordering regressions for the CI learning gate in ADR 0044.

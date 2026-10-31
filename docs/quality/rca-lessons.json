@@ -33,6 +33,17 @@
         "tests/test_host_first_deploy.py::test_prerequisite_inspection_refuses_uid_1000_before_private_path_probe",
         "tests/test_host_first_deploy.py::test_snapshot_measures_staging_and_rootless_docker_filesystems_separately"
       ]
+    },
+    {
+      "id": "RCA-115",
+      "issue": 115,
+      "fix_pr": 117,
+      "root_cause": "Two fresh manual release dispatches for one SHA both had attempt 1 and could serially repush the mutable SHA tag.",
+      "prevention": "Require only the current first-attempt run in bounded workflow history before build and again before registry login.",
+      "regression_tests": [
+        "tests/test_release_dispatch.py::test_duplicate_fresh_dispatch_is_no_go",
+        "tests/test_release_dispatch.py::test_release_checks_unique_dispatch_before_build_and_before_push"
+      ]
     }
   ]
 }

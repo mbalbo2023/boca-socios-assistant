@@ -30,11 +30,19 @@ def test_only_current_first_attempt_is_accepted() -> None:
     module["validate_dispatch_history"](_api_response(), SHA, "12345")
 
 
+def test_duplicate_fresh_dispatch_is_no_go() -> None:
+    module = runpy.run_path(str(SCRIPT))
+    response = _api_response()
+    response["total_count"] = 2
+    response["workflow_runs"].append(dict(response["workflow_runs"][0], id=67890))
+    with pytest.raises(module["DispatchError"], match="duplicated"):
+        module["validate_dispatch_history"](response, SHA, "12345")
+
+
 @pytest.mark.parametrize(
     "change",
     [
         {"total_count": 0},
-        {"total_count": 2},
         {"total_count": True},
         {"workflow_runs": []},
         {"workflow_runs": [{"id": 54321}]},
