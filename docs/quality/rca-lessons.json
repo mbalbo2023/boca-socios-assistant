@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "lessons": [
+    {
+      "id": "RCA-80",
+      "issue": 80,
+      "fix_pr": 81,
+      "root_cause": "A private host-owned file is not readable by container UID 10001 under Docker rootless UID remapping.",
+      "prevention": "Keep the key in a Boca-only volume and prove ownership, mode and actual UID 10001 read access before starting.",
+      "regression_tests": [
+        "tests/test_host_first_deploy.py::test_key_volume_is_created_once_and_verified_without_host_secret",
+        "tests/test_host_first_deploy.py::test_labeled_local_volume_cannot_redirect_key_initialization"
+      ]
+    },
+    {
+      "id": "RCA-88",
+      "issue": 88,
+      "fix_pr": 89,
+      "root_cause": "A successful release run did not prove that the operator-supplied digest was the image scanned and published in that run.",
+      "prevention": "Bind the exact digest, source SHA and first-attempt run ID to the uploaded release manifest before host credentials.",
+      "regression_tests": [
+        "tests/test_release_manifest.py::test_other_image_run_or_extra_field_is_no_go",
+        "tests/test_release_manifest.py::test_workflow_checks_artifact_before_host_credentials"
+      ]
+    },
+    {
+      "id": "RCA-90",
+      "issue": 90,
+      "fix_pr": 91,
+      "root_cause": "A socket checked from UID 1000 could appear absent when it was merely inaccessible; staging capacity omitted the rootless image store.",
+      "prevention": "Inspect from the dedicated UID and check both staging and validated DockerRootDir capacity before any Boca mutation.",
+      "regression_tests": [
+        "tests/test_host_first_deploy.py::test_prerequisite_inspection_refuses_uid_1000_before_private_path_probe",
+        "tests/test_host_first_deploy.py::test_snapshot_measures_staging_and_rootless_docker_filesystems_separately"
+      ]
+    }
+  ]
+}

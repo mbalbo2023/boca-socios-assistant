@@ -6,13 +6,12 @@ from pathlib import Path
 
 import pytest
 
-MODULE = runpy.run_path(
-    str(Path(__file__).resolve().parents[1] / "scripts/check_rca_lessons.py")
-)
+MODULE = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/check_rca_lessons.py"))
 LessonError = MODULE["LessonError"]
 check_retention = MODULE["check_retention"]
+load_junit = MODULE["load_junit"]
 load_registry = MODULE["load_registry"]
-validate_collected = MODULE["validate_collected"]
+validate_executed = MODULE["validate_executed"]
 validate_registry = MODULE["validate_registry"]
 
 
@@ -34,12 +33,27 @@ def _registry() -> dict[str, object]:
     }
 
 
-def test_collected_regression_is_required_and_parameterized_cases_count() -> None:
+def test_executed_regression_is_required_and_parameterized_cases_count() -> None:
     lessons = validate_registry(_registry())
     selector = lessons["RCA-80"]["regression_tests"][0]
-    validate_collected(lessons, {selector + "[one]", selector + "[two]"})
-    with pytest.raises(LessonError, match="not collected"):
-        validate_collected(lessons, {"tests/test_host_first_deploy.py::test_unrelated"})
+    validate_executed(lessons, {selector + "[one]", selector + "[two]"})
+    with pytest.raises(LessonError, match="not executed"):
+        validate_executed(lessons, {"tests/test_host_first_deploy.py::test_unrelated"})
+
+
+def test_junit_rejects_skipped_regression_and_maps_executed_nodeid(tmp_path: Path) -> None:
+    path = tmp_path / "tests.xml"
+    path.write_text(
+        '<testsuites><testsuite><testcase classname="tests.test_host_first_deploy" '
+        'name="test_key_volume_is_created_once_and_verified_without_host_secret" />'
+        "</testsuite></testsuites>",
+        encoding="utf-8",
+    )
+    nodeids = load_junit(path)
+    validate_executed(validate_registry(_registry()), nodeids)
+    path.write_text(path.read_text().replace(" />", "><skipped /></testcase>"))
+    with pytest.raises(LessonError, match="skipped"):
+        load_junit(path)
 
 
 def test_accepted_lesson_and_its_tests_cannot_disappear() -> None:
