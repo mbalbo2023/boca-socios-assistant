@@ -14,6 +14,10 @@ def validate_release_run(run: object, source_sha: str, release_run_id: str) -> N
         raise ReleaseRunError("invalid release run metadata")
     if type(run.get("id")) is not int or str(run["id"]) != release_run_id:
         raise ReleaseRunError("release run ID mismatch")
+    # Artifacts are scoped to a run ID, not to a particular rerun attempt.
+    # A successful later attempt could otherwise cite an earlier artifact.
+    if type(run.get("run_attempt")) is not int or run["run_attempt"] != 1:
+        raise ReleaseRunError("release run must be the first attempt")
     for field, expected in {
         "name": "Boca image release",
         "event": "workflow_dispatch",

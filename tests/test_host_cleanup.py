@@ -473,6 +473,41 @@ def test_private_runtime_must_be_owned_and_rootless_before_docker(
         cleanup._check_rootless_boundary()
 
 
+def test_cleanup_docker_command_discards_inherited_transport_and_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[dict[str, str]] = []
+
+    def fake_run(*args: object, **kwargs: object) -> object:
+        environment = kwargs["env"]
+        assert isinstance(environment, dict)
+        captured.append(environment)
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(cleanup.subprocess, "run", fake_run)
+    for key in (
+        "DOCKER_HOST",
+        "DOCKER_CONTEXT",
+        "DOCKER_CONFIG",
+        "DOCKER_TLS",
+        "DOCKER_TLS_VERIFY",
+        "DOCKER_CERT_PATH",
+    ):
+        monkeypatch.setenv(key, "remote-or-rootful")
+    assert cleanup._run("info") == "ok"
+    assert captured[0]["DOCKER_HOST"] == "unix:///run/user/10001/docker.sock"
+    assert all(
+        key not in captured[0]
+        for key in (
+            "DOCKER_CONTEXT",
+            "DOCKER_CONFIG",
+            "DOCKER_TLS",
+            "DOCKER_TLS_VERIFY",
+            "DOCKER_CERT_PATH",
+        )
+    )
+
+
 def test_unowned_runtime_parent_is_rejected_before_socket_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -555,7 +590,8 @@ def test_actions_cleanup_only_follows_a_failed_staging_attempt() -> None:
     stage = workflow.index("Stage only reviewed Boca Compose file")
     apply = workflow.index("Pull verified digest and start only Boca controller")
     cleanup_step = workflow.index("Clean only proven disposable Boca artifacts after failure")
-    assert preflight < marker < stage < apply < cleanup_step
+    main_recheck = workflow.index("Recheck current main HEAD before staging")
+    assert preflight < main_recheck < marker < stage < apply < cleanup_step
     cleanup_section = workflow[cleanup_step : workflow.index("- name:", cleanup_step + 10)]
     assert (
         "if: failure() && inputs.operation == 'first-install' && "

@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout merge candidate without persisted credentials
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Build one local controller image
@@ -61,7 +61,7 @@ jobs:
           BOCA_RELEASE_ENV_READY: ${{ vars.BOCA_RELEASE_ENV_READY }}
         run: test "$BOCA_RELEASE_ENV_READY" = 'ready'
       - name: Checkout exact main commit
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Build one local controller image
@@ -98,6 +98,7 @@ jobs:
           IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
           PYTHONPATH: src
         run: |
+          set -euo pipefail
           docker push "$IMAGE" | tee "$RUNNER_TEMP/boca-push.log"
           image_ref="$(python scripts/parse_image_digest.py "$RUNNER_TEMP/boca-push.log" "$GITHUB_SHA")"
           printf 'image_ref=%s\n' "$image_ref" >> "$GITHUB_OUTPUT"
@@ -109,11 +110,12 @@ jobs:
             printf 'Actions run: `%s`\n' "$GITHUB_RUN_ID"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve exact published digest for the guarded install
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boca-release-manifest
           path: ${{ runner.temp }}/boca-release-manifest.json
           if-no-files-found: error
+          overwrite: false
           retention-days: 30
       - name: Log out from registry
         if: always()

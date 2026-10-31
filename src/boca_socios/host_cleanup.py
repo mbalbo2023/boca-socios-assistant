@@ -106,7 +106,13 @@ def _safe_private_runtime() -> bool:
 def _run(*args: str) -> str:
     # Never inherit a remote/rootful Docker context or transport from SSH.
     environment = dict(os.environ)
-    for key in ("DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"):
+    for key in (
+        "DOCKER_CONTEXT",
+        "DOCKER_CONFIG",
+        "DOCKER_TLS",
+        "DOCKER_TLS_VERIFY",
+        "DOCKER_CERT_PATH",
+    ):
         environment.pop(key, None)
     environment["DOCKER_HOST"] = f"unix://{ROOTLESS_SOCKET}"
     try:

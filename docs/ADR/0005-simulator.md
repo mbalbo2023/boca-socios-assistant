@@ -68,6 +68,6 @@ derived from a real event. No adapter to a live provider is included.
 The simulator uses constant-sized state per logical entry/session plus
 in-memory ordering lists; it starts no processes, browser workers or
 connections. Full frozen lint, format, strict types, tests and isolation
-gates must pass before review, and human review is required to merge.
+gates and an agent technical review of the exact head must pass before merge.
 
 Deployment and live observation remain unauthorized, separate milestones.

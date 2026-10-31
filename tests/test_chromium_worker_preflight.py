@@ -25,6 +25,14 @@ def test_worker_rejects_root_even_with_browser_binary(tmp_path: Path) -> None:
         module.validate_worker_identity(0, browser)
 
 
+def test_worker_rejects_another_nonroot_uid(tmp_path: Path) -> None:
+    module = worker()
+    browser = tmp_path / "chrome"
+    browser.touch()
+    with pytest.raises(module.WorkerPreflightError, match="worker_uid_mismatch"):
+        module.validate_worker_identity(1000, browser)
+
+
 def test_worker_rejects_missing_browser_binary(tmp_path: Path) -> None:
     module = worker()
     with pytest.raises(module.WorkerPreflightError, match="browser_missing"):

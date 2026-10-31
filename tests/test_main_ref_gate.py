@@ -53,10 +53,15 @@ def test_current_main_and_first_attempt_are_checked_before_ssh_and_apply() -> No
         for start in range(len(workflow))
         if workflow.startswith("python scripts/check_main_ref.py", start)
     ]
-    assert len(checks) == 2
+    assert len(checks) == 3
     assert checks[0] < workflow.index("Configure pinned SSH host key")
     assert (
-        workflow.index("Stage only reviewed Boca Compose file")
+        workflow.index("Read-only host capacity and Boca namespace before first install")
         < checks[1]
+        < workflow.index("Stage only reviewed Boca Compose file")
+    )
+    assert (
+        workflow.index("Validate resolved host Compose model")
+        < checks[2]
         < workflow.index("Pull verified digest and start only Boca controller")
     )

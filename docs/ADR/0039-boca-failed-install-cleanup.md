@@ -77,8 +77,8 @@ between measurements makes the outcome INDETERMINADO if deletion began.
 No `docker system/image/volume prune`, `compose down`, daemon restart,
 automatic retry, volume removal or host-wide cleanup is permitted.
 
-The helper and failure step remain in an unmerged draft; no SSH, host or
-Docker operation was performed while writing or testing this candidate.
+No SSH, host or Docker operation was performed while writing or testing this
+candidate. Merging the workflow does not dispatch it to a host.
 Actions uses the existing Boca-only serialization lock and rejects a manual
 run attempt greater than one. The workflow treats uncertain state or an
 unverified disk measurement as NO-GO. If a mutation began, the result is

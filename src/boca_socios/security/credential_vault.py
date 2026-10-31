@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import hmac
 import os
 import stat
 from dataclasses import dataclass
@@ -33,15 +32,6 @@ class CredentialVault:
             raise ValueError("invalid key identifier")
         self._key = key
         self._key_id = key_id
-
-    @property
-    def key_id(self) -> str:
-        """Nonsecret version label for migration policy checks."""
-        return self._key_id
-
-    def same_material_as(self, other: CredentialVault) -> bool:
-        """Compare candidate key material without returning either key."""
-        return hmac.compare_digest(self._key, other._key)
 
     @classmethod
     def from_secret_file(cls, file_path: Path, *, key_id: str = "v1") -> CredentialVault:

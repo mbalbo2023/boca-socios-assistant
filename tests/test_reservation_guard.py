@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from multiprocessing import get_context
 from pathlib import Path
 from threading import Barrier
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -32,6 +34,56 @@ def setup_guard(tmp_path: Path) -> tuple[Database, ReservationAttemptGuard, str]
     guard = ReservationAttemptGuard(database)
     guard.migrate()
     return database, guard, request_id
+
+
+def _compete_in_process(
+    db_path: str, request_id: str, start: Any, ready: Any, results: Any
+) -> None:
+    ready.put(True)
+    if not start.wait(timeout=15):
+        results.put("start timeout")
+        return
+    try:
+        claim = ReservationAttemptGuard(Database(Path(db_path))).claim(request_id, now=1000)
+    except Exception as exc:
+        results.put(type(exc).__name__)
+    else:
+        results.put(claim is not None)
+
+
+def test_two_processes_share_one_durable_authorization(tmp_path: Path) -> None:
+    database, guard, request_id = setup_guard(tmp_path)
+    context = get_context("spawn")
+    start = context.Event()
+    ready = context.Queue()
+    results = context.Queue()
+    processes = [
+        context.Process(
+            target=_compete_in_process,
+            args=(str(database.path), request_id, start, ready, results),
+        )
+        for _ in range(2)
+    ]
+    try:
+        for process in processes:
+            process.start()
+        assert [ready.get(timeout=15) for _ in processes] == [True, True]
+        start.set()
+        for process in processes:
+            process.join(timeout=15)
+        assert all(process.exitcode == 0 for process in processes)
+        assert sorted(results.get(timeout=5) for _ in processes) == [False, True]
+        assert guard.claim(request_id, now=1001) is None
+        with database.connection() as connection:
+            assert connection.execute("SELECT count(*) FROM reservation_attempts").fetchone() == (
+                1,
+            )
+    finally:
+        start.set()
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+            process.join(timeout=5)
 
 
 def test_concurrent_aliases_get_only_one_durable_authorization(tmp_path: Path) -> None:

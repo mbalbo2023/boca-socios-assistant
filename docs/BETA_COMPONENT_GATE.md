@@ -1,20 +1,35 @@
-# BETA de componentes: gate de integración #35
+# BETA de componentes: registro histórico del gate #35
 
 **Fecha:** 2026-10-28 (America/Argentina/Buenos_Aires). **Estado:** rama de
 verificación, sin merge a `main`, despliegue ni acceso autenticado a Boca.
+Este es el estado de aquel corte; los SHA y resultados no acreditan el estado
+actual. Consultar [BETA_INTEGRATION_STATUS.md](BETA_INTEGRATION_STATUS.md)
+para los componentes ya integrados y su revalidación posterior. Desde
+2026-10-29 rige
+[ADR 0038](ADR/0038-agent-review-and-operations.md):
+revisión técnica registrada del agente y CI exacta, sin aprobación humana
+adicional. El diseño #28 se revisó y fusionó el 2026-10-29 en horario de
+Argentina, sin habilitar alta real. Revalidar PRs, main y gates antes de operar.
+
+**Revalidación del 2026-10-30 (UTC):** #30, #34, #33 y #43 ya están en `main`.
+#36, #38, #40 y #44 permanecen como borradores; #42 se rehízo como PR
+documental directo a `main`. El árbol y las CI de 157 pruebas descritos abajo
+son históricos, no el estado del actual PR #42. El smoke offline de Chromium
+integrado no prueba el sitio ni habilita reserva o despliegue.
 
 Para un agente nuevo, empezar por
 [AGENT_HANDOFF_2026-10-28.md](AGENT_HANDOFF_2026-10-28.md), que incluye
 procedencia de PRs, evidencias, dependencias y decisiones pendientes.
 
 **Actualización de continuidad:** [PR #36](https://github.com/mbalbo2023/boca-socios-assistant/pull/36)
-integra componentes; [PR #38](https://github.com/mbalbo2023/boca-socios-assistant/pull/38)
-añade el guard de intento único y [PR #40](https://github.com/mbalbo2023/boca-socios-assistant/pull/40)
-el recifrado interno. Son **borradores apilados**, no una versión fusionada.
-En otra rama, [PR #33](https://github.com/mbalbo2023/boca-socios-assistant/pull/33)
+integraba componentes en aquel candidato; [PR #38](https://github.com/mbalbo2023/boca-socios-assistant/pull/38)
+añadía el guard de intento único y [PR #40](https://github.com/mbalbo2023/boca-socios-assistant/pull/40)
+el recifrado interno. Eran **borradores apilados** al corte. En otra rama,
+[PR #33](https://github.com/mbalbo2023/boca-socios-assistant/pull/33)
 corrige la ruta pública y [PR #43](https://github.com/mbalbo2023/boca-socios-assistant/pull/43)
 construye el worker Chromium. Esos cambios **no** están incorporados en el
-árbol de esta rama ni en sus 157 pruebas. [PR #44](https://github.com/mbalbo2023/boca-socios-assistant/pull/44)
+árbol de la rama histórica ni en sus 157 pruebas.
+[PR #44](https://github.com/mbalbo2023/boca-socios-assistant/pull/44)
 mide un único arranque offline de ese worker en otra rama apilada.
 
 ## Candidatos incorporados
@@ -30,10 +45,10 @@ mide un único arranque offline de ese worker en otra rama apilada.
 | #38 | `3df9d73fcb85d00123988dc1d4528ad8e66792f0` | Concesión local única, vencimiento sin reintento, conciliación manual |
 | #40 | `ce1b4aecdd97949b96943c3911cd21482f36e5e1` | Recifrado transaccional y trigger contra escritores de clave antigua |
 
-La integración de estos snapshots no tuvo conflictos de código. El PR #34
+La integración de estos snapshots no tuvo conflictos de código al corte. El PR #34
 partió de una HEAD anterior de #30; la regresión posterior del vault de #30
-se incorporó explícitamente. Las ramas de origen continúan abiertas para
-revisión independiente.
+se incorporó explícitamente. La integración final exige revisión técnica
+propia y CI exacta de cada PR fuente; algunos ya se integraron después.
 
 ## Prueba cruzada
 
@@ -54,7 +69,7 @@ SUCCESS en `quality-and-tests` e `image-build` para su HEAD exacta. En el
 [40770471612](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40770471612)
 SUCCESS en ambos jobs. #38 pasó
 [40769224759](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40769224759)
-en ambos jobs. En **esta rama** el build sigue siendo sólo del controlador.
+en ambos jobs. En **aquella rama** el build seguía siendo sólo del controlador.
 Por separado, #33 HEAD `577c52656cbd90d2f6f308340405c456b065a9ce`
 pasó [40777337319](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/40777337319)
 (42 tests locales) y #43 HEAD `9a6311d2be22de76d8f5cf609cba0f46c9e67eb2`
@@ -71,26 +86,26 @@ rendimiento de Boca o del droplet.
 
 | Orden | Gate | Estado / efecto |
 | --- | --- | --- |
-| 1 | Revisión humana de #28 y seguridad de identidad/admin/TLS | Pendiente; bloquea formulario expuesto y claves reales |
-| 2 | Revisión de cada PR fuente y activación verificable de protección `main` (#10) | Pendiente; bloquea merge de borradores |
-| 3 | #36 → #38 → #40 y CI de la HEAD de integración final | CI verde en cada HEAD; revisión humana pendiente; no habilita operaciones externas |
+| 1 | Diseño #28 revisado y fusionado; implementar identidad/admin/TLS | Seguridad del endpoint pendiente; bloquea formulario expuesto y claves reales |
+| 2 | Revisión técnica registrada de cada PR fuente y protección verificable de `main` (#10) | CI exacta, conversaciones resueltas y PR listo preceden merge |
+| 3 | #36 → #38 → #40 y CI de la HEAD de integración final | Las CI históricas fueron verdes; exigir nueva revisión técnica y checks exactos antes de integrar |
 | 4 | Worker aislado #27 y una observación **anónima** de la portada real con egress acotado | #43 pasa smoke offline y #33 apunta a `/auth/login`; falta ejecución del script con egress de sistema acotado |
 | 5 | Canal privado, identidad externa única, backup/restore, cuenta autorizada y reconciliación de Boca | Pendiente; impide credenciales reales y reserva |
-| 6 | Despliegue Docker exclusivo Boca por Actions | Requiere aprobación específica posterior con SHA, digest y recursos |
+| 6 | Despliegue de simulación exclusivo Boca por Actions | Operación autónoma sólo con SHA, digest inmutable, SSH fijado, entorno protegido, aislamiento rootless y recursos probados |
 
 El dueño pidió trabajar sobre Boca Socios real en vez de un laboratorio
 funcional con página ficticia. Los tests de componentes permanecen offline y
-**no se cuentan como prueba del sitio**. #27 tiene un worker en borrador con
-Chromium arrancado en CI sin red; #11 mantiene pendiente la medición de una
+**no se cuentan como prueba del sitio**. #27 dio lugar a un worker ya integrado
+con Chromium arrancado en CI sin red; #11 mantiene pendiente la medición de una
 sesión sin carga a Boca.
 No se simularán varias visitas a la web del tercero para extrapolar capacidad.
 
 ## Límites antes de una BETA operativa
 
-1. #28 requiere revisión humana del diseño. #31 no expone formulario ni
-   endpoint, ni autentica administrador. Falta TLS, CSRF, sesiones, identidad
-   de socio única verificada, baja completa, backup/restore y rotación de
-   master key. **No cargar contraseñas todavía**.
+1. El diseño #28 fue revisado técnicamente y fusionado. #31 no expone
+   formulario ni endpoint, ni autentica administrador. Faltan TLS, CSRF,
+   sesiones, identidad de socio única verificada, baja completa,
+   backup/restore y rotación de master key. **No cargar contraseñas todavía**.
 2. El panel #29 recibe datos inyectados; no tiene API autenticada ni pantalla
    de alta. La UI accesible no acredita acceso seguro desde tablet.
 3. El outbox #34 es local y durable, pero no entrega Telegram ni comparte una
@@ -107,26 +122,53 @@ No se simularán varias visitas a la web del tercero para extrapolar capacidad.
 5. Docker CI construye el controlador y, en #43, una imagen worker separada
    cuyo Chromium arrancó y cerró sin red. #44 midió **un arranque offline**
    en CI, sin inferir el consumo de una visita real ni del droplet. Faltan
-   sandbox en el kernel de destino, egress acotado, scan de imagen,
-   canal privado de credenciales ni workflow de despliegue aprobado. #10 no tiene protección de
-   `main` verificada. Ningún PR tiene revisión humana registrada.
+   sandbox en el kernel de destino, egress acotado, scan de imagen y canal
+   privado de credenciales para cualquier BETA real. Verificar el estado
+   actual de #10 y de los workflows en GitHub; los checks históricos no
+   sustituyen revisión técnica de los candidatos actuales.
 6. #40 permite recifrar datos sintéticos y rechazar escritores con versión
    vieja. No se ha probado backup/restore cifrado, custodia, compatibilidad de
    arranque con versión nueva ni retiro seguro de claves. El runtime por
    defecto continúa en versión `v1` y el servicio de recifrado está apagado.
 
-**GO:** desarrollo, revisión y CI en ramas. **NO-GO:** credenciales reales,
-reservas, notificaciones externas, merge sin revisión o despliegue. El dueño
-recibirá una solicitud separada y concreta para desplegar después de cerrar
-los gates, con SHA, digest y recursos; cualquier operación del droplet será
-por GitHub Actions exclusivo de Boca.
+**GO:** desarrollo, revisión técnica y CI en ramas. **NO-GO:** credenciales
+reales, reservas, notificaciones externas y merge sin revisión registrada o
+checks exactos. Un despliegue de **simulación solamente** puede proceder por
+Actions bajo la dirección permanente del dueño una vez probados gates de
+imagen, SHA, entorno, SSH, rootless, capacidad y servicio. Una fuente externa
+fallida se informa con hora y semáforo verde/amarillo/rojo/desconocido tras el
+diagnóstico acotado de Actions; no bloquea por sí misma ese despliegue ni
+justifica repetirlo. Un fallo en el host exige inventario de disco/inodos y
+limpieza por Actions sólo de remanentes Boca descartables y sin uso.
 
 ## Revisión accesible
 
-Abrir primero [#28](https://github.com/mbalbo2023/boca-socios-assistant/pull/28)
-para revisar el diseño de alta, luego los PRs de la tabla en orden de
-dependencia. En cada PR usar «Files changed» y «Checks» y registrar la
-aprobación humana de una persona distinta del autor. La CI apilada no sustituye
-la revisión del PR fuente.
+Consultar el diseño ya revisado en
+[#28](https://github.com/mbalbo2023/boca-socios-assistant/pull/28),
+luego los PRs de la tabla en orden de dependencia. En cada PR usar
+«Files changed» y «Checks» y registrar la revisión técnica del agente con
+SHA exacto y hallazgos resueltos; no llamar
+a eso aprobación humana independiente. La CI apilada no sustituye la
+revisión del PR fuente.
 No hace falta ejecutar comandos en el droplet ni copiar datos de socios al
 portapapeles para esta revisión.
+
+## Revalidación del contrato #35 — 2026-10-29 ART
+
+Sobre `main` `37a1b6199f86e9011b7a2dcc73535c76585964e3`, la PR #36 añade
+el puerto estructural que acepta outbox en memoria o SQLite, conserva las
+validaciones previas de alias y tiempo, y prueba alta interna ficticia,
+intención única, aviso durable y panel redactado. Una regresión concurrente
+demostró dos invocaciones del navegador ficticio con alias de un socio; el
+coordinador ahora concede una sola ejecución local por socio y rechaza la
+segunda antes de ese navegador. La barrera se libera también ante fallo.
+Esta protección vive sólo en esa instancia; #38 todavía no está integrada ni
+conectada al flujo y no se afirma intento único externo o entre procesos.
+
+La medición offline de Chromium #44 y el scan de imagen #55 ya forman parte
+de `main` en este corte. Ninguno prueba la capacidad del droplet o una
+reserva de Boca. El dueño difirió todo trabajo de backup/restore hasta una
+versión productiva fiable; no forma parte de #36 ni de la primera instalación
+de simulación. Las credenciales reales siguen deshabilitadas. La evidencia
+de pruebas y Actions de la HEAD exacta de #36 queda en su PR; los SHA y
+cifras anteriores de este archivo siguen como registro histórico.
