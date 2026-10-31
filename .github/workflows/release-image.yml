@@ -54,6 +54,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      actions: read
       packages: write
     steps:
       - name: Require verified protected release environment
@@ -73,6 +74,13 @@ jobs:
         run: |
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref.json"
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref.json" "$GITHUB_SHA"
+      - name: Require a unique first dispatch before release build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release-image.yml/runs?event=workflow_dispatch&head_sha=$GITHUB_SHA&per_page=2" > "$RUNNER_TEMP/boca-release-runs-build.json"
+          python scripts/check_release_dispatch.py "$RUNNER_TEMP/boca-release-runs-build.json" "$GITHUB_SHA" "$GITHUB_RUN_ID"
       - name: Build one local controller image
         env:
           IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
@@ -103,6 +111,13 @@ jobs:
         run: |
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-publish.json"
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-publish.json" "$GITHUB_SHA"
+      - name: Recheck unique dispatch before registry login
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/release-image.yml/runs?event=workflow_dispatch&head_sha=$GITHUB_SHA&per_page=2" > "$RUNNER_TEMP/boca-release-runs-publish.json"
+          python scripts/check_release_dispatch.py "$RUNNER_TEMP/boca-release-runs-publish.json" "$GITHUB_SHA" "$GITHUB_RUN_ID"
       - name: Log in only after successful scan
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
