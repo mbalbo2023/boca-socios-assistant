@@ -38,8 +38,10 @@ it reads only /proc/self/cgroup and the cgroup v2 cpu.max, memory.max and
 pids.max files. It requires the private namespace root and effective
 0.5 CPU, 256 MiB and 64 PIDs, returning a small numeric receipt. Missing,
 unlimited or unexpected values fail closed. The manual diagnostic reuses the
-same contract. A postflight error stops only the Boca controller and keeps
-key/data volumes, image and network for separate diagnosis.
+same contract. A postflight error attempts to stop only the Boca controller
+and keeps key/data volumes, image and network for separate diagnosis. If the
+stop itself fails, a bounded `BOCA_ROLLBACK_UNVERIFIED` marker is emitted; the
+controller state remains unknown and needs Boca-only inventory before retry.
 
 Immediately before `BOCA_DEPLOY_PASS`, the helper measures both filesystems
 again and checks the same topology and reserve. The bounded PASS receipt

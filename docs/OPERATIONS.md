@@ -58,8 +58,10 @@ Before reporting success, the helper reuses the read-only diagnostic contract
 to check the actual container, image, dormant engine, resource limits, both
 mounts, network, capabilities, tmpfs, effective cgroup v2 limits and key
 metadata. It measures both capacities again before the PASS receipt. Startup
-or postflight failure stops only the Boca controller and preserves the key and
-both volumes for separate diagnosis. An
+or postflight failure attempts to stop only the Boca controller and preserves
+the key and both volumes for separate diagnosis. A failed stop leaves the
+controller state unverified: `BOCA_ROLLBACK_UNVERIFIED`, NO-GO and Boca-only
+inventory before retry. An
 existing Boca key, container, volume, network or staged file blocks a fresh
 installation; this flow is not recovery or upgrade. The CPU snapshot remains
 an estimate and capacity cannot be reserved against another actor. See

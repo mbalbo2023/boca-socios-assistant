@@ -1171,6 +1171,43 @@ def test_postflight_failure_stops_only_controller_and_preserves_key(
     assert not any(command[:3] == ("docker", "volume", "rm") for command in commands)
 
 
+def test_failed_controller_stop_reports_uncertain_rollback_without_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    digest = _staged(tmp_path, monkeypatch)
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str, env: dict[str, str] | None = None) -> str:
+        commands.append(args)
+        if args[:3] == ("docker", "image", "inspect"):
+            return json.dumps([IMAGE]) if "RepoDigests" in args[4] else SOURCE_SHA
+        if "ps" in args:
+            return "c" * 64
+        if args[:2] == ("docker", "inspect"):
+            return "healthy"
+        if "stop" in args:
+            raise PreflightError("simulated stop failure")
+        return ""
+
+    def fail_postflight(_image: str, _sha: str) -> DiagnosticSnapshot:
+        raise PreflightError("engine on")
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    monkeypatch.setattr(host, "_create_key", lambda _image: commands.append(("key", "created")))
+    monkeypatch.setattr(host, "_diagnostic_files", lambda _sha: None)
+    monkeypatch.setattr(host, "collect_diagnostic", fail_postflight)
+    with pytest.raises(PreflightError, match="engine on"):
+        host.phase("apply", IMAGE, SOURCE_SHA, digest)
+    output = capsys.readouterr()
+    assert "BOCA_DEPLOY_PASS" not in output.out
+    assert "BOCA_ROLLBACK_UNVERIFIED" in output.err
+    assert [command[-2:] for command in commands if "stop" in command] == [("stop", "controller")]
+    assert not any("down" in command or "prune" in command for command in commands)
+    assert not any(command[:3] == ("docker", "volume", "rm") for command in commands)
+
+
 @pytest.mark.parametrize(
     ("field", "payload"),
     [

@@ -987,7 +987,10 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
         try:
             _run(*_compose_args("stop", "controller"), env=_compose_env(image))
         except PreflightError:
-            pass
+            print(
+                "BOCA_ROLLBACK_UNVERIFIED: controller stop failed; inventory Boca before retry",
+                file=sys.stderr,
+            )
         raise
     print(
         f"BOCA_DEPLOY_PASS image={image} source_sha={source_sha} service=controller"

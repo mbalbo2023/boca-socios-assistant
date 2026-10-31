@@ -44,7 +44,8 @@
         "tests/test_host_first_deploy.py::test_malformed_docker_postflight_stops_controller_without_removing_key",
         "tests/test_runtime_probe.py::test_missing_or_relaxed_effective_limits_are_no_go",
         "tests/test_host_first_deploy.py::test_runner_smoke_probes_effective_runtime_in_disposable_container",
-        "tests/test_host_first_deploy.py::test_foreign_or_reconfigured_boca_network_is_no_go"
+        "tests/test_host_first_deploy.py::test_foreign_or_reconfigured_boca_network_is_no_go",
+        "tests/test_host_first_deploy.py::test_failed_controller_stop_reports_uncertain_rollback_without_pass"
       ]
     },
     {
