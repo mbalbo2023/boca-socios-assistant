@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import runpy
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -24,6 +26,7 @@ is_allowed_page_request = _script["is_allowed_page_request"]
 latency_summary = _script["latency_summary"]
 parse_counts = _script["parse_counts"]
 summarize_resources = _script["summarize_resources"]
+run_group = _script["_run_group"]
 
 
 def snapshot(
@@ -133,3 +136,67 @@ def test_page_requests_fail_closed_outside_ephemeral_loopback(url: str) -> None:
 
 def test_page_request_accepts_only_ephemeral_loopback() -> None:
     assert is_allowed_page_request("http://127.0.0.1:54321/synthetic?nodes=400", 54321)
+
+
+def test_blocked_external_page_request_makes_group_no_go(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(run_group.__globals__, "resource_snapshot", snapshot)
+
+    class FakeRoute:
+        request = SimpleNamespace(url="https://example.invalid/asset")
+        aborted = False
+
+        async def abort(self, _reason: str) -> None:
+            self.aborted = True
+
+        async def continue_(self) -> None:
+            raise AssertionError("external request must never continue")
+
+    class FakePage:
+        async def goto(self, _url: str, **_kwargs: object) -> None:
+            await context.route_callback(route)
+
+        def locator(self, _selector: str) -> FakePage:
+            return self
+
+        async def wait_for(self, **_kwargs: object) -> None:
+            pass
+
+    class FakeContext:
+        async def route(self, _pattern: str, callback: object) -> None:
+            self.route_callback = callback
+
+        async def new_page(self) -> FakePage:
+            return FakePage()
+
+        async def close(self) -> None:
+            pass
+
+    class FakeBrowser:
+        async def new_context(self, **_kwargs: object) -> FakeContext:
+            return context
+
+        async def close(self) -> None:
+            pass
+
+    class FakeChromium:
+        async def launch(self, **_kwargs: object) -> FakeBrowser:
+            return FakeBrowser()
+
+    context = FakeContext()
+    route = FakeRoute()
+    args = SimpleNamespace(
+        max_delta_mib=512,
+        min_headroom_mib=384,
+        min_pid_headroom=16,
+        dom_nodes=50,
+        timeout_ms=1_000,
+        hold_ms=0,
+    )
+    report = asyncio.run(run_group(SimpleNamespace(chromium=FakeChromium()), 54321, 1, 1, args))
+    assert route.aborted
+    assert report["navigation_successes"] == 1
+    assert report["blocked_external_page_requests"] == 1
+    assert "external_page_request_blocked" in report["errors"]
+    assert report["result"] == "NO_GO"

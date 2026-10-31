@@ -180,7 +180,7 @@ class SqliteNotificationOutbox:
         with self._write() as connection:
             connection.execute(
                 """UPDATE notification_outbox SET state='exhausted', next_attempt_at=NULL,
-                   lease_token=NULL, lease_until=NULL
+                   lease_token=NULL, claimed_at=NULL, lease_until=NULL
                    WHERE state IN ('pending', 'claimed') AND expires_at <= ?""",
                 (now,),
             )
@@ -217,9 +217,9 @@ class SqliteNotificationOutbox:
                 attempt_number = int(attempts) + 1
                 connection.execute(
                     """UPDATE notification_outbox SET state='claimed', attempts=?,
-                       next_attempt_at=NULL, lease_token=?, lease_until=?
+                       next_attempt_at=NULL, lease_token=?, claimed_at=?, lease_until=?
                        WHERE idempotency_key=?""",
-                    (attempt_number, str(lease_token), lease_until, key),
+                    (attempt_number, str(lease_token), now, lease_until, key),
                 )
                 connection.execute(
                     "INSERT INTO notification_claim_windows(attempted_at) VALUES (?)", (now,)
@@ -237,7 +237,8 @@ class SqliteNotificationOutbox:
         if not isinstance(claim, SqliteDeliveryClaim):
             raise InvalidClaim("claim is invalid or stale")
         row = connection.execute(
-            """SELECT kind, priority, state, attempts, lease_token, lease_until, expires_at
+            """SELECT kind, priority, state, attempts, lease_token, lease_until,
+                      expires_at, claimed_at
                FROM notification_outbox WHERE idempotency_key=?""",
             (str(claim.idempotency_key),),
         ).fetchone()
@@ -250,6 +251,8 @@ class SqliteNotificationOutbox:
             or row[3] != claim.attempt_number
             or row[4] != str(claim.lease_token)
             or row[5] is None
+            or row[7] is None
+            or now < row[7]
             or now >= row[5]
             or now >= row[6]
             or claim.kind is not kind
@@ -266,7 +269,8 @@ class SqliteNotificationOutbox:
             key, _, _ = self._validate_claim(connection, claim, now)
             connection.execute(
                 """UPDATE notification_outbox SET state='accepted', accepted_at=?,
-                   lease_token=NULL, lease_until=NULL WHERE idempotency_key=?""",
+                   lease_token=NULL, claimed_at=NULL, lease_until=NULL
+                   WHERE idempotency_key=?""",
                 (now, key),
             )
             row = connection.execute(f"{_RECORD} WHERE idempotency_key=?", (key,)).fetchone()
@@ -327,7 +331,8 @@ class SqliteNotificationOutbox:
                 next_attempt = candidate
         connection.execute(
             """UPDATE notification_outbox SET state=?, next_attempt_at=?,
-               lease_token=NULL, lease_until=NULL WHERE idempotency_key=?""",
+               lease_token=NULL, claimed_at=NULL, lease_until=NULL
+               WHERE idempotency_key=?""",
             ("pending" if next_attempt is not None else "exhausted", next_attempt, key),
         )
 

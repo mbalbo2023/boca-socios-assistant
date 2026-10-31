@@ -1,0 +1,327 @@
+name: Boca first deploy
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Inspect prerequisites, preflight, first installation, or dormant-controller diagnostic
+        required: true
+        type: choice
+        options: [inspect-prerequisites, preflight, first-install, diagnostic]
+      source_sha:
+        description: Exact current main commit approved for the operation
+        required: true
+        type: string
+      image_ref:
+        description: Full reviewed GHCR digest for install/diagnostic; blank for inspection/preflight
+        required: false
+        type: string
+      release_run_id:
+        description: Reviewed image release run ID for install/diagnostic; blank for inspection/preflight
+        required: false
+        type: string
+      service:
+        description: Fixed Boca-only service
+        required: true
+        type: choice
+        options: [controller]
+      resource_budget:
+        description: Fixed Boca-only maximum budget
+        required: true
+        type: choice
+        options: [0.5cpu-256m-64pids]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boca-first-deploy
+  cancel-in-progress: false
+
+jobs:
+  pr-validation:
+    if: github.event_name == 'pull_request'
+    name: first-deploy-pr-validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout proposed workflow without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Install frozen development graph
+        run: |
+          python -m pip install --disable-pip-version-check uv==0.13.4
+          uv sync --frozen
+      - name: Check dispatch and first-install boundaries offline
+        run: |
+          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_cleanup.py tests/test_key_custody.py tests/test_release_run.py
+          uv run python scripts/check_repo_policy.py
+
+  pr-runtime-smoke:
+    if: github.event_name == 'pull_request'
+    name: first-deploy-runtime-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      BOCA_IMAGE: boca-first-install-smoke:${{ github.sha }}
+      BOCA_ENVIRONMENT: staging
+    steps:
+      - name: Checkout proposed runtime without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build local simulation image only
+        run: docker build --tag "$BOCA_IMAGE" .
+      - name: Provision separate owner-only key volume on disposable runner
+        run: |
+          docker volume create --driver local \
+            --label com.docker.compose.project=boca-socios \
+            --label com.docker.compose.volume=boca_key boca-socios_boca_key
+          docker run --rm --pull never --user 0:0 --network none --read-only \
+            --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges \
+            --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_key,target=/run/secrets,volume-nocopy \
+            "$BOCA_IMAGE" python -m boca_socios.security.key_custody init
+          if docker run --rm --pull never --user 0:0 --network none --read-only \
+            --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges \
+            --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_key,target=/run/secrets,volume-nocopy \
+            "$BOCA_IMAGE" python -m boca_socios.security.key_custody init >/dev/null 2>&1; then
+            exit 1
+          fi
+          docker run --rm --pull never --user 10001:10001 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_key,target=/run/secrets,volume-nocopy,readonly \
+            "$BOCA_IMAGE" python -m boca_socios.security.key_custody verify
+      - name: Start isolated Compose controller and verify health without third-party traffic
+        run: |
+          docker compose -p boca-socios -f compose.yaml up --no-build --no-deps --wait --wait-timeout 90 -d controller
+          container="$(docker compose -p boca-socios -f compose.yaml ps -q controller)"
+          test -n "$container"
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$container")" = healthy
+          test "$(docker exec --user 10001:10001 "$container" python -m boca_socios.security.key_custody inspect)" = BOCA_KEY_READY
+          docker inspect --format '{{json .HostConfig}}' "$container" | python3 -c 'import json,sys; h=json.load(sys.stdin); assert (h["NanoCpus"], h["Memory"], h["PidsLimit"], h["ReadonlyRootfs"], h["Privileged"], h["PortBindings"], h["PublishAllPorts"]) == (500000000, 268435456, 64, True, False, {}, False)'
+          docker inspect --format '{{json .HostConfig}}' "$container" | python3 -c 'import json,sys; h=json.load(sys.stdin); assert h["NetworkMode"] == "boca-socios_boca_private" and h["CapDrop"] == ["ALL"] and h["CapAdd"] in (None, []) and h["SecurityOpt"] == ["no-new-privileges:true"] and h["Tmpfs"] == {"/tmp": "rw,noexec,nosuid,size=16m"} and h["CgroupnsMode"] in ("private", "")'
+          docker inspect --format '{{json .NetworkSettings}}' "$container" | python3 -c 'import json,sys; n=json.load(sys.stdin); assert n["Ports"] == {} and set(n["Networks"]) == {"boca-socios_boca_private"} and len(n["Networks"]["boca-socios_boca_private"]["NetworkID"]) == 64'
+          network_id="$(docker inspect --format '{{json .NetworkSettings}}' "$container" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Networks"]["boca-socios_boca_private"]["NetworkID"])')"
+          docker network inspect --format '{{json .}}' "$network_id" | python3 -c 'import json,sys; n=json.load(sys.stdin); cid,nid=sys.argv[1:]; assert n["Id"] == nid and n["Name"] == "boca-socios_boca_private" and n["Driver"] == "bridge" and n["Scope"] == "local" and n["Internal"] is False and n["Attachable"] is False and n["Ingress"] is False and set(n["Containers"]) == {cid} and n["Labels"]["com.docker.compose.project"] == "boca-socios" and n["Labels"]["com.docker.compose.network"] == "boca_private"' "$container" "$network_id"
+          docker exec --user 10001:10001 "$container" python -m boca_socios.runtime_probe
+          docker inspect --format '{{json .Mounts}}' "$container" | python3 -c 'import json,sys; m=json.load(sys.stdin); assert {(x["Type"], x["Name"], x["Destination"], x["RW"]) for x in m} == {("volume", "boca-socios_boca_data", "/data", True), ("volume", "boca-socios_boca_key", "/run/secrets", False)}'
+          docker logs "$container" | python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin if x.strip()]; assert rows == [{"event": "started", "mode": "simulation", "engine": "off", "site_calls": 0}]'
+      - name: Remove only synthetic Boca resources from disposable runner
+        if: always()
+        run: |
+          docker compose -p boca-socios -f compose.yaml stop controller || true
+          docker compose -p boca-socios -f compose.yaml rm -sf controller || true
+          docker volume rm boca-socios_boca_data || true
+          docker volume rm boca-socios_boca_key || true
+          docker network rm boca-socios_boca_private || true
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'mbalbo2023/boca-socios-assistant' && github.actor == 'mbalbo2023'
+    name: approved-boca-manual-operation
+    environment: boca-first-deploy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    env:
+      BOCA_OPERATION: ${{ inputs.operation }}
+      BOCA_IMAGE_REF: ${{ inputs.image_ref }}
+      BOCA_SOURCE_SHA: ${{ inputs.source_sha }}
+      BOCA_SERVICE: ${{ inputs.service }}
+      BOCA_BUDGET: ${{ inputs.resource_budget }}
+      BOCA_RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+    steps:
+      - name: Require verified protected environment and matching main commit
+        env:
+          BOCA_DEPLOY_ENV_READY: ${{ vars.BOCA_DEPLOY_ENV_READY }}
+        run: |
+          test "$BOCA_DEPLOY_ENV_READY" = ready
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"
+          [[ "$BOCA_OPERATION" = inspect-prerequisites || "$BOCA_OPERATION" = preflight || "$BOCA_OPERATION" = first-install || "$BOCA_OPERATION" = diagnostic ]]
+          test "$BOCA_SERVICE" = controller
+          test "$BOCA_BUDGET" = 0.5cpu-256m-64pids
+          if [[ "$BOCA_OPERATION" = inspect-prerequisites || "$BOCA_OPERATION" = preflight ]]; then
+            test -z "$BOCA_IMAGE_REF"
+            test -z "$BOCA_RELEASE_RUN_ID"
+          else
+            test -n "$BOCA_IMAGE_REF"
+            test -n "$BOCA_RELEASE_RUN_ID"
+          fi
+      - name: Checkout exact main commit without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Confirm current main HEAD before host access
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref.json" "$BOCA_SOURCE_SHA"
+      - name: Validate immutable inputs and successful matching release
+        if: inputs.operation != 'preflight' && inputs.operation != 'inspect-prerequisites'
+        env:
+          PYTHONPATH: src
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/check_deploy_inputs.py "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_SERVICE" "$BOCA_BUDGET" "$BOCA_RELEASE_RUN_ID"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BOCA_RELEASE_RUN_ID" \
+            > "$RUNNER_TEMP/boca-release-run.json"
+          python scripts/check_release_run.py "$RUNNER_TEMP/boca-release-run.json" "$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID"
+          gh run download "$BOCA_RELEASE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name boca-release-manifest --dir "$RUNNER_TEMP/boca-release-manifest"
+          python -m boca_socios.release_manifest verify \
+            "$RUNNER_TEMP/boca-release-manifest/boca-release-manifest.json" \
+            "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID"
+      - name: Hash reviewed Boca Compose file
+        run: sha256sum compose.yaml | cut -d' ' -f1 > "$RUNNER_TEMP/boca-compose.sha"
+      - name: Validate reviewed runner Compose model
+        if: inputs.operation != 'preflight' && inputs.operation != 'inspect-prerequisites'
+        env:
+          BOCA_IMAGE: ${{ inputs.image_ref }}
+          BOCA_ENVIRONMENT: staging
+          PYTHONPATH: src
+        run: |
+          docker compose -p boca-socios -f compose.yaml config --format json > "$RUNNER_TEMP/boca-runner-model.json"
+          python scripts/check_deploy_contract.py "$RUNNER_TEMP/boca-runner-model.json" "$BOCA_IMAGE_REF"
+      - name: Configure pinned SSH host key and dedicated identity
+        env:
+          BOCA_HOST: ${{ vars.BOCA_DEPLOY_HOST }}
+          BOCA_SSH_KEY: ${{ secrets.BOCA_DEPLOY_SSH_KEY }}
+          BOCA_KNOWN_HOSTS: ${{ secrets.BOCA_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          [[ "$BOCA_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$ ]]
+          test -n "$BOCA_SSH_KEY"
+          test -n "$BOCA_KNOWN_HOSTS"
+          mkdir -m 700 "$RUNNER_TEMP/boca-ssh"
+          printf '%s\n' "$BOCA_SSH_KEY" > "$RUNNER_TEMP/boca-ssh/key"
+          printf '%s\n' "$BOCA_KNOWN_HOSTS" > "$RUNNER_TEMP/boca-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/boca-ssh/key" "$RUNNER_TEMP/boca-ssh/known_hosts"
+          {
+            printf 'Host boca-target\n'
+            printf '  HostName %s\n' "$BOCA_HOST"
+            printf '  User boca-deploy\n'
+            printf '  IdentityFile %s/boca-ssh/key\n' "$RUNNER_TEMP"
+            printf '  UserKnownHostsFile %s/boca-ssh/known_hosts\n' "$RUNNER_TEMP"
+            printf '  GlobalKnownHostsFile /dev/null\n'
+            printf '  StrictHostKeyChecking yes\n'
+            printf '  BatchMode yes\n'
+            printf '  IdentitiesOnly yes\n'
+            printf '  IdentityAgent none\n'
+            printf '  PasswordAuthentication no\n'
+            printf '  KbdInteractiveAuthentication no\n'
+            printf '  ClearAllForwardings yes\n'
+            printf '  RequestTTY no\n'
+            printf '  UpdateHostKeys no\n'
+            printf '  ConnectTimeout 10\n'
+            printf '  NumberOfPasswordPrompts 0\n'
+            printf '  ForwardAgent no\n'
+          } > "$RUNNER_TEMP/boca-ssh/config"
+          chmod 600 "$RUNNER_TEMP/boca-ssh/config"
+      - name: Inspect dedicated user prerequisites without Docker
+        if: inputs.operation == 'inspect-prerequisites'
+        run: |
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - inspect-prerequisites "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py
+      - name: Observe host capacity and Boca namespace without an image
+        if: inputs.operation == 'preflight'
+        run: |
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - observe "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py
+      - name: Read-only host capacity and Boca namespace before first install
+        if: inputs.operation == 'first-install'
+        run: |
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - preflight "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py
+      - name: Record read-only preflight result
+        if: inputs.operation == 'preflight'
+        run: |
+          {
+            printf 'Boca host preflight: rootless boundary and capacity gate PASS; no installation performed\n\n'
+            printf 'Commit: `%s`\n\nService: `controller`\n\nBudget: `0.5cpu-256m-64pids`\n' "$BOCA_SOURCE_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Record inspection scope
+        if: always() && inputs.operation == 'inspect-prerequisites'
+        run: |
+          printf 'Boca prerequisite inspection only; metadata status is in the preceding SSH step. No Docker operation or installation was requested. This is not deployment approval.\n' >> "$GITHUB_STEP_SUMMARY"
+      - name: Recheck current main HEAD before staging
+        if: inputs.operation == 'first-install'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-stage.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-stage.json" "$BOCA_SOURCE_SHA"
+      - name: Mark Boca staging attempt after read-only preflight
+        id: boca_stage_attempt
+        if: inputs.operation == 'first-install'
+        run: printf 'started=true\n' >> "$GITHUB_OUTPUT"
+      - name: Stage only reviewed Boca Compose file
+        if: inputs.operation == 'first-install'
+        run: |
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - stage "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py
+          scp -F "$RUNNER_TEMP/boca-ssh/config" -p compose.yaml boca-target:/srv/boca-socios/compose.yaml
+      - name: Validate resolved host Compose model
+        if: inputs.operation == 'first-install'
+        env:
+          PYTHONPATH: src
+        run: |
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - config "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-host-model.json"
+          python scripts/check_deploy_contract.py "$RUNNER_TEMP/boca-host-model.json" "$BOCA_IMAGE_REF"
+      - name: Recheck current main HEAD before effectful install
+        if: inputs.operation == 'first-install'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-apply.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-apply.json" "$BOCA_SOURCE_SHA"
+      - name: Pull verified digest and start only Boca controller
+        if: inputs.operation == 'first-install'
+        run: |
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - apply "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py
+          {
+            printf 'Boca first install: simulation-only controller healthy\n\n'
+            printf 'Commit: `%s`\n\nImage: `%s`\n\nRelease run: `%s`\n\nService: `controller`\n\nBudget: `0.5cpu-256m-64pids`\n' "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" "$BOCA_RELEASE_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Clean only proven disposable Boca artifacts after failure
+        if: failure() && inputs.operation == 'first-install' && steps.boca_stage_attempt.outputs.started == 'true'
+        run: |
+          # Preserve the first-install failure. Never echo unsanitized SSH output.
+          set +e
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_cleanup.py > "$RUNNER_TEMP/boca-cleanup.receipt" 2>/dev/null
+          cleanup_rc=$?
+          set -e
+          receipt=''
+          if [[ "$cleanup_rc" -eq 0 ]]; then
+            receipt="$(cat "$RUNNER_TEMP/boca-cleanup.receipt")"
+          fi
+          receipt_pattern='^BOCA_CLEANUP state=(CLEANED|ALREADY_CLEAN|PARTIAL|RETAINED) image=(removed|absent) stage=(removed|absent|retained) retained=(yes|no) image_logical_mib=[0-9]+ same_fs=(yes|no) stage_free_mib_before=[0-9]+ stage_free_mib_after=[0-9]+ docker_free_mib_before=[0-9]+ docker_free_mib_after=[0-9]+ stage_inodes_before=[0-9]+ stage_inodes_after=[0-9]+ docker_inodes_before=[0-9]+ docker_inodes_after=[0-9]+$'
+          if [[ "$cleanup_rc" -eq 0 && ${#receipt} -le 384 && "$receipt" =~ $receipt_pattern ]]; then
+            printf 'Boca first-install failed; original failure remains NO_GO. Selective cleanup: `%s`.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'Boca first-install failed; original failure remains NO_GO. Selective cleanup: NO_GO INDETERMINADO; Boca state may have changed. Re-inventory Boca before retry.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Validate host Compose model for read-only diagnostic
+        if: inputs.operation == 'diagnostic'
+        env:
+          PYTHONPATH: src
+        run: |
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - diagnostic-config "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-host-model.json"
+          python scripts/check_deploy_contract.py "$RUNNER_TEMP/boca-host-model.json" "$BOCA_IMAGE_REF"
+      - name: Inspect only Boca health and dormant motor
+        if: inputs.operation == 'diagnostic'
+        run: |
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - diagnostic "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py
+          {
+            printf 'Boca read-only diagnostic: healthy controller, engine off\n\n'
+            printf 'Commit: `%s`\n\nImage: `%s`\n\nRelease run: `%s`\n\nService: `controller`\n' "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" "$BOCA_RELEASE_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"

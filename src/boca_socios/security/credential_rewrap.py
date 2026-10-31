@@ -1,8 +1,8 @@
 """Opt-in internal credential key rewrap; no CLI, endpoint or runtime wiring.
 
-Both externally sourced key versions must remain staged until a separate
-restart and backup recovery verification. This code must never see real keys
-through GitHub, tests, logs or conversation.
+Both externally sourced key versions must remain staged. Operational recovery
+remains a separate future gate; this dormant module does not perform backups.
+It must never see real keys through GitHub, tests, logs or conversation.
 """
 
 from __future__ import annotations
@@ -19,6 +19,14 @@ from boca_socios.storage.database import Database
 
 class KeyPolicyMismatch(Exception):
     """The DB version or a row does not match the expected key version."""
+
+
+MAX_RECORDS = 1000
+_POLICY_OBJECTS = {
+    "credential_key_policy": "table",
+    "credential_key_insert": "trigger",
+    "credential_key_update": "trigger",
+}
 
 
 @contextmanager
@@ -42,16 +50,47 @@ def _policy(connection: sqlite3.Connection) -> str:
     return str(row[0])
 
 
-def _require_triggers(connection: sqlite3.Connection) -> None:
-    names = {
-        str(row[0])
-        for row in connection.execute(
-            """SELECT name FROM sqlite_master WHERE type='trigger'
-               AND name IN ('credential_key_insert', 'credential_key_update')"""
+def _migration() -> tuple[str, str, dict[str, tuple[str, str]]]:
+    sql = (
+        files("boca_socios.storage.migrations")
+        .joinpath("0004_credential_key_policy.sql")
+        .read_text(encoding="utf-8")
+    )
+    expected: dict[str, tuple[str, str]] = {}
+    statement = ""
+    for line in sql.splitlines(keepends=True):
+        statement += line
+        if sqlite3.complete_statement(statement):
+            ddl = statement.strip().removesuffix(";")
+            parts = ddl.split(maxsplit=3)
+            if len(parts) < 4 or parts[0] != "CREATE" or parts[2] not in _POLICY_OBJECTS:
+                raise ValueError("unexpected credential key policy migration")
+            name = parts[2]
+            if parts[1].lower() != _POLICY_OBJECTS[name] or name in expected:
+                raise ValueError("unexpected credential key policy migration")
+            expected[name] = (_POLICY_OBJECTS[name], ddl)
+            statement = ""
+    if statement.strip() or set(expected) != set(_POLICY_OBJECTS):
+        raise ValueError("incomplete credential key policy migration")
+    return sql, hashlib.sha256(sql.encode("utf-8")).hexdigest(), expected
+
+
+def _require_policy_integrity(
+    connection: sqlite3.Connection, digest: str, expected: dict[str, tuple[str, str]]
+) -> None:
+    row = connection.execute("SELECT checksum FROM schema_migrations WHERE version=4").fetchone()
+    if row != (digest,):
+        raise ValueError("migration checksum mismatch: credential key policy")
+    actual = {
+        str(name): (str(kind), str(ddl))
+        for name, kind, ddl in connection.execute(
+            """SELECT name, type, sql FROM sqlite_master
+               WHERE name IN ('credential_key_policy',
+                              'credential_key_insert', 'credential_key_update')"""
         )
     }
-    if names != {"credential_key_insert", "credential_key_update"}:
-        raise KeyPolicyMismatch("credential key version guard is unavailable")
+    if actual != expected:
+        raise KeyPolicyMismatch("credential key version guard or DDL is unavailable")
 
 
 def _rows(connection: sqlite3.Connection, max_records: int) -> list[tuple[str, SealedCredential]]:
@@ -72,11 +111,12 @@ def verify_active_credentials(
     database: Database, vault: CredentialVault, *, max_records: int = 1000
 ) -> int:
     """Read-only restart check using the newly loaded active key only."""
-    if type(max_records) is not int or max_records < 1:
-        raise ValueError("max_records must be positive")
+    if type(max_records) is not int or not 1 <= max_records <= MAX_RECORDS:
+        raise ValueError("max_records must be within 1..1000")
     with database.connection() as connection:
         connection.execute("BEGIN")
-        _require_triggers(connection)
+        _, digest, expected = _migration()
+        _require_policy_integrity(connection, digest, expected)
         if _policy(connection) != vault.key_id:
             raise KeyPolicyMismatch("active credential version does not match supplied key")
         rows = _rows(connection, max_records)
@@ -102,8 +142,8 @@ class CredentialKeyRewrapper:
             raise ValueError("rotation requires different key versions")
         if old_vault.same_material_as(new_vault):
             raise ValueError("rotation requires different key material")
-        if type(max_records) is not int or max_records < 1:
-            raise ValueError("max_records must be positive")
+        if type(max_records) is not int or not 1 <= max_records <= MAX_RECORDS:
+            raise ValueError("max_records must be within 1..1000")
         self._database = database
         self._old = old_vault
         self._new = new_vault
@@ -116,20 +156,13 @@ class CredentialKeyRewrapper:
         rotate() subsequently verifies their ciphertext before any commit.
         """
         self._database.migrate()
-        sql = (
-            files("boca_socios.storage.migrations")
-            .joinpath("0004_credential_key_policy.sql")
-            .read_text(encoding="utf-8")
-        )
-        digest = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+        sql, digest, expected = _migration()
         with _write(self._database) as connection:
             row = connection.execute(
                 "SELECT checksum FROM schema_migrations WHERE version=4"
             ).fetchone()
             if row is not None:
-                if row[0] != digest:
-                    raise ValueError("migration checksum mismatch: credential key policy")
-                _require_triggers(connection)
+                _require_policy_integrity(connection, digest, expected)
                 if _policy(connection) != self._old.key_id:
                     raise KeyPolicyMismatch("credential key policy has moved to another version")
                 return
@@ -154,7 +187,7 @@ class CredentialKeyRewrapper:
             connection.execute(
                 "INSERT INTO schema_migrations(version, checksum) VALUES (4, ?)", (digest,)
             )
-            _require_triggers(connection)
+            _require_policy_integrity(connection, digest, expected)
 
     def rotate(self) -> int:
         """Atomically re-encrypt all rows and block old-version writes.
@@ -163,7 +196,8 @@ class CredentialKeyRewrapper:
         keys for independent recovery verification. No key is retired here.
         """
         with _write(self._database) as connection:
-            _require_triggers(connection)
+            _, digest, expected = _migration()
+            _require_policy_integrity(connection, digest, expected)
             if _policy(connection) != self._old.key_id:
                 raise KeyPolicyMismatch("credential key policy has moved to another version")
             rows = _rows(connection, self._max_records)

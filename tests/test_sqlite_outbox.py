@@ -80,6 +80,22 @@ def test_concurrent_claim_fencing_and_restart_recovery(tmp_path: Path) -> None:
     assert store(path, policy).claim_ready(now=1004) == ()
 
 
+def test_clock_rewind_cannot_settle_a_claim_before_it_started(tmp_path: Path) -> None:
+    path = tmp_path / "boca.sqlite3"
+    box = store(path)
+    key = uuid4()
+    box.enqueue(NotificationRequest(key, NoticeKind.HEARTBEAT), now=1000)
+    (claim,) = box.claim_ready(now=1000)
+    restarted = store(path)
+    with pytest.raises(InvalidClaim):
+        restarted.accept(claim, now=999)
+    with pytest.raises(InvalidClaim):
+        restarted.fail(claim, now=999)
+    assert restarted.get(key).state is DeliveryState.CLAIMED  # type: ignore[union-attr]
+    accepted = restarted.accept(claim, now=1000)
+    assert accepted.acceptance_latency_seconds == 0
+
+
 def test_durable_rate_backpressure_priority_and_retry_after(tmp_path: Path) -> None:
     path = tmp_path / "boca.sqlite3"
     policy = OutboxPolicy(

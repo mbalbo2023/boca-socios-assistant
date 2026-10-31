@@ -50,6 +50,18 @@ def setup_rotation(
     return database, old, new, rewrapper, members
 
 
+def test_default_database_migrate_does_not_activate_key_policy(tmp_path: Path) -> None:
+    database = Database(tmp_path / "data" / "boca.sqlite3")
+    database.migrate()
+    with database.connection() as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM schema_migrations WHERE version=4"
+        ).fetchone() == (0,)
+        assert connection.execute(
+            "SELECT count(*) FROM sqlite_master WHERE name='credential_key_policy'"
+        ).fetchone() == (0,)
+
+
 def test_atomic_rotation_restart_verification_and_stale_writer_is_fenced(tmp_path: Path) -> None:
     database, old, new, migration, members = setup_rotation(tmp_path)
     previous = {member: database.get_credential(member) for member in members}
@@ -121,6 +133,14 @@ def test_missing_or_wrong_key_and_oversized_batch_fail_closed(tmp_path: Path) ->
         assert connection.execute("SELECT key_id FROM credential_key_policy").fetchone() == ("v1",)
 
 
+def test_reviewed_record_ceiling_cannot_be_raised(tmp_path: Path) -> None:
+    database, old, new, _, _ = setup_rotation(tmp_path, count=1)
+    with pytest.raises(ValueError, match="1..1000"):
+        CredentialKeyRewrapper(database, old, new, max_records=1001)
+    with pytest.raises(ValueError, match="1..1000"):
+        verify_active_credentials(database, old, max_records=1001)
+
+
 def test_same_key_material_or_version_and_mixed_rows_are_rejected(tmp_path: Path) -> None:
     database, old, new, _, members = setup_rotation(tmp_path)
     with pytest.raises(ValueError, match="different key versions"):
@@ -155,6 +175,39 @@ def test_migration_checksum_and_no_preexisting_mixed_versions(tmp_path: Path) ->
             "SELECT count(*) FROM schema_migrations WHERE version=4"
         ).fetchone() == (0,)
     assert len(members) == 2
+
+
+@pytest.mark.parametrize("tamper", ["checksum", "policy_table", "insert_trigger", "update_trigger"])
+def test_rotation_and_restart_verify_reject_modified_policy_schema(
+    tmp_path: Path, tamper: str
+) -> None:
+    database, old, new, migration, members = setup_rotation(tmp_path, count=1)
+    before = database.get_credential(members[0])
+    with database.connection() as connection, connection:
+        if tamper == "checksum":
+            connection.execute("UPDATE schema_migrations SET checksum='wrong' WHERE version=4")
+        elif tamper == "policy_table":
+            connection.execute("ALTER TABLE credential_key_policy ADD COLUMN bypass TEXT")
+        else:
+            if tamper == "insert_trigger":
+                connection.execute("DROP TRIGGER credential_key_insert")
+                connection.execute(
+                    "CREATE TRIGGER credential_key_insert BEFORE INSERT ON credentials "
+                    "BEGIN SELECT 1; END"
+                )
+            else:
+                connection.execute("DROP TRIGGER credential_key_update")
+                connection.execute(
+                    "CREATE TRIGGER credential_key_update BEFORE UPDATE ON credentials "
+                    "BEGIN SELECT 1; END"
+                )
+    with pytest.raises((KeyPolicyMismatch, ValueError), match="checksum|guard"):
+        migration.rotate()
+    with pytest.raises((KeyPolicyMismatch, ValueError), match="checksum|guard"):
+        verify_active_credentials(database, old)
+    with database.connection() as connection:
+        assert connection.execute("SELECT key_id FROM credential_key_policy").fetchone() == ("v1",)
+    assert database.get_credential(members[0]) == before
 
 
 def test_competing_old_writer_cannot_commit_after_rotation(

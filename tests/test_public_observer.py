@@ -21,9 +21,10 @@ def observer():  # type: ignore[no-untyped-def]
 @pytest.mark.parametrize(
     "url,kind,allowed",
     [
-        ("https://bocasocios.bocajuniors.com.ar/", "document", True),
-        ("https://bocasocios.bocajuniors.com.ar/_next/static/a.js", "script", False),
+        ("https://bocasocios.bocajuniors.com.ar/auth/login", "document", True),
         ("https://bocasocios.bocajuniors.com.ar/", "document", False),
+        ("https://bocasocios.bocajuniors.com.ar/_next/static/a.js", "script", False),
+        ("https://bocasocios.bocajuniors.com.ar/auth/login", "document", False),
         ("https://bocasocios.bocajuniors.com.ar/login", "document", False),
         ("https://bocasocios.bocajuniors.com.ar/?unexpected=1", "document", False),
         ("https://bocasocios.bocajuniors.com.ar/_next/image?a=1", "image", False),
@@ -34,7 +35,7 @@ def observer():  # type: ignore[no-untyped-def]
 )
 def test_request_allowlist_is_exact_and_one_document(url: str, kind: str, allowed: bool) -> None:
     module = observer()
-    previous = url == module.HOME_URL and kind == "document" and not allowed
+    previous = url == module.LOGIN_URL and kind == "document" and not allowed
     assert module.allow_request(url, "GET", kind, int(previous)) is allowed
     assert not module.allow_request(url, "POST", kind, 0)
 
@@ -44,24 +45,30 @@ def test_request_allowlist_is_exact_and_one_document(url: str, kind: str, allowe
     [
         (
             200,
-            "https://bocasocios.bocajuniors.com.ar/",
+            "https://bocasocios.bocajuniors.com.ar/auth/login",
             "Ingresá a Boca Socios. Iniciar sesión",
             "login_visible",
         ),
-        (403, "https://bocasocios.bocajuniors.com.ar/", "Ingresá a Boca Socios", "blocked"),
+        (
+            403,
+            "https://bocasocios.bocajuniors.com.ar/auth/login",
+            "Ingresá a Boca Socios",
+            "blocked",
+        ),
         (
             200,
-            "https://bocasocios.bocajuniors.com.ar/",
+            "https://bocasocios.bocajuniors.com.ar/auth/login",
             "Ingresá a Boca Socios. CAPTCHA",
             "challenge",
         ),
         (
             200,
-            "https://bocasocios.bocajuniors.com.ar/",
+            "https://bocasocios.bocajuniors.com.ar/auth/login",
             "Sala de espera. Iniciar sesión",
             "challenge",
         ),
-        (200, "https://bocasocios.bocajuniors.com.ar/", "Unknown page", "unknown"),
+        (200, "https://bocasocios.bocajuniors.com.ar/auth/login", "Unknown page", "unknown"),
+        (200, "https://bocasocios.bocajuniors.com.ar/", "Ingresá a Boca Socios", "blocked"),
         (200, "https://bocasocios.bocajuniors.com.ar/login", "Ingresá a Boca Socios", "blocked"),
     ],
 )
@@ -104,7 +111,7 @@ def test_browser_context_closes_on_block_and_never_navigates_again() -> None:
         status = 200
 
     class Page:
-        url = module.HOME_URL
+        url = module.LOGIN_URL
 
         def __init__(self) -> None:
             self.visits: list[str] = []
@@ -188,7 +195,7 @@ def test_browser_context_closes_on_block_and_never_navigates_again() -> None:
         chromium = Chromium()
 
     assert asyncio.run(module.observe(API())) == "login_visible"
-    assert page.visits == [module.HOME_URL]
+    assert page.visits == [module.LOGIN_URL]
     assert browser.closed and context.closed
 
 
@@ -198,7 +205,7 @@ def test_redirect_response_is_aborted_without_followup_navigation() -> None:
 
     class Route:
         class Request:
-            url = module.HOME_URL
+            url = module.LOGIN_URL
             method = "GET"
             resource_type = "document"
 
@@ -223,7 +230,7 @@ def test_redirect_response_is_aborted_without_followup_navigation() -> None:
     route = Route()
 
     class Page:
-        url = module.HOME_URL
+        url = module.LOGIN_URL
 
         async def goto(self, _url: str, **_kwargs: object) -> None:
             await context.handler(route)
@@ -257,14 +264,15 @@ def test_redirect_response_is_aborted_without_followup_navigation() -> None:
 
     assert asyncio.run(module.observe(API())) == "blocked"
     assert route.aborted
-    assert requests == [module.HOME_URL]
+    assert requests == [module.LOGIN_URL]
 
 
 @pytest.mark.parametrize(
     "url,method,kind",
     [
         ("https://bocasocios.bocajuniors.com.ar/", "GET", "document"),
-        ("https://bocasocios.bocajuniors.com.ar/", "POST", "fetch"),
+        ("https://bocasocios.bocajuniors.com.ar/auth/login", "GET", "document"),
+        ("https://bocasocios.bocajuniors.com.ar/auth/login", "POST", "fetch"),
         ("https://assets.other.example/app.css", "GET", "stylesheet"),
     ],
 )
@@ -295,10 +303,10 @@ def test_second_navigation_post_and_foreign_domain_stop_observation(
             self.aborted = True
 
     class Page:
-        url = module.HOME_URL
+        url = module.LOGIN_URL
 
         async def goto(self, _url: str, **_kwargs: object) -> Response:
-            await context.handler(Route(module.HOME_URL, "GET", "document"))
+            await context.handler(Route(module.LOGIN_URL, "GET", "document"))
             unsafe = Route(url, method, kind)
             await context.handler(unsafe)
             assert unsafe.aborted
@@ -334,4 +342,4 @@ def test_second_navigation_post_and_foreign_domain_stop_observation(
         chromium = Chromium()
 
     assert asyncio.run(module.observe(API())) == "blocked"
-    assert fetched == [module.HOME_URL]
+    assert fetched == [module.LOGIN_URL]

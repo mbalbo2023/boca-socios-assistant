@@ -9,10 +9,13 @@ description = "Isolated, consent-based Boca Socios ticket workflow foundation"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-  "cryptography>=44,<48",
+  "cryptography>=44,<51",
 ]
 
 [dependency-groups]
+browser = [
+  "playwright==1.64.1",
+]
 dev = [
   "mypy>=1.18,<2",
   "pytest>=9,<10",

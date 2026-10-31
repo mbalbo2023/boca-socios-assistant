@@ -1,7 +1,7 @@
-# Official multi-platform index digest of Python 3.12.15 slim-bookworm.
+# Official multi-platform index digest of Python 3.12.15 Alpine 3.24.
 # Verify/update the digest through a reviewed dependency PR; never float it.
 # A successful image build does NOT authorize a production deployment.
-FROM python:3.12.15-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70 AS build
+FROM python:3.12.15-alpine3.24@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d AS build
 
 WORKDIR /app
 RUN python -m pip install --disable-pip-version-check --no-cache-dir uv==0.13.4
@@ -9,7 +9,7 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 RUN uv sync --locked --no-dev --no-editable
 
-FROM python:3.12.15-slim-bookworm@sha256:6a0e06f5ba0b373d051aabd3fffb9b873f27f9a2a3a14bcbe37dee6f0e3bbc70 AS runtime
+FROM python:3.12.15-alpine3.24@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d AS runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH=/app/.venv/bin:$PATH \
@@ -17,13 +17,13 @@ ENV PYTHONUNBUFFERED=1 \
     BOCA_DB_PATH=/data/boca.sqlite3 \
     BOCA_MASTER_KEY_FILE=/run/secrets/boca_master_key
 
-RUN groupadd --gid 10001 boca && \
-    useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin boca && \
+RUN addgroup -S -g 10001 boca && \
+    adduser -S -D -H -u 10001 -G boca -s /sbin/nologin boca && \
     mkdir -p /data && chown boca:boca /data
 COPY --from=build /app/.venv /app/.venv
-RUN /app/.venv/bin/python -c "import boca_socios.security.credential_vault; import boca_socios.storage.database"
 WORKDIR /app
 USER 10001:10001
+RUN /app/.venv/bin/python -c "import os, sqlite3; from boca_socios.security.credential_vault import CredentialVault; import boca_socios.storage.database; assert os.getuid() == os.geteuid() == 10001; assert os.getgid() == os.getegid() == 10001; assert sqlite3.connect(':memory:').execute('select 1').fetchone() == (1,); vault = CredentialVault(bytes(32)); assert vault.open(vault.seal('smoke', member_id='smoke'), member_id='smoke') == 'smoke'"
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
     CMD ["python", "-m", "boca_socios.healthcheck"]
 CMD ["python", "-m", "boca_socios.runtime"]

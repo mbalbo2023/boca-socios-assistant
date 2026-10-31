@@ -4,21 +4,19 @@ name: boca-socios
 
 services:
   controller:
-    image: ${BOCA_IMAGE:-boca-socios:development}
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${BOCA_IMAGE:?BOCA_IMAGE_digest_is_required}
+    user: "10001:10001"
     restart: unless-stopped
     init: true
     environment:
       BOCA_ENVIRONMENT: ${BOCA_ENVIRONMENT:-development}
       BOCA_RUNTIME_MODE: simulation
+      BOCA_ENGINE_MODE: "off"
       BOCA_DB_PATH: /data/boca.sqlite3
       BOCA_MASTER_KEY_FILE: /run/secrets/boca_master_key
-    secrets:
-      - boca_master_key
     volumes:
       - boca_data:/data
+      - boca_key:/run/secrets:ro
     networks:
       - boca_private
     read_only: true
@@ -39,12 +37,9 @@ services:
       start_period: 15s
     # Deliberately no host port, privileged mode, Docker socket or host mounts.
 
-secrets:
-  boca_master_key:
-    file: ${BOCA_MASTER_KEY_SOURCE:?BOCA_MASTER_KEY_SOURCE_is_required}
-
 volumes:
   boca_data: {}
+  boca_key: {}
 
 networks:
   boca_private:

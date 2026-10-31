@@ -1,6 +1,7 @@
 """Offline contract tests; no network, Telegram credentials, or real session state."""
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from uuid import UUID
 
 import pytest
@@ -267,6 +268,23 @@ def test_concurrent_claims_never_duplicate_an_attempt() -> None:
     claims = tuple(claim for batch in batches for claim in batch)
     assert len(claims) == 10
     assert len({claim.idempotency_key for claim in claims}) == 10
+
+
+def test_claim_belongs_to_one_outbox_and_one_lease() -> None:
+    first = NotificationOutbox()
+    second = NotificationOutbox()
+    for box in (first, second):
+        box.enqueue(request(1, NoticeKind.ACTION_REQUIRED), now=0)
+    (first_claim,) = first.claim_ready(now=0)
+    (second_claim,) = second.claim_ready(now=0)
+    assert first_claim == second_claim
+
+    with pytest.raises(InvalidClaim):
+        second.accept(first_claim, now=1)
+    with pytest.raises(InvalidClaim):
+        first.fail(replace(first_claim), now=1)
+    assert first.accept(first_claim, now=1).state is DeliveryState.ACCEPTED
+    assert second.accept(second_claim, now=1).state is DeliveryState.ACCEPTED
 
 
 def test_capacity_invalid_inputs_and_stale_claim_are_rejected_safely() -> None:
