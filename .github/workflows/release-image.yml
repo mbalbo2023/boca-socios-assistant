@@ -59,11 +59,20 @@ jobs:
       - name: Require verified protected release environment
         env:
           BOCA_RELEASE_ENV_READY: ${{ vars.BOCA_RELEASE_ENV_READY }}
-        run: test "$BOCA_RELEASE_ENV_READY" = 'ready'
+        run: |
+          test "$BOCA_RELEASE_ENV_READY" = 'ready'
+          test "$GITHUB_RUN_ATTEMPT" = 1
       - name: Checkout exact main commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Require current main source before release build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref.json" "$GITHUB_SHA"
       - name: Build one local controller image
         env:
           IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
@@ -87,6 +96,13 @@ jobs:
           exit-code: "1"
           format: table
           timeout: 10m
+      - name: Recheck current main source before publication
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-publish.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-publish.json" "$GITHUB_SHA"
       - name: Log in only after successful scan
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
