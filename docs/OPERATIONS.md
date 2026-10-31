@@ -59,9 +59,23 @@ controller and preserves the key and both volumes for separate diagnosis. An
 existing Boca key, container, volume, network or staged file blocks a fresh
 installation; this flow is not recovery or upgrade. The CPU snapshot is an
 estimate; this gate now measures staging and rootless image storage separately,
-while #106 still needs post-pull capacity proof. #97 and #99 remain pending
-gates. An external source failure is reported by
-Actions as an alert, not a deploy blocker for the simulation-only controller.
+while #106 still needs post-pull capacity proof. #99 remains pending. An
+external source failure is reported by Actions as an alert, not a deploy
+blocker for the simulation-only controller.
+
+After a failed first-install, the same Actions job attempts selective cleanup
+only if the read-only preflight, current-main recheck and staging marker passed.
+It removes an exact unreferenced image without force if no container uses it,
+even when key/data volumes remain. It removes the matching staged Compose file
+only when no Boca container, volume or network exists; otherwise it retains
+that file and all volumes/networks and reports `PARTIAL` or `RETAINED`. The
+bounded receipt records staging and rootless Docker data free space/inodes
+before and after, plus whether they share a filesystem. Virtual image size
+and observed free-space changes are not proof of causal reclamation. Unknown
+storage backends or paths stop before deletion. A failed or unverified cleanup
+reports `NO_GO INDETERMINADO`: a partial deletion may have occurred, and a
+Boca-only inventory is required before any retry. The original install
+failure remains failed. See [ADR 0039](ADR/0039-boca-failed-install-cleanup.md).
 
 ## Read-only diagnostic under demand (issue #68)
 
@@ -148,7 +162,7 @@ cannot establish that image storage has headroom.
    stop an existing workload or enumerate unrelated services destructively.
 8. On failure: inventory the Boca attempt through the same Actions workflow,
    stop Boca only, then remove positively identified unused disposable Boca
-   image/container/network/staging remnants with before/after measurements.
+   image/staging remnants with before/after measurements.
    Retain key/data volumes and uncertain resources. No destructive Docker
    prune, blanket compose down, or volume deletion.
 9. Diagnose any external-source failure via bounded read-only Actions before
