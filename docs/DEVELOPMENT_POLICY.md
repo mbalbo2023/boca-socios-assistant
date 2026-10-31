@@ -61,6 +61,17 @@ automatic push-based deployment, personal SSH procedures, host cron jobs,
 any unrelated deployment integration or Docker cleanup of another project.
 If a proposed feature requires any of those, stop for an architecture review.
 
+## Synthetic panel preview artifacts
+
+A manual Actions preview of the owner panel may upload a short-lived HTML
+artifact built only from fixed sample states in source. It must not accept a
+database, credential, member, event or host input, read runtime data, call
+Boca, publish a website or add a service port. The artifact is public-repo
+material, so it must contain no actual personal data. A preview checks the
+panel's presentation only; it is not an authenticated operating interface or
+evidence of a reservation. Real enrollment and status serving retain their
+separate security gates.
+
 ## Acceptance criteria per PR
 
 Explicit requirement, tests, redacted evidence, doc/ADR updates, security
