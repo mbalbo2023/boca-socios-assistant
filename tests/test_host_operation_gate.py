@@ -73,7 +73,16 @@ def test_read_only_host_ready_cannot_unlock_effectful_coordinates(operation: str
 
 
 def test_unknown_or_stale_host_dispatch_is_no_go() -> None:
-    assert _run_gate("unknown", read_only_ready="ready", deploy_ready="ready").returncode != 0
+    assert (
+        _run_gate(
+            "unknown",
+            read_only_ready="ready",
+            deploy_ready="ready",
+            image="reviewed-digest",
+            release_run="123",
+        ).returncode
+        != 0
+    )
     assert _run_gate("preflight", read_only_ready="ready", run_attempt="2").returncode != 0
     assert _run_gate("preflight", read_only_ready="ready", source_sha="b" * 40).returncode != 0
     assert _run_gate("preflight", read_only_ready="Ready").returncode != 0
@@ -81,6 +90,11 @@ def test_unknown_or_stale_host_dispatch_is_no_go() -> None:
 
 def test_host_gate_is_before_checkout_and_ssh() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert workflow.index(f"      - name: {GATE_NAME}") < workflow.index(
-        "      - name: Checkout exact main commit"
-    ) < workflow.index("      - name: Configure pinned SSH host key")
+    gate = workflow.split(f"      - name: {GATE_NAME}\n", 1)[1].split("      - name:", 1)[0]
+    assert "BOCA_HOST_READONLY_ENV_READY: ${{ vars.BOCA_HOST_READONLY_ENV_READY }}" in gate
+    assert "BOCA_DEPLOY_ENV_READY: ${{ vars.BOCA_DEPLOY_ENV_READY }}" in gate
+    assert (
+        workflow.index(f"      - name: {GATE_NAME}")
+        < workflow.index("      - name: Checkout exact main commit")
+        < workflow.index("      - name: Configure pinned SSH host key")
+    )

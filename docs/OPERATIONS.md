@@ -19,6 +19,13 @@ budget. The protected `boca-first-deploy` GitHub environment must restrict
 deployment to `main` and contain only Boca-specific credentials/variables.
 The owner's standing direction requires no additional human approval. The
 readiness variable alone is insufficient evidence of environment protection.
+The manual job uses separate fail-closed environment variables: only
+`BOCA_HOST_READONLY_ENV_READY=ready` can enable `inspect-prerequisites` or
+`preflight`, while `BOCA_DEPLOY_ENV_READY=ready` is required for `first-install`
+or `diagnostic`. Both remain unset until their own evidence is reviewed;
+setting the read-only variable does not unlock installation. The two read-only
+choices require blank image and release-run inputs, and the install/diagnostic
+choices require both. See [ADR 0045](ADR/0045-readonly-host-readiness.md).
 
 The proposed host prerequisite is a dedicated `boca-deploy` identity with UID
 10001, dedicated rootless Docker, Python 3.10+, and an already provisioned empty
@@ -123,6 +130,11 @@ existing `preflight` remains mandatory before any release/install decision.
 The environment must first be verified and marked ready as an **environment**
 (pinned identity and main-only branch rule), independently
 of the daemon's readiness. See [ADR 0037](ADR/0037-host-prerequisite-inspection.md).
+That verification may enable only `BOCA_HOST_READONLY_ENV_READY` for the first
+inspection; it must not set `BOCA_DEPLOY_ENV_READY` or
+`BOCA_RELEASE_ENV_READY`. The latter gates remain closed until separate
+release and deployment evidence exists. A successful metadata inspection
+permits considering the stricter read-only `preflight`; it is not host approval.
 
 The manual host workflow rejects reruns and verifies the current `main` ref
 through the GitHub API before SSH. First installation repeats that check

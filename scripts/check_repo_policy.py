@@ -47,7 +47,10 @@ def check_policy(root: Path) -> list[str]:
             for required in (
                 "workflow_dispatch:",
                 "environment: boca-first-deploy",
+                "BOCA_HOST_READONLY_ENV_READY",
                 "BOCA_DEPLOY_ENV_READY",
+                'test "$BOCA_HOST_READONLY_ENV_READY" = ready',
+                'test "$BOCA_DEPLOY_ENV_READY" = ready',
                 'test "$GITHUB_RUN_ATTEMPT" = 1',
                 "python scripts/check_main_ref.py",
                 "StrictHostKeyChecking yes",
