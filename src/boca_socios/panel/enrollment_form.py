@@ -7,10 +7,10 @@ from html import escape
 STYLE = """
 body { font: 1.1rem system-ui; max-width: 42rem; margin: auto; padding: 1.5rem; }
 label { display: block; margin-top: 1.2rem; }
-input:not([type=checkbox]), button { box-sizing: border-box; width: 100%;
-  min-height: 48px; padding: .7rem; font: inherit; }
+input:not([type=checkbox]), button, select { box-sizing: border-box; width: 100%;
+  min-height: 52px; padding: .7rem; font: inherit; }
 input[type=checkbox] { width: 28px; height: 28px; vertical-align: middle; }
-a { display: inline-block; min-height: 44px; padding-top: .5rem; }
+a { display: inline-block; min-height: 52px; padding-top: .5rem; }
 button { margin-top: 1.5rem; cursor: pointer; }
 :focus-visible { outline: 3px solid #064bc5; outline-offset: 3px; }
 #result { min-height: 3rem; margin-top: 1rem; }

@@ -39,6 +39,7 @@ class EnrollmentOperation:
 class OwnerSession:
     created: float
     touched: float
+    permissions: frozenset[str] = frozenset()
     csrf: str = field(default_factory=lambda: secrets.token_urlsafe(32))
     fingerprint_key: bytes = field(default_factory=lambda: secrets.token_bytes(32))
     operations: dict[str, EnrollmentOperation] = field(default_factory=dict)
@@ -108,6 +109,7 @@ class OwnerSessions:
                 return None
         except Exception:
             return None
+        assert isinstance(identity, OwnerIdentity)
         with self._lock:
             self._sessions = {
                 key: value for key, value in self._sessions.items() if self._live(value, now)
@@ -115,7 +117,9 @@ class OwnerSessions:
             if len(self._sessions) >= 32:
                 return None
             token = secrets.token_urlsafe(32)
-            self._sessions[hashlib.sha256(token.encode("ascii")).digest()] = OwnerSession(now, now)
+            self._sessions[hashlib.sha256(token.encode("ascii")).digest()] = OwnerSession(
+                now, now, identity.permissions
+            )
         return f"__Host-boca_session={token}; Path=/; Secure; HttpOnly; SameSite=Strict"
 
     def lookup(self, cookie: object) -> OwnerSession | None:
