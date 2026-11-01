@@ -131,8 +131,9 @@ class TelegramTransport:
         self._pinned_configuration = current
 
     def preflight(self) -> None:
-        """Fail before consuming a notification if private files are unavailable."""
-        self._configuration()
+        """Pin both private files before any claim; reject a later secret change."""
+        token, destination = self._configuration()
+        self._pin_configuration(token, destination)
 
     def _send_blocking(self, notice: TelegramNotice) -> TelegramAck:
         if not isinstance(notice, TelegramNotice) or not isinstance(notice.kind, NoticeKind):

@@ -147,6 +147,46 @@ class TelegramDeliveryTests(unittest.TestCase):
         self.assertEqual(self.outbox.get(self.request.idempotency_key).state, DeliveryState.PENDING)
         self.assertEqual(list_local_notices(self.outbox.database)[0].telegram_state, None)
 
+    def test_chat_change_after_claim_is_ambiguous_without_any_http_attempt(self):
+        root = Path(self.directory.name)
+        token, destination = root / "bot_token", root / "chat_id"
+        token.write_text("1:synthetic", encoding="ascii")
+        destination.write_text("123", encoding="ascii")
+        token.chmod(0o600)
+        destination.chmod(0o600)
+        connections = []
+
+        def connection(**arguments):
+            result = FakeConnection(**arguments)
+            connections.append(result)
+            return result
+
+        class ChangedAfterClaim(TelegramTransport):
+            async def send(self, notice):
+                destination.write_text("456", encoding="ascii")
+                destination.chmod(0o600)
+                return self._send_blocking(notice)
+
+        transport = ChangedAfterClaim(
+            token,
+            destination,
+            connection_factory=connection,
+        )
+        coordinator = self.coordinator(transport)
+        coordinator.prepare_storage()
+        with patch(
+            "boca_socios.notify.telegram_transport.ssl.create_default_context",
+            return_value=object(),
+        ):
+            report = asyncio.run(coordinator.tick())
+        self.assertEqual((report.attempted, report.ambiguous), (1, 1))
+        self.assertEqual(connections, [])
+        self.assertEqual(
+            self.outbox.get(self.request.idempotency_key).state, DeliveryState.EXHAUSTED
+        )
+        self.assertEqual(list_local_notices(self.outbox.database)[0].telegram_state, "ambiguous")
+        self.assertEqual(asyncio.run(self.coordinator(FakeTransport()).tick()).attempted, 0)
+
 
 class FakeConnection:
     def __init__(self, host, timeout, context):
@@ -231,6 +271,30 @@ class TelegramTransportTests(unittest.TestCase):
         self.token.chmod(0o600)
         with self.assertRaises(TelegramUnconfirmed):
             self.transport().preflight()
+
+    def test_preflight_pins_token_and_destination_before_prepared_send(self):
+        notice = TelegramNotice(uuid4(), NoticeKind.STATE_CHANGED)
+        for secret, replacement in (
+            (self.token, "2:replacement"),
+            (self.destination, "456"),
+        ):
+            with self.subTest(changed=secret.name):
+                original = secret.read_text(encoding="utf-8")
+                transport = self.transport()
+                transport.preflight()
+                secret.write_text(replacement, encoding="utf-8")
+                secret.chmod(0o600)
+                try:
+                    with patch(
+                        "boca_socios.notify.telegram_transport.ssl.create_default_context",
+                        return_value=object(),
+                    ):
+                        with self.assertRaisesRegex(TelegramUnconfirmed, "configuration changed"):
+                            transport._send_blocking(notice)
+                    self.assertEqual(self.connections, [])
+                finally:
+                    secret.write_text(original, encoding="utf-8")
+                    secret.chmod(0o600)
 
 
 if __name__ == "__main__":

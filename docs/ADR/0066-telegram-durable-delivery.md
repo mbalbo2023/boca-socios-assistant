@@ -80,3 +80,21 @@ custodia de bot/destino y composición de un trabajador Boca apagado por defecto
 son trabajo de integración documentado por #45; no hay envío automático desde
 el panel. Si el Bot API falla, mostrar el aviso y su estado en el panel sin
 inventar entrega.
+
+## Aclaración de implementación para BETA (#168)
+
+La prueba previa (`TelegramTransport.preflight`) **fija en memoria** el par
+token/destino después de cotejar dos lecturas de los archivos privados, antes
+de cualquier reclamo o marca `prepared`. Las lecturas posteriores al enviar
+deben coincidir con ese par o fallar sin realizar la solicitud HTTP. El pin
+persiste durante la vida del objeto de transporte: rotar un secreto requiere
+detener el trabajador y construir uno nuevo tras las verificaciones de
+identidad/destino, nunca redirige avisos pendientes por accidente.
+
+La regresión `test_preflight_pins_token_and_destination_before_prepared_send`
+ejercita cambios separados de token y chat ID entre preflight y envío con
+conexiones HTTP falsas, exigiendo **cero** llamadas en ambos casos. Este ajuste
+también cubre el coordinador después de reclamar el aviso: conserva el estado
+`ambiguous` sin HTTP ni reenvío. Es estrictamente de código: no supone que
+existan secretos Boca, un destino privado verificado, un contenedor activo ni
+recibo del API en el droplet.
