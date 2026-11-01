@@ -1,5 +1,5 @@
 # Separate synthetic served-BETA candidate, never selected by first-install.
-# Same dedicated Boca project, with only host-loopback TLS and no Boca live I/O.
+# Same dedicated Boca project; plain HTTP only on host loopback behind SSH.
 name: boca-socios
 
 services:
@@ -15,16 +15,13 @@ services:
       BOCA_ENGINE_MODE: "off"
       BOCA_DB_PATH: /data/boca.sqlite3
       BOCA_MASTER_KEY_FILE: /run/secrets/boca_master_key
-      BOCA_PANEL_ORIGIN: ${BOCA_PANEL_ORIGIN:?private_HTTPS_origin_is_required}
+      BOCA_PANEL_ORIGIN: ${BOCA_PANEL_ORIGIN:?private_SSH_loopback_origin_is_required}
       BOCA_OWNER_SUBJECT: ${BOCA_OWNER_SUBJECT:?owner_subject_is_required}
       BOCA_PASSKEY_CREDENTIAL_ID_FILE: /run/owner/credential_id
       BOCA_PASSKEY_PUBLIC_KEY_DER_FILE: /run/owner/public_key.der
-      BOCA_TLS_CERT_FILE: /run/owner/tls.crt
-      BOCA_TLS_KEY_FILE: /run/owner/tls.key
       BOCA_BIND_HOST: "0.0.0.0"
       BOCA_BIND_PORT: "8443"
       BOCA_HEALTH_MODE: beta
-      BOCA_HEALTH_CA_FILE: /run/owner/health-ca.pem
     volumes:
       - boca_data:/data
       - boca_key:/run/secrets:ro

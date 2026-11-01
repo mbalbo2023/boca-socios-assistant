@@ -1,4 +1,4 @@
-"""Sealed, one-time custody for the real owner's public passkey and TLS bundle.
+"""Sealed, one-time custody for the real owner's public passkey.
 
 The protected host operation runs this module only in the pinned Boca image,
 with a dedicated owner volume, UID 10001, no network and a capped tmpfs.
@@ -30,12 +30,13 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from boca_socios.beta_config_preflight import _tls_handshake
-from boca_socios.owner_origin import owner_rp_host
+from boca_socios.owner_origin import SSH_LOOPBACK_ORIGIN, owner_rp_host
 
 UID = 10001
 OWNER_DIR = Path("/run/owner")
 REPOSITORY = "mbalbo2023/boca-socios-assistant"
 PURPOSE = "boca-owner-passkey-tls-v1"
+HTTP_PURPOSE = "boca-owner-passkey-v2"
 PRIVATE_KEY = "owner_recipient_x25519.key"
 LIMITS = {
     "credential_id": 1024,
@@ -44,7 +45,12 @@ LIMITS = {
     "tls.key": 4096,
     "health-ca.pem": 8192,
 }
+HTTP_LIMITS = {"credential_id": 1024, "public_key.der": 512}
 MAX_ENVELOPE = 32768
+
+
+def _bundle_limits(origin: str) -> dict[str, int]:
+    return HTTP_LIMITS if origin == SSH_LOOPBACK_ORIGIN else LIMITS
 
 
 class BootstrapError(ValueError):
@@ -223,12 +229,13 @@ def prepare(owner_dir: Path = OWNER_DIR, *, uid: int = UID) -> RecipientReceipt:
         os.close(directory)
 
 
-def _validate_bundle(bundle: dict[str, bytes], hostname: str) -> None:
+def _validate_bundle(bundle: dict[str, bytes], origin: str, hostname: str) -> None:
+    limits = _bundle_limits(origin)
     if (
-        set(bundle) != set(LIMITS)
+        set(bundle) != set(limits)
         or any(
             not isinstance(bundle[name], bytes) or not 0 < len(bundle[name]) <= limit
-            for name, limit in LIMITS.items()
+            for name, limit in limits.items()
         )
         or len(bundle["credential_id"]) < 16
     ):
@@ -244,14 +251,16 @@ def _validate_bundle(bundle: dict[str, bytes], hostname: str) -> None:
             != bundle["public_key.der"]
         ):
             raise ValueError
-        # The container supplies a capped memory-backed /tmp; no bundle bytes
-        # are written to the persistent owner volume until this proof passes.
-        with tempfile.TemporaryDirectory(prefix="boca-owner-") as temp:
-            paths = {name: Path(temp) / name for name in ("tls.crt", "tls.key", "health-ca.pem")}
-            for name, path in paths.items():
-                path.write_bytes(bundle[name])
-                path.chmod(0o600)
-            _tls_handshake(paths["tls.crt"], paths["tls.key"], paths["health-ca.pem"], hostname)
+        if origin != SSH_LOOPBACK_ORIGIN:
+            # Legacy HTTPS sender: validate before persistent owner writes.
+            with tempfile.TemporaryDirectory(prefix="boca-owner-") as temp:
+                paths = {
+                    name: Path(temp) / name for name in ("tls.crt", "tls.key", "health-ca.pem")
+                }
+                for name, path in paths.items():
+                    path.write_bytes(bundle[name])
+                    path.chmod(0o600)
+                _tls_handshake(paths["tls.crt"], paths["tls.key"], paths["health-ca.pem"], hostname)
     except (TypeError, ValueError, OSError):
         raise BootstrapError("invalid_owner_material") from None
 
@@ -262,7 +271,7 @@ def _header(
     return {
         "version": 1,
         "repository": REPOSITORY,
-        "purpose": PURPOSE,
+        "purpose": HTTP_PURPOSE if origin == SSH_LOOPBACK_ORIGIN else PURPOSE,
         "uid": UID,
         "panel_origin": origin,
         "owner_subject": subject,
@@ -274,12 +283,17 @@ def _header(
     }
 
 
-def _key(shared: bytes, salt: bytes, aad: bytes) -> bytes:
+def _key(shared: bytes, salt: bytes, aad: bytes, origin: str) -> bytes:
+    domain = (
+        b"boca-owner-passkey-envelope-v2:"
+        if origin == SSH_LOOPBACK_ORIGIN
+        else b"boca-owner-passkey-tls-envelope-v1:"
+    )
     return HKDF(
         algorithm=hashes.SHA256(),
         length=32,
         salt=salt,
-        info=b"boca-owner-passkey-tls-envelope-v1:" + hashlib.sha256(aad).digest(),
+        info=domain + hashlib.sha256(aad).digest(),
     ).derive(shared)
 
 
@@ -288,7 +302,7 @@ def seal_for_recipient(
 ) -> bytes:
     """Offline sender API: produce canonical ciphertext, never a secret receipt."""
     hostname = _coordinates(origin, subject)
-    _validate_bundle(bundle, hostname)
+    _validate_bundle(bundle, origin, hostname)
     public = _unb64(receipt.public_key, maximum=32, length=32)
     if not hmac.compare_digest(hashlib.sha256(public).hexdigest(), receipt.fingerprint):
         raise BootstrapError("recipient_key_unsafe")
@@ -301,7 +315,9 @@ def seal_for_recipient(
     aad = _canonical(header)
     plaintext = _canonical({name: _b64(value) for name, value in bundle.items()})
     encrypted = AESGCM(
-        _key(ephemeral.exchange(x25519.X25519PublicKey.from_public_bytes(public)), salt, aad)
+        _key(
+            ephemeral.exchange(x25519.X25519PublicKey.from_public_bytes(public)), salt, aad, origin
+        )
     ).encrypt(nonce, plaintext, aad)
     envelope = _canonical({**header, "ciphertext": _b64(encrypted)})
     if len(envelope) > MAX_ENVELOPE:
@@ -325,7 +341,7 @@ def _decrypt(
             type(data["version"]) is not int
             or data["version"] != 1
             or data["repository"] != REPOSITORY
-            or data["purpose"] != PURPOSE
+            or data["purpose"] != (HTTP_PURPOSE if origin == SSH_LOOPBACK_ORIGIN else PURPOSE)
             or type(data["uid"]) is not int
             or data["uid"] != UID
             or data["panel_origin"] != origin
@@ -345,12 +361,13 @@ def _decrypt(
         shared = x25519.X25519PrivateKey.from_private_bytes(private).exchange(
             x25519.X25519PublicKey.from_public_bytes(ephemeral)
         )
-        plaintext = AESGCM(_key(shared, salt, aad)).decrypt(nonce, ciphertext, aad)
+        plaintext = AESGCM(_key(shared, salt, aad, origin)).decrypt(nonce, ciphertext, aad)
         payload = json.loads(plaintext.decode("ascii"), object_pairs_hook=_unique)
-        if not isinstance(payload, dict) or set(payload) != set(LIMITS):
+        limits = _bundle_limits(origin)
+        if not isinstance(payload, dict) or set(payload) != set(limits):
             raise ValueError
-        bundle = {name: _unb64(payload[name], maximum=limit) for name, limit in LIMITS.items()}
-        _validate_bundle(bundle, _coordinates(origin, subject))
+        bundle = {name: _unb64(payload[name], maximum=limit) for name, limit in limits.items()}
+        _validate_bundle(bundle, origin, _coordinates(origin, subject))
         return bundle
     except (ValueError, TypeError, KeyError, UnicodeError, InvalidTag):
         raise BootstrapError("invalid_envelope") from None
@@ -370,7 +387,8 @@ def install(owner_dir: Path, envelope: bytes, origin: str, subject: str, *, uid:
         for name, content in bundle.items():
             _write_new(directory, name, content, uid)
         if any(
-            _read(directory, name, uid, LIMITS[name]) != content for name, content in bundle.items()
+            _read(directory, name, uid, _bundle_limits(origin)[name]) != content
+            for name, content in bundle.items()
         ):
             raise BootstrapError("bundle_unverified")
         return receipt.fingerprint
@@ -379,14 +397,21 @@ def install(owner_dir: Path, envelope: bytes, origin: str, subject: str, *, uid:
 
 
 def verify(owner_dir: Path, origin: str, subject: str, *, uid: int = UID) -> str:
-    """Check exact custody and TLS locally; return only recipient fingerprint."""
+    """Check exact custody locally; legacy HTTPS origins also prove TLS."""
     _identity(uid)
     hostname = _coordinates(origin, subject)
     directory = _directory(owner_dir, uid)
     try:
         private = _read(directory, PRIVATE_KEY, uid, 32)
-        bundle = {name: _read(directory, name, uid, limit) for name, limit in LIMITS.items()}
-        _validate_bundle(bundle, hostname)
+        bundle = {
+            name: _read(directory, name, uid, limit)
+            for name, limit in _bundle_limits(origin).items()
+        }
+        if origin == SSH_LOOPBACK_ORIGIN and any(
+            _exists(directory, name) for name in ("tls.crt", "tls.key", "health-ca.pem")
+        ):
+            raise BootstrapError("unexpected_tls_artifact")
+        _validate_bundle(bundle, origin, hostname)
         return _receipt(private, "CONFIGURED").fingerprint
     finally:
         os.close(directory)

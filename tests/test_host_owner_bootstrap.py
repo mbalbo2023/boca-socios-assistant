@@ -186,7 +186,6 @@ def test_exact_tunnel_origin_is_validated_before_owner_host_access(
         "https://localhost",
         "https://localhost:9000",
         "https://boca.localhost:8443",
-        "http://localhost:8443",
         "https://127.0.0.1:8443",
         "https://LOCALHOST:8443",
         "https://localhost:8443/",

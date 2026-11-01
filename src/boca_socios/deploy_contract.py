@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 
+from boca_socios.owner_origin import SSH_LOOPBACK_ORIGIN
+
 
 class ContractError(ValueError):
     """The proposed deployment model exceeds the Boca-only boundary."""
@@ -147,8 +149,8 @@ def validate_beta_contract(
     """Validate a separate served package; this does not authorize host installation."""
     if not _IMAGE.fullmatch(expected_image):
         raise ContractError("invalid approved image digest")
-    if not re.fullmatch(r"https://[a-z0-9][a-z0-9.-]{0,252}(?::[0-9]{2,5})?", expected_origin):
-        raise ContractError("invalid private HTTPS origin")
+    if expected_origin != SSH_LOOPBACK_ORIGIN:
+        raise ContractError("BETA Compose is restricted to SSH-only localhost origin")
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", expected_owner):
         raise ContractError("invalid owner subject")
 
@@ -197,12 +199,9 @@ def validate_beta_contract(
             "BOCA_OWNER_SUBJECT": expected_owner,
             "BOCA_PASSKEY_CREDENTIAL_ID_FILE": "/run/owner/credential_id",
             "BOCA_PASSKEY_PUBLIC_KEY_DER_FILE": "/run/owner/public_key.der",
-            "BOCA_TLS_CERT_FILE": "/run/owner/tls.crt",
-            "BOCA_TLS_KEY_FILE": "/run/owner/tls.key",
             "BOCA_BIND_HOST": "0.0.0.0",  # noqa: S104 - Boca bridge; host publishes loopback only
             "BOCA_BIND_PORT": "8443",
             "BOCA_HEALTH_MODE": "beta",
-            "BOCA_HEALTH_CA_FILE": "/run/owner/health-ca.pem",
         },
         "BETA controller environment",
     )

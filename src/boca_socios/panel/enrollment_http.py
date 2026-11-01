@@ -11,6 +11,7 @@ from typing import Protocol
 from urllib.parse import parse_qsl, urlsplit
 from uuid import UUID
 
+from boca_socios.owner_origin import owner_rp_host
 from boca_socios.panel.enrollment_form import CSP, render_form, render_members
 from boca_socios.panel.owner_sessions import OwnerSession, OwnerSessions
 from boca_socios.security.enrollment import EnrollmentConflict
@@ -78,8 +79,7 @@ class EnrollmentApplication:
     ) -> None:
         parsed = urlsplit(origin)
         if (
-            parsed.scheme != "https"
-            or not parsed.hostname
+            not parsed.hostname
             or parsed.username is not None
             or parsed.password is not None
             or parsed.path
@@ -87,7 +87,8 @@ class EnrollmentApplication:
             or parsed.fragment
             or any(char.isspace() for char in origin)
         ):
-            raise ValueError("one HTTPS origin must be configured")
+            raise ValueError("one exact private origin must be configured")
+        owner_rp_host(origin)
         self._origin = origin
         self._host = parsed.netloc
         self._sessions = sessions
@@ -101,7 +102,10 @@ class EnrollmentApplication:
             return _result(start, 503)
 
     def _handle(self, environ: Mapping[str, object], start: StartResponse) -> list[bytes]:
-        if environ.get("wsgi.url_scheme") != "https" or environ.get("HTTP_HOST") != self._host:
+        if (
+            environ.get("wsgi.url_scheme") != urlsplit(self._origin).scheme
+            or environ.get("HTTP_HOST") != self._host
+        ):
             return _result(start, 400)
         try:
             session = self._sessions.lookup(environ.get("HTTP_COOKIE", ""))

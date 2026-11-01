@@ -91,11 +91,14 @@ class Settings:
         paths = (
             self.passkey_credential_id_file,
             self.passkey_public_key_der_file,
-            self.tls_cert_file,
-            self.tls_key_file,
         )
         if any(path is None or not path.is_absolute() for path in paths):
-            raise ValueError("private BETA credential and TLS paths are required")
+            raise ValueError("private BETA public credential paths are required")
+        if self.panel_origin.startswith("https://") and any(
+            path is None or not path.is_absolute()
+            for path in (self.tls_cert_file, self.tls_key_file)
+        ):
+            raise ValueError("HTTPS BETA certificate paths are required")
 
     def validate_bridge(self) -> bool:
         """Return opt-in state; malformed partial activation fails closed."""

@@ -12,7 +12,7 @@ from boca_socios import host_first_deploy as host
 
 SHA = "a" * 40
 IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64
-ORIGIN = "https://boca.example.test:8443"
+ORIGIN = "http://localhost:8443"
 OWNER = "synthetic-owner"
 
 
@@ -91,7 +91,7 @@ def test_beta_preflight_containers_are_network_free_and_do_not_mount_data() -> N
     )
     assert host.KEY_VOLUME not in " ".join(owner)
     assert "boca-socios_boca_data" not in " ".join(owner)
-    assert "BOCA_HEALTH_CA_FILE=/run/owner/health-ca.pem" in owner
+    assert "BOCA_HEALTH_CA_FILE=/run/owner/health-ca.pem" not in owner
     assert owner[-4:] == ("python", "-m", "boca_socios.runtime", "check-beta-owner")
     full = host._beta_check_container(IMAGE, ORIGIN, OWNER, "check-beta-config")
     assert (
@@ -135,7 +135,7 @@ def test_beta_workflow_has_separate_marker_release_and_main_gates() -> None:
         "--label com.docker.compose.volume=boca_data boca-socios_boca_data", owner_step
     )
     assert owner_step < config_step < data_step
-    assert "--resolve beta.boca.example.test:8443:127.0.0.1" in workflow
+    assert "--resolve localhost:8443:127.0.0.1" in workflow
     assert "chown 10001:10001 /run/owner'" in workflow
 
 
@@ -330,9 +330,6 @@ def test_beta_postflight_proves_actual_private_bind_not_just_compose_model(
                 "BOCA_OWNER_SUBJECT": OWNER,
                 "BOCA_PASSKEY_CREDENTIAL_ID_FILE": "/run/owner/credential_id",
                 "BOCA_PASSKEY_PUBLIC_KEY_DER_FILE": "/run/owner/public_key.der",
-                "BOCA_TLS_CERT_FILE": "/run/owner/tls.crt",
-                "BOCA_TLS_KEY_FILE": "/run/owner/tls.key",
-                "BOCA_HEALTH_CA_FILE": "/run/owner/health-ca.pem",
                 "BOCA_HEALTH_MODE": "beta",
                 "BOCA_BIND_HOST": "0.0.0.0",  # noqa: S104 - isolated container
                 "BOCA_BIND_PORT": "8443",

@@ -77,7 +77,7 @@ jobs:
       - name: Validate optional served BETA Compose model without host access
         env:
           BOCA_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-          BOCA_PANEL_ORIGIN: https://beta.boca.example.test:8443
+          BOCA_PANEL_ORIGIN: http://localhost:8443
           BOCA_OWNER_SUBJECT: synthetic-owner
           PYTHONPATH: src
         run: |
@@ -92,7 +92,7 @@ jobs:
     env:
       BOCA_IMAGE: boca-first-install-smoke:${{ github.sha }}
       BOCA_ENVIRONMENT: staging
-      BOCA_PANEL_ORIGIN: https://beta.boca.example.test:8443
+      BOCA_PANEL_ORIGIN: http://localhost:8443
       BOCA_OWNER_SUBJECT: synthetic-owner
     steps:
       - name: Checkout proposed runtime without persisted credentials
@@ -133,22 +133,16 @@ jobs:
             "$BOCA_IMAGE" python -m boca_socios.site_bootstrap verify)" = \
             "BOCA_SITE_BOOTSTRAP state=VERIFIED fingerprint=$fingerprint"
           docker volume rm boca-socios_boca_owner
-      - name: Exercise sealed owner passkey and TLS custody in a disposable Boca volume
+      - name: Exercise sealed HTTP owner passkey custody in a disposable Boca volume
         run: |
           set -euo pipefail
           fixture="$RUNNER_TEMP/boca-owner-custody-fixture"
           mkdir -m 700 "$fixture"
-          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
-            -keyout "$fixture/tls.key" -out "$fixture/tls.crt" \
-            -subj /CN=beta.boca.example.test \
-            -addext subjectAltName=DNS:beta.boca.example.test \
-            -addext basicConstraints=critical,CA:TRUE -days 1
-          cp "$fixture/tls.crt" "$fixture/health-ca.pem"
           openssl ecparam -name prime256v1 -genkey -noout -out "$fixture/passkey.pem"
           openssl pkey -in "$fixture/passkey.pem" -pubout -outform DER -out "$fixture/public_key.der"
           python3 -c 'import os,pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(os.urandom(32))' "$fixture/credential_id"
           chmod 0755 "$fixture"
-          chmod 0644 "$fixture/credential_id" "$fixture/public_key.der" "$fixture/tls.crt" "$fixture/tls.key" "$fixture/health-ca.pem"
+          chmod 0644 "$fixture/credential_id" "$fixture/public_key.der"
           docker volume create --driver local \
             --label com.docker.compose.project=boca-socios \
             --label com.docker.compose.volume=boca_owner boca-socios_boca_owner
@@ -169,7 +163,7 @@ jobs:
             --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
             --tmpfs /tmp:rw,noexec,nosuid,size=4m \
             --mount "type=bind,source=$fixture,target=/fixture,readonly" \
-            "$BOCA_IMAGE" python -c 'import base64,sys; from pathlib import Path; from boca_socios.owner_bootstrap import RecipientReceipt,seal_for_recipient,LIMITS; bundle={name:(Path("/fixture")/name).read_bytes() for name in LIMITS}; sealed=seal_for_recipient(RecipientReceipt("PREPARED",sys.argv[1],sys.argv[2]),bundle,sys.argv[3],sys.argv[4]); print(base64.urlsafe_b64encode(sealed).rstrip(b"=").decode())' "$public" "$fingerprint" "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")"
+            "$BOCA_IMAGE" python -c 'import base64,sys; from pathlib import Path; from boca_socios.owner_bootstrap import RecipientReceipt,seal_for_recipient,_bundle_limits; bundle={name:(Path("/fixture")/name).read_bytes() for name in _bundle_limits(sys.argv[3])}; sealed=seal_for_recipient(RecipientReceipt("PREPARED",sys.argv[1],sys.argv[2]),bundle,sys.argv[3],sys.argv[4]); print(base64.urlsafe_b64encode(sealed).rstrip(b"=").decode())' "$public" "$fingerprint" "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")"
           test "$(PYTHONPATH=src python3 -c 'import sys; from boca_socios.host_first_deploy import _owner_envelope; sys.stdout.write(_owner_envelope(*sys.argv[1:]))' "$sealed" "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT" | \
             docker run --rm -i --pull never --user 10001:10001 --network none --read-only \
               --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
@@ -267,18 +261,10 @@ jobs:
           openssl ecparam -name prime256v1 -genkey -noout -out "$RUNNER_TEMP/boca-owner-fixture/passkey.pem"
           openssl pkey -in "$RUNNER_TEMP/boca-owner-fixture/passkey.pem" -pubout -outform DER -out "$RUNNER_TEMP/boca-owner-fixture/public_key.der"
           python3 -c 'import os,pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(os.urandom(32))' "$RUNNER_TEMP/boca-owner-fixture/credential_id"
-          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
-            -keyout "$RUNNER_TEMP/boca-owner-fixture/tls.key" \
-            -out "$RUNNER_TEMP/boca-owner-fixture/tls.crt" \
-            -subj /CN=beta.boca.example.test -addext subjectAltName=DNS:beta.boca.example.test -days 1
-          cp "$RUNNER_TEMP/boca-owner-fixture/tls.crt" "$RUNNER_TEMP/boca-owner-fixture/health-ca.pem"
           # Only disposable synthetic inputs are readable by the cap-dropped copy container.
           chmod 0755 "$RUNNER_TEMP/boca-owner-fixture"
           chmod 0644 "$RUNNER_TEMP/boca-owner-fixture/credential_id" \
-            "$RUNNER_TEMP/boca-owner-fixture/public_key.der" \
-            "$RUNNER_TEMP/boca-owner-fixture/tls.crt" \
-            "$RUNNER_TEMP/boca-owner-fixture/tls.key" \
-            "$RUNNER_TEMP/boca-owner-fixture/health-ca.pem"
+            "$RUNNER_TEMP/boca-owner-fixture/public_key.der"
           docker volume create --driver local \
             --label com.docker.compose.project=boca-socios \
             --label com.docker.compose.volume=boca_owner boca-socios_boca_owner
@@ -287,7 +273,7 @@ jobs:
             --pids-limit 16 --memory 64m --cpus 0.25 \
             --mount type=volume,source=boca-socios_boca_owner,target=/run/owner \
             --mount "type=bind,source=$RUNNER_TEMP/boca-owner-fixture,target=/fixture,readonly" \
-            "$BOCA_IMAGE" sh -eu -c 'cp /fixture/credential_id /fixture/public_key.der /fixture/tls.crt /fixture/tls.key /fixture/health-ca.pem /run/owner/; chmod 0400 /run/owner/*; chown 10001:10001 /run/owner/*; chmod 0700 /run/owner; chown 10001:10001 /run/owner'
+            "$BOCA_IMAGE" sh -eu -c 'cp /fixture/credential_id /fixture/public_key.der /run/owner/; chmod 0400 /run/owner/*; chown 10001:10001 /run/owner/*; chmod 0700 /run/owner; chown 10001:10001 /run/owner'
           # Probe the actual image with an owner-only mount, then key+owner;
           # neither can open a database or listener before data creation.
           beta_env=(
@@ -298,9 +284,6 @@ jobs:
             --env "BOCA_OWNER_SUBJECT=$BOCA_OWNER_SUBJECT"
             --env BOCA_PASSKEY_CREDENTIAL_ID_FILE=/run/owner/credential_id
             --env BOCA_PASSKEY_PUBLIC_KEY_DER_FILE=/run/owner/public_key.der
-            --env BOCA_TLS_CERT_FILE=/run/owner/tls.crt
-            --env BOCA_TLS_KEY_FILE=/run/owner/tls.key
-            --env BOCA_HEALTH_CA_FILE=/run/owner/health-ca.pem
             --env BOCA_BIND_HOST=0.0.0.0 --env BOCA_BIND_PORT=8443
           )
           test "$(docker run --rm --pull never --user 10001:10001 --network none --read-only \
@@ -381,7 +364,7 @@ jobs:
           docker network rm boca-socios_telegram_egress
           docker volume rm boca-socios_boca_telegram
           [[ "$(docker network ls --format '{{.Name}}')" != *boca-socios_telegram_egress* ]]
-      - name: Serve BETA on runner loopback with exact image, TLS and isolation
+      - name: Serve BETA on runner loopback with exact image, HTTP and isolation
         run: |
           docker compose -p boca-socios -f compose.beta.yaml up --no-build --no-deps --wait --wait-timeout 90 -d controller
           container="$(docker compose -p boca-socios -f compose.beta.yaml ps -q controller)"
@@ -393,11 +376,10 @@ jobs:
           docker inspect --format '{{json .Mounts}}' "$container" | python3 -c 'import json,sys; m=json.load(sys.stdin); assert {(x["Type"], x["Name"], x["Destination"], x["RW"]) for x in m} == {("volume", "boca-socios_boca_data", "/data", True), ("volume", "boca-socios_boca_key", "/run/secrets", False), ("volume", "boca-socios_boca_owner", "/run/owner", False)}'
           docker exec --user 10001:10001 "$container" python -m boca_socios.runtime_probe
           curl --fail --silent --show-error --noproxy '*' \
-            --resolve beta.boca.example.test:8443:127.0.0.1 \
-            --cacert "$RUNNER_TEMP/boca-owner-fixture/tls.crt" \
-            https://beta.boca.example.test:8443/healthz > "$RUNNER_TEMP/boca-beta-health.receipt"
+            --resolve localhost:8443:127.0.0.1 \
+            http://localhost:8443/healthz > "$RUNNER_TEMP/boca-beta-health.receipt"
           test "$(cat "$RUNNER_TEMP/boca-beta-health.receipt")" = BOCA_BETA_READY
-      - name: Run synthetic TLS acceptance inside capped disposable controller
+      - name: Run synthetic loopback HTTP acceptance inside capped disposable controller
         run: |
           container="$(docker compose -p boca-socios -f compose.beta.yaml ps -q controller)"
           [[ "$container" =~ ^[0-9a-f]{64}$ ]]
@@ -994,7 +976,7 @@ jobs:
           set -e
           receipt=''
           if [[ "$acceptance_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-beta-acceptance.receipt")"; fi
-          receipt_pattern='^BOCA_BETA_ACCEPTANCE state=PASS source_sha=([0-9a-f]{40}) image=(ghcr[.]io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}) scope=container_loopback requests=([0-9]+) median_ms=([0-9]+[.][0-9]{2}) p95_ms=([0-9]+[.][0-9]{2}) elapsed_ms=([0-9]+[.][0-9]{2}) cpu_ms=([0-9]+[.][0-9]{2}) process_peak_rss_kib=([0-9]+) scratch_bytes=([0-9]+) members=1 intents=1 notices=1 tls=verified engine=off site=not_contacted telegram=not_sent stage_free_mib=([0-9]+) docker_free_mib=([0-9]+) stage_inodes=([0-9]+) docker_inodes=([0-9]+)$'
+          receipt_pattern='^BOCA_BETA_ACCEPTANCE state=PASS source_sha=([0-9a-f]{40}) image=(ghcr[.]io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}) scope=container_loopback requests=([0-9]+) median_ms=([0-9]+[.][0-9]{2}) p95_ms=([0-9]+[.][0-9]{2}) elapsed_ms=([0-9]+[.][0-9]{2}) cpu_ms=([0-9]+[.][0-9]{2}) process_peak_rss_kib=([0-9]+) scratch_bytes=([0-9]+) members=1 intents=1 notices=1 local_http=verified engine=off site=not_contacted telegram=not_sent stage_free_mib=([0-9]+) docker_free_mib=([0-9]+) stage_inodes=([0-9]+) docker_inodes=([0-9]+)$'
           if [[ "$acceptance_rc" -ne 0 || ${#receipt} -gt 600 || ! "$receipt" =~ $receipt_pattern ]]; then
             printf 'Boca BETA synthetic acceptance: NO_GO; host output withheld. Boca-only stop follows if its protected gate remains valid.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1

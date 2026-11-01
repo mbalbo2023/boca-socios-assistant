@@ -16,7 +16,7 @@ PASS = (
     "BOCA_SYNTHETIC_ACCEPTANCE state=PASS scope=container_loopback "
     "requests=21 median_ms=1.00 p95_ms=2.00 elapsed_ms=100.00 "
     "cpu_ms=30.00 process_peak_rss_kib=15000 scratch_bytes=12345 "
-    "members=1 intents=1 notices=1 tls=verified engine=off "
+    "members=1 intents=1 notices=1 local_http=verified engine=off "
     "site=not_contacted telegram=not_sent"
 )
 
@@ -254,7 +254,9 @@ def test_protected_workflow_runs_probe_then_boca_only_stop_in_one_job() -> None:
     workflow = Path(".github/workflows/boca-first-deploy.yml").read_text(encoding="utf-8")
     assert (
         workflow.index("Serve BETA on runner loopback with exact image")
-        < workflow.index("Run synthetic TLS acceptance inside capped disposable controller")
+        < workflow.index(
+            "Run synthetic loopback HTTP acceptance inside capped disposable controller"
+        )
         < workflow.index("Remove only synthetic Boca resources from disposable runner")
     )
     assert 'docker exec --user 10001:10001 "$container"' in workflow

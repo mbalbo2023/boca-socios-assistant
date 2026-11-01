@@ -291,5 +291,5 @@ def test_operation_id_cannot_rebind_creation_or_proof_and_proof_expires() -> Non
     ],
 )
 def test_absent_or_mismatched_https_origin_fails_closed(origin: str, rp_id: str) -> None:
-    with pytest.raises(ValueError, match="exact HTTPS"):
+    with pytest.raises(ValueError, match="exact trustworthy RP"):
         OwnerPasskeyRegistration(origin=origin, rp_id=rp_id, owner_subject="owner")

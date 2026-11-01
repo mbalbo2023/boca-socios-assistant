@@ -9,7 +9,7 @@ import pytest
 from boca_socios.deploy_contract import ContractError, validate_beta_contract
 from test_deploy_contract import IMAGE, model
 
-ORIGIN = "https://localhost:8443"
+ORIGIN = "http://localhost:8443"
 OWNER = "synthetic-owner"
 
 
@@ -36,12 +36,9 @@ def beta_model() -> dict[str, object]:
         "BOCA_OWNER_SUBJECT": OWNER,
         "BOCA_PASSKEY_CREDENTIAL_ID_FILE": "/run/owner/credential_id",
         "BOCA_PASSKEY_PUBLIC_KEY_DER_FILE": "/run/owner/public_key.der",
-        "BOCA_TLS_CERT_FILE": "/run/owner/tls.crt",
-        "BOCA_TLS_KEY_FILE": "/run/owner/tls.key",
         "BOCA_BIND_HOST": "0.0.0.0",  # noqa: S104 - isolated container bridge
         "BOCA_BIND_PORT": "8443",
         "BOCA_HEALTH_MODE": "beta",
-        "BOCA_HEALTH_CA_FILE": "/run/owner/health-ca.pem",
     }
     service["volumes"].append(  # type: ignore[index]
         {
@@ -79,7 +76,7 @@ def test_exact_served_beta_package_passes() -> None:
         ),
         ("service", "cap_add", ["NET_ADMIN"]),
         ("env", "BOCA_ENGINE_MODE", "on"),
-        ("env", "BOCA_PANEL_ORIGIN", "http://localhost:8443"),
+        ("env", "BOCA_PANEL_ORIGIN", "https://localhost:8443"),
         ("env", "BOCA_BIND_HOST", "127.0.0.1"),
         ("env", "BOCA_TLS_KEY_FILE", "/var/shared/tls.key"),
         ("volume", "external", False),
@@ -115,7 +112,7 @@ def test_beta_port_and_config_volume_cannot_grow() -> None:
 
 def test_beta_requires_exact_explicit_origin_subject_and_digest() -> None:
     for image, origin, owner in (
-        (IMAGE, "http://localhost:8443", OWNER),
+        (IMAGE, "https://localhost:8443", OWNER),
         (IMAGE, ORIGIN + "/panel", OWNER),
         (IMAGE, ORIGIN, ""),
         ("ghcr.io/mbalbo2023/boca-socios-assistant:latest", ORIGIN, OWNER),

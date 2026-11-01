@@ -23,8 +23,10 @@ ORIGIN = "http://localhost:8443"
 
 
 def _public() -> bytes:
-    return ec.generate_private_key(ec.SECP256R1()).public_key().public_bytes(
-        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    return (
+        ec.generate_private_key(ec.SECP256R1())
+        .public_key()
+        .public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
     )
 
 
@@ -37,7 +39,6 @@ def test_exact_http_loopback_origin_is_a_valid_owner_rp() -> None:
 @pytest.mark.parametrize(
     "origin",
     [
-        "https://localhost:8443",
         "http://localhost",
         "http://localhost:9000",
         "http://127.0.0.1:8443",
@@ -123,20 +124,24 @@ def test_http_localhost_panel_and_enrollment_require_exact_origin(tmp_path: Path
                 "CONTENT_LENGTH": "",
                 "HTTP_ORIGIN": "",
             },
-            lambda status, _headers: statuses.append(status),
+            lambda status, _headers, captured=statuses: captured.append(status),
         )
         assert int(statuses[0].split()[0]) == expected
 
 
 def test_http_localhost_owner_envelope_only_contains_public_passkey_material() -> None:
     private = x25519.X25519PrivateKey.generate()
-    public = private.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    public = private.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
     import base64
     import hashlib
     import json
 
     recipient = RecipientReceipt(
-        "PREPARED", base64.urlsafe_b64encode(public).rstrip(b"=").decode(), hashlib.sha256(public).hexdigest()
+        "PREPARED",
+        base64.urlsafe_b64encode(public).rstrip(b"=").decode(),
+        hashlib.sha256(public).hexdigest(),
     )
     sealed = seal_for_recipient(
         recipient, {"credential_id": os.urandom(32), "public_key.der": _public()}, ORIGIN, "owner"

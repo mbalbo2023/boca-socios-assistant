@@ -96,6 +96,25 @@ def test_exact_tunnel_origin_seals_installs_and_verifies(tmp_path: Path) -> None
         boot.verify(directory, ORIGIN, SUBJECT, uid=os.geteuid())
 
 
+def test_ssh_only_http_custody_seals_no_certificate_or_ca(tmp_path: Path) -> None:
+    origin = "http://localhost:8443"
+    owner = _owner(tmp_path)
+    receipt = boot.prepare(owner, uid=os.geteuid())
+    bundle = {name: value for name, value in _bundle().items() if name in boot.HTTP_LIMITS}
+    envelope = boot.seal_for_recipient(receipt, bundle, origin, SUBJECT)
+    header = json.loads(envelope)
+    assert header["purpose"] == boot.HTTP_PURPOSE
+    assert all(private not in envelope for private in bundle.values())
+    with pytest.raises(boot.BootstrapError):
+        boot.install(owner, envelope, ORIGIN, SUBJECT, uid=os.geteuid())
+    assert boot.install(owner, envelope, origin, SUBJECT, uid=os.geteuid()) == receipt.fingerprint
+    assert boot.verify(owner, origin, SUBJECT, uid=os.geteuid()) == receipt.fingerprint
+    assert {path.name for path in owner.iterdir()} == set(boot.HTTP_LIMITS) | {boot.PRIVATE_KEY}
+    (owner / "health-ca.pem").symlink_to(tmp_path / "missing-ca")
+    with pytest.raises(boot.BootstrapError, match="unexpected_tls_artifact"):
+        boot.verify(owner, origin, SUBJECT, uid=os.geteuid())
+
+
 def test_wrong_recipient_origin_tamper_and_invalid_tls_have_no_owner_effect(tmp_path: Path) -> None:
     a, b = _owner(tmp_path / "a"), _owner(tmp_path / "b")
     receipt = boot.prepare(a, uid=os.geteuid())
@@ -157,7 +176,6 @@ def test_symlink_and_partial_state_preserved_without_retry(tmp_path: Path) -> No
         "https://localhost",
         "https://localhost:9000",
         "https://boca.localhost:8443",
-        "http://localhost:8443",
         "https://127.0.0.1:8443",
         "https://LOCALHOST:8443",
         "https://localhost:8443/",

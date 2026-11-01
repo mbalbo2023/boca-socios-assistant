@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from boca_socios.owner_origin import owner_rp_host
 from boca_socios.panel.passkey import (
     PasskeyOwnerAuthentication,
     _decode,
@@ -147,7 +148,7 @@ def _cose_public_key(value: bytes) -> ec.EllipticCurvePublicKey:
 class OwnerPasskeyRegistration:
     """One in-memory create→get proof for an independently authorized owner.
 
-    The first-owner authorization and HTTPS serving are deliberately outside
+    The first-owner authorization and private serving are deliberately outside
     this class. Never wire `begin` to an anonymous route or a client identity
     header. A restart drops the pending ceremony without installing anything.
     """
@@ -161,28 +162,28 @@ class OwnerPasskeyRegistration:
         clock: Callable[[], float] = monotonic,
     ) -> None:
         if not all(isinstance(value, str) for value in (origin, rp_id, owner_subject)):
-            raise ValueError("registration requires an exact HTTPS RP and owner")
+            raise ValueError("registration requires an exact trustworthy RP and owner")
         parsed = urlsplit(origin)
         if (
-            parsed.scheme != "https"
-            or parsed.hostname != rp_id
+            parsed.hostname != rp_id
             or parsed.username is not None
             or parsed.password is not None
             or parsed.path
             or parsed.query
             or parsed.fragment
             or not parsed.netloc
-            or origin != f"https://{parsed.netloc}"
             or not owner_subject
             or len(owner_subject) > 128
         ):
-            raise ValueError("registration requires an exact HTTPS RP and owner")
+            raise ValueError("registration requires an exact trustworthy RP and owner")
         # Accessing `port` rejects malformed authorities before any challenge.
         try:
             _ = parsed.port
             rp_id.encode("ascii")
+            if owner_rp_host(origin) != rp_id:
+                raise ValueError("RP mismatch")
         except (ValueError, UnicodeError) as error:
-            raise ValueError("registration requires an exact HTTPS RP and owner") from error
+            raise ValueError("registration requires an exact trustworthy RP and owner") from error
         self._origin = origin
         self._rp_id = rp_id
         self._owner = owner_subject

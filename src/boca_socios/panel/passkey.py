@@ -22,6 +22,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from boca_socios.owner_origin import owner_rp_host
 from boca_socios.panel.owner_sessions import OwnerIdentity
 
 _BASE64URL = re.compile(r"[A-Za-z0-9_-]+")
@@ -80,8 +81,7 @@ class PasskeyOwnerAuthentication:
     ) -> None:
         parsed = urlsplit(origin)
         if (
-            parsed.scheme != "https"
-            or parsed.hostname != rp_id
+            parsed.hostname != rp_id
             or parsed.username is not None
             or parsed.password is not None
             or parsed.path
@@ -93,7 +93,12 @@ class PasskeyOwnerAuthentication:
             or not isinstance(credential_id, bytes)
             or not 16 <= len(credential_id) <= 1024
         ):
-            raise ValueError("passkey requires an exact HTTPS RP and owner configuration")
+            raise ValueError("passkey requires an exact trustworthy RP and owner configuration")
+        try:
+            if owner_rp_host(origin) != rp_id:
+                raise ValueError("RP mismatch")
+        except ValueError:
+            raise ValueError("passkey requires an exact trustworthy RP") from None
         key = serialization.load_der_public_key(public_key_der)
         if not isinstance(key, ec.EllipticCurvePublicKey) or not isinstance(
             key.curve, ec.SECP256R1
