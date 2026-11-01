@@ -1749,21 +1749,33 @@ def _beta_acceptance_status(
     _verify_beta_compose(compose_sha)
     snapshot = collect_snapshot(beta_staged=True)
     volumes = _names("volume", "name=^boca-socios_")
-    networks = _names("network", "name=^boca-socios_")
-    if volumes != {OWNER_VOLUME, KEY_VOLUME, DATA_VOLUME} or networks != {
-        "boca-socios_boca_private"
-    }:
+    if volumes != {OWNER_VOLUME, KEY_VOLUME, DATA_VOLUME}:
         raise PreflightError("installed Boca namespace differs from reviewed BETA")
-    if not snapshot.boca_containers or not snapshot.boca_volume or not snapshot.boca_network:
-        raise PreflightError("installed Boca controller or resources are absent")
-    validate_snapshot(
-        replace(snapshot, boca_containers=False, boca_volume=False, boca_network=False)
-    )
+    network_ids = _run(
+        "docker", "network", "ls", "--no-trunc", "-q", "--filter", "name=^boca-socios_"
+    ).splitlines()
+    if len(network_ids) != 1 or not re.fullmatch(r"[0-9a-f]{64}", network_ids[0]):
+        raise PreflightError("installed Boca network inventory differs from reviewed BETA")
+    if (
+        snapshot.arch != "x86_64"
+        or snapshot.uid != 10001
+        or not snapshot.root_ready
+        or not snapshot.boca_containers
+        or not snapshot.boca_volume
+        or not snapshot.boca_network
+    ):
+        raise PreflightError("installed Boca controller identity or resources are unsafe")
+    # The preinstall 768 MiB/0.5 CPU headroom gate cannot be reused after the
+    # capped controller has started. Retain explicit installed-host reserves.
+    if snapshot.available_memory_kib < 512 * 1024 or snapshot.cpu_headroom < 0.25:
+        raise PreflightError("insufficient installed Boca host headroom")
     _validate_owner_volume()
     _validate_key_volume()
     _validate_data_volume()
     _run(*_beta_compose_args("config", "-q"), env=_beta_compose_env(image, origin, owner))
     diagnostic = collect_diagnostic(image, source_sha, beta_origin=origin, beta_owner=owner)
+    if network_ids[0] != diagnostic.network_id:
+        raise PreflightError("installed Boca network identity changed")
     _beta_loopback_health(diagnostic.container_id, origin)
     capacity = _storage_snapshot()
     _validate_storage_capacity(capacity)

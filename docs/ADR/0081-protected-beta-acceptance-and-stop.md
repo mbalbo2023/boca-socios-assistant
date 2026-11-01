@@ -24,12 +24,14 @@ The workflow keeps the first-attempt, repository/owner actor, protected
 environment, BETA marker, service/controller, fixed 0.5 CPU/256 MiB/64 PID
 budget, empty Site envelope, pinned SSH identity, current-main rechecks and
 verified release run/manifest/digest gates. It hashes the reviewed
-`compose.beta.yaml` and verifies the runner and staged host model. No PR or
+`compose.beta.yaml`, validates the runner model, then checks the staged host
+file hash and Compose syntax plus the actual container postflight. No PR or
 push event reaches the host. The existing workflow mutex serializes the
 install, acceptance and stop operations.
 
 The host helper checks the dedicated UID10001 rootless daemon and capacity,
-exactly one installed Boca controller, named Boca volumes/network, staged
+exactly one installed Boca controller, exact named Boca volumes and the full
+network ID matched to the inspected network, staged
 Compose hash, actual container image/revision, health, command and engine-off
 settings, three mount destinations/read-write modes, no unexpected peers,
 host-loopback-only port, cgroup/capability/read-only limits and TLS health
@@ -39,6 +41,12 @@ or application database. It invokes the reviewed `host_probe` module only by
 ID and accepts one strictly bounded `BOCA_SYNTHETIC_ACCEPTANCE state=PASS`
 receipt. Execution and output are bounded; failure output is redacted. It
 checks the same host identity, health and capacity again after the probe.
+The installed controller has already consumed part of the preinstall host
+reserve, so acceptance requires at least 512 MiB available memory and 0.25
+approximate CPU headroom, plus 4 GiB and 50,000 free inodes on both Boca
+staging and rootless Docker storage. The actual 0.5 CPU/256 MiB/64 PID cgroup
+limits are checked separately. These are conservative host gates, not a
+tablet performance claim or Chromium capacity estimate.
 
 The probe uses a new temporary SQLite/key/passkey/certificate under the
 container `/tmp` and HTTPS container loopback. Its request count, median/p95,

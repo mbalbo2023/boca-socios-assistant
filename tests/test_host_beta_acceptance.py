@@ -147,7 +147,7 @@ def test_unknown_installed_volume_refuses_probe_before_diagnostic(
         lambda kind, _filter: (
             {host.OWNER_VOLUME, host.KEY_VOLUME, "boca-socios_unknown"}
             if kind == "volume"
-            else {"boca-socios_boca_private"}
+            else {"a" * 64}
         ),
     )
     monkeypatch.setattr(
@@ -161,6 +161,93 @@ def test_unknown_installed_volume_refuses_probe_before_diagnostic(
             "https://boca.example.test:8443",
             "owner",
         )
+
+
+@pytest.mark.parametrize(
+    ("memory_kib", "cpu_headroom", "network_id", "accepted"),
+    [
+        (600 * 1024, 0.3, "a" * 64, True),
+        (500 * 1024, 0.3, "a" * 64, False),
+        (600 * 1024, 0.2, "a" * 64, False),
+        (600 * 1024, 0.3, "b" * 64, False),
+    ],
+)
+def test_installed_headroom_and_network_id_are_checked_without_preinstall_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+    memory_kib: int,
+    cpu_headroom: float,
+    network_id: str,
+    accepted: bool,
+) -> None:
+    image = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64
+    snapshot = host.HostSnapshot(
+        arch="x86_64",
+        uid=10001,
+        available_memory_kib=memory_kib,
+        available_disk_bytes=8 * 1024**3,
+        available_inodes=100000,
+        docker_disk_bytes=8 * 1024**3,
+        docker_inodes=100000,
+        root_ready=True,
+        boca_containers=True,
+        boca_volume=True,
+        boca_network=True,
+        cpu_headroom=cpu_headroom,
+    )
+    diagnostic = SimpleNamespace(container_id="c" * 64, network_id=network_id)
+    capacity = SimpleNamespace(
+        stage_free_bytes=8 * 1024**3,
+        docker_free_bytes=8 * 1024**3,
+        stage_inodes=100000,
+        docker_inodes=100000,
+    )
+    monkeypatch.setattr(host, "_verify_beta_compose", lambda *_args: None)
+    monkeypatch.setattr(host, "collect_snapshot", lambda **_kwargs: snapshot)
+    monkeypatch.setattr(
+        host,
+        "_names",
+        lambda kind, _filter: (
+            {host.OWNER_VOLUME, host.KEY_VOLUME, host.DATA_VOLUME}
+            if kind == "volume"
+            else {"a" * 64}
+        ),
+    )
+    for name in ("_validate_owner_volume", "_validate_key_volume", "_validate_data_volume"):
+        monkeypatch.setattr(host, name, lambda: None)
+    commands: list[tuple[str, ...]] = []
+
+    def run(*args: str, **_kwargs: object) -> str:
+        commands.append(args)
+        if args[:3] == ("docker", "network", "ls"):
+            assert args == (
+                "docker",
+                "network",
+                "ls",
+                "--no-trunc",
+                "-q",
+                "--filter",
+                "name=^boca-socios_",
+            )
+            return "a" * 64
+        return ""
+
+    monkeypatch.setattr(host, "_run", run)
+    monkeypatch.setattr(host, "collect_diagnostic", lambda *_args, **_kwargs: diagnostic)
+    monkeypatch.setattr(host, "_beta_loopback_health", lambda *_args: None)
+    monkeypatch.setattr(host, "_storage_snapshot", lambda: capacity)
+    monkeypatch.setattr(host, "_validate_storage_capacity", lambda *_args: None)
+
+    def operation() -> tuple[object, object]:
+        return host._beta_acceptance_status(
+            image, "a" * 40, "d" * 64, "https://boca.example.test:8443", "owner"
+        )
+
+    if accepted:
+        assert operation() == (diagnostic, capacity)
+        assert any(args[:3] == ("docker", "network", "ls") for args in commands)
+    else:
+        with pytest.raises(host.PreflightError):
+            operation()
 
 
 def test_protected_workflow_runs_probe_then_boca_only_stop_in_one_job() -> None:
