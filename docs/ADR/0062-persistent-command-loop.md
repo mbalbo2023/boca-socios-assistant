@@ -56,7 +56,7 @@ loop, concurrent aliases and the one-ticket SQL constraint, wrong-member
 denial, running stop/cancellation, accepted-command startup recovery,
 completed-command restart without replay, timeout ambiguity and absent/broken
 schema without implicit initialization. The exact candidate SHA, CI runs and
-review belong to the PR #159 description after those checks run. These tests
+review belong to PR #161 for issue #159. These tests
 do not prove a WSGI listener, owner authentication, TLS, Site integration,
 Telegram delivery, Chromium on the droplet or a real Boca flow. The root
 integration writer will reconcile central status and #45 before closing this
