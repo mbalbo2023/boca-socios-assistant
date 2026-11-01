@@ -50,7 +50,7 @@ The choice does not mean the file exists or authorize replacing storage found
 later. First-install's empty-namespace assumption must be checked; an existing
 installation needs a compatible reviewed procedure, not deletion by default.
 
-Prepare dedicated rootless remediation through the sole workflow, verify
+For subsequent approved host work through the sole workflow, verify
 service/socket/cgroups/storage capacity and separate the browser budget. Do
 not reinstall Docker merely because the user unit was absent. The existing
 install/diagnostic code expects the dormant controller with no exposed ports;

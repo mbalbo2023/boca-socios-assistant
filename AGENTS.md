@@ -74,8 +74,8 @@ remains UNVERIFIED. Preserve and identify any discovered storage. The dedicated
 rootless service was prepared by run #120; no application/database was installed
 by that operation. Do not rerun first-time preparation over its existing config.
 
-Proceed with approved implementation/review/tests and preparation of dedicated
-rootless Docker and an application-served private panel without repeating the
+Build on the prepared dedicated rootless service and proceed with approved
+implementation/review/tests of an application-served private panel without repeating the
 same permission request. Concrete identity/bootstrap/private-access options
 still require their documented decision before activation. Final release and
 installation use a reviewed concrete candidate under the plan, not this
