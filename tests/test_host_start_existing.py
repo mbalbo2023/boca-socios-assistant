@@ -53,27 +53,31 @@ def _ready(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(host, "_read_private", lambda *_args: None)
     monkeypatch.setattr(host, "_entry", lambda *_args: None)
     monkeypatch.setattr(host.os, "access", lambda *_args: False)
-    monkeypatch.setattr(host, "_stop_service_state", lambda _home: "inactive")
+    states = iter(["inactive", "active"])
+    monkeypatch.setattr(host, "_stop_service_state", lambda _home: next(states))
 
 
 def test_start_existing_validates_exact_install_and_stopped_inventory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _ready(monkeypatch)
+    monkeypatch.setattr(host, "_verified_enablement", lambda _home: None)
     with patch.object(
         host,
         "_command",
         side_effect=[
             "yes",
             "",
-            "ActiveState=active\nSubState=running",
             _metadata(),
             CONTAINER,
             _container(),
         ],
     ) as command:
         host.start_existing(SHA)
-    assert call(HOME, "/usr/bin/systemctl", "--user", "start", "docker.service", timeout=50) in command.call_args_list
+    assert (
+        call(HOME, "/usr/bin/systemctl", "--user", "start", "docker.service", timeout=50)
+        in command.call_args_list
+    )
     assert all("stop" not in invocation.args for invocation in command.call_args_list)
 
 
@@ -96,7 +100,7 @@ def test_start_existing_rejects_unknown_container_after_start(
     with patch.object(
         host,
         "_command",
-        side_effect=["yes", "", "ActiveState=active\nSubState=running", _metadata(), CONTAINER, _container("other")],
+        side_effect=["yes", "", _metadata(), CONTAINER, _container("other")],
     ) as command:
         with pytest.raises(host.SetupError, match="unknown_container_preserved_no_stop"):
             host.start_existing(SHA)
