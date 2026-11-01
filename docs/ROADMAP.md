@@ -15,7 +15,7 @@ funcionalidad operativa.
 
 | Frente | Entregado al corte | Próximo gate y responsable |
 | --- | --- | --- |
-| Host dedicado | Rootless preparado #120; preflight #124 PASS sólo para controlador dormido; `stop-test` [41282301501](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41282301501) ALREADY_STOPPED, `containers=not_queried`, datos preservados | Root: capacidad funcional, operación manual, postflight y nueva parada después de pruebas futuras; no repetir #120 |
+| Host dedicado | Rootless preparado #120; preflight #124 PASS sólo para controlador dormido; `stop-test` [41282301501](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41282301501) ALREADY_STOPPED, `containers=not_queried`, datos preservados. `port-check` #211 integra la comprobación 8443 sólo en código, sin recibo host | Root: ejecutar el check protegido, luego capacidad funcional, operación manual, postflight y nueva parada después de pruebas futuras; no repetir #120 |
 | Simulación | Coordinador #130, comandos #149, loop #161, ciclo #164, TLS #173 y RCA UUID #187 integrados | Acceder desde host/tablet con identidad privada, sin activar Boca real |
 | Panel/alta | Servicio cifrado #31, adaptadores #128/#148, owner passkey/controles #163, registro #174, preflight #189 y custodia cifrada #208 integrados en código | #209: origen TLS privado, inscripción física del dueño, E2E tablet y rechazo real de terceros |
 | Aceptación | HTTP loopback #170, probe TLS #190 y operación protegida de aceptación/parada #200 integrados | Host/tablet/Site/Telegram y recursos/latencia reales con recibos aparte |

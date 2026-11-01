@@ -8,7 +8,7 @@ on:
         description: Boca host operation; BETA install requires separate private owner/TLS and protected release gates
         required: true
         type: choice
-        options: [inspect-prerequisites, prepare-rootless, preflight, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, beta-install, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
+        options: [inspect-prerequisites, port-check, prepare-rootless, preflight, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, beta-install, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
         description: Exact current main commit approved for the operation
         required: true
@@ -72,7 +72,7 @@ jobs:
           uv sync --frozen
       - name: Check dispatch and first-install boundaries offline
         run: |
-          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_beta_install.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_owner_bootstrap.py tests/test_host_owner_bootstrap.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_telegram_one_shot.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
+          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_loopback_port.py tests/test_host_beta_install.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_owner_bootstrap.py tests/test_host_owner_bootstrap.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_telegram_one_shot.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
       - name: Validate optional served BETA Compose model without host access
         env:
@@ -475,7 +475,7 @@ jobs:
           if [[ "$BOCA_OPERATION" != telegram-install ]]; then test -z "$BOCA_TELEGRAM_ENVELOPE"; fi
           if [[ "$BOCA_OPERATION" != owner-install ]]; then test -z "$BOCA_OWNER_ENVELOPE"; fi
           case "$BOCA_OPERATION" in
-            inspect-prerequisites|preflight)
+            inspect-prerequisites|port-check|preflight)
               test "$BOCA_HOST_READONLY_ENV_READY" = ready
               test -z "$BOCA_IMAGE_REF"
               test -z "$BOCA_RELEASE_RUN_ID"
@@ -760,6 +760,24 @@ jobs:
         run: |
           remote_command="$(python3 -c 'import shlex, sys; print(shlex.join(sys.argv[1:]))' python3 - inspect-prerequisites "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py
+      - name: Check only Boca host loopback 8443 without Docker
+        if: inputs.operation == 'port-check'
+        run: |
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - port-check '' "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")")"
+          set +e
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-port-check.receipt" 2>/dev/null
+          port_rc=$?
+          set -e
+          receipt="$(cat "$RUNNER_TEMP/boca-port-check.receipt")"
+          if [[ "$port_rc" -eq 0 && "$receipt" = 'BOCA_PORT_CHECK state=FREE address=127.0.0.1 port=8443 reserved=no' ]]; then
+            printf 'Boca host-loopback port: `%s`. Instant observation only; no port reserved, Docker or application effect.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$port_rc" -ne 0 && "$receipt" =~ ^BOCA_PORT_CHECK\ state=(BUSY|ERROR)\ address=127[.]0[.]0[.]1\ port=8443\ reserved=no$ ]]; then
+            printf 'Boca host-loopback port: `%s`. NO_GO; no service identified or changed.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          else
+            printf 'Boca host-loopback port: NO_GO unverified; host output withheld.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
       - name: Observe host capacity and Boca namespace without an image
         if: inputs.operation == 'preflight'
         run: |
@@ -887,6 +905,20 @@ jobs:
         run: |
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-beta-apply.json"
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-beta-apply.json" "$BOCA_SOURCE_SHA"
+      - name: Recheck Boca loopback 8443 before BETA app and key effects
+        if: inputs.operation == 'beta-install'
+        run: |
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - port-check '' "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")")"
+          set +e
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-beta-port.receipt" 2>/dev/null
+          port_rc=$?
+          set -e
+          receipt="$(cat "$RUNNER_TEMP/boca-beta-port.receipt")"
+          if [[ "$port_rc" -ne 0 || "$receipt" != 'BOCA_PORT_CHECK state=FREE address=127.0.0.1 port=8443 reserved=no' ]]; then
+            printf 'Boca BETA loopback port: NO_GO; output withheld. No BETA app or key effect attempted.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf 'Boca BETA loopback port: FREE at pre-apply instant, not reserved.\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Initialize new-only BETA and start isolated controller
         if: inputs.operation == 'beta-install'
         env:

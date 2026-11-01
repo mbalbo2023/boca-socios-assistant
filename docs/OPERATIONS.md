@@ -242,14 +242,22 @@ The current owner authorization in #45 includes this simulation BETA delivery;
 the ruleset still requires the candidate review and exact checks. Readiness
 alone does not prove environment protection or operational success.
 The manual job uses separate fail-closed environment variables: only
-`BOCA_HOST_READONLY_ENV_READY=ready` can enable `inspect-prerequisites` or
-`preflight`, while `BOCA_DEPLOY_ENV_READY=ready` is required for prepare-rootless,
+`BOCA_HOST_READONLY_ENV_READY=ready` can enable `inspect-prerequisites`,
+`port-check` or `preflight`, while `BOCA_DEPLOY_ENV_READY=ready` is required for prepare-rootless,
 first-install, diagnostic or `stop-test`. READONLY was set before #66; DEPLOY was added only
 to the protected environment for #120, without changing secrets/protections.
 RELEASE was not enabled by that preparation. Revalidate scope/values before
 another operation; a readiness marker does not itself authorize it. Read-only
 choices and prepare-rootless require blank image/release inputs; first-install
 and diagnostic require both. See ADR0046 and ADR0058.
+
+`port-check` probes only the Boca host's fixed IPv4 `127.0.0.1:8443` with a
+dedicated-UID bind and immediate close. It returns an allowlisted FREE/BUSY/
+ERROR receipt, does not enumerate or connect to a process, and runs without
+the rootless daemon. The BETA install workflow repeats this check just before
+app/key effects. A FREE result is instantaneous and does not reserve the port;
+the later Docker binding/TLS probe and real tablet access have separate gates.
+This code has no host run receipt yet. See ADR0087 and issue #211.
 
 The host prerequisite is a dedicated `boca-deploy` identity with UID
 10001, dedicated rootless Docker, Python 3.10+, and an already provisioned empty

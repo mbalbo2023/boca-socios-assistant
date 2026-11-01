@@ -77,6 +77,9 @@ runtime libraries are integrated in code, without application installation.
 PR #208 integrated a separate protected, sealed owner passkey/TLS custody
 path in code. Its synthetic checks do not enroll the owner or make the
 tablet's exact HTTPS origin reachable; those remain deployment gates.
+The protected `port-check` choice in the manual workflow tests only the fixed
+host-loopback `127.0.0.1:8443` by a short bind/close. It has not run on the
+droplet; a FREE receipt would not reserve a port or establish tablet access.
 The private Site v10 has a disabled D1 bridge and fails closed while host
 credentials/poller are absent. PRs #181/#196 integrated protected ciphertext
 custody and global daemon inventory checks, but no Site host phase ran.

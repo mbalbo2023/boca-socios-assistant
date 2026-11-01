@@ -55,7 +55,7 @@ def _run_gate(
     )
 
 
-@pytest.mark.parametrize("operation", ["inspect-prerequisites", "preflight"])
+@pytest.mark.parametrize("operation", ["inspect-prerequisites", "port-check", "preflight"])
 def test_read_only_host_gate_does_not_require_deploy_ready(operation: str) -> None:
     assert _run_gate(operation, read_only_ready="ready").returncode == 0
     assert _run_gate(operation, deploy_ready="ready").returncode != 0
