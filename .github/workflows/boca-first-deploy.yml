@@ -72,7 +72,7 @@ jobs:
           uv sync --frozen
       - name: Check dispatch and first-install boundaries offline
         run: |
-          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_loopback_port.py tests/test_host_beta_install.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_owner_bootstrap.py tests/test_host_owner_bootstrap.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_telegram_one_shot.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
+          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_loopback_port.py tests/test_host_beta_install.py tests/test_host_beta_cleanup.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_owner_bootstrap.py tests/test_host_owner_bootstrap.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_telegram_one_shot.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
       - name: Validate optional served BETA Compose model without host access
         env:
@@ -949,6 +949,25 @@ jobs:
             printf 'Boca BETA install failed; original failure remains NO_GO. Bounded controller rollback: `%s`. Boca volumes and staged file retained for review.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
           else
             printf 'Boca BETA install failed; original failure remains NO_GO. Controller stop unverified; Boca app/key/owner may be present. Inventory before any retry.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Clean unused Boca BETA artifacts after failed install
+        if: failure() && inputs.operation == 'beta-install' && steps.boca_beta_stage_attempt.outputs.started == 'true'
+        run: |
+          # Always preserve the failed deploy status. Redact all remote output
+          # except an exact, bounded and non-sensitive receipt.
+          set +e
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - --beta "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" < src/boca_socios/host_cleanup.py > "$RUNNER_TEMP/boca-beta-cleanup.receipt" 2>/dev/null
+          cleanup_rc=$?
+          set -e
+          receipt=''
+          if [[ "$cleanup_rc" -eq 0 ]]; then
+            receipt="$(cat "$RUNNER_TEMP/boca-beta-cleanup.receipt")"
+          fi
+          receipt_pattern='^BOCA_BETA_CLEANUP state=(CLEANED|ALREADY_CLEAN) container=(removed|absent) network=(removed|absent) image=(removed|absent) stage=(removed|absent) volumes=preserved image_logical_mib=[0-9]+ same_fs=(yes|no) stage_free_mib_before=[0-9]+ stage_free_mib_after=[0-9]+ docker_free_mib_before=[0-9]+ docker_free_mib_after=[0-9]+ stage_inodes_before=[0-9]+ stage_inodes_after=[0-9]+ docker_inodes_before=[0-9]+ docker_inodes_after=[0-9]+$'
+          if [[ "$cleanup_rc" -eq 0 && ${#receipt} -le 512 && "$receipt" =~ $receipt_pattern ]]; then
+            printf 'Boca BETA install failed; original failure remains NO_GO. Immediate selective recovery: `%s`. Persistent Boca volumes preserved.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'Boca BETA install failed; original failure remains NO_GO. Immediate cleanup: NO_GO INDETERMINADO; disposable Boca resources may remain. Protected Boca-only inventory required before retry.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Recheck current main before BETA acceptance
         if: inputs.operation == 'beta-acceptance'

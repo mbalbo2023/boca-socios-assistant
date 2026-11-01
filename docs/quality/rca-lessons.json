@@ -195,6 +195,22 @@
       "regression_tests": [
         "tests/test_owner_ceremony.py::test_owner_ceremony_requires_discoverable_passkey_and_explains_storage"
       ]
+    },
+    {
+      "id": "RCA-219",
+      "issue": 219,
+      "fix_pr": 220,
+      "root_cause": "The protected BETA failure branch stopped its controller but retained disposable Compose, container, private network and image artifacts, blocking a clean new-only preflight.",
+      "prevention": "Immediately invoke bounded rootless Boca-only cleanup after a marked failed BETA stage; prove exact identities, preserve persistent volumes, and fail closed on ambiguous partial deletion.",
+      "regression_tests": [
+        "tests/test_host_beta_cleanup.py::test_actions_beta_cleanup_is_immediate_after_bounded_stop",
+        "tests/test_host_beta_cleanup.py::test_beta_cleanup_rejects_extra_file_in_private_staging_directory",
+        "tests/test_host_beta_cleanup.py::test_beta_cleanup_failed_stop_is_indeterminate_and_keeps_volumes",
+        "tests/test_host_beta_cleanup.py::test_beta_cleanup_detects_volume_inventory_drift_after_mutation",
+        "tests/test_host_beta_cleanup.py::test_failed_beta_cleanup_is_idempotent_after_preserving_volumes",
+        "tests/test_host_beta_cleanup.py::test_policy_rejects_removing_the_mandatory_beta_failure_hook",
+        "tests/test_host_beta_cleanup.py::test_actions_beta_cleanup_redacts_remote_output_and_preserves_failure"
+      ]
     }
   ]
 }

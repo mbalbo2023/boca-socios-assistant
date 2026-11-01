@@ -55,11 +55,15 @@ every unrelated service, host configuration and application repository.
    All authorized host actions still use only the dedicated manual workflow
    with exact commit/image/service, isolation, capacity and environment gates.
    Serialize host operations; no automatic retry after a failed gate.
-9. On failure, record RCA and Boca-only disk/inode inventory. Through Actions,
-   remove only positively identified disposable Boca remnants after verifying
-   they are unused; preserve key/data volumes and uncertain artifacts. Never
-   prune host-wide resources or touch another workload. Fix code defects in a
-   new PR; do not redeploy merely because an external source failed.
+9. On a failed staged `first-install` or `beta-install`, the **same protected
+   Boca Actions run must immediately attempt** a bounded stop and cleanup of
+   positively identified, unused Boca-only Docker/Compose remnants, with
+   before/after disk/inode inventory, redacted receipt and RCA. Preserve the
+   original failed result, all owner/key/data volumes and uncertain artifacts;
+   never prune host-wide resources or touch another workload. If cancellation,
+   runner loss, SSH or rootless failure prevents cleanup, record/retain NO_GO
+   and require fresh Boca-only inventory; no blind retry. Fix code defects in
+   a new PR; do not redeploy merely because an external source failed.
 10. Use YYYY-MM-DD in America/Argentina/Buenos_Aires for user-facing times.
 
 ## Approved BETA preparation scope

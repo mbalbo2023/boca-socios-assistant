@@ -78,6 +78,12 @@ def check_policy(root: Path) -> list[str]:
                 "python3 - preflight",
                 "python3 - observe",
                 "python3 - apply",
+                "Clean only proven disposable Boca artifacts after failure",
+                "if: failure() && inputs.operation == 'first-install' && steps.boca_stage_attempt.outputs.started == 'true'",
+                "Clean unused Boca BETA artifacts after failed install",
+                "if: failure() && inputs.operation == 'beta-install' && steps.boca_beta_stage_attempt.outputs.started == 'true'",
+                "src/boca_socios/host_cleanup.py",
+                'python3 - --beta "$BOCA_IMAGE_REF"',
             ):
                 if required not in data:
                     failures.append(f"first-deploy workflow missing gate: {required}")

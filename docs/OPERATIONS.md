@@ -378,6 +378,24 @@ reports `NO_GO INDETERMINADO`: a partial deletion may have occurred, and a
 Boca-only inventory is required before any retry. The original install
 failure remains failed. See [ADR 0039](ADR/0039-boca-failed-install-cleanup.md).
 
+**Failed served BETA install — #219/PR #220 candidate, not yet a host run:**
+the same protected Actions workflow adds a bounded cleanup step immediately
+after the existing `beta-rollback` failure step. Only after the BETA staging
+marker does it check exact Docker rootless identity, SHA/digest/Compose hash,
+entire dedicated-daemon container inventory, controller UID/labels/mounts,
+private network attachments and named owner/key/data volumes. It may stop
+and discard only that exact failed BETA controller (without removing volumes),
+its unused private network, its unshared digest image and its exact staged
+`compose.beta.yaml`; it confirms each removal and unchanged volume inventory.
+The protected owner/key/data volumes remain deliberately, even when freshly
+created, because their contents cannot be assumed disposable. The original
+deploy still fails. A changed/unknown artifact, unreachable daemon or
+mid-cleanup failure yields `NO_GO INDETERMINADO`, an inventory gate and no
+automatic retry. Cancelling/losing the Actions runner can prevent the hook;
+no unconditional zero-residue guarantee is claimed. See
+[ADR 0090](ADR/0090-immediate-failed-beta-deploy-cleanup.md). No host cleanup
+was performed merely by adding this code.
+
 ## Read-only diagnostic under demand (issue #68)
 
 The same protected workflow provides a manual `diagnostic` choice for a Boca
