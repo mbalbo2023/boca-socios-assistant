@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import sqlite3
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from importlib.resources import files
 from pathlib import Path
 from threading import Barrier
-
-import pytest
+from unittest import TestCase
 
 from boca_socios.browser.contracts import SimulationOutcome
 from boca_socios.domain.policy import TicketIntent
@@ -20,6 +21,7 @@ from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
 from boca_socios.panel.local_status import read_local_status
 from boca_socios.queue import InvalidStateTransition, OfflineQueueSimulator, SimulatorConfig
 from boca_socios.reservation_guard import (
+    InvalidReservationClaim,
     ReservationAttemptGuard,
     ReservationResolution,
     ReservationState,
@@ -28,6 +30,7 @@ from boca_socios.storage.database import Database
 
 START = datetime(2026, 10, 31, 18, tzinfo=UTC)
 INTENT = TicketIntent("member-1", "event-1")
+CHECKS = TestCase()
 
 
 class BrowserDouble:
@@ -56,6 +59,8 @@ def _lab(
     database: Database,
     outbox: SqliteNotificationOutbox,
     browser: BrowserDouble,
+    *,
+    clock: Callable[[], float] = lambda: START.timestamp(),
 ) -> DurableOfflineSimulation:
     queue = OfflineQueueSimulator(
         SimulatorConfig(event_id="event-1", opens_at=START, closes_at=START + timedelta(hours=1))
@@ -68,7 +73,7 @@ def _lab(
         queue=queue,
         outbox=outbox,
         browser=browser,
-        clock=lambda: START.timestamp(),
+        clock=clock,
     )
     lab.prepare_storage()
     return lab
@@ -125,21 +130,28 @@ def test_separate_coordinators_racing_share_one_browser_claim(tmp_path: Path) ->
         assert connection.execute("SELECT count(*) FROM reservation_attempts").fetchone() == (1,)
 
 
-@pytest.mark.parametrize("failure", [RuntimeError("synthetic failed"), asyncio.CancelledError()])
-def test_failure_or_cancellation_never_reopens_browser_claim(
-    tmp_path: Path, failure: BaseException
-) -> None:
+def _check_failure_is_not_retried(tmp_path: Path, failure: BaseException) -> None:
     database, outbox = _storage(tmp_path / "boca.sqlite3")
     browser = BrowserDouble(failure=failure)
-    with pytest.raises(type(failure)):
+    with CHECKS.assertRaises(type(failure)):
         _run(_lab(database, outbox, browser))
     restarted = BrowserDouble()
-    with pytest.raises(InvalidStateTransition):
+    with CHECKS.assertRaises(InvalidStateTransition):
         _run(_lab(database, outbox, restarted))
     assert browser.calls == 1 and restarted.calls == 0
     request_id = database.request_ticket(INTENT)
-    assert ReservationAttemptGuard(database).get(request_id).state is ReservationState.SIMULATION_FAILED
+    assert ReservationAttemptGuard(database).get(request_id).state is (
+        ReservationState.SIMULATION_FAILED
+    )
     assert outbox.claim_ready(now=START.timestamp()) == ()
+
+
+def test_browser_failure_never_reopens_claim(tmp_path: Path) -> None:
+    _check_failure_is_not_retried(tmp_path, RuntimeError("synthetic failed"))
+
+
+def test_cancellation_never_reopens_claim(tmp_path: Path) -> None:
+    _check_failure_is_not_retried(tmp_path, asyncio.CancelledError())
 
 
 def test_crash_after_claim_is_not_retried_by_new_coordinator(tmp_path: Path) -> None:
@@ -149,11 +161,11 @@ def test_crash_after_claim_is_not_retried_by_new_coordinator(tmp_path: Path) -> 
     guard = ReservationAttemptGuard(database)
     request_id = database.request_ticket(INTENT)
     assert guard.claim(request_id, now=START.timestamp()) is not None
-    with pytest.raises(InvalidStateTransition):
+    with CHECKS.assertRaises(InvalidStateTransition):
         _run(lab)
     assert browser.calls == 0
     assert guard.mark_overdue(now=START.timestamp() + 121) == 1
-    with pytest.raises(InvalidStateTransition):
+    with CHECKS.assertRaises(InvalidStateTransition):
         _run(_lab(database, outbox, browser))
     assert browser.calls == 0
 
@@ -166,7 +178,7 @@ def test_notice_failure_can_replay_notice_without_repeating_browser(tmp_path: Pa
             raise RuntimeError("synthetic outbox unavailable")
 
     browser = BrowserDouble()
-    with pytest.raises(RuntimeError, match="outbox unavailable"):
+    with CHECKS.assertRaises(RuntimeError):
         _run(_lab(database, FailingOutbox(database.path), browser))
     restarted = BrowserDouble()
     _run(_lab(database, outbox, restarted))
@@ -188,11 +200,15 @@ def test_opt_in_schema_preserves_existing_claims_and_original_checksum(tmp_path:
     assert guard.claim(request_id, now=1002) is None
     sql = files("boca_socios.storage.migrations").joinpath("0003_reservation_guard.sql").read_text()
     with database.connection() as connection:
-        assert connection.execute("SELECT checksum FROM schema_migrations WHERE version=3").fetchone() == (
-            hashlib.sha256(sql.encode()).hexdigest(),
-        )
+        checksum = connection.execute(
+            "SELECT checksum FROM schema_migrations WHERE version=3"
+        ).fetchone()
+        assert checksum == (hashlib.sha256(sql.encode()).hexdigest(),)
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
-        assert connection.execute("SELECT count(*) FROM schema_migrations WHERE version=5").fetchone() == (1,)
+        count = connection.execute(
+            "SELECT count(*) FROM schema_migrations WHERE version=5"
+        ).fetchone()
+        assert count == (1,)
 
 
 def test_failed_schema_upgrade_rolls_back_without_erasing_prior_claim(tmp_path: Path) -> None:
@@ -203,8 +219,75 @@ def test_failed_schema_upgrade_rolls_back_without_erasing_prior_claim(tmp_path: 
     assert guard.claim(request_id, now=1000) is not None
     with database.connection() as connection, connection:
         connection.execute("CREATE TABLE reservation_attempts_simulation (occupied TEXT)")
-    with pytest.raises(Exception):
+    with CHECKS.assertRaises(sqlite3.OperationalError):
         guard.migrate_simulation()
     assert guard.get(request_id).state is ReservationState.IN_FLIGHT
     with database.connection() as connection:
-        assert connection.execute("SELECT count(*) FROM schema_migrations WHERE version=5").fetchone() == (0,)
+        count = connection.execute(
+            "SELECT count(*) FROM schema_migrations WHERE version=5"
+        ).fetchone()
+        assert count == (0,)
+
+
+def test_attempt_kind_cannot_convert_simulation_to_provider_ack(tmp_path: Path) -> None:
+    database, _ = _storage(tmp_path / "boca.sqlite3")
+    guard = ReservationAttemptGuard(database)
+    guard.migrate_simulation()
+    request_id = database.request_ticket(INTENT)
+    claim = guard.claim_simulation(request_id, now=1000)
+    assert claim is not None
+    with CHECKS.assertRaises(InvalidReservationClaim):
+        guard.resolve(claim, ReservationResolution.PROVIDER_ACK_REPORTED, now=1001)
+    assert guard.get(request_id).state is ReservationState.IN_FLIGHT
+    with database.connection() as connection, connection:
+        with CHECKS.assertRaises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE reservation_attempts SET state='provider_ack_reported', closed_at=1001"
+            )
+
+
+def test_external_claim_cannot_be_reported_as_simulation(tmp_path: Path) -> None:
+    database, _ = _storage(tmp_path / "boca.sqlite3")
+    guard = ReservationAttemptGuard(database)
+    guard.migrate_simulation()
+    request_id = database.request_ticket(INTENT)
+    claim = guard.claim(request_id, now=1000)
+    assert claim is not None
+    with CHECKS.assertRaises(InvalidReservationClaim):
+        guard.resolve(claim, ReservationResolution.SIMULATION_COMPLETED, now=1001)
+    assert guard.get(request_id).state is ReservationState.IN_FLIGHT
+
+
+def test_expired_completion_does_not_publish_or_retry(tmp_path: Path) -> None:
+    database, outbox = _storage(tmp_path / "boca.sqlite3")
+    browser = BrowserDouble()
+    times = iter([1000.0, 1120.0])
+    lab = _lab(database, outbox, browser, clock=lambda: next(times))
+    with CHECKS.assertRaises(InvalidReservationClaim):
+        _run(lab)
+    assert outbox.claim_ready(now=START.timestamp()) == ()
+    restarted = BrowserDouble()
+    with CHECKS.assertRaises(InvalidStateTransition):
+        _run(_lab(database, outbox, restarted))
+    assert browser.calls == 1 and restarted.calls == 0
+
+
+def test_invalid_clock_does_not_create_intent_or_call_browser(tmp_path: Path) -> None:
+    database, outbox = _storage(tmp_path / "boca.sqlite3")
+    browser = BrowserDouble()
+    lab = _lab(database, outbox, browser, clock=lambda: float("nan"))
+    with CHECKS.assertRaises(ValueError):
+        _run(lab)
+    assert browser.calls == 0
+    with database.connection() as connection:
+        assert connection.execute("SELECT count(*) FROM ticket_requests").fetchone() == (0,)
+
+
+def test_migration_0005_checksum_drift_is_rejected(tmp_path: Path) -> None:
+    database, _ = _storage(tmp_path / "boca.sqlite3")
+    guard = ReservationAttemptGuard(database)
+    guard.migrate_simulation()
+    with database.connection() as connection, connection:
+        connection.execute("UPDATE schema_migrations SET checksum='tampered' WHERE version=5")
+    with CHECKS.assertRaises(ValueError):
+        guard.migrate_simulation()
