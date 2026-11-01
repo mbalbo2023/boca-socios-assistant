@@ -236,6 +236,18 @@
         "tests/test_browser_on_demand.py::test_timeout_swallowed_during_context_exit_never_returns_late_success",
         "tests/test_browser_on_demand.py::test_external_stop_swallowed_during_teardown_does_not_claim_success"
       ]
+    },
+    {
+      "id": "RCA-235",
+      "issue": 235,
+      "fix_pr": 236,
+      "root_cause": "The isolated synthetic AF_UNIX worker could wait indefinitely for an active handler during STOP, while client or worker teardown could still permit a late success reply after cancellation.",
+      "prevention": "Cancel and fence active IPC work before bounded server shutdown, reject uncooperative socket teardown, and recheck close, cancellation and deadline after cleanup and before any synthetic success.",
+      "regression_tests": [
+        "tests/test_browser_ipc.py::test_worker_stop_between_fake_success_and_reply_sends_no_go",
+        "tests/test_browser_ipc.py::test_close_during_slow_socket_teardown_fences_late_success",
+        "tests/test_browser_ipc.py::test_stop_during_partial_frame_never_starts_browser"
+      ]
     }
   ]
 }
