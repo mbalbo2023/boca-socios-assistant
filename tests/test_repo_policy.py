@@ -38,3 +38,18 @@ def test_duplicate_adr_number_is_blocked(tmp_path: Path) -> None:
     (adr / "0045-local-status-projection.md").write_text("# Panel\n")
     (adr / "0045-readonly-host-readiness.md").write_text("# Host\n")
     assert "duplicate ADR number: 0045" in check_policy(root)
+
+
+def test_optional_beta_compose_must_keep_loopback_and_isolation(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    (root / ".github/workflows/ci.yml").write_text("workflow_dispatch:\n")
+    beta = root / "compose.beta.yaml"
+    beta.write_text(
+        "name: boca-socios\nBOCA_RUNTIME_MODE: simulation\n"
+        'BOCA_ENGINE_MODE: "off"\n'
+        '"0.0.0.0:8443:8443/tcp"\n'
+        "mem_limit: 256m\ncpus: 0.50\nprivileged: true\n"
+    )
+    findings = check_policy(root)
+    assert any("BETA Compose missing bounded contract" in item for item in findings)
+    assert any("forbidden BETA Compose feature" in item for item in findings)

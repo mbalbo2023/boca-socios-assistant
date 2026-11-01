@@ -1,0 +1,63 @@
+# Separate synthetic served-BETA candidate, never selected by first-install.
+# Same dedicated Boca project, with only host-loopback TLS and no Boca live I/O.
+name: boca-socios
+
+services:
+  controller:
+    image: ${BOCA_IMAGE:?BOCA_IMAGE_digest_is_required}
+    command: ["python", "-m", "boca_socios.runtime", "serve-beta"]
+    user: "10001:10001"
+    restart: unless-stopped
+    init: true
+    environment:
+      BOCA_ENVIRONMENT: staging
+      BOCA_RUNTIME_MODE: simulation
+      BOCA_ENGINE_MODE: "off"
+      BOCA_DB_PATH: /data/boca.sqlite3
+      BOCA_MASTER_KEY_FILE: /run/secrets/boca_master_key
+      BOCA_PANEL_ORIGIN: ${BOCA_PANEL_ORIGIN:?private_HTTPS_origin_is_required}
+      BOCA_OWNER_SUBJECT: ${BOCA_OWNER_SUBJECT:?owner_subject_is_required}
+      BOCA_PASSKEY_CREDENTIAL_ID_FILE: /run/owner/credential_id
+      BOCA_PASSKEY_PUBLIC_KEY_DER_FILE: /run/owner/public_key.der
+      BOCA_TLS_CERT_FILE: /run/owner/tls.crt
+      BOCA_TLS_KEY_FILE: /run/owner/tls.key
+      BOCA_BIND_HOST: "0.0.0.0"
+      BOCA_BIND_PORT: "8443"
+      BOCA_HEALTH_MODE: beta
+      BOCA_HEALTH_CA_FILE: /run/owner/health-ca.pem
+    volumes:
+      - boca_data:/data
+      - boca_key:/run/secrets:ro
+      - boca_owner:/run/owner:ro
+    networks:
+      - boca_private
+    ports:
+      - "127.0.0.1:8443:8443/tcp"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.50
+    healthcheck:
+      test: ["CMD", "python", "-m", "boca_socios.healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  boca_data: {}
+  boca_key: {}
+  # Must already be provisioned by a separate reviewed custody operation.
+  boca_owner:
+    external: true
+    name: boca-socios_boca_owner
+
+networks:
+  boca_private:
+    driver: bridge
