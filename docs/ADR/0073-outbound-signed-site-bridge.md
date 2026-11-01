@@ -1,6 +1,6 @@
 # ADR 0073: opt-in outbound signed Site bridge for synthetic local commands
 
-**Status:** Accepted on merge of the scoped #156 bridge PR. Before merge,
+**Status:** Accepted on merge of PR #179 for issue #156. Before merge,
 this is an unmerged candidate. Code acceptance does not activate the Site,
 install credentials or prove a droplet connection.
 
