@@ -14,7 +14,9 @@ every unrelated service, host configuration and application repository.
   In later authorized deployments, use ONLY the dedicated Boca Actions workflow.
 - Never change existing host Docker Compose stacks; use project
   name boca-socios and its own image, secrets, volume, bridge and service only.
-- Current mode is SIMULATION_ONLY. No real login or actual ticket buying.
+- Ticket/reservation effects remain SIMULATION_ONLY. Authenticated Boca
+  navigation is now authorized only for the designated private testing account,
+  without reservations, purchases or changes to that Boca account.
 - One ticket per member per event is **nonnegotiable**; enforce at domain,
   DB and transaction boundaries. Multiple sessions must never multiply
   authorized ticket quantity.
@@ -45,13 +47,12 @@ every unrelated service, host configuration and application repository.
    checks precede merge. GitHub does not require a second human approving
    review; that is distinct from the owner approving the task scope. No
    deployment side effects from push or documentation-only changes.
-8. Do not choose infrastructure or business-logic changes unilaterally.
-   Present the concrete options, recommendation, effects and evidence to the
-   owner, then obtain approval for that scope before changing it. Previously
-   broad autonomous-operation wording is superseded by this instruction.
-   Approval for a diagnosis or code fix is not approval to install, release,
-   migrate a real database or enable another feature. Once a scope is approved,
-   complete its routine implementation and checks without asking repeatedly.
+8. Apply the latest explicit scope in issue #45 and ADR0062. The owner now
+   delegates implementation, infrastructure/access choices, release and installation
+   for the operational BETA, connected private Site and Telegram. Do not request
+   another generic GO within that scope. Record choices, effects and evidence.
+   Changes outside it still need concrete options/recommendation and approval;
+   existing storage must be preserved and never replaced by inference.
    All authorized host actions still use only the dedicated manual workflow
    with exact commit/image/service, isolation, capacity and environment gates.
    Serialize host operations; no automatic retry after a failed gate.
@@ -62,11 +63,13 @@ every unrelated service, host configuration and application repository.
    new PR; do not redeploy merely because an external source failed.
 10. Use YYYY-MM-DD in America/Argentina/Buenos_Aires for user-facing times.
 
-## Approved BETA preparation scope
+## Approved operational BETA scope
 
-[ADR 0056](docs/ADR/0056-approved-simulation-beta-delivery.md) and the
+[ADR0062](docs/ADR/0062-operational-beta-and-recovery.md) supersedes the
+preparation-only authority of historical ADR0056. The
 [delivery plan](docs/BETA_DELIVERY_PLAN.md) record the owner-approved stage:
-private simulation BETA including mandatory **Socios > Agregar socio**,
+operational private BETA including mandatory **Socios > Agregar socio**,
+connected existing Site, Telegram and all documented functional requirements,
 coordinator/state/stop, durable local notices, restart/idempotency checks and
 measured efficiency. The delegated logical destination is `/data/boca.sqlite3`
 in `boca-socios_boca_data`, with a separate key; current global existence
@@ -76,11 +79,16 @@ by that operation. Do not rerun first-time preparation over its existing config.
 
 Build on the prepared dedicated rootless service and proceed with approved
 implementation/review/tests of an application-served private panel without repeating the
-same permission request. Concrete identity/bootstrap/private-access options
-still require their documented decision before activation. Final release and
-installation use a reviewed concrete candidate under the plan, not this
-planning approval alone. No real credentials/login/queue/reservations, existing
-real-DB migration, backup or unrelated workload changes are implied.
+same permission request. Identity/bootstrap/private-access decisions are
+delegated within the new scope. ADR0062 records selected Site-native identity
+and outbound encrypted bridge design; neither is yet proven operational.
+Release/installation still require reviewed exact-SHA images and all technical
+gates. Custody and login for the designated testing account are authorized;
+no other accounts, reservations, purchases or Boca account changes.
+After testing, stop and verify every Boca service/container/worker/bridge and
+the dedicated daemon, retaining data/key. A STOP receipt is mandatory even
+when acceptance fails; UNKNOWN is not stopped. No backup or unrelated changes.
+Follow [RESUME_PROCEDURE](docs/RESUME_PROCEDURE.md) at each phase and handoff.
 
 ## Code design principles
 
@@ -100,8 +108,9 @@ real-DB migration, backup or unrelated workload changes are implied.
   not blockers for a safe simulation-only deploy. Code defects and security,
   image or host-resource gates remain blockers. No live behavior is enabled by
   a source-health result.
-- Live automation is a separate technical review and controlled milestone;
-  the current runtime remains simulation-only with its engine off.
+- The observed source runtime is still dormant until a reviewed integration
+  proves otherwise. Authorized testing navigation is distinct from prohibited
+  real reservation/purchase/account mutations; never enable a hidden fallback.
 
 ## Rule 84 — documentation must remain factual and current
 
@@ -134,5 +143,6 @@ or a freshness date unsupported by a real verification.
 - Security and resource impact
 - Why unrelated resources remain untouched
 - Next steps and blockers
+
 
 

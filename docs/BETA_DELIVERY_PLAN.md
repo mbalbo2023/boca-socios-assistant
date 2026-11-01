@@ -1,11 +1,17 @@
 # Plan de entrega y aceptación de la BETA funcional
 
+> Corte fuente comprobado al iniciar esta etapa: `213be4903669c6e88122a536ad8fee6785c997ac`.
+> La autorización operativa de [ADR0062](ADR/0062-operational-beta-and-recovery.md) no prueba funciones nuevas.
+> Revalidar #45 y seguir [reanudación](RESUME_PROCEDURE.md); último host comprobado: #120, no STOP final todavía.
+
 ## Alcance y fuente de verdad
 
 El dueño aprobó comenzar las recomendaciones del plan y mantener su avance en
-GitHub. [ADR0056](ADR/0056-approved-simulation-beta-delivery.md) registra las
-decisiones de esta etapa. La BETA objetivo es **privada y funcional en
-simulación**, con **alta de socios obligatoria**; un controlador dormido sano
+GitHub. [ADR0062](ADR/0062-operational-beta-and-recovery.md) amplía la etapa
+a una **BETA operativa desplegada, Site privado conectado y Telegram**, con
+**todas las funciones documentadas y alta de socios obligatorias**. La
+navegación autenticada de testing está autorizada sólo para la cuenta designada;
+reservas/compras y modificaciones de cuenta Boca siguen prohibidas. Un controlador dormido sano
 no basta. Este documento es un plan mantenido con las entregas, no evidencia
 de funciones ya desplegadas ni un servicio automático de seguimiento.
 
@@ -14,9 +20,17 @@ fue una propuesta anterior. Su lenguaje de decisiones pendientes no revoca la
 aprobación posterior de los frentes aquí registrados. El [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
 registra autorización vigente, HEAD, decisiones y evidencia de cada cierre.
 Revalidar esos hechos antes de actuar; no interpretar autorización del trabajo
-como evidencia de éxito o permiso para operar datos reales.
+como evidencia de éxito; datos/cuenta designados conservan su alcance exacto.
 
-[Autorización de esta etapa](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551681142).
+[Autorización vigente](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326).
+La anterior autorización preparatoria y ADR0056 son históricas. No se necesita
+otro GO genérico de identidad/infraestructura/release/instalación en este alcance.
+Las decisiones concretas se registran y prueban. Se eligió autenticación nativa
+del Site y puente HTTPS saliente con buzón temporal RSA-OAEP/AES-GCM cifrado;
+SQLite del droplet sigue canónica. Diseño todavía no implementado. Al terminar las
+pruebas, STOP verificado de todos los servicios Boca, incluido daemon dedicado,
+con datos/clave preservados y Site indicando backend detenido.
+[Procedimiento de reanudación por fases](RESUME_PROCEDURE.md).
 
 ## Base comprobada de este plan
 
@@ -27,7 +41,7 @@ y [scan 41259139886](https://github.com/mbalbo2023/boca-socios-assistant/actions
 exitosos; 594 pruebas y RCA12/32 en ese corte. Los checks de una nueva entrega
 se registran sobre su propio SHA; estas cifras no se trasladan a otro candidato.
 
-El corte integrado de esta entrega es `6be606f83c5a6afe0ba7226abbca6a09276d1ca1`: incluye
+El corte funcional integrado anterior es `6be606f83c5a6afe0ba7226abbca6a09276d1ca1`: incluye
 #130/#128/#134, el análisis146, alta148, comandos149, preparación150 y pruebas
 de composición152. [CI main41262581358](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41262581358)
 y [scan41262581422](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41262581422)
@@ -71,16 +85,16 @@ de usarlo. Preparar el daemon no instala ni acepta la aplicación.
 | Datos | Destino lógico futuro `/data/boca.sqlite3`, volumen `boca-socios_boca_data`, clave en volumen externo separado | Existencia global actual UNVERIFIED; no sobrescribir una DB hallada ni migrar datos reales por inferencia |
 | Docker | Preparar servicio rootless dedicado Boca y comprobar recursos | No reinstalar Docker por inferirlo de una unidad ausente; único canal Actions protegido |
 | Panel | Propia aplicación Boca sirve panel privado y accede localmente a SQLite | Elegir/probar identidad, sesión/TLS y acceso concreto; el navegador no recibe DB/clave/SSH/socket |
-| Alta | `Socios > Agregar socio` obligatorio, sobre servicio cifrado existente | Sólo datos/credenciales sintéticos en esta BETA; alta local no verifica identidad ni elegibilidad Boca |
+| Alta | `Socios > Agregar socio` obligatorio, sobre servicio cifrado existente | Tests sintéticos y custodia temporal cifrada de la cuenta designada por canal privado; alta local no verifica elegibilidad Boca |
 | Coordinación | Comandos y estado persistente; pausa visible en ambigüedad | No reejecución ciega ni éxito externo inventado |
-| Avisos | Estado/avisos locales funcionales; ensayos del dispatcher sintético | Telegram permanece pendiente explícito y necesita transporte/recepción/reconciliación propios |
-| Site | Complemento #113 preservado | Demo sintética; no cuenta como panel operativo conectado |
-| Operación final | Candidato concreto, imágenes/digests, preflight y aceptación verificables | Release/instalación final por decisión del candidato; no login/cola/reserva real ni backup |
+| Avisos | Estado/avisos locales funcionales; ensayos del dispatcher sintético | Telegram obligatorio pendiente de implementación y prueba real de transporte/recepción/reconciliación |
+| Site | Conectar el Site privado existente #113 sin ampliar audiencia | Demo actual sintética; requiere backend, autorización por operación y prueba operativa |
+| Operación final | Candidato concreto, imágenes/digests, preflight y aceptación verificables | Release/instalación delegadas con candidato exacto y gates; navegación designada permitida, sin reserva/compra/cambio de cuenta ni backup |
 
 Las decisiones ya aprobadas no se vuelven a preguntar para cada implementación,
 prueba o reconciliación rutinaria. Desviaciones materiales fuera de este alcance
 se presentan con opciones, recomendación e impacto. Backup/restore sigue
-diferido; no se eliminan los requisitos de custodia/recuperación para alta real.
+diferido; la custodia temporal autorizada debe mantener cifrado, clave externa y preservación sin backup.
 
 ## Entregas y dependencias
 
@@ -90,12 +104,12 @@ diferido; no se eliminan los requisitos de custodia/recuperación para alta real
 | B2 | Servicio preparado por150/120; preflight de aplicación pendiente | Rootless propio sano; namespace candidato y procedencia de cualquier almacenamiento encontrado verificados; capacidad/cgroups/permisos de aplicación probados. No exigir un censo global ni reemplazar una DB | Destino delegado y propuesta concreta por Actions |
 | B3 | Coordinador130 y comandos149 integrados; conexión runtime pendiente en B7 | Comandos iniciar/detener/estado; guardia persistente, idempotencia, pausa ambigua y replay seguro probados | Contrato de estados y esquema del candidato |
 | B4 | Lectura128 y formulario/handler148 integrados; lista/servidor/identidad de alta17 pendientes | Acceso privado tablet; Socios > Agregar socio cifrado/atómico; errores, duplicados, denegación y estado posterior visibles | B3 contrato; servicio de alta/clave/DB |
-| B5 | Dispatcher sintético #134 integrado; conexión de avisos locales pendiente | Proyección fiel de estados persistidos, límites/restart/dedup; razón ambigua durable todavía pendiente, sin llamar entrega real a aceptación sintética | Resultados persistidos de B3; UI B4 |
-| B6 | Chromium/medición | Una sesión aislada con recursos, parada y errores medidos en entorno candidato; alcance de egress explícito | Presupuesto separado; observación real no inferida de test offline |
+| B5 | Dispatcher sintético #134 integrado; avisos locales y Telegram operativo pendientes | Proyección fiel de estados persistidos, límites/restart/dedup; razón ambigua durable todavía pendiente, sin llamar entrega real a aceptación sintética | Resultados persistidos de B3; UI B4 |
+| B6 | Chromium/medición y navegación Boca designada | Sesión aislada, recursos y cierre medidos; navegación real y evidencia redactada sin reserva/compra/cambio de cuenta; egress explícito | Presupuesto separado; observación real no inferida de test offline |
 | B7 | Runtime/imágenes/Compose/host contract | Programa arrancado conecta B3/B4/B5; health funcional, acceso privado y manifiesto por componente; primera instalación probada en entorno desechable | B2–B6 según componentes del candidato |
 | B8 | Composición en proceso152 probada; candidato servido/E2E final pendiente | Suite E2E, lint/types, RCA, seguridad e imágenes sobre mismo SHA; evidencia de rapidez/recursos; revisión exacta | B7 consolidado |
 | B9 | Release e instalación concreta | SHA→digest/manifiesto→proceso instalado trazables; capacidad revalidada; sólo workflow y mutex Boca | B2 apto, B8 verde, decisión final del candidato |
-| B10 | Aceptación de BETA en droplet | Recorrido completo desde interfaz real, persistencia/reinicio autorizado, límites, denegación y avisos; acta de versión/pendientes | B9 y matriz de aceptación |
+| B10 | Aceptación operativa y cierre STOP | Recorridos completos Site/backend/Telegram y navegación designada; persistencia, límites, denegación y evidencia redactada; STOP de todos los recursos Boca/daemon verificado | B9 y matriz de aceptación |
 
 Estos IDs no son estados de la aplicación. Cada cambio de estado de una entrega
 se acompaña de issue/PR, SHA base/candidato/integrado, runs, resultado, límites,
@@ -114,9 +128,8 @@ modalidades, permisos o productos que no se hayan definido.
 
 **Panel propio** es la superficie operativa prevista de la BETA privada. El
 **Site #113** sigue siendo demo privada sintética/complementaria: no está
-conectado a DB, comandos, mensajería ni Actions. La intención de contemplar una
-función en ambos diseños no decide duplicar todos sus controles ni demuestra
-que el Site pueda ejecutarla. La navegación/estado planificado puede mostrar
+conectado a DB, comandos, mensajería ni Actions. La nueva entrega exige conectar el Site y cubrir las funciones documentadas;
+no exige duplicar cada control en dos interfaces ni demuestra que ya funcione. La navegación/estado planificado puede mostrar
 «pendiente», «diferido» o «no habilitado» con motivo, sin botones que simulen
 efectos reales. No afirmar «gestiona todo» ni «todo operativo desde el inicio».
 
@@ -124,22 +137,23 @@ Estados: **visible/planificado** significa incluido en el diseño o seguimiento,
 no una pantalla ya publicada; **integrado** describe código; **operativo** exige
 interfaz real, identidad/permiso, contrato conectado y prueba del candidato en
 el entorno. Hoy ningún control del Site cumple esa última condición. La
-aceptación BETA de simulación y la operación real contra Boca son hitos distintos.
+aceptación exige operación real del sistema y navegación designada; efectos
+de reserva/compra/cambio de cuenta Boca siguen fuera de alcance.
 
 | Función conversada | Cobertura UI prevista | Código/evidencia disponible | Estado de entrega y gate pendiente |
 | --- | --- | --- | --- |
 | Alta y consulta de socios | Socios > Agregar socio; lista/consulta con resultado explícito | Servicio cifrado31, formulario/handler148 y lectura agregada128; agregados no son una lista de socios | Alta sintética obligatoria para BETA; lista, servidor, identidad y recorrido tablet aún por completar/probar |
 | Baja/revocación y cambio de credencial | Acciones de ciclo de vida con confirmación y resultado | Servicio interno permite revocar y cambiar contraseña; revocación conserva identidad/cuota | UI/permiso/auditoría de operación pendientes; no borrar cuotas ni tratar revocación como borrado total de persona |
-| Rotación de clave y eliminación completa | Mostrar alcance/estado y requisitos de custodia | Recifrador40 y migración0004 opt-in; no rotación real demostrada | Pendiente explícito: coordinación de escritores, DELETE/retención/recuperación; no se añade a la BETA por una pantalla |
+| Rotación de clave y eliminación completa | Mostrar alcance/estado y requisitos de custodia | Recifrador40 y migración0004 opt-in; no rotación real demostrada | Requisito pendiente: coordinación de escritores, DELETE/retención/custodia y UI probada; no borrar cuotas ni ejecutar backup |
 | Eventos, categorías, horarios y fuentes | Selección/configuración definida, horarios ART, origen y fecha de avisos | Modelos/simulador y cuota local; backlog de categorías/ingesta/procedencia conservado | Gestión UI y datos oficiales no operativos; definir contratos concretos sin inventar categorías/modalidades |
 | Simulación, iniciar/detener/estado y reinicio | Controles y resultado local, pausa visible en ambigüedad | Coordinador durable130 y comandos149, recuperación/avisos persistidos en código | Objetivo obligatorio BETA; falta conexión web/runtime, estado coherente desde sesión y E2E servido; no es reserva Boca |
 | Sesiones múltiples y límites | Configuración/estado de sesiones autorizadas y consumo | Simulador agrupa aliases por socio/evento; guardia una intención/cantidad1 | UI/BrowserContext/medición pendientes. Varias sesiones no prueban posiciones o tokens Queue-it independientes |
-| Avisos locales y Telegram | Bandeja/estado de avisos, canal y fallos explícitos | Outbox durable y dispatcher sintético134; sin transporte real | Avisos locales forman parte de BETA; Telegram sigue opción de alcance/pendiente explícito, nunca declarado descartado o entregado sin proveedor/destino autorizado |
+| Avisos locales y Telegram | Bandeja/estado de avisos, canal y fallos explícitos | Outbox durable y dispatcher sintético134; sin transporte real | Avisos locales y Telegram son obligatorios; transporte y recepción real aún pendientes, nunca declarar entrega sin recibo del destino autorizado |
 | Diagnóstico, fuente pública y recursos | Semáforo con procedencia/hora, salud y límites | Workflows fuente/host, inventario98, preparación120 y medición Chromium offline | Proyección UI real pendiente; un semáforo externo no habilita login ni prueba capacidad de host |
 | RCA, calidad y trazabilidad | Versiones, SHA/digests, runs, decisiones y errores redactados | CI, reviews, ledger RCA y continuidad45; no editor automático de código | Integración UI/recibos por acción pendiente; nunca sustituir pruebas exactas por una insignia sintética |
 | Release/deploy y operación host | Mostrar estado/recibos y alcance permitido | Único workflow Actions protegido; operador root y gates exactos | No control Site→Actions demostrado. Cualquier control futuro invoca sólo workflow protegido; nada de SSH/Docker/secreto en Site |
 | Backup/restore | Estado diferido y motivo visible/planificado | Biblioteca offline47; ningún ensayo operativo acredita recuperación | Diferido por el dueño hasta versión productiva fiable; sin botón operativo ni backup ahora |
-| Login, cola, elegibilidad, reserva/compra real | Identificar hito separado y no habilitado | Modelos y observación pública histórica; sin flujo autenticado validado | No habilitado en esta BETA; requiere consentimiento/custodia, flujo legítimo y conciliación de resultados ambiguos |
+| Navegación/login Boca; cola, elegibilidad y reserva/compra | Distinguir navegación real designada de efectos simulados | Sin flujo autenticado validado al corte fuente | Login/navegación de cuenta designada autorizado para testing; detener ante bloqueo y no evadirlo. No reservar, comprar ni cambiar la cuenta Boca |
 | Administración multiusuario y modalidades no descritas | No inventar controles, roles o planes | El formulario de socios no crea administradores; no hay definición aprobada de otras modalidades | Sin definición: registrar la necesidad antes de diseñar/activar, sin presentar una suposición como función acordada |
 
 El simulador sí documenta FIFO/lotería de precola y aliases locales; son
@@ -163,7 +177,7 @@ por haberlo dibujado ni se elimina por no entrar en el primer hito funcional.
 
 La persona autorizada abre el panel privado, entra a **Socios** y usa
 **Agregar socio**. El formulario requiere los datos que ya valida el servicio
-(email/identidad local, credencial sintética, registro de consentimiento y
+(email/identidad local, credencial sintética en tests o designada por canal privado, registro de consentimiento y
 nombre visible opcional). Usar labels explícitos, foco/teclado ordenados,
 mensajes de error asociados y campos accesibles por voz; comprobar el recorrido
 en tablet sin publicar secretos. La interfaz debe identificar el modo de simulación,
@@ -185,7 +199,8 @@ indebida; diseñar el contrato de idempotencia sin sustituir datos existentes.
 Validación fallida, email duplicado, clave inválida, DB incompatible o caída
 transaccional deben dejar un estado visible y verificable sin filtraciones.
 No mostrar de nuevo el secreto ni conservarlo en URL/logs/artefactos de prueba.
-Las pruebas usan sólo fixtures sintéticos, incluso en la aceptación final.
+Las pruebas automatizadas usan fixtures sintéticos; la aceptación de navegación
+real usa exclusivamente la cuenta designada, sin exponer su identidad/secreto.
 
 ## Evidencia de composición ya integrada
 
@@ -205,7 +220,9 @@ El adaptador de estado #128 rechaza cookies, mientras el formulario/sesiones de
 identidad/permiso coherente para alta, estado y comandos, sin tratar un puerto
 inyectado de pruebas como autenticación real ni eliminar guards por conveniencia.
 [Las opciones concretas de acceso/bootstrap](https://github.com/mbalbo2023/boca-socios-assistant/issues/17#issuecomment-6551922108)
-están documentadas como propuestas, no aprobadas.
+son antecedentes propuestos, no implementados. La decisión delegada actual usa
+identidad nativa del Site y puente cifrado, sin passkey adicional; su contrato
+y validación siguen pendientes de los módulos correspondientes.
 Incluir consulta de estado después del alta desde la misma sesión autorizada y
 sus casos de expiración/denegación en la aceptación HTTP real.
 
@@ -233,7 +250,7 @@ de avisos y ciclo de vida del runtime conservan su propio criterio de cierre.
 | Una entrada | Un socio/evento, cantidad1; concurrencia/alias/doble comando/replay sin nueva intención indebida | Repetición sintética desde interfaz sin multiplicar intención; no equivale a ticket Boca |
 | Start/stop/status | Comandos idempotentes, parada repetible, reloj/expiración y fallos; UI refleja estado durable | Estado fechado consistente con proceso instalado; parada sin tocar otro proyecto |
 | Reinicio/ambigüedad | Caídas antes/después de intención, resultado y aviso; pausa visible, sin éxito inventado ni reejecución ciega | Reinicio autorizado de Boca, datos/clave retenidos y estado coherente |
-| Avisos | Estados persistidos y límites/backoff/fencing/replay; causa ambigua durable pendiente, no inferida de exhausted | Aviso local visible y trazable al resultado; no afirmar recepción Telegram |
+| Avisos | Estados persistidos y límites/backoff/fencing/replay; causa ambigua durable pendiente, no inferida de exhausted | Aviso local visible y Telegram real al destino autorizado con recibo y fallo/ambigüedad honestos |
 | Recursos/errores | Clave inválida, DB incompatible, límites CPU/RAM/PID, red/mounts y capacidad post-pull | Pruebas efectivas de cgroups, salud funcional, espacio/inodos y aislamiento Boca |
 | Rapidez | Medir tiempos y distribución de recorridos/checks con cantidad de muestras y SHA | Medir mismos recorridos sintéticos y consumo con versión/digests; comparar condiciones |
 
@@ -279,9 +296,11 @@ se corrigen; no se aceleran debilitando gates.
 
 ## Paralelización, documentación y cierre
 
-El [recibo de inicio](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551681142)
-registra los escritores asignados. Ownership operativo puede relevarse allí;
-estas responsabilidades evitan editar rutas compartidas simultáneamente:
+El [recibo de autorización vigente](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326)
+y los checkpoints posteriores registran escritores y branches activos; consultar
+[reanudación](RESUME_PROCEDURE.md#ownership-y-punto-inicial-de-esta-etapa).
+La tabla conserva módulos y responsables de contratos, incluidos antecedentes
+ya integrados; no es una lista de PRs aún abiertos ni un lease de escritura:
 
 | Ámbito | Seguimiento | Responsabilidad de escritura/revisión |
 | --- | --- | --- |
@@ -290,7 +309,7 @@ estas responsabilidades evitan editar rutas compartidas simultáneamente:
 | Panel/alta | #126/#128 y #17 | Adaptadores, formulario/consentimiento y ADR0061; sin docs centrales simultáneas |
 | Avisos | #133/#134 | Dispatcher/ADR0051 integrados; ADR0059 sólo reservado para futuro alcance, no existe como contrato aceptado; sin envío real inferido |
 | Eficiencia | #143 cerrado con146 | Baseline/análisis y ADR0060 integrados; instrumentación/optimización futura requiere evidencia propia, sin retirar gates |
-| Plan/documentación | #144 | Este plan, docs centrales y ADR0056; reconciliar hechos de módulos |
+| Plan/documentación | #154; #144 histórico completado | Este plan, docs centrales, ADR0062 y reanudación; reconciliar hechos de módulos |
 | Integración/continuidad | #45/#113 | Root revisa, serializa merges y actualiza checkpoint/decisiones |
 
 Un escritor por rutas: host/datos, coordinación, panel/alta, avisos, navegador y
@@ -308,8 +327,10 @@ explícito hasta completar el recibo; no llamar actual a información conocida
 como obsoleta. No hay robot ni calendario de mantenimiento separado.
 
 El acta final enlaza versiones, digests, runs, acceso privado, matriz completa,
-mediciones, limitaciones y pendientes. Sólo entonces se marca **BETA validada en
-simulación**. Permanecen registrados el flujo real, Telegram externo pendiente,
-observación pública autorizada, rotación/recuperación real, accesibilidad y
-backlog histórico sin evidencia de cierre. Backup/restore diferido y
-Porota/PPI Watch fuera de alcance.
+mediciones, limitaciones y pendientes. Sólo con todos los requisitos aplicables
+y recibos se marca **BETA operativa validada, backend detenido tras las pruebas**.
+No cerrar por maqueta ni suite sintética. Telegram, Site conectado, navegación
+designada, accesibilidad y ciclo funcional documentado deben tener evidencia
+propia; cualquier requisito pendiente mantiene BLOCKED la aceptación completa.
+Backup/restore diferido y Porota/PPI Watch fuera de alcance.
+

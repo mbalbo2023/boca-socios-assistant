@@ -1,5 +1,9 @@
 # Estado de integración BETA
 
+> Corte fuente comprobado al iniciar esta etapa: `213be4903669c6e88122a536ad8fee6785c997ac`.
+> La autorización operativa de [ADR0062](ADR/0062-operational-beta-and-recovery.md) no prueba funciones nuevas.
+> Revalidar #45 y seguir [reanudación](RESUME_PROCEDURE.md); último host comprobado: #120, no STOP final todavía.
+
 ## Estado comprobado y límites
 
 La release sigue en **simulación solamente**. La HEAD y los checks de cada
@@ -13,7 +17,7 @@ impactada en el mismo PR y continuidad reconciliada antes de cerrar el trabajo.
 Evidencia operacional: [recibo120](https://github.com/mbalbo2023/boca-socios-assistant/issues/145#issuecomment-6551973756);
 la HEAD y decisiones posteriores se mantienen en #45.
 [Antecedente de Regla84](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551338776)
-y [dirección vigente de BETA](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551681142).
+y [dirección operativa vigente](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326).
 
 | Área | Integrado/comprobado | Límite o pendiente |
 | --- | --- | --- |
@@ -26,11 +30,11 @@ y [dirección vigente de BETA](https://github.com/mbalbo2023/boca-socios-assista
 | Concurrencia Actions | #136 separó grupos PR y retuvo mutex manual constante | Operaciones host seriales; no habilita infraestructura ni elimina límites de runners |
 | Migración P1 | #141 integrado: validación de ledger/checksum antes de DDL/WAL/chmod, recheck y creación exclusiva | Sólo código/fixtures; mode=ro puede interactuar con SHM, no es auditoría integral ni exclusión de toda carrera; ninguna migración real ejecutada |
 | Release/calidad | Gates de SHA/intento/digest, CI frozen, build, scan, policy y RCA | CI no prueba publicación GHCR ni salud del droplet; autorización de un fix no habilita release |
-| Reserva real | NO_GO | Sin cuenta/canal habilitados, evidencia del flujo legítimo ni conciliación de resultado externo ambiguo |
+| Reserva real | NO_GO | La cuenta designada permite navegación de testing, no reservas/compras ni modificaciones de cuenta; tampoco hay conciliación de resultado externo que habilite esos efectos |
 
 ## Plan aprobado para la próxima entrega
 
-[ADR0056](ADR/0056-approved-simulation-beta-delivery.md) y
+[ADR0062](ADR/0062-operational-beta-and-recovery.md) y
 [BETA_DELIVERY_PLAN](BETA_DELIVERY_PLAN.md) registran el desarrollo aprobado de
 la BETA privada funcional. **Socios > Agregar socio** es obligatorio: servicio
 cifrado existente, clave externa, acceso privado y E2E con datos sintéticos.
@@ -100,14 +104,15 @@ aprobada y autenticada, notificaciones y pruebas correspondientes.
 
 ## Autorización y próximos gates
 
-La [dirección aprobada de BETA](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551681142)
-amplía los alcances ya completados a la preparación y desarrollo del plan.
-Las decisiones ya registradas no requieren aprobación repetida; nuevas
-alternativas fuera del alcance sí conservan opciones/recomendación/decisión.
-Identidad/bootstrap/acceso concreto y publicación/instalación final quedan
-sujetos a sus opciones, candidato y gates, no a la mera aprobación del plan.
-No se autorizan migraciones reales, credenciales/login/cola/reserva ni cambios
-en Porota/PPI Watch.
+La [dirección operativa vigente](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326)
+autoriza completar aplicación desplegada, Site privado conectado, Telegram y
+todas las funciones documentadas; delega decisiones de implementación,
+infraestructura/acceso y release/instalación, sin otro GO genérico. Los gates
+técnicos y el candidato exacto permanecen. Login/navegación para la cuenta
+designada y custodia temporal cifrada autorizados; ninguna reserva, compra o
+modificación de cuenta Boca, ni otra cuenta o cambio en Porota/PPI Watch.
+Al finalizar se detienen/verifican todos los recursos Boca y su daemon; el Site
+refleja backend detenido. [Reanudación y STOP](RESUME_PROCEDURE.md).
 La ausencia de una aprobación humana obligatoria en el ruleset es un dato de
 GitHub, no una delegación general de decisiones. Cada PR requiere revisión
 registrada del agente y checks del candidato exacto.
@@ -118,7 +123,7 @@ acotado → remediación elegida → preflight apto → release por digest/manif
 repetir #98/120 ni recrear secretos SSH. Las pruebas
 de scopes independientes aprobados pueden avanzar en paralelo; host y merges
 permanecen serializados. Backup/restore está diferido hasta versión productiva
-fiable y no se convierte en un bloqueo de simulación ni permiso de alta real.
+fiable; no ejecutarlo como condición de esta custodia temporal autorizada.
 
 ## Registro histórico del candidato #24
 
@@ -208,4 +213,5 @@ Las PR encadenadas #34/#36/#38/#40
 necesitan revisión propia y actualización sobre `main` en orden; su mera
 existencia no completa el runtime. No hay credenciales reales, tráfico autenticado,
 reserva, Telegram, cambios del droplet ni de otros proyectos en este candidato.
+
 

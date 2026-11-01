@@ -1,5 +1,9 @@
 # Safe operations — verified evidence and gated procedures
 
+> Corte fuente comprobado al iniciar esta etapa: `213be4903669c6e88122a536ad8fee6785c997ac`.
+> La autorización operativa de [ADR0062](ADR/0062-operational-beta-and-recovery.md) no prueba funciones nuevas.
+> Revalidar #45 y seguir [reanudación](RESUME_PROCEDURE.md); último host comprobado: #120, no STOP final todavía.
+
 ## Current state
 
 The runtime remains dormant and CI never deploys. The dedicated rootless service
@@ -29,14 +33,13 @@ content was opened by either operation. Do not rerun #98 or prepare-rootless:
 first-time preparation must now preserve the configuration it created.
 
 The earlier scoped diagnosis/fix work is complete. The
-[approved BETA direction](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551681142)
-now authorizes preparation/development of the delivery plan, including private
-enrollment, dedicated rootless direction, own-application panel, chosen logical
-storage and efficiency measurements. Complete routine approved work without
-asking again. Concrete identity/bootstrap/private access and final reviewed
-release/install candidate gates remain decisions in the plan. No existing real
-DB migration, real credentials or general unrelated infrastructure authority
-is implied. Neither prior inspection nor first-time preparation is a retry recipe.
+[approved operational scope](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326)
+authorizes implementation, infrastructure/access choices, release/install and
+validation of the functional BETA, connection of the existing private Site and
+Telegram. No further generic GO is required within that scope. All technical
+candidate/isolation/capacity gates remain. Designated-account custody and
+authenticated testing navigation are approved; no reservation, purchase, Boca
+account modification or unrelated infrastructure change is authorized. Neither prior inspection nor first-time preparation is a retry recipe.
 See issue #45 for the current scoped decision and BETA_INTEGRATION_STATUS.md
 for the source/integration cut. PR #141 separately fixed the migration function
 through synthetic fixtures; merging it did not run Database.migrate on the
@@ -59,10 +62,18 @@ Completing code here does not itself configure the host or deploy the BETA.
 
 Before final publication/installation, present the concrete reviewed candidate
 with exact SHA, immutable images/manifests, access, schema/data handling,
-capacity, stop plan and synthetic acceptance results. The final decision and
-all recorded gates precede the serial Actions operation. Then run the real
-interface acceptance with synthetic enrollment, start/stop/status, local notices
-and authorized restart. Preserve data/key on failure; no backup or other project.
+capacity, stop plan and synthetic acceptance results. The delegated operational
+decision and all recorded gates precede the serial Actions operation; no further
+generic approval is required. Then validate the connected Site, full documented
+functional matrix and Telegram, plus bounded designated-account navigation.
+Reserve/purchase/Boca account mutations remain simulated only. Preserve data/key
+on failure; no backup or other project. Finish by stopping and verifying every
+Boca app/worker/browser/bridge/container and the dedicated daemon through the
+protected workflow. Record each resource and final state; UNKNOWN is not PASS.
+The Site must show last observation and backend stopped/unavailable truthfully.
+A stop/recovery operation must be implemented and reviewed before test activation;
+this document does not claim that the current workflow already supports it.
+See [RESUME_PROCEDURE](RESUME_PROCEDURE.md) for the required STOP receipt.
 
 ## Implemented prepare-rootless contract — executed once in #120
 
@@ -96,9 +107,9 @@ review, green exact-SHA checks and a recorded gate receipt for the commit,
 complete GHCR digest, successful release run, `controller` and resource
 budget. The protected `boca-first-deploy` GitHub environment must restrict
 deployment to `main` and contain only Boca-specific credentials/variables.
-The owner must approve the concrete installation scope after options and a
-recommendation. The ruleset not requiring a human approving PR review does not
-waive that decision. Readiness alone does not prove environment protection.
+The owner approved the operational installation scope in ADR0062; the agent
+records the concrete reviewed candidate and technical gates before dispatch.
+The ruleset does not require an additional human approving PR review. Readiness alone does not prove environment protection.
 The manual job uses separate fail-closed environment variables: only
 `BOCA_HOST_READONLY_ENV_READY=ready` can enable `inspect-prerequisites` or
 `preflight`, while `BOCA_DEPLOY_ENV_READY=ready` is required for prepare-rootless,
@@ -257,13 +268,13 @@ cannot establish that image storage has headroom.
 
 ## Gate before any future live Docker deployment
 
-1. Present infrastructure/business options and a recommendation; obtain owner
-   approval for the concrete scope. Record the exact current commit SHA,
+1. Apply the delegated operational scope in ADR0062; record the selected
+   design and evidence. Outside that scope obtain approval. Record current SHA,
    immutable image digest for an install, Compose service, CPU/RAM/disk budget
    and operation before dispatch. A merge never deploys by itself.
 2. Controlled GitHub Actions environment, main-only branch restriction,
    dedicated SSH identity and pinned host key. Technical checks do not replace
-   the scope approval above.
+   authorization scope; the operational BETA scope is already approved.
 3. Check spare host disk/inodes/CPU/memory and existing service health using
    non-mutating observations. If capacity is insufficient: NO_GO.
 4. Confirm Compose project is boca-socios; no host mounts, published ports,
@@ -291,5 +302,6 @@ daemon, reboot, host-wide network changes, shared Compose files, altering
 other services' ports or workflows, disabling host timers, publishing new
 ports without approval and production SSH outside the owner-approved
 Actions workflow.
+
 
 

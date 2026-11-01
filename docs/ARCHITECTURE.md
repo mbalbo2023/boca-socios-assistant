@@ -1,5 +1,9 @@
 # Architecture v1 — isolated Boca Socios project
 
+> Corte fuente comprobado al iniciar esta etapa: `213be4903669c6e88122a536ad8fee6785c997ac`.
+> La autorización operativa de [ADR0062](ADR/0062-operational-beta-and-recovery.md) no prueba funciones nuevas.
+> Revalidar #45 y seguir [reanudación](RESUME_PROCEDURE.md); último host comprobado: #120, no STOP final todavía.
+
 ## Boundaries and flow
 
 ~~~mermaid
@@ -20,8 +24,11 @@ Unverified third-party behavior stays behind interfaces.
 The current runtime remains dormant. PRs128/130/134/148/149 provide adapters
 and coordination; PR152 proves their synthetic in-process composition, not a
 served application. Run120 prepared the dedicated rootless daemon without any
-application/database installation. ADR0056 approves preparing a panel served
-by the Boca application, backed by local SQLite; #113 remains complementary.
+application/database installation. ADR0062 now authorizes the operational
+BETA and connection of the existing private Site, backed by local SQLite.
+The selected design uses Site-native owner identity and an outbound HTTPS
+bridge with a temporary RSA-OAEP/AES-GCM encrypted mailbox; SQLite on the
+droplet remains canonical. It still needs implementation/review and evidence.
 The private form **Socios > Agregar socio** is mandatory for BETA acceptance.
 Its server boundary reuses MemberEnrollmentService and CredentialVault for
 atomic member/credential/audit persistence with an external key. UI/API input,
@@ -33,8 +40,11 @@ A default-deny identity port is a development boundary, not working login.
 start/stop/status, guard, persisted results and local notices. The browser
 never opens SQLite or receives a key; the server accesses the file locally.
 A separate database server or API platform is not required by this design.
-Tests and initial acceptance use synthetic member data; no Boca identity,
-consent or eligibility is proven by local email validation.
+Automated tests use synthetic member data. Separately authorized real navigation
+uses only the designated private testing account without reservation, purchase
+or Boca account modification. Local email validation proves neither Boca
+identity nor eligibility. Stop every Boca service, bridge and dedicated daemon
+after tests; retain data/key and publish only redacted receipts.
 
 ## Service and data models
 
@@ -59,7 +69,8 @@ replacement, fallback path or real migration is implied by this choice.
 SQLite dedicated WAL file under a **Boca-only** Compose named volume. Use
 busy_timeout and explicit transactions; enforce all unique/foreign-key rules
 at DB level. Backups and migration rollback design require independent ADRs
-before a live release.
+before their eventual activation; operational backup/restore remains deferred.
+ADR0062 permits designated-account temporary custody without a backup operation.
 
 ## Multi-session design (future)
 
@@ -88,5 +99,6 @@ workers may require another independent compute environment.
 Structured logs: event type, opaque member/event IDs, state transitions and
 duration. No usernames/passwords, token values, full redirects, cookies or
 authorization headers. Healthcheck reads only migration status.
+
 
 

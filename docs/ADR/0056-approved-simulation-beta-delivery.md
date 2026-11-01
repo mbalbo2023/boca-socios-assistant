@@ -1,6 +1,10 @@
 # ADR 0056: alcance aprobado de preparación de la BETA funcional
 
-**Estado:** Accepted on merge. Registra la dirección explícita del dueño en
+**Estado:** histórico, aceptado al integrarse #153. Su reserva de una nueva
+aprobación genérica, exclusión de login y alcance sólo preparatorio fueron
+sustituidos por [ADR0062](0062-operational-beta-and-recovery.md). El resto de
+este documento conserva literalmente la decisión de aquella etapa, no la
+autoridad vigente. Registra la dirección explícita del dueño en
 issue #45 y el alcance documental #144; no acredita un despliegue.
 
 [Autorización de esta etapa](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551681142).
@@ -83,3 +87,4 @@ central reconcilia plan/estado y el responsable de #45/#113 actualiza el
 checkpoint antes de cierre. Esta coordinación satisface Regla84 sin escritores
 simultáneos ni exigir que todos reescriban los mismos documentos. No se promete
 un robot de mantenimiento ni una actualización programada separada.
+

@@ -1,5 +1,9 @@
 # Boca Socios Assistant
 
+> Corte fuente comprobado al iniciar esta etapa: `213be4903669c6e88122a536ad8fee6785c997ac`.
+> La autorización operativa de [ADR0062](docs/ADR/0062-operational-beta-and-recovery.md) no prueba funciones nuevas.
+> Revalidar #45 y seguir [reanudación](docs/RESUME_PROCEDURE.md); último host comprobado: #120, no STOP final todavía.
+
 Public, simulation-first engineering project for a consent-based Boca Juniors
 membership and ticket-assistance workflow. This repository is owned by
 **mbalbo2023** and remains isolated from **all unrelated applications and
@@ -58,13 +62,20 @@ The [delivery plan](docs/BETA_DELIVERY_PLAN.md) makes private member enrollment
 (**Socios > Agregar socio**) part of acceptance, together with simulation
 start/stop/status, durable local notices and restart/idempotency tests. Reuse
 the existing encrypted enrollment service; tests use synthetic credentials.
-The own-application private panel and dedicated rootless direction are approved
-for preparation. Neither the form nor the connected runtime is claimed live.
+The owner now authorizes operational deployment, connection of the existing
+private Site and Telegram, plus authenticated testing navigation using only
+the designated account. The full documented functional scope is required;
+mockups and synthetic tests alone cannot close acceptance. Neither the form
+nor connected runtime is yet claimed live. See [ADR0062](docs/ADR/0062-operational-beta-and-recovery.md).
 
 `/data/boca.sqlite3` in `boca-socios_boca_data` is the delegated logical storage
 decision for this BETA, not proof that a database exists on the droplet. Actual
 global location remains UNVERIFIED; existing data must never be replaced by
-inference. Real credentials and Boca actions remain outside this delivery.
+inference. Designated testing-account custody/navigation is authorized;
+reservations, purchases and Boca account changes remain prohibited. After
+tests, all Boca services including the dedicated daemon must be verifiably
+stopped, preserving data/key. The Site must show that stopped state.
+[Resume from any new chat](docs/RESUME_PROCEDURE.md) using issue #45.
 
 ## Read before contributing
 
@@ -107,4 +118,5 @@ evidence for deployment or a functional BETA.
 and free standard GitHub-hosted Actions runners on public repositories. The
 ruleset must be **created and verified in GitHub Settings**; the existence of
 this documentation never proves it is active. See GITHUB_SETUP.md.
+
 

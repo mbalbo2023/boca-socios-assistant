@@ -16,12 +16,16 @@ current scoped approvals and verified state are recorded in issue #45.
 
 ## Approved delivery and maintenance
 
-[ADR0056](ADR/0056-approved-simulation-beta-delivery.md) and
+[ADR0062](ADR/0062-operational-beta-and-recovery.md) and
 [BETA_DELIVERY_PLAN](BETA_DELIVERY_PLAN.md) record the approved next stage,
-including private enrollment and synthetic E2E/restart/one-ticket acceptance.
-Do not ask again for routine development/tests within that scope. Identity and
-private-access activation decisions and final release/install candidate gates
-remain explicit. Evidence of code approval is not evidence of a created DB.
+including operational enrollment, connected owner-private Site, Telegram,
+all documented functions and designated-account navigation testing. Delegated
+implementation/infrastructure/access/release/install decisions proceed without
+another generic GO; record concrete choices and preserve exact candidate gates.
+Synthetic E2E is necessary but cannot replace deployed acceptance. Evidence of
+authorization or code approval is not evidence of a created DB or working Site.
+No reservations, purchases or Boca account modifications. Mandatory final STOP
+includes the dedicated daemon; follow [RESUME_PROCEDURE](RESUME_PROCEDURE.md).
 
 Module writers update their contract/ADR, changed behavior, limits and exact
 checks in the same PR. The central documentation owner coordinates plan/status
@@ -71,8 +75,9 @@ main is protected before verifying GitHub's **actual ruleset state**. See
 6. Releases are build-once with immutable image digest and verified source
    provenance. An installation uses the sole manual GitHub Actions workflow,
    exact SHA/digest/service inputs and a Boca-only resource preflight. The
-   owner must have approved that concrete operation scope. Approval of code
-   tests or a read-only diagnosis does not authorize release or installation.
+   current operational scope is explicitly approved in ADR0062. Record the
+   concrete candidate/gates before the operation; no repeated generic permission
+   request is needed. Earlier diagnosis approval alone was not this authority.
 7. On any unexpected condition, stop/fail closed, record NO_GO and fix forward.
 8. If a host operation fails, inventory Boca-only disposable artifacts and
    disk/inodes before and after a narrowly scoped Actions cleanup. Preserve
@@ -134,4 +139,5 @@ from its single full-suite run; a listed test that did not execute and pass,
 or a removed accepted lesson/test, fails the gate. A changed finding needs
 another reviewed PR with new evidence. No automated finding edits code,
 merges a PR or dispatches deployment. See ADR 0044.
+
 

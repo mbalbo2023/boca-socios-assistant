@@ -1,5 +1,9 @@
 # Backlog comprobado y decisiones pendientes
 
+> Corte fuente comprobado al iniciar esta etapa: `213be4903669c6e88122a536ad8fee6785c997ac`.
+> La autorización operativa de [ADR0062](ADR/0062-operational-beta-and-recovery.md) no prueba funciones nuevas.
+> Revalidar #45 y seguir [reanudación](RESUME_PROCEDURE.md); último host comprobado: #120, no STOP final todavía.
+
 Este documento separa código integrado, evidencia de ejecución y propuestas.
 El [checkpoint vigente #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
 identifica la HEAD y los runs que deben revalidarse antes de operar. Un candidato
@@ -19,8 +23,13 @@ la dirección vigente de esta etapa se enlaza a continuación.
 
 ## Etapa de entrega aprobada
 
-El [plan versionado BETA](BETA_DELIVERY_PLAN.md) y ADR0056 incorporan la nueva
-[dirección del dueño](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551681142).
+El [plan versionado BETA](BETA_DELIVERY_PLAN.md) y ADR0062 incorporan la
+[dirección operativa vigente](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326).
+Implementación, elección de infraestructura/acceso, release e instalación están
+delegadas dentro de este alcance; no requieren otra aprobación genérica.
+Site privado conectado, Telegram y todas las funciones documentadas son
+obligatorios; no se aceptará únicamente una maqueta. Al finalizar las pruebas
+se verificará STOP de todos los recursos Boca y del daemon dedicado.
 La [matriz UI completa](BETA_DELIVERY_PLAN.md#matriz-completa-de-alcance-ui-panel-propio-y-site-complementario)
 conserva todas las funciones conversadas y distingue diseño, código integrado,
 operación, diferidos y necesidades sin definición; no promete Site operativo
@@ -31,10 +40,10 @@ pasos rutinarios dentro del alcance. La ubicación lógica delegada queda decidi
 `/data/boca.sqlite3` en `boca-socios_boca_data`, clave externa. La existencia
 global actual continúa UNVERIFIED; no reemplazar almacenamiento encontrado.
 
-Esta autorización de desarrollo no habilita credenciales/login/cola/reserva
-real, migraciones sobre una DB existente ni publicación/instalación sin el
-candidato concreto y sus gates. Identidad/bootstrap y acceso privado se
-presentarán con opciones verificables antes de activarlos. El plan mantiene
+La cuenta designada por canal privado puede custodiarse cifrada y usarse en
+navegación/login de testing; no otras cuentas, reservas, compras ni cambios de
+cuenta Boca. Release/instalación usan candidato exacto y gates; no sobrescribir
+ni migrar una DB encontrada por inferencia. El plan mantiene
 recibos por entrega; no promete un robot de actualización separado.
 
 ## Fundación y componentes integrados
@@ -81,8 +90,8 @@ Los diagnósticos/fixes anteriores están integrados. El alcance aprobado ahora
 incluye preparar la BETA según el plan enlazado, con destino lógico definido y
 alta privada obligatoria; la aceptación final todavía requiere evidencia.
 Las decisiones fuera de ese alcance conservan opciones/recomendación/aprobación.
-No se autorizaron credenciales reales ni migraciones sobre una DB real; release
-y primera instalación se deciden sobre el candidato concreto validado.
+La autorización ampliada permite la cuenta designada y operación BETA sobre
+candidato validado; la ubicación de cualquier DB previa sigue sin verificarse.
 
 ## Pendientes reales y orden
 
@@ -96,7 +105,7 @@ y primera instalación se deciden sobre el candidato concreto validado.
 | Panel y alta/Site | Panel propio con Socios > Agregar socio obligatorio; servicio cifrado, acceso privado y comandos sintéticos | #128/148 son adaptadores integrados; lista/servidor/identidad/bootstrap/acceso pendientes. Site sigue complemento |
 | Notificaciones | Conectar avisos locales al panel/recorrido; reconciliación durable antes de transporte real | #134 sintético integrado; Telegram pendiente explícito, sin entrega externa exactamente una vez |
 | Chromium | Egress de sistema acotado y capacidad de una sesión antes de observación pública real autorizada | Los filtros Playwright no sustituyen una frontera de red; no usar página Boca ficticia como evidencia |
-| Alta sintética / flujo real | Alta privada incluida en BETA con datos sintéticos; flujo real conserva identidad/consentimiento/custodia/login/cola/confirmación | No confundir biblioteca interna con formulario operativo ni alta local con validación Boca; credenciales y acciones reales excluidas |
+| Alta sintética / flujo real | Alta privada incluida en BETA con datos sintéticos; flujo real conserva identidad/consentimiento/custodia/login/cola/confirmación | No confundir biblioteca interna con formulario operativo ni alta local con validación Boca; cuenta designada permitida sólo para testing; reserva/compra/cambio de cuenta excluidos |
 | Calidad/continuidad | Retener regresiones RCA ejecutadas; mantener este backlog y #45/#113 coherentes | Regla 84; un escritor por scope y evidencia exacta antes de cierre |
 | PR históricos | Reconciliar #77/#83/#87; evaluar docs #75/#67/#15 y solapamiento mypy #3/#101 | No fusionar árboles viejos ni contar issues abiertos como funcionalidades necesariamente faltantes |
 
@@ -104,7 +113,8 @@ El controlador actual valida clave, aplica la migración inicial y espera con
 `engine=off`, `site_calls=0`. Validarlo en el droplet no completaría una BETA
 funcional. Los componentes de guardia, adaptador de lectura y dispatcher sintético
 integrados no alteran ese hecho. El backend de acceso al SQLite puede pertenecer al mismo
-servicio; no está aprobada una nueva arquitectura de servicios independientes.
+servicio; cualquier nueva composición debe registrarse y probarse bajo el alcance delegado,
+sin dar acceso directo del Site a SQLite/clave/SSH/socket.
 
 Los alcances autorizados con rutas disjuntas se prueban en paralelo; merges y
 operaciones host se serializan. No tocar Porota/PPI Watch. Un fallo de fuente
@@ -140,7 +150,8 @@ pruebas y objetivo aprobado antes de cerrarlos o cambiar su alcance:
 
 Backup/restore operativo se retoma después de una versión productiva fiable.
 #47 aporta una biblioteca offline; no prueba custodia ni restauración. El hito
-no bloquea la simulación, pero ADR0012/0022 mantienen recuperación, custodia,
-canal privado y ciclo de claves antes de alta real. #40 ya integró recifrado
+no se ejecuta en esta etapa. ADR0062 autoriza custodia temporal de la cuenta
+designada sin backup, manteniendo cifrado, clave externa y canal privado. #40 ya integró recifrado
 interno dormido con migración0004 opt-in; faltan coordinación de escritores y
 protección de DELETE para rotación real. No ejecutar backups ahora.
+
