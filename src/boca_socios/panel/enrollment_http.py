@@ -95,6 +95,12 @@ class EnrollmentApplication:
         self._now = now
 
     def __call__(self, environ: Mapping[str, object], start: StartResponse) -> list[bytes]:
+        try:
+            return self._handle(environ, start)
+        except Exception:
+            return _result(start, 503)
+
+    def _handle(self, environ: Mapping[str, object], start: StartResponse) -> list[bytes]:
         if environ.get("wsgi.url_scheme") != "https" or environ.get("HTTP_HOST") != self._host:
             return _result(start, 400)
         try:
