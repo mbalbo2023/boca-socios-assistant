@@ -346,6 +346,11 @@ jobs:
                   "peers": net.get("Containers") == {},
               }
               print("BOCA_CI_TELEGRAM_ISOLATION " + json.dumps(checks, sort_keys=True))
+              print("BOCA_CI_TELEGRAM_DOCKER_NORMALIZATION " + json.dumps({
+                  "healthcheck": config.get("Healthcheck"),
+                  "security": {key: h.get(key) for key in (
+                      "ReadonlyRootfs", "Privileged", "PublishAllPorts", "CapDrop", "CapAdd", "SecurityOpt")},
+              }, sort_keys=True))
               raise AssertionError("disposable Telegram Docker isolation differs")
           PY
           docker rm boca-socios-telegram-test-1
