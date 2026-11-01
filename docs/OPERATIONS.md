@@ -216,12 +216,15 @@ existing `preflight` remains mandatory before any release/install decision.
 The environment must first be verified and marked ready as an **environment**
 (pinned identity and main-only branch rule), independently
 of the daemon's readiness. See [ADR 0037](ADR/0037-host-prerequisite-inspection.md).
-That verification may enable only `BOCA_HOST_READONLY_ENV_READY` for the first
+That initial verification enabled only `BOCA_HOST_READONLY_ENV_READY` for the first
 inspection, scoped to the protected `boca-first-deploy` environment after
 checking no repository-level variable of that name exists; the shell cannot
-prove variable scope. It must not set `BOCA_DEPLOY_ENV_READY` or
-`BOCA_RELEASE_ENV_READY`. The latter gates remain closed until separate
-release and deployment evidence exists. A successful metadata inspection
+prove variable scope. That read-only authorization did not permit setting
+`BOCA_DEPLOY_ENV_READY` or `BOCA_RELEASE_ENV_READY`. Subsequently, the separately
+approved preparation scope enabled `BOCA_DEPLOY_ENV_READY=ready` in that
+protected environment for run #120. `BOCA_RELEASE_ENV_READY` remains closed;
+the deployment marker does not itself approve application installation.
+A successful metadata inspection
 permits considering the stricter read-only `preflight`; it is not host approval.
 
 The manual host workflow rejects reruns and verifies the current `main` ref

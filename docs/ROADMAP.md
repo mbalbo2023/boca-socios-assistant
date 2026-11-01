@@ -88,7 +88,7 @@ y primera instalación se deciden sobre el candidato concreto validado.
 
 | Frente | Próximo resultado verificable | Dependencia o decisión |
 | --- | --- | --- |
-| Diagnóstico host | #140 integrado y #98 ejecutado: recibo limitado a tres rutas candidatas, sin contenido ni Docker | Completado ese alcance; existencia global sigue UNVERIFIED. Dirección rootless aceptada; procedimiento concreto/capacidad aún por probar |
+| Diagnóstico host | #140 integrado y #98 ejecutado: recibo limitado a tres rutas candidatas, sin contenido ni Docker | Completado ese alcance; existencia global sigue UNVERIFIED. Preparación rootless completada en120; presupuesto/capacidad de aplicación aún por probar |
 | Infraestructura | Servicio rootless preparado y verificado en120 | Preparación cerrada en ese alcance; presupuesto/preflight y aceptación de aplicación siguen pendientes |
 | Controlador en droplet | Preflight daemon/cgroups/capacidad apto; luego release por digest, instalación y postflight de salud/red/mounts/límites efectivos | Alcances aprobados y gates sucesivos; sigue NO_GO |
 | Migración P1 | #141 integrado: valida ledger/checksum existente antes de DDL/WAL/chmod, con recheck e inicialización exclusiva de archivo nuevo | Corrección de código probada con fixtures; no auditoría completa de esquema ni migración de DB real |
