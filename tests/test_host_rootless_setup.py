@@ -26,9 +26,7 @@ def test_failed_command_reports_static_stage_and_exit_status_without_output() ->
     ):
         with CHECKS.assertRaisesRegex(setup.SetupError, "^user_service_start_failed_exit_7$"):
             setup._command(Path("/home/boca-deploy"), *argv)
-    with patch.object(
-        setup.subprocess, "run", side_effect=subprocess.TimeoutExpired(argv, 15)
-    ):
+    with patch.object(setup.subprocess, "run", side_effect=subprocess.TimeoutExpired(argv, 15)):
         with CHECKS.assertRaisesRegex(setup.SetupError, "^user_service_start_failed_timeout$"):
             setup._command(Path("/home/boca-deploy"), *argv)
     assert setup._command_reason(("/usr/bin/rootlesskit",)) == "rootless_namespace_failed"
