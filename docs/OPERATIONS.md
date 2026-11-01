@@ -20,9 +20,10 @@ No SQLite was opened, created, moved or migrated, and no container was probed.
 (attempt1, job124707449992) records that cut; later source changes do not change
 what it observed. The receipt time was 2026-10-31 21:54:17 ART. The workflow
 failed at the unchanged absent-socket gate after emitting these receipts.
-See the [current checkpoint](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+See the [operational checkpoint](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551442762).
 
-The owner subsequently approved bounded file diagnosis, the P1 database
+The [scoped direction and Rule 84](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551338776)
+approved bounded file diagnosis, the P1 database
 preflight fix, PR #136 concurrency correction and documentation maintenance.
 These scopes do not authorize installation, release, real database migrations
 or a general infrastructure/business decision. Present options and a
@@ -134,7 +135,8 @@ mismatch is NO-GO and requires diagnosis; it is not a reason to retry the
 first install or alter another workload. The helper checks real/effective
 UID/GID before private metadata and pins rootless Docker transport. It must
 remain uninvoked until the environment, identity and host prerequisites are
-verified under the objective gates. No host diagnostic has run yet.
+verified under the objective gates. No operation=diagnostic of an installed
+controller has run; prerequisite/file inspections have.
 
 ## Implemented read-only host preflight — not executed
 

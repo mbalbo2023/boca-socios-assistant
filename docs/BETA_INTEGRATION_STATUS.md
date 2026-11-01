@@ -10,6 +10,9 @@ Las referencias exactas siguientes conservan su alcance histórico; no se
 presentan como pruebas de un SHA posterior. Rige la Regla 84: documentación
 impactada en el mismo PR y continuidad reconciliada antes de cerrar el trabajo.
 
+Evidencia consolidada: [corte operativo #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551442762).
+[Dirección acotada y Regla 84](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551338776).
+
 | Área | Integrado/comprobado | Límite o pendiente |
 | --- | --- | --- |
 | Componentes offline | Cola/estados, navegador sintético, coordinador local, guardia SQLite y outbox durable | No runtime coordinado ni flujo real; #130 abierto no equivale a integración |

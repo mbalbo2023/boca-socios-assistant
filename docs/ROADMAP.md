@@ -12,6 +12,9 @@ El corte de código reconciliado incluye #136/#140/#141, hasta
 `07cf424c92384a42e820b73befcaaeeaca87e8d9`. Esto identifica el código revisado;
 la inspección #98 citada abajo corresponde a su propio SHA anterior.
 
+Evidencia consolidada: [corte operativo #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551442762).
+[Dirección acotada y Regla 84](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551338776).
+
 ## Fundación y componentes integrados
 
 | Área | Comprobado en el repositorio | Lo que aún no demuestra |
