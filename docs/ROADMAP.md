@@ -8,42 +8,66 @@ Rige la [Regla 84](../AGENTS.md#rule-84--documentation-must-remain-factual-and-c
 actualizar la documentación afectada en el mismo PR y reconciliar el checkpoint
 antes de cerrar el alcance; conservar cortes anteriores sólo como históricos.
 
-El corte de código reconciliado incluye #136/#140/#141, hasta
-`07cf424c92384a42e820b73befcaaeeaca87e8d9`. Esto identifica el código revisado;
+El corte de código reconciliado incorpora #136/#140/#141 y los componentes
+#130/#128/#134/#148/#149/#150/#152, hasta `6be606f83c5a6afe0ba7226abbca6a09276d1ca1`. Esto identifica el código revisado;
 la inspección #98 citada abajo corresponde a su propio SHA anterior.
 
-Evidencia consolidada: [corte operativo #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551442762).
-[Dirección acotada y Regla 84](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551338776).
+Evidencia operacional: [recibo120](https://github.com/mbalbo2023/boca-socios-assistant/issues/145#issuecomment-6551973756);
+la HEAD y decisiones posteriores se mantienen en #45.
+[Antecedente de Regla84](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551338776);
+la dirección vigente de esta etapa se enlaza a continuación.
+
+## Etapa de entrega aprobada
+
+El [plan versionado BETA](BETA_DELIVERY_PLAN.md) y ADR0056 incorporan la nueva
+[dirección del dueño](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551681142).
+La [matriz UI completa](BETA_DELIVERY_PLAN.md#matriz-completa-de-alcance-ui-panel-propio-y-site-complementario)
+conserva todas las funciones conversadas y distingue diseño, código integrado,
+operación, diferidos y necesidades sin definición; no promete Site operativo
+ni «gestiona todo». Se comienza según las recomendaciones: alta privada obligatoria de socios,
+coordinación/avisos, preparación rootless dedicada y panel propio, pruebas E2E
+y medición de rapidez/recursos con integridad. No pedir otra vez permisos para
+pasos rutinarios dentro del alcance. La ubicación lógica delegada queda decidida:
+`/data/boca.sqlite3` en `boca-socios_boca_data`, clave externa. La existencia
+global actual continúa UNVERIFIED; no reemplazar almacenamiento encontrado.
+
+Esta autorización de desarrollo no habilita credenciales/login/cola/reserva
+real, migraciones sobre una DB existente ni publicación/instalación sin el
+candidato concreto y sus gates. Identidad/bootstrap y acceso privado se
+presentarán con opciones verificables antes de activarlos. El plan mantiene
+recibos por entrega; no promete un robot de actualización separado.
 
 ## Fundación y componentes integrados
 
 | Área | Comprobado en el repositorio | Lo que aún no demuestra |
 | --- | --- | --- |
 | Persistencia | SQLite WAL, migraciones, unicidad socio/evento y cantidad 1; vault AES-256-GCM con clave externa | Existencia de DB en el droplet, alta real ni recuperación operativa |
-| Simulación | Máquina de estados, cola determinista, navegador sintético, coordinador offline y guardia SQLite son módulos integrados | Coordinador durable conectado al runtime, reserva externa ni exactamente una entrega |
-| Notificaciones | Outbox en memoria y SQLite con deduplicación, leases, rate limit y backoff | Transporte externo, Telegram ni recibo de proveedor |
-| Panel | Renderizador accesible, preview sintética y proyección local agregada SQLite de #121 | Endpoint privado, identidad, autorización, conexión Site/DB ni controles operativos |
+| Simulación | Estados/cola, navegador sintético, guardia/coordinador130 y comandos149 integrados; migraciones0005/0006 opt-in | Sin runtime/comandos web conectados, reserva externa ni exactamente una entrega; ninguna migración real aplicada |
+| Notificaciones | Outbox en memoria/SQLite y dispatcher sintético #134, límites/fencing/retry y reporte transitorio de ambigüedad | Sin wiring runtime, transporte externo/Telegram/recibo; crash antes de settlement aún puede reintentar |
+| Panel | Renderizador, preview/proyección local #121 y adaptador GET128 y formulario/handler148 integrados, default-deny | Sin listener, identidad real/TLS, lista socios, Site conectado ni controles operativos |
 | Site #113 | Demostración privada publicada con datos sintéticos | Gestión real ni acceso nuevo de visitantes |
 | Chromium | Imagen separada, smoke sin egress y medición de un arranque offline #43/#44 | Capacidad del droplet ni una visita real a Boca |
 | Calidad | CI frozen, Ruff, mypy, tests, policy, auditoría Actions, Dependabot y escaneo de imagen Trivy | Todos los servicios de code/secret/dependency scanning habilitados: verificar sus permisos por separado |
 | Entrega | Workflows manuales protegidos, digest/manifiesto, controles de SHA/intento, pre/postflight y limpieza selectiva | Publicación, instalación o salud real del controlador |
 | Concurrencia Actions | #136 separó validación por PR y preservó un mutex constante para operaciones manuales | Paralelismo ilimitado de runners ni permiso de operación host |
 
-## Host: evidencia y decisión requerida
+## Host: servicio preparado, aplicación pendiente
 
-#124 corrigió la pérdida del argumento vacío por SSH; #70 alcanzó UID10001.
-#132 añadió diagnóstico fijo de ejecutables y estado de la unidad de usuario.
-La [inspección #98](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41258754195),
-sobre `5c642b6d8bf5feac14aaf4a7c4df34ca2e91a97e`, observó runtime/bus propios,
-controladores cpu/memory/pids, socket rootless ausente y socket rootful no
-escribible. Docker, dockerd, wrapper y setup fueron encontrados; la unidad
-`docker.service` del usuario dedicado informó `not-found/inactive/dead`.
-No corresponde afirmar que Docker no está instalado. Tampoco se probó un
-daemon apto, capacidad suficiente ni una base Boca operativa. El inventario
-acotado de #140 informó candidate-absent para DB/WAL/SHM en los tres candidatos
-rootless_default, staging_root y staging_data; ubicación global UNVERIFIED.
-No se abrió, creó, movió ni migró SQLite. El gate del socket mantuvo NO_GO.
-Recibo: 2026-10-31 21:54:17 ART, attempt1, job124707449992. No repetir #98.
+PR #150 integró prepare-rootless; [run #120](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41262650418)
+lo ejecutó una vez sobre `6be606f83c5a6afe0ba7226abbca6a09276d1ca1` y produjo
+SERVICE_READY con application_database=not_accessed/application=not_installed.
+Se verificó el daemon rootless propio, cgroupv2-systemd, overlay2, data root
+privado, cero contenedores y namespace Boca vacío; no se instalaron aplicación,
+imágenes, SQLite ni volúmenes/clave. [Recibo completo](https://github.com/mbalbo2023/boca-socios-assistant/issues/145#issuecomment-6551973756).
+La capacidad fue informativa (application_budget=not_checked); faltan capacidad
+y postflight efectivos de la BETA. No reejecutar primera preparación sobre la
+configuración existente. El marcador DEPLOY se añadió sólo al entorno protegido
+para esta operación; no habilitó release ni constituye aceptación de la BETA.
+
+#124 corrigió SSH y #132/#140 agregaron diagnósticos. La inspección histórica98
+había hallado el servicio ausente y candidate-absent para DB/WAL/SHM en tres
+rutas fijas. #120 resuelve el servicio, pero no convierte ese inventario acotado
+en una prueba de inexistencia global de DB. Ubicación global sigue UNVERIFIED.
 
 La base configurada es `/data/boca.sqlite3`, persistida por Compose en
 `boca-socios_boca_data`. SQLite corre embebida en Python; no exige un servidor
@@ -53,33 +77,33 @@ bases temporales de CI son fixtures, no la base del servicio.
 crea una base operativa ni ejecuta una migración en el droplet. Las reproducciones
 del defecto P1 usaron exclusivamente bases temporales sintéticas; no datos reales.
 
-El dueño aprobó diagnóstico acotado de archivos, corrección P1 de preflight de
-migración, #136 y mantenimiento documental. La elección de infraestructura o
-lógica de negocio exige opciones, recomendación y aprobación explícita del
-alcance. No se autorizaron instalación, release ni migraciones sobre DB reales.
-Una aprobación específica permite completar sus pruebas sin volver a pedirla;
-no constituye autonomía general para los hitos siguientes.
+Los diagnósticos/fixes anteriores están integrados. El alcance aprobado ahora
+incluye preparar la BETA según el plan enlazado, con destino lógico definido y
+alta privada obligatoria; la aceptación final todavía requiere evidencia.
+Las decisiones fuera de ese alcance conservan opciones/recomendación/aprobación.
+No se autorizaron credenciales reales ni migraciones sobre una DB real; release
+y primera instalación se deciden sobre el candidato concreto validado.
 
 ## Pendientes reales y orden
 
 | Frente | Próximo resultado verificable | Dependencia o decisión |
 | --- | --- | --- |
-| Diagnóstico host | #140 integrado y #98 ejecutado: recibo limitado a tres rutas candidatas, sin contenido ni Docker | Completado ese alcance; ausencia global de DB y remediación siguen sin demostrar/decidir |
-| Infraestructura | Opciones de remediación con impacto, aislamiento y recomendación | Decisión del dueño antes de modificar el host |
+| Diagnóstico host | #140 integrado y #98 ejecutado: recibo limitado a tres rutas candidatas, sin contenido ni Docker | Completado ese alcance; existencia global sigue UNVERIFIED. Preparación rootless completada en120; presupuesto/capacidad de aplicación aún por probar |
+| Infraestructura | Servicio rootless preparado y verificado en120 | Preparación cerrada en ese alcance; presupuesto/preflight y aceptación de aplicación siguen pendientes |
 | Controlador en droplet | Preflight daemon/cgroups/capacidad apto; luego release por digest, instalación y postflight de salud/red/mounts/límites efectivos | Alcances aprobados y gates sucesivos; sigue NO_GO |
 | Migración P1 | #141 integrado: valida ledger/checksum existente antes de DDL/WAL/chmod, con recheck e inicialización exclusiva de archivo nuevo | Corrección de código probada con fixtures; no auditoría completa de esquema ni migración de DB real |
-| Simulación funcional | Conectar guardia durable y coordinación; probar reinicio, concurrencia y resultados ambiguos | #130 es candidato abierto, separado de main y sin runtime habilitado |
-| Panel/Site | Elegir capa de acceso, identidad, autorización y conexión privada; lectura agregada primero | Presentar opciones/recomendación antes de decidir; #128 es adaptador propuesto, no listener ni Site conectado |
-| Notificaciones | Ejercitar consumo sintético; diseñar reconciliación durable antes de transporte real | #134 es candidato sintético abierto; no habilita Telegram ni entrega exactamente una vez |
+| Simulación funcional | Módulos130/149 y composición en proceso152 integrados; runtime/HTTP aún por conectar | Integración de biblioteca no habilita motor; migraciones0005/0006 opt-in, loop persistente y recuperación exclusiva |
+| Panel y alta/Site | Panel propio con Socios > Agregar socio obligatorio; servicio cifrado, acceso privado y comandos sintéticos | #128/148 son adaptadores integrados; lista/servidor/identidad/bootstrap/acceso pendientes. Site sigue complemento |
+| Notificaciones | Conectar avisos locales al panel/recorrido; reconciliación durable antes de transporte real | #134 sintético integrado; Telegram pendiente explícito, sin entrega externa exactamente una vez |
 | Chromium | Egress de sistema acotado y capacidad de una sesión antes de observación pública real autorizada | Los filtros Playwright no sustituyen una frontera de red; no usar página Boca ficticia como evidencia |
-| Alta y flujo real | Canal privado, identidad, custodia, coordinación de escritores, login/cola/eligibilidad y confirmación legítima | Hito separado; sin credenciales, sesiones, reservas ni compras reales ahora |
+| Alta sintética / flujo real | Alta privada incluida en BETA con datos sintéticos; flujo real conserva identidad/consentimiento/custodia/login/cola/confirmación | No confundir biblioteca interna con formulario operativo ni alta local con validación Boca; credenciales y acciones reales excluidas |
 | Calidad/continuidad | Retener regresiones RCA ejecutadas; mantener este backlog y #45/#113 coherentes | Regla 84; un escritor por scope y evidencia exacta antes de cierre |
 | PR históricos | Reconciliar #77/#83/#87; evaluar docs #75/#67/#15 y solapamiento mypy #3/#101 | No fusionar árboles viejos ni contar issues abiertos como funcionalidades necesariamente faltantes |
 
 El controlador actual valida clave, aplica la migración inicial y espera con
 `engine=off`, `site_calls=0`. Validarlo en el droplet no completaría una BETA
-funcional. La guardia, API mínima o transporte sintético de candidatos abiertos
-no alteran ese hecho. El backend de acceso al SQLite puede pertenecer al mismo
+funcional. Los componentes de guardia, adaptador de lectura y dispatcher sintético
+integrados no alteran ese hecho. El backend de acceso al SQLite puede pertenecer al mismo
 servicio; no está aprobada una nueva arquitectura de servicios independientes.
 
 Los alcances autorizados con rutas disjuntas se prueban en paralelo; merges y

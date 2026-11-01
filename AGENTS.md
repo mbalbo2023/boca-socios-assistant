@@ -62,6 +62,26 @@ every unrelated service, host configuration and application repository.
    new PR; do not redeploy merely because an external source failed.
 10. Use YYYY-MM-DD in America/Argentina/Buenos_Aires for user-facing times.
 
+## Approved BETA preparation scope
+
+[ADR 0056](docs/ADR/0056-approved-simulation-beta-delivery.md) and the
+[delivery plan](docs/BETA_DELIVERY_PLAN.md) record the owner-approved stage:
+private simulation BETA including mandatory **Socios > Agregar socio**,
+coordinator/state/stop, durable local notices, restart/idempotency checks and
+measured efficiency. The delegated logical destination is `/data/boca.sqlite3`
+in `boca-socios_boca_data`, with a separate key; current global existence
+remains UNVERIFIED. Preserve and identify any discovered storage. The dedicated
+rootless service was prepared by run #120; no application/database was installed
+by that operation. Do not rerun first-time preparation over its existing config.
+
+Build on the prepared dedicated rootless service and proceed with approved
+implementation/review/tests of an application-served private panel without repeating the
+same permission request. Concrete identity/bootstrap/private-access options
+still require their documented decision before activation. Final release and
+installation use a reviewed concrete candidate under the plan, not this
+planning approval alone. No real credentials/login/queue/reservations, existing
+real-DB migration, backup or unrelated workload changes are implied.
+
 ## Code design principles
 
 - Thin adapters around any external system; Queue-it and Boca are third-party

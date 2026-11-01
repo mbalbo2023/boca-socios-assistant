@@ -9,9 +9,32 @@ of mistaking a green CI unit test for a verified live deployment.
 The reviewed manual Boca Actions workflow is the sole remote operation path.
 Read-only inspection has executed; this does not establish that installation
 prerequisites or runtime are ready. Infrastructure and business-logic choices
-require concrete options, a recommendation and owner approval before changes.
+outside an already approved scope require concrete options, a recommendation
+and owner approval before changes.
 Earlier blanket autonomy statements do not authorize a new operation. The
 current scoped approvals and verified state are recorded in issue #45.
+
+## Approved delivery and maintenance
+
+[ADR0056](ADR/0056-approved-simulation-beta-delivery.md) and
+[BETA_DELIVERY_PLAN](BETA_DELIVERY_PLAN.md) record the approved next stage,
+including private enrollment and synthetic E2E/restart/one-ticket acceptance.
+Do not ask again for routine development/tests within that scope. Identity and
+private-access activation decisions and final release/install candidate gates
+remain explicit. Evidence of code approval is not evidence of a created DB.
+
+Module writers update their contract/ADR, changed behavior, limits and exact
+checks in the same PR. The central documentation owner coordinates plan/status
+and the root owner updates #45/#113 on integration. Rule84 does not require
+concurrent writers to duplicate identical global summaries; it requires their
+facts to remain consistent and the assigned update to complete before closure.
+Parallel checks may continue while independent source work advances.
+
+Efficiency work measures queue/execution/build/scan/test and end-to-end latency
+on exact candidates. Consolidate changes before publishing, parallelize
+independent jobs and serialize final integration/host operations. Do not omit
+required checks, substitute old evidence, relax gates or promote untrusted PR
+artifacts to privileged release merely to reduce elapsed time.
 
 ## Branch protection contract
 
