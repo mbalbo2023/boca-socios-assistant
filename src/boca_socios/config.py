@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +16,14 @@ class Settings:
     db_path: Path
     master_key_file: Path
     engine_mode: str = "off"
+    panel_origin: str = ""
+    owner_subject: str = ""
+    passkey_credential_id_file: Path | None = None
+    passkey_public_key_der_file: Path | None = None
+    tls_cert_file: Path | None = None
+    tls_key_file: Path | None = None
+    bind_host: str = "127.0.0.1"
+    bind_port: int = 8443
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -25,7 +35,20 @@ class Settings:
                 os.environ.get("BOCA_MASTER_KEY_FILE", "/run/secrets/boca_master_key")
             ),
             engine_mode=os.environ.get("BOCA_ENGINE_MODE", "off"),
+            panel_origin=os.environ.get("BOCA_PANEL_ORIGIN", ""),
+            owner_subject=os.environ.get("BOCA_OWNER_SUBJECT", ""),
+            passkey_credential_id_file=cls._optional_path("BOCA_PASSKEY_CREDENTIAL_ID_FILE"),
+            passkey_public_key_der_file=cls._optional_path("BOCA_PASSKEY_PUBLIC_KEY_DER_FILE"),
+            tls_cert_file=cls._optional_path("BOCA_TLS_CERT_FILE"),
+            tls_key_file=cls._optional_path("BOCA_TLS_KEY_FILE"),
+            bind_host=os.environ.get("BOCA_BIND_HOST", "127.0.0.1"),
+            bind_port=int(os.environ.get("BOCA_BIND_PORT", "8443")),
         )
+
+    @staticmethod
+    def _optional_path(name: str) -> Path | None:
+        value = os.environ.get(name)
+        return Path(value) if value else None
 
     def validate(self) -> None:
         if self.environment not in {"development", "staging", "production"}:
@@ -37,3 +60,31 @@ class Settings:
             raise ValueError("engine must remain off; activation is not implemented")
         if not self.db_path.is_absolute() or not self.master_key_file.is_absolute():
             raise ValueError("database and secret paths must be absolute")
+
+    def validate_beta(self) -> None:
+        self.validate()
+        origin = urlsplit(self.panel_origin)
+        if (
+            origin.scheme != "https"
+            or not origin.hostname
+            or origin.username is not None
+            or origin.password is not None
+            or origin.path
+            or origin.query
+            or origin.fragment
+            or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", self.owner_subject) is None
+            # 0.0.0.0 is inside Boca's isolated container only; Compose must
+            # publish to host loopback and verify the effective HostConfig.
+            or self.bind_host not in {"127.0.0.1", "0.0.0.0"}  # noqa: S104
+            or type(self.bind_port) is not int
+            or not 1024 <= self.bind_port <= 65535
+        ):
+            raise ValueError("invalid private BETA serving configuration")
+        paths = (
+            self.passkey_credential_id_file,
+            self.passkey_public_key_der_file,
+            self.tls_cert_file,
+            self.tls_key_file,
+        )
+        if any(path is None or not path.is_absolute() for path in paths):
+            raise ValueError("private BETA credential and TLS paths are required")
