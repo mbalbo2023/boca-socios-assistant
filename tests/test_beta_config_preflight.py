@@ -28,7 +28,9 @@ def _private(path: Path, value: bytes) -> Path:
     return path
 
 
-def _certificates(host: str = HOST, *, expired: bool = False) -> tuple[bytes, bytes, bytes]:
+def _certificates(
+    host: str = HOST, *, expired: bool = False, encrypted: bool = False
+) -> tuple[bytes, bytes, bytes]:
     now = datetime.now(UTC)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Synthetic Boca CA")])
@@ -60,7 +62,9 @@ def _certificates(host: str = HOST, *, expired: bool = False) -> tuple[bytes, by
         tls_key.private_bytes(
             serialization.Encoding.PEM,
             serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
+            serialization.BestAvailableEncryption(b"synthetic-only")
+            if encrypted
+            else serialization.NoEncryption(),
         ),
         ca.public_bytes(serialization.Encoding.PEM),
     )
@@ -115,7 +119,7 @@ def test_owner_then_full_check_use_no_socket_or_database(
     assert not settings.db_path.exists()
 
 
-@pytest.mark.parametrize("bad", ["san", "ca", "expired", "key"])
+@pytest.mark.parametrize("bad", ["san", "ca", "expired", "key", "encrypted"])
 def test_owner_check_rejects_untrusted_tls(tmp_path: Path, bad: str) -> None:
     settings, owner, ca = _fixture(tmp_path)
     if bad == "san":
@@ -127,6 +131,11 @@ def test_owner_check_rejects_untrusted_tls(tmp_path: Path, bad: str) -> None:
         _private(ca, wrong_ca)
     elif bad == "expired":
         cert, key, matching_ca = _certificates(expired=True)
+        _private(owner / "tls.crt", cert)
+        _private(owner / "tls.key", key)
+        _private(ca, matching_ca)
+    elif bad == "encrypted":
+        cert, key, matching_ca = _certificates(encrypted=True)
         _private(owner / "tls.crt", cert)
         _private(owner / "tls.key", key)
         _private(ca, matching_ca)

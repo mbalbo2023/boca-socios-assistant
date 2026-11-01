@@ -79,7 +79,8 @@ def _tls_handshake(cert_file: Path, key_file: Path, ca_file: Path, hostname: str
     try:
         server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         server_context.minimum_version = ssl.TLSVersion.TLSv1_2
-        server_context.load_cert_chain(str(cert_file), str(key_file))
+        # An encrypted key is an invalid bundle; never ask for a passphrase.
+        server_context.load_cert_chain(str(cert_file), str(key_file), password=lambda: b"")
         client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         client_context.minimum_version = ssl.TLSVersion.TLSv1_2
         client_context.verify_mode = ssl.CERT_REQUIRED
