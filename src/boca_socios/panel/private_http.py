@@ -19,6 +19,7 @@ from typing import Protocol
 from urllib.parse import parse_qsl, urlsplit
 from uuid import UUID
 
+from boca_socios.notify.projection import list_local_notices
 from boca_socios.panel import private_ui
 from boca_socios.panel.enrollment_http import EnrollmentApplication
 from boca_socios.panel.local_status import read_local_status
@@ -29,6 +30,7 @@ from boca_socios.security.enrollment import (
     CredentialUnavailable,
     MemberNotFound,
 )
+from boca_socios.storage.database import Database
 
 StartResponse = Callable[[str, list[tuple[str, str]]], object]
 _UUID_PATH = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -136,6 +138,7 @@ class PrivatePanelApplication:
         self._origin = origin
         self._host = parsed.netloc
         self._database_path = database_path
+        self._database = Database(database_path)
         self._members = members
         self._directory = MemberDirectory(database_path)
         self._commands = commands
@@ -180,7 +183,7 @@ class PrivatePanelApplication:
         if path == "/comandos" or (isinstance(path, str) and path.startswith("/comandos/")):
             if "simulation:write" not in session.permissions:
                 return _error(start, 403, "Permiso insuficiente.")
-        if path == "/estado" and "local-status:read" not in session.permissions:
+        if path in ("/estado", "/avisos") and "local-status:read" not in session.permissions:
             return _error(start, 403, "Permiso insuficiente.")
         if method == "GET":
             if not self._empty_get(environ):
@@ -196,6 +199,10 @@ class PrivatePanelApplication:
                 data = asdict(snapshot)
                 data["observed_at"] = snapshot.observed_at.isoformat()
                 return _response(start, 200, private_ui.status(data))
+            if path == "/avisos":
+                return _response(
+                    start, 200, private_ui.notices(list_local_notices(self._database, limit=20))
+                )
             if isinstance(path, str) and path.startswith("/socios/"):
                 return self._member_detail(path.removeprefix("/socios/"), session, start)
             if isinstance(path, str) and path.startswith("/comandos/"):

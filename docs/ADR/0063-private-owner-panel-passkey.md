@@ -47,6 +47,7 @@ logs. Merely setting the WSGI value in a test does not prove TLS.
 | `POST /socios/{id}/credencial`, `/revocar` | `members:write` | existing local vault rotation/revocation; no external account change or full erasure |
 | `GET /comandos`, `/comandos/{id}` and `POST /comandos`, `/comandos/{id}/detener` | `simulation:write` | read/start/stop local simulation via injected persistent command host |
 | `GET /estado` | `local-status:read` | read-only SQLite aggregate, labelled without external confirmation |
+| `GET /avisos` | `local-status:read` | read-only local outbox state and explicit Telegram API state, without destination or message text |
 
 Read-only member/command queries open SQLite `mode=ro`, never initialize a DB,
 return at most 50 rows and avoid credential material. Display names are HTML
@@ -60,7 +61,9 @@ the durable history, without minting another command ID. A stopped or
 completed local result is never a Boca reservation.
 
 The WSGI app has no listener, migration, credential provisioning, Site
-credential bridge or Telegram transport. The runtime writer owns composition
+credential bridge or Telegram transport. The notice route reads only the
+bounded projection integrated by #162; `api_accepted` means a Bot API response,
+never human receipt. The runtime writer owns composition
 and persistent event loop; the Site writer owns the separate outbound bridge.
 No inbound Site bearer route is added in this candidate. All public Site
 material remains free of members and passwords.

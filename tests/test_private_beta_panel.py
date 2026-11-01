@@ -12,11 +12,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import sleep
 from urllib.parse import urlencode
+from uuid import uuid4
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from boca_socios.integration.command_store import CommandStore
+from boca_socios.notify.outbox import NoticeKind, NotificationRequest
+from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
 from boca_socios.panel.passkey import PasskeyAssertion, PasskeyOwnerAuthentication
 from boca_socios.panel.private_http import PrivatePanelApplication
 from boca_socios.security.credential_vault import CredentialVault
@@ -132,6 +135,7 @@ def _app(
 ) -> tuple[PrivatePanelApplication, Database]:
     db = Database(path)
     db.migrate()
+    SqliteNotificationOutbox(db).migrate()
     CommandStore(db).migrate()
     db.create_event(EVENT_ID, "Partido sintético")
     app = PrivatePanelApplication(
@@ -195,6 +199,7 @@ def test_private_login_enrollment_listing_and_local_command_are_connected() -> N
         app, db = _app(Path(directory) / "boca.sqlite3", provider, host)
         assert _request(app, "/socios")[0] == 401
         assert _request(app, "/comandos")[0] == 401
+        assert _request(app, "/avisos")[0] == 401
         cookie = _login(app, key, credential_id)
         status, headers, page = _request(app, "/socios/nuevo", cookie=cookie)
         assert status == 200 and headers["Cache-Control"] == "no-store"
@@ -238,6 +243,13 @@ def test_private_login_enrollment_listing_and_local_command_are_connected() -> N
         replay = _request(app, "/comandos", cookie=cookie, method="POST", payload=command_fields)
         assert replay[0] == 303 and len(host.calls) == 1
         assert _request(app, "/estado", cookie=cookie)[0] == 200
+        SqliteNotificationOutbox(db).enqueue(
+            NotificationRequest(uuid4(), NoticeKind.STATE_CHANGED), now=1.0
+        )
+        notices = _request(app, "/avisos", cookie=cookie)
+        assert notices[0] == 200 and b"Aviso local" in notices[2]
+        assert b"no configurado" in notices[2]
+        assert b"persona@example.test" not in notices[2]
 
 
 def test_cross_origin_csrf_and_spoofed_tls_never_start_simulation() -> None:

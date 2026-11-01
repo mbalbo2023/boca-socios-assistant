@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import json
 from datetime import UTC, datetime
 from html import escape
 
+from boca_socios.notify.projection import LocalNoticeView
 from boca_socios.panel.enrollment_form import STYLE
 from boca_socios.panel.members import CommandView, MemberView
 
@@ -69,7 +69,8 @@ def _page(title: str, content: str, *, body_attributes: str = "", script: str = 
 <title>{escape(title)} · Boca Socios Assistant</title><style>{STYLE}</style></head>
 <body{body_attributes}><nav aria-label="Secciones"><a href="/">Inicio</a> ·
 <a href="/socios">Socios</a> · <a href="/comandos">Simulación</a> ·
-<a href="/estado">Estado</a></nav><main>{content}</main>{script}</body></html>""".encode()
+<a href="/estado">Estado</a> · <a href="/avisos">Avisos</a></nav>
+<main>{content}</main>{script}</body></html>""".encode()
 
 
 def login(challenge: str, credential_id: str) -> bytes:
@@ -96,6 +97,7 @@ def home(csrf: str) -> bytes:
         '<p><a href="/socios">Consultar o agregar socios</a></p>'
         '<p><a href="/comandos">Iniciar, detener o consultar simulaciones</a></p>'
         '<p><a href="/estado">Consultar estado local</a></p>'
+        '<p><a href="/avisos">Consultar avisos locales y estado Telegram</a></p>'
         '<form action="/salir" method="post">'
         f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
         '<button type="submit">Cerrar sesión</button></form>',
@@ -241,9 +243,27 @@ def status(snapshot: dict[str, object]) -> bytes:
     )
 
 
+def notices(items: tuple[LocalNoticeView, ...]) -> bytes:
+    rows = []
+    for item in items:
+        local = f"Aviso local {item.kind.value}: {item.state.value}; intentos {item.attempts}."
+        telegram = (
+            "Telegram no configurado o sin intento registrado."
+            if item.telegram_state is None
+            else "Telegram: API aceptó el pedido; no acredita recepción humana."
+            if item.telegram_state == "api_accepted"
+            else "Telegram: resultado ambiguo, requiere revisión."
+            if item.telegram_state in ("ambiguous", "needs_review")
+            else "Telegram: estado local pendiente."
+        )
+        rows.append(f"<li>{escape(local)} {escape(telegram)}</li>")
+    return _page(
+        "Avisos",
+        "<h1>Avisos de simulación</h1><p>Estado local; nunca confirma una entrada Boca. "
+        "La aceptación de Telegram por su API no prueba lectura o entrega al destinatario.</p>"
+        "<ul>" + "".join(rows or ["<li>Sin avisos locales.</li>"]) + "</ul>",
+    )
+
+
 def message(title: str, detail: str) -> bytes:
     return _page(title, "<h1>" + escape(title) + "</h1><p>" + escape(detail) + "</p>")
-
-
-def login_config_json(challenge: str, credential_id: str) -> str:
-    return json.dumps({"challenge": challenge, "credential_id": credential_id})
