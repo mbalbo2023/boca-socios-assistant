@@ -61,6 +61,7 @@ _MIGRATIONS = {
     3: "0003_reservation_guard.sql",
     4: "0004_credential_key_policy.sql",
     5: "0005_simulation_outcomes.sql",
+    6: "0006_beta_commands.sql",
 }
 _MAX_INTENTS = 200
 
@@ -86,7 +87,7 @@ def _expected_ticket_table() -> str:
 
 
 def _require_known_schema(connection: sqlite3.Connection) -> None:
-    rows = connection.execute("SELECT version, checksum FROM schema_migrations LIMIT 6").fetchall()
+    rows = connection.execute("SELECT version, checksum FROM schema_migrations LIMIT 7").fetchall()
     if not rows or len(rows) > len(_MIGRATIONS) or 1 not in {version for version, _ in rows}:
         raise LocalStatusUnavailable("local status unavailable")
     for version, checksum in rows:
