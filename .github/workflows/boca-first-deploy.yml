@@ -140,6 +140,13 @@ jobs:
             -out "$RUNNER_TEMP/boca-owner-fixture/tls.crt" \
             -subj /CN=localhost -addext subjectAltName=DNS:localhost -days 1
           cp "$RUNNER_TEMP/boca-owner-fixture/tls.crt" "$RUNNER_TEMP/boca-owner-fixture/health-ca.pem"
+          # Only disposable synthetic inputs are readable by the cap-dropped copy container.
+          chmod 0755 "$RUNNER_TEMP/boca-owner-fixture"
+          chmod 0644 "$RUNNER_TEMP/boca-owner-fixture/credential_id" \
+            "$RUNNER_TEMP/boca-owner-fixture/public_key.der" \
+            "$RUNNER_TEMP/boca-owner-fixture/tls.crt" \
+            "$RUNNER_TEMP/boca-owner-fixture/tls.key" \
+            "$RUNNER_TEMP/boca-owner-fixture/health-ca.pem"
           docker volume create --driver local \
             --label com.docker.compose.project=boca-socios \
             --label com.docker.compose.volume=boca_owner boca-socios_boca_owner
