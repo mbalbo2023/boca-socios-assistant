@@ -187,7 +187,10 @@ See ADR0076 and ADR0081.
 Issue #207 proposes `owner-prepare/install/verify` for the dedicated owner
 volume, with purpose-bound ciphertext holding the physical passkey's **public**
 credential and matching TLS/health material. ADR0086 defines the isolated
-runner/host contract and the nonsecret receipt. This is a code proposal:
+runner/host contract and the nonsecret receipt. Each owner phase temporarily
+starts only the previously prepared, stopped Boca rootless daemon after its
+unit/config/inventory proof, then requires `stop-test` in the same job even
+after a failed phase; an uncertain stop remains NO-GO. This is a code proposal:
 no real owner passkey, origin, certificate, private tablet route or host
 custody operation has been verified. The 41299068773 protected release is
 SUCCESS for prior main `d0c539d14f38687fbc3711c94ef35df908e57a91`

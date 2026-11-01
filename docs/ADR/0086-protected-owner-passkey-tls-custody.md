@@ -24,8 +24,15 @@ unredirected, unattached and the only Boca volume. A network-free, read-only
 image container with UID/GID10001, dropped capabilities and 0.25 CPU/64 MiB/16
 PID limits prepares a new X25519 recipient key in the owner directory. The
 same fixed container boundary installs ciphertext with a capped 4 MiB memory
-tmpfs, or verifies a read-only owner mount. No host config, app, DB, master key,
-proxy, DNS, port, Site or Telegram service is changed.
+tmpfs, or verifies a read-only owner mount. No host service configuration,
+app, DB, master key, proxy, DNS, port, Site or Telegram service is changed.
+
+The dedicated daemon was last observed stopped, so the same protected job
+uses the existing `start-existing` gate to prove its untouched unit/config,
+UID, socket and stopped inventory before the owner phase. A marked attempt
+always invokes Boca-only `stop-test` in that job, including on failed
+startup/custody; it requires a bounded positive stopped receipt and preserves
+uncertain state for review. It never repeats `prepare-rootless`.
 
 Only the public recipient key and fingerprint leave `owner-prepare`. An
 offline sender must obtain the genuine owner's two-step
@@ -39,7 +46,8 @@ fingerprint in authenticated data. The workflow input holds only canonical
 unpadded base64url ciphertext. The host checks bounded framing; the pinned
 image checks the authentication tag and material again before owner-volume
 writes. It creates five files exclusively as UID10001 mode0400 under a
-UID10001 mode0700 directory, then checks content and TLS again. An existing,
+UID10001 mode0700 directory and checks their exact-byte readback; the separate
+`owner-verify` phase repeats the local TLS proof. An existing,
 symlinked or partial target fails closed and remains for Boca-only review;
 there is no overwrite or automatic retry. The passkey's private key never
 leaves the owner's device. No certificate, secret or credential ID appears in

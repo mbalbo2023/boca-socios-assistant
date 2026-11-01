@@ -162,3 +162,38 @@ def test_phase_rejects_owner_ciphertext_outside_owner_operation(
         host.phase("site-verify", IMAGE, SHA, SHA, owner_envelope=_envelope())
     with pytest.raises(host.PreflightError, match="invalid private BETA coordinates"):
         host.phase("owner-prepare", IMAGE, SHA, SHA)
+
+
+@pytest.mark.parametrize(
+    "origin",
+    ["https://a..b.example.test", "https://bad-.example.test", "https://a.example.test:443"],
+)
+def test_malformed_owner_rp_fails_before_any_host_access(
+    monkeypatch: pytest.MonkeyPatch, origin: str
+) -> None:
+    monkeypatch.setattr(
+        host, "_validate_coordinates", lambda *_args, **_kwargs: pytest.fail("host access")
+    )
+    with pytest.raises(host.PreflightError, match="invalid private"):
+        host.phase("owner-prepare", IMAGE, SHA, SHA, origin, SUBJECT)
+
+
+def test_owner_workflow_stops_daemon_in_same_job_on_failure() -> None:
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
+    ).read_text()
+    assert (
+        workflow.index("Recheck current main before owner custody operation")
+        < workflow.index("Mark owner custody host attempt before starting dedicated daemon")
+        < workflow.index("Start only the stopped prepared Boca rootless daemon for owner custody")
+        < workflow.index(
+            "Prepare, install or verify only Boca owner-volume passkey and TLS custody"
+        )
+        < workflow.index("Stop only Boca services and daemon after owner custody")
+    )
+    section = workflow.split(
+        "      - name: Stop only Boca services and daemon after owner custody"
+    )[1].split("      - name:", 1)[0]
+    assert "if: always() && startsWith(inputs.operation, 'owner-')" in section
+    assert "steps.boca_owner_attempt.outputs.started == 'true'" in section
+    assert "python3 - stop-test" in section

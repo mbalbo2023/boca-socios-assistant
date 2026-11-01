@@ -290,6 +290,26 @@ def _validate_beta_context(origin: str, owner: str) -> None:
         raise PreflightError("invalid private BETA port")
 
 
+def _validate_owner_context(origin: str, owner: str) -> None:
+    """Match the exact HTTPS RP coordinate contract before any owner effect."""
+    _validate_beta_context(origin, owner)
+    parsed = urlsplit(origin)
+    host, port = parsed.hostname, parsed.port
+    if (
+        host is None
+        or re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", host) is None
+        or len(host) > 253
+        or any(
+            len(label) > 63 or label.startswith("-") or label.endswith("-")
+            for label in host.split(".")
+        )
+        or parsed.netloc != (host if port is None else f"{host}:{port}")
+        or port == 443
+        or origin != f"https://{parsed.netloc}"
+    ):
+        raise PreflightError("invalid private owner origin")
+
+
 def validate_docker_boundary(snapshot: DockerBoundarySnapshot) -> None:
     if snapshot.socket_secure is not True or snapshot.rootful_socket_inaccessible is not True:
         raise PreflightError("dedicated rootless socket or rootful Docker access is unsafe")
@@ -1149,7 +1169,7 @@ def _site_receipt(output: str, operation: str) -> str:
 
 def _owner_envelope(value: str, origin: str, subject: str) -> str:
     """Inspect only bounded ciphertext framing; the pinned image decrypts it."""
-    _validate_beta_context(origin, subject)
+    _validate_owner_context(origin, subject)
     try:
         if not value or len(value) > 43691 or re.fullmatch(r"[A-Za-z0-9_-]+", value) is None:
             raise ValueError
@@ -1253,7 +1273,7 @@ def _owner_receipt(output: str, operation: str) -> str:
 def _owner_container(image: str, operation: str, origin: str, subject: str) -> tuple[str, ...]:
     if operation not in {"prepare", "install", "verify"}:
         raise PreflightError("unknown owner custody operation")
-    _validate_beta_context(origin, subject)
+    _validate_owner_context(origin, subject)
     return (
         "docker",
         "run",
@@ -2138,7 +2158,7 @@ def _owner_phase(
     operation: str, image: str, source_sha: str, origin: str, subject: str, envelope: str
 ) -> None:
     """Provision only the isolated owner volume, never an app or real DB."""
-    _validate_beta_context(origin, subject)
+    _validate_owner_context(origin, subject)
     if (operation == "owner-install") != bool(envelope):
         raise PreflightError("sealed owner envelope required only for install")
     decoded = _owner_envelope(envelope, origin, subject) if envelope else None
@@ -2857,7 +2877,7 @@ def phase(
     if owner_custody:
         if phase_name not in {"owner-prepare", "owner-install", "owner-verify"}:
             raise PreflightError("unknown owner custody phase")
-        _validate_beta_context(envelope, beta_owner)
+        _validate_owner_context(envelope, beta_owner)
         if telegram_envelope or expected_bot_id or expected_chat_hmac:
             raise PreflightError("unexpected Telegram arguments in owner phase")
     elif owner_envelope:

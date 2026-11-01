@@ -649,6 +649,25 @@ jobs:
         run: |
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-owner.json"
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-owner.json" "$BOCA_SOURCE_SHA"
+      - name: Mark owner custody host attempt before starting dedicated daemon
+        id: boca_owner_attempt
+        if: startsWith(inputs.operation, 'owner-')
+        run: printf 'started=true\n' >> "$GITHUB_OUTPUT"
+      - name: Start only the stopped prepared Boca rootless daemon for owner custody
+        if: startsWith(inputs.operation, 'owner-')
+        run: |
+          set +e
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - start-existing "$BOCA_SOURCE_SHA")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py > "$RUNNER_TEMP/boca-owner-start.receipt" 2>/dev/null
+          start_rc=$?
+          set -e
+          receipt=''
+          if [[ "$start_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-owner-start.receipt")"; fi
+          pattern='^BOCA_ROOTLESS_START state=READY source_sha=([0-9a-f]{40}) inventory=known_stopped data=preserved$'
+          if [[ "$start_rc" -ne 0 || ${#receipt} -gt 180 || ! "$receipt" =~ $pattern || "${BASH_REMATCH[1]}" != "$BOCA_SOURCE_SHA" ]]; then
+            printf 'Boca owner custody: prepared daemon start NO_GO; Boca-only stop follows.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
       - name: Prepare, install or verify only Boca owner-volume passkey and TLS custody
         if: startsWith(inputs.operation, 'owner-')
         env:
@@ -674,6 +693,22 @@ jobs:
             exit 1
           fi
           printf 'Boca owner custody: `%s`. No BETA service started. Source: `%s`; image: `%s`.\n' "$receipt" "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" >> "$GITHUB_STEP_SUMMARY"
+      - name: Stop only Boca services and daemon after owner custody
+        if: always() && startsWith(inputs.operation, 'owner-') && steps.boca_owner_attempt.outputs.started == 'true'
+        run: |
+          set +e
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - stop-test "$BOCA_SOURCE_SHA")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py > "$RUNNER_TEMP/boca-owner-stop.receipt" 2>/dev/null
+          stop_rc=$?
+          set -e
+          receipt=''
+          if [[ "$stop_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-owner-stop.receipt")"; fi
+          pattern='^BOCA_STOP_TEST state=(STOPPED|ALREADY_STOPPED) source_sha=([0-9a-f]{40}) containers=(0|not_queried) data=preserved$'
+          if [[ "$stop_rc" -ne 0 || ${#receipt} -gt 180 || ! "$receipt" =~ $pattern || "${BASH_REMATCH[2]}" != "$BOCA_SOURCE_SHA" ]]; then
+            printf 'Boca owner custody stop: NO_GO; daemon state unverified. Preserve all volumes and inspect before retry.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf 'Boca owner custody ended: `%s`; owner volume preserved.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
       - name: Prepare, install or verify only Boca Site owner-volume custody
         if: inputs.operation == 'site-prepare' || inputs.operation == 'site-install' || inputs.operation == 'site-verify'
         env:

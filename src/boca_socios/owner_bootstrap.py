@@ -94,15 +94,15 @@ def _canonical(value: dict[str, object]) -> bytes:
 
 
 def _coordinates(origin: str, subject: str) -> str:
+    if not isinstance(origin, str) or not isinstance(subject, str):
+        raise BootstrapError("invalid_coordinates")
     try:
         parsed = urlsplit(origin)
         host, port = parsed.hostname, parsed.port
     except ValueError:
         raise BootstrapError("invalid_coordinates") from None
     if (
-        not isinstance(origin, str)
-        or not isinstance(subject, str)
-        or host is None
+        host is None
         or re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", host) is None
         or len(host) > 253
         or any(
