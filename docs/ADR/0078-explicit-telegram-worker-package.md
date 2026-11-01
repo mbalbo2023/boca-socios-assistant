@@ -1,7 +1,7 @@
 # ADR 0078: proceso Telegram opt-in para avisos sintéticos
 
-**Estado:** propuesta de issue #185, pendiente de revisión y merge. El código de
-este PR no instala, configura ni arranca el proceso en el droplet.
+**Estado:** decisión aceptada al integrar PR #188; candidata hasta su merge.
+El código del PR no instala, configura ni arranca el proceso en el droplet.
 Fecha de diseño: 2026-11-01 (America/Argentina/Buenos_Aires).
 
 ## Decisión
@@ -65,6 +65,6 @@ Las pruebas locales usan SQLite temporal, transportes falsos, configuración
 inválida, schema ausente, ambigüedad y parada; los tests de contrato verifican
 el Compose estructurado. CI hospedada valida además que Docker Compose resuelva
 su sintaxis, con digest ficticio y sin levantar un contenedor. Evidencia exacta
-del candidato, checks y revisión se registra en el PR de issue #185; hasta
+del candidato, checks y revisión se registra en PR #188/issue #185; hasta
 merge y gates operativos, el estado es **código candidato**, Telegram externo
 NO-GO.
