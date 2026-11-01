@@ -87,6 +87,31 @@ operaciones host se serializan. No tocar Porota/PPI Watch. Un fallo de fuente
 pública se informa como semáforo asesor, sin justificar otro despliegue ni
 relajar gates de código, imagen, host o autorización.
 
+## Pendientes históricos por reconciliar, no completados por esta actualización
+
+El [backlog anterior](https://github.com/mbalbo2023/boca-socios-assistant/blob/07cf424c92384a42e820b73befcaaeeaca87e8d9/docs/ROADMAP.md)
+contenía estos requisitos específicos. El resumen de componentes integrados
+no los elimina ni acredita su aceptación funcional. Revisarlos contra código,
+pruebas y objetivo aprobado antes de cerrarlos o cambiar su alcance:
+
+- Horarios de eventos en America/Argentina/Buenos_Aires e ingesta de avisos
+  oficiales con procedencia verificable de cada fuente.
+- Trazas estructuradas redactadas y objetivos medibles de visibilidad y
+  notificaciones (SLA); no hay un SLA operativo demostrado por la CI.
+- BrowserContext aislado por sesión aprobada y límite configurable de sesiones;
+  múltiples contextos no prueban múltiples posiciones Queue-it ni autorizan
+  concurrencia real sobre Boca.
+- Retry, backpressure y diagnóstico observer-only del coordinador, además de
+  las políticas ya implementadas por el outbox; probar su integración y fallos.
+- Revisión de modelos de identidad, evento y categoría y su coherencia con la
+  cuota de una entrada por socio/evento; la restricción DB no prueba todos los
+  modelos ni su conexión a una interfaz.
+- El backlog de flujo real incluía un paso de reserva con intervención humana
+  y rastro de auditoría. Sigue como decisión de producto pendiente de discutir
+  con opciones y recomendación; esta actualización no lo impone, elimina ni
+  habilita reservas. También siguen sin verificarse el orden real login/cola,
+  vínculo de sesión, elegibilidad y confirmación legítima del proveedor.
+
 ## Recuperación diferida por el dueño
 
 Backup/restore operativo se retoma después de una versión productiva fiable.
