@@ -6,6 +6,7 @@ import json
 import os
 import stat
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -103,3 +104,40 @@ def test_rejects_malformed_envelope_and_invalid_secret_material(tmp_path: Path) 
         with pytest.raises(boot.BootstrapError):
             boot.install(directory, envelope, uid=os.geteuid())
     assert not (directory / "site_bypass_token").exists()
+
+
+def test_partial_second_write_is_preserved_and_blocks_retry(tmp_path: Path) -> None:
+    directory = _owner(tmp_path)
+    receipt = boot.prepare(directory, uid=os.geteuid())
+    envelope = boot.seal_for_recipient(receipt, TOKEN, KEY)
+    original = boot._write_new
+
+    def fail_second(parent: int, name: str, content: bytes, uid: int) -> None:
+        if name == boot.HMAC_FILE:
+            raise boot.BootstrapError("synthetic_second_write_failed")
+        original(parent, name, content, uid)
+
+    with patch.object(boot, "_write_new", side_effect=fail_second):
+        with pytest.raises(boot.BootstrapError, match="synthetic_second_write_failed"):
+            boot.install(directory, envelope, uid=os.geteuid())
+    assert (directory / boot.BYPASS_FILE).read_bytes() == TOKEN.encode()
+    assert not (directory / boot.HMAC_FILE).exists()
+    with pytest.raises(boot.BootstrapError, match="already_configured"):
+        boot.install(directory, envelope, uid=os.geteuid())
+    with pytest.raises(boot.BootstrapError, match="pair_unverified"):
+        boot.verify(directory, uid=os.geteuid())
+
+
+def test_redirected_owner_directory_or_recipient_key_is_rejected(tmp_path: Path) -> None:
+    directory = _owner(tmp_path)
+    receipt = boot.prepare(directory, uid=os.geteuid())
+    redirected = tmp_path / "redirected"
+    redirected.symlink_to(directory, target_is_directory=True)
+    with pytest.raises(boot.BootstrapError, match="owner_directory_unsafe"):
+        boot.prepare(redirected, uid=os.geteuid())
+    private = directory / boot.PRIVATE_KEY
+    private.unlink()
+    private.symlink_to(tmp_path / "missing")
+    with pytest.raises(boot.BootstrapError, match="owner_entry_unsafe"):
+        boot.install(directory, boot.seal_for_recipient(receipt, TOKEN, KEY), uid=os.geteuid())
+    assert not (directory / boot.BYPASS_FILE).exists()
