@@ -150,6 +150,17 @@
       "regression_tests": [
         "tests/test_local_status_projection.py::test_telegram_migration_is_known_but_corruption_and_future_versions_fail_closed"
       ]
+    },
+    {
+      "id": "RCA-186",
+      "issue": 186,
+      "fix_pr": 187,
+      "root_cause": "The panel discarded the durable host's canonical command ID after member/event deduplication and redirected to the newly submitted operation UUID, which had no detail row.",
+      "prevention": "Validate and retain the returned canonical UUID for the redirect and its replay; fail closed without a Location header if the host result has no valid command ID.",
+      "regression_tests": [
+        "tests/test_private_beta_panel.py::test_new_command_key_redirects_to_existing_canonical_result",
+        "tests/test_private_beta_panel.py::test_malformed_command_result_never_becomes_a_redirect"
+      ]
     }
   ]
 }
