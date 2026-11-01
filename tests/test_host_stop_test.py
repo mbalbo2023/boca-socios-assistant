@@ -20,6 +20,8 @@ HOME = Path("/home/boca-deploy")
 SHA = "a" * 40
 CONTAINER = "a" * 64
 UNKNOWN = "b" * 64
+IMAGE_ID = "sha256:" + "c" * 64
+IMAGE_REF = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "d" * 64
 
 
 def _info(count: int) -> str:
@@ -50,6 +52,149 @@ def _inspect(container_id: str, *, service: str = "controller", running: bool = 
             "State": {"Running": running},
         }
     )
+
+
+def _telegram_inspect(container_id: str, *, running: bool = True) -> dict[str, object]:
+    record = json.loads(_inspect(container_id, service="telegram", running=running))
+    record["Image"] = IMAGE_ID
+    record["Config"]["Image"] = IMAGE_REF
+    record["Config"]["Cmd"] = ["python", "-m", "boca_socios.notify.telegram_worker", "serve"]
+    record["Config"]["User"] = "10001:10001"
+    record["Config"]["Labels"]["org.opencontainers.image.revision"] = SHA
+    return record
+
+
+def _telegram_image() -> dict[str, object]:
+    return {
+        "Id": IMAGE_ID,
+        "RepoDigests": [IMAGE_REF],
+        "Config": {"Labels": {"org.opencontainers.image.revision": SHA}},
+    }
+
+
+def test_verified_telegram_and_controller_stop_only_after_complete_inventory() -> None:
+    with patch.object(
+        host,
+        "_command",
+        side_effect=[
+            _info(2),
+            f"{CONTAINER}\n{UNKNOWN}",
+            _inspect(CONTAINER),
+            json.dumps(_telegram_inspect(UNKNOWN)),
+            json.dumps(_telegram_image()),
+            CONTAINER,
+            UNKNOWN,
+            _inspect(CONTAINER, running=False),
+            json.dumps(_telegram_inspect(UNKNOWN, running=False)),
+            _info(2),
+            f"{CONTAINER}\n{UNKNOWN}",
+        ],
+    ) as command:
+        assert host._stop_test_containers(HOME) == 2
+    stops = [call.args[-1] for call in command.call_args_list if call.args[3] == "stop"]
+    assert stops == [CONTAINER, UNKNOWN]
+    assert command.call_args_list[4].args[3:5] == ("image", "inspect")
+    assert command.call_args_list[5].args[3] == "stop"
+
+
+def test_telegram_identity_and_image_mismatch_block_even_known_controller_stop() -> None:
+    def wrong_project(container: dict, _image: dict) -> None:
+        container["Config"]["Labels"]["com.docker.compose.project"] = "other"
+
+    def wrong_service(container: dict, _image: dict) -> None:
+        container["Config"]["Labels"]["com.docker.compose.service"] = "proxy"
+
+    def wrong_number(container: dict, _image: dict) -> None:
+        container["Config"]["Labels"]["com.docker.compose.container-number"] = "2"
+
+    def wrong_name(container: dict, _image: dict) -> None:
+        container["Name"] = "/boca-socios-telegram-2"
+
+    def wrong_user(container: dict, _image: dict) -> None:
+        container["Config"]["User"] = "0:0"
+
+    def wrong_command(container: dict, _image: dict) -> None:
+        container["Config"]["Cmd"] = ["sh", "-c", "sleep 100"]
+
+    def wrong_ref(container: dict, _image: dict) -> None:
+        container["Config"]["Image"] = "unreviewed:latest"
+
+    def wrong_id(container: dict, _image: dict) -> None:
+        container["Image"] = "sha256:" + "e" * 64
+
+    def wrong_digest(_container: dict, image: dict) -> None:
+        image["RepoDigests"] = ["ghcr.io/other/project@sha256:" + "d" * 64]
+
+    def wrong_image_identity(_container: dict, image: dict) -> None:
+        image["Id"] = "sha256:" + "e" * 64
+
+    def wrong_revision(container: dict, _image: dict) -> None:
+        container["Config"]["Labels"]["org.opencontainers.image.revision"] = "f" * 40
+
+    def wrong_image_revision(_container: dict, image: dict) -> None:
+        image["Config"]["Labels"]["org.opencontainers.image.revision"] = "f" * 40
+
+    for mutate in (
+        wrong_project,
+        wrong_service,
+        wrong_number,
+        wrong_name,
+        wrong_user,
+        wrong_command,
+        wrong_ref,
+        wrong_id,
+        wrong_digest,
+        wrong_image_identity,
+        wrong_revision,
+        wrong_image_revision,
+    ):
+        telegram = _telegram_inspect(UNKNOWN)
+        image = _telegram_image()
+        mutate(telegram, image)
+        with patch.object(
+            host,
+            "_command",
+            side_effect=[
+                _info(2),
+                f"{CONTAINER}\n{UNKNOWN}",
+                _inspect(CONTAINER),
+                json.dumps(telegram),
+                json.dumps(image),
+            ],
+        ) as command:
+            with CHECKS.assertRaisesRegex(host.SetupError, "unknown_container_preserved_no_stop"):
+                host._stop_test_containers(HOME)
+        assert all(call.args[3] != "stop" for call in command.call_args_list)
+
+
+def test_unknown_after_verified_telegram_blocks_every_stop() -> None:
+    other = "e" * 64
+    with patch.object(
+        host,
+        "_command",
+        side_effect=[
+            _info(2),
+            f"{CONTAINER}\n{other}",
+            json.dumps(_telegram_inspect(CONTAINER)),
+            json.dumps(_telegram_image()),
+            _inspect(other, service="other"),
+        ],
+    ) as command:
+        with CHECKS.assertRaisesRegex(host.SetupError, "unknown_container_preserved_no_stop"):
+            host._stop_test_containers(HOME)
+    assert all(call.args[3] != "stop" for call in command.call_args_list)
+
+
+def test_telegram_image_lookup_failure_blocks_inventory_without_stop() -> None:
+    for result in (host.SetupError("private_daemon_metadata_failed_exit_1"), "not json"):
+        with patch.object(
+            host,
+            "_command",
+            side_effect=[_info(1), CONTAINER, json.dumps(_telegram_inspect(CONTAINER)), result],
+        ) as command:
+            with CHECKS.assertRaisesRegex(host.SetupError, "unknown_container_preserved_no_stop"):
+                host._stop_test_containers(HOME)
+        assert all(call.args[3] != "stop" for call in command.call_args_list)
 
 
 def test_unknown_container_fails_before_any_stop() -> None:

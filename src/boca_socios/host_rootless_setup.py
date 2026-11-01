@@ -23,6 +23,7 @@ DATA = (".local", "share", "docker")
 CONFIG = (".config", "docker", "daemon.json")
 UNIT = (".config", "systemd", "user", "docker.service")
 ENABLE = (".config", "systemd", "user", "default.target.wants", "docker.service")
+TELEGRAM_IMAGE = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z")
 
 
 class SetupError(ValueError):
@@ -579,6 +580,55 @@ def _stop_service_state(home: Path) -> str:
     raise SetupError("dedicated_service_state_unverified")
 
 
+def _verified_telegram_image(
+    home: Path, endpoint: str, record: dict[str, object], config: dict[str, object] | None
+) -> bool:
+    """Prove an optional worker's fixed command and local immutable Boca image."""
+    if config is None:
+        return False
+    image_ref = config.get("Image")
+    image_id = record.get("Image")
+    labels = config.get("Labels")
+    revision = labels.get("org.opencontainers.image.revision") if isinstance(labels, dict) else None
+    if (
+        not isinstance(image_ref, str)
+        or TELEGRAM_IMAGE.fullmatch(image_ref) is None
+        or not isinstance(image_id, str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None
+        or config.get("Cmd") != ["python", "-m", "boca_socios.notify.telegram_worker", "serve"]
+        or config.get("User") != "10001:10001"
+        or not isinstance(revision, str)
+        or re.fullmatch(r"[0-9a-f]{40}", revision) is None
+    ):
+        return False
+    try:
+        image = json.loads(
+            _command(
+                home,
+                "/usr/bin/docker",
+                endpoint,
+                "image",
+                "inspect",
+                "--format",
+                "{{json .}}",
+                image_id,
+            )
+        )
+    except (SetupError, ValueError):
+        return False
+    image_config = image.get("Config") if isinstance(image, dict) else None
+    image_labels = image_config.get("Labels") if isinstance(image_config, dict) else None
+    digests = image.get("RepoDigests") if isinstance(image, dict) else None
+    return (
+        isinstance(image, dict)
+        and image.get("Id") == image_id
+        and isinstance(digests, list)
+        and image_ref in digests
+        and isinstance(image_labels, dict)
+        and image_labels.get("org.opencontainers.image.revision") == revision
+    )
+
+
 def _stop_test_containers(home: Path) -> int:
     endpoint = "--host=unix:///run/user/10001/docker.sock"
     raw = _command(home, "/usr/bin/docker", endpoint, "info", "--format", "{{json .}}")
@@ -622,12 +672,16 @@ def _stop_test_containers(home: Path) -> int:
             or record.get("Id") != container_id
             or not isinstance(labels, dict)
             or labels.get("com.docker.compose.project") != "boca-socios"
-            or service not in {"controller", "browser", "proxy"}
+            or service not in {"controller", "browser", "proxy", "telegram"}
             or not isinstance(number, str)
             or not re.fullmatch(r"[1-9][0-9]{0,2}", number)
             or record.get("Name") != f"/boca-socios-{service}-{number}"
             or not isinstance(state, dict)
             or type(state.get("Running")) is not bool
+        ):
+            raise SetupError("unknown_container_preserved_no_stop")
+        if service == "telegram" and (
+            number != "1" or not _verified_telegram_image(home, endpoint, record, config)
         ):
             raise SetupError("unknown_container_preserved_no_stop")
         if state["Running"]:
