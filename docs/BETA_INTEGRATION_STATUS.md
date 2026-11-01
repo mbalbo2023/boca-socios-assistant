@@ -3,7 +3,7 @@
 ## Corte verificado y alcance
 
 Al corte de este documento, `main` es
-`9e923af56e76a04069bfad6f8ca9c68db0edd890` (PR #181).
+`5cb8ce17715f571979a2ea3bb092da9b470f362d` (PR #204).
 Revalidar la HEAD, Actions y el
 [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
 antes de una operación: este SHA no se traslada automáticamente a candidatos
@@ -12,7 +12,8 @@ para completar BETA de simulación, Site conectado, Telegram y despliegue
 validado; se excluyen reservas, compras y mutaciones reales en Boca.
 
 **BETA operativa en el droplet: NO_VERIFICADA / aplicación no instalada.**
-Código integrado, Site publicado, CI verde y servicio rootless preparado son
+Código integrado, Site publicado, CI verde y servicio rootless preparado y
+detenido son
 evidencias distintas. El controlador de `compose.yaml` todavía espera con
 `engine=off`, sin listener ni puerto; `compose.beta.yaml` #171 empaqueta
 un entrypoint BETA TLS para pruebas desechables, no instalado. #120/#124 no
@@ -23,14 +24,14 @@ UNVERIFIED; el destino lógico futuro es `/data/boca.sqlite3` en el volumen
 
 | Frente | Código o ejecución comprobada | Gate restante |
 | --- | --- | --- |
-| Simulación | Coordinador #130, comandos #149, loop #161, ciclo local #164 y entrypoint TLS #173 integrados; alta cifrada #31/#148 | Empaquetar/servir en host con identidad y acceso privado; E2E host. No hay cliente Boca real |
-| Panel | Adaptadores #128/#148, owner passkey/controles #163 y prueba de registro WebAuthn #174 integrados | Inscripción física del dueño, origen TLS privado, tablet y rechazo de terceros |
-| Avisos/Telegram | Outbox/dispatcher, #162 fence/migración0007/adapter/proyección y #176 corrección de estado local con schema0007 | Sin bot/destino privados, provisión, worker ni envío/recepción real; `api_accepted` tampoco probaría lectura humana |
-| Site #113 | Versión privada v10 con cola D1 desactivada; #178 helper cifrado, #179 cliente outbound opt-in y #181 custodia host protegida integrados | Sin release/digest, bypass+HMAC host, flag ni E2E; aún offline y no conectado a DB/comandos. Ver issue #113 |
-| Host | Preparación rootless #120 SERVICE_READY; preflight read-only #124 PASS para controlador dormido; `stop-test` #156/41272785626 STOPPED, `containers=0` detenidos en ese run | No prueba presupuesto BETA/Chromium; sin instalación funcional. Ningún contenedor Boca quedó en ejecución; los ya detenidos, si existían, se preservaron |
+| Simulación | Coordinador #130, comandos #149, loop #161, ciclo #164 y entrypoint TLS #173; RCA de UUID canónico #187 y probe sintético #190 | Empaquetar/servir en host con identidad y acceso privado; E2E host. No hay cliente Boca real |
+| Panel | Adaptadores #128/#148, owner passkey/controles #163, registro WebAuthn #174 y preflight sin listener #189 | Inscripción física del dueño, origen TLS privado, tablet y rechazo de terceros |
+| Avisos/Telegram | #162 fence/migración0007/adapter, #176 estado, worker default-off #188, parada opcional #194, helper cifrado #199, fases protegidas #203 y prueba Bot API de un solo intento #204 | Sin bot/destino privados, provisión en host ni envío/recepción real; `api_accepted` tampoco probaría lectura humana |
+| Site #113 | Versión privada v10 D1 desactivada; #178 helper, #179 cliente opt-in, #181 custodia Actions y #196 inventario global | Sin release/digest, bypass+HMAC host, flag ni E2E; aún offline y no conectado a DB/comandos. Ver issue #113 |
+| Host | Rootless #120, preflight dormido #124 y última parada observada #156/41272785626 STOPPED; `beta-install` #191 y `beta-acceptance`/parada #200 integrados sólo en código | Sin release/imagen, marca BETA, identidad/archivos privados, instalación funcional ni aceptación host. Estado actual del daemon UNVERIFIED hasta nueva inspección |
 | Chromium | Imagen y smoke offline #43/#44 con límite sintético | Capacidad/egress del droplet y visita real no acreditadas |
-| Calidad/release | CI frozen, Ruff/mypy/tests/policy, build/scan y gates de digest; #171 smoke de paquete TLS/aislamiento en runner | Release de imagen funcional, capacidad, pre/postflight y aceptación host sobre SHA/digests exactos |
-| Aceptación sintética | #170 integra HTTP loopback desechable con alta, comandos, aviso, reinicio y parada; muestra de 21 requests | Sin TLS, tablet, Site, Telegram ni recursos del droplet |
+| Calidad/release | CI frozen, Ruff/mypy/tests/policy, build/scan y gates de digest; #171 y #191/#200 smoke de paquete y probe TLS en runner | `BOCA_RELEASE_ENV_READY` ausente: sin publicación/digest ni capacidad/postflight del droplet |
+| Aceptación sintética | #170 HTTP loopback desechable, #190 probe TLS en contenedor y #200 operación protegida de aceptación/parada | Sin ejecución host/tablet, Site, Telegram ni recursos medidos del droplet |
 
 ## Evidencia exacta de este corte
 
@@ -134,6 +135,81 @@ UNVERIFIED; el destino lógico futuro es `/data/boca.sqlite3` en el volumen
   release 41273068906 SUCCESS; revisión 5726437610. El smoke preparó,
   instaló y verificó un sobre sintético en volumen desechable del runner;
   el job host quedó omitido. Ninguna fase Site se despachó al droplet.
+- [PR #187](https://github.com/mbalbo2023/boca-socios-assistant/pull/187)
+  integró RCA del redirect a UUID canónico en
+  `b92e2abacd63d1654dfb6d795f718af2ea283589`; candidato
+  `6c0ade927811f19f331c68b2b6b3e7a0bf8b8ed9`, CI 41274391525,
+  scan 41274391451, validaciones release/deploy 41274391657/41274391454,
+  preview 41274391653 SUCCESS y revisión 5726518608. Prueba roja previa;
+  no hubo efecto host.
+- [PR #189](https://github.com/mbalbo2023/boca-socios-assistant/pull/189)
+  integró `check-beta-owner/config` sin listener en
+  `63965b087fbd6d7a68308302bb8baf2e08975674`; candidato
+  `b2b34a17f207f7021d09bb63455f7aafa7ba958d`, CI 41274671069,
+  scan 41274671077, release/deploy 41274671053/41274671118 SUCCESS,
+  revisión 5726527799. No inscribió al dueño ni configuró TLS host.
+- [PR #188](https://github.com/mbalbo2023/boca-socios-assistant/pull/188)
+  integró worker Telegram explícito y apagado por defecto en
+  `1bdc80b7f50021227cd798e655844b157198ea93`; candidato
+  `2e1ee9339b6c2ec83ba235deb2a81699c8c928b9`, CI 41274848402,
+  scan 41274848345, release/deploy 41274848336/41274848461 SUCCESS,
+  revisión 5726534430. Sin bot, destino ni envío.
+- [PR #190](https://github.com/mbalbo2023/boca-socios-assistant/pull/190)
+  integró probe TLS sintético desechable en
+  `64746289363741c4d85df79fa4e133b07f261efa`; candidato
+  `04592f882d1492b03fbe93a3c50e7293237a83a2`, CI 41275005313,
+  scan 41275005491, release/deploy 41275005329/41275005377 SUCCESS,
+  revisión 5726547113. Sin ejecución host.
+- [PR #191](https://github.com/mbalbo2023/boca-socios-assistant/pull/191)
+  integró `beta-install` protegido en
+  `161043f15befd5b612b71e036c9c1dead21581ce`; candidato
+  `5265546027fc8f69f03495202fbfd427a5232af2`, CI 41275510437,
+  scan 41275510471, release/deploy 41275510497/41275510438 SUCCESS,
+  revisión 5726574754. El smoke corrió preflight e imagen desechables;
+  host/publish omitidos, sin instalación.
+- [PR #194](https://github.com/mbalbo2023/boca-socios-assistant/pull/194)
+  integró reconocimiento fail-closed del worker Telegram en `stop-test` en
+  `451e40bf08e271f7fdf9dbb975ec5a1ed45bc298`; candidato
+  `ba5f8b4cc42c47dc279a95222c6fff3b4d30748b`, CI 41275762284,
+  scan 41275762308, release/deploy 41275762296/41275762254 SUCCESS,
+  revisión 5726581135. No hubo nuevo dispatch de parada.
+- [PR #196](https://github.com/mbalbo2023/boca-socios-assistant/pull/196)
+  cerró RCA de inventario global del daemon antes/después de custodia Site en
+  `2768d23dd2e9e58563a13aa80d8b76885448d020`; candidato
+  `2676bd9f0cb91e4da0785b0cd149e2d33fd5810a`, CI 41276268828,
+  scan 41276268931, release/deploy 41276268935/41276268997 SUCCESS,
+  revisión 5726595915. No hubo Site host dispatch.
+- [PR #200](https://github.com/mbalbo2023/boca-socios-assistant/pull/200)
+  integró `beta-acceptance` y parada Boca obligatoria en el mismo job en
+  `f21b55f8cc79f9906b8ce1eff3fa1e6c152e896e`; candidato
+  `8d629841832cb32d5435521f222359892f498389`, CI 41277081359,
+  scan 41277081440, release/deploy 41277081383/41277081431 SUCCESS,
+  revisión 5726623269. El runner ejecutó el probe con límites del
+  controlador; job host omitido, sin aceptación del droplet.
+- [PR #199](https://github.com/mbalbo2023/boca-socios-assistant/pull/199)
+  integró helper de custodia cifrada del bot/destino Telegram en
+  `a808a6455e624eea7e1eeb7bedd10f3ab63f9a7c`; candidato
+  `e73c6a5c7339e47d6e69bf1e26c9d65749b123e3`, CI 41277311559,
+  scan 41277311577, release/deploy 41277311519/41277311599 SUCCESS,
+  revisión 5726629731. Ningún secreto real ni volumen host.
+- [PR #203](https://github.com/mbalbo2023/boca-socios-assistant/pull/203)
+  integró las operaciones protegidas de migración 0007 y custodia Telegram
+  posterior a BETA en `487995ca57282e2947d977333e72bd10775fbb98`;
+  candidato `6c5dd64b1f5c6302ce309de181ff8d49be3ac3fe`, CI
+  41278835729, scan 41278835819, release/deploy 41278835721/41278835778
+  SUCCESS y revisión 5726684632. El smoke en runner probó prepare/install/verify
+  cifrados con datos sintéticos y stdin canónico; el job host y la publicación
+  se omitieron. Main push CI 41278970494 y scan 41278970501 SUCCESS. Sin
+  migración, volumen, bot ni destino reales en el droplet.
+- [PR #204](https://github.com/mbalbo2023/boca-socios-assistant/pull/204)
+  integró prueba protegida de identidad privada y un único aviso Telegram
+  sintético en `5cb8ce17715f571979a2ea3bb092da9b470f362d`; candidato
+  `6e8205c0063c095bd51e36820e7be89ba98079c4`, CI 41281318516,
+  scan 41281318527, release/deploy 41281318543/41281318563 SUCCESS y
+  revisión 5726822139. El runner validó metadata Docker real y pruebas
+  falsas de Bot API/SQLite; publicación y operación host omitidas. No hubo
+  token/chat, tráfico Telegram ni envío real. Main push CI 41281517606 y
+  scan 41281517611 SUCCESS.
 
 El Site privado v10 (source `d4c7f9094caddc018646b165e5ce42ebbccc93df`,
 versión `appgver_1fda8ad8e44881918895842f6b608f77`, deploy
@@ -166,10 +242,19 @@ existían. La unidad conserva su
 enablement y podría reiniciar en un reboot posterior; revalidar el estado
 antes de otro uso.
 
-El entorno protegido `boca-image-release` carece de la variable
+La inspección de entornos protegidos en GitHub del 2026-11-01 confirmó que
+`boca-image-release` no tiene variables ni secretos, incluido
 `BOCA_RELEASE_ENV_READY`: no hay release exitoso por digest de esta HEAD.
-Las fases Site #181 exigen ese release y material cifrado para el destinatario
-verificado; el daemon Boca está detenido y el puente permanece desactivado.
+`boca-first-deploy` conserva sólo las dos credenciales SSH y tres variables
+de despliegue/lectura; carece de `BOCA_BETA_ENV_READY`,
+`BOCA_TELEGRAM_ENV_READY`, `BOCA_TELEGRAM_OWNER_READY`, origen/sujeto owner,
+HMAC/bot ID protegidos y material Site. No se ha provisionado la
+credencial/passkey/TLS real. Las
+fases Site #181/#196, instalación #191, aceptación #200 y Telegram #203/#204
+exigen su release y
+gates correspondientes. El último estado observado del daemon Boca fue STOPPED
+en #156; el actual es UNVERIFIED hasta nueva inspección. El puente sigue
+desactivado.
 
 La [inspección #98](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41258754195)
 es histórica: servicio ausente antes de #120; DB/WAL/SHM candidate-absent
@@ -192,9 +277,10 @@ La cadena pendiente es: panel/runtime empaquetado con acceso privado verificable
 del host y datos/clave compatibles → instalación manual protegida → E2E
 sintético desde interfaz real y medición → nueva parada Boca verificable. La
 parada de 41272785626 cerró las pruebas de preparación, no una instalación
-BETA. El workflow actual `first-install` instala sólo un controlador dormido;
-#181 añade custodia Site, no `beta-install`. Ninguno
-autoriza presentarlo como BETA. El Site privado v10 y el código Telegram no
+BETA. El workflow `first-install` instala sólo un controlador dormido; #191
+agrega `beta-install` y #200 `beta-acceptance` con parada, ambos sin dispatch
+host. Su código no autoriza presentarlo como BETA operativa. El Site privado
+v10 y el código Telegram no
 suplen esos pasos. No hacer backup/restore ahora; sigue diferido.
 
 El historial detallado del candidato offline #24 y de cortes previos permanece

@@ -1,9 +1,11 @@
 # ADR 0079: image-side owner and TLS preflight without a listener
 
-**Status:** candidate for issue #184, based on main
-`b92e2abacd63d1654dfb6d795f718af2ea283589`. This code is a proposed
-gate for the protected #167 beta-install workflow; it has not run on the
-droplet and does not provide tablet access.
+**Status:** integrated by PR #189 in
+`63965b087fbd6d7a68308302bb8baf2e08975674`. Exact candidate
+`b2b34a17f207f7021d09bb63455f7aafa7ba958d` passed CI 41274671069,
+scan 41274671077, release/deploy validation 41274671053/41274671118 and
+review 5726527799. Baseline was `b92e2abacd63d1654dfb6d795f718af2ea283589`.
+It has not run on the droplet and does not provide tablet access.
 
 ## Decision
 
@@ -66,6 +68,6 @@ acceptance remain unverified.
 Synthetic tests cover valid no-socket/no-DB execution, wrong SAN/CA/expiry/key,
 unsafe owner modes/symlink, invalid passkey, missing master key and fixed
 redacted CLI receipts. Exact candidate SHA, Actions runs and technical review
-will be recorded in the PR. The root integration writer owns central plan,
+are recorded above and in PR #189. The root integration writer owns central plan,
 status and issue #45 under Rule 84. No real Boca login, queue, reservation or
 purchase is part of this change.

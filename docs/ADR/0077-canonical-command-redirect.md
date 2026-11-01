@@ -1,7 +1,10 @@
 # ADR 0077: canonical command redirects after durable deduplication
 
-**Status:** candidate in issue #186 / PR #187. This document describes a
-reviewed code path only after its exact checks pass; no host BETA is implied.
+**Status:** integrated by PR #187 in
+`b92e2abacd63d1654dfb6d795f718af2ea283589`. Exact candidate
+`6c0ade927811f19f331c68b2b6b3e7a0bf8b8ed9` passed CI 41274391525,
+scan 41274391451, release/deploy validation 41274391657/41274391454,
+preview 41274391653 and review 5726518608. No host BETA is implied.
 
 ## Failure and decision
 

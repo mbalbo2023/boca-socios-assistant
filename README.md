@@ -45,11 +45,13 @@ infrastructure**.
   that a Boca database or volume already exists on the droplet.
 - Security: AES-256-GCM credential vault with per-record random nonce,
   authenticated member-specific binding, external key volume, and key version.
-- Current dormant runtime isolation: Compose project **boca-socios**; named volume
+- Default dormant runtime isolation: Compose project **boca-socios**; named volume
   and bridge network; nonroot, read-only container, dropped capabilities,
   CPU/memory caps, no exposed ports and no host Docker socket. A separate
-  beta Compose candidate #171 is tested only on disposable runners, with TLS
-  published to host loopback and its own private owner volume.
+  beta Compose candidate #171 and protected `beta-install` #191/
+  `beta-acceptance` #200 contracts were tested on disposable runners. The
+  model binds TLS to Boca host loopback and uses a private owner volume; no
+  droplet install occurred.
 - CI: pinned checkout/setup actions, frozen dependency lock, lint, format,
   strict typing, tests, image build and repository-isolation checks.
 - Delivery: small PRs, recorded agent technical review, exact-SHA status
@@ -65,13 +67,15 @@ The [delivery plan](docs/BETA_DELIVERY_PLAN.md) makes private member enrollment
 (**Socios > Agregar socio**) part of acceptance, together with simulation
 start/stop/status, durable local notices and restart/idempotency tests. Reuse
 the existing encrypted enrollment service; tests use synthetic credentials.
-The own-application panel, entrypoint and local runtime libraries are integrated
-in code, without host provisioning. The private Site v10 has a disabled D1
-bridge and fails closed while host credentials/poller are absent. PR #181
-integrated protected ciphertext-only Site custody phases, but no host phase ran.
-Telegram
-transport code is integrated but has no configured bot,
-verified destination or real send. None of these is claimed live in the
+The own-application panel, entrypoint, owner/TLS preflight #189, and local
+runtime libraries are integrated in code, without application installation.
+The private Site v10 has a disabled D1 bridge and fails closed while host
+credentials/poller are absent. PRs #181/#196 integrated protected ciphertext
+custody and global daemon inventory checks, but no Site host phase ran.
+Telegram's opt-in worker #188, safe stop recognition #194, sealed helper #199,
+protected schema/custody #203 and one-shot Bot API test #204 are integrated,
+with no host dispatch, configured bot, verified destination or real send.
+None of these is claimed live in the
 droplet; see the [status table](docs/BETA_INTEGRATION_STATUS.md).
 
 `/data/boca.sqlite3` in `boca-socios_boca_data` is the delegated logical storage

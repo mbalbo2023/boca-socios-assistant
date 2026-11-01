@@ -1,14 +1,14 @@
 # ADR 0082: Site custody requires an empty dedicated rootless daemon
 
-**Status:** draft PR #196 for issue #195. On main
-`451e40bf08e271f7fdf9dbb975ec5a1ed45bc298`, local `uv run pytest -q`
-passed 853 tests and 29 subtests; Ruff, mypy, repository policy and diff
-checks passed; the RCA ledger accepted 16 lessons and 41 executed regression
-selectors in the local full-suite report. This is a source-only RCA of
+**Status:** integrated by PR #196 in
+`2768d23dd2e9e58563a13aa80d8b76885448d020`. Exact candidate
+`2676bd9f0cb91e4da0785b0cd149e2d33fd5810a` passed CI 41276268828,
+scan 41276268931, release/deploy validation 41276268935/41276268997 and
+review 5726595915. Local 853 tests and 29 subtests passed; RCA gate 16
+lessons/41 selectors. This is a source-only RCA of
 the protected Site custody contract introduced in PR #181; no Site host
 operation, release, token install or service activation ran as part of this
-change. Exact candidate SHA, hosted checks and technical review belong in
-the PR evidence after final validation.
+change. Exact candidate SHA, hosted checks and review are recorded above.
 
 ## Cause and decision
 
@@ -50,10 +50,10 @@ including after the one-shot helper before PASS, and before existing-volume
 receipt and preservation of any already created Boca owner volume. The initial
 regression failed against the prior implementation; the fixed tests pass
 alongside the existing exact volume and envelope cases. The full local and
-hosted candidate receipts are recorded in the PR after exact checks.
+hosted candidate receipts are recorded above and in PR #196.
 
-Protected Site custody dispatch remains NO-GO pending a reviewed current-main
-candidate, matching protected release digest and real sealed material; this
+Protected Site custody dispatch remains NO-GO pending a matching protected
+release digest and real sealed material; this
 source-only fix supplies no host proof. BETA, Telegram and the dormant first
 install have separate gates. The integration writer reconciles central
 delivery/status docs and issue #45 with actual evidence under Rule 84.

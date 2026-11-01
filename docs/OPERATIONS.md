@@ -2,7 +2,7 @@
 
 ## Current state
 
-The runtime remains dormant and CI never deploys. The dedicated rootless service
+The default runtime remains dormant and CI never deploys. The dedicated rootless service
 was prepared in #120 and stopped in #156/41272785626; the BETA application
 remains not installed/NO_GO.
 [Read-only preflight #124](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41268626135)
@@ -134,8 +134,74 @@ start a service or enable the Site bridge. See ADR0074.
 The `boca-image-release` environment currently lacks
 `BOCA_RELEASE_ENV_READY`, so no successful protected image release/digest is
 available. No Site custody phase was dispatched. Its real recipient key and
-the Site bypass/HMAC material have not been installed on the host; the rootless
-daemon is stopped. A successful runner smoke cannot satisfy these host gates.
+the Site bypass/HMAC material have not been installed on the host. The rootless
+daemon was last observed STOPPED in #156; its current state is UNVERIFIED.
+A successful runner smoke cannot satisfy these host gates.
+
+PR #196 integrated the Site custody global-inventory RCA in
+`2768d23dd2e9e58563a13aa80d8b76885448d020`. Candidate
+`2676bd9f0cb91e4da0785b0cd149e2d33fd5810a` passed CI 41276268828,
+scan 41276268931, release/deploy validation 41276268935/41276268997 and
+review 5726595915. It checks the entire dedicated rootless daemon before
+and after each Site effect; the test injected a foreign container at five
+boundaries. No Site host phase was dispatched. See ADR0082.
+
+## Protected served BETA and acceptance — code only
+
+PR #189 integrated image-side `check-beta-owner/config` without listener in
+`63965b087fbd6d7a68308302bb8baf2e08975674` (candidate `b2b34a17`, CI
+41274671069, scan 41274671077, release/deploy 41274671053/41274671118,
+review 5726527799). These are file/identity/TLS preflights, not owner
+enrollment or host configuration. See ADR0079.
+
+PR #191 integrated a separate protected `beta-install` in
+`161043f15befd5b612b71e036c9c1dead21581ce` (candidate `5265546`, CI
+41275510437, scan 41275510471, release/deploy 41275510497/41275510438,
+review 5726574754). It gates exact current main and successful protected
+image digest, `BOCA_BETA_ENV_READY`, owner subject/origin, empty dedicated
+daemon, owner-only files, key, new-only data volume, host-loopback TLS and
+positive-identity rollback. Disposable runner smoke exercised both no-listener
+preflights before data init. The host/publish jobs were skipped. See ADR0075.
+
+PR #190 integrated the synthetic container TLS probe in
+`64746289363741c4d85df79fa4e133b07f261efa`; PR #200 integrated protected
+`beta-acceptance` in `f21b55f8cc79f9906b8ce1eff3fa1e6c152e896e`.
+The latter candidate `8d629841` passed CI 41277081359, scan 41277081440,
+release/deploy 41277081383/41277081431 and review 5726623269. Its PR
+smoke ran the probe inside a capped disposable controller. A manual host run
+would validate installed identity before/after the probe, then attempt
+`stop-test` in the same job even on probe failure or main drift; success
+requires a positive STOPPED receipt. No host BETA install/acceptance run has
+occurred. Container-loopback tests do not prove owner tablet, Site or Telegram.
+See ADR0076 and ADR0081.
+
+The 2026-11-01 GitHub environment inspection found no
+`BOCA_RELEASE_ENV_READY` in `boca-image-release`; the deploy environment lacks
+`BOCA_BETA_ENV_READY`, both Telegram readiness markers, protected bot/chat
+assertions, owner origin/subject and real passkey/TLS files. There is no
+protected image release/digest, host
+install or private tablet route. The last observed Boca daemon state was STOPPED
+in #156; its current state is UNVERIFIED until another inspection. Do not
+dispatch `beta-install`, Site phases or `beta-acceptance` until their exact
+gates are satisfied. No `prepare-rootless` retry over the existing unit.
+
+## Telegram opt-in package — no host provisioning
+
+PR #188 integrated a separate default-off worker in
+`1bdc80b7f50021227cd798e655844b157198ea93`; #194 integrated exact
+Telegram container recognition for `stop-test` in
+`451e40bf08e271f7fdf9dbb975ec5a1ed45bc298`; #199 integrated sealed
+bot/destination custody helper in
+`a808a6455e624eea7e1eeb7bedd10f3ab63f9a7c`. #203 integrated protected
+post-install schema0007 and sealed custody phases in
+`487995ca57282e2947d977333e72bd10775fbb98`. #204 integrated a protected
+one-shot Bot API identity/send test in `5cb8ce17715f571979a2ea3bb092da9b470f362d`.
+Exact local/hosted evidence and reviews are in
+[the integration status](BETA_INTEGRATION_STATUS.md).
+No bot,
+destination, schema0007 migration, private volume, worker or send has been
+provisioned on the droplet. The new stop-test code itself has not run on the
+host. See ADR0078/0080/0083/0084/0085 and issue #168.
 
 ## Implemented first-install contract — not executed
 
@@ -320,8 +386,10 @@ cannot establish that image storage has headroom.
    the scope approval above.
 3. Check spare host disk/inodes/CPU/memory and existing service health using
    non-mutating observations. If capacity is insufficient: NO_GO.
-4. Confirm Compose project is boca-socios; no host mounts, published ports,
-   Docker socket, broad privileges or common secrets/volumes/networks.
+4. Confirm Compose project is boca-socios; no host mounts, Docker socket,
+   broad privileges or common secrets/volumes/networks. The dormant package
+   publishes no port; the approved served BETA binds only reviewed
+   `127.0.0.1:8443`, never a wildcard or public interface.
 5. Build once in CI, scan and publish image by digest. Deploy exact digest,
    never rebuild on the production host.
 6. Serialize deployment with a Boca-only lock, never parallel retry.

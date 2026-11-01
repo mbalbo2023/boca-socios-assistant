@@ -1,14 +1,13 @@
 # ADR 0081: protected synthetic BETA acceptance and Boca stop
 
-**Status:** candidate in issue #193, based on main
-`2768d23dd2e9e58563a13aa80d8b76885448d020` after the BETA install,
-Telegram stop-helper and Site custody fixes. The disposable TLS probe is
-integrated by PR #190. Local frozen Ruff, format, mypy and policy gates passed;
-pytest passed 879 tests and 29 subtests on the local candidate. Hosted checks,
-exact technical review, release and host execution remain separate evidence.
-No protected BETA image release or installation was observed. This is a code
-candidate, not a deployed operation. Authorization is the simulation BETA
-scope in issue #45.
+**Status:** integrated by PR #200 in
+`f21b55f8cc79f9906b8ce1eff3fa1e6c152e896e`. Exact candidate
+`8d629841832cb32d5435521f222359892f498389` passed CI 41277081359,
+scan 41277081440, release/deploy validation 41277081383/41277081431 and
+review 5726623269. Local frozen gates passed with 883 tests and 29 subtests.
+The disposable TLS probe came from PR #190. No protected BETA image release,
+host install or acceptance dispatch was observed; runner smoke is not host
+proof. Authorization is the simulation BETA scope in issue #45.
 
 ## Decision and sequence
 

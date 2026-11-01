@@ -1,9 +1,12 @@
 # ADR 0076: disposable TLS acceptance inside the Boca container
 
-**Status:** candidate in issue #183. The code is not a host operation; the
-exact PR/CI/review and any later protected invocation are separate evidence.
-Baseline when claimed: main `b92e2abacd63d1654dfb6d795f718af2ea283589`
-after RCA #186. Authorization: [#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326).
+**Status:** integrated by PR #190 in
+`64746289363741c4d85df79fa4e133b07f261efa`. Candidate
+`04592f882d1492b03fbe93a3c50e7293237a83a2` passed CI 41275005313,
+scan 41275005491, release/deploy validation 41275005329/41275005377 and
+review 5726547113. The code is not a host operation; no protected invocation
+ran. Baseline when claimed: main `b92e2abacd63d1654dfb6d795f718af2ea283589`.
+Authorization: [#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326).
 
 ## Decision and isolation
 
