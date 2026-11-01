@@ -5,10 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Inspect, prepare dedicated rootless service, preflight, install, or diagnose
+        description: Inspect, prepare, preflight, install, diagnose, or stop Boca test services
         required: true
         type: choice
-        options: [inspect-prerequisites, prepare-rootless, preflight, first-install, diagnostic]
+        options: [inspect-prerequisites, prepare-rootless, preflight, first-install, diagnostic, stop-test]
       source_sha:
         description: Exact current main commit approved for the operation
         required: true
@@ -60,7 +60,7 @@ jobs:
           uv sync --frozen
       - name: Check dispatch and first-install boundaries offline
         run: |
-          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_cleanup.py tests/test_key_custody.py tests/test_release_run.py
+          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_key_custody.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
 
   pr-runtime-smoke:
@@ -157,6 +157,11 @@ jobs:
               test -z "$BOCA_RELEASE_RUN_ID"
               ;;
             prepare-rootless)
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test -z "$BOCA_IMAGE_REF"
+              test -z "$BOCA_RELEASE_RUN_ID"
+              ;;
+            stop-test)
               test "$BOCA_DEPLOY_ENV_READY" = ready
               test -z "$BOCA_IMAGE_REF"
               test -z "$BOCA_RELEASE_RUN_ID"
@@ -258,6 +263,20 @@ jobs:
           remote_command="$(python3 -c 'import shlex, sys; print(shlex.join(sys.argv[1:]))' python3 - apply "$BOCA_SOURCE_SHA")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py
           printf 'Dedicated Boca rootless service prepared and checked; application, SQLite and key volumes were not created. Source: `%s`.\n' "$BOCA_SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Recheck current main before stopping Boca tests
+        if: inputs.operation == 'stop-test'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-stop.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-stop.json" "$BOCA_SOURCE_SHA"
+      - name: Stop and verify dedicated Boca test services
+        if: inputs.operation == 'stop-test'
+        run: |
+          remote_command="$(python3 -c 'import shlex, sys; print(shlex.join(sys.argv[1:]))' python3 - stop-test "$BOCA_SOURCE_SHA")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py
+          printf 'Boca test services and dedicated daemon stopped or already stopped; inspect preceding receipt. Data and key retained. Source: `%s`.\n' "$BOCA_SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Inspect dedicated user prerequisites without Docker
         if: inputs.operation == 'inspect-prerequisites'
         run: |

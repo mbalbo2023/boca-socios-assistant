@@ -4,6 +4,13 @@
 
 The runtime remains dormant and CI never deploys. The dedicated rootless service
 is now prepared, while the BETA application remains not installed/NO_GO.
+[Read-only preflight #124](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41268626135)
+on `main` `213be4903669c6e88122a536ad8fee6785c997ac`, attempt 1, passed
+at 2026-11-01 00:18 ART: UID10001, rootless boundary, empty namespace,
+853288 KiB available memory, 8009560064 free bytes, 2902623 free inodes
+and 1.60 CPU headroom. It tested the existing 0.5 CPU/256 MiB controller
+contract and performed no install. It does not establish capacity for a
+functional BETA with Chromium, public HTTPS access or Telegram.
 [Run #120](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41262650418)
 (attempt1, job124718888659, source `6be606f83c5a6afe0ba7226abbca6a09276d1ca1`)
 executed prepare-rootless successfully after exact-source CI41262581358 and
@@ -29,14 +36,15 @@ content was opened by either operation. Do not rerun #98 or prepare-rootless:
 first-time preparation must now preserve the configuration it created.
 
 The earlier scoped diagnosis/fix work is complete. The
-[approved BETA direction](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551681142)
-now authorizes preparation/development of the delivery plan, including private
-enrollment, dedicated rootless direction, own-application panel, chosen logical
-storage and efficiency measurements. Complete routine approved work without
-asking again. Concrete identity/bootstrap/private access and final reviewed
-release/install candidate gates remain decisions in the plan. No existing real
-DB migration, real credentials or general unrelated infrastructure authority
-is implied. Neither prior inspection nor first-time preparation is a retry recipe.
+[current BETA authorization](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326)
+extends the previously approved preparation to a connected private Site,
+Telegram and a validated simulation BETA through the protected workflow.
+Concrete identity, release and installation still require reviewed exact
+candidate evidence and security gates, but the owner has already authorized
+this scoped delivery. No reservation, purchase, Boca account mutation,
+unreviewed migration of existing data, backup or unrelated infrastructure
+operation is implied. Neither prior inspection nor first-time preparation is
+a retry recipe.
 See issue #45 for the current scoped decision and BETA_INTEGRATION_STATUS.md
 for the source/integration cut. PR #141 separately fixed the migration function
 through synthetic fixtures; merging it did not run Database.migrate on the
@@ -57,10 +65,10 @@ install/diagnostic code expects the dormant controller with no exposed ports;
 it must be reviewed against the functional runtime/private-access candidate.
 Completing code here does not itself configure the host or deploy the BETA.
 
-Before final publication/installation, present the concrete reviewed candidate
+Before final publication/installation, record the concrete reviewed candidate
 with exact SHA, immutable images/manifests, access, schema/data handling,
-capacity, stop plan and synthetic acceptance results. The final decision and
-all recorded gates precede the serial Actions operation. Then run the real
+capacity, stop plan and synthetic acceptance results. All recorded gates
+precede the serial Actions operation under the current authorization. Then run the real
 interface acceptance with synthetic enrollment, start/stop/status, local notices
 and authorized restart. Preserve data/key on failure; no backup or other project.
 
@@ -86,6 +94,20 @@ report UNVERIFIED and inspect the exact Boca state before retry. Diagnostics
 expose only fixed phase/exit/timeout and allowlisted unit Result/ExecMainStatus,
 never stderr or journal. See ADR0058 for prerequisites and limits.
 
+## Stop-test candidate for mandatory shutdown — issue #157
+
+The issue #157 candidate adds `stop-test` to the existing protected manual
+workflow. It uses the same owner/main/environment/SSH/mutex gates, blank
+image/release inputs and an immediate main recheck. Its reviewed helper checks
+the dedicated unit/config and inventories all containers of the private
+rootless daemon. Unknown containers prevent any stop; recognized Boca test
+containers are stopped by exact ID, then the dedicated user unit is stopped.
+Success requires no running Boca container, inactive unit, PID zero and absent
+private Docker socket. The operation is idempotent when already stopped. It
+preserves data/key volumes and enablement; a later reboot may start the daemon
+again. CI for this candidate and any actual STOP receipt are separate facts.
+See ADR0067.
+
 ## Implemented first-install contract — not executed
 
 The integrated `boca-first-deploy.yml` provides a manual, environment-gated
@@ -96,13 +118,13 @@ review, green exact-SHA checks and a recorded gate receipt for the commit,
 complete GHCR digest, successful release run, `controller` and resource
 budget. The protected `boca-first-deploy` GitHub environment must restrict
 deployment to `main` and contain only Boca-specific credentials/variables.
-The owner must approve the concrete installation scope after options and a
-recommendation. The ruleset not requiring a human approving PR review does not
-waive that decision. Readiness alone does not prove environment protection.
+The current owner authorization in #45 includes this simulation BETA delivery;
+the ruleset still requires the candidate review and exact checks. Readiness
+alone does not prove environment protection or operational success.
 The manual job uses separate fail-closed environment variables: only
 `BOCA_HOST_READONLY_ENV_READY=ready` can enable `inspect-prerequisites` or
 `preflight`, while `BOCA_DEPLOY_ENV_READY=ready` is required for prepare-rootless,
-first-install or diagnostic. READONLY was set before #66; DEPLOY was added only
+first-install, diagnostic or the candidate `stop-test`. READONLY was set before #66; DEPLOY was added only
 to the protected environment for #120, without changing secrets/protections.
 RELEASE was not enabled by that preparation. Revalidate scope/values before
 another operation; a readiness marker does not itself authorize it. Read-only
@@ -194,7 +216,7 @@ remain uninvoked until the environment, identity and host prerequisites are
 verified under the objective gates. No operation=diagnostic of an installed
 controller has run; prerequisite/file inspections have.
 
-## Implemented read-only host preflight — not executed
+## Implemented read-only host preflight — executed in #124
 
 Before an image release or first install, the same protected manual workflow
 can check the Boca rootless socket, cgroup delegation, dedicated identity,
@@ -202,7 +224,10 @@ empty Boca namespace and aggregate capacity with `operation=preflight`. Its
 image and release-run fields must be blank. This operation has no stage,
 pull, key, volume, container or site effect and is unavailable on PRs. It
 requires the protected environment and pinned SSH identity. Prerequisite
-inspection has run, but the stricter daemon preflight has not passed. See [ADR 0035](ADR/0035-readonly-host-preflight.md).
+inspection ran before #120. The stricter daemon preflight subsequently passed
+in #124/41268626135 with the existing controller budget. Its success does not
+validate a different Compose budget or the final functional candidate. See
+[ADR 0035](ADR/0035-readonly-host-preflight.md).
 
 ## Executed prerequisite inspection and its limits
 

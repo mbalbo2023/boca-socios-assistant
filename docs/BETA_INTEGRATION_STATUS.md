@@ -22,7 +22,7 @@ y [dirección vigente de BETA](https://github.com/mbalbo2023/boca-socios-assista
 | Notificaciones | Outbox durable y dispatcher sintético #134 integrados, sin red | Sin runtime/avisos panel conectados ni Telegram real; crash antes de settlement requiere reconciliación antes de transporte externo |
 | Chromium | #43/#44 prueban arranque/cierre y presupuesto offline sin egress | No capacidad del droplet ni visita real; falta frontera de egress y observación pública específicamente autorizada |
 | Claves/recuperación | #40 integró recifrador dormido y migración0004 opt-in; runtime migra0001 | No rotación real; faltan coordinación de escritores, protección DELETE, custodia y recuperación. Backup/restore diferido por el dueño |
-| Host | Preparación150 ejecutada en120: servicio rootless dedicado READY, sin app | Application_budget=not_checked; sin app/DB/volúmenes/clave creados. Location globalUNVERIFIED; BETA/deploy aún NO_GO |
+| Host | Preparación150 ejecutada en120: servicio rootless dedicado READY, sin app. Preflight #124 PASS sobre contrato actual 0.5 CPU/256 MiB | No prueba presupuesto BETA funcional/Chromium; sin app/DB/volúmenes/clave creados. Location globalUNVERIFIED; BETA/deploy aún NO_GO. Stop-test #157 es candidato, no ejecución |
 | Concurrencia Actions | #136 separó grupos PR y retuvo mutex manual constante | Operaciones host seriales; no habilita infraestructura ni elimina límites de runners |
 | Migración P1 | #141 integrado: validación de ledger/checksum antes de DDL/WAL/chmod, recheck y creación exclusiva | Sólo código/fixtures; mode=ro puede interactuar con SHM, no es auditoría integral ni exclusión de toda carrera; ninguna migración real ejecutada |
 | Release/calidad | Gates de SHA/intento/digest, CI frozen, build, scan, policy y RCA | CI no prueba publicación GHCR ni salud del droplet; autorización de un fix no habilita release |
@@ -62,6 +62,14 @@ La capacidad informativa antes/después no prueba presupuesto de aplicación.
 DEPLOY ready se añadió sólo al entorno protegido; no hubo release/pull,
 contenedor, SQLite, volúmenes de app/clave, clave ni backup. No repetir
 prepare-rootless sobre la configuración que ahora existe.
+
+[Preflight #124 / 41268626135](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41268626135),
+attempt1, source `213be4903669c6e88122a536ad8fee6785c997ac`,
+ejecutó `preflight` de sólo lectura y terminó SUCCESS. Recibo:
+`mem_kib=853288`, `stage_disk_bytes=8009560064`, `stage_inodes=2902623`,
+`cpu_headroom=1.60`, `namespace=empty`. Esto prueba el gate rootless/capacidad
+para el controlador dormido del Compose vigente, no el candidato BETA ni
+presupuesto Chromium; no instaló aplicación ni accedió a SQLite/clave.
 
 La siguiente evidencia de #98 es **histórica**: el estado de servicio ausente
 fue reemplazado por el recibo #120; el alcance limitado del inventario DB sigue
