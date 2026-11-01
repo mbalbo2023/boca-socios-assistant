@@ -60,8 +60,17 @@ jobs:
           uv sync --frozen
       - name: Check dispatch and first-install boundaries offline
         run: |
-          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_key_custody.py tests/test_release_run.py
+          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_key_custody.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
+      - name: Validate optional served BETA Compose model without host access
+        env:
+          BOCA_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          BOCA_PANEL_ORIGIN: https://localhost:8443
+          BOCA_OWNER_SUBJECT: synthetic-owner
+          PYTHONPATH: src
+        run: |
+          docker compose -p boca-socios -f compose.beta.yaml config --format json > "$RUNNER_TEMP/boca-beta-model.json"
+          uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-beta-model.json" "$BOCA_IMAGE"
 
   pr-runtime-smoke:
     if: github.event_name == 'pull_request'
@@ -71,6 +80,8 @@ jobs:
     env:
       BOCA_IMAGE: boca-first-install-smoke:${{ github.sha }}
       BOCA_ENVIRONMENT: staging
+      BOCA_PANEL_ORIGIN: https://localhost:8443
+      BOCA_OWNER_SUBJECT: synthetic-owner
     steps:
       - name: Checkout proposed runtime without persisted credentials
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -115,13 +126,73 @@ jobs:
           docker exec --user 10001:10001 "$container" python -m boca_socios.runtime_probe
           docker inspect --format '{{json .Mounts}}' "$container" | python3 -c 'import json,sys; m=json.load(sys.stdin); assert {(x["Type"], x["Name"], x["Destination"], x["RW"]) for x in m} == {("volume", "boca-socios_boca_data", "/data", True), ("volume", "boca-socios_boca_key", "/run/secrets", False)}'
           docker logs "$container" | python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin if x.strip()]; assert rows == [{"event": "started", "mode": "simulation", "engine": "off", "site_calls": 0}]'
+      - name: Prepare synthetic owner bundle and new-only BETA database on disposable runner
+        run: |
+          docker compose -p boca-socios -f compose.yaml stop controller
+          docker compose -p boca-socios -f compose.yaml rm -sf controller
+          docker volume rm boca-socios_boca_data
+          mkdir -m 700 "$RUNNER_TEMP/boca-owner-fixture"
+          openssl ecparam -name prime256v1 -genkey -noout -out "$RUNNER_TEMP/boca-owner-fixture/passkey.pem"
+          openssl pkey -in "$RUNNER_TEMP/boca-owner-fixture/passkey.pem" -pubout -outform DER -out "$RUNNER_TEMP/boca-owner-fixture/public_key.der"
+          python3 -c 'import os,pathlib,sys; pathlib.Path(sys.argv[1]).write_bytes(os.urandom(32))' "$RUNNER_TEMP/boca-owner-fixture/credential_id"
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+            -keyout "$RUNNER_TEMP/boca-owner-fixture/tls.key" \
+            -out "$RUNNER_TEMP/boca-owner-fixture/tls.crt" \
+            -subj /CN=localhost -addext subjectAltName=DNS:localhost -days 1
+          cp "$RUNNER_TEMP/boca-owner-fixture/tls.crt" "$RUNNER_TEMP/boca-owner-fixture/health-ca.pem"
+          # Only disposable synthetic inputs are readable by the cap-dropped copy container.
+          chmod 0755 "$RUNNER_TEMP/boca-owner-fixture"
+          chmod 0644 "$RUNNER_TEMP/boca-owner-fixture/credential_id" \
+            "$RUNNER_TEMP/boca-owner-fixture/public_key.der" \
+            "$RUNNER_TEMP/boca-owner-fixture/tls.crt" \
+            "$RUNNER_TEMP/boca-owner-fixture/tls.key" \
+            "$RUNNER_TEMP/boca-owner-fixture/health-ca.pem"
+          docker volume create --driver local \
+            --label com.docker.compose.project=boca-socios \
+            --label com.docker.compose.volume=boca_owner boca-socios_boca_owner
+          docker run --rm --pull never --user 0:0 --network none --read-only \
+            --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges \
+            --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_owner,target=/run/owner \
+            --mount "type=bind,source=$RUNNER_TEMP/boca-owner-fixture,target=/fixture,readonly" \
+            "$BOCA_IMAGE" sh -eu -c 'cp /fixture/credential_id /fixture/public_key.der /fixture/tls.crt /fixture/tls.key /fixture/health-ca.pem /run/owner/; chmod 0400 /run/owner/*; chown 10001:10001 /run/owner/*'
+          docker volume create --driver local \
+            --label com.docker.compose.project=boca-socios \
+            --label com.docker.compose.volume=boca_data boca-socios_boca_data
+          docker run --rm --pull never --user 10001:10001 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --pids-limit 64 --memory 256m --cpus 0.50 \
+            --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+            --env BOCA_ENVIRONMENT=staging \
+            --env BOCA_RUNTIME_MODE=simulation --env BOCA_ENGINE_MODE=off \
+            --env BOCA_DB_PATH=/data/boca.sqlite3 \
+            --env BOCA_MASTER_KEY_FILE=/run/secrets/boca_master_key \
+            --mount type=volume,source=boca-socios_boca_data,target=/data \
+            --mount type=volume,source=boca-socios_boca_key,target=/run/secrets,readonly \
+            "$BOCA_IMAGE" python -m boca_socios.runtime init-beta
+      - name: Serve BETA on runner loopback with exact image, TLS and isolation
+        run: |
+          docker compose -p boca-socios -f compose.beta.yaml up --no-build --no-deps --wait --wait-timeout 90 -d controller
+          container="$(docker compose -p boca-socios -f compose.beta.yaml ps -q controller)"
+          test -n "$container"
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$container")" = healthy
+          docker inspect --format '{{json .HostConfig}}' "$container" | python3 -c 'import json,sys; h=json.load(sys.stdin); assert (h["NanoCpus"], h["Memory"], h["PidsLimit"], h["ReadonlyRootfs"], h["Privileged"], h["PortBindings"], h["PublishAllPorts"]) == (500000000, 268435456, 64, True, False, {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}, False)'
+          docker inspect --format '{{json .HostConfig}}' "$container" | python3 -c 'import json,sys; h=json.load(sys.stdin); assert h["NetworkMode"] == "boca-socios_boca_private" and h["CapDrop"] == ["ALL"] and h["CapAdd"] in (None, []) and h["SecurityOpt"] == ["no-new-privileges:true"] and h["Tmpfs"] == {"/tmp": "rw,noexec,nosuid,size=16m"} and h["CgroupnsMode"] in ("private", "")'
+          docker inspect --format '{{json .NetworkSettings}}' "$container" | python3 -c 'import json,sys; n=json.load(sys.stdin); assert set(n["Networks"]) == {"boca-socios_boca_private"} and n["Ports"] == {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}'
+          docker inspect --format '{{json .Mounts}}' "$container" | python3 -c 'import json,sys; m=json.load(sys.stdin); assert {(x["Type"], x["Name"], x["Destination"], x["RW"]) for x in m} == {("volume", "boca-socios_boca_data", "/data", True), ("volume", "boca-socios_boca_key", "/run/secrets", False), ("volume", "boca-socios_boca_owner", "/run/owner", False)}'
+          docker exec --user 10001:10001 "$container" python -m boca_socios.runtime_probe
+          curl --fail --silent --show-error --noproxy '*' --cacert "$RUNNER_TEMP/boca-owner-fixture/tls.crt" https://localhost:8443/healthz > "$RUNNER_TEMP/boca-beta-health.receipt"
+          test "$(cat "$RUNNER_TEMP/boca-beta-health.receipt")" = BOCA_BETA_READY
       - name: Remove only synthetic Boca resources from disposable runner
         if: always()
         run: |
+          docker compose -p boca-socios -f compose.beta.yaml stop controller || true
+          docker compose -p boca-socios -f compose.beta.yaml rm -sf controller || true
           docker compose -p boca-socios -f compose.yaml stop controller || true
           docker compose -p boca-socios -f compose.yaml rm -sf controller || true
           docker volume rm boca-socios_boca_data || true
           docker volume rm boca-socios_boca_key || true
+          docker volume rm boca-socios_boca_owner || true
           docker network rm boca-socios_boca_private || true
 
   deploy:

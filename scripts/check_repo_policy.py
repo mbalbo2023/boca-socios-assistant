@@ -17,6 +17,22 @@ def check_policy(root: Path) -> list[str]:
         failures.append("default Compose runtime must be simulation-only")
     if "mem_limit: 256m" not in compose or "cpus: 0.50" not in compose:
         failures.append("controller resource limits must be retained")
+    beta_compose_path = root / "compose.beta.yaml"
+    if beta_compose_path.exists():
+        beta_compose = beta_compose_path.read_text(encoding="utf-8")
+        for required in (
+            "name: boca-socios",
+            "BOCA_RUNTIME_MODE: simulation",
+            'BOCA_ENGINE_MODE: "off"',
+            '"127.0.0.1:8443:8443/tcp"',
+            "mem_limit: 256m",
+            "cpus: 0.50",
+        ):
+            if required not in beta_compose:
+                failures.append(f"BETA Compose missing bounded contract: {required}")
+        for forbidden in ("network_mode: host", "privileged: true", "pid: host", "docker.sock"):
+            if forbidden in beta_compose:
+                failures.append(f"forbidden BETA Compose feature: {forbidden}")
     for forbidden in (
         "network_mode: host",
         "privileged: true",
