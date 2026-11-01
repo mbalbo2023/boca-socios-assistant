@@ -158,7 +158,23 @@ def _environment(home: Path) -> dict[str, str]:
     }
 
 
+def _command_reason(command: tuple[str, ...]) -> str:
+    if command[0] == "/usr/bin/systemctl":
+        return {
+            "start": "user_service_start_failed",
+            "stop": "user_service_stop_failed",
+            "daemon-reload": "user_manager_reload_failed",
+        }.get(command[2], "user_service_metadata_failed")
+    return {
+        "/usr/bin/loginctl": "dedicated_linger_query_failed",
+        "/usr/bin/rootlesskit": "rootless_namespace_failed",
+        "/usr/bin/dockerd": "daemon_config_validation_failed",
+        "/usr/bin/docker": "private_daemon_metadata_failed",
+    }.get(command[0], "dedicated_command_failed")
+
+
 def _command(home: Path, *command: str, timeout: int = 15) -> str:
+    reason = _command_reason(command)
     try:
         result = subprocess.run(  # noqa: S603 - fixed reviewed commands, no shell
             command,
@@ -169,8 +185,12 @@ def _command(home: Path, *command: str, timeout: int = 15) -> str:
             env=_environment(home),
             timeout=timeout,
         )
+    except subprocess.CalledProcessError as exc:
+        raise SetupError(f"{reason}_exit_{exc.returncode}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise SetupError(f"{reason}_timeout") from exc
     except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
-        raise SetupError("dedicated_command_failed") from exc
+        raise SetupError(f"{reason}_unavailable") from exc
     if len(result.stdout) > 65536:
         raise SetupError("dedicated_command_output_unbounded")
     return result.stdout.strip()
@@ -209,7 +229,7 @@ def _subordinate_ids(text: str) -> tuple[int, int]:
     return start, count
 
 
-def _binary(path: str, *, setuid: bool = False) -> None:
+def _binary(path: str) -> None:
     try:
         metadata = Path(path).lstat()
     except OSError as exc:
@@ -219,7 +239,6 @@ def _binary(path: str, *, setuid: bool = False) -> None:
         or metadata.st_uid != 0
         or stat.S_IMODE(metadata.st_mode) & 0o022
         or not os.access(path, os.X_OK)
-        or (setuid and not metadata.st_mode & stat.S_ISUID)
     ):
         raise SetupError("trusted_existing_binary_required")
 
@@ -273,12 +292,18 @@ def _preflight() -> Path:
         _absent(home, relative)
     _empty_data_root(home)
     for name in (
-        "env", "true", "systemctl", "loginctl", "docker", "dockerd",
-        "dockerd-rootless.sh", "rootlesskit",
+        "env",
+        "true",
+        "systemctl",
+        "loginctl",
+        "docker",
+        "dockerd",
+        "dockerd-rootless.sh",
+        "rootlesskit",
     ):
         _binary(f"/usr/bin/{name}")
     for name in ("newuidmap", "newgidmap"):
-        _binary(f"/usr/bin/{name}", setuid=True)
+        _binary(f"/usr/bin/{name}")
     _subordinate_ids(_read_fixed("/etc/subuid"))
     _subordinate_ids(_read_fixed("/etc/subgid"))
     if int(_read_fixed("/proc/sys/user/max_user_namespaces", 64).strip()) < 1:
@@ -294,8 +319,13 @@ def _preflight() -> Path:
     if linger != "yes":
         raise SetupError("dedicated_linger_requires_privileged_operator")
     state = _command(
-        home, "/usr/bin/systemctl", "--user", "show", "docker.service",
-        "--property=LoadState", "--value",
+        home,
+        "/usr/bin/systemctl",
+        "--user",
+        "show",
+        "docker.service",
+        "--property=LoadState",
+        "--value",
     )
     if state != "not-found":
         raise SetupError("existing_user_service_preserved")
@@ -305,10 +335,48 @@ def _preflight() -> Path:
 
 def _namespace_smoke(home: Path) -> None:
     # Namespace smoke is separate and cannot be bypassed by an install --force.
+    _command(home, "/usr/bin/rootlesskit", "--net=none", "/usr/bin/true")
+
+
+def _service_failure_receipt(home: Path) -> None:
     try:
-        _command(home, "/usr/bin/rootlesskit", "--net=none", "/usr/bin/true")
-    except SetupError as exc:
-        raise SetupError("namespace_smoke_failed_no_host_policy_change") from exc
+        raw = _command(
+            home,
+            "/usr/bin/systemctl",
+            "--user",
+            "show",
+            "docker.service",
+            "--property=Result,ExecMainStatus",
+        )
+        pairs = [line.split("=", 1) for line in raw.splitlines()]
+        if len(pairs) != 2 or any(len(pair) != 2 for pair in pairs):
+            raise SetupError("service_failure_metadata_invalid")
+        fields = dict(pairs)
+        result = fields.get("Result")
+        status = fields.get("ExecMainStatus", "")
+        if (
+            set(fields) != {"Result", "ExecMainStatus"}
+            or result
+            not in {
+                "success",
+                "resources",
+                "timeout",
+                "exit-code",
+                "signal",
+                "core-dump",
+                "watchdog",
+                "start-limit-hit",
+                "oom-kill",
+                "protocol",
+                "exec-condition",
+            }
+            or not re.fullmatch(r"[0-9]{1,3}", status)
+            or int(status) > 255
+        ):
+            raise SetupError("service_failure_metadata_invalid")
+        print(f"BOCA_ROOTLESS_SERVICE_FAILURE result={result} exit_status={int(status)}")
+    except (SetupError, OSError, ValueError, TypeError):
+        print("BOCA_ROOTLESS_SERVICE_FAILURE metadata=UNVERIFIED")
 
 
 def _unit() -> str:
@@ -330,18 +398,21 @@ WantedBy=default.target
 
 
 def _config(home: Path) -> str:
-    return json.dumps(
-        {
-            "hosts": [f"unix://{RUNTIME}/docker.sock"],
-            "data-root": str(home.joinpath(*DATA)),
-            "exec-root": f"{RUNTIME}/docker",
-            "pidfile": f"{RUNTIME}/docker.pid",
-            "storage-driver": "overlay2",
-            "features": {"containerd-snapshotter": False},
-            "exec-opts": ["native.cgroupdriver=systemd"],
-        },
-        sort_keys=True,
-    ) + "\n"
+    return (
+        json.dumps(
+            {
+                "hosts": [f"unix://{RUNTIME}/docker.sock"],
+                "data-root": str(home.joinpath(*DATA)),
+                "exec-root": f"{RUNTIME}/docker",
+                "pidfile": f"{RUNTIME}/docker.pid",
+                "storage-driver": "overlay2",
+                "features": {"containerd-snapshotter": False},
+                "exec-opts": ["native.cgroupdriver=systemd"],
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
 
 
 def _postflight(home: Path) -> None:
@@ -357,14 +428,22 @@ def _postflight(home: Path) -> None:
     if os.access("/var/run/docker.sock", os.W_OK):
         raise SetupError("rootful_access_forbidden")
     state = _command(
-        home, "/usr/bin/systemctl", "--user", "show", "docker.service",
+        home,
+        "/usr/bin/systemctl",
+        "--user",
+        "show",
+        "docker.service",
         "--property=ActiveState,SubState",
     )
     if set(state.splitlines()) != {"ActiveState=active", "SubState=running"}:
         raise SetupError("dedicated_service_not_running")
     raw = _command(
-        home, "/usr/bin/docker", "--host=unix:///run/user/10001/docker.sock",
-        "info", "--format", "{{json .}}",
+        home,
+        "/usr/bin/docker",
+        "--host=unix:///run/user/10001/docker.sock",
+        "info",
+        "--format",
+        "{{json .}}",
     )
     info = json.loads(raw)
     options = info.get("SecurityOptions") if isinstance(info, dict) else None
@@ -387,8 +466,14 @@ def _postflight(home: Path) -> None:
     os.close(descriptor)
     for kind in ("volume", "network"):
         if _command(
-            home, "/usr/bin/docker", "--host=unix:///run/user/10001/docker.sock",
-            kind, "ls", "-q", "--filter", "name=^boca-socios_",
+            home,
+            "/usr/bin/docker",
+            "--host=unix:///run/user/10001/docker.sock",
+            kind,
+            "ls",
+            "-q",
+            "--filter",
+            "name=^boca-socios_",
         ):
             raise SetupError("existing_boca_namespace_preserved")
     _capacity(home, "after")
@@ -410,16 +495,22 @@ def prepare(phase: str, source_sha: str) -> None:
     _write_new(home, UNIT, _unit())
     _command(home, "/usr/bin/systemctl", "--user", "daemon-reload")
     effective = _command(
-        home, "/usr/bin/systemctl", "--user", "show", "docker.service",
+        home,
+        "/usr/bin/systemctl",
+        "--user",
+        "show",
+        "docker.service",
         "--property=FragmentPath,DropInPaths",
     )
     if set(effective.splitlines()) != {f"FragmentPath={home.joinpath(*UNIT)}", "DropInPaths="}:
         raise SetupError("effective_unit_override_preserved_no_start")
+    _empty_data_root(home)
     try:
         _command(home, "/usr/bin/systemctl", "--user", "start", "docker.service", timeout=50)
         _postflight(home)
         _enable_new(home)
     except (SetupError, OSError, ValueError, TypeError, KeyError):
+        _service_failure_receipt(home)
         try:
             _command(home, "/usr/bin/systemctl", "--user", "stop", "docker.service", timeout=35)
         except SetupError:
@@ -441,13 +532,15 @@ def main() -> int:
     except SetupError as exc:
         print(
             f"BOCA_ROOTLESS_SETUP state=NO_GO reason={exc} files=preserved_or_partial"
-            " application_database=not_accessed", file=sys.stderr,
+            " enablement=UNVERIFIED application_database=not_accessed",
+            file=sys.stderr,
         )
         return 1
     except (OSError, ValueError, TypeError, KeyError):
         print(
             "BOCA_ROOTLESS_SETUP state=NO_GO reason=metadata_or_io_unavailable"
-            " files=preserved_or_partial application_database=not_accessed", file=sys.stderr,
+            " files=preserved_or_partial enablement=UNVERIFIED application_database=not_accessed",
+            file=sys.stderr,
         )
         return 1
     return 0

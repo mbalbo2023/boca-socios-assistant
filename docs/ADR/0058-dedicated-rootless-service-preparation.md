@@ -1,6 +1,6 @@
 # ADR 0058: prepare only the dedicated Boca rootless user service
 
-**Status:** Proposed implementation for issue #145. 2026-10-31 ART.
+**Status:** Accepted on merge of PR #150 for issue #145. 2026-10-31 ART.
 The owner approved beginning the recommended plan in issue #45 and delegated
 the storage-location choice. This PR prepares the mechanism; no host dispatch,
 Docker installation, application release or first installation has occurred.
@@ -71,6 +71,13 @@ the existing storage/capacity verifier; the installed dockerd must first
 accept this exact configuration through `--validate`, without starting a daemon.
 Unsupported installed versions fail closed; no package is upgraded.
 
+Require the dedicated home and runtime anchors to be mode 0700. This is the
+existing Boca privacy/verification contract, not a universal Docker rootless
+requirement: ADR0037 and host_first_deploy._checked_docker_storage_identity
+already require a private 0700 home before accepting Docker storage. The
+historical dedicated-home observation also reported 0700. Relaxing that
+boundary would need a consistent storage/privacy review, not a local bypass.
+
 The fixed user unit launches the existing wrapper through `/usr/bin/env -i`
 with only dedicated identity/home/runtime/bus and trusted system PATH. No CLI
 context is created or selected. It uses Delegate=yes, KillMode=mixed and
@@ -110,6 +117,11 @@ authorize image release/install, certify application capacity or assert DB
 existence. Fixed commands have timeouts; stdout is captured then rejected
 above 64 KiB, so this is a receipt-size cap, not a streaming RAM bound. Errors
 and logs never expose raw command output, paths, credentials or member data.
+Command failures retain a fixed phase reason and numeric process exit status
+or timeout classification. After an attempted start fails, query only this
+user unit's Result and ExecMainStatus before stopping it. Emit allowlisted
+result labels and an integer status, or metadata=UNVERIFIED if unavailable or
+malformed; never emit stderr, journals or arbitrary properties.
 
 If linger, UID mapping, trusted binaries or host policy require administrator
 privileges, report the concrete prerequisite and stop. Alternatives are an

@@ -54,9 +54,14 @@ class SqliteDeliveryClaim:
 class SqliteNotificationOutbox:
     """Store only UUID/kind/state/timing; source payloads never enter SQLite."""
 
-    def __init__(self, path: Path, policy: OutboxPolicy | None = None) -> None:
-        self._db = Database(path)
+    def __init__(self, path: Path | Database, policy: OutboxPolicy | None = None) -> None:
+        self._db = path if isinstance(path, Database) else Database(path)
         self._policy = policy if policy is not None else OutboxPolicy()
+
+    @property
+    def database(self) -> Database:
+        """The configured repository; constructing an outbox never migrates it."""
+        return self._db
 
     def migrate(self) -> None:
         """Apply the additive version-2 schema after the existing foundation."""

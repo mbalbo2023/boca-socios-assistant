@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import subprocess
 from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -16,10 +17,55 @@ CHECKS = TestCase()
 SHA = "a" * 40
 
 
+def test_failed_command_reports_static_stage_and_exit_status_without_output() -> None:
+    argv = ("/usr/bin/systemctl", "--user", "start", "docker.service")
+    with patch.object(
+        setup.subprocess,
+        "run",
+        side_effect=subprocess.CalledProcessError(7, argv, output="private", stderr="secret"),
+    ):
+        with CHECKS.assertRaisesRegex(setup.SetupError, "^user_service_start_failed_exit_7$"):
+            setup._command(Path("/home/boca-deploy"), *argv)
+    with patch.object(
+        setup.subprocess, "run", side_effect=subprocess.TimeoutExpired(argv, 15)
+    ):
+        with CHECKS.assertRaisesRegex(setup.SetupError, "^user_service_start_failed_timeout$"):
+            setup._command(Path("/home/boca-deploy"), *argv)
+    assert setup._command_reason(("/usr/bin/rootlesskit",)) == "rootless_namespace_failed"
+    assert setup._command_reason(("/usr/bin/dockerd",)) == "daemon_config_validation_failed"
+
+
+def test_service_failure_metadata_is_allowlisted_and_never_prints_raw_output() -> None:
+    for raw, expected in (
+        ("Result=exit-code\nExecMainStatus=1", "result=exit-code exit_status=1"),
+        ("Result=secret-value\nExecMainStatus=1", "metadata=UNVERIFIED"),
+        ("Result=exit-code\nExecMainStatus=999", "metadata=UNVERIFIED"),
+        ("Result=exit-code\nExecMainStatus=1\nExtra=secret", "metadata=UNVERIFIED"),
+    ):
+        with (
+            patch.object(setup, "_command", return_value=raw) as command,
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            setup._service_failure_receipt(Path("/home/boca-deploy"))
+        assert output.getvalue().strip() == f"BOCA_ROOTLESS_SERVICE_FAILURE {expected}"
+        assert command.call_args.args[1:] == (
+            "/usr/bin/systemctl",
+            "--user",
+            "show",
+            "docker.service",
+            "--property=Result,ExecMainStatus",
+        )
+
+
 def test_subordinate_ids_require_one_sufficient_dedicated_range() -> None:
     assert setup._subordinate_ids("other:1:10\nboca-deploy:100000:65536\n") == (100000, 65536)
-    for raw in ("", "boca-deploy:100000:1", "boca-deploy:10001:65536", "10001:x:65536",
-                "boca-deploy:100000:65536\n10001:200000:65536"):
+    for raw in (
+        "",
+        "boca-deploy:100000:1",
+        "boca-deploy:10001:65536",
+        "10001:x:65536",
+        "boca-deploy:100000:65536\n10001:200000:65536",
+    ):
         with CHECKS.assertRaises(setup.SetupError):
             setup._subordinate_ids(raw)
 
@@ -42,6 +88,7 @@ def test_directory_walk_rejects_symlinks_double_root_and_foreign_owner() -> None
     with TemporaryDirectory() as root:
         home = Path(root)
         (home / "link").symlink_to("/", target_is_directory=True)
+
         def owned(fd: int) -> SimpleNamespace:
             resolved = Path(os.readlink(f"/proc/self/fd/{fd}"))
             uid = 10001 if resolved == home or resolved.is_relative_to(home) else 0
@@ -136,6 +183,7 @@ def test_apply_starts_only_own_unit_then_requires_strict_postflight() -> None:
     with (
         patch.object(setup, "_preflight", return_value=home),
         patch.object(setup, "_namespace_smoke"),
+        patch.object(setup, "_empty_data_root"),
         patch.object(setup, "_write_new") as write,
         patch.object(setup, "_command", return_value=effective) as command,
         patch.object(setup, "_enable_new") as enable,
@@ -149,7 +197,13 @@ def test_apply_starts_only_own_unit_then_requires_strict_postflight() -> None:
     assert [call.args[1:] for call in command.call_args_list] == [
         ("/usr/bin/dockerd", "--validate", f"--config-file={home}/.config/docker/daemon.json"),
         ("/usr/bin/systemctl", "--user", "daemon-reload"),
-        ("/usr/bin/systemctl", "--user", "show", "docker.service", "--property=FragmentPath,DropInPaths"),
+        (
+            "/usr/bin/systemctl",
+            "--user",
+            "show",
+            "docker.service",
+            "--property=FragmentPath,DropInPaths",
+        ),
         ("/usr/bin/systemctl", "--user", "start", "docker.service"),
     ]
     assert "state=SERVICE_READY" in output.getvalue()
@@ -158,14 +212,29 @@ def test_apply_starts_only_own_unit_then_requires_strict_postflight() -> None:
 def test_postflight_rejects_malformed_rootless_and_container_count_evidence() -> None:
     home = Path("/home/boca-deploy")
     valid = {
-        "SecurityOptions": ["name=rootless"], "CgroupVersion": "2", "CgroupDriver": "systemd",
-        "Driver": "overlay2", "DockerRootDir": str(home.joinpath(*setup.DATA)), "Containers": 0,
+        "SecurityOptions": ["name=rootless"],
+        "CgroupVersion": "2",
+        "CgroupDriver": "systemd",
+        "Driver": "overlay2",
+        "DockerRootDir": str(home.joinpath(*setup.DATA)),
+        "Containers": 0,
     }
-    for changes in ({"SecurityOptions": "name=rootless"}, {"SecurityOptions": ["name=rootless", 1]}, {"Containers": False}):
+    for changes in (
+        {"SecurityOptions": "name=rootless"},
+        {"SecurityOptions": ["name=rootless", 1]},
+        {"Containers": False},
+    ):
         with (
             patch.object(setup, "_socket"),
             patch.object(setup.os, "access", return_value=False),
-            patch.object(setup, "_command", side_effect=["ActiveState=active\nSubState=running", json.dumps({**valid, **changes})]),
+            patch.object(
+                setup,
+                "_command",
+                side_effect=[
+                    "ActiveState=active\nSubState=running",
+                    json.dumps({**valid, **changes}),
+                ],
+            ),
         ):
             with CHECKS.assertRaisesRegex(setup.SetupError, "boundary_unproven"):
                 setup._postflight(home)
@@ -177,6 +246,7 @@ def test_postflight_failure_stops_only_new_service_and_preserves_files() -> None
     with (
         patch.object(setup, "_preflight", return_value=home),
         patch.object(setup, "_namespace_smoke"),
+        patch.object(setup, "_empty_data_root"),
         patch.object(setup, "_write_new"),
         patch.object(setup, "_enable_new"),
         patch.object(setup, "_command", return_value=effective) as command,
@@ -198,3 +268,38 @@ def test_workflow_setup_has_existing_mutation_gate_and_final_main_recheck() -> N
     assert "BOCA_ROOTLESS_SETUP_ENV_READY" not in workflow
     assert "Recheck current main before preparing dedicated rootless service" in workflow
     assert "host_rootless_setup.py" in workflow
+
+
+def test_enablement_failure_stops_own_service_without_claiming_link_removal() -> None:
+    home = Path("/home/boca-deploy")
+    effective = f"FragmentPath={home}/.config/systemd/user/docker.service\nDropInPaths=\n"
+    with (
+        patch.object(setup, "_preflight", return_value=home),
+        patch.object(setup, "_namespace_smoke"),
+        patch.object(setup, "_empty_data_root"),
+        patch.object(setup, "_write_new"),
+        patch.object(setup, "_postflight"),
+        patch.object(setup, "_enable_new", side_effect=OSError("sync failed")),
+        patch.object(setup, "_command", return_value=effective) as command,
+        patch.object(setup.os, "unlink") as unlink,
+    ):
+        with CHECKS.assertRaises(OSError):
+            setup.prepare("apply", SHA)
+    assert command.call_args.args[1:] == ("/usr/bin/systemctl", "--user", "stop", "docker.service")
+    unlink.assert_not_called()
+
+
+def test_existing_empty_data_directory_is_allowed_but_contents_are_preserved() -> None:
+    with TemporaryDirectory() as root:
+        home = Path(root)
+        for occupied in (False, True):
+            if occupied:
+                (home / "existing").write_bytes(b"do-not-read")
+            descriptor = os.open(home, os.O_RDONLY | os.O_DIRECTORY)
+            with patch.object(setup, "_directory", return_value=descriptor):
+                if occupied:
+                    with CHECKS.assertRaisesRegex(setup.SetupError, "data_preserved"):
+                        setup._empty_data_root(home)
+                else:
+                    setup._empty_data_root(home)
+        assert (home / "existing").read_bytes() == b"do-not-read"
