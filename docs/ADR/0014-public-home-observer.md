@@ -33,9 +33,39 @@ queue, CAPTCHA, blocked response, unknown page or any error is a stop, with
 only a sanitized reason or exception class. No HTML, screenshot, HAR, cookie,
 header, response body, query parameter or page text is written to output.
 
+### Optional read-only login DOM smoke (follow-up to #32)
+
+The explicit `--ack-one-public-visit --check-public-login-dom` mode reuses
+**the same observer, same exact `/auth/login` URL and same one-GET route gate**.
+It checks the HTTP 200 response, exact final URL and challenge indicators
+*before* examining any form. It then requires exactly one form containing one
+visible `input[type=email]`, one visible `input[type=password]` and one
+visible `button[type=submit]` or `input[type=submit]`, initially disabled.
+It reads only control counts, visibility and the disabled state; there is no
+interaction, value extraction, credential input or form submit. This mode
+does **not** depend on the site's visible copy or button accessible label;
+it fails closed if semantic form markup is absent. Success is the sanitized
+`login_form_disabled` state, not a login test.
+The original `--ack-one-public-visit` text-only mode remains unchanged.
+
+Both modes still require `BOCA_PUBLIC_OBSERVATION=one-shot` and
+`BOCA_OBSERVER_STOP=0`, with the stop switch enabled by default. Missing,
+hidden, duplicated or enabled controls become `unknown` and stop; no follow-on
+navigation or retries occur. Because the real site's markup has **not** been
+verified by this implementation, these selectors are a conservative
+hypothesis from a previously observed public form, not a claim of live
+compatibility. A Next.js client-rendered form may be absent with JavaScript
+disabled and scripts aborted: an empty CSR shell produces `unknown`/stop,
+**not** a false PASS. Visibility checks with CSS assets blocked cannot prove
+how a fully styled, hydrated site would display the form.
+
 The normal CI suite tests request filters, classification and browser cleanup
 with doubles. No scheduled or PR workflow makes a request to Boca. Playwright
 is deliberately absent from the controller dependency lock and Docker image.
+The optional DOM smoke and its CLI gate are also tested with offline doubles;
+the tests include a negative empty CSR-shell case, but they are not an online
+Chromium or live-site pass. A controlled real observation still requires the
+network isolation gate below; until then, live compatibility is NO_GO/unknown.
 JavaScript is disabled; if the public portal renders its login only in the
 client, the observer will return `unknown` and stop. A redirect away from
 `/auth/login` also stops; the script does not follow it. The unit tests use

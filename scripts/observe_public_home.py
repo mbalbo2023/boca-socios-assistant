@@ -51,6 +51,18 @@ class RoutePort(Protocol):
     async def fulfill(self, *, response: ResponsePort) -> None: ...
 
 
+class LocatorPort(Protocol):
+    async def count(self) -> int: ...
+
+    async def is_visible(self) -> bool: ...
+
+    async def is_disabled(self) -> bool: ...
+
+
+class PublicLoginDomPort(Protocol):
+    def locator(self, selector: str) -> LocatorPort: ...
+
+
 def allow_request(url: str, method: str, kind: str, document_count: int) -> bool:
     """Allow only the first exact public-login document, with no active assets."""
     parsed = urlsplit(url)
@@ -79,19 +91,45 @@ def expected_discarded_asset(url: str, method: str, kind: str) -> bool:
     return kind == "other" and parsed.path == "/favicon.ico" and not parsed.query
 
 
-def classify(status: int, url: str, visible_text: str) -> str:
-    """Discard text after classification; never include it in output or errors."""
+def document_gate(status: int, url: str, visible_text: str) -> str | None:
+    """Stop bad responses and challenges before interpreting public DOM."""
     if status != 200 or url != LOGIN_URL:
         return "blocked"
     text = visible_text.casefold()
     if any(marker in text for marker in CHALLENGE_MARKERS):
         return "challenge"
+    return None
+
+
+def classify(status: int, url: str, visible_text: str) -> str:
+    """Discard text after classification; never include it in output or errors."""
+    gate = document_gate(status, url, visible_text)
+    if gate is not None:
+        return gate
+    text = visible_text.casefold()
     if "ingresá a boca socios" in text and "iniciar sesión" in text:
         return "login_visible"
     return "unknown"
 
 
-async def observe(api: object) -> str:
+async def inspect_login_dom(page: PublicLoginDomPort) -> bool:
+    """Read only the public form structure; never read values or activate controls."""
+    # Requiring one form ties each typed control and disabled submit to one form,
+    # while allowing the visible copy and accessible labels to change safely.
+    form = page.locator("form")
+    if await form.count() != 1:
+        return False
+    email = page.locator('form input[type="email"]')
+    password = page.locator('form input[type="password"]')
+    submit = page.locator('form button[type="submit"], form input[type="submit"]')
+    # Missing, hidden or duplicated controls, CSR shells or enabled submit are unknown.
+    for item in (email, password, submit):
+        if await item.count() != 1 or not await item.is_visible():
+            return False
+    return await submit.is_disabled()
+
+
+async def observe(api: object, *, check_dom: bool = False) -> str:
     """Observe exactly one public document, fail closed on any extra request."""
     # api is the Playwright object in production; a fake is injected in tests.
     browser = await api.chromium.launch(  # type: ignore[attr-defined]
@@ -139,6 +177,15 @@ async def observe(api: object) -> str:
             visible_text = await asyncio.wait_for(page.inner_text("body"), timeout=3)
             if blocked:
                 return "blocked"
+            if check_dom:
+                gate = document_gate(response.status, page.url, visible_text)
+                if gate is not None:
+                    return gate
+                # This reads selectors/state only. No fill, click or submit.
+                dom_ok = await asyncio.wait_for(inspect_login_dom(page), timeout=3)
+                if blocked:
+                    return "blocked"
+                return "login_form_disabled" if dom_ok else "unknown"
             return classify(response.status, page.url, visible_text)
         finally:
             await asyncio.wait_for(context.close(), timeout=5)
@@ -149,8 +196,10 @@ async def observe(api: object) -> str:
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
+    public_view = argv == ["--ack-one-public-visit"]
+    dom_view = argv == ["--ack-one-public-visit", "--check-public-login-dom"]
     if (
-        argv != ["--ack-one-public-visit"]
+        not (public_view or dom_view)
         or os.environ.get("BOCA_PUBLIC_OBSERVATION") != "one-shot"
         or os.environ.get("BOCA_OBSERVER_STOP", "1") != "0"
     ):
@@ -161,10 +210,10 @@ def main(argv: list[str] | None = None) -> int:
 
         async def run() -> str:
             async with async_playwright() as api:
-                return await asyncio.wait_for(observe(api), timeout=25)
+                return await asyncio.wait_for(observe(api, check_dom=dom_view), timeout=25)
 
         state = asyncio.run(run())
-        if state != "login_visible":
+        if state != ("login_form_disabled" if dom_view else "login_visible"):
             print(f"public_observer_stopped: {state}", file=sys.stderr)
             return 1
         print(json.dumps({"mode": "public_login_only", "state": state}))
