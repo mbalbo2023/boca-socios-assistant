@@ -1,6 +1,6 @@
 # ADR 0083: custodia cifrada del bot Telegram y destino privado
 
-**Estado:** propuesta del issue #198, pendiente de PR, revisión y merge.
+**Estado:** decisión aceptada al integrar PR #199; candidata hasta su merge.
 Diseño: 2026-11-01 (America/Argentina/Buenos_Aires). Este cambio es biblioteca
 y pruebas sintéticas; no configura el droplet ni envía un mensaje.
 
@@ -61,6 +61,6 @@ Los tests usan token/chat totalmente sintéticos y volumen temporal; cubren
 cifrado/des-cifrado, domain/tag/recipient, campos duplicados/desconocidos,
 replay, symlink, permisos, enlace duro, identidad, fallo del segundo write y
 recibos redactados. El test falló inicialmente porque el módulo no existía;
-candidate/checks/revisión exactos se consignarán en el PR. No hubo Bot API,
+candidato/checks/revisión exactos se consignan en PR #199. No hubo Bot API,
 credenciales reales, migración o efecto host. El escritor central actualizará
 estado, plan y checkpoint al integrar esta evidencia conforme a regla 84.

@@ -74,6 +74,8 @@ def test_wrong_recipient_duplicate_unknown_field_or_bad_tag_cannot_write(tmp_pat
             boot.install(a, json.dumps(changed).encode(), uid=os.geteuid())
     with pytest.raises(boot.BootstrapError, match="invalid_envelope"):
         boot.install(a, b'{"version":1,"version":1}', uid=os.geteuid())
+    with pytest.raises(boot.BootstrapError, match="invalid_envelope"):
+        boot.install(a, json.dumps(parsed, indent=2).encode(), uid=os.geteuid())
     assert not (a / boot.TOKEN_FILE).exists() and not (b / boot.TOKEN_FILE).exists()
 
 

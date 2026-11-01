@@ -293,6 +293,8 @@ def _decrypt(envelope: bytes, private: bytes, receipt: RecipientReceipt) -> tupl
             "ciphertext"
         }:
             raise BootstrapError("invalid_envelope")
+        if envelope != _canonical(data):
+            raise BootstrapError("invalid_envelope")
         header = {name: value for name, value in data.items() if name != "ciphertext"}
         if (
             type(data["version"]) is not int
