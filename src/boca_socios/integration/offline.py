@@ -113,14 +113,19 @@ class OfflineSimulation:
             snapshot = self._queue.snapshot(session_id)
             if snapshot.state is not QueueState.ADMITTED:
                 raise InvalidStateTransition("synthetic admission is required for this member")
-            workflow = SyntheticBrowserWorkflow(
-                intents=SqliteIntentAdapter(self._database),
-                browser=self._browser,
-                notifications=StaticOutboxAdapter(self._outbox, notification_at_seconds),
-            )
-            receipt = await workflow.run(intent)
+            receipt = await self._run_workflow(intent, notification_at_seconds)
             self._queue.finish(session_id, at)
             return receipt
         finally:
             with self._claim_lock:
                 self._active_members.remove(intent.member_id)
+
+    async def _run_workflow(
+        self, intent: TicketIntent, notification_at_seconds: float
+    ) -> SimulationReceipt:
+        workflow = SyntheticBrowserWorkflow(
+            intents=SqliteIntentAdapter(self._database),
+            browser=self._browser,
+            notifications=StaticOutboxAdapter(self._outbox, notification_at_seconds),
+        )
+        return await workflow.run(intent)
