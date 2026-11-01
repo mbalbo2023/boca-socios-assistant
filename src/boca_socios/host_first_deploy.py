@@ -11,21 +11,27 @@ import base64
 import binascii
 import errno
 import hashlib
+import http.client
 import json
 import os
 import platform
 import pwd
 import re
 import shutil
+import socket
+import ssl
 import stat
 import subprocess
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path("/srv/boca-socios")
 COMPOSE = ROOT / "compose.yaml"
+BETA_COMPOSE = ROOT / "compose.beta.yaml"
 PROJECT = "boca-socios"
+DATA_VOLUME = "boca-socios_boca_data"
 KEY_VOLUME = "boca-socios_boca_key"
 OWNER_VOLUME = "boca-socios_boca_owner"
 ROOTLESS_SOCKET = Path("/run/user/10001/docker.sock")
@@ -235,6 +241,34 @@ def validate_site_snapshot(
     if require_owner and volumes != {OWNER_VOLUME}:
         raise PreflightError("Boca owner volume is not installed")
     validate_snapshot(replace(snapshot, boca_volume=False))
+
+
+def validate_beta_snapshot(
+    snapshot: HostSnapshot, volumes: set[str], *, expected: set[str]
+) -> None:
+    """Allow only the named Boca volumes for the current new-install phase."""
+    permitted = {OWNER_VOLUME, KEY_VOLUME, DATA_VOLUME}
+    if (
+        OWNER_VOLUME not in expected
+        or not expected <= permitted
+        or volumes != expected
+        or snapshot.boca_volume != bool(volumes)
+    ):
+        raise PreflightError("unexpected Boca BETA volume inventory")
+    validate_snapshot(replace(snapshot, boca_volume=False))
+
+
+def _validate_beta_context(origin: str, owner: str) -> None:
+    if not re.fullmatch(
+        r"https://[a-z0-9][a-z0-9.-]{0,252}(?::[0-9]{2,5})?", origin
+    ) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", owner):
+        raise PreflightError("invalid private BETA coordinates")
+    try:
+        port = urlsplit(origin).port
+    except ValueError as exc:
+        raise PreflightError("invalid private BETA port") from exc
+    if port is not None and not 1024 <= port <= 65535:
+        raise PreflightError("invalid private BETA port")
 
 
 def validate_docker_boundary(snapshot: DockerBoundarySnapshot) -> None:
@@ -604,6 +638,20 @@ def _root_ready() -> bool:
     return os.access(ROOT, os.W_OK)
 
 
+def _beta_root_ready() -> bool:
+    if not _safe_dir(ROOT):
+        return False
+    try:
+        entries = {child.name for child in ROOT.iterdir()}
+    except OSError:
+        return False
+    return (
+        entries == {BETA_COMPOSE.name}
+        and not BETA_COMPOSE.is_symlink()
+        and os.access(ROOT, os.W_OK)
+    )
+
+
 def _names(kind: str, label: str) -> set[str]:
     return set(_run("docker", kind, "ls", "-q", "--filter", label).splitlines())
 
@@ -734,11 +782,11 @@ def _validate_storage_continuity(before: StorageSnapshot, after: StorageSnapshot
     _validate_storage_capacity(after)
 
 
-def collect_snapshot() -> HostSnapshot:
+def collect_snapshot(*, beta_staged: bool = False) -> HostSnapshot:
     # The deployment identity owns only the rootless Docker endpoint; the key
     # is generated in a separate named volume within the container UID map.
     uid = _require_dedicated_identity()
-    if not _root_ready():
+    if not (_beta_root_ready() if beta_staged else _root_ready()):
         raise PreflightError("Boca-owned directory is unavailable or unsafe")
     _run("docker", "version", "--format", "{{.Server.Version}}")
     _run("docker", "compose", "version", "--short")
@@ -792,6 +840,20 @@ def _verify_compose(expected_sha: str) -> None:
         raise PreflightError("staged Compose SHA-256 differs from reviewed file")
 
 
+def _verify_beta_compose(expected_sha: str) -> None:
+    if not _beta_root_ready():
+        raise PreflightError("unsafe staged BETA directory")
+    metadata = BETA_COMPOSE.lstat()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != 10001
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+        or metadata.st_size > 32_768
+        or hashlib.sha256(BETA_COMPOSE.read_bytes()).hexdigest() != expected_sha
+    ):
+        raise PreflightError("staged BETA Compose differs from reviewed file")
+
+
 def _compose_env(image: str) -> dict[str, str]:
     return {
         **os.environ,
@@ -802,6 +864,18 @@ def _compose_env(image: str) -> dict[str, str]:
 
 def _compose_args(*args: str) -> tuple[str, ...]:
     return ("docker", "compose", "-p", PROJECT, "-f", str(COMPOSE), *args)
+
+
+def _beta_compose_env(image: str, origin: str, owner: str) -> dict[str, str]:
+    return {
+        **_compose_env(image),
+        "BOCA_PANEL_ORIGIN": origin,
+        "BOCA_OWNER_SUBJECT": owner,
+    }
+
+
+def _beta_compose_args(*args: str) -> tuple[str, ...]:
+    return ("docker", "compose", "-p", PROJECT, "-f", str(BETA_COMPOSE), *args)
 
 
 def _validate_key_volume() -> None:
@@ -861,6 +935,34 @@ def _validate_owner_volume() -> None:
             raise PreflightError("Boca owner volume mountpoint is redirected")
     except (OSError, RuntimeError) as exc:
         raise PreflightError("Boca owner volume mountpoint is unavailable") from exc
+
+
+def _validate_data_volume() -> None:
+    volume = _json_object(
+        _run("docker", "volume", "inspect", "--format", "{{json .}}", DATA_VOLUME),
+        "data volume",
+    )
+    root = Path(_run("docker", "info", "--format", "{{.DockerRootDir}}"))
+    expected = root / "volumes" / DATA_VOLUME / "_data"
+    labels = volume.get("Labels")
+    if (
+        volume.get("Name") != DATA_VOLUME
+        or volume.get("Driver") != "local"
+        or volume.get("Scope") != "local"
+        or volume.get("Options") not in (None, {})
+        or not root.is_absolute()
+        or root == Path("/")
+        or volume.get("Mountpoint") != str(expected)
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.volume") != "boca_data"
+    ):
+        raise PreflightError("Boca data volume identity is unsafe")
+    try:
+        if root.resolve(strict=True) != root or expected.resolve(strict=True) != expected:
+            raise PreflightError("Boca data volume mountpoint is redirected")
+    except (OSError, RuntimeError) as exc:
+        raise PreflightError("Boca data volume mountpoint is unavailable") from exc
 
 
 def _owner_init_container(image: str) -> tuple[str, ...]:
@@ -1088,6 +1190,124 @@ def _create_key(image: str) -> None:
         raise PreflightError("Boca key is not readable by the controller identity")
 
 
+def _beta_check_container(image: str, origin: str, owner: str, operation: str) -> tuple[str, ...]:
+    if operation not in {"check-beta-owner", "check-beta-config"}:
+        raise PreflightError("invalid BETA preflight")
+    _validate_beta_context(origin, owner)
+    if not IMAGE_PATTERN.fullmatch(image):
+        raise PreflightError("invalid BETA image")
+    env = {
+        "BOCA_ENVIRONMENT": "staging",
+        "BOCA_RUNTIME_MODE": "simulation",
+        "BOCA_ENGINE_MODE": "off",
+        "BOCA_DB_PATH": "/data/boca.sqlite3",
+        "BOCA_MASTER_KEY_FILE": "/run/secrets/boca_master_key",
+        "BOCA_PANEL_ORIGIN": origin,
+        "BOCA_OWNER_SUBJECT": owner,
+        "BOCA_PASSKEY_CREDENTIAL_ID_FILE": "/run/owner/credential_id",
+        "BOCA_PASSKEY_PUBLIC_KEY_DER_FILE": "/run/owner/public_key.der",
+        "BOCA_TLS_CERT_FILE": "/run/owner/tls.crt",
+        "BOCA_TLS_KEY_FILE": "/run/owner/tls.key",
+        "BOCA_HEALTH_CA_FILE": "/run/owner/health-ca.pem",
+        "BOCA_BIND_HOST": "0.0.0.0",  # noqa: S104 - isolated Boca bridge, host loopback only
+        "BOCA_BIND_PORT": "8443",
+    }
+    return (
+        "docker",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--user",
+        "10001:10001",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--pids-limit",
+        "16",
+        "--memory",
+        "64m",
+        "--cpus",
+        "0.25",
+        *(arg for pair in sorted(env.items()) for arg in ("--env", f"{pair[0]}={pair[1]}")),
+        "--mount",
+        f"type=volume,source={OWNER_VOLUME},target=/run/owner,volume-nocopy,readonly",
+        *(
+            (
+                "--mount",
+                f"type=volume,source={KEY_VOLUME},target=/run/secrets,volume-nocopy,readonly",
+            )
+            if operation == "check-beta-config"
+            else ()
+        ),
+        image,
+        "python",
+        "-m",
+        "boca_socios.runtime",
+        operation,
+    )
+
+
+def _beta_check_receipt(output: str, operation: str) -> None:
+    expected = (
+        '{"event":"beta_owner_ready","mode":"simulation","engine":"off"}'
+        if operation == "check-beta-owner"
+        else '{"event":"beta_config_ready","mode":"simulation","engine":"off"}'
+    )
+    if output != expected:
+        raise PreflightError("BETA image preflight did not confirm readiness")
+
+
+def _beta_init_container(image: str) -> tuple[str, ...]:
+    if not IMAGE_PATTERN.fullmatch(image):
+        raise PreflightError("invalid BETA image")
+    return (
+        "docker",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--user",
+        "10001:10001",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--pids-limit",
+        "64",
+        "--memory",
+        "256m",
+        "--cpus",
+        "0.50",
+        "--env",
+        "BOCA_ENVIRONMENT=staging",
+        "--env",
+        "BOCA_RUNTIME_MODE=simulation",
+        "--env",
+        "BOCA_ENGINE_MODE=off",
+        "--env",
+        "BOCA_DB_PATH=/data/boca.sqlite3",
+        "--env",
+        "BOCA_MASTER_KEY_FILE=/run/secrets/boca_master_key",
+        "--mount",
+        f"type=volume,source={DATA_VOLUME},target=/data",
+        "--mount",
+        f"type=volume,source={KEY_VOLUME},target=/run/secrets,volume-nocopy,readonly",
+        image,
+        "python",
+        "-m",
+        "boca_socios.runtime",
+        "init-beta",
+    )
+
+
 def _validate_coordinates(
     image: str, source_sha: str, compose_sha: str, *, read_only_preflight: bool = False
 ) -> None:
@@ -1174,10 +1394,21 @@ def _validate_boca_network(container: str, network_id: str) -> None:
         raise PreflightError("Boca private network identity or peers changed")
 
 
-def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
-    container = _run(*_compose_args("ps", "-q", "controller"), env=_compose_env(image))
+def collect_diagnostic(
+    image: str, source_sha: str, *, beta_origin: str = "", beta_owner: str = ""
+) -> DiagnosticSnapshot:
+    beta = bool(beta_origin)
+    if beta:
+        _validate_beta_context(beta_origin, beta_owner)
+    args = _beta_compose_args if beta else _compose_args
+    environment_vars = (
+        _beta_compose_env(image, beta_origin, beta_owner) if beta else _compose_env(image)
+    )
+    container = _run(*args("ps", "-q", "controller"), env=environment_vars)
     if not re.fullmatch(r"[0-9a-f]{64}", container):
         raise PreflightError("expected exactly one Boca controller")
+    if beta and set(_run("docker", "ps", "-a", "-q", "--no-trunc").splitlines()) != {container}:
+        raise PreflightError("dedicated BETA daemon has an unexpected container")
     config = _json_object(
         _run("docker", "inspect", "--format", "{{json .Config}}", container), "container config"
     )
@@ -1214,12 +1445,14 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
     if type(cgroupns_mode) is not str:
         raise PreflightError("missing Boca cgroup namespace metadata")
     mounts = json.loads(_run("docker", "inspect", "--format", "{{json .Mounts}}", container))
-    if not isinstance(mounts, list) or len(mounts) != 2:
+    if not isinstance(mounts, list) or len(mounts) != (3 if beta else 2):
         raise PreflightError("unexpected Boca controller mounts")
     expected_mounts = {
-        ("boca-socios_boca_data", "/data", True),
+        (DATA_VOLUME, "/data", True),
         (KEY_VOLUME, "/run/secrets", False),
     }
+    if beta:
+        expected_mounts.add((OWNER_VOLUME, "/run/owner", False))
     actual_mounts: set[tuple[str, str, bool]] = set()
     for mount in mounts:
         if (
@@ -1255,6 +1488,22 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
         "BOCA_ENVIRONMENT": "staging",
         "BOCA_DB_PATH": "/data/boca.sqlite3",
         "BOCA_MASTER_KEY_FILE": "/run/secrets/boca_master_key",
+        **(
+            {
+                "BOCA_PANEL_ORIGIN": beta_origin,
+                "BOCA_OWNER_SUBJECT": beta_owner,
+                "BOCA_PASSKEY_CREDENTIAL_ID_FILE": "/run/owner/credential_id",
+                "BOCA_PASSKEY_PUBLIC_KEY_DER_FILE": "/run/owner/public_key.der",
+                "BOCA_TLS_CERT_FILE": "/run/owner/tls.crt",
+                "BOCA_TLS_KEY_FILE": "/run/owner/tls.key",
+                "BOCA_HEALTH_CA_FILE": "/run/owner/health-ca.pem",
+                "BOCA_HEALTH_MODE": "beta",
+                "BOCA_BIND_HOST": "0.0.0.0",  # noqa: S104 - isolated Boca bridge
+                "BOCA_BIND_PORT": "8443",
+            }
+            if beta
+            else {}
+        ),
     }.items():
         if environment.get(name) != expected:
             raise PreflightError(f"Boca diagnostic {name} mismatch")
@@ -1313,8 +1562,245 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
         cgroupns_mode=cgroupns_mode,
         cgroup=_cgroup_limits(container),
     )
-    validate_diagnostic(snapshot, image, source_sha)
+    if beta:
+        expected_ports = {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
+        if port_bindings != expected_ports or network_ports != expected_ports:
+            raise PreflightError("BETA host loopback port binding changed")
+        restart = host.get("RestartPolicy")
+        if (
+            config.get("Cmd") != ["python", "-m", "boca_socios.runtime", "serve-beta"]
+            or config.get("Entrypoint") not in (None, [])
+            or not isinstance(restart, dict)
+            or restart.get("Name") != "unless-stopped"
+            or restart.get("MaximumRetryCount") != 0
+        ):
+            raise PreflightError("BETA command or restart policy changed")
+        validate_diagnostic(
+            replace(snapshot, has_ports=False, network_ports=False), image, source_sha
+        )
+        if environment.get("BOCA_SITE_BRIDGE_MODE", "off") != "off":
+            raise PreflightError("BETA Site bridge activation is not authorized")
+    else:
+        validate_diagnostic(snapshot, image, source_sha)
     return snapshot
+
+
+def _beta_loopback_health(container: str, origin: str) -> None:
+    """Use the container's public CA only; connect to the host loopback publish."""
+    authority = urlsplit(origin)
+    if not authority.hostname:
+        raise PreflightError("invalid BETA TLS hostname")
+    ca = _run(
+        "docker",
+        "exec",
+        "--user",
+        "10001:10001",
+        container,
+        "python",
+        "-c",
+        "from pathlib import Path; print(Path('/run/owner/health-ca.pem').read_text(encoding='ascii'))",
+    )
+    if not 0 < len(ca) <= 16_384 or "-----BEGIN CERTIFICATE-----" not in ca:
+        raise PreflightError("BETA trust anchor unavailable")
+    context = ssl.create_default_context(cadata=ca)
+    try:
+        with socket.create_connection(("127.0.0.1", 8443), timeout=3) as plain:
+            with context.wrap_socket(plain, server_hostname=authority.hostname) as secured:
+                secured.settimeout(3)
+                secured.sendall(
+                    f"GET /healthz HTTP/1.1\r\nHost: {authority.netloc}\r\n"
+                    "Connection: close\r\n\r\n".encode("ascii")
+                )
+                response = http.client.HTTPResponse(secured)
+                response.begin()
+                if response.status != 200 or response.read(64) != b"BOCA_BETA_READY":
+                    raise PreflightError("BETA host loopback health unavailable")
+    except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+        raise PreflightError("BETA host loopback TLS unavailable") from exc
+
+
+def _beta_inventory(*, staged: bool, expected: set[str]) -> HostSnapshot:
+    snapshot = collect_snapshot(beta_staged=staged)
+    if _run("docker", "ps", "-a", "-q", "--no-trunc"):
+        raise PreflightError("dedicated BETA daemon must have no containers before install")
+    volumes = _names("volume", "name=^boca-socios_")
+    validate_beta_snapshot(snapshot, volumes, expected=expected)
+    _validate_owner_volume()
+    if _run("docker", "ps", "-a", "-q", "--filter", f"volume={OWNER_VOLUME}"):
+        raise PreflightError("Boca owner volume is attached to a container")
+    return snapshot
+
+
+def _beta_pull(image: str, source_sha: str) -> None:
+    before = _storage_snapshot()
+    _validate_storage_capacity(before)
+    _run("docker", "pull", image)
+    digests = json.loads(
+        _run("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image)
+    )
+    revision = _run(
+        "docker",
+        "image",
+        "inspect",
+        "--format",
+        '{{index .Config.Labels "org.opencontainers.image.revision"}}',
+        image,
+    )
+    if not isinstance(digests, list) or image not in digests or revision != source_sha:
+        raise PreflightError("pulled BETA image differs from reviewed release")
+    _validate_storage_continuity(before, _storage_snapshot())
+
+
+def _beta_rollback(image: str, source_sha: str) -> None:
+    global_ids = set(_run("docker", "ps", "-a", "-q", "--no-trunc").splitlines())
+    labeled = set(
+        _run(
+            "docker",
+            "ps",
+            "-a",
+            "-q",
+            "--no-trunc",
+            "--filter",
+            f"label=com.docker.compose.project={PROJECT}",
+        ).splitlines()
+    )
+    named = set(
+        _run(
+            "docker", "ps", "-a", "-q", "--no-trunc", "--filter", "name=^/boca-socios-"
+        ).splitlines()
+    )
+    if global_ids != labeled or labeled != named or len(labeled) > 1:
+        raise PreflightError("Boca rollback container inventory is uncertain")
+    state = "NO_CONTROLLER"
+    if labeled:
+        container = next(iter(labeled))
+        if not re.fullmatch(r"[0-9a-f]{64}", container):
+            raise PreflightError("Boca rollback container ID is uncertain")
+        record = _json_object(
+            _run("docker", "inspect", "--format", "{{json .}}", container), "rollback container"
+        )
+        config = record.get("Config")
+        labels = config.get("Labels") if isinstance(config, dict) else None
+        current_state = record.get("State")
+        if (
+            record.get("Id") != container
+            or record.get("Name") != "/boca-socios-controller-1"
+            or not isinstance(config, dict)
+            or config.get("Image") != image
+            or config.get("User") != "10001:10001"
+            or not isinstance(labels, dict)
+            or labels.get("com.docker.compose.project") != PROJECT
+            or labels.get("com.docker.compose.service") != "controller"
+            or labels.get("org.opencontainers.image.revision") != source_sha
+            or not isinstance(current_state, dict)
+            or type(current_state.get("Running")) is not bool
+        ):
+            raise PreflightError("Boca rollback controller identity is uncertain")
+        if current_state["Running"]:
+            _run("docker", "stop", "--time", "30", container)
+            state = "STOPPED"
+        else:
+            state = "ALREADY_STOPPED"
+        after = _json_object(
+            _run("docker", "inspect", "--format", "{{json .State}}", container), "stopped state"
+        )
+        if after.get("Running") is not False or after.get("Restarting") is not False:
+            raise PreflightError("Boca rollback controller stop is unverified")
+    storage = _storage_snapshot()
+    print(
+        f"BOCA_BETA_ROLLBACK state={state} data=preserved key=preserved owner=preserved"
+        f" stage=preserved stage_free_mib={storage.stage_free_bytes // 1024**2}"
+        f" docker_free_mib={storage.docker_free_bytes // 1024**2}"
+        f" stage_inodes={storage.stage_inodes} docker_inodes={storage.docker_inodes}"
+    )
+
+
+def _beta_phase(
+    operation: str, image: str, source_sha: str, compose_sha: str, origin: str, owner: str
+) -> None:
+    _validate_beta_context(origin, owner)
+    if operation == "beta-rollback":
+        _beta_rollback(image, source_sha)
+        return
+    staged = operation in {"beta-config", "beta-apply"}
+    if staged:
+        _verify_beta_compose(compose_sha)
+    snapshot = _beta_inventory(staged=staged, expected={OWNER_VOLUME})
+    if not staged and (COMPOSE.exists() or BETA_COMPOSE.exists() or any(ROOT.iterdir())):
+        raise PreflightError("Boca app files already staged; recovery review required")
+    if operation in {"beta-preflight", "beta-stage"}:
+        print(
+            f"BOCA_BETA_PREFLIGHT state=PASS uid={snapshot.uid}"
+            f" mem_kib={snapshot.available_memory_kib}"
+            f" stage_free_mib={snapshot.available_disk_bytes // 1024**2}"
+            f" docker_free_mib={snapshot.docker_disk_bytes // 1024**2}"
+            f" stage_inodes={snapshot.available_inodes} docker_inodes={snapshot.docker_inodes}"
+            " owner=existing app=absent"
+        )
+        return
+    compose_env = _beta_compose_env(image, origin, owner)
+    if operation == "beta-config":
+        print(_run(*_beta_compose_args("config", "--format", "json"), env=compose_env))
+        return
+    if operation != "beta-apply":
+        raise PreflightError("unknown BETA phase")
+    _run(*_beta_compose_args("config", "-q"), env=compose_env)
+    _beta_pull(image, source_sha)
+    _verify_beta_compose(compose_sha)
+    _beta_inventory(staged=True, expected={OWNER_VOLUME})
+    _beta_check_receipt(
+        _run(*_beta_check_container(image, origin, owner, "check-beta-owner")),
+        "check-beta-owner",
+    )
+    _beta_inventory(staged=True, expected={OWNER_VOLUME})
+    _create_key(image)
+    _beta_inventory(staged=True, expected={OWNER_VOLUME, KEY_VOLUME})
+    _beta_check_receipt(
+        _run(*_beta_check_container(image, origin, owner, "check-beta-config")),
+        "check-beta-config",
+    )
+    _beta_inventory(staged=True, expected={OWNER_VOLUME, KEY_VOLUME})
+    created = _run(
+        "docker",
+        "volume",
+        "create",
+        "--driver",
+        "local",
+        "--label",
+        f"com.docker.compose.project={PROJECT}",
+        "--label",
+        "com.docker.compose.volume=boca_data",
+        DATA_VOLUME,
+    )
+    if created != DATA_VOLUME:
+        raise PreflightError("unexpected Boca data volume creation")
+    _validate_data_volume()
+    if _run(*_beta_init_container(image)):
+        raise PreflightError("BETA new-only database initialization had unexpected output")
+    _validate_data_volume()
+    _validate_key_volume()
+    _validate_owner_volume()
+    _run(
+        *_beta_compose_args(
+            "up", "--no-build", "--no-deps", "--wait", "--wait-timeout", "90", "-d", "controller"
+        ),
+        env=compose_env,
+    )
+    _verify_beta_compose(compose_sha)
+    _validate_data_volume()
+    _validate_key_volume()
+    _validate_owner_volume()
+    diagnostic = collect_diagnostic(image, source_sha, beta_origin=origin, beta_owner=owner)
+    _beta_loopback_health(diagnostic.container_id, origin)
+    capacity = _storage_snapshot()
+    _validate_storage_capacity(capacity)
+    print(
+        f"BOCA_BETA_INSTALL state=PASS source_sha={source_sha} image={image}"
+        " service=controller host=loopback tls=verified engine=off site=off telegram=off"
+        f" stage_free_mib={capacity.stage_free_bytes // 1024**2}"
+        f" docker_free_mib={capacity.docker_free_bytes // 1024**2}"
+        f" stage_inodes={capacity.stage_inodes} docker_inodes={capacity.docker_inodes}"
+    )
 
 
 def _site_phase(operation: str, image: str, source_sha: str, envelope: str) -> None:
@@ -1379,9 +1865,27 @@ def _site_phase(operation: str, image: str, source_sha: str, envelope: str) -> N
 
 
 def phase(
-    phase_name: str, image: str, source_sha: str, compose_sha: str, envelope: str = ""
+    phase_name: str,
+    image: str,
+    source_sha: str,
+    compose_sha: str,
+    envelope: str = "",
+    beta_owner: str = "",
 ) -> None:
-    if envelope and phase_name != "site-install":
+    beta = phase_name.startswith("beta-")
+    if beta:
+        if phase_name not in {
+            "beta-preflight",
+            "beta-stage",
+            "beta-config",
+            "beta-apply",
+            "beta-rollback",
+        }:
+            raise PreflightError("unknown BETA deployment phase")
+        _validate_beta_context(envelope, beta_owner)
+    elif beta_owner:
+        raise PreflightError("unexpected BETA context outside BETA phase")
+    elif envelope and phase_name != "site-install":
         raise PreflightError("unexpected Site envelope outside install phase")
     _validate_coordinates(
         image,
@@ -1391,6 +1895,10 @@ def phase(
     )
     if phase_name == "inspect-prerequisites":
         inspect_prerequisites()
+        return
+    if beta:
+        _validate_docker_boundary()
+        _beta_phase(phase_name, image, source_sha, compose_sha, envelope, beta_owner)
         return
     if phase_name.startswith("site-"):
         if phase_name not in {"site-prepare", "site-install", "site-verify"}:
@@ -1522,15 +2030,28 @@ def main() -> int:
             "site-prepare",
             "site-install",
             "site-verify",
+            "beta-preflight",
+            "beta-stage",
+            "beta-config",
+            "beta-apply",
+            "beta-rollback",
         ),
     )
     parser.add_argument("image")
     parser.add_argument("source_sha")
     parser.add_argument("compose_sha")
     parser.add_argument("envelope", nargs="?", default="")
+    parser.add_argument("beta_owner", nargs="?", default="")
     args = parser.parse_args()
     try:
-        phase(args.phase, args.image, args.source_sha, args.compose_sha, args.envelope)
+        phase(
+            args.phase,
+            args.image,
+            args.source_sha,
+            args.compose_sha,
+            args.envelope,
+            args.beta_owner,
+        )
     except (PreflightError, OSError, ValueError, TypeError, KeyError) as exc:
         print(f"BOCA_NO_GO: {exc}", file=sys.stderr)
         return 1
