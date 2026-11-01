@@ -45,6 +45,9 @@ mutex; do not add another concurrency mechanism for the same defect.
 Stabilize each candidate before pushing routine formatting/source corrections
 and reconcile final integration in order, retaining strict up-to-date checks.
 This reduces avoidable repeated work without accepting stale source evidence.
+Reuse already successful evidence for its exact unchanged candidate instead
+of dispatching duplicate tests. A new source/base/merge SHA still needs its
+own required checks; serialize merges and retain the actual up-to-date gate.
 
 Do not introduce cache/artifact plumbing merely because builds are repeated:
 
@@ -90,6 +93,29 @@ one peak. A future worker needs its own reviewed budget/isolation and a
 separately authorized host preflight. No droplet stress test, browser visit,
 host resource increase, database operation or installation follows from this
 measurement.
+
+## Future BETA end-to-end measurements
+
+Once an approved panel/enrollment/command path exists, measure its complete
+synthetic user action before comparing optimizations: start in the browser
+when the action is submitted and finish when the acknowledged durable result
+is visible. Also record server request duration and DB transaction duration
+separately so network/render time is not mistaken for storage contention.
+Distinguish read-only panel refresh, synthetic enrollment, command acceptance
+and eventual completion; an HTTP acknowledgement alone is not completion.
+
+Report observation count, p50/p95 method, errors/timeouts, cold versus warm
+runs, concurrency, exact image/source, runner/host class and resource limits.
+Use monotonic elapsed clocks within each process and opaque correlation IDs;
+do not subtract unsynchronized browser/server timestamps. Record peak memory,
+CPU consumed and PID count for each participating container as well as total
+wall time. Do not log credentials, key material or member data. Keep workload,
+data size and environment equal for a comparison, and retain failed samples
+instead of improving percentiles by dropping them. A small sample's p95 must
+be labeled as such, not treated as a production bound. Set acceptance targets
+from the agreed product requirement and observed baseline, not an arbitrary
+latency threshold invented in this ADR. These are measurement instructions,
+not implemented instrumentation or authorization for a host load test.
 
 ## Delivery boundary
 
