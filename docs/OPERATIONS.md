@@ -2,6 +2,22 @@
 
 ## Current state
 
+**SSH-local owner enrollment candidate #225 / ADR0092 (code only):**
+PR #224 integrated `http://localhost:8443` at
+`main=93c14ee5d939fd7d6abf56a57843c23c32b281c3`, with no certificate
+requirement and no droplet effect. The proposed first-owner URL
+`http://localhost:8443/activar#key=…` is **not live** and the placeholder
+is not a usable credential. The #225 source can verify WebAuthn create→get
+and stage only encrypted v2 ciphertext. The HTTP container is forbidden to
+mount the owner volume, which holds an X25519 private recipient key.
+Protected host orchestration, the same-job deletion of verified temporary
+Docker artifacts after success/failure, offline `owner_bootstrap.install`
+and `verify`, private handoff of a real one-use link, an exact release and
+physical Chrome/Termius testing are still separate gates. Until then,
+**NO-GO** for owner activation or BETA. No web server/proxy/firewall, other
+app, other port or existing droplet service may be changed; `8443` BUSY
+means stop. See [ADR0092](ADR/0092-one-use-ssh-chrome-owner-enrollment.md).
+
 The default runtime remains dormant and CI never deploys. The dedicated rootless service
 was prepared in #120 and stopped in #156/41272785626; the BETA application
 remains not installed/NO_GO. The protected [image release 41312460820](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41312460820)

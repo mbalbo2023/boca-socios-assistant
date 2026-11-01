@@ -56,9 +56,10 @@ infrastructure**.
   CPU/memory caps, no exposed ports and no host Docker socket. A separate
   beta Compose candidate #171 and protected `beta-install` #191/
   `beta-acceptance` #200 contracts were tested on disposable runners. The
-  model is being changed under #223/ADR0091 to use certificate-free HTTP only
+  model was integrated in PR #224/ADR0091 with certificate-free HTTP only
   on Boca host loopback behind SSH, with a private owner volume; no droplet
-  install occurred.
+  install occurred. The isolated one-use browser enrollment candidate #225
+  uses separate temporary encrypted staging, not that private volume.
 - CI: pinned checkout/setup actions, frozen dependency lock, lint, format,
   strict typing, tests, image build and repository-isolation checks.
 - Delivery: small PRs, recorded agent technical review, exact-SHA status
@@ -85,7 +86,7 @@ reserve a port or establish tablet access.
 The later protected [run 41310958281](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41310958281)
 on `main=3ec1096fb5dce8a01af5c8060f0be056bf44fb9d` reported
 `FREE reserved=no` at that instant. The owner chose a private tablet forward
-to the local panel on 8443. **The newer #223/ADR0091 candidate supersedes
+to the local panel on 8443. **Merged PR #224/ADR0091 supersedes
 the HTTPS-localhost route:** the only proposed BETA Compose origin is
 `http://localhost:8443` (WebAuthn RP `localhost`) through Termius SSH, with
 **no device certificate/CA installation**. The actual
@@ -94,8 +95,12 @@ the single stored credential also needs cross-device proof for Android/iOS.
 The former tablet-local TLS WebAuthn emitter (#215, ADR0089) remains only as
 historical code and is **not** the owner's enrollment procedure. The requested
 one-time activation URL must instead be served from the droplet on the same
-isolated Boca port, with a privately delivered single-use key; that bootstrap
-endpoint is not implemented yet. Synthetic tests cannot establish physical
+isolated Boca port, with a privately delivered single-use key. The #225/ADR0092
+core candidate implements the **unserved** `/activar#key=…` browser flow and
+WebAuthn proof, producing a v2 encrypted envelope in a separate disposable
+staging volume without mounting the owner's X25519 private key. Protected
+Actions host orchestration, cleanup and offline owner install remain to be
+implemented and reviewed. Synthetic tests cannot establish physical
 owner verification, private capability handoff or iOS use; no real credential
 or host owner-install is claimed.
 The #217 correction requires a discoverable passkey during local enrollment.
