@@ -32,8 +32,10 @@ accessible one-page UI; GET has no challenge or owner credential. Before
 `begin()`, the local owner supplies a fresh 256-bit base64url capability
 through a non-echoing device TTY and enters the same value in the browser.
 This is a local physical bootstrap, not a static shared secret, anonymous
-begin, forwarded identity header or GitHub credential. The process holds a
-hash only, expires it after 120 seconds and consumes the single attempt; an
+begin, forwarded identity header or GitHub credential. After transient input
+handling, persistent ceremony state holds only a digest, expires it after
+120 seconds and consumes the single attempt; Python cannot guarantee that
+discarded input bytes are zeroized from process memory. An
 invalid attempt closes the emitter. A second random process-local session
 token protects creation/proof/abort. POST requires trusted TLS scheme, exact
 Host and Origin, bounded JSON, and no query string. It rejects mismatched

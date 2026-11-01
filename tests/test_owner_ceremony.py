@@ -25,6 +25,7 @@ from boca_socios import owner_bootstrap as boot
 from boca_socios import owner_ceremony as ceremony
 
 CAP = base64.urlsafe_b64encode(b"synthetic-token-" + b"x" * 16).rstrip(b"=").decode()
+CAP_DIGEST = hashlib.sha256(ceremony._capability(CAP)).digest()
 SUBJECT = "synthetic-owner"
 
 
@@ -149,7 +150,7 @@ def _setup(
     host.mkdir(mode=0o700)
     receipt = boot.prepare(host, uid=os.geteuid())
     app = ceremony.LocalOwnerCeremony(
-        capability=CAP,
+        capability_digest=CAP_DIGEST,
         recipient=receipt,
         owner_subject=SUBJECT,
         tls=ceremony.read_device_tls(device),
@@ -231,8 +232,15 @@ def test_session_timeout_and_recipient_mismatch_fail_closed(tmp_path: Path) -> N
     wrong = boot.RecipientReceipt(receipt.state, receipt.public_key, "0" * 64)
     with pytest.raises(ceremony.CeremonyError, match="invalid_coordinates"):
         ceremony.LocalOwnerCeremony(
-            capability=CAP,
+            capability_digest=CAP_DIGEST,
             recipient=wrong,
+            owner_subject=SUBJECT,
+            tls=ceremony.read_device_tls(tmp_path / "device"),
+        )
+    with pytest.raises(ceremony.CeremonyError, match="invalid_local_capability"):
+        ceremony.LocalOwnerCeremony(
+            capability_digest=CAP,  # type: ignore[arg-type]  # raw input cannot be held as state
+            recipient=receipt,
             owner_subject=SUBJECT,
             tls=ceremony.read_device_tls(tmp_path / "device"),
         )
@@ -334,7 +342,9 @@ def test_tls_tamper_and_symlink_fail_before_any_listener(
     tls.chmod(0o400)
     monkeypatch.setattr(ceremony, "_LocalTLSServer", lambda *_args: pytest.fail("listener opened"))
     with pytest.raises(ceremony.CeremonyError):
-        ceremony.serve_device(device, boot.RecipientReceipt("PREPARED", "", ""), SUBJECT, CAP)
+        ceremony.serve_device(
+            device, boot.RecipientReceipt("PREPARED", "", ""), SUBJECT, CAP_DIGEST
+        )
     tls.unlink()
     tls.symlink_to(tmp_path / "outside")
     with pytest.raises(ceremony.CeremonyError):
@@ -376,7 +386,7 @@ def test_serving_context_closes_after_invalid_attempt(
             assert _request(self.app, "POST", "/begin", {"capability": _b64(b"x" * 32)})[0] == 403
 
     monkeypatch.setattr(ceremony, "_LocalTLSServer", FakeServer)
-    ceremony.serve_device(tmp_path / "device", receipt, SUBJECT, CAP)
+    ceremony.serve_device(tmp_path / "device", receipt, SUBJECT, CAP_DIGEST)
     assert len(servers) == 1 and servers[0].closed
 
 

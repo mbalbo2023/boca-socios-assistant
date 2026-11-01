@@ -129,7 +129,7 @@ class LocalOwnerCeremony:
     def __init__(
         self,
         *,
-        capability: str,
+        capability_digest: bytes,
         recipient: RecipientReceipt,
         owner_subject: str,
         tls: dict[str, bytes],
@@ -151,7 +151,9 @@ class LocalOwnerCeremony:
         self._registration = OwnerPasskeyRegistration(
             origin=ORIGIN, rp_id=RP_ID, owner_subject=owner_subject, clock=clock
         )
-        self._cap_digest = hashlib.sha256(_capability(capability)).digest()
+        if not isinstance(capability_digest, bytes) or len(capability_digest) != 32:
+            raise CeremonyError("invalid_local_capability")
+        self._cap_digest = capability_digest
         self._recipient = recipient
         self._subject = owner_subject
         self._tls = tls
@@ -326,7 +328,7 @@ class _LocalTLSServer(WSGIServer):
 
 
 def serve_device(
-    path: Path, recipient: RecipientReceipt, owner_subject: str, capability: str
+    path: Path, recipient: RecipientReceipt, owner_subject: str, capability_digest: bytes
 ) -> None:
     """Serve only this device's loopback; close after one result or timeout."""
     tls = read_device_tls(path)
@@ -334,7 +336,10 @@ def serve_device(
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(str(path / "tls.crt"), str(path / "tls.key"))
     app = LocalOwnerCeremony(
-        capability=capability, recipient=recipient, owner_subject=owner_subject, tls=tls
+        capability_digest=capability_digest,
+        recipient=recipient,
+        owner_subject=owner_subject,
+        tls=tls,
     )
     with _LocalTLSServer(context) as server:
         server.set_app(app)
@@ -361,13 +366,14 @@ def main(argv: list[str] | None = None) -> int:
                 raise CeremonyError("local_tty_required")
             if not all((args.recipient_public_key, args.recipient_fingerprint, args.owner_subject)):
                 raise CeremonyError("invalid_coordinates")
-            capability = getpass.getpass("Capacidad local de 256 bits (sin eco): ")
-            _capability(capability)
+            capability_digest = hashlib.sha256(
+                _capability(getpass.getpass("Capacidad local de 256 bits (sin eco): "))
+            ).digest()
             receipt = RecipientReceipt(
                 "PREPARED", args.recipient_public_key, args.recipient_fingerprint
             )
             print("BOCA_DEVICE_CEREMONY state=LOCAL_ONLY origin=https://localhost:8443")
-            serve_device(args.directory, receipt, args.owner_subject, capability)
+            serve_device(args.directory, receipt, args.owner_subject, capability_digest)
             print("BOCA_DEVICE_CEREMONY state=CLOSED")
     except (CeremonyError, BootstrapError, OSError, ValueError):
         print("BOCA_DEVICE_CEREMONY state=NO_GO", file=sys.stderr)
