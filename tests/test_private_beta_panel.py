@@ -17,6 +17,7 @@ from uuid import uuid4
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from boca_socios.domain.policy import TicketIntent
 from boca_socios.integration.command_store import CommandStore
 from boca_socios.notify.outbox import NoticeKind, NotificationRequest
 from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
@@ -108,6 +109,7 @@ def _request(
 class FakeCommand:
     state: str = "accepted"
     updated_at: float = 1.0
+    command_id: str = ""
 
 
 class FakeHost:
@@ -119,7 +121,7 @@ class FakeHost:
 
     def begin(self, command_id: str, *, member_id: str, event_id: str) -> FakeCommand:
         self.calls.append((command_id, member_id, event_id))
-        return FakeCommand()
+        return FakeCommand(command_id=command_id)
 
     def status(self, command_id: str, *, member_id: str) -> FakeCommand | None:
         return FakeCommand()
@@ -254,6 +256,48 @@ def test_private_login_enrollment_listing_and_local_command_are_connected() -> N
         assert notices[0] == 200 and b"Aviso local" in notices[2]
         assert b"no configurado" in notices[2]
         assert b"persona@example.test" not in notices[2]
+
+
+def test_new_command_key_redirects_to_existing_canonical_result() -> None:
+    clock = [0.0]
+    provider, key, credential_id = _passkey(clock)
+    canonical = str(uuid4())
+
+    class DeduplicatingHost(FakeHost):
+        def begin(self, command_id: str, *, member_id: str, event_id: str) -> FakeCommand:
+            self.calls.append((command_id, member_id, event_id))
+            return FakeCommand(state="completed", command_id=canonical)
+
+    host = DeduplicatingHost()
+    with TemporaryDirectory() as directory:
+        app, db = _app(Path(directory) / "boca.sqlite3", provider, host)
+        member_id = MemberEnrollmentService(db, CredentialVault(os.urandom(32))).enroll(
+            email="member@example.test",
+            password="test-password",
+            consent_recorded_at=datetime.now(UTC),
+        )
+        CommandStore(db).enqueue(
+            canonical, TicketIntent(member_id, EVENT_ID), now=1.0, max_pending=16
+        )
+        cookie = _login(app, key, credential_id)
+        status, _, form = _request(app, "/comandos", cookie=cookie)
+        assert status == 200
+        new_id = re.search(rb'name="operation_id" value="([^"]+)"', form).group(1).decode()
+        assert new_id != canonical
+        fields = {
+            "csrf": re.search(rb'name="csrf" value="([^"]+)"', form).group(1).decode(),
+            "operation_id": new_id,
+            "member_id": member_id,
+            "event_id": EVENT_ID,
+        }
+        result = _request(app, "/comandos", cookie=cookie, method="POST", payload=fields)
+        assert result[0] == 303
+        assert result[1]["Location"] == f"/comandos/{canonical}"
+        replay = _request(app, "/comandos", cookie=cookie, method="POST", payload=fields)
+        assert replay[1]["Location"] == f"/comandos/{canonical}"
+        assert host.calls == [(new_id, member_id, EVENT_ID)]
+        assert _request(app, f"/comandos/{canonical}", cookie=cookie)[0] == 200
+        assert _request(app, f"/comandos/{new_id}", cookie=cookie)[0] == 404
 
 
 def test_cross_origin_csrf_and_spoofed_tls_never_start_simulation() -> None:
