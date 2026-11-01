@@ -13,14 +13,12 @@ infrastructure**.
 > preserved. Its `containers=0` field counts containers stopped in that run;
 > exited containers, if any, remain preserved.
 > None of these receipts is application readiness.
-> The protected [image release 41301618285](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41301618285) published `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:6f067e5078081760dec27f81d95792a4423ff9c1d9cb3bef19ef70dbfc8cf889`
-> from the #208 integration `58f57822e95da9574c0a9d5122607616da4a024a` (manifest artifact 13082030761), before this documentation update. This is an image
-> publication, not a droplet install. Recheck exact current main/release binding
-> before any host action; the [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
-> holds the latest operational receipt.
-> The later release 41302342233 published an image for `3ef7aff8...` only;
-> #212 moved main to `3ec1096f...`. Neither digest matches this candidate for
-> an install. A final exact-main release is still required.
+> The protected [image release 41312460820](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41312460820) published `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:67d8f59487632f117ec8c22d307481c1a9ba340502212d9bafe582309624301f`
+> for the pre-change #214 main `8fdbec97262a525821eb87f3fbc27f1841a5d2ec`
+> (manifest 13086161844). Earlier releases 41301618285/#208 and
+> 41302342233/`3ef7aff8...` are historical. This is GHCR publication only,
+> with no droplet pull/install. This code change requires a new exact-main
+> release before a future host install; recheck the [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
 > The controller was never installed; no live login, Queue-it client or automated
 > checkout is enabled. See [current integration status](docs/BETA_INTEGRATION_STATUS.md)
 > and [continuity issue #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
@@ -90,6 +88,11 @@ to the local panel on 8443; this candidate admits only the exact
 `https://localhost:8443` RP origin for that route (ADR0088). The actual
 forward, trusted tablet TLS certificate and physical passkey remain untested;
 the single stored credential also needs cross-device proof for Android/iOS.
+This tree includes a one-use tablet-local WebAuthn create/get emitter and
+device-held TLS bundle in code (#215, ADR0089). Synthetic
+tests cannot establish Android CA trust, physical owner verification, secure
+ciphertext handoff or iOS use; no real credential or host owner-install is
+claimed. The owner-device command and clipboard behavior remain unverified.
 Site decommission is deferred until the local replacement is validated.
 The private Site v10 has a disabled D1 bridge and fails closed while host
 credentials/poller are absent. PRs #181/#196 integrated protected ciphertext

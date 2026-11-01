@@ -30,11 +30,19 @@ Telegram conserva su gate propio, sin atribuir recepción a código integrado.
 El [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6558572360)
 registra la ejecución protegida 41310958281 sobre
 `main=3ec1096fb5dce8a01af5c8060f0be056bf44fb9d`: 8443 FREE
-`reserved=no`, sin arrancar servicio ni instalar aplicación. #213/ADR0088
-proponen admitir sólo `https://localhost:8443` para ese túnel; no prueban
-el forwarding, la confianza TLS ni la inscripción y uso de passkey física
-en Android/iOS. #209 continúa abierto. Release, owner custody, instalación,
-aceptación y parada final requieren sus recibos exactos por Actions.
+`reserved=no`, sin arrancar servicio ni instalar aplicación. PR #214/ADR0088
+integró el origen exacto `https://localhost:8443` en
+`main=8fdbec97262a525821eb87f3fbc27f1841a5d2ec`: CI 41312228362 y
+scan 41312228548 SUCCESS. La [release protegida 41312460820](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41312460820),
+intento 1 SUCCESS, publicó sólo la imagen
+`ghcr.io/mbalbo2023/boca-socios-assistant@sha256:67d8f59487632f117ec8c22d307481c1a9ba340502212d9bafe582309624301f`
+con manifiesto 13086161844 para ese SHA; no hubo pull ni instalación en el
+droplet. Este cambio (#215/PR #216/ADR0089) incorpora en código un emisor
+local de un solo uso, con pruebas sintéticas, no credencial física. La confianza TLS,
+forwarding, WebAuthn Android/iOS y entrega privada del sobre siguen sin
+prueba (#209). Una nueva HEAD tras este PR exige release propio antes del
+host. Owner custody, instalación, aceptación y parada final requieren sus
+recibos exactos por Actions.
 
 **Corte de integración previo a esta actualización documental 2026-11-01:**
 `main` `6d3007a3ca1dfdba428cb7595486b1166a1d02b6` incorpora loop persistente
@@ -78,8 +86,8 @@ con manifest 13082030761. Sigue siendo sólo una imagen: no se instaló BETA.
 PR #208/ADR0086 integró la custodia cifrada de cinco archivos owner por
 Actions, con 942 pruebas locales y smoke desechable del candidato
 `465deba9456d9ace5a2cddbcdab25a5310f3d095`; no hubo efecto host.
-Una futura actualización documental mueve `main` y exige otro release
-exacto antes de operar. Continúan pendientes
+Ese corte quedó histórico al avanzar `main`; cada HEAD final exige release
+exacta antes de operar. Continúan pendientes
 el alta física WebAuthn, origen/ruta HTTPS tablet, DNS/certificado y decisión
 de acceso privado (#209); no inferirlos de la custodia.
 
@@ -157,12 +165,12 @@ diferido; no se eliminan los requisitos de custodia/recuperación para alta real
 | B1 | Plan/contratos y seguimiento: esta documentación | Matriz de alcance, alta obligatoria, decisiones, owners y evidencias registradas | Dirección del dueño |
 | B2 | Servicio preparado #120; parada #156 y ALREADY_STOPPED en 41282301501; #191 preflight host beta integrado sin ejecución | Rootless propio sano; namespace candidato y procedencia de almacenamiento verificados; capacidad/cgroups/permisos de aplicación probados. No reemplazar una DB por inferencia | Destino delegado y propuesta concreta por Actions |
 | B3 | Coordinador130, comandos149, loop161, ciclo164 y TLS173 integrados; RCA canónico187 | Comandos iniciar/detener/estado; guardia persistente, idempotencia, pausa ambigua y replay seguro probados | Contrato servido de B7 y panel B4 |
-| B4 | Lectura128, formulario148, panel WSGI163, TLS173, preflight owner189 y custodia protegida #208 integrados en código; inscripción física y ruta privada #209 pendientes | Acceso privado tablet; Socios > Agregar socio cifrado/atómico; errores, duplicados, denegación y estado posterior visibles | B3 contrato; servicio de alta/clave/DB |
+| B4 | Lectura128, formulario148, panel WSGI163, TLS173, preflight owner189, custodia #208 y origen exacto #214 integrados; este cambio #215 incorpora emisor local sólo en código, sin inscripción física ni forwarding #209 | Acceso privado tablet; Socios > Agregar socio cifrado/atómico; errores, duplicados, denegación y estado posterior visibles | B3 contrato; servicio de alta/clave/DB |
 | B5 | Dispatcher134, Telegram162, `/avisos`163, worker188, custodia199/203 y prueba única204 integrados; recorrido host/recepción pendientes | Proyección fiel de estados persistidos, límites/restart/dedup; razón ambigua durable sin llamar entrega real a aceptación de API | Resultados persistidos de B3; UI B4 y provisión #168 |
 | B6 | Chromium/medición | Una sesión aislada con recursos, parada y errores medidos en entorno candidato; alcance de egress explícito | Presupuesto separado; observación real no inferida de test offline |
 | B7 | TLS173, Compose171 y operación protegida `beta-install`191 integrados; no ejecutados en host | Programa arrancado conecta B3/B4/B5; health funcional, acceso privado y manifiesto por componente; instalación desechable probada | B2–B6 según componentes del candidato |
 | B8 | HTTP loopback170, probe TLS190 y smoke de contenedor limitado200; E2E host pendiente | Suite E2E, lint/types, RCA, seguridad e imágenes sobre mismo SHA; rapidez/recursos y revisión exacta | B7 consolidado |
-| B9 | Imagen protegida 41301618285 publicada con digest/manifest para el SHA de integración #208; código de instalación #191 sin dispatch | SHA→digest/manifiesto→proceso instalado trazables; capacidad revalidada; sólo workflow y mutex Boca | B2 apto, B8 verde, decisión final del candidato |
+| B9 | Release 41312460820 publicó imagen/manifiesto para `8fdbec97...` de #214; sólo GHCR, sin pull/install; código #191 sin dispatch | SHA→digest/manifiesto→proceso instalado trazables; nueva release para HEAD final y capacidad revalidada; sólo workflow y mutex Boca | B2 apto, B8 verde, decisión final del candidato |
 | B10 | Aceptación/parada protegida200 integrada, sin dispatch | Recorrido desde interfaz real/tablet, persistencia/reinicio, límites, denegación y avisos; acta de versión/pendientes | B9 y matriz de aceptación |
 
 Estos IDs no son estados de la aplicación. Cada cambio de estado de una entrega

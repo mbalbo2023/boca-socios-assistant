@@ -13,15 +13,15 @@ posteriores. Rige la [autorización ampliada](https://github.com/mbalbo2023/boca
 para completar BETA de simulación, Site conectado, Telegram y despliegue
 validado; se excluyen reservas, compras y mutaciones reales en Boca.
 
-El corte posterior #208 quedó en `58f57822e95da9574c0a9d5122607616da4a024a`.
+El corte histórico posterior #208 quedó en `58f57822e95da9574c0a9d5122607616da4a024a`.
 Su [release protegido 41301618285](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41301618285)
 terminó SUCCESS con digest `sha256:6f067e5078081760dec27f81d95792a4423ff9c1d9cb3bef19ef70dbfc8cf889`
 y manifest 13082030761. Es sólo publicación, no instalación. #208 integró
 custodia cifrada owner en código y ADR0086; no se ha inscrito una
 passkey real, definido el origen privado, configurado un certificado ni
 ejecutado su operación en el droplet. #209 sigue la decisión de ruta/ceremonia.
-Tras integrar esta actualización documental será necesaria otra publicación
-para vincular la nueva HEAD.
+Ese corte ya fue superado; la release #214 previa a este cambio se registra
+abajo y una HEAD final distinta exige su propia publicación.
 
 **Corte posterior comprobado 2026-11-01:** #212 integró la comprobación
 protegida del puerto; `main=3ec1096fb5dce8a01af5c8060f0be056bf44fb9d`
@@ -32,11 +32,18 @@ reserved=no`. Sólo comprobó disponibilidad instantánea, sin Docker ni Boca
 arrancado. La release 41302342233 para `3ef7aff8...` quedó histórica tras
 #212; un install exige publicación de la HEAD final exacta. Por decisión del
 dueño, el panel local con forwarding privado es primario; Site #113 queda
-privado/offline, su baja diferida y fuera del gate BETA local. El candidato
-#213/ADR0088 acepta el origen HTTPS localhost exacto en código, pero la
-tablet, CA y passkey física siguen sin prueba (#209). Una credencial owner
-única tampoco acredita automáticamente Android e iOS. Los detalles de
-releases y runs históricos que siguen conservan su SHA original.
+privado/offline, su baja diferida y fuera del gate BETA local. El cambio
+PR #214/ADR0088 integró el origen HTTPS localhost exacto en
+`main=8fdbec97262a525821eb87f3fbc27f1841a5d2ec`; CI 41312228362 y
+scan 41312228548 SUCCESS. La [release protegida 41312460820](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41312460820),
+intento 1 SUCCESS, publicó sólo
+`ghcr.io/mbalbo2023/boca-socios-assistant@sha256:67d8f59487632f117ec8c22d307481c1a9ba340502212d9bafe582309624301f`
+con manifest 13086161844. Sin pull ni instalación host. Este cambio
+#215/PR #216/ADR0089 incorpora código de emisor WebAuthn local de un solo uso, sin prueba física de
+Android, confianza CA, clipboard, entrega cifrada ni iOS (#209). La credencial
+única tampoco acredita automáticamente ambos sistemas. La HEAD final de
+este cambio exige nueva release exacta antes de cualquier host install. Los
+runs históricos siguientes conservan su SHA original.
 
 **BETA operativa en el droplet: NO_VERIFICADA / aplicación no instalada.**
 Código integrado, Site publicado, CI verde y servicio rootless preparado y
@@ -52,12 +59,12 @@ UNVERIFIED; el destino lógico futuro es `/data/boca.sqlite3` en el volumen
 | Frente | Código o ejecución comprobada | Gate restante |
 | --- | --- | --- |
 | Simulación | Coordinador #130, comandos #149, loop #161, ciclo #164 y entrypoint TLS #173; RCA de UUID canónico #187 y probe sintético #190 | Empaquetar/servir en host con identidad y acceso privado; E2E host. No hay cliente Boca real |
-| Panel | Adaptadores #128/#148, owner passkey/controles #163, registro WebAuthn #174, preflight sin listener #189 y custodia #208 integrados en código; #213 propone origen exacto `https://localhost:8443`; sin instalación | #209: forward y CA en tablet, passkey física y uso Android/iOS, rechazo real de terceros |
+| Panel | Adaptadores #128/#148, owner passkey/controles #163, registro WebAuthn #174, preflight #189, custodia #208 y origen `https://localhost:8443` #214 integrados; este cambio #215 incorpora emisor local sólo en código, sin instalación | #209: confianza CA, UV real, entrega privada del sobre, forward y uso Android/iOS, rechazo real de terceros |
 | Avisos/Telegram | #162 fence/migración0007/adapter, #176 estado, worker default-off #188, parada opcional #194, helper cifrado #199, fases protegidas #203 y prueba Bot API de un solo intento #204 | Sin bot/destino privados, provisión en host ni envío/recepción real; `api_accepted` tampoco probaría lectura humana |
 | Site #113 | Versión privada v10 D1 desactivada; #178 helper, #179 cliente opt-in, #181 custodia Actions y #196 inventario global | Ya no es gate de la BETA del panel local. Sigue offline y privado; baja diferida tras validar reemplazo. Ver #113 |
 | Host | Rootless #120, preflight dormido #124, parada #198/41282301501 ALREADY_STOPPED; `port-check` #211/41310958281 observó 8443 FREE `reserved=no`; custodia owner #208, `beta-install` #191 y `beta-acceptance` #200 sólo en código | Sin marca BETA, identidad/archivos privados, instalación funcional ni aceptación host. Revalidar daemon, capacidad, puerto y SHA antes de operar |
 | Chromium | Imagen y smoke offline #43/#44 con límite sintético | Capacidad/egress del droplet y visita real no acreditadas |
-| Calidad/release | Main tras #212 `3ec1096fb5dce8a01af5c8060f0be056bf44fb9d`, CI 41310796782 y scan 41310796751 SUCCESS. La release 41302342233 corresponde al SHA anterior `3ef7aff8...` y es histórica | Nueva release y manifiesto para la HEAD final exacta antes de instalar; CI no demuestra capacidad/postflight ni acceso tablet |
+| Calidad/release | Corte previo a este cambio: main #214 `8fdbec97262a525821eb87f3fbc27f1841a5d2ec`, CI 41312228362 y scan 41312228548 SUCCESS; release 41312460820 publicó imagen/manifiesto sólo para ese SHA | Nueva release y manifiesto para la HEAD final exacta antes de instalar; CI no demuestra capacidad/postflight ni acceso tablet |
 | Aceptación sintética | #170 HTTP loopback desechable, #190 probe TLS en contenedor y #200 operación protegida de aceptación/parada | Sin ejecución host/tablet, Site, Telegram ni recursos medidos del droplet |
 
 ## Evidencia exacta de este corte
