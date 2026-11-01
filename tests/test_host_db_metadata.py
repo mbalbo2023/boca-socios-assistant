@@ -103,6 +103,13 @@ def test_candidate_refuses_foreign_or_writable_anchor_and_path_escape() -> None:
             for candidate in (Path("relative"), anchor / ".." / "foreign", Path("/elsewhere")):
                 assert host._candidate_file_metadata(candidate, anchor) == ("unsafe-path", None)
         opened.assert_not_called()
+        with patch.object(host.os, "open") as opened:
+            doubled = Path("/" + str(anchor))
+            assert host._candidate_file_metadata(doubled / "boca.sqlite3", doubled) == (
+                "unsafe-path",
+                None,
+            )
+        opened.assert_not_called()
 
 
 def test_candidate_rejects_directory_replaced_by_symlink_without_following() -> None:
@@ -164,7 +171,7 @@ def test_db_metadata_validates_identity_before_any_path_probe() -> None:
 
 
 def test_invalid_home_is_redacted_without_probing_arbitrary_location() -> None:
-    for home in ("/", "relative", "/home/../foreign", "", None):
+    for home in ("/", "//home/private", "relative", "/home/../foreign", "", None):
         with (
             patch.object(host, "_require_dedicated_identity", return_value=10001),
             patch.object(host.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir=home)),

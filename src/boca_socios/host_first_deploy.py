@@ -388,8 +388,8 @@ def _rootless_service_metadata(private_runtime_ready: bool) -> str:
 def _candidate_file_metadata(path: Path, anchor: Path) -> tuple[str, int | None]:
     """Stat one candidate via no-follow directory descriptors; never open its data."""
     if (
-        not path.is_absolute()
-        or not anchor.is_absolute()
+        path.anchor != "/"
+        or anchor.anchor != "/"
         or anchor == Path("/")
         or ".." in path.parts
         or ".." in anchor.parts
@@ -441,6 +441,7 @@ def _database_candidate_metadata() -> str:
         if (
             isinstance(raw_home, str)
             and raw_home.startswith("/")
+            and not raw_home.startswith("//")
             and raw_home != "/"
             and len(raw_home) <= 4096
             and ".." not in Path(raw_home).parts
