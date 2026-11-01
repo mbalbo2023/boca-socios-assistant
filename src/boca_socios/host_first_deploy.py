@@ -1715,12 +1715,101 @@ def _beta_rollback(image: str, source_sha: str) -> None:
     )
 
 
+def _validate_beta_acceptance_receipt(raw: str) -> str:
+    """Accept only the fixed disposable probe proof, never its arbitrary stdout."""
+    if len(raw) > 384:
+        raise PreflightError("BETA synthetic receipt exceeds bounded output")
+    match = re.fullmatch(
+        r"BOCA_SYNTHETIC_ACCEPTANCE state=PASS scope=container_loopback"
+        r" requests=([0-9]{2}) median_ms=([0-9]{1,6}[.][0-9]{2})"
+        r" p95_ms=([0-9]{1,6}[.][0-9]{2}) elapsed_ms=([0-9]{1,6}[.][0-9]{2})"
+        r" cpu_ms=([0-9]{1,6}[.][0-9]{2}) process_peak_rss_kib=([0-9]{1,6})"
+        r" scratch_bytes=([0-9]{1,7}) members=1 intents=1 notices=1"
+        r" tls=verified engine=off site=not_contacted telegram=not_sent",
+        raw,
+    )
+    if match is None:
+        raise PreflightError("invalid BETA synthetic receipt")
+    requests, median, p95, elapsed, cpu, rss, scratch = match.groups()
+    if (
+        not 18 <= int(requests) <= 64
+        or not 0 <= float(median) <= float(p95) <= float(elapsed) <= 120_000
+        or not 0 <= float(cpu) <= 120_000
+        or not 0 < int(rss) <= 262_144
+        or not 0 < int(scratch) <= 8 * 1024 * 1024
+    ):
+        raise PreflightError("BETA synthetic measurements are invalid")
+    return raw
+
+
+def _beta_acceptance_status(
+    image: str, source_sha: str, compose_sha: str, origin: str, owner: str
+) -> tuple[DiagnosticSnapshot, StorageSnapshot]:
+    """Revalidate the whole installed Boca boundary before and after the probe."""
+    _verify_beta_compose(compose_sha)
+    snapshot = collect_snapshot(beta_staged=True)
+    volumes = _names("volume", "name=^boca-socios_")
+    networks = _names("network", "name=^boca-socios_")
+    if volumes != {OWNER_VOLUME, KEY_VOLUME, DATA_VOLUME} or networks != {
+        "boca-socios_boca_private"
+    }:
+        raise PreflightError("installed Boca namespace differs from reviewed BETA")
+    if not snapshot.boca_containers or not snapshot.boca_volume or not snapshot.boca_network:
+        raise PreflightError("installed Boca controller or resources are absent")
+    validate_snapshot(
+        replace(snapshot, boca_containers=False, boca_volume=False, boca_network=False)
+    )
+    _validate_owner_volume()
+    _validate_key_volume()
+    _validate_data_volume()
+    _run(*_beta_compose_args("config", "-q"), env=_beta_compose_env(image, origin, owner))
+    diagnostic = collect_diagnostic(image, source_sha, beta_origin=origin, beta_owner=owner)
+    _beta_loopback_health(diagnostic.container_id, origin)
+    capacity = _storage_snapshot()
+    _validate_storage_capacity(capacity)
+    return diagnostic, capacity
+
+
+def _beta_acceptance_phase(
+    image: str, source_sha: str, compose_sha: str, origin: str, owner: str
+) -> None:
+    _validate_beta_context(origin, owner)
+    before, capacity_before = _beta_acceptance_status(image, source_sha, compose_sha, origin, owner)
+    receipt = _validate_beta_acceptance_receipt(
+        _run(
+            "docker",
+            "exec",
+            "--user",
+            "10001:10001",
+            before.container_id,
+            "python",
+            "-m",
+            "boca_socios.acceptance.host_probe",
+        )
+    )
+    after, capacity_after = _beta_acceptance_status(image, source_sha, compose_sha, origin, owner)
+    if after.container_id != before.container_id:
+        raise PreflightError("Boca controller changed during synthetic acceptance")
+    _validate_storage_continuity(capacity_before, capacity_after)
+    print(
+        f"BOCA_BETA_ACCEPTANCE state=PASS source_sha={source_sha} image={image}"
+        + receipt.removeprefix("BOCA_SYNTHETIC_ACCEPTANCE state=PASS")
+        + f" stage_free_mib={capacity_after.stage_free_bytes // 1024**2}"
+        + f" docker_free_mib={capacity_after.docker_free_bytes // 1024**2}"
+        + f" stage_inodes={capacity_after.stage_inodes}"
+        + f" docker_inodes={capacity_after.docker_inodes}"
+    )
+
+
 def _beta_phase(
     operation: str, image: str, source_sha: str, compose_sha: str, origin: str, owner: str
 ) -> None:
     _validate_beta_context(origin, owner)
     if operation == "beta-rollback":
         _beta_rollback(image, source_sha)
+        return
+    if operation == "beta-acceptance":
+        _beta_acceptance_phase(image, source_sha, compose_sha, origin, owner)
         return
     staged = operation in {"beta-config", "beta-apply"}
     if staged:
@@ -1892,6 +1981,7 @@ def phase(
             "beta-config",
             "beta-apply",
             "beta-rollback",
+            "beta-acceptance",
         }:
             raise PreflightError("unknown BETA deployment phase")
         _validate_beta_context(envelope, beta_owner)
@@ -2047,6 +2137,7 @@ def main() -> int:
             "beta-config",
             "beta-apply",
             "beta-rollback",
+            "beta-acceptance",
         ),
     )
     parser.add_argument("image")
