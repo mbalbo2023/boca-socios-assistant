@@ -95,10 +95,10 @@ class TelegramTransport:
                 after = os.fstat(descriptor)
                 if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
                     raise ValueError("secret file changed")
-                raw = os.read(descriptor, 129)
+                raw = os.read(descriptor, 151)
             finally:
                 os.close(descriptor)
-            if not raw or len(raw) > 128:
+            if not raw or len(raw) > 150:
                 raise ValueError("invalid secret length")
             return raw.decode("ascii").strip()
         except (OSError, ValueError, UnicodeError):

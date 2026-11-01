@@ -72,6 +72,161 @@ def _telegram_image() -> dict[str, object]:
     }
 
 
+def _telegram_test_inspect(container_id: str, *, running: bool = True) -> dict[str, object]:
+    record = _telegram_inspect(container_id, running=running)
+    record["Name"] = "/boca-socios-telegram-test-1"
+    record["Config"]["Labels"]["com.docker.compose.service"] = "telegram-test"
+    record["Config"]["Cmd"] = [
+        "python",
+        "-m",
+        "boca_socios.telegram_one_shot",
+        "test",
+        SHA,
+        "12345",
+        "e" * 64,
+    ]
+    record["Config"]["Env"] = [
+        "BOCA_ENVIRONMENT=staging",
+        "BOCA_RUNTIME_MODE=simulation",
+        "BOCA_ENGINE_MODE=off",
+        "BOCA_TELEGRAM_DISPATCH_MODE=explicit",
+    ]
+    record["Config"]["Healthcheck"] = {"Test": ["NONE"]}
+    record["HostConfig"] = {
+        "NanoCpus": 250_000_000,
+        "Memory": 134_217_728,
+        "PidsLimit": 32,
+        "ReadonlyRootfs": True,
+        "Privileged": False,
+        "PublishAllPorts": False,
+        "PortBindings": {},
+        "NetworkMode": host.TELEGRAM_TEST_NETWORK,
+        "CapDrop": ["ALL"],
+        "CapAdd": None,
+        "SecurityOpt": ["no-new-privileges:true"],
+        "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=8m"},  # noqa: S108 - private container
+    }
+    record["Mounts"] = [
+        {"Type": kind, "Name": name, "Destination": dest, "RW": writable, "Driver": driver}
+        for kind, name, dest, writable, driver in host.TELEGRAM_TEST_MOUNTS
+    ]
+    record["NetworkSettings"] = {
+        "Ports": {},
+        "Networks": {host.TELEGRAM_TEST_NETWORK: {}} if running else {},
+    }
+    return record
+
+
+def _telegram_test_network(container_id: str) -> str:
+    return json.dumps(
+        {
+            "Name": host.TELEGRAM_TEST_NETWORK,
+            "Driver": "bridge",
+            "Scope": "local",
+            "Internal": False,
+            "Attachable": False,
+            "Ingress": False,
+            "Labels": {
+                "com.docker.compose.project": "boca-socios",
+                "com.docker.compose.network": "telegram_egress",
+            },
+            "Containers": {container_id: {}},
+        }
+    )
+
+
+def test_known_disposable_telegram_test_can_be_stopped_after_cli_timeout() -> None:
+    with patch.object(
+        host,
+        "_command",
+        side_effect=[
+            _info(2),
+            f"{CONTAINER}\n{UNKNOWN}",
+            _inspect(CONTAINER),
+            json.dumps(_telegram_test_inspect(UNKNOWN)),
+            _telegram_test_network(UNKNOWN),
+            json.dumps(_telegram_image()),
+            CONTAINER,
+            UNKNOWN,
+            _inspect(CONTAINER, running=False),
+            json.dumps(_telegram_test_inspect(UNKNOWN, running=False)),
+            _info(2),
+            f"{CONTAINER}\n{UNKNOWN}",
+        ],
+    ) as command:
+        assert host._stop_test_containers(HOME) == 2
+    assert [call.args[-1] for call in command.call_args_list if call.args[3] == "stop"] == [
+        CONTAINER,
+        UNKNOWN,
+    ]
+
+
+def test_unreviewed_one_shot_command_cannot_stop_any_container() -> None:
+    for changed in (
+        ["python", "-m", "boca_socios.telegram_one_shot", "test", SHA, "12345", "bad"],
+        ["python", "-m", "boca_socios.telegram_one_shot", "test", "f" * 40, "12345", "e" * 64],
+        ["sh", "-c", "send another message"],
+    ):
+        record = _telegram_test_inspect(UNKNOWN)
+        record["Config"]["Cmd"] = changed
+        with patch.object(
+            host,
+            "_command",
+            side_effect=[
+                _info(2),
+                f"{CONTAINER}\n{UNKNOWN}",
+                _inspect(CONTAINER),
+                json.dumps(record),
+            ],
+        ) as command:
+            with CHECKS.assertRaisesRegex(host.SetupError, "unknown_container_preserved_no_stop"):
+                host._stop_test_containers(HOME)
+        assert all("stop" not in invocation.args for invocation in command.call_args_list)
+
+
+def test_one_shot_foreign_mount_network_or_budget_blocks_every_stop() -> None:
+    for location, key, value in (
+        ("Mounts", None, [{"Type": "bind", "Source": "/unrelated"}]),
+        ("HostConfig", "NetworkMode", "host"),
+        ("HostConfig", "NanoCpus", 2_000_000_000),
+        ("HostConfig", "PortBindings", {"80/tcp": [{"HostIp": "0.0.0.0"}]}),  # noqa: S104 - rejected
+        ("HostConfig", "CapAdd", ["SYS_ADMIN"]),
+    ):
+        record = _telegram_test_inspect(UNKNOWN)
+        if key is None:
+            record[location] = value
+        else:
+            record[location][key] = value
+        with patch.object(
+            host,
+            "_command",
+            side_effect=[
+                _info(2),
+                f"{CONTAINER}\n{UNKNOWN}",
+                _inspect(CONTAINER),
+                json.dumps(record),
+            ],
+        ) as command:
+            with CHECKS.assertRaisesRegex(host.SetupError, "unknown_container_preserved_no_stop"):
+                host._stop_test_containers(HOME)
+        assert all("stop" not in invocation.args for invocation in command.call_args_list)
+
+    with patch.object(
+        host,
+        "_command",
+        side_effect=[
+            _info(2),
+            f"{CONTAINER}\n{UNKNOWN}",
+            _inspect(CONTAINER),
+            json.dumps(_telegram_test_inspect(UNKNOWN)),
+            _telegram_test_network("f" * 64),
+        ],
+    ) as command:
+        with CHECKS.assertRaisesRegex(host.SetupError, "unknown_container_preserved_no_stop"):
+            host._stop_test_containers(HOME)
+    assert all("stop" not in invocation.args for invocation in command.call_args_list)
+
+
 def test_verified_telegram_and_controller_stop_only_after_complete_inventory() -> None:
     with patch.object(
         host,

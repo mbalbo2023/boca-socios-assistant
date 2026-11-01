@@ -35,6 +35,8 @@ DATA_VOLUME = "boca-socios_boca_data"
 KEY_VOLUME = "boca-socios_boca_key"
 OWNER_VOLUME = "boca-socios_boca_owner"
 TELEGRAM_VOLUME = "boca-socios_boca_telegram"
+TELEGRAM_NETWORK = "boca-socios_telegram_egress"
+TELEGRAM_TEST_NAME = "boca-socios-telegram-test-1"
 ROOTLESS_SOCKET = Path("/run/user/10001/docker.sock")
 PRIVATE_MANAGER_SOCKET = Path("/run/user/10001/systemd/private")
 USER_BUS_SOCKET = Path("/run/user/10001/bus")
@@ -2190,7 +2192,8 @@ def _telegram_installed(
     if volumes not in (expected, expected | {TELEGRAM_VOLUME}):
         raise PreflightError("dedicated Telegram volume inventory changed")
     networks = set(_run("docker", "network", "ls", "--format", "{{.Name}}").splitlines())
-    if networks != {"bridge", "host", "none", "boca-socios_boca_private"}:
+    baseline = {"bridge", "host", "none", "boca-socios_boca_private"}
+    if networks not in (baseline, baseline | {TELEGRAM_NETWORK}):
         raise PreflightError("dedicated Telegram network inventory changed")
     network = _json_object(
         _run("docker", "network", "inspect", "--format", "{{json .}}", "boca-socios_boca_private"),
@@ -2210,6 +2213,8 @@ def _telegram_installed(
         or network_labels.get("com.docker.compose.network") != "boca_private"
     ):
         raise PreflightError("dedicated Telegram network provenance changed")
+    if TELEGRAM_NETWORK in networks:
+        _telegram_egress()
     _validate_data_volume()
     _validate_key_volume()
     _validate_owner_volume()
@@ -2217,6 +2222,250 @@ def _telegram_installed(
         _telegram_volume()
     _validate_storage_capacity(_storage_snapshot())
     return TELEGRAM_VOLUME in volumes
+
+
+def _telegram_egress() -> None:
+    network = _json_object(
+        _run("docker", "network", "inspect", "--format", "{{json .}}", TELEGRAM_NETWORK),
+        "Telegram egress network",
+    )
+    labels = network.get("Labels")
+    if (
+        network.get("Name") != TELEGRAM_NETWORK
+        or network.get("Driver") != "bridge"
+        or network.get("Scope") != "local"
+        or network.get("Internal") is not False
+        or network.get("Attachable") is not False
+        or network.get("Ingress") is not False
+        or network.get("Containers") != {}
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.network") != "telegram_egress"
+    ):
+        raise PreflightError("Telegram egress provenance changed")
+
+
+def _telegram_test_container(
+    image: str, source_sha: str, expected_bot_id: str, expected_chat_hmac: str
+) -> tuple[str, ...]:
+    return (
+        "docker",
+        "run",
+        "--pull",
+        "never",
+        "--name",
+        TELEGRAM_TEST_NAME,
+        "--label",
+        f"com.docker.compose.project={PROJECT}",
+        "--label",
+        "com.docker.compose.service=telegram-test",
+        "--label",
+        "com.docker.compose.container-number=1",
+        "--user",
+        "10001:10001",
+        "--network",
+        TELEGRAM_NETWORK,
+        "--read-only",
+        "--no-healthcheck",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--pids-limit",
+        "32",
+        "--memory",
+        "128m",
+        "--cpus",
+        "0.25",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=8m",  # noqa: S108 - private capped container tmpfs
+        "--env",
+        "BOCA_ENVIRONMENT=staging",
+        "--env",
+        "BOCA_RUNTIME_MODE=simulation",
+        "--env",
+        "BOCA_ENGINE_MODE=off",
+        "--env",
+        "BOCA_TELEGRAM_DISPATCH_MODE=explicit",
+        "--mount",
+        f"type=volume,source={DATA_VOLUME},target=/data,volume-nocopy",
+        "--mount",
+        f"type=volume,source={TELEGRAM_VOLUME},target=/run/telegram,volume-nocopy,readonly",
+        image,
+        "python",
+        "-m",
+        "boca_socios.telegram_one_shot",
+        "test",
+        source_sha,
+        expected_bot_id,
+        expected_chat_hmac,
+    )
+
+
+def _telegram_test_finished(
+    image: str, source_sha: str, expected_bot_id: str, expected_chat_hmac: str, controller_id: str
+) -> str:
+    ids = _run("docker", "ps", "-a", "-q", "--no-trunc").splitlines()
+    if (
+        len(ids) != 2
+        or controller_id not in ids
+        or any(re.fullmatch(r"[0-9a-f]{64}", value) is None for value in ids)
+    ):
+        raise PreflightError("Telegram test container inventory changed")
+    candidates = []
+    for container_id in ids:
+        record = _json_object(
+            _run("docker", "inspect", "--format", "{{json .}}", container_id), "test container"
+        )
+        if record.get("Name") == f"/{TELEGRAM_TEST_NAME}":
+            candidates.append((container_id, record))
+    if len(candidates) != 1:
+        raise PreflightError("Telegram test container unavailable")
+    container_id, record = candidates[0]
+    config, state, host = record.get("Config"), record.get("State"), record.get("HostConfig")
+    mounts = record.get("Mounts")
+    network_settings = record.get("NetworkSettings")
+    image_id = _run("docker", "image", "inspect", "--format", "{{.Id}}", image)
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    entries = config.get("Env") if isinstance(config, dict) else None
+    if not isinstance(entries, list) or any(
+        not isinstance(item, str) or "=" not in item for item in entries
+    ):
+        raise PreflightError("Telegram test environment unavailable")
+    environment = dict(item.split("=", 1) for item in entries)
+    if len(environment) != len(entries) or any(
+        environment.get(key) != expected
+        for key, expected in {
+            "BOCA_ENVIRONMENT": "staging",
+            "BOCA_RUNTIME_MODE": "simulation",
+            "BOCA_ENGINE_MODE": "off",
+            "BOCA_TELEGRAM_DISPATCH_MODE": "explicit",
+        }.items()
+    ):
+        raise PreflightError("Telegram test environment changed")
+    if (
+        record.get("Id") != container_id
+        or record.get("Image") != image_id
+        or not isinstance(config, dict)
+        or config.get("Image") != image
+        or config.get("User") != "10001:10001"
+        or config.get("Healthcheck") != {"Test": ["NONE"]}
+        or config.get("Cmd")
+        != [
+            "python",
+            "-m",
+            "boca_socios.telegram_one_shot",
+            "test",
+            source_sha,
+            expected_bot_id,
+            expected_chat_hmac,
+        ]
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.service") != "telegram-test"
+        or labels.get("com.docker.compose.container-number") != "1"
+        or labels.get("org.opencontainers.image.revision") != source_sha
+        or not isinstance(state, dict)
+        or state.get("Running") is not False
+        or state.get("ExitCode") != 0
+        or not isinstance(host, dict)
+        or host.get("NanoCpus") != 250_000_000
+        or host.get("Memory") != 134_217_728
+        or host.get("PidsLimit") != 32
+        or host.get("ReadonlyRootfs") is not True
+        or host.get("Privileged") is not False
+        or host.get("PortBindings") != {}
+        or host.get("PublishAllPorts") is not False
+        or host.get("NetworkMode") != TELEGRAM_NETWORK
+        or host.get("CapDrop") != ["ALL"]
+        or host.get("CapAdd") not in (None, [])
+        or host.get("SecurityOpt") != ["no-new-privileges:true"]
+        or host.get("Tmpfs") != {"/tmp": "rw,noexec,nosuid,size=8m"}  # noqa: S108 - private container
+        or not isinstance(mounts, list)
+        or len(mounts) != 2
+        or {
+            (
+                item.get("Type"),
+                item.get("Name"),
+                item.get("Destination"),
+                item.get("RW"),
+                item.get("Driver"),
+            )
+            for item in mounts
+            if isinstance(item, dict)
+        }
+        != {
+            ("volume", DATA_VOLUME, "/data", True, "local"),
+            ("volume", TELEGRAM_VOLUME, "/run/telegram", False, "local"),
+        }
+        or not isinstance(network_settings, dict)
+        or network_settings.get("Ports") != {}
+        or not isinstance(network_settings.get("Networks"), dict)
+        or set(network_settings["Networks"]) not in (set(), {TELEGRAM_NETWORK})
+    ):
+        raise PreflightError("Telegram test container provenance changed")
+    return container_id
+
+
+def _telegram_test_phase(
+    image: str,
+    source_sha: str,
+    compose_sha: str,
+    origin: str,
+    owner: str,
+    expected_bot_id: str,
+    expected_chat_hmac: str,
+) -> None:
+    if not _telegram_installed(image, source_sha, compose_sha, origin, owner):
+        raise PreflightError("Telegram private volume unavailable")
+    custody = _run(*_telegram_container(image, "telegram_bootstrap", "verify", writable=False))
+    schema = _run(*_telegram_container(image, "telegram_storage_gate", "verify", writable=False))
+    if (
+        re.fullmatch(r"BOCA_TELEGRAM_BOOTSTRAP state=VERIFIED fingerprint=[0-9a-f]{64}", custody)
+        is None
+        or schema != "BOCA_TELEGRAM_STORAGE state=VERIFIED schema=0007"
+    ):
+        raise PreflightError("Telegram custody or schema unverified")
+    networks = set(_run("docker", "network", "ls", "--format", "{{.Name}}").splitlines())
+    if TELEGRAM_NETWORK not in networks:
+        created = _run(
+            "docker",
+            "network",
+            "create",
+            "--driver",
+            "bridge",
+            "--label",
+            f"com.docker.compose.project={PROJECT}",
+            "--label",
+            "com.docker.compose.network=telegram_egress",
+            TELEGRAM_NETWORK,
+        )
+        if re.fullmatch(r"[0-9a-f]{64}", created) is None:
+            raise PreflightError("Telegram egress creation unverified")
+    _telegram_egress()
+    _telegram_installed(image, source_sha, compose_sha, origin, owner)
+    controller_id = _run("docker", "ps", "-a", "-q", "--no-trunc")
+    if re.fullmatch(r"[0-9a-f]{64}", controller_id) is None:
+        raise PreflightError("Telegram controller inventory changed")
+    receipt = _run(
+        *_telegram_test_container(image, source_sha, expected_bot_id, expected_chat_hmac)
+    )
+    if receipt != (
+        f"BOCA_TELEGRAM_TEST state=API_ACCEPTED source_sha={source_sha}"
+        " synthetic=1 human_receipt=unverified"
+    ):
+        raise PreflightError("Telegram API acceptance receipt unverified")
+    container_id = _telegram_test_finished(
+        image, source_sha, expected_bot_id, expected_chat_hmac, controller_id
+    )
+    if _run("docker", "rm", container_id) != container_id:
+        raise PreflightError("Telegram disposable test removal unverified")
+    _telegram_installed(image, source_sha, compose_sha, origin, owner)
+    _telegram_egress()
+    if _run("docker", "network", "rm", TELEGRAM_NETWORK) != TELEGRAM_NETWORK:
+        raise PreflightError("Telegram disposable egress removal unverified")
+    _telegram_installed(image, source_sha, compose_sha, origin, owner)
+    print(receipt)
 
 
 def _telegram_phase(
@@ -2227,11 +2476,26 @@ def _telegram_phase(
     origin: str,
     owner: str,
     envelope: str,
+    expected_bot_id: str = "",
+    expected_chat_hmac: str = "",
 ) -> None:
     if (operation == "telegram-install") != bool(envelope):
         raise PreflightError("sealed Telegram envelope required only for install")
     decoded = _telegram_envelope(envelope) if envelope else None
+    if operation == "telegram-test":
+        if (
+            re.fullmatch(r"[1-9][0-9]{0,15}", expected_bot_id) is None
+            or re.fullmatch(r"[0-9a-f]{64}", expected_chat_hmac) is None
+        ):
+            raise PreflightError("Telegram owner assertion missing")
+    elif expected_bot_id or expected_chat_hmac:
+        raise PreflightError("unexpected Telegram owner assertion")
     present = _telegram_installed(image, source_sha, compose_sha, origin, owner)
+    if operation == "telegram-test":
+        _telegram_test_phase(
+            image, source_sha, compose_sha, origin, owner, expected_bot_id, expected_chat_hmac
+        )
+        return
     if operation == "telegram-migrate":
         if present:
             raise PreflightError("Telegram volume already present before migration")
@@ -2326,6 +2590,8 @@ def phase(
     envelope: str = "",
     beta_owner: str = "",
     telegram_envelope: str = "",
+    expected_bot_id: str = "",
+    expected_chat_hmac: str = "",
 ) -> None:
     beta = phase_name.startswith("beta-")
     telegram = phase_name.startswith("telegram-")
@@ -2340,7 +2606,7 @@ def phase(
         }:
             raise PreflightError("unknown BETA deployment phase")
         _validate_beta_context(envelope, beta_owner)
-        if telegram_envelope:
+        if telegram_envelope or expected_bot_id or expected_chat_hmac:
             raise PreflightError("unexpected Telegram envelope outside Telegram phase")
     elif telegram:
         if phase_name not in {
@@ -2348,6 +2614,7 @@ def phase(
             "telegram-prepare",
             "telegram-install",
             "telegram-verify",
+            "telegram-test",
         }:
             raise PreflightError("unknown Telegram host phase")
         _validate_beta_context(envelope, beta_owner)
@@ -2355,6 +2622,8 @@ def phase(
         raise PreflightError("unexpected BETA context outside BETA phase")
     elif telegram_envelope:
         raise PreflightError("unexpected Telegram envelope outside Telegram phase")
+    elif expected_bot_id or expected_chat_hmac:
+        raise PreflightError("unexpected Telegram owner assertion outside Telegram phase")
     elif envelope and phase_name != "site-install":
         raise PreflightError("unexpected Site envelope outside install phase")
     _validate_coordinates(
@@ -2373,7 +2642,15 @@ def phase(
     if telegram:
         _validate_docker_boundary()
         _telegram_phase(
-            phase_name, image, source_sha, compose_sha, envelope, beta_owner, telegram_envelope
+            phase_name,
+            image,
+            source_sha,
+            compose_sha,
+            envelope,
+            beta_owner,
+            telegram_envelope,
+            expected_bot_id,
+            expected_chat_hmac,
         )
         return
     if phase_name.startswith("site-"):
@@ -2516,6 +2793,7 @@ def main() -> int:
             "telegram-prepare",
             "telegram-install",
             "telegram-verify",
+            "telegram-test",
         ),
     )
     parser.add_argument("image")
@@ -2524,6 +2802,8 @@ def main() -> int:
     parser.add_argument("envelope", nargs="?", default="")
     parser.add_argument("beta_owner", nargs="?", default="")
     parser.add_argument("telegram_envelope", nargs="?", default="")
+    parser.add_argument("expected_bot_id", nargs="?", default="")
+    parser.add_argument("expected_chat_hmac", nargs="?", default="")
     args = parser.parse_args()
     try:
         phase(
@@ -2534,6 +2814,8 @@ def main() -> int:
             args.envelope,
             args.beta_owner,
             args.telegram_envelope,
+            args.expected_bot_id,
+            args.expected_chat_hmac,
         )
     except (PreflightError, OSError, ValueError, TypeError, KeyError) as exc:
         print(f"BOCA_NO_GO: {exc}", file=sys.stderr)

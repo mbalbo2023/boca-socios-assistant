@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import json
 import sqlite3
 from importlib.resources import files
@@ -20,6 +21,10 @@ from boca_socios.telegram_storage_gate import MIGRATIONS
 TOKEN = "12345:synthetic-bot-token-for-tests"
 CHAT = "123456789"
 SHA = "a" * 40
+
+
+def _assertion(chat: str) -> str:
+    return hmac.new(TOKEN.encode(), chat.encode(), hashlib.sha256).hexdigest()
 
 
 class _Response:
@@ -81,7 +86,7 @@ def test_identity_checks_bot_and_exact_owner_private_chat(tmp_path: Path) -> Non
     shot.check_identity(
         transport,
         12345,
-        hashlib.sha256(CHAT.encode()).hexdigest(),
+        _assertion(CHAT),
         connection_factory=lambda **_kwargs: _Connection(next(responses), calls),
     )
     assert [method for method, _url in calls] == ["GET", "GET"]
@@ -110,10 +115,65 @@ def test_group_or_mismatched_destination_never_sends(
         shot.check_identity(
             _transport(tmp_path, chat),
             12345,
-            hashlib.sha256(chat.encode()).hexdigest(),
+            _assertion(chat),
             connection_factory=lambda **_kwargs: _Connection(next(responses), calls),
         )
     assert all("sendMessage" not in url for _method, url in calls)
+
+
+def test_owner_hmac_mismatch_blocks_before_any_bot_api_request(tmp_path: Path) -> None:
+    calls: list[tuple[str, str]] = []
+    with pytest.raises(shot.OneShotError, match="owner_destination_mismatch"):
+        shot.check_identity(
+            _transport(tmp_path),
+            12345,
+            "f" * 64,
+            connection_factory=lambda **_kwargs: _Connection(
+                _Response({"ok": True, "result": {}}), calls
+            ),
+        )
+    assert calls == []
+
+
+def test_wrong_bot_id_or_redirect_blocks_before_chat_or_send(tmp_path: Path) -> None:
+    for index, response in enumerate(
+        (
+            _Response({"ok": True, "result": {"id": 54321, "is_bot": True}}),
+            _Response({"ok": True, "result": {"id": 12345, "is_bot": True}}, status=302),
+        )
+    ):
+        directory = tmp_path / str(index)
+        directory.mkdir()
+        calls: list[tuple[str, str]] = []
+        with pytest.raises(shot.OneShotError):
+            shot.check_identity(
+                _transport(directory),
+                12345,
+                _assertion(CHAT),
+                connection_factory=lambda response=response, calls=calls, **_kwargs: _Connection(
+                    response, calls
+                ),
+            )
+        assert len(calls) == 1 and calls[0][1].endswith("/getMe")
+
+
+def test_effective_worker_limits_are_required_before_any_network(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(shot, "CGROUP_ROOT", tmp_path)
+    monkeypatch.setattr(shot, "SELF_CGROUP", tmp_path / "self")
+    for name, value in (
+        ("cgroup.controllers", "cpu memory pids"),
+        ("self", "0::/"),
+        ("cpu.max", "25000 100000"),
+        ("memory.max", "134217728"),
+        ("pids.max", "32"),
+    ):
+        (tmp_path / name).write_text(value)
+    shot.require_effective_limits()
+    (tmp_path / "pids.max").write_text("max")
+    with pytest.raises(shot.OneShotError, match="effective_worker_budget_unverified"):
+        shot.require_effective_limits()
 
 
 class _Sender:

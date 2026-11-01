@@ -8,7 +8,7 @@ on:
         description: Boca host operation; BETA install requires separate private owner/TLS and protected release gates
         required: true
         type: choice
-        options: [inspect-prerequisites, prepare-rootless, preflight, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, beta-install, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify]
+        options: [inspect-prerequisites, prepare-rootless, preflight, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, beta-install, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
         description: Exact current main commit approved for the operation
         required: true
@@ -68,7 +68,7 @@ jobs:
           uv sync --frozen
       - name: Check dispatch and first-install boundaries offline
         run: |
-          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_beta_install.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
+          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_beta_install.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_telegram_one_shot.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
       - name: Validate optional served BETA Compose model without host access
         env:
@@ -274,6 +274,54 @@ jobs:
             --mount type=volume,source=boca-socios_boca_data,target=/data \
             --mount type=volume,source=boca-socios_boca_key,target=/run/secrets,readonly \
             "$BOCA_IMAGE" python -m boca_socios.runtime init-beta
+      - name: Inspect real disposable one-shot Docker isolation without Bot API traffic
+        run: |
+          set -euo pipefail
+          docker volume create --driver local \
+            --label com.docker.compose.project=boca-socios \
+            --label com.docker.compose.volume=boca_telegram boca-socios_boca_telegram
+          docker network create --driver bridge \
+            --label com.docker.compose.project=boca-socios \
+            --label com.docker.compose.network=telegram_egress boca-socios_telegram_egress
+          set +e
+          docker run --pull never --name boca-socios-telegram-test-1 \
+            --label com.docker.compose.project=boca-socios \
+            --label com.docker.compose.service=telegram-test \
+            --label com.docker.compose.container-number=1 \
+            --user 10001:10001 --network boca-socios_telegram_egress \
+            --read-only --no-healthcheck --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 32 --memory 128m --cpus 0.25 \
+            --tmpfs /tmp:rw,noexec,nosuid,size=8m \
+            --env BOCA_ENVIRONMENT=staging --env BOCA_RUNTIME_MODE=simulation \
+            --env BOCA_ENGINE_MODE=off --env BOCA_TELEGRAM_DISPATCH_MODE=explicit \
+            --mount type=volume,source=boca-socios_boca_data,target=/data,volume-nocopy \
+            --mount type=volume,source=boca-socios_boca_telegram,target=/run/telegram,volume-nocopy,readonly \
+            "$BOCA_IMAGE" python -m boca_socios.telegram_one_shot test "$GITHUB_SHA" 12345 \
+            eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee \
+            > /dev/null 2>&1
+          test_rc=$?
+          set -e
+          test "$test_rc" -eq 1
+          docker inspect --format '{{json .}}' boca-socios-telegram-test-1 > "$RUNNER_TEMP/boca-telegram-test-container.json"
+          docker network inspect --format '{{json .}}' boca-socios_telegram_egress > "$RUNNER_TEMP/boca-telegram-test-network.json"
+          PYTHONPATH=src python3 - "$RUNNER_TEMP/boca-telegram-test-container.json" "$RUNNER_TEMP/boca-telegram-test-network.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          from boca_socios import host_rootless_setup as host
+
+          record = json.loads(Path(sys.argv[1]).read_text())
+          network = Path(sys.argv[2]).read_text()
+          def only_network(_home, _binary, _endpoint, *command):
+              assert command[:2] == ("network", "inspect")
+              return network
+          host._command = only_network
+          assert record["State"]["Running"] is False
+          assert host._verified_telegram_test_isolation(Path("/home/boca-deploy"), "--host=local", record)
+          PY
+          docker rm boca-socios-telegram-test-1
+          docker network rm boca-socios_telegram_egress
+          docker volume rm boca-socios_boca_telegram
+          [[ "$(docker network ls --format '{{.Name}}')" != *boca-socios_telegram_egress* ]]
       - name: Serve BETA on runner loopback with exact image, TLS and isolation
         run: |
           docker compose -p boca-socios -f compose.beta.yaml up --no-build --no-deps --wait --wait-timeout 90 -d controller
@@ -321,6 +369,8 @@ jobs:
           docker compose -p boca-socios -f compose.beta.yaml rm -sf controller || true
           docker compose -p boca-socios -f compose.yaml stop controller || true
           docker compose -p boca-socios -f compose.yaml rm -sf controller || true
+          docker rm -f boca-socios-telegram-test-1 || true
+          docker network rm boca-socios_telegram_egress || true
           docker volume rm boca-socios_boca_data || true
           docker volume rm boca-socios_boca_key || true
           docker volume rm boca-socios_boca_owner || true
@@ -350,6 +400,9 @@ jobs:
           BOCA_DEPLOY_ENV_READY: ${{ vars.BOCA_DEPLOY_ENV_READY }}
           BOCA_BETA_ENV_READY: ${{ vars.BOCA_BETA_ENV_READY }}
           BOCA_TELEGRAM_ENV_READY: ${{ vars.BOCA_TELEGRAM_ENV_READY }}
+          BOCA_TELEGRAM_OWNER_READY: ${{ vars.BOCA_TELEGRAM_OWNER_READY }}
+          BOCA_TELEGRAM_EXPECTED_BOT_ID: ${{ secrets.BOCA_TELEGRAM_EXPECTED_BOT_ID }}
+          BOCA_TELEGRAM_EXPECTED_CHAT_HMAC: ${{ secrets.BOCA_TELEGRAM_EXPECTED_CHAT_HMAC }}
           BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
           BOCA_SITE_ENVELOPE: ${{ inputs.site_envelope }}
@@ -406,7 +459,7 @@ jobs:
               test -n "$BOCA_BETA_OWNER_SUBJECT"
               test -z "$BOCA_SITE_ENVELOPE"
               ;;
-            telegram-migrate|telegram-prepare|telegram-install|telegram-verify)
+            telegram-migrate|telegram-prepare|telegram-install|telegram-verify|telegram-test)
               test "$BOCA_DEPLOY_ENV_READY" = ready
               test "$BOCA_BETA_ENV_READY" = ready
               test "$BOCA_TELEGRAM_ENV_READY" = ready
@@ -416,6 +469,11 @@ jobs:
               test -n "$BOCA_BETA_OWNER_SUBJECT"
               test -z "$BOCA_SITE_ENVELOPE"
               if [[ "$BOCA_OPERATION" = telegram-install ]]; then test -n "$BOCA_TELEGRAM_ENVELOPE"; fi
+              if [[ "$BOCA_OPERATION" = telegram-test ]]; then
+                test "$BOCA_TELEGRAM_OWNER_READY" = ready
+                [[ "$BOCA_TELEGRAM_EXPECTED_BOT_ID" =~ ^[1-9][0-9]{0,15}$ ]]
+                [[ "$BOCA_TELEGRAM_EXPECTED_CHAT_HMAC" =~ ^[0-9a-f]{64}$ ]]
+              fi
               ;;
             *) exit 1 ;;
           esac
@@ -812,15 +870,23 @@ jobs:
             printf 'Boca Telegram start-existing: NO_GO; stopped-state provenance unverified. Boca-only stop follows.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-      - name: Execute offline Telegram schema or sealed custody phase
+      - name: Execute protected Telegram schema, custody or one-shot test
         if: startsWith(inputs.operation, 'telegram-')
         env:
           BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
           BOCA_TELEGRAM_ENVELOPE: ${{ inputs.telegram_envelope }}
+          BOCA_TELEGRAM_EXPECTED_BOT_ID: ${{ secrets.BOCA_TELEGRAM_EXPECTED_BOT_ID }}
+          BOCA_TELEGRAM_EXPECTED_CHAT_HMAC: ${{ secrets.BOCA_TELEGRAM_EXPECTED_CHAT_HMAC }}
         run: |
           set +e
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - "$BOCA_OPERATION" "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" "$BOCA_TELEGRAM_ENVELOPE")"
+          expected_bot=''
+          expected_chat=''
+          if [[ "$BOCA_OPERATION" = telegram-test ]]; then
+            expected_bot="$BOCA_TELEGRAM_EXPECTED_BOT_ID"
+            expected_chat="$BOCA_TELEGRAM_EXPECTED_CHAT_HMAC"
+          fi
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - "$BOCA_OPERATION" "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" "$BOCA_TELEGRAM_ENVELOPE" "$expected_bot" "$expected_chat")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-telegram-phase.receipt" 2>/dev/null
           phase_rc=$?
           set -e
@@ -831,17 +897,18 @@ jobs:
             telegram-prepare) pattern='^BOCA_TELEGRAM_BOOTSTRAP state=(PREPARED|ALREADY_PREPARED) public_key=([A-Za-z0-9_-]{43}) fingerprint=([0-9a-f]{64})$' ;;
             telegram-install) pattern='^BOCA_TELEGRAM_BOOTSTRAP state=CONFIGURED fingerprint=([0-9a-f]{64})$' ;;
             telegram-verify) pattern='^BOCA_TELEGRAM_BOOTSTRAP state=VERIFIED fingerprint=([0-9a-f]{64})$' ;;
+            telegram-test) pattern='^BOCA_TELEGRAM_TEST state=API_ACCEPTED source_sha=([0-9a-f]{40}) synthetic=1 human_receipt=unverified$' ;;
             *) exit 1 ;;
           esac
           if [[ "$phase_rc" -ne 0 || ${#receipt} -gt 180 || ! "$receipt" =~ $pattern ]]; then
             printf 'Boca Telegram post-install custody: NO_GO; private details withheld. Boca-only stop follows.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          if [[ "$BOCA_OPERATION" = telegram-migrate && "${BASH_REMATCH[1]}" != "$BOCA_SOURCE_SHA" ]]; then
+          if [[ "$BOCA_OPERATION" = telegram-migrate || "$BOCA_OPERATION" = telegram-test ]] && [[ "${BASH_REMATCH[1]}" != "$BOCA_SOURCE_SHA" ]]; then
             printf 'Boca Telegram schema receipt mismatch; Boca-only stop follows.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          printf 'Boca Telegram post-install custody: `%s`. Bot API and delivery have not been tested.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Boca Telegram protected phase: `%s`. Only telegram-test may report Bot API acceptance; human receipt remains unverified.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
       - name: Stop positively identified Boca services after Telegram custody
         if: always() && startsWith(inputs.operation, 'telegram-') && steps.boca_telegram_attempt.outputs.started == 'true'
         env:
@@ -858,9 +925,13 @@ jobs:
           set -e
           receipt=''
           if [[ "$stop_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-telegram-stop.receipt")"; fi
-          pattern='^BOCA_STOP_TEST state=(STOPPED|ALREADY_STOPPED) source_sha=([0-9a-f]{40}) containers=(0|not_queried) data=preserved$'
+          pattern='^BOCA_STOP_TEST state=(STOPPED|ALREADY_STOPPED) source_sha=([0-9a-f]{40}) containers=(0|1|not_queried) data=preserved$'
           if [[ "$stop_rc" -ne 0 || ${#receipt} -gt 180 || ! "$receipt" =~ $pattern || "${BASH_REMATCH[2]}" != "$BOCA_SOURCE_SHA" ]]; then
             printf 'Boca Telegram stop: NO_GO; positive Boca-only stop receipt absent. Preserve all volumes and inspect before retry.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [[ "$BOCA_OPERATION" != telegram-test && "${BASH_REMATCH[3]}" = 1 ]]; then
+            printf 'Boca Telegram stop: NO_GO; unexpected running container outside one-shot test.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           printf 'Boca Telegram custody phase ended: `%s`; controller and daemon stopped; app/key/owner/Telegram volumes retained.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"

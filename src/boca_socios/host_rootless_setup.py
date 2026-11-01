@@ -24,6 +24,11 @@ CONFIG = (".config", "docker", "daemon.json")
 UNIT = (".config", "systemd", "user", "docker.service")
 ENABLE = (".config", "systemd", "user", "default.target.wants", "docker.service")
 TELEGRAM_IMAGE = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z")
+TELEGRAM_TEST_NETWORK = "boca-socios_telegram_egress"
+TELEGRAM_TEST_MOUNTS = {
+    ("volume", "boca-socios_boca_data", "/data", True, "local"),
+    ("volume", "boca-socios_boca_telegram", "/run/telegram", False, "local"),
+}
 
 
 class SetupError(ValueError):
@@ -590,16 +595,31 @@ def _verified_telegram_image(
     image_id = record.get("Image")
     labels = config.get("Labels")
     revision = labels.get("org.opencontainers.image.revision") if isinstance(labels, dict) else None
+    service = labels.get("com.docker.compose.service") if isinstance(labels, dict) else None
+    command = config.get("Cmd")
+    worker = command == ["python", "-m", "boca_socios.notify.telegram_worker", "serve"]
+    one_shot = (
+        isinstance(command, list)
+        and len(command) == 7
+        and command[:4] == ["python", "-m", "boca_socios.telegram_one_shot", "test"]
+        and command[4] == revision
+        and isinstance(command[5], str)
+        and re.fullmatch(r"[1-9][0-9]{0,15}", command[5]) is not None
+        and isinstance(command[6], str)
+        and re.fullmatch(r"[0-9a-f]{64}", command[6]) is not None
+    )
     if (
         not isinstance(image_ref, str)
         or TELEGRAM_IMAGE.fullmatch(image_ref) is None
         or not isinstance(image_id, str)
         or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None
-        or config.get("Cmd") != ["python", "-m", "boca_socios.notify.telegram_worker", "serve"]
+        or not ((service == "telegram" and worker) or (service == "telegram-test" and one_shot))
         or config.get("User") != "10001:10001"
         or not isinstance(revision, str)
         or re.fullmatch(r"[0-9a-f]{40}", revision) is None
     ):
+        return False
+    if service == "telegram-test" and not _verified_telegram_test_isolation(home, endpoint, record):
         return False
     try:
         image = json.loads(
@@ -626,6 +646,102 @@ def _verified_telegram_image(
         and image_ref in digests
         and isinstance(image_labels, dict)
         and image_labels.get("org.opencontainers.image.revision") == revision
+    )
+
+
+def _verified_telegram_test_isolation(home: Path, endpoint: str, record: dict[str, object]) -> bool:
+    host, config, mounts = record.get("HostConfig"), record.get("Config"), record.get("Mounts")
+    network_settings = record.get("NetworkSettings")
+    state = record.get("State")
+    if not isinstance(config, dict):
+        return False
+    entries = config.get("Env")
+    if not isinstance(entries, list) or any(
+        not isinstance(item, str) or "=" not in item for item in entries
+    ):
+        return False
+    environment = dict(item.split("=", 1) for item in entries)
+    if len(environment) != len(entries) or any(
+        environment.get(key) != expected
+        for key, expected in {
+            "BOCA_ENVIRONMENT": "staging",
+            "BOCA_RUNTIME_MODE": "simulation",
+            "BOCA_ENGINE_MODE": "off",
+            "BOCA_TELEGRAM_DISPATCH_MODE": "explicit",
+        }.items()
+    ):
+        return False
+    if config.get("Healthcheck") != {"Test": ["NONE"]}:
+        return False
+    if (
+        not isinstance(host, dict)
+        or host.get("NanoCpus") != 250_000_000
+        or host.get("Memory") != 134_217_728
+        or host.get("PidsLimit") != 32
+        or host.get("ReadonlyRootfs") is not True
+        or host.get("Privileged") is not False
+        or host.get("PublishAllPorts") is not False
+        or host.get("PortBindings") != {}
+        or host.get("NetworkMode") != TELEGRAM_TEST_NETWORK
+        or host.get("CapDrop") != ["ALL"]
+        or host.get("CapAdd") not in (None, [])
+        or host.get("SecurityOpt") != ["no-new-privileges:true"]
+        or host.get("Tmpfs") != {"/tmp": "rw,noexec,nosuid,size=8m"}  # noqa: S108 - private container
+        or not isinstance(mounts, list)
+        or len(mounts) != 2
+        or {
+            (
+                item.get("Type"),
+                item.get("Name"),
+                item.get("Destination"),
+                item.get("RW"),
+                item.get("Driver"),
+            )
+            for item in mounts
+            if isinstance(item, dict)
+        }
+        != TELEGRAM_TEST_MOUNTS
+        or not isinstance(network_settings, dict)
+        or network_settings.get("Ports") != {}
+        or not isinstance(state, dict)
+        or type(state.get("Running")) is not bool
+    ):
+        return False
+    networks = network_settings.get("Networks")
+    if not isinstance(networks, dict) or set(networks) not in (set(), {TELEGRAM_TEST_NETWORK}):
+        return False
+    if state["Running"] and set(networks) != {TELEGRAM_TEST_NETWORK}:
+        return False
+    try:
+        network = json.loads(
+            _command(
+                home,
+                "/usr/bin/docker",
+                endpoint,
+                "network",
+                "inspect",
+                "--format",
+                "{{json .}}",
+                TELEGRAM_TEST_NETWORK,
+            )
+        )
+    except (SetupError, ValueError):
+        return False
+    labels = network.get("Labels") if isinstance(network, dict) else None
+    peers = network.get("Containers") if isinstance(network, dict) else None
+    return (
+        isinstance(network, dict)
+        and network.get("Name") == TELEGRAM_TEST_NETWORK
+        and network.get("Driver") == "bridge"
+        and network.get("Scope") == "local"
+        and network.get("Internal") is False
+        and network.get("Attachable") is False
+        and network.get("Ingress") is False
+        and isinstance(labels, dict)
+        and labels.get("com.docker.compose.project") == "boca-socios"
+        and labels.get("com.docker.compose.network") == "telegram_egress"
+        and isinstance(peers, dict)
+        and set(peers) == ({record.get("Id")} if state["Running"] else set())
     )
 
 
@@ -673,7 +789,7 @@ def _verified_containers(home: Path) -> tuple[list[str], list[str]]:
             or record.get("Id") != container_id
             or not isinstance(labels, dict)
             or labels.get("com.docker.compose.project") != "boca-socios"
-            or service not in {"controller", "browser", "proxy", "telegram"}
+            or service not in {"controller", "browser", "proxy", "telegram", "telegram-test"}
             or not isinstance(number, str)
             or not re.fullmatch(r"[1-9][0-9]{0,2}", number)
             or record.get("Name") != f"/boca-socios-{service}-{number}"
@@ -681,7 +797,7 @@ def _verified_containers(home: Path) -> tuple[list[str], list[str]]:
             or type(state.get("Running")) is not bool
         ):
             raise SetupError("unknown_container_preserved_no_stop")
-        if service == "telegram" and (
+        if service in {"telegram", "telegram-test"} and (
             number != "1" or not _verified_telegram_image(home, endpoint, record, config)
         ):
             raise SetupError("unknown_container_preserved_no_stop")

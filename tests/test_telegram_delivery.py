@@ -223,6 +223,15 @@ class TelegramTransportTests(unittest.TestCase):
             asyncio.run(transport.send(TelegramNotice(uuid4(), NoticeKind.HEARTBEAT)))
         self.assertTrue(conn.closed)
 
+    def test_bootstrap_maximum_token_length_is_transport_compatible(self):
+        self.token.write_text("12345678901234567890:" + "x" * 128, encoding="ascii")
+        self.token.chmod(0o600)
+        self.assertEqual(self.transport()._configuration()[1], 123)
+        self.token.write_text("12345678901234567890:" + "x" * 129, encoding="ascii")
+        self.token.chmod(0o600)
+        with self.assertRaises(TelegramUnconfirmed):
+            self.transport().preflight()
+
 
 if __name__ == "__main__":
     unittest.main()
