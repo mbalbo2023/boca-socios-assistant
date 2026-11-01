@@ -629,7 +629,8 @@ def _verified_telegram_image(
     )
 
 
-def _stop_test_containers(home: Path) -> int:
+def _verified_containers(home: Path) -> tuple[list[str], list[str]]:
+    """Read the complete dedicated inventory before any container effect."""
     endpoint = "--host=unix:///run/user/10001/docker.sock"
     raw = _command(home, "/usr/bin/docker", endpoint, "info", "--format", "{{json .}}")
     info = json.loads(raw)
@@ -686,6 +687,12 @@ def _stop_test_containers(home: Path) -> int:
             raise SetupError("unknown_container_preserved_no_stop")
         if state["Running"]:
             running.append(container_id)
+    return ids, running
+
+
+def _stop_test_containers(home: Path) -> int:
+    ids, running = _verified_containers(home)
+    endpoint = "--host=unix:///run/user/10001/docker.sock"
     # Complete the inventory before the first effect. Never stop an unknown container.
     for container_id in running:
         _command(
@@ -718,6 +725,71 @@ def _stop_test_containers(home: Path) -> int:
     ):
         raise SetupError("dedicated_container_inventory_changed_no_daemon_stop")
     return len(running)
+
+
+def _verified_enablement(home: Path) -> None:
+    parent = _directory(home, ENABLE[:-1], create=False)
+    if parent is None:
+        raise SetupError("reviewed_service_enablement_missing")
+    try:
+        metadata = os.stat(ENABLE[-1], dir_fd=parent, follow_symlinks=False)
+        if (
+            not stat.S_ISLNK(metadata.st_mode)
+            or metadata.st_uid != UID
+            or os.readlink(ENABLE[-1], dir_fd=parent) != "../docker.service"
+        ):
+            raise SetupError("reviewed_service_enablement_mismatch")
+    except OSError as exc:
+        raise SetupError("reviewed_service_enablement_missing") from exc
+    finally:
+        os.close(parent)
+
+
+def start_existing(source_sha: str) -> None:
+    """Start only the stopped, reviewed Boca user daemon; preserve its app state."""
+    if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise SetupError("invalid_start_coordinates")
+    home = _identity()
+    for anchor in (home, RUNTIME):
+        descriptor = _directory(anchor, (), create=False)
+        if descriptor is None:
+            raise SetupError("private_directory_required")
+        os.close(descriptor)
+    _socket(RUNTIME / "systemd/private")
+    _socket(RUNTIME / "bus")
+    if os.access("/var/run/docker.sock", os.W_OK):
+        raise SetupError("rootful_access_forbidden")
+    _read_private(home, CONFIG, _config(home))
+    _read_private(home, UNIT, _unit())
+    _verified_enablement(home)
+    if _stop_service_state(home) != "inactive":
+        raise SetupError("dedicated_service_already_active")
+    for name in ("docker.sock", "dockerd-rootless", "containerd-rootless"):
+        if _entry(RUNTIME, (name,)) is not None:
+            raise SetupError("stale_dedicated_socket_unverified")
+    if (
+        _command(home, "/usr/bin/loginctl", "show-user", "10001", "--property=Linger", "--value")
+        != "yes"
+    ):
+        raise SetupError("dedicated_linger_requires_privileged_operator")
+    _command(home, "/usr/bin/systemctl", "--user", "start", "docker.service", timeout=50)
+    for attempt in range(30):
+        try:
+            _socket(RUNTIME / "docker.sock")
+            break
+        except FileNotFoundError:
+            if attempt == 29:
+                raise SetupError("dedicated_socket_startup_timeout") from None
+            time.sleep(0.5)
+    if _stop_service_state(home) != "active":
+        raise SetupError("dedicated_service_not_running")
+    _, running = _verified_containers(home)
+    if running:
+        raise SetupError("dedicated_container_already_running_no_test")
+    print(
+        f"BOCA_ROOTLESS_START state=READY source_sha={source_sha}"
+        " inventory=known_stopped data=preserved"
+    )
 
 
 def stop_test(source_sha: str) -> None:
@@ -761,13 +833,18 @@ def stop_test(source_sha: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Boca dedicated rootless service preparation")
-    parser.add_argument("phase", choices=("check", "apply", "stop-test"))
+    parser.add_argument("phase", choices=("check", "apply", "start-existing", "stop-test"))
     parser.add_argument("source_sha")
     args = parser.parse_args()
-    prefix = "BOCA_STOP_TEST" if args.phase == "stop-test" else "BOCA_ROOTLESS_SETUP"
+    prefix = {
+        "stop-test": "BOCA_STOP_TEST",
+        "start-existing": "BOCA_ROOTLESS_START",
+    }.get(args.phase, "BOCA_ROOTLESS_SETUP")
     try:
         if args.phase == "stop-test":
             stop_test(args.source_sha)
+        elif args.phase == "start-existing":
+            start_existing(args.source_sha)
         else:
             prepare(args.phase, args.source_sha)
     except SetupError as exc:

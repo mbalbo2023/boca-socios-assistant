@@ -53,7 +53,7 @@ def test_current_main_and_first_attempt_are_checked_before_ssh_and_apply() -> No
         for start in range(len(workflow))
         if workflow.startswith("python scripts/check_main_ref.py", start)
     ]
-    assert len(checks) == 10
+    assert len(checks) == 12
     assert checks[0] < workflow.index("Configure pinned SSH host key")
     assert (
         workflow.index("Recheck current main before Site custody operation")
@@ -98,5 +98,15 @@ def test_current_main_and_first_attempt_are_checked_before_ssh_and_apply() -> No
     assert (
         workflow.index("Stop positively identified Boca services after BETA acceptance")
         < checks[9]
+        < workflow.rindex('boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py')
+    )
+    assert (
+        workflow.index("Recheck current main before Telegram post-install custody")
+        < checks[10]
+        < workflow.index("Mark Telegram host attempt before starting existing Boca daemon")
+    )
+    assert (
+        workflow.index("Stop positively identified Boca services after Telegram custody")
+        < checks[11]
         < workflow.rindex('boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py')
     )

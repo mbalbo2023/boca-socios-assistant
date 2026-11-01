@@ -1,6 +1,6 @@
 # ADR 0083: custodia cifrada del bot Telegram y destino privado
 
-**Estado:** decisión aceptada al integrar PR #199; candidata hasta su merge.
+**Estado:** decisión aceptada al integrar PR #199.
 Diseño: 2026-11-01 (America/Argentina/Buenos_Aires). Este cambio es biblioteca
 y pruebas sintéticas; no configura el droplet ni envía un mensaje.
 
@@ -47,10 +47,11 @@ y formato de los dos archivos sin revelar sus valores, pero no prueba que
 el bot sea válido, que el destino pertenezca al dueño ni recepción humana.
 
 El archivo privado es compatible con `TelegramTransport` de ADR0066, cuyo
-preflight posterior exige valores y modo owner-only. La comprobación real de
-identidad Bot API, destino privado, schema0007/procedencia de DB, release/SHA,
-presupuesto agregado, puerto/red y un mensaje sintético de prueba requieren
-otro PR y operación protegida en el **workflow existente** (#168). El
+preflight posterior exige valores y modo owner-only. La ruta candidata #201
+agrega comprobaciones de schema0007/procedencia, release/SHA, puerto/red y
+custodia protegida posterior al BETA. La identidad Bot API, destino privado,
+presupuesto efectivo del worker y un mensaje sintético requieren el PR
+separado #202 y operación protegida en el **workflow existente**. El
 stop-test reconoce el servicio opcional sólo en código por ADR0080; no se
 despachó una parada después de ese cambio. Sin bot y destino verificados,
 el estado operativo Telegram es NO-GO.
