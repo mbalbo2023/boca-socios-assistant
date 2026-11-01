@@ -64,7 +64,12 @@ def test_running_operations_are_never_cancelled_and_push_cannot_deploy() -> None
 
 
 def test_policy_rejects_shared_pr_group_or_split_manual_mutex(tmp_path: Path) -> None:
-    for relative in ("compose.yaml", "AGENTS.md", ".github/CODEOWNERS", ".github/pull_request_template.md"):
+    for relative in (
+        "compose.yaml",
+        "AGENTS.md",
+        ".github/CODEOWNERS",
+        ".github/pull_request_template.md",
+    ):
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text((ROOT / relative).read_text())

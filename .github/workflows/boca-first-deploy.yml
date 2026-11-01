@@ -36,7 +36,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: boca-first-deploy
+  group: ${{ github.event_name == 'pull_request' && format('boca-first-deploy-pr-{0}', github.event.pull_request.number) || 'boca-first-deploy' }}
   cancel-in-progress: false
 
 jobs:
@@ -332,3 +332,4 @@ jobs:
             printf 'Boca read-only diagnostic: healthy controller, engine off\n\n'
             printf 'Commit: `%s`\n\nImage: `%s`\n\nRelease run: `%s`\n\nService: `controller`\n' "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" "$BOCA_RELEASE_RUN_ID"
           } >> "$GITHUB_STEP_SUMMARY"
+
