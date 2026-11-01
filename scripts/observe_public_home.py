@@ -29,6 +29,21 @@ CHALLENGE_MARKERS = (
     "verificá que sos humano",
     "verifica que eres humano",
 )
+# Only attribute *names* are inspected; this constant expression never reads
+# handler values, executes site handlers, fills fields or returns page content.
+# Traverse open shadow roots as well as the light DOM to avoid trusting a
+# form whose inline lifecycle changes after page scripts become enabled.
+INLINE_HANDLER_NAME_PROBE = """() => {
+  const pending = [document.documentElement];
+  for (let i = 0; i < pending.length; i++) {
+    const element = pending[i];
+    if (element.getAttributeNames().some(name => name.toLowerCase().startsWith('on')))
+      return true;
+    pending.push(...element.children);
+    if (element.shadowRoot) pending.push(...element.shadowRoot.children);
+  }
+  return false;
+}"""
 
 
 class RequestPort(Protocol):
@@ -61,6 +76,8 @@ class LocatorPort(Protocol):
 
 class PublicLoginDomPort(Protocol):
     def locator(self, selector: str) -> LocatorPort: ...
+
+    async def evaluate(self, expression: str) -> object: ...
 
 
 def allow_request(url: str, method: str, kind: str, document_count: int) -> bool:
@@ -125,6 +142,9 @@ async def inspect_login_dom(page: PublicLoginDomPort) -> bool:
     if await page.locator(
         'form[aria-hidden="true"], [aria-hidden="true"] form, form[inert], [inert] form'
     ).count():
+        return False
+    inline_handler = await page.evaluate(INLINE_HANDLER_NAME_PROBE)
+    if type(inline_handler) is not bool or inline_handler:
         return False
     # Requiring one form ties each typed control and disabled submit to one form,
     # while allowing the visible copy and accessible labels to change safely.

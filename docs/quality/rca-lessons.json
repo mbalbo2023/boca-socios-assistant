@@ -248,6 +248,19 @@
         "tests/test_browser_ipc.py::test_close_during_slow_socket_teardown_fences_late_success",
         "tests/test_browser_ipc.py::test_stop_during_partial_frame_never_starts_browser"
       ]
+    },
+    {
+      "id": "RCA-238",
+      "issue": 238,
+      "fix_pr": 240,
+      "root_cause": "The one-GET login observer treated unstyled visible controls as sufficient even after blocking external CSS, and overlooked scripts, inline on* event handlers and aria-hidden ancestors that can change or conceal the initial form.",
+      "prevention": "Reject success for any aborted display asset, script/style declaration, generic on* attribute name or aria-hidden/inert ancestor; preserve offline real-Chromium SSR/CSR/CSS/hydration fixtures with no network and a fixed sanitized receipt.",
+      "regression_tests": [
+        "tests/test_public_observer.py::test_browser_context_closes_on_block_and_never_navigates_again",
+        "tests/test_public_observer.py::test_login_dom_inspection_is_read_only_and_fails_closed",
+        "tests/test_public_observer.py::test_inline_event_handler_probe_is_generic_and_reads_names_only",
+        "tests/test_public_observer.py::test_ci_runs_real_chromium_public_fixtures_only_with_os_network_none"
+      ]
     }
   ]
 }

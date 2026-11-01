@@ -54,6 +54,18 @@ FIXTURES = (
         "unknown",
     ),
     Fixture(
+        "inline_onload_hydration_dependency",
+        '<html><body onload="document.querySelector(&quot;button&quot;).disabled=false">'
+        + FORM
+        + "</body></html>",
+        "unknown",
+    ),
+    Fixture(
+        "generic_onpointerdown_dependency",
+        f'<html><body><section onpointerdown="alert(1)">{FORM}</section></body></html>',
+        "unknown",
+    ),
+    Fixture(
         "inline_css_dependency",
         f"<html><head><style>form {{ opacity: 1 }}</style></head><body>{FORM}</body></html>",
         "unknown",
@@ -133,7 +145,11 @@ async def run() -> dict[str, object]:
                         )
                         # Prove what the browser actually sees with JS and CSS
                         # resources disabled, then require conservative unknown.
-                        if fixture.name in {"css_dependency", "hydration_dependency"}:
+                        if fixture.name in {
+                            "css_dependency",
+                            "hydration_dependency",
+                            "inline_onload_hydration_dependency",
+                        }:
                             assert await page.locator('form button[type="submit"]').is_disabled()
                         if fixture.name == "css_dependency":
                             assert await page.locator('form input[type="email"]').is_visible()

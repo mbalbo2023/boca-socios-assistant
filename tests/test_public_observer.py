@@ -257,6 +257,10 @@ def test_browser_context_closes_on_block_and_never_navigates_again(
         async def inner_text(self, _selector: str) -> str:
             return visible_text
 
+        async def evaluate(self, expression: str) -> bool:
+            assert "getAttributeNames()" in expression and "startsWith('on')" in expression
+            return False
+
         def locator(self, selector: str) -> object:
             assert visible_text != "CAPTCHA", "challenge must stop before DOM reads"
             selectors = {
@@ -337,19 +341,20 @@ def test_browser_context_closes_on_block_and_never_navigates_again(
 
 
 @pytest.mark.parametrize(
-    "form_count,email_count,password_count,button_count,disabled,visible,dependencies,hidden_parent,expected",
+    "form_count,email_count,password_count,button_count,disabled,visible,dependencies,hidden_parent,inline_handler,expected",
     [
-        (1, 1, 1, 1, True, True, 0, 0, True),
-        (0, 0, 0, 0, False, False, 0, 0, False),  # CSR shell without initial form.
-        (2, 1, 1, 1, True, True, 0, 0, False),
-        (1, 0, 1, 1, True, True, 0, 0, False),
-        (1, 1, 0, 1, True, True, 0, 0, False),
-        (1, 2, 1, 1, True, True, 0, 0, False),
-        (1, 1, 1, 2, True, True, 0, 0, False),
-        (1, 1, 1, 1, False, True, 0, 0, False),
-        (1, 1, 1, 1, True, False, 0, 0, False),  # CSS-hidden controls.
-        (1, 1, 1, 1, True, True, 1, 0, False),  # Stylesheet/script not observed.
-        (1, 1, 1, 1, True, True, 0, 1, False),  # aria-hidden ancestor.
+        (1, 1, 1, 1, True, True, 0, 0, False, True),
+        (0, 0, 0, 0, False, False, 0, 0, False, False),  # CSR shell without initial form.
+        (2, 1, 1, 1, True, True, 0, 0, False, False),
+        (1, 0, 1, 1, True, True, 0, 0, False, False),
+        (1, 1, 0, 1, True, True, 0, 0, False, False),
+        (1, 2, 1, 1, True, True, 0, 0, False, False),
+        (1, 1, 1, 2, True, True, 0, 0, False, False),
+        (1, 1, 1, 1, False, True, 0, 0, False, False),
+        (1, 1, 1, 1, True, False, 0, 0, False, False),  # CSS-hidden controls.
+        (1, 1, 1, 1, True, True, 1, 0, False, False),  # Stylesheet/script not observed.
+        (1, 1, 1, 1, True, True, 0, 1, False, False),  # aria-hidden ancestor.
+        (1, 1, 1, 1, True, True, 0, 0, True, False),  # body onload or any on* attribute.
     ],
 )
 def test_login_dom_inspection_is_read_only_and_fails_closed(
@@ -361,6 +366,7 @@ def test_login_dom_inspection_is_read_only_and_fails_closed(
     visible: bool,
     dependencies: int,
     hidden_parent: int,
+    inline_handler: bool,
     expected: bool,
 ) -> None:
     module = observer()
@@ -384,6 +390,11 @@ def test_login_dom_inspection_is_read_only_and_fails_closed(
             return disabled
 
     class Page:
+        async def evaluate(self, expression: str) -> bool:
+            assert "getAttributeNames()" in expression and "startsWith('on')" in expression
+            read_methods.append("event_handler_names_only")
+            return inline_handler
+
         def locator(self, selector: str) -> Field:
             mapping = {
                 'script, link[rel~="stylesheet"], style': Field(
@@ -403,7 +414,8 @@ def test_login_dom_inspection_is_read_only_and_fails_closed(
 
     assert asyncio.run(module.inspect_login_dom(Page())) is expected
     assert all(
-        method.startswith(("count:", "is_visible:", "is_disabled:")) for method in read_methods
+        method.startswith(("count:", "is_visible:", "is_disabled:", "event_handler_names_only"))
+        for method in read_methods
     )
     assert not any(method.startswith("is_disabled:") for method in read_methods) or (
         form_count == 1 and button_count == 1 and email_count == 1 and password_count == 1
@@ -421,6 +433,8 @@ def test_real_chromium_fixture_runner_is_inert_without_explicit_offline_ack(
         "csr_empty_shell",
         "css_dependency",
         "hydration_dependency",
+        "inline_onload_hydration_dependency",
+        "generic_onpointerdown_dependency",
         "inline_css_dependency",
         "challenge_preempts_form",
         "enabled_submit",
@@ -448,6 +462,16 @@ def test_real_chromium_fixture_runner_is_inert_without_explicit_offline_ack(
     )
 
 
+def test_inline_event_handler_probe_is_generic_and_reads_names_only() -> None:
+    probe = observer().INLINE_HANDLER_NAME_PROBE
+    assert "getAttributeNames()" in probe
+    assert "startsWith('on')" in probe
+    assert "shadowRoot" in probe
+    assert "getAttribute(" not in probe
+    assert "attributes[" not in probe
+    assert "onload" not in probe and "onpointerdown" not in probe
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -467,7 +491,7 @@ def test_offline_chromium_receipt_never_claims_unexecuted_or_partial_fixtures(
     receipt: dict[str, object] = {
         "mode": "offline_public_login_dom",
         "state": "PASS",
-        "cases": 9,
+        "cases": len(runner.FIXTURES),
         "page_requests_aborted": 1,
     }
     receipt.update(change)
