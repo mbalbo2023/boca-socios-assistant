@@ -74,8 +74,11 @@ def check_policy(root: Path) -> list[str]:
                 "|| 'boca-first-deploy' }}\n"
                 "  cancel-in-progress: false\n"
             )
-            if re.search(r"^" + re.escape(concurrency) + r"(?=\n|$)", data, re.MULTILINE) is None:
-                failures.append("first-deploy workflow missing gate: isolated PR/manual concurrency")
+            pattern = r"^" + re.escape(concurrency) + r"(?=\n|$)"
+            if re.search(pattern, data, re.MULTILINE) is None:
+                failures.append(
+                    "first-deploy workflow missing gate: isolated PR/manual concurrency"
+                )
         else:
             for forbidden in ("ssh ", "scp "):
                 if forbidden in data:
