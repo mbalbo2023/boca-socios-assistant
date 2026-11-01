@@ -1,6 +1,11 @@
 # ADR 0053: validate existing SQLite before migration writes
 
-**Status:** Proposed, 2026-10-31 ART. Issue #137.
+**Status:** Accepted implementation. Issue #137; PR #141 merged as
+`07cf424c92384a42e820b73befcaaeeaca87e8d9`. Exact candidate
+`1bd018fccdf4430fc075afe4e957fc17fd59e178` passed
+[CI 41258685042](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41258685042)
+and [image scan 41258685016](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41258685016).
+Acceptance covers code and synthetic fixtures, not a migration of real data.
 
 ## Reproduced defect
 
@@ -56,3 +61,4 @@ No SQL migration file, business rule, runtime mode, deployment workflow or
 existing real database is changed by this PR. It does not authorize applying
 migrations, installation, release, backup or live access. PR #130 remains a
 separate inactive candidate.
+

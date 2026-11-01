@@ -93,6 +93,53 @@
         "tests/test_host_ssh_transport.py::test_inspection_preserves_remote_argv",
         "tests/test_host_ssh_transport.py::test_observe_preserves_remote_argv"
       ]
+    },
+    {
+      "id": "RCA-131",
+      "issue": 131,
+      "fix_pr": 132,
+      "root_cause": "An absent dedicated rootless socket did not distinguish unavailable Docker executables from a missing, inactive or failed user service.",
+      "prevention": "Inspect fixed executable availability and allowlisted user-service properties without daemon operations; require the dedicated identity and a proven private bus before contacting systemd.",
+      "regression_tests": [
+        "tests/test_host_service_inspection.py::test_service_metadata_distinguishes_missing_inactive_failed_and_running",
+        "tests/test_host_service_inspection.py::test_service_probe_uses_only_fixed_user_unit_and_private_bus",
+        "tests/test_host_service_inspection.py::test_service_probe_does_not_connect_when_private_runtime_is_unproven"
+      ]
+    },
+    {
+      "id": "RCA-135",
+      "issue": 135,
+      "fix_pr": 136,
+      "root_cause": "Unrelated pull requests and manual host operations shared a GitHub concurrency group, allowing newer pending work to replace older validation even with cancel-in-progress disabled.",
+      "prevention": "Separate validation groups by pull-request number, retain one constant manual host mutex, and reject changed routing, cancellation or deployment triggers in policy and regressions.",
+      "regression_tests": [
+        "tests/test_workflow_concurrency.py::test_unrelated_prs_cannot_replace_each_others_pending_validation",
+        "tests/test_workflow_concurrency.py::test_all_manual_operations_keep_one_constant_host_mutex",
+        "tests/test_workflow_concurrency.py::test_running_operations_are_never_cancelled_and_push_cannot_deploy",
+        "tests/test_workflow_concurrency.py::test_policy_rejects_shared_pr_group_or_split_manual_mutex"
+      ]
+    },
+    {
+      "id": "RCA-137",
+      "issue": 137,
+      "fix_pr": 141,
+      "root_cause": "Database.migrate enabled WAL and ran schema DDL before validating an existing migration checksum, altering rejected databases and adopting unversioned files.",
+      "prevention": "Validate the existing ledger through mode=ro, then recheck checksum and file identity through mode=rw before application DDL/WAL/chmod; reject unknown files and create fresh files exclusively.",
+      "regression_tests": [
+        "tests/test_database_migration_preflight.py::test_checksum_rejection_precedes_schema_wal_and_chmod",
+        "tests/test_database_migration_preflight.py::test_unversioned_database_is_not_adopted"
+      ]
+    },
+    {
+      "id": "RCA-139",
+      "issue": 139,
+      "fix_pr": 140,
+      "root_cause": "A double-slash anchor retained by pathlib did not match the single-slash traversal path, bypassing the candidate directory ownership and writable-mode check in a review candidate.",
+      "prevention": "Require single-root absolute candidate and anchor paths, reject double-slash account homes, and keep descriptor-based no-symlink traversal with explicit ownership checks.",
+      "regression_tests": [
+        "tests/test_host_db_metadata.py::test_candidate_refuses_foreign_or_writable_anchor_and_path_escape",
+        "tests/test_host_db_metadata.py::test_invalid_home_is_redacted_without_probing_arbitrary_location"
+      ]
     }
   ]
 }
