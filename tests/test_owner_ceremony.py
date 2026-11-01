@@ -184,6 +184,7 @@ def test_no_anonymous_begin_and_one_use_capability(tmp_path: Path) -> None:
     assert status == 200 and isinstance(script, bytes)
     assert b"navigator.credentials.create" in script and b"navigator.credentials.get" in script
     assert b"navigator.clipboard.writeText" in script
+    assert b"input cifrado protegido" in script and b"issues, PRs ni chats" in script
     assert _request(app, "POST", "/begin", {})[0] == 403
     assert app.stopped.is_set()
     assert _request(app, "POST", "/begin", {"capability": CAP})[0] == 410

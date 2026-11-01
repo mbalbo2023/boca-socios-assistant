@@ -89,7 +89,7 @@ copy.addEventListener('click', async () => {
     await navigator.clipboard.writeText(sealed);
     sealed = null;
     copy.hidden = true;
-    status.textContent = 'Sobre cifrado copiado. Verificá el portapapeles antes de usar owner-install; no lo pegues en GitHub.';
+    status.textContent = 'Sobre cifrado copiado. No lo pegues en issues, PRs ni chats; solo en el input cifrado protegido cuando ese paso esté autorizado.';
   } catch (_error) {
     status.textContent = 'No se pudo copiar automáticamente. Mantené esta página abierta para reintentar; no uses una captura.';
   }
