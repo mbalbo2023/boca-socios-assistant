@@ -23,3 +23,10 @@ INSERT INTO reservation_attempts_simulation
 DROP TABLE reservation_attempts;
 ALTER TABLE reservation_attempts_simulation RENAME TO reservation_attempts;
 CREATE INDEX idx_reservation_review ON reservation_attempts(state, review_after);
+
+CREATE TRIGGER reservation_attempt_kind_immutable
+BEFORE UPDATE OF attempt_kind ON reservation_attempts
+WHEN NEW.attempt_kind IS NOT OLD.attempt_kind
+BEGIN
+  SELECT RAISE(ABORT, 'attempt kind is immutable');
+END;

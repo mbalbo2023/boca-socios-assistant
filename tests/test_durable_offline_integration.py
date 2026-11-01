@@ -244,6 +244,11 @@ def test_attempt_kind_cannot_convert_simulation_to_provider_ack(tmp_path: Path) 
             connection.execute(
                 "UPDATE reservation_attempts SET state='provider_ack_reported', closed_at=1001"
             )
+        with CHECKS.assertRaises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE reservation_attempts SET attempt_kind='external', "
+                "state='provider_ack_reported', closed_at=1001"
+            )
 
 
 def test_external_claim_cannot_be_reported_as_simulation(tmp_path: Path) -> None:
@@ -256,6 +261,12 @@ def test_external_claim_cannot_be_reported_as_simulation(tmp_path: Path) -> None
     with CHECKS.assertRaises(InvalidReservationClaim):
         guard.resolve(claim, ReservationResolution.SIMULATION_COMPLETED, now=1001)
     assert guard.get(request_id).state is ReservationState.IN_FLIGHT
+    with database.connection() as connection, connection:
+        with CHECKS.assertRaises(sqlite3.IntegrityError):
+            connection.execute(
+                "UPDATE reservation_attempts SET attempt_kind='simulation', "
+                "state='simulation_completed', closed_at=1001"
+            )
 
 
 def test_expired_completion_does_not_publish_or_retry(tmp_path: Path) -> None:

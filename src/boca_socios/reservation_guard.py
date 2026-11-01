@@ -117,9 +117,14 @@ class ReservationAttemptGuard:
                 if row[0] != digest:
                     raise ValueError("migration checksum mismatch: simulation outcomes")
                 return
-            for statement in sql.split(";"):
-                if statement.strip():
+            statement = ""
+            for line in sql.splitlines(keepends=True):
+                statement += line
+                if sqlite3.complete_statement(statement):
                     connection.execute(statement)
+                    statement = ""
+            if statement.strip():
+                raise ValueError("incomplete simulation migration statement")
             connection.execute(
                 "INSERT INTO schema_migrations(version, checksum) VALUES (5, ?)", (digest,)
             )

@@ -25,7 +25,9 @@ original migration 0003 and checksum remain unchanged. Default guard.migrate
 and the dormant runtime still do not apply 0005; only migrate_simulation does.
 Both Python resolution checks and SQL constraints prohibit a simulation claim
 from becoming provider_ack_reported or an external claim becoming a simulated
-result. Local-status schema validation accepts the reviewed v5 checksum while
+result. An immutable-kind trigger also rejects changing the kind and state
+together; statement parsing retains the trigger body within the same migration
+transaction. Local-status schema validation accepts the reviewed v5 checksum while
 continuing to report external_confirmation=not_observed.
 
 After a successful synthetic browser, completion is persisted before notice
