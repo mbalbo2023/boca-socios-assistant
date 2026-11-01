@@ -54,10 +54,12 @@ mismo Telegram, notificaciones reales, readiness beta ni evidencia Boca.
 ## Reconciliación del candidato
 
 El candidato se reconstruye sobre `main`
-`4922e45b5e2e38242263b6ba10969a8190aa939a`, conservando la historia de #134
+`8b64bb332a977b6637e13a142e905e5149a5e841`, conservando la historia de #134
 y sin cambiar implementación ni pruebas del dispatcher. Los once casos de
 integración local se verificaron nuevamente con el preflight SQLite de #141;
 las validaciones completas de Actions se registran sobre el SHA final en el PR.
+Esta base incorpora #130 (coordinador opt-in) y #128 (API de estado sin
+listener); el dispatcher no se conecta a ninguno ni aplica migraciones opt-in.
 Este documento describe un candidato hasta su merge, no una capacidad del host.
 La integración no conecta el consumidor al panel ni al motor: los avisos locales
 requieren un contrato de lectura separado y la entrega externa sigue diferida.
