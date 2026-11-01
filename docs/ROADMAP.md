@@ -17,12 +17,12 @@ funcionalidad operativa.
 | --- | --- | --- |
 | Host dedicado | Rootless preparado #120; preflight #124 PASS sólo para controlador dormido; `stop-test` [41282301501](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41282301501) ALREADY_STOPPED, `containers=not_queried`, datos preservados | Root: capacidad funcional, operación manual, postflight y nueva parada después de pruebas futuras; no repetir #120 |
 | Simulación | Coordinador #130, comandos #149, loop #161, ciclo #164, TLS #173 y RCA UUID #187 integrados | Acceder desde host/tablet con identidad privada, sin activar Boca real |
-| Panel/alta | Servicio cifrado #31, adaptadores #128/#148, owner passkey/controles #163, registro #174 y preflight #189 integrados; custodia cifrada #207 propuesta | Origen TLS privado, inscripción física del dueño, E2E tablet y rechazo real de terceros |
+| Panel/alta | Servicio cifrado #31, adaptadores #128/#148, owner passkey/controles #163, registro #174, preflight #189 y custodia cifrada #208 integrados en código | #209: origen TLS privado, inscripción física del dueño, E2E tablet y rechazo real de terceros |
 | Aceptación | HTTP loopback #170, probe TLS #190 y operación protegida de aceptación/parada #200 integrados | Host/tablet/Site/Telegram y recursos/latencia reales con recibos aparte |
-| Imagen/deploy | `compose.beta.yaml` #171, `beta-install` #191, release protegido [#198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41298346638) con digest/manifiesto para el SHA de corte; sin instalación | Release coincidente con la HEAD que se vaya a instalar, marca BETA, archivos privados, capacidad y dispatch exacto; no despachar candidato no apto |
+| Imagen/deploy | `compose.beta.yaml` #171, `beta-install` #191, release protegido [41301618285](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41301618285) con digest/manifiesto para integración #208; sin instalación | Release coincidente con la HEAD que se vaya a instalar, marca BETA, archivos privados, capacidad y dispatch exacto; no despachar candidato no apto |
 | Site #113 | Demo privada v10 D1 desactivada; helper #178, cliente #179, custodia #181 y RCA inventario #196 | Release coincidente con HEAD, bypass+HMAC host, flag y E2E; hoy offline |
 | Telegram #162 | Fence/adapter, worker #188 apagado, stop-test #194, helper #199, custodia #203 y prueba única #204 | #168: bot y destino verificados, provisión y ejecución host, aceptación API/recepción humana separadas sin reintento ciego |
-| Documentación | #205 integró el corte de código; este candidato registra release #198 y parada protegida en cinco rutas | Mantener #45 y los documentos al día con cada SHA/run; revisar antes de merge según regla 84 |
+| Documentación | #205/#206 integraron los cortes previos; esta reconciliación registra #208 y release 41301618285, sin host | Mantener #45 y los documentos al día con cada SHA/run; revisar antes de merge según regla 84 |
 
 La secuencia de host es: candidato funcional revisado y checks exactos →
 provisión privada sin secretos en repo/logs → release por digest/manifiesto →

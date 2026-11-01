@@ -13,8 +13,8 @@ infrastructure**.
 > preserved. Its `containers=0` field counts containers stopped in that run;
 > exited containers, if any, remain preserved.
 > None of these receipts is application readiness.
-> The protected [image release #198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41299068773) published `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:95ec739640422532a73de49bc9d37e436a3d26a4c7eb09a626a8813130927168`
-> from `d0c539d14f38687fbc3711c94ef35df908e57a91` (manifest artifact 13080811204), the source before issue #207. This is an image
+> The protected [image release 41301618285](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41301618285) published `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:6f067e5078081760dec27f81d95792a4423ff9c1d9cb3bef19ef70dbfc8cf889`
+> from the #208 integration `58f57822e95da9574c0a9d5122607616da4a024a` (manifest artifact 13082030761), before this documentation update. This is an image
 > publication, not a droplet install. Recheck exact current main/release binding
 > before any host action; the [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
 > holds the latest operational receipt.
@@ -74,8 +74,8 @@ start/stop/status, durable local notices and restart/idempotency tests. Reuse
 the existing encrypted enrollment service; tests use synthetic credentials.
 The own-application panel, entrypoint, owner/TLS preflight #189, and local
 runtime libraries are integrated in code, without application installation.
-Issue #207 proposes a separate protected, sealed owner passkey/TLS custody
-path. Its code and synthetic checks do not enroll the owner or make the
+PR #208 integrated a separate protected, sealed owner passkey/TLS custody
+path in code. Its synthetic checks do not enroll the owner or make the
 tablet's exact HTTPS origin reachable; those remain deployment gates.
 The private Site v10 has a disabled D1 bridge and fails closed while host
 credentials/poller are absent. PRs #181/#196 integrated protected ciphertext
