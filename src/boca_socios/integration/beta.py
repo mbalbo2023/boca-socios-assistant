@@ -102,9 +102,11 @@ class BetaCoordinator:
         return snapshot
 
     def status(self, command_id: str, *, member_id: str) -> CommandSnapshot | None:
+        self._require_member(member_id)
         return self._store.get(command_id, member_id=member_id)
 
     async def stop(self, command_id: str, *, member_id: str) -> CommandSnapshot | None:
+        self._require_member(member_id)
         result = self._store.stop(command_id, member_id=member_id, now=self._now())
         if (
             result is not None
@@ -114,6 +116,11 @@ class BetaCoordinator:
             if self._active is not None:
                 self._active.cancel()
         return result
+
+    @staticmethod
+    def _require_member(member_id: str) -> None:
+        if not isinstance(member_id, str) or not member_id.strip():
+            raise ValueError("member identity must be a nonblank string")
 
     def _kick(self) -> None:
         if not self._closed and not self._failed and (self._worker is None or self._worker.done()):

@@ -337,6 +337,19 @@ class BetaCommandTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(LocalStatusUnavailable):
             read_local_status(self.db.path, observed_at=datetime.now(UTC))
 
+    async def test_invalid_member_identity_cannot_disable_scope_or_access_database(self):
+        with (
+            patch.object(self.service._store, "get") as get,
+            patch.object(self.service._store, "stop") as stop,
+        ):
+            for member in (None, "", " ", 1, True):
+                with self.subTest(member=member), self.assertRaises(ValueError):
+                    self.service.status(self.key, member_id=member)
+                with self.subTest(member=member), self.assertRaises(ValueError):
+                    await self.service.stop(self.key, member_id=member)
+            get.assert_not_called()
+            stop.assert_not_called()
+
     async def test_command_schema_failure_rolls_back_ddl_and_version(self):
         db = Database(Path(self.directory.name) / "rollback.sqlite")
         ReservationAttemptGuard(db).migrate_simulation()
