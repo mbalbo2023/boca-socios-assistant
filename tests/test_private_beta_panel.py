@@ -300,6 +300,41 @@ def test_new_command_key_redirects_to_existing_canonical_result() -> None:
         assert _request(app, f"/comandos/{new_id}", cookie=cookie)[0] == 404
 
 
+def test_malformed_command_result_never_becomes_a_redirect() -> None:
+    clock = [0.0]
+    provider, key, credential_id = _passkey(clock)
+
+    class MalformedHost(FakeHost):
+        def begin(self, command_id: str, *, member_id: str, event_id: str) -> FakeCommand:
+            self.calls.append((command_id, member_id, event_id))
+            return FakeCommand(command_id="../outside")
+
+    host = MalformedHost()
+    with TemporaryDirectory() as directory:
+        app, db = _app(Path(directory) / "boca.sqlite3", provider, host)
+        member_id = MemberEnrollmentService(db, CredentialVault(os.urandom(32))).enroll(
+            email="member@example.test",
+            password="test-password",
+            consent_recorded_at=datetime.now(UTC),
+        )
+        cookie = _login(app, key, credential_id)
+        status, _, form = _request(app, "/comandos", cookie=cookie)
+        assert status == 200
+        fields = {
+            "csrf": re.search(rb'name="csrf" value="([^"]+)"', form).group(1).decode(),
+            "operation_id": re.search(rb'name="operation_id" value="([^"]+)"', form)
+            .group(1)
+            .decode(),
+            "member_id": member_id,
+            "event_id": EVENT_ID,
+        }
+        first = _request(app, "/comandos", cookie=cookie, method="POST", payload=fields)
+        replay = _request(app, "/comandos", cookie=cookie, method="POST", payload=fields)
+        assert first[0] == replay[0] == 503
+        assert "Location" not in first[1] and "Location" not in replay[1]
+        assert len(host.calls) == 1
+
+
 def test_cross_origin_csrf_and_spoofed_tls_never_start_simulation() -> None:
     clock = [0.0]
     provider, key, credential_id = _passkey(clock)

@@ -402,16 +402,19 @@ class PrivatePanelApplication:
         try:
             if self._commands is None or self._commands.failed:
                 raise RuntimeError("command host unavailable")
-            self._commands.begin(
+            snapshot = self._commands.begin(
                 fields["operation_id"], member_id=member_id, event_id=fields["event_id"]
             )
+            canonical = _canonical_uuid(getattr(snapshot, "command_id", None))
+            if canonical is None:
+                raise RuntimeError("canonical command result is unavailable")
         except Exception:
             self._sessions.finish(operation, 503)
             return _error(
                 start, 503, "Resultado incierto. Consulte el historial; no repita con otro ID."
             )
-        self._sessions.finish(operation, 303, fields["operation_id"])
-        return self._redirect(start, f"/comandos/{fields['operation_id']}")
+        self._sessions.finish(operation, 303, canonical)
+        return self._redirect(start, f"/comandos/{canonical}")
 
     def _command_detail(
         self, command_id: str, session: OwnerSession, start: StartResponse
