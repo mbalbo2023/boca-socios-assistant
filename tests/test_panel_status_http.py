@@ -24,7 +24,9 @@ def _identity(token: str, now: datetime) -> VerifiedIdentity | None:
 def _app(tmp_path: Path) -> StatusApplication:
     db = Database(tmp_path / "private" / "boca.sqlite3")
     db.migrate()
-    return StatusApplication(db.path, owner_subject=OWNER, verify_identity=_identity, now=lambda: NOW)
+    return StatusApplication(
+        db.path, owner_subject=OWNER, verify_identity=_identity, now=lambda: NOW
+    )
 
 
 def _request(
@@ -92,7 +94,11 @@ def test_verified_identity_still_requires_owner_permission_and_expiry(
     identity = VerifiedIdentity(
         "another-owner" if kind == "foreign" else OWNER,
         frozenset() if kind == "permission" else frozenset({"local-status:read"}),
-        datetime(2026, 10, 31) if kind == "naive" else NOW if kind == "expired" else NOW + timedelta(1),
+        datetime(2026, 10, 31)
+        if kind == "naive"
+        else NOW
+        if kind == "expired"
+        else NOW + timedelta(1),
     )
     app = StatusApplication(
         tmp_path / "missing.sqlite3",
@@ -136,7 +142,10 @@ def test_private_reader_and_identity_failures_are_generic(tmp_path: Path) -> Non
         raise RuntimeError("private token or provider configuration")
 
     app = StatusApplication(
-        tmp_path / "missing.sqlite3", owner_subject=OWNER, verify_identity=unavailable, now=lambda: NOW
+        tmp_path / "missing.sqlite3",
+        owner_subject=OWNER,
+        verify_identity=unavailable,
+        now=lambda: NOW,
     )
     assert _request(app)[0:3:2] == (503, {"error": "identity_unavailable"})
 

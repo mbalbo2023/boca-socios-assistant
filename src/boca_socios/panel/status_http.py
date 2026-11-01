@@ -92,9 +92,7 @@ class StatusApplication:
         self._read_lock = Lock()
         self._next_read = 0.0
 
-    def __call__(
-        self, environ: Mapping[str, object], start_response: StartResponse
-    ) -> list[bytes]:
+    def __call__(self, environ: Mapping[str, object], start_response: StartResponse) -> list[bytes]:
         # Never trust an incoming forwarded-proto header as proof of TLS.
         if environ.get("wsgi.url_scheme") != "https":
             return _error(start_response, 400, "secure_transport_required")
