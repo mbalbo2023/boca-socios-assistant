@@ -342,6 +342,14 @@ def test_finished_one_shot_requires_exact_disposable_identity_before_remove(
         "12345",
         "e" * 64,
     ]
+    record["Config"]["Entrypoint"] = None  # type: ignore[index]
+    record["Config"]["WorkingDir"] = "/app"  # type: ignore[index]
+    record["Config"]["Env"] = [  # type: ignore[index]
+        "BOCA_ENVIRONMENT=staging",
+        "BOCA_RUNTIME_MODE=simulation",
+        "BOCA_ENGINE_MODE=off",
+        "BOCA_TELEGRAM_DISPATCH_MODE=explicit",
+    ]
     record["Config"]["Labels"]["com.docker.compose.service"] = "telegram-test"  # type: ignore[index]
     record["Config"]["Healthcheck"] = {  # type: ignore[index]
         "Test": ["NONE"],
@@ -387,13 +395,21 @@ def test_finished_one_shot_requires_exact_disposable_identity_before_remove(
         if args[:2] == ("docker", "inspect"):
             return json.dumps(_record() if args[-1] == CID else record)
         if args[:3] == ("docker", "image", "inspect"):
-            return IMAGE_ID
+            return json.dumps({"Id": IMAGE_ID, "Config": {"Env": []}})
         pytest.fail(f"unexpected command {args!r}")
 
     monkeypatch.setattr(host, "_run", fake_run)
     assert host._telegram_test_finished(IMAGE, SHA, "12345", "e" * 64, CID) == "f" * 64
     record["Mounts"][1]["Name"] = "unrelated_volume"  # type: ignore[index]
     with pytest.raises(host.PreflightError, match="provenance changed"):
+        host._telegram_test_finished(IMAGE, SHA, "12345", "e" * 64, CID)
+    record["Mounts"][1]["Name"] = host.TELEGRAM_VOLUME  # type: ignore[index]
+    record["Config"]["Entrypoint"] = ["sh", "-c"]  # type: ignore[index]
+    with pytest.raises(host.PreflightError, match="provenance changed"):
+        host._telegram_test_finished(IMAGE, SHA, "12345", "e" * 64, CID)
+    record["Config"]["Entrypoint"] = None  # type: ignore[index]
+    record["Config"]["Env"].append("PYTHONHOME=/data")  # type: ignore[index]
+    with pytest.raises(host.PreflightError, match="environment changed"):
         host._telegram_test_finished(IMAGE, SHA, "12345", "e" * 64, CID)
 
 

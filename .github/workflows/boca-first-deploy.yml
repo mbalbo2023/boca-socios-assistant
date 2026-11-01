@@ -304,19 +304,22 @@ jobs:
           test "$test_rc" -eq 1
           docker inspect --format '{{json .}}' boca-socios-telegram-test-1 > "$RUNNER_TEMP/boca-telegram-test-container.json"
           docker network inspect --format '{{json .}}' boca-socios_telegram_egress > "$RUNNER_TEMP/boca-telegram-test-network.json"
-          PYTHONPATH=src python3 - "$RUNNER_TEMP/boca-telegram-test-container.json" "$RUNNER_TEMP/boca-telegram-test-network.json" <<'PY'
+          docker image inspect --format '{{json .}}' "$BOCA_IMAGE" > "$RUNNER_TEMP/boca-telegram-test-image.json"
+          PYTHONPATH=src python3 - "$RUNNER_TEMP/boca-telegram-test-container.json" "$RUNNER_TEMP/boca-telegram-test-network.json" "$RUNNER_TEMP/boca-telegram-test-image.json" <<'PY'
           import json, sys
           from pathlib import Path
           from boca_socios import host_rootless_setup as host
 
           record = json.loads(Path(sys.argv[1]).read_text())
           network = Path(sys.argv[2]).read_text()
+          image = json.loads(Path(sys.argv[3]).read_text())
           def only_network(_home, _binary, _endpoint, *command):
               assert command[:2] == ("network", "inspect")
               return network
           host._command = only_network
           assert record["State"]["Running"] is False
           assert host._verified_telegram_test_isolation(Path("/home/boca-deploy"), "--host=local", record)
+          assert host._telegram_test_environment(record["Config"]["Env"], image["Config"]["Env"])
           PY
           docker rm boca-socios-telegram-test-1
           docker network rm boca-socios_telegram_egress

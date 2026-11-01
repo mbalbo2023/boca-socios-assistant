@@ -62,7 +62,10 @@ identidad si el Docker CLI termina o expira. `stop-test` reconoce este caso
 únicamente si imagen local/digest/revisión/comando, recursos, UID, mounts,
 red, puertos, capacidades y entorno coinciden; ante un elemento extraño no
 detiene ninguno. En éxito el host verifica el recibo, el contenedor detenido
-y sus montajes/configuración antes de quitar **sólo** ese contenedor
+con entrypoint nulo, directorio `/app` y entorno igual al de la imagen
+inmutable más las cuatro variables revisadas, sin `PYTHONPATH` ni otros
+overrides, junto al resto de sus montajes/configuración, antes de quitar
+**sólo** ese contenedor
 desechable; verifica la red Boca vacía antes de quitar **sólo** esa red. El
 inventario vuelve al controller parado y sus volúmenes. Ante incertidumbre
 preserva contenedor, red y todos los datos para revisión. Un paso `always()`

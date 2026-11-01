@@ -646,7 +646,37 @@ def _verified_telegram_image(
         and image_ref in digests
         and isinstance(image_labels, dict)
         and image_labels.get("org.opencontainers.image.revision") == revision
+        and (
+            service != "telegram-test"
+            or (
+                isinstance(image_config, dict)
+                and _telegram_test_environment(config.get("Env"), image_config.get("Env"))
+            )
+        )
     )
+
+
+def _telegram_test_environment(actual: object, base: object) -> bool:
+    """No container-only overrides beyond the reviewed one-shot values."""
+
+    def entries(value: object) -> dict[str, str] | None:
+        if not isinstance(value, list) or any(
+            not isinstance(item, str) or "=" not in item for item in value
+        ):
+            return None
+        result = dict(item.split("=", 1) for item in value)
+        return result if len(result) == len(value) else None
+
+    baseline, observed = entries(base), entries(actual)
+    if baseline is None or observed is None:
+        return False
+    baseline.update(
+        BOCA_ENVIRONMENT="staging",
+        BOCA_RUNTIME_MODE="simulation",
+        BOCA_ENGINE_MODE="off",
+        BOCA_TELEGRAM_DISPATCH_MODE="explicit",
+    )
+    return observed == baseline
 
 
 def _verified_telegram_test_isolation(home: Path, endpoint: str, record: dict[str, object]) -> bool:
@@ -671,13 +701,18 @@ def _verified_telegram_test_isolation(home: Path, endpoint: str, record: dict[st
         }.items()
     ):
         return False
-    if config.get("Healthcheck") != {
-        "Test": ["NONE"],
-        "Interval": 30_000_000_000,
-        "Timeout": 5_000_000_000,
-        "StartPeriod": 15_000_000_000,
-        "Retries": 3,
-    }:
+    if (
+        config.get("Entrypoint") is not None
+        or config.get("WorkingDir") != "/app"
+        or config.get("Healthcheck")
+        != {
+            "Test": ["NONE"],
+            "Interval": 30_000_000_000,
+            "Timeout": 5_000_000_000,
+            "StartPeriod": 15_000_000_000,
+            "Retries": 3,
+        }
+    ):
         return False
     if (
         not isinstance(host, dict)

@@ -68,7 +68,7 @@ def _telegram_image() -> dict[str, object]:
     return {
         "Id": IMAGE_ID,
         "RepoDigests": [IMAGE_REF],
-        "Config": {"Labels": {"org.opencontainers.image.revision": SHA}},
+        "Config": {"Labels": {"org.opencontainers.image.revision": SHA}, "Env": []},
     }
 
 
@@ -85,6 +85,8 @@ def _telegram_test_inspect(container_id: str, *, running: bool = True) -> dict[s
         "12345",
         "e" * 64,
     ]
+    record["Config"]["Entrypoint"] = None
+    record["Config"]["WorkingDir"] = "/app"
     record["Config"]["Env"] = [
         "BOCA_ENVIRONMENT=staging",
         "BOCA_RUNTIME_MODE=simulation",
@@ -199,6 +201,8 @@ def test_one_shot_foreign_mount_network_or_budget_blocks_every_stop() -> None:
         ("HostConfig", "CapAdd", ["SYS_ADMIN"]),
         ("HostConfig", "SecurityOpt", []),
         ("Config", "Healthcheck", {"Test": ["CMD", "unrelated"]}),
+        ("Config", "Entrypoint", ["sh", "-c"]),
+        ("Config", "WorkingDir", "/data"),
     ):
         record = _telegram_test_inspect(UNKNOWN)
         if key is None:
@@ -228,6 +232,24 @@ def test_one_shot_foreign_mount_network_or_budget_blocks_every_stop() -> None:
             _inspect(CONTAINER),
             json.dumps(_telegram_test_inspect(UNKNOWN)),
             _telegram_test_network("f" * 64),
+        ],
+    ) as command:
+        with CHECKS.assertRaisesRegex(host.SetupError, "unknown_container_preserved_no_stop"):
+            host._stop_test_containers(HOME)
+    assert all("stop" not in invocation.args for invocation in command.call_args_list)
+
+    record = _telegram_test_inspect(UNKNOWN)
+    record["Config"]["Env"].append("PYTHONPATH=/data")
+    with patch.object(
+        host,
+        "_command",
+        side_effect=[
+            _info(2),
+            f"{CONTAINER}\n{UNKNOWN}",
+            _inspect(CONTAINER),
+            json.dumps(record),
+            _telegram_test_network(UNKNOWN),
+            json.dumps(_telegram_image()),
         ],
     ) as command:
         with CHECKS.assertRaisesRegex(host.SetupError, "unknown_container_preserved_no_stop"):

@@ -2302,6 +2302,29 @@ def _telegram_test_container(
     )
 
 
+def _telegram_test_environment(actual: object, base: object) -> bool:
+    """Compare the test's environment with the immutable image plus four fixed values."""
+
+    def entries(value: object) -> dict[str, str] | None:
+        if not isinstance(value, list) or any(
+            not isinstance(item, str) or "=" not in item for item in value
+        ):
+            return None
+        result = dict(item.split("=", 1) for item in value)
+        return result if len(result) == len(value) else None
+
+    baseline, observed = entries(base), entries(actual)
+    if baseline is None or observed is None:
+        return False
+    baseline.update(
+        BOCA_ENVIRONMENT="staging",
+        BOCA_RUNTIME_MODE="simulation",
+        BOCA_ENGINE_MODE="off",
+        BOCA_TELEGRAM_DISPATCH_MODE="explicit",
+    )
+    return observed == baseline
+
+
 def _telegram_test_finished(
     image: str, source_sha: str, expected_bot_id: str, expected_chat_hmac: str, controller_id: str
 ) -> str:
@@ -2325,22 +2348,16 @@ def _telegram_test_finished(
     config, state, host = record.get("Config"), record.get("State"), record.get("HostConfig")
     mounts = record.get("Mounts")
     network_settings = record.get("NetworkSettings")
-    image_id = _run("docker", "image", "inspect", "--format", "{{.Id}}", image)
+    image_record = _json_object(
+        _run("docker", "image", "inspect", "--format", "{{json .}}", image),
+        "Telegram test image",
+    )
+    image_id = image_record.get("Id")
+    image_config = image_record.get("Config")
     labels = config.get("Labels") if isinstance(config, dict) else None
     entries = config.get("Env") if isinstance(config, dict) else None
-    if not isinstance(entries, list) or any(
-        not isinstance(item, str) or "=" not in item for item in entries
-    ):
-        raise PreflightError("Telegram test environment unavailable")
-    environment = dict(item.split("=", 1) for item in entries)
-    if len(environment) != len(entries) or any(
-        environment.get(key) != expected
-        for key, expected in {
-            "BOCA_ENVIRONMENT": "staging",
-            "BOCA_RUNTIME_MODE": "simulation",
-            "BOCA_ENGINE_MODE": "off",
-            "BOCA_TELEGRAM_DISPATCH_MODE": "explicit",
-        }.items()
+    if not isinstance(image_config, dict) or not _telegram_test_environment(
+        entries, image_config.get("Env")
     ):
         raise PreflightError("Telegram test environment changed")
     if (
@@ -2349,6 +2366,8 @@ def _telegram_test_finished(
         or not isinstance(config, dict)
         or config.get("Image") != image
         or config.get("User") != "10001:10001"
+        or config.get("Entrypoint") is not None
+        or config.get("WorkingDir") != "/app"
         or config.get("Healthcheck")
         != {
             "Test": ["NONE"],
