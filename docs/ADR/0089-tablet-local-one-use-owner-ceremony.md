@@ -1,7 +1,8 @@
 # ADR 0089: one-use owner ceremony emitter on the tablet
 
-**Status:** candidate in issue #215, based on `main=8fdbec97262a525821eb87f3fbc27f1841a5d2ec`.
-This is reviewable code, not an Android enrollment, TLS trust installation,
+**Status:** code contract in issue #215, based on the pre-change
+`main=8fdbec97262a525821eb87f3fbc27f1841a5d2ec`.
+This is code for review/integration, not an Android enrollment, TLS trust installation,
 host owner-volume install or BETA activation. PR/CI/review evidence belongs in
 the candidate PR and the central checkpoint after integration.
 

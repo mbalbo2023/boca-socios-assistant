@@ -4,12 +4,13 @@
 
 The default runtime remains dormant and CI never deploys. The dedicated rootless service
 was prepared in #120 and stopped in #156/41272785626; the BETA application
-remains not installed/NO_GO. The protected [image release 41301618285](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41301618285)
-published `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:6f067e5078081760dec27f81d95792a4423ff9c1d9cb3bef19ef70dbfc8cf889` for the #208 integration `58f57822e95da9574c0a9d5122607616da4a024a` with manifest artifact 13082030761.
-This was registry-only; no droplet pull/install. Subsequent commits require a
-matching new release, tracked in [issue #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
-The later release 41302342233 was for `3ef7aff8...`, before #212 advanced
-main to `3ec1096f...`; it too is historical for any subsequent install.
+remains not installed/NO_GO. The protected [image release 41312460820](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41312460820)
+published `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:67d8f59487632f117ec8c22d307481c1a9ba340502212d9bafe582309624301f`
+with manifest 13086161844 for the pre-change #214 main
+`8fdbec97262a525821eb87f3fbc27f1841a5d2ec`. This was registry-only,
+with no droplet pull/install. Earlier releases 41301618285/#208 and
+41302342233/`3ef7aff8...` are historical. The HEAD after this code change
+requires a matching new release, tracked in [issue #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
 The [stop-test #198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41282301501) observed `ALREADY_STOPPED
 containers=not_queried data=preserved` at 03:48 ART; it did not inventory
 stopped containers and future daemon state must be rechecked.
@@ -195,8 +196,9 @@ unit/config/inventory proof, then requires `stop-test` in the same job even
 after a failed phase; an uncertain stop remains NO-GO. This is code only:
 no real owner passkey, origin, certificate, private tablet route or host
 custody operation has been verified. The 41301618285 protected release is
-SUCCESS for the #208 integration main `58f57822e95da9574c0a9d5122607616da4a024a`;
-this documentation merge will need a new exact release. Issue #209 holds
+SUCCESS for the historical #208 integration main `58f57822e95da9574c0a9d5122607616da4a024a`;
+the later #214 release and the requirement for a new exact HEAD are recorded
+above. Issue #209 holds
 the private tablet route and first-owner ceremony. Do not set the BETA marker
 or run `beta-install` from a synthetic fixture.
 
@@ -273,9 +275,9 @@ certificate trust and real passkey are verified. The present single owner
 credential needs separate Android/iOS interoperability proof. No terminal
 operation by the owner replaces the gated Actions host workflow.
 
-## Tablet-local first-owner ceremony — candidate, not activated
+## Tablet-local first-owner ceremony — code only, not activated
 
-Issue #215 / ADR0089 adds a one-use **device-local** emitter candidate for
+Issue #215 / ADR0089 adds a one-use **device-local** emitter in this tree for
 `https://localhost:8443`. It never runs on the droplet or in the protected
 host workflow. A new-only private directory on the device holds the generated
 `DNS:localhost` TLS leaf/key and public CA; the CA signing key is discarded.
@@ -286,8 +288,7 @@ any WebAuthn challenge. A failed attempt, successful proof, abort or timeout
 closes the loopback listener. It returns an owner-install-compatible sealed
 envelope only after create **and** get with user verification. The browser
 tries to copy automatically, reports success and reveals a manual Copy button
-if denied. It does not print ciphertext
-in a terminal or save it to a file.
+if denied. It does not print ciphertext in a terminal or save it to a file.
 
 The physical procedure remains **NO-GO** pending a private Android runtime,
 trusted CA import, observed Chrome response-accessor/UV compatibility and

@@ -37,8 +37,8 @@ scan 41312228548 SUCCESS. La [release protegida 41312460820](https://github.com/
 intento 1 SUCCESS, publicó sólo la imagen
 `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:67d8f59487632f117ec8c22d307481c1a9ba340502212d9bafe582309624301f`
 con manifiesto 13086161844 para ese SHA; no hubo pull ni instalación en el
-droplet. PR #216/#215/ADR0089 es candidato separado de emisor local de un
-solo uso, con pruebas sintéticas, no credencial física. La confianza TLS,
+droplet. Este cambio (#215/PR #216/ADR0089) incorpora en código un emisor
+local de un solo uso, con pruebas sintéticas, no credencial física. La confianza TLS,
 forwarding, WebAuthn Android/iOS y entrega privada del sobre siguen sin
 prueba (#209). Una nueva HEAD tras este PR exige release propio antes del
 host. Owner custody, instalación, aceptación y parada final requieren sus
@@ -86,8 +86,8 @@ con manifest 13082030761. Sigue siendo sólo una imagen: no se instaló BETA.
 PR #208/ADR0086 integró la custodia cifrada de cinco archivos owner por
 Actions, con 942 pruebas locales y smoke desechable del candidato
 `465deba9456d9ace5a2cddbcdab25a5310f3d095`; no hubo efecto host.
-Una futura actualización documental mueve `main` y exige otro release
-exacto antes de operar. Continúan pendientes
+Ese corte quedó histórico al avanzar `main`; cada HEAD final exige release
+exacta antes de operar. Continúan pendientes
 el alta física WebAuthn, origen/ruta HTTPS tablet, DNS/certificado y decisión
 de acceso privado (#209); no inferirlos de la custodia.
 
@@ -165,7 +165,7 @@ diferido; no se eliminan los requisitos de custodia/recuperación para alta real
 | B1 | Plan/contratos y seguimiento: esta documentación | Matriz de alcance, alta obligatoria, decisiones, owners y evidencias registradas | Dirección del dueño |
 | B2 | Servicio preparado #120; parada #156 y ALREADY_STOPPED en 41282301501; #191 preflight host beta integrado sin ejecución | Rootless propio sano; namespace candidato y procedencia de almacenamiento verificados; capacidad/cgroups/permisos de aplicación probados. No reemplazar una DB por inferencia | Destino delegado y propuesta concreta por Actions |
 | B3 | Coordinador130, comandos149, loop161, ciclo164 y TLS173 integrados; RCA canónico187 | Comandos iniciar/detener/estado; guardia persistente, idempotencia, pausa ambigua y replay seguro probados | Contrato servido de B7 y panel B4 |
-| B4 | Lectura128, formulario148, panel WSGI163, TLS173, preflight owner189, custodia #208 y origen exacto #214 integrados; PR #216 emisor local candidato, sin inscripción física ni forwarding #209 | Acceso privado tablet; Socios > Agregar socio cifrado/atómico; errores, duplicados, denegación y estado posterior visibles | B3 contrato; servicio de alta/clave/DB |
+| B4 | Lectura128, formulario148, panel WSGI163, TLS173, preflight owner189, custodia #208 y origen exacto #214 integrados; este cambio #215 incorpora emisor local sólo en código, sin inscripción física ni forwarding #209 | Acceso privado tablet; Socios > Agregar socio cifrado/atómico; errores, duplicados, denegación y estado posterior visibles | B3 contrato; servicio de alta/clave/DB |
 | B5 | Dispatcher134, Telegram162, `/avisos`163, worker188, custodia199/203 y prueba única204 integrados; recorrido host/recepción pendientes | Proyección fiel de estados persistidos, límites/restart/dedup; razón ambigua durable sin llamar entrega real a aceptación de API | Resultados persistidos de B3; UI B4 y provisión #168 |
 | B6 | Chromium/medición | Una sesión aislada con recursos, parada y errores medidos en entorno candidato; alcance de egress explícito | Presupuesto separado; observación real no inferida de test offline |
 | B7 | TLS173, Compose171 y operación protegida `beta-install`191 integrados; no ejecutados en host | Programa arrancado conecta B3/B4/B5; health funcional, acceso privado y manifiesto por componente; instalación desechable probada | B2–B6 según componentes del candidato |
