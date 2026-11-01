@@ -141,9 +141,10 @@ The prior environment inspection found `BOCA_RELEASE_ENV_READY` absent.
 It was subsequently set to `ready` only in `boca-image-release` without
 changing its main-only branch rule. [Release #198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41298346638) succeeded and
 published the digest above for the then-current main SHA; verify a matching
-release for any later HEAD. No Site custody phase was dispatched. Its real recipient key and
-the Site bypass/HMAC material have not been installed on the host. The dedicated daemon was observed ALREADY_STOPPED in protected stop-test #198;
-recheck its state before any future use.
+release for any later HEAD. No Site custody phase was dispatched. Its real
+recipient key and the Site bypass/HMAC material have not been installed on
+the host. The dedicated daemon was observed ALREADY_STOPPED in protected
+stop-test 41282301501; recheck its state before any future use.
 A successful runner smoke cannot satisfy these host gates.
 
 PR #196 integrated the Site custody global-inventory RCA in
@@ -187,9 +188,11 @@ The earlier 2026-11-01 GitHub environment inspection found no
 `BOCA_RELEASE_ENV_READY`; this release marker was then enabled and release
 #198 succeeded for the source SHA above. The deploy environment still lacks
 `BOCA_BETA_ENV_READY`, both Telegram readiness markers, protected bot/chat
-assertions, owner origin/subject and real passkey/TLS files. There is a protected image release/digest for the source SHA above, but no host
-install or private tablet route. The dedicated Boca daemon was observed ALREADY_STOPPED in stop-test #198,
-without a stopped-container inventory; recheck before another operation. Do not
+assertions, owner origin/subject and real passkey/TLS files. There is a
+protected image release/digest for the source SHA above, but no host install
+or private tablet route. The dedicated Boca daemon was observed ALREADY_STOPPED
+in stop-test 41282301501, without a stopped-container inventory; recheck
+before another operation. Do not
 dispatch `beta-install`, Site phases or `beta-acceptance` until their exact
 gates are satisfied. No `prepare-rootless` retry over the existing unit.
 

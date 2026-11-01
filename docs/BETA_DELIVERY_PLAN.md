@@ -47,8 +47,8 @@ La custodia Site, `beta-install` y `beta-acceptance` están integrados en
 código, sin dispatch al host; acceso privado y aceptación host requieren
 pruebas propias. El Site privado v10 #113 publicó cola D1 sintética
 desactivada y proxy/recibos fail-closed; existe release de imagen para el
-SHA de corte, pero faltan digest coincidente con una HEAD posterior, bypass+HMAC
-host y E2E.
+SHA de corte; revalidar digest coincidente con la HEAD al operar. Faltan
+bypass+HMAC host y E2E.
 Telegram tiene worker, helper cifrado y fases host de custodia/prueba en código,
 pero no tiene
 bot/destino ni recepción
@@ -128,7 +128,7 @@ diferido; no se eliminan los requisitos de custodia/recuperación para alta real
 | ID | Entrega y estado en el corte base | Criterio de cierre | Depende de |
 | --- | --- | --- | --- |
 | B1 | Plan/contratos y seguimiento: esta documentación | Matriz de alcance, alta obligatoria, decisiones, owners y evidencias registradas | Dirección del dueño |
-| B2 | Servicio preparado #120 y detenido #156; #191 preflight host beta integrado sin ejecución | Rootless propio sano; namespace candidato y procedencia de almacenamiento verificados; capacidad/cgroups/permisos de aplicación probados. No reemplazar una DB por inferencia | Destino delegado y propuesta concreta por Actions |
+| B2 | Servicio preparado #120; parada #156 y ALREADY_STOPPED en 41282301501; #191 preflight host beta integrado sin ejecución | Rootless propio sano; namespace candidato y procedencia de almacenamiento verificados; capacidad/cgroups/permisos de aplicación probados. No reemplazar una DB por inferencia | Destino delegado y propuesta concreta por Actions |
 | B3 | Coordinador130, comandos149, loop161, ciclo164 y TLS173 integrados; RCA canónico187 | Comandos iniciar/detener/estado; guardia persistente, idempotencia, pausa ambigua y replay seguro probados | Contrato servido de B7 y panel B4 |
 | B4 | Lectura128, formulario148, panel WSGI163, TLS173 y preflight owner189 integrados; inscripción física y ruta privada pendientes | Acceso privado tablet; Socios > Agregar socio cifrado/atómico; errores, duplicados, denegación y estado posterior visibles | B3 contrato; servicio de alta/clave/DB |
 | B5 | Dispatcher134, Telegram162, `/avisos`163, worker188, custodia199/203 y prueba única204 integrados; recorrido host/recepción pendientes | Proyección fiel de estados persistidos, límites/restart/dedup; razón ambigua durable sin llamar entrega real a aceptación de API | Resultados persistidos de B3; UI B4 y provisión #168 |
@@ -180,7 +180,7 @@ aceptación BETA de simulación y la operación real contra Boca son hitos disti
 | Avisos locales y Telegram | Bandeja/estado de avisos, canal y fallos explícitos | Outbox durable, dispatcher134, adaptador162, UI163, worker188, parada194, helper cifrado199, custodia203 y prueba única204 | Bot/destino reales, dispatch de custodia/prueba host y recepción #168 pendientes, sin afirmar entrega por código integrado |
 | Diagnóstico, fuente pública y recursos | Semáforo con procedencia/hora, salud y límites | Workflows fuente/host, inventario98, preparación120 y medición Chromium offline | Proyección UI real pendiente; un semáforo externo no habilita login ni prueba capacidad de host |
 | RCA, calidad y trazabilidad | Versiones, SHA/digests, runs, decisiones y errores redactados | CI, reviews, ledger RCA y continuidad45; no editor automático de código | Integración UI/recibos por acción pendiente; nunca sustituir pruebas exactas por una insignia sintética |
-| Release/deploy y operación host | Mostrar estado/recibos y alcance permitido | Workflow protegido; rootless #120, preflight #124, stop #198, imagen release #198, custodia Site181/196, `beta-install`191 y aceptación/parada200 integrados | Falta release coincidente con futura HEAD, BETA marker, identidad privada, dispatch de install y control Site→Actions; nada de SSH/Docker/secreto en Site |
+| Release/deploy y operación host | Mostrar estado/recibos y alcance permitido | Workflow protegido; rootless #120, preflight #124, parada 41282301501, imagen release 41298346638, custodia Site181/196, `beta-install`191 y aceptación/parada200 integrados | Revalidar release coincidente con HEAD; faltan BETA marker, identidad privada, dispatch de install y control Site→Actions; nada de SSH/Docker/secreto en Site |
 | Backup/restore | Estado diferido y motivo visible/planificado | Biblioteca offline47; ningún ensayo operativo acredita recuperación | Diferido por el dueño hasta versión productiva fiable; sin botón operativo ni backup ahora |
 | Login, cola, elegibilidad, reserva/compra real | Identificar hito separado y no habilitado | Modelos y observación pública histórica; sin flujo autenticado validado | No habilitado en esta BETA; requiere consentimiento/custodia, flujo legítimo y conciliación de resultados ambiguos |
 | Administración multiusuario y modalidades no descritas | No inventar controles, roles o planes | El formulario de socios no crea administradores; no hay definición aprobada de otras modalidades | Sin definición: registrar la necesidad antes de diseñar/activar, sin presentar una suposición como función acordada |

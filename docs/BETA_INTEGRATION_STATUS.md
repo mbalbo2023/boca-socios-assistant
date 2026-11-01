@@ -19,8 +19,8 @@ detenido son
 evidencias distintas. El controlador de `compose.yaml` todavía espera con
 `engine=off`, sin listener ni puerto; `compose.beta.yaml` #171 empaqueta
 un entrypoint BETA TLS para pruebas desechables, no instalado. #120/#124 no
-crearon DB, clave ni volumen de aplicación en el host y #156 sólo detuvo el
-servicio dedicado. La ubicación global de una DB Boca anterior sigue
+crearon DB, clave ni volumen de aplicación en el host; #156 detuvo el
+servicio dedicado y 41282301501 confirmó ALREADY_STOPPED. La ubicación global de una DB Boca anterior sigue
 UNVERIFIED; el destino lógico futuro es `/data/boca.sqlite3` en el volumen
 `boca-socios_boca_data`, sin permiso para reemplazar datos encontrados.
 
@@ -29,7 +29,7 @@ UNVERIFIED; el destino lógico futuro es `/data/boca.sqlite3` en el volumen
 | Simulación | Coordinador #130, comandos #149, loop #161, ciclo #164 y entrypoint TLS #173; RCA de UUID canónico #187 y probe sintético #190 | Empaquetar/servir en host con identidad y acceso privado; E2E host. No hay cliente Boca real |
 | Panel | Adaptadores #128/#148, owner passkey/controles #163, registro WebAuthn #174 y preflight sin listener #189 | Inscripción física del dueño, origen TLS privado, tablet y rechazo de terceros |
 | Avisos/Telegram | #162 fence/migración0007/adapter, #176 estado, worker default-off #188, parada opcional #194, helper cifrado #199, fases protegidas #203 y prueba Bot API de un solo intento #204 | Sin bot/destino privados, provisión en host ni envío/recepción real; `api_accepted` tampoco probaría lectura humana |
-| Site #113 | Versión privada v10 D1 desactivada; #178 helper, #179 cliente opt-in, #181 custodia Actions y #196 inventario global | Imagen publicada #198 para el SHA de corte; faltan release coincidente con cualquier nueva HEAD, bypass+HMAC host, flag y E2E. Aún offline. Ver issue #113 |
+| Site #113 | Versión privada v10 D1 desactivada; #178 helper, #179 cliente opt-in, #181 custodia Actions y #196 inventario global | Imagen publicada #198 para el SHA de corte; revalidar coincidencia con HEAD al operar. Faltan bypass+HMAC host, flag y E2E. Aún offline. Ver issue #113 |
 | Host | Rootless #120, preflight dormido #124, parada #198/41282301501 ALREADY_STOPPED, imagen release #198; `beta-install` #191 y `beta-acceptance` #200 integrados en código | Sin marca BETA, identidad/archivos privados, instalación funcional ni aceptación host. Revalidar daemon y SHA antes de operar |
 | Chromium | Imagen y smoke offline #43/#44 con límite sintético | Capacidad/egress del droplet y visita real no acreditadas |
 | Calidad/release | CI, scan, smoke de runner y publicación protegida [#198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41298346638) SUCCESS para `6d3007a3ca1dfdba428cb7595486b1166a1d02b6`, manifest artifact 13079654802 | Digest publicado `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:ab0745a840e35a6d713fed14ec0761512fdc90284c133f2c321c9ffe2d3c9284`; no demuestra capacidad/postflight del droplet y debe coincidir con la HEAD exacta de cada operación |
