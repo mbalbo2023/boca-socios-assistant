@@ -45,7 +45,7 @@ error. Default HTTP logs and exception traceback output are suppressed;
 responses use no-store, no-referrer, strict CSP and no CORS.
 
 The browser calls `navigator.credentials.create()` with ES256, RP
-`localhost`, UV required, `residentKey: required` and
+`localhost`, the device's platform authenticator, UV required, `residentKey: required` and
 `requireResidentKey: true`, and attestation none, then `get()` with the newly
 created ID and UV required. The unchanged ADR0071 verifier checks challenge,
 origin, RP hash, attested COSE/SPKI match, flags, signature and one-use proof.

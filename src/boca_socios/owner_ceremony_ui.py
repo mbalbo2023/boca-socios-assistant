@@ -52,7 +52,7 @@ start.addEventListener('click', async () => {
       rp: {id: begin.rp_id, name: 'Boca Socios BETA'},
       user: {id: from64(begin.user_id), name: 'Dueño', displayName: 'Dueño'},
       challenge: from64(begin.challenge), pubKeyCredParams: [{type: 'public-key', alg: -7}],
-      authenticatorSelection: {userVerification: 'required', residentKey: 'required', requireResidentKey: true},
+      authenticatorSelection: {authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'required', requireResidentKey: true},
       timeout: begin.timeout_ms, attestation: 'none'
     }});
     if (!created || !created.response.getAuthenticatorData || !created.response.getPublicKey ||

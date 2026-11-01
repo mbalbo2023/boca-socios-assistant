@@ -201,6 +201,7 @@ def test_owner_ceremony_requires_discoverable_passkey_and_explains_storage(tmp_p
     status, script, _ = _request(app, "GET", "/ceremony.js")
     assert status == 200 and isinstance(script, bytes)
     assert b"residentKey: 'required', requireResidentKey: true" in script
+    assert b"authenticatorAttachment: 'platform'" in script
     assert b"residentKey: 'preferred'" not in script
     assert b"userVerification: 'required'" in script
 
