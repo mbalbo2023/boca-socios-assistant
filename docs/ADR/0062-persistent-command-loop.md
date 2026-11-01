@@ -1,7 +1,8 @@
 # ADR 0062: one persistent command loop for the private BETA panel
 
-**Status:** Proposed implementation in issue #159. This document describes a
-candidate, not code in `main` or an installed application.
+**Status:** Accepted on merge of PR #161 for issue #159. Before that merge,
+this document describes an unmerged candidate; neither state proves an
+installed application.
 
 ## Context and decision
 
