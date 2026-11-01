@@ -61,8 +61,10 @@ execution. This test is not a protected release or droplet proof.
 
 As observed during this implementation, the `boca-image-release` protected
 environment has no `BOCA_RELEASE_ENV_READY` variable, so no successful image
-release run/digest is available for these operations. The Boca rootless
-service is being stopped after prior tests. **Host execution is NO-GO** until
+release run/digest is available for these operations. Protected `stop-test`
+run #41272785626 completed SUCCESS with `BOCA_STOP_TEST state=STOPPED`,
+`containers=0`, `data=preserved`; the Boca test services are stopped.
+**Host execution is NO-GO** until
 those gates, a verified recipient receipt and securely sealed real Site
 material exist. No real Site credential, Boca login, queue, reservation or
 purchase was used here. The root integration writer reconciles the delivery

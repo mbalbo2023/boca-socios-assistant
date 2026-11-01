@@ -236,6 +236,16 @@ def test_attached_owner_volume_blocks_site_operation_before_image_pull(
     assert seen == [("docker", "ps", "-a", "-q", "--filter", f"volume={host.OWNER_VOLUME}")]
 
 
+def test_legacy_phase_rejects_unexpected_envelope_before_host_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        host, "_validate_docker_boundary", lambda: pytest.fail("rootless host probed")
+    )
+    with pytest.raises(host.PreflightError, match="unexpected Site envelope"):
+        host.phase("observe", "", "a" * 40, "d" * 64, "ciphertext")
+
+
 def test_site_dispatch_has_exact_source_release_and_no_plaintext_fields() -> None:
     workflow = Path(".github/workflows/boca-first-deploy.yml").read_text(encoding="utf-8")
     assert "site-prepare" in workflow and "site-install" in workflow and "site-verify" in workflow

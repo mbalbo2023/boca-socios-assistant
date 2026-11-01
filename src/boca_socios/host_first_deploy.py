@@ -1381,6 +1381,8 @@ def _site_phase(operation: str, image: str, source_sha: str, envelope: str) -> N
 def phase(
     phase_name: str, image: str, source_sha: str, compose_sha: str, envelope: str = ""
 ) -> None:
+    if envelope and phase_name != "site-install":
+        raise PreflightError("unexpected Site envelope outside install phase")
     _validate_coordinates(
         image,
         source_sha,
@@ -1396,8 +1398,6 @@ def phase(
         _validate_docker_boundary()
         _site_phase(phase_name, image, source_sha, envelope)
         return
-    if envelope:
-        raise PreflightError("unexpected Site envelope in first-install phase")
     _validate_docker_boundary()
     if phase_name in {"diagnostic-config", "diagnostic"}:
         _diagnostic_files(compose_sha)
