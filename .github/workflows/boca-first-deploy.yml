@@ -155,7 +155,7 @@ jobs:
             --pids-limit 16 --memory 64m --cpus 0.25 \
             --mount type=volume,source=boca-socios_boca_owner,target=/run/owner \
             --mount "type=bind,source=$RUNNER_TEMP/boca-owner-fixture,target=/fixture,readonly" \
-            "$BOCA_IMAGE" sh -eu -c 'cp /fixture/credential_id /fixture/public_key.der /fixture/tls.crt /fixture/tls.key /fixture/health-ca.pem /run/owner/; chown 10001:10001 /run/owner/*; chmod 0400 /run/owner/*'
+            "$BOCA_IMAGE" sh -eu -c 'cp /fixture/credential_id /fixture/public_key.der /fixture/tls.crt /fixture/tls.key /fixture/health-ca.pem /run/owner/; chmod 0400 /run/owner/*; chown 10001:10001 /run/owner/*'
           docker volume create --driver local \
             --label com.docker.compose.project=boca-socios \
             --label com.docker.compose.volume=boca_data boca-socios_boca_data
