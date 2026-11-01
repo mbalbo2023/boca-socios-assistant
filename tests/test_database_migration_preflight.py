@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 from unittest import TestCase
@@ -26,7 +27,11 @@ def _legacy(path: Path, *, ledger: bool = True) -> None:
 
 
 def _snapshot(path: Path) -> tuple[bytes, int, tuple[str, ...]]:
-    return path.read_bytes(), path.stat().st_mode, tuple(sorted(p.name for p in path.parent.iterdir()))
+    return (
+        path.read_bytes(),
+        path.stat().st_mode,
+        tuple(sorted(p.name for p in path.parent.iterdir())),
+    )
 
 
 def test_checksum_rejection_precedes_schema_wal_and_chmod(tmp_path: Path) -> None:
@@ -89,13 +94,13 @@ def test_write_connection_rechecks_checksum_after_readonly_preflight(tmp_path: P
     path.chmod(0o640)
     mutated = False
 
-    def connect(database: object, **kwargs: object) -> sqlite3.Connection:
+    def connect(database: str | Path, *, uri: bool = False) -> sqlite3.Connection:
         nonlocal mutated
         if "mode=rw" in str(database) and not mutated:
             mutated = True
             with closing(original_connect(path)) as other, other:
                 other.execute("UPDATE schema_migrations SET checksum='changed'")
-        return original_connect(database, **kwargs)  # type: ignore[arg-type]
+        return original_connect(database, uri=uri)
 
     with patch("boca_socios.storage.database.sqlite3.connect", side_effect=connect):
         with CHECKS.assertRaisesRegex(ValueError, "checksum"):
@@ -115,3 +120,71 @@ def test_symlink_rejection_does_not_change_target(tmp_path: Path) -> None:
     with CHECKS.assertRaisesRegex(ValueError, "symlink"):
         Database(path).migrate()
     assert _snapshot(target) == before
+
+
+def test_empty_or_missing_version_ledger_is_rejected(tmp_path: Path) -> None:
+    for name in ("empty", "missing-version"):
+        path = tmp_path / f"{name}.sqlite"
+        if name == "empty":
+            path.touch()
+        else:
+            _legacy(path)
+            with closing(sqlite3.connect(path)) as connection, connection:
+                connection.execute("DELETE FROM schema_migrations")
+        before = _snapshot(path)
+        with CHECKS.assertRaisesRegex(ValueError, "migration"):
+            Database(path).migrate()
+        assert _snapshot(path) == before
+
+
+def test_readonly_preflight_observes_current_wal_checksum(tmp_path: Path) -> None:
+    path = tmp_path / "active.sqlite"
+    Database(path).migrate()
+    with closing(sqlite3.connect(path)) as writer:
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("UPDATE schema_migrations SET checksum='active-wal'")
+        writer.commit()
+        assert Path(str(path) + "-wal").stat().st_size > 0
+        path.chmod(0o640)
+        with CHECKS.assertRaisesRegex(ValueError, "checksum"):
+            Database(path).migrate()
+        assert writer.execute("SELECT checksum FROM schema_migrations").fetchone() == (
+            "active-wal",
+        )
+        assert path.stat().st_mode & 0o777 == 0o640
+
+
+def test_path_replacement_before_writable_open_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "original.sqlite"
+    replacement = tmp_path / "replacement.sqlite"
+    Database(path).migrate()
+    Database(replacement).migrate()
+    original_connect = sqlite3.connect
+    with closing(original_connect(replacement)) as connection:
+        connection.execute("PRAGMA journal_mode=DELETE")
+    replacement.chmod(0o640)
+    swapped = False
+
+    def connect(database: str | Path, *, uri: bool = False) -> sqlite3.Connection:
+        nonlocal swapped
+        if "mode=rw" in str(database) and not swapped:
+            swapped = True
+            replacement.replace(path)
+        return original_connect(database, uri=uri)
+
+    with patch("boca_socios.storage.database.sqlite3.connect", side_effect=connect):
+        with CHECKS.assertRaisesRegex(ValueError, "identity"):
+            Database(path).migrate()
+    assert swapped
+    with closing(original_connect(path)) as connection:
+        assert connection.execute("PRAGMA journal_mode").fetchone() == ("delete",)
+    assert path.stat().st_mode & 0o777 == 0o640
+
+
+def test_known_database_supports_parallel_idempotent_migration(tmp_path: Path) -> None:
+    path = tmp_path / "concurrent.sqlite"
+    Database(path).migrate()
+    with ThreadPoolExecutor(max_workers=4) as workers:
+        list(workers.map(lambda _: Database(path).migrate(), range(12)))
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("SELECT count(*) FROM schema_migrations").fetchone() == (1,)
