@@ -1,11 +1,11 @@
 # ADR 0075: protected served BETA install gate
 
-**Status:** candidate in issue #182. No protected image release or host install has
-run from this change. On main `64746289363741c4d85df79fa4e133b07f261efa`,
-local `uv run pytest -q` passed 842 tests and 29 subtests; Ruff, mypy,
-repository policy and diff checks passed. Exact candidate SHA, hosted checks
-and technical review must be appended after the final branch is tested; a
-green PR is not host proof.
+**Status:** integrated by PR #191 in
+`161043f15befd5b612b71e036c9c1dead21581ce`. Exact candidate
+`5265546027fc8f69f03495202fbfd427a5232af2` passed CI 41275510437,
+scan 41275510471, release/deploy validation 41275510497/41275510438 and
+review 5726574754. Local 842 tests and 29 subtests passed. No protected
+image release or host install ran; a green PR is not host proof.
 
 ## Scope and decision
 
@@ -78,15 +78,12 @@ full no-listener preflights, followed by synthetic new-only DB, TLS health and
 loopback on a runner with a synthetic FQDN and private owner directory mode.
 These checks use no real Boca credentials or purchases.
 
-At this candidate stage the protected image release environment lacks
+At this integration cut the protected image release environment lacks
 `BOCA_RELEASE_ENV_READY`; no approved release digest exists. The BETA marker,
 private owner/TLS files and tablet access designation have not been observed
 ready. Protected stop-test run 41272785626 succeeded earlier; its
 `containers=0` counts running containers stopped by that run, not all exited
-container records. The separate Site custody phases inherited an earlier
-Boca-scoped container check; they remain NO-GO for host dispatch until a
-separate globally inventoried rootless-daemon gate is reviewed. **Host
-`beta-install` remains NO-GO.** No host operation is
-dispatched by this PR. The integration owner reconciles README, plan, roadmap,
-status and issue #45 after exact review and any later host evidence under
-Rule 84.
+container records. The separate Site custody inventory gap was subsequently
+fixed in PR #196, without host dispatch. **Host `beta-install` remains NO-GO.**
+No host operation was dispatched by PR #191. Central documentation and #45
+record later evidence under Rule 84.

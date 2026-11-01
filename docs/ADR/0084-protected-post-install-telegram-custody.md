@@ -1,7 +1,8 @@
 # ADR 0084: custodia Telegram posterior a BETA, con parada en el mismo job
 
-**Estado:** decisión aceptada al integrar PR #203 para issue #201.
-Diseño: 2026-11-01
+**Estado:** decisión aceptada al integrar PR #203 para issue #201 en
+`487995ca57282e2947d977333e72bd10775fbb98`; candidato
+`6c5dd64b1f5c6302ce309de181ff8d49be3ac3fe`. Diseño: 2026-11-01
 (America/Argentina/Buenos_Aires). No se ejecutó una operación host ni se
 configuró un bot/destino real con este cambio.
 
@@ -32,8 +33,11 @@ ya parado. El inventario incierto queda NO_GO y se preservan los volúmenes.
 La fase posterior exige exactamente un controller BETA parado, nombre,
 etiquetas, comando, UID, imagen local cuyo ID/digest/revisión coinciden con el
 release aprobado, presupuesto y puerto 127.0.0.1:8443, simulación/engine off,
-mounts data/key/owner, ningún otro contenedor o volumen, red BETA exacta sin
-peers y hash del archivo Compose ya instalado. Mide capacidad del filesystem
+mounts data/key/owner, ningún otro contenedor, sólo volúmenes Boca esperados
+(data/key/owner y Telegram opcional tras `prepare`) y red BETA exacta sin
+peers. Tras #204 puede existir la red egress Boca opcional, también vacía y
+verificada; ninguna red o volumen ajenos son admisibles. Exige el hash del
+archivo Compose ya instalado y mide capacidad del filesystem
 dedicado. Un contenedor nuevo de una sola ejecución, sin red, con digest local
 fijado, límite 0.25 CPU/64 MiB/16 PID, cap drop y rootfs read-only comprueba
 el SQLite existente; `telegram-migrate` permite el ledger completo y
@@ -55,12 +59,12 @@ conexión Bot API, no inicia el worker ni envía un mensaje.
 
 El bot y el chat numérico privado aún no fueron aportados ni verificados.
 La posesión del sobre cifrado y la validación de su formato no prueban que el
-bot exista ni que el destino pertenezca al dueño. Se requiere un issue/PR
-separado para comprobar `getMe`, `getChat`, afirmación de identidad/destino
-por el dueño, procedencia de schema0007 y una sola notificación sintética
-con fence duradero de ADR0066. La aceptación Bot API se distinguirá de
+bot exista ni que el destino pertenezca al dueño. PR #204 integró en código
+la prueba posterior `getMe`/`getChat`, afirmación protegida del dueño,
+procedencia schema0007 y una sola notificación sintética con fence duradero
+de ADR0066. La aceptación Bot API se distingue de
 recepción humana; timeout o crash quedarán ambiguos, sin retry. El worker
-opt-in de ADR0078 seguirá apagado hasta esa puerta. La operación host
+opt-in de ADR0078 sigue apagado hasta ejecutar y verificar esa puerta. La operación host
 continúa NO_GO sin release real, entorno protegido, bot y destino verificados;
 este PR no despacha nada.
 
@@ -69,9 +73,10 @@ este PR no despacha nada.
 Las pruebas sintéticas cubren configuración/unit inalterados, daemon ya
 activo o inventario desconocido, fuente/digest, contenedor parado, volumen,
 red, checksum/schema/replay y orden del workflow con stop posterior. El primer
-commit de tests falló por ausencia de `start_existing`; SHA candidato, gates
-hosted y revisión se consignan en el PR de #201. Un smoke del PR usa un
+commit de tests falló por ausencia de `start_existing`. CI 41278835729,
+scan 41278835819, release/deploy 41278835721/41278835778 SUCCESS y
+revisión técnica 5726684632 en el SHA candidato exacto. Un smoke del PR usa un
 contenedor y volumen desechables sin red con credenciales ficticias para
 ejercitar prepare/cifrado/install por stdin abierto/verify. No constituyen prueba de
-estado del droplet, token, destino ni entrega. El escritor central reconciliará
-README, plan y checkpoint tras integrar el resultado conforme a la regla 84.
+estado del droplet, token, destino ni entrega. El job host y la publicación
+quedaron omitidos; el estado central se reconcilia por #197 conforme a regla 84.

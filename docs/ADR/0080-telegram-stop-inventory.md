@@ -1,7 +1,11 @@
 # ADR 0080: reconocimiento seguro del worker Telegram al detener pruebas
 
-**Estado:** decisión aceptada al integrar PR #194; candidata hasta
-su merge. Fecha de diseño: 2026-11-01 (America/Argentina/Buenos_Aires).
+**Estado:** integrada por PR #194 en
+`451e40bf08e271f7fdf9dbb975ec5a1ed45bc298`; candidato
+`ba5f8b4cc42c47dc279a95222c6fff3b4d30748b`, CI 41275762284,
+scan 41275762308, release/deploy 41275762296/41275762254 y revisión
+5726581135. No hubo dispatch host con este cambio.
+Fecha de diseño: 2026-11-01 (America/Argentina/Buenos_Aires).
 
 ## Decisión y verificación previa al efecto
 

@@ -20,12 +20,17 @@ Unverified third-party behavior stays behind interfaces.
 The default Compose runtime remains dormant. PRs #161/#164 integrate the
 persistent local command loop and lifecycle; #163 integrates a same-origin
 owner passkey panel; #170 tests disposable HTTP loopback; #173 adds explicit
-`init-beta` and `serve-beta` TLS entrypoints. None has installed a BETA in
-the droplet. Run #120 prepared only the dedicated rootless daemon, and #124
-passed preflight for the dormant budget. The private Site #113 v10 has a
+`init-beta` and `serve-beta` TLS entrypoints. #189 adds no-listener owner/TLS
+checks, #191 protected new-only install, #190 a disposable TLS probe and #200
+protected acceptance with same-job stop. None has installed a BETA in the
+droplet. Run #120 prepared only the dedicated rootless daemon, #124 passed
+preflight for the dormant budget and #156 stopped it. The private Site #113 v10 has a
 disabled D1 bridge; #178/#179 add sealed custody and outbound client code,
-and #181 adds protected host custody operations. No Site host phase ran and the
-bridge remains disabled. Telegram #162 is opt-in code without bot/destination.
+and #181 adds protected host custody, hardened by global inventory RCA #196.
+No Site host phase ran; the bridge remains disabled. Telegram #162/#188 is
+opt-in code with #194 stop recognition, #199 sealed custody helper, #203
+post-install phases and #204 one-shot Bot API gate, still without host
+dispatch, bot/destination or a send.
 ADR0056 sets a panel served by the Boca application, backed by local SQLite.
 The private form **Socios > Agregar socio** is mandatory for BETA acceptance.
 Its server boundary reuses MemberEnrollmentService and CredentialVault for

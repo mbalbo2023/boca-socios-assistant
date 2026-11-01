@@ -1,6 +1,10 @@
 # ADR 0083: custodia cifrada del bot Telegram y destino privado
 
-**Estado:** decisión aceptada al integrar PR #199.
+**Estado:** integrada por PR #199 en
+`a808a6455e624eea7e1eeb7bedd10f3ab63f9a7c`; candidato
+`e73c6a5c7339e47d6e69bf1e26c9d65749b123e3`, CI 41277311559,
+scan 41277311577, release/deploy 41277311519/41277311599 y revisión
+5726629731. No hubo provisión ni envío real.
 Diseño: 2026-11-01 (America/Argentina/Buenos_Aires). Este cambio es biblioteca
 y pruebas sintéticas; no configura el droplet ni envía un mensaje.
 
@@ -8,10 +12,10 @@ y pruebas sintéticas; no configura el droplet ni envía un mensaje.
 
 El worker opt-in de ADR0078 lee `/run/telegram/bot_token` y
 `/run/telegram/chat_id`; el Compose define el volumen externo
-`boca-socios_boca_telegram` pero no lo crea ni lo provisiona. Un helper
+`boca-socios_boca_telegram` pero no lo crea ni lo provisiona por defecto. Un helper
 independiente `python -m boca_socios.telegram_bootstrap` ofrece `prepare`,
-`install` y `verify` **explícitos**. Sólo una futura operación protegida del
-workflow Boca puede ejecutarlo en la imagen fijada como UID/GID 10001 con el
+`install` y `verify` **explícitos**. La operación protegida #203 puede ejecutarlo
+en la imagen fijada como UID/GID 10001 con el
 volumen privado en `/run/telegram`, directorio UID/GID10001 modo 0700. El
 helper no crea volumen, consulta Telegram, toca SQLite, inicia worker ni
 activa reservas/compras.
@@ -47,9 +51,9 @@ y formato de los dos archivos sin revelar sus valores, pero no prueba que
 el bot sea válido, que el destino pertenezca al dueño ni recepción humana.
 
 El archivo privado es compatible con `TelegramTransport` de ADR0066, cuyo
-preflight posterior exige valores y modo owner-only. La ruta candidata #201
-agrega comprobaciones de schema0007/procedencia, release/SHA, puerto/red y
-custodia protegida posterior al BETA. La identidad Bot API, destino privado,
+preflight posterior exige valores y modo owner-only. PR #203 integró
+comprobaciones de schema0007/procedencia, release/SHA, puerto/red y
+custodia protegida posterior al BETA sólo en código. La identidad Bot API, destino privado,
 presupuesto efectivo del worker y un mensaje sintético requieren el PR
 separado #202 y operación protegida en el **workflow existente**. El
 stop-test reconoce el servicio opcional sólo en código por ADR0080; no se

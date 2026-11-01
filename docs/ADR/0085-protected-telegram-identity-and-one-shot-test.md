@@ -1,7 +1,8 @@
 # ADR 0085: identidad Telegram y un único envío sintético protegido
 
-**Estado:** decisión candidata de issue #202, aceptada sólo al integrar su PR
-con checks y revisión exactos. Diseño: 2026-11-01
+**Estado:** decisión aceptada al integrar PR #204 de issue #202 en
+`5cb8ce17715f571979a2ea3bb092da9b470f362d`; candidato
+`6e8205c0063c095bd51e36820e7be89ba98079c4`. Diseño: 2026-11-01
 (America/Argentina/Buenos_Aires). Este cambio sólo agrega código y pruebas
 falsas; no configura el droplet ni envía un mensaje real.
 
@@ -80,9 +81,10 @@ smoke desechable de Actions observó que Docker retiene los intervalos de
 healthcheck de la imagen junto a `Test=["NONE"]` y normaliza el flag CLI de
 seguridad como `no-new-privileges` sin sufijo; ambas formas exactas se fijan
 en los validadores del contenedor de test. El primer
-commit de tests falló porque no existía el módulo de one-shot; SHA, checks y
-revisión se consignan en el PR de #202. La validación PR no envía tráfico
+commit de tests falló porque no existía el módulo de one-shot. CI
+41281318516, scan 41281318527, release/deploy 41281318543/41281318563
+SUCCESS y revisión 5726822139 en el SHA candidato exacto. La validación PR
+con Docker desechable no envía tráfico
 público. La operación real sigue **NO-GO** sin token, chat privado y
 afirmación del dueño, release/host observados y entorno protegido. El
-escritor central actualizará estado y checkpoint después del merge según
-regla 84.
+escritor central reconcilia estado y checkpoint en #197 según regla 84.

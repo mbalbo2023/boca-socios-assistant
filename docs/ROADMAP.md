@@ -4,7 +4,7 @@ El [plan de entrega](BETA_DELIVERY_PLAN.md) define aceptación; el
 [estado](BETA_INTEGRATION_STATUS.md) y el
 [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
 separan código, comprobaciones y ejecución host. Al corte
-`main=9e923af56e76a04069bfad6f8ca9c68db0edd890` la aplicación BETA
+`main=5cb8ce17715f571979a2ea3bb092da9b470f362d` la aplicación BETA
 no está instalada. La autorización ampliada
 [#45/6552258326](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326)
 incluye Site conectado, Telegram y deploy validado por Actions, con datos
@@ -16,13 +16,13 @@ funcionalidad operativa.
 | Frente | Entregado al corte | Próximo gate y responsable |
 | --- | --- | --- |
 | Host dedicado | Rootless preparado #120; preflight read-only #124 PASS sólo para controlador dormido; `stop-test` #156/41272785626 STOPPED, `containers=0` detenidos en ese run | Root: capacidad funcional, operación manual, postflight y nueva parada después de pruebas futuras; no repetir #120 |
-| Simulación | Coordinador #130, comandos #149, loop #161, ciclo local #164 y entrypoint TLS explícito #173 integrados | Empaquetar/acceder en host con configuración privada, sin activar Boca real |
-| Panel/alta | Servicio cifrado #31, adaptadores #128/#148, owner passkey/controles #163 y prueba de registro #174 integrados | Origen TLS accesible, inscripción física del dueño, E2E servido/tablet y rechazo real de terceros |
-| Aceptación | Composición en proceso #152 y HTTP loopback desechable #170 integrados | TLS/tablet/host, recursos y latencia reales con recibos aparte |
-| Imagen/deploy | `compose.beta.yaml` #171 y smoke TLS/aislamiento desechable integrados; `first-install` actual sólo dormido | Release protegido/digest, capacidad y operación `beta-install` separada con acceso privado; no despachar un candidato no apto |
-| Site #113 | Demo privada v10 con D1 desactivado; helper #178, cliente #179 y custodia Actions #181 integrados | Release, bypass+HMAC host, flag y E2E; hoy offline |
-| Telegram #162 | Fence durable opt-in, transporte y proyección local; RCA #176 corrige estado con schema0007 | #168: bot y destino verificados, custodia, worker y prueba de recepción sin reintento ciego |
-| Documentación | ADR de cada cambio y checkpoint #45; #154 candidato revisado en PR #180 | Integrar revisión de README/plan/status/roadmap y recibos según regla 84 |
+| Simulación | Coordinador #130, comandos #149, loop #161, ciclo #164, TLS #173 y RCA UUID #187 integrados | Acceder desde host/tablet con identidad privada, sin activar Boca real |
+| Panel/alta | Servicio cifrado #31, adaptadores #128/#148, owner passkey/controles #163, registro #174 y preflight #189 integrados | Origen TLS privado, inscripción física del dueño, E2E tablet y rechazo real de terceros |
+| Aceptación | HTTP loopback #170, probe TLS #190 y operación protegida de aceptación/parada #200 integrados | Host/tablet/Site/Telegram y recursos/latencia reales con recibos aparte |
+| Imagen/deploy | `compose.beta.yaml` #171, `beta-install` protegido #191 y smoke desechable integrados; `first-install` aún dormido | Release protegido/digest, marca BETA, archivos privados, capacidad y dispatch exacto; no despachar candidato no apto |
+| Site #113 | Demo privada v10 D1 desactivada; helper #178, cliente #179, custodia #181 y RCA inventario #196 | Release, bypass+HMAC host, flag y E2E; hoy offline |
+| Telegram #162 | Fence/adapter, worker #188 apagado, stop-test #194, helper #199, custodia #203 y prueba única #204 | #168: bot y destino verificados, provisión y ejecución host, aceptación API/recepción humana separadas sin reintento ciego |
+| Documentación | #180 integró corte anterior; #45 registra nuevos merges | #197: reconciliar este nuevo corte y recibos según regla 84 |
 
 La secuencia de host es: candidato funcional revisado y checks exactos →
 provisión privada sin secretos en repo/logs → release por digest/manifiesto →

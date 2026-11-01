@@ -46,6 +46,16 @@ credential enrollment. Do not recreate the existing SSH deployment secret.
   encryption at the server boundary, TLS, request size limits, CSRF/session
   protection and no request body logging.
 - On failure to decrypt or read key: fail closed, no plaintext fallback.
+- `check-beta-owner/config` #189 validates owner passkey/TLS files without
+  opening a listener or database; #191 gates new-only installation on those
+  checks. Neither command creates a real owner credential or a private tablet
+  route. The protected `beta-install`/`beta-acceptance` jobs #191/#200 have
+  not run on the host.
+- Telegram's default-off worker #188, sealed helper #199, protected
+  schema/custody #203 and one-shot identity/send gate #204 have only synthetic
+  tests. No bot token, numeric private chat destination, host volume or Bot API
+  delivery has been verified.
+  Never put plaintext values in workflow inputs or logs.
 - Redact emails from logs and use opaque member identifiers.
 - Do not export cookies, auth state, Queue-it passes, HAR or passwords to
   Telegram, untrusted browser tools or GitHub Actions artifacts.
