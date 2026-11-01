@@ -51,6 +51,13 @@ credential enrollment. Do not recreate the existing SSH deployment secret.
   checks. Neither command creates a real owner credential or a private tablet
   route. The protected `beta-install`/`beta-acceptance` jobs #191/#200 have
   not run on the host.
+- The local owner ceremony #217 requires a discoverable passkey with user
+  verification. Its private key remains with the selected Android credential
+  provider, never in a Chrome cookie or host volume. The `__Host-boca_session`
+  cookie is HttpOnly/Secure/SameSite Strict and expires by server policy after
+  15 minutes idle, 8 hours absolute or process restart. Device persistence and
+  cross-platform use are physical acceptance gates; TLS expiry still needs a
+  reviewed rotation path.
 - Telegram's default-off worker #188, sealed helper #199, protected
   schema/custody #203 and one-shot identity/send gate #204 have only synthetic
   tests. No bot token, numeric private chat destination, host volume or Bot API

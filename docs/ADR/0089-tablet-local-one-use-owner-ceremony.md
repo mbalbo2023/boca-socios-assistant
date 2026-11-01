@@ -45,7 +45,8 @@ error. Default HTTP logs and exception traceback output are suppressed;
 responses use no-store, no-referrer, strict CSP and no CORS.
 
 The browser calls `navigator.credentials.create()` with ES256, RP
-`localhost`, UV required and attestation none, then `get()` with the newly
+`localhost`, the device's platform authenticator, UV required, `residentKey: required` and
+`requireResidentKey: true`, and attestation none, then `get()` with the newly
 created ID and UV required. The unchanged ADR0071 verifier checks challenge,
 origin, RP hash, attested COSE/SPKI match, flags, signature and one-use proof.
 On success only, the emitter combines the **public** credential ID/SPKI with
@@ -88,3 +89,18 @@ reviewed multi-credential design is needed. No transient host enrollment
 endpoint, SSH key grant, real Boca login, queue, reservation or purchase is
 introduced. A green candidate has **NO_GO** status for real device and host
 operations until these physical and protected gates are recorded.
+
+## Persistencia de la llave — corrección #217
+
+La primera versión integrada en #216 pedía `residentKey: preferred`; ello
+permitía crear una credencial no descubrible que Google Password Manager no
+sincroniza. La corrección #217 exige una credencial descubrible y falla cerrada
+si el administrador/autenticador elegido no la ofrece. Android decide dónde
+guarda la clave privada: el usuario debe elegir su administrador de
+credenciales. Ni la clave privada ni el sobre sellado se guardan en una cookie
+de Chrome. La cookie `__Host-boca_session` sólo identifica la sesión temporal
+del panel (15 minutos de inactividad, máximo 8 horas y revocación al reiniciar
+el proceso). Una credencial descubrible no demuestra por sí sola
+sincronización, permanencia indefinida ni uso desde iOS: se prueban físicamente
+en #209. La hoja TLS local vence a los 30 días y la CA a los 90; la
+rotación/recuperación sigue pendiente de diseño y revisión.

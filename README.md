@@ -93,6 +93,11 @@ device-held TLS bundle in code (#215, ADR0089). Synthetic
 tests cannot establish Android CA trust, physical owner verification, secure
 ciphertext handoff or iOS use; no real credential or host owner-install is
 claimed. The owner-device command and clipboard behavior remain unverified.
+The #217 correction requires a discoverable passkey during local enrollment.
+The chosen Android credential manager holds its private key, not a Chrome
+cookie. The panel session cookie is temporary (15-minute idle, 8-hour absolute
+limit, and invalidated by process restart); Android storage/sync and iOS use
+still require physical proof in #209. TLS renewal remains an open gate.
 Site decommission is deferred until the local replacement is validated.
 The private Site v10 has a disabled D1 bridge and fails closed while host
 credentials/poller are absent. PRs #181/#196 integrated protected ciphertext

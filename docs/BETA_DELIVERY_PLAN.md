@@ -43,6 +43,12 @@ forwarding, WebAuthn Android/iOS y entrega privada del sobre siguen sin
 prueba (#209). Una nueva HEAD tras este PR exige release propio antes del
 host. Owner custody, instalación, aceptación y parada final requieren sus
 recibos exactos por Actions.
+La corrección #217 exige credencial WebAuthn descubrible durante el alta y
+aclara que la llave privada pertenece al administrador de credenciales elegido
+en Android. La cookie del panel dura 15 minutos inactiva, 8 horas como máximo
+y se invalida al reiniciar el proceso. Persistencia/sincronización real, iOS y
+renovación TLS siguen pendientes de prueba/diseño; este cambio no instala
+credencial ni aplicación en el droplet.
 
 **Corte de integración previo a esta actualización documental 2026-11-01:**
 `main` `6d3007a3ca1dfdba428cb7595486b1166a1d02b6` incorpora loop persistente
