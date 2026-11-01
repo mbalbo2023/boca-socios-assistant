@@ -151,12 +151,21 @@ def test_private_reader_and_identity_failures_are_generic(tmp_path: Path) -> Non
     assert _request(app)[0:3:2] == (503, {"error": "identity_unavailable"})
 
 
-def test_malformed_provider_identity_fails_closed_without_traceback(tmp_path: Path) -> None:
+@pytest.mark.parametrize("field", ["expiry_none", "expiry_string", "permissions_none"])
+def test_malformed_provider_identity_fails_closed_without_traceback(
+    tmp_path: Path, field: str
+) -> None:
     app = StatusApplication(
         tmp_path / "private.sqlite3",
         owner_subject=OWNER,
         verify_identity=lambda token, now: VerifiedIdentity(
-            OWNER, frozenset({"local-status:read"}), cast(datetime, None)
+            OWNER,
+            cast(frozenset[str], None)
+            if field == "permissions_none"
+            else frozenset({"local-status:read"}),
+            NOW + timedelta(minutes=1)
+            if field == "permissions_none"
+            else cast(datetime, "private-invalid-expiry" if field == "expiry_string" else None),
         ),
         now=lambda: NOW,
     )

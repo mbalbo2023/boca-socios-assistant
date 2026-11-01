@@ -124,16 +124,21 @@ class StatusApplication:
             return _error(start_response, 503, "identity_unavailable")
         if identity is None:
             return _error(start_response, 401, "authentication_required")
-        if (
-            not isinstance(identity, VerifiedIdentity)
-            or identity.subject != self._owner
-            or not isinstance(identity.permissions, frozenset)
-            or "local-status:read" not in identity.permissions
-            or not isinstance(identity.expires_at, datetime)
-            or identity.expires_at.tzinfo is None
-            or identity.expires_at.utcoffset() is None
-            or identity.expires_at <= now
-        ):
+        try:
+            permitted = (
+                isinstance(identity, VerifiedIdentity)
+                and isinstance(identity.subject, str)
+                and identity.subject == self._owner
+                and isinstance(identity.permissions, frozenset)
+                and "local-status:read" in identity.permissions
+                and isinstance(identity.expires_at, datetime)
+                and identity.expires_at.tzinfo is not None
+                and identity.expires_at.utcoffset() is not None
+                and identity.expires_at > now
+            )
+        except Exception:
+            return _error(start_response, 503, "identity_unavailable")
+        if not permitted:
             return _error(start_response, 403, "read_not_permitted")
         # One read at a time and at most one per second per app instance.
         # Hosting still needs a global request budget across workers.
