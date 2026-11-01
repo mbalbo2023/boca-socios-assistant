@@ -1,20 +1,29 @@
 # Estado de integración BETA
 
-## Actualización candidata #223 — sin efectos en el droplet
+## Corte integrado #224 y candidato de alta #225 — sin efectos en el droplet
 
-Sobre `main=8a7bcf433a83071cc5ccee327c35743d349ce930` se está revisando
-la corrección de acceso solicitada por el dueño: **`http://localhost:8443`**
-con WebAuthn RP `localhost` por túnel SSH Termius, sin certificados/CA ni
-configuración de servidor web compartido. Boca conserva únicamente
-`127.0.0.1:8443` como puerto host y mantiene las garantías de limpieza
-selectiva Docker de #220. El modo HTTP nuevo cifra en custodia sólo la
-credencial pública mediante sobre v2; el camino TLS anterior de #214/#215
-queda histórico y no es un procedimiento de activación para la tablet.
-**NO-GO operativo:** no hay todavía enlace/token de un solo uso servido en
-el host, envío privado de la llave, prueba física Chrome/passkey/Termius ni
-instalación BETA. La suite y CI del candidato no sustituyen estos gates;
-ver [ADR0091](ADR/0091-ssh-loopback-http-without-device-certificates.md)
-y [#223](https://github.com/mbalbo2023/boca-socios-assistant/issues/223).
+`main=93c14ee5d939fd7d6abf56a57843c23c32b281c3` integró
+[PR #224](https://github.com/mbalbo2023/boca-socios-assistant/pull/224):
+**`http://localhost:8443`** con WebAuthn RP `localhost` por túnel SSH
+Termius, sin certificados/CA ni configuración de servidor web compartido.
+CI main 41341214858 y seguridad 41341214783 pasaron; no hubo deploy.
+Boca conserva solamente el futuro host bind `127.0.0.1:8443` y la limpieza
+Docker selectiva de #220, sin tocar puertos/servidores/contenedores ajenos.
+El modo HTTP cifra exclusivamente el ID y la clave pública de la credencial
+en un sobre v2; el camino TLS anterior de #214/#215 es histórico.
+
+El candidato de código [#225](https://github.com/mbalbo2023/boca-socios-assistant/issues/225)
+agrega un servidor temporal HTTP distinto del panel y una URL **plantilla**
+`http://localhost:8443/activar#key=…`. Recibe sólo el hash de una llave
+aleatoria de 256 bits y una clave pública de destinatario, valida
+WebAuthn create→get y guarda únicamente el **sobre cifrado v2** en staging
+temporal; el volumen de dueño con clave privada X25519 no se monta en el
+servidor web. El flujo host/Actions (port-check, contenedor temporal,
+instalación offline, verify, cleanup inmediato y canal privado) **aún no está
+implementado ni autorizado para ejecución**. Ver [ADR0092](ADR/0092-one-use-ssh-chrome-owner-enrollment.md).
+**NO-GO operativo:** no existe aún enlace/token funcional servido en el
+host, envío privado de la llave, prueba física Chrome/passkey/Termius ni
+instalación BETA. Las pruebas sintéticas no sustituyen esos gates.
 
 ## Corte verificado y alcance
 

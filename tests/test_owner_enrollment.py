@@ -22,7 +22,7 @@ def _b64(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
 
 
-TOKEN = _b64(b"synthetic-key-32-bytes-long!!!!!!!")
+TOKEN = _b64(b"$" * 32)
 SUBJECT = "synthetic-owner"
 
 
@@ -60,9 +60,7 @@ def _request(
 
     payload = b"".join(app(environ, start))
     content: dict[str, Any] | bytes = (
-        payload
-        if method == "GET" and result["status"] == 200
-        else json.loads(payload)
+        payload if method == "GET" and result["status"] == 200 else json.loads(payload)
     )
     return result["status"], content, result["headers"]
 
@@ -76,7 +74,7 @@ def _new(
     staging = tmp_path / "staging"
     staging.mkdir(mode=0o700)
     app = enrollment.OneUseOwnerEnrollment(
-        capability_digest=hashlib.sha256(base64.urlsafe_b64decode(TOKEN + "=")).digest(),
+        capability_digest=hashlib.sha256(enrollment._capability(TOKEN)).digest(),
         staging_dir=staging,
         recipient=receipt,
         owner_subject=SUBJECT,
@@ -143,7 +141,7 @@ def test_url_fragment_not_sent_to_server_or_manual_input(tmp_path: Path) -> None
     assert status == 200 and isinstance(page, bytes)
     assert b"http://localhost:8443" in page
     assert b"certificado" not in page.lower()
-    assert b"type=\"password\"" not in page
+    assert b'type="password"' not in page
     assert headers["Cache-Control"] == "no-store"
     assert headers["Referrer-Policy"] == "no-referrer"
     status, script, _ = _request(app, "GET", "/activar.js")
@@ -182,6 +180,21 @@ def test_capability_one_attempt_fail_closed(tmp_path: Path) -> None:
     assert not (staging / "owner-envelope.v2").exists()
 
 
+def test_wrong_valid_size_capability_closes_without_retry(tmp_path: Path) -> None:
+    app, staging, _ = _new(tmp_path)
+    assert _request(app, "POST", "/begin", {"capability": _b64(b"x" * 32)})[0] == 403
+    assert app.stopped.is_set()
+    assert _request(app, "POST", "/begin", {"capability": TOKEN})[0] == 410
+    assert list(staging.iterdir()) == []
+
+
+def test_token_must_be_32_raw_bytes_and_canonical() -> None:
+    for value in ("", "x", "x" * 44, "x" * 42 + "!", "x" * 42 + "=", "x" * 43):
+        with pytest.raises(enrollment.EnrollmentError):
+            enrollment._capability(value)
+    assert enrollment._capability(TOKEN) == b"$" * 32
+
+
 def test_expiry_closes_without_side_effects(tmp_path: Path) -> None:
     clock = [100.0]
     app, staging, owner = _new(tmp_path, clock=clock)
@@ -189,6 +202,135 @@ def test_expiry_closes_without_side_effects(tmp_path: Path) -> None:
     assert _request(app, "POST", "/begin", {"capability": TOKEN})[0] == 410
     assert not (owner / "credential_id").exists()
     assert not (staging / "owner-envelope.v2").exists()
+
+
+def test_untrusted_session_rejected_before_creation(tmp_path: Path) -> None:
+    app, staging, _ = _new(tmp_path)
+    _, begin, _ = _request(app, "POST", "/begin", {"capability": TOKEN})
+    assert isinstance(begin, dict)
+    assert (
+        _request(
+            app,
+            "POST",
+            "/creation",
+            {"operation_id": begin["operation_id"], "response": {}},
+            session=_b64(b"z" * 32),
+        )[0]
+        == 403
+    )
+    assert app.stopped.is_set()
+    assert list(staging.iterdir()) == []
+
+
+def test_invalid_proof_stops_without_staging_or_owner_writes(tmp_path: Path) -> None:
+    app, staging, owner = _new(tmp_path)
+    key = ec.generate_private_key(ec.SECP256R1())
+    _, begin, _ = _request(app, "POST", "/begin", {"capability": TOKEN})
+    assert isinstance(begin, dict)
+    _, proof, _ = _request(
+        app,
+        "POST",
+        "/creation",
+        {"operation_id": begin["operation_id"], "response": _creation(begin["challenge"], key)},
+        session=begin["session"],
+    )
+    assert isinstance(proof, dict)
+    assertion = _proof(proof["challenge"], key)
+    assertion["signature"] = _b64(b"wrong-signature")
+    assert (
+        _request(
+            app,
+            "POST",
+            "/proof",
+            {"operation_id": begin["operation_id"], "assertion": assertion},
+            session=begin["session"],
+        )[0]
+        == 403
+    )
+    assert app.stopped.is_set()
+    assert list(staging.iterdir()) == []
+    assert not (owner / "credential_id").exists()
+
+
+def test_failed_staging_write_cannot_report_completed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, staging, owner = _new(tmp_path)
+    key = ec.generate_private_key(ec.SECP256R1())
+    _, begin, _ = _request(app, "POST", "/begin", {"capability": TOKEN})
+    assert isinstance(begin, dict)
+    _, proof, _ = _request(
+        app,
+        "POST",
+        "/creation",
+        {"operation_id": begin["operation_id"], "response": _creation(begin["challenge"], key)},
+        session=begin["session"],
+    )
+    assert isinstance(proof, dict)
+
+    def partial_write(_directory: int, name: str, _content: bytes, _uid: int) -> None:
+        (staging / name).write_bytes(b"partial-only")
+        raise custody.BootstrapError("partial_configuration_preserved")
+
+    monkeypatch.setattr(enrollment, "_write_new", partial_write)
+    assert (
+        _request(
+            app,
+            "POST",
+            "/proof",
+            {"operation_id": begin["operation_id"], "assertion": _proof(proof["challenge"], key)},
+            session=begin["session"],
+        )[0]
+        == 403
+    )
+    assert app.stopped.is_set() and not app.completed
+    assert (staging / enrollment.ENVELOPE_NAME).read_bytes() == b"partial-only"
+    assert not (owner / "credential_id").exists()
+
+
+def test_expiry_after_begin_rejects_creation(tmp_path: Path) -> None:
+    clock = [100.0]
+    app, staging, _ = _new(tmp_path, clock=clock)
+    _, begin, _ = _request(app, "POST", "/begin", {"capability": TOKEN})
+    assert isinstance(begin, dict)
+    clock[0] = 1001.0
+    assert _request(app, "POST", "/creation", {}, session=begin["session"])[0] == 410
+    assert list(staging.iterdir()) == []
+
+
+def test_staging_artifact_without_webauthn_never_claims_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, staging, owner = _new(tmp_path)
+    receipt = custody.prepare(owner, uid=os.geteuid())
+
+    class UntrustedServer:
+        def __init__(self) -> None:
+            self.app: enrollment.OneUseOwnerEnrollment | None = None
+
+        def __enter__(self) -> UntrustedServer:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return
+
+        def set_app(self, app: enrollment.OneUseOwnerEnrollment) -> None:
+            self.app = app
+
+        def handle_request(self) -> None:
+            assert self.app is not None
+            (staging / enrollment.ENVELOPE_NAME).write_bytes(b"untrusted-artifact")
+            self.app.stopped.set()
+
+    monkeypatch.setattr(enrollment, "_TemporaryHTTPServer", UntrustedServer)
+    assert not enrollment.serve(
+        staging,
+        receipt,
+        SUBJECT,
+        hashlib.sha256(enrollment._capability(TOKEN)).digest(),
+        uid=os.geteuid(),
+    )
+    assert not (owner / "credential_id").exists()
 
 
 def test_full_synthetic_chrome_enrollment_writes_only_public_owner_key(tmp_path: Path) -> None:
@@ -218,8 +360,8 @@ def test_full_synthetic_chrome_enrollment_writes_only_public_owner_key(tmp_path:
         {"operation_id": begin["operation_id"], "assertion": _proof(proof["challenge"], key)},
         session=begin["session"],
     )
-    assert status == 200 and finish == {"state": "configured"}
-    assert app.stopped.is_set()
+    assert status == 200 and finish == {"state": "verified_for_install"}
+    assert app.stopped.is_set() and app.completed
     assert not (owner / "credential_id").exists()
     envelope = (staging / "owner-envelope.v2").read_bytes()
     assert b"credential_id" not in envelope
@@ -230,8 +372,15 @@ def test_full_synthetic_chrome_enrollment_writes_only_public_owner_key(tmp_path:
     # the private owner X25519 recipient key or the owner volume itself.
     custody.install(owner, envelope, enrollment.ORIGIN, SUBJECT, uid=os.geteuid())
     assert (owner / "credential_id").read_bytes() == b"synthetic-owner-credential-id"
-    assert all((owner / name).stat().st_mode & 0o777 == 0o400 for name in ("credential_id", "public_key.der"))
-    assert not any(name.endswith((".key", ".crt", ".pem")) for name in os.listdir(owner) if name != custody.PRIVATE_KEY)
+    assert all(
+        (owner / name).stat().st_mode & 0o777 == 0o400
+        for name in ("credential_id", "public_key.der")
+    )
+    assert not any(
+        name.endswith((".key", ".crt", ".pem"))
+        for name in os.listdir(owner)
+        if name != custody.PRIVATE_KEY
+    )
     assert custody.verify(owner, enrollment.ORIGIN, SUBJECT, uid=os.geteuid())
     assert _request(app, "POST", "/proof", {})[0] == 410
 
@@ -241,12 +390,26 @@ def test_existing_owner_material_rejected_before_listening(tmp_path: Path) -> No
     (staging / "owner-envelope.v2").write_bytes(b"existing")
     owner = tmp_path / "owner"
     receipt = custody.prepare(owner, uid=os.geteuid())
-    with pytest.raises(custody.BootstrapError):
+    with pytest.raises(enrollment.EnrollmentError, match="staging_not_empty"):
         enrollment.OneUseOwnerEnrollment(
-            capability_digest=hashlib.sha256(base64.urlsafe_b64decode(TOKEN + "=")).digest(),
+            capability_digest=hashlib.sha256(enrollment._capability(TOKEN)).digest(),
             staging_dir=staging,
             recipient=receipt,
             owner_subject=SUBJECT,
             uid=os.geteuid(),
         )
     assert not app.stopped.is_set()  # independent, earlier app state is unaffected
+
+
+def test_recipient_fingerprint_must_match_before_http(tmp_path: Path) -> None:
+    _, staging, owner = _new(tmp_path)
+    receipt = custody.prepare(owner, uid=os.geteuid())
+    altered = custody.RecipientReceipt(receipt.state, receipt.public_key, "0" * 64)
+    with pytest.raises(enrollment.EnrollmentError, match="invalid_recipient"):
+        enrollment.OneUseOwnerEnrollment(
+            capability_digest=hashlib.sha256(enrollment._capability(TOKEN)).digest(),
+            staging_dir=staging,
+            recipient=altered,
+            owner_subject=SUBJECT,
+            uid=os.geteuid(),
+        )
