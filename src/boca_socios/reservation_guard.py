@@ -24,11 +24,15 @@ class ReservationState(StrEnum):
     IN_FLIGHT = "in_flight"
     NEEDS_REVIEW = "needs_review"
     PROVIDER_ACK_REPORTED = "provider_ack_reported"
+    SIMULATION_COMPLETED = "simulation_completed"
+    SIMULATION_FAILED = "simulation_failed"
 
 
 class ReservationResolution(StrEnum):
     UNRESOLVED = "unresolved"
     PROVIDER_ACK_REPORTED = "provider_ack_reported"
+    SIMULATION_COMPLETED = "simulation_completed"
+    SIMULATION_FAILED = "simulation_failed"
 
 
 class InvalidReservationClaim(Exception):
@@ -96,6 +100,35 @@ class ReservationAttemptGuard:
                 "INSERT INTO schema_migrations(version, checksum) VALUES (3, ?)", (digest,)
             )
 
+    def migrate_simulation(self) -> None:
+        """Opt in to local simulation outcomes without rewriting migration 0003."""
+        self.migrate()
+        sql = (
+            files("boca_socios.storage.migrations")
+            .joinpath("0005_simulation_outcomes.sql")
+            .read_text(encoding="utf-8")
+        )
+        digest = hashlib.sha256(sql.encode("utf-8")).hexdigest()
+        with self._write() as connection:
+            row = connection.execute(
+                "SELECT checksum FROM schema_migrations WHERE version=5"
+            ).fetchone()
+            if row is not None:
+                if row[0] != digest:
+                    raise ValueError("migration checksum mismatch: simulation outcomes")
+                return
+            statement = ""
+            for line in sql.splitlines(keepends=True):
+                statement += line
+                if sqlite3.complete_statement(statement):
+                    connection.execute(statement)
+                    statement = ""
+            if statement.strip():
+                raise ValueError("incomplete simulation migration statement")
+            connection.execute(
+                "INSERT INTO schema_migrations(version, checksum) VALUES (5, ?)", (digest,)
+            )
+
     @staticmethod
     def _request_id(value: str) -> str:
         if not isinstance(value, str):
@@ -142,6 +175,21 @@ class ReservationAttemptGuard:
         The caller must separately prove account eligibility, admission and
         provider authorization; this gate cannot establish any of them.
         """
+        return self._claim(
+            request_id, now=now, review_after_seconds=review_after_seconds, simulation=False
+        )
+
+    def claim_simulation(
+        self, request_id: str, *, now: float, review_after_seconds: float = 120
+    ) -> ReservationClaim | None:
+        """Consume a local synthetic attempt; never a provider authorization."""
+        return self._claim(
+            request_id, now=now, review_after_seconds=review_after_seconds, simulation=True
+        )
+
+    def _claim(
+        self, request_id: str, *, now: float, review_after_seconds: float, simulation: bool
+    ) -> ReservationClaim | None:
         key = self._request_id(request_id)
         started = self._time(now)
         duration = self._time(review_after_seconds)
@@ -155,13 +203,18 @@ class ReservationAttemptGuard:
             if request is None or request[0] != "planned":
                 raise ValueError("an active local ticket intent is required")
             token = uuid4()
-            cursor = connection.execute(
+            statement = (
                 """INSERT INTO reservation_attempts
+                   (request_id, claim_token, state, started_at, review_after, attempt_kind)
+                   VALUES (?, ?, 'in_flight', ?, ?, 'simulation')
+                   ON CONFLICT(request_id) DO NOTHING"""
+                if simulation
+                else """INSERT INTO reservation_attempts
                    (request_id, claim_token, state, started_at, review_after)
                    VALUES (?, ?, 'in_flight', ?, ?)
-                   ON CONFLICT(request_id) DO NOTHING""",
-                (key, str(token), started, deadline),
+                   ON CONFLICT(request_id) DO NOTHING"""
             )
+            cursor = connection.execute(statement, (key, str(token), started, deadline))
             if cursor.rowcount == 0:
                 return None
             if cursor.rowcount != 1:
@@ -178,11 +231,13 @@ class ReservationAttemptGuard:
         if not isinstance(resolution, ReservationResolution):
             raise ValueError("an explicit resolution is required")
         resolved_at = self._time(now)
-        target = (
-            ReservationState.PROVIDER_ACK_REPORTED
-            if resolution is ReservationResolution.PROVIDER_ACK_REPORTED
-            else ReservationState.NEEDS_REVIEW
-        )
+        targets = {
+            ReservationResolution.PROVIDER_ACK_REPORTED: ReservationState.PROVIDER_ACK_REPORTED,
+            ReservationResolution.UNRESOLVED: ReservationState.NEEDS_REVIEW,
+            ReservationResolution.SIMULATION_COMPLETED: ReservationState.SIMULATION_COMPLETED,
+            ReservationResolution.SIMULATION_FAILED: ReservationState.SIMULATION_FAILED,
+        }
+        target = targets[resolution]
         with self._write() as connection:
             row = connection.execute(
                 """SELECT claim_token, request_id, state, started_at, review_after, closed_at
@@ -192,6 +247,25 @@ class ReservationAttemptGuard:
             if row is None or row[0] != str(claim.claim_token):
                 raise InvalidReservationClaim("missing or stale reservation claim")
             current = self._snapshot(row[1:])
+            upgraded = (
+                connection.execute("SELECT 1 FROM schema_migrations WHERE version=5").fetchone()
+                is not None
+            )
+            kind = (
+                connection.execute(
+                    "SELECT attempt_kind FROM reservation_attempts WHERE request_id=?", (key,)
+                ).fetchone()[0]
+                if upgraded
+                else "external"
+            )
+            synthetic = resolution in {
+                ReservationResolution.SIMULATION_COMPLETED,
+                ReservationResolution.SIMULATION_FAILED,
+            }
+            if (synthetic and kind != "simulation") or (
+                resolution is ReservationResolution.PROVIDER_ACK_REPORTED and kind != "external"
+            ):
+                raise InvalidReservationClaim("attempt kind does not permit this resolution")
             if current.state is target:
                 return current
             if (
