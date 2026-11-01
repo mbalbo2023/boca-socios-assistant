@@ -16,6 +16,9 @@ El controlador servido no lo importa ni lo inicia.
 `compose.telegram.json` es un archivo Compose independiente en formato JSON,
 con el mismo proyecto dedicado `boca-socios` y sólo el servicio `telegram` bajo
 perfil `telegram-opt-in`. El perfil y `restart: no` impiden arranque implícito.
+Deshabilita el healthcheck heredado de la imagen, que sólo verifica SQLite y
+confundiría DB legible con recepción Telegram; una futura prueba host debe
+inspeccionar el proceso y el resultado del intento por separado.
 No hay puerto, host mount, Docker socket, modo privilegiado ni red compartida
 con el controlador. El proceso UID/GID 10001 usa un bridge dedicado de egress,
 raíz de sólo lectura, capacidades retiradas, `no-new-privileges`, límite de

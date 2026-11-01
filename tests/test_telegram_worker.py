@@ -144,6 +144,7 @@ def test_telegram_compose_is_separate_off_by_default_and_bounded() -> None:
     assert worker["command"] == ["python", "-m", "boca_socios.notify.telegram_worker", "serve"]
     assert worker["user"] == "10001:10001"
     assert worker["restart"] == "no"
+    assert worker["healthcheck"] == {"disable": True}
     assert worker["read_only"] is True
     assert worker["cap_drop"] == ["ALL"]
     assert worker["security_opt"] == ["no-new-privileges:true"]

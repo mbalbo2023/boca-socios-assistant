@@ -7,6 +7,7 @@
       "command": ["python", "-m", "boca_socios.notify.telegram_worker", "serve"],
       "user": "10001:10001",
       "restart": "no",
+      "healthcheck": {"disable": true},
       "init": true,
       "environment": {
         "BOCA_ENVIRONMENT": "staging",
