@@ -127,7 +127,9 @@ class StatusApplication:
         if (
             not isinstance(identity, VerifiedIdentity)
             or identity.subject != self._owner
+            or not isinstance(identity.permissions, frozenset)
             or "local-status:read" not in identity.permissions
+            or not isinstance(identity.expires_at, datetime)
             or identity.expires_at.tzinfo is None
             or identity.expires_at.utcoffset() is None
             or identity.expires_at <= now

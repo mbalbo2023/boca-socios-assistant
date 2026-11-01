@@ -3,6 +3,7 @@
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -148,6 +149,18 @@ def test_private_reader_and_identity_failures_are_generic(tmp_path: Path) -> Non
         now=lambda: NOW,
     )
     assert _request(app)[0:3:2] == (503, {"error": "identity_unavailable"})
+
+
+def test_malformed_provider_identity_fails_closed_without_traceback(tmp_path: Path) -> None:
+    app = StatusApplication(
+        tmp_path / "private.sqlite3",
+        owner_subject=OWNER,
+        verify_identity=lambda token, now: VerifiedIdentity(
+            OWNER, frozenset({"local-status:read"}), cast(datetime, None)
+        ),
+        now=lambda: NOW,
+    )
+    assert _request(app)[0:3:2] == (403, {"error": "read_not_permitted"})
 
 
 def test_repeated_authorized_reads_have_bounded_per_process_rate(tmp_path: Path) -> None:
