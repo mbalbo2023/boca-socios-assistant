@@ -77,7 +77,11 @@ does not turn the drifted acceptance green.
 Offline tests cover gate inputs, exact digest/release/main, staged Compose,
 positive and negative container inventory, cgroups/network/mounts/TLS,
 malformed/oversize/ambiguous receipts, timeout, postflight drift and stop
-failure. Frozen lint, format, mypy, full pytest, isolation policy, exact-SHA
+failure. PR runtime smoke invokes the same disposable probe inside the actual
+runner controller under 0.5 CPU/256 MiB/16 MiB tmpfs, with a strictly parsed
+receipt before Boca-only runner cleanup. That synthetic runner check is not a
+droplet measurement or proof of owner access. Frozen lint, format, mypy, full
+pytest, isolation policy, exact-SHA
 Actions and technical review precede merge. A host run must record the
 source SHA/digest, acceptance metrics, capacity and verified stop receipt.
 Physical owner passkey/private tablet access, Site HMAC bridge and Telegram

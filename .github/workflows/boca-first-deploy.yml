@@ -250,6 +250,30 @@ jobs:
             --cacert "$RUNNER_TEMP/boca-owner-fixture/tls.crt" \
             https://beta.boca.example.test:8443/healthz > "$RUNNER_TEMP/boca-beta-health.receipt"
           test "$(cat "$RUNNER_TEMP/boca-beta-health.receipt")" = BOCA_BETA_READY
+      - name: Run synthetic TLS acceptance inside capped disposable controller
+        run: |
+          container="$(docker compose -p boca-socios -f compose.beta.yaml ps -q controller)"
+          [[ "$container" =~ ^[0-9a-f]{64}$ ]]
+          docker exec --user 10001:10001 "$container" \
+            python -m boca_socios.acceptance.host_probe \
+            > "$RUNNER_TEMP/boca-synthetic-probe.receipt" 2>/dev/null
+          PYTHONPATH=src python3 - "$RUNNER_TEMP/boca-synthetic-probe.receipt" <<'PY'
+          import sys
+          from pathlib import Path
+          from boca_socios.host_first_deploy import _validate_beta_acceptance_receipt
+
+          try:
+              path = Path(sys.argv[1])
+              if path.stat().st_size > 385:
+                  raise ValueError("synthetic receipt exceeds bounded output")
+              raw = path.read_text(encoding="ascii")
+              if raw.count("\n") != 1 or not raw.endswith("\n"):
+                  raise ValueError("unexpected synthetic receipt lines")
+              print(_validate_beta_acceptance_receipt(raw[:-1]))
+          except (OSError, UnicodeError, ValueError):
+              print("BOCA_NO_GO: disposable synthetic receipt invalid", file=sys.stderr)
+              raise SystemExit(1) from None
+          PY
       - name: Remove only synthetic Boca resources from disposable runner
         if: always()
         run: |

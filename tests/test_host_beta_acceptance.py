@@ -252,6 +252,13 @@ def test_installed_headroom_and_network_id_are_checked_without_preinstall_thresh
 
 def test_protected_workflow_runs_probe_then_boca_only_stop_in_one_job() -> None:
     workflow = Path(".github/workflows/boca-first-deploy.yml").read_text(encoding="utf-8")
+    assert (
+        workflow.index("Serve BETA on runner loopback with exact image")
+        < workflow.index("Run synthetic TLS acceptance inside capped disposable controller")
+        < workflow.index("Remove only synthetic Boca resources from disposable runner")
+    )
+    assert 'docker exec --user 10001:10001 "$container"' in workflow
+    assert "_validate_beta_acceptance_receipt(raw[:-1])" in workflow
     assert "beta-acceptance" in workflow
     assert 'test "$BOCA_BETA_ENV_READY" = ready' in workflow
     assert "python scripts/check_release_run.py" in workflow
