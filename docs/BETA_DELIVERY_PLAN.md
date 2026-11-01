@@ -56,15 +56,17 @@ comprobada (#168). La [parada protegida #198](https://github.com/mbalbo2023/boca
 `ALREADY_STOPPED containers=not_queried data=preserved` sobre el SHA de corte.
 Antes de otro uso se revalida el daemon y el main actual.
 
-El [release protegido 41299068773](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41299068773)
-publicó un digest nuevo para `d0c539d14f38687fbc3711c94ef35df908e57a91`
-con manifest 13080811204, después de la reconciliación #206. Sigue siendo
-sólo una imagen: no se instaló BETA. El candidato #207/ADR0086 agrega una
-propuesta de custodia cifrada de cinco archivos owner por Actions, con pruebas
-sintéticas y sin efecto host en PR. Una eventual integración de #207 exigirá
-su propio release exacto antes de cualquier operación. Continúan pendientes
+El [release protegido 41301618285](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41301618285)
+publicó el digest `sha256:6f067e5078081760dec27f81d95792a4423ff9c1d9cb3bef19ef70dbfc8cf889`
+para el corte #208 `58f57822e95da9574c0a9d5122607616da4a024a`,
+con manifest 13082030761. Sigue siendo sólo una imagen: no se instaló BETA.
+PR #208/ADR0086 integró la custodia cifrada de cinco archivos owner por
+Actions, con 942 pruebas locales y smoke desechable del candidato
+`465deba9456d9ace5a2cddbcdab25a5310f3d095`; no hubo efecto host.
+Una futura actualización documental mueve `main` y exige otro release
+exacto antes de operar. Continúan pendientes
 el alta física WebAuthn, origen/ruta HTTPS tablet, DNS/certificado y decisión
-de acceso privado; no inferirlos de la custodia.
+de acceso privado (#209); no inferirlos de la custodia.
 
 ## Base histórica comprobada de este plan
 
@@ -140,12 +142,12 @@ diferido; no se eliminan los requisitos de custodia/recuperación para alta real
 | B1 | Plan/contratos y seguimiento: esta documentación | Matriz de alcance, alta obligatoria, decisiones, owners y evidencias registradas | Dirección del dueño |
 | B2 | Servicio preparado #120; parada #156 y ALREADY_STOPPED en 41282301501; #191 preflight host beta integrado sin ejecución | Rootless propio sano; namespace candidato y procedencia de almacenamiento verificados; capacidad/cgroups/permisos de aplicación probados. No reemplazar una DB por inferencia | Destino delegado y propuesta concreta por Actions |
 | B3 | Coordinador130, comandos149, loop161, ciclo164 y TLS173 integrados; RCA canónico187 | Comandos iniciar/detener/estado; guardia persistente, idempotencia, pausa ambigua y replay seguro probados | Contrato servido de B7 y panel B4 |
-| B4 | Lectura128, formulario148, panel WSGI163, TLS173 y preflight owner189 integrados; custodia protegida #207 propuesta, inscripción física y ruta privada pendientes | Acceso privado tablet; Socios > Agregar socio cifrado/atómico; errores, duplicados, denegación y estado posterior visibles | B3 contrato; servicio de alta/clave/DB |
+| B4 | Lectura128, formulario148, panel WSGI163, TLS173, preflight owner189 y custodia protegida #208 integrados en código; inscripción física y ruta privada #209 pendientes | Acceso privado tablet; Socios > Agregar socio cifrado/atómico; errores, duplicados, denegación y estado posterior visibles | B3 contrato; servicio de alta/clave/DB |
 | B5 | Dispatcher134, Telegram162, `/avisos`163, worker188, custodia199/203 y prueba única204 integrados; recorrido host/recepción pendientes | Proyección fiel de estados persistidos, límites/restart/dedup; razón ambigua durable sin llamar entrega real a aceptación de API | Resultados persistidos de B3; UI B4 y provisión #168 |
 | B6 | Chromium/medición | Una sesión aislada con recursos, parada y errores medidos en entorno candidato; alcance de egress explícito | Presupuesto separado; observación real no inferida de test offline |
 | B7 | TLS173, Compose171 y operación protegida `beta-install`191 integrados; no ejecutados en host | Programa arrancado conecta B3/B4/B5; health funcional, acceso privado y manifiesto por componente; instalación desechable probada | B2–B6 según componentes del candidato |
 | B8 | HTTP loopback170, probe TLS190 y smoke de contenedor limitado200; E2E host pendiente | Suite E2E, lint/types, RCA, seguridad e imágenes sobre mismo SHA; rapidez/recursos y revisión exacta | B7 consolidado |
-| B9 | Imagen protegida #198 publicada con digest/manifest para el SHA de corte; código de instalación #191 sin dispatch | SHA→digest/manifiesto→proceso instalado trazables; capacidad revalidada; sólo workflow y mutex Boca | B2 apto, B8 verde, decisión final del candidato |
+| B9 | Imagen protegida 41301618285 publicada con digest/manifest para el SHA de integración #208; código de instalación #191 sin dispatch | SHA→digest/manifiesto→proceso instalado trazables; capacidad revalidada; sólo workflow y mutex Boca | B2 apto, B8 verde, decisión final del candidato |
 | B10 | Aceptación/parada protegida200 integrada, sin dispatch | Recorrido desde interfaz real/tablet, persistencia/reinicio, límites, denegación y avisos; acta de versión/pendientes | B9 y matriz de aceptación |
 
 Estos IDs no son estados de la aplicación. Cada cambio de estado de una entrega
@@ -190,7 +192,7 @@ aceptación BETA de simulación y la operación real contra Boca son hitos disti
 | Avisos locales y Telegram | Bandeja/estado de avisos, canal y fallos explícitos | Outbox durable, dispatcher134, adaptador162, UI163, worker188, parada194, helper cifrado199, custodia203 y prueba única204 | Bot/destino reales, dispatch de custodia/prueba host y recepción #168 pendientes, sin afirmar entrega por código integrado |
 | Diagnóstico, fuente pública y recursos | Semáforo con procedencia/hora, salud y límites | Workflows fuente/host, inventario98, preparación120 y medición Chromium offline | Proyección UI real pendiente; un semáforo externo no habilita login ni prueba capacidad de host |
 | RCA, calidad y trazabilidad | Versiones, SHA/digests, runs, decisiones y errores redactados | CI, reviews, ledger RCA y continuidad45; no editor automático de código | Integración UI/recibos por acción pendiente; nunca sustituir pruebas exactas por una insignia sintética |
-| Release/deploy y operación host | Mostrar estado/recibos y alcance permitido | Workflow protegido; rootless #120, preflight #124, parada 41282301501, imagen release 41298346638, custodia Site181/196, `beta-install`191 y aceptación/parada200 integrados | Revalidar release coincidente con HEAD; faltan BETA marker, identidad privada, dispatch de install y control Site→Actions; nada de SSH/Docker/secreto en Site |
+| Release/deploy y operación host | Mostrar estado/recibos y alcance permitido | Workflow protegido; rootless #120, preflight #124, parada 41282301501, imagen release 41301618285 para corte #208, custodia owner208 y Site181/196, `beta-install`191 y aceptación/parada200 integrados | Revalidar release coincidente con HEAD; faltan BETA marker, identidad privada, dispatch de install y control Site→Actions; nada de SSH/Docker/secreto en Site |
 | Backup/restore | Estado diferido y motivo visible/planificado | Biblioteca offline47; ningún ensayo operativo acredita recuperación | Diferido por el dueño hasta versión productiva fiable; sin botón operativo ni backup ahora |
 | Login, cola, elegibilidad, reserva/compra real | Identificar hito separado y no habilitado | Modelos y observación pública histórica; sin flujo autenticado validado | No habilitado en esta BETA; requiere consentimiento/custodia, flujo legítimo y conciliación de resultados ambiguos |
 | Administración multiusuario y modalidades no descritas | No inventar controles, roles o planes | El formulario de socios no crea administradores; no hay definición aprobada de otras modalidades | Sin definición: registrar la necesidad antes de diseñar/activar, sin presentar una suposición como función acordada |

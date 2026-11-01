@@ -1,8 +1,10 @@
 # ADR 0086: protected owner passkey and TLS custody before BETA install
 
-**Status:** proposed in issue #207. Code and runner checks are pending review;
-no owner credential, TLS key or private tablet route has been provisioned on the
-droplet. This proposal does not mark BETA operational.
+**Status:** integrated by PR #208 in
+`58f57822e95da9574c0a9d5122607616da4a024a` from candidate
+`465deba9456d9ace5a2cddbcdab25a5310f3d095`. No owner credential,
+TLS key or private tablet route has been provisioned on the droplet.
+This code integration does not mark BETA operational.
 
 ## Decision
 
@@ -73,8 +75,13 @@ Synthetic tests exercise sealed prepare/install/verify, wrong recipient,
 origin/subject, tampering, TLS mismatch, exclusive writes, partial-state
 preservation, full daemon inventory and immutable image ordering. The PR
 workflow also runs the image in a disposable, network-free owner volume with
-generated synthetic keys/certificates. Record the exact candidate SHA, CI,
-image scan, PR runner smoke and technical review before integration. These
+generated synthetic keys/certificates. Candidate
+`465deba9456d9ace5a2cddbcdab25a5310f3d095` passed
+CI 41301216347, scan 41301216391, release PR validation 41301216375 and
+deploy PR validation/disposable smoke 41301216348; host and publication jobs
+were skipped. Technical review 5727815153 found no blocking issue. The
+protected release 41301618285 published the integration SHA and digest, with
+manifest artifact 13082030761; it did not start a droplet service. These
 tests do not prove tablet access or a real owner passkey. The affected delivery
 plan, status and operations documents and issue #45 must distinguish code
 integration from host execution under Rule 84.

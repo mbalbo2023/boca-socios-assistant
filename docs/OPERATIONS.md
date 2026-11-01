@@ -4,8 +4,8 @@
 
 The default runtime remains dormant and CI never deploys. The dedicated rootless service
 was prepared in #120 and stopped in #156/41272785626; the BETA application
-remains not installed/NO_GO. The protected [image release #198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41298346638)
-published `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:ab0745a840e35a6d713fed14ec0761512fdc90284c133f2c321c9ffe2d3c9284` for `6d3007a3ca1dfdba428cb7595486b1166a1d02b6` with manifest artifact 13079654802.
+remains not installed/NO_GO. The protected [image release 41301618285](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41301618285)
+published `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:6f067e5078081760dec27f81d95792a4423ff9c1d9cb3bef19ef70dbfc8cf889` for the #208 integration `58f57822e95da9574c0a9d5122607616da4a024a` with manifest artifact 13082030761.
 This was registry-only; no droplet pull/install. Subsequent commits require a
 matching new release, tracked in [issue #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
 The [stop-test #198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41282301501) observed `ALREADY_STOPPED
@@ -184,17 +184,18 @@ requires a positive STOPPED receipt. No host BETA install/acceptance run has
 occurred. Container-loopback tests do not prove owner tablet, Site or Telegram.
 See ADR0076 and ADR0081.
 
-Issue #207 proposes `owner-prepare/install/verify` for the dedicated owner
+PR #208 integrated `owner-prepare/install/verify` for the dedicated owner
 volume, with purpose-bound ciphertext holding the physical passkey's **public**
 credential and matching TLS/health material. ADR0086 defines the isolated
 runner/host contract and the nonsecret receipt. Each owner phase temporarily
 starts only the previously prepared, stopped Boca rootless daemon after its
 unit/config/inventory proof, then requires `stop-test` in the same job even
-after a failed phase; an uncertain stop remains NO-GO. This is a code proposal:
+after a failed phase; an uncertain stop remains NO-GO. This is code only:
 no real owner passkey, origin, certificate, private tablet route or host
-custody operation has been verified. The 41299068773 protected release is
-SUCCESS for prior main `d0c539d14f38687fbc3711c94ef35df908e57a91`
-only; any #207 merge needs a new exact release. Do not set the BETA marker
+custody operation has been verified. The 41301618285 protected release is
+SUCCESS for the #208 integration main `58f57822e95da9574c0a9d5122607616da4a024a`;
+this documentation merge will need a new exact release. Issue #209 holds
+the private tablet route and first-owner ceremony. Do not set the BETA marker
 or run `beta-install` from a synthetic fixture.
 
 The earlier 2026-11-01 GitHub environment inspection found no
