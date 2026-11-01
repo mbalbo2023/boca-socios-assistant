@@ -1,8 +1,8 @@
 # ADR 0062: one persistent command loop for the private BETA panel
 
-**Status:** Accepted on merge of PR #161 for issue #159. Before that merge,
-this document describes an unmerged candidate; neither state proves an
-installed application.
+**Status:** accepted; PR #161 integrated into
+`77bf93c29dc59d5db0b5cf57c2c6ba2a14e8f39e`. This code does not prove
+an installed application.
 
 ## Context and decision
 

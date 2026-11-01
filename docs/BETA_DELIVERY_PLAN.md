@@ -16,9 +16,32 @@ registra autorización vigente, HEAD, decisiones y evidencia de cada cierre.
 Revalidar esos hechos antes de actuar; no interpretar autorización del trabajo
 como evidencia de éxito o permiso para operar datos reales.
 
-[Autorización de esta etapa](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551681142).
+[Autorización vigente ampliada](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326)
+para completar la BETA sintética, Site conectado, Telegram y deploy validado
+por Actions, sin reservas ni compras reales. El alcance anterior de preparación
+queda como historial; ninguna autorización es evidencia de instalación.
 
-## Base comprobada de este plan
+**Corte de integración 2026-11-01:** `main`
+`9e923af56e76a04069bfad6f8ca9c68db0edd890` incorpora loop persistente
+#161, Telegram durable opt-in #162, stop-test #165, ciclo de vida local #164
+y panel owner passkey #163, aceptación HTTP sintética #170 y entrypoint
+TLS explícito #173, prueba de registro WebAuthn #174 y corrección
+de lectura con schema Telegram0007 #176, paquete beta separado #171,
+helper cifrado #178, cliente Site opt-in #179 y custodia host protegida #181,
+además del corte base descrito abajo. [Estado actual y runs exactos](BETA_INTEGRATION_STATUS.md).
+El Compose/primer install aún son dormidos y no hay aplicación en el droplet.
+El stop-test protegido [#156/41272785626](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41272785626)
+emitió STOPPED, cero contenedores y datos preservados tras las pruebas de
+preparación; no es evidencia de instalación BETA.
+La custodia #181 está integrada en código, pero no tuvo dispatch al host;
+`beta-install`, acceso privado y aceptación host son frentes pendientes y
+requieren pruebas propias. El Site privado v10 #113 publicó cola D1 sintética
+desactivada y proxy/recibos fail-closed; falta release de imagen protegido,
+bypass+HMAC host y E2E.
+Telegram no tiene
+bot/destino ni recepción comprobada (#168).
+
+## Base histórica comprobada de este plan
 
 Punto de partida documentado: `4922e45b5e2e38242263b6ba10969a8190aa939a`,
 después de #142. No se confunde ese baseline con una integración posterior.
@@ -33,8 +56,9 @@ de composición152. [CI main41262581358](https://github.com/mbalbo2023/boca-soci
 y [scan41262581422](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41262581422)
 verifican ese SHA; la documentación candidata tiene sus checks propios.
 
-El runtime valida clave, inicializa esquema base y espera con engine=off; no
-sirve panel ni conecta coordinador/avisos. Compose contiene sólo controlador
+El runtime de Compose del corte vigente valida clave, inicializa esquema base
+y espera con engine=off; no sirve panel ni conecta coordinador/avisos.
+Compose contiene sólo controlador
 sin puertos. #128/#130/#134 eran candidatos separados en ese corte inicial.
 La primera integración ya incorpora #130 (coordinador durable opt-in), #128
 (adaptador WSGI de lectura default-deny) y #134 (dispatcher sintético). Son
@@ -44,7 +68,9 @@ servicio de comandos durable. Ambos siguen sin servidor autenticado ni wiring
 del runtime. El dispatcher conserva el límite de crash entre llamada sintética y
 settlement: no prueba entrega exactamente una vez. La imagen y
 smoke Chromium offline no prueban navegación Boca ni forman parte de ese Compose.
-El Site #113 es una demo privada sintética, sin conexión a DB ni comandos.
+El Site #113 es una demo privada sintética; la versión v10 publicada incorpora
+cola D1 desactivada y proxy/recibos fail-closed, aún sin conexión efectiva a
+DB ni comandos.
 
 La [preparación #120](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41262650418) ejecutó
 prepare-rootless sobre `6be606f83c5a6afe0ba7226abbca6a09276d1ca1`, attempt1, y terminó
@@ -73,8 +99,8 @@ de usarlo. Preparar el daemon no instala ni acepta la aplicación.
 | Panel | Propia aplicación Boca sirve panel privado y accede localmente a SQLite | Elegir/probar identidad, sesión/TLS y acceso concreto; el navegador no recibe DB/clave/SSH/socket |
 | Alta | `Socios > Agregar socio` obligatorio, sobre servicio cifrado existente | Sólo datos/credenciales sintéticos en esta BETA; alta local no verifica identidad ni elegibilidad Boca |
 | Coordinación | Comandos y estado persistente; pausa visible en ambigüedad | No reejecución ciega ni éxito externo inventado |
-| Avisos | Estado/avisos locales funcionales; ensayos del dispatcher sintético | Telegram permanece pendiente explícito y necesita transporte/recepción/reconciliación propios |
-| Site | Complemento #113 preservado | Demo sintética; no cuenta como panel operativo conectado |
+| Avisos | Estado/avisos locales funcionales; ensayos del dispatcher sintético | Transporte Telegram #162 integrado opt-in; bot/destino, worker y recepción siguen pendientes |
+| Site | Complemento #113 preservado | Versión privada v10 con D1 desactivado; no cuenta como panel operativo conectado |
 | Operación final | Candidato concreto, imágenes/digests, preflight y aceptación verificables | Release/instalación final por decisión del candidato; no login/cola/reserva real ni backup |
 
 Las decisiones ya aprobadas no se vuelven a preguntar para cada implementación,
@@ -88,12 +114,12 @@ diferido; no se eliminan los requisitos de custodia/recuperación para alta real
 | --- | --- | --- | --- |
 | B1 | Plan/contratos y seguimiento: esta documentación | Matriz de alcance, alta obligatoria, decisiones, owners y evidencias registradas | Dirección del dueño |
 | B2 | Servicio preparado por150/120; preflight de aplicación pendiente | Rootless propio sano; namespace candidato y procedencia de cualquier almacenamiento encontrado verificados; capacidad/cgroups/permisos de aplicación probados. No exigir un censo global ni reemplazar una DB | Destino delegado y propuesta concreta por Actions |
-| B3 | Coordinador130 y comandos149 integrados; conexión runtime pendiente en B7 | Comandos iniciar/detener/estado; guardia persistente, idempotencia, pausa ambigua y replay seguro probados | Contrato de estados y esquema del candidato |
+| B3 | Coordinador130, comandos149 y loop161 integrados; ciclo de vida local164 sin listener | Comandos iniciar/detener/estado; guardia persistente, idempotencia, pausa ambigua y replay seguro probados | Contrato servido de B7 y panel B4 |
 | B4 | Lectura128 y formulario/handler148 integrados; lista/servidor/identidad de alta17 pendientes | Acceso privado tablet; Socios > Agregar socio cifrado/atómico; errores, duplicados, denegación y estado posterior visibles | B3 contrato; servicio de alta/clave/DB |
-| B5 | Dispatcher sintético #134 integrado; conexión de avisos locales pendiente | Proyección fiel de estados persistidos, límites/restart/dedup; razón ambigua durable todavía pendiente, sin llamar entrega real a aceptación sintética | Resultados persistidos de B3; UI B4 |
+| B5 | Dispatcher sintético #134 y transporte Telegram opt-in #162 integrados; conexión de avisos locales al panel pendiente | Proyección fiel de estados persistidos, límites/restart/dedup; razón ambigua durable todavía pendiente, sin llamar entrega real a aceptación de API | Resultados persistidos de B3; UI B4 y provisión #168 |
 | B6 | Chromium/medición | Una sesión aislada con recursos, parada y errores medidos en entorno candidato; alcance de egress explícito | Presupuesto separado; observación real no inferida de test offline |
-| B7 | Runtime/imágenes/Compose/host contract | Programa arrancado conecta B3/B4/B5; health funcional, acceso privado y manifiesto por componente; primera instalación probada en entorno desechable | B2–B6 según componentes del candidato |
-| B8 | Composición en proceso152 probada; candidato servido/E2E final pendiente | Suite E2E, lint/types, RCA, seguridad e imágenes sobre mismo SHA; evidencia de rapidez/recursos; revisión exacta | B7 consolidado |
+| B7 | Runtime TLS173 y paquete/Compose beta171 integrados; contrato host beta pendiente | Programa arrancado conecta B3/B4/B5; health funcional, acceso privado y manifiesto por componente; primera instalación probada en entorno desechable | B2–B6 según componentes del candidato |
+| B8 | Composición en proceso152 y HTTP loopback sintético170 probados; E2E host final pendiente | Suite E2E, lint/types, RCA, seguridad e imágenes sobre mismo SHA; evidencia de rapidez/recursos; revisión exacta | B7 consolidado |
 | B9 | Release e instalación concreta | SHA→digest/manifiesto→proceso instalado trazables; capacidad revalidada; sólo workflow y mutex Boca | B2 apto, B8 verde, decisión final del candidato |
 | B10 | Aceptación de BETA en droplet | Recorrido completo desde interfaz real, persistencia/reinicio autorizado, límites, denegación y avisos; acta de versión/pendientes | B9 y matriz de aceptación |
 
@@ -113,8 +139,10 @@ matriz conserva el alcance de [#113](https://github.com/mbalbo2023/boca-socios-a
 modalidades, permisos o productos que no se hayan definido.
 
 **Panel propio** es la superficie operativa prevista de la BETA privada. El
-**Site #113** sigue siendo demo privada sintética/complementaria: no está
-conectado a DB, comandos, mensajería ni Actions. La intención de contemplar una
+**Site #113** sigue siendo demo privada sintética/complementaria: su proxy
+read-only falla cerrado sin backend y la cola D1 está desactivada; no está
+conectado a DB, comandos,
+mensajería ni Actions. La intención de contemplar una
 función en ambos diseños no decide duplicar todos sus controles ni demuestra
 que el Site pueda ejecutarla. La navegación/estado planificado puede mostrar
 «pendiente», «diferido» o «no habilitado» con motivo, sin botones que simulen
@@ -128,16 +156,16 @@ aceptación BETA de simulación y la operación real contra Boca son hitos disti
 
 | Función conversada | Cobertura UI prevista | Código/evidencia disponible | Estado de entrega y gate pendiente |
 | --- | --- | --- | --- |
-| Alta y consulta de socios | Socios > Agregar socio; lista/consulta con resultado explícito | Servicio cifrado31, formulario/handler148 y lectura agregada128; agregados no son una lista de socios | Alta sintética obligatoria para BETA; lista, servidor, identidad y recorrido tablet aún por completar/probar |
-| Baja/revocación y cambio de credencial | Acciones de ciclo de vida con confirmación y resultado | Servicio interno permite revocar y cambiar contraseña; revocación conserva identidad/cuota | UI/permiso/auditoría de operación pendientes; no borrar cuotas ni tratar revocación como borrado total de persona |
+| Alta y consulta de socios | Socios > Agregar socio; lista/consulta con resultado explícito | Servicio cifrado31, formulario/handler148, lectura128 y panel owner #163 integrados | Alta sintética obligatoria; servidor, credencial de dueño y recorrido tablet aún por completar/probar |
+| Baja/revocación y cambio de credencial | Acciones de ciclo de vida con confirmación y resultado | Servicio interno y UI owner #163 integrados | E2E servido/host pendiente; no borrar cuotas ni tratar revocación como borrado total de persona |
 | Rotación de clave y eliminación completa | Mostrar alcance/estado y requisitos de custodia | Recifrador40 y migración0004 opt-in; no rotación real demostrada | Pendiente explícito: coordinación de escritores, DELETE/retención/recuperación; no se añade a la BETA por una pantalla |
 | Eventos, categorías, horarios y fuentes | Selección/configuración definida, horarios ART, origen y fecha de avisos | Modelos/simulador y cuota local; backlog de categorías/ingesta/procedencia conservado | Gestión UI y datos oficiales no operativos; definir contratos concretos sin inventar categorías/modalidades |
-| Simulación, iniciar/detener/estado y reinicio | Controles y resultado local, pausa visible en ambigüedad | Coordinador durable130 y comandos149, recuperación/avisos persistidos en código | Objetivo obligatorio BETA; falta conexión web/runtime, estado coherente desde sesión y E2E servido; no es reserva Boca |
+| Simulación, iniciar/detener/estado y reinicio | Controles y resultado local, pausa visible en ambigüedad | Coordinador130, comandos149, loop161, ciclo local164 y controles web owner163 integrados | Objetivo obligatorio BETA; falta entrypoint, sesión/servidor y E2E host; no es reserva Boca |
 | Sesiones múltiples y límites | Configuración/estado de sesiones autorizadas y consumo | Simulador agrupa aliases por socio/evento; guardia una intención/cantidad1 | UI/BrowserContext/medición pendientes. Varias sesiones no prueban posiciones o tokens Queue-it independientes |
-| Avisos locales y Telegram | Bandeja/estado de avisos, canal y fallos explícitos | Outbox durable y dispatcher sintético134; sin transporte real | Avisos locales forman parte de BETA; Telegram sigue opción de alcance/pendiente explícito, nunca declarado descartado o entregado sin proveedor/destino autorizado |
+| Avisos locales y Telegram | Bandeja/estado de avisos, canal y fallos explícitos | Outbox durable, dispatcher sintético134, adaptador/fence Telegram #162 y UI local163 integrados | Avisos locales obligatorios; bot/destino, worker y recepción #168 pendientes, sin afirmar entrega por código integrado |
 | Diagnóstico, fuente pública y recursos | Semáforo con procedencia/hora, salud y límites | Workflows fuente/host, inventario98, preparación120 y medición Chromium offline | Proyección UI real pendiente; un semáforo externo no habilita login ni prueba capacidad de host |
 | RCA, calidad y trazabilidad | Versiones, SHA/digests, runs, decisiones y errores redactados | CI, reviews, ledger RCA y continuidad45; no editor automático de código | Integración UI/recibos por acción pendiente; nunca sustituir pruebas exactas por una insignia sintética |
-| Release/deploy y operación host | Mostrar estado/recibos y alcance permitido | Único workflow Actions protegido; operador root y gates exactos | No control Site→Actions demostrado. Cualquier control futuro invoca sólo workflow protegido; nada de SSH/Docker/secreto en Site |
+| Release/deploy y operación host | Mostrar estado/recibos y alcance permitido | Único workflow Actions protegido; rootless preparado #120, preflight dormido #124, stop-test #156/41272785626 STOPPED | No control Site→Actions demostrado. Cualquier control futuro invoca sólo workflow protegido; nada de SSH/Docker/secreto en Site |
 | Backup/restore | Estado diferido y motivo visible/planificado | Biblioteca offline47; ningún ensayo operativo acredita recuperación | Diferido por el dueño hasta versión productiva fiable; sin botón operativo ni backup ahora |
 | Login, cola, elegibilidad, reserva/compra real | Identificar hito separado y no habilitado | Modelos y observación pública histórica; sin flujo autenticado validado | No habilitado en esta BETA; requiere consentimiento/custodia, flujo legítimo y conciliación de resultados ambiguos |
 | Administración multiusuario y modalidades no descritas | No inventar controles, roles o planes | El formulario de socios no crea administradores; no hay definición aprobada de otras modalidades | Sin definición: registrar la necesidad antes de diseñar/activar, sin presentar una suposición como función acordada |
@@ -199,15 +227,15 @@ tablet/voz ni sitio Boca. Ver [aceptación en proceso](quality/BETA_JOURNEY_ACCE
 
 ## Integración de contratos pendiente antes de servir la aplicación
 
-Los adaptadores de lectura y alta no constituyen un servidor privado completo.
-El adaptador de estado #128 rechaza cookies, mientras el formulario/sesiones de
-#148 usa cookies seguras. El runtime compuesto deberá definir y probar una
-identidad/permiso coherente para alta, estado y comandos, sin tratar un puerto
-inyectado de pruebas como autenticación real ni eliminar guards por conveniencia.
+Los adaptadores #128/#148 por sí solos no constituyen un servidor privado.
+El panel owner passkey #163 ya integrado en código unifica alta, estado y
+comandos bajo la sesión de dueño. Su identidad no está provisionada ni servida
+en el host; un puerto de pruebas no es acceso privado operativo.
 [Las opciones concretas de acceso/bootstrap](https://github.com/mbalbo2023/boca-socios-assistant/issues/17#issuecomment-6551922108)
-están documentadas como propuestas, no aprobadas.
-Incluir consulta de estado después del alta desde la misma sesión autorizada y
-sus casos de expiración/denegación en la aceptación HTTP real.
+son antecedentes de diseño. Falta un contrato configurado y probando
+identidad, origen TLS y rechazo de terceros. Incluir consulta de estado
+después del alta desde la misma sesión autorizada y expiración/denegación
+en la aceptación HTTP real.
 
 El outbox persiste sólo pending/claimed/accepted/exhausted. Exhausted no guarda
 la causa, y DispatchReport.ambiguous es transitorio; no se puede reconstruir un
@@ -217,12 +245,13 @@ la UI debe mostrar únicamente lo que la evidencia permite, separándolo de
 needs_review del comando. La tabla de aceptación describe un objetivo, no un
 motivo durable ya implementado.
 
-El coordinador de comandos requiere un event loop persistente y recuperación
-exclusiva al arranque. Un stop de otra instancia no cancela por sí solo la tarea
-que vive en un proceso diferente; el servidor debe respetar ese contrato. Las
-pruebas en proceso pueden validar composición/DB sin demostrar listener, TLS,
-bootstrap, tablet o navegador real. La lista de socios, comandos web, integración
-de avisos y ciclo de vida del runtime conservan su propio criterio de cierre.
+El loop persistente #161 y el ciclo local #164 integraron recuperación
+exclusiva al arranque en biblioteca; el panel #163 aporta lista, comandos y
+avisos bajo un owner WSGI. Un stop de otra instancia no cancela por sí solo la
+tarea que vive en un proceso diferente; el servidor debe respetar ese
+contrato. Estas pruebas no demuestran listener, TLS, bootstrap, tablet o
+navegador real. La composición servida y el despliegue conservan sus criterios
+de cierre.
 
 ## Matriz de aceptación antes y después de desplegar
 

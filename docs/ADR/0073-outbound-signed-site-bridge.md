@@ -1,7 +1,7 @@
 # ADR 0073: opt-in outbound signed Site bridge for synthetic local commands
 
-**Status:** Accepted on merge of PR #179 for issue #156. Before merge,
-this is an unmerged candidate. Code acceptance does not activate the Site,
+**Status:** accepted; PR #179 integrated into
+`c1ecf8ae230bd8d02beef9f4e0d3dbf0c9aa5163`. Code acceptance does not activate the Site,
 install credentials or prove a droplet connection.
 
 ## Decision and trust boundary
@@ -67,8 +67,10 @@ Tests use only synthetic keys, temporary SQLite and injected HTTPS response
 doubles. They cover canonical HMAC, pinned destination/secret file checks,
 redirect and malformed response rejection, one-command recovery after an
 ack loss, wrong event/member denial, stop idempotency, default-off startup
-and missing-secret fail-before-listener. Hosted exact SHA CI/scan and agent
-technical review belong in the PR. This is code-level evidence only: the
+and missing-secret fail-before-listener. Candidate
+`7933550bed4e7cfb6955dc4366be20c659b5cc5b` passed
+CI 41272179087, scan 41272165010 and review 5726364954 in PR #179.
+This is code-level evidence only: the
 Site D1 route remains disabled until separate reviewed secret provisioning,
 owner Site activation, protected Actions E2E, tablet/private access and
 stop-test receipts. No real Boca login, queue, reservation or purchase is

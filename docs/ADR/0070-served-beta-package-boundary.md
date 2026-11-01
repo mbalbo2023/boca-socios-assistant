@@ -1,8 +1,11 @@
 # ADR 0070: paquete servido BETA aislado y puerta de instalación separada
 
-**Estado:** aceptada al integrar el PR #171 de issue #167. El candidato y sus
-checks se registran en ese PR; la presencia de Compose y pruebas no instala ni
-habilita una BETA en el droplet.
+**Estado:** aceptada; PR #171 integrado en
+`472574ca380e9c14d665b8aab97790b9a05e1f71`.
+El candidato `e498c8d1f4d09202b09fcda19d6accd09850d8f2` pasó
+CI 41271723362, scan 41271723366 y validaciones release/deploy
+41271723342/41271723422; revisión 5726348620. Compose y pruebas no instalan ni
+habilitan una BETA en el droplet.
 
 ## Decisión de empaquetado
 
@@ -38,5 +41,5 @@ acredita acceso desde tablet ni Site conectado; Telegram conserva un gate
 operativo propio. No hay reserva, compra ni navegación Boca real en esta ADR.
 
 Autorización y continuidad: [#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326),
-plan B7–B10. El recibo exacto de PR/Actions se agrega tras la validación del
-candidato; este documento no presupone su éxito.
+plan B7–B10. Esos checks probaron paquete desechable; no prueban la
+operación del droplet.

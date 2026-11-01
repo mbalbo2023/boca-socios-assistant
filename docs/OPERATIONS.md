@@ -3,7 +3,8 @@
 ## Current state
 
 The runtime remains dormant and CI never deploys. The dedicated rootless service
-is now prepared, while the BETA application remains not installed/NO_GO.
+was prepared in #120 and stopped in #156/41272785626; the BETA application
+remains not installed/NO_GO.
 [Read-only preflight #124](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41268626135)
 on `main` `213be4903669c6e88122a536ad8fee6785c997ac`, attempt 1, passed
 at 2026-11-01 00:18 ART: UID10001, rootless boundary, empty namespace,
@@ -94,9 +95,10 @@ report UNVERIFIED and inspect the exact Boca state before retry. Diagnostics
 expose only fixed phase/exit/timeout and allowlisted unit Result/ExecMainStatus,
 never stderr or journal. See ADR0058 for prerequisites and limits.
 
-## Stop-test candidate for mandatory shutdown — issue #157
+## Integrated stop-test for mandatory shutdown — issue #157
 
-The issue #157 candidate adds `stop-test` to the existing protected manual
+PR #165 integrated `stop-test` in
+`1441d55a632d4a545b21ee7f6f2b0a4140ab2320` into the existing protected manual
 workflow. It uses the same owner/main/environment/SSH/mutex gates, blank
 image/release inputs and an immediate main recheck. Its reviewed helper checks
 the dedicated unit/config and inventories all containers of the private
@@ -105,8 +107,35 @@ containers are stopped by exact ID, then the dedicated user unit is stopped.
 Success requires no running Boca container, inactive unit, PID zero and absent
 private Docker socket. The operation is idempotent when already stopped. It
 preserves data/key volumes and enablement; a later reboot may start the daemon
-again. CI for this candidate and any actual STOP receipt are separate facts.
+again. CI 41269572935, scan 41269572802 and review 5726252792
+cover its exact candidate. The protected manual
+[run #156 / 41272785626](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41272785626)
+on main `c1ecf8ae230bd8d02beef9f4e0d3dbf0c9aa5163` emitted
+`BOCA_STOP_TEST state=STOPPED ... containers=0 data=preserved` after the
+immediate main check. It stopped the dedicated daemon after preparation tests;
+no BETA application had been installed. Reinspect after any reboot because
+enablement was preserved.
 See ADR0067.
+
+## Protected Site custody phases — integrated, not dispatched
+
+[PR #181](https://github.com/mbalbo2023/boca-socios-assistant/pull/181)
+integrated `site-prepare`, `site-install` and `site-verify` into the same
+protected manual workflow at
+`9e923af56e76a04069bfad6f8ca9c68db0edd890`. Candidate
+`4c8158d79a49924738b2a52573dc37cc91eccc1a` passed CI 41273068810,
+scan 41273068858, disposable sealed owner-volume smoke/deploy validation
+41273068811, release PR validation 41273068906 and review 5726437610. The
+host job was skipped. These operations accept a reviewed release digest for
+the exact main SHA; install accepts only a bounded, canonical sealed envelope
+as ciphertext. They do not create the application DB/key, stage BETA Compose,
+start a service or enable the Site bridge. See ADR0074.
+
+The `boca-image-release` environment currently lacks
+`BOCA_RELEASE_ENV_READY`, so no successful protected image release/digest is
+available. No Site custody phase was dispatched. Its real recipient key and
+the Site bypass/HMAC material have not been installed on the host; the rootless
+daemon is stopped. A successful runner smoke cannot satisfy these host gates.
 
 ## Implemented first-install contract — not executed
 
@@ -124,7 +153,7 @@ alone does not prove environment protection or operational success.
 The manual job uses separate fail-closed environment variables: only
 `BOCA_HOST_READONLY_ENV_READY=ready` can enable `inspect-prerequisites` or
 `preflight`, while `BOCA_DEPLOY_ENV_READY=ready` is required for prepare-rootless,
-first-install, diagnostic or the candidate `stop-test`. READONLY was set before #66; DEPLOY was added only
+first-install, diagnostic or `stop-test`. READONLY was set before #66; DEPLOY was added only
 to the protected environment for #120, without changing secrets/protections.
 RELEASE was not enabled by that preparation. Revalidate scope/values before
 another operation; a readiness marker does not itself authorize it. Read-only

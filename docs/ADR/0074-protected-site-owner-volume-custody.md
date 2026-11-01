@@ -1,7 +1,11 @@
 # ADR 0074: protected Site owner-volume custody gate
 
-**Status:** candidate for issue #167B, pending exact PR SHA, hosted checks and
-technical review. This source change itself has no host effect. It does not
+**Status:** integrated by PR #181 in `9e923af56e76a04069bfad6f8ca9c68db0edd890`.
+Exact candidate `4c8158d79a49924738b2a52573dc37cc91eccc1a` passed CI
+41273068810, scan 41273068858, disposable host-contract smoke 41273068811,
+release PR validation 41273068906 and review 5726437610. These are PR
+checks, not a protected release or host dispatch. This source change itself has
+no host effect. It does not
 enable the Site bridge, install a BETA service or provide owner tablet access.
 
 ## Decision
@@ -56,8 +60,8 @@ canonical ciphertext transport, fixed container argv/UID/mount/network,
 bounded receipts and image-revision failure before volume creation. The PR
 workflow also exercises a synthetic sealed prepare/install/verify cycle in a
 disposable owner volume using a locally built image, then removes that volume.
-Exact candidate SHA, hosted CI/scan and review are recorded on the PR after
-execution. This test is not a protected release or droplet proof.
+Exact candidate SHA, hosted CI/scan and review are recorded above. This test
+is not a protected release or droplet proof.
 
 As observed during this implementation, the `boca-image-release` protected
 environment has no `BOCA_RELEASE_ENV_READY` variable, so no successful image

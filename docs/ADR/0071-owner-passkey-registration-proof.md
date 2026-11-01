@@ -1,6 +1,7 @@
 # ADR 0071: inert owner passkey creation and possession proof
 
-**Status:** candidate for issue #172, based on main
+**Status:** accepted; PR #174 integrated into
+`74edba458efe8cc2ce3b5f6e0deb1a8da9a0529d` from baseline
 `0161922fb68bad3c36101bf9633ba025faf52f32`. This is a code-only
 contract. It does not enroll the real owner, open a listener, install files,
 select an external origin or establish tablet access.
@@ -74,8 +75,9 @@ registering a new credential for the new RP.
 Synthetic tests create disposable P-256 keys, exercise exact origin/RP/UV,
 challenge expiry and replay, COSE/SPKI matching, malformed creation and wrong
 proof signature, then feed returned bytes to the existing panel verifier.
-Local/Actions exact SHA results and technical review belong in the resulting
-PR after publication. This does not demonstrate the owner's
+Candidate `91c05f6a75499f3643af06834262ae6a1527e468` passed
+CI 41271084422, scan 41271084439 and preview 41271084425,
+with exact review 5726310354 in PR #174. This does not demonstrate the owner's
 tablet/browser, private HTTPS route, first-owner authorization, protected
 provisioning, host capacity or a deployed BETA. No Boca credentials, login,
 queue, reservation or purchase are used. The root integration writer owns

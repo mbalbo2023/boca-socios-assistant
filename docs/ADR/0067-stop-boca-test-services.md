@@ -1,7 +1,8 @@
 # ADR 0067: parada verificable de servicios de prueba Boca
 
-**Estado:** aceptada al integrar el PR de issue #157. Este documento describe
-el candidato de código; su existencia no prueba una ejecución en el host.
+**Estado:** aceptada; PR #165 integrado en
+`1441d55a632d4a545b21ee7f6f2b0a4140ab2320`. Su existencia no prueba
+una ejecución en el host.
 
 ## Decisión y frontera
 
