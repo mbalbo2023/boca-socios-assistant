@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
+import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -79,6 +82,22 @@ def test_classification_stops_before_claiming_any_reservation(
 
 
 @pytest.mark.parametrize(
+    "status,url,text,expected",
+    [
+        (200, "https://bocasocios.bocajuniors.com.ar/auth/login", "New heading", None),
+        (200, "https://bocasocios.bocajuniors.com.ar/", "New heading", "blocked"),
+        (403, "https://bocasocios.bocajuniors.com.ar/auth/login", "New heading", "blocked"),
+        (200, "https://bocasocios.bocajuniors.com.ar/auth/login", "Queue-it", "challenge"),
+        (200, "https://bocasocios.bocajuniors.com.ar/auth/login", "CAPTCHA", "challenge"),
+    ],
+)
+def test_dom_document_gate_precedes_any_copy_or_form_interpretation(
+    status: int, url: str, text: str, expected: str | None
+) -> None:
+    assert observer().document_gate(status, url, text) == expected
+
+
+@pytest.mark.parametrize(
     "url,method,kind,expected",
     [
         ("https://bocasocios.bocajuniors.com.ar/_next/static/app.css", "GET", "stylesheet", True),
@@ -102,9 +121,69 @@ def test_opt_in_gate_rejects_arguments_and_disabled_mode(monkeypatch: pytest.Mon
     assert module.main([]) == 2
     monkeypatch.setenv("BOCA_PUBLIC_OBSERVATION", "one-shot")
     assert module.main(["--url", "https://example.invalid"]) == 2
+    assert module.main(["--check-public-login-dom"]) == 2
 
 
-def test_browser_context_closes_on_block_and_never_navigates_again() -> None:
+def test_dom_cli_is_explicit_and_offline_mocked(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = observer()
+    calls: list[bool] = []
+
+    class AsyncPlaywright:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *_args: object) -> None:
+            pass
+
+    fake_playwright = ModuleType("playwright")
+    fake_async_api = ModuleType("playwright.async_api")
+    fake_async_api.async_playwright = AsyncPlaywright  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "playwright", fake_playwright)
+    monkeypatch.setitem(sys.modules, "playwright.async_api", fake_async_api)
+
+    async def fake_observe(_api: object, *, check_dom: bool = False) -> str:
+        calls.append(check_dom)
+        return "login_form_disabled" if check_dom else "login_visible"
+
+    monkeypatch.setattr(module, "observe", fake_observe)
+    monkeypatch.setenv("BOCA_PUBLIC_OBSERVATION", "one-shot")
+    monkeypatch.setenv("BOCA_OBSERVER_STOP", "0")
+
+    assert module.main(["--ack-one-public-visit", "--check-public-login-dom"]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "mode": "public_login_only",
+        "state": "login_form_disabled",
+    }
+    assert module.main(["--ack-one-public-visit"]) == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "login_visible"
+    assert calls == [True, False]
+
+    async def csr_shell(_api: object, *, check_dom: bool = False) -> str:
+        assert check_dom
+        return "unknown"
+
+    monkeypatch.setattr(module, "observe", csr_shell)
+    assert module.main(["--ack-one-public-visit", "--check-public-login-dom"]) == 1
+    stopped = capsys.readouterr()
+    assert stopped.out == ""
+    assert stopped.err == "public_observer_stopped: unknown\n"
+
+
+@pytest.mark.parametrize(
+    "visible_text,form_count,expected",
+    [
+        ("Ingresá a Boca Socios. Iniciar sesión", 1, "login_form_disabled"),
+        ("", 0, "unknown"),  # Next.js CSR shell, JS and assets intentionally disabled.
+        ("Bienvenidos a la cuenta del club", 1, "login_form_disabled"),
+        ("CAPTCHA", 1, "challenge"),
+    ],
+    ids=["original_copy", "csr_empty_shell", "copy_changed", "challenge_preempts_dom"],
+)
+def test_browser_context_closes_on_block_and_never_navigates_again(
+    visible_text: str, form_count: int, expected: str
+) -> None:
     module = observer()
 
     class Response:
@@ -152,7 +231,29 @@ def test_browser_context_closes_on_block_and_never_navigates_again() -> None:
             return Response()
 
         async def inner_text(self, _selector: str) -> str:
-            return "Ingresá a Boca Socios. Iniciar sesión"
+            return visible_text
+
+        def locator(self, selector: str) -> object:
+            assert visible_text != "CAPTCHA", "challenge must stop before DOM reads"
+            selectors = {
+                "form",
+                'form input[type="email"]',
+                'form input[type="password"]',
+                'form button[type="submit"], form input[type="submit"]',
+            }
+            assert selector in selectors
+
+            class Field:
+                async def count(self) -> int:
+                    return form_count
+
+                async def is_visible(self) -> bool:
+                    return True
+
+                async def is_disabled(self) -> bool:
+                    return True
+
+            return Field()
 
     page = Page()
 
@@ -194,9 +295,73 @@ def test_browser_context_closes_on_block_and_never_navigates_again() -> None:
     class API:
         chromium = Chromium()
 
-    assert asyncio.run(module.observe(API())) == "login_visible"
+    assert asyncio.run(module.observe(API(), check_dom=True)) == expected
     assert page.visits == [module.LOGIN_URL]
     assert browser.closed and context.closed
+
+
+@pytest.mark.parametrize(
+    "form_count,email_count,password_count,button_count,disabled,visible,expected",
+    [
+        (1, 1, 1, 1, True, True, True),
+        (0, 0, 0, 0, False, False, False),  # Next.js shell lacking server-rendered inputs.
+        (2, 1, 1, 1, True, True, False),
+        (1, 0, 1, 1, True, True, False),
+        (1, 1, 0, 1, True, True, False),
+        (1, 2, 1, 1, True, True, False),
+        (1, 1, 1, 2, True, True, False),
+        (1, 1, 1, 1, False, True, False),
+        (1, 1, 1, 1, True, False, False),  # Hidden controls cannot prove visible login.
+    ],
+)
+def test_login_dom_inspection_is_read_only_and_fails_closed(
+    form_count: int,
+    email_count: int,
+    password_count: int,
+    button_count: int,
+    disabled: bool,
+    visible: bool,
+    expected: bool,
+) -> None:
+    module = observer()
+    read_methods: list[str] = []
+
+    class Field:
+        def __init__(self, label: str, count: int) -> None:
+            self.label = label
+            self.count_value = count
+
+        async def count(self) -> int:
+            read_methods.append(f"count:{self.label}")
+            return self.count_value
+
+        async def is_visible(self) -> bool:
+            read_methods.append(f"is_visible:{self.label}")
+            return visible
+
+        async def is_disabled(self) -> bool:
+            read_methods.append("is_disabled:login")
+            return disabled
+
+    class Page:
+        def locator(self, selector: str) -> Field:
+            mapping = {
+                "form": Field("form", form_count),
+                'form input[type="email"]': Field("email", email_count),
+                'form input[type="password"]': Field("password", password_count),
+                'form button[type="submit"], form input[type="submit"]': Field(
+                    "login", button_count
+                ),
+            }
+            return mapping[selector]
+
+    assert asyncio.run(module.inspect_login_dom(Page())) is expected
+    assert all(
+        method.startswith(("count:", "is_visible:", "is_disabled:")) for method in read_methods
+    )
+    assert not any(method.startswith("is_disabled:") for method in read_methods) or (
+        form_count == 1 and button_count == 1 and email_count == 1 and password_count == 1
+    )
 
 
 def test_redirect_response_is_aborted_without_followup_navigation() -> None:
