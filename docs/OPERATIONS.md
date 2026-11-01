@@ -1,33 +1,61 @@
-# Safe operations — no active deployment yet
+# Safe operations — verified evidence and gated procedures
 
 ## Current state
 
-The runtime is foundation-only, and CI never deploys. The Boca-only manual
-workflow is being integrated behind objective gates; its private environment
-already contains the pre-existing SSH identity and an authorized host-key pin.
-No host operation has run through it.
+The runtime is foundation-only and CI never deploys. The Boca-only manual
+workflow is integrated and has executed prerequisite inspections. Its protected
+environment contains the pre-existing SSH identity and pinned host key.
 
-## Proposed first installation (issue #62)
+Inspection #98 on source `5c642b6d8bf5feac14aaf4a7c4df34ca2e91a97e` reached
+UID 10001 with private runtime/bus and cpu/memory/pids controllers. The dedicated
+rootless socket was absent; executable lookup found Docker, dockerd, rootless
+wrapper and setup tool, while the user docker.service reported
+`load=not-found active=inactive sub=dead result=success`. This proves neither
+a working daemon nor a globally missing Docker installation. Host remains
+NO_GO. The bounded database inventory reported db/wal/shm candidate-absent
+for rootless_default, staging_root and staging_data. This applies only to the
+three fixed candidate paths in ADR0054; global location remains UNVERIFIED.
+No SQLite was opened, created, moved or migrated, and no container was probed.
+[Inspection #98](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41258754195)
+(attempt1, job124707449992) records that cut; later source changes do not change
+what it observed. The receipt time was 2026-10-31 21:54:17 ART. The workflow
+failed at the unchanged absent-socket gate after emitting these receipts.
+See the [operational checkpoint](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551442762).
 
-The proposed `boca-first-deploy.yml` adds a manual, environment-gated path; it
-has not run on the host. `pull_request` only runs tests and the isolation
-policy, with no host credentials. A manual dispatch is allowed only from
+The [scoped direction and Rule 84](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551338776)
+approved bounded file diagnosis, the P1 database
+preflight fix, PR #136 concurrency correction and documentation maintenance.
+These scopes do not authorize installation, release, real database migrations
+or a general infrastructure/business decision. Present options and a
+recommendation, then obtain approval before such a decision. Do not rerun #98.
+See issue #45 for the current scoped decision and BETA_INTEGRATION_STATUS.md
+for the source/integration cut. PR #141 separately fixed the migration function
+through synthetic fixtures; merging it did not run Database.migrate on the
+droplet or create a service database. ADR0053 states the WAL/concurrency limits.
+
+## Implemented first-install contract — not executed
+
+The integrated `boca-first-deploy.yml` provides a manual, environment-gated
+installation path. Its read-only inspection has run; first-install has not.
+`pull_request` only runs tests and the isolation policy, with no host credentials. A manual dispatch is allowed only from
 the exact current `main` commit by the repository owner after agent technical
 review, green exact-SHA checks and a recorded gate receipt for the commit,
 complete GHCR digest, successful release run, `controller` and resource
 budget. The protected `boca-first-deploy` GitHub environment must restrict
 deployment to `main` and contain only Boca-specific credentials/variables.
-The owner's standing direction requires no additional human approval. The
-readiness variable alone is insufficient evidence of environment protection.
+The owner must approve the concrete installation scope after options and a
+recommendation. The ruleset not requiring a human approving PR review does not
+waive that decision. Readiness alone does not prove environment protection.
 The manual job uses separate fail-closed environment variables: only
 `BOCA_HOST_READONLY_ENV_READY=ready` can enable `inspect-prerequisites` or
 `preflight`, while `BOCA_DEPLOY_ENV_READY=ready` is required for `first-install`
-or `diagnostic`. Both remain unset until their own evidence is reviewed;
-setting the read-only variable does not unlock installation. The two read-only
+or `diagnostic`. READONLY was set in the protected environment before #66;
+DEPLOY/RELEASE remain unenabled in the recorded evidence. A future check must
+revalidate their scope and values; setting READONLY does not unlock installation. The two read-only
 choices require blank image and release-run inputs, and the install/diagnostic
 choices require both. See [ADR 0046](ADR/0046-readonly-host-readiness.md).
 
-The proposed host prerequisite is a dedicated `boca-deploy` identity with UID
+The host prerequisite is a dedicated `boca-deploy` identity with UID
 10001, dedicated rootless Docker, Python 3.10+, and an already provisioned empty
 `/srv/boca-socios` directory owned by that UID with mode 0700. The SSH host
 identity must be independently verified and pinned in the environment's
@@ -92,9 +120,9 @@ failure remains failed. See [ADR 0039](ADR/0039-boca-failed-install-cleanup.md).
 
 ## Read-only diagnostic under demand (issue #68)
 
-The same protected workflow proposes a manual `diagnostic` choice for a Boca
-controller already installed from the exact current `main` SHA. Under the
-owner's standing direction, its recorded gates and environment restrictions
+The same protected workflow provides a manual `diagnostic` choice for a Boca
+controller already installed from the exact current `main` SHA. With the
+concrete operation scope approved, its recorded gates and environment restrictions
 must match the exact operation, SHA, digest, service and budget. It checks
 only Boca Compose, key **metadata**, immutable image identity, resource
 limits, effective cgroup values, one Boca-only network, security flags,
@@ -107,22 +135,24 @@ mismatch is NO-GO and requires diagnosis; it is not a reason to retry the
 first install or alter another workload. The helper checks real/effective
 UID/GID before private metadata and pins rootless Docker transport. It must
 remain uninvoked until the environment, identity and host prerequisites are
-verified under the objective gates. No host diagnostic has run yet.
+verified under the objective gates. No operation=diagnostic of an installed
+controller has run; prerequisite/file inspections have.
 
-## Proposed read-only host preflight (issue #84)
+## Implemented read-only host preflight — not executed
 
 Before an image release or first install, the same protected manual workflow
 can check the Boca rootless socket, cgroup delegation, dedicated identity,
 empty Boca namespace and aggregate capacity with `operation=preflight`. Its
 image and release-run fields must be blank. This operation has no stage,
 pull, key, volume, container or site effect and is unavailable on PRs. It
-requires the protected environment and pinned SSH identity; no host operation
-has been dispatched. See [ADR 0035](ADR/0035-readonly-host-preflight.md).
+requires the protected environment and pinned SSH identity. Prerequisite
+inspection has run, but the stricter daemon preflight has not passed. See [ADR 0035](ADR/0035-readonly-host-preflight.md).
 
-## Proposed prerequisite inspection after false-negative socket checks (issue #90)
+## Executed prerequisite inspection and its limits
 
-The same manual workflow adds `operation=inspect-prerequisites`, with blank
-image and release-run fields. It checks socket and cgroup **metadata as UID
+The same manual workflow provides `operation=inspect-prerequisites`, with blank
+image and release-run fields. #140 added fixed-path DB/WAL/SHM metadata receipts
+without opening SQLite or file contents; ADR0054 defines their narrow scope. It checks socket and cgroup **metadata as UID
 10001**, differentiating `absent` from `unavailable`, without running Docker
 or altering the host. A failed job reports unproven prerequisites; a metadata
 candidate is not proof that a Docker daemon is rootless or healthy. The
@@ -151,7 +181,7 @@ Boca staging directory and the dedicated rootless daemon's verified
 ownership or available capacity is NO-GO; a healthy staging filesystem alone
 cannot establish that image storage has headroom.
 
-## Proposed isolated deployment layout
+## Configured isolated deployment layout — not evidence of host resources
 
 | Item | Boca project | Unrelated workloads |
 | --- | --- | --- |
@@ -168,11 +198,13 @@ cannot establish that image storage has headroom.
 
 ## Gate before any future live Docker deployment
 
-1. Under the owner's standing direction, record the exact current commit SHA,
+1. Present infrastructure/business options and a recommendation; obtain owner
+   approval for the concrete scope. Record the exact current commit SHA,
    immutable image digest for an install, Compose service, CPU/RAM/disk budget
-   and operation before autonomous dispatch. A merge never deploys by itself.
+   and operation before dispatch. A merge never deploys by itself.
 2. Controlled GitHub Actions environment, main-only branch restriction,
-   dedicated SSH identity and pinned host key; no required human approval.
+   dedicated SSH identity and pinned host key. Technical checks do not replace
+   the scope approval above.
 3. Check spare host disk/inodes/CPU/memory and existing service health using
    non-mutating observations. If capacity is insufficient: NO_GO.
 4. Confirm Compose project is boca-socios; no host mounts, published ports,
@@ -200,4 +232,5 @@ daemon, reboot, host-wide network changes, shared Compose files, altering
 other services' ports or workflows, disabling host timers, publishing new
 ports without approval and production SSH outside the owner-approved
 Actions workflow.
+
 
