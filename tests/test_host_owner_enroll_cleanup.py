@@ -117,7 +117,8 @@ class FakeEnrollDocker:
                     "Id": "f" * 64,
                     "Name": cleanup.ENROLL_NETWORK,
                     "Driver": "bridge",
-                    "Internal": True,
+                    "Internal": False,
+                    "Options": cleanup.ENROLL_NETWORK_OPTIONS,
                     "Labels": {
                         "com.docker.compose.project": "boca-socios",
                         "com.docker.compose.network": "owner_enroll_private",

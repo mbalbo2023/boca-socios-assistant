@@ -40,6 +40,11 @@ ENROLL_VOLUME = "boca-socios_owner_enroll_staging"
 ENROLL_MARKER = ROOT / "owner-enroll-attempt.json"
 ENROLL_NETWORK = "boca-socios_owner_enroll_private"
 ENROLL_CONTAINER = "boca-socios-owner-enroll-1"
+ENROLL_NETWORK_OPTIONS = {
+    "com.docker.network.bridge.enable_ip_masquerade": "false",
+    "com.docker.network.bridge.enable_icc": "false",
+    "com.docker.network.bridge.host_binding_ipv4": "127.0.0.1",
+}
 TELEGRAM_VOLUME = "boca-socios_boca_telegram"
 TELEGRAM_NETWORK = "boca-socios_telegram_egress"
 TELEGRAM_TEST_NAME = "boca-socios-telegram-test-1"
@@ -1477,6 +1482,11 @@ def _owner_enroll_preflight(image: str, source_sha: str, origin: str, subject: s
     _validate_owner_context(origin, subject)
     if IMAGE_PATTERN.fullmatch(image) is None or SHA_PATTERN.fullmatch(source_sha) is None:
         raise PreflightError("owner enrollment release coordinates invalid")
+    version = _run("docker", "version", "--format", "{{.Server.Version}}")
+    match = re.fullmatch(r"([0-9]{1,3})\.[0-9]{1,3}\.[0-9]{1,3}(?:[-+][A-Za-z0-9._-]+)?", version)
+    if match is None or int(match[1]) < 28:
+        # Older Docker can leak loopback-published ports onto the host L2.
+        raise PreflightError("Docker engine loopback-port isolation unverified")
     if not _safe_dir(ROOT) or any(ROOT.iterdir()):
         raise PreflightError("Boca enrollment staging directory must be empty")
     _site_daemon_empty()
@@ -1608,6 +1618,7 @@ def _owner_enroll_container_state(image: str, source_sha: str) -> tuple[str, boo
     network_settings = record.get("NetworkSettings")
     mounts = record.get("Mounts")
     labels = config.get("Labels") if isinstance(config, dict) else None
+    expected_binding = {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
     if (
         record.get("Id") != container
         or record.get("Name") != "/" + ENROLL_CONTAINER
@@ -1620,17 +1631,21 @@ def _owner_enroll_container_state(image: str, source_sha: str) -> tuple[str, boo
         or labels.get("org.opencontainers.image.revision") != source_sha
         or not isinstance(host, dict)
         or host.get("NetworkMode") != ENROLL_NETWORK
-        or host.get("PortBindings") != {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
+        or host.get("PortBindings") != expected_binding
         or host.get("ReadonlyRootfs") is not True
         or host.get("Privileged") is not False
         or host.get("CapDrop") != ["ALL"]
         or host.get("PidsLimit") != 32
         or host.get("Memory") != 128 * 1024**2
         or host.get("NanoCpus") != 500_000_000
+        or not isinstance(state, dict)
         or not isinstance(network_settings, dict)
         or not isinstance(network_settings.get("Networks"), dict)
         or set(network_settings["Networks"]) != {ENROLL_NETWORK}
-        or not isinstance(state, dict)
+        or (
+            network_settings.get("Ports") != expected_binding
+            and not (state.get("Running") is False and network_settings.get("Ports") in ({}, None))
+        )
         or type(state.get("Running")) is not bool
         or state.get("Restarting") is not False
         or type(state.get("ExitCode")) is not int
@@ -1657,7 +1672,8 @@ def _owner_enroll_network(container: str) -> None:
     if (
         record.get("Name") != ENROLL_NETWORK
         or record.get("Driver") != "bridge"
-        or record.get("Internal") is not True
+        or record.get("Internal") is not False
+        or record.get("Options") != ENROLL_NETWORK_OPTIONS
         or not isinstance(labels, dict)
         or labels.get("com.docker.compose.project") != PROJECT
         or labels.get("com.docker.compose.network") != "owner_enroll_private"
@@ -1746,7 +1762,12 @@ def _owner_enroll_start(
         "create",
         "--driver",
         "bridge",
-        "--internal",
+        "--opt",
+        "com.docker.network.bridge.enable_ip_masquerade=false",
+        "--opt",
+        "com.docker.network.bridge.enable_icc=false",
+        "--opt",
+        "com.docker.network.bridge.host_binding_ipv4=127.0.0.1",
         "--label",
         f"com.docker.compose.project={PROJECT}",
         "--label",

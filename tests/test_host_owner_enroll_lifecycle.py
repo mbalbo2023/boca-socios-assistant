@@ -90,6 +90,16 @@ def test_busy_8443_blocks_staging_and_docker(monkeypatch: pytest.MonkeyPatch) ->
     assert calls == ["preflight"]
 
 
+@pytest.mark.parametrize("version", ["27.5.1", "unknown", "26.0.0+docker"])
+def test_old_or_unverifiable_docker_refuses_loopback_enrollment_before_writes(
+    monkeypatch: pytest.MonkeyPatch, version: str
+) -> None:
+    monkeypatch.setattr(host, "_run", lambda *argv: version)
+    monkeypatch.setattr(host, "_safe_dir", lambda *_args: pytest.fail("host inspected"))
+    with pytest.raises(host.PreflightError, match="loopback-port isolation"):
+        host._owner_enroll_preflight(IMAGE, SHA, ORIGIN, SUBJECT)
+
+
 def test_preexisting_image_detection_uses_exact_inspect_not_digest_listing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -150,7 +160,10 @@ def _container_metadata() -> dict[str, object]:
             "Memory": 128 * 1024**2,
             "NanoCpus": 500_000_000,
         },
-        "NetworkSettings": {"Networks": {host.ENROLL_NETWORK: {}}},
+        "NetworkSettings": {
+            "Networks": {host.ENROLL_NETWORK: {}},
+            "Ports": {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]},
+        },
         "Mounts": [
             {
                 "Type": "volume",
@@ -164,7 +177,15 @@ def _container_metadata() -> dict[str, object]:
 
 
 @pytest.mark.parametrize(
-    "tamper", ["foreign-port", "foreign-mount", "root-user", "wrong-image", "other-network"]
+    "tamper",
+    [
+        "foreign-port",
+        "unmapped-port",
+        "foreign-mount",
+        "root-user",
+        "wrong-image",
+        "other-network",
+    ],
 )
 def test_container_inspection_refuses_foreign_identity_before_offline_import(
     monkeypatch: pytest.MonkeyPatch, tamper: str
@@ -176,6 +197,10 @@ def test_container_inspection_refuses_foreign_identity_before_offline_import(
     assert isinstance(config, dict) and isinstance(host_config, dict) and isinstance(mounts, list)
     if tamper == "foreign-port":
         host_config["PortBindings"] = {"8443/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8443"}]}  # noqa: S104 - rejected fixture
+    elif tamper == "unmapped-port":
+        networks = metadata["NetworkSettings"]
+        assert isinstance(networks, dict)
+        networks["Ports"] = {}
     elif tamper == "foreign-mount":
         mounts.append(
             {"Type": "volume", "Name": host.OWNER_VOLUME, "Destination": "/run/owner", "RW": True}

@@ -237,14 +237,17 @@ fixed `controller`/budget and a SHA-256 **hash** of the one-use private
 Chrome key (never the key/URL). The existing owner-prepare X25519 recipient
 must already be prepared. A dedicated helper verifies owner volume identity,
 empty Boca rootless container/network inventory, storage topology and an
-unoccupied `127.0.0.1:8443` before creating a disposable labelled network,
+unoccupied `127.0.0.1:8443` and Docker Engine version **28+** before
+creating a disposable labelled Boca bridge without IP masquerading or
+intercontainer traffic (not `--internal`, which blocked the published port
+in the disposable runner),
 named volume `boca-socios_owner_enroll_staging` and listener on **that port
 only**. The web container has no owner/key/data/socket mount. After one
 successful WebAuthn proof or a 900s timeout, offline `install-staged` reads
 only ciphertext from the staging volume, with `--network none`; verify uses
 owner read-only. The same protected job always attempts `host_cleanup.py
 --enroll` after starting the stage, verifying removal of only the known
-temporary container, internal network, volume, marker and optional newly
+temporary container, bounded Boca bridge, volume, marker and optional newly
 pulled unshared image. The persistent owner/key/data and all other resources
 survive; an uncertain cleanup is NO-GO with no automatic retry. Never use
 `docker prune`. The PR's disposable runner smoke is **not** a host run.
@@ -252,6 +255,11 @@ The helper only *inspects* a previously prepared owner recipient with
 owner mounted read-only; it never generates an X25519 private key during
 the temporary attempt. Actions rechecks current `main` **after** Chrome
 proof and **before** owner decryption/import.
+Disabling masquerading reduces external connectivity, but is not absolute
+egress denial on every routed host; the temporary HTTP application contains
+no outbound request path. The workflow validates exact network options,
+the published Docker port and the local HTTP response. Do not loosen the
+loopback-only host binding or perform external network probes.
 No real link, private key, tablet proof, new port publication or droplet
 side effect exists from this change. The [ADR0092](ADR/0092-one-use-ssh-chrome-owner-enrollment.md)
 tracks the code/physical gates separately.

@@ -223,9 +223,14 @@ jobs:
           public="${BASH_REMATCH[1]}"
           fingerprint="${BASH_REMATCH[2]}"
           private_digest="$(python3 -c 'import hashlib; print(hashlib.sha256(bytes([7])*32).hexdigest())')"
-          docker network create --driver bridge --internal \
+          docker network create --driver bridge \
+            --opt com.docker.network.bridge.enable_ip_masquerade=false \
+            --opt com.docker.network.bridge.enable_icc=false \
+            --opt com.docker.network.bridge.host_binding_ipv4=127.0.0.1 \
             --label com.docker.compose.project=boca-socios \
             --label com.docker.compose.network=owner_enroll_private "$private_net"
+          network_options="$(docker network inspect --format '{{json .Options}}' "$private_net")"
+          python3 -c 'import json,sys; actual=json.loads(sys.argv[1]); expected={"com.docker.network.bridge.enable_ip_masquerade":"false","com.docker.network.bridge.enable_icc":"false","com.docker.network.bridge.host_binding_ipv4":"127.0.0.1"}; assert actual==expected' "$network_options"
           docker run --detach --pull never --name "$temporary" --user 10001:10001 \
             --network "$private_net" --publish 127.0.0.1:8443:8443/tcp \
             --restart no --no-healthcheck --read-only --cap-drop ALL \
@@ -244,6 +249,8 @@ jobs:
             printf 'BOCA_ENROLL_SMOKE state=NO_GO reason=%s container_status=%s\n' "$reason" "$state"
             exit 1
           fi
+          published_ports="$(docker inspect --format '{{json .NetworkSettings.Ports}}' "$temporary")"
+          python3 -c 'import json,sys; actual=json.loads(sys.argv[1]); assert actual=={"8443/tcp":[{"HostIp":"127.0.0.1","HostPort":"8443"}]}' "$published_ports"
           ready=0
           for attempt in {1..40}; do
             if curl --noproxy '*' --silent --show-error --fail --max-time 2 \

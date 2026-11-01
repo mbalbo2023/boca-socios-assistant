@@ -35,6 +35,11 @@ ENROLL_VOLUME = "boca-socios_owner_enroll_staging"
 ENROLL_MARKER = ROOT / "owner-enroll-attempt.json"
 ENROLL_NETWORK = "boca-socios_owner_enroll_private"
 ENROLL_CONTAINER = "boca-socios-owner-enroll-1"
+ENROLL_NETWORK_OPTIONS = {
+    "com.docker.network.bridge.enable_ip_masquerade": "false",
+    "com.docker.network.bridge.enable_icc": "false",
+    "com.docker.network.bridge.host_binding_ipv4": "127.0.0.1",
+}
 ROOTLESS_SOCKET = Path("/run/user/10001/docker.sock")
 ROOTFUL_SOCKET = Path("/var/run/docker.sock")
 DOCKER = "/usr/bin/docker"
@@ -867,7 +872,8 @@ def _enroll_network(container_id: str | None, marker: dict[str, object] | None) 
         record.get("Name") != ENROLL_NETWORK
         or re.fullmatch(r"[0-9a-f]{64}", str(record.get("Id"))) is None
         or record.get("Driver") != "bridge"
-        or record.get("Internal") is not True
+        or record.get("Internal") is not False
+        or record.get("Options") != ENROLL_NETWORK_OPTIONS
         or not isinstance(labels, dict)
         or labels.get("com.docker.compose.project") != "boca-socios"
         or labels.get("com.docker.compose.network") != "owner_enroll_private"
