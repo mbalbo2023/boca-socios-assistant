@@ -49,6 +49,8 @@ creates the single ticket intent plus command/key binding; request_id remains
 unique and quantity stays1. Tickets stay planned: completion here is a local
 simulation result, never an external reserved ticket. Version6 is recognized
 by the existing read-only status projection; an unknown version still fails.
+Preparation is sequential across existing migration components, not one atomic
+upgrade of every version; migration0006's DDL and ledger are atomic together.
 
 The worker atomically changes accepted to running before any synthetic call.
 Only one running/stop_requested command can be claimed through this store at
@@ -84,6 +86,8 @@ competing claims are fenced in SQLite; calling recovery against another live
 process is unsupported. Remote-instance stop persists stop_requested but cannot
 cancel that process's in-memory task; the single hosting instance is the
 supported control path. Timeouts are cooperative, not process isolation.
+SQLite calls are synchronous with the existing five-second connection timeout;
+the hosting request/shutdown budgets must account for database contention.
 
 Read-only status uses SQLite mode=ro and writes use mode=rw, so absent paths
 are not silently created by commands. SQLite WAL/shared-memory limitations

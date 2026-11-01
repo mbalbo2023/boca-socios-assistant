@@ -185,8 +185,8 @@ class BetaCoordinator:
                     )
                     try:
                         await self._active
-                    except (Exception, asyncio.CancelledError):
-                        # Only the durable guard decides the result; exception text is not stored.
+                    except (Exception, asyncio.CancelledError):  # noqa: S110
+                        # Adapter errors may contain secrets; the durable guard records the outcome.
                         pass
                 current = self._store.get(record.command_id)
                 if current is None:
