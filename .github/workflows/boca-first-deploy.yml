@@ -233,8 +233,19 @@ jobs:
             --mount "type=volume,source=$stage,target=/run/enrollment,volume-nocopy" \
             "$BOCA_IMAGE" python -m boca_socios.owner_enrollment \
             "$BOCA_OWNER_SUBJECT" "$private_digest" "$public" "$fingerprint"
+          state="$(docker inspect --format '{{.State.Status}}/{{.State.ExitCode}}' "$temporary")"
+          if [[ "$state" != running/0 ]]; then
+            diagnostic="$(docker logs "$temporary" 2>&1 || true)"
+            if [[ "$diagnostic" == *"BOCA_OWNER_ENROLL state=NO_GO"* ]]; then
+              reason=owner_enrollment_rejected
+            else
+              reason=container_exited_without_proof
+            fi
+            printf 'BOCA_ENROLL_SMOKE state=NO_GO reason=%s container_status=%s\n' "$reason" "$state"
+            exit 1
+          fi
           ready=0
-          for attempt in {1..20}; do
+          for attempt in {1..40}; do
             if curl --noproxy '*' --silent --show-error --fail --max-time 2 \
               --header 'Host: localhost:8443' http://127.0.0.1:8443/activar \
               -o "$RUNNER_TEMP/boca-enroll-smoke.html"; then
@@ -243,6 +254,10 @@ jobs:
             fi
             sleep 0.25
           done
+          if [[ "$ready" -ne 1 ]]; then
+            state="$(docker inspect --format '{{.State.Status}}/{{.State.ExitCode}}' "$temporary")"
+            printf 'BOCA_ENROLL_SMOKE state=NO_GO reason=loopback_unreachable container_status=%s\n' "$state"
+          fi
           test "$ready" -eq 1
           grep -q 'navigator.credentials' "$RUNNER_TEMP/boca-enroll-smoke.html" || \
             grep -q 'activar.js' "$RUNNER_TEMP/boca-enroll-smoke.html"
