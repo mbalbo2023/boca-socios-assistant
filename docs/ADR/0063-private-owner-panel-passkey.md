@@ -1,7 +1,8 @@
 # ADR 0063: private same-origin panel with passkey assertion gate
 
-**Status:** candidate in issue #160. This ADR describes code on the feature
-branch, not a deployed Boca service. Main baseline at start:
+**Status:** accepted; PR #163 integrated into
+`ebb5e95399233eec629c8c52d4176092e97c5f34`. This describes code, not a
+deployed Boca service. Main baseline at start:
 `213be4903669c6e88122a536ad8fee6785c997ac`. The later authorization in
 [#45 comment 6552258326](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326)
 expands the BETA goal while retaining simulation-only and review/Actions gates.
@@ -79,11 +80,14 @@ material remains free of members and passwords.
 Synthetic tests exercise passkey origin/UV/signature/replay, authenticated
 enrollment→encrypted storage→masked list→local command, and cross-origin,
 CSRF, spoofed TLS and missing-session denials. Test credentials and keys are
-ephemeral fixtures. Exact SHA and Actions results belong in the PR after
-publication; a local pass does not establish the host, tablet or Site.
+ephemeral fixtures. Candidate
+`4b608b1ae8dedd4ad9fe541ecbd5f45fac42958c` passed
+CI 41270060363, scan 41270060350, release/deploy validation
+41270060360/41270060361 and preview 41270060364; technical review
+5726269111 in PR #163. These checks do not establish the host, tablet or Site.
 
-Before operational acceptance: review the exact branch and integrate it with
-runtime/notification candidates; provision one real owner credential with a
+The exact branch was reviewed and the runtime/notification code was integrated
+through #162/#164/#173/#179. Before operational acceptance, provision one real owner credential with a
 recoverable process and exact HTTPS origin; configure a Boca-only TLS server
 through the protected Actions workflow; test real tablet voice/keyboard
 behavior, restart, denial and local notices on the deployed candidate. No

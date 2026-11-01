@@ -1,7 +1,8 @@
 # ADR 0068: explicit local BETA lifecycle before server and Site integration
 
-**Status:** Accepted on merge of PR #164 for issue #156. Until that
-merge, this describes a candidate; no application installation is implied.
+**Status:** accepted; PR #164 integrated into
+`df668e066d2967ad7eb82e3c9f96935af282e2e2`. No application
+installation is implied.
 
 ## Decision
 
@@ -54,8 +55,9 @@ silently enable a dead polling client or claim Site connectivity.
 Disposable SQLite/key tests cover missing storage, explicit new creation,
 existing read-only restart, one command replay, key failure before writes,
 existing path/symlink preservation, checksum/table drift and cancellation on
-close. Exact SHA, hosted CI/scan and technical review are recorded in the PR
-after execution. These tests do not prove a served panel, Site/Telegram
+close. Candidate `46f9a48e6e6c2c7a738e5559a536e3de6011170f`
+passed CI 41269722611 and scan 41269722595, with technical review
+5726257987 in PR #164. These tests do not prove a served panel, Site/Telegram
 delivery, droplet capacity, real navigation or a BETA installation. The root
 integration writer reconciles README/status/plan and issue #45 before this
 scope closes.

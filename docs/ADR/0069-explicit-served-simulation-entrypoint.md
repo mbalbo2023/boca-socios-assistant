@@ -1,7 +1,7 @@
 # ADR 0069: explicit local TLS entrypoint for the simulation panel
 
-**Status:** Accepted on merge of PR #173 for issue #169. Before that merge,
-this describes an unmerged candidate. Neither state establishes that the
+**Status:** accepted; PR #173 integrated into
+`0161922fb68bad3c36101bf9633ba025faf52f32`. This does not establish that the
 droplet serves a BETA or that a tablet can reach it.
 
 ## Decision
@@ -70,7 +70,8 @@ Telegram acceptance, owner ceremony, droplet deploy or real Boca outcome.
 Disposable first-install/restart tests, actual loopback TLS requests, denied
 unauthenticated routes, strict CA health probe, spoofed Host/plaintext,
 missing/unsafe files and post-start storage loss cover the local contract.
-The exact candidate SHA, hosted CI/scan and technical review will be recorded
-in PR #169. No host service was started by these unit tests, and no external
+Candidate `e86818dd87cbfd6fada494c1fe537aef19ee7834` passed
+CI 41270849469 and scan 41270849494, with exact review 5726302585
+in PR #173. No host service was started by these unit tests, and no external
 traffic was sent. Root integrates central status, plan and issue #45 only
 after reviewed merge and host evidence.

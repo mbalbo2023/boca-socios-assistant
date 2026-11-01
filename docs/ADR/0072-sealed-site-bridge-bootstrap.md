@@ -1,9 +1,9 @@
 # ADR 0072: sealed intake for the private Site bridge credentials
 
-**Status:** candidate for issue #177. This is a helper contract, not a host
-operation or a connected Site. Initial main baseline:
-`74edba458efe8cc2ce3b5f6e0deb1a8da9a0529d`. Exact PR/CI evidence is
-recorded on the final candidate; until integration this text is proposed code.
+**Status:** accepted; PR #178 integrated into
+`497028ba49ec509f586051feca8876f2250ff5ac`. This is a helper
+contract, not a host operation or connected Site. Initial main baseline:
+`74edba458efe8cc2ce3b5f6e0deb1a8da9a0529d`.
 
 ## Decision and trust boundary
 
@@ -61,8 +61,9 @@ commands or contacts Boca.
 
 Synthetic tests cover round-trip sealing and two-file custody, wrong
 recipient/tag/AAD, malformed or duplicate fields, unsafe directory/symlink,
-partial-write preservation and replay refusal. Local full gate, exact SHA,
-hosted CI/scan and review are recorded on PR #177 after execution. The tests
+partial-write preservation and replay refusal. Candidate
+`ee11d8eb5332913f28eda48d14b1ec5e1749d0c4` passed
+CI 41271955784, scan 41271955801 and review 5726355216 in PR #178. The tests
 use fake tokens and keys and no network. #167B owns the protected workflow,
 volume identity and ciphertext transport; #156 owns an opt-in outbound client;
 #113 owns D1 permissions/queue and native Site HMAC storage. A green helper

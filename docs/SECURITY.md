@@ -42,7 +42,7 @@ credential enrollment. Do not recreate the existing SSH deployment secret.
 ## Access policy
 
 - No conversationally supplied secrets may enter repository history.
-- Future credential enrollment uses a protected owner-only interface with
+- The integrated enrollment UI code must be served through a protected owner-only interface with
   encryption at the server boundary, TLS, request size limits, CSRF/session
   protection and no request body logging.
 - On failure to decrypt or read key: fail closed, no plaintext fallback.

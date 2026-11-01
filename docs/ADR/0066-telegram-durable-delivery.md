@@ -1,14 +1,15 @@
 # ADR 0066: envío Telegram con incertidumbre durable
 
-**Estado:** Accepted on merge of PR #162. Mientras el PR siga abierto, este
-contrato es candidato y no acredita integración, configuración ni despliegue.
+**Estado:** aceptada e integrada por PR #162 en
+`466517d90991d3c9b600502af69424a84b82fabc`. La integración no acredita
+configuración ni despliegue.
 Fecha de decisión de diseño: 2026-11-01 (America/Argentina/Buenos_Aires).
 
 ## Alcance y contrato
 
 El dueño amplió la BETA para incluir Telegram en el
 [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326).
-Este candidato agrega un adaptador de **envío saliente explícito**, sin arrancar
+El cambio agrega un adaptador de **envío saliente explícito**, sin arrancar
 un trabajador al importar el módulo o iniciar el controlador. La composición
 runtime, los secretos del bot/destino y la prueba de recepción siguen siendo
 gates separados. Un aviso local persistido no acredita envío Telegram.
@@ -56,17 +57,21 @@ lee metadata de avisos, con límite de 1 a 100 y sin crear una DB. Su caller
 debe comprobar identidad/permisos de dueño antes de mostrar los datos; el
 Site no recibe token, chat ID, SQLite ni acceso al envío.
 
-## Evidencia y límites de este candidato
+## Evidencia de integración y límites
 
 Base comprobada al comenzar: main
 `213be4903669c6e88122a536ad8fee6785c997ac`; CI
 [41263234770](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41263234770)
 y scan [41263234803](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41263234803)
-verdes sobre esa base. Este PR aún no es main ni host. Pruebas locales con HTTP
+verdes sobre esa base histórica. El candidato final
+`e93bd190798d0974183935c21965b046b6ff965e` pasó
+[CI 41269298595](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41269298595),
+[scan 41269298533](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41269298533)
+y validaciones release/deploy 41269298646/41269298514; revisión exacta
+5726244536 en PR #162. Pruebas locales con HTTP
 falso y SQLite temporal verifican aceptación del API, secreto ausente antes de
 claim, respuesta no verificada, excepción, concurrencia y crash tras marca o
-ack previo al settlement. Los controles completos de candidato/Actions se
-registrarán en el PR sobre su SHA exacto. No hubo token, destino ni mensaje
+ack previo al settlement. No hubo token, destino ni mensaje
 real; sin esos recursos no puede validarse Telegram extremo a extremo.
 
 No se ejecutaron acciones Boca, migraciones sobre datos del droplet, release,

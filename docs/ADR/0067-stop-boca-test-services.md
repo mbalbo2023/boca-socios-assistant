@@ -1,7 +1,8 @@
 # ADR 0067: parada verificable de servicios de prueba Boca
 
-**Estado:** aceptada al integrar el PR de issue #157. Este documento describe
-el candidato de código; su existencia no prueba una ejecución en el host.
+**Estado:** aceptada; PR #165 integrado en
+`1441d55a632d4a545b21ee7f6f2b0a4140ab2320`. Su ejecución protegida
+#156/41272785626 se registra abajo.
 
 ## Decisión y frontera
 
@@ -47,8 +48,12 @@ mutex de host Boca y la exclusividad del daemon siguen siendo necesarios.
 Pruebas sintéticas cubren contenedor desconocido y conteo inconsistente antes
 de efectos, transporte rootless falso, contenedores reconocidos, fallo de
 stop, daemon sólo, idempotencia, symlink de configuración y gate manual con
-coordenadas vacías. PR/Actions registran SHA y resultados reales. La primera
-ejecución sobre el host requiere un recibo del candidato integrado: CI no es
-una parada real.
+coordenadas vacías. El [run protegido #156/41272785626](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41272785626),
+attempt 1, sobre `main` `c1ecf8ae230bd8d02beef9f4e0d3dbf0c9aa5163`
+terminó SUCCESS y emitió
+`BOCA_STOP_TEST state=STOPPED ... containers=0 data=preserved`. El campo
+`containers=0` cuenta los contenedores en ejecución detenidos en este run,
+no el inventario total; el helper verificó que ninguno quedara en ejecución,
+preservando los ya detenidos si existían. CI no sustituye este recibo host.
 
 Autorización: [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326).

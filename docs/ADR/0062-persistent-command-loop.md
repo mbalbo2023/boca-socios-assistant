@@ -1,8 +1,8 @@
 # ADR 0062: one persistent command loop for the private BETA panel
 
-**Status:** Accepted on merge of PR #161 for issue #159. Before that merge,
-this document describes an unmerged candidate; neither state proves an
-installed application.
+**Status:** accepted; PR #161 integrated into
+`77bf93c29dc59d5db0b5cf57c2c6ba2a14e8f39e`. This code does not prove
+an installed application.
 
 ## Context and decision
 
@@ -55,9 +55,9 @@ Synthetic temporary-SQLite tests cover separate synchronous requests on one
 loop, concurrent aliases and the one-ticket SQL constraint, wrong-member
 denial, running stop/cancellation, accepted-command startup recovery,
 completed-command restart without replay, timeout ambiguity and absent/broken
-schema without implicit initialization. The exact candidate SHA, CI runs and
-review belong to PR #161 for issue #159. These tests
+schema without implicit initialization. PR #161 for issue #159 records the
+exact candidate SHA, green CI and review. These tests
 do not prove a WSGI listener, owner authentication, TLS, Site integration,
 Telegram delivery, Chromium on the droplet or a real Boca flow. The root
-integration writer will reconcile central status and #45 before closing this
-delivery under Rule 84.
+integration status and #45 record the later integration and host gates under
+Rule 84.
