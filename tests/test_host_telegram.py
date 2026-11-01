@@ -214,18 +214,223 @@ def test_telegram_migration_cannot_create_volume_before_schema_receipt(
         host._telegram_phase("telegram-migrate", IMAGE, SHA, COMPOSE_SHA, ORIGIN, OWNER, "")
 
 
+def test_one_shot_container_is_capped_named_and_retained_for_stop_test() -> None:
+    command = host._telegram_test_container(IMAGE, SHA, "12345", "e" * 64)
+    assert command[:4] == ("docker", "run", "--pull", "never")
+    assert "--rm" not in command
+    assert command[command.index("--name") + 1] == "boca-socios-telegram-test-1"
+    assert "com.docker.compose.service=telegram-test" in command
+    assert command[command.index("--network") + 1] == host.TELEGRAM_NETWORK
+    assert command[command.index("--memory") + 1] == "128m"
+    assert command[command.index("--cpus") + 1] == "0.25"
+    assert command[command.index("--pids-limit") + 1] == "32"
+    assert f"type=volume,source={host.DATA_VOLUME},target=/data,volume-nocopy" in command
+    assert (
+        f"type=volume,source={host.TELEGRAM_VOLUME},target=/run/telegram,volume-nocopy,readonly"
+        in command
+    )
+    assert command[-7:] == (
+        "python",
+        "-m",
+        "boca_socios.telegram_one_shot",
+        "test",
+        SHA,
+        "12345",
+        "e" * 64,
+    )
+
+
+def test_telegram_test_requires_both_owner_assertions_before_host_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host, "_telegram_installed", lambda *_args: pytest.fail("host probed"))
+    for bot, assertion in (("", "e" * 64), ("12345", ""), ("bot", "e" * 64)):
+        with pytest.raises(host.PreflightError, match="owner assertion missing"):
+            host._telegram_phase(
+                "telegram-test", IMAGE, SHA, COMPOSE_SHA, ORIGIN, OWNER, "", bot, assertion
+            )
+
+
+def test_one_shot_result_must_be_verified_before_disposable_removal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host, "_telegram_installed", lambda *_args: True)
+    monkeypatch.setattr(host, "_telegram_egress", lambda: None)
+    monkeypatch.setattr(host, "_telegram_container", lambda *_args, **_kwargs: ("fixture",))
+    monkeypatch.setattr(
+        host, "_telegram_test_finished", lambda *_args: pytest.fail("false receipt")
+    )
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str, **_kwargs: object) -> str:
+        commands.append(args)
+        if args == ("fixture",):
+            return (
+                "BOCA_TELEGRAM_BOOTSTRAP state=VERIFIED fingerprint=" + "a" * 64
+                if len([command for command in commands if command == ("fixture",)]) == 1
+                else "BOCA_TELEGRAM_STORAGE state=VERIFIED schema=0007"
+            )
+        if args[:2] == ("docker", "run"):
+            return "BOCA_TELEGRAM_TEST state=NO_GO source_sha=" + SHA
+        if args[:3] == ("docker", "network", "ls"):
+            return "bridge\nhost\nnone\nboca-socios_boca_private\n" + host.TELEGRAM_NETWORK
+        if args[:3] == ("docker", "ps", "-a"):
+            return CID
+        if args[:2] == ("docker", "rm"):
+            pytest.fail("removed without positive one-shot receipt")
+        pytest.fail(f"unexpected command {args!r}")
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    with pytest.raises(host.PreflightError, match="API acceptance receipt unverified"):
+        host._telegram_test_phase(IMAGE, SHA, COMPOSE_SHA, ORIGIN, OWNER, "12345", "e" * 64)
+    assert all(command[:2] != ("docker", "rm") for command in commands)
+
+
+def test_success_removes_only_verified_test_container_then_empty_boca_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host, "_telegram_installed", lambda *_args: True)
+    monkeypatch.setattr(host, "_telegram_egress", lambda: None)
+    monkeypatch.setattr(host, "_telegram_container", lambda *_args, **_kwargs: ("fixture",))
+    monkeypatch.setattr(host, "_telegram_test_finished", lambda *_args: "f" * 64)
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(*args: str, **_kwargs: object) -> str:
+        commands.append(args)
+        if args == ("fixture",):
+            return (
+                "BOCA_TELEGRAM_BOOTSTRAP state=VERIFIED fingerprint=" + "a" * 64
+                if len([command for command in commands if command == ("fixture",)]) == 1
+                else "BOCA_TELEGRAM_STORAGE state=VERIFIED schema=0007"
+            )
+        if args[:3] == ("docker", "network", "ls"):
+            return "bridge\nhost\nnone\nboca-socios_boca_private\n" + host.TELEGRAM_NETWORK
+        if args[:3] == ("docker", "ps", "-a"):
+            return CID
+        if args[:2] == ("docker", "run"):
+            return (
+                f"BOCA_TELEGRAM_TEST state=API_ACCEPTED source_sha={SHA}"
+                " synthetic=1 human_receipt=unverified"
+            )
+        if args[:2] == ("docker", "rm"):
+            return "f" * 64
+        if args[:3] == ("docker", "network", "rm"):
+            return host.TELEGRAM_NETWORK
+        pytest.fail(f"unexpected command {args!r}")
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    host._telegram_test_phase(IMAGE, SHA, COMPOSE_SHA, ORIGIN, OWNER, "12345", "e" * 64)
+    effects = [
+        command[:3]
+        for command in commands
+        if command[:2] == ("docker", "rm") or command[:3] == ("docker", "network", "rm")
+    ]
+    assert effects == [("docker", "rm", "f" * 64), ("docker", "network", "rm")]
+
+
+def test_finished_one_shot_requires_exact_disposable_identity_before_remove(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = _record()
+    record["Name"] = "/boca-socios-telegram-test-1"
+    record["Config"]["Cmd"] = [  # type: ignore[index]
+        "python",
+        "-m",
+        "boca_socios.telegram_one_shot",
+        "test",
+        SHA,
+        "12345",
+        "e" * 64,
+    ]
+    record["Config"]["Entrypoint"] = None  # type: ignore[index]
+    record["Config"]["WorkingDir"] = "/app"  # type: ignore[index]
+    record["Config"]["Env"] = [  # type: ignore[index]
+        "BOCA_ENVIRONMENT=staging",
+        "BOCA_RUNTIME_MODE=simulation",
+        "BOCA_ENGINE_MODE=off",
+        "BOCA_TELEGRAM_DISPATCH_MODE=explicit",
+    ]
+    record["Config"]["Labels"]["com.docker.compose.service"] = "telegram-test"  # type: ignore[index]
+    record["Config"]["Healthcheck"] = {  # type: ignore[index]
+        "Test": ["NONE"],
+        "Interval": 30_000_000_000,
+        "Timeout": 5_000_000_000,
+        "StartPeriod": 15_000_000_000,
+        "Retries": 3,
+    }
+    record["Config"]["Env"] = [  # type: ignore[index]
+        "BOCA_ENVIRONMENT=staging",
+        "BOCA_RUNTIME_MODE=simulation",
+        "BOCA_ENGINE_MODE=off",
+        "BOCA_TELEGRAM_DISPATCH_MODE=explicit",
+    ]
+    record["State"] = {"Running": False, "ExitCode": 0}
+    record["HostConfig"] = {  # type: ignore[index]
+        "NanoCpus": 250_000_000,
+        "Memory": 134_217_728,
+        "PidsLimit": 32,
+        "ReadonlyRootfs": True,
+        "Privileged": False,
+        "PortBindings": {},
+        "PublishAllPorts": False,
+        "NetworkMode": host.TELEGRAM_NETWORK,
+        "CapDrop": ["ALL"],
+        "CapAdd": None,
+        "SecurityOpt": ["no-new-privileges"],
+        "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=8m"},  # noqa: S108 - private container
+    }
+    record["Mounts"] = [
+        {"Type": "volume", "Name": name, "Destination": dest, "RW": writable, "Driver": "local"}
+        for name, dest, writable in (
+            (host.DATA_VOLUME, "/data", True),
+            (host.TELEGRAM_VOLUME, "/run/telegram", False),
+        )
+    ]
+    record["NetworkSettings"] = {"Ports": {}, "Networks": {}}
+    record["Id"] = "f" * 64
+
+    def fake_run(*args: str) -> str:
+        if args[:3] == ("docker", "ps", "-a"):
+            return CID + "\n" + "f" * 64
+        if args[:2] == ("docker", "inspect"):
+            return json.dumps(_record() if args[-1] == CID else record)
+        if args[:3] == ("docker", "image", "inspect"):
+            return json.dumps({"Id": IMAGE_ID, "Config": {"Env": []}})
+        pytest.fail(f"unexpected command {args!r}")
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    assert host._telegram_test_finished(IMAGE, SHA, "12345", "e" * 64, CID) == "f" * 64
+    record["Mounts"][1]["Name"] = "unrelated_volume"  # type: ignore[index]
+    with pytest.raises(host.PreflightError, match="provenance changed"):
+        host._telegram_test_finished(IMAGE, SHA, "12345", "e" * 64, CID)
+    record["Mounts"][1]["Name"] = host.TELEGRAM_VOLUME  # type: ignore[index]
+    record["Config"]["Entrypoint"] = ["sh", "-c"]  # type: ignore[index]
+    with pytest.raises(host.PreflightError, match="provenance changed"):
+        host._telegram_test_finished(IMAGE, SHA, "12345", "e" * 64, CID)
+    record["Config"]["Entrypoint"] = None  # type: ignore[index]
+    record["Config"]["Env"].append("PYTHONHOME=/data")  # type: ignore[index]
+    with pytest.raises(host.PreflightError, match="environment changed"):
+        host._telegram_test_finished(IMAGE, SHA, "12345", "e" * 64, CID)
+
+
 def test_workflow_requires_release_owner_marker_and_same_job_stop() -> None:
     workflow = Path(".github/workflows/boca-first-deploy.yml").read_text()
     assert 'test "$BOCA_TELEGRAM_ENV_READY" = ready' in workflow
     assert "python scripts/check_release_run.py" in workflow
     assert 'start-existing "$BOCA_SOURCE_SHA"' in workflow
     assert "BOCA_TELEGRAM_ENVELOPE: ${{ inputs.telegram_envelope }}" in workflow
+    assert (
+        "BOCA_TELEGRAM_EXPECTED_CHAT_HMAC: ${{ secrets.BOCA_TELEGRAM_EXPECTED_CHAT_HMAC }}"
+        in workflow
+    )
+    assert 'test "$BOCA_TELEGRAM_OWNER_READY" = ready' in workflow
+    assert "telegram-test) pattern='^BOCA_TELEGRAM_TEST state=API_ACCEPTED" in workflow
     assert "sys.stdout.write(_telegram_envelope(sys.argv[1]))" in workflow
     assert "Mark Telegram host attempt before starting existing Boca daemon" in workflow
     assert "always() && startsWith(inputs.operation, 'telegram-')" in workflow
     assert (
         workflow.index("Start only stopped existing dedicated Boca daemon")
-        < workflow.index("Execute offline Telegram schema or sealed custody phase")
+        < workflow.index("Execute protected Telegram schema, custody or one-shot test")
         < workflow.index("Stop positively identified Boca services after Telegram custody")
     )
-    assert "telegram-test" not in workflow and "sendMessage" not in workflow
+    assert "telegram-test" in workflow and "sendMessage" not in workflow

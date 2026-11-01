@@ -1,7 +1,7 @@
 # ADR 0084: custodia Telegram posterior a BETA, con parada en el mismo job
 
-**Estado:** decisión candidata para PR de issue #201; aceptada sólo al integrar
-el PR con checks y revisión exactos. Diseño: 2026-11-01
+**Estado:** decisión aceptada al integrar PR #203 para issue #201.
+Diseño: 2026-11-01
 (America/Argentina/Buenos_Aires). No se ejecutó una operación host ni se
 configuró un bot/destino real con este cambio.
 
