@@ -53,7 +53,7 @@ def test_current_main_and_first_attempt_are_checked_before_ssh_and_apply() -> No
         for start in range(len(workflow))
         if workflow.startswith("python scripts/check_main_ref.py", start)
     ]
-    assert len(checks) == 6
+    assert len(checks) == 8
     assert checks[0] < workflow.index("Configure pinned SSH host key")
     assert (
         workflow.index("Recheck current main before Site custody operation")
@@ -79,4 +79,14 @@ def test_current_main_and_first_attempt_are_checked_before_ssh_and_apply() -> No
         workflow.index("Validate resolved host Compose model")
         < checks[5]
         < workflow.index("Pull verified digest and start only Boca controller")
+    )
+    assert (
+        workflow.index("Read-only BETA capacity, owner custody and empty app namespace")
+        < checks[6]
+        < workflow.index("Stage only reviewed served BETA Compose file")
+    )
+    assert (
+        workflow.index("Validate resolved served BETA host Compose model")
+        < checks[7]
+        < workflow.index("Initialize new-only BETA and start isolated controller")
     )
