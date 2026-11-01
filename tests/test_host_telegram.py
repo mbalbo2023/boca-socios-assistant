@@ -343,7 +343,13 @@ def test_finished_one_shot_requires_exact_disposable_identity_before_remove(
         "e" * 64,
     ]
     record["Config"]["Labels"]["com.docker.compose.service"] = "telegram-test"  # type: ignore[index]
-    record["Config"]["Healthcheck"] = {"Test": ["NONE"]}  # type: ignore[index]
+    record["Config"]["Healthcheck"] = {  # type: ignore[index]
+        "Test": ["NONE"],
+        "Interval": 30_000_000_000,
+        "Timeout": 5_000_000_000,
+        "StartPeriod": 15_000_000_000,
+        "Retries": 3,
+    }
     record["Config"]["Env"] = [  # type: ignore[index]
         "BOCA_ENVIRONMENT=staging",
         "BOCA_RUNTIME_MODE=simulation",
@@ -362,7 +368,7 @@ def test_finished_one_shot_requires_exact_disposable_identity_before_remove(
         "NetworkMode": host.TELEGRAM_NETWORK,
         "CapDrop": ["ALL"],
         "CapAdd": None,
-        "SecurityOpt": ["no-new-privileges:true"],
+        "SecurityOpt": ["no-new-privileges"],
         "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=8m"},  # noqa: S108 - private container
     }
     record["Mounts"] = [

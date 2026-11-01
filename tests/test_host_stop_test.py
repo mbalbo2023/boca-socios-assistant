@@ -91,7 +91,13 @@ def _telegram_test_inspect(container_id: str, *, running: bool = True) -> dict[s
         "BOCA_ENGINE_MODE=off",
         "BOCA_TELEGRAM_DISPATCH_MODE=explicit",
     ]
-    record["Config"]["Healthcheck"] = {"Test": ["NONE"]}
+    record["Config"]["Healthcheck"] = {
+        "Test": ["NONE"],
+        "Interval": 30_000_000_000,
+        "Timeout": 5_000_000_000,
+        "StartPeriod": 15_000_000_000,
+        "Retries": 3,
+    }
     record["HostConfig"] = {
         "NanoCpus": 250_000_000,
         "Memory": 134_217_728,
@@ -103,7 +109,7 @@ def _telegram_test_inspect(container_id: str, *, running: bool = True) -> dict[s
         "NetworkMode": host.TELEGRAM_TEST_NETWORK,
         "CapDrop": ["ALL"],
         "CapAdd": None,
-        "SecurityOpt": ["no-new-privileges:true"],
+        "SecurityOpt": ["no-new-privileges"],
         "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=8m"},  # noqa: S108 - private container
     }
     record["Mounts"] = [
@@ -191,6 +197,8 @@ def test_one_shot_foreign_mount_network_or_budget_blocks_every_stop() -> None:
         ("HostConfig", "NanoCpus", 2_000_000_000),
         ("HostConfig", "PortBindings", {"80/tcp": [{"HostIp": "0.0.0.0"}]}),  # noqa: S104 - rejected
         ("HostConfig", "CapAdd", ["SYS_ADMIN"]),
+        ("HostConfig", "SecurityOpt", []),
+        ("Config", "Healthcheck", {"Test": ["CMD", "unrelated"]}),
     ):
         record = _telegram_test_inspect(UNKNOWN)
         if key is None:

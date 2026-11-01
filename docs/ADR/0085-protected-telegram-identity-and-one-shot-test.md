@@ -73,6 +73,10 @@ tras el marcador exige el recibo de `stop-test` en el mismo job.
 Pruebas falsas de Bot API y SQLite ejercitan bot/chat privados, HMAC erróneo,
 grupo rechazado, fence, aceptación y timeout terminal; fake Docker verifica
 identidad/aislamiento y la ausencia de `rm` ante un recibo falso. El primer
+smoke desechable de Actions observó que Docker retiene los intervalos de
+healthcheck de la imagen junto a `Test=["NONE"]` y normaliza el flag CLI de
+seguridad como `no-new-privileges` sin sufijo; ambas formas exactas se fijan
+en los validadores del contenedor de test. El primer
 commit de tests falló porque no existía el módulo de one-shot; SHA, checks y
 revisión se consignan en el PR de #202. La validación PR no envía tráfico
 público. La operación real sigue **NO-GO** sin token, chat privado y

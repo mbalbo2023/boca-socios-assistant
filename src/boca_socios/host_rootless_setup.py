@@ -671,7 +671,13 @@ def _verified_telegram_test_isolation(home: Path, endpoint: str, record: dict[st
         }.items()
     ):
         return False
-    if config.get("Healthcheck") != {"Test": ["NONE"]}:
+    if config.get("Healthcheck") != {
+        "Test": ["NONE"],
+        "Interval": 30_000_000_000,
+        "Timeout": 5_000_000_000,
+        "StartPeriod": 15_000_000_000,
+        "Retries": 3,
+    }:
         return False
     if (
         not isinstance(host, dict)
@@ -685,7 +691,7 @@ def _verified_telegram_test_isolation(home: Path, endpoint: str, record: dict[st
         or host.get("NetworkMode") != TELEGRAM_TEST_NETWORK
         or host.get("CapDrop") != ["ALL"]
         or host.get("CapAdd") not in (None, [])
-        or host.get("SecurityOpt") != ["no-new-privileges:true"]
+        or host.get("SecurityOpt") != ["no-new-privileges"]
         or host.get("Tmpfs") != {"/tmp": "rw,noexec,nosuid,size=8m"}  # noqa: S108 - private container
         or not isinstance(mounts, list)
         or len(mounts) != 2

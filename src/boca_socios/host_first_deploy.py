@@ -2349,7 +2349,14 @@ def _telegram_test_finished(
         or not isinstance(config, dict)
         or config.get("Image") != image
         or config.get("User") != "10001:10001"
-        or config.get("Healthcheck") != {"Test": ["NONE"]}
+        or config.get("Healthcheck")
+        != {
+            "Test": ["NONE"],
+            "Interval": 30_000_000_000,
+            "Timeout": 5_000_000_000,
+            "StartPeriod": 15_000_000_000,
+            "Retries": 3,
+        }
         or config.get("Cmd")
         != [
             "python",
@@ -2379,7 +2386,7 @@ def _telegram_test_finished(
         or host.get("NetworkMode") != TELEGRAM_NETWORK
         or host.get("CapDrop") != ["ALL"]
         or host.get("CapAdd") not in (None, [])
-        or host.get("SecurityOpt") != ["no-new-privileges:true"]
+        or host.get("SecurityOpt") != ["no-new-privileges"]
         or host.get("Tmpfs") != {"/tmp": "rw,noexec,nosuid,size=8m"}  # noqa: S108 - private container
         or not isinstance(mounts, list)
         or len(mounts) != 2

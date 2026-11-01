@@ -316,42 +316,7 @@ jobs:
               return network
           host._command = only_network
           assert record["State"]["Running"] is False
-          if not host._verified_telegram_test_isolation(Path("/home/boca-deploy"), "--host=local", record):
-              config, h = record["Config"], record["HostConfig"]
-              n, mounts, net = record["NetworkSettings"], record["Mounts"], json.loads(network)
-              env = config.get("Env", [])
-              checks = {
-                  "health": config.get("Healthcheck") == {"Test": ["NONE"]},
-                  "env": all(value in env for value in (
-                      "BOCA_ENVIRONMENT=staging", "BOCA_RUNTIME_MODE=simulation",
-                      "BOCA_ENGINE_MODE=off", "BOCA_TELEGRAM_DISPATCH_MODE=explicit")),
-                  "budget": (h.get("NanoCpus"), h.get("Memory"), h.get("PidsLimit"))
-                      == (250000000, 134217728, 32),
-                  "security": (h.get("ReadonlyRootfs"), h.get("Privileged"), h.get("PublishAllPorts"),
-                      h.get("CapDrop"), h.get("SecurityOpt"))
-                      == (True, False, False, ["ALL"], ["no-new-privileges:true"])
-                      and h.get("CapAdd") in (None, []),
-                  "ports": h.get("PortBindings") == {} and n.get("Ports") == {},
-                  "tmpfs": h.get("Tmpfs") == {"/tmp": "rw,noexec,nosuid,size=8m"},
-                  "mounts": {(m.get("Type"), m.get("Name"), m.get("Destination"),
-                      m.get("RW"), m.get("Driver")) for m in mounts} == host.TELEGRAM_TEST_MOUNTS,
-                  "network": h.get("NetworkMode") == host.TELEGRAM_TEST_NETWORK
-                      and set(n.get("Networks", {})) in (set(), {host.TELEGRAM_TEST_NETWORK})
-                      and net.get("Name") == host.TELEGRAM_TEST_NETWORK
-                      and net.get("Driver") == "bridge" and net.get("Scope") == "local"
-                      and net.get("Internal") is False and net.get("Attachable") is False
-                      and net.get("Ingress") is False,
-                  "labels": net.get("Labels", {}).get("com.docker.compose.project") == "boca-socios"
-                      and net.get("Labels", {}).get("com.docker.compose.network") == "telegram_egress",
-                  "peers": net.get("Containers") == {},
-              }
-              print("BOCA_CI_TELEGRAM_ISOLATION " + json.dumps(checks, sort_keys=True))
-              print("BOCA_CI_TELEGRAM_DOCKER_NORMALIZATION " + json.dumps({
-                  "healthcheck": config.get("Healthcheck"),
-                  "security": {key: h.get(key) for key in (
-                      "ReadonlyRootfs", "Privileged", "PublishAllPorts", "CapDrop", "CapAdd", "SecurityOpt")},
-              }, sort_keys=True))
-              raise AssertionError("disposable Telegram Docker isolation differs")
+          assert host._verified_telegram_test_isolation(Path("/home/boca-deploy"), "--host=local", record)
           PY
           docker rm boca-socios-telegram-test-1
           docker network rm boca-socios_telegram_egress
