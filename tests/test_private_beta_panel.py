@@ -151,6 +151,7 @@ def _login(
 ) -> str:
     status, _, page = _request(app, "/ingresar")
     assert status == 200 and b"navigator.credentials.get" in page
+    assert b"button, select" in page and b"min-height: 52px" in page
     challenge = re.search(rb'data-challenge="([A-Za-z0-9_-]+)"', page).group(1).decode()
     assertion = _assertion(key, credential_id, challenge)
     status, headers, body = _request(

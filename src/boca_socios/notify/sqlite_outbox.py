@@ -205,13 +205,35 @@ class SqliteNotificationOutbox:
             budget = min(limit, remaining)
             if budget <= 0:
                 return ()
-            due = connection.execute(
-                """SELECT idempotency_key, kind, priority, attempts
-                   FROM notification_outbox
-                   WHERE state='pending' AND next_attempt_at <= ? AND expires_at > ?
-                   ORDER BY priority DESC, sequence ASC LIMIT ?""",
-                (now, now, budget),
-            ).fetchall()
+            # Once external dispatch has committed a pre-send intent, no
+            # dispatcher may automatically reclaim it after a crash/lease
+            # expiry. Its uncertain result requires explicit owner review.
+            has_telegram_fence = (
+                connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='telegram_delivery_attempts'"
+                ).fetchone()
+                is not None
+            )
+            if has_telegram_fence:
+                due = connection.execute(
+                    """SELECT idempotency_key, kind, priority, attempts
+                       FROM notification_outbox
+                       WHERE state='pending' AND next_attempt_at <= ? AND expires_at > ?
+                         AND NOT EXISTS (
+                           SELECT 1 FROM telegram_delivery_attempts AS t
+                           WHERE t.idempotency_key = notification_outbox.idempotency_key
+                         )
+                       ORDER BY priority DESC, sequence ASC LIMIT ?""",
+                    (now, now, budget),
+                ).fetchall()
+            else:
+                due = connection.execute(
+                    """SELECT idempotency_key, kind, priority, attempts
+                       FROM notification_outbox
+                       WHERE state='pending' AND next_attempt_at <= ? AND expires_at > ?
+                       ORDER BY priority DESC, sequence ASC LIMIT ?""",
+                    (now, now, budget),
+                ).fetchall()
             claims: list[SqliteDeliveryClaim] = []
             for key, kind_raw, priority_raw, attempts in due:
                 kind = NoticeKind(str(kind_raw))
