@@ -83,6 +83,13 @@ credential enrollment. Do not recreate the existing SSH deployment secret.
   image-security and release PR scans plus the no-network synthetic Chromium
   smoke before any browser digest can be released. No suppressions or
   assumption of host installation are permitted.
+  A later hosted #241 scan exposed genuinely vulnerable `pip` vendor libraries,
+  `setuptools/_vendor`, `virtualenv` and Ubuntu `libbrotli1` despite fixed
+  global package metadata. The next code-only cut updates `libbrotli1`
+  to its Noble security version, fixes build-time virtualenv, and removes
+  complete unused Python build-tool distributions (including the actual
+  vendored code and seed caches) **after** the locked Browser Worker venv
+  is built. Its success remains unverified until another strict hosted scan.
 - Rotate any real password that has previously been disclosed outside the
   approved encrypted enrollment channel before using it in production.
 

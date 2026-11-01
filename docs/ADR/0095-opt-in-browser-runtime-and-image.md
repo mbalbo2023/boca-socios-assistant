@@ -124,6 +124,38 @@ dependency graph remains
 `uv sync --locked --only-group browser`, pinned Playwright 1.64.1 and UID10002
 with Chromium sandbox, no egress and no new ports.
 
+### RCA after the first #241 hosted scan: PR #242
+
+Hosted [image-security run 41359796930](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41359796930)
+verified that the first GStreamer removal worked and all six *installed*
+Python fixes showed zero findings, but Trivy still failed with Ubuntu HIGH
+`libbrotli1 1.1.0-2build2`, six vulnerabilities in its generic `Python`
+target, two vulnerable `setuptools/_vendor` components and one in
+`virtualenv 21.14.9`. The Python generic target was not grounds to suppress a
+false positive: installed `pip >=26.2` carries actual vendored libraries and
+their `pip/_vendor/bom.cdx.json`; Trivy explicitly scans this third-party
+SBOM ([upstream RCA](https://github.com/aquasecurity/trivy/discussions/11031)).
+The accompanying vendored Python implementations remained in the image.
+
+The follow-up build updates **only** Ubuntu Noble `libbrotli1` to exact fixed
+`1.1.0-2ubuntu0.1` ([USN-8956-1](https://ubuntu.com/security/notices/USN-8956-1))
+with `apt-get update`, scoped install and a `dpkg-query` version check.
+It pins build-time `virtualenv==21.14.13` to address
+[GHSA-cx6f-vjhg-g3cc](https://github.com/advisories/GHSA-cx6f-vjhg-g3cc).
+After the locked browser `.venv` has been assembled, the system interpreter
+uninstalls entire build-only `setuptools`, `virtualenv`, `uv` and finally
+`pip` distributions; postconditions check imports, vendor trees, embedded
+pip SBOM and virtualenv seed/cache absence. Removing whole unused tools is
+real attack-surface reduction, **not** deleting an isolated BOM to conceal
+vulnerable executable code. The final worker still runs only Playwright from
+the untouched locked `.venv`. No live URL, credential, extra port or host
+image publication is involved.
+
+**Current decision remains NO-GO** until the exact new PR candidate's strict
+browser Trivy and existing `--network none` Chromium sandbox/DOM smoke both
+pass on GitHub-hosted runners. Local static and Python unit tests cannot
+prove actual package removal or the scanner result.
+
 The **existing** `image-security.yml` PR job gains a second, unchanged
 HIGH/CRITICAL OS+library Trivy policy scan for the browser image. PR #239's
 separate release workflow retains its own independent browser scan. This

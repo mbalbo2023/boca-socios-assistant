@@ -10,18 +10,23 @@ ENV PYTHONUNBUFFERED=1 \
     BOCA_OBSERVER_STOP=1
 
 WORKDIR /app
-# #241: Noble's CVE-2025-3887 fix is ESM-only for both the unused Bad plugin
-# and its shared library. Explicitly remove both (never autoremove) and refuse
-# if either remains installed. CI must still launch Chromium with its sandbox.
-RUN apt-get purge --yes gstreamer1.0-plugins-bad libgstreamer-plugins-bad1.0-0 && \
+# #241: one supported Noble security update, two ESM-only GStreamer Bad
+# packages not used by the synthetic DOM. Never upgrade the whole distro or
+# autoremove dependent browser libraries. Postconditions fail closed.
+RUN apt-get update && \
+    apt-get install --yes --no-install-recommends libbrotli1=1.1.0-2ubuntu0.1 && \
+    test "$(dpkg-query -W -f='${Version}' libbrotli1)" = "1.1.0-2ubuntu0.1" && \
+    apt-get purge --yes gstreamer1.0-plugins-bad libgstreamer-plugins-bad1.0-0 && \
     for pkg in gstreamer1.0-plugins-bad libgstreamer-plugins-bad1.0-0; do \
       if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed'; then \
         exit 1; \
       fi; \
-    done
+    done && \
+    test "$(dpkg-query -W -f='${Version}' libbrotli1)" = "1.1.0-2ubuntu0.1" && \
+    apt-get clean
 
 # Exact fixed versions from #241 plus all four audited Python 3.12 transitives
-# of virtualenv 21.14.9. --no-deps rejects floating selections; pip check
+# of virtualenv 21.14.13. --no-deps rejects floating selections; pip check
 # refuses missing/incompatible requirements. The separate browser venv below
 # remains frozen against uv.lock (Playwright 1.64.1).
 RUN python -m pip install --disable-pip-version-check --no-cache-dir --no-deps --only-binary=:all: \
@@ -35,10 +40,27 @@ RUN python -m pip install --disable-pip-version-check --no-cache-dir --no-deps -
     python-discovery==1.6.6 \
     setuptools==78.1.1 \
     urllib3==2.8.0 \
-    virtualenv==21.14.9 && \
+    virtualenv==21.14.13 && \
     python -m pip check
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --locked --only-group browser --no-editable --no-cache
+
+# Runtime needs only the locked /app/.venv Playwright interpreter and bundled
+# Chromium. Global pip >=26.2 carries vulnerable *real* vendored libraries in
+# pip/_vendor/bom.cdx.json; setuptools and virtualenv contain their own vendor
+# and seed wheels. Remove entire build-only tools, never just their SBOMs.
+# /usr/bin/python3 targets the system packages, NOT /app/.venv/bin/python.
+RUN /usr/bin/python3 -c 'import sys; assert sys.prefix == sys.base_prefix' && \
+    /usr/bin/python3 -m pip --version && \
+    /usr/bin/python3 -m pip uninstall --yes setuptools virtualenv uv && \
+    /usr/bin/python3 -m pip uninstall --yes pip && \
+    /usr/bin/python3 -c 'import importlib.util; assert all(importlib.util.find_spec(name) is None for name in ("pip", "setuptools", "virtualenv"))' && \
+    test ! -d /usr/local/lib/python3.12/dist-packages/pip/_vendor && \
+    test ! -d /usr/local/lib/python3.12/dist-packages/setuptools/_vendor && \
+    test ! -d /usr/local/lib/python3.12/dist-packages/virtualenv/seed/wheels/embed && \
+    test ! -e /usr/local/lib/python3.12/dist-packages/pip/_vendor/bom.cdx.json && \
+    test ! -L /root/.cache/virtualenv && \
+    if [ -d /root/.cache/virtualenv ]; then rm -r -- /root/.cache/virtualenv; fi
 
 RUN groupadd --gid 10002 boca-browser && \
     useradd --uid 10002 --gid 10002 --create-home --shell /usr/sbin/nologin boca-browser

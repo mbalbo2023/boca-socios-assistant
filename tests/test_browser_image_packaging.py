@@ -49,12 +49,29 @@ def test_browser_image_removes_unfixed_optional_multimedia_and_pins_python_fixes
         "python-discovery": "1.6.6",
         "setuptools": "78.1.1",
         "urllib3": "2.8.0",
-        "virtualenv": "21.14.9",
+        "virtualenv": "21.14.13",
     }.items():
         assert f"{name}=={fixed}" in dockerfile
     assert "--no-deps" in dockerfile
     assert "--only-binary=:all:" in dockerfile
     assert "python -m pip check" in dockerfile
+
+
+def test_browser_image_fixes_brotli_and_removes_build_only_vendored_python() -> None:
+    text = (Path(__file__).resolve().parents[1] / "Dockerfile.browser").read_text(encoding="utf-8")
+    assert "apt-get update" in text
+    assert "apt-get install --yes --no-install-recommends libbrotli1=1.1.0-2ubuntu0.1" in text
+    assert "dpkg-query -W -f='${Version}' libbrotli1" in text
+    assert "-m pip uninstall --yes setuptools virtualenv uv" in text
+    assert "-m pip uninstall --yes pip" in text
+    assert text.index("-m pip uninstall --yes setuptools virtualenv uv") < text.index(
+        "-m pip uninstall --yes pip"
+    )
+    assert "pip/_vendor" in text  # Require a post-uninstall vendor-tree absence check.
+    assert "setuptools/_vendor" in text
+    assert "root/.cache/virtualenv" in text
+    assert text.index("uv sync --locked --only-group browser") < text.index("-m pip uninstall")
+    assert "rm -f" not in text  # Never conceal only a vulnerable BOM or METADATA.
 
 
 def test_existing_security_workflow_scans_browser_as_strictly_as_controller() -> None:
