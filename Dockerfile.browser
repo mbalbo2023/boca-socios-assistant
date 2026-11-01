@@ -10,7 +10,33 @@ ENV PYTHONUNBUFFERED=1 \
     BOCA_OBSERVER_STOP=1
 
 WORKDIR /app
-RUN python -m pip install --disable-pip-version-check --no-cache-dir uv==0.13.4
+# #241: Noble's CVE-2025-3887 fix is ESM-only for both the unused Bad plugin
+# and its shared library. Explicitly remove both (never autoremove) and refuse
+# if either remains installed. CI must still launch Chromium with its sandbox.
+RUN apt-get purge --yes gstreamer1.0-plugins-bad libgstreamer-plugins-bad1.0-0 && \
+    for pkg in gstreamer1.0-plugins-bad libgstreamer-plugins-bad1.0-0; do \
+      if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed'; then \
+        exit 1; \
+      fi; \
+    done
+
+# Exact fixed versions from #241 plus all four audited Python 3.12 transitives
+# of virtualenv 21.14.9. --no-deps rejects floating selections; pip check
+# refuses missing/incompatible requirements. The separate browser venv below
+# remains frozen against uv.lock (Playwright 1.64.1).
+RUN python -m pip install --disable-pip-version-check --no-cache-dir --no-deps --only-binary=:all: \
+    uv==0.13.4 \
+    certifi==2026.10.18 \
+    distlib==0.4.4 \
+    filelock==4.2.1 \
+    msgpack==1.2.3 \
+    packaging==26.3 \
+    platformdirs==4.14.2 \
+    python-discovery==1.6.6 \
+    setuptools==78.1.1 \
+    urllib3==2.8.0 \
+    virtualenv==21.14.9 && \
+    python -m pip check
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --locked --only-group browser --no-editable --no-cache
 

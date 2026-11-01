@@ -73,6 +73,16 @@ credential enrollment. Do not recreate the existing SSH deployment secret.
   the digest or dependency graph requires an isolated CI review. This is a
   **reproducible dependency selection**, not a guarantee of bit-for-bit
   identical images or a substitute for vulnerability scanning.
+- The separate UID10002 browser image is subject to the same blocking
+  HIGH/CRITICAL OS+library Trivy policy as the controller. #241 tracks a
+  confirmed browser scan failure from release PR #239; its code-only
+  candidate removes the unused vulnerable GStreamer Bad plug-in **and shared
+  library**, and pins six fixed Python base packages plus four audited
+  virtualenv dependencies, while preserving locked Playwright and the
+  Chromium sandbox. The changed image must pass **both** strict hosted
+  image-security and release PR scans plus the no-network synthetic Chromium
+  smoke before any browser digest can be released. No suppressions or
+  assumption of host installation are permitted.
 - Rotate any real password that has previously been disclosed outside the
   approved encrypted enrollment channel before using it in production.
 

@@ -1,17 +1,18 @@
 # ADR 0095: Opt-in synthetic IPC backend and separate UID10002 browser image
 
-**Status:** local **code-only** candidate for #227, 2026-11-01 ART, rebased
-onto exact GitHub main `a14d900b95d45b257b429356469f4cd9cae22144`.
-This includes the corrected IPC STOP/post-read fence in PR #236, the
-Playwright-only image packaging in #232, command regressions #231 and
-protected owner-enrollment #229. This phase changes only its owned files and
-passed local frozen pytest (**1172 tests and 31 subtests**), Ruff, mypy and
-repository policy after rebase. It must still pass **separate exact-commit
-GitHub-hosted PR CI and human review** before merge; no CI result or runtime
-installation is inferred from the local tests.
-It does **not** authorize or modify Compose, GitHub Actions, host scripts,
-droplet containers, Docker networks, volumes, application ports or owner
-passkey activation #225.
+**Status:** the original #227 code-only runtime/image cut was integrated in
+PR #237 on main `46f184fc49747f98246ac82047d9786b65239168` (historical
+local base `a14d900b95d45b257b429356469f4cd9cae22144`). It included the
+corrected IPC STOP/post-read fence #236, the offline Playwright image #232,
+command regressions #231 and owner-enrollment #229. Its local verification
+was 1172 pytest cases and 31 subtests; that receipt did **not** demonstrate
+browser image security or any deployment. The following #241 security
+remediation is rebased onto main
+`ef34cb40b150f9cfc891c5d7e0e3e48f151358f9` (including #240 offline
+Chromium fixtures), and remains a **separate unmerged, code-only candidate**
+until exact-commit hosted CI and review. Neither phase authorizes Compose or host
+changes, application ports, Docker cleanup outside Boca or owner passkey
+activation #225.
 
 ## Decision
 
@@ -89,3 +90,48 @@ the central writer reconciles operational status and #45 after review.
 **Host activation remains NO-GO**, regardless of code/test success, until
 the owner approves specific host/Compose scope and later execution based on
 fresh inventory and exact-main release/digest/security/cleanup evidence.
+
+## Security remediation after PR #237: issue #241 (candidate)
+
+The separately reviewed release PR #239 (candidate `1b7c354ab4302a4b74ad3d81e86bd3c5c8ef1482`)
+failed its real hosted [browser image Trivy gate](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41358385474):
+three Ubuntu HIGH findings in the GStreamer Bad package family (CVE-2025-3887)
+and ten Python HIGH/CRITICAL findings in six base-image Python packages.
+This is a confirmed **security NO-GO**, not a failed simulated reservation
+or an incident on the droplet. Ubuntu Noble's official CVE status only
+lists a fix under [Ubuntu Pro ESM Apps](https://ubuntu.com/security/notices/USN-7558-1)
+for **both** `gstreamer1.0-plugins-bad` and `libgstreamer-plugins-bad1.0-0`,
+not an ordinary public package update.
+
+The scoped candidate removes only the GStreamer Bad multimedia plug-in
+**and its associated shared library**, which the self-contained fake ticket
+DOM does not require; its `dpkg-query` postcondition refuses an image still
+reporting either package as installed. No `apt-get autoremove`, alternate browser base, sandbox disable,
+Trivy ignore or severity downgrade is allowed. The image's global Python
+environment pins the fixed versions from the hosted receipt:
+`certifi==2026.10.18`, `filelock==4.2.1`, `msgpack==1.2.3`,
+`setuptools==78.1.1`, `urllib3==2.8.0` and `virtualenv==21.14.9`.
+The exact Python 3.12 transitive requirements of virtualenv were inspected
+from its wheel metadata and are also pinned:
+`distlib==0.4.4`, `packaging==26.3`, `platformdirs==4.14.2` and
+`python-discovery==1.6.6`. Their wheel metadata requirements were validated
+in a temporary Python 3.12 environment with all ten exact pins, where
+`uv pip check` reported compatible packages. System pip uses
+`--no-deps --only-binary=:all:` and `python -m pip check` must pass, refusing
+floating resolution or missing requirements. This temporary environment
+check is **not** a Docker build or Trivy receipt. The separate browser
+dependency graph remains
+`uv sync --locked --only-group browser`, pinned Playwright 1.64.1 and UID10002
+with Chromium sandbox, no egress and no new ports.
+
+The **existing** `image-security.yml` PR job gains a second, unchanged
+HIGH/CRITICAL OS+library Trivy policy scan for the browser image. PR #239's
+separate release workflow retains its own independent browser scan. This
+duplicates a browser build and scan per release PR (extra disposable-runner
+time/storage) deliberately: #241 can never appear green on controller-only
+image security while the unmerged release workflow is not yet present.
+The existing `ci.yml` image-build smoke must also launch Chromium under
+`--network none`, UID10002, seccomp and cgroup budgets and complete the
+synthetic DOM journey **after** optional multimedia removal. Any failure,
+including an unfixed or newly found Trivy issue, keeps release/host NO-GO;
+local static tests do not substitute for hosted image execution.
