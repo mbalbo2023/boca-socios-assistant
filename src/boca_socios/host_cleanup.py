@@ -1,10 +1,11 @@
-"""Conservative Boca-only cleanup candidate for a failed first installation.
+"""Conservative Boca-only cleanup after a failed protected installation.
 
 This standalone standard-library module is streamed by the guarded failure
-step of the single protected Actions workflow after a first-install attempt.
+step of the single protected Actions workflow after a staged install attempt.
 It does not authorize a host operation by itself.
-Any Boca container or ambiguous image blocks deletion. Key/data volumes and
-networks are always preserved, even if the exact unreferenced image is removed.
+The first-install contract retains all containers and networks. The BETA
+contract can stop/remove only its exact controller and empty private network.
+No contract ever deletes a key, data or owner volume or a shared image.
 """
 
 from __future__ import annotations
@@ -23,6 +24,12 @@ from pathlib import Path
 
 ROOT = Path("/srv/boca-socios")
 COMPOSE = ROOT / "compose.yaml"
+BETA_COMPOSE = ROOT / "compose.beta.yaml"
+BETA_NETWORK = "boca-socios_boca_private"
+BETA_CONTROLLER = "/boca-socios-controller-1"
+BETA_VOLUMES = frozenset(
+    {"boca-socios_boca_owner", "boca-socios_boca_key", "boca-socios_boca_data"}
+)
 ROOTLESS_SOCKET = Path("/run/user/10001/docker.sock")
 ROOTFUL_SOCKET = Path("/var/run/docker.sock")
 DOCKER = "/usr/bin/docker"
@@ -62,6 +69,12 @@ class CleanupResult:
     before: CapacitySnapshot
     after: CapacitySnapshot
     image_size_bytes: int
+
+
+@dataclass(frozen=True)
+class BetaCleanupResult(CleanupResult):
+    removed_container: bool
+    removed_network: bool
 
 
 def _validate_coordinates(image: str, source_sha: str, compose_sha: str) -> None:
@@ -160,7 +173,7 @@ def _check_rootless_boundary() -> None:
         raise CleanupError("dedicated rootless Docker boundary is unproven")
 
 
-def _checked_root() -> None:
+def _checked_root_entries(allowed: frozenset[str]) -> None:
     try:
         metadata = ROOT.lstat()
     except OSError as exc:
@@ -175,8 +188,12 @@ def _checked_root() -> None:
         entries = {child.name for child in ROOT.iterdir()}
     except OSError as exc:
         raise CleanupError("private Boca directory is unavailable") from exc
-    if entries - {"compose.yaml"}:
+    if entries - allowed:
         raise CleanupError("private Boca directory contains uncertain state")
+
+
+def _checked_root() -> None:
+    _checked_root_entries(frozenset({"compose.yaml"}))
 
 
 def _checked_stage(compose_sha: str) -> bool:
@@ -200,6 +217,31 @@ def _checked_stage(compose_sha: str) -> bool:
         raise CleanupError("staged Compose content is unavailable") from exc
     if actual_hash != compose_sha:
         raise CleanupError("staged Compose differs from the exact Boca candidate")
+    return True
+
+
+def _checked_beta_stage(compose_sha: str) -> bool:
+    """Prove a new-only BETA staged file; never follow or discard a symlink."""
+    _checked_root_entries(frozenset({"compose.beta.yaml"}))
+    try:
+        metadata = BETA_COMPOSE.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise CleanupError("BETA staged Compose metadata is unavailable") from exc
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != 10001
+        or stat.S_IMODE(metadata.st_mode) & 0o022
+        or metadata.st_size > 32_768
+    ):
+        raise CleanupError("BETA staged Compose identity is unsafe")
+    try:
+        actual = hashlib.sha256(BETA_COMPOSE.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise CleanupError("BETA staged Compose content is unavailable") from exc
+    if actual != compose_sha:
+        raise CleanupError("BETA staged Compose differs from the reviewed candidate")
     return True
 
 
@@ -387,14 +429,244 @@ def clean_failed_install(image: str, source_sha: str, compose_sha: str) -> Clean
     return result
 
 
+def _beta_container_id(image: str, source_sha: str) -> str | None:
+    """Reject other or ambiguous containers even on the dedicated daemon."""
+    all_ids = set(_run("ps", "-a", "-q", "--no-trunc").splitlines())
+    labeled = set(
+        _run(
+            "ps",
+            "-a",
+            "-q",
+            "--no-trunc",
+            "--filter",
+            "label=com.docker.compose.project=boca-socios",
+        ).splitlines()
+    )
+    named = set(
+        _run("ps", "-a", "-q", "--no-trunc", "--filter", "name=^/boca-socios-").splitlines()
+    )
+    if all_ids != labeled or labeled != named or len(labeled) > 1:
+        raise CleanupError("BETA container inventory is uncertain")
+    if not labeled:
+        return None
+    container = next(iter(labeled))
+    if not re.fullmatch(r"[0-9a-f]{64}", container):
+        raise CleanupError("BETA container ID is uncertain")
+    try:
+        record = json.loads(_run("container", "inspect", "--format", "{{json .}}", container))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise CleanupError("BETA container metadata is invalid") from exc
+    if not isinstance(record, dict):
+        raise CleanupError("BETA container metadata is invalid")
+    config = record.get("Config")
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    host = record.get("HostConfig")
+    state = record.get("State")
+    mounts = record.get("Mounts")
+    expected_mounts = {
+        ("boca-socios_boca_data", "/data", True),
+        ("boca-socios_boca_key", "/run/secrets", False),
+        ("boca-socios_boca_owner", "/run/owner", False),
+    }
+    if (
+        record.get("Id") != container
+        or record.get("Name") != BETA_CONTROLLER
+        or not isinstance(config, dict)
+        or config.get("Image") != image
+        or config.get("User") != "10001:10001"
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != "boca-socios"
+        or labels.get("com.docker.compose.service") != "controller"
+        or labels.get("org.opencontainers.image.revision") != source_sha
+        or not isinstance(host, dict)
+        or host.get("NetworkMode") != BETA_NETWORK
+        or not isinstance(state, dict)
+        or type(state.get("Running")) is not bool
+        or state.get("Restarting") is not False
+        or not isinstance(mounts, list)
+        or len(mounts) != 3
+        or any(
+            not isinstance(mount, dict)
+            or mount.get("Type") != "volume"
+            or type(mount.get("RW")) is not bool
+            for mount in mounts
+        )
+        or {(mount.get("Name"), mount.get("Destination"), mount.get("RW")) for mount in mounts}
+        != expected_mounts
+    ):
+        raise CleanupError("BETA controller identity or persistent mounts are uncertain")
+    return container
+
+
+def _beta_volumes() -> frozenset[str]:
+    names = frozenset(
+        _run("volume", "ls", "--format", "{{.Name}}", "--filter", "name=^boca-socios_").splitlines()
+    )
+    if "boca-socios_boca_owner" not in names or not names.issubset(BETA_VOLUMES):
+        raise CleanupError("BETA persistent volume inventory is uncertain")
+    return names
+
+
+def _beta_network(container: str | None) -> bool:
+    names = set(
+        _run(
+            "network", "ls", "--format", "{{.Name}}", "--filter", "name=^boca-socios_"
+        ).splitlines()
+    )
+    if not names:
+        return False
+    if names != {BETA_NETWORK}:
+        raise CleanupError("BETA network inventory is uncertain")
+    try:
+        record = json.loads(_run("network", "inspect", "--format", "{{json .}}", BETA_NETWORK))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise CleanupError("BETA network metadata is invalid") from exc
+    if not isinstance(record, dict):
+        raise CleanupError("BETA network metadata is invalid")
+    labels = record.get("Labels")
+    peers = record.get("Containers")
+    if (
+        record.get("Name") != BETA_NETWORK
+        or record.get("Driver") != "bridge"
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != "boca-socios"
+        or labels.get("com.docker.compose.network") != "boca_private"
+        or not isinstance(peers, dict)
+        or set(peers) - ({container} if container else set())
+    ):
+        raise CleanupError("BETA network has unproven identity or attachments")
+    return True
+
+
+def _beta_image_size(image: str, source_sha: str) -> tuple[bool, int]:
+    try:
+        record = json.loads(_run("image", "inspect", "--format", "{{json .}}", image))
+    except ImageAbsent:
+        return False, 0
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise CleanupError("BETA image metadata is invalid") from exc
+    return True, validate_image(record, image, source_sha)
+
+
+def clean_failed_beta_install(image: str, source_sha: str, compose_sha: str) -> BetaCleanupResult:
+    """Clean only the exact aborted BETA attempt; never touch persistent volumes."""
+    _check_identity()
+    _validate_coordinates(image, source_sha, compose_sha)
+    _check_rootless_boundary()
+    staged = _checked_beta_stage(compose_sha)
+    container = _beta_container_id(image, source_sha)
+    before_volumes = _beta_volumes()
+    network = _beta_network(container)
+    has_image, image_size = _beta_image_size(image, source_sha)
+    before = _capacity()
+    mutation_attempted = False
+    try:
+        if container is not None:
+            # A failed prior rollback is not authority to delete an unknown
+            # process. This identity was just checked against the exact digest,
+            # SHA, Compose service and all three persistent mount destinations.
+            record = json.loads(_run("container", "inspect", "--format", "{{json .}}", container))
+            if not isinstance(record, dict) or not isinstance(record.get("State"), dict):
+                raise CleanupError("BETA controller state is unavailable")
+            if record["State"].get("Running") is True:
+                mutation_attempted = True
+                _run("container", "stop", "--time", "30", container)
+            confirmed = _beta_container_id(image, source_sha)
+            if confirmed != container:
+                raise CleanupError("BETA container changed before removal")
+            state = json.loads(_run("container", "inspect", "--format", "{{json .}}", container))
+            if (
+                not isinstance(state, dict)
+                or not isinstance(state.get("State"), dict)
+                or state["State"].get("Running") is not False
+                or state["State"].get("Restarting") is not False
+            ):
+                raise CleanupError("BETA controller did not stop safely")
+            mutation_attempted = True
+            _run("container", "rm", container)  # No --volumes or --force.
+            if _beta_container_id(image, source_sha) is not None:
+                raise CleanupError("BETA container remained after removal")
+        if network:
+            if not _beta_network(None):
+                raise CleanupError("BETA network changed before removal")
+            mutation_attempted = True
+            _run("network", "rm", BETA_NETWORK)
+            if _beta_network(None):
+                raise CleanupError("BETA network remained after removal")
+        if has_image:
+            if _run("ps", "-a", "-q", "--filter", f"ancestor={image}"):
+                raise CleanupError("BETA image is still referenced by a container")
+            if not _beta_image_size(image, source_sha)[0]:
+                raise CleanupError("BETA image changed before removal")
+            mutation_attempted = True
+            _run("image", "rm", "--no-prune", image)
+            if _beta_image_size(image, source_sha)[0]:
+                raise CleanupError("BETA image remained after removal")
+        if staged:
+            if not _checked_beta_stage(compose_sha):
+                raise CleanupError("BETA staged file changed before removal")
+            mutation_attempted = True
+            BETA_COMPOSE.unlink()
+            if _checked_beta_stage(compose_sha):
+                raise CleanupError("BETA staged file remained after removal")
+        after_volumes = _beta_volumes()
+        after = _capacity()
+        if (
+            after_volumes != before_volumes
+            or before.docker_root != after.docker_root
+            or before.stage_device != after.stage_device
+            or before.docker_device != after.docker_device
+        ):
+            raise CleanupError("BETA persistent state or storage topology changed")
+    except (CleanupError, OSError, TypeError, ValueError, KeyError) as exc:
+        if mutation_attempted:
+            raise CleanupIndeterminate("bounded BETA cleanup outcome is unverified") from exc
+        raise CleanupError("BETA cleanup failed before any deletion") from exc
+    cleaned = bool(container or network or has_image or staged)
+    result = BetaCleanupResult(
+        removed_image=has_image,
+        removed_stage=staged,
+        retained_state=bool(before_volumes),
+        before=before,
+        after=after,
+        image_size_bytes=image_size,
+        removed_container=container is not None,
+        removed_network=network,
+    )
+    print(
+        "BOCA_BETA_CLEANUP"
+        f" state={'CLEANED' if cleaned else 'ALREADY_CLEAN'}"
+        f" container={'removed' if container else 'absent'}"
+        f" network={'removed' if network else 'absent'}"
+        f" image={'removed' if has_image else 'absent'}"
+        f" stage={'removed' if staged else 'absent'}"
+        " volumes=preserved"
+        f" image_logical_mib={image_size // 1024**2}"
+        f" same_fs={'yes' if before.stage_device == before.docker_device else 'no'}"
+        f" stage_free_mib_before={before.stage_free_bytes // 1024**2}"
+        f" stage_free_mib_after={after.stage_free_bytes // 1024**2}"
+        f" docker_free_mib_before={before.docker_free_bytes // 1024**2}"
+        f" docker_free_mib_after={after.docker_free_bytes // 1024**2}"
+        f" stage_inodes_before={before.stage_inodes}"
+        f" stage_inodes_after={after.stage_inodes}"
+        f" docker_inodes_before={before.docker_inodes}"
+        f" docker_inodes_after={after.docker_inodes}"
+    )
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Conservative Boca-only failed-install cleanup")
+    parser.add_argument("--beta", action="store_true", help="exact served-BETA cleanup contract")
     parser.add_argument("image")
     parser.add_argument("source_sha")
     parser.add_argument("compose_sha")
     args = parser.parse_args(argv)
     try:
-        clean_failed_install(args.image, args.source_sha, args.compose_sha)
+        if args.beta:
+            clean_failed_beta_install(args.image, args.source_sha, args.compose_sha)
+        else:
+            clean_failed_install(args.image, args.source_sha, args.compose_sha)
     except CleanupIndeterminate:
         print("BOCA_CLEANUP_INDETERMINADO: re-inventory Boca before retry", file=sys.stderr)
         return 1

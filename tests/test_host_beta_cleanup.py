@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import runpy
 import subprocess
 import textwrap
 from pathlib import Path
@@ -266,7 +267,7 @@ def test_beta_cleanup_rejects_symlink_stage_even_when_target_hash_matches(
 
 
 def test_beta_cleanup_rejects_extra_file_in_private_staging_directory(
-    beta_case: tuple[FakeBetaDocker, Path, str]
+    beta_case: tuple[FakeBetaDocker, Path, str],
 ) -> None:
     docker, stage, compose_sha = beta_case
     (stage.parent / "unrecognized.txt").write_text("unreviewed artifact")
@@ -337,7 +338,7 @@ def test_beta_cleanup_detects_volume_inventory_drift_after_mutation(
 
 
 def test_beta_cli_dispatch_preserves_existing_first_install_route(
-    monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: list[str] = []
     monkeypatch.setattr(cleanup, "clean_failed_beta_install", lambda *_: seen.append("beta"))
@@ -362,6 +363,29 @@ def test_actions_beta_cleanup_is_immediate_after_bounded_stop() -> None:
     assert "--beta" in section
     assert "2>/dev/null" in section
     assert "NO_GO INDETERMINADO" in section
+
+
+def test_policy_rejects_removing_the_mandatory_beta_failure_hook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = Path(__file__).resolve().parents[1]
+    check_policy = runpy.run_path(str(repo / "scripts/check_repo_policy.py"))["check_policy"]
+    original_read = Path.read_text
+
+    def tampered_read(path: Path, *args: object, **kwargs: object) -> str:
+        contents = original_read(path, *args, **kwargs)
+        if path.name == "boca-first-deploy.yml":
+            return contents.replace(
+                "Clean unused Boca BETA artifacts after failed install",
+                "BETA failure cleanup was accidentally removed",
+            )
+        return contents
+
+    monkeypatch.setattr(Path, "read_text", tampered_read)
+    assert any(
+        "Clean unused Boca BETA artifacts after failed install" in issue
+        for issue in check_policy(repo)
+    )
 
 
 @pytest.mark.parametrize("successful", [False, True])

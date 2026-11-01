@@ -74,9 +74,14 @@ main is protected before verifying GitHub's **actual ruleset state**. See
    owner must have approved that concrete operation scope. Approval of code
    tests or a read-only diagnosis does not authorize release or installation.
 7. On any unexpected condition, stop/fail closed, record NO_GO and fix forward.
-8. If a host operation fails, inventory Boca-only disposable artifacts and
-   disk/inodes before and after a narrowly scoped Actions cleanup. Preserve
-   key/data volumes and uncertain resources; never use host-wide prune.
+8. If staged `first-install` or `beta-install` fails, the same protected Boca
+   Actions job must immediately attempt a positive-identity stop and selective
+   cleanup of disposable Boca artifacts. Inventory disk/inodes before and
+   after, keep the original failure red, preserve owner/key/data volumes and
+   uncertain resources, and never use host-wide prune. Runner/SSH/daemon loss
+   may prevent cleanup: report NO_GO, require new Boca-only inventory and
+   never silently retry. Other protected host phases retain their own
+   non-destructive failure/stop and preservation contracts.
 9. Diagnose source failures through Actions before deciding on code changes.
    Report source health as a timestamped semaphore. A source outage cannot
    turn a safe dormant-controller deploy into NO_GO or justify redeployment;

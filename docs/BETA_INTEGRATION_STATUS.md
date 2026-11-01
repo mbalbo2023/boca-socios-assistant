@@ -46,6 +46,12 @@ este cambio exige nueva release exacta antes de cualquier host install. Los
 runs históricos siguientes conservan su SHA original.
 
 **BETA operativa en el droplet: NO_VERIFICADA / aplicación no instalada.**
+RCA #219/PR #220 incorpora como **candidato aún no desplegado** una limpieza
+selectiva inmediata en el mismo workflow tras fallar un `beta-install` marcado:
+parada/identificación del controlador y descarte seguro de contenedor, red,
+imagen y Compose exactos si son descartables, con clave/datos/owner preservados.
+Los casos inciertos requieren nuevo inventario Boca y nunca permiten un retry
+automático. No hubo operación real de limpieza. Ver ADR0090.
 El cambio #217 requiere una passkey descubrible en la ceremonia local, para
 evitar aceptar una credencial no sincronizable por Google Password Manager.
 El navegador sólo recibe una cookie de sesión temporal; la llave privada
