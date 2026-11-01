@@ -196,9 +196,9 @@ def test_site_prepare_only_creates_owner_volume_after_exact_image_and_capacity(
     assert calls[-1] == ("docker", "ps", "-a", "-q", "--no-trunc")
 
 
-@pytest.mark.parametrize("rogue_after", [1, 2, 3, 4])
+@pytest.mark.parametrize("rogue_after", [1, 2, 3, 4, 5])
 def test_site_custody_refuses_foreign_dedicated_daemon_container_before_each_effect(
-    monkeypatch: pytest.MonkeyPatch, rogue_after: int
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], rogue_after: int
 ) -> None:
     """Regression #195: a foreign rootless container cannot be invisible to Site."""
     volumes: set[str] = set()
@@ -229,15 +229,22 @@ def test_site_custody_refuses_foreign_dedicated_daemon_container_before_each_eff
             volumes.add(host.OWNER_VOLUME)
             return host.OWNER_VOLUME
         if args[-1] == "prepare":
-            pytest.fail("Site bootstrap ran despite foreign container")
+            if rogue_after != 5:
+                pytest.fail("Site bootstrap ran despite foreign container")
+            public = base64.urlsafe_b64encode(b"p" * 32).rstrip(b"=").decode("ascii")
+            fingerprint = hashlib.sha256(b"p" * 32).hexdigest()
+            return (
+                f"BOCA_SITE_BOOTSTRAP state=PREPARED public_key={public} fingerprint={fingerprint}"
+            )
         return ""
 
     monkeypatch.setattr(host, "_run", fake_run)
     with pytest.raises(host.PreflightError, match="dedicated Site daemon"):
         host._site_phase("site-prepare", IMAGE, "a" * 40, "")
     assert global_checks == rogue_after
-    assert not any("prepare" == args[-1] for args in seen)
-    assert volumes == ({host.OWNER_VOLUME} if rogue_after in {3, 4} else set())
+    assert any(args[-1] == "prepare" for args in seen) is (rogue_after == 5)
+    assert volumes == ({host.OWNER_VOLUME} if rogue_after >= 3 else set())
+    assert capsys.readouterr().out == ""
 
 
 @pytest.mark.parametrize("operation", ["site-install", "site-verify"])

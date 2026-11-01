@@ -2,7 +2,7 @@
 
 **Status:** draft PR #196 for issue #195. On main
 `451e40bf08e271f7fdf9dbb975ec5a1ed45bc298`, local `uv run pytest -q`
-passed 852 tests and 29 subtests; Ruff, mypy, repository policy and diff
+passed 853 tests and 29 subtests; Ruff, mypy, repository policy and diff
 checks passed; the RCA ledger accepted 16 lessons and 41 executed regression
 selectors in the local full-suite report. This is a source-only RCA of
 the protected Site custody contract introduced in PR #181; no Site host
@@ -44,9 +44,10 @@ that a tablet can reach Boca.
 
 ## Verification and operating gate
 
-Tests inject a foreign rootless container at each prepare boundary and before
-existing-volume `site-install`/`site-verify`, require NO_GO before the next
-effect and preservation of any already created Boca owner volume. The initial
+Tests inject a foreign rootless container at all five prepare boundaries,
+including after the one-shot helper before PASS, and before existing-volume
+`site-install`/`site-verify`. They require NO_GO before the next effect or
+receipt and preservation of any already created Boca owner volume. The initial
 regression failed against the prior implementation; the fixed tests pass
 alongside the existing exact volume and envelope cases. The full local and
 hosted candidate receipts are recorded in the PR after exact checks.
