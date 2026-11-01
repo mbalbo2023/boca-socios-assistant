@@ -625,6 +625,24 @@ def inspect_prerequisites() -> None:
         raise PreflightError("prerequisite metadata unproven; no Docker operation attempted")
 
 
+def check_loopback_port() -> None:
+    """Try only Boca's intended IPv4 host binding; never contact a listener.
+
+    The socket closes before this phase returns. FREE is an instant observation,
+    not a reservation or proof that a later Docker publication will succeed.
+    """
+    _require_dedicated_identity()
+    state = "FREE"
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 8443))
+    except OSError as exc:
+        state = "BUSY" if exc.errno == errno.EADDRINUSE else "ERROR"
+    print(f"BOCA_PORT_CHECK state={state} address=127.0.0.1 port=8443 reserved=no")
+    if state != "FREE":
+        raise PreflightError("Boca loopback port unavailable")
+
+
 def _rootful_socket_inaccessible() -> bool:
     return not os.access(ROOTFUL_SOCKET, os.W_OK)
 
@@ -2919,10 +2937,13 @@ def phase(
         image,
         source_sha,
         compose_sha,
-        read_only_preflight=phase_name in {"observe", "inspect-prerequisites"},
+        read_only_preflight=phase_name in {"observe", "inspect-prerequisites", "port-check"},
     )
     if phase_name == "inspect-prerequisites":
         inspect_prerequisites()
+        return
+    if phase_name == "port-check":
+        check_loopback_port()
         return
     if owner_custody:
         _validate_docker_boundary()
@@ -3066,6 +3087,7 @@ def main() -> int:
         "phase",
         choices=(
             "inspect-prerequisites",
+            "port-check",
             "observe",
             "preflight",
             "stage",
