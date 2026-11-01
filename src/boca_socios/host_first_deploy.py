@@ -7,6 +7,7 @@ Each invocation is a single phase; a failed phase is not retried automatically.
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -384,6 +385,98 @@ def _rootless_service_metadata(private_runtime_ready: bool) -> str:
     )
 
 
+def _candidate_file_metadata(path: Path, anchor: Path) -> tuple[str, int | None]:
+    """Stat one candidate via no-follow directory descriptors; never open its data."""
+    if (
+        path.anchor != "/"
+        or anchor.anchor != "/"
+        or anchor == Path("/")
+        or ".." in path.parts
+        or ".." in anchor.parts
+        or not path.is_relative_to(anchor)
+        or path == anchor
+        or len(str(path)) > 4096
+        or len(path.parts) > 32
+    ):
+        return "unsafe-path", None
+    descriptor: int | None = None
+    try:
+        flags = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        descriptor = os.open("/", flags)
+        current = Path("/")
+        for part in path.parts[1:-1]:
+            child = os.open(part, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+            current /= part
+            if current == anchor:
+                metadata = os.fstat(descriptor)
+                if metadata.st_uid != 10001 or stat.S_IMODE(metadata.st_mode) & 0o022:
+                    return "unsafe-path", None
+        metadata = os.stat(path.name, dir_fd=descriptor, follow_symlinks=False)
+        if stat.S_ISLNK(metadata.st_mode):
+            return "unsafe-path", None
+        if not stat.S_ISREG(metadata.st_mode):
+            return "not-regular", None
+        if not 0 <= metadata.st_size < 2**63:
+            return "unavailable", None
+        return "candidate-present", metadata.st_size
+    except FileNotFoundError:
+        return "candidate-absent", None
+    except PermissionError:
+        return "inaccessible", None
+    except OSError as exc:
+        return ("unsafe-path" if exc.errno in {errno.ELOOP, errno.ENOTDIR} else "unavailable"), None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _database_candidate_metadata() -> str:
+    """Fixed locations are candidates, never a global database existence claim."""
+    _require_dedicated_identity()
+    candidates: tuple[tuple[str, Path, Path], ...] = ()
+    try:
+        raw_home = getattr(pwd.getpwuid(10001), "pw_dir", None)
+        if (
+            isinstance(raw_home, str)
+            and raw_home.startswith("/")
+            and not raw_home.startswith("//")
+            and raw_home != "/"
+            and len(raw_home) <= 4096
+            and ".." not in Path(raw_home).parts
+            and str(Path(raw_home)) == raw_home
+        ):
+            home = Path(raw_home)
+            candidates = (
+                (
+                    "rootless_default",
+                    home / ".local/share/docker/volumes/boca-socios_boca_data/_data/boca.sqlite3",
+                    home,
+                ),
+                ("staging_root", ROOT / "boca.sqlite3", ROOT),
+                ("staging_data", ROOT / "data/boca.sqlite3", ROOT),
+            )
+    except (KeyError, OSError, ValueError):
+        pass
+    lines = ["BOCA_DB_CANDIDATES location=UNVERIFIED scope=fixed_paths_only"]
+    if not candidates:
+        for label in ("rootless_default", "staging_root", "staging_data"):
+            lines.append(
+                f"BOCA_DB_CANDIDATE label={label} db=unavailable wal=unavailable shm=unavailable"
+            )
+        return "\n".join(lines)
+    for label, path, anchor in candidates:
+        fields = [f"BOCA_DB_CANDIDATE label={label}"]
+        for name, suffix in (("db", ""), ("wal", "-wal"), ("shm", "-shm")):
+            state, size = _candidate_file_metadata(Path(str(path) + suffix), anchor)
+            fields.append(f"{name}={state}")
+            if size is not None:
+                fields.append(f"{name}_bytes={size}")
+        lines.append(" ".join(fields))
+    return "\n".join(lines)
+
+
 def inspect_prerequisites() -> None:
     """Observe only Boca's private runtime; metadata is not a Docker preflight."""
     uid = _require_dedicated_identity()
@@ -418,6 +511,7 @@ def inspect_prerequisites() -> None:
         f" rootful={rootful} controllers={controllers}"
     )
     print(_rootless_service_metadata(runtime_safe and private == bus == "owned"))
+    print(_database_candidate_metadata())
     if state != "METADATA_CANDIDATE":
         raise PreflightError("prerequisite metadata unproven; no Docker operation attempted")
 
