@@ -101,8 +101,10 @@ class FakeChromium:
         self.browser = browser
         self.launches = 0
 
-    async def launch(self, *, headless: bool, timeout: int, args: list[str]) -> FakeBrowser:
-        assert headless and timeout == 15_000
+    async def launch(
+        self, *, headless: bool, chromium_sandbox: bool, timeout: int, args: list[str]
+    ) -> FakeBrowser:
+        assert headless and chromium_sandbox and timeout == 15_000
         assert args == ["--disable-background-networking"]
         self.launches += 1
         return self.browser

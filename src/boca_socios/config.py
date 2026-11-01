@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from boca_socios.integration.bridge_client import SITE_ORIGIN
-from boca_socios.owner_origin import owner_rp_host
+from boca_socios.owner_origin import SSH_LOOPBACK_ORIGIN, owner_rp_host
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +31,7 @@ class Settings:
     site_token_file: Path | None = None
     site_hmac_key_file: Path | None = None
     source_sha: str = ""
+    browser_backend: str = "off"
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -55,6 +56,7 @@ class Settings:
             site_token_file=cls._optional_path("BOCA_SITE_TOKEN_FILE"),
             site_hmac_key_file=cls._optional_path("BOCA_SITE_HMAC_KEY_FILE"),
             source_sha=os.environ.get("BOCA_SOURCE_SHA", ""),
+            browser_backend=os.environ.get("BOCA_BROWSER_BACKEND", "off"),
         )
 
     @staticmethod
@@ -70,6 +72,11 @@ class Settings:
             raise ValueError("live mode is not implemented or authorized")
         if self.engine_mode != "off":
             raise ValueError("engine must remain off; activation is not implemented")
+        if type(self.browser_backend) is not str or self.browser_backend not in {
+            "off",
+            "ipc",
+        }:
+            raise ValueError("invalid synthetic browser backend")
         if not self.db_path.is_absolute() or not self.master_key_file.is_absolute():
             raise ValueError("database and secret paths must be absolute")
 
@@ -99,6 +106,13 @@ class Settings:
             for path in (self.tls_cert_file, self.tls_key_file)
         ):
             raise ValueError("HTTPS BETA certificate paths are required")
+        if self.browser_backend == "ipc" and (
+            self.environment != "staging"
+            or self.panel_origin != SSH_LOOPBACK_ORIGIN
+            or self.bind_host != "0.0.0.0"  # noqa: S104 - isolated container, host binds loopback
+            or self.bind_port != 8443
+        ):
+            raise ValueError("synthetic browser requires staging SSH-only BETA")
 
     def validate_bridge(self) -> bool:
         """Return opt-in state; malformed partial activation fails closed."""

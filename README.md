@@ -58,9 +58,11 @@ infrastructure**.
   `beta-acceptance` #200 contracts were tested on disposable runners. The
   model was integrated in PR #224/ADR0091 with certificate-free HTTP only
   on Boca host loopback behind SSH, with a private owner volume; no droplet
-  install occurred. The isolated one-use browser enrollment host-PR candidate
-  #225 uses a disposable named Docker staging volume, not the private owner
-  volume; its protected workflow and selective cleanup remain unmerged.
+  install occurred. The isolated one-use browser enrollment #225/PR #229
+  uses a separate disposable named Docker staging volume for encrypted
+  envelopes, not the private owner volume. Its protected host operation is
+  integrated **in code only**;
+  no real owner link, Chrome passkey or host installation has been verified.
 - CI: pinned checkout/setup actions, frozen dependency lock, lint, format,
   strict typing, tests, image build and repository-isolation checks.
 - Delivery: small PRs, recorded agent technical review, exact-SHA status
@@ -100,13 +102,13 @@ isolated Boca port, with a privately delivered single-use key. The #225/ADR0092
 core candidate implements the **unserved** `/activar#key=…` browser flow and
 WebAuthn proof, producing a v2 encrypted envelope in a separate disposable
 staging volume without mounting the owner's X25519 private key. The #225
-host-PR candidate adds `owner-enroll` to the **existing** protected Actions
-workflow with positive rootless/volume checks, offline `install-staged`,
-same-job selective cleanup after every attempted stage and a disposable
-runner smoke. **It is not yet merged or executed on the droplet.** Synthetic
-tests cannot establish physical
-owner verification, private capability handoff or iOS use; no real credential
-or host owner-install is claimed.
+`owner-enroll` operation, positive rootless/volume checks, offline
+`install-staged` and mandatory same-job selective cleanup after attempted
+staging were integrated in PR #229 into the **existing** protected Actions
+workflow, with disposable-runner smoke tests. This code is not evidence of a
+completed host run: the single-use private URL has **not** been delivered,
+nor has physical Chrome passkey creation, private handoff, iOS use or owner
+install been verified.
 The #217 correction requires a discoverable passkey during local enrollment.
 The chosen Android credential manager holds its private key, not a Chrome
 cookie. The panel session cookie is temporary (15-minute idle, 8-hour absolute
@@ -122,17 +124,32 @@ disposable controller/network/image/staged-Compose artifacts, while preserving
 owner/key/data volumes and retaining the failed deploy status. This is
 integrated code/test behavior, **not** proof of a cleanup or BETA installation on the droplet;
 unknown or interrupted cleanup remains NO_GO and forbids blind retries.
+The entirely synthetic Chromium journey (#25) and its on-demand and Unix IPC
+contracts (#227, ADR0093/0094) are integrated for offline tests, never real
+Boca navigation. This code cut adds optional `BOCA_BROWSER_BACKEND=ipc` for a
+separately isolated, UID10002 Browser Worker with a local Unix socket;
+**the default `off` keeps the existing in-process simulation stub**. The
+opt-in setting has no usable worker until a separately reviewed image,
+Compose/host isolation and selective cleanup are approved, released and
+installed. It never enables real tickets or login. Chromium sandboxing,
+network isolation, 30-second coordinator budget and worker identity gates
+are code-level safety requirements, **not** proof of deployed safeguards.
+The command/restart/notification regression suite (#228/PR #231) is merged
+and synthetic; Telegram #168 still needs dedicated bot custody, verified
+destination and a protected one-message host/owner receipt. Both are
+operationally unverified, and no other droplet workload may be affected.
 The private Site v10 has a disabled D1 bridge and fails closed while host
 credentials/poller are absent. PRs #181/#196 integrated protected ciphertext
 custody and global daemon inventory checks, but no Site host phase ran.
 Telegram's opt-in worker #188, safe stop recognition #194, sealed helper #199,
 protected schema/custody #203 and one-shot Bot API test #204 are integrated,
 with no host dispatch, configured bot, verified destination or real send.
-Parallel first-BETA candidates include #227 (isolated synthetic Chromium
-worker), #25 (offline Playwright CI), #228 (HTTP restart/notice recovery)
-and #168 (Telegram identity-pinning regression); no branch is represented
-as merged before its independent CI and review.
-None of these is claimed live in the
+The offline #25 Playwright CI smoke (PR #232), #227 synthetic adapter and
+IPC/STOP guards (PRs #233/#236), #228 restart/notice regressions (PR #231),
+and #168 Telegram identity pinning (PR #230) **are merged as code/tests**.
+This new optional Browser Worker runtime/image cut remains a separate
+unmerged candidate until its own exact-SHA CI and review. None proves a
+running browser sidecar, real Telegram dispatch or BETA installation on the
 droplet; see the [status table](docs/BETA_INTEGRATION_STATUS.md).
 
 `/data/boca.sqlite3` in `boca-socios_boca_data` is the delegated logical storage
