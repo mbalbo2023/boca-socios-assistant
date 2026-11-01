@@ -25,3 +25,17 @@ puede usar datos ficticios o agregados aprobados.
 
 Backup/restore sigue diferido por decisión del dueño. Ninguna prueba toca
 claves reales, host, Queue-it, Boca, Telegram ni otros proyectos.
+
+## Compatibilidad con migración Telegram 0007 (candidato #175)
+
+La proyección valida también el checksum exacto de la migración opt-in
+`0007_telegram_delivery.sql`, integrada por #162. Leer el ledger con un límite
+derivado del número de versiones reconocidas más una detecta una versión futura
+adicional; cada versión observada debe estar en la lista y conservar su hash.
+Esto permite consultar el mismo estado local después de preparar el outbox
+Telegram sin aceptar esquemas desconocidos ni modificar la DB por la lectura.
+La regresión usa SQLite temporal y comprueba tanto el caso 0007 válido como el
+checksum alterado y una versión 8 desconocida. Este cambio no configura bot,
+ejecuta la migración en el host, envía avisos ni prueba disponibilidad HTTP.
+Los resultados de CI y el SHA exacto se registran en el PR; documentación
+central y checkpoint se reconcilian por el responsable de integración.

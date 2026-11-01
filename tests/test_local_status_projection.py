@@ -10,6 +10,8 @@ from pathlib import Path
 import pytest
 
 from boca_socios.domain.policy import TicketIntent
+from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
+from boca_socios.notify.telegram_delivery import TelegramDeliveryCoordinator
 from boca_socios.panel.local_status import LocalStatusUnavailable, read_local_status
 from boca_socios.storage.database import Database
 
@@ -118,6 +120,32 @@ def test_unknown_or_modified_schema_fails_closed(tmp_path: Path, tamper: str) ->
             connection.execute("ALTER TABLE ticket_requests ADD COLUMN hidden TEXT")
     with pytest.raises(LocalStatusUnavailable, match="^local status unavailable$"):
         read_local_status(db.path, observed_at=NOW)
+
+
+@pytest.mark.parametrize("tamper", [None, "telegram_checksum", "future_version"])
+def test_telegram_migration_is_known_but_corruption_and_future_versions_fail_closed(
+    tmp_path: Path, tamper: str | None
+) -> None:
+    db = _database(tmp_path)
+    _intent(db, "private-member", "private-event")
+    # The opt-in migration uses only local SQLite; no sender is constructed or called.
+    outbox = SqliteNotificationOutbox(db)
+    TelegramDeliveryCoordinator(outbox, object(), lambda: NOW.timestamp()).prepare_storage()
+    with db.connection() as connection, connection:
+        connection.execute("UPDATE ticket_requests SET updated_at='2026-10-31 14:59:00'")
+        if tamper == "telegram_checksum":
+            connection.execute("UPDATE schema_migrations SET checksum='wrong' WHERE version=7")
+        elif tamper == "future_version":
+            connection.execute(
+                "INSERT INTO schema_migrations(version, checksum) VALUES (8, 'unknown')"
+            )
+    if tamper is None:
+        snapshot = read_local_status(db.path, observed_at=NOW)
+        assert snapshot.counts.local_planned == 1
+        assert snapshot.external_confirmation == "not_observed"
+    else:
+        with pytest.raises(LocalStatusUnavailable, match="^local status unavailable$"):
+            read_local_status(db.path, observed_at=NOW)
 
 
 @pytest.mark.parametrize("invalid", ["status", "timestamp", "future"])
