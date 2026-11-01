@@ -18,7 +18,7 @@ from threading import Event
 from urllib.parse import quote, urlsplit
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer
 
-from boca_socios.browser.contracts import SimulationOutcome
+from boca_socios.browser.contracts import SimulationOutcome, SyntheticBrowserPort
 from boca_socios.config import Settings
 from boca_socios.integration.bridge_client import SiteBridgeTransport, SiteBridgeWorker
 from boca_socios.integration.operational import (
@@ -173,8 +173,15 @@ class ServedBeta:
             self.runtime.close()
 
 
-def build_beta_server(settings: Settings) -> ServedBeta:
-    """Fail closed before opening a listener when owner identity is missing."""
+def build_beta_server(
+    settings: Settings, *, browser: SyntheticBrowserPort | None = None
+) -> ServedBeta:
+    """Serve only a trusted synthetic browser port, defaulting to inert local work.
+
+    Injection allows an independently confined, one-shot worker to be tested
+    against the existing command/DB lifecycle. It is never a public HTTP
+    parameter or an implicit host-side Chromium activation.
+    """
     settings.validate_beta()
     bridge_enabled = settings.validate_bridge()
     transport = None
@@ -208,7 +215,7 @@ def build_beta_server(settings: Settings) -> ServedBeta:
     runtime = LocalBetaRuntime.start(
         database_path=settings.db_path,
         key_file=settings.master_key_file,
-        browser=_LocalSyntheticBrowser(),
+        browser=browser if browser is not None else _LocalSyntheticBrowser(),
     )
     bridge: SiteBridgeWorker | None = None
     server: _TLSWSGIServer | _LoopbackHTTPWSGIServer | None = None
