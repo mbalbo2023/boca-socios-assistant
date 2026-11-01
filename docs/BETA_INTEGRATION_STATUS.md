@@ -2,26 +2,52 @@
 
 ## Estado vigente — 2026-10-31 (America/Argentina/Buenos_Aires)
 
-Base verificada: `main` `64fdda449045ed39bf3e2d152c97518eb7f835d0`.
+Base verificada: `main` `dc6c69f9746cc4514c7e268846dece9ff30842b5`.
 La release sigue en **simulación solamente**. Los merges no demuestran un host
 apto ni habilitan login, credenciales, cola, Telegram o reserva real.
 
 | Área | Estado vigente | Evidencia y límite |
 | --- | --- | --- |
 | Componentes offline | GO para revisión y pruebas sintéticas | #30/#34/#36 integraron contratos y outbox durable; #36 impide dos ejecuciones del navegador ficticio en una misma instancia; #38 agregó una concesión local SQLite, aún sin conexión a un flujo externo de reserva |
-| Panel y alta privada | NO_GO operativo | #29 sólo renderiza estados inyectados; #31 es un servicio interno sin endpoint; #110 integró una vista previa sintética, sin publicar un Site ni servir una ruta privada. #113 describe la consola compartible futura, que exige API Boca, identidad, TLS, sesión y CSRF |
+| Panel y alta privada | Demostración privada publicada; NO_GO operativo | #113 tiene un Site privado con datos sintéticos. #121 aporta lectura local agregada en modo read-only; no hay endpoint ni conexión al Site. #31 sigue como servicio interno. Falta una capa servidor mínima con identidad, permisos, TLS y protección de sesión/CSRF; no acceso del navegador al archivo SQLite |
 | Chromium y fuente pública | Sólo prueba offline y observación pública acotada | #43 arrancó/cerró Chromium sin egress y #44 midió un arranque, no capacidad del droplet ni visita real. #33 no se ejecutó contra Boca en este gate; #96 ofrece un semáforo manual asesor, no prueba de flujo autenticado |
 | Claves y recuperación | NO_GO para credenciales/rotación reales | #40 integró un recifrador interno dormido y migración 0004 opt-in; el runtime sigue en 0001. Pruebas sintéticas cubren transacción/rollback, escritor viejo, nueva clave, reinicio y DDL. Los triggers no cercan DELETE ni prueban por sí solos la posesión de la clave nueva; faltan coordinación de escritores y recuperación operativa. El dueño difirió backup/restore hasta versión productiva fiable; #47 es sólo biblioteca offline. Persisten canal privado, identidad y custodia de ADR 0012/0022 |
-| Controlador y host | NO_GO para dispatch | #79/#81 aislaron Docker rootless y clave; #89 ligó digest a release; #91 añadió inspección UID/capacidad; #97 limpieza selectiva. #116 verifica en CI red/cgroups efectivos y capacidad tras pull/up. Faltan identidad SSH, entorno protegido y pruebas reales de daemon, límites y espacio; ningún host se operó |
-| Release y calidad | GO sólo para CI offline | #99 rechaza reruns/main obsoleto; #117 rechaza dos dispatches nuevos del mismo SHA. #114/#116 exigen en CI 6 lecciones RCA y 15 selectores. No se publicó GHCR y un check verde no prueba el host |
+| Controlador y host | Inspección ejecutada; NO_GO instalación | #124 corrigió argv SSH. Run #70 pasó readiness, SHA y SSH; observó UID10001, runtime privado, user manager y D-Bus propios, socket rootful no escribible y controladores cpu/memory/pids. El socket rootless está ausente: falta distinguir daemon no instalado, detenido o fallando, y luego probar capacidad/aislamiento reales. #116 sólo aporta pruebas CI de límites/red y capacidad tras pull/up |
+| Release y calidad | GO para CI; host pendiente | #99 rechaza reruns/main obsoleto; #117 rechaza dispatches duplicados de release. #124 pasó 564 pruebas y deja 8 lecciones RCA/21 selectores. CI y escaneo de main son SUCCESS; no acreditan publicación GHCR, instalación ni runtime del droplet |
 | Reserva real | NO_GO | No hay cuenta autorizada, orden real de login/cola/eligibilidad, confirmación de Boca ni conciliación externa de un resultado ambiguo; una intención local `planned` no es ticket |
 
 Cada PR necesita revisión técnica registrada del agente, checks exactos y
 conversaciones resueltas. ADR 0038 no exige una aprobación humana adicional.
-La única operación futura de host sería manual por Actions con sus gates
-comprobados; un merge o un semáforo público no la dispara. La BETA de
+Las operaciones de host usan el workflow manual Actions con sus gates
+comprobados; un merge o un semáforo público no las dispara. La BETA de
 simulación y el alta real tienen puertas distintas: postergar backup/restore
 no convierte la primera en un bloqueo ni autoriza la segunda.
+
+### Ubicación de datos y significado del primer despliegue
+
+Compose configura `/data/boca.sqlite3` dentro del controlador y monta `/data`
+desde el volumen persistente `boca-socios_boca_data`. Es una configuración,
+no evidencia de que ese archivo o volumen ya exista en el droplet. La
+inspección #70 no ejecutó Docker ni inventarió datos. Las bases temporales de
+CI tampoco son una base operativa del servicio.
+
+El runtime actual valida la clave, aplica la migración inicial y espera con
+`engine=off` y `site_calls=0`. Un primer controlador saludable demostrará ese
+alcance, no una BETA funcional: faltan coordinación de módulos, guardia durable
+conectada, interfaz autenticada, transporte de notificaciones y las pruebas
+correspondientes. La API mínima puede pertenecer al mismo backend; no requiere
+un sistema independiente ni bloquea validar primero el controlador dormido.
+
+La siguiente secuencia del host es diagnóstico del rootless ausente →
+preflight apto → release por digest/manifiesto → instalación → postflight.
+Código, pruebas y documentación de ámbitos independientes avanzan en paralelo;
+fusiones y operaciones host permanecen serializadas. No se recrean secretos
+SSH ni se relajan los gates para ocultar una carencia real del host.
+
+Evidencia: [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551007644),
+[run #70](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41255522108),
+[CI main](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41255414416)
+y [escaneo main](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41255414443).
 
 ## Registro histórico del candidato #24
 
