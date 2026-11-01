@@ -25,6 +25,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
+from time import monotonic, sleep
 from urllib.parse import urlsplit
 
 ROOT = Path("/srv/boca-socios")
@@ -34,6 +35,11 @@ PROJECT = "boca-socios"
 DATA_VOLUME = "boca-socios_boca_data"
 KEY_VOLUME = "boca-socios_boca_key"
 OWNER_VOLUME = "boca-socios_boca_owner"
+ENROLL_STAGE = Path("/run/enrollment")
+ENROLL_VOLUME = "boca-socios_owner_enroll_staging"
+ENROLL_MARKER = ROOT / "owner-enroll-attempt.json"
+ENROLL_NETWORK = "boca-socios_owner_enroll_private"
+ENROLL_CONTAINER = "boca-socios-owner-enroll-1"
 TELEGRAM_VOLUME = "boca-socios_boca_telegram"
 TELEGRAM_NETWORK = "boca-socios_telegram_egress"
 TELEGRAM_TEST_NAME = "boca-socios-telegram-test-1"
@@ -313,7 +319,12 @@ def validate_docker_boundary(snapshot: DockerBoundarySnapshot) -> None:
         raise PreflightError("rootless CPU, memory and PID controllers must be delegated")
 
 
-def _run(*args: str, env: dict[str, str] | None = None, input_data: str | None = None) -> str:
+def _run(
+    *args: str,
+    env: dict[str, str] | None = None,
+    input_data: str | None = None,
+    timeout: float = 120,
+) -> str:
     run_env = env
     if args[0] == "docker":
         # SSH environment and Docker CLI context must never redirect host
@@ -331,7 +342,7 @@ def _run(*args: str, env: dict[str, str] | None = None, input_data: str | None =
             check=True,
             text=True,
             capture_output=True,
-            timeout=120,
+            timeout=timeout,
             env=run_env,
             input=input_data,
         )
@@ -1286,7 +1297,7 @@ def _owner_receipt(output: str, operation: str) -> str:
 
 
 def _owner_container(image: str, operation: str, origin: str, subject: str) -> tuple[str, ...]:
-    if operation not in {"prepare", "install", "verify"}:
+    if operation not in {"prepare", "inspect-prepared", "install", "install-staged", "verify"}:
         raise PreflightError("unknown owner custody operation")
     _validate_owner_context(origin, subject)
     return (
@@ -1315,7 +1326,15 @@ def _owner_container(image: str, operation: str, origin: str, subject: str) -> t
         "/tmp:rw,noexec,nosuid,size=4m",  # noqa: S108 - bounded memory-only proof
         "--mount",
         f"type=volume,source={OWNER_VOLUME},target=/run/owner,volume-nocopy"
-        + (",readonly" if operation == "verify" else ""),
+        + (",readonly" if operation in {"verify", "inspect-prepared"} else ""),
+        *(
+            (
+                "--mount",
+                f"type=volume,source={ENROLL_VOLUME},target=/run/enrollment,volume-nocopy,readonly",
+            )
+            if operation == "install-staged"
+            else ()
+        ),
         image,
         "python",
         "-m",
@@ -1323,6 +1342,486 @@ def _owner_container(image: str, operation: str, origin: str, subject: str) -> t
         operation,
         origin,
         subject,
+    )
+
+
+def _owner_enroll_container(
+    image: str, source_sha: str, subject: str, digest: str, public: str, fingerprint: str
+) -> tuple[str, ...]:
+    """HTTP only sees its own disposable ciphertext staging, never private volumes."""
+    _validate_owner_context("http://localhost:8443", subject)
+    if (
+        IMAGE_PATTERN.fullmatch(image) is None
+        or SHA_PATTERN.fullmatch(source_sha) is None
+        or DIGEST_PATTERN.fullmatch(digest) is None
+        or re.fullmatch(r"[A-Za-z0-9_-]{43}", public) is None
+        or DIGEST_PATTERN.fullmatch(fingerprint) is None
+    ):
+        raise PreflightError("owner enrollment coordinates invalid")
+    return (
+        "docker",
+        "run",
+        "--detach",
+        "--pull",
+        "never",
+        "--name",
+        ENROLL_CONTAINER,
+        "--label",
+        f"com.docker.compose.project={PROJECT}",
+        "--label",
+        "com.docker.compose.service=owner-enroll",
+        "--label",
+        f"org.opencontainers.image.revision={source_sha}",
+        "--user",
+        "10001:10001",
+        "--network",
+        ENROLL_NETWORK,
+        "--publish",
+        "127.0.0.1:8443:8443/tcp",
+        "--restart",
+        "no",
+        "--no-healthcheck",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--pids-limit",
+        "32",
+        "--memory",
+        "128m",
+        "--cpus",
+        "0.50",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=4m",  # noqa: S108 - bounded in-memory scratch
+        "--mount",
+        f"type=volume,source={ENROLL_VOLUME},target=/run/enrollment,volume-nocopy",
+        image,
+        "python",
+        "-m",
+        "boca_socios.owner_enrollment",
+        subject,
+        digest,
+        public,
+        fingerprint,
+    )
+
+
+def _owner_enroll_init_container(image: str) -> tuple[str, ...]:
+    """Prepare only the new disposable volume's container-UID ownership."""
+    if IMAGE_PATTERN.fullmatch(image) is None:
+        raise PreflightError("temporary Boca image invalid")
+    return (
+        "docker",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--user",
+        "0:0",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "CHOWN",
+        "--security-opt",
+        "no-new-privileges",
+        "--pids-limit",
+        "16",
+        "--memory",
+        "64m",
+        "--cpus",
+        "0.25",
+        "--mount",
+        f"type=volume,source={ENROLL_VOLUME},target=/run/enrollment,volume-nocopy",
+        image,
+        "python",
+        "-c",
+        "import os; os.chmod('/run/enrollment',0o700); os.chown('/run/enrollment',10001,10001)",
+    )
+
+
+def _owner_enroll_volume() -> None:
+    """Prove the temporary staging volume cannot redirect into any host path."""
+    volume = _json_object(
+        _run("docker", "volume", "inspect", "--format", "{{json .}}", ENROLL_VOLUME),
+        "owner enrollment volume",
+    )
+    root = Path(_run("docker", "info", "--format", "{{.DockerRootDir}}"))
+    expected = root / "volumes" / ENROLL_VOLUME / "_data"
+    labels = volume.get("Labels")
+    if (
+        volume.get("Name") != ENROLL_VOLUME
+        or volume.get("Driver") != "local"
+        or volume.get("Scope") != "local"
+        or volume.get("Options") not in (None, {})
+        or not root.is_absolute()
+        or root == Path("/")
+        or volume.get("Mountpoint") != str(expected)
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.volume") != "owner_enroll_staging"
+    ):
+        raise PreflightError("temporary Boca volume identity unverified")
+    try:
+        if root.resolve(strict=True) != root or expected.resolve(strict=True) != expected:
+            raise PreflightError("temporary Boca volume path redirected")
+    except (OSError, RuntimeError) as exc:
+        raise PreflightError("temporary Boca volume path unavailable") from exc
+
+
+def _owner_enroll_preflight(image: str, source_sha: str, origin: str, subject: str) -> None:
+    """Refuse unrelated state before the first disposable Boca side effect."""
+    _validate_owner_context(origin, subject)
+    if IMAGE_PATTERN.fullmatch(image) is None or SHA_PATTERN.fullmatch(source_sha) is None:
+        raise PreflightError("owner enrollment release coordinates invalid")
+    if not _safe_dir(ROOT) or any(ROOT.iterdir()):
+        raise PreflightError("Boca enrollment staging directory must be empty")
+    _site_daemon_empty()
+    volumes = _names("volume", "name=^boca-socios_")
+    validate_site_snapshot(collect_snapshot(), volumes, require_owner=True)
+    if volumes != {OWNER_VOLUME} or _names("network", "name=^boca-socios_"):
+        raise PreflightError("owner enrollment requires its existing private owner volume only")
+    _validate_owner_volume()
+    if _run("docker", "ps", "-a", "-q", "--filter", f"volume={OWNER_VOLUME}"):
+        raise PreflightError("owner volume is attached to a container")
+    _validate_storage_capacity(_storage_snapshot())
+
+
+def _owner_enroll_port_free() -> bool:
+    """An instant non-listening bind; port collision never authorizes eviction."""
+    _require_dedicated_identity()
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 8443))
+    except OSError:
+        return False
+    return True
+
+
+def _owner_enroll_image_preexisting(image: str) -> bool:
+    """Only an exact image-inspect absence proves a new pull is disposable.
+
+    An image-list digest display may omit a reference that already exists.
+    All other Docker errors fail closed before the attempt marker is written.
+    """
+    if IMAGE_PATTERN.fullmatch(image) is None:
+        raise PreflightError("owner enrollment image invalid")
+    try:
+        _run("docker", "image", "inspect", "--format", "{{json .}}", image)
+    except PreflightError as exc:
+        cause = exc.__cause__
+        if (
+            isinstance(cause, subprocess.CalledProcessError)
+            and cause.returncode != 0
+            and isinstance(cause.stderr, str)
+            and re.search(
+                r"(?:^|: )No such image: " + re.escape(image) + r"\s*\Z",
+                cause.stderr,
+            )
+        ):
+            return False
+        raise
+    return True
+
+
+def _owner_enroll_write_marker(
+    image: str, source_sha: str, compose_sha: str, digest: str, existing_image: bool
+) -> None:
+    """Record exact provenance *before* pull; no bearer token is persisted."""
+    record = {
+        "image": image,
+        "source_sha": source_sha,
+        "compose_sha": compose_sha,
+        "capability_sha256": digest,
+        "image_preexisting": existing_image,
+    }
+    content = json.dumps(record, sort_keys=True, separators=(",", ":")).encode("ascii")
+    try:
+        fd = os.open(
+            ENROLL_MARKER,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+        )
+        with os.fdopen(fd, "wb") as output:
+            output.write(content)
+            output.flush()
+            os.fchmod(output.fileno(), 0o400)
+            os.fsync(output.fileno())
+        directory = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except OSError as exc:
+        raise PreflightError("owner enrollment attempt marker is unavailable") from exc
+
+
+def _owner_enroll_read_marker(image: str, source_sha: str, compose_sha: str, digest: str) -> bool:
+    """Exact regular-file identity is required before offline import."""
+    try:
+        fd = os.open(ENROLL_MARKER, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        with os.fdopen(fd, "rb") as item:
+            metadata = os.fstat(item.fileno())
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != 10001
+                or metadata.st_nlink != 1
+                or stat.S_IMODE(metadata.st_mode) != 0o400
+                or metadata.st_size > 1024
+            ):
+                raise PreflightError("owner enrollment marker identity changed")
+            raw = item.read(1025)
+        record = json.loads(raw)
+    except (OSError, ValueError, TypeError) as exc:
+        raise PreflightError("owner enrollment marker unavailable") from exc
+    expected = {
+        "image": image,
+        "source_sha": source_sha,
+        "compose_sha": compose_sha,
+        "capability_sha256": digest,
+    }
+    if (
+        not isinstance(record, dict)
+        or {key: record.get(key) for key in expected} != expected
+        or set(record) != set(expected) | {"image_preexisting"}
+        or type(record.get("image_preexisting")) is not bool
+        or json.dumps(record, sort_keys=True, separators=(",", ":")).encode("ascii") != raw
+    ):
+        raise PreflightError("owner enrollment marker provenance changed")
+    return bool(record["image_preexisting"])
+
+
+def _owner_enroll_container_state(image: str, source_sha: str) -> tuple[str, bool, int]:
+    """Positive identity from the *entire* dedicated daemon, not a label filter alone."""
+    ids = _run("docker", "ps", "-a", "-q", "--no-trunc").splitlines()
+    if len(ids) != 1 or re.fullmatch(r"[0-9a-f]{64}", ids[0]) is None:
+        raise PreflightError("temporary Boca container inventory unverified")
+    container = ids[0]
+    record = _json_object(
+        _run("docker", "container", "inspect", "--format", "{{json .}}", container),
+        "owner enrollment container",
+    )
+    config, host, state = record.get("Config"), record.get("HostConfig"), record.get("State")
+    network_settings = record.get("NetworkSettings")
+    mounts = record.get("Mounts")
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    if (
+        record.get("Id") != container
+        or record.get("Name") != "/" + ENROLL_CONTAINER
+        or not isinstance(config, dict)
+        or config.get("Image") != image
+        or config.get("User") != "10001:10001"
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.service") != "owner-enroll"
+        or labels.get("org.opencontainers.image.revision") != source_sha
+        or not isinstance(host, dict)
+        or host.get("NetworkMode") != ENROLL_NETWORK
+        or host.get("PortBindings") != {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
+        or host.get("ReadonlyRootfs") is not True
+        or host.get("Privileged") is not False
+        or host.get("CapDrop") != ["ALL"]
+        or host.get("PidsLimit") != 32
+        or host.get("Memory") != 128 * 1024**2
+        or host.get("NanoCpus") != 500_000_000
+        or not isinstance(network_settings, dict)
+        or not isinstance(network_settings.get("Networks"), dict)
+        or set(network_settings["Networks"]) != {ENROLL_NETWORK}
+        or not isinstance(state, dict)
+        or type(state.get("Running")) is not bool
+        or state.get("Restarting") is not False
+        or type(state.get("ExitCode")) is not int
+        or not isinstance(mounts, list)
+        or len(mounts) != 1
+        or mounts[0].get("Type") != "volume"
+        or mounts[0].get("Name") != ENROLL_VOLUME
+        or mounts[0].get("Destination") != "/run/enrollment"
+        or mounts[0].get("RW") is not True
+    ):
+        raise PreflightError("temporary Boca container identity or exposure unverified")
+    return container, state["Running"], state["ExitCode"]
+
+
+def _owner_enroll_network(container: str) -> None:
+    names = _names("network", "name=^boca-socios_")
+    if names != {ENROLL_NETWORK}:
+        raise PreflightError("temporary Boca network inventory unverified")
+    record = _json_object(
+        _run("docker", "network", "inspect", "--format", "{{json .}}", ENROLL_NETWORK),
+        "owner enrollment network",
+    )
+    labels, peers = record.get("Labels"), record.get("Containers")
+    if (
+        record.get("Name") != ENROLL_NETWORK
+        or record.get("Driver") != "bridge"
+        or record.get("Internal") is not True
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.network") != "owner_enroll_private"
+        or not isinstance(peers, dict)
+        or set(peers) - {container}
+    ):
+        raise PreflightError("temporary Boca network isolation unverified")
+
+
+def _owner_enroll_ready() -> bool:
+    """GET only the verified local Boca listener; no bearer token in this probe."""
+    try:
+        connection = http.client.HTTPConnection("127.0.0.1", 8443, timeout=2)
+        try:
+            connection.request("GET", "/activar", headers={"Host": "localhost:8443"})
+            response = connection.getresponse()
+            return (
+                response.status == 200
+                and response.getheader("Cache-Control") == "no-store"
+                and len(response.read(16_385)) <= 16_384
+            )
+        finally:
+            connection.close()
+    except (OSError, http.client.HTTPException):
+        return False
+
+
+def _owner_enroll_start(
+    image: str, source_sha: str, origin: str, subject: str, digest: str, compose_sha: str = ""
+) -> None:
+    if DIGEST_PATTERN.fullmatch(digest) is None:
+        raise PreflightError("owner capability digest must be SHA-256 hex")
+    _owner_enroll_preflight(image, source_sha, origin, subject)
+    if not _owner_enroll_port_free():
+        raise PreflightError("Boca loopback port 8443 BUSY; no occupant changed")
+    before = _storage_snapshot()
+    existing_image = _owner_enroll_image_preexisting(image)
+    _owner_enroll_write_marker(image, source_sha, compose_sha, digest, existing_image)
+    _run("docker", "pull", image)
+    digests = json.loads(
+        _run("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image)
+    )
+    revision = _run(
+        "docker",
+        "image",
+        "inspect",
+        "--format",
+        '{{index .Config.Labels "org.opencontainers.image.revision"}}',
+        image,
+    )
+    if not isinstance(digests, list) or image not in digests or revision != source_sha:
+        raise PreflightError("owner enrollment image differs from reviewed release")
+    _validate_storage_continuity(before, _storage_snapshot())
+    receipt = _owner_receipt(
+        _run(*_owner_container(image, "inspect-prepared", origin, subject)), "prepare"
+    )
+    match = re.fullmatch(
+        r"BOCA_OWNER_BOOTSTRAP state=ALREADY_PREPARED public_key=([A-Za-z0-9_-]{43}) fingerprint=([0-9a-f]{64})",
+        receipt,
+    )
+    if match is None:
+        raise PreflightError("owner X25519 recipient must be prepared before enrollment")
+    _site_daemon_empty()
+    _validate_owner_volume()
+    created = _run(
+        "docker",
+        "volume",
+        "create",
+        "--driver",
+        "local",
+        "--label",
+        f"com.docker.compose.project={PROJECT}",
+        "--label",
+        "com.docker.compose.volume=owner_enroll_staging",
+        ENROLL_VOLUME,
+    )
+    if created != ENROLL_VOLUME:
+        raise PreflightError("temporary Boca staging volume creation unverified")
+    _owner_enroll_volume()
+    if _run(*_owner_enroll_init_container(image)):
+        raise PreflightError("temporary Boca staging ownership preparation unverified")
+    _owner_enroll_volume()
+    network = _run(
+        "docker",
+        "network",
+        "create",
+        "--driver",
+        "bridge",
+        "--internal",
+        "--label",
+        f"com.docker.compose.project={PROJECT}",
+        "--label",
+        "com.docker.compose.network=owner_enroll_private",
+        ENROLL_NETWORK,
+    )
+    if re.fullmatch(r"[0-9a-f]{64}", network) is None:
+        raise PreflightError("temporary Boca network creation unverified")
+    _owner_enroll_network("")
+    launched = _run(
+        *_owner_enroll_container(image, source_sha, subject, digest, match[1], match[2])
+    )
+    if re.fullmatch(r"[0-9a-f]{64}", launched) is None:
+        raise PreflightError("temporary Boca container launch unverified")
+    container, running, _ = _owner_enroll_container_state(image, source_sha)
+    if launched != container or not running:
+        raise PreflightError("temporary Boca enrollment listener did not start")
+    _owner_enroll_network(container)
+    deadline = monotonic() + 10
+    while monotonic() < deadline:
+        if _owner_enroll_ready():
+            print(
+                f"BOCA_OWNER_ENROLL state=READY address=127.0.0.1 port=8443 ttl=900 source_sha={source_sha}"
+            )
+            return
+        sleep(0.25)
+    raise PreflightError("temporary Boca enrollment listener not ready")
+
+
+def _owner_enroll_wait(
+    image: str, source_sha: str, compose_sha: str, origin: str, subject: str, digest: str
+) -> None:
+    """Wait for proof only; Actions must recheck current main before offline import."""
+    _validate_owner_context(origin, subject)
+    _owner_enroll_read_marker(image, source_sha, compose_sha, digest)
+    _validate_owner_volume()
+    container, running, _ = _owner_enroll_container_state(image, source_sha)
+    _owner_enroll_network(container)
+    if running:
+        # The dedicated HTTP process has its own 900-second monotonic deadline.
+        # Docker wait supplies a bounded additional host-side ceiling.
+        if _run("docker", "wait", container, timeout=930) != "0":
+            raise PreflightError("owner enrollment browser proof not completed")
+    stopped, running, exit_code = _owner_enroll_container_state(image, source_sha)
+    if stopped != container or running or exit_code != 0:
+        raise PreflightError("owner enrollment HTTP did not finish successfully")
+    _owner_enroll_network(container)
+    _owner_enroll_volume()
+    print(f"BOCA_OWNER_ENROLL state=PROOF_STAGED source_sha={source_sha}")
+
+
+def _owner_enroll_finish(
+    image: str, source_sha: str, compose_sha: str, origin: str, subject: str, digest: str
+) -> None:
+    """Offline import requires a successful prior wait and current-main recheck."""
+    _validate_owner_context(origin, subject)
+    _owner_enroll_read_marker(image, source_sha, compose_sha, digest)
+    _validate_owner_volume()
+    container, running, exit_code = _owner_enroll_container_state(image, source_sha)
+    if running or exit_code != 0:
+        raise PreflightError("owner enrollment HTTP proof not staged successfully")
+    _owner_enroll_network(container)
+    _owner_enroll_volume()
+    _validate_owner_volume()
+    receipt = _owner_receipt(
+        _run(*_owner_container(image, "install-staged", origin, subject)),
+        "install",
+    )
+    verified = _owner_receipt(_run(*_owner_container(image, "verify", origin, subject)), "verify")
+    fingerprint = receipt.rsplit("=", 1)[1]
+    if verified.rsplit("=", 1)[1] != fingerprint:
+        raise PreflightError("offline owner custody verification did not match installation")
+    _validate_owner_volume()
+    print(
+        f"BOCA_OWNER_ENROLL state=CONFIGURED_VERIFIED source_sha={source_sha} fingerprint={fingerprint}"
     )
 
 
@@ -2902,18 +3401,37 @@ def phase(
     expected_bot_id: str = "",
     expected_chat_hmac: str = "",
     owner_envelope: str = "",
+    enroll_digest: str = "",
 ) -> None:
     beta = phase_name.startswith("beta-")
     telegram = phase_name.startswith("telegram-")
     owner_custody = phase_name.startswith("owner-")
+    owner_enroll = phase_name in {
+        "owner-enroll-start",
+        "owner-enroll-wait",
+        "owner-enroll-finish",
+    }
     if owner_custody:
-        if phase_name not in {"owner-prepare", "owner-install", "owner-verify"}:
+        if phase_name not in {
+            "owner-prepare",
+            "owner-install",
+            "owner-verify",
+            "owner-enroll-start",
+            "owner-enroll-wait",
+            "owner-enroll-finish",
+        }:
             raise PreflightError("unknown owner custody phase")
         _validate_owner_context(envelope, beta_owner)
         if telegram_envelope or expected_bot_id or expected_chat_hmac:
             raise PreflightError("unexpected Telegram arguments in owner phase")
+        if owner_enroll and (DIGEST_PATTERN.fullmatch(enroll_digest) is None or owner_envelope):
+            raise PreflightError("owner capability digest must be SHA-256 hex")
+        if not owner_enroll and enroll_digest:
+            raise PreflightError("unexpected owner capability digest")
     elif owner_envelope:
         raise PreflightError("unexpected owner envelope outside owner phase")
+    elif enroll_digest:
+        raise PreflightError("unexpected owner capability digest")
     if beta:
         if phase_name not in {
             "beta-preflight",
@@ -2961,7 +3479,16 @@ def phase(
         return
     if owner_custody:
         _validate_docker_boundary()
-        _owner_phase(phase_name, image, source_sha, envelope, beta_owner, owner_envelope)
+        if phase_name == "owner-enroll-start":
+            _owner_enroll_start(image, source_sha, envelope, beta_owner, enroll_digest, compose_sha)
+        elif phase_name == "owner-enroll-wait":
+            _owner_enroll_wait(image, source_sha, compose_sha, envelope, beta_owner, enroll_digest)
+        elif phase_name == "owner-enroll-finish":
+            _owner_enroll_finish(
+                image, source_sha, compose_sha, envelope, beta_owner, enroll_digest
+            )
+        else:
+            _owner_phase(phase_name, image, source_sha, envelope, beta_owner, owner_envelope)
         return
     if beta:
         _validate_docker_boundary()
@@ -3115,6 +3642,9 @@ def main() -> int:
             "owner-prepare",
             "owner-install",
             "owner-verify",
+            "owner-enroll-start",
+            "owner-enroll-wait",
+            "owner-enroll-finish",
             "beta-preflight",
             "beta-stage",
             "beta-config",
@@ -3137,6 +3667,7 @@ def main() -> int:
     parser.add_argument("expected_bot_id", nargs="?", default="")
     parser.add_argument("expected_chat_hmac", nargs="?", default="")
     parser.add_argument("owner_envelope", nargs="?", default="")
+    parser.add_argument("enroll_digest", nargs="?", default="")
     args = parser.parse_args()
     try:
         phase(
@@ -3150,6 +3681,7 @@ def main() -> int:
             args.expected_bot_id,
             args.expected_chat_hmac,
             args.owner_envelope,
+            args.enroll_digest,
         )
     except (PreflightError, OSError, ValueError, TypeError, KeyError) as exc:
         print(f"BOCA_NO_GO: {exc}", file=sys.stderr)

@@ -8,7 +8,7 @@ on:
         description: Boca host operation; BETA install requires separate private owner/TLS and protected release gates
         required: true
         type: choice
-        options: [inspect-prerequisites, port-check, prepare-rootless, preflight, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, beta-install, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
+        options: [inspect-prerequisites, port-check, prepare-rootless, preflight, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
         description: Exact current main commit approved for the operation
         required: true
@@ -31,6 +31,10 @@ on:
         type: string
       owner_envelope:
         description: Owner-install only; sealed passkey/TLS JSON as unpadded base64url ciphertext
+        required: false
+        type: string
+      owner_capability_sha256:
+        description: Owner-enroll only; SHA-256 hex of a private 32-byte Chrome URL key, NEVER the bearer key
         required: false
         type: string
       service:
@@ -72,7 +76,7 @@ jobs:
           uv sync --frozen
       - name: Check dispatch and first-install boundaries offline
         run: |
-          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_loopback_port.py tests/test_host_beta_install.py tests/test_host_beta_cleanup.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_owner_bootstrap.py tests/test_host_owner_bootstrap.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_telegram_one_shot.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
+          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_loopback_port.py tests/test_host_beta_install.py tests/test_host_beta_cleanup.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_owner_bootstrap.py tests/test_host_owner_bootstrap.py tests/test_host_owner_enroll_lifecycle.py tests/test_host_owner_enroll_cleanup.py tests/test_host_operation_gate.py tests/test_main_ref_gate.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_telegram_one_shot.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
       - name: Validate optional served BETA Compose model without host access
         env:
@@ -179,6 +183,89 @@ jobs:
             "BOCA_OWNER_BOOTSTRAP state=VERIFIED fingerprint=$fingerprint"
           docker volume rm boca-socios_boca_owner
           rm -rf "$fixture"
+      - name: Smoke disposable Chrome listener and offline staged owner import
+        run: |
+          set -euo pipefail
+          stage=boca-socios_owner_enroll_staging
+          private_net=boca-socios_owner_enroll_private
+          temporary=boca-socios-owner-enroll-1
+          cleanup_enroll_smoke() {
+            docker container rm --force "$temporary" >/dev/null 2>&1 || true
+            docker network rm "$private_net" >/dev/null 2>&1 || true
+            docker volume rm "$stage" >/dev/null 2>&1 || true
+            docker volume rm boca-socios_boca_owner >/dev/null 2>&1 || true
+          }
+          test -z "$(docker ps -aq --filter "name=^/$temporary$")"
+          test -z "$(docker network ls -q --filter "name=^$private_net$")"
+          test -z "$(docker volume ls -q --filter "name=^$stage$")"
+          test -z "$(docker volume ls -q --filter 'name=^boca-socios_boca_owner$')"
+          trap cleanup_enroll_smoke EXIT
+          docker volume create --driver local \
+            --label com.docker.compose.project=boca-socios \
+            --label com.docker.compose.volume=boca_owner boca-socios_boca_owner
+          docker volume create --driver local \
+            --label com.docker.compose.project=boca-socios \
+            --label com.docker.compose.volume=owner_enroll_staging "$stage"
+          for volume in boca-socios_boca_owner "$stage"; do
+            mountpoint=/run/owner
+            if [[ "$volume" = "$stage" ]]; then mountpoint=/run/enrollment; fi
+            docker run --rm --pull never --user 0:0 --network none --read-only \
+              --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges \
+              --pids-limit 16 --memory 64m --cpus 0.25 \
+              --mount "type=volume,source=$volume,target=$mountpoint,volume-nocopy" \
+              "$BOCA_IMAGE" python -c 'import os,sys; os.chmod(sys.argv[1],0o700); os.chown(sys.argv[1],10001,10001)' "$mountpoint"
+          done
+          recipient="$(docker run --rm --pull never --user 10001:10001 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_owner,target=/run/owner,volume-nocopy \
+            "$BOCA_IMAGE" python -m boca_socios.owner_bootstrap prepare "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")"
+          [[ "$recipient" =~ ^BOCA_OWNER_BOOTSTRAP\ state=PREPARED\ public_key=([A-Za-z0-9_-]{43})\ fingerprint=([0-9a-f]{64})$ ]]
+          public="${BASH_REMATCH[1]}"
+          fingerprint="${BASH_REMATCH[2]}"
+          private_digest="$(python3 -c 'import hashlib; print(hashlib.sha256(bytes([7])*32).hexdigest())')"
+          docker network create --driver bridge --internal \
+            --label com.docker.compose.project=boca-socios \
+            --label com.docker.compose.network=owner_enroll_private "$private_net"
+          docker run --detach --pull never --name "$temporary" --user 10001:10001 \
+            --network "$private_net" --publish 127.0.0.1:8443:8443/tcp \
+            --restart no --no-healthcheck --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 32 --memory 128m --cpus 0.5 \
+            --mount "type=volume,source=$stage,target=/run/enrollment,volume-nocopy" \
+            "$BOCA_IMAGE" python -m boca_socios.owner_enrollment \
+            "$BOCA_OWNER_SUBJECT" "$private_digest" "$public" "$fingerprint"
+          ready=0
+          for attempt in {1..20}; do
+            if curl --noproxy '*' --silent --show-error --fail --max-time 2 \
+              --header 'Host: localhost:8443' http://127.0.0.1:8443/activar \
+              -o "$RUNNER_TEMP/boca-enroll-smoke.html"; then
+              ready=1
+              break
+            fi
+            sleep 0.25
+          done
+          test "$ready" -eq 1
+          grep -q 'navigator.credentials' "$RUNNER_TEMP/boca-enroll-smoke.html" || \
+            grep -q 'activar.js' "$RUNNER_TEMP/boca-enroll-smoke.html"
+          test -z "$(docker inspect --format '{{range .Mounts}}{{if eq .Name "boca-socios_boca_owner"}}owner{{end}}{{end}}' "$temporary")"
+          docker container stop --time 3 "$temporary" >/dev/null
+          docker container rm "$temporary" >/dev/null
+          docker run --rm --pull never --user 10001:10001 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount "type=volume,source=$stage,target=/run/enrollment,volume-nocopy" \
+            "$BOCA_IMAGE" python -c 'import os,sys; from pathlib import Path; from cryptography.hazmat.primitives.asymmetric import ec; from cryptography.hazmat.primitives import serialization; from boca_socios.owner_bootstrap import RecipientReceipt,seal_for_recipient,_directory,_write_new,UID; public=ec.generate_private_key(ec.SECP256R1()).public_key().public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo); payload=seal_for_recipient(RecipientReceipt("PREPARED",sys.argv[1],sys.argv[2]),{"credential_id":os.urandom(32),"public_key.der":public},sys.argv[3],sys.argv[4]); directory=_directory(Path("/run/enrollment"),UID); _write_new(directory,"owner-envelope.v2",payload,UID); os.close(directory)' \
+            "$public" "$fingerprint" "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT"
+          test "$(docker run --rm --pull never --user 10001:10001 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_owner,target=/run/owner,volume-nocopy \
+            --mount "type=volume,source=$stage,target=/run/enrollment,volume-nocopy,readonly" \
+            "$BOCA_IMAGE" python -m boca_socios.owner_bootstrap install-staged "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")" = \
+            "BOCA_OWNER_BOOTSTRAP state=CONFIGURED fingerprint=$fingerprint"
+          test "$(docker run --rm --pull never --user 10001:10001 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_owner,target=/run/owner,volume-nocopy,readonly \
+            "$BOCA_IMAGE" python -m boca_socios.owner_bootstrap verify "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")" = \
+            "BOCA_OWNER_BOOTSTRAP state=VERIFIED fingerprint=$fingerprint"
+          printf 'BOCA_ENROLL_SMOKE state=PASSED listener=127.0.0.1:8443 owner_mount=offline_only\n'
       - name: Exercise sealed Telegram custody in a disposable offline Boca volume
         run: |
           set -euo pipefail
@@ -423,7 +510,7 @@ jobs:
     name: approved-boca-manual-operation
     environment: boca-first-deploy
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
       actions: read
@@ -434,6 +521,7 @@ jobs:
       BOCA_SERVICE: ${{ inputs.service }}
       BOCA_BUDGET: ${{ inputs.resource_budget }}
       BOCA_RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+      BOCA_OWNER_CAPABILITY_SHA256: ${{ inputs.owner_capability_sha256 }}
     steps:
       - name: Require verified protected environment and matching main commit
         env:
@@ -456,6 +544,7 @@ jobs:
           test "$BOCA_BUDGET" = 0.5cpu-256m-64pids
           if [[ "$BOCA_OPERATION" != telegram-install ]]; then test -z "$BOCA_TELEGRAM_ENVELOPE"; fi
           if [[ "$BOCA_OPERATION" != owner-install ]]; then test -z "$BOCA_OWNER_ENVELOPE"; fi
+          if [[ "$BOCA_OPERATION" != owner-enroll ]]; then test -z "$BOCA_OWNER_CAPABILITY_SHA256"; fi
           case "$BOCA_OPERATION" in
             inspect-prerequisites|port-check|preflight)
               test "$BOCA_HOST_READONLY_ENV_READY" = ready
@@ -493,7 +582,7 @@ jobs:
               test -n "$BOCA_RELEASE_RUN_ID"
               test -n "$BOCA_SITE_ENVELOPE"
               ;;
-            owner-prepare|owner-verify|owner-install)
+            owner-prepare|owner-verify|owner-install|owner-enroll)
               test "$BOCA_DEPLOY_ENV_READY" = ready
               test -n "$BOCA_IMAGE_REF"
               test -n "$BOCA_RELEASE_RUN_ID"
@@ -502,6 +591,9 @@ jobs:
               test -z "$BOCA_SITE_ENVELOPE"
               if [[ "$BOCA_OPERATION" = owner-install ]]; then
                 test -n "$BOCA_OWNER_ENVELOPE"
+              fi
+              if [[ "$BOCA_OPERATION" = owner-enroll ]]; then
+                [[ "$BOCA_OWNER_CAPABILITY_SHA256" =~ ^[0-9a-f]{64}$ ]]
               fi
               ;;
             beta-install|beta-acceptance)
@@ -651,7 +743,7 @@ jobs:
             exit 1
           fi
       - name: Prepare, install or verify only Boca owner-volume public passkey custody
-        if: startsWith(inputs.operation, 'owner-')
+        if: inputs.operation == 'owner-prepare' || inputs.operation == 'owner-install' || inputs.operation == 'owner-verify'
         env:
           BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
@@ -675,6 +767,91 @@ jobs:
             exit 1
           fi
           printf 'Boca owner custody: `%s`. No BETA service started. Source: `%s`; image: `%s`.\n' "$receipt" "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" >> "$GITHUB_STEP_SUMMARY"
+      - name: Mark Chrome owner enrollment host stage attempt
+        id: boca_owner_enroll_attempt
+        if: inputs.operation == 'owner-enroll'
+        run: printf 'started=true\n' >> "$GITHUB_OUTPUT"
+      - name: Start disposable owner enrollment only on Boca loopback 8443
+        if: inputs.operation == 'owner-enroll'
+        env:
+          BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
+          BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
+        run: |
+          set +e
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - owner-enroll-start "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' '' "$BOCA_OWNER_CAPABILITY_SHA256")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-owner-enroll-start.receipt" 2>/dev/null
+          enroll_rc=$?
+          set -e
+          receipt=''
+          if [[ "$enroll_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-owner-enroll-start.receipt")"; fi
+          pattern='^BOCA_OWNER_ENROLL state=READY address=127[.]0[.]0[.]1 port=8443 ttl=900 source_sha=([0-9a-f]{40})$'
+          if [[ "$enroll_rc" -ne 0 || ${#receipt} -gt 200 || ! "$receipt" =~ $pattern || "${BASH_REMATCH[1]}" != "$BOCA_SOURCE_SHA" ]]; then
+            printf 'Boca owner enrollment: NO_GO before Chrome use. Immediate selective cleanup follows; no port occupant may be changed.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf 'Boca owner enrollment: `%s`. Open the previously generated private URL in Chrome through Termius now; this summary contains NO bearer key. TTL begins with the temporary server.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Wait only for one-use Chrome proof to reach offline staging
+        if: inputs.operation == 'owner-enroll'
+        env:
+          BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
+          BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
+        run: |
+          set +e
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - owner-enroll-wait "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' '' "$BOCA_OWNER_CAPABILITY_SHA256")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-owner-enroll-wait.receipt" 2>/dev/null
+          wait_rc=$?
+          set -e
+          receipt=''
+          if [[ "$wait_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-owner-enroll-wait.receipt")"; fi
+          pattern='^BOCA_OWNER_ENROLL state=PROOF_STAGED source_sha=([0-9a-f]{40})$'
+          if [[ "$wait_rc" -ne 0 || ${#receipt} -gt 160 || ! "$receipt" =~ $pattern || "${BASH_REMATCH[1]}" != "$BOCA_SOURCE_SHA" ]]; then
+            printf 'Boca owner enrollment: Chrome proof NO_GO; no staged credential imported; immediate selective cleanup follows.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf 'Boca owner enrollment: Chrome proof staged; final main recheck required before offline custody. No bearer or ciphertext recorded.\n' >> "$GITHUB_STEP_SUMMARY"
+      - name: Recheck current main after Chrome proof before owner private-key import
+        if: inputs.operation == 'owner-enroll'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-owner-after-proof.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-owner-after-proof.json" "$BOCA_SOURCE_SHA"
+      - name: Finish one-use Chrome enrollment with offline owner custody
+        if: inputs.operation == 'owner-enroll'
+        env:
+          BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
+          BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
+        run: |
+          set +e
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - owner-enroll-finish "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' '' "$BOCA_OWNER_CAPABILITY_SHA256")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-owner-enroll-finish.receipt" 2>/dev/null
+          finish_rc=$?
+          set -e
+          receipt=''
+          if [[ "$finish_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-owner-enroll-finish.receipt")"; fi
+          pattern='^BOCA_OWNER_ENROLL state=CONFIGURED_VERIFIED source_sha=([0-9a-f]{40}) fingerprint=([0-9a-f]{64})$'
+          if [[ "$finish_rc" -ne 0 || ${#receipt} -gt 200 || ! "$receipt" =~ $pattern || "${BASH_REMATCH[1]}" != "$BOCA_SOURCE_SHA" ]]; then
+            printf 'Boca owner enrollment: NO_GO; Chrome proof or offline custody unverified. Cleanup follows; existing owner material is preserved.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf 'Boca owner enrollment: `%s`; real tablet credential persistence remains a physical acceptance check. Cleanup follows.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Clean Boca-only disposable owner enrollment artifacts
+        if: always() && inputs.operation == 'owner-enroll' && steps.boca_owner_enroll_attempt.outputs.started == 'true'
+        run: |
+          set +e
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - --enroll "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_cleanup.py > "$RUNNER_TEMP/boca-owner-enroll-cleanup.receipt" 2>/dev/null
+          cleanup_rc=$?
+          set -e
+          receipt=''
+          if [[ "$cleanup_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-owner-enroll-cleanup.receipt")"; fi
+          pattern='^BOCA_OWNER_ENROLL_CLEANUP state=(CLEANED|ALREADY_CLEAN) container=(removed|absent) network=(removed|absent) image=(removed|retained|absent) stage=(removed|absent) marker=(removed|absent) volumes=preserved( [a-z_]+=[a-z0-9_]+)*$'
+          if [[ "$cleanup_rc" -ne 0 || ${#receipt} -gt 700 || ! "$receipt" =~ $pattern ]]; then
+            printf 'Boca owner enrollment cleanup: NO_GO INDETERMINADO; original result remains failed; fresh Boca-only inventory required, no retry.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf 'Boca owner enrollment selective cleanup: `%s`. Owner/key/data and all foreign resources preserved.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
       - name: Stop only Boca services and daemon after owner custody
         if: always() && startsWith(inputs.operation, 'owner-') && steps.boca_owner_attempt.outputs.started == 'true'
         run: |

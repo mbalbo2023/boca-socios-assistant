@@ -58,8 +58,9 @@ infrastructure**.
   `beta-acceptance` #200 contracts were tested on disposable runners. The
   model was integrated in PR #224/ADR0091 with certificate-free HTTP only
   on Boca host loopback behind SSH, with a private owner volume; no droplet
-  install occurred. The isolated one-use browser enrollment candidate #225
-  uses separate temporary encrypted staging, not that private volume.
+  install occurred. The isolated one-use browser enrollment host-PR candidate
+  #225 uses a disposable named Docker staging volume, not the private owner
+  volume; its protected workflow and selective cleanup remain unmerged.
 - CI: pinned checkout/setup actions, frozen dependency lock, lint, format,
   strict typing, tests, image build and repository-isolation checks.
 - Delivery: small PRs, recorded agent technical review, exact-SHA status
@@ -98,9 +99,12 @@ one-time activation URL must instead be served from the droplet on the same
 isolated Boca port, with a privately delivered single-use key. The #225/ADR0092
 core candidate implements the **unserved** `/activar#key=…` browser flow and
 WebAuthn proof, producing a v2 encrypted envelope in a separate disposable
-staging volume without mounting the owner's X25519 private key. Protected
-Actions host orchestration, cleanup and offline owner install remain to be
-implemented and reviewed. Synthetic tests cannot establish physical
+staging volume without mounting the owner's X25519 private key. The #225
+host-PR candidate adds `owner-enroll` to the **existing** protected Actions
+workflow with positive rootless/volume checks, offline `install-staged`,
+same-job selective cleanup after every attempted stage and a disposable
+runner smoke. **It is not yet merged or executed on the droplet.** Synthetic
+tests cannot establish physical
 owner verification, private capability handoff or iOS use; no real credential
 or host owner-install is claimed.
 The #217 correction requires a discoverable passkey during local enrollment.
@@ -124,6 +128,10 @@ custody and global daemon inventory checks, but no Site host phase ran.
 Telegram's opt-in worker #188, safe stop recognition #194, sealed helper #199,
 protected schema/custody #203 and one-shot Bot API test #204 are integrated,
 with no host dispatch, configured bot, verified destination or real send.
+Parallel first-BETA candidates include #227 (isolated synthetic Chromium
+worker), #25 (offline Playwright CI), #228 (HTTP restart/notice recovery)
+and #168 (Telegram identity-pinning regression); no branch is represented
+as merged before its independent CI and review.
 None of these is claimed live in the
 droplet; see the [status table](docs/BETA_INTEGRATION_STATUS.md).
 

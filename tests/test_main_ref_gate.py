@@ -53,7 +53,9 @@ def test_current_main_and_first_attempt_are_checked_before_ssh_and_apply() -> No
         for start in range(len(workflow))
         if workflow.startswith("python scripts/check_main_ref.py", start)
     ]
-    assert len(checks) == 13
+    # The second owner-enrollment main recheck is intentionally after the
+    # 15-minute browser proof and before any private-key import.
+    assert len(checks) == 14
     assert checks[0] < workflow.index("Configure pinned SSH host key")
     assert (
         workflow.index("Recheck current main before Site custody operation")
@@ -66,52 +68,57 @@ def test_current_main_and_first_attempt_are_checked_before_ssh_and_apply() -> No
         < workflow.index("Prepare, install or verify only Boca owner-volume public passkey custody")
     )
     assert (
-        workflow.index("Check prerequisites for dedicated rootless service preparation")
+        workflow.index("Recheck current main after Chrome proof before owner private-key import")
         < checks[3]
+        < workflow.index("Finish one-use Chrome enrollment with offline owner custody")
+    )
+    assert (
+        workflow.index("Check prerequisites for dedicated rootless service preparation")
+        < checks[4]
         < workflow.index("Prepare only dedicated Boca rootless user service")
     )
     assert (
         workflow.index("Recheck current main before stopping Boca tests")
-        < checks[4]
+        < checks[5]
         < workflow.index("Stop and verify dedicated Boca test services")
     )
     assert (
         workflow.index("Read-only host capacity and Boca namespace before first install")
-        < checks[5]
+        < checks[6]
         < workflow.index("Stage only reviewed Boca Compose file")
     )
     assert (
         workflow.index("Validate resolved host Compose model")
-        < checks[6]
+        < checks[7]
         < workflow.index("Pull verified digest and start only Boca controller")
     )
     assert (
         workflow.index("Read-only BETA capacity, owner custody and empty app namespace")
-        < checks[7]
+        < checks[8]
         < workflow.index("Stage only reviewed served BETA Compose file")
     )
     assert (
         workflow.index("Validate resolved served BETA host Compose model")
-        < checks[8]
+        < checks[9]
         < workflow.index("Initialize new-only BETA and start isolated controller")
     )
     assert (
         workflow.index("Recheck current main before BETA acceptance")
-        < checks[9]
+        < checks[10]
         < workflow.index("Mark protected BETA acceptance host attempt")
     )
     assert (
         workflow.index("Stop positively identified Boca services after BETA acceptance")
-        < checks[10]
+        < checks[11]
         < workflow.rindex('boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py')
     )
     assert (
         workflow.index("Recheck current main before Telegram post-install custody")
-        < checks[11]
+        < checks[12]
         < workflow.index("Mark Telegram host attempt before starting existing Boca daemon")
     )
     assert (
         workflow.index("Stop positively identified Boca services after Telegram custody")
-        < checks[12]
+        < checks[13]
         < workflow.rindex('boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py')
     )
