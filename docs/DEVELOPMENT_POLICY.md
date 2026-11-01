@@ -6,9 +6,10 @@ Past incident classes include accidental deploy on documentation changes,
 overlapping writers and deployment leases, status gates being skipped,
 SQLite writer contention, excessive disk/memory pressure and the danger
 of mistaking a green CI unit test for a verified live deployment.
-The current main has no remote deployment workflow. A reviewed, manual Boca
-Actions workflow may later run autonomously under the owner's standing
-direction after its objective gates are satisfied.
+The reviewed manual Boca Actions workflow is the sole remote operation path.
+It may run autonomously under the owner's standing direction after its
+operation-specific gates are satisfied. Read-only inspection has executed;
+this does not establish that installation prerequisites or runtime are ready.
 
 ## Branch protection contract
 
@@ -56,7 +57,7 @@ main is protected before verifying GitHub's **actual ruleset state**. See
 
 ## No parallel deployment paths
 
-There must be **exactly one** future controlled deploy workflow. Never add
+There must remain **exactly one** controlled deploy workflow. Never add
 automatic push-based deployment, personal SSH procedures, host cron jobs,
 any unrelated deployment integration or Docker cleanup of another project.
 If a proposed feature requires any of those, stop for an architecture review.
@@ -88,4 +89,3 @@ from its single full-suite run; a listed test that did not execute and pass,
 or a removed accepted lesson/test, fails the gate. A changed finding needs
 another reviewed PR with new evidence. No automated finding edits code,
 merges a PR or dispatches deployment. See ADR 0044.
-

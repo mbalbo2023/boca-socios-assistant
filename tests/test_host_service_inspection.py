@@ -42,15 +42,22 @@ def test_service_probe_uses_only_fixed_user_unit_and_private_bus() -> None:
     assert "load=loaded active=failed sub=failed result=exit-code" in report
     assert "docker=available dockerd=available wrapper=available setup=available" in report
     args, kwargs = run.call_args
-    assert args == ((
-        "/usr/bin/systemctl", "--user", "--no-pager", "show", "docker.service",
+    command = (
+        "/usr/bin/systemctl",
+        "--user",
+        "--no-pager",
+        "show",
+        "docker.service",
         "--property=LoadState,ActiveState,SubState,Result",
-    ),)
+    )
+    assert args == (command,)
     assert kwargs["timeout"] == 5
     assert kwargs["check"] is True
     assert kwargs["stderr"] == subprocess.DEVNULL
     assert kwargs["env"] == {
-        "PATH": "/usr/bin:/bin", "LC_ALL": "C", "XDG_RUNTIME_DIR": "/run/user/10001",
+        "PATH": "/usr/bin:/bin",
+        "LC_ALL": "C",
+        "XDG_RUNTIME_DIR": "/run/user/10001",
         "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/10001/bus",
     }
 

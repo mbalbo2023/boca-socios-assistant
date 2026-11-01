@@ -408,6 +408,7 @@ def test_inspection_reports_unproven_rootless_without_docker_or_host_mutation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _dedicated_test_identity(monkeypatch)
+    monkeypatch.setattr(host, "_rootless_service_metadata", lambda _ready: "BOCA_ROOTLESS_SERVICE stub")
     runtime = tmp_path / "runtime"
     runtime.mkdir(mode=0o700)
     monkeypatch.setattr(host, "ROOTLESS_SOCKET", runtime / "docker.sock")
@@ -431,6 +432,7 @@ def test_inspection_under_boca_uid_reports_only_metadata_candidate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _dedicated_test_identity(monkeypatch)
+    monkeypatch.setattr(host, "_rootless_service_metadata", lambda _ready: "BOCA_ROOTLESS_SERVICE stub")
     runtime = tmp_path / "runtime"
     sockets = {runtime / "systemd" / "private", runtime / "bus", runtime / "docker.sock"}
     monkeypatch.setattr(host, "ROOTLESS_SOCKET", runtime / "docker.sock")
