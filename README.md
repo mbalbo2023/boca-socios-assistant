@@ -90,6 +90,11 @@ to the local panel on 8443; this candidate admits only the exact
 `https://localhost:8443` RP origin for that route (ADR0088). The actual
 forward, trusted tablet TLS certificate and physical passkey remain untested;
 the single stored credential also needs cross-device proof for Android/iOS.
+Issue #215 has a separate **candidate under review** for a one-use tablet-local
+WebAuthn create/get emitter and device-held TLS bundle (ADR0089). Synthetic
+tests cannot establish Android CA trust, physical owner verification, secure
+ciphertext handoff or iOS use; no real credential or host owner-install is
+claimed. The owner-device command and clipboard behavior remain unverified.
 Site decommission is deferred until the local replacement is validated.
 The private Site v10 has a disabled D1 bridge and fails closed while host
 credentials/poller are absent. PRs #181/#196 integrated protected ciphertext

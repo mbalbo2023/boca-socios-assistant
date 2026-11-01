@@ -273,6 +273,36 @@ certificate trust and real passkey are verified. The present single owner
 credential needs separate Android/iOS interoperability proof. No terminal
 operation by the owner replaces the gated Actions host workflow.
 
+## Tablet-local first-owner ceremony — candidate, not activated
+
+Issue #215 / ADR0089 adds a one-use **device-local** emitter candidate for
+`https://localhost:8443`. It never runs on the droplet or in the protected
+host workflow. A new-only private directory on the device holds the generated
+`DNS:localhost` TLS leaf/key and public CA; the CA signing key is discarded.
+The device must establish actual browser trust of that CA without bypassing
+warnings. The code requires an independently generated fresh 256-bit local
+capability, entered via a non-echoing device TTY and then the browser before
+any WebAuthn challenge. A failed attempt, successful proof, abort or timeout
+closes the loopback listener. It returns an owner-install-compatible sealed
+envelope only after create **and** get with user verification and offers a
+browser Copy action with success/failure status. It does not print ciphertext
+in a terminal or save it to a file.
+
+The physical procedure remains **NO-GO** pending a private Android runtime,
+trusted CA import, observed Chrome response-accessor/UV compatibility and
+clipboard behavior. The strict no-extension COSE parser remains unchanged.
+Verify the public X25519 recipient and fingerprint against the exact protected
+`owner-prepare` receipt; do not infer trust from a self-consistent key pair.
+Do not paste a real capability, private TLS key, credential or envelope into
+the repository, issue, PR, logs or screenshots. Review ciphertext transfer and
+Actions input retention before a real `owner-install`. After the one-use
+emitter is closed and tablet 8443 is free, establish the separate private SSH
+forward and prove the real panel at the same origin. The current single owner
+credential also needs an actual iOS compatibility proof. No device command is
+prescribed until the actual Android environment and copy/handoff path are
+checked; a later terminal instruction, if unavoidable, must be a copyable code
+block. No host operation follows from a synthetic test or a copied envelope.
+
 The host prerequisite is a dedicated `boca-deploy` identity with UID
 10001, dedicated rootless Docker, Python 3.10+, and an already provisioned empty
 `/srv/boca-socios` directory owned by that UID with mode 0700. The SSH host
