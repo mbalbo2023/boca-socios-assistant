@@ -42,7 +42,9 @@ class NotificationDispatcherTests(unittest.TestCase):
         return SqliteNotificationOutbox(self.path, self.policy)
 
     def enqueue(self):
-        request = NotificationRequest(uuid4(), NoticeKind.ACTION_REQUIRED, {"secret": "do-not-copy"})
+        request = NotificationRequest(
+            uuid4(), NoticeKind.ACTION_REQUIRED, {"secret": "do-not-copy"}
+        )
         self.outbox.enqueue(request, now=self.now)
         return request
 

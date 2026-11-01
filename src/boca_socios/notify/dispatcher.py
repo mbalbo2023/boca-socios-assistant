@@ -41,7 +41,9 @@ class SyntheticResult:
             or not isfinite(delay)
             or delay < 0
         ):
-            raise ValueError("retry delay requires a retryable result and finite nonnegative seconds")
+            raise ValueError(
+                "retry delay requires a retryable result and finite nonnegative seconds"
+            )
 
 
 @dataclass(frozen=True, slots=True, repr=False)
