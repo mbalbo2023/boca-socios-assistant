@@ -1810,6 +1810,7 @@ def _site_phase(operation: str, image: str, source_sha: str, envelope: str) -> N
     decoded = _site_envelope(envelope) if operation == "site-install" else None
     if COMPOSE.exists() or COMPOSE.is_symlink():
         raise PreflightError("Boca Compose already staged; separate recovery review required")
+    _site_daemon_empty()
     name = operation.removeprefix("site-")
     volumes = _names("volume", "name=^boca-socios_")
     validate_site_snapshot(collect_snapshot(), volumes, require_owner=name != "prepare")
@@ -1835,6 +1836,7 @@ def _site_phase(operation: str, image: str, source_sha: str, envelope: str) -> N
         raise PreflightError("pulled Site bootstrap image differs from reviewed release")
     _validate_storage_continuity(before_pull, _storage_snapshot())
     # Reject a changed namespace before the first owner-volume effect.
+    _site_daemon_empty()
     current = _names("volume", "name=^boca-socios_")
     validate_site_snapshot(collect_snapshot(), current, require_owner=name != "prepare")
     if current != volumes:
@@ -1857,12 +1859,21 @@ def _site_phase(operation: str, image: str, source_sha: str, envelope: str) -> N
         if created != OWNER_VOLUME:
             raise PreflightError("unexpected Boca owner volume creation")
         _validate_owner_volume()
+        _site_daemon_empty()
         if _run(*_owner_init_container(image)):
             raise PreflightError("Boca owner directory preparation had unexpected output")
     _validate_owner_volume()
+    _site_daemon_empty()
     receipt = _site_receipt(_run(*_site_container(image, name), input_data=decoded), name)
     _validate_owner_volume()
+    _site_daemon_empty()
     print(receipt)
+
+
+def _site_daemon_empty() -> None:
+    """The dedicated rootless daemon cannot conceal foreign unlabeled containers."""
+    if _run("docker", "ps", "-a", "-q", "--no-trunc"):
+        raise PreflightError("dedicated Site daemon has an unexpected container")
 
 
 def phase(

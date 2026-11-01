@@ -174,6 +174,17 @@
         "tests/test_host_stop_test.py::test_unknown_after_verified_telegram_blocks_every_stop",
         "tests/test_host_stop_test.py::test_telegram_image_lookup_failure_blocks_inventory_without_stop"
       ]
+    },
+    {
+      "id": "RCA-195",
+      "issue": 195,
+      "fix_pr": 196,
+      "root_cause": "The Site owner-volume custody preflight filtered only Boca-labeled and Boca-named containers, allowing a foreign container in the dedicated rootless daemon to remain invisible before pull or sealed bootstrap effects.",
+      "prevention": "Require an empty full rootless daemon container inventory before pull, after pull, before owner directory preparation, immediately before the sealed Site helper and before reporting PASS; preserve all resources on uncertainty.",
+      "regression_tests": [
+        "tests/test_host_site_bootstrap.py::test_site_custody_refuses_foreign_dedicated_daemon_container_before_each_effect",
+        "tests/test_host_site_bootstrap.py::test_site_existing_owner_operations_reject_foreign_daemon_before_token_or_verify"
+      ]
     }
   ]
 }

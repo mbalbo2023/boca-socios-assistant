@@ -192,7 +192,78 @@ def test_site_prepare_only_creates_owner_volume_after_exact_image_and_capacity(
         i for i, call in enumerate(calls) if call[1:3] == ("image", "inspect")
     )
     assert any("--cap-add" in call and call[-1].startswith("import os;") for call in calls)
-    assert calls[-1][-1] == "prepare"
+    assert any(call[-1] == "prepare" for call in calls)
+    assert calls[-1] == ("docker", "ps", "-a", "-q", "--no-trunc")
+
+
+@pytest.mark.parametrize("rogue_after", [1, 2, 3, 4, 5])
+def test_site_custody_refuses_foreign_dedicated_daemon_container_before_each_effect(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], rogue_after: int
+) -> None:
+    """Regression #195: a foreign rootless container cannot be invisible to Site."""
+    volumes: set[str] = set()
+    global_checks = 0
+    seen: list[tuple[str, ...]] = []
+    monkeypatch.setattr(host, "COMPOSE", Path("/nonexistent-boca-test-compose"))
+    monkeypatch.setattr(host, "_names", lambda *_args: set(volumes))
+    monkeypatch.setattr(
+        host, "collect_snapshot", lambda: replace(_snapshot(), boca_volume=bool(volumes))
+    )
+    monkeypatch.setattr(host, "_validate_owner_volume", lambda: None)
+    monkeypatch.setattr(host, "_storage_snapshot", lambda: object())
+    monkeypatch.setattr(host, "_validate_storage_capacity", lambda _snapshot: None)
+    monkeypatch.setattr(host, "_validate_storage_continuity", lambda _before, _after: None)
+
+    def fake_run(*args: str, input_data: str | None = None) -> str:
+        nonlocal global_checks
+        assert input_data is None
+        seen.append(args)
+        if args == ("docker", "ps", "-a", "-q", "--no-trunc"):
+            global_checks += 1
+            return "f" * 64 if global_checks == rogue_after else ""
+        if args[1:3] == ("image", "inspect"):
+            return json.dumps([IMAGE]) if "RepoDigests" in args[4] else "a" * 40
+        if args[1:3] == ("volume", "create"):
+            if rogue_after in {1, 2}:
+                pytest.fail("Site owner volume created despite foreign container")
+            volumes.add(host.OWNER_VOLUME)
+            return host.OWNER_VOLUME
+        if args[-1] == "prepare":
+            if rogue_after != 5:
+                pytest.fail("Site bootstrap ran despite foreign container")
+            public = base64.urlsafe_b64encode(b"p" * 32).rstrip(b"=").decode("ascii")
+            fingerprint = hashlib.sha256(b"p" * 32).hexdigest()
+            return (
+                f"BOCA_SITE_BOOTSTRAP state=PREPARED public_key={public} fingerprint={fingerprint}"
+            )
+        return ""
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    with pytest.raises(host.PreflightError, match="dedicated Site daemon"):
+        host._site_phase("site-prepare", IMAGE, "a" * 40, "")
+    assert global_checks == rogue_after
+    assert any(args[-1] == "prepare" for args in seen) is (rogue_after == 5)
+    assert volumes == ({host.OWNER_VOLUME} if rogue_after >= 3 else set())
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("operation", ["site-install", "site-verify"])
+def test_site_existing_owner_operations_reject_foreign_daemon_before_token_or_verify(
+    monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    monkeypatch.setattr(host, "COMPOSE", Path("/nonexistent-boca-test-compose"))
+    monkeypatch.setattr(host, "_site_envelope", lambda _value: "synthetic-ciphertext")
+    monkeypatch.setattr(host, "_names", lambda *_args: pytest.fail("Boca inventory after rogue"))
+
+    def fake_run(*args: str, input_data: str | None = None) -> str:
+        assert args == ("docker", "ps", "-a", "-q", "--no-trunc")
+        return "f" * 64
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    with pytest.raises(host.PreflightError, match="dedicated Site daemon"):
+        host._site_phase(
+            operation, IMAGE, "a" * 40, "ciphertext" if operation == "site-install" else ""
+        )
 
 
 def test_wrong_image_revision_refuses_owner_volume_creation(
@@ -228,12 +299,17 @@ def test_attached_owner_volume_blocks_site_operation_before_image_pull(
 
     def fake_run(*args: str, input_data: str | None = None) -> str:
         seen.append(args)
+        if args == ("docker", "ps", "-a", "-q", "--no-trunc"):
+            return ""
         return "c" * 64
 
     monkeypatch.setattr(host, "_run", fake_run)
     with pytest.raises(host.PreflightError, match="attached"):
         host._site_phase("site-verify", IMAGE, "a" * 40, "")
-    assert seen == [("docker", "ps", "-a", "-q", "--filter", f"volume={host.OWNER_VOLUME}")]
+    assert seen == [
+        ("docker", "ps", "-a", "-q", "--no-trunc"),
+        ("docker", "ps", "-a", "-q", "--filter", f"volume={host.OWNER_VOLUME}"),
+    ]
 
 
 def test_legacy_phase_rejects_unexpected_envelope_before_host_probe(
