@@ -108,7 +108,9 @@ def test_service_probe_checks_identity_before_executable_or_bus_metadata() -> No
 
 def test_binary_presence_only_reports_fixed_search_lookup_without_execution() -> None:
     with (
-        patch.object(host.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir="/home/boca-deploy")),
+        patch.object(
+            host.pwd, "getpwuid", return_value=SimpleNamespace(pw_dir="/home/boca-deploy")
+        ),
         patch.object(host.shutil, "which", return_value="/usr/bin/docker") as which,
         patch.object(host.subprocess, "run") as run,
     ):
