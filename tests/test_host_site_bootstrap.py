@@ -195,6 +195,50 @@ def test_site_prepare_only_creates_owner_volume_after_exact_image_and_capacity(
     assert calls[-1][-1] == "prepare"
 
 
+@pytest.mark.parametrize("rogue_after", [1, 2, 3])
+def test_site_custody_refuses_foreign_dedicated_daemon_container_before_each_effect(
+    monkeypatch: pytest.MonkeyPatch, rogue_after: int
+) -> None:
+    """Regression #195: a foreign rootless container cannot be invisible to Site."""
+    volumes: set[str] = set()
+    global_checks = 0
+    seen: list[tuple[str, ...]] = []
+    monkeypatch.setattr(host, "COMPOSE", Path("/nonexistent-boca-test-compose"))
+    monkeypatch.setattr(host, "_names", lambda *_args: set(volumes))
+    monkeypatch.setattr(
+        host, "collect_snapshot", lambda: replace(_snapshot(), boca_volume=bool(volumes))
+    )
+    monkeypatch.setattr(host, "_validate_owner_volume", lambda: None)
+    monkeypatch.setattr(host, "_storage_snapshot", lambda: object())
+    monkeypatch.setattr(host, "_validate_storage_capacity", lambda _snapshot: None)
+    monkeypatch.setattr(host, "_validate_storage_continuity", lambda _before, _after: None)
+
+    def fake_run(*args: str, input_data: str | None = None) -> str:
+        nonlocal global_checks
+        assert input_data is None
+        seen.append(args)
+        if args == ("docker", "ps", "-a", "-q", "--no-trunc"):
+            global_checks += 1
+            return "f" * 64 if global_checks == rogue_after else ""
+        if args[1:3] == ("image", "inspect"):
+            return json.dumps([IMAGE]) if "RepoDigests" in args[4] else "a" * 40
+        if args[1:3] == ("volume", "create"):
+            if rogue_after in {1, 2}:
+                pytest.fail("Site owner volume created despite foreign container")
+            volumes.add(host.OWNER_VOLUME)
+            return host.OWNER_VOLUME
+        if args[-1] == "prepare":
+            pytest.fail("Site bootstrap ran despite foreign container")
+        return ""
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    with pytest.raises(host.PreflightError, match="dedicated Site daemon"):
+        host._site_phase("site-prepare", IMAGE, "a" * 40, "")
+    assert global_checks == rogue_after
+    assert not any("prepare" == args[-1] for args in seen)
+    assert volumes == ({host.OWNER_VOLUME} if rogue_after == 3 else set())
+
+
 def test_wrong_image_revision_refuses_owner_volume_creation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
