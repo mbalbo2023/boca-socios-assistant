@@ -237,11 +237,13 @@ jobs:
       - name: Inspect dedicated user prerequisites without Docker
         if: inputs.operation == 'inspect-prerequisites'
         run: |
-          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - inspect-prerequisites "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py
+          remote_command="$(python3 -c 'import shlex, sys; print(shlex.join(sys.argv[1:]))' python3 - inspect-prerequisites "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py
       - name: Observe host capacity and Boca namespace without an image
         if: inputs.operation == 'preflight'
         run: |
-          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target python3 - observe "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" < src/boca_socios/host_first_deploy.py
+          remote_command="$(python3 -c 'import shlex, sys; print(shlex.join(sys.argv[1:]))' python3 - observe "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py
       - name: Read-only host capacity and Boca namespace before first install
         if: inputs.operation == 'first-install'
         run: |

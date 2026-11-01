@@ -82,6 +82,17 @@
         "tests/test_host_operation_gate.py::test_unknown_or_stale_host_dispatch_is_no_go",
         "tests/test_host_operation_gate.py::test_host_gate_is_before_checkout_and_ssh"
       ]
+    },
+    {
+      "id": "RCA-123",
+      "issue": 123,
+      "fix_pr": 124,
+      "root_cause": "OpenSSH joined locally quoted command arguments into a remote shell string, losing the empty image positional argument before the host parser.",
+      "prevention": "Serialize read-only remote commands with shlex.join and execute actual workflow steps through a local remote-shell transport regression.",
+      "regression_tests": [
+        "tests/test_host_ssh_transport.py::test_inspection_preserves_remote_argv",
+        "tests/test_host_ssh_transport.py::test_observe_preserves_remote_argv"
+      ]
     }
   ]
 }
