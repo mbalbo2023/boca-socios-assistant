@@ -1,7 +1,9 @@
 # ADR 0061: private enrollment form and bounded owner sessions
 
-Status: implementation proposal for the approved synthetic BETA scope, issue #17.
-This change supplies request adapters, not an exposed server or deployed login.
+Status: request/session adapters implemented in PR #148 for the approved
+synthetic BETA scope, issue #17. Passkey authentication, bootstrap, recovery and
+TLS remain proposals pending a concrete decision and implementation. The PR's
+merge record determines integration; no exposed server or deployed login exists.
 
 ## Enrollment inside the application
 
