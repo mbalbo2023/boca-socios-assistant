@@ -140,6 +140,16 @@
         "tests/test_host_db_metadata.py::test_candidate_refuses_foreign_or_writable_anchor_and_path_escape",
         "tests/test_host_db_metadata.py::test_invalid_home_is_redacted_without_probing_arbitrary_location"
       ]
+    },
+    {
+      "id": "RCA-175",
+      "issue": 175,
+      "fix_pr": 176,
+      "root_cause": "The read-only local status projection enumerated schema versions only through 6 and capped ledger reads at 7, so reviewed Telegram migration 7 caused a false availability failure.",
+      "prevention": "Validate each installed reviewed migration by exact checksum and set the bounded ledger query to the number of recognized versions plus one, rejecting future versions and corruption.",
+      "regression_tests": [
+        "tests/test_local_status_projection.py::test_telegram_migration_is_known_but_corruption_and_future_versions_fail_closed"
+      ]
     }
   ]
 }

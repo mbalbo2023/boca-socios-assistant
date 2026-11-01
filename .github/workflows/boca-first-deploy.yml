@@ -177,8 +177,10 @@ jobs:
           test -n "$container"
           test "$(docker inspect --format '{{.State.Health.Status}}' "$container")" = healthy
           docker inspect --format '{{json .HostConfig}}' "$container" | python3 -c 'import json,sys; h=json.load(sys.stdin); assert (h["NanoCpus"], h["Memory"], h["PidsLimit"], h["ReadonlyRootfs"], h["Privileged"], h["PortBindings"], h["PublishAllPorts"]) == (500000000, 268435456, 64, True, False, {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}, False)'
+          docker inspect --format '{{json .HostConfig}}' "$container" | python3 -c 'import json,sys; h=json.load(sys.stdin); assert h["NetworkMode"] == "boca-socios_boca_private" and h["CapDrop"] == ["ALL"] and h["CapAdd"] in (None, []) and h["SecurityOpt"] == ["no-new-privileges:true"] and h["Tmpfs"] == {"/tmp": "rw,noexec,nosuid,size=16m"} and h["CgroupnsMode"] in ("private", "")'
           docker inspect --format '{{json .NetworkSettings}}' "$container" | python3 -c 'import json,sys; n=json.load(sys.stdin); assert set(n["Networks"]) == {"boca-socios_boca_private"} and n["Ports"] == {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}'
           docker inspect --format '{{json .Mounts}}' "$container" | python3 -c 'import json,sys; m=json.load(sys.stdin); assert {(x["Type"], x["Name"], x["Destination"], x["RW"]) for x in m} == {("volume", "boca-socios_boca_data", "/data", True), ("volume", "boca-socios_boca_key", "/run/secrets", False), ("volume", "boca-socios_boca_owner", "/run/owner", False)}'
+          docker exec --user 10001:10001 "$container" python -m boca_socios.runtime_probe
           curl --fail --silent --show-error --noproxy '*' --cacert "$RUNNER_TEMP/boca-owner-fixture/tls.crt" https://localhost:8443/healthz > "$RUNNER_TEMP/boca-beta-health.receipt"
           test "$(cat "$RUNNER_TEMP/boca-beta-health.receipt")" = BOCA_BETA_READY
       - name: Remove only synthetic Boca resources from disposable runner
