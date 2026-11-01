@@ -15,7 +15,12 @@ import pytest
 
 from boca_socios import telegram_one_shot as shot
 from boca_socios.notify.outbox import NoticeKind
-from boca_socios.notify.telegram_transport import TelegramAck, TelegramNotice, TelegramTransport
+from boca_socios.notify.telegram_transport import (
+    TelegramAck,
+    TelegramNotice,
+    TelegramTransport,
+    TelegramUnconfirmed,
+)
 from boca_socios.telegram_storage_gate import MIGRATIONS
 
 TOKEN = "12345:synthetic-bot-token-for-tests"
@@ -91,6 +96,11 @@ def test_identity_checks_bot_and_exact_owner_private_chat(tmp_path: Path) -> Non
     )
     assert [method for method, _url in calls] == ["GET", "GET"]
     assert calls[0][1].endswith("/getMe") and calls[1][1].endswith("/getChat?chat_id=" + CHAT)
+    (tmp_path / "chat_id").chmod(0o600)
+    (tmp_path / "chat_id").write_text("987654321")
+    (tmp_path / "chat_id").chmod(0o400)
+    with pytest.raises(TelegramUnconfirmed, match="configuration changed"):
+        transport.preflight()
 
 
 @pytest.mark.parametrize(

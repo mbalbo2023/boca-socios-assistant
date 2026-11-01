@@ -154,6 +154,7 @@ def check_identity(
         or chat.get("type") != "private"
     ):
         raise OneShotError("private_destination_mismatch")
+    transport._pin_configuration(token, destination)
 
 
 async def deliver_once(

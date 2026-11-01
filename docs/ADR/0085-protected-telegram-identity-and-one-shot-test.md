@@ -30,6 +30,8 @@ debe devolver el ID de bot afirmado y `is_bot=true`; `getChat` debe devolver
 el mismo ID del destino numérico positivo y `type=private`. El HMAC del
 destino se compara antes de contactar la API. Las especificaciones de los
 métodos y tipo privado son las del [Bot API oficial](https://core.telegram.org/bots/api).
+La configuración verificada se fija en memoria para este intento; si los
+archivos privados cambian antes del envío, la lectura falla cerrada.
 El token necesariamente aparece en la ruta HTTPS enviada a Telegram, nunca
 en excepciones o recibos. `getChat` y la afirmación humana reducen el riesgo
 de destino equivocado; la aceptación posterior de `sendMessage` no prueba

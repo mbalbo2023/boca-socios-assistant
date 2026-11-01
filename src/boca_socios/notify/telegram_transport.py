@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import http.client
 import json
 import os
@@ -80,6 +81,7 @@ class TelegramTransport:
         self._token_file = token_file
         self._chat_id_file = chat_id_file
         self._connection_factory = connection_factory
+        self._pinned_configuration: tuple[str, int] | None = None
 
     def __repr__(self) -> str:
         return "TelegramTransport(<private configuration omitted>)"
@@ -114,7 +116,19 @@ class TelegramTransport:
         destination = int(chat_id)
         if destination == 0:
             raise TelegramUnconfirmed("Telegram private configuration invalid")
+        pinned = self._pinned_configuration
+        if pinned is not None and (
+            not hmac.compare_digest(token, pinned[0]) or destination != pinned[1]
+        ):
+            raise TelegramUnconfirmed("Telegram private configuration changed")
         return token, destination
+
+    def _pin_configuration(self, token: str, destination: int) -> None:
+        """Bind a one-shot identity proof to the exact later send configuration."""
+        current = self._configuration()
+        if not hmac.compare_digest(current[0], token) or current[1] != destination:
+            raise TelegramUnconfirmed("Telegram private configuration changed")
+        self._pinned_configuration = current
 
     def preflight(self) -> None:
         """Fail before consuming a notification if private files are unavailable."""
