@@ -192,6 +192,19 @@ def test_no_anonymous_begin_and_one_use_capability(tmp_path: Path) -> None:
     assert _request(app, "POST", "/begin", {"capability": CAP})[0] == 410
 
 
+def test_owner_ceremony_requires_discoverable_passkey_and_explains_storage(tmp_path: Path) -> None:
+    app, _ = _setup(tmp_path)
+    status, page, _ = _request(app, "GET", "/")
+    assert status == 200 and isinstance(page, bytes)
+    assert b"administrador de credenciales" in page
+    assert b"cookie de sesi" in page
+    status, script, _ = _request(app, "GET", "/ceremony.js")
+    assert status == 200 and isinstance(script, bytes)
+    assert b"residentKey: 'required', requireResidentKey: true" in script
+    assert b"residentKey: 'preferred'" not in script
+    assert b"userVerification: 'required'" in script
+
+
 @pytest.mark.parametrize(
     "change",
     [
