@@ -192,10 +192,11 @@ def test_site_prepare_only_creates_owner_volume_after_exact_image_and_capacity(
         i for i, call in enumerate(calls) if call[1:3] == ("image", "inspect")
     )
     assert any("--cap-add" in call and call[-1].startswith("import os;") for call in calls)
-    assert calls[-1][-1] == "prepare"
+    assert any(call[-1] == "prepare" for call in calls)
+    assert calls[-1] == ("docker", "ps", "-a", "-q", "--no-trunc")
 
 
-@pytest.mark.parametrize("rogue_after", [1, 2, 3])
+@pytest.mark.parametrize("rogue_after", [1, 2, 3, 4])
 def test_site_custody_refuses_foreign_dedicated_daemon_container_before_each_effect(
     monkeypatch: pytest.MonkeyPatch, rogue_after: int
 ) -> None:
@@ -236,7 +237,26 @@ def test_site_custody_refuses_foreign_dedicated_daemon_container_before_each_eff
         host._site_phase("site-prepare", IMAGE, "a" * 40, "")
     assert global_checks == rogue_after
     assert not any("prepare" == args[-1] for args in seen)
-    assert volumes == ({host.OWNER_VOLUME} if rogue_after == 3 else set())
+    assert volumes == ({host.OWNER_VOLUME} if rogue_after in {3, 4} else set())
+
+
+@pytest.mark.parametrize("operation", ["site-install", "site-verify"])
+def test_site_existing_owner_operations_reject_foreign_daemon_before_token_or_verify(
+    monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    monkeypatch.setattr(host, "COMPOSE", Path("/nonexistent-boca-test-compose"))
+    monkeypatch.setattr(host, "_site_envelope", lambda _value: "synthetic-ciphertext")
+    monkeypatch.setattr(host, "_names", lambda *_args: pytest.fail("Boca inventory after rogue"))
+
+    def fake_run(*args: str, input_data: str | None = None) -> str:
+        assert args == ("docker", "ps", "-a", "-q", "--no-trunc")
+        return "f" * 64
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    with pytest.raises(host.PreflightError, match="dedicated Site daemon"):
+        host._site_phase(
+            operation, IMAGE, "a" * 40, "ciphertext" if operation == "site-install" else ""
+        )
 
 
 def test_wrong_image_revision_refuses_owner_volume_creation(
@@ -272,12 +292,17 @@ def test_attached_owner_volume_blocks_site_operation_before_image_pull(
 
     def fake_run(*args: str, input_data: str | None = None) -> str:
         seen.append(args)
+        if args == ("docker", "ps", "-a", "-q", "--no-trunc"):
+            return ""
         return "c" * 64
 
     monkeypatch.setattr(host, "_run", fake_run)
     with pytest.raises(host.PreflightError, match="attached"):
         host._site_phase("site-verify", IMAGE, "a" * 40, "")
-    assert seen == [("docker", "ps", "-a", "-q", "--filter", f"volume={host.OWNER_VOLUME}")]
+    assert seen == [
+        ("docker", "ps", "-a", "-q", "--no-trunc"),
+        ("docker", "ps", "-a", "-q", "--filter", f"volume={host.OWNER_VOLUME}"),
+    ]
 
 
 def test_legacy_phase_rejects_unexpected_envelope_before_host_probe(
