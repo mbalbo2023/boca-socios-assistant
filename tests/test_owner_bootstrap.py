@@ -61,6 +61,21 @@ def _owner(tmp_path: Path) -> Path:
     return directory
 
 
+def test_inspect_prepared_cannot_create_a_private_owner_key(tmp_path: Path) -> None:
+    owner = _owner(tmp_path)
+    with pytest.raises(boot.BootstrapError):
+        boot.inspect_prepared(owner, uid=os.geteuid())
+    assert list(owner.iterdir()) == []
+    receipt = boot.prepare(owner, uid=os.geteuid())
+    inspected = boot.inspect_prepared(owner, uid=os.geteuid())
+    assert inspected.state == "ALREADY_PREPARED"
+    assert (inspected.public_key, inspected.fingerprint) == (
+        receipt.public_key,
+        receipt.fingerprint,
+    )
+    assert {path.name for path in owner.iterdir()} == {boot.PRIVATE_KEY}
+
+
 def test_sealed_real_shape_installs_only_owner_files_once(tmp_path: Path) -> None:
     directory = _owner(tmp_path)
     receipt = boot.prepare(directory, uid=os.geteuid())
@@ -113,6 +128,46 @@ def test_ssh_only_http_custody_seals_no_certificate_or_ca(tmp_path: Path) -> Non
     (owner / "health-ca.pem").symlink_to(tmp_path / "missing-ca")
     with pytest.raises(boot.BootstrapError, match="unexpected_tls_artifact"):
         boot.verify(owner, origin, SUBJECT, uid=os.geteuid())
+
+
+def test_offline_install_staged_reads_only_single_verified_ciphertext(tmp_path: Path) -> None:
+    owner = _owner(tmp_path)
+    staging = tmp_path / "enrollment"
+    staging.mkdir(mode=0o700)
+    recipient = boot.prepare(owner, uid=os.geteuid())
+    bundle = {name: value for name, value in _bundle().items() if name in boot.HTTP_LIMITS}
+    sealed = boot.seal_for_recipient(recipient, bundle, "http://localhost:8443", SUBJECT)
+    envelope = staging / "owner-envelope.v2"
+    envelope.write_bytes(sealed)
+    envelope.chmod(0o400)
+    assert (
+        boot.install_staged(owner, staging, "http://localhost:8443", SUBJECT, uid=os.geteuid())
+        == recipient.fingerprint
+    )
+    assert boot.verify(owner, "http://localhost:8443", SUBJECT, uid=os.geteuid())
+    assert envelope.read_bytes() == sealed  # Staging cleanup belongs to host, not importer.
+
+
+def test_staged_import_rejects_extra_or_symlink_before_private_owner_write(tmp_path: Path) -> None:
+    owner = _owner(tmp_path)
+    staging = tmp_path / "enrollment"
+    staging.mkdir(mode=0o700)
+    receipt = boot.prepare(owner, uid=os.geteuid())
+    bundle = {name: value for name, value in _bundle().items() if name in boot.HTTP_LIMITS}
+    sealed = boot.seal_for_recipient(receipt, bundle, "http://localhost:8443", SUBJECT)
+    outside = tmp_path / "elsewhere"
+    outside.write_bytes(sealed)
+    target = staging / "owner-envelope.v2"
+    target.symlink_to(outside)
+    with pytest.raises(boot.BootstrapError):
+        boot.install_staged(owner, staging, "http://localhost:8443", SUBJECT, uid=os.geteuid())
+    target.unlink()
+    target.write_bytes(sealed)
+    target.chmod(0o400)
+    (staging / "extra").write_bytes(b"untrusted")
+    with pytest.raises(boot.BootstrapError, match="staging"):
+        boot.install_staged(owner, staging, "http://localhost:8443", SUBJECT, uid=os.geteuid())
+    assert not any((owner / name).exists() for name in boot.HTTP_LIMITS)
 
 
 def test_wrong_recipient_origin_tamper_and_invalid_tls_have_no_owner_effect(tmp_path: Path) -> None:

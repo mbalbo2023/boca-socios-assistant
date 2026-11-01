@@ -29,6 +29,9 @@ def _run_gate(
     release_run: str = "",
     source_sha: str = SHA,
     run_attempt: str = "1",
+    capability_digest: str = "",
+    owner_origin: str = "",
+    owner_subject: str = "",
 ) -> subprocess.CompletedProcess[str]:
     # The extracted gate uses only shell builtins and these synthetic values.
     env = {
@@ -43,6 +46,9 @@ def _run_gate(
         "GITHUB_RUN_ATTEMPT": run_attempt,
         "BOCA_SERVICE": "controller",
         "BOCA_BUDGET": "0.5cpu-256m-64pids",
+        "BOCA_OWNER_CAPABILITY_SHA256": capability_digest,
+        "BOCA_BETA_PANEL_ORIGIN": owner_origin,
+        "BOCA_BETA_OWNER_SUBJECT": owner_subject,
     }
     return subprocess.run(  # noqa: S603 - fixed bash interpreter, synthetic local gate
         ["/usr/bin/bash", "-e", "-o", "pipefail"],
@@ -86,6 +92,34 @@ def test_unknown_or_stale_host_dispatch_is_no_go() -> None:
     assert _run_gate("preflight", read_only_ready="ready", run_attempt="2").returncode != 0
     assert _run_gate("preflight", read_only_ready="ready", source_sha="b" * 40).returncode != 0
     assert _run_gate("preflight", read_only_ready="Ready").returncode != 0
+
+
+def test_owner_enrollment_requires_digest_only_and_existing_release_gate() -> None:
+    context = {
+        "deploy_ready": "ready",
+        "image": "reviewed-digest",
+        "release_run": "123",
+        "owner_origin": "http://localhost:8443",
+        "owner_subject": "owner",
+    }
+    assert _run_gate("owner-enroll", capability_digest="a" * 64, **context).returncode == 0
+    for digest in ("", "a" * 63, "A" * 64, "https://example.test/activar#key=secret"):
+        assert _run_gate("owner-enroll", capability_digest=digest, **context).returncode != 0
+    assert (
+        _run_gate(
+            "owner-enroll",
+            capability_digest="a" * 64,
+            **{**context, "owner_origin": "https://localhost:8443"},
+        ).returncode
+        != 0
+    )
+    assert (
+        _run_gate(
+            "owner-enroll", capability_digest="a" * 64, **{**context, "deploy_ready": ""}
+        ).returncode
+        != 0
+    )
+    assert _run_gate("owner-prepare", capability_digest="a" * 64, **context).returncode != 0
 
 
 def test_host_gate_is_before_checkout_and_ssh() -> None:

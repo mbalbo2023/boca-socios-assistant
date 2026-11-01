@@ -211,6 +211,19 @@
         "tests/test_host_beta_cleanup.py::test_policy_rejects_removing_the_mandatory_beta_failure_hook",
         "tests/test_host_beta_cleanup.py::test_actions_beta_cleanup_redacts_remote_output_and_preserves_failure"
       ]
+    },
+    {
+      "id": "RCA-225",
+      "issue": 225,
+      "fix_pr": 229,
+      "root_cause": "The first one-use owner enrollment host smoke used only a Docker --internal bridge, which has no gateway for published ports: the container stayed running while localhost:8443 refused every connection.",
+      "prevention": "Use an exclusive Boca bridge with IP masquerading and intercontainer traffic disabled, bind only host loopback, verify effective NetworkSettings.Ports as well as PortBindings, and require Docker Engine 28+ before protected activation.",
+      "regression_tests": [
+        "tests/test_host_owner_enroll_lifecycle.py::test_owner_enroll_bridge_requires_publishable_gateway_and_no_masquerade",
+        "tests/test_host_owner_enroll_lifecycle.py::test_container_inspection_refuses_foreign_identity_before_offline_import",
+        "tests/test_host_owner_enroll_lifecycle.py::test_old_or_unverifiable_docker_refuses_loopback_enrollment_before_writes",
+        "tests/test_host_owner_enroll_lifecycle.py::test_lifecycle_workflow_enforces_same_job_cleanup_before_daemon_stop"
+      ]
     }
   ]
 }

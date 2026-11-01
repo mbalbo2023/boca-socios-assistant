@@ -1,9 +1,10 @@
 # Estado de integración BETA
 
-## Corte integrado #224 y candidato de alta #225 — sin efectos en el droplet
+## Corte integrado #224/#226 y candidato de host #225 — sin efectos en el droplet
 
-`main=93c14ee5d939fd7d6abf56a57843c23c32b281c3` integró
-[PR #224](https://github.com/mbalbo2023/boca-socios-assistant/pull/224):
+`main=4b1d219c2ba1739dc20c9c103170beedff8c1607` incluye
+[PR #224](https://github.com/mbalbo2023/boca-socios-assistant/pull/224) y
+[PR #226](https://github.com/mbalbo2023/boca-socios-assistant/pull/226):
 **`http://localhost:8443`** con WebAuthn RP `localhost` por túnel SSH
 Termius, sin certificados/CA ni configuración de servidor web compartido.
 CI main 41341214858 y seguridad 41341214783 pasaron; no hubo deploy.
@@ -18,12 +19,37 @@ agrega un servidor temporal HTTP distinto del panel y una URL **plantilla**
 aleatoria de 256 bits y una clave pública de destinatario, valida
 WebAuthn create→get y guarda únicamente el **sobre cifrado v2** en staging
 temporal; el volumen de dueño con clave privada X25519 no se monta en el
-servidor web. El flujo host/Actions (port-check, contenedor temporal,
-instalación offline, verify, cleanup inmediato y canal privado) **aún no está
-implementado ni autorizado para ejecución**. Ver [ADR0092](ADR/0092-one-use-ssh-chrome-owner-enrollment.md).
+servidor web. La rama candidata #225 añade al **mismo workflow protegido**
+`owner-enroll` el preflight de puerto ocupado, contenedor temporal, volumen
+staging Docker exclusivo, instalación/verify offline y limpieza selectiva
+inmediata tras éxito o fallo. Pruebas de código y smoke en runner desechable
+son parte del PR; **todavía requieren CI hospedado, revisión y merge**. El
+canal de entrega de clave privado y la activación host **no están ejecutados
+ni autorizados por ese PR**. Ver [ADR0092](ADR/0092-one-use-ssh-chrome-owner-enrollment.md).
 **NO-GO operativo:** no existe aún enlace/token funcional servido en el
 host, envío privado de la llave, prueba física Chrome/passkey/Termius ni
 instalación BETA. Las pruebas sintéticas no sustituyen esos gates.
+
+### Frentes obligatorios de primera BETA desarrollados en paralelo
+
+- [#225](https://github.com/mbalbo2023/boca-socios-assistant/issues/225):
+  enlace de Chrome de un uso por Actions protegido y cleanup Boca-only.
+- [#227](https://github.com/mbalbo2023/boca-socios-assistant/issues/227):
+  worker Chromium sintético bajo demanda, límites/timeout y contrato de
+  integración con el runtime; sin conexión a Boca real.
+- [#25](https://github.com/mbalbo2023/boca-socios-assistant/issues/25):
+  recorrido Playwright offline reproducible en CI/imagen desechable.
+- [#228](https://github.com/mbalbo2023/boca-socios-assistant/issues/228):
+  regresiones HTTP de reinicio, comandos ambiguos y avisos sin duplicación.
+- [#168](https://github.com/mbalbo2023/boca-socios-assistant/issues/168):
+  cierre de seguridad/preflight del transporte Telegram y pruebas; token,
+  destino, aceptación Bot API y recepción real mantienen gates privados.
+
+Estas ramas son **candidatos independientes**, no integraciones verificadas
+ni evidencia de aplicación instalada. Los componentes ya integrados de panel,
+alta sintética, comando durable, estado y avisos se reutilizan; no se
+duplican. Login/cola/reserva/compra real en Boca quedan fuera de la BETA de
+simulación autorizada.
 
 ## Corte verificado y alcance
 

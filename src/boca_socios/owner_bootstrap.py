@@ -34,6 +34,8 @@ from boca_socios.owner_origin import SSH_LOOPBACK_ORIGIN, owner_rp_host
 
 UID = 10001
 OWNER_DIR = Path("/run/owner")
+ENROLLMENT_DIR = Path("/run/enrollment")
+ENROLLMENT_FILE = "owner-envelope.v2"
 REPOSITORY = "mbalbo2023/boca-socios-assistant"
 PURPOSE = "boca-owner-passkey-tls-v1"
 HTTP_PURPOSE = "boca-owner-passkey-v2"
@@ -229,6 +231,18 @@ def prepare(owner_dir: Path = OWNER_DIR, *, uid: int = UID) -> RecipientReceipt:
         os.close(directory)
 
 
+def inspect_prepared(owner_dir: Path = OWNER_DIR, *, uid: int = UID) -> RecipientReceipt:
+    """Read an existing owner recipient without ever creating persistent material."""
+    _identity(uid)
+    directory = _directory(owner_dir, uid)
+    try:
+        if any(_exists(directory, name) for name in LIMITS):
+            raise BootstrapError("already_configured")
+        return _receipt(_read(directory, PRIVATE_KEY, uid, 32), "ALREADY_PREPARED")
+    finally:
+        os.close(directory)
+
+
 def _validate_bundle(bundle: dict[str, bytes], origin: str, hostname: str) -> None:
     limits = _bundle_limits(origin)
     if (
@@ -396,6 +410,25 @@ def install(owner_dir: Path, envelope: bytes, origin: str, subject: str, *, uid:
         os.close(directory)
 
 
+def install_staged(
+    owner_dir: Path, staging_dir: Path, origin: str, subject: str, *, uid: int = UID
+) -> str:
+    """Import ciphertext from a separate *offline* read-only staging volume.
+
+    Both volumes are mounted only after the HTTP container has stopped.
+    No envelope passes through GitHub inputs, host stdout or Docker argv.
+    """
+    _identity(uid)
+    stage = _directory(staging_dir, uid)
+    try:
+        if os.listdir(stage) != [ENROLLMENT_FILE]:
+            raise BootstrapError("staging_unverified")
+        envelope = _read(stage, ENROLLMENT_FILE, uid, MAX_ENVELOPE)
+    finally:
+        os.close(stage)
+    return install(owner_dir, envelope, origin, subject, uid=uid)
+
+
 def verify(owner_dir: Path, origin: str, subject: str, *, uid: int = UID) -> str:
     """Check exact custody locally; legacy HTTPS origins also prove TLS."""
     _identity(uid)
@@ -419,21 +452,26 @@ def verify(owner_dir: Path, origin: str, subject: str, *, uid: int = UID) -> str
 
 def main(argv: tuple[str, ...] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Boca sealed owner credential bootstrap")
-    parser.add_argument("phase", choices=("prepare", "install", "verify"))
+    parser.add_argument(
+        "phase", choices=("prepare", "inspect-prepared", "install", "install-staged", "verify")
+    )
     parser.add_argument("origin")
     parser.add_argument("subject")
     args = parser.parse_args(argv)
     try:
-        if args.phase == "prepare":
+        if args.phase in {"prepare", "inspect-prepared"}:
             _coordinates(args.origin, args.subject)
-            receipt = prepare()
+            receipt = prepare() if args.phase == "prepare" else inspect_prepared()
             print(
                 f"BOCA_OWNER_BOOTSTRAP state={receipt.state} public_key={receipt.public_key} fingerprint={receipt.fingerprint}"
             )
-        elif args.phase == "install":
-            fingerprint = install(
-                OWNER_DIR, sys.stdin.buffer.read(MAX_ENVELOPE + 1), args.origin, args.subject
-            )
+        elif args.phase in {"install", "install-staged"}:
+            if args.phase == "install-staged":
+                fingerprint = install_staged(OWNER_DIR, ENROLLMENT_DIR, args.origin, args.subject)
+            else:
+                fingerprint = install(
+                    OWNER_DIR, sys.stdin.buffer.read(MAX_ENVELOPE + 1), args.origin, args.subject
+                )
             print(f"BOCA_OWNER_BOOTSTRAP state=CONFIGURED fingerprint={fingerprint}")
         else:
             fingerprint = verify(OWNER_DIR, args.origin, args.subject)
