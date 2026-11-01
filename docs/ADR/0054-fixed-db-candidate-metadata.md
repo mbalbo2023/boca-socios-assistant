@@ -1,6 +1,11 @@
 # ADR 0054: observe fixed Boca database candidates without opening SQLite
 
-**Status:** Proposed, 2026-10-31 ART. Issue #139.
+**Status:** Accepted implementation. Issue #139; PR #140 merged as
+`5c642b6d8bf5feac14aaf4a7c4df34ca2e91a97e`. Exact candidate
+`8f1d07960de3a2af977abc7d3c6fed3a515b5760` passed
+[CI 41258543384](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41258543384)
+and [image scan 41258543491](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41258543491).
+Implementation acceptance is not evidence of a located database or deployment.
 
 ## Evidence and scope
 
@@ -63,3 +68,4 @@ Regression tests cover metadata-only opens, absent versus inaccessible,
 parent/leaf symlinks, a directory changed into a symlink during traversal,
 foreign/writable anchors, path escape, fixed candidate limits, redaction,
 dedicated identity ordering and emission before an unchanged NO-GO gate.
+

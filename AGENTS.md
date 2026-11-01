@@ -42,12 +42,18 @@ every unrelated service, host configuration and application repository.
 6. Provide exact candidate SHA, base SHA, changed paths, test evidence,
    known limitations and explicit go/no-go in PR description.
 7. The agent performs and records technical review; exact-SHA green required
-   checks precede merge. No second human approval is required by the owner.
-   No deployment side effects from push or documentation-only changes.
-8. The owner's standing direction permits autonomous Boca operations through
-   the dedicated manual Actions workflow once exact commit, immutable image
-   digest (for an installation), service, isolation, capacity and environment
-   gates are proven and recorded. A merge alone never triggers deployment.
+   checks precede merge. GitHub does not require a second human approving
+   review; that is distinct from the owner approving the task scope. No
+   deployment side effects from push or documentation-only changes.
+8. Do not choose infrastructure or business-logic changes unilaterally.
+   Present the concrete options, recommendation, effects and evidence to the
+   owner, then obtain approval for that scope before changing it. Previously
+   broad autonomous-operation wording is superseded by this instruction.
+   Approval for a diagnosis or code fix is not approval to install, release,
+   migrate a real database or enable another feature. Once a scope is approved,
+   complete its routine implementation and checks without asking repeatedly.
+   All authorized host actions still use only the dedicated manual workflow
+   with exact commit/image/service, isolation, capacity and environment gates.
    Serialize host operations; no automatic retry after a failed gate.
 9. On failure, record RCA and Boca-only disk/inode inventory. Through Actions,
    remove only positively identified disposable Boca remnants after verifying
@@ -77,6 +83,28 @@ every unrelated service, host configuration and application repository.
 - Live automation is a separate technical review and controlled milestone;
   the current runtime remains simulation-only with its engine off.
 
+## Rule 84 — documentation must remain factual and current
+
+[ADR 0055](docs/ADR/0055-factual-documentation-and-scoped-approval.md) records the owner instruction and the historical
+autonomy clauses it supersedes.
+
+Update affected documentation in the same PR as the change. Separate observed
+behavior from configuration, unmerged proposals and future work; never present
+a passing candidate or a configured path as a deployed capability. Cite exact
+source SHA, PR and run evidence, its scope and its limitations. Preserve prior
+cuts only under explicit historical labels.
+
+Before closing a task, reconcile the affected README, operations/status/backlog
+documents and the continuity checkpoint with the reviewed result, remaining
+work and current authorization. Verify main and relevant checks again; do not
+copy an old SHA or test count into a current claim. One assigned writer owns
+each document/issue to avoid conflicting updates. If documentation or evidence
+is still pending, keep that fact explicit and the task open.
+
+This is a delivery obligation for each authorized task, not a claim that an
+automatic robot checks or rewrites all GitHub content. Do not invent schedules
+or a freshness date unsupported by a real verification.
+
 ## Handoff checklist
 
 - GitHub branch/PR/issue and exact HEAD
@@ -86,4 +114,5 @@ every unrelated service, host configuration and application repository.
 - Security and resource impact
 - Why unrelated resources remain untouched
 - Next steps and blockers
+
 

@@ -1,53 +1,77 @@
 # Estado de integración BETA
 
-## Estado vigente — 2026-10-31 (America/Argentina/Buenos_Aires)
+## Estado comprobado y límites
 
-Base verificada: `main` `dc6c69f9746cc4514c7e268846dece9ff30842b5`.
-La release sigue en **simulación solamente**. Los merges no demuestran un host
-apto ni habilitan login, credenciales, cola, Telegram o reserva real.
+La release sigue en **simulación solamente**. La HEAD y los checks de cada
+operación deben revalidarse en el [checkpoint vigente #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+El corte de código incluye #136/#140/#141 hasta
+`07cf424c92384a42e820b73befcaaeeaca87e8d9`; la inspección #98 usó su SHA anterior.
+Las referencias exactas siguientes conservan su alcance histórico; no se
+presentan como pruebas de un SHA posterior. Rige la Regla 84: documentación
+impactada en el mismo PR y continuidad reconciliada antes de cerrar el trabajo.
 
-| Área | Estado vigente | Evidencia y límite |
+| Área | Integrado/comprobado | Límite o pendiente |
 | --- | --- | --- |
-| Componentes offline | GO para revisión y pruebas sintéticas | #30/#34/#36 integraron contratos y outbox durable; #36 impide dos ejecuciones del navegador ficticio en una misma instancia; #38 agregó una concesión local SQLite, aún sin conexión a un flujo externo de reserva |
-| Panel y alta privada | Demostración privada publicada; NO_GO operativo | #113 tiene un Site privado con datos sintéticos. #121 aporta lectura local agregada en modo read-only; no hay endpoint ni conexión al Site. #31 sigue como servicio interno. Falta una capa servidor mínima con identidad, permisos, TLS y protección de sesión/CSRF; no acceso del navegador al archivo SQLite |
-| Chromium y fuente pública | Sólo prueba offline y observación pública acotada | #43 arrancó/cerró Chromium sin egress y #44 midió un arranque, no capacidad del droplet ni visita real. #33 no se ejecutó contra Boca en este gate; #96 ofrece un semáforo manual asesor, no prueba de flujo autenticado |
-| Claves y recuperación | NO_GO para credenciales/rotación reales | #40 integró un recifrador interno dormido y migración 0004 opt-in; el runtime sigue en 0001. Pruebas sintéticas cubren transacción/rollback, escritor viejo, nueva clave, reinicio y DDL. Los triggers no cercan DELETE ni prueban por sí solos la posesión de la clave nueva; faltan coordinación de escritores y recuperación operativa. El dueño difirió backup/restore hasta versión productiva fiable; #47 es sólo biblioteca offline. Persisten canal privado, identidad y custodia de ADR 0012/0022 |
-| Controlador y host | Inspección ejecutada; NO_GO instalación | #124 corrigió argv SSH. Run #70 pasó readiness, SHA y SSH; observó UID10001, runtime privado, user manager y D-Bus propios, socket rootful no escribible y controladores cpu/memory/pids. El socket rootless está ausente: falta distinguir daemon no instalado, detenido o fallando, y luego probar capacidad/aislamiento reales. #116 sólo aporta pruebas CI de límites/red y capacidad tras pull/up |
-| Release y calidad | GO para CI; host pendiente | #99 rechaza reruns/main obsoleto; #117 rechaza dispatches duplicados de release. #124 pasó 564 pruebas y deja 8 lecciones RCA/21 selectores. CI y escaneo de main son SUCCESS; no acreditan publicación GHCR, instalación ni runtime del droplet |
-| Reserva real | NO_GO | No hay cuenta autorizada, orden real de login/cola/eligibilidad, confirmación de Boca ni conciliación externa de un resultado ambiguo; una intención local `planned` no es ticket |
+| Componentes offline | Cola/estados, navegador sintético, coordinador local, guardia SQLite y outbox durable | No runtime coordinado ni flujo real; #130 abierto no equivale a integración |
+| Panel/Site | #113 publicó Site privado sintético; #121 aporta proyección local agregada read-only | Sin endpoint servido, identidad operativa ni conexión DB/Site. #128 es candidato separado. Elegir opciones de acceso con el dueño antes de decidir arquitectura |
+| Notificaciones | Outbox durable integrado, sin red | #134 propone dispatcher sintético; ningún transporte real ni Telegram. Ambigüedad tras crash requiere reconciliación antes de delivery real |
+| Chromium | #43/#44 prueban arranque/cierre y presupuesto offline sin egress | No capacidad del droplet ni visita real; falta frontera de egress y observación pública específicamente autorizada |
+| Claves/recuperación | #40 integró recifrador dormido y migración0004 opt-in; runtime migra0001 | No rotación real; faltan coordinación de escritores, protección DELETE, custodia y recuperación. Backup/restore diferido por el dueño |
+| Host | #124/#132/#140 integrados; inspección #98 ejecutada con metadata de servicio y tres candidatos DB | Socket ausente; ejecutables disponibles/unidad not-found. DB/WAL/SHM candidate-absent sólo en esas rutas; location UNVERIFIED. Sin daemon apto ni DB operativa probada |
+| Concurrencia Actions | #136 separó grupos PR y retuvo mutex manual constante | Operaciones host seriales; no habilita infraestructura ni elimina límites de runners |
+| Migración P1 | #141 integrado: validación de ledger/checksum antes de DDL/WAL/chmod, recheck y creación exclusiva | Sólo código/fixtures; mode=ro puede interactuar con SHM, no es auditoría integral ni exclusión de toda carrera; ninguna migración real ejecutada |
+| Release/calidad | Gates de SHA/intento/digest, CI frozen, build, scan, policy y RCA | CI no prueba publicación GHCR ni salud del droplet; autorización de un fix no habilita release |
+| Reserva real | NO_GO | Sin cuenta/canal habilitados, evidencia del flujo legítimo ni conciliación de resultado externo ambiguo |
 
-Cada PR necesita revisión técnica registrada del agente, checks exactos y
-conversaciones resueltas. ADR 0038 no exige una aprobación humana adicional.
-Las operaciones de host usan el workflow manual Actions con sus gates
-comprobados; un merge o un semáforo público no las dispara. La BETA de
-simulación y el alta real tienen puertas distintas: postergar backup/restore
-no convierte la primera en un bloqueo ni autoriza la segunda.
+## Evidencia host y ubicación de datos
 
-### Ubicación de datos y significado del primer despliegue
+La [inspección #98 / 41258754195](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41258754195)
+ejecutó `inspect-prerequisites`, attempt1, sobre
+`5c642b6d8bf5feac14aaf4a7c4df34ca2e91a97e`. Observó UID10001, runtime y bus
+propios, controladores cpu/memory/pids, socket rootful no escribible y rootless
+ausente. `load=not-found active=inactive sub=dead result=success` corresponde a
+la unidad de usuario docker.service; Docker/dockerd/wrapper/setup fueron
+hallados por búsqueda de ejecutables. Esto no dice «Docker desinstalado» ni
+prueba un daemon sano. No se ejecutó Docker, instalación, release ni backup.
+La metadata emitida a las 21:54:17 ART del 2026-10-31 (job124707449992) informó
+candidate-absent para DB/WAL/SHM en rootless_default, staging_root y staging_data.
+Son sólo las tres hipótesis fijas de ADR0054: no una búsqueda general. El recibo
+retiene `location=UNVERIFIED scope=fixed_paths_only`; no se abrió, creó, movió
+ni migró ninguna base. El job falló después por el gate del socket ausente.
+#92 es evidencia histórica previa, sin el inventario de candidatos de #140.
 
 Compose configura `/data/boca.sqlite3` dentro del controlador y monta `/data`
-desde el volumen persistente `boca-socios_boca_data`. Es una configuración,
-no evidencia de que ese archivo o volumen ya exista en el droplet. La
-inspección #70 no ejecutó Docker ni inventarió datos. Las bases temporales de
-CI tampoco son una base operativa del servicio.
+desde `boca-socios_boca_data`. SQLite es embebida en Python y no necesita un
+servidor de base separado. El volumen permite persistir el archivo fuera del
+ciclo de vida del contenedor; su configuración no prueba su existencia real.
+Se inspeccionaron sólo metadatos de rutas candidatas y no se confirmó ni leyó
+una DB Boca en el droplet; las DB de CI son temporales.
+`Database.migrate()` es una función del código: desarrollarla o corregirla no
+crea una base operativa ni ejecuta una migración en el droplet. Las reproducciones
+del defecto P1 usaron exclusivamente bases temporales sintéticas; no datos reales.
 
-El runtime actual valida la clave, aplica la migración inicial y espera con
-`engine=off` y `site_calls=0`. Un primer controlador saludable demostrará ese
-alcance, no una BETA funcional: faltan coordinación de módulos, guardia durable
-conectada, interfaz autenticada, transporte de notificaciones y las pruebas
-correspondientes. La API mínima puede pertenecer al mismo backend; no requiere
-un sistema independiente ni bloquea validar primero el controlador dormido.
+El runtime valida la clave, aplica la migración inicial y espera con
+`engine=off` y `site_calls=0`. Un controlador saludable sólo probaría ese
+alcance. No sería una BETA funcional sin coordinación durable, interfaz
+aprobada y autenticada, notificaciones y pruebas correspondientes.
 
-La siguiente secuencia del host es diagnóstico del rootless ausente →
-preflight apto → release por digest/manifiesto → instalación → postflight.
-Código, pruebas y documentación de ámbitos independientes avanzan en paralelo;
-fusiones y operaciones host permanecen serializadas. No se recrean secretos
-SSH ni se relajan los gates para ocultar una carencia real del host.
+## Autorización y próximos gates
 
-Evidencia: [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551007644),
-[run #70](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41255522108),
-[CI main](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41255414416)
-y [escaneo main](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41255414443).
+La instrucción actual exige opciones, recomendación y aprobación antes de
+nuevas decisiones de infraestructura o lógica de negocio. El dueño aprobó
+el diagnóstico acotado de archivos, la corrección P1 de migración, #136 y esta
+reconciliación documental. Eso no autoriza instalación, release, migraciones
+reales, credenciales/login/cola/reserva ni cambios en Porota/PPI Watch.
+La ausencia de una aprobación humana obligatoria en el ruleset es un dato de
+GitHub, no una delegación general de decisiones. Cada PR requiere revisión
+registrada del agente y checks del candidato exacto.
+
+La secuencia posible del host, sujeta a decisiones aprobadas, es diagnóstico
+acotado → remediación elegida → preflight apto → release por digest/manifiesto
+→ instalación → postflight. No repetir #98 ni recrear secretos SSH. Las pruebas
+de scopes independientes aprobados pueden avanzar en paralelo; host y merges
+permanecen serializados. Backup/restore está diferido hasta versión productiva
+fiable y no se convierte en un bloqueo de simulación ni permiso de alta real.
 
 ## Registro histórico del candidato #24
 
@@ -137,3 +161,4 @@ Las PR encadenadas #34/#36/#38/#40
 necesitan revisión propia y actualización sobre `main` en orden; su mera
 existencia no completa el runtime. No hay credenciales reales, tráfico autenticado,
 reserva, Telegram, cambios del droplet ni de otros proyectos en este candidato.
+

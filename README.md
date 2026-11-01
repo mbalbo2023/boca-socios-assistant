@@ -46,12 +46,15 @@ infrastructure**.
   strict typing, tests, image build and repository-isolation checks.
 - Delivery: small PRs, recorded agent technical review, exact-SHA status
   checks and immutable release artifacts. Boca-only host operations
-  use the manual Actions workflow under the owner's standing direction once
-  its exact-input and isolation gates are proven.
+  use the manual Actions workflow after approval of the concrete scope and
+  proof of its exact-input and isolation gates. Infrastructure and business
+  choices require options, a recommendation and the owner's decision.
 
 ## Read before contributing
 
-- [AGENTS.md](AGENTS.md): binding instructions for all coding agents.
+- [AGENTS.md](AGENTS.md): binding instructions, including Rule 84: keep affected
+  documentation factual and current in the same PR and reconcile continuity
+  before closing the task.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): modules and threat boundaries.
 - [docs/DEVELOPMENT_POLICY.md](docs/DEVELOPMENT_POLICY.md): branch/PR/CI gates.
 - [docs/SECURITY.md](docs/SECURITY.md): password, key and session policy.
@@ -88,3 +91,4 @@ evidence for deployment or a functional BETA.
 and free standard GitHub-hosted Actions runners on public repositories. The
 ruleset must be **created and verified in GitHub Settings**; the existence of
 this documentation never proves it is active. See GITHUB_SETUP.md.
+
