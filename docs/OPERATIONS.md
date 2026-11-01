@@ -184,6 +184,16 @@ requires a positive STOPPED receipt. No host BETA install/acceptance run has
 occurred. Container-loopback tests do not prove owner tablet, Site or Telegram.
 See ADR0076 and ADR0081.
 
+Issue #207 proposes `owner-prepare/install/verify` for the dedicated owner
+volume, with purpose-bound ciphertext holding the physical passkey's **public**
+credential and matching TLS/health material. ADR0086 defines the isolated
+runner/host contract and the nonsecret receipt. This is a code proposal:
+no real owner passkey, origin, certificate, private tablet route or host
+custody operation has been verified. The 41299068773 protected release is
+SUCCESS for prior main `d0c539d14f38687fbc3711c94ef35df908e57a91`
+only; any #207 merge needs a new exact release. Do not set the BETA marker
+or run `beta-install` from a synthetic fixture.
+
 The earlier 2026-11-01 GitHub environment inspection found no
 `BOCA_RELEASE_ENV_READY`; this release marker was then enabled and release
 #198 succeeded for the source SHA above. The deploy environment still lacks

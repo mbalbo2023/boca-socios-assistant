@@ -63,6 +63,22 @@ SITE_ENVELOPE_FIELDS = frozenset(
         "ciphertext",
     }
 )
+OWNER_ENVELOPE_FIELDS = frozenset(
+    {
+        "version",
+        "repository",
+        "purpose",
+        "uid",
+        "panel_origin",
+        "owner_subject",
+        "recipient_public_key",
+        "recipient_fingerprint",
+        "ephemeral_public_key",
+        "salt",
+        "nonce",
+        "ciphertext",
+    }
+)
 
 
 class PreflightError(ValueError):
@@ -1131,6 +1147,150 @@ def _site_receipt(output: str, operation: str) -> str:
     raise PreflightError("invalid Site bootstrap receipt")
 
 
+def _owner_envelope(value: str, origin: str, subject: str) -> str:
+    """Inspect only bounded ciphertext framing; the pinned image decrypts it."""
+    _validate_beta_context(origin, subject)
+    try:
+        if not value or len(value) > 43691 or re.fullmatch(r"[A-Za-z0-9_-]+", value) is None:
+            raise ValueError
+        raw = base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
+        if (
+            not 0 < len(raw) <= 32768
+            or base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != value
+        ):
+            raise ValueError
+
+        def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, item in pairs:
+                if key in result:
+                    raise ValueError
+                result[key] = item
+            return result
+
+        decoded = raw.decode("ascii")
+        data = json.loads(decoded, object_pairs_hook=unique)
+        if (
+            not isinstance(data, dict)
+            or set(data) != OWNER_ENVELOPE_FIELDS
+            or type(data["version"]) is not int
+            or data["version"] != 1
+            or data["repository"] != "mbalbo2023/boca-socios-assistant"
+            or data["purpose"] != "boca-owner-passkey-tls-v1"
+            or type(data["uid"]) is not int
+            or data["uid"] != 10001
+            or data["panel_origin"] != origin
+            or data["owner_subject"] != subject
+            or json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True) != decoded
+        ):
+            raise ValueError
+        for key, length in {
+            "recipient_public_key": 32,
+            "ephemeral_public_key": 32,
+            "salt": 16,
+            "nonce": 12,
+        }.items():
+            token = data[key]
+            if not isinstance(token, str) or re.fullmatch(r"[A-Za-z0-9_-]+", token) is None:
+                raise ValueError
+            binary = base64.b64decode(
+                token + "=" * (-len(token) % 4), altchars=b"-_", validate=True
+            )
+            if (
+                len(binary) != length
+                or base64.urlsafe_b64encode(binary).rstrip(b"=").decode() != token
+            ):
+                raise ValueError
+        fingerprint = data["recipient_fingerprint"]
+        if (
+            not isinstance(fingerprint, str)
+            or DIGEST_PATTERN.fullmatch(fingerprint) is None
+            or hashlib.sha256(
+                base64.urlsafe_b64decode(data["recipient_public_key"] + "=")
+            ).hexdigest()
+            != fingerprint
+        ):
+            raise ValueError
+        token = data["ciphertext"]
+        if not isinstance(token, str) or re.fullmatch(r"[A-Za-z0-9_-]+", token) is None:
+            raise ValueError
+        ciphertext = base64.b64decode(
+            token + "=" * (-len(token) % 4), altchars=b"-_", validate=True
+        )
+        if (
+            not 16 <= len(ciphertext) <= 32000
+            or base64.urlsafe_b64encode(ciphertext).rstrip(b"=").decode() != token
+        ):
+            raise ValueError
+    except (ValueError, TypeError, KeyError, UnicodeError, binascii.Error) as exc:
+        raise PreflightError("invalid sealed owner envelope") from exc
+    return decoded
+
+
+def _owner_receipt(output: str, operation: str) -> str:
+    if len(output) > 256:
+        raise PreflightError("invalid owner bootstrap receipt")
+    if operation == "prepare":
+        match = re.fullmatch(
+            r"BOCA_OWNER_BOOTSTRAP state=(PREPARED|ALREADY_PREPARED)"
+            r" public_key=([A-Za-z0-9_-]{43}) fingerprint=([0-9a-f]{64})",
+            output,
+        )
+        if match is not None:
+            try:
+                public = base64.b64decode(match[2] + "=", altchars=b"-_", validate=True)
+                if len(public) == 32 and hashlib.sha256(public).hexdigest() == match[3]:
+                    return output
+            except (ValueError, binascii.Error):
+                pass
+    elif operation in {"install", "verify"}:
+        state = "CONFIGURED" if operation == "install" else "VERIFIED"
+        if re.fullmatch(rf"BOCA_OWNER_BOOTSTRAP state={state} fingerprint=[0-9a-f]{{64}}", output):
+            return output
+    raise PreflightError("invalid owner bootstrap receipt")
+
+
+def _owner_container(image: str, operation: str, origin: str, subject: str) -> tuple[str, ...]:
+    if operation not in {"prepare", "install", "verify"}:
+        raise PreflightError("unknown owner custody operation")
+    _validate_beta_context(origin, subject)
+    return (
+        "docker",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        *(("-i",) if operation == "install" else ()),
+        "--user",
+        "10001:10001",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--pids-limit",
+        "16",
+        "--memory",
+        "64m",
+        "--cpus",
+        "0.25",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=4m",  # noqa: S108 - bounded memory-only proof
+        "--mount",
+        f"type=volume,source={OWNER_VOLUME},target=/run/owner,volume-nocopy"
+        + (",readonly" if operation == "verify" else ""),
+        image,
+        "python",
+        "-m",
+        "boca_socios.owner_bootstrap",
+        operation,
+        origin,
+        subject,
+    )
+
+
 def _key_container(image: str, operation: str) -> tuple[str, ...]:
     if operation not in {"init", "verify"}:
         raise PreflightError("invalid key custody operation")
@@ -1974,6 +2134,77 @@ def _site_phase(operation: str, image: str, source_sha: str, envelope: str) -> N
     print(receipt)
 
 
+def _owner_phase(
+    operation: str, image: str, source_sha: str, origin: str, subject: str, envelope: str
+) -> None:
+    """Provision only the isolated owner volume, never an app or real DB."""
+    _validate_beta_context(origin, subject)
+    if (operation == "owner-install") != bool(envelope):
+        raise PreflightError("sealed owner envelope required only for install")
+    decoded = _owner_envelope(envelope, origin, subject) if envelope else None
+    if any(path.exists() or path.is_symlink() for path in (COMPOSE, BETA_COMPOSE)):
+        raise PreflightError("Boca Compose already staged; separate recovery review required")
+    _site_daemon_empty()
+    name = operation.removeprefix("owner-")
+    volumes = _names("volume", "name=^boca-socios_")
+    validate_site_snapshot(collect_snapshot(), volumes, require_owner=name != "prepare")
+    if volumes:
+        _validate_owner_volume()
+        if _run("docker", "ps", "-a", "-q", "--filter", f"volume={OWNER_VOLUME}"):
+            raise PreflightError("Boca owner volume is attached to a container")
+    before_pull = _storage_snapshot()
+    _validate_storage_capacity(before_pull)
+    _run("docker", "pull", image)
+    digests = json.loads(
+        _run("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image)
+    )
+    revision = _run(
+        "docker",
+        "image",
+        "inspect",
+        "--format",
+        '{{index .Config.Labels "org.opencontainers.image.revision"}}',
+        image,
+    )
+    if not isinstance(digests, list) or image not in digests or revision != source_sha:
+        raise PreflightError("pulled owner bootstrap image differs from reviewed release")
+    _validate_storage_continuity(before_pull, _storage_snapshot())
+    _site_daemon_empty()
+    current = _names("volume", "name=^boca-socios_")
+    validate_site_snapshot(collect_snapshot(), current, require_owner=name != "prepare")
+    if current != volumes:
+        raise PreflightError("Boca owner volume inventory changed during bootstrap")
+    if current and _run("docker", "ps", "-a", "-q", "--filter", f"volume={OWNER_VOLUME}"):
+        raise PreflightError("Boca owner volume became attached to a container")
+    if name == "prepare" and not current:
+        created = _run(
+            "docker",
+            "volume",
+            "create",
+            "--driver",
+            "local",
+            "--label",
+            f"com.docker.compose.project={PROJECT}",
+            "--label",
+            "com.docker.compose.volume=boca_owner",
+            OWNER_VOLUME,
+        )
+        if created != OWNER_VOLUME:
+            raise PreflightError("unexpected Boca owner volume creation")
+        _validate_owner_volume()
+        _site_daemon_empty()
+        if _run(*_owner_init_container(image)):
+            raise PreflightError("Boca owner directory preparation had unexpected output")
+    _validate_owner_volume()
+    _site_daemon_empty()
+    receipt = _owner_receipt(
+        _run(*_owner_container(image, name, origin, subject), input_data=decoded), name
+    )
+    _validate_owner_volume()
+    _site_daemon_empty()
+    print(receipt)
+
+
 def _site_daemon_empty() -> None:
     """The dedicated rootless daemon cannot conceal foreign unlabeled containers."""
     if _run("docker", "ps", "-a", "-q", "--no-trunc"):
@@ -2618,9 +2849,19 @@ def phase(
     telegram_envelope: str = "",
     expected_bot_id: str = "",
     expected_chat_hmac: str = "",
+    owner_envelope: str = "",
 ) -> None:
     beta = phase_name.startswith("beta-")
     telegram = phase_name.startswith("telegram-")
+    owner_custody = phase_name.startswith("owner-")
+    if owner_custody:
+        if phase_name not in {"owner-prepare", "owner-install", "owner-verify"}:
+            raise PreflightError("unknown owner custody phase")
+        _validate_beta_context(envelope, beta_owner)
+        if telegram_envelope or expected_bot_id or expected_chat_hmac:
+            raise PreflightError("unexpected Telegram arguments in owner phase")
+    elif owner_envelope:
+        raise PreflightError("unexpected owner envelope outside owner phase")
     if beta:
         if phase_name not in {
             "beta-preflight",
@@ -2644,6 +2885,8 @@ def phase(
         }:
             raise PreflightError("unknown Telegram host phase")
         _validate_beta_context(envelope, beta_owner)
+    elif owner_custody:
+        pass
     elif beta_owner:
         raise PreflightError("unexpected BETA context outside BETA phase")
     elif telegram_envelope:
@@ -2660,6 +2903,10 @@ def phase(
     )
     if phase_name == "inspect-prerequisites":
         inspect_prerequisites()
+        return
+    if owner_custody:
+        _validate_docker_boundary()
+        _owner_phase(phase_name, image, source_sha, envelope, beta_owner, owner_envelope)
         return
     if beta:
         _validate_docker_boundary()
@@ -2809,6 +3056,9 @@ def main() -> int:
             "site-prepare",
             "site-install",
             "site-verify",
+            "owner-prepare",
+            "owner-install",
+            "owner-verify",
             "beta-preflight",
             "beta-stage",
             "beta-config",
@@ -2830,6 +3080,7 @@ def main() -> int:
     parser.add_argument("telegram_envelope", nargs="?", default="")
     parser.add_argument("expected_bot_id", nargs="?", default="")
     parser.add_argument("expected_chat_hmac", nargs="?", default="")
+    parser.add_argument("owner_envelope", nargs="?", default="")
     args = parser.parse_args()
     try:
         phase(
@@ -2842,6 +3093,7 @@ def main() -> int:
             args.telegram_envelope,
             args.expected_bot_id,
             args.expected_chat_hmac,
+            args.owner_envelope,
         )
     except (PreflightError, OSError, ValueError, TypeError, KeyError) as exc:
         print(f"BOCA_NO_GO: {exc}", file=sys.stderr)

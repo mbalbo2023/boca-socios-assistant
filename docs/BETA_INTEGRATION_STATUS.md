@@ -13,6 +13,15 @@ posteriores. Rige la [autorización ampliada](https://github.com/mbalbo2023/boca
 para completar BETA de simulación, Site conectado, Telegram y despliegue
 validado; se excluyen reservas, compras y mutaciones reales en Boca.
 
+El corte posterior #206 quedó en `d0c539d14f38687fbc3711c94ef35df908e57a91`.
+Su [release protegido 41299068773](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41299068773)
+terminó SUCCESS con digest `sha256:95ec739640422532a73de49bc9d37e436a3d26a4c7eb09a626a8813130927168`
+y manifest 13080811204. Es sólo publicación, no instalación. La propuesta
+#207 añade custodia cifrada owner en código y ADR0086; no se ha inscrito una
+passkey real, definido el origen privado, configurado un certificado ni
+ejecutado su operación en el droplet. Tras integrar el candidato será
+necesaria otra publicación para vincular la nueva HEAD.
+
 **BETA operativa en el droplet: NO_VERIFICADA / aplicación no instalada.**
 Código integrado, Site publicado, CI verde y servicio rootless preparado y
 detenido son
@@ -27,7 +36,7 @@ UNVERIFIED; el destino lógico futuro es `/data/boca.sqlite3` en el volumen
 | Frente | Código o ejecución comprobada | Gate restante |
 | --- | --- | --- |
 | Simulación | Coordinador #130, comandos #149, loop #161, ciclo #164 y entrypoint TLS #173; RCA de UUID canónico #187 y probe sintético #190 | Empaquetar/servir en host con identidad y acceso privado; E2E host. No hay cliente Boca real |
-| Panel | Adaptadores #128/#148, owner passkey/controles #163, registro WebAuthn #174 y preflight sin listener #189 | Inscripción física del dueño, origen TLS privado, tablet y rechazo de terceros |
+| Panel | Adaptadores #128/#148, owner passkey/controles #163, registro WebAuthn #174 y preflight sin listener #189; custodia #207 propuesta sin host | Inscripción física del dueño, origen TLS privado, tablet y rechazo de terceros |
 | Avisos/Telegram | #162 fence/migración0007/adapter, #176 estado, worker default-off #188, parada opcional #194, helper cifrado #199, fases protegidas #203 y prueba Bot API de un solo intento #204 | Sin bot/destino privados, provisión en host ni envío/recepción real; `api_accepted` tampoco probaría lectura humana |
 | Site #113 | Versión privada v10 D1 desactivada; #178 helper, #179 cliente opt-in, #181 custodia Actions y #196 inventario global | Imagen publicada #198 para el SHA de corte; revalidar coincidencia con HEAD al operar. Faltan bypass+HMAC host, flag y E2E. Aún offline. Ver issue #113 |
 | Host | Rootless #120, preflight dormido #124, parada #198/41282301501 ALREADY_STOPPED, imagen release #198; `beta-install` #191 y `beta-acceptance` #200 integrados en código | Sin marca BETA, identidad/archivos privados, instalación funcional ni aceptación host. Revalidar daemon y SHA antes de operar |
