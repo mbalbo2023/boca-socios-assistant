@@ -161,6 +161,19 @@
         "tests/test_private_beta_panel.py::test_new_command_key_redirects_to_existing_canonical_result",
         "tests/test_private_beta_panel.py::test_malformed_command_result_never_becomes_a_redirect"
       ]
+    },
+    {
+      "id": "RCA-192",
+      "issue": 192,
+      "fix_pr": 194,
+      "root_cause": "The stop-test inventory allowlist predated the optional Telegram service, so a future valid worker would prevent Boca test shutdown as an unknown container.",
+      "prevention": "Require complete inventory validation and prove the worker's fixed Compose identity, command, UID, immutable Boca image digest, local image ID and revision before any stop.",
+      "regression_tests": [
+        "tests/test_host_stop_test.py::test_verified_telegram_and_controller_stop_only_after_complete_inventory",
+        "tests/test_host_stop_test.py::test_telegram_identity_and_image_mismatch_block_even_known_controller_stop",
+        "tests/test_host_stop_test.py::test_unknown_after_verified_telegram_blocks_every_stop",
+        "tests/test_host_stop_test.py::test_telegram_image_lookup_failure_blocks_inventory_without_stop"
+      ]
     }
   ]
 }

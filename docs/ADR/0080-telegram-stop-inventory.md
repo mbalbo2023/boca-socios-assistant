@@ -1,6 +1,6 @@
 # ADR 0080: reconocimiento seguro del worker Telegram al detener pruebas
 
-**Estado:** decisión aceptada al integrar el PR de issue #192; candidata hasta
+**Estado:** decisión aceptada al integrar PR #194; candidata hasta
 su merge. Fecha de diseño: 2026-11-01 (America/Argentina/Buenos_Aires).
 
 ## Decisión y verificación previa al efecto
@@ -46,8 +46,9 @@ La prueba de aceptación falló antes del cambio al rechazar `telegram`. La
 regresión sintética cubre un controller conocido junto a un Telegram válido,
 los campos de identidad falsos, digest/ID/revisión discordantes, fallo de
 inspección de imagen y un desconocido después de un Telegram válido: ninguno
-se detiene en un inventario incierto. CI/scan/revisión y SHA exactos se
-registran en el PR de #192. Son pruebas con respuestas Docker falsas, no
+se detiene en un inventario incierto. RCA-192 conserva los selectores
+ejecutados. CI/scan/revisión y SHA exactos se registran en PR #194. Son pruebas
+con respuestas Docker falsas, no
 evidencia de parada host ni de Telegram operativo. El último `stop-test`
 protegido observado #156/41272785626 precede a este cambio y no valida su
 nueva ruta. No se despachó ninguna operación, no hubo bot/destino ni envío real.
