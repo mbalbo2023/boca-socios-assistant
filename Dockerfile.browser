@@ -5,6 +5,7 @@ FROM mcr.microsoft.com/playwright/python:v1.64.1-noble@sha256:330d401ae23c905896
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH=/app/.venv/bin:$PATH \
+    PYTHONPATH=/app/src \
     BOCA_OBSERVER_STOP=1
 
 WORKDIR /app
@@ -14,7 +15,13 @@ RUN uv sync --locked --only-group browser --no-editable --no-cache
 
 RUN groupadd --gid 10002 boca-browser && \
     useradd --uid 10002 --gid 10002 --create-home --shell /usr/sbin/nologin boca-browser
+# The browser image carries only the synthetic workflow's typed contracts,
+# not the controller, storage, member credentials or application runtime.
+COPY src/boca_socios/__init__.py ./src/boca_socios/__init__.py
+COPY src/boca_socios/browser/ ./src/boca_socios/browser/
+COPY src/boca_socios/domain/__init__.py src/boca_socios/domain/policy.py ./src/boca_socios/domain/
 COPY scripts/__init__.py scripts/verify_chromium_worker.py scripts/observe_public_home.py scripts/measure_browser_budget.py ./scripts/
+COPY scripts/run_synthetic_ticket_flow.py ./scripts/run_synthetic_ticket_flow.py
 ENV HOME=/home/boca-browser \
     XDG_CACHE_HOME=/tmp/browser-cache \
     XDG_CONFIG_HOME=/tmp/browser-config

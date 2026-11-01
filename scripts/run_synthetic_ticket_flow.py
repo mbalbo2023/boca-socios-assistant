@@ -61,7 +61,10 @@ async def run() -> int:
     try:
         async with async_playwright() as api:
             browser = await api.chromium.launch(
-                headless=True, timeout=15_000, args=["--disable-background-networking"]
+                headless=True,
+                chromium_sandbox=True,
+                timeout=15_000,
+                args=["--disable-background-networking"],
             )
             try:
                 context = await browser.new_context(service_workers="block", accept_downloads=False)
@@ -95,9 +98,9 @@ async def run() -> int:
                     )
                     return 0
                 finally:
-                    await context.close()
+                    await asyncio.wait_for(context.close(), timeout=5)
             finally:
-                await browser.close()
+                await asyncio.wait_for(browser.close(), timeout=5)
     except Exception as error:
         # No URLs, cookies or credentials are included in the failure output.
         print(f"synthetic_browser_failure: {type(error).__name__}", file=sys.stderr)

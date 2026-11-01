@@ -89,4 +89,49 @@ jobs:
           --security-opt no-new-privileges --cap-drop ALL --cap-add SYS_CHROOT
           --user 10002:10002 boca-browser-ci:${{ github.sha }}
           python -m scripts.measure_browser_budget
+      - name: Run synthetic Chromium DOM journey offline
+        env:
+          BOCA_BROWSER_TAG: boca-browser-ci:${{ github.sha }}
+          BOCA_BROWSER_NAME: boca-browser-synthetic-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          # The existing script loads only inline synthetic HTML; the container
+          # network namespace denies external egress including browser background I/O.
+          timeout --signal=TERM --kill-after=10s 90s \
+            docker run --rm --init --name "$BOCA_BROWSER_NAME" --network none \
+            --cgroupns=private --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=128m,mode=1777 \
+            --tmpfs /home/boca-browser:rw,nosuid,nodev,noexec,size=32m,uid=10002,gid=10002,mode=700 \
+            --shm-size=128m --pids-limit=128 --memory=768m --cpus=1 \
+            --security-opt seccomp=docker/seccomp_profile.json \
+            --security-opt no-new-privileges --cap-drop ALL --cap-add SYS_CHROOT \
+            --user 10002:10002 "$BOCA_BROWSER_TAG" \
+            python -m scripts.run_synthetic_ticket_flow \
+            > "$RUNNER_TEMP/boca-synthetic-browser.receipt"
+          python3 scripts/check_synthetic_browser_receipt.py \
+            "$RUNNER_TEMP/boca-synthetic-browser.receipt"
+      - name: Clean disposable browser runner resources
+        if: always()
+        env:
+          BOCA_BROWSER_NAME: boca-browser-synthetic-${{ github.run_id }}-${{ github.run_attempt }}
+          BOCA_BROWSER_TAG: boca-browser-ci:${{ github.sha }}
+          BOCA_CONTROLLER_TAG: boca-socios-ci:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Hosted disposable runner only. Never operate a droplet or prune a daemon.
+          docker info > /dev/null
+          if docker container inspect "$BOCA_BROWSER_NAME" > /dev/null 2>&1; then
+            docker container stop --time 5 "$BOCA_BROWSER_NAME" > /dev/null 2>&1 || true
+            docker container rm --force "$BOCA_BROWSER_NAME" > /dev/null
+          fi
+          if docker container inspect "$BOCA_BROWSER_NAME" > /dev/null 2>&1; then
+            echo 'BOCA_BROWSER_CLEANUP state=NO_GO container=still_present' >&2
+            exit 1
+          fi
+          for tag in "$BOCA_BROWSER_TAG" "$BOCA_CONTROLLER_TAG"; do
+            if docker image inspect "$tag" > /dev/null 2>&1; then
+              docker image rm "$tag" > /dev/null
+            fi
+          done
+          echo 'BOCA_BROWSER_CLEANUP state=PASS container=absent images=absent'
 

@@ -28,7 +28,8 @@ adapter contract and cannot be mistaken for an external reservation.
   It starts one headless Chromium context, blocks page requests, drives the
   embedded synthetic HTML and closes the context/browser on every path.
   The script has no URL/credentials/Queue ID arguments or runtime wiring.
-- Playwright is not a dependency of the controller image or default CI.
+- Playwright is not a dependency of the controller image or quality job;
+  the existing separate browser-image smoke already uses it in CI.
   For this optional lab tool, use Playwright **1.64.1** (checked in official
   PyPI release), paired with its matching Chromium build.
 
@@ -66,9 +67,37 @@ local notice count of 1. No real confirmation number exists.
 
 The Playwright route handler blocks **page** requests, not Chromium's
 entire background network access. Strong no-egress verification requires
-OS-level network isolation; the script is not automatically run in CI and
-does not measure the shared droplet's capacity. See ADR 0008 and issue #11.
+OS-level network isolation; the original script was not automatically run
+in CI and does not measure the shared droplet's capacity. See ADR 0008 and issue #11.
 Do not deploy it to the Porota host, enable host IPC, or infer scalability.
+
+## Proposed CI regression for issue #25 (not deployed)
+
+The existing `run_synthetic_ticket_flow.py` is proposed as a second,
+**isolated** Chromium smoke in the existing `image-build` CI job. The image
+copies only the synthetic browser contracts and `TicketIntent` policy into
+the distinct browser image, with an explicit `/app/src` import path. It does
+not copy the controller/runtime, database, secrets, host helpers or a live
+site adapter. The default image command remains the offline startup check;
+the new smoke is invoked only by CI on an ephemeral GitHub-hosted runner.
+
+The script continues to use its inline HTML and one page/context, now with
+`chromium_sandbox=True`, bounded operations and explicit context/browser
+closure. Docker enforces `--network none`, read-only filesystem, dedicated
+UID 10002, private cgroup, reviewed seccomp profile, private tmpfs/SHM,
+1 CPU, 768 MiB and 128 PIDs. A 90-second outer timeout makes a hung browser
+fail closed. A separate validator accepts only one exact allowlisted
+synthetic JSON receipt; tests reject ambiguous, duplicate or nonsynthetic
+results. Runner cleanup stops/removes only the exact named synthetic
+container and exact CI image tags, including after ordinary failed steps;
+it never prunes a daemon. Cancellation, runner loss or Docker daemon failure
+may prevent cleanup and cannot honestly be reported as verified absence.
+
+This is a **code candidate until exact-HEAD Actions, technical review and
+merge pass**. Even green CI demonstrates only artificial DOM transitions in
+one sandboxed Chromium process. It is not a website visit, actual Queue-it
+session, Boca ticket, tablet passkey test, droplet capacity measurement or
+deployment approval.
 
 ## Acceptance and failure handling
 
