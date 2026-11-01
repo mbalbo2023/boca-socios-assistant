@@ -76,8 +76,14 @@ start.addEventListener('click', async () => {
       signature: to64(assertion.response.signature)
     }}, session);
     sealed = result.envelope;
-    copy.hidden = false;
-    status.textContent = 'Prueba aprobada. Copiá el sobre cifrado; cerrá esta página y el emisor antes de iniciar el túnel.';
+    try {
+      await navigator.clipboard.writeText(sealed);
+      sealed = null;
+      status.textContent = 'Prueba aprobada y sobre cifrado copiado. No lo pegues en issues, PRs ni chats; solo en el input cifrado protegido cuando esté autorizado.';
+    } catch (_copyError) {
+      copy.hidden = false;
+      status.textContent = 'Prueba aprobada. El navegador no permitió copiar automáticamente; usá el botón Copiar y comprobá el resultado antes de iniciar el túnel.';
+    }
   } catch (_error) {
     if (session) { try { await post('/abort', {}, session); } catch (_ignored) { /* already closed */ } }
     status.textContent = 'No se completó la prueba. Cerrá esta página y revisá el motivo local sin reutilizar la capacidad.';

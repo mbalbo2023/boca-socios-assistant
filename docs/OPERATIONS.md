@@ -284,8 +284,9 @@ warnings. The code requires an independently generated fresh 256-bit local
 capability, entered via a non-echoing device TTY and then the browser before
 any WebAuthn challenge. A failed attempt, successful proof, abort or timeout
 closes the loopback listener. It returns an owner-install-compatible sealed
-envelope only after create **and** get with user verification and offers a
-browser Copy action with success/failure status. It does not print ciphertext
+envelope only after create **and** get with user verification. The browser
+tries to copy automatically, reports success and reveals a manual Copy button
+if denied. It does not print ciphertext
 in a terminal or save it to a file.
 
 The physical procedure remains **NO-GO** pending a private Android runtime,

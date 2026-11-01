@@ -51,8 +51,10 @@ its device-held TLS leaf/key/CA and calls
 fingerprint from a protected `owner-prepare` receipt. It returns only the
 bounded canonical sealed JSON envelope encoded in unpadded base64url for the
 existing protected `owner-install` contract, then closes the listener. No
-passkey private key is exported. The browser has a Copy button with explicit
-success/failure status; clipboard behavior is unverified on the real device.
+passkey private key is exported. The browser attempts an automatic clipboard
+copy after proof and reports success; if browser activation denies it, a Copy
+button appears with explicit success/failure status. Clipboard behavior is
+unverified on the real device.
 The envelope is held in page memory until copy or closure, with no local file,
 history, URL or server log. A client abort after a successful server response
 may lose the envelope and leave an uninstalled orphan credential; there is no
