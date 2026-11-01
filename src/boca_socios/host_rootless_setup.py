@@ -165,6 +165,8 @@ def _command_reason(command: tuple[str, ...]) -> str:
             "stop": "user_service_stop_failed",
             "daemon-reload": "user_manager_reload_failed",
         }.get(command[2], "user_service_metadata_failed")
+    if command[0] == "/usr/bin/docker" and len(command) > 2 and command[2] == "stop":
+        return "boca_container_stop_failed"
     return {
         "/usr/bin/loginctl": "dedicated_linger_query_failed",
         "/usr/bin/rootlesskit": "rootless_namespace_failed",
@@ -522,23 +524,208 @@ def prepare(phase: str, source_sha: str) -> None:
     )
 
 
+def _read_private(home: Path, relative: tuple[str, ...], expected: str) -> None:
+    """Verify the two files this helper created without following a redirect."""
+    parent = _directory(home, relative[:-1], create=False)
+    if parent is None:
+        raise SetupError("reviewed_service_configuration_missing")
+    try:
+        fd = os.open(relative[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)
+        with os.fdopen(fd, "r", encoding="utf-8") as source:
+            metadata = os.fstat(source.fileno())
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != UID
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+                or metadata.st_size > 4096
+            ):
+                raise SetupError("reviewed_service_configuration_unsafe")
+            actual = source.read(4097)
+        if actual != expected:
+            raise SetupError("reviewed_service_configuration_mismatch")
+    except OSError as exc:
+        raise SetupError("reviewed_service_configuration_unavailable") from exc
+    finally:
+        os.close(parent)
+
+
+def _stop_service_state(home: Path) -> str:
+    raw = _command(
+        home,
+        "/usr/bin/systemctl",
+        "--user",
+        "show",
+        "docker.service",
+        "--property=FragmentPath,DropInPaths,ActiveState,SubState,MainPID",
+    )
+    pairs = [line.split("=", 1) for line in raw.splitlines()]
+    if len(pairs) != 5 or any(len(pair) != 2 for pair in pairs):
+        raise SetupError("dedicated_service_state_unverified")
+    fields = dict(pairs)
+    if (
+        len(fields) != 5
+        or fields.get("FragmentPath") != str(home.joinpath(*UNIT))
+        or fields.get("DropInPaths") != ""
+    ):
+        raise SetupError("effective_unit_override_preserved_no_stop")
+    if fields.get("ActiveState") == "inactive" and fields.get("SubState") == "dead":
+        if fields.get("MainPID") != "0":
+            raise SetupError("dedicated_service_state_unverified")
+        return "inactive"
+    if fields.get("ActiveState") == "active" and fields.get("SubState") == "running":
+        if not re.fullmatch(r"[1-9][0-9]{0,9}", fields.get("MainPID", "")):
+            raise SetupError("dedicated_service_state_unverified")
+        return "active"
+    raise SetupError("dedicated_service_state_unverified")
+
+
+def _stop_test_containers(home: Path) -> int:
+    endpoint = "--host=unix:///run/user/10001/docker.sock"
+    raw = _command(home, "/usr/bin/docker", endpoint, "info", "--format", "{{json .}}")
+    info = json.loads(raw)
+    if (
+        not isinstance(info, dict)
+        or not isinstance(info.get("SecurityOptions"), list)
+        or "name=rootless" not in info["SecurityOptions"]
+        or info.get("DockerRootDir") != str(home.joinpath(*DATA))
+        or info.get("CgroupVersion") != "2"
+        or info.get("CgroupDriver") != "systemd"
+        or info.get("Driver") != "overlay2"
+        or type(info.get("Containers")) is not int
+        or not 0 <= info["Containers"] <= 12
+    ):
+        raise SetupError("rootless_daemon_boundary_unproven")
+    raw_ids = _command(home, "/usr/bin/docker", endpoint, "ps", "-aq", "--no-trunc")
+    ids = raw_ids.splitlines() if raw_ids else []
+    if (
+        len(ids) != info["Containers"]
+        or len(set(ids)) != len(ids)
+        or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids)
+    ):
+        raise SetupError("dedicated_container_inventory_unverified")
+    running: list[str] = []
+    for container_id in ids:
+        record = json.loads(
+            _command(
+                home, "/usr/bin/docker", endpoint, "inspect", "--format", "{{json .}}", container_id
+            )
+        )
+        config = record.get("Config") if isinstance(record, dict) else None
+        labels = config.get("Labels") if isinstance(config, dict) else None
+        state = record.get("State") if isinstance(record, dict) else None
+        service = labels.get("com.docker.compose.service") if isinstance(labels, dict) else None
+        number = (
+            labels.get("com.docker.compose.container-number") if isinstance(labels, dict) else None
+        )
+        if (
+            not isinstance(record, dict)
+            or record.get("Id") != container_id
+            or not isinstance(labels, dict)
+            or labels.get("com.docker.compose.project") != "boca-socios"
+            or service not in {"controller", "browser", "proxy"}
+            or not isinstance(number, str)
+            or not re.fullmatch(r"[1-9][0-9]{0,2}", number)
+            or record.get("Name") != f"/boca-socios-{service}-{number}"
+            or not isinstance(state, dict)
+            or type(state.get("Running")) is not bool
+        ):
+            raise SetupError("unknown_container_preserved_no_stop")
+        if state["Running"]:
+            running.append(container_id)
+    # Complete the inventory before the first effect. Never stop an unknown container.
+    for container_id in running:
+        _command(
+            home, "/usr/bin/docker", endpoint, "stop", "--time", "10", container_id, timeout=25
+        )
+    for container_id in ids:
+        record = json.loads(
+            _command(
+                home, "/usr/bin/docker", endpoint, "inspect", "--format", "{{json .}}", container_id
+            )
+        )
+        state = record.get("State") if isinstance(record, dict) else None
+        if (
+            not isinstance(record, dict)
+            or record.get("Id") != container_id
+            or not isinstance(state, dict)
+            or state.get("Running") is not False
+        ):
+            raise SetupError("boca_container_stop_unverified")
+    after = json.loads(
+        _command(home, "/usr/bin/docker", endpoint, "info", "--format", "{{json .}}")
+    )
+    after_ids = _command(home, "/usr/bin/docker", endpoint, "ps", "-aq", "--no-trunc")
+    if (
+        not isinstance(after, dict)
+        or type(after.get("Containers")) is not int
+        or after.get("Containers") != len(ids)
+        or len(after_ids.splitlines() if after_ids else []) != len(ids)
+        or set(after_ids.splitlines() if after_ids else []) != set(ids)
+    ):
+        raise SetupError("dedicated_container_inventory_changed_no_daemon_stop")
+    return len(running)
+
+
+def stop_test(source_sha: str) -> None:
+    if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise SetupError("invalid_stop_coordinates")
+    home = _identity()
+    for anchor in (home, RUNTIME):
+        descriptor = _directory(anchor, (), create=False)
+        if descriptor is None:
+            raise SetupError("private_directory_required")
+        os.close(descriptor)
+    _socket(RUNTIME / "systemd/private")
+    _socket(RUNTIME / "bus")
+    if os.access("/var/run/docker.sock", os.W_OK):
+        raise SetupError("rootful_access_forbidden")
+    _read_private(home, CONFIG, _config(home))
+    _read_private(home, UNIT, _unit())
+    state = _stop_service_state(home)
+    if state == "inactive":
+        if _entry(RUNTIME, ("docker.sock",)) is not None:
+            raise SetupError("stale_dedicated_socket_unverified")
+        print(
+            f"BOCA_STOP_TEST state=ALREADY_STOPPED source_sha={source_sha} containers=not_queried data=preserved"
+        )
+        return
+    _socket(RUNTIME / "docker.sock")
+    stopped = _stop_test_containers(home)
+    _command(home, "/usr/bin/systemctl", "--user", "stop", "docker.service", timeout=35)
+    if _stop_service_state(home) != "inactive":
+        raise SetupError("dedicated_service_stop_unverified")
+    for attempt in range(10):
+        if _entry(RUNTIME, ("docker.sock",)) is None:
+            break
+        if attempt == 9:
+            raise SetupError("dedicated_socket_stop_unverified")
+        time.sleep(0.2)
+    print(
+        f"BOCA_STOP_TEST state=STOPPED source_sha={source_sha} containers={stopped} data=preserved"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Boca dedicated rootless service preparation")
-    parser.add_argument("phase", choices=("check", "apply"))
+    parser.add_argument("phase", choices=("check", "apply", "stop-test"))
     parser.add_argument("source_sha")
     args = parser.parse_args()
+    prefix = "BOCA_STOP_TEST" if args.phase == "stop-test" else "BOCA_ROOTLESS_SETUP"
     try:
-        prepare(args.phase, args.source_sha)
+        if args.phase == "stop-test":
+            stop_test(args.source_sha)
+        else:
+            prepare(args.phase, args.source_sha)
     except SetupError as exc:
         print(
-            f"BOCA_ROOTLESS_SETUP state=NO_GO reason={exc} files=preserved_or_partial"
+            f"{prefix} state=NO_GO reason={exc} files=preserved_or_partial"
             " enablement=UNVERIFIED application_database=not_accessed",
             file=sys.stderr,
         )
         return 1
     except (OSError, ValueError, TypeError, KeyError):
         print(
-            "BOCA_ROOTLESS_SETUP state=NO_GO reason=metadata_or_io_unavailable"
+            f"{prefix} state=NO_GO reason=metadata_or_io_unavailable"
             " files=preserved_or_partial enablement=UNVERIFIED application_database=not_accessed",
             file=sys.stderr,
         )
