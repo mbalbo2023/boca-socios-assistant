@@ -1,5 +1,21 @@
 # Estado de integración BETA
 
+## Actualización candidata #223 — sin efectos en el droplet
+
+Sobre `main=8a7bcf433a83071cc5ccee327c35743d349ce930` se está revisando
+la corrección de acceso solicitada por el dueño: **`http://localhost:8443`**
+con WebAuthn RP `localhost` por túnel SSH Termius, sin certificados/CA ni
+configuración de servidor web compartido. Boca conserva únicamente
+`127.0.0.1:8443` como puerto host y mantiene las garantías de limpieza
+selectiva Docker de #220. El modo HTTP nuevo cifra en custodia sólo la
+credencial pública mediante sobre v2; el camino TLS anterior de #214/#215
+queda histórico y no es un procedimiento de activación para la tablet.
+**NO-GO operativo:** no hay todavía enlace/token de un solo uso servido en
+el host, envío privado de la llave, prueba física Chrome/passkey/Termius ni
+instalación BETA. La suite y CI del candidato no sustituyen estos gates;
+ver [ADR0091](ADR/0091-ssh-loopback-http-without-device-certificates.md)
+y [#223](https://github.com/mbalbo2023/boca-socios-assistant/issues/223).
+
 ## Corte verificado y alcance
 
 Corte de evidencia previo a esta actualización documental: `main` era

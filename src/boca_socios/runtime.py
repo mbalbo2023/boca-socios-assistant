@@ -26,6 +26,7 @@ from boca_socios.integration.operational import (
     LocalRuntimeUnavailable,
     validate_existing_beta_storage,
 )
+from boca_socios.owner_origin import SSH_LOOPBACK_ORIGIN
 from boca_socios.panel.passkey import PasskeyOwnerAuthentication
 from boca_socios.panel.private_http import PrivatePanelApplication
 from boca_socios.security.credential_vault import CredentialVault
@@ -121,12 +122,30 @@ class _QuietTLSHandler(WSGIRequestHandler):
         return
 
 
+class _LoopbackHTTPWSGIServer(WSGIServer):
+    """Plain HTTP only inside Boca; the droplet publishes solely to loopback."""
+
+    def __init__(self, address: tuple[str, int], handler: type[WSGIRequestHandler]) -> None:
+        super().__init__(address, handler)
+        self.timeout = 0.5
+
+    def get_request(self) -> tuple[socket.socket, tuple[str, int]]:
+        connection, address = super().get_request()
+        connection.settimeout(5.0)
+        return connection, address
+
+
+class _QuietHTTPHandler(WSGIRequestHandler):
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+
 class ServedBeta:
-    """One TLS WSGI server and one local command host, closed together."""
+    """One private WSGI server and one local command host, closed together."""
 
     def __init__(
         self,
-        server: _TLSWSGIServer,
+        server: _TLSWSGIServer | _LoopbackHTTPWSGIServer,
         runtime: LocalBetaRuntime,
         bridge: SiteBridgeWorker | None = None,
     ) -> None:
@@ -155,7 +174,7 @@ class ServedBeta:
 
 
 def build_beta_server(settings: Settings) -> ServedBeta:
-    """Fail closed before opening a listener when identity/TLS is missing."""
+    """Fail closed before opening a listener when owner identity is missing."""
     settings.validate_beta()
     bridge_enabled = settings.validate_bridge()
     transport = None
@@ -168,8 +187,6 @@ def build_beta_server(settings: Settings) -> ServedBeta:
         )
     credential_id = _read_config_file(settings.passkey_credential_id_file, limit=1024)
     public_key = _read_config_file(settings.passkey_public_key_der_file, limit=4096)
-    _read_config_file(settings.tls_key_file, limit=8192, private=True)
-    _read_config_file(settings.tls_cert_file, limit=16384)
     origin = urlsplit(settings.panel_origin)
     passkey = PasskeyOwnerAuthentication(
         credential_id=credential_id,
@@ -179,10 +196,14 @@ def build_beta_server(settings: Settings) -> ServedBeta:
         owner_subject=settings.owner_subject,
         permissions=_OWNER_PERMISSIONS,
     )
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
-    assert settings.tls_cert_file is not None and settings.tls_key_file is not None
-    context.load_cert_chain(str(settings.tls_cert_file), str(settings.tls_key_file))
+    context: ssl.SSLContext | None = None
+    if settings.panel_origin != SSH_LOOPBACK_ORIGIN:
+        _read_config_file(settings.tls_key_file, limit=8192, private=True)
+        _read_config_file(settings.tls_cert_file, limit=16384)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        assert settings.tls_cert_file is not None and settings.tls_key_file is not None
+        context.load_cert_chain(str(settings.tls_cert_file), str(settings.tls_key_file))
     events = _configured_event(settings.db_path)
     runtime = LocalBetaRuntime.start(
         database_path=settings.db_path,
@@ -190,7 +211,7 @@ def build_beta_server(settings: Settings) -> ServedBeta:
         browser=_LocalSyntheticBrowser(),
     )
     bridge: SiteBridgeWorker | None = None
-    server: _TLSWSGIServer | None = None
+    server: _TLSWSGIServer | _LoopbackHTTPWSGIServer | None = None
     try:
         if transport is not None:
             bridge = SiteBridgeWorker(
@@ -213,7 +234,7 @@ def build_beta_server(settings: Settings) -> ServedBeta:
             if environ.get("PATH_INFO") == "/healthz":
                 healthy = (
                     environ.get("REQUEST_METHOD") == "GET"
-                    and environ.get("wsgi.url_scheme") == "https"
+                    and environ.get("wsgi.url_scheme") == origin.scheme
                     and environ.get("HTTP_HOST") == origin.netloc
                     and not environ.get("QUERY_STRING")
                     and runtime.ready
@@ -236,7 +257,14 @@ def build_beta_server(settings: Settings) -> ServedBeta:
                 return [body]
             return panel(environ, start)
 
-        server = _TLSWSGIServer((settings.bind_host, settings.bind_port), _QuietTLSHandler, context)
+        if context is None:
+            server = _LoopbackHTTPWSGIServer(
+                (settings.bind_host, settings.bind_port), _QuietHTTPHandler
+            )
+        else:
+            server = _TLSWSGIServer(
+                (settings.bind_host, settings.bind_port), _QuietTLSHandler, context
+            )
         server.set_app(app)
         if bridge is not None:
             bridge.start()
@@ -294,7 +322,8 @@ def main(argv: tuple[str, ...] = ()) -> int:
         label = "beta_config" if full else "beta_owner"
         try:
             settings = Settings.from_environment()
-            ca_file = Path(os.environ.get("BOCA_HEALTH_CA_FILE", ""))
+            ca_env = os.environ.get("BOCA_HEALTH_CA_FILE", "")
+            ca_file = Path(ca_env) if ca_env else None
             if full:
                 beta_config_preflight.check_beta_config(
                     settings, ca_file=ca_file, owner_root=beta_config_preflight.OWNER_ROOT

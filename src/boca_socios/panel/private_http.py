@@ -1,6 +1,6 @@
 """Same-origin private simulation UI and passkey session boundary.
 
-This WSGI callable is inert until a reviewed TLS server wires it to a Boca-only
+This WSGI callable is inert until a reviewed private server wires it to a Boca-only
 database, passkey public credential and synthetic command host. No real Boca
 login, queue admission, reservation or purchase path exists here.
 """
@@ -20,6 +20,7 @@ from urllib.parse import parse_qsl, urlsplit
 from uuid import UUID
 
 from boca_socios.notify.projection import list_local_notices
+from boca_socios.owner_origin import owner_rp_host
 from boca_socios.panel import private_ui
 from boca_socios.panel.enrollment_http import EnrollmentApplication
 from boca_socios.panel.local_status import read_local_status
@@ -119,15 +120,15 @@ class PrivatePanelApplication:
     ) -> None:
         parsed = urlsplit(origin)
         if (
-            parsed.scheme != "https"
-            or not parsed.netloc
+            not parsed.netloc
             or parsed.path
             or parsed.query
             or parsed.fragment
             or parsed.username is not None
             or parsed.password is not None
         ):
-            raise ValueError("an exact HTTPS origin is required")
+            raise ValueError("an exact private origin is required")
+        owner_rp_host(origin)
         if not database_path.is_absolute() or not owner_subject:
             raise ValueError("Boca database and owner must be configured")
         if len(events) > 20 or any(
@@ -158,7 +159,10 @@ class PrivatePanelApplication:
             )
 
     def _handle(self, environ: Mapping[str, object], start: StartResponse) -> list[bytes]:
-        if environ.get("wsgi.url_scheme") != "https" or environ.get("HTTP_HOST") != self._host:
+        if (
+            environ.get("wsgi.url_scheme") != urlsplit(self._origin).scheme
+            or environ.get("HTTP_HOST") != self._host
+        ):
             return _error(start, 400, "Se requiere el origen privado seguro.")
         if environ.get("QUERY_STRING", "") or environ.get("HTTP_TRANSFER_ENCODING", ""):
             return _error(start, 400, "Solicitud inválida.")

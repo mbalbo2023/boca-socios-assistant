@@ -119,6 +119,23 @@ def test_owner_then_full_check_use_no_socket_or_database(
     assert not settings.db_path.exists()
 
 
+def test_ssh_loopback_http_owner_gate_needs_only_public_passkey(tmp_path: Path) -> None:
+    settings, owner, ca = _fixture(tmp_path)
+    settings = replace(
+        settings, panel_origin="http://localhost:8443", tls_cert_file=None, tls_key_file=None
+    )
+    for name in ("tls.crt", "tls.key", "health-ca.pem"):
+        (owner / name).unlink()
+    beta_config_preflight.check_beta_owner(settings, owner_root=owner)
+    beta_config_preflight.check_beta_config(settings, owner_root=owner)
+    assert not settings.db_path.exists()
+    with pytest.raises(ValueError, match="SSH-only"):
+        beta_config_preflight.check_beta_owner(settings, owner_root=owner, ca_file=ca)
+    _private(owner / "tls.crt", b"unexpected certificate")
+    with pytest.raises(ValueError, match="unexpected owner BETA TLS artifact"):
+        beta_config_preflight.check_beta_owner(settings, owner_root=owner)
+
+
 def test_exact_tunnel_origin_requires_matching_tls_san_and_ca(tmp_path: Path) -> None:
     settings, owner, ca = _fixture(tmp_path)
     cert, key, trust = _certificates("localhost")

@@ -56,8 +56,9 @@ infrastructure**.
   CPU/memory caps, no exposed ports and no host Docker socket. A separate
   beta Compose candidate #171 and protected `beta-install` #191/
   `beta-acceptance` #200 contracts were tested on disposable runners. The
-  model binds TLS to Boca host loopback and uses a private owner volume; no
-  droplet install occurred.
+  model is being changed under #223/ADR0091 to use certificate-free HTTP only
+  on Boca host loopback behind SSH, with a private owner volume; no droplet
+  install occurred.
 - CI: pinned checkout/setup actions, frozen dependency lock, lint, format,
   strict typing, tests, image build and repository-isolation checks.
 - Delivery: small PRs, recorded agent technical review, exact-SHA status
@@ -73,7 +74,7 @@ The [delivery plan](docs/BETA_DELIVERY_PLAN.md) makes private member enrollment
 (**Socios > Agregar socio**) part of acceptance, together with simulation
 start/stop/status, durable local notices and restart/idempotency tests. Reuse
 the existing encrypted enrollment service; tests use synthetic credentials.
-The own-application panel, entrypoint, owner/TLS preflight #189, and local
+The own-application panel, entrypoint, owner preflight #189, and local
 runtime libraries are integrated in code, without application installation.
 PR #208 integrated a separate protected, sealed owner passkey/TLS custody
 path in code. Its synthetic checks do not enroll the owner or make the
@@ -84,20 +85,26 @@ reserve a port or establish tablet access.
 The later protected [run 41310958281](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41310958281)
 on `main=3ec1096fb5dce8a01af5c8060f0be056bf44fb9d` reported
 `FREE reserved=no` at that instant. The owner chose a private tablet forward
-to the local panel on 8443; this candidate admits only the exact
-`https://localhost:8443` RP origin for that route (ADR0088). The actual
-forward, trusted tablet TLS certificate and physical passkey remain untested;
+to the local panel on 8443. **The newer #223/ADR0091 candidate supersedes
+the HTTPS-localhost route:** the only proposed BETA Compose origin is
+`http://localhost:8443` (WebAuthn RP `localhost`) through Termius SSH, with
+**no device certificate/CA installation**. The actual
+forward and physical passkey remain untested;
 the single stored credential also needs cross-device proof for Android/iOS.
-This tree includes a one-use tablet-local WebAuthn create/get emitter and
-device-held TLS bundle in code (#215, ADR0089). Synthetic
-tests cannot establish Android CA trust, physical owner verification, secure
-ciphertext handoff or iOS use; no real credential or host owner-install is
-claimed. The owner-device command and clipboard behavior remain unverified.
+The former tablet-local TLS WebAuthn emitter (#215, ADR0089) remains only as
+historical code and is **not** the owner's enrollment procedure. The requested
+one-time activation URL must instead be served from the droplet on the same
+isolated Boca port, with a privately delivered single-use key; that bootstrap
+endpoint is not implemented yet. Synthetic tests cannot establish physical
+owner verification, private capability handoff or iOS use; no real credential
+or host owner-install is claimed.
 The #217 correction requires a discoverable passkey during local enrollment.
 The chosen Android credential manager holds its private key, not a Chrome
 cookie. The panel session cookie is temporary (15-minute idle, 8-hour absolute
 limit, and invalidated by process restart); Android storage/sync and iOS use
-still require physical proof in #209. TLS renewal remains an open gate.
+still require physical proof in #209. Chrome localhost cookie acceptance must
+be tested on the actual tablet; Safari support remains unverified. No renewal
+or generation of TLS certificates is required for the chosen SSH-only route.
 Site decommission is deferred until the local replacement is validated.
 Merged PR #220 (RCA #219) strengthens the existing Boca-only failed
 deploy recovery: a failed staged `beta-install` invokes immediate selective

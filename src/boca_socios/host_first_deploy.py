@@ -12,7 +12,6 @@ import binascii
 import errno
 import hashlib
 import http.client
-import ipaddress
 import json
 import os
 import platform
@@ -279,9 +278,11 @@ def validate_beta_snapshot(
 
 
 def _validate_beta_context(origin: str, owner: str) -> None:
-    if not re.fullmatch(
-        r"https://[a-z0-9][a-z0-9.-]{0,252}(?::[0-9]{2,5})?", origin
-    ) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", owner):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", owner):
+        raise PreflightError("invalid private BETA coordinates")
+    if origin == "http://localhost:8443":
+        return
+    if not re.fullmatch(r"https://[a-z0-9][a-z0-9.-]{0,252}(?::[0-9]{2,5})?", origin):
         raise PreflightError("invalid private BETA coordinates")
     try:
         port = urlsplit(origin).port
@@ -292,36 +293,13 @@ def _validate_beta_context(origin: str, owner: str) -> None:
 
 
 def _validate_owner_context(origin: str, owner: str) -> None:
-    """Match the exact HTTPS RP coordinate contract before any owner effect."""
+    """Match the standalone host's strict private RP contract."""
     _validate_beta_context(origin, owner)
-    parsed = urlsplit(origin)
-    host, port = parsed.hostname, parsed.port
-    if (
-        host is None
-        or parsed.netloc != (host if port is None else f"{host}:{port}")
-        or port == 443
-        or origin != f"https://{parsed.netloc}"
-    ):
+    # Host custody and BETA are no longer allowed to prepare an HTTPS owner
+    # volume from a stale protected secret. Legacy HTTPS library tests are
+    # separate; only this new, owner-selected port-forward route deploys.
+    if origin != "http://localhost:8443":
         raise PreflightError("invalid private owner origin")
-    if host == "localhost":
-        if port != 8443:
-            raise PreflightError("invalid private owner origin")
-        return
-    if (
-        re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", host) is None
-        or len(host) > 253
-        or host.endswith(".localhost")
-        or any(
-            len(label) > 63 or label.startswith("-") or label.endswith("-")
-            for label in host.split(".")
-        )
-    ):
-        raise PreflightError("invalid private owner origin")
-    try:
-        ipaddress.ip_address(host)
-    except ValueError:
-        return
-    raise PreflightError("invalid private owner origin")
 
 
 def validate_docker_boundary(snapshot: DockerBoundarySnapshot) -> None:
@@ -1228,7 +1206,12 @@ def _owner_envelope(value: str, origin: str, subject: str) -> str:
             or type(data["version"]) is not int
             or data["version"] != 1
             or data["repository"] != "mbalbo2023/boca-socios-assistant"
-            or data["purpose"] != "boca-owner-passkey-tls-v1"
+            or data["purpose"]
+            != (
+                "boca-owner-passkey-v2"
+                if origin == "http://localhost:8443"
+                else "boca-owner-passkey-tls-v1"
+            )
             or type(data["uid"]) is not int
             or data["uid"] != 10001
             or data["panel_origin"] != origin
@@ -1421,9 +1404,6 @@ def _beta_check_container(image: str, origin: str, owner: str, operation: str) -
         "BOCA_OWNER_SUBJECT": owner,
         "BOCA_PASSKEY_CREDENTIAL_ID_FILE": "/run/owner/credential_id",
         "BOCA_PASSKEY_PUBLIC_KEY_DER_FILE": "/run/owner/public_key.der",
-        "BOCA_TLS_CERT_FILE": "/run/owner/tls.crt",
-        "BOCA_TLS_KEY_FILE": "/run/owner/tls.key",
-        "BOCA_HEALTH_CA_FILE": "/run/owner/health-ca.pem",
         "BOCA_BIND_HOST": "0.0.0.0",  # noqa: S104 - isolated Boca bridge, host loopback only
         "BOCA_BIND_PORT": "8443",
     }
@@ -1709,9 +1689,6 @@ def collect_diagnostic(
                 "BOCA_OWNER_SUBJECT": beta_owner,
                 "BOCA_PASSKEY_CREDENTIAL_ID_FILE": "/run/owner/credential_id",
                 "BOCA_PASSKEY_PUBLIC_KEY_DER_FILE": "/run/owner/public_key.der",
-                "BOCA_TLS_CERT_FILE": "/run/owner/tls.crt",
-                "BOCA_TLS_KEY_FILE": "/run/owner/tls.key",
-                "BOCA_HEALTH_CA_FILE": "/run/owner/health-ca.pem",
                 "BOCA_HEALTH_MODE": "beta",
                 "BOCA_BIND_HOST": "0.0.0.0",  # noqa: S104 - isolated Boca bridge
                 "BOCA_BIND_PORT": "8443",
@@ -1722,6 +1699,15 @@ def collect_diagnostic(
     }.items():
         if environment.get(name) != expected:
             raise PreflightError(f"Boca diagnostic {name} mismatch")
+    if (
+        beta
+        and beta_origin == "http://localhost:8443"
+        and any(
+            name in environment
+            for name in ("BOCA_TLS_CERT_FILE", "BOCA_TLS_KEY_FILE", "BOCA_HEALTH_CA_FILE")
+        )
+    ):
+        raise PreflightError("unexpected Boca HTTP BETA TLS configuration")
     repo_digests = json.loads(
         _run("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image)
     )
@@ -1801,10 +1787,24 @@ def collect_diagnostic(
 
 
 def _beta_loopback_health(container: str, origin: str) -> None:
-    """Use the container's public CA only; connect to the host loopback publish."""
+    """Probe the exact Boca port on host loopback, never another web server."""
     authority = urlsplit(origin)
     if not authority.hostname:
-        raise PreflightError("invalid BETA TLS hostname")
+        raise PreflightError("invalid BETA hostname")
+    if origin == "http://localhost:8443":
+        try:
+            with socket.create_connection(("127.0.0.1", 8443), timeout=3) as connection:
+                connection.settimeout(3)
+                connection.sendall(
+                    b"GET /healthz HTTP/1.1\r\nHost: localhost:8443\r\nConnection: close\r\n\r\n"
+                )
+                response = http.client.HTTPResponse(connection)
+                response.begin()
+                if response.status != 200 or response.read(64) != b"BOCA_BETA_READY":
+                    raise PreflightError("BETA host loopback health unavailable")
+            return
+        except (OSError, http.client.HTTPException) as exc:
+            raise PreflightError("BETA host SSH-loopback HTTP unavailable") from exc
     ca = _run(
         "docker",
         "exec",
@@ -1940,7 +1940,7 @@ def _validate_beta_acceptance_receipt(raw: str) -> str:
         r" p95_ms=([0-9]{1,6}[.][0-9]{2}) elapsed_ms=([0-9]{1,6}[.][0-9]{2})"
         r" cpu_ms=([0-9]{1,6}[.][0-9]{2}) process_peak_rss_kib=([0-9]{1,6})"
         r" scratch_bytes=([0-9]{1,7}) members=1 intents=1 notices=1"
-        r" tls=verified engine=off site=not_contacted telegram=not_sent",
+        r" local_http=verified engine=off site=not_contacted telegram=not_sent",
         raw,
     )
     if match is None:
@@ -2113,7 +2113,7 @@ def _beta_phase(
     _validate_storage_capacity(capacity)
     print(
         f"BOCA_BETA_INSTALL state=PASS source_sha={source_sha} image={image}"
-        " service=controller host=loopback tls=verified engine=off site=off telegram=off"
+        " service=controller host=loopback local_http=verified engine=off site=off telegram=off"
         f" stage_free_mib={capacity.stage_free_bytes // 1024**2}"
         f" docker_free_mib={capacity.docker_free_bytes // 1024**2}"
         f" stage_inodes={capacity.stage_inodes} docker_inodes={capacity.docker_inodes}"

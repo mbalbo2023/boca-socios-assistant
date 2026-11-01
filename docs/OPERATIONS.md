@@ -160,6 +160,16 @@ boundaries. No Site host phase was dispatched. See ADR0082.
 
 ## Protected served BETA and acceptance — code only
 
+**Newer candidate #223 / ADR0091:** the selected droplet/tunnel origin is
+`http://localhost:8443`, without a device TLS certificate or CA. The
+`beta-install` package still publishes **only** host `127.0.0.1:8443` from
+the dedicated Boca rootless container. It must not configure, restart, proxy,
+or modify any host web server, other application or port. An occupied or
+unavailable 8443 is a fail-closed **STOP**, not a reason to stop the occupant.
+The historical TLS code/release receipts below document earlier candidates;
+neither they nor synthetic acceptance mean an installed panel. The one-use
+Chrome registration link is still unimplemented and is an activation blocker.
+
 PR #189 integrated image-side `check-beta-owner/config` without listener in
 `63965b087fbd6d7a68308302bb8baf2e08975674` (candidate `b2b34a17`, CI
 41274671069, scan 41274671077, release/deploy 41274671053/41274671118,
@@ -260,7 +270,7 @@ dedicated-UID bind and immediate close. It returns an allowlisted FREE/BUSY/
 ERROR receipt, does not enumerate or connect to a process, and runs without
 the rootless daemon. The BETA install workflow repeats this check just before
 app/key effects. A FREE result is instantaneous and does not reserve the port;
-the later Docker binding/TLS probe and real tablet access have separate gates.
+the later Docker binding/local-HTTP probe and real tablet access have separate gates.
 See ADR0087 and issue #211.
 
 The later protected [run 41310958281](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41310958281)
@@ -268,50 +278,41 @@ on exact `main=3ec1096fb5dce8a01af5c8060f0be056bf44fb9d`, attempt 1,
 passed `BOCA_PORT_CHECK state=FREE address=127.0.0.1 port=8443 reserved=no`.
 This supersedes only the preceding absence of a host port observation; it did
 not start Boca. The owner selected a private local tablet forward and kept
-Site decommission pending. ADR0088's candidate origin is exactly
-`https://localhost:8443`, with a private trusted `DNS:localhost` certificate.
+Site decommission pending. ADR0088's old candidate origin
+`https://localhost:8443` is superseded for the SSH-only BETA by
+`http://localhost:8443` in ADR0091, without device certificates or CA.
 Do not dispatch owner custody or BETA install until the physical tablet route,
-certificate trust and real passkey are verified. The present single owner
+one-time enrollment authorization and real passkey are verified. The present single owner
 credential needs separate Android/iOS interoperability proof. No terminal
 operation by the owner replaces the gated Actions host workflow.
 
-## Tablet-local first-owner ceremony — code only, not activated
+## First-owner registration on Chrome — new host link still pending
 
-Issue #215 / ADR0089 adds a one-use **device-local** emitter in this tree for
-`https://localhost:8443`. It never runs on the droplet or in the protected
-host workflow. A new-only private directory on the device holds the generated
-`DNS:localhost` TLS leaf/key and public CA; the CA signing key is discarded.
-The device must establish actual browser trust of that CA without bypassing
-warnings. The code requires an independently generated fresh 256-bit local
-capability, entered via a non-echoing device TTY and then the browser before
-any WebAuthn challenge. A failed attempt, successful proof, abort or timeout
-closes the loopback listener. It returns an owner-install-compatible sealed
-envelope only after create **and** get with user verification. The browser
-tries to copy automatically, reports success and reveals a manual Copy button
-if denied. It does not print ciphertext in a terminal or save it to a file.
-The #217 correction requests the tablet's platform authenticator and requires
-a discoverable passkey; if the chosen Android
-credential manager cannot create one, registration fails. The private key
-stays in that manager. Chrome holds only a short-lived HttpOnly panel session
-cookie, expiring after 15 minutes idle, 8 hours absolute or a panel process
-restart; it cannot be made permanently valid by browser settings. Actual
-credential persistence/sync must be observed on Android, and iOS use separately
-proven. TLS leaf/CA expiry at 30/90 days requires reviewed renewal.
+The old #215/ADR0089 one-use **device-local** Python/TLS emitter is retained
+for historical audit only; **do not ask the owner to run it**. Per #223/ADR0091,
+the planned Chrome flow must be served by a temporary Boca-only registration
+service on the *same* droplet host loopback 8443 through Termius SSH. The
+owner wants one private URL with a short-lived 256-bit one-use key. No such
+URL/endpoint exists yet. The design must prevent token exposure in publicly
+accessible GitHub Actions logs, workflow dispatch history, PRs or screenshots;
+authorization must be consumed atomically before creating a discoverable
+WebAuthn passkey, and the physical create→get ceremony must verify the user.
+Only the public credential ID/ES256 key may persist in Boca owner custody.
+The private passkey stays in the chosen Android credential manager; it is not
+a permanent browser cookie. The panel session cookie remains HttpOnly/Secure/
+SameSite=Strict, with 15-minute idle and 8-hour absolute expiration and
+revocation on process restart. Real Chrome localhost Secure-cookie acceptance,
+Google Password Manager persistence and iOS compatibility remain physical
+gates. SSH encrypts the remote path, **not** an app-to-localhost connection
+inside Android; do not claim general HTTPS-equivalent protection.
 
-The physical procedure remains **NO-GO** pending a private Android runtime,
-trusted CA import, observed Chrome response-accessor/UV compatibility and
-clipboard behavior. The strict no-extension COSE parser remains unchanged.
-Verify the public X25519 recipient and fingerprint against the exact protected
-`owner-prepare` receipt; do not infer trust from a self-consistent key pair.
-Do not paste a real capability, private TLS key, credential or envelope into
-the repository, issue, PR, logs or screenshots. Review ciphertext transfer and
-Actions input retention before a real `owner-install`. After the one-use
-emitter is closed and tablet 8443 is free, establish the separate private SSH
-forward and prove the real panel at the same origin. The current single owner
-credential also needs an actual iOS compatibility proof. No device command is
-prescribed until the actual Android environment and copy/handoff path are
-checked; a later terminal instruction, if unavoidable, must be a copyable code
-block. No host operation follows from a synthetic test or a copied envelope.
+The current sequence is **NO-GO for host operations**: review a private token
+handoff, implement the single-use host enrollment phase, verify the real Chrome
+flow and forwarding, then perform the separate protected owner and BETA phases
+with exact HEAD/release/port/isolation gates. Do not touch a shared web server,
+create a public listener, add a new host port, or run another workload's Docker
+command. Failed Boca BETA staging still invokes the immediate selective cleanup
+of ADR0090, preserving all persistent and uncertain volumes.
 
 The host prerequisite is a dedicated `boca-deploy` identity with UID
 10001, dedicated rootless Docker, Python 3.10+, and an already provisioned empty

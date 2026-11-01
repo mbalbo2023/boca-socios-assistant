@@ -1,4 +1,4 @@
-"""No-listener owner/TLS gate for the isolated simulation BETA image.
+"""No-listener owner identity gate for the isolated simulation BETA image.
 
 This checks only local configuration and performs an in-memory TLS handshake.
 It neither opens a network socket nor reads, creates or migrates the database.
@@ -17,14 +17,16 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from boca_socios.config import Settings
 from boca_socios.integration.bridge_client import SiteBridgeTransport
-from boca_socios.owner_origin import owner_rp_host
+from boca_socios.owner_origin import SSH_LOOPBACK_ORIGIN, owner_rp_host
 from boca_socios.panel.passkey import PasskeyOwnerAuthentication
 from boca_socios.security.credential_vault import CredentialVault
 
 OWNER_ROOT = Path("/run/owner")
 
 
-def _owner_files(root: Path, names: tuple[str, ...]) -> dict[str, bytes]:
+def _owner_files(
+    root: Path, names: tuple[str, ...], *, forbidden: tuple[str, ...] = ()
+) -> dict[str, bytes]:
     """Read fixed files by owner-directory descriptor, rejecting links and modes."""
     flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_DIRECTORY
     try:
@@ -39,6 +41,13 @@ def _owner_files(root: Path, names: tuple[str, ...]) -> dict[str, bytes]:
                 or stat.S_IMODE(metadata.st_mode) != 0o700
             ):
                 raise ValueError("owner BETA configuration is unsafe")
+            for name in forbidden:
+                try:
+                    os.stat(name, dir_fd=directory, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise ValueError("unexpected owner BETA TLS artifact")
             limits = {
                 "credential_id": 1024,
                 "public_key.der": 512,
@@ -119,27 +128,43 @@ def _tls_handshake(cert_file: Path, key_file: Path, ca_file: Path, hostname: str
         raise ValueError("owner BETA configuration TLS proof failed") from None
 
 
-def check_beta_owner(settings: Settings, *, ca_file: Path, owner_root: Path = OWNER_ROOT) -> None:
-    """Validate public passkey and TLS owner bundle before creating a key volume."""
+def check_beta_owner(
+    settings: Settings, *, ca_file: Path | None = None, owner_root: Path = OWNER_ROOT
+) -> None:
+    """Validate the public passkey; HTTPS origins additionally require TLS."""
     settings.validate_beta()
     try:
         host = owner_rp_host(settings.panel_origin)
     except ValueError:
         raise ValueError("owner BETA configuration is invalid") from None
+    http_only = settings.panel_origin == SSH_LOOPBACK_ORIGIN
     if (
         settings.bind_host != "0.0.0.0"  # noqa: S104 - only inside isolated container
         or settings.bind_port != 8443
         or not owner_root.is_absolute()
         or settings.passkey_credential_id_file != owner_root / "credential_id"
         or settings.passkey_public_key_der_file != owner_root / "public_key.der"
-        or settings.tls_cert_file != owner_root / "tls.crt"
+    ):
+        raise ValueError("owner BETA configuration is invalid")
+    if not http_only and (
+        settings.tls_cert_file != owner_root / "tls.crt"
         or settings.tls_key_file != owner_root / "tls.key"
         or ca_file != owner_root / "health-ca.pem"
     ):
-        raise ValueError("owner BETA configuration is invalid")
+        raise ValueError("owner BETA HTTPS configuration is invalid")
+    if http_only and any(
+        path is not None for path in (settings.tls_cert_file, settings.tls_key_file, ca_file)
+    ):
+        raise ValueError("SSH-only BETA must not configure TLS material")
+    names = (
+        ("credential_id", "public_key.der")
+        if http_only
+        else ("credential_id", "public_key.der", "tls.crt", "tls.key", "health-ca.pem")
+    )
     bundle = _owner_files(
         owner_root,
-        ("credential_id", "public_key.der", "tls.crt", "tls.key", "health-ca.pem"),
+        names,
+        forbidden=("tls.crt", "tls.key", "health-ca.pem") if http_only else (),
     )
     public_der = bundle["public_key.der"]
     try:
@@ -163,11 +188,15 @@ def check_beta_owner(settings: Settings, *, ca_file: Path, owner_root: Path = OW
         )
     except (TypeError, ValueError):
         raise ValueError("owner BETA configuration public credential invalid") from None
-    assert settings.tls_cert_file is not None and settings.tls_key_file is not None
-    _tls_handshake(settings.tls_cert_file, settings.tls_key_file, ca_file, host)
+    if not http_only:
+        assert settings.tls_cert_file is not None and settings.tls_key_file is not None
+        assert ca_file is not None
+        _tls_handshake(settings.tls_cert_file, settings.tls_key_file, ca_file, host)
 
 
-def check_beta_config(settings: Settings, *, ca_file: Path, owner_root: Path = OWNER_ROOT) -> None:
+def check_beta_config(
+    settings: Settings, *, ca_file: Path | None = None, owner_root: Path = OWNER_ROOT
+) -> None:
     """Validate the full local serving configuration before creating data."""
     check_beta_owner(settings, ca_file=ca_file, owner_root=owner_root)
     CredentialVault.from_secret_file(settings.master_key_file)

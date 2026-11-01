@@ -16,7 +16,7 @@ PASS = (
     "BOCA_SYNTHETIC_ACCEPTANCE state=PASS scope=container_loopback "
     "requests=21 median_ms=1.00 p95_ms=2.00 elapsed_ms=100.00 "
     "cpu_ms=30.00 process_peak_rss_kib=15000 scratch_bytes=12345 "
-    "members=1 intents=1 notices=1 tls=verified engine=off "
+    "members=1 intents=1 notices=1 local_http=verified engine=off "
     "site=not_contacted telegram=not_sent"
 )
 
@@ -88,9 +88,7 @@ def test_host_probe_runs_only_in_twice_validated_controller(
     monkeypatch.setattr(host, "_beta_acceptance_status", status)
     monkeypatch.setattr(host, "_run", run)
     monkeypatch.setattr(host, "_validate_storage_continuity", lambda *_args: None)
-    host._beta_acceptance_phase(
-        image, source_sha, "d" * 64, "https://boca.example.test:8443", "owner"
-    )
+    host._beta_acceptance_phase(image, source_sha, "d" * 64, "http://localhost:8443", "owner")
     assert status_calls == ["checked", "checked"]
     assert len(commands) == 1
     output = capsys.readouterr().out
@@ -116,7 +114,7 @@ def test_postflight_container_change_discards_probe_pass(
             "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64,
             "a" * 40,
             "d" * 64,
-            "https://boca.example.test:8443",
+            "http://localhost:8443",
             "owner",
         )
     assert "state=PASS" not in capsys.readouterr().out
@@ -158,7 +156,7 @@ def test_unknown_installed_volume_refuses_probe_before_diagnostic(
             "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64,
             "a" * 40,
             "d" * 64,
-            "https://boca.example.test:8443",
+            "http://localhost:8443",
             "owner",
         )
 
@@ -239,7 +237,7 @@ def test_installed_headroom_and_network_id_are_checked_without_preinstall_thresh
 
     def operation() -> tuple[object, object]:
         return host._beta_acceptance_status(
-            image, "a" * 40, "d" * 64, "https://boca.example.test:8443", "owner"
+            image, "a" * 40, "d" * 64, "http://localhost:8443", "owner"
         )
 
     if accepted:
@@ -254,7 +252,9 @@ def test_protected_workflow_runs_probe_then_boca_only_stop_in_one_job() -> None:
     workflow = Path(".github/workflows/boca-first-deploy.yml").read_text(encoding="utf-8")
     assert (
         workflow.index("Serve BETA on runner loopback with exact image")
-        < workflow.index("Run synthetic TLS acceptance inside capped disposable controller")
+        < workflow.index(
+            "Run synthetic loopback HTTP acceptance inside capped disposable controller"
+        )
         < workflow.index("Remove only synthetic Boca resources from disposable runner")
     )
     assert 'docker exec --user 10001:10001 "$container"' in workflow
@@ -300,7 +300,7 @@ def test_acceptance_dispatch_rejects_stale_source_missing_markers_or_site_envelo
         "BOCA_HOST_READONLY_ENV_READY": "",
         "BOCA_DEPLOY_ENV_READY": "ready",
         "BOCA_BETA_ENV_READY": "ready",
-        "BOCA_BETA_PANEL_ORIGIN": "https://boca.example.test:8443",
+        "BOCA_BETA_PANEL_ORIGIN": "http://localhost:8443",
         "BOCA_BETA_OWNER_SUBJECT": "owner",
         "BOCA_IMAGE_REF": "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64,
         "BOCA_RELEASE_RUN_ID": "12345",
@@ -327,6 +327,7 @@ def test_acceptance_dispatch_rejects_stale_source_missing_markers_or_site_envelo
         ("BOCA_RELEASE_RUN_ID", ""),
         ("BOCA_IMAGE_REF", ""),
         ("BOCA_SITE_ENVELOPE", "ciphertext"),
+        ("BOCA_BETA_PANEL_ORIGIN", "https://localhost:8443"),
     ):
         original = environment[field]
         environment[field] = changed
@@ -369,7 +370,7 @@ def test_workflow_accepts_only_exact_host_receipt(tmp_path: Path, extra: str) ->
             "GITHUB_STEP_SUMMARY": str(summary),
             "BOCA_SOURCE_SHA": source_sha,
             "BOCA_IMAGE_REF": image,
-            "BOCA_BETA_PANEL_ORIGIN": "https://boca.example.test:8443",
+            "BOCA_BETA_PANEL_ORIGIN": "http://localhost:8443",
             "BOCA_BETA_OWNER_SUBJECT": "owner",
             "BOCA_TEST_RECEIPT": receipt,
         },

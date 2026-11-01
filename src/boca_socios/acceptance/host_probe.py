@@ -1,7 +1,7 @@
-"""Bounded synthetic TLS journey inside one isolated Boca controller container.
+"""Bounded synthetic SSH-local HTTP journey inside one isolated Boca container.
 
 The CLI never reads mounted application data, owner material or real Boca
-credentials. It creates its own short-lived SQLite, key, certificate and
+credentials. It creates its own short-lived SQLite, key and
 passkey in /tmp, connects only to container loopback and prints a small receipt.
 It must be invoked by a separate reviewed protected Actions operation.
 """
@@ -18,29 +18,26 @@ import re
 import resource
 import socket
 import sqlite3
-import ssl
 import statistics
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Thread
 from urllib.parse import quote, urlencode
 from uuid import UUID
 
-from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.x509.oid import NameOID
 
 from boca_socios.config import Settings
 from boca_socios.runtime import ServedBeta, build_beta_server, initialize_beta
 
-_ORIGIN = "https://boca.example.test"
-_HOST = "boca.example.test"
+_ORIGIN = "http://localhost:8443"
+_HOST = "localhost"
+_AUTHORITY = "localhost:8443"
 _EVENT = "00000000-0000-4000-8000-000000000001"
 
 
@@ -69,7 +66,7 @@ class ProbeReceipt:
             f"cpu_ms={self.cpu_ms:.2f} process_peak_rss_kib={self.process_peak_rss_kib} "
             f"scratch_bytes={self.scratch_bytes} "
             f"members={self.members} intents={self.intents} notices={self.notices} "
-            "tls=verified engine=off site=not_contacted telegram=not_sent"
+            "local_http=verified engine=off site=not_contacted telegram=not_sent"
         )
 
 
@@ -78,7 +75,6 @@ class _Material:
     settings: Settings
     passkey: ec.EllipticCurvePrivateKey
     credential_id: bytes
-    ca: Path
 
 
 def _require(condition: bool) -> None:
@@ -110,29 +106,6 @@ def _material(directory: Path) -> _Material:
             serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
         ),
     )
-    tls_key = ec.generate_private_key(ec.SECP256R1())
-    now = datetime.now(UTC)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, _HOST)])
-    certificate = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(tls_key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now - timedelta(minutes=1))
-        .not_valid_after(now + timedelta(hours=1))
-        .add_extension(x509.SubjectAlternativeName([x509.DNSName(_HOST)]), critical=False)
-        .sign(tls_key, hashes.SHA256())
-    )
-    cert = _private(directory / "tls.crt", certificate.public_bytes(serialization.Encoding.PEM))
-    private_key = _private(
-        directory / "tls.key",
-        tls_key.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        ),
-    )
     master = _private(directory / "boca.key", base64.b64encode(os.urandom(32)) + b"\n")
     settings = Settings(
         environment="staging",
@@ -144,27 +117,16 @@ def _material(directory: Path) -> _Material:
         owner_subject="synthetic_owner",
         passkey_credential_id_file=credential,
         passkey_public_key_der_file=public,
-        tls_cert_file=cert,
-        tls_key_file=private_key,
         bind_host="127.0.0.1",
         bind_port=_free_port(),
         site_bridge_mode="off",
     )
-    return _Material(settings, passkey, credential_id, cert)
+    return _Material(settings, passkey, credential_id)
 
 
-class _LoopbackHTTPS(http.client.HTTPSConnection):
-    def __init__(self, host: str, port: int, *, timeout: float, context: ssl.SSLContext) -> None:
-        super().__init__(host, port, timeout=timeout, context=context)
-        self._tls_context = context
-
+class _LoopbackHTTP(http.client.HTTPConnection):
     def connect(self) -> None:
-        raw = socket.create_connection(("127.0.0.1", self.port), timeout=self.timeout)
-        try:
-            self.sock = self._tls_context.wrap_socket(raw, server_hostname=_HOST)
-        except Exception:
-            raw.close()
-            raise
+        self.sock = socket.create_connection(("127.0.0.1", self.port), timeout=self.timeout)
 
 
 @contextmanager
@@ -179,7 +141,7 @@ def _serve(settings: Settings) -> Iterator[None]:
         except Exception as exc:
             errors.append(exc)
 
-    thread = Thread(target=run, name="boca-synthetic-tls", daemon=True)
+    thread = Thread(target=run, name="boca-synthetic-http", daemon=True)
     thread.start()
     try:
         yield
@@ -205,9 +167,8 @@ def _request(
     payload = (
         body if body is not None else urlencode(fields or {}).encode() if method == "POST" else None
     )
-    context = ssl.create_default_context(cafile=str(material.ca))
-    connection = _LoopbackHTTPS(_HOST, material.settings.bind_port, timeout=2, context=context)
-    headers = {"Host": _HOST}
+    connection = _LoopbackHTTP(_HOST, material.settings.bind_port, timeout=2)
+    headers = {"Host": _AUTHORITY}
     if cookie:
         headers["Cookie"] = cookie
     if method == "POST":

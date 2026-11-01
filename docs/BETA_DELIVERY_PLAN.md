@@ -27,6 +27,15 @@ interfaz principal de la BETA. Usa el puerto ya configurado
 9000. El Site #113 deja de ser dependencia de aceptación de esta BETA;
 permanece privado/sintético y su baja se posterga hasta validar el reemplazo.
 Telegram conserva su gate propio, sin atribuir recepción a código integrado.
+**Corrección posterior #223/ADR0091, aún candidata:** la ruta elegida pasa a
+`http://localhost:8443` exclusivamente bajo forwarding SSH Termius,
+sin certificados ni CA en Android. `127.0.0.1:8443` es el **único** puerto
+publicado por Boca en el host, jamás una interfaz pública; se prohíbe tocar
+servidores web, proxies, otros contenedores o puertos existentes. El port-check
+BUSY/ERROR detiene la instalación sin intervenir al ocupante. El emisor local
+TLS descrito abajo (#215/ADR0089) queda histórico, no es un paso para el
+dueño. Falta diseñar/probar el enlace con llave de un solo uso servido desde
+el mismo puerto por el droplet; no existe todavía una URL de activación real.
 El [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6558572360)
 registra la ejecución protegida 41310958281 sobre
 `main=3ec1096fb5dce8a01af5c8060f0be056bf44fb9d`: 8443 FREE

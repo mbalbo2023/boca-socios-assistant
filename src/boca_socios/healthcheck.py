@@ -1,4 +1,4 @@
-"""Dormant SQLite liveness or explicit local HTTPS BETA readiness."""
+"""Dormant SQLite liveness or explicit private-loopback BETA readiness."""
 
 from __future__ import annotations
 
@@ -22,18 +22,27 @@ def _beta_health() -> int:
         ca_file = os.environ.get("BOCA_HEALTH_CA_FILE")
         if ca_file and not Path(ca_file).is_absolute():
             return 1
-        context = ssl.create_default_context(cafile=ca_file or None)
+        if origin.scheme == "http" and ca_file:
+            return 1
+        context = (
+            ssl.create_default_context(cafile=ca_file or None) if origin.scheme == "https" else None
+        )
         with socket.create_connection(("127.0.0.1", settings.bind_port), timeout=2.0) as raw:
-            with context.wrap_socket(raw, server_hostname=origin.hostname) as tls:
-                tls.settimeout(2.0)
-                tls.sendall(
+            connection = (
+                context.wrap_socket(raw, server_hostname=origin.hostname)
+                if context is not None
+                else raw
+            )
+            with connection:
+                connection.settimeout(2.0)
+                connection.sendall(
                     f"GET /healthz HTTP/1.1\r\nHost: {origin.netloc}\r\nConnection: close\r\n\r\n".encode(
                         "ascii"
                     )
                 )
                 response = bytearray()
                 while len(response) <= 2048:
-                    chunk = tls.recv(2049 - len(response))
+                    chunk = connection.recv(2049 - len(response))
                     if not chunk:
                         break
                     response.extend(chunk)

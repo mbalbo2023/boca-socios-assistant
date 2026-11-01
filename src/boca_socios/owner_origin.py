@@ -6,11 +6,15 @@ import ipaddress
 import re
 from urllib.parse import urlsplit
 
+SSH_LOOPBACK_ORIGIN = "http://localhost:8443"
+
 
 def owner_rp_host(origin: str) -> str:
-    """Allow DNS HTTPS origins or the one reviewed private tablet tunnel origin."""
+    """Allow exact SSH-loopback HTTP or a canonical HTTPS owner origin."""
     if not isinstance(origin, str):
         raise ValueError("invalid owner origin")
+    if origin == SSH_LOOPBACK_ORIGIN:
+        return "localhost"
     try:
         parsed = urlsplit(origin)
         host, port = parsed.hostname, parsed.port
