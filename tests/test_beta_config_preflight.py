@@ -119,6 +119,44 @@ def test_owner_then_full_check_use_no_socket_or_database(
     assert not settings.db_path.exists()
 
 
+def test_exact_tunnel_origin_requires_matching_tls_san_and_ca(tmp_path: Path) -> None:
+    settings, owner, ca = _fixture(tmp_path)
+    cert, key, trust = _certificates("localhost")
+    _private(owner / "tls.crt", cert)
+    _private(owner / "tls.key", key)
+    _private(ca, trust)
+    settings = replace(settings, panel_origin="https://localhost:8443")
+    beta_config_preflight.check_beta_owner(settings, owner_root=owner, ca_file=ca)
+    beta_config_preflight.check_beta_config(settings, owner_root=owner, ca_file=ca)
+    wrong_cert, wrong_key, _ = _certificates("other.example.test")
+    _private(owner / "tls.crt", wrong_cert)
+    _private(owner / "tls.key", wrong_key)
+    with pytest.raises(ValueError, match="TLS proof failed"):
+        beta_config_preflight.check_beta_owner(settings, owner_root=owner, ca_file=ca)
+    assert not settings.db_path.exists()
+
+
+@pytest.mark.parametrize(
+    "origin",
+    (
+        "https://localhost",
+        "https://localhost:9000",
+        "https://boca.localhost:8443",
+        "http://localhost:8443",
+        "https://127.0.0.1:8443",
+        "https://LOCALHOST:8443",
+        "https://localhost:8443/",
+    ),
+)
+def test_tunnel_origin_rejects_aliases_and_other_ports(tmp_path: Path, origin: str) -> None:
+    settings, owner, ca = _fixture(tmp_path)
+    with pytest.raises(ValueError):
+        beta_config_preflight.check_beta_owner(
+            replace(settings, panel_origin=origin), owner_root=owner, ca_file=ca
+        )
+    assert not settings.db_path.exists()
+
+
 @pytest.mark.parametrize("bad", ["san", "ca", "expired", "key", "encrypted"])
 def test_owner_check_rejects_untrusted_tls(tmp_path: Path, bad: str) -> None:
     settings, owner, ca = _fixture(tmp_path)

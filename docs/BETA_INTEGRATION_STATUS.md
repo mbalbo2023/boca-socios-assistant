@@ -23,6 +23,21 @@ ejecutado su operación en el droplet. #209 sigue la decisión de ruta/ceremonia
 Tras integrar esta actualización documental será necesaria otra publicación
 para vincular la nueva HEAD.
 
+**Corte posterior comprobado 2026-11-01:** #212 integró la comprobación
+protegida del puerto; `main=3ec1096fb5dce8a01af5c8060f0be056bf44fb9d`
+con CI 41310796782 y scan 41310796751 SUCCESS. La operación manual
+[41310958281](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41310958281)
+en ese SHA, intento 1, reportó `FREE address=127.0.0.1 port=8443
+reserved=no`. Sólo comprobó disponibilidad instantánea, sin Docker ni Boca
+arrancado. La release 41302342233 para `3ef7aff8...` quedó histórica tras
+#212; un install exige publicación de la HEAD final exacta. Por decisión del
+dueño, el panel local con forwarding privado es primario; Site #113 queda
+privado/offline, su baja diferida y fuera del gate BETA local. El candidato
+#213/ADR0088 acepta el origen HTTPS localhost exacto en código, pero la
+tablet, CA y passkey física siguen sin prueba (#209). Una credencial owner
+única tampoco acredita automáticamente Android e iOS. Los detalles de
+releases y runs históricos que siguen conservan su SHA original.
+
 **BETA operativa en el droplet: NO_VERIFICADA / aplicación no instalada.**
 Código integrado, Site publicado, CI verde y servicio rootless preparado y
 detenido son
@@ -37,12 +52,12 @@ UNVERIFIED; el destino lógico futuro es `/data/boca.sqlite3` en el volumen
 | Frente | Código o ejecución comprobada | Gate restante |
 | --- | --- | --- |
 | Simulación | Coordinador #130, comandos #149, loop #161, ciclo #164 y entrypoint TLS #173; RCA de UUID canónico #187 y probe sintético #190 | Empaquetar/servir en host con identidad y acceso privado; E2E host. No hay cliente Boca real |
-| Panel | Adaptadores #128/#148, owner passkey/controles #163, registro WebAuthn #174, preflight sin listener #189 y custodia #208 integrados en código; sin host | Inscripción física del dueño, origen TLS privado, tablet y rechazo de terceros #209 |
+| Panel | Adaptadores #128/#148, owner passkey/controles #163, registro WebAuthn #174, preflight sin listener #189 y custodia #208 integrados en código; #213 propone origen exacto `https://localhost:8443`; sin instalación | #209: forward y CA en tablet, passkey física y uso Android/iOS, rechazo real de terceros |
 | Avisos/Telegram | #162 fence/migración0007/adapter, #176 estado, worker default-off #188, parada opcional #194, helper cifrado #199, fases protegidas #203 y prueba Bot API de un solo intento #204 | Sin bot/destino privados, provisión en host ni envío/recepción real; `api_accepted` tampoco probaría lectura humana |
-| Site #113 | Versión privada v10 D1 desactivada; #178 helper, #179 cliente opt-in, #181 custodia Actions y #196 inventario global | Imagen publicada 41301618285 para el SHA de integración #208; revalidar coincidencia con HEAD al operar. Faltan bypass+HMAC host, flag y E2E. Aún offline. Ver issue #113 |
-| Host | Rootless #120, preflight dormido #124, parada #198/41282301501 ALREADY_STOPPED, imagen release 41301618285 y custodia owner #208; `beta-install` #191 y `beta-acceptance` #200 integrados en código | Sin marca BETA, identidad/archivos privados, instalación funcional ni aceptación host. Revalidar daemon y SHA antes de operar |
+| Site #113 | Versión privada v10 D1 desactivada; #178 helper, #179 cliente opt-in, #181 custodia Actions y #196 inventario global | Ya no es gate de la BETA del panel local. Sigue offline y privado; baja diferida tras validar reemplazo. Ver #113 |
+| Host | Rootless #120, preflight dormido #124, parada #198/41282301501 ALREADY_STOPPED; `port-check` #211/41310958281 observó 8443 FREE `reserved=no`; custodia owner #208, `beta-install` #191 y `beta-acceptance` #200 sólo en código | Sin marca BETA, identidad/archivos privados, instalación funcional ni aceptación host. Revalidar daemon, capacidad, puerto y SHA antes de operar |
 | Chromium | Imagen y smoke offline #43/#44 con límite sintético | Capacidad/egress del droplet y visita real no acreditadas |
-| Calidad/release | CI, scan, smoke de runner y publicación protegida [41301618285](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41301618285) SUCCESS para integración #208 `58f57822e95da9574c0a9d5122607616da4a024a`, manifest artifact 13082030761 | Digest publicado `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:6f067e5078081760dec27f81d95792a4423ff9c1d9cb3bef19ef70dbfc8cf889`; no demuestra capacidad/postflight del droplet y debe coincidir con la HEAD exacta de cada operación |
+| Calidad/release | Main tras #212 `3ec1096fb5dce8a01af5c8060f0be056bf44fb9d`, CI 41310796782 y scan 41310796751 SUCCESS. La release 41302342233 corresponde al SHA anterior `3ef7aff8...` y es histórica | Nueva release y manifiesto para la HEAD final exacta antes de instalar; CI no demuestra capacidad/postflight ni acceso tablet |
 | Aceptación sintética | #170 HTTP loopback desechable, #190 probe TLS en contenedor y #200 operación protegida de aceptación/parada | Sin ejecución host/tablet, Site, Telegram ni recursos medidos del droplet |
 
 ## Evidencia exacta de este corte

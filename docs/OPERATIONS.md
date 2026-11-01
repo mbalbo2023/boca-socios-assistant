@@ -8,6 +8,8 @@ remains not installed/NO_GO. The protected [image release 41301618285](https://g
 published `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:6f067e5078081760dec27f81d95792a4423ff9c1d9cb3bef19ef70dbfc8cf889` for the #208 integration `58f57822e95da9574c0a9d5122607616da4a024a` with manifest artifact 13082030761.
 This was registry-only; no droplet pull/install. Subsequent commits require a
 matching new release, tracked in [issue #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+The later release 41302342233 was for `3ef7aff8...`, before #212 advanced
+main to `3ec1096f...`; it too is historical for any subsequent install.
 The [stop-test #198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41282301501) observed `ALREADY_STOPPED
 containers=not_queried data=preserved` at 03:48 ART; it did not inventory
 stopped containers and future daemon state must be rechecked.
@@ -257,7 +259,19 @@ ERROR receipt, does not enumerate or connect to a process, and runs without
 the rootless daemon. The BETA install workflow repeats this check just before
 app/key effects. A FREE result is instantaneous and does not reserve the port;
 the later Docker binding/TLS probe and real tablet access have separate gates.
-This code has no host run receipt yet. See ADR0087 and issue #211.
+See ADR0087 and issue #211.
+
+The later protected [run 41310958281](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41310958281)
+on exact `main=3ec1096fb5dce8a01af5c8060f0be056bf44fb9d`, attempt 1,
+passed `BOCA_PORT_CHECK state=FREE address=127.0.0.1 port=8443 reserved=no`.
+This supersedes only the preceding absence of a host port observation; it did
+not start Boca. The owner selected a private local tablet forward and kept
+Site decommission pending. ADR0088's candidate origin is exactly
+`https://localhost:8443`, with a private trusted `DNS:localhost` certificate.
+Do not dispatch owner custody or BETA install until the physical tablet route,
+certificate trust and real passkey are verified. The present single owner
+credential needs separate Android/iOS interoperability proof. No terminal
+operation by the owner replaces the gated Actions host workflow.
 
 The host prerequisite is a dedicated `boca-deploy` identity with UID
 10001, dedicated rootless Docker, Python 3.10+, and an already provisioned empty

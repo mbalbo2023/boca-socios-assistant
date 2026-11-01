@@ -6,9 +6,9 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from boca_socios.integration.bridge_client import SITE_ORIGIN
+from boca_socios.owner_origin import owner_rp_host
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,16 +75,12 @@ class Settings:
 
     def validate_beta(self) -> None:
         self.validate()
-        origin = urlsplit(self.panel_origin)
+        try:
+            owner_rp_host(self.panel_origin)
+        except ValueError:
+            raise ValueError("invalid private BETA serving configuration") from None
         if (
-            origin.scheme != "https"
-            or not origin.hostname
-            or origin.username is not None
-            or origin.password is not None
-            or origin.path
-            or origin.query
-            or origin.fragment
-            or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", self.owner_subject) is None
+            re.fullmatch(r"[A-Za-z0-9_-]{1,128}", self.owner_subject) is None
             # 0.0.0.0 is inside Boca's isolated container only; Compose must
             # publish to host loopback and verify the effective HostConfig.
             or self.bind_host not in {"127.0.0.1", "0.0.0.0"}  # noqa: S104

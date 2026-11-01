@@ -178,6 +178,28 @@ def test_malformed_owner_rp_fails_before_any_host_access(
         host.phase("owner-prepare", IMAGE, SHA, SHA, origin, SUBJECT)
 
 
+def test_exact_tunnel_origin_is_validated_before_owner_host_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host._validate_owner_context("https://localhost:8443", SUBJECT)
+    for origin in (
+        "https://localhost",
+        "https://localhost:9000",
+        "https://boca.localhost:8443",
+        "http://localhost:8443",
+        "https://127.0.0.1:8443",
+        "https://LOCALHOST:8443",
+        "https://localhost:8443/",
+    ):
+        with pytest.raises(host.PreflightError, match="invalid private"):
+            host._validate_owner_context(origin, SUBJECT)
+    monkeypatch.setattr(
+        host, "_validate_coordinates", lambda *_args, **_kwargs: pytest.fail("host access")
+    )
+    with pytest.raises(host.PreflightError, match="invalid private"):
+        host.phase("owner-prepare", IMAGE, SHA, SHA, "https://localhost:9000", SUBJECT)
+
+
 def test_owner_workflow_stops_daemon_in_same_job_on_failure() -> None:
     workflow = (
         Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"

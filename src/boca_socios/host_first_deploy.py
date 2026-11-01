@@ -12,6 +12,7 @@ import binascii
 import errno
 import hashlib
 import http.client
+import ipaddress
 import json
 import os
 import platform
@@ -297,17 +298,30 @@ def _validate_owner_context(origin: str, owner: str) -> None:
     host, port = parsed.hostname, parsed.port
     if (
         host is None
-        or re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", host) is None
-        or len(host) > 253
-        or any(
-            len(label) > 63 or label.startswith("-") or label.endswith("-")
-            for label in host.split(".")
-        )
         or parsed.netloc != (host if port is None else f"{host}:{port}")
         or port == 443
         or origin != f"https://{parsed.netloc}"
     ):
         raise PreflightError("invalid private owner origin")
+    if host == "localhost":
+        if port != 8443:
+            raise PreflightError("invalid private owner origin")
+        return
+    if (
+        re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", host) is None
+        or len(host) > 253
+        or host.endswith(".localhost")
+        or any(
+            len(label) > 63 or label.startswith("-") or label.endswith("-")
+            for label in host.split(".")
+        )
+    ):
+        raise PreflightError("invalid private owner origin")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return
+    raise PreflightError("invalid private owner origin")
 
 
 def validate_docker_boundary(snapshot: DockerBoundarySnapshot) -> None:
@@ -1394,7 +1408,7 @@ def _create_key(image: str) -> None:
 def _beta_check_container(image: str, origin: str, owner: str, operation: str) -> tuple[str, ...]:
     if operation not in {"check-beta-owner", "check-beta-config"}:
         raise PreflightError("invalid BETA preflight")
-    _validate_beta_context(origin, owner)
+    _validate_owner_context(origin, owner)
     if not IMAGE_PATTERN.fullmatch(image):
         raise PreflightError("invalid BETA image")
     env = {
@@ -1600,7 +1614,7 @@ def collect_diagnostic(
 ) -> DiagnosticSnapshot:
     beta = bool(beta_origin)
     if beta:
-        _validate_beta_context(beta_origin, beta_owner)
+        _validate_owner_context(beta_origin, beta_owner)
     args = _beta_compose_args if beta else _compose_args
     environment_vars = (
         _beta_compose_env(image, beta_origin, beta_owner) if beta else _compose_env(image)
@@ -1986,7 +2000,7 @@ def _beta_acceptance_status(
 def _beta_acceptance_phase(
     image: str, source_sha: str, compose_sha: str, origin: str, owner: str
 ) -> None:
-    _validate_beta_context(origin, owner)
+    _validate_owner_context(origin, owner)
     before, capacity_before = _beta_acceptance_status(image, source_sha, compose_sha, origin, owner)
     receipt = _validate_beta_acceptance_receipt(
         _run(
@@ -2017,7 +2031,7 @@ def _beta_acceptance_phase(
 def _beta_phase(
     operation: str, image: str, source_sha: str, compose_sha: str, origin: str, owner: str
 ) -> None:
-    _validate_beta_context(origin, owner)
+    _validate_owner_context(origin, owner)
     if operation == "beta-rollback":
         _beta_rollback(image, source_sha)
         return
@@ -2910,7 +2924,7 @@ def phase(
             "beta-acceptance",
         }:
             raise PreflightError("unknown BETA deployment phase")
-        _validate_beta_context(envelope, beta_owner)
+        _validate_owner_context(envelope, beta_owner)
         if telegram_envelope or expected_bot_id or expected_chat_hmac:
             raise PreflightError("unexpected Telegram envelope outside Telegram phase")
     elif telegram:

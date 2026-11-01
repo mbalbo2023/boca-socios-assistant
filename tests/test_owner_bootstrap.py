@@ -83,6 +83,19 @@ def test_sealed_real_shape_installs_only_owner_files_once(tmp_path: Path) -> Non
     assert not (directory / "boca.sqlite3").exists()
 
 
+def test_exact_tunnel_origin_seals_installs_and_verifies(tmp_path: Path) -> None:
+    origin = "https://localhost:8443"
+    directory = _owner(tmp_path)
+    receipt = boot.prepare(directory, uid=os.geteuid())
+    envelope = boot.seal_for_recipient(receipt, _bundle("localhost"), origin, SUBJECT)
+    assert (
+        boot.install(directory, envelope, origin, SUBJECT, uid=os.geteuid()) == receipt.fingerprint
+    )
+    assert boot.verify(directory, origin, SUBJECT, uid=os.geteuid()) == receipt.fingerprint
+    with pytest.raises(boot.BootstrapError):
+        boot.verify(directory, ORIGIN, SUBJECT, uid=os.geteuid())
+
+
 def test_wrong_recipient_origin_tamper_and_invalid_tls_have_no_owner_effect(tmp_path: Path) -> None:
     a, b = _owner(tmp_path / "a"), _owner(tmp_path / "b")
     receipt = boot.prepare(a, uid=os.geteuid())
@@ -142,6 +155,12 @@ def test_symlink_and_partial_state_preserved_without_retry(tmp_path: Path) -> No
         "https://owner.boca.example.test/",
         "https://owner.boca.example.test:443",
         "https://localhost",
+        "https://localhost:9000",
+        "https://boca.localhost:8443",
+        "http://localhost:8443",
+        "https://127.0.0.1:8443",
+        "https://LOCALHOST:8443",
+        "https://localhost:8443/",
         "https://owner.boca.example.test/path",
     ],
 )

@@ -21,6 +21,21 @@ para completar la BETA sintética, Site conectado, Telegram y deploy validado
 por Actions, sin reservas ni compras reales. El alcance anterior de preparación
 queda como historial; ninguna autorización es evidencia de instalación.
 
+**Decisión posterior 2026-11-01:** el panel Boca local en el droplet es la
+interfaz principal de la BETA. Usa el puerto ya configurado
+`127.0.0.1:8443` y forwarding privado desde la tablet; no se crea puerto
+9000. El Site #113 deja de ser dependencia de aceptación de esta BETA;
+permanece privado/sintético y su baja se posterga hasta validar el reemplazo.
+Telegram conserva su gate propio, sin atribuir recepción a código integrado.
+El [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6558572360)
+registra la ejecución protegida 41310958281 sobre
+`main=3ec1096fb5dce8a01af5c8060f0be056bf44fb9d`: 8443 FREE
+`reserved=no`, sin arrancar servicio ni instalar aplicación. #213/ADR0088
+proponen admitir sólo `https://localhost:8443` para ese túnel; no prueban
+el forwarding, la confianza TLS ni la inscripción y uso de passkey física
+en Android/iOS. #209 continúa abierto. Release, owner custody, instalación,
+aceptación y parada final requieren sus recibos exactos por Actions.
+
 **Corte de integración previo a esta actualización documental 2026-11-01:**
 `main` `6d3007a3ca1dfdba428cb7595486b1166a1d02b6` incorpora loop persistente
 #161, Telegram durable opt-in #162, stop-test #165, ciclo de vida local #164
