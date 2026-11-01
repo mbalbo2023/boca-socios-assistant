@@ -1,7 +1,9 @@
 # ADR 0090: immediate and bounded BETA deploy failure cleanup
 
-**Status:** review candidate for #219 / PR #220, 2026-11-01 ART. No host
-cleanup, BETA install or Docker operation was dispatched from this work.
+**Status:** code integrated by PR #220 / #219 in main commit
+`0c2646a4eb91520498f5284783d1572c7fde9761` after technical review and
+four successful PR workflows, 2026-11-01 ART. No host cleanup, BETA
+install or Docker operation was dispatched from this work.
 
 ## RCA and decision
 

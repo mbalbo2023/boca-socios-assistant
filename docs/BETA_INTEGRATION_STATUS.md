@@ -46,7 +46,7 @@ este cambio exige nueva release exacta antes de cualquier host install. Los
 runs históricos siguientes conservan su SHA original.
 
 **BETA operativa en el droplet: NO_VERIFICADA / aplicación no instalada.**
-RCA #219/PR #220 incorpora como **candidato aún no desplegado** una limpieza
+RCA #219/PR #220 ya integra en main, **sin ejecutar en host**, una limpieza
 selectiva inmediata en el mismo workflow tras fallar un `beta-install` marcado:
 parada/identificación del controlador y descarte seguro de contenedor, red,
 imagen y Compose exactos si son descartables, con clave/datos/owner preservados.

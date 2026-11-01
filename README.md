@@ -99,12 +99,12 @@ cookie. The panel session cookie is temporary (15-minute idle, 8-hour absolute
 limit, and invalidated by process restart); Android storage/sync and iOS use
 still require physical proof in #209. TLS renewal remains an open gate.
 Site decommission is deferred until the local replacement is validated.
-The #219/PR #220 review candidate strengthens the existing Boca-only failed
+Merged PR #220 (RCA #219) strengthens the existing Boca-only failed
 deploy recovery: a failed staged `beta-install` invokes immediate selective
 cleanup via the same protected Actions job. It can remove only verified
 disposable controller/network/image/staged-Compose artifacts, while preserving
 owner/key/data volumes and retaining the failed deploy status. This is
-code/test work, **not** proof of a cleanup or BETA installation on the droplet;
+integrated code/test behavior, **not** proof of a cleanup or BETA installation on the droplet;
 unknown or interrupted cleanup remains NO_GO and forbids blind retries.
 The private Site v10 has a disabled D1 bridge and fails closed while host
 credentials/poller are absent. PRs #181/#196 integrated protected ciphertext

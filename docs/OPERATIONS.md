@@ -378,7 +378,7 @@ reports `NO_GO INDETERMINADO`: a partial deletion may have occurred, and a
 Boca-only inventory is required before any retry. The original install
 failure remains failed. See [ADR 0039](ADR/0039-boca-failed-install-cleanup.md).
 
-**Failed served BETA install — #219/PR #220 candidate, not yet a host run:**
+**Failed served BETA install — #219/PR #220 integrated in code, no host run:**
 the same protected Actions workflow adds a bounded cleanup step immediately
 after the existing `beta-rollback` failure step. Only after the BETA staging
 marker does it check exact Docker rootless identity, SHA/digest/Compose hash,
