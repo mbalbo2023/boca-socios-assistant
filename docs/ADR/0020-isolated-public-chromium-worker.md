@@ -59,6 +59,15 @@ does not by itself attest every sandbox layer or prove the droplet's kernel
 allows this profile. The host must be checked through a later authorized
 Boca-only Actions preflight. This image is not a deployed worker yet.
 
+Issue #25 proposes a separate, offline Chromium DOM regression in CI using
+the same browser-only image. Only the typed synthetic browser contracts,
+`TicketIntent` policy and fixed DOM script are copied into the image; the
+controller, database, live adapters and host runtime remain absent. This
+does not enable the default-disabled public observer, introduce a Compose
+service or change the image's default command. ADR0011 records the exact
+no-network Docker limits and synthetic-only receipt. Host deployment remains
+NO-GO even if the new CI smoke passes.
+
 One manual anonymous request to the exact public `/auth/login` can only run
 later in a nonproduction worker whose OS/network egress policy permits only
 that public host over HTTPS, following recorded technical review and objective

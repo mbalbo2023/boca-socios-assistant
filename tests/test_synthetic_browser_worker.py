@@ -234,8 +234,10 @@ def test_optional_chromium_script_closes_browser_context_on_all_paths(
     browser = Browser()
 
     class Chromium:
-        async def launch(self, *, headless: bool, timeout: int, args: list[str]) -> Browser:
-            assert headless and timeout == 15_000
+        async def launch(
+            self, *, headless: bool, chromium_sandbox: bool, timeout: int, args: list[str]
+        ) -> Browser:
+            assert headless and chromium_sandbox and timeout == 15_000
             assert "--disable-background-networking" in args
             return browser
 
