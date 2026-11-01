@@ -289,6 +289,13 @@ closes the loopback listener. It returns an owner-install-compatible sealed
 envelope only after create **and** get with user verification. The browser
 tries to copy automatically, reports success and reveals a manual Copy button
 if denied. It does not print ciphertext in a terminal or save it to a file.
+The #217 correction requires a discoverable passkey; if the chosen Android
+credential manager cannot create one, registration fails. The private key
+stays in that manager. Chrome holds only a short-lived HttpOnly panel session
+cookie, expiring after 15 minutes idle, 8 hours absolute or a panel process
+restart; it cannot be made permanently valid by browser settings. Actual
+credential persistence/sync must be observed on Android, and iOS use separately
+proven. TLS leaf/CA expiry at 30/90 days requires reviewed renewal.
 
 The physical procedure remains **NO-GO** pending a private Android runtime,
 trusted CA import, observed Chrome response-accessor/UV compatibility and

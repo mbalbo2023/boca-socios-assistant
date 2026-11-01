@@ -46,6 +46,11 @@ este cambio exige nueva release exacta antes de cualquier host install. Los
 runs históricos siguientes conservan su SHA original.
 
 **BETA operativa en el droplet: NO_VERIFICADA / aplicación no instalada.**
+El cambio #217 requiere una passkey descubrible en la ceremonia local, para
+evitar aceptar una credencial no sincronizable por Google Password Manager.
+El navegador sólo recibe una cookie de sesión temporal; la llave privada
+reside en el administrador de credenciales elegido. No hay prueba física de
+persistencia, sincronización Android/iOS ni renovación TLS (#209).
 Código integrado, Site publicado, CI verde y servicio rootless preparado y
 detenido son
 evidencias distintas. El controlador de `compose.yaml` todavía espera con

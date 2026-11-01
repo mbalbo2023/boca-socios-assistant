@@ -10,6 +10,7 @@ _PAGE = """<!doctype html><html lang="es"><meta charset="utf-8">
 <title>Alta privada de la llave Boca</title>
 <h1>Alta privada de la llave Boca</h1>
 <p>Solo en este dispositivo. Verificá que la dirección sea https://localhost:8443 y el certificado sea confiable. No continúes ante avisos de seguridad.</p>
+<p>La llave se guarda en el administrador de credenciales que elijas en Android. Chrome usará una cookie de sesión temporal; la llave no se guarda en esa cookie. El dispositivo puede pedir biometría, PIN o patrón para autorizar el alta.</p>
 <label>Capacidad local de un solo uso <input id="cap" type="password" autocomplete="off" spellcheck="false"></label>
 <button id="start" type="button">Crear y verificar llave</button>
 <button id="copy" type="button" hidden>Copiar sobre cifrado</button>
@@ -51,7 +52,7 @@ start.addEventListener('click', async () => {
       rp: {id: begin.rp_id, name: 'Boca Socios BETA'},
       user: {id: from64(begin.user_id), name: 'Dueño', displayName: 'Dueño'},
       challenge: from64(begin.challenge), pubKeyCredParams: [{type: 'public-key', alg: -7}],
-      authenticatorSelection: {userVerification: 'required', residentKey: 'preferred'},
+      authenticatorSelection: {userVerification: 'required', residentKey: 'required', requireResidentKey: true},
       timeout: begin.timeout_ms, attestation: 'none'
     }});
     if (!created || !created.response.getAuthenticatorData || !created.response.getPublicKey ||
