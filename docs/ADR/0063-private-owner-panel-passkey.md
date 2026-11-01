@@ -60,6 +60,12 @@ fails. If a command result is uncertain, the page asks the owner to inspect
 the durable history, without minting another command ID. A stopped or
 completed local result is never a Boca reservation.
 
+The authenticated home names deferred event sources/categories, browser
+session controls, master-key rotation/full erasure, backup/restore, live Boca
+operations and Site integration as **not enabled**. These are static status
+labels without an action button or simulated side effect; they do not claim
+the remaining BETA matrix is implemented.
+
 The WSGI app has no listener, migration, credential provisioning, Site
 credential bridge or Telegram transport. The notice route reads only the
 bounded projection integrated by #162; `api_accepted` means a Bot API response,

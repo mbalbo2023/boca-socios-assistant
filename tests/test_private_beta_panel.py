@@ -201,6 +201,10 @@ def test_private_login_enrollment_listing_and_local_command_are_connected() -> N
         assert _request(app, "/comandos")[0] == 401
         assert _request(app, "/avisos")[0] == 401
         cookie = _login(app, key, credential_id)
+        status, _, home = _request(app, "/", cookie=cookie)
+        assert status == 200 and b"Funciones no habilitadas" in home
+        assert b"Backup y restauraci" in home and b"compra reales en Boca" in home
+        assert b'action="/backup"' not in home and b'action="/reservar"' not in home
         status, headers, page = _request(app, "/socios/nuevo", cookie=cookie)
         assert status == 200 and headers["Cache-Control"] == "no-store"
         csrf = re.search(rb'name="csrf" value="([^"]+)"', page).group(1).decode()

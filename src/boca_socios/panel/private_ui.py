@@ -98,6 +98,14 @@ def home(csrf: str) -> bytes:
         '<p><a href="/comandos">Iniciar, detener o consultar simulaciones</a></p>'
         '<p><a href="/estado">Consultar estado local</a></p>'
         '<p><a href="/avisos">Consultar avisos locales y estado Telegram</a></p>'
+        '<section aria-labelledby="pending"><h2 id="pending">Funciones no habilitadas</h2><ul>'
+        "<li>Fuentes de eventos, categorías y horarios oficiales: pendientes de integración.</li>"
+        "<li>Varias sesiones de navegador y sus límites: pendientes de validación.</li>"
+        "<li>Rotación de clave maestra y eliminación completa: pendientes de custodia.</li>"
+        "<li>Backup y restauración: diferidos hasta una versión productiva fiable.</li>"
+        "<li>Login, fila, elegibilidad, reserva y compra reales en Boca: no habilitados.</li>"
+        "<li>Site complementario: conexión y estado operativo sujetos a su propio recibo.</li>"
+        "</ul></section>"
         '<form action="/salir" method="post">'
         f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
         '<button type="submit">Cerrar sesión</button></form>',
