@@ -1,6 +1,6 @@
 # ADR 0068: explicit local BETA lifecycle before server and Site integration
 
-**Status:** Accepted on merge of the scoped #156 lifecycle PR. Until that
+**Status:** Accepted on merge of PR #164 for issue #156. Until that
 merge, this describes a candidate; no application installation is implied.
 
 ## Decision
