@@ -192,4 +192,3 @@ def read_local_status(
         )
     except (OSError, sqlite3.Error, ValueError, TypeError):
         raise LocalStatusUnavailable("local status unavailable") from None
-

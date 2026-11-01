@@ -120,7 +120,6 @@ class OfflineSimulation:
             with self._claim_lock:
                 self._active_members.remove(intent.member_id)
 
-
     async def _run_workflow(
         self, intent: TicketIntent, notification_at_seconds: float
     ) -> SimulationReceipt:

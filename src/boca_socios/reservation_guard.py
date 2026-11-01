@@ -289,4 +289,3 @@ class ReservationAttemptGuard:
                 (at, at),
             )
             return cursor.rowcount
-
