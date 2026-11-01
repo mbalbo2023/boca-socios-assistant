@@ -1,6 +1,7 @@
 # ADR 0070: paquete servido BETA aislado y puerta de instalación separada
 
-**Estado:** candidato de #167. La presencia de Compose y pruebas no instala ni
+**Estado:** aceptada al integrar el PR #171 de issue #167. El candidato y sus
+checks se registran en ese PR; la presencia de Compose y pruebas no instala ni
 habilita una BETA en el droplet.
 
 ## Decisión de empaquetado
