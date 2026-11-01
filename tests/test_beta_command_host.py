@@ -68,7 +68,12 @@ class CommandHostTests(unittest.TestCase):
     def wait_state(self, host: BetaCommandHost, key: str, *states: CommandState) -> CommandState:
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline:
-            snapshot = host.status(key, member_id="member")
+            try:
+                snapshot = host.status(key, member_id="member")
+            except CommandResultUnknown:
+                # A short client deadline may expire while the same loop is
+                # still finishing the first request; keep the same key.
+                continue
             if snapshot is not None and snapshot.state in states:
                 return snapshot.state
             time.sleep(0.01)
