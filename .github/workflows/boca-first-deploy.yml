@@ -5,10 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Boca host operation; Site phases stage ciphertext only and do not start services
+        description: Boca host operation; BETA install requires separate private owner/TLS and protected release gates
         required: true
         type: choice
-        options: [inspect-prerequisites, prepare-rootless, preflight, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify]
+        options: [inspect-prerequisites, prepare-rootless, preflight, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, beta-install]
       source_sha:
         description: Exact current main commit approved for the operation
         required: true
@@ -64,12 +64,12 @@ jobs:
           uv sync --frozen
       - name: Check dispatch and first-install boundaries offline
         run: |
-          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_site_bootstrap.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_key_custody.py tests/test_release_run.py
+          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_beta_install.py tests/test_host_site_bootstrap.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_key_custody.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
       - name: Validate optional served BETA Compose model without host access
         env:
           BOCA_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-          BOCA_PANEL_ORIGIN: https://localhost:8443
+          BOCA_PANEL_ORIGIN: https://beta.boca.example.test:8443
           BOCA_OWNER_SUBJECT: synthetic-owner
           PYTHONPATH: src
         run: |
@@ -84,7 +84,7 @@ jobs:
     env:
       BOCA_IMAGE: boca-first-install-smoke:${{ github.sha }}
       BOCA_ENVIRONMENT: staging
-      BOCA_PANEL_ORIGIN: https://localhost:8443
+      BOCA_PANEL_ORIGIN: https://beta.boca.example.test:8443
       BOCA_OWNER_SUBJECT: synthetic-owner
     steps:
       - name: Checkout proposed runtime without persisted credentials
@@ -174,7 +174,7 @@ jobs:
           openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
             -keyout "$RUNNER_TEMP/boca-owner-fixture/tls.key" \
             -out "$RUNNER_TEMP/boca-owner-fixture/tls.crt" \
-            -subj /CN=localhost -addext subjectAltName=DNS:localhost -days 1
+            -subj /CN=beta.boca.example.test -addext subjectAltName=DNS:beta.boca.example.test -days 1
           cp "$RUNNER_TEMP/boca-owner-fixture/tls.crt" "$RUNNER_TEMP/boca-owner-fixture/health-ca.pem"
           # Only disposable synthetic inputs are readable by the cap-dropped copy container.
           chmod 0755 "$RUNNER_TEMP/boca-owner-fixture"
@@ -191,7 +191,35 @@ jobs:
             --pids-limit 16 --memory 64m --cpus 0.25 \
             --mount type=volume,source=boca-socios_boca_owner,target=/run/owner \
             --mount "type=bind,source=$RUNNER_TEMP/boca-owner-fixture,target=/fixture,readonly" \
-            "$BOCA_IMAGE" sh -eu -c 'cp /fixture/credential_id /fixture/public_key.der /fixture/tls.crt /fixture/tls.key /fixture/health-ca.pem /run/owner/; chmod 0400 /run/owner/*; chown 10001:10001 /run/owner/*'
+            "$BOCA_IMAGE" sh -eu -c 'cp /fixture/credential_id /fixture/public_key.der /fixture/tls.crt /fixture/tls.key /fixture/health-ca.pem /run/owner/; chmod 0400 /run/owner/*; chown 10001:10001 /run/owner/*; chmod 0700 /run/owner; chown 10001:10001 /run/owner'
+          # Probe the actual image with an owner-only mount, then key+owner;
+          # neither can open a database or listener before data creation.
+          beta_env=(
+            --env BOCA_ENVIRONMENT=staging --env BOCA_RUNTIME_MODE=simulation
+            --env BOCA_ENGINE_MODE=off --env BOCA_DB_PATH=/data/boca.sqlite3
+            --env BOCA_MASTER_KEY_FILE=/run/secrets/boca_master_key
+            --env "BOCA_PANEL_ORIGIN=$BOCA_PANEL_ORIGIN"
+            --env "BOCA_OWNER_SUBJECT=$BOCA_OWNER_SUBJECT"
+            --env BOCA_PASSKEY_CREDENTIAL_ID_FILE=/run/owner/credential_id
+            --env BOCA_PASSKEY_PUBLIC_KEY_DER_FILE=/run/owner/public_key.der
+            --env BOCA_TLS_CERT_FILE=/run/owner/tls.crt
+            --env BOCA_TLS_KEY_FILE=/run/owner/tls.key
+            --env BOCA_HEALTH_CA_FILE=/run/owner/health-ca.pem
+            --env BOCA_BIND_HOST=0.0.0.0 --env BOCA_BIND_PORT=8443
+          )
+          test "$(docker run --rm --pull never --user 10001:10001 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
+            "${beta_env[@]}" \
+            --mount type=volume,source=boca-socios_boca_owner,target=/run/owner,volume-nocopy,readonly \
+            "$BOCA_IMAGE" python -m boca_socios.runtime check-beta-owner)" = \
+            '{"event":"beta_owner_ready","mode":"simulation","engine":"off"}'
+          test "$(docker run --rm --pull never --user 10001:10001 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
+            "${beta_env[@]}" \
+            --mount type=volume,source=boca-socios_boca_owner,target=/run/owner,volume-nocopy,readonly \
+            --mount type=volume,source=boca-socios_boca_key,target=/run/secrets,volume-nocopy,readonly \
+            "$BOCA_IMAGE" python -m boca_socios.runtime check-beta-config)" = \
+            '{"event":"beta_config_ready","mode":"simulation","engine":"off"}'
           docker volume create --driver local \
             --label com.docker.compose.project=boca-socios \
             --label com.docker.compose.volume=boca_data boca-socios_boca_data
@@ -217,7 +245,10 @@ jobs:
           docker inspect --format '{{json .NetworkSettings}}' "$container" | python3 -c 'import json,sys; n=json.load(sys.stdin); assert set(n["Networks"]) == {"boca-socios_boca_private"} and n["Ports"] == {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}'
           docker inspect --format '{{json .Mounts}}' "$container" | python3 -c 'import json,sys; m=json.load(sys.stdin); assert {(x["Type"], x["Name"], x["Destination"], x["RW"]) for x in m} == {("volume", "boca-socios_boca_data", "/data", True), ("volume", "boca-socios_boca_key", "/run/secrets", False), ("volume", "boca-socios_boca_owner", "/run/owner", False)}'
           docker exec --user 10001:10001 "$container" python -m boca_socios.runtime_probe
-          curl --fail --silent --show-error --noproxy '*' --cacert "$RUNNER_TEMP/boca-owner-fixture/tls.crt" https://localhost:8443/healthz > "$RUNNER_TEMP/boca-beta-health.receipt"
+          curl --fail --silent --show-error --noproxy '*' \
+            --resolve beta.boca.example.test:8443:127.0.0.1 \
+            --cacert "$RUNNER_TEMP/boca-owner-fixture/tls.crt" \
+            https://beta.boca.example.test:8443/healthz > "$RUNNER_TEMP/boca-beta-health.receipt"
           test "$(cat "$RUNNER_TEMP/boca-beta-health.receipt")" = BOCA_BETA_READY
       - name: Remove only synthetic Boca resources from disposable runner
         if: always()
@@ -252,6 +283,9 @@ jobs:
         env:
           BOCA_HOST_READONLY_ENV_READY: ${{ vars.BOCA_HOST_READONLY_ENV_READY }}
           BOCA_DEPLOY_ENV_READY: ${{ vars.BOCA_DEPLOY_ENV_READY }}
+          BOCA_BETA_ENV_READY: ${{ vars.BOCA_BETA_ENV_READY }}
+          BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
+          BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
           BOCA_SITE_ENVELOPE: ${{ inputs.site_envelope }}
         run: |
           test "$GITHUB_RUN_ATTEMPT" = 1
@@ -295,6 +329,15 @@ jobs:
               test -n "$BOCA_RELEASE_RUN_ID"
               test -n "$BOCA_SITE_ENVELOPE"
               ;;
+            beta-install)
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test "$BOCA_BETA_ENV_READY" = ready
+              test -n "$BOCA_IMAGE_REF"
+              test -n "$BOCA_RELEASE_RUN_ID"
+              test -n "$BOCA_BETA_PANEL_ORIGIN"
+              test -n "$BOCA_BETA_OWNER_SUBJECT"
+              test -z "$BOCA_SITE_ENVELOPE"
+              ;;
             *) exit 1 ;;
           esac
       - name: Checkout exact main commit without persisted credentials
@@ -309,7 +352,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref.json"
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref.json" "$BOCA_SOURCE_SHA"
       - name: Validate immutable inputs and successful matching release
-        if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic' || inputs.operation == 'site-prepare' || inputs.operation == 'site-install' || inputs.operation == 'site-verify'
+        if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic' || inputs.operation == 'site-prepare' || inputs.operation == 'site-install' || inputs.operation == 'site-verify' || inputs.operation == 'beta-install'
         env:
           PYTHONPATH: src
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -325,6 +368,9 @@ jobs:
             "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID"
       - name: Hash reviewed Boca Compose file
         run: sha256sum compose.yaml | cut -d' ' -f1 > "$RUNNER_TEMP/boca-compose.sha"
+      - name: Hash reviewed served BETA Compose file
+        if: inputs.operation == 'beta-install'
+        run: sha256sum compose.beta.yaml | cut -d' ' -f1 > "$RUNNER_TEMP/boca-beta-compose.sha"
       - name: Validate reviewed runner Compose model
         if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic'
         env:
@@ -334,6 +380,16 @@ jobs:
         run: |
           docker compose -p boca-socios -f compose.yaml config --format json > "$RUNNER_TEMP/boca-runner-model.json"
           python scripts/check_deploy_contract.py "$RUNNER_TEMP/boca-runner-model.json" "$BOCA_IMAGE_REF"
+      - name: Validate reviewed served BETA runner Compose model
+        if: inputs.operation == 'beta-install'
+        env:
+          BOCA_IMAGE: ${{ inputs.image_ref }}
+          BOCA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
+          BOCA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
+          PYTHONPATH: src
+        run: |
+          docker compose -p boca-socios -f compose.beta.yaml config --format json > "$RUNNER_TEMP/boca-beta-runner-model.json"
+          python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-beta-runner-model.json" "$BOCA_IMAGE_REF"
       - name: Configure pinned SSH host key and dedicated identity
         env:
           BOCA_HOST: ${{ vars.BOCA_DEPLOY_HOST }}
@@ -504,6 +560,86 @@ jobs:
             printf 'Boca first-install failed; original failure remains NO_GO. Selective cleanup: `%s`.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
           else
             printf 'Boca first-install failed; original failure remains NO_GO. Selective cleanup: NO_GO INDETERMINADO; Boca state may have changed. Re-inventory Boca before retry.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Read-only BETA capacity, owner custody and empty app namespace
+        if: inputs.operation == 'beta-install'
+        env:
+          BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
+          BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
+        run: |
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - beta-preflight "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py
+      - name: Recheck current main before BETA install
+        if: inputs.operation == 'beta-install'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-beta-stage.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-beta-stage.json" "$BOCA_SOURCE_SHA"
+      - name: Mark BETA staging attempt after owner-only preflight
+        id: boca_beta_stage_attempt
+        if: inputs.operation == 'beta-install'
+        run: printf 'started=true\n' >> "$GITHUB_OUTPUT"
+      - name: Stage only reviewed served BETA Compose file
+        if: inputs.operation == 'beta-install'
+        env:
+          BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
+          BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
+        run: |
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - beta-stage "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py
+          scp -F "$RUNNER_TEMP/boca-ssh/config" -p compose.beta.yaml boca-target:/srv/boca-socios/compose.beta.yaml
+      - name: Validate resolved served BETA host Compose model
+        if: inputs.operation == 'beta-install'
+        env:
+          BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
+          BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
+          BOCA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
+          BOCA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
+          PYTHONPATH: src
+        run: |
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - beta-config "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-beta-host-model.json"
+          python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-beta-host-model.json" "$BOCA_IMAGE_REF"
+      - name: Recheck current main immediately before BETA app and key effects
+        if: inputs.operation == 'beta-install'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-beta-apply.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-beta-apply.json" "$BOCA_SOURCE_SHA"
+      - name: Initialize new-only BETA and start isolated controller
+        if: inputs.operation == 'beta-install'
+        env:
+          BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
+          BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
+        run: |
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - beta-apply "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py
+          {
+            printf 'Boca served BETA host-local install: simulation controller healthy; private host loopback TLS verified. Tablet, Site and Telegram are separate gates.\n\n'
+            printf 'Commit: `%s`\n\nImage: `%s`\n\nRelease run: `%s`\n\nService: `controller`\n' "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" "$BOCA_RELEASE_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Stop only positively identified Boca BETA controller on failure
+        if: failure() && inputs.operation == 'beta-install' && steps.boca_beta_stage_attempt.outputs.started == 'true'
+        env:
+          BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
+          BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
+        run: |
+          set +e
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - beta-rollback "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-beta-rollback.receipt" 2>/dev/null
+          rollback_rc=$?
+          set -e
+          receipt=''
+          if [[ "$rollback_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-beta-rollback.receipt")"; fi
+          receipt_pattern='^BOCA_BETA_ROLLBACK state=(STOPPED|ALREADY_STOPPED|NO_CONTROLLER) data=preserved key=preserved owner=preserved stage=preserved stage_free_mib=[0-9]+ docker_free_mib=[0-9]+ stage_inodes=[0-9]+ docker_inodes=[0-9]+$'
+          if [[ "$rollback_rc" -eq 0 && ${#receipt} -le 320 && "$receipt" =~ $receipt_pattern ]]; then
+            printf 'Boca BETA install failed; original failure remains NO_GO. Bounded controller rollback: `%s`. Boca volumes and staged file retained for review.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'Boca BETA install failed; original failure remains NO_GO. Controller stop unverified; Boca app/key/owner may be present. Inventory before any retry.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Validate host Compose model for read-only diagnostic
         if: inputs.operation == 'diagnostic'
