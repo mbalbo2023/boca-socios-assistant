@@ -220,6 +220,7 @@ def test_workflow_requires_release_owner_marker_and_same_job_stop() -> None:
     assert "python scripts/check_release_run.py" in workflow
     assert 'start-existing "$BOCA_SOURCE_SHA"' in workflow
     assert "BOCA_TELEGRAM_ENVELOPE: ${{ inputs.telegram_envelope }}" in workflow
+    assert "sys.stdout.write(_telegram_envelope(sys.argv[1]))" in workflow
     assert "Mark Telegram host attempt before starting existing Boca daemon" in workflow
     assert "always() && startsWith(inputs.operation, 'telegram-')" in workflow
     assert (
