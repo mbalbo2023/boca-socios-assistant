@@ -224,6 +224,18 @@
         "tests/test_host_owner_enroll_lifecycle.py::test_old_or_unverifiable_docker_refuses_loopback_enrollment_before_writes",
         "tests/test_host_owner_enroll_lifecycle.py::test_lifecycle_workflow_enforces_same_job_cleanup_before_daemon_stop"
       ]
+    },
+    {
+      "id": "RCA-227",
+      "issue": 227,
+      "fix_pr": 233,
+      "root_cause": "The synthetic Chromium adapter accepted its fake success before async page context teardown; a context manager swallowing cancellation during __aexit__ could return success after close, STOP or deadline expiration.",
+      "prevention": "Do not accept synthetic success until after context exit; recheck the deadline, closed state and pending external task cancellation before returning, even when teardown swallows CancelledError.",
+      "regression_tests": [
+        "tests/test_browser_on_demand.py::test_close_during_stubborn_context_exit_never_returns_late_success",
+        "tests/test_browser_on_demand.py::test_timeout_swallowed_during_context_exit_never_returns_late_success",
+        "tests/test_browser_on_demand.py::test_external_stop_swallowed_during_teardown_does_not_claim_success"
+      ]
     }
   ]
 }

@@ -121,6 +121,62 @@ def test_new_only_initialization_and_existing_only_restart(tmp_path: Path) -> No
         assert connection.execute("SELECT version FROM schema_migrations").fetchall() == versions
 
 
+def test_served_beta_accepts_only_an_explicit_synthetic_browser_injection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Injectable worker stays behind the existing one-ticket command host."""
+    # This test replaces the listener, so it deliberately needs no local socket.
+    monkeypatch.setitem(_settings.__globals__, "_port", lambda: 8443)
+    settings = _settings(tmp_path)
+
+    class Browser:
+        async def simulate_general_reservation(self) -> runtime_module.SimulationOutcome:
+            return runtime_module.SimulationOutcome.RESERVED_IN_SIMULATOR
+
+    class Runtime:
+        members = object()
+        commands = object()
+
+        def close(self) -> None:
+            pass
+
+    class Server:
+        def __init__(self, *_args: object) -> None:
+            self.application: object | None = None
+
+        def set_app(self, app: object) -> None:
+            self.application = app
+
+        def server_close(self) -> None:
+            pass
+
+    received: list[object] = []
+
+    def start_runtime(**kwargs: object) -> Runtime:
+        received.append(kwargs["browser"])
+        return Runtime()
+
+    monkeypatch.setattr(runtime_module, "_configured_event", lambda _path: {})
+    monkeypatch.setattr(runtime_module.LocalBetaRuntime, "start", start_runtime)
+    monkeypatch.setattr(runtime_module, "_TLSWSGIServer", Server)
+    monkeypatch.setattr(runtime_module, "PrivatePanelApplication", lambda **_kwargs: object())
+
+    worker = Browser()
+    served = build_beta_server(settings, browser=worker)
+    try:
+        assert received == [worker]
+        assert isinstance(served.server, Server)
+        assert served.server.application is not None
+    finally:
+        served.close()
+
+    served = build_beta_server(settings)
+    try:
+        assert len(received) == 2 and isinstance(received[1], runtime_module._LocalSyntheticBrowser)
+    finally:
+        served.close()
+
+
 def test_served_tls_health_requires_ready_loop_and_owner_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
