@@ -54,7 +54,7 @@ def valid_environment() -> dict[str, str]:
         ("BOCA_ENVIRONMENT", "production"),
         ("BOCA_RUNTIME_MODE", "live"),
         ("BOCA_ENGINE_MODE", "on"),
-        ("BOCA_DB_PATH", "/tmp/boca.sqlite3"),
+        ("BOCA_DB_PATH", "/other/boca.sqlite3"),
         ("BOCA_TELEGRAM_DISPATCH_MODE", "off"),
     ],
 )
@@ -117,9 +117,10 @@ class WorkerLifecycleTests(unittest.TestCase):
         self.assertEqual(len(transport.notices), 1)
         self.assertEqual(outbox.get(first.idempotency_key).state, DeliveryState.EXHAUSTED)
         self.assertEqual(outbox.get(second.idempotency_key).state, DeliveryState.PENDING)
-        self.assertEqual(
-            asyncio.run(self.coordinator(FakeTransport()).tick()).attempted, 1
-        )  # Explicit later invocation can process the other key only.
+        later = FakeTransport()
+        self.assertEqual(asyncio.run(self.coordinator(later).tick()).attempted, 1)
+        self.assertEqual(later.notices[0].idempotency_key, second.idempotency_key)
+        # A separate explicit invocation can process the other key only.
 
     def test_graceful_stop_does_not_send_after_stop(self) -> None:
         outbox = SqliteNotificationOutbox(self.database)

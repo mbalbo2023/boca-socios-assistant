@@ -1,0 +1,34 @@
+{
+  "name": "boca-socios",
+  "services": {
+    "telegram": {
+      "profiles": ["telegram-opt-in"],
+      "image": "${BOCA_IMAGE:?BOCA_IMAGE_digest_is_required}",
+      "command": ["python", "-m", "boca_socios.notify.telegram_worker", "serve"],
+      "user": "10001:10001",
+      "restart": "no",
+      "init": true,
+      "environment": {
+        "BOCA_ENVIRONMENT": "staging",
+        "BOCA_RUNTIME_MODE": "simulation",
+        "BOCA_ENGINE_MODE": "off",
+        "BOCA_DB_PATH": "/data/boca.sqlite3",
+        "BOCA_TELEGRAM_DISPATCH_MODE": "explicit"
+      },
+      "volumes": ["boca_data:/data", "boca_telegram:/run/telegram:ro"],
+      "networks": ["telegram_egress"],
+      "read_only": true,
+      "tmpfs": ["/tmp:rw,noexec,nosuid,size=8m"],
+      "security_opt": ["no-new-privileges:true"],
+      "cap_drop": ["ALL"],
+      "pids_limit": 32,
+      "mem_limit": "128m",
+      "cpus": 0.25
+    }
+  },
+  "volumes": {
+    "boca_data": {"external": true, "name": "boca-socios_boca_data"},
+    "boca_telegram": {"external": true, "name": "boca-socios_boca_telegram"}
+  },
+  "networks": {"telegram_egress": {"driver": "bridge"}}
+}
