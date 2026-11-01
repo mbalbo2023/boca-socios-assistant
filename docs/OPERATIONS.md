@@ -4,7 +4,13 @@
 
 The default runtime remains dormant and CI never deploys. The dedicated rootless service
 was prepared in #120 and stopped in #156/41272785626; the BETA application
-remains not installed/NO_GO.
+remains not installed/NO_GO. The protected [image release #198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41298346638)
+published `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:ab0745a840e35a6d713fed14ec0761512fdc90284c133f2c321c9ffe2d3c9284` for `6d3007a3ca1dfdba428cb7595486b1166a1d02b6` with manifest artifact 13079654802.
+This was registry-only; no droplet pull/install. Subsequent commits require a
+matching new release, tracked in [issue #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+The [stop-test #198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41282301501) observed `ALREADY_STOPPED
+containers=not_queried data=preserved` at 03:48 ART; it did not inventory
+stopped containers and future daemon state must be rechecked.
 [Read-only preflight #124](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41268626135)
 on `main` `213be4903669c6e88122a536ad8fee6785c997ac`, attempt 1, passed
 at 2026-11-01 00:18 ART: UID10001, rootless boundary, empty namespace,
@@ -131,11 +137,13 @@ the exact main SHA; install accepts only a bounded, canonical sealed envelope
 as ciphertext. They do not create the application DB/key, stage BETA Compose,
 start a service or enable the Site bridge. See ADR0074.
 
-The `boca-image-release` environment currently lacks
-`BOCA_RELEASE_ENV_READY`, so no successful protected image release/digest is
-available. No Site custody phase was dispatched. Its real recipient key and
-the Site bypass/HMAC material have not been installed on the host. The rootless
-daemon was last observed STOPPED in #156; its current state is UNVERIFIED.
+The prior environment inspection found `BOCA_RELEASE_ENV_READY` absent.
+It was subsequently set to `ready` only in `boca-image-release` without
+changing its main-only branch rule. [Release #198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41298346638) succeeded and
+published the digest above for the then-current main SHA; verify a matching
+release for any later HEAD. No Site custody phase was dispatched. Its real recipient key and
+the Site bypass/HMAC material have not been installed on the host. The dedicated daemon was observed ALREADY_STOPPED in protected stop-test #198;
+recheck its state before any future use.
 A successful runner smoke cannot satisfy these host gates.
 
 PR #196 integrated the Site custody global-inventory RCA in
@@ -175,13 +183,13 @@ requires a positive STOPPED receipt. No host BETA install/acceptance run has
 occurred. Container-loopback tests do not prove owner tablet, Site or Telegram.
 See ADR0076 and ADR0081.
 
-The 2026-11-01 GitHub environment inspection found no
-`BOCA_RELEASE_ENV_READY` in `boca-image-release`; the deploy environment lacks
+The earlier 2026-11-01 GitHub environment inspection found no
+`BOCA_RELEASE_ENV_READY`; this release marker was then enabled and release
+#198 succeeded for the source SHA above. The deploy environment still lacks
 `BOCA_BETA_ENV_READY`, both Telegram readiness markers, protected bot/chat
-assertions, owner origin/subject and real passkey/TLS files. There is no
-protected image release/digest, host
-install or private tablet route. The last observed Boca daemon state was STOPPED
-in #156; its current state is UNVERIFIED until another inspection. Do not
+assertions, owner origin/subject and real passkey/TLS files. There is a protected image release/digest for the source SHA above, but no host
+install or private tablet route. The dedicated Boca daemon was observed ALREADY_STOPPED in stop-test #198,
+without a stopped-container inventory; recheck before another operation. Do not
 dispatch `beta-install`, Site phases or `beta-acceptance` until their exact
 gates are satisfied. No `prepare-rootless` retry over the existing unit.
 
@@ -342,8 +350,8 @@ checking no repository-level variable of that name exists; the shell cannot
 prove variable scope. That read-only authorization did not permit setting
 `BOCA_DEPLOY_ENV_READY` or `BOCA_RELEASE_ENV_READY`. Subsequently, the separately
 approved preparation scope enabled `BOCA_DEPLOY_ENV_READY=ready` in that
-protected environment for run #120. `BOCA_RELEASE_ENV_READY` remains closed;
-the deployment marker does not itself approve application installation.
+protected environment for run #120. `BOCA_RELEASE_ENV_READY` was enabled later for release #198; the deployment
+marker does not itself approve application installation.
 A successful metadata inspection
 permits considering the stricter read-only `preflight`; it is not host approval.
 

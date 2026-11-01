@@ -21,8 +21,8 @@ para completar la BETA sintética, Site conectado, Telegram y deploy validado
 por Actions, sin reservas ni compras reales. El alcance anterior de preparación
 queda como historial; ninguna autorización es evidencia de instalación.
 
-**Corte de integración 2026-11-01:** `main`
-`5cb8ce17715f571979a2ea3bb092da9b470f362d` incorpora loop persistente
+**Corte de integración previo a esta actualización documental 2026-11-01:**
+`main` `6d3007a3ca1dfdba428cb7595486b1166a1d02b6` incorpora loop persistente
 #161, Telegram durable opt-in #162, stop-test #165, ciclo de vida local #164
 y panel owner passkey #163, aceptación HTTP sintética #170 y entrypoint
 TLS explícito #173, prueba de registro WebAuthn #174 y corrección
@@ -32,7 +32,10 @@ además RCA de comandos #187, preflight owner #189, worker Telegram #188,
 probe sintético #190, `beta-install` #191, parada Telegram #194,
 `beta-acceptance` #200, custodia cifrada Telegram #199 y fases protegidas
 de migración/custodia posterior #203, prueba Bot API de un solo intento #204
-y el corte base descrito abajo.
+y PR #205 de reconciliación documental, además del corte base descrito abajo.
+La [publicación protegida #198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41298346638) generó `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:ab0745a840e35a6d713fed14ec0761512fdc90284c133f2c321c9ffe2d3c9284`
+para ese SHA y el manifiesto ID 13079654802; no instaló la aplicación.
+Una modificación posterior de `main` necesita release propio antes de install.
 [Estado actual y runs exactos](BETA_INTEGRATION_STATUS.md).
 El Compose/primer install aún son dormidos y no hay aplicación en el droplet.
 El stop-test protegido [#156/41272785626](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41272785626)
@@ -43,13 +46,15 @@ No es evidencia de instalación BETA.
 La custodia Site, `beta-install` y `beta-acceptance` están integrados en
 código, sin dispatch al host; acceso privado y aceptación host requieren
 pruebas propias. El Site privado v10 #113 publicó cola D1 sintética
-desactivada y proxy/recibos fail-closed; falta release de imagen protegido,
-bypass+HMAC host y E2E.
+desactivada y proxy/recibos fail-closed; existe release de imagen para el
+SHA de corte, pero faltan digest coincidente con una HEAD posterior, bypass+HMAC
+host y E2E.
 Telegram tiene worker, helper cifrado y fases host de custodia/prueba en código,
 pero no tiene
 bot/destino ni recepción
-comprobada (#168). El último estado observado del daemon Boca fue STOPPED en
-#156/41272785626; el estado actual requiere nueva inspección.
+comprobada (#168). La [parada protegida #198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41282301501) observó
+`ALREADY_STOPPED containers=not_queried data=preserved` sobre el SHA de corte.
+Antes de otro uso se revalida el daemon y el main actual.
 
 ## Base histórica comprobada de este plan
 
@@ -130,7 +135,7 @@ diferido; no se eliminan los requisitos de custodia/recuperación para alta real
 | B6 | Chromium/medición | Una sesión aislada con recursos, parada y errores medidos en entorno candidato; alcance de egress explícito | Presupuesto separado; observación real no inferida de test offline |
 | B7 | TLS173, Compose171 y operación protegida `beta-install`191 integrados; no ejecutados en host | Programa arrancado conecta B3/B4/B5; health funcional, acceso privado y manifiesto por componente; instalación desechable probada | B2–B6 según componentes del candidato |
 | B8 | HTTP loopback170, probe TLS190 y smoke de contenedor limitado200; E2E host pendiente | Suite E2E, lint/types, RCA, seguridad e imágenes sobre mismo SHA; rapidez/recursos y revisión exacta | B7 consolidado |
-| B9 | Release e instalación concreta: código191, sin digest ni dispatch | SHA→digest/manifiesto→proceso instalado trazables; capacidad revalidada; sólo workflow y mutex Boca | B2 apto, B8 verde, decisión final del candidato |
+| B9 | Imagen protegida #198 publicada con digest/manifest para el SHA de corte; código de instalación #191 sin dispatch | SHA→digest/manifiesto→proceso instalado trazables; capacidad revalidada; sólo workflow y mutex Boca | B2 apto, B8 verde, decisión final del candidato |
 | B10 | Aceptación/parada protegida200 integrada, sin dispatch | Recorrido desde interfaz real/tablet, persistencia/reinicio, límites, denegación y avisos; acta de versión/pendientes | B9 y matriz de aceptación |
 
 Estos IDs no son estados de la aplicación. Cada cambio de estado de una entrega
@@ -175,7 +180,7 @@ aceptación BETA de simulación y la operación real contra Boca son hitos disti
 | Avisos locales y Telegram | Bandeja/estado de avisos, canal y fallos explícitos | Outbox durable, dispatcher134, adaptador162, UI163, worker188, parada194, helper cifrado199, custodia203 y prueba única204 | Bot/destino reales, dispatch de custodia/prueba host y recepción #168 pendientes, sin afirmar entrega por código integrado |
 | Diagnóstico, fuente pública y recursos | Semáforo con procedencia/hora, salud y límites | Workflows fuente/host, inventario98, preparación120 y medición Chromium offline | Proyección UI real pendiente; un semáforo externo no habilita login ni prueba capacidad de host |
 | RCA, calidad y trazabilidad | Versiones, SHA/digests, runs, decisiones y errores redactados | CI, reviews, ledger RCA y continuidad45; no editor automático de código | Integración UI/recibos por acción pendiente; nunca sustituir pruebas exactas por una insignia sintética |
-| Release/deploy y operación host | Mostrar estado/recibos y alcance permitido | Workflow protegido; rootless #120, preflight #124, stop #156, custodia Site181/196, `beta-install`191 y aceptación/parada200 integrados | Sin release/BETA markers, identidad privada, dispatch ni control Site→Actions demostrado; nada de SSH/Docker/secreto en Site |
+| Release/deploy y operación host | Mostrar estado/recibos y alcance permitido | Workflow protegido; rootless #120, preflight #124, stop #198, imagen release #198, custodia Site181/196, `beta-install`191 y aceptación/parada200 integrados | Falta release coincidente con futura HEAD, BETA marker, identidad privada, dispatch de install y control Site→Actions; nada de SSH/Docker/secreto en Site |
 | Backup/restore | Estado diferido y motivo visible/planificado | Biblioteca offline47; ningún ensayo operativo acredita recuperación | Diferido por el dueño hasta versión productiva fiable; sin botón operativo ni backup ahora |
 | Login, cola, elegibilidad, reserva/compra real | Identificar hito separado y no habilitado | Modelos y observación pública histórica; sin flujo autenticado validado | No habilitado en esta BETA; requiere consentimiento/custodia, flujo legítimo y conciliación de resultados ambiguos |
 | Administración multiusuario y modalidades no descritas | No inventar controles, roles o planes | El formulario de socios no crea administradores; no hay definición aprobada de otras modalidades | Sin definición: registrar la necesidad antes de diseñar/activar, sin presentar una suposición como función acordada |
