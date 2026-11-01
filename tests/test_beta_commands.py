@@ -278,6 +278,31 @@ class BetaCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.browser.calls, 1)
         await timed.close()
 
+    async def test_timeout_survives_restart_and_new_alias_without_retry_or_notice(self):
+        timed = self.make_service(timeout_seconds=0.01)
+        self.browser.release.clear()
+        await timed.begin(self.key, self.intent)
+        await timed.wait_idle()
+        self.assertEqual(timed.status(self.key, member_id="member").state, CommandState.FAILED)
+        await timed.close()
+
+        restarted = self.make_service()
+        await restarted.recover()
+        retried = await restarted.begin(str(uuid4()), self.intent)
+        await restarted.wait_idle()
+        self.assertEqual(retried.command_id, self.key)
+        self.assertEqual(retried.state, CommandState.FAILED)
+        self.assertEqual(self.browser.calls, 1)
+        with self.db.connection() as connection:
+            self.assertEqual(
+                connection.execute("SELECT quantity FROM ticket_requests").fetchall(), [(1,)]
+            )
+            self.assertEqual(
+                connection.execute("SELECT count(*) FROM notification_outbox").fetchone(),
+                (0,),
+            )
+        await restarted.close()
+
     async def test_migration_checksum_mismatch_does_not_rewrite_ledger(self):
         with self.db.connection() as connection, connection:
             connection.execute("UPDATE schema_migrations SET checksum='wrong' WHERE version=6")

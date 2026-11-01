@@ -22,15 +22,21 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event, Thread
 from urllib.parse import urlencode
+from uuid import uuid4
 from wsgiref.simple_server import WSGIRequestHandler, make_server
 
+import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from boca_socios.browser.contracts import SimulationOutcome
+from boca_socios.domain.policy import TicketIntent
+from boca_socios.integration.command_store import CommandStore
 from boca_socios.integration.operational import LocalBetaRuntime
 from boca_socios.panel.passkey import PasskeyOwnerAuthentication
 from boca_socios.panel.private_http import PrivatePanelApplication
+from boca_socios.reservation_guard import ReservationAttemptGuard, ReservationResolution
+from boca_socios.storage.database import Database
 
 ORIGIN = "https://boca.example.test"
 EVENT_ID = "5387eb20-c962-42f5-933e-d5f681ab0877"
@@ -62,6 +68,15 @@ class _WaitingBrowser(_SyntheticBrowser):
         except asyncio.CancelledError:
             self.cancelled = True
             raise
+
+
+class _FailingBrowser(_SyntheticBrowser):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def simulate_general_reservation(self) -> SimulationOutcome:
+        self.calls += 1
+        raise RuntimeError("PRIVATE_SYNTHETIC_ADAPTER_ERROR_MUST_NOT_LEAK")
 
 
 class _QuietHandler(WSGIRequestHandler):
@@ -483,3 +498,230 @@ def test_loopback_http_stop_cancels_worker_and_survives_restart() -> None:
                 reopened.close()
         finally:
             runtime.close()
+
+
+def test_loopback_http_failed_browser_is_redacted_and_not_retried_after_restart() -> None:
+    timings: list[float] = []
+    browser = _FailingBrowser()
+    with TemporaryDirectory() as directory:
+        path = Path(directory)
+        database_path, key_file = path / "boca.sqlite3", path / "boca.key"
+        key_file.write_bytes(base64.b64encode(b"k" * 32) + b"\n")
+        key_file.chmod(0o400)
+        runtime = LocalBetaRuntime.start(
+            database_path=database_path, key_file=key_file, browser=browser, initialize_new=True
+        )
+        _, key, credential_id = _passkey()
+        try:
+            runtime.database.create_event(EVENT_ID, "Partido sintético")
+            member_id = runtime.members.enroll(
+                email="failure@example.test",
+                password="synthetic-failure-secret",
+                consent_recorded_at=datetime.now(UTC),
+            )
+            provider, _, _ = _passkey(key, credential_id)
+            with _loopback(_app(runtime, provider)) as port:
+                cookie = _login(port, key, credential_id, timings)
+                status, _, form = _request(port, "/comandos", cookie=cookie, timings=timings)
+                assert status == 200
+                command_id = _hidden(form, "operation_id")
+                command = {
+                    "csrf": _hidden(form, "csrf"),
+                    "operation_id": command_id,
+                    "member_id": member_id,
+                    "event_id": EVENT_ID,
+                }
+                status, _, _ = _request(
+                    port,
+                    "/comandos",
+                    method="POST",
+                    cookie=cookie,
+                    fields=command,
+                    timings=timings,
+                )
+                assert status == 303
+                deadline = time.monotonic() + 3
+                while True:
+                    status, _, detail = _request(
+                        port, f"/comandos/{command_id}", cookie=cookie, timings=timings
+                    )
+                    assert status == 200
+                    assert b"PRIVATE_SYNTHETIC_ADAPTER_ERROR_MUST_NOT_LEAK" not in detail
+                    if b"Estado: failed" in detail:
+                        break
+                    assert time.monotonic() < deadline
+                    time.sleep(0.02)
+                assert (
+                    b"Sin avisos locales"
+                    in _request(port, "/avisos", cookie=cookie, timings=timings)[2]
+                )
+            runtime.close()
+            reopened = LocalBetaRuntime.start(
+                database_path=database_path,
+                key_file=key_file,
+                browser=browser,
+                initialize_new=False,
+            )
+            try:
+                provider, _, _ = _passkey(key, credential_id)
+                with _loopback(_app(reopened, provider)) as port:
+                    cookie = _login(port, key, credential_id, timings)
+                    status, _, detail = _request(
+                        port, f"/comandos/{command_id}", cookie=cookie, timings=timings
+                    )
+                    assert status == 200 and b"Estado: failed" in detail
+                    status, _, form = _request(port, "/comandos", cookie=cookie, timings=timings)
+                    assert status == 200
+                    retry = {
+                        "csrf": _hidden(form, "csrf"),
+                        "operation_id": _hidden(form, "operation_id"),
+                        "member_id": member_id,
+                        "event_id": EVENT_ID,
+                    }
+                    status, headers, body = _request(
+                        port,
+                        "/comandos",
+                        method="POST",
+                        cookie=cookie,
+                        fields=retry,
+                        timings=timings,
+                    )
+                    assert status == 303 and headers["Location"] == f"/comandos/{command_id}"
+                    assert b"PRIVATE_SYNTHETIC_ADAPTER_ERROR_MUST_NOT_LEAK" not in body
+                    assert (
+                        b"Sin avisos locales"
+                        in _request(port, "/avisos", cookie=cookie, timings=timings)[2]
+                    )
+            finally:
+                reopened.close()
+        finally:
+            runtime.close()
+
+        assert browser.calls == 1
+        with sqlite3.connect(database_path) as connection:
+            assert connection.execute("SELECT state FROM beta_commands").fetchall() == [("failed",)]
+            assert connection.execute("SELECT quantity FROM ticket_requests").fetchall() == [(1,)]
+            assert connection.execute("SELECT count(*) FROM notification_outbox").fetchone() == (0,)
+
+
+@pytest.mark.parametrize(
+    ("resolved", "expected_state", "notice_count"),
+    [
+        (False, b"needs_review", 0),
+        (True, b"completed", 1),
+    ],
+    ids=("ambiguous-running", "completed-before-notice"),
+)
+def test_loopback_http_interrupted_command_recovery_does_not_replay_browser(
+    resolved: bool, expected_state: bytes, notice_count: int
+) -> None:
+    """Seed the two crash boundaries, then assert recovery through real HTTP.
+
+    Unlike coordinator-only recovery tests, this checks that the authenticated
+    browser-facing routes expose the durable result after two process lifecycles.
+    """
+    timings: list[float] = []
+    browser = _SyntheticBrowser()
+    with TemporaryDirectory() as directory:
+        path = Path(directory)
+        database_path, key_file = path / "boca.sqlite3", path / "boca.key"
+        key_file.write_bytes(base64.b64encode(b"k" * 32) + b"\n")
+        key_file.chmod(0o400)
+        first = LocalBetaRuntime.start(
+            database_path=database_path, key_file=key_file, browser=browser, initialize_new=True
+        )
+        try:
+            first.database.create_event(EVENT_ID, "Partido sintético")
+            member_id = first.members.enroll(
+                email="interrupted@example.test",
+                password="synthetic-interrupted-secret",
+                consent_recorded_at=datetime.now(UTC),
+            )
+        finally:
+            first.close()
+
+        # Persist exactly the state that survives an abrupt worker/process loss:
+        # a RUNNING command with an unresolved or already-completed guard.
+        database = Database(database_path)
+        store = CommandStore(database)
+        command_id = str(uuid4())
+        store.enqueue(command_id, TicketIntent(member_id, EVENT_ID), now=1000, max_pending=16)
+        claimed = store.claim_next(now=1000)
+        assert claimed is not None
+        snapshot, _ = claimed
+        guard = ReservationAttemptGuard(database)
+        claim = guard.claim_simulation(snapshot.request_id, now=1000)
+        assert claim is not None
+        if resolved:
+            guard.resolve(claim, ReservationResolution.SIMULATION_COMPLETED, now=1000)
+
+        previous_cookie = ""
+        _, key, credential_id = _passkey()
+        for _ in range(2):
+            provider, _, _ = _passkey(key, credential_id)
+            restarted = LocalBetaRuntime.start(
+                database_path=database_path,
+                key_file=key_file,
+                browser=browser,
+                initialize_new=False,
+            )
+            try:
+                with _loopback(_app(restarted, provider)) as port:
+                    # Authentication is process-local even when command state
+                    # and the offline outbox survive repeated startup.
+                    if previous_cookie:
+                        assert (
+                            _request(
+                                port,
+                                f"/comandos/{command_id}",
+                                cookie=previous_cookie,
+                                timings=timings,
+                            )[0]
+                            == 401
+                        )
+                    assert _request(port, "/avisos", timings=timings)[0] == 401
+                    cookie = _login(port, key, credential_id, timings)
+                    status, _, detail = _request(
+                        port, f"/comandos/{command_id}", cookie=cookie, timings=timings
+                    )
+                    assert status == 200 and b"Estado: " + expected_state in detail
+                    assert b"interrupted@example.test" not in detail
+
+                    # A fresh user retry for the same member/event must map to
+                    # the original UUID, without arming another browser call.
+                    status, _, form = _request(port, "/comandos", cookie=cookie, timings=timings)
+                    assert status == 200
+                    retry = {
+                        "csrf": _hidden(form, "csrf"),
+                        "operation_id": _hidden(form, "operation_id"),
+                        "member_id": member_id,
+                        "event_id": EVENT_ID,
+                    }
+                    status, headers, _ = _request(
+                        port,
+                        "/comandos",
+                        method="POST",
+                        cookie=cookie,
+                        fields=retry,
+                        timings=timings,
+                    )
+                    assert status == 303
+                    assert headers["Location"] == f"/comandos/{command_id}"
+                    status, _, notices = _request(port, "/avisos", cookie=cookie, timings=timings)
+                    assert status == 200
+                    assert (b"Aviso local" in notices) is resolved
+                    assert (b"Sin avisos locales" in notices) is not resolved
+                    assert b"interrupted@example.test" not in notices
+                    previous_cookie = cookie
+            finally:
+                restarted.close()
+
+        assert browser.calls == 0
+        with sqlite3.connect(database_path) as connection:
+            assert connection.execute(
+                "SELECT command_id,state,notice_enqueued FROM beta_commands"
+            ).fetchall() == [(command_id, expected_state.decode(), notice_count)]
+            assert connection.execute("SELECT quantity FROM ticket_requests").fetchall() == [(1,)]
+            assert connection.execute("SELECT count(*) FROM notification_outbox").fetchone() == (
+                notice_count,
+            )
