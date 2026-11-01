@@ -9,6 +9,7 @@ from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
+from unittest.mock import patch
 from urllib.parse import urlencode
 from uuid import UUID
 
@@ -308,3 +309,15 @@ def test_form_and_session_count_are_bounded() -> None:
     for _ in range(31):
         assert sessions.authenticate("synthetic-proof") is not None
     assert sessions.authenticate("synthetic-proof") is None
+
+
+def test_internal_provider_failure_never_escapes_request_boundary() -> None:
+    sessions, cookie = _sessions()
+    app = EnrollmentApplication(None, sessions, origin=ORIGIN)
+
+    def failed_operation(session: object) -> None:
+        raise RuntimeError("synthetic-secret-in-provider-error")
+
+    with patch.object(sessions, "new_operation", side_effect=failed_operation):
+        status, _, body = _request(app, cookie)
+        assert status == 503 and b"synthetic-secret" not in body
