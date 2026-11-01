@@ -4,29 +4,69 @@
 
 La release sigue en **simulación solamente**. La HEAD y los checks de cada
 operación deben revalidarse en el [checkpoint vigente #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
-El corte de código incluye #136/#140/#141 hasta
-`07cf424c92384a42e820b73befcaaeeaca87e8d9`; la inspección #98 usó su SHA anterior.
+El corte de código incluye #136/#140/#141 y componentes #130/#128/#134/#148/#149/#150/#152 hasta
+`6be606f83c5a6afe0ba7226abbca6a09276d1ca1`; la preparación #120 usó este SHA; la inspección #98 corresponde a su corte anterior.
 Las referencias exactas siguientes conservan su alcance histórico; no se
 presentan como pruebas de un SHA posterior. Rige la Regla 84: documentación
 impactada en el mismo PR y continuidad reconciliada antes de cerrar el trabajo.
 
-Evidencia consolidada: [corte operativo #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551442762).
-[Dirección acotada y Regla 84](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551338776).
+Evidencia operacional: [recibo120](https://github.com/mbalbo2023/boca-socios-assistant/issues/145#issuecomment-6551973756);
+la HEAD y decisiones posteriores se mantienen en #45.
+[Antecedente de Regla84](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551338776)
+y [dirección vigente de BETA](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551681142).
 
 | Área | Integrado/comprobado | Límite o pendiente |
 | --- | --- | --- |
-| Componentes offline | Cola/estados, navegador sintético, coordinador local, guardia SQLite y outbox durable | No runtime coordinado ni flujo real; #130 abierto no equivale a integración |
-| Panel/Site | #113 publicó Site privado sintético; #121 aporta proyección local agregada read-only | Sin endpoint servido, identidad operativa ni conexión DB/Site. #128 es candidato separado. Elegir opciones de acceso con el dueño antes de decidir arquitectura |
-| Notificaciones | Outbox durable integrado, sin red | #134 propone dispatcher sintético; ningún transporte real ni Telegram. Ambigüedad tras crash requiere reconciliación antes de delivery real |
+| Componentes offline | Cola/estados, navegador sintético, guardia/outbox, coordinador130 y comandos149 integrados; esquema0005/0006 opt-in | Sin conexión de comandos web/runtime ni flujo real; ninguna migración sobre DB real |
+| Panel/Site | Demo113, proyección121, lectura128 y formulario/handler148 integrados; identidad default-deny | Sin listener/identidad real/TLS, lista socios ni DB/Site conectado. Panel propio aprobado para preparación; opciones de identidad/bootstrap/acceso pendientes |
+| Notificaciones | Outbox durable y dispatcher sintético #134 integrados, sin red | Sin runtime/avisos panel conectados ni Telegram real; crash antes de settlement requiere reconciliación antes de transporte externo |
 | Chromium | #43/#44 prueban arranque/cierre y presupuesto offline sin egress | No capacidad del droplet ni visita real; falta frontera de egress y observación pública específicamente autorizada |
 | Claves/recuperación | #40 integró recifrador dormido y migración0004 opt-in; runtime migra0001 | No rotación real; faltan coordinación de escritores, protección DELETE, custodia y recuperación. Backup/restore diferido por el dueño |
-| Host | #124/#132/#140 integrados; inspección #98 ejecutada con metadata de servicio y tres candidatos DB | Socket ausente; ejecutables disponibles/unidad not-found. DB/WAL/SHM candidate-absent sólo en esas rutas; location UNVERIFIED. Sin daemon apto ni DB operativa probada |
+| Host | Preparación150 ejecutada en120: servicio rootless dedicado READY, sin app | Application_budget=not_checked; sin app/DB/volúmenes/clave creados. Location globalUNVERIFIED; BETA/deploy aún NO_GO |
 | Concurrencia Actions | #136 separó grupos PR y retuvo mutex manual constante | Operaciones host seriales; no habilita infraestructura ni elimina límites de runners |
 | Migración P1 | #141 integrado: validación de ledger/checksum antes de DDL/WAL/chmod, recheck y creación exclusiva | Sólo código/fixtures; mode=ro puede interactuar con SHM, no es auditoría integral ni exclusión de toda carrera; ninguna migración real ejecutada |
 | Release/calidad | Gates de SHA/intento/digest, CI frozen, build, scan, policy y RCA | CI no prueba publicación GHCR ni salud del droplet; autorización de un fix no habilita release |
 | Reserva real | NO_GO | Sin cuenta/canal habilitados, evidencia del flujo legítimo ni conciliación de resultado externo ambiguo |
 
+## Plan aprobado para la próxima entrega
+
+[ADR0056](ADR/0056-approved-simulation-beta-delivery.md) y
+[BETA_DELIVERY_PLAN](BETA_DELIVERY_PLAN.md) registran el desarrollo aprobado de
+la BETA privada funcional. **Socios > Agregar socio** es obligatorio: servicio
+cifrado existente, clave externa, acceso privado y E2E con datos sintéticos.
+La [matriz de alcance UI](BETA_DELIVERY_PLAN.md#matriz-completa-de-alcance-ui-panel-propio-y-site-complementario)
+conserva alta/consulta, ciclo de credenciales, eventos/sesiones, avisos, diagnóstico,
+calidad, operación y diferidos. El Site113 sigue demo; contemplar una función
+no prueba que sea operativa desde la primera BETA.
+Se preparan panel propio y rootless dedicado; la ubicación lógica delegada es
+`/data/boca.sqlite3` en `boca-socios_boca_data`. La existencia global actual
+sigue UNVERIFIED y no se sustituirá una DB encontrada por inferencia.
+
+Los componentes integrados incluyen formulario/handler de alta y comandos;
+las cuatro pruebas de composición152 operan en proceso con identidad/browser
+dobles. No acreditan login real, listener, tablet, runtime funcional desplegado
+ni BETA terminada. Se
+miden rapidez/recursos manteniendo checks exactos e integridad. La dirección
+vigente permite completar los pasos rutinarios aprobados sin repetir permiso.
+
 ## Evidencia host y ubicación de datos
+
+[Preparación #120](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41262650418), attempt1,
+source `6be606f83c5a6afe0ba7226abbca6a09276d1ca1`, job124718888659, finalizó SUCCESS.
+A las 22:49:24 ART del 2026-10-31 emitió SERVICE_READY,
+application_database=not_accessed y application=not_installed. Se creó/arrancó/
+habilitó sólo el daemon dedicado y su bookkeeping; postflight probó rootless,
+cgroupv2-systemd, overlay2, data root privado, cero contenedores y namespace
+Boca vacío. [Recibo](https://github.com/mbalbo2023/boca-socios-assistant/issues/145#issuecomment-6551973756).
+La capacidad informativa antes/después no prueba presupuesto de aplicación.
+DEPLOY ready se añadió sólo al entorno protegido; no hubo release/pull,
+contenedor, SQLite, volúmenes de app/clave, clave ni backup. No repetir
+prepare-rootless sobre la configuración que ahora existe.
+
+La siguiente evidencia de #98 es **histórica**: el estado de servicio ausente
+fue reemplazado por el recibo #120; el alcance limitado del inventario DB sigue
+vigente como límite de lo observado.
+
 
 La [inspección #98 / 41258754195](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41258754195)
 ejecutó `inspect-prerequisites`, attempt1, sobre
@@ -60,18 +100,22 @@ aprobada y autenticada, notificaciones y pruebas correspondientes.
 
 ## Autorización y próximos gates
 
-La instrucción actual exige opciones, recomendación y aprobación antes de
-nuevas decisiones de infraestructura o lógica de negocio. El dueño aprobó
-el diagnóstico acotado de archivos, la corrección P1 de migración, #136 y esta
-reconciliación documental. Eso no autoriza instalación, release, migraciones
-reales, credenciales/login/cola/reserva ni cambios en Porota/PPI Watch.
+La [dirección aprobada de BETA](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551681142)
+amplía los alcances ya completados a la preparación y desarrollo del plan.
+Las decisiones ya registradas no requieren aprobación repetida; nuevas
+alternativas fuera del alcance sí conservan opciones/recomendación/decisión.
+Identidad/bootstrap/acceso concreto y publicación/instalación final quedan
+sujetos a sus opciones, candidato y gates, no a la mera aprobación del plan.
+No se autorizan migraciones reales, credenciales/login/cola/reserva ni cambios
+en Porota/PPI Watch.
 La ausencia de una aprobación humana obligatoria en el ruleset es un dato de
 GitHub, no una delegación general de decisiones. Cada PR requiere revisión
 registrada del agente y checks del candidato exacto.
 
 La secuencia posible del host, sujeta a decisiones aprobadas, es diagnóstico
 acotado → remediación elegida → preflight apto → release por digest/manifiesto
-→ instalación → postflight. No repetir #98 ni recrear secretos SSH. Las pruebas
+→ instalación → postflight. La preparación120 ya completó su alcance; no
+repetir #98/120 ni recrear secretos SSH. Las pruebas
 de scopes independientes aprobados pueden avanzar en paralelo; host y merges
 permanecen serializados. Backup/restore está diferido hasta versión productiva
 fiable y no se convierte en un bloqueo de simulación ni permiso de alta real.

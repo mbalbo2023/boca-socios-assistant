@@ -2,36 +2,89 @@
 
 ## Current state
 
-The runtime is foundation-only and CI never deploys. The Boca-only manual
-workflow is integrated and has executed prerequisite inspections. Its protected
-environment contains the pre-existing SSH identity and pinned host key.
+The runtime remains dormant and CI never deploys. The dedicated rootless service
+is now prepared, while the BETA application remains not installed/NO_GO.
+[Run #120](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41262650418)
+(attempt1, job124718888659, source `6be606f83c5a6afe0ba7226abbca6a09276d1ca1`)
+executed prepare-rootless successfully after exact-source CI41262581358 and
+scan41262581422. The apply receipt at 2026-10-31 22:49:24 ART reported
+SERVICE_READY, application_database=not_accessed and application=not_installed.
+The reviewed helper verified rootless/cgroup-v2-systemd/overlay2/private data
+root, zero containers and an empty Boca namespace before enabling its user unit.
+See the [operational receipt](https://github.com/mbalbo2023/boca-socios-assistant/issues/145#issuecomment-6551973756).
 
-Inspection #98 on source `5c642b6d8bf5feac14aaf4a7c4df34ca2e91a97e` reached
-UID 10001 with private runtime/bus and cpu/memory/pids controllers. The dedicated
-rootless socket was absent; executable lookup found Docker, dockerd, rootless
-wrapper and setup tool, while the user docker.service reported
-`load=not-found active=inactive sub=dead result=success`. This proves neither
-a working daemon nor a globally missing Docker installation. Host remains
-NO_GO. The bounded database inventory reported db/wal/shm candidate-absent
-for rootless_default, staging_root and staging_data. This applies only to the
-three fixed candidate paths in ADR0054; global location remains UNVERIFIED.
-No SQLite was opened, created, moved or migrated, and no container was probed.
-[Inspection #98](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41258754195)
-(attempt1, job124707449992) records that cut; later source changes do not change
-what it observed. The receipt time was 2026-10-31 21:54:17 ART. The workflow
-failed at the unchanged absent-socket gate after emitting these receipts.
-See the [operational checkpoint](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551442762).
+Only dedicated daemon configuration, unit, enablement and private Docker
+bookkeeping were created. No image was released/pulled, no container, SQLite,
+application/key volume or key was created, and no backup ran. Informative
+capacity was 8010493952 bytes/2902936 inodes at check, then 8010489856/2902936
+before apply effects and 8010072064/2902879 after; application_budget=not_checked.
+These readings do not validate BETA resource capacity or causal disk usage.
+Global location of any older database remains UNVERIFIED.
 
-The [scoped direction and Rule 84](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551338776)
-approved bounded file diagnosis, the P1 database
-preflight fix, PR #136 concurrency correction and documentation maintenance.
-These scopes do not authorize installation, release, real database migrations
-or a general infrastructure/business decision. Present options and a
-recommendation, then obtain approval before such a decision. Do not rerun #98.
+The earlier inspection #98 on source5c642b6d8bf5feac14aaf4a7c4df34ca2e91a97e
+found the service/socket absent and DB/WAL/SHM candidate-absent only at the three
+fixed paths of ADR0054. It remains historical evidence; #120 supersedes the
+service state, not the limited meaning of that database inventory. No SQLite
+content was opened by either operation. Do not rerun #98 or prepare-rootless:
+first-time preparation must now preserve the configuration it created.
+
+The earlier scoped diagnosis/fix work is complete. The
+[approved BETA direction](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6551681142)
+now authorizes preparation/development of the delivery plan, including private
+enrollment, dedicated rootless direction, own-application panel, chosen logical
+storage and efficiency measurements. Complete routine approved work without
+asking again. Concrete identity/bootstrap/private access and final reviewed
+release/install candidate gates remain decisions in the plan. No existing real
+DB migration, real credentials or general unrelated infrastructure authority
+is implied. Neither prior inspection nor first-time preparation is a retry recipe.
 See issue #45 for the current scoped decision and BETA_INTEGRATION_STATUS.md
 for the source/integration cut. PR #141 separately fixed the migration function
 through synthetic fixtures; merging it did not run Database.migrate on the
 droplet or create a service database. ADR0053 states the WAL/concurrency limits.
+
+## Functional BETA preparation and final operation
+
+Follow [BETA_DELIVERY_PLAN](BETA_DELIVERY_PLAN.md). The chosen future database
+mount is `/data/boca.sqlite3` on `boca-socios_boca_data`, with a separate key.
+The choice does not mean the file exists or authorize replacing storage found
+later. First-install's empty-namespace assumption must be checked; an existing
+installation needs a compatible reviewed procedure, not deletion by default.
+
+Prepare dedicated rootless remediation through the sole workflow, verify
+service/socket/cgroups/storage capacity and separate the browser budget. Do
+not reinstall Docker merely because the user unit was absent. The existing
+install/diagnostic code expects the dormant controller with no exposed ports;
+it must be reviewed against the functional runtime/private-access candidate.
+Completing code here does not itself configure the host or deploy the BETA.
+
+Before final publication/installation, present the concrete reviewed candidate
+with exact SHA, immutable images/manifests, access, schema/data handling,
+capacity, stop plan and synthetic acceptance results. The final decision and
+all recorded gates precede the serial Actions operation. Then run the real
+interface acceptance with synthetic enrollment, start/stop/status, local notices
+and authorized restart. Preserve data/key on failure; no backup or other project.
+
+## Implemented prepare-rootless contract — executed once in #120
+
+PR #150 adds prepare-rootless to the same protected workflow. It uses the
+existing BOCA_DEPLOY_ENV_READY mutation gate, blank image/release inputs and
+fixed controller/budget coordinates. Those coordinates do not establish an
+application budget for the daemon. The helper check is read-only; Actions
+rechecks current main immediately before apply, which repeats prerequisites.
+Apply runs an ephemeral isolated namespace smoke before persistent writes,
+creates daemon configuration/user unit exclusively, validates configuration
+and effective unit provenance, starts only the dedicated user docker.service,
+verifies the private rootless daemon, then enables only that unit. No package
+installation, shared-daemon access or application/DB/key creation is included.
+
+The procedure refuses existing configuration, enablement, unsafe paths or a
+nonempty/inaccessible dedicated data root; it is not repair/upgrade. Capacity
+receipts are informative, leaving application preflight separate. Failures
+preserve files/data; after an attempted start, only that new service is stopped.
+An enablement link may remain after a late failure even if stop succeeds:
+report UNVERIFIED and inspect the exact Boca state before retry. Diagnostics
+expose only fixed phase/exit/timeout and allowlisted unit Result/ExecMainStatus,
+never stderr or journal. See ADR0058 for prerequisites and limits.
 
 ## Implemented first-install contract — not executed
 
@@ -48,19 +101,21 @@ recommendation. The ruleset not requiring a human approving PR review does not
 waive that decision. Readiness alone does not prove environment protection.
 The manual job uses separate fail-closed environment variables: only
 `BOCA_HOST_READONLY_ENV_READY=ready` can enable `inspect-prerequisites` or
-`preflight`, while `BOCA_DEPLOY_ENV_READY=ready` is required for `first-install`
-or `diagnostic`. READONLY was set in the protected environment before #66;
-DEPLOY/RELEASE remain unenabled in the recorded evidence. A future check must
-revalidate their scope and values; setting READONLY does not unlock installation. The two read-only
-choices require blank image and release-run inputs, and the install/diagnostic
-choices require both. See [ADR 0046](ADR/0046-readonly-host-readiness.md).
+`preflight`, while `BOCA_DEPLOY_ENV_READY=ready` is required for prepare-rootless,
+first-install or diagnostic. READONLY was set before #66; DEPLOY was added only
+to the protected environment for #120, without changing secrets/protections.
+RELEASE was not enabled by that preparation. Revalidate scope/values before
+another operation; a readiness marker does not itself authorize it. Read-only
+choices and prepare-rootless require blank image/release inputs; first-install
+and diagnostic require both. See ADR0046 and ADR0058.
 
 The host prerequisite is a dedicated `boca-deploy` identity with UID
 10001, dedicated rootless Docker, Python 3.10+, and an already provisioned empty
 `/srv/boca-socios` directory owned by that UID with mode 0700. The SSH host
 identity must be independently verified and pinned in the environment's
-known-hosts secret; the workflow has no `ssh-keyscan` fallback. Host setup is
-not part of this PR. Confirm the GHCR package is accessible by the host
+known-hosts secret; the workflow has no `ssh-keyscan` fallback. First-install
+does not provision these prerequisites; prepare-rootless is the separate
+reviewed operation described above. Confirm the GHCR package is accessible by the host
 without placing registry credentials on it. If any prerequisite is absent,
 stop before dispatch and record NO-GO; do not improvise a host change.
 
@@ -77,7 +132,8 @@ privileges and restart/retention. Do not dispatch merely because the runner
 smoke passes. See [ADR 0033](ADR/0033-rootless-daemon-boundary.md) and
 [ADR 0034](ADR/0034-rootless-key-custody.md).
 
-The workflow first validates dispatch inputs and the successful manual image
+For first-install/diagnostic, the workflow validates dispatch inputs and the
+successful manual image
 release run for the same current `main` SHA. It downloads that run's immutable
 manifest and requires the selected image digest, SHA and run ID to match
 before opening SSH; an absent or expired artifact or any rerun attempt blocks

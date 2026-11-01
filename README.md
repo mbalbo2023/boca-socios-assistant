@@ -5,8 +5,9 @@ membership and ticket-assistance workflow. This repository is owned by
 **mbalbo2023** and remains isolated from **all unrelated applications and
 infrastructure**.
 
-> **Current release: SIMULATION ONLY; host installation not yet validated.**
-> The manual Boca workflow exists and has performed read-only host inspection.
+> **Current release: SIMULATION ONLY; BETA application not installed.**
+> The manual Boca workflow inspected the host and prepared its dedicated
+> rootless service (#120). That service-ready receipt is not application readiness.
 > The controller remains dormant; no live login, Queue-it client or automated
 > checkout is enabled. See [current integration status](docs/BETA_INTEGRATION_STATUS.md)
 > and [continuity issue #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
@@ -48,7 +49,22 @@ infrastructure**.
   checks and immutable release artifacts. Boca-only host operations
   use the manual Actions workflow after approval of the concrete scope and
   proof of its exact-input and isolation gates. Infrastructure and business
-  choices require options, a recommendation and the owner's decision.
+  choices outside the approved delivery plan require options, a recommendation
+  and the owner's decision; routine work within that scope proceeds.
+
+## Functional BETA being prepared
+
+The [delivery plan](docs/BETA_DELIVERY_PLAN.md) makes private member enrollment
+(**Socios > Agregar socio**) part of acceptance, together with simulation
+start/stop/status, durable local notices and restart/idempotency tests. Reuse
+the existing encrypted enrollment service; tests use synthetic credentials.
+The own-application private panel and dedicated rootless direction are approved
+for preparation. Neither the form nor the connected runtime is claimed live.
+
+`/data/boca.sqlite3` in `boca-socios_boca_data` is the delegated logical storage
+decision for this BETA, not proof that a database exists on the droplet. Actual
+global location remains UNVERIFIED; existing data must never be replaced by
+inference. Real credentials and Boca actions remain outside this delivery.
 
 ## Read before contributing
 
