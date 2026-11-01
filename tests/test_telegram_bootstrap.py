@@ -61,10 +61,14 @@ def test_wrong_recipient_duplicate_unknown_field_or_bad_tag_cannot_write(tmp_pat
     with pytest.raises(boot.BootstrapError):
         boot.install(b, envelope, uid=os.geteuid())
     parsed = json.loads(envelope)
+    changed_tag = {
+        **parsed,
+        "ciphertext": ("A" if parsed["ciphertext"][0] != "A" else "B") + parsed["ciphertext"][1:],
+    }
     for changed in (
         {**parsed, "purpose": "boca-site-bridge-machine-v1"},
         {**parsed, "unknown": "field"},
-        {**parsed, "ciphertext": "AAAA"},
+        changed_tag,
     ):
         with pytest.raises(boot.BootstrapError, match="invalid_envelope"):
             boot.install(a, json.dumps(changed).encode(), uid=os.geteuid())
@@ -79,6 +83,10 @@ def test_invalid_secret_or_unsafe_directory_and_symlink_refused(tmp_path: Path) 
     for token, chat in (("invalid", CHAT), (TOKEN, "not-numeric"), (TOKEN, "0")):
         with pytest.raises(boot.BootstrapError, match="invalid_secret_material"):
             boot.seal_for_recipient(receipt, token, chat)
+    with pytest.raises(boot.BootstrapError, match="recipient_key_unsafe"):
+        boot.seal_for_recipient(
+            boot.RecipientReceipt("PREPARED", receipt.public_key, "wrong"), TOKEN, CHAT
+        )
     envelope = boot.seal_for_recipient(receipt, TOKEN, CHAT)
     directory.chmod(0o755)
     with pytest.raises(boot.BootstrapError, match="telegram_directory_unsafe"):
@@ -127,3 +135,29 @@ def test_unsafe_configured_file_and_wrong_uid_fail_closed(tmp_path: Path) -> Non
         boot.verify(directory, uid=os.geteuid())
     with pytest.raises(boot.BootstrapError, match="dedicated_identity_required"):
         boot.verify(directory, uid=os.geteuid() + 1)
+
+
+def test_hardlinked_secret_and_redirected_destination_fail_closed(tmp_path: Path) -> None:
+    directory = _private_directory(tmp_path)
+    receipt = boot.prepare(directory, uid=os.geteuid())
+    envelope = boot.seal_for_recipient(receipt, TOKEN, CHAT)
+    outside = tmp_path / "outside"
+    outside.write_text("untouched")
+    (directory / boot.CHAT_FILE).symlink_to(outside)
+    with pytest.raises(boot.BootstrapError, match="already_configured"):
+        boot.install(directory, envelope, uid=os.geteuid())
+    assert outside.read_text() == "untouched"
+    (directory / boot.CHAT_FILE).unlink()
+    boot.install(directory, envelope, uid=os.geteuid())
+    os.link(directory / boot.TOKEN_FILE, tmp_path / "hardlink")
+    with pytest.raises(boot.BootstrapError, match="pair_unverified"):
+        boot.verify(directory, uid=os.geteuid())
+
+
+def test_cli_rejects_unexpected_argument_without_echo(capsys) -> None:
+    assert boot.main(("secret-looking-argument",)) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        captured.err == "BOCA_TELEGRAM_BOOTSTRAP state=NO_GO reason=invalid_envelope_or_custody\n"
+    )
