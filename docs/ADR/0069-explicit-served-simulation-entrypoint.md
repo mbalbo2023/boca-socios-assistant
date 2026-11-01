@@ -1,7 +1,8 @@
 # ADR 0069: explicit local TLS entrypoint for the simulation panel
 
-**Status:** Candidate in PR for issue #169. Accepted only on merge. This does
-not state that the droplet serves a BETA or that a tablet can reach it.
+**Status:** Accepted on merge of PR #173 for issue #169. Before that merge,
+this describes an unmerged candidate. Neither state establishes that the
+droplet serves a BETA or that a tablet can reach it.
 
 ## Decision
 
@@ -55,8 +56,12 @@ the HTTPS origin. Credential files are read through bounded, regular,
 non-symlink, owner-checked descriptors; the TLS private key must be private.
 They must be provisioned outside source and workflow inputs. The standard
 library WSGI server is sequential and the listener is a **local access
-probe**, not a public HTTP edge. Socket timeouts limit individual requests;
-host packaging and a later reviewed private access boundary remain necessary.
+probe**, not a public HTTP edge. One TLS client can occupy that server for up
+to the five-second connection timeout, delaying every other request. This is
+only suitable for the small owner-only host-loopback BETA; a future tablet
+route needs a reviewed private access boundary, concurrency and denial of
+service limits. Host packaging must never count green health alone as tablet
+acceptance.
 Health proves local readiness only; it does not prove Site connectivity,
 Telegram acceptance, owner ceremony, droplet deploy or real Boca outcome.
 
