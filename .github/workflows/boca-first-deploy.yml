@@ -5,10 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Inspect prerequisites, preflight, first installation, or dormant-controller diagnostic
+        description: Inspect, prepare dedicated rootless service, preflight, install, or diagnose
         required: true
         type: choice
-        options: [inspect-prerequisites, preflight, first-install, diagnostic]
+        options: [inspect-prerequisites, prepare-rootless, preflight, first-install, diagnostic]
       source_sha:
         description: Exact current main commit approved for the operation
         required: true
@@ -156,6 +156,11 @@ jobs:
               test -z "$BOCA_IMAGE_REF"
               test -z "$BOCA_RELEASE_RUN_ID"
               ;;
+            prepare-rootless)
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test -z "$BOCA_IMAGE_REF"
+              test -z "$BOCA_RELEASE_RUN_ID"
+              ;;
             first-install|diagnostic)
               test "$BOCA_DEPLOY_ENV_READY" = ready
               test -n "$BOCA_IMAGE_REF"
@@ -175,7 +180,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref.json"
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref.json" "$BOCA_SOURCE_SHA"
       - name: Validate immutable inputs and successful matching release
-        if: inputs.operation != 'preflight' && inputs.operation != 'inspect-prerequisites'
+        if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic'
         env:
           PYTHONPATH: src
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -192,7 +197,7 @@ jobs:
       - name: Hash reviewed Boca Compose file
         run: sha256sum compose.yaml | cut -d' ' -f1 > "$RUNNER_TEMP/boca-compose.sha"
       - name: Validate reviewed runner Compose model
-        if: inputs.operation != 'preflight' && inputs.operation != 'inspect-prerequisites'
+        if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic'
         env:
           BOCA_IMAGE: ${{ inputs.image_ref }}
           BOCA_ENVIRONMENT: staging
@@ -234,6 +239,25 @@ jobs:
             printf '  ForwardAgent no\n'
           } > "$RUNNER_TEMP/boca-ssh/config"
           chmod 600 "$RUNNER_TEMP/boca-ssh/config"
+      - name: Check prerequisites for dedicated rootless service preparation
+        if: inputs.operation == 'prepare-rootless'
+        run: |
+          remote_command="$(python3 -c 'import shlex, sys; print(shlex.join(sys.argv[1:]))' python3 - check "$BOCA_SOURCE_SHA")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py
+      - name: Recheck current main before preparing dedicated rootless service
+        if: inputs.operation == 'prepare-rootless'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-rootless.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-rootless.json" "$BOCA_SOURCE_SHA"
+      - name: Prepare only dedicated Boca rootless user service
+        if: inputs.operation == 'prepare-rootless'
+        run: |
+          remote_command="$(python3 -c 'import shlex, sys; print(shlex.join(sys.argv[1:]))' python3 - apply "$BOCA_SOURCE_SHA")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py
+          printf 'Dedicated Boca rootless service prepared and checked; application, SQLite and key volumes were not created. Source: `%s`.\n' "$BOCA_SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Inspect dedicated user prerequisites without Docker
         if: inputs.operation == 'inspect-prerequisites'
         run: |
