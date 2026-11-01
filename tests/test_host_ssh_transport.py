@@ -22,7 +22,9 @@ def _transport(step: str, image: str) -> list[str]:
         (root / "boca-compose.sha").write_text(COMPOSE_SHA + "\n", encoding="utf-8")
         # OpenSSH joins command argv with spaces; the remote shell parses again.
         # This local shim uses no connection and executes only the stdin recorder.
-        shim = 'ssh() { test "$1" = -F; shift 2; test "$1" = boca-target; shift; /bin/sh -c "$*"; }\n'
+        shim = (
+            'ssh() { test "$1" = -F; shift 2; test "$1" = boca-target; shift; /bin/sh -c "$*"; }\n'
+        )
         result = subprocess.run(  # noqa: S603 - fixed local shell, synthetic transport only
             ["/bin/bash", "-e", "-o", "pipefail"],
             input=shim + script,
