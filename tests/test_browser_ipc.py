@@ -428,6 +428,90 @@ def test_worker_stop_between_fake_success_and_reply_sends_no_go(
     asyncio.run(exercise())
 
 
+def test_stop_during_partial_frame_never_starts_browser(
+    socket_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def exercise() -> None:
+        fake = FakeBrowser()
+        sidecar = worker(fake, socket_path)
+        reading = asyncio.Event()
+        original_read = sidecar._read_request
+
+        async def observed_read(reader: asyncio.StreamReader) -> None:
+            reading.set()
+            await original_read(reader)
+
+        monkeypatch.setattr(sidecar, "_read_request", observed_read)
+        await sidecar.start()
+        reader, writer = await asyncio.open_unix_connection(str(socket_path))
+        closing: asyncio.Task[None] | None = None
+        try:
+            await asyncio.wait_for(reading.wait(), 1)
+            # A connected, authenticated peer sends no bytes until STOP.
+            closing = asyncio.create_task(sidecar.close())
+            await asyncio.sleep(0)
+            assert sidecar._closed
+            writer.write(framed(REQUEST))
+            writer.write_eof()
+            assert await asyncio.wait_for(read_frame(reader), 1) == NO_GO
+            assert await asyncio.wait_for(reader.read(1), 1) == b""
+            await asyncio.wait_for(closing, 2)
+            assert fake.calls == 0 and fake.closed
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            if closing is not None and not closing.done():
+                await closing
+
+    asyncio.run(exercise())
+
+
+def test_success_written_before_drain_cannot_be_post_stop_commit(
+    socket_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class PausedDrainWriter:
+        def __init__(self) -> None:
+            self.written: list[bytes] = []
+            self.drain_started = asyncio.Event()
+            self.release_drain = asyncio.Event()
+
+        def write(self, data: bytes) -> None:
+            self.written.append(data)
+
+        async def drain(self) -> None:
+            self.drain_started.set()
+            await self.release_drain.wait()
+
+        def close(self) -> None:
+            return
+
+        async def wait_closed(self) -> None:
+            return
+
+    async def exercise() -> None:
+        fake = FakeBrowser()
+        sidecar = worker(fake, socket_path)
+        monkeypatch.setattr(worker_module, "verify_peer", lambda *args, **kwargs: None)
+        reader = asyncio.StreamReader()
+        reader.feed_data(framed(REQUEST))
+        reader.feed_eof()
+        writer = PausedDrainWriter()
+        handler = asyncio.create_task(sidecar._handle(reader, writer))  # type: ignore[arg-type]
+        try:
+            await asyncio.wait_for(writer.drain_started.wait(), 1)
+            # _respond writes synchronously before awaiting drain. The
+            # response was committed while STOP had not yet happened.
+            assert writer.written == [framed(SUCCESS)] and not sidecar._closed
+            await sidecar.close()
+            assert sidecar._closed and fake.closed
+        finally:
+            writer.release_drain.set()
+            await asyncio.wait_for(handler, 1)
+        assert writer.written == [framed(SUCCESS)] and fake.calls == 1
+
+    asyncio.run(exercise())
+
+
 def test_uncooperative_worker_is_poisoned_and_late_success_is_refused(socket_path: Path) -> None:
     class Stubborn(FakeBrowser):
         async def simulate_general_reservation(self) -> SimulationOutcome:

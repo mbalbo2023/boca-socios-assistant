@@ -1,11 +1,13 @@
 # ADR 0094: IPC de un comando sintético con Chromium separado de BETA
 
-**Estado:** candidato de **código y pruebas local**, sin PR, integración ni
-activación sobre el droplet. Implementación aislada de #227 basada en el
-worktree #233 `d259ed2`; antes de abrir PR hay que incorporarla sobre el
-`main=53c4a69610a0eb2b73e0c5edc32c5146d6d117ff`, que ya incluye la
-corrección posterior de cancelación de #233. No constituye autorización para
-alterar Compose, Dockerfile, GitHub Actions, red, volumen o servicio alguno.
+**Estado:** candidato de **código y pruebas en revisión en PR #236**, sin
+integración ni activación sobre el droplet. La rama de escritura local de #227
+nació del worktree #233 `d259ed2`; el integrador de #236 tiene que aplicar
+los cambios sobre un `main` que incluya la corrección posterior de cancelación
+de #233 y repetir todos los checks sobre el **SHA final**. Las corridas verdes
+previas de #236 no validan automáticamente los commits locales posteriores.
+No constituye autorización para alterar Compose, Dockerfile, GitHub Actions,
+red, volumen o servicio alguno.
 
 ## Decisión de código, sin runtime instalado
 
@@ -64,7 +66,7 @@ workflow/host que se apruebe más adelante.
 
 ### RCA de carrera STOP/respuesta y cierre de conexiones ([#235](https://github.com/mbalbo2023/boca-socios-assistant/issues/235))
 
-Durante el desarrollo local se reprodujeron dos fallos de aceptación/cierre
+Durante el desarrollo local se reprodujeron tres fallos de aceptación/cierre
 que bloquearían la aprobación si quedaran sin resolver. En el cliente, un
 `return SUCCESS` antes de `wait_closed()` podía entregar un resultado tardío
 si `close()` ocurría durante una espera que suprimía cancelación. La corrección
@@ -82,6 +84,23 @@ cerrado, cancelación y deadline **sin un await intermedio** antes de encolar
 `SUCCESS`. Una eventual cancelación no cooperativa exige muerte del proceso
 aislado, sin resultado positivo ni retry. Regresión exacta:
 `test_worker_stop_between_fake_success_and_reply_sends_no_go`.
+
+Un tercer interleaving de la misma investigación mostró una brecha distinta:
+un handler autenticado podía quedarse esperando la trama en `_read_request`,
+recibir `STOP` y, tras completarse la lectura, **iniciar Chromium después del
+cierre**, aunque no entregara `SUCCESS`. Se introdujo un fence inmediato de
+`closed/poisoned` **después de la lectura completa y antes de lanzar la tarea**,
+sin `await` entre el fence y la creación de la tarea. La regresión
+`test_stop_during_partial_frame_never_starts_browser` retiene la trama sobre
+un socket AF_UNIX real hasta después del STOP y exige cero invocaciones.
+
+La auditoría distinguió también una alarma de respuesta tardía **no
+reproducible en el flujo real**: `_respond` ejecuta `writer.write()` antes de
+su primer `await writer.drain()`. Si STOP se intercala durante `drain`, el
+frame positivo **ya estaba escrito antes** del cierre; no hay punto de
+intercalación entre el último fence y `write`. La regresión de fidelidad
+`test_success_written_before_drain_cannot_be_post_stop_commit` verifica el
+orden efectivo sin insertar un `await` artificial en `_respond`.
 
 ## Cero egress y límites de activación
 
@@ -109,7 +128,7 @@ inventario exclusivo Boca, capacidad, health/stop, deadline de muerte de
 proceso, limpieza exacta de contenedor/volumen tras fallo con recibo
 redactado, nuevo artefacto inmutable, revisión y checks CI sobre el SHA
 final, todo bajo el **único workflow protegido de Actions**. Este PR
-propuesto no incorpora ninguna de esas mutaciones.
+#236 no incorpora ninguna de esas mutaciones.
 
 ## Evidencia y Regla 84
 
@@ -117,11 +136,14 @@ Las pruebas locales con AF_UNIX real bajo UID de fixture verifican protocolo
 fijo, `SO_PEERCRED` en ambos extremos, permisos e inode, exceso de bytes,
 segundo comando, concurrentes, deadline, cancelación, resultado tardío y
 reutilización durable de la misma solicitud `quantity=1` a través del
-`BetaCoordinator`. No levantan Chromium real, no instalan Docker, no
-comunican con Internet ni prueban mapeos entre dos contenedores rootless.
+`BetaCoordinator`, incluida la carrera STOP con trama incompleta. No levantan
+Chromium real, no instalan Docker, no comunican con Internet ni prueban mapeos
+entre dos contenedores rootless.
 El informe de entrega registra su conteo exacto y SHA local; el escritor de
-integración debe reconciliar README/OPERATIONS/estado/#45 cuando exista PR
-revisado, sin presentar código como beta activa.
+integración debe reconciliar README/OPERATIONS/estado/#45 al revisar #236,
+sin presentar código como beta activa. La prueba de corte real de STOP y la de
+compromiso de escritura deben preservarse en el RCA
+[#235](https://github.com/mbalbo2023/boca-socios-assistant/issues/235).
 
 **Resultado de activación:** **NO-GO** hasta aprobación de infraestructura
 acotada, empaquetado, revisión, pruebas de kernel/socket en contenedores

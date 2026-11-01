@@ -199,6 +199,11 @@ class UnixSyntheticWorker:
             accepted = True
             try:
                 await self._read_request(reader)
+                # Reading the complete frame yields to the event loop. STOP
+                # may have closed this worker while the peer was still
+                # writing; never launch a browser for that stale request.
+                if self._closed or self._poisoned.is_set():
+                    raise SyntheticIPCError("worker_closed")
                 deadline = monotonic() + self._operation_seconds
                 response = await self._run_synthetic()
                 # Last non-await boundary before queueing the reply. A STOP,
