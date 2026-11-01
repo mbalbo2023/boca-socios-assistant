@@ -113,7 +113,19 @@ def classify(status: int, url: str, visible_text: str) -> str:
 
 
 async def inspect_login_dom(page: PublicLoginDomPort) -> bool:
-    """Read only the public form structure; never read values or activate controls."""
+    """Prove only a self-contained initial form, never hydrated-page readiness.
+
+    JavaScript and external assets are blocked for the one-GET contract. A
+    stylesheet could conceal otherwise visible controls, and a script could
+    replace the form or change its disabled state. Such incomplete snapshots
+    are unknown even when the initial controls appear structurally valid.
+    """
+    if await page.locator('script, link[rel~="stylesheet"], style').count():
+        return False
+    if await page.locator(
+        'form[aria-hidden="true"], [aria-hidden="true"] form, form[inert], [inert] form'
+    ).count():
+        return False
     # Requiring one form ties each typed control and disabled submit to one form,
     # while allowing the visible copy and accessible labels to change safely.
     form = page.locator("form")
@@ -145,16 +157,17 @@ async def observe(api: object, *, check_dom: bool = False) -> str:
         try:
             document_count = 0
             blocked = False
+            discarded_assets = 0
 
             async def route_request(route: RoutePort) -> None:
-                nonlocal document_count, blocked
+                nonlocal document_count, blocked, discarded_assets
                 request = route.request
                 if not allow_request(
                     request.url, request.method, request.resource_type, document_count
                 ):
-                    if not expected_discarded_asset(
-                        request.url, request.method, request.resource_type
-                    ):
+                    if expected_discarded_asset(request.url, request.method, request.resource_type):
+                        discarded_assets += 1
+                    else:
                         blocked = True
                     await route.abort()
                     return
@@ -185,7 +198,9 @@ async def observe(api: object, *, check_dom: bool = False) -> str:
                 dom_ok = await asyncio.wait_for(inspect_login_dom(page), timeout=3)
                 if blocked:
                     return "blocked"
-                return "login_form_disabled" if dom_ok else "unknown"
+                # Any aborted display asset makes actual visibility/state
+                # uncertain even if the initial HTML contains a valid form.
+                return "login_form_disabled" if dom_ok and not discarded_assets else "unknown"
             return classify(response.status, page.url, visible_text)
         finally:
             await asyncio.wait_for(context.close(), timeout=5)
