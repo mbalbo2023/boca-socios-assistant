@@ -86,8 +86,8 @@ CI 41270060363, scan 41270060350, release/deploy validation
 41270060360/41270060361 and preview 41270060364; technical review
 5726269111 in PR #163. These checks do not establish the host, tablet or Site.
 
-Before operational acceptance: review the exact branch and integrate it with
-runtime/notification candidates; provision one real owner credential with a
+The exact branch was reviewed and the runtime/notification code was integrated
+through #162/#164/#173/#179. Before operational acceptance, provision one real owner credential with a
 recoverable process and exact HTTPS origin; configure a Boca-only TLS server
 through the protected Actions workflow; test real tablet voice/keyboard
 behavior, restart, denial and local notices on the deployed candidate. No

@@ -15,7 +15,7 @@ funcionalidad operativa.
 
 | Frente | Entregado al corte | Próximo gate y responsable |
 | --- | --- | --- |
-| Host dedicado | Rootless preparado #120; preflight read-only #124 PASS sólo para controlador dormido; `stop-test` #156/41272785626 STOPPED, 0 contenedores | Root: capacidad funcional, operación manual, postflight y nueva parada después de pruebas futuras; no repetir #120 |
+| Host dedicado | Rootless preparado #120; preflight read-only #124 PASS sólo para controlador dormido; `stop-test` #156/41272785626 STOPPED, `containers=0` detenidos en ese run | Root: capacidad funcional, operación manual, postflight y nueva parada después de pruebas futuras; no repetir #120 |
 | Simulación | Coordinador #130, comandos #149, loop #161, ciclo local #164 y entrypoint TLS explícito #173 integrados | Empaquetar/acceder en host con configuración privada, sin activar Boca real |
 | Panel/alta | Servicio cifrado #31, adaptadores #128/#148, owner passkey/controles #163 y prueba de registro #174 integrados | Origen TLS accesible, inscripción física del dueño, E2E servido/tablet y rechazo real de terceros |
 | Aceptación | Composición en proceso #152 y HTTP loopback desechable #170 integrados | TLS/tablet/host, recursos y latencia reales con recibos aparte |

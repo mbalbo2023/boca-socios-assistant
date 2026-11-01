@@ -55,9 +55,9 @@ Synthetic temporary-SQLite tests cover separate synchronous requests on one
 loop, concurrent aliases and the one-ticket SQL constraint, wrong-member
 denial, running stop/cancellation, accepted-command startup recovery,
 completed-command restart without replay, timeout ambiguity and absent/broken
-schema without implicit initialization. The exact candidate SHA, CI runs and
-review belong to PR #161 for issue #159. These tests
+schema without implicit initialization. PR #161 for issue #159 records the
+exact candidate SHA, green CI and review. These tests
 do not prove a WSGI listener, owner authentication, TLS, Site integration,
 Telegram delivery, Chromium on the droplet or a real Boca flow. The root
-integration writer will reconcile central status and #45 before closing this
-delivery under Rule 84.
+integration status and #45 record the later integration and host gates under
+Rule 84.

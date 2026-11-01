@@ -15,8 +15,9 @@ validado; se excluyen reservas, compras y mutaciones reales en Boca.
 Código integrado, Site publicado, CI verde y servicio rootless preparado son
 evidencias distintas. El controlador de `compose.yaml` todavía espera con
 `engine=off`, sin listener ni puerto; `compose.beta.yaml` #171 empaqueta
-un entrypoint BETA TLS para pruebas desechables, no instalado. No se ha creado una DB, clave ni volumen
-de aplicación en el host. La ubicación global de una DB Boca anterior sigue
+un entrypoint BETA TLS para pruebas desechables, no instalado. #120/#124 no
+crearon DB, clave ni volumen de aplicación en el host y #156 sólo detuvo el
+servicio dedicado. La ubicación global de una DB Boca anterior sigue
 UNVERIFIED; el destino lógico futuro es `/data/boca.sqlite3` en el volumen
 `boca-socios_boca_data`, sin permiso para reemplazar datos encontrados.
 
@@ -26,7 +27,7 @@ UNVERIFIED; el destino lógico futuro es `/data/boca.sqlite3` en el volumen
 | Panel | Adaptadores #128/#148, owner passkey/controles #163 y prueba de registro WebAuthn #174 integrados | Inscripción física del dueño, origen TLS privado, tablet y rechazo de terceros |
 | Avisos/Telegram | Outbox/dispatcher, #162 fence/migración0007/adapter/proyección y #176 corrección de estado local con schema0007 | Sin bot/destino privados, provisión, worker ni envío/recepción real; `api_accepted` tampoco probaría lectura humana |
 | Site #113 | Versión privada v10 con cola D1 desactivada; #178 helper cifrado, #179 cliente outbound opt-in y #181 custodia host protegida integrados | Sin release/digest, bypass+HMAC host, flag ni E2E; aún offline y no conectado a DB/comandos. Ver issue #113 |
-| Host | Preparación rootless #120 SERVICE_READY; preflight read-only #124 PASS para controlador dormido; `stop-test` #156/41272785626 STOPPED, 0 contenedores | No prueba presupuesto BETA/Chromium; sin instalación funcional. Datos preservados; el servicio quedó detenido al corte |
+| Host | Preparación rootless #120 SERVICE_READY; preflight read-only #124 PASS para controlador dormido; `stop-test` #156/41272785626 STOPPED, `containers=0` detenidos en ese run | No prueba presupuesto BETA/Chromium; sin instalación funcional. Ningún contenedor Boca quedó en ejecución; los ya detenidos, si existían, se preservaron |
 | Chromium | Imagen y smoke offline #43/#44 con límite sintético | Capacidad/egress del droplet y visita real no acreditadas |
 | Calidad/release | CI frozen, Ruff/mypy/tests/policy, build/scan y gates de digest; #171 smoke de paquete TLS/aislamiento en runner | Release de imagen funcional, capacidad, pre/postflight y aceptación host sobre SHA/digests exactos |
 | Aceptación sintética | #170 integra HTTP loopback desechable con alta, comandos, aviso, reinicio y parada; muestra de 21 requests | Sin TLS, tablet, Site, Telegram ni recursos del droplet |
@@ -158,7 +159,10 @@ attempt 1, operó desde `main` `c1ecf8ae230bd8d02beef9f4e0d3dbf0c9aa5163`
 con imagen y release vacíos. El job protegido revalidó la HEAD antes del
 host y emitió `BOCA_STOP_TEST state=STOPPED ... containers=0 data=preserved`.
 Detuvo el daemon dedicado Boca y preservó datos/clave; no instaló la BETA ni
-afirma que haya probado el panel, Site o Telegram. La unidad conserva su
+afirma que haya probado el panel, Site o Telegram. `containers=0` cuenta los
+contenedores detenidos por esa invocación, no el inventario total: la operación
+verificó que ninguno quedara en ejecución y preservó los ya detenidos, si
+existían. La unidad conserva su
 enablement y podría reiniciar en un reboot posterior; revalidar el estado
 antes de otro uso.
 

@@ -31,8 +31,10 @@ helper cifrado #178, cliente Site opt-in #179 y custodia host protegida #181,
 además del corte base descrito abajo. [Estado actual y runs exactos](BETA_INTEGRATION_STATUS.md).
 El Compose/primer install aún son dormidos y no hay aplicación en el droplet.
 El stop-test protegido [#156/41272785626](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41272785626)
-emitió STOPPED, cero contenedores y datos preservados tras las pruebas de
-preparación; no es evidencia de instalación BETA.
+emitió STOPPED, `containers=0` (ninguno detenido en esa invocación) y datos
+preservados tras las pruebas de preparación. Verificó que no quedaran
+contenedores Boca en ejecución; podría conservar contenedores ya detenidos.
+No es evidencia de instalación BETA.
 La custodia #181 está integrada en código, pero no tuvo dispatch al host;
 `beta-install`, acceso privado y aceptación host son frentes pendientes y
 requieren pruebas propias. El Site privado v10 #113 publicó cola D1 sintética
@@ -50,22 +52,22 @@ y [scan 41259139886](https://github.com/mbalbo2023/boca-socios-assistant/actions
 exitosos; 594 pruebas y RCA12/32 en ese corte. Los checks de una nueva entrega
 se registran sobre su propio SHA; estas cifras no se trasladan a otro candidato.
 
-El corte integrado de esta entrega es `6be606f83c5a6afe0ba7226abbca6a09276d1ca1`: incluye
+El corte histórico de preparación fue `6be606f83c5a6afe0ba7226abbca6a09276d1ca1`: incluye
 #130/#128/#134, el análisis146, alta148, comandos149, preparación150 y pruebas
 de composición152. [CI main41262581358](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41262581358)
 y [scan41262581422](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41262581422)
-verifican ese SHA; la documentación candidata tiene sus checks propios.
+verifican ese SHA; los cambios posteriores tienen checks propios.
 
-El runtime de Compose del corte vigente valida clave, inicializa esquema base
-y espera con engine=off; no sirve panel ni conecta coordinador/avisos.
-Compose contiene sólo controlador
-sin puertos. #128/#130/#134 eran candidatos separados en ese corte inicial.
-La primera integración ya incorpora #130 (coordinador durable opt-in), #128
-(adaptador WSGI de lectura default-deny) y #134 (dispatcher sintético). Son
-componentes sin wiring runtime, listener, identidad real, TLS ni transporte
-externo. #148 agrega formulario/handler y sesiones de alta; #149 integra el
-servicio de comandos durable. Ambos siguen sin servidor autenticado ni wiring
-del runtime. El dispatcher conserva el límite de crash entre llamada sintética y
+En aquel corte, el runtime de `compose.yaml` validaba clave, inicializaba
+esquema base y esperaba con engine=off; no servía panel ni conectaba
+coordinador/avisos. Ese Compose conserva sólo el controlador sin puertos.
+#128/#130/#134 eran candidatos separados en el corte inicial.
+La primera integración incorporó #130 (coordinador durable opt-in), #128
+(adaptador WSGI de lectura default-deny) y #134 (dispatcher sintético). Eran
+componentes que entonces carecían de wiring runtime, listener, identidad real,
+TLS y transporte externo. #148 agregó formulario/handler y sesiones de alta;
+#149 integró el servicio de comandos durable. En ese corte ambos carecían de
+servidor autenticado y wiring del runtime. El dispatcher conserva el límite de crash entre llamada sintética y
 settlement: no prueba entrega exactamente una vez. La imagen y
 smoke Chromium offline no prueban navegación Boca ni forman parte de ese Compose.
 El Site #113 es una demo privada sintética; la versión v10 publicada incorpora
@@ -114,9 +116,9 @@ diferido; no se eliminan los requisitos de custodia/recuperación para alta real
 | --- | --- | --- | --- |
 | B1 | Plan/contratos y seguimiento: esta documentación | Matriz de alcance, alta obligatoria, decisiones, owners y evidencias registradas | Dirección del dueño |
 | B2 | Servicio preparado por150/120; preflight de aplicación pendiente | Rootless propio sano; namespace candidato y procedencia de cualquier almacenamiento encontrado verificados; capacidad/cgroups/permisos de aplicación probados. No exigir un censo global ni reemplazar una DB | Destino delegado y propuesta concreta por Actions |
-| B3 | Coordinador130, comandos149 y loop161 integrados; ciclo de vida local164 sin listener | Comandos iniciar/detener/estado; guardia persistente, idempotencia, pausa ambigua y replay seguro probados | Contrato servido de B7 y panel B4 |
-| B4 | Lectura128 y formulario/handler148 integrados; lista/servidor/identidad de alta17 pendientes | Acceso privado tablet; Socios > Agregar socio cifrado/atómico; errores, duplicados, denegación y estado posterior visibles | B3 contrato; servicio de alta/clave/DB |
-| B5 | Dispatcher sintético #134 y transporte Telegram opt-in #162 integrados; conexión de avisos locales al panel pendiente | Proyección fiel de estados persistidos, límites/restart/dedup; razón ambigua durable todavía pendiente, sin llamar entrega real a aceptación de API | Resultados persistidos de B3; UI B4 y provisión #168 |
+| B3 | Coordinador130, comandos149, loop161 y ciclo local164 integrados; entrypoint TLS173 sólo probado en runner | Comandos iniciar/detener/estado; guardia persistente, idempotencia, pausa ambigua y replay seguro probados | Contrato servido de B7 y panel B4 |
+| B4 | Lectura128, formulario148 y panel/servidor owner163 integrados; inscripción física del dueño y ruta privada pendientes | Acceso privado tablet; Socios > Agregar socio cifrado/atómico; errores, duplicados, denegación y estado posterior visibles | B3 contrato; servicio de alta/clave/DB |
+| B5 | Dispatcher sintético #134, Telegram opt-in #162 y ruta local `/avisos` del panel163 integrados; recorrido host pendiente | Proyección fiel de estados persistidos, límites/restart/dedup; razón ambigua durable todavía pendiente, sin llamar entrega real a aceptación de API | Resultados persistidos de B3; UI B4 y provisión #168 |
 | B6 | Chromium/medición | Una sesión aislada con recursos, parada y errores medidos en entorno candidato; alcance de egress explícito | Presupuesto separado; observación real no inferida de test offline |
 | B7 | Runtime TLS173 y paquete/Compose beta171 integrados; contrato host beta pendiente | Programa arrancado conecta B3/B4/B5; health funcional, acceso privado y manifiesto por componente; primera instalación probada en entorno desechable | B2–B6 según componentes del candidato |
 | B8 | Composición en proceso152 y HTTP loopback sintético170 probados; E2E host final pendiente | Suite E2E, lint/types, RCA, seguridad e imágenes sobre mismo SHA; evidencia de rapidez/recursos; revisión exacta | B7 consolidado |
@@ -160,7 +162,7 @@ aceptación BETA de simulación y la operación real contra Boca son hitos disti
 | Baja/revocación y cambio de credencial | Acciones de ciclo de vida con confirmación y resultado | Servicio interno y UI owner #163 integrados | E2E servido/host pendiente; no borrar cuotas ni tratar revocación como borrado total de persona |
 | Rotación de clave y eliminación completa | Mostrar alcance/estado y requisitos de custodia | Recifrador40 y migración0004 opt-in; no rotación real demostrada | Pendiente explícito: coordinación de escritores, DELETE/retención/recuperación; no se añade a la BETA por una pantalla |
 | Eventos, categorías, horarios y fuentes | Selección/configuración definida, horarios ART, origen y fecha de avisos | Modelos/simulador y cuota local; backlog de categorías/ingesta/procedencia conservado | Gestión UI y datos oficiales no operativos; definir contratos concretos sin inventar categorías/modalidades |
-| Simulación, iniciar/detener/estado y reinicio | Controles y resultado local, pausa visible en ambigüedad | Coordinador130, comandos149, loop161, ciclo local164 y controles web owner163 integrados | Objetivo obligatorio BETA; falta entrypoint, sesión/servidor y E2E host; no es reserva Boca |
+| Simulación, iniciar/detener/estado y reinicio | Controles y resultado local, pausa visible en ambigüedad | Coordinador130, comandos149, loop161, ciclo local164, controles web owner163 y entrypoint TLS173 integrados | Objetivo obligatorio BETA; faltan instalación, sesión del dueño/acceso privado y E2E host; no es reserva Boca |
 | Sesiones múltiples y límites | Configuración/estado de sesiones autorizadas y consumo | Simulador agrupa aliases por socio/evento; guardia una intención/cantidad1 | UI/BrowserContext/medición pendientes. Varias sesiones no prueban posiciones o tokens Queue-it independientes |
 | Avisos locales y Telegram | Bandeja/estado de avisos, canal y fallos explícitos | Outbox durable, dispatcher sintético134, adaptador/fence Telegram #162 y UI local163 integrados | Avisos locales obligatorios; bot/destino, worker y recepción #168 pendientes, sin afirmar entrega por código integrado |
 | Diagnóstico, fuente pública y recursos | Semáforo con procedencia/hora, salud y límites | Workflows fuente/host, inventario98, preparación120 y medición Chromium offline | Proyección UI real pendiente; un semáforo externo no habilita login ni prueba capacidad de host |

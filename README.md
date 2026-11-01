@@ -9,7 +9,9 @@ infrastructure**.
 > The manual Boca workflow inspected the host and prepared its dedicated
 > rootless service (#120), then passed a read-only preflight for the dormant
 > controller (#124). The protected stop-test #156/41272785626 subsequently
-> stopped the dedicated daemon with zero containers and data preserved.
+> stopped the dedicated daemon, with no Boca container left running and data
+> preserved. Its `containers=0` field counts containers stopped in that run;
+> exited containers, if any, remain preserved.
 > None of these receipts is application readiness.
 > The controller was never installed; no live login, Queue-it client or automated
 > checkout is enabled. See [current integration status](docs/BETA_INTEGRATION_STATUS.md)
