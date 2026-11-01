@@ -13,7 +13,7 @@ from boca_socios import host_first_deploy as host
 
 IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64
 SHA = "a" * 40
-ORIGIN = "https://owner.boca.example.test"
+ORIGIN = "http://localhost:8443"
 SUBJECT = "synthetic-owner"
 
 
@@ -22,7 +22,7 @@ def _envelope() -> str:
     fields = {
         "version": 1,
         "repository": "mbalbo2023/boca-socios-assistant",
-        "purpose": "boca-owner-passkey-tls-v1",
+        "purpose": "boca-owner-passkey-v2",
         "uid": 10001,
         "panel_origin": ORIGIN,
         "owner_subject": SUBJECT,
@@ -181,7 +181,7 @@ def test_malformed_owner_rp_fails_before_any_host_access(
 def test_exact_tunnel_origin_is_validated_before_owner_host_access(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    host._validate_owner_context("https://localhost:8443", SUBJECT)
+    host._validate_owner_context("http://localhost:8443", SUBJECT)
     for origin in (
         "https://localhost",
         "https://localhost:9000",
@@ -189,6 +189,10 @@ def test_exact_tunnel_origin_is_validated_before_owner_host_access(
         "https://127.0.0.1:8443",
         "https://LOCALHOST:8443",
         "https://localhost:8443/",
+        "https://localhost:8443",
+        "https://owner.boca.example.test",
+        "http://owner.boca.example.test:8443",
+        "http://127.0.0.1:8443",
     ):
         with pytest.raises(host.PreflightError, match="invalid private"):
             host._validate_owner_context(origin, SUBJECT)
@@ -207,9 +211,7 @@ def test_owner_workflow_stops_daemon_in_same_job_on_failure() -> None:
         workflow.index("Recheck current main before owner custody operation")
         < workflow.index("Mark owner custody host attempt before starting dedicated daemon")
         < workflow.index("Start only the stopped prepared Boca rootless daemon for owner custody")
-        < workflow.index(
-            "Prepare, install or verify only Boca owner-volume passkey and TLS custody"
-        )
+        < workflow.index("Prepare, install or verify only Boca owner-volume public passkey custody")
         < workflow.index("Stop only Boca services and daemon after owner custody")
     )
     section = workflow.split(

@@ -63,9 +63,7 @@ def test_current_main_and_first_attempt_are_checked_before_ssh_and_apply() -> No
     assert (
         workflow.index("Recheck current main before owner custody operation")
         < checks[2]
-        < workflow.index(
-            "Prepare, install or verify only Boca owner-volume passkey and TLS custody"
-        )
+        < workflow.index("Prepare, install or verify only Boca owner-volume public passkey custody")
     )
     assert (
         workflow.index("Check prerequisites for dedicated rootless service preparation")

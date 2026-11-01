@@ -12,7 +12,6 @@ import binascii
 import errno
 import hashlib
 import http.client
-import ipaddress
 import json
 import os
 import platform
@@ -296,36 +295,11 @@ def _validate_beta_context(origin: str, owner: str) -> None:
 def _validate_owner_context(origin: str, owner: str) -> None:
     """Match the standalone host's strict private RP contract."""
     _validate_beta_context(origin, owner)
-    if origin == "http://localhost:8443":
-        return
-    parsed = urlsplit(origin)
-    host, port = parsed.hostname, parsed.port
-    if (
-        host is None
-        or parsed.netloc != (host if port is None else f"{host}:{port}")
-        or port == 443
-        or origin != f"https://{parsed.netloc}"
-    ):
+    # Host custody and BETA are no longer allowed to prepare an HTTPS owner
+    # volume from a stale protected secret. Legacy HTTPS library tests are
+    # separate; only this new, owner-selected port-forward route deploys.
+    if origin != "http://localhost:8443":
         raise PreflightError("invalid private owner origin")
-    if host == "localhost":
-        if port != 8443:
-            raise PreflightError("invalid private owner origin")
-        return
-    if (
-        re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", host) is None
-        or len(host) > 253
-        or host.endswith(".localhost")
-        or any(
-            len(label) > 63 or label.startswith("-") or label.endswith("-")
-            for label in host.split(".")
-        )
-    ):
-        raise PreflightError("invalid private owner origin")
-    try:
-        ipaddress.ip_address(host)
-    except ValueError:
-        return
-    raise PreflightError("invalid private owner origin")
 
 
 def validate_docker_boundary(snapshot: DockerBoundarySnapshot) -> None:

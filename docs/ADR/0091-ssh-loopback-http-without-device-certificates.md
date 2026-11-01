@@ -4,6 +4,10 @@
 
 ## Owner decision and scope
 
+The BETA Compose, protected owner/acceptance host helper and protected Actions
+origin gate all reject any origin other than `http://localhost:8443`; an old
+HTTPS environment secret cannot prepare an incompatible Boca owner volume.
+
 The owner rejected the Android certificate/CA/Termux path and chose the existing Termius SSH connection. The target is **exactly** `http://localhost:8443` with WebAuthn RP ID `localhost` in Chrome on the tablet. Termius must forward tablet `127.0.0.1:8443` to droplet `127.0.0.1:8443` over its pre-existing authenticated SSH connection. This replaces ADR0088's HTTPS localhost and ADR0089's *device-local* certificate emitter as the proposed first-owner route; those ADRs remain historical records, and the old code is not a procedure to give the owner. Chromium and the WebAuthn specification permit the exceptional potentially trustworthy `http://localhost` context (see [Chromium WebAuthn origins](https://chromium.googlesource.com/chromium/src/+/main/content/browser/webauth/origins.md) and [W3C WebAuthn](https://www.w3.org/TR/webauthn-3/)). HTTP on DNS, IP addresses, alternate `.localhost` names, another port, or a noncanonical Host/Origin remains denied. The existing HTTPS DNS library path is retained for historical tests, but BETA Compose is restricted to the single reviewed HTTP localhost origin.
 
 No host web-server, Nginx, Apache, Caddy, shared proxy, firewall rule, DNS, certificate, existing app or other port is changed. The Boca-only Compose container listens internally on its bridge but **Docker publishes solely `127.0.0.1:8443:8443/tcp`** on the droplet. A protected Boca-only port check must show that exact host port available immediately before install; BUSY/ERROR means STOP, with no attempt to stop or reconfigure whoever uses it. The only host operator remains the protected Boca Actions workflow, with current main/digest, owner, UID/cgroups, volume isolation and capacity gates. The staged-install failure cleanup from ADR0090 remains mandatory, immediate and selective, preserving owner/key/data volumes and every foreign resource.

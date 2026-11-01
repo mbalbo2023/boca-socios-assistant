@@ -88,9 +88,7 @@ def test_host_probe_runs_only_in_twice_validated_controller(
     monkeypatch.setattr(host, "_beta_acceptance_status", status)
     monkeypatch.setattr(host, "_run", run)
     monkeypatch.setattr(host, "_validate_storage_continuity", lambda *_args: None)
-    host._beta_acceptance_phase(
-        image, source_sha, "d" * 64, "https://boca.example.test:8443", "owner"
-    )
+    host._beta_acceptance_phase(image, source_sha, "d" * 64, "http://localhost:8443", "owner")
     assert status_calls == ["checked", "checked"]
     assert len(commands) == 1
     output = capsys.readouterr().out
@@ -116,7 +114,7 @@ def test_postflight_container_change_discards_probe_pass(
             "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64,
             "a" * 40,
             "d" * 64,
-            "https://boca.example.test:8443",
+            "http://localhost:8443",
             "owner",
         )
     assert "state=PASS" not in capsys.readouterr().out
@@ -158,7 +156,7 @@ def test_unknown_installed_volume_refuses_probe_before_diagnostic(
             "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64,
             "a" * 40,
             "d" * 64,
-            "https://boca.example.test:8443",
+            "http://localhost:8443",
             "owner",
         )
 
@@ -239,7 +237,7 @@ def test_installed_headroom_and_network_id_are_checked_without_preinstall_thresh
 
     def operation() -> tuple[object, object]:
         return host._beta_acceptance_status(
-            image, "a" * 40, "d" * 64, "https://boca.example.test:8443", "owner"
+            image, "a" * 40, "d" * 64, "http://localhost:8443", "owner"
         )
 
     if accepted:
@@ -302,7 +300,7 @@ def test_acceptance_dispatch_rejects_stale_source_missing_markers_or_site_envelo
         "BOCA_HOST_READONLY_ENV_READY": "",
         "BOCA_DEPLOY_ENV_READY": "ready",
         "BOCA_BETA_ENV_READY": "ready",
-        "BOCA_BETA_PANEL_ORIGIN": "https://boca.example.test:8443",
+        "BOCA_BETA_PANEL_ORIGIN": "http://localhost:8443",
         "BOCA_BETA_OWNER_SUBJECT": "owner",
         "BOCA_IMAGE_REF": "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64,
         "BOCA_RELEASE_RUN_ID": "12345",
@@ -329,6 +327,7 @@ def test_acceptance_dispatch_rejects_stale_source_missing_markers_or_site_envelo
         ("BOCA_RELEASE_RUN_ID", ""),
         ("BOCA_IMAGE_REF", ""),
         ("BOCA_SITE_ENVELOPE", "ciphertext"),
+        ("BOCA_BETA_PANEL_ORIGIN", "https://localhost:8443"),
     ):
         original = environment[field]
         environment[field] = changed
@@ -371,7 +370,7 @@ def test_workflow_accepts_only_exact_host_receipt(tmp_path: Path, extra: str) ->
             "GITHUB_STEP_SUMMARY": str(summary),
             "BOCA_SOURCE_SHA": source_sha,
             "BOCA_IMAGE_REF": image,
-            "BOCA_BETA_PANEL_ORIGIN": "https://boca.example.test:8443",
+            "BOCA_BETA_PANEL_ORIGIN": "http://localhost:8443",
             "BOCA_BETA_OWNER_SUBJECT": "owner",
             "BOCA_TEST_RECEIPT": receipt,
         },

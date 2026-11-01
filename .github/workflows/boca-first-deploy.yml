@@ -497,7 +497,7 @@ jobs:
               test "$BOCA_DEPLOY_ENV_READY" = ready
               test -n "$BOCA_IMAGE_REF"
               test -n "$BOCA_RELEASE_RUN_ID"
-              test -n "$BOCA_BETA_PANEL_ORIGIN"
+              test "$BOCA_BETA_PANEL_ORIGIN" = http://localhost:8443
               test -n "$BOCA_BETA_OWNER_SUBJECT"
               test -z "$BOCA_SITE_ENVELOPE"
               if [[ "$BOCA_OPERATION" = owner-install ]]; then
@@ -509,7 +509,7 @@ jobs:
               test "$BOCA_BETA_ENV_READY" = ready
               test -n "$BOCA_IMAGE_REF"
               test -n "$BOCA_RELEASE_RUN_ID"
-              test -n "$BOCA_BETA_PANEL_ORIGIN"
+              test "$BOCA_BETA_PANEL_ORIGIN" = http://localhost:8443
               test -n "$BOCA_BETA_OWNER_SUBJECT"
               test -z "$BOCA_SITE_ENVELOPE"
               ;;
@@ -519,7 +519,7 @@ jobs:
               test "$BOCA_TELEGRAM_ENV_READY" = ready
               test -n "$BOCA_IMAGE_REF"
               test -n "$BOCA_RELEASE_RUN_ID"
-              test -n "$BOCA_BETA_PANEL_ORIGIN"
+              test "$BOCA_BETA_PANEL_ORIGIN" = http://localhost:8443
               test -n "$BOCA_BETA_OWNER_SUBJECT"
               test -z "$BOCA_SITE_ENVELOPE"
               if [[ "$BOCA_OPERATION" = telegram-install ]]; then test -n "$BOCA_TELEGRAM_ENVELOPE"; fi
@@ -650,7 +650,7 @@ jobs:
             printf 'Boca owner custody: prepared daemon start NO_GO; Boca-only stop follows.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-      - name: Prepare, install or verify only Boca owner-volume passkey and TLS custody
+      - name: Prepare, install or verify only Boca owner-volume public passkey custody
         if: startsWith(inputs.operation, 'owner-')
         env:
           BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
