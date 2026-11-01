@@ -13,6 +13,11 @@ infrastructure**.
 > preserved. Its `containers=0` field counts containers stopped in that run;
 > exited containers, if any, remain preserved.
 > None of these receipts is application readiness.
+> The protected [image release #198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41298346638) published `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:ab0745a840e35a6d713fed14ec0761512fdc90284c133f2c321c9ffe2d3c9284`
+> from `6d3007a3ca1dfdba428cb7595486b1166a1d02b6` (manifest artifact 13079654802). This is an image
+> publication, not a droplet install. Recheck exact current main/release binding
+> before any host action; the [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
+> holds the latest operational receipt.
 > The controller was never installed; no live login, Queue-it client or automated
 > checkout is enabled. See [current integration status](docs/BETA_INTEGRATION_STATUS.md)
 > and [continuity issue #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).

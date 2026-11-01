@@ -2,8 +2,10 @@
 
 ## Corte verificado y alcance
 
-Al corte de este documento, `main` es
-`5cb8ce17715f571979a2ea3bb092da9b470f362d` (PR #204).
+Corte de evidencia previo a esta actualización documental: `main` era
+`6d3007a3ca1dfdba428cb7595486b1166a1d02b6` (PR #205 integrado). La publicación de imagen #198
+corresponde exactamente a ese SHA; una posterior actualización de documentación
+mueve `main` y requiere otro release para mantener la vinculación exacta.
 Revalidar la HEAD, Actions y el
 [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
 antes de una operación: este SHA no se traslada automáticamente a candidatos
@@ -17,8 +19,8 @@ detenido son
 evidencias distintas. El controlador de `compose.yaml` todavía espera con
 `engine=off`, sin listener ni puerto; `compose.beta.yaml` #171 empaqueta
 un entrypoint BETA TLS para pruebas desechables, no instalado. #120/#124 no
-crearon DB, clave ni volumen de aplicación en el host y #156 sólo detuvo el
-servicio dedicado. La ubicación global de una DB Boca anterior sigue
+crearon DB, clave ni volumen de aplicación en el host; #156 detuvo el
+servicio dedicado y 41282301501 confirmó ALREADY_STOPPED. La ubicación global de una DB Boca anterior sigue
 UNVERIFIED; el destino lógico futuro es `/data/boca.sqlite3` en el volumen
 `boca-socios_boca_data`, sin permiso para reemplazar datos encontrados.
 
@@ -27,10 +29,10 @@ UNVERIFIED; el destino lógico futuro es `/data/boca.sqlite3` en el volumen
 | Simulación | Coordinador #130, comandos #149, loop #161, ciclo #164 y entrypoint TLS #173; RCA de UUID canónico #187 y probe sintético #190 | Empaquetar/servir en host con identidad y acceso privado; E2E host. No hay cliente Boca real |
 | Panel | Adaptadores #128/#148, owner passkey/controles #163, registro WebAuthn #174 y preflight sin listener #189 | Inscripción física del dueño, origen TLS privado, tablet y rechazo de terceros |
 | Avisos/Telegram | #162 fence/migración0007/adapter, #176 estado, worker default-off #188, parada opcional #194, helper cifrado #199, fases protegidas #203 y prueba Bot API de un solo intento #204 | Sin bot/destino privados, provisión en host ni envío/recepción real; `api_accepted` tampoco probaría lectura humana |
-| Site #113 | Versión privada v10 D1 desactivada; #178 helper, #179 cliente opt-in, #181 custodia Actions y #196 inventario global | Sin release/digest, bypass+HMAC host, flag ni E2E; aún offline y no conectado a DB/comandos. Ver issue #113 |
-| Host | Rootless #120, preflight dormido #124 y última parada observada #156/41272785626 STOPPED; `beta-install` #191 y `beta-acceptance`/parada #200 integrados sólo en código | Sin release/imagen, marca BETA, identidad/archivos privados, instalación funcional ni aceptación host. Estado actual del daemon UNVERIFIED hasta nueva inspección |
+| Site #113 | Versión privada v10 D1 desactivada; #178 helper, #179 cliente opt-in, #181 custodia Actions y #196 inventario global | Imagen publicada #198 para el SHA de corte; revalidar coincidencia con HEAD al operar. Faltan bypass+HMAC host, flag y E2E. Aún offline. Ver issue #113 |
+| Host | Rootless #120, preflight dormido #124, parada #198/41282301501 ALREADY_STOPPED, imagen release #198; `beta-install` #191 y `beta-acceptance` #200 integrados en código | Sin marca BETA, identidad/archivos privados, instalación funcional ni aceptación host. Revalidar daemon y SHA antes de operar |
 | Chromium | Imagen y smoke offline #43/#44 con límite sintético | Capacidad/egress del droplet y visita real no acreditadas |
-| Calidad/release | CI frozen, Ruff/mypy/tests/policy, build/scan y gates de digest; #171 y #191/#200 smoke de paquete y probe TLS en runner | `BOCA_RELEASE_ENV_READY` ausente: sin publicación/digest ni capacidad/postflight del droplet |
+| Calidad/release | CI, scan, smoke de runner y publicación protegida [#198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41298346638) SUCCESS para `6d3007a3ca1dfdba428cb7595486b1166a1d02b6`, manifest artifact 13079654802 | Digest publicado `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:ab0745a840e35a6d713fed14ec0761512fdc90284c133f2c321c9ffe2d3c9284`; no demuestra capacidad/postflight del droplet y debe coincidir con la HEAD exacta de cada operación |
 | Aceptación sintética | #170 HTTP loopback desechable, #190 probe TLS en contenedor y #200 operación protegida de aceptación/parada | Sin ejecución host/tablet, Site, Telegram ni recursos medidos del droplet |
 
 ## Evidencia exacta de este corte
@@ -242,9 +244,14 @@ existían. La unidad conserva su
 enablement y podría reiniciar en un reboot posterior; revalidar el estado
 antes de otro uso.
 
-La inspección de entornos protegidos en GitHub del 2026-11-01 confirmó que
-`boca-image-release` no tiene variables ni secretos, incluido
-`BOCA_RELEASE_ENV_READY`: no hay release exitoso por digest de esta HEAD.
+La inspección anterior de entornos protegidos en GitHub del 2026-11-01 halló
+`boca-image-release` sin variables ni secretos. Después se configuró sólo la
+variable de entorno `BOCA_RELEASE_ENV_READY=ready`, preservando la regla de
+rama `main`. La [publicación protegida #198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41298346638), attempt 1, SUCCESS,
+produjo `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:ab0745a840e35a6d713fed14ec0761512fdc90284c133f2c321c9ffe2d3c9284` para `6d3007a3ca1dfdba428cb7595486b1166a1d02b6` y el artefacto
+`boca-release-manifest` ID 13079654802. El push CI 41282070869 y scan
+41282070707 del SHA base fueron SUCCESS. La imagen no se descargó ni instaló
+en el droplet; un nuevo commit exige release propio antes de cualquier install.
 `boca-first-deploy` conserva sólo las dos credenciales SSH y tres variables
 de despliegue/lectura; carece de `BOCA_BETA_ENV_READY`,
 `BOCA_TELEGRAM_ENV_READY`, `BOCA_TELEGRAM_OWNER_READY`, origen/sujeto owner,
@@ -252,9 +259,10 @@ HMAC/bot ID protegidos y material Site. No se ha provisionado la
 credencial/passkey/TLS real. Las
 fases Site #181/#196, instalación #191, aceptación #200 y Telegram #203/#204
 exigen su release y
-gates correspondientes. El último estado observado del daemon Boca fue STOPPED
-en #156; el actual es UNVERIFIED hasta nueva inspección. El puente sigue
-desactivado.
+gates correspondientes. La [parada protegida #198](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41282301501) sobre `6d3007a3ca1dfdba428cb7595486b1166a1d02b6`
+fue SUCCESS y emitió `ALREADY_STOPPED containers=not_queried data=preserved`;
+no inventariaba contenedores. El daemon puede reiniciar tras un reboot, por lo
+que se revalida antes de operar. El puente sigue desactivado.
 
 La [inspección #98](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41258754195)
 es histórica: servicio ausente antes de #120; DB/WAL/SHM candidate-absent
