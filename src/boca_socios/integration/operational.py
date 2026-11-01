@@ -117,6 +117,7 @@ class LocalBetaRuntime:
         key_file: Path,
         browser: SyntheticBrowserPort,
         initialize_new: bool = False,
+        command_timeout_seconds: float = 5.0,
     ) -> LocalBetaRuntime:
         if type(initialize_new) is not bool or not database_path.is_absolute():
             raise ValueError("invalid local BETA storage configuration")
@@ -129,7 +130,12 @@ class LocalBetaRuntime:
             validate_existing_beta_storage(database_path)
         database = Database(database_path)
         outbox = SqliteNotificationOutbox(database)
-        coordinator = BetaCoordinator(database=database, outbox=outbox, browser=browser)
+        coordinator = BetaCoordinator(
+            database=database,
+            outbox=outbox,
+            browser=browser,
+            timeout_seconds=command_timeout_seconds,
+        )
         if initialize_new:
             try:
                 coordinator.prepare_storage()

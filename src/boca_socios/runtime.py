@@ -173,6 +173,45 @@ class ServedBeta:
             self.runtime.close()
 
 
+def _browser_for_beta(
+    settings: Settings, supplied: SyntheticBrowserPort | None = None
+) -> tuple[SyntheticBrowserPort, float]:
+    """Select an inert default or explicitly isolated single-flight IPC.
+
+    A requested worker must have the expected UID and positively identified
+    AF_UNIX socket *before* the application touches member storage or opens
+    an HTTP listener. This metadata gate is not evidence of worker liveness,
+    cgroup enforcement or Docker no-egress; protected host acceptance owns
+    those independent checks.
+    """
+    if supplied is not None:
+        if settings.browser_backend != "off":
+            raise ValueError("ambiguous browser injection")
+        return supplied, 5.0
+    if settings.browser_backend == "off":
+        return _LocalSyntheticBrowser(), 5.0
+    if settings.browser_backend != "ipc":
+        raise ValueError("invalid synthetic browser backend")
+
+    from boca_socios.browser.ipc_client import UnixSyntheticBrowser
+    from boca_socios.browser.ipc_protocol import (
+        SOCKET_PATH,
+        WORKER_UID,
+        SyntheticIPCError,
+        socket_identity,
+    )
+
+    if os.geteuid() != 10001 or os.getegid() != 10001:
+        raise ValueError("synthetic browser worker boundary unavailable")
+    try:
+        socket_identity(SOCKET_PATH, uid=WORKER_UID)
+    except SyntheticIPCError:
+        raise ValueError("synthetic browser worker boundary unavailable") from None
+    # Allow the existing durable coordinator a finite 30 seconds for the
+    # 25-second IPC client budget; never change its five-second default.
+    return UnixSyntheticBrowser(), 30.0
+
+
 def build_beta_server(
     settings: Settings, *, browser: SyntheticBrowserPort | None = None
 ) -> ServedBeta:
@@ -183,6 +222,7 @@ def build_beta_server(
     parameter or an implicit host-side Chromium activation.
     """
     settings.validate_beta()
+    selected_browser, command_timeout = _browser_for_beta(settings, browser)
     bridge_enabled = settings.validate_bridge()
     transport = None
     if bridge_enabled:
@@ -215,7 +255,8 @@ def build_beta_server(
     runtime = LocalBetaRuntime.start(
         database_path=settings.db_path,
         key_file=settings.master_key_file,
-        browser=browser if browser is not None else _LocalSyntheticBrowser(),
+        browser=selected_browser,
+        command_timeout_seconds=command_timeout,
     )
     bridge: SiteBridgeWorker | None = None
     server: _TLSWSGIServer | _LoopbackHTTPWSGIServer | None = None
@@ -289,6 +330,8 @@ def build_beta_server(
 
 def initialize_beta(settings: Settings) -> None:
     settings.validate()
+    if settings.browser_backend != "off":
+        raise ValueError("synthetic browser must be off during BETA initialization")
     runtime = LocalBetaRuntime.start(
         database_path=settings.db_path,
         key_file=settings.master_key_file,
@@ -305,6 +348,8 @@ def _dormant() -> int:
     os.umask(0o077)
     settings = Settings.from_environment()
     settings.validate()
+    if settings.browser_backend != "off":
+        raise ValueError("synthetic browser requires the served BETA entrypoint")
     # Fail closed if decryption key is absent or malformed.
     CredentialVault.from_secret_file(settings.master_key_file)
     Database(settings.db_path).migrate()
@@ -335,6 +380,10 @@ def main(argv: tuple[str, ...] = ()) -> int:
                 beta_config_preflight.check_beta_config(
                     settings, ca_file=ca_file, owner_root=beta_config_preflight.OWNER_ROOT
                 )
+                # This CLI gate must not claim a complete IPC-enabled BETA
+                # configuration when the fixed worker socket is absent.
+                if settings.browser_backend == "ipc":
+                    _browser_for_beta(settings)
             else:
                 beta_config_preflight.check_beta_owner(
                     settings, ca_file=ca_file, owner_root=beta_config_preflight.OWNER_ROOT

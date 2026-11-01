@@ -1,5 +1,6 @@
-# Review-only offline smoke; no deployment. Index digest reported by Actions
-# run 40778220081, then fixed here for both build and review.
+# Optional, offline UID10002 synthetic worker image. Building or importing it
+# cannot activate a BETA sidecar; a separate protected, approved host contract
+# must supply network-none, cgroups, socket-only IPC and cleanup.
 FROM mcr.microsoft.com/playwright/python:v1.64.1-noble@sha256:330d401ae23c905896a0c26c66c36fc971b621519e7b11b435a8328d7bf6e031
 
 ENV PYTHONUNBUFFERED=1 \
@@ -15,8 +16,8 @@ RUN uv sync --locked --only-group browser --no-editable --no-cache
 
 RUN groupadd --gid 10002 boca-browser && \
     useradd --uid 10002 --gid 10002 --create-home --shell /usr/sbin/nologin boca-browser
-# The browser image carries only the synthetic workflow's typed contracts,
-# not the controller, storage, member credentials or application runtime.
+# Copy only fixed synthetic browser contracts and one-ticket policy. Do not
+# include controller/runtime, credential vault, database or private owner data.
 COPY src/boca_socios/__init__.py ./src/boca_socios/__init__.py
 COPY src/boca_socios/browser/ ./src/boca_socios/browser/
 COPY src/boca_socios/domain/__init__.py src/boca_socios/domain/policy.py ./src/boca_socios/domain/
@@ -27,5 +28,7 @@ ENV HOME=/home/boca-browser \
     XDG_CONFIG_HOME=/tmp/browser-config
 USER 10002:10002
 
-# A browser startup check, never an automatic visit to Boca.
-CMD ["python", "scripts/verify_chromium_worker.py"]
+# The worker must prove cgroups, UID10002 and no-egress before binding IPC.
+# With no specifically prepared IPC mount it refuses startup; no IP listener.
+# Offline CI smoke overrides CMD with its explicit measurement command.
+CMD ["python", "-m", "boca_socios.browser.ipc_worker"]

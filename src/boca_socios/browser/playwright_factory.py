@@ -38,6 +38,7 @@ async def isolated_playwright_page() -> AsyncIterator[PagePort]:
     async with async_playwright() as api:
         browser = await api.chromium.launch(
             headless=True,
+            chromium_sandbox=True,
             timeout=15_000,
             args=["--disable-background-networking"],
         )
