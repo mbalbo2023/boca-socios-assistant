@@ -7,6 +7,8 @@ Each invocation is a single phase; a failed phase is not retried automatically.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import errno
 import hashlib
 import json
@@ -18,13 +20,14 @@ import shutil
 import stat
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 ROOT = Path("/srv/boca-socios")
 COMPOSE = ROOT / "compose.yaml"
 PROJECT = "boca-socios"
 KEY_VOLUME = "boca-socios_boca_key"
+OWNER_VOLUME = "boca-socios_boca_owner"
 ROOTLESS_SOCKET = Path("/run/user/10001/docker.sock")
 PRIVATE_MANAGER_SOCKET = Path("/run/user/10001/systemd/private")
 USER_BUS_SOCKET = Path("/run/user/10001/bus")
@@ -35,6 +38,22 @@ CGROUP_CONTROLLERS = Path(
 IMAGE_PATTERN = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z")
 SHA_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+SITE_ORIGIN = "https://boca-socios-consola-demo-20261031.mbalbo14901.chatgpt.site"
+SITE_ENVELOPE_FIELDS = frozenset(
+    {
+        "version",
+        "repository",
+        "purpose",
+        "uid",
+        "site_origin",
+        "recipient_fingerprint",
+        "recipient_public_key",
+        "ephemeral_public_key",
+        "salt",
+        "nonce",
+        "ciphertext",
+    }
+)
 
 
 class PreflightError(ValueError):
@@ -207,6 +226,17 @@ def validate_snapshot(snapshot: HostSnapshot) -> None:
         raise PreflightError("existing Boca namespace requires separate recovery review")
 
 
+def validate_site_snapshot(
+    snapshot: HostSnapshot, volumes: set[str], *, require_owner: bool
+) -> None:
+    """Permit only the exact Boca owner volume; never an app or other namespace."""
+    if snapshot.boca_volume != bool(volumes) or volumes not in (set(), {OWNER_VOLUME}):
+        raise PreflightError("unexpected Boca volume inventory for Site bootstrap")
+    if require_owner and volumes != {OWNER_VOLUME}:
+        raise PreflightError("Boca owner volume is not installed")
+    validate_snapshot(replace(snapshot, boca_volume=False))
+
+
 def validate_docker_boundary(snapshot: DockerBoundarySnapshot) -> None:
     if snapshot.socket_secure is not True or snapshot.rootful_socket_inaccessible is not True:
         raise PreflightError("dedicated rootless socket or rootful Docker access is unsafe")
@@ -218,7 +248,7 @@ def validate_docker_boundary(snapshot: DockerBoundarySnapshot) -> None:
         raise PreflightError("rootless CPU, memory and PID controllers must be delegated")
 
 
-def _run(*args: str, env: dict[str, str] | None = None) -> str:
+def _run(*args: str, env: dict[str, str] | None = None, input_data: str | None = None) -> str:
     run_env = env
     if args[0] == "docker":
         # SSH environment and Docker CLI context must never redirect host
@@ -232,7 +262,13 @@ def _run(*args: str, env: dict[str, str] | None = None) -> str:
         run_env["DOCKER_HOST"] = f"unix://{ROOTLESS_SOCKET}"
     try:
         result = subprocess.run(  # noqa: S603 - validated coordinates; fixed argv, no shell
-            args, check=True, text=True, capture_output=True, timeout=120, env=run_env
+            args,
+            check=True,
+            text=True,
+            capture_output=True,
+            timeout=120,
+            env=run_env,
+            input=input_data,
         )
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         # Suppress subprocess stderr: it may include paths or registry diagnostics.
@@ -799,6 +835,197 @@ def _validate_key_volume() -> None:
         raise PreflightError("Boca key volume mountpoint is unavailable") from exc
 
 
+def _validate_owner_volume() -> None:
+    volume = _json_object(
+        _run("docker", "volume", "inspect", "--format", "{{json .}}", OWNER_VOLUME),
+        "owner volume",
+    )
+    root = Path(_run("docker", "info", "--format", "{{.DockerRootDir}}"))
+    expected = root / "volumes" / OWNER_VOLUME / "_data"
+    labels = volume.get("Labels")
+    if (
+        volume.get("Name") != OWNER_VOLUME
+        or volume.get("Driver") != "local"
+        or volume.get("Scope") != "local"
+        or volume.get("Options") not in (None, {})
+        or not root.is_absolute()
+        or root == Path("/")
+        or volume.get("Mountpoint") != str(expected)
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.volume") != "boca_owner"
+    ):
+        raise PreflightError("Boca owner volume identity is unsafe")
+    try:
+        if root.resolve(strict=True) != root or expected.resolve(strict=True) != expected:
+            raise PreflightError("Boca owner volume mountpoint is redirected")
+    except (OSError, RuntimeError) as exc:
+        raise PreflightError("Boca owner volume mountpoint is unavailable") from exc
+
+
+def _owner_init_container(image: str) -> tuple[str, ...]:
+    # The new empty volume starts root-owned in the container user namespace.
+    # chmod precedes chown because this one-shot container retains only CHOWN.
+    return (
+        "docker",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--user",
+        "0:0",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "CHOWN",
+        "--security-opt",
+        "no-new-privileges",
+        "--pids-limit",
+        "16",
+        "--memory",
+        "64m",
+        "--cpus",
+        "0.25",
+        "--mount",
+        f"type=volume,source={OWNER_VOLUME},target=/run/owner,volume-nocopy",
+        image,
+        "python",
+        "-c",
+        "import os; os.chmod('/run/owner', 0o700); os.chown('/run/owner', 10001, 10001)",
+    )
+
+
+def _site_container(image: str, operation: str) -> tuple[str, ...]:
+    if operation not in {"prepare", "install", "verify"} or not IMAGE_PATTERN.fullmatch(image):
+        raise PreflightError("invalid Site bootstrap coordinates")
+    return (
+        "docker",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        *(("-i",) if operation == "install" else ()),
+        "--user",
+        "10001:10001",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--pids-limit",
+        "16",
+        "--memory",
+        "64m",
+        "--cpus",
+        "0.25",
+        "--mount",
+        f"type=volume,source={OWNER_VOLUME},target=/run/owner,volume-nocopy"
+        + (",readonly" if operation == "verify" else ""),
+        image,
+        "python",
+        "-m",
+        "boca_socios.site_bootstrap",
+        operation,
+    )
+
+
+def _site_envelope(value: str) -> str:
+    """Accept only a canonical, bounded ciphertext envelope as transport data."""
+    try:
+        if not value or len(value) > 10923 or not re.fullmatch(r"[A-Za-z0-9_-]+", value):
+            raise ValueError
+        raw = base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
+        if (
+            not 0 < len(raw) <= 8192
+            or base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != value
+        ):
+            raise ValueError
+
+        def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, item in pairs:
+                if key in result:
+                    raise ValueError
+                result[key] = item
+            return result
+
+        decoded = raw.decode("ascii")
+        data = json.loads(decoded, object_pairs_hook=unique)
+        if (
+            not isinstance(data, dict)
+            or set(data) != SITE_ENVELOPE_FIELDS
+            or type(data["version"]) is not int
+            or data["version"] != 1
+            or data["repository"] != "mbalbo2023/boca-socios-assistant"
+            or data["purpose"] != "boca-site-bridge-machine-v1"
+            or type(data["uid"]) is not int
+            or data["uid"] != 10001
+            or data["site_origin"] != SITE_ORIGIN
+            or json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True) != decoded
+        ):
+            raise ValueError
+        sizes = {
+            "recipient_public_key": (32, 32),
+            "ephemeral_public_key": (32, 32),
+            "salt": (16, 16),
+            "nonce": (12, 12),
+            "ciphertext": (16, 4096),
+        }
+        for key, (minimum, maximum) in sizes.items():
+            token = data[key]
+            if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", token):
+                raise ValueError
+            binary = base64.b64decode(
+                token + "=" * (-len(token) % 4), altchars=b"-_", validate=True
+            )
+            if (
+                not minimum <= len(binary) <= maximum
+                or base64.urlsafe_b64encode(binary).rstrip(b"=").decode("ascii") != token
+            ):
+                raise ValueError
+        fingerprint = data["recipient_fingerprint"]
+        if (
+            not isinstance(fingerprint, str)
+            or not DIGEST_PATTERN.fullmatch(fingerprint)
+            or hashlib.sha256(
+                base64.urlsafe_b64decode(data["recipient_public_key"] + "=")
+            ).hexdigest()
+            != fingerprint
+        ):
+            raise ValueError
+    except (ValueError, TypeError, KeyError, UnicodeError, binascii.Error) as exc:
+        raise PreflightError("invalid sealed Site envelope") from exc
+    return decoded
+
+
+def _site_receipt(output: str, operation: str) -> str:
+    if len(output) > 256:
+        raise PreflightError("invalid Site bootstrap receipt")
+    if operation == "prepare":
+        match = re.fullmatch(
+            r"BOCA_SITE_BOOTSTRAP state=(PREPARED|ALREADY_PREPARED)"
+            r" public_key=([A-Za-z0-9_-]{43}) fingerprint=([0-9a-f]{64})",
+            output,
+        )
+        if match is not None:
+            try:
+                public = base64.b64decode(match[2] + "=", altchars=b"-_", validate=True)
+                if len(public) == 32 and hashlib.sha256(public).hexdigest() == match[3]:
+                    return output
+            except (ValueError, binascii.Error):
+                pass
+    elif operation in {"install", "verify"}:
+        state = "CONFIGURED" if operation == "install" else "VERIFIED"
+        if re.fullmatch(rf"BOCA_SITE_BOOTSTRAP state={state} fingerprint=[0-9a-f]{{64}}", output):
+            return output
+    raise PreflightError("invalid Site bootstrap receipt")
+
+
 def _key_container(image: str, operation: str) -> tuple[str, ...]:
     if operation not in {"init", "verify"}:
         raise PreflightError("invalid key custody operation")
@@ -1090,7 +1317,70 @@ def collect_diagnostic(image: str, source_sha: str) -> DiagnosticSnapshot:
     return snapshot
 
 
-def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> None:
+def _site_phase(operation: str, image: str, source_sha: str, envelope: str) -> None:
+    if (envelope and operation != "site-install") or (operation == "site-install" and not envelope):
+        raise PreflightError("sealed Site envelope required only for install")
+    decoded = _site_envelope(envelope) if operation == "site-install" else None
+    if COMPOSE.exists() or COMPOSE.is_symlink():
+        raise PreflightError("Boca Compose already staged; separate recovery review required")
+    name = operation.removeprefix("site-")
+    volumes = _names("volume", "name=^boca-socios_")
+    validate_site_snapshot(collect_snapshot(), volumes, require_owner=name != "prepare")
+    if volumes:
+        _validate_owner_volume()
+        if _run("docker", "ps", "-a", "-q", "--filter", f"volume={OWNER_VOLUME}"):
+            raise PreflightError("Boca owner volume is attached to a container")
+    before_pull = _storage_snapshot()
+    _validate_storage_capacity(before_pull)
+    _run("docker", "pull", image)
+    repo_digests = json.loads(
+        _run("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image)
+    )
+    revision = _run(
+        "docker",
+        "image",
+        "inspect",
+        "--format",
+        '{{index .Config.Labels "org.opencontainers.image.revision"}}',
+        image,
+    )
+    if not isinstance(repo_digests, list) or image not in repo_digests or revision != source_sha:
+        raise PreflightError("pulled Site bootstrap image differs from reviewed release")
+    _validate_storage_continuity(before_pull, _storage_snapshot())
+    # Reject a changed namespace before the first owner-volume effect.
+    current = _names("volume", "name=^boca-socios_")
+    validate_site_snapshot(collect_snapshot(), current, require_owner=name != "prepare")
+    if current != volumes:
+        raise PreflightError("Boca owner volume inventory changed during bootstrap")
+    if current and _run("docker", "ps", "-a", "-q", "--filter", f"volume={OWNER_VOLUME}"):
+        raise PreflightError("Boca owner volume became attached to a container")
+    if name == "prepare" and not current:
+        created = _run(
+            "docker",
+            "volume",
+            "create",
+            "--driver",
+            "local",
+            "--label",
+            f"com.docker.compose.project={PROJECT}",
+            "--label",
+            "com.docker.compose.volume=boca_owner",
+            OWNER_VOLUME,
+        )
+        if created != OWNER_VOLUME:
+            raise PreflightError("unexpected Boca owner volume creation")
+        _validate_owner_volume()
+        if _run(*_owner_init_container(image)):
+            raise PreflightError("Boca owner directory preparation had unexpected output")
+    _validate_owner_volume()
+    receipt = _site_receipt(_run(*_site_container(image, name), input_data=decoded), name)
+    _validate_owner_volume()
+    print(receipt)
+
+
+def phase(
+    phase_name: str, image: str, source_sha: str, compose_sha: str, envelope: str = ""
+) -> None:
     _validate_coordinates(
         image,
         source_sha,
@@ -1100,6 +1390,14 @@ def phase(phase_name: str, image: str, source_sha: str, compose_sha: str) -> Non
     if phase_name == "inspect-prerequisites":
         inspect_prerequisites()
         return
+    if phase_name.startswith("site-"):
+        if phase_name not in {"site-prepare", "site-install", "site-verify"}:
+            raise PreflightError("unknown Site bootstrap phase")
+        _validate_docker_boundary()
+        _site_phase(phase_name, image, source_sha, envelope)
+        return
+    if envelope:
+        raise PreflightError("unexpected Site envelope in first-install phase")
     _validate_docker_boundary()
     if phase_name in {"diagnostic-config", "diagnostic"}:
         _diagnostic_files(compose_sha)
@@ -1221,14 +1519,18 @@ def main() -> int:
             "apply",
             "diagnostic-config",
             "diagnostic",
+            "site-prepare",
+            "site-install",
+            "site-verify",
         ),
     )
     parser.add_argument("image")
     parser.add_argument("source_sha")
     parser.add_argument("compose_sha")
+    parser.add_argument("envelope", nargs="?", default="")
     args = parser.parse_args()
     try:
-        phase(args.phase, args.image, args.source_sha, args.compose_sha)
+        phase(args.phase, args.image, args.source_sha, args.compose_sha, args.envelope)
     except (PreflightError, OSError, ValueError, TypeError, KeyError) as exc:
         print(f"BOCA_NO_GO: {exc}", file=sys.stderr)
         return 1

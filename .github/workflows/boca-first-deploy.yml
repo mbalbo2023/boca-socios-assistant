@@ -5,10 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Inspect, prepare, preflight, install, diagnose, or stop Boca test services
+        description: Boca host operation; Site phases stage ciphertext only and do not start services
         required: true
         type: choice
-        options: [inspect-prerequisites, prepare-rootless, preflight, first-install, diagnostic, stop-test]
+        options: [inspect-prerequisites, prepare-rootless, preflight, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify]
       source_sha:
         description: Exact current main commit approved for the operation
         required: true
@@ -18,7 +18,11 @@ on:
         required: false
         type: string
       release_run_id:
-        description: Reviewed image release run ID for install/diagnostic; blank for inspection/preflight
+        description: Reviewed image release run ID for install/diagnostic/Site; blank for inspection/preflight
+        required: false
+        type: string
+      site_envelope:
+        description: Site-install only; canonical sealed JSON envelope encoded as unpadded base64url (ciphertext, never plaintext)
         required: false
         type: string
       service:
@@ -60,7 +64,7 @@ jobs:
           uv sync --frozen
       - name: Check dispatch and first-install boundaries offline
         run: |
-          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_key_custody.py tests/test_release_run.py
+          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_site_bootstrap.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_key_custody.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
       - name: Validate optional served BETA Compose model without host access
         env:
@@ -89,6 +93,38 @@ jobs:
           persist-credentials: false
       - name: Build local simulation image only
         run: docker build --tag "$BOCA_IMAGE" .
+      - name: Exercise sealed Site intake in a disposable Boca owner volume
+        run: |
+          set -euo pipefail
+          docker volume create --driver local \
+            --label com.docker.compose.project=boca-socios \
+            --label com.docker.compose.volume=boca_owner boca-socios_boca_owner
+          docker run --rm --pull never --user 0:0 --network none --read-only \
+            --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges \
+            --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_owner,target=/run/owner,volume-nocopy \
+            "$BOCA_IMAGE" python -c 'import os; os.chmod("/run/owner", 0o700); os.chown("/run/owner", 10001, 10001)'
+          receipt="$(docker run --rm --pull never --user 10001:10001 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_owner,target=/run/owner,volume-nocopy \
+            "$BOCA_IMAGE" python -m boca_socios.site_bootstrap prepare)"
+          [[ "$receipt" =~ ^BOCA_SITE_BOOTSTRAP\ state=PREPARED\ public_key=([A-Za-z0-9_-]{43})\ fingerprint=([0-9a-f]{64})$ ]]
+          public="${BASH_REMATCH[1]}"
+          fingerprint="${BASH_REMATCH[2]}"
+          sealed="$(docker run --rm --pull never --user 10001:10001 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
+            "$BOCA_IMAGE" python -c 'import base64,sys; from boca_socios.site_bootstrap import RecipientReceipt,seal_for_recipient; sealed=seal_for_recipient(RecipientReceipt("PREPARED",sys.argv[1],sys.argv[2]),"synthetic-ci-payload-00000000",b"x"*32); print(base64.urlsafe_b64encode(sealed).rstrip(b"=").decode("ascii"))' "$public" "$fingerprint")"
+          PYTHONPATH=src python3 -c 'import sys; from boca_socios.host_first_deploy import _site_envelope; sys.stdout.write(_site_envelope(sys.argv[1]))' "$sealed" | \
+            docker run --rm -i --pull never --user 10001:10001 --network none --read-only \
+              --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
+              --mount type=volume,source=boca-socios_boca_owner,target=/run/owner,volume-nocopy \
+              "$BOCA_IMAGE" python -m boca_socios.site_bootstrap install
+          test "$(docker run --rm --pull never --user 10001:10001 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_owner,target=/run/owner,volume-nocopy,readonly \
+            "$BOCA_IMAGE" python -m boca_socios.site_bootstrap verify)" = \
+            "BOCA_SITE_BOOTSTRAP state=VERIFIED fingerprint=$fingerprint"
+          docker volume rm boca-socios_boca_owner
       - name: Provision separate owner-only key volume on disposable runner
         run: |
           docker volume create --driver local \
@@ -216,6 +252,7 @@ jobs:
         env:
           BOCA_HOST_READONLY_ENV_READY: ${{ vars.BOCA_HOST_READONLY_ENV_READY }}
           BOCA_DEPLOY_ENV_READY: ${{ vars.BOCA_DEPLOY_ENV_READY }}
+          BOCA_SITE_ENVELOPE: ${{ inputs.site_envelope }}
         run: |
           test "$GITHUB_RUN_ATTEMPT" = 1
           test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"
@@ -226,21 +263,37 @@ jobs:
               test "$BOCA_HOST_READONLY_ENV_READY" = ready
               test -z "$BOCA_IMAGE_REF"
               test -z "$BOCA_RELEASE_RUN_ID"
+              test -z "$BOCA_SITE_ENVELOPE"
               ;;
             prepare-rootless)
               test "$BOCA_DEPLOY_ENV_READY" = ready
               test -z "$BOCA_IMAGE_REF"
               test -z "$BOCA_RELEASE_RUN_ID"
+              test -z "$BOCA_SITE_ENVELOPE"
               ;;
             stop-test)
               test "$BOCA_DEPLOY_ENV_READY" = ready
               test -z "$BOCA_IMAGE_REF"
               test -z "$BOCA_RELEASE_RUN_ID"
+              test -z "$BOCA_SITE_ENVELOPE"
               ;;
             first-install|diagnostic)
               test "$BOCA_DEPLOY_ENV_READY" = ready
               test -n "$BOCA_IMAGE_REF"
               test -n "$BOCA_RELEASE_RUN_ID"
+              test -z "$BOCA_SITE_ENVELOPE"
+              ;;
+            site-prepare|site-verify)
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test -n "$BOCA_IMAGE_REF"
+              test -n "$BOCA_RELEASE_RUN_ID"
+              test -z "$BOCA_SITE_ENVELOPE"
+              ;;
+            site-install)
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test -n "$BOCA_IMAGE_REF"
+              test -n "$BOCA_RELEASE_RUN_ID"
+              test -n "$BOCA_SITE_ENVELOPE"
               ;;
             *) exit 1 ;;
           esac
@@ -256,7 +309,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref.json"
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref.json" "$BOCA_SOURCE_SHA"
       - name: Validate immutable inputs and successful matching release
-        if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic'
+        if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic' || inputs.operation == 'site-prepare' || inputs.operation == 'site-install' || inputs.operation == 'site-verify'
         env:
           PYTHONPATH: src
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -315,6 +368,27 @@ jobs:
             printf '  ForwardAgent no\n'
           } > "$RUNNER_TEMP/boca-ssh/config"
           chmod 600 "$RUNNER_TEMP/boca-ssh/config"
+      - name: Recheck current main before Site custody operation
+        if: inputs.operation == 'site-prepare' || inputs.operation == 'site-install' || inputs.operation == 'site-verify'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-site.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-site.json" "$BOCA_SOURCE_SHA"
+      - name: Prepare, install or verify only Boca Site owner-volume custody
+        if: inputs.operation == 'site-prepare' || inputs.operation == 'site-install' || inputs.operation == 'site-verify'
+        env:
+          BOCA_SITE_ENVELOPE: ${{ inputs.site_envelope }}
+        run: |
+          phase="$BOCA_OPERATION"
+          envelope="$BOCA_SITE_ENVELOPE"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - "$phase" "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$envelope")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py
+          {
+            printf 'Boca Site credential custody operation: `%s` completed; receipt above. No BETA service started.\n\n' "$phase"
+            printf 'Commit: `%s`\n\nImage: `%s`\n\nRelease run: `%s`\n' "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" "$BOCA_RELEASE_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Check prerequisites for dedicated rootless service preparation
         if: inputs.operation == 'prepare-rootless'
         run: |
