@@ -11,9 +11,10 @@ consent controls. POST `/socios` calls the existing MemberEnrollmentService,
 which generates the opaque member ID and atomically writes the member, AEAD
 ciphertext and metadata-only audit. The caller supplies the server's current
 consent timestamp after affirmative consent; this is recorded consent, not
-proof of external eligibility. Email is the existing service's login identifier;
-there is no separate username column or new membership-identity claim. Do not
-invent another field or change the schema. No real login or reservation follows.
+proof of external eligibility. The existing service stores email and alias;
+there is no separate Boca username column. Email is not asserted to be the
+correct external login or verified membership identity. Do not invent another
+field or change the schema. No real login or reservation follows.
 
 No SQLite access occurs in the browser and no separate database server or API
 platform is introduced. Database/vault/service instances are supplied by the
@@ -31,6 +32,9 @@ dependency lock changes, the real verifier, enrollment of the admin's device,
 recovery and TLS deployment are separate concrete decisions before exposure.
 Password plus TOTP alone is not asserted to meet ADR 0012's phishing-resistant
 requirement. This ADR does not silently approve or implement an auth provider.
+The proposed verifier follows the W3C WebAuthn authentication and challenge
+requirements: <https://www.w3.org/TR/webauthn-3/#sctn-verifying-assertion> and
+<https://www.w3.org/TR/webauthn-3/#sctn-cryptographic-challenges>.
 
 OwnerSessions accepts a server-side authentication verifier and denies by
 default. Its authenticate method is not an HTTP route. Only a verified owner
