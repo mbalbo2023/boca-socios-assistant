@@ -7,6 +7,7 @@ import http.client
 import socket
 import sqlite3
 import ssl
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event, Thread
@@ -18,7 +19,9 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
 from boca_socios import healthcheck
+from boca_socios import runtime as runtime_module
 from boca_socios.config import Settings
+from boca_socios.integration.bridge_client import SITE_ORIGIN
 from boca_socios.integration.operational import LocalRuntimeUnavailable
 from boca_socios.runtime import SIMULATION_EVENT_ID, build_beta_server, initialize_beta
 
@@ -183,3 +186,52 @@ def test_refuses_unsafe_identity_and_tls_files_before_listener(tmp_path: Path) -
     settings.passkey_credential_id_file.symlink_to(tmp_path / "tls.crt")
     with pytest.raises(ValueError, match="unavailable"):
         build_beta_server(settings)
+
+
+def test_site_bridge_is_explicit_and_secret_gated_before_listener(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = _settings(tmp_path)
+    initialize_beta(settings)
+    assert settings.validate_bridge() is False
+    bridge_settings = replace(
+        settings,
+        site_bridge_mode="poll",
+        site_origin=SITE_ORIGIN,
+        site_token_file=tmp_path / "missing-token",
+        site_hmac_key_file=tmp_path / "missing-hmac",
+        source_sha="a" * 40,
+    )
+    with pytest.raises(ValueError, match="unavailable"):
+        build_beta_server(bridge_settings)
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", settings.bind_port))
+    with pytest.raises(ValueError, match="configuration"):
+        replace(bridge_settings, site_origin="https://other.chatgpt.site").validate_bridge()
+    with pytest.raises(ValueError, match="configuration"):
+        replace(bridge_settings, source_sha="unverified").validate_bridge()
+
+    _private(tmp_path / "missing-token", b"synthetic-bypass-token-no-live")
+    _private(tmp_path / "missing-hmac", b"h" * 32)
+
+    class LocalOnlyTransport:
+        states: list[str] = []
+
+        def lease(self) -> None:
+            return None
+
+        def heartbeat(self, _sha: str, state: str, _snapshot: object) -> None:
+            self.states.append(state)
+
+        def ack(self, _lease: object, _state: str) -> None:
+            raise AssertionError("no synthetic Site operation was leased")
+
+    local = LocalOnlyTransport()
+    monkeypatch.setattr(runtime_module, "SiteBridgeTransport", lambda **_kwargs: local)
+    served = build_beta_server(bridge_settings)
+    try:
+        assert served.bridge is not None and not served.bridge.failed
+        assert served.runtime.ready
+    finally:
+        served.close()
+    assert not served.runtime.ready and local.states[-1] == "stopping"
