@@ -39,6 +39,10 @@ jobs:
         run: |
           docker compose -f compose.yaml config --format json > "$RUNNER_TEMP/boca-compose.json"
           uv run python scripts/check_deploy_contract.py "$RUNNER_TEMP/boca-compose.json" "$BOCA_IMAGE"
+      - name: Validate opt-in Telegram Compose syntax
+        env:
+          BOCA_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        run: docker compose -f compose.telegram.json --profile telegram-opt-in config --format json > "$RUNNER_TEMP/boca-telegram-compose.json"
       - name: Lint
         run: uv run ruff check .
       - name: Format
