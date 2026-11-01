@@ -123,10 +123,16 @@ def test_telegram_identity_and_image_mismatch_block_even_known_controller_stop()
         container["Image"] = "sha256:" + "e" * 64
 
     def wrong_digest(_container: dict, image: dict) -> None:
-        image["RepoDigests"] = []
+        image["RepoDigests"] = ["ghcr.io/other/project@sha256:" + "d" * 64]
+
+    def wrong_image_identity(_container: dict, image: dict) -> None:
+        image["Id"] = "sha256:" + "e" * 64
 
     def wrong_revision(container: dict, _image: dict) -> None:
         container["Config"]["Labels"]["org.opencontainers.image.revision"] = "f" * 40
+
+    def wrong_image_revision(_container: dict, image: dict) -> None:
+        image["Config"]["Labels"]["org.opencontainers.image.revision"] = "f" * 40
 
     for mutate in (
         wrong_project,
@@ -138,7 +144,9 @@ def test_telegram_identity_and_image_mismatch_block_even_known_controller_stop()
         wrong_ref,
         wrong_id,
         wrong_digest,
+        wrong_image_identity,
         wrong_revision,
+        wrong_image_revision,
     ):
         telegram = _telegram_inspect(UNKNOWN)
         image = _telegram_image()
@@ -175,6 +183,18 @@ def test_unknown_after_verified_telegram_blocks_every_stop() -> None:
         with CHECKS.assertRaisesRegex(host.SetupError, "unknown_container_preserved_no_stop"):
             host._stop_test_containers(HOME)
     assert all(call.args[3] != "stop" for call in command.call_args_list)
+
+
+def test_telegram_image_lookup_failure_blocks_inventory_without_stop() -> None:
+    for result in (host.SetupError("private_daemon_metadata_failed_exit_1"), "not json"):
+        with patch.object(
+            host,
+            "_command",
+            side_effect=[_info(1), CONTAINER, json.dumps(_telegram_inspect(CONTAINER)), result],
+        ) as command:
+            with CHECKS.assertRaisesRegex(host.SetupError, "unknown_container_preserved_no_stop"):
+                host._stop_test_containers(HOME)
+        assert all(call.args[3] != "stop" for call in command.call_args_list)
 
 
 def test_unknown_container_fails_before_any_stop() -> None:
