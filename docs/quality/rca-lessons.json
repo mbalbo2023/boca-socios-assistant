@@ -185,6 +185,16 @@
         "tests/test_host_site_bootstrap.py::test_site_custody_refuses_foreign_dedicated_daemon_container_before_each_effect",
         "tests/test_host_site_bootstrap.py::test_site_existing_owner_operations_reject_foreign_daemon_before_token_or_verify"
       ]
+    },
+    {
+      "id": "RCA-217",
+      "issue": 217,
+      "fix_pr": 218,
+      "root_cause": "The tablet-local owner ceremony requested residentKey preferred without a platform authenticator, so enrollment could accept a device-bound nondiscoverable credential instead of a key stored by the tablet credential manager.",
+      "prevention": "Require a platform authenticator and discoverable credential with user verification in the served creation options, and explain that browser cookies hold only temporary panel sessions.",
+      "regression_tests": [
+        "tests/test_owner_ceremony.py::test_owner_ceremony_requires_discoverable_passkey_and_explains_storage"
+      ]
     }
   ]
 }
