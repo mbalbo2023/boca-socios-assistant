@@ -44,12 +44,20 @@ def _transport(step: str, image: str) -> list[str]:
 def test_inspection_preserves_remote_argv() -> None:
     for image in ("", "sha256:example", "spaces 'quotes' ; $(printf injected)"):
         assert _transport("Inspect dedicated user prerequisites without Docker", image) == [
-            "-", "inspect-prerequisites", image, SHA, COMPOSE_SHA,
+            "-",
+            "inspect-prerequisites",
+            image,
+            SHA,
+            COMPOSE_SHA,
         ]
 
 
 def test_observe_preserves_remote_argv() -> None:
     for image in ("", "sha256:example", "spaces 'quotes' ; $(printf injected)"):
         assert _transport("Observe host capacity and Boca namespace without an image", image) == [
-            "-", "observe", image, SHA, COMPOSE_SHA,
+            "-",
+            "observe",
+            image,
+            SHA,
+            COMPOSE_SHA,
         ]
