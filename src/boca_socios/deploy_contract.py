@@ -149,7 +149,7 @@ def validate_beta_contract(
         raise ContractError("invalid approved image digest")
     if not re.fullmatch(r"https://[a-z0-9][a-z0-9.-]{0,252}(?::[0-9]{2,5})?", expected_origin):
         raise ContractError("invalid private HTTPS origin")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", expected_owner):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", expected_owner):
         raise ContractError("invalid owner subject")
 
     root = _mapping(model, "BETA Compose model")
