@@ -7,18 +7,17 @@ It neither opens a network socket nor reads, creates or migrates the database.
 from __future__ import annotations
 
 import os
-import re
 import ssl
 import stat
 from contextlib import ExitStack
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from boca_socios.config import Settings
 from boca_socios.integration.bridge_client import SiteBridgeTransport
+from boca_socios.owner_origin import owner_rp_host
 from boca_socios.panel.passkey import PasskeyOwnerAuthentication
 from boca_socios.security.credential_vault import CredentialVault
 
@@ -123,25 +122,12 @@ def _tls_handshake(cert_file: Path, key_file: Path, ca_file: Path, hostname: str
 def check_beta_owner(settings: Settings, *, ca_file: Path, owner_root: Path = OWNER_ROOT) -> None:
     """Validate public passkey and TLS owner bundle before creating a key volume."""
     settings.validate_beta()
-    origin = urlsplit(settings.panel_origin)
-    host = origin.hostname
     try:
-        port = origin.port
+        host = owner_rp_host(settings.panel_origin)
     except ValueError:
         raise ValueError("owner BETA configuration is invalid") from None
-    authority = host if port is None else f"{host}:{port}"
     if (
-        host is None
-        or origin.netloc != authority
-        or port == 443  # browser origins omit the default HTTPS port
-        or settings.panel_origin != f"https://{origin.netloc}"
-        or not re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", host)
-        or len(host) > 253
-        or any(
-            len(label) > 63 or label.startswith("-") or label.endswith("-")
-            for label in host.split(".")
-        )
-        or settings.bind_host != "0.0.0.0"  # noqa: S104 - only inside isolated container
+        settings.bind_host != "0.0.0.0"  # noqa: S104 - only inside isolated container
         or settings.bind_port != 8443
         or not owner_root.is_absolute()
         or settings.passkey_credential_id_file != owner_root / "credential_id"

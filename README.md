@@ -18,6 +18,9 @@ infrastructure**.
 > publication, not a droplet install. Recheck exact current main/release binding
 > before any host action; the [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
 > holds the latest operational receipt.
+> The later release 41302342233 published an image for `3ef7aff8...` only;
+> #212 moved main to `3ec1096f...`. Neither digest matches this candidate for
+> an install. A final exact-main release is still required.
 > The controller was never installed; no live login, Queue-it client or automated
 > checkout is enabled. See [current integration status](docs/BETA_INTEGRATION_STATUS.md)
 > and [continuity issue #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
@@ -78,8 +81,16 @@ PR #208 integrated a separate protected, sealed owner passkey/TLS custody
 path in code. Its synthetic checks do not enroll the owner or make the
 tablet's exact HTTPS origin reachable; those remain deployment gates.
 The protected `port-check` choice in the manual workflow tests only the fixed
-host-loopback `127.0.0.1:8443` by a short bind/close. It has not run on the
-droplet; a FREE receipt would not reserve a port or establish tablet access.
+host-loopback `127.0.0.1:8443` by a short bind/close; a FREE receipt does not
+reserve a port or establish tablet access.
+The later protected [run 41310958281](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41310958281)
+on `main=3ec1096fb5dce8a01af5c8060f0be056bf44fb9d` reported
+`FREE reserved=no` at that instant. The owner chose a private tablet forward
+to the local panel on 8443; this candidate admits only the exact
+`https://localhost:8443` RP origin for that route (ADR0088). The actual
+forward, trusted tablet TLS certificate and physical passkey remain untested;
+the single stored credential also needs cross-device proof for Android/iOS.
+Site decommission is deferred until the local replacement is validated.
 The private Site v10 has a disabled D1 bridge and fails closed while host
 credentials/poller are absent. PRs #181/#196 integrated protected ciphertext
 custody and global daemon inventory checks, but no Site host phase ran.

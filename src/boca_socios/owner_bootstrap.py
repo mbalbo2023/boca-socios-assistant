@@ -22,7 +22,6 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes, serialization
@@ -31,6 +30,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from boca_socios.beta_config_preflight import _tls_handshake
+from boca_socios.owner_origin import owner_rp_host
 
 UID = 10001
 OWNER_DIR = Path("/run/owner")
@@ -97,25 +97,10 @@ def _coordinates(origin: str, subject: str) -> str:
     if not isinstance(origin, str) or not isinstance(subject, str):
         raise BootstrapError("invalid_coordinates")
     try:
-        parsed = urlsplit(origin)
-        host, port = parsed.hostname, parsed.port
+        host = owner_rp_host(origin)
     except ValueError:
         raise BootstrapError("invalid_coordinates") from None
-    if (
-        host is None
-        or re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", host) is None
-        or len(host) > 253
-        or any(
-            len(label) > 63 or label.startswith("-") or label.endswith("-")
-            for label in host.split(".")
-        )
-        or parsed.scheme != "https"
-        or parsed.netloc != (host if port is None else f"{host}:{port}")
-        or port == 443
-        or (port is not None and not 1024 <= port <= 65535)
-        or origin != f"https://{parsed.netloc}"
-        or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", subject) is None
-    ):
+    if re.fullmatch(r"[A-Za-z0-9_-]{1,128}", subject) is None:
         raise BootstrapError("invalid_coordinates")
     return host
 
