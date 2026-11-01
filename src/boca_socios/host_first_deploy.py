@@ -13,6 +13,7 @@ import os
 import platform
 import pwd
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -273,6 +274,116 @@ def _socket_state(path: Path, *, expected_uid: int = 10001) -> str:
     )
 
 
+def _binary_presence(command: str) -> str:
+    """Search executable metadata only; absence is not an uninstall diagnosis."""
+    search = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    try:
+        home = getattr(pwd.getpwuid(10001), "pw_dir", "")
+        if isinstance(home, str) and home.startswith("/") and ":" not in home:
+            search = f"{home}/bin:{search}"
+        return "available" if shutil.which(command, path=search) else "not_found_in_search_path"
+    except (OSError, KeyError):
+        return "unavailable"
+
+
+def _parse_service_properties(raw: str) -> tuple[str, str, str, str]:
+    """Only allowlisted states leave the host, never command output or paths."""
+    unknown = ("unavailable", "unavailable", "unavailable", "unavailable")
+    if len(raw) > 1024:
+        return unknown
+    allowed = {
+        "LoadState": {"loaded", "not-found", "masked", "error", "bad-setting", "stub", "merged"},
+        "ActiveState": {
+            "active",
+            "inactive",
+            "failed",
+            "activating",
+            "deactivating",
+            "reloading",
+            "maintenance",
+            "refreshing",
+        },
+        "SubState": {
+            "dead",
+            "running",
+            "exited",
+            "failed",
+            "start",
+            "start-pre",
+            "start-post",
+            "stop",
+            "stop-sigterm",
+            "stop-sigkill",
+            "stop-post",
+            "auto-restart",
+            "reload",
+        },
+        "Result": {
+            "success",
+            "exit-code",
+            "signal",
+            "core-dump",
+            "timeout",
+            "resources",
+            "start-limit-hit",
+            "watchdog",
+            "protocol",
+            "oom-kill",
+            "exec-condition",
+        },
+    }
+    fields: dict[str, str] = {}
+    for line in raw.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or key in fields or key not in allowed or value not in allowed[key]:
+            return unknown
+        fields[key] = value
+    if fields.keys() != allowed.keys():
+        return unknown
+    return fields["LoadState"], fields["ActiveState"], fields["SubState"], fields["Result"]
+
+
+def _rootless_service_metadata(private_runtime_ready: bool) -> str:
+    _require_dedicated_identity()
+    binaries = [
+        _binary_presence(command)
+        for command in ("docker", "dockerd", "dockerd-rootless.sh", "dockerd-rootless-setuptool.sh")
+    ]
+    states = ("not_checked", "not_checked", "not_checked", "not_checked")
+    if private_runtime_ready:
+        try:
+            result = subprocess.run(  # noqa: S603 - fixed read-only user-unit command, no shell
+                (
+                    "/usr/bin/systemctl",
+                    "--user",
+                    "--no-pager",
+                    "show",
+                    "docker.service",
+                    "--property=LoadState,ActiveState,SubState,Result",
+                ),
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                env={
+                    "PATH": "/usr/bin:/bin",
+                    "LC_ALL": "C",
+                    "XDG_RUNTIME_DIR": "/run/user/10001",
+                    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/10001/bus",
+                },
+            )
+            states = _parse_service_properties(result.stdout)
+        except (OSError, subprocess.SubprocessError, UnicodeError):
+            states = ("unavailable", "unavailable", "unavailable", "unavailable")
+    return (
+        f"BOCA_ROOTLESS_SERVICE load={states[0]} active={states[1]}"
+        f" sub={states[2]} result={states[3]}"
+        f" docker={binaries[0]} dockerd={binaries[1]}"
+        f" wrapper={binaries[2]} setup={binaries[3]}"
+    )
+
+
 def inspect_prerequisites() -> None:
     """Observe only Boca's private runtime; metadata is not a Docker preflight."""
     uid = _require_dedicated_identity()
@@ -306,6 +417,7 @@ def inspect_prerequisites() -> None:
         f" private={private} bus={bus} rootless={rootless}"
         f" rootful={rootful} controllers={controllers}"
     )
+    print(_rootless_service_metadata(runtime_safe and private == bus == "owned"))
     if state != "METADATA_CANDIDATE":
         raise PreflightError("prerequisite metadata unproven; no Docker operation attempted")
 
