@@ -182,6 +182,19 @@ def test_sealed_input_is_canonical_and_domain_separated() -> None:
             host._telegram_envelope(invalid)
 
 
+def test_only_sealed_install_keeps_container_stdin_open() -> None:
+    install = host._telegram_container(IMAGE, "telegram_bootstrap", "install", writable=True)
+    prepare = host._telegram_container(IMAGE, "telegram_bootstrap", "prepare", writable=True)
+    verify = host._telegram_container(IMAGE, "telegram_bootstrap", "verify", writable=False)
+    schema = host._telegram_container(IMAGE, "telegram_storage_gate", "migrate", writable=True)
+    assert install[:5] == ("docker", "run", "--rm", "-i", "--pull")
+    assert all("-i" not in command for command in (prepare, verify, schema))
+    assert "--network" in install and install[install.index("--network") + 1] == "none"
+    assert (
+        f"type=volume,source={host.TELEGRAM_VOLUME},target=/run/telegram,volume-nocopy" in install
+    )
+
+
 def test_phase_rejects_telegram_envelope_on_other_operations_before_host_access(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

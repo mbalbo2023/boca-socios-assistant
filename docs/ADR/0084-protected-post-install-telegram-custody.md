@@ -36,8 +36,9 @@ mounts data/key/owner, ningún otro contenedor o volumen, red BETA exacta sin
 peers y hash del archivo Compose ya instalado. Mide capacidad del filesystem
 dedicado. Un contenedor nuevo de una sola ejecución, sin red, con digest local
 fijado, límite 0.25 CPU/64 MiB/16 PID, cap drop y rootfs read-only comprueba
-el SQLite existente; `telegram-migrate` permite sólo ledger completo y
-checksums 0001–0006, aplica aditivamente 0007 y vuelve a verificar 0001–0007.
+el SQLite existente; `telegram-migrate` permite el ledger completo y
+checksums 0001–0006 para aplicar aditivamente 0007, o verifica 0001–0007
+ya presente sin reescribirlo. Después exige 0001–0007 íntegros.
 No crea una DB, no instala sobre una DB desconocida ni reanuda un controller.
 
 `telegram-prepare` crea sólo el volumen privado nuevo y rotulado
@@ -69,6 +70,8 @@ Las pruebas sintéticas cubren configuración/unit inalterados, daemon ya
 activo o inventario desconocido, fuente/digest, contenedor parado, volumen,
 red, checksum/schema/replay y orden del workflow con stop posterior. El primer
 commit de tests falló por ausencia de `start_existing`; SHA candidato, gates
-hosted y revisión se consignan en el PR de #201. No constituyen prueba de
+hosted y revisión se consignan en el PR de #201. Un smoke del PR usa un
+contenedor y volumen desechables sin red con credenciales ficticias para
+ejercitar prepare/cifrado/install por stdin abierto/verify. No constituyen prueba de
 estado del droplet, token, destino ni entrega. El escritor central reconciliará
 README, plan y checkpoint tras integrar el resultado conforme a la regla 84.

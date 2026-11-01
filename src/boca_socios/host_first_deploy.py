@@ -2062,6 +2062,7 @@ def _telegram_container(image: str, module: str, action: str, *, writable: bool)
         "docker",
         "run",
         "--rm",
+        *(("-i",) if secret and action == "install" else ()),
         "--pull",
         "never",
         "--user",

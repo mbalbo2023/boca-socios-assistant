@@ -129,6 +129,39 @@ jobs:
             "$BOCA_IMAGE" python -m boca_socios.site_bootstrap verify)" = \
             "BOCA_SITE_BOOTSTRAP state=VERIFIED fingerprint=$fingerprint"
           docker volume rm boca-socios_boca_owner
+      - name: Exercise sealed Telegram custody in a disposable offline Boca volume
+        run: |
+          set -euo pipefail
+          docker volume create --driver local \
+            --label com.docker.compose.project=boca-socios \
+            --label com.docker.compose.volume=boca_telegram boca-socios_boca_telegram
+          docker run --rm --pull never --user 0:0 --network none --read-only \
+            --cap-drop ALL --cap-add CHOWN --security-opt no-new-privileges \
+            --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_telegram,target=/run/telegram,volume-nocopy \
+            "$BOCA_IMAGE" python -c 'import os; os.chmod("/run/telegram", 0o700); os.chown("/run/telegram", 10001, 10001)'
+          receipt="$(docker run --rm --pull never --user 10001:10001 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_telegram,target=/run/telegram,volume-nocopy \
+            "$BOCA_IMAGE" python -m boca_socios.telegram_bootstrap prepare)"
+          [[ "$receipt" =~ ^BOCA_TELEGRAM_BOOTSTRAP\ state=PREPARED\ public_key=([A-Za-z0-9_-]{43})\ fingerprint=([0-9a-f]{64})$ ]]
+          public="${BASH_REMATCH[1]}"
+          fingerprint="${BASH_REMATCH[2]}"
+          sealed="$(docker run --rm --pull never --user 10001:10001 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
+            "$BOCA_IMAGE" python -c 'import base64,sys; from boca_socios.telegram_bootstrap import RecipientReceipt,seal_for_recipient; value=seal_for_recipient(RecipientReceipt("PREPARED",sys.argv[1],sys.argv[2]),"12345:synthetic-bot-token-for-ci","-123456789"); print(base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii"))' "$public" "$fingerprint")"
+          test "$(PYTHONPATH=src python3 -c 'import sys; from boca_socios.host_first_deploy import _telegram_envelope; print(_telegram_envelope(sys.argv[1]))' "$sealed" | \
+            docker run --rm -i --pull never --user 10001:10001 --network none --read-only \
+              --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
+              --mount type=volume,source=boca-socios_boca_telegram,target=/run/telegram,volume-nocopy \
+              "$BOCA_IMAGE" python -m boca_socios.telegram_bootstrap install)" = \
+            "BOCA_TELEGRAM_BOOTSTRAP state=CONFIGURED fingerprint=$fingerprint"
+          test "$(docker run --rm --pull never --user 10001:10001 --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
+            --mount type=volume,source=boca-socios_boca_telegram,target=/run/telegram,volume-nocopy,readonly \
+            "$BOCA_IMAGE" python -m boca_socios.telegram_bootstrap verify)" = \
+            "BOCA_TELEGRAM_BOOTSTRAP state=VERIFIED fingerprint=$fingerprint"
+          docker volume rm boca-socios_boca_telegram
       - name: Provision separate owner-only key volume on disposable runner
         run: |
           docker volume create --driver local \
