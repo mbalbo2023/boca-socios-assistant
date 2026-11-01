@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from boca_socios.integration.bridge_client import SITE_ORIGIN
+
 
 @dataclass(frozen=True, slots=True)
 class Settings:
@@ -24,6 +26,11 @@ class Settings:
     tls_key_file: Path | None = None
     bind_host: str = "127.0.0.1"
     bind_port: int = 8443
+    site_bridge_mode: str = "off"
+    site_origin: str = ""
+    site_token_file: Path | None = None
+    site_hmac_key_file: Path | None = None
+    source_sha: str = ""
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -43,6 +50,11 @@ class Settings:
             tls_key_file=cls._optional_path("BOCA_TLS_KEY_FILE"),
             bind_host=os.environ.get("BOCA_BIND_HOST", "127.0.0.1"),
             bind_port=int(os.environ.get("BOCA_BIND_PORT", "8443")),
+            site_bridge_mode=os.environ.get("BOCA_SITE_BRIDGE_MODE", "off"),
+            site_origin=os.environ.get("BOCA_SITE_ORIGIN", ""),
+            site_token_file=cls._optional_path("BOCA_SITE_TOKEN_FILE"),
+            site_hmac_key_file=cls._optional_path("BOCA_SITE_HMAC_KEY_FILE"),
+            source_sha=os.environ.get("BOCA_SOURCE_SHA", ""),
         )
 
     @staticmethod
@@ -88,3 +100,19 @@ class Settings:
         )
         if any(path is None or not path.is_absolute() for path in paths):
             raise ValueError("private BETA credential and TLS paths are required")
+
+    def validate_bridge(self) -> bool:
+        """Return opt-in state; malformed partial activation fails closed."""
+        if self.site_bridge_mode == "off":
+            return False
+        if (
+            self.site_bridge_mode != "poll"
+            or self.site_origin != SITE_ORIGIN
+            or self.site_token_file is None
+            or not self.site_token_file.is_absolute()
+            or self.site_hmac_key_file is None
+            or not self.site_hmac_key_file.is_absolute()
+            or re.fullmatch(r"[0-9a-f]{40}", self.source_sha) is None
+        ):
+            raise ValueError("private Site bridge configuration is incomplete")
+        return True

@@ -20,6 +20,7 @@ from wsgiref.simple_server import WSGIRequestHandler, WSGIServer
 
 from boca_socios.browser.contracts import SimulationOutcome
 from boca_socios.config import Settings
+from boca_socios.integration.bridge_client import SiteBridgeTransport, SiteBridgeWorker
 from boca_socios.integration.operational import (
     LocalBetaRuntime,
     LocalRuntimeUnavailable,
@@ -123,9 +124,15 @@ class _QuietTLSHandler(WSGIRequestHandler):
 class ServedBeta:
     """One TLS WSGI server and one local command host, closed together."""
 
-    def __init__(self, server: _TLSWSGIServer, runtime: LocalBetaRuntime) -> None:
+    def __init__(
+        self,
+        server: _TLSWSGIServer,
+        runtime: LocalBetaRuntime,
+        bridge: SiteBridgeWorker | None = None,
+    ) -> None:
         self.server = server
         self.runtime = runtime
+        self.bridge = bridge
         self._closed = False
 
     def serve_until(self, stopping: Event) -> None:
@@ -140,12 +147,25 @@ class ServedBeta:
             return
         self._closed = True
         self.server.server_close()
-        self.runtime.close()
+        try:
+            if self.bridge is not None:
+                self.bridge.close()
+        finally:
+            self.runtime.close()
 
 
 def build_beta_server(settings: Settings) -> ServedBeta:
     """Fail closed before opening a listener when identity/TLS is missing."""
     settings.validate_beta()
+    bridge_enabled = settings.validate_bridge()
+    transport = None
+    if bridge_enabled:
+        assert settings.site_token_file is not None and settings.site_hmac_key_file is not None
+        transport = SiteBridgeTransport(
+            origin=settings.site_origin,
+            token_file=settings.site_token_file,
+            hmac_key_file=settings.site_hmac_key_file,
+        )
     credential_id = _read_config_file(settings.passkey_credential_id_file, limit=1024)
     public_key = _read_config_file(settings.passkey_public_key_der_file, limit=4096)
     _read_config_file(settings.tls_key_file, limit=8192, private=True)
@@ -169,7 +189,16 @@ def build_beta_server(settings: Settings) -> ServedBeta:
         key_file=settings.master_key_file,
         browser=_LocalSyntheticBrowser(),
     )
+    bridge: SiteBridgeWorker | None = None
+    server: _TLSWSGIServer | None = None
     try:
+        if transport is not None:
+            bridge = SiteBridgeWorker(
+                transport=transport,
+                commands=runtime.commands,
+                database_path=settings.db_path,
+                source_sha=settings.source_sha,
+            )
         panel = PrivatePanelApplication(
             origin=settings.panel_origin,
             database_path=settings.db_path,
@@ -188,6 +217,7 @@ def build_beta_server(settings: Settings) -> ServedBeta:
                     and environ.get("HTTP_HOST") == origin.netloc
                     and not environ.get("QUERY_STRING")
                     and runtime.ready
+                    and (bridge is None or not bridge.failed)
                 )
                 if healthy:
                     try:
@@ -208,9 +238,17 @@ def build_beta_server(settings: Settings) -> ServedBeta:
 
         server = _TLSWSGIServer((settings.bind_host, settings.bind_port), _QuietTLSHandler, context)
         server.set_app(app)
-        return ServedBeta(server, runtime)
+        if bridge is not None:
+            bridge.start()
+        return ServedBeta(server, runtime, bridge)
     except Exception:
-        runtime.close()
+        if server is not None:
+            server.server_close()
+        try:
+            if bridge is not None:
+                bridge.close()
+        finally:
+            runtime.close()
         raise
 
 
