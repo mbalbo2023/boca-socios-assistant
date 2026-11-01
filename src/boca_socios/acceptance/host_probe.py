@@ -343,13 +343,15 @@ def _first_visit(material: _Material, timings: list[float]) -> tuple[str, str, s
             break
         _require(time.monotonic() < deadline)
         time.sleep(0.02)
-    notices = _request(material, "/avisos", timings, cookie=cookie)
-    _require(
-        notices[0] == 200
-        and b"Aviso local" in notices[2]
-        and fields["email"].encode() not in notices[2]
-        and b"Telegram no configurado" in notices[2]
-    )
+    notice_deadline = time.monotonic() + 3
+    while True:
+        notices = _request(material, "/avisos", timings, cookie=cookie)
+        _require(notices[0] == 200 and fields["email"].encode() not in notices[2])
+        if b"Aviso local" in notices[2]:
+            _require(b"Telegram no configurado" in notices[2])
+            break
+        _require(time.monotonic() < notice_deadline)
+        time.sleep(0.02)
     state = _request(material, "/estado", timings, cookie=cookie)
     _require(state[0] == 200 and b"no observada" in state[2])
     stop = _request(
