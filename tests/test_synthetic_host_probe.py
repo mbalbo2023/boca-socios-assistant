@@ -3,7 +3,8 @@
 import socket
 from pathlib import Path
 
-from boca_socios.acceptance.host_probe import _run_probe, main
+from boca_socios.acceptance import host_probe
+from boca_socios.acceptance.host_probe import ProbeReceipt, _run_probe, main
 
 
 def test_verified_tls_journey_is_disposable_and_uses_only_loopback(
@@ -32,6 +33,7 @@ def test_verified_tls_journey_is_disposable_and_uses_only_loopback(
     assert receipt.median_ms > 0 and receipt.p95_ms > 0
     assert receipt.intents == receipt.members == receipt.notices == 1
     assert receipt.cpu_ms >= 0 and receipt.process_peak_rss_kib > 0
+    assert 0 < receipt.scratch_bytes <= 8 * 1024 * 1024
     assert destinations and {host for host, _port in destinations} == {"127.0.0.1"}
     assert all(
         file.read_bytes() == b"sentinel-must-remain-untouched"
@@ -54,3 +56,26 @@ def test_cli_refuses_wrong_identity_and_engine_before_creating_material(
     monkeypatch.setenv("BOCA_ENGINE_MODE", "on")
     assert main() == 1
     assert "state=NO_GO" in capsys.readouterr().out
+
+
+def test_cli_pass_receipt_uses_fixed_tmp(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(host_probe.os, "geteuid", lambda: 10001)
+    for key, value in {
+        "BOCA_ENVIRONMENT": "staging",
+        "BOCA_RUNTIME_MODE": "simulation",
+        "BOCA_ENGINE_MODE": "off",
+        "BOCA_DB_PATH": "/data/boca.sqlite3",
+    }.items():
+        monkeypatch.setenv(key, value)
+    roots: list[Path] = []
+
+    def fake_probe(root: Path) -> ProbeReceipt:
+        roots.append(root)
+        return ProbeReceipt(21, 1.0, 2.0, 100.0, 30.0, 15000, 12345, 1, 1, 1)
+
+    monkeypatch.setattr(host_probe, "_run_probe", fake_probe)
+    assert main() == 0
+    line = capsys.readouterr().out
+    assert roots == [Path("/tmp")]  # noqa: S108 - verifies fixed container tmpfs
+    assert "state=PASS scope=container_loopback" in line
+    assert "members=1 intents=1 notices=1" in line
