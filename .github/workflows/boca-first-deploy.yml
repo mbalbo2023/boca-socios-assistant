@@ -8,7 +8,7 @@ on:
         description: Boca host operation; BETA install requires separate private owner/TLS and protected release gates
         required: true
         type: choice
-        options: [inspect-prerequisites, prepare-rootless, preflight, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, beta-install]
+        options: [inspect-prerequisites, prepare-rootless, preflight, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, beta-install, beta-acceptance]
       source_sha:
         description: Exact current main commit approved for the operation
         required: true
@@ -64,7 +64,7 @@ jobs:
           uv sync --frozen
       - name: Check dispatch and first-install boundaries offline
         run: |
-          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_beta_install.py tests/test_host_site_bootstrap.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_key_custody.py tests/test_release_run.py
+          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_host_first_deploy.py tests/test_host_beta_install.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_key_custody.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
       - name: Validate optional served BETA Compose model without host access
         env:
@@ -250,6 +250,30 @@ jobs:
             --cacert "$RUNNER_TEMP/boca-owner-fixture/tls.crt" \
             https://beta.boca.example.test:8443/healthz > "$RUNNER_TEMP/boca-beta-health.receipt"
           test "$(cat "$RUNNER_TEMP/boca-beta-health.receipt")" = BOCA_BETA_READY
+      - name: Run synthetic TLS acceptance inside capped disposable controller
+        run: |
+          container="$(docker compose -p boca-socios -f compose.beta.yaml ps -q controller)"
+          [[ "$container" =~ ^[0-9a-f]{64}$ ]]
+          docker exec --user 10001:10001 "$container" \
+            python -m boca_socios.acceptance.host_probe \
+            > "$RUNNER_TEMP/boca-synthetic-probe.receipt" 2>/dev/null
+          PYTHONPATH=src python3 - "$RUNNER_TEMP/boca-synthetic-probe.receipt" <<'PY'
+          import sys
+          from pathlib import Path
+          from boca_socios.host_first_deploy import _validate_beta_acceptance_receipt
+
+          try:
+              path = Path(sys.argv[1])
+              if path.stat().st_size > 385:
+                  raise ValueError("synthetic receipt exceeds bounded output")
+              raw = path.read_text(encoding="ascii")
+              if raw.count("\n") != 1 or not raw.endswith("\n"):
+                  raise ValueError("unexpected synthetic receipt lines")
+              print(_validate_beta_acceptance_receipt(raw[:-1]))
+          except (OSError, UnicodeError, ValueError):
+              print("BOCA_NO_GO: disposable synthetic receipt invalid", file=sys.stderr)
+              raise SystemExit(1) from None
+          PY
       - name: Remove only synthetic Boca resources from disposable runner
         if: always()
         run: |
@@ -329,7 +353,7 @@ jobs:
               test -n "$BOCA_RELEASE_RUN_ID"
               test -n "$BOCA_SITE_ENVELOPE"
               ;;
-            beta-install)
+            beta-install|beta-acceptance)
               test "$BOCA_DEPLOY_ENV_READY" = ready
               test "$BOCA_BETA_ENV_READY" = ready
               test -n "$BOCA_IMAGE_REF"
@@ -352,7 +376,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref.json"
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref.json" "$BOCA_SOURCE_SHA"
       - name: Validate immutable inputs and successful matching release
-        if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic' || inputs.operation == 'site-prepare' || inputs.operation == 'site-install' || inputs.operation == 'site-verify' || inputs.operation == 'beta-install'
+        if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic' || inputs.operation == 'site-prepare' || inputs.operation == 'site-install' || inputs.operation == 'site-verify' || inputs.operation == 'beta-install' || inputs.operation == 'beta-acceptance'
         env:
           PYTHONPATH: src
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -369,7 +393,7 @@ jobs:
       - name: Hash reviewed Boca Compose file
         run: sha256sum compose.yaml | cut -d' ' -f1 > "$RUNNER_TEMP/boca-compose.sha"
       - name: Hash reviewed served BETA Compose file
-        if: inputs.operation == 'beta-install'
+        if: inputs.operation == 'beta-install' || inputs.operation == 'beta-acceptance'
         run: sha256sum compose.beta.yaml | cut -d' ' -f1 > "$RUNNER_TEMP/boca-beta-compose.sha"
       - name: Validate reviewed runner Compose model
         if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic'
@@ -381,7 +405,7 @@ jobs:
           docker compose -p boca-socios -f compose.yaml config --format json > "$RUNNER_TEMP/boca-runner-model.json"
           python scripts/check_deploy_contract.py "$RUNNER_TEMP/boca-runner-model.json" "$BOCA_IMAGE_REF"
       - name: Validate reviewed served BETA runner Compose model
-        if: inputs.operation == 'beta-install'
+        if: inputs.operation == 'beta-install' || inputs.operation == 'beta-acceptance'
         env:
           BOCA_IMAGE: ${{ inputs.image_ref }}
           BOCA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
@@ -641,6 +665,71 @@ jobs:
           else
             printf 'Boca BETA install failed; original failure remains NO_GO. Controller stop unverified; Boca app/key/owner may be present. Inventory before any retry.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
+      - name: Recheck current main before BETA acceptance
+        if: inputs.operation == 'beta-acceptance'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-beta-acceptance.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-beta-acceptance.json" "$BOCA_SOURCE_SHA"
+      - name: Mark protected BETA acceptance host attempt
+        id: boca_beta_acceptance_attempt
+        if: inputs.operation == 'beta-acceptance'
+        run: printf 'started=true\n' >> "$GITHUB_OUTPUT"
+      - name: Invoke bounded synthetic BETA acceptance
+        if: inputs.operation == 'beta-acceptance'
+        env:
+          BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
+          BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
+        run: |
+          set +e
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - beta-acceptance "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-beta-acceptance.receipt" 2>/dev/null
+          acceptance_rc=$?
+          set -e
+          receipt=''
+          if [[ "$acceptance_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-beta-acceptance.receipt")"; fi
+          receipt_pattern='^BOCA_BETA_ACCEPTANCE state=PASS source_sha=([0-9a-f]{40}) image=(ghcr[.]io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}) scope=container_loopback requests=([0-9]+) median_ms=([0-9]+[.][0-9]{2}) p95_ms=([0-9]+[.][0-9]{2}) elapsed_ms=([0-9]+[.][0-9]{2}) cpu_ms=([0-9]+[.][0-9]{2}) process_peak_rss_kib=([0-9]+) scratch_bytes=([0-9]+) members=1 intents=1 notices=1 tls=verified engine=off site=not_contacted telegram=not_sent stage_free_mib=([0-9]+) docker_free_mib=([0-9]+) stage_inodes=([0-9]+) docker_inodes=([0-9]+)$'
+          if [[ "$acceptance_rc" -ne 0 || ${#receipt} -gt 600 || ! "$receipt" =~ $receipt_pattern ]]; then
+            printf 'Boca BETA synthetic acceptance: NO_GO; host output withheld. Boca-only stop follows if its protected gate remains valid.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [[ "${BASH_REMATCH[1]}" != "$BOCA_SOURCE_SHA" || "${BASH_REMATCH[2]}" != "$BOCA_IMAGE_REF" ]]; then
+            printf 'Boca BETA synthetic acceptance: NO_GO; source or digest receipt mismatch.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf 'Boca BETA synthetic container-loopback acceptance: `%s`. This does not verify owner tablet access, Site or Telegram.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Stop positively identified Boca services after BETA acceptance
+        if: always() && inputs.operation == 'beta-acceptance' && steps.boca_beta_acceptance_attempt.outputs.started == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          set +e
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-beta-stop.json" 2>/dev/null
+          main_rc=$?
+          if [[ "$main_rc" -eq 0 ]]; then python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-beta-stop.json" "$BOCA_SOURCE_SHA" >/dev/null 2>&1; main_rc=$?; fi
+          if [[ "$main_rc" -ne 0 ]]; then
+            printf 'Boca BETA acceptance: NO_GO; main changed or is unavailable after the test. Boca-only stop remains required under the positively marked host attempt.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - stop-test "$BOCA_SOURCE_SHA")"
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py > "$RUNNER_TEMP/boca-beta-stop.receipt" 2>/dev/null
+          stop_rc=$?
+          set -e
+          receipt=''
+          if [[ "$stop_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-beta-stop.receipt")"; fi
+          stop_pattern='^BOCA_STOP_TEST state=STOPPED source_sha=([0-9a-f]{40}) containers=1 data=preserved$'
+          if [[ "$stop_rc" -ne 0 || ${#receipt} -gt 180 || ! "$receipt" =~ $stop_pattern ]]; then
+            printf 'Boca BETA stop: NO_GO; positive Boca stop receipt absent. Controller state unverified; original acceptance failure, if any, remains.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [[ "${BASH_REMATCH[1]}" != "$BOCA_SOURCE_SHA" ]]; then
+            printf 'Boca BETA stop: NO_GO; source receipt mismatch.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf 'Boca BETA tests ended: `%s`; data/key/owner retained.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$main_rc" -ne 0 ]]; then exit 1; fi
       - name: Validate host Compose model for read-only diagnostic
         if: inputs.operation == 'diagnostic'
         env:
