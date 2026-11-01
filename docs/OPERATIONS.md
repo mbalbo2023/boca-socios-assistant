@@ -134,8 +134,9 @@ start a service or enable the Site bridge. See ADR0074.
 The `boca-image-release` environment currently lacks
 `BOCA_RELEASE_ENV_READY`, so no successful protected image release/digest is
 available. No Site custody phase was dispatched. Its real recipient key and
-the Site bypass/HMAC material have not been installed on the host; the rootless
-daemon is stopped. A successful runner smoke cannot satisfy these host gates.
+the Site bypass/HMAC material have not been installed on the host. The rootless
+daemon was last observed STOPPED in #156; its current state is UNVERIFIED.
+A successful runner smoke cannot satisfy these host gates.
 
 PR #196 integrated the Site custody global-inventory RCA in
 `2768d23dd2e9e58563a13aa80d8b76885448d020`. Candidate
