@@ -59,13 +59,26 @@ def check_policy(root: Path) -> list[str]:
                 "BOCA_DEPLOY_KNOWN_HOSTS",
                 "github.ref == 'refs/heads/main'",
                 "github.actor == 'mbalbo2023'",
-                "boca-first-deploy\n  cancel-in-progress: false",
                 "python3 - preflight",
                 "python3 - observe",
                 "python3 - apply",
             ):
                 if required not in data:
                     failures.append(f"first-deploy workflow missing gate: {required}")
+            # PRs have separate pending slots; every manual operation shares
+            # the same fixed host mutex, independent of inputs/ref/run/SHA.
+            concurrency = (
+                "concurrency:\n"
+                "  group: ${{ github.event_name == 'pull_request' && "
+                "format('boca-first-deploy-pr-{0}', github.event.pull_request.number) "
+                "|| 'boca-first-deploy' }}\n"
+                "  cancel-in-progress: false\n"
+            )
+            pattern = r"^" + re.escape(concurrency) + r"(?=\n|$)"
+            if re.search(pattern, data, re.MULTILINE) is None:
+                failures.append(
+                    "first-deploy workflow missing gate: isolated PR/manual concurrency"
+                )
         else:
             for forbidden in ("ssh ", "scp "):
                 if forbidden in data:

@@ -1,7 +1,7 @@
 # ADR 0051: dispatcher sintético acotado sobre el outbox durable
 
-- Estado: aceptada para ensayos offline; transporte real pendiente
-- Scope: issue #133
+- Estado: propuesta para integración revisada; ensayos offline solamente
+- Scope: issue #133, PR #134
 - Relacionada: ADR 0016 (outbox durable offline)
 
 ## Contexto
@@ -50,3 +50,14 @@ Antes de cualquier transporte real se requiere otra decisión e implementación
 para registrar/reconciliar la ambigüedad durable antes de reintentar, incluyendo
 la semántica de idempotencia del proveedor. Este dispatcher no habilita por sí
 mismo Telegram, notificaciones reales, readiness beta ni evidencia Boca.
+
+## Reconciliación del candidato
+
+El candidato se reconstruye sobre `main`
+`4922e45b5e2e38242263b6ba10969a8190aa939a`, conservando la historia de #134
+y sin cambiar implementación ni pruebas del dispatcher. Los once casos de
+integración local se verificaron nuevamente con el preflight SQLite de #141;
+las validaciones completas de Actions se registran sobre el SHA final en el PR.
+Este documento describe un candidato hasta su merge, no una capacidad del host.
+La integración no conecta el consumidor al panel ni al motor: los avisos locales
+requieren un contrato de lectura separado y la entrega externa sigue diferida.
