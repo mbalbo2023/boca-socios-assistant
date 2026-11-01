@@ -287,6 +287,33 @@ def _dormant() -> int:
 
 
 def main(argv: tuple[str, ...] = ()) -> int:
+    if argv in {("check-beta-owner",), ("check-beta-config",)}:
+        from boca_socios import beta_config_preflight
+
+        full = argv == ("check-beta-config",)
+        label = "beta_config" if full else "beta_owner"
+        try:
+            settings = Settings.from_environment()
+            ca_file = Path(os.environ.get("BOCA_HEALTH_CA_FILE", ""))
+            if full:
+                beta_config_preflight.check_beta_config(
+                    settings, ca_file=ca_file, owner_root=beta_config_preflight.OWNER_ROOT
+                )
+            else:
+                beta_config_preflight.check_beta_owner(
+                    settings, ca_file=ca_file, owner_root=beta_config_preflight.OWNER_ROOT
+                )
+        except Exception:
+            # Public workflow receipts never include paths or credential content.
+            print(json.dumps({"event": f"{label}_unavailable"}, separators=(",", ":")))
+            return 1
+        print(
+            json.dumps(
+                {"event": f"{label}_ready", "mode": "simulation", "engine": "off"},
+                separators=(",", ":"),
+            )
+        )
+        return 0
     if argv == ("init-beta",):
         os.umask(0o077)
         initialize_beta(Settings.from_environment())
