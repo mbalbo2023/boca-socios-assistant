@@ -7,15 +7,18 @@ overlapping writers and deployment leases, status gates being skipped,
 SQLite writer contention, excessive disk/memory pressure and the danger
 of mistaking a green CI unit test for a verified live deployment.
 The reviewed manual Boca Actions workflow is the sole remote operation path.
-It may run autonomously under the owner's standing direction after its
-operation-specific gates are satisfied. Read-only inspection has executed;
-this does not establish that installation prerequisites or runtime are ready.
+Read-only inspection has executed; this does not establish that installation
+prerequisites or runtime are ready. Infrastructure and business-logic choices
+require concrete options, a recommendation and owner approval before changes.
+Earlier blanket autonomy statements do not authorize a new operation. The
+current scoped approvals and verified state are recorded in issue #45.
 
 ## Branch protection contract
 
 - Default branch: main; no direct pushes, branch deletion or force-pushes.
 - Require a PR and a recorded agent technical review; no human approving
-  review or code-owner approval is required. Resolve review conversations.
+  review or code-owner approval is required by the ruleset. This does not
+  replace owner approval of infrastructure/business scope. Resolve conversations.
 - Required contexts: CI / quality-and-tests and CI / image-build,
   after the first workflow run.
 - No merge of draft PRs, skipped tests or unknown candidate SHAs.
@@ -45,7 +48,8 @@ main is protected before verifying GitHub's **actual ruleset state**. See
 6. Releases are build-once with immutable image digest and verified source
    provenance. An installation uses the sole manual GitHub Actions workflow,
    exact SHA/digest/service inputs and a Boca-only resource preflight. The
-   owner has delegated this gated operation without another human approval.
+   owner must have approved that concrete operation scope. Approval of code
+   tests or a read-only diagnosis does not authorize release or installation.
 7. On any unexpected condition, stop/fail closed, record NO_GO and fix forward.
 8. If a host operation fails, inventory Boca-only disposable artifacts and
    disk/inodes before and after a narrowly scoped Actions cleanup. Preserve
@@ -73,6 +77,24 @@ panel's presentation only; it is not an authenticated operating interface or
 evidence of a reservation. Real enrollment and status serving retain their
 separate security gates.
 
+## Rule 84 — factual documentation in the delivery contract
+
+[ADR 0055](ADR/0055-factual-documentation-and-scoped-approval.md) records the owner instruction and the historical
+autonomy clauses it supersedes.
+
+Every PR updates the documentation affected by its final behavior, evidence,
+authorization and limitations. Distinguish configuration from observed state,
+main from an unmerged candidate, synthetic tests from host/site evidence, and
+local results from provider confirmation. Exact SHA/run references identify
+what was actually checked; a successful old run is never current evidence.
+
+Before task closure, the assigned writer reconciles the relevant README,
+operations guide, roadmap, integration status and continuity checkpoint. State
+what remains pending and what decision is required. Label historical snapshots
+explicitly instead of mixing their instructions with the current contract.
+Do not close while a required update is unrecorded. This rule does not add an
+automatic documentation updater, a periodic schedule or approval authority.
+
 ## Acceptance criteria per PR
 
 Explicit requirement, tests, redacted evidence, doc/ADR updates, security
@@ -89,3 +111,4 @@ from its single full-suite run; a listed test that did not execute and pass,
 or a removed accepted lesson/test, fails the gate. A changed finding needs
 another reviewed PR with new evidence. No automated finding edits code,
 merges a PR or dispatches deployment. See ADR 0044.
+
