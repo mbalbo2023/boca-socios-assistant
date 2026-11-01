@@ -1,9 +1,10 @@
 # ADR 0082: Site custody requires an empty dedicated rootless daemon
 
-**Status:** review candidate for issue #195. On main
+**Status:** draft PR #196 for issue #195. On main
 `451e40bf08e271f7fdf9dbb975ec5a1ed45bc298`, local `uv run pytest -q`
 passed 852 tests and 29 subtests; Ruff, mypy, repository policy and diff
-checks passed. This is a source-only RCA of
+checks passed; the RCA ledger accepted 16 lessons and 41 executed regression
+selectors in the local full-suite report. This is a source-only RCA of
 the protected Site custody contract introduced in PR #181; no Site host
 operation, release, token install or service activation ran as part of this
 change. Exact candidate SHA, hosted checks and technical review belong in
