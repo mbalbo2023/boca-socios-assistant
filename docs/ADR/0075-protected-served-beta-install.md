@@ -2,7 +2,7 @@
 
 **Status:** candidate in issue #182. No protected image release or host install has
 run from this change. On main `64746289363741c4d85df79fa4e133b07f261efa`,
-local `uv run pytest -q` passed 841 tests and 29 subtests; Ruff, mypy,
+local `uv run pytest -q` passed 842 tests and 29 subtests; Ruff, mypy,
 repository policy and diff checks passed. Exact candidate SHA, hosted checks
 and technical review must be appended after the final branch is tested; a
 green PR is not host proof.
@@ -38,7 +38,9 @@ UID 10001, network none, no key/data mounts. Only its fixed readiness receipt
 allows the Boca key volume to be created and initialized. `check-beta-config`
 then reads owner and key read-only with no data mount, listener or network.
 Only its fixed receipt allows the new data volume and new-only `init-beta`
-one-shot container. Failure at any point preserves all named volumes.
+one-shot container. The full daemon inventory is checked again after init and
+before Compose starts, closing the gap between one-shot creation and service
+startup. Failure at any point preserves all named volumes.
 
 The isolated controller runs simulation with engine off, no Site bridge and no
 Telegram worker. Compose publishes **only host 127.0.0.1:8443**, while its

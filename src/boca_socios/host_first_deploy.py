@@ -1780,6 +1780,7 @@ def _beta_phase(
     _validate_data_volume()
     _validate_key_volume()
     _validate_owner_volume()
+    _beta_inventory(staged=True, expected={OWNER_VOLUME, KEY_VOLUME, DATA_VOLUME})
     _run(
         *_beta_compose_args(
             "up", "--no-build", "--no-deps", "--wait", "--wait-timeout", "90", "-d", "controller"

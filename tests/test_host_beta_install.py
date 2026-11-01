@@ -197,6 +197,44 @@ def test_full_config_failure_preserves_absent_data_volume(
     assert calls == ["owner", "key", "config"]
 
 
+def test_foreign_container_after_db_init_blocks_compose_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operations: list[str] = []
+    monkeypatch.setattr(host, "_verify_beta_compose", lambda _sha: None)
+    monkeypatch.setattr(host, "_beta_pull", lambda *_args: None)
+    monkeypatch.setattr(host, "_create_key", lambda _image: None)
+    monkeypatch.setattr(host, "_validate_data_volume", lambda: None)
+    monkeypatch.setattr(host, "_validate_key_volume", lambda: None)
+    monkeypatch.setattr(host, "_validate_owner_volume", lambda: None)
+
+    def inventory(*, staged: bool, expected: set[str]) -> host.HostSnapshot:
+        assert staged
+        if expected == {host.OWNER_VOLUME, host.KEY_VOLUME, host.DATA_VOLUME}:
+            operations.append("foreign-after-init")
+            raise host.PreflightError("dedicated BETA daemon must have no containers")
+        return _snapshot()
+
+    def fake_run(*args: str, env: dict[str, str] | None = None) -> str:
+        operations.append(" ".join(args))
+        if "up" in args:
+            pytest.fail("unexpected container was allowed to coexist with controller")
+        if "check-beta-owner" in args:
+            return '{"event":"beta_owner_ready","mode":"simulation","engine":"off"}'
+        if "check-beta-config" in args:
+            return '{"event":"beta_config_ready","mode":"simulation","engine":"off"}'
+        if args[:3] == ("docker", "volume", "create"):
+            return host.DATA_VOLUME
+        return ""
+
+    monkeypatch.setattr(host, "_beta_inventory", inventory)
+    monkeypatch.setattr(host, "_run", fake_run)
+    with pytest.raises(host.PreflightError, match="daemon must have no containers"):
+        host._beta_phase("beta-apply", IMAGE, SHA, "d" * 64, ORIGIN, OWNER)
+    assert "foreign-after-init" in operations
+    assert any("init-beta" in command for command in operations)
+
+
 def test_rollback_rejects_unknown_namespace_before_any_stop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
