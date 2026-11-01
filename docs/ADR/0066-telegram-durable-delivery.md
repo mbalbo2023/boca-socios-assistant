@@ -1,7 +1,8 @@
 # ADR 0066: envío Telegram con incertidumbre durable
 
-**Estado:** candidato de #158, pendiente de PR, revisión y CI. Fecha de decisión
-de diseño: 2026-11-01 (America/Argentina/Buenos_Aires).
+**Estado:** Accepted on merge of PR #162. Mientras el PR siga abierto, este
+contrato es candidato y no acredita integración, configuración ni despliegue.
+Fecha de decisión de diseño: 2026-11-01 (America/Argentina/Buenos_Aires).
 
 ## Alcance y contrato
 
