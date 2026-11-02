@@ -10,6 +10,7 @@ import ipaddress
 import json
 import select
 import socket
+import sys
 import time
 from collections.abc import Callable
 
@@ -141,7 +142,7 @@ def read_client_hello(connection: socket.socket) -> bytes:
     raise ValueError("fragmented ClientHello limit")
 
 
-def relay(client: socket.socket, upstream: socket.socket) -> None:
+def relay(client: socket.socket, upstream: socket.socket, *, capture_mode: bool = False) -> None:
     """Bound the tunnel without interpreting or retaining encrypted page content."""
     deadline = time.monotonic() + 30
     totals = {client: 0, upstream: 0}
@@ -152,17 +153,33 @@ def relay(client: socket.socket, upstream: socket.socket) -> None:
             if not chunk:
                 return
             totals[source] += len(chunk)
-            limit = MAX_CLIENT_BYTES if source is client else MAX_SERVER_BYTES
+            limit = (
+                MAX_CLIENT_BYTES
+                if source is client
+                else (MAX_SERVER_BYTES + (128 * 1024 if capture_mode else 0))
+            )
             if totals[source] > limit:
                 raise ValueError("tunnel byte limit")
             (upstream if source is client else client).sendall(chunk)
     raise TimeoutError("tunnel deadline")
 
 
-def serve() -> int:
+def finish_count(header: bytes) -> int | None:
+    for count in range(26):
+        expected = (
+            f"POST /finish/{count} HTTP/1.1\r\nHost: proxy\r\nContent-Length: 0\r\n\r\n"
+        ).encode("ascii")
+        if header == expected:
+            return count
+    return None
+
+
+def serve(*, capture_mode: bool = False) -> int:
     receipt = {"mode": "exact_fqdn_proxy", "accepted_tunnels": 0, "upstream_connections": 0}
     result = 1
-    deadline = time.monotonic() + 150
+    pinned_address = None
+    maximum = 25 if capture_mode else 1
+    deadline = time.monotonic() + (240 if capture_mode else 150)
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -190,21 +207,37 @@ def serve() -> int:
                     if bytes(header) == b"GET /health HTTP/1.1\r\nHost: proxy\r\n\r\n":
                         client.sendall(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
                         continue
-                    if not exact_connect(bytes(header)):
+                    completed = finish_count(bytes(header)) if capture_mode else None
+                    if completed is not None:
+                        if (
+                            completed
+                            == receipt["accepted_tunnels"]
+                            == receipt["upstream_connections"]
+                        ):
+                            client.sendall(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                            result = 0
+                            break
+                        raise ValueError("finish counter mismatch")
+                    if not exact_connect(bytes(header)) or receipt["accepted_tunnels"] >= maximum:
                         client.sendall(b"HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n")
                         continue
-                    receipt["accepted_tunnels"] = 1
+                    receipt["accepted_tunnels"] += 1
                     client.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
                     hello = read_client_hello(client)
-                    address = public_address()
+                    if pinned_address is None:
+                        pinned_address = public_address()
                     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as upstream:
                         upstream.settimeout(5)
-                        upstream.connect((address, 443))
-                        receipt["upstream_connections"] = 1
+                        upstream.connect((pinned_address, 443))
+                        receipt["upstream_connections"] += 1
                         upstream.sendall(hello)
-                        relay(client, upstream)
-                    result = 0
-                    break  # Never accept a second permitted tunnel, even after disconnect.
+                        if capture_mode:
+                            relay(client, upstream, capture_mode=True)
+                        else:
+                            relay(client, upstream)
+                    if not capture_mode:
+                        result = 0
+                        break  # Legacy one-GET mode can never accept a second tunnel.
     except (OSError, ValueError, UnicodeError):
         result = 1
     finally:
@@ -215,4 +248,6 @@ def serve() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(serve())
+    if sys.argv[1:] not in ([], ["--capture-25"]):
+        raise SystemExit(2)
+    raise SystemExit(serve(capture_mode=sys.argv[1:] == ["--capture-25"]))

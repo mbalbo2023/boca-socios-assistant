@@ -199,3 +199,83 @@ def test_serve_uses_at_most_one_pinned_connection_and_reports_honest_counters(
         "upstream_connections": int(valid_sni),
         "state": "complete" if valid_sni else "stopped",
     }
+
+
+@pytest.mark.parametrize("count,extra,finish", [(1, False, 1), (25, True, 25), (1, False, 2)])
+def test_capture_proxy_pin_budget_and_partial_completion(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    count: int,
+    extra: bool,
+    finish: int,
+) -> None:
+    data = hello()
+    connect = f"CONNECT {proxy.HOST}:443 HTTP/1.1\r\nHost: {proxy.HOST}:443\r\n\r\n".encode()
+    wire = connect + b"\x16\x03\x01" + len(data).to_bytes(2, "big") + data
+    responses: list[bytes] = []
+    destinations: list[object] = []
+    resolutions = []
+
+    class Connection:
+        def __init__(self, payload: bytes = b"") -> None:
+            self.payload = payload
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def settimeout(self, _value: float) -> None:
+            pass
+
+        def recv(self, amount: int) -> bytes:
+            part, self.payload = self.payload[:amount], self.payload[amount:]
+            return part
+
+        def sendall(self, payload: bytes) -> None:
+            responses.append(payload)
+
+        def connect(self, address: object) -> None:
+            destinations.append(address)
+
+    clients = [Connection(wire) for _ in range(count)]
+    if extra:
+        clients.append(Connection(wire))
+    clients.append(
+        Connection(
+            f"POST /finish/{finish} HTTP/1.1\r\nHost: proxy\r\nContent-Length: 0\r\n\r\n".encode()
+        )
+    )
+
+    class Listener(Connection):
+        def setsockopt(self, *_args: object) -> None:
+            pass
+
+        def bind(self, _address: object) -> None:
+            pass
+
+        def listen(self, _count: int) -> None:
+            pass
+
+        def accept(self) -> tuple[Connection, None]:
+            return clients.pop(0), None
+
+    sockets = iter([Listener(), *[Connection() for _ in range(count)]])
+    monkeypatch.setattr(proxy.socket, "socket", lambda *_args, **_kwargs: next(sockets))
+
+    def resolve() -> str:
+        resolutions.append(True)
+        return "8.8.8.8"
+
+    monkeypatch.setattr(proxy, "public_address", resolve)
+    monkeypatch.setattr(proxy, "relay", lambda *_args, **kwargs: None)
+    assert proxy.serve(capture_mode=True) == (0 if count == finish else 1)
+    assert resolutions == [True]
+    assert destinations == [("8.8.8.8", 443)] * count
+    assert not clients
+    if extra:
+        assert any(item.startswith(b"HTTP/1.1 403") for item in responses)
+    receipt = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert receipt["accepted_tunnels"] == receipt["upstream_connections"] == count
+    assert receipt["state"] == ("complete" if count == finish else "stopped")

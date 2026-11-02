@@ -36,15 +36,17 @@ externas aún no verificadas**. No es evidencia de un defecto de despliegue y
 no justifica reinstalar la BETA. La simulación permanece separada. No hubo
 repetición, descarga adicional ni nueva modificación de código para este informe.
 
-## Propuesta concreta pendiente de aprobación
+## Ampliación autorizada; implementación y ejecución pendientes de validación
 
-Recomendación: una única captura ampliada, anónima y secuencial en un runner
+El propietario autorizó continuar este alcance concreto. El candidato de
+[ADR 0105](../ADR/0105-bounded-public-capture-offline-render.md) implementa una
+única captura ampliada, anónima y secuencial en un runner
 desechable de Actions; después, render de los bytes reales capturados en
 Chromium **sin salida de red**. No se propone una página inventada ni navegación
 libre. Este paso permitiría comprobar el render con las dependencias conocidas;
 no acreditaría por sí solo el sitio conectado completo, una sesión o reservas.
 
-| Límite propuesto | Alcance exacto |
+| Límite autorizado | Alcance exacto |
 | --- | --- |
 | Documentos | Un GET nuevo a `/auth/login`; el HTML anterior no fue conservado |
 | Estáticos | Como máximo los 24 paths exactos enumerados abajo; cada uno una sola vez |
@@ -74,10 +76,10 @@ sesión, no se completa CAPTCHA ni se interactúa con filas o formularios. Una
 dependencia nueva se informa de forma saneada para una decisión posterior;
 no se declara GREEN porque la página esté parcialmente renderizada.
 
-### Paths estáticos conocidos que delimitarían la autorización
+### Paths estáticos conocidos que delimitan la autorización
 
 Todos pertenecen al único origen indicado arriba. La lista es una allowlist
-propuesta de referencias observadas, **no una declaración de necesidad runtime**.
+de referencias observadas, **no una declaración de necesidad runtime**.
 
 | Tipo | Path exacto |
 | --- | --- |
@@ -106,8 +108,11 @@ propuesta de referencias observadas, **no una declaración de necesidad runtime*
 | JavaScript | `/_next/static/ZjtPdUbA-bZTrUy51xKDH/_buildManifest.js` |
 | JavaScript | `/_next/static/ZjtPdUbA-bZTrUy51xKDH/_ssgManifest.js` |
 
-La ampliación supera la autorización vigente de un GET. **No está ejecutada
-ni implementada por este informe.** Requiere aprobación de ese alcance,
-implementación revisada, CI sobre el SHA exacto y comprobación previa del
-aislamiento. Ninguna parte necesita cambiar el droplet, sus puertos, servicios
-o contenedores.
+La ampliación está autorizada para una sola ejecución con estos límites;
+**todavía no fue ejecutada**. El código candidato exige coincidencia exacta
+de los 24 estáticos; una referencia ausente también produce STOP, sin
+descargar las demás por inercia. Requiere revisión independiente, CI y smoke
+Docker/Chromium sobre el SHA exacto antes del dispatch manual único. La
+observación de DOM auténtico offline conservará `connected_site=false` y no
+satisface por sí sola la carga completa del sitio conectado. Ninguna parte
+necesita cambiar el droplet, sus puertos, servicios o contenedores.

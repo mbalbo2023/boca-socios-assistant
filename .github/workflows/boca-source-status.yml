@@ -11,6 +11,7 @@ on:
         options:
           - http-status
           - chromium-one-get
+          - chromium-capture-25
   pull_request:
     paths:
       - .github/workflows/boca-source-status.yml
@@ -69,7 +70,7 @@ jobs:
 
   browser-isolation:
     name: public-browser-isolation
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'chromium-one-get' && github.ref == 'refs/heads/main' && github.repository == 'mbalbo2023/boca-socios-assistant' && github.actor == 'mbalbo2023')
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'chromium-one-get' || inputs.mode == 'chromium-capture-25') && github.ref == 'refs/heads/main' && github.repository == 'mbalbo2023/boca-socios-assistant' && github.actor == 'mbalbo2023')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -93,10 +94,16 @@ jobs:
         env:
           BOCA_OBSERVER_IMAGE: boca-observer:${{ github.sha }}
         run: timeout --signal=TERM --kill-after=10s 120s bash scripts/run_public_observer_isolated.sh --one-get
+      - name: Capture only the approved public paths and render with zero egress
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'chromium-capture-25'
+        env:
+          BOCA_OBSERVER_IMAGE: boca-observer:${{ github.sha }}
+        run: timeout --signal=TERM --kill-after=10s 240s bash scripts/run_public_observer_isolated.sh --capture-25
       - name: Record observation scope
         if: always()
         run: |
-          printf '%s\n' 'This job tests initial public HTML only. It does not prove full SPA loading, login, queue, or reservation. One Playwright route.fetch and one TLS tunnel are separately counted; encrypted HTTP is not independently inspected.' >> "$GITHUB_STEP_SUMMARY"
+          printf 'Selected source: `%s`\n' "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' 'Exclusive modes: initial HTML (one route.fetch), or approved capture (at most 25 trusted-client HTTP GETs) followed by offline render with network none. TLS tunnel counters are separate. Offline DOM evidence is not a full connected-site check, login, queue or reservation. PR smoke uses synthetic bytes and makes zero public requests.' >> "$GITHUB_STEP_SUMMARY"
       - name: Remove only this runner image if the attempt stopped before wrapper cleanup
         if: always()
         env:
