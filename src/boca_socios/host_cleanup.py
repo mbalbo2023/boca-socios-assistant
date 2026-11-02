@@ -1591,6 +1591,13 @@ def _browser_ipc_container_ids(
                 or labels.get("com.docker.compose.service") is not None
                 or labels.get(BROWSER_IPC_PROBE_PHASE_LABEL) != phase
                 or host.get("NetworkMode") != "none"
+                or host.get("PidMode") not in ("", "private")
+                or host.get("IpcMode") != "private"
+                or host.get("CgroupnsMode") != "private"
+                or host.get("UsernsMode") != ""
+                or host.get("UTSMode") != ""
+                or (host.get("Init") is not None and host.get("Init") is not False)
+                or host.get("AutoRemove") is not True
                 or host.get("PortBindings") not in (None, {})
                 or ports not in (None, {})
                 or set(network["Networks"]) != {"none"}
@@ -1808,17 +1815,37 @@ def clean_failed_browser_ipc_install(
             container_id = containers.get(service)
             if container_id is None:
                 continue
-            if inspect_containers().get(service) != container_id:
+            current_id = inspect_containers().get(service)
+            if service == "probe" and current_id is None:
+                # docker run --rm may have finished and self-removed this
+                # uniquely labeled one-shot between the two inventories.
+                continue
+            if current_id != container_id:
                 raise CleanupError("browser IPC container changed before stop")
-            inspected = json.loads(
-                _run("container", "inspect", "--format", "{{json .}}", container_id)
-            )
+            try:
+                inspected = json.loads(
+                    _run("container", "inspect", "--format", "{{json .}}", container_id)
+                )
+            except CleanupError:
+                if service == "probe" and inspect_containers().get(service) is None:
+                    continue
+                raise
             if not isinstance(inspected, dict) or not isinstance(inspected.get("State"), dict):
                 raise CleanupError("browser IPC container state changed")
             if inspected["State"].get("Running") is True:
                 attempted = True
-                _run("container", "stop", "--time", stop_seconds, container_id)
-            if inspect_containers().get(service) != container_id:
+                try:
+                    _run("container", "stop", "--time", stop_seconds, container_id)
+                except CleanupError:
+                    if service == "probe" and inspect_containers().get(service) is None:
+                        continue
+                    raise
+            current_id = inspect_containers().get(service)
+            if service == "probe" and current_id is None:
+                # --rm disposes the exact helper on successful stop; no
+                # separate `docker rm` is possible or appropriate.
+                continue
+            if current_id != container_id:
                 raise CleanupError("browser IPC container identity changed after stop")
             inspected = json.loads(
                 _run("container", "inspect", "--format", "{{json .}}", container_id)
@@ -1831,7 +1858,12 @@ def clean_failed_browser_ipc_install(
             ):
                 raise CleanupError("browser IPC container failed to stop safely")
             attempted = True
-            _run("container", "rm", container_id)  # No --force or -v.
+            try:
+                _run("container", "rm", container_id)  # No --force or -v.
+            except CleanupError:
+                if service == "probe" and inspect_containers().get(service) is None:
+                    continue
+                raise
             if service in inspect_containers():
                 raise CleanupError("browser IPC container remained after removal")
 

@@ -40,7 +40,18 @@ class FakeDocker:
         self.probe_bad_user = False
         self.probe_bad_security = False
         self.probe_bad_env = False
+        self.probe_pid_mode = "private"
+        self.probe_ipc_mode = "private"
+        self.probe_cgroupns_mode = "private"
+        self.probe_userns_mode = ""
+        self.probe_uts_mode = ""
+        self.probe_init: bool | None = None
+        self.probe_auto_remove = True
         self.duplicate_probe = False
+        self.probe_auto_remove_on_stop = False
+        self.probe_auto_remove_before_rm = False
+        self.probe_disappears_after_inventory = False
+        self.probe_inventory_snapshots = 0
         self.images = {IMAGE, BROWSER}
         self.volumes = set(PERSISTENT) | {IPC_VOLUME}
         self.network = True
@@ -199,6 +210,13 @@ class FakeDocker:
             },
             "HostConfig": {
                 "NetworkMode": "none",
+                "PidMode": self.probe_pid_mode,
+                "IpcMode": self.probe_ipc_mode,
+                "CgroupnsMode": self.probe_cgroupns_mode,
+                "UsernsMode": self.probe_userns_mode,
+                "UTSMode": self.probe_uts_mode,
+                "Init": self.probe_init,
+                "AutoRemove": self.probe_auto_remove,
                 "PortBindings": {"8444/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8444"}]}
                 if self.probe_bad_ports
                 else {},
@@ -224,6 +242,10 @@ class FakeDocker:
     def __call__(self, *args: str) -> str:
         self.commands.append(args)
         if args[:3] == ("ps", "-a", "-q"):
+            if args == ("ps", "-a", "-q", "--no-trunc"):
+                self.probe_inventory_snapshots += 1
+                if self.probe_disappears_after_inventory and self.probe_inventory_snapshots > 1:
+                    self.probe_phase = None
             if "--filter" in args:
                 expression = args[args.index("--filter") + 1]
                 if expression.startswith("ancestor="):
@@ -252,6 +274,8 @@ class FakeDocker:
             if args[-1] == PROBE:
                 assert args[2:4] == ("--time", "8")
                 self.probe_running = False
+                if self.probe_auto_remove_on_stop:
+                    self.probe_phase = None
                 return PROBE
             service = "controller" if args[-1] == CONTROLLER else "worker"
             assert args[2] == "--time" and args[3] == ("30" if service == "controller" else "8")
@@ -261,6 +285,8 @@ class FakeDocker:
             if args[-1] == PROBE:
                 assert not self.probe_running
                 self.probe_phase = None
+                if self.probe_auto_remove_before_rm:
+                    raise cleanup.CleanupError("--rm helper completed before explicit rm")
                 return PROBE
             service = "controller" if args[-1] == CONTROLLER else "worker"
             assert not self.containers[service]
@@ -532,6 +558,27 @@ def test_orphaned_named_phase_probe_is_selectively_stopped_before_services(
     assert not any("--force" in command or "--volumes" in command for command in docker.commands)
 
 
+@pytest.mark.parametrize("when", ["before-stop", "on-stop", "before-rm"])
+def test_docker_run_auto_remove_race_is_idempotent_for_exact_probe_only(
+    case: tuple[FakeDocker, dict[str, object], dict[str, Path]],
+    when: str,
+) -> None:
+    docker, marker, files = case
+    docker.containers = {}
+    docker.probe_phase = "key-verify"
+    docker.probe_disappears_after_inventory = when == "before-stop"
+    docker.probe_auto_remove_on_stop = when == "on-stop"
+    docker.probe_auto_remove_before_rm = when == "before-rm"
+    result = run_cleanup(marker)
+    assert result.removed_probe
+    assert docker.probe_phase is None and not files["marker"].exists()
+    assert docker.volumes == PERSISTENT
+    assert not any("--force" in command or "--volumes" in command for command in docker.commands)
+    if when in {"before-stop", "on-stop"}:
+        assert ("container", "rm", PROBE) not in docker.commands
+    assert sum(command == ("container", "rm", PROBE) for command in docker.commands) <= 1
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -545,6 +592,13 @@ def test_orphaned_named_phase_probe_is_selectively_stopped_before_services(
         "user",
         "security",
         "duplicate-env",
+        "pid-host",
+        "ipc-host",
+        "cgroupns-host",
+        "userns-host",
+        "uts-host",
+        "init-true",
+        "autoremove-false",
     ],
 )
 def test_unreviewed_or_duplicated_helper_blocks_cleanup_without_deleting(
@@ -573,6 +627,20 @@ def test_unreviewed_or_duplicated_helper_blocks_cleanup_without_deleting(
     elif change == "duplicate-env":
         docker.probe_phase = "owner-check"
         docker.probe_bad_env = True
+    elif change == "pid-host":
+        docker.probe_pid_mode = "host"
+    elif change == "ipc-host":
+        docker.probe_ipc_mode = "host"
+    elif change == "cgroupns-host":
+        docker.probe_cgroupns_mode = "host"
+    elif change == "userns-host":
+        docker.probe_userns_mode = "host"
+    elif change == "uts-host":
+        docker.probe_uts_mode = "host"
+    elif change == "init-true":
+        docker.probe_init = True
+    elif change == "autoremove-false":
+        docker.probe_auto_remove = False
     else:
         docker.duplicate_probe = True
     with pytest.raises(cleanup.CleanupError):
