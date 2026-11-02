@@ -420,6 +420,20 @@
         "tests/test_ssh_http_origin.py::test_http_owner_envelope_rejects_tls_and_private_artifact_fields",
         "tests/test_ssh_http_origin.py::test_http_owner_envelope_rejects_private_der_in_public_key_slot"
       ]
+    },
+    {
+      "id": "RCA-268",
+      "issue": 268,
+      "fix_pr": 269,
+      "root_cause": "The infrastructure preflight discarded the controlled host error stream and failed to retain an exit category, hiding why its initial stopped-boundary check failed before any daemon-start attempt. The specific historical host cause remains unknown.",
+      "prevention": "Capture bounded private streams, publish only exact SHA-bound receipts and allowlisted fixed reasons, keep unknown transport failures indeterminate, and provide an explicit read-only inspection that cannot enter effect or restore steps.",
+      "regression_tests": [
+        "tests/test_infrastructure_diagnostics.py::test_real_setup_error_survives_initial_workflow_without_raw_stderr",
+        "tests/test_infrastructure_diagnostics.py::test_readonly_inspection_cannot_reach_effect_steps",
+        "tests/test_infrastructure_diagnostics.py::test_transport_unknown_never_becomes_prepared",
+        "tests/test_infrastructure_diagnostics.py::test_ssh_capture_is_bounded_before_parser_reads_it",
+        "tests/test_infrastructure_diagnostics.py::test_capture_files_are_untrusted_and_never_echoed"
+      ]
     }
   ]
 }
