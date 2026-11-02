@@ -22,8 +22,13 @@ def test_pytest_entrypoint_collects_observer_tests_without_pythonpath(tmp_path: 
     """Match CI's console entrypoint: no cwd import help from python -m pytest."""
     for relative in (
         "pyproject.toml",
+        "scripts/__init__.py",
         "scripts/observe_public_home.py",
         "scripts/public_observer_proxy.py",
+        "scripts/public_observer_bundle.py",
+        "scripts/public_observer_capture.py",
+        "scripts/public_observer_render.py",
+        "tests/test_public_observer_capture.py",
         "tests/test_public_observer_isolation.py",
         "tests/test_public_observer_proxy.py",
     ):
@@ -39,6 +44,7 @@ def test_pytest_entrypoint_collects_observer_tests_without_pythonpath(tmp_path: 
             "-q",
             "tests/test_public_observer_isolation.py",
             "tests/test_public_observer_proxy.py",
+            "tests/test_public_observer_capture.py",
         ],
         cwd=tmp_path,
         env={

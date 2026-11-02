@@ -36,15 +36,17 @@ externas aún no verificadas**. No es evidencia de un defecto de despliegue y
 no justifica reinstalar la BETA. La simulación permanece separada. No hubo
 repetición, descarga adicional ni nueva modificación de código para este informe.
 
-## Propuesta concreta pendiente de aprobación
+## Ampliación autorizada; candidato probado, ejecución pública pendiente
 
-Recomendación: una única captura ampliada, anónima y secuencial en un runner
+El propietario autorizó continuar este alcance concreto. El candidato de
+[ADR 0105](../ADR/0105-bounded-public-capture-offline-render.md) implementa una
+única captura ampliada, anónima y secuencial en un runner
 desechable de Actions; después, render de los bytes reales capturados en
 Chromium **sin salida de red**. No se propone una página inventada ni navegación
 libre. Este paso permitiría comprobar el render con las dependencias conocidas;
 no acreditaría por sí solo el sitio conectado completo, una sesión o reservas.
 
-| Límite propuesto | Alcance exacto |
+| Límite autorizado | Alcance exacto |
 | --- | --- |
 | Documentos | Un GET nuevo a `/auth/login`; el HTML anterior no fue conservado |
 | Estáticos | Como máximo los 24 paths exactos enumerados abajo; cada uno una sola vez |
@@ -74,10 +76,10 @@ sesión, no se completa CAPTCHA ni se interactúa con filas o formularios. Una
 dependencia nueva se informa de forma saneada para una decisión posterior;
 no se declara GREEN porque la página esté parcialmente renderizada.
 
-### Paths estáticos conocidos que delimitarían la autorización
+### Paths estáticos conocidos que delimitan la autorización
 
 Todos pertenecen al único origen indicado arriba. La lista es una allowlist
-propuesta de referencias observadas, **no una declaración de necesidad runtime**.
+de referencias observadas, **no una declaración de necesidad runtime**.
 
 | Tipo | Path exacto |
 | --- | --- |
@@ -106,8 +108,33 @@ propuesta de referencias observadas, **no una declaración de necesidad runtime*
 | JavaScript | `/_next/static/ZjtPdUbA-bZTrUy51xKDH/_buildManifest.js` |
 | JavaScript | `/_next/static/ZjtPdUbA-bZTrUy51xKDH/_ssgManifest.js` |
 
-La ampliación supera la autorización vigente de un GET. **No está ejecutada
-ni implementada por este informe.** Requiere aprobación de ese alcance,
-implementación revisada, CI sobre el SHA exacto y comprobación previa del
-aislamiento. Ninguna parte necesita cambiar el droplet, sus puertos, servicios
-o contenedores.
+La ampliación está autorizada para una sola ejecución con estos límites;
+**todavía no fue ejecutada**. El código candidato exige coincidencia exacta
+de los 24 estáticos; una referencia ausente también produce STOP, sin
+descargar las demás por inercia. Requiere revisión independiente, CI y smoke
+Docker/Chromium sobre el SHA exacto antes del dispatch manual único. La
+observación de DOM auténtico offline conservará `connected_site=false` y no
+satisface por sí sola la carga completa del sitio conectado. Ninguna parte
+necesita cambiar el droplet, sus puertos, servicios o contenedores.
+
+## Evidencia del candidato #263, sin tráfico público
+
+El [PR #263](https://github.com/mbalbo2023/boca-socios-assistant/pull/263),
+head `9c693cb296e037af397e3ade2634f6264f717782`, pasó
+[CI 41508912214](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41508912214)
+con 1902 tests y 31 subtests, y
+[seguridad 41508912267](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41508912267).
+El [smoke real Docker/Chromium 41508912351](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41508912351),
+job `125495324095`, verificó aislamiento anterior/posterior, renderer sin red,
+formulario sintético creado por JS, rechazo esperado de fetch, WebSocket,
+navegación y Worker, y limpieza selectiva: PASS; `public_connections=0`.
+
+El checkout ejecutado fue el merge de prueba
+`c470c530c3f93895722fe22c7168a6957ced723e`, cuyo árbol
+`b3d12d0d09f224e0ba25316024dbd7a78be13cf7` coincide exactamente con el head.
+La revisión independiente comprobó los 12 blobs y 134 pruebas focales, sin
+P0/P1 pendientes. RCA #262 conserva los dos defectos detectados durante esa
+revisión y sus regresiones. Esta evidencia corresponde a ese corte: cambios
+posteriores de documentación, registro RCA o base requieren checks del nuevo
+candidato. La captura pública única todavía no fue ejecutada y no se declara
+validado el sitio real a partir de este smoke sintético.

@@ -18,8 +18,16 @@ physical Chrome/GPM persistence or Telegram delivery is established here.
 [Real public observation 41481095746](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481095746)
 returned UNKNOWN for the permitted initial document, with pre/post isolation
 and cleanup PASS. This does not establish a browser or deployment failure,
-nor full-site acceptance. The [report and bounded proposal](quality/public-source-validation-2026-11-02.md)
-require separate approval before additional requests.
+nor full-site acceptance. The [report](quality/public-source-validation-2026-11-02.md)
+records the already approved capture of up to 25 anonymous fixed-path GETs.
+PR #263/ADR0105 implements `chromium-capture-25` in the existing source
+workflow. CI and the real offline isolation/cleanup smoke passed the initial
+candidate; the report identifies its exact head, tested merge and equal tree.
+Use the final integrated SHA with its successful checks for the single manual
+capture. No public dispatch has occurred for this expanded scope. Any new
+resource, query, redirect, API or other destination requires a separate
+decision; no automatic expansion or retry. A positive offline captured DOM
+does not establish a connected site, login, queue or ticket action.
 
 [Read-only inspection 41471945717](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41471945717)
 at 12:28:47 ART reached SSH as UID10001, observed the owned user bus and

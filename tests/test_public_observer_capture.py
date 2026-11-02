@@ -1,0 +1,398 @@
+"""No-network regressions for the approved capture and private byte boundary."""
+
+from __future__ import annotations
+
+import asyncio
+import importlib.util
+import io
+import json
+import signal
+import sys
+import time
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location(
+    "boca_capture_scripts",
+    ROOT / "scripts/__init__.py",
+    submodule_search_locations=[str(ROOT / "scripts")],
+)
+assert SPEC and SPEC.loader
+PACKAGE = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = PACKAGE
+SPEC.loader.exec_module(PACKAGE)
+from boca_capture_scripts import public_observer_bundle as bundle  # noqa: E402
+from boca_capture_scripts import public_observer_capture as capture  # noqa: E402
+from boca_capture_scripts import public_observer_render as render  # noqa: E402
+
+
+def html(extra: str = "") -> bytes:
+    refs = "".join(
+        f'<script src="{path}"></script>'
+        if path.endswith(".js")
+        else f'<link href="{path}" rel="preload">'
+        for path in bundle.ASSETS
+    )
+    return (f"<!doctype html><html><body>{refs}{extra}</body></html>").encode()
+
+
+def test_exact_raw_inventory_rejects_changed_or_sensitive_urls() -> None:
+    assert set(bundle.inventory(html())) == set(bundle.ASSETS)
+    for extra in (
+        '<img src="/new.png">',
+        '<img src="//evil.invalid/x">',
+        '<base href="/">',
+        '<meta http-equiv="refresh" content="0;url=/">',
+        '<img srcset="/new.png 2x">',
+    ):
+        with pytest.raises(ValueError):
+            bundle.inventory(html(extra))
+    for suffix in ("?secret=yes", "#fragment", "?", "#"):
+        changed = html().replace(
+            next(iter(bundle.ASSETS)).encode(), (next(iter(bundle.ASSETS)) + suffix).encode(), 1
+        )
+        with pytest.raises(ValueError):
+            bundle.inventory(changed)
+    with pytest.raises(ValueError):
+        bundle.inventory(b"<html>captcha</html>")
+
+
+def test_bundle_revalidates_content_paths_counts_sizes_and_hashes() -> None:
+    value = bundle.fixture_bundle()
+    encoded = bundle.encode_bundle(value)
+    assert bundle.decode_bundle(io.BytesIO(encoded), fixture=True) == value
+    with pytest.raises(ValueError):
+        bundle.decode_bundle(io.BytesIO(encoded), fixture=False)
+    for key, bad in (
+        ("path", "/new"),
+        ("sha256", "0" * 64),
+        ("body", "%%%"),
+        ("headers", {"Set-Cookie": "private"}),
+    ):
+        changed = json.loads(encoded)
+        changed["entries"][0][key] = bad
+        with pytest.raises(ValueError):
+            bundle.decode_bundle(io.BytesIO(json.dumps(changed).encode()), fixture=True)
+
+
+def test_capture_rejects_redirect_cookie_reuse_and_stream_overflow() -> None:
+    class Response:
+        status = 302
+        headers = {"Content-Type": "text/html", "Set-Cookie": "private"}
+
+        def getheader(self, name: str, default: str = "") -> str:
+            return self.headers.get(name, default)
+
+        def read(self, size: int) -> bytes:
+            return b"x" * size
+
+    with pytest.raises(ValueError):
+        capture.read_response(Response(), bundle.LOGIN_PATH, 100)
+    Response.status = 200
+    with pytest.raises(ValueError):
+        capture.read_response(Response(), bundle.LOGIN_PATH, 100)
+
+
+def test_capture_wire_headers_have_no_cookie_authorization_or_compression() -> None:
+    assert capture.REQUEST_HEADERS == {
+        "Host": bundle.HOST,
+        "Connection": "close",
+        "Accept-Encoding": "identity",
+        "User-Agent": "BocaSociosPublicDiagnostic/1.0",
+        "Accept": "*/*",
+    }
+    assert capture.request_budget(119, 120) == 1
+    assert capture.request_budget(1, 120) == 8
+    with pytest.raises(TimeoutError):
+        capture.request_budget(120, 120)
+
+
+def test_trusted_http_client_uses_fresh_verified_tunnel_without_redirect_or_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+
+    class Connection:
+        def __init__(self, host: str, port: int, *, timeout: float, context: object) -> None:
+            assert host == "172.18.0.3" and port == 18080 and timeout == 8
+            assert context.check_hostname and context.verify_mode == 2
+
+        def set_tunnel(self, host: str, port: int) -> None:
+            calls.append(("tunnel", host, port))
+
+        def request(self, method: str, path: str, *, headers: dict) -> None:
+            calls.append((method, path, headers))
+            raise OSError("no network fixture")
+
+        def close(self) -> None:
+            calls.append(("close",))
+
+    monkeypatch.setattr(capture.http.client, "HTTPSConnection", Connection)
+    with pytest.raises(OSError):
+        capture.fetch(bundle.LOGIN_PATH, "172.18.0.3", 8, 1024)
+    assert calls == [
+        ("tunnel", bundle.HOST, 443),
+        ("GET", bundle.LOGIN_PATH, capture.REQUEST_HEADERS),
+        ("close",),
+    ]
+
+
+def test_capture_serial_spacing_exact_paths_counters_and_finish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = [0.0]
+    attempts = []
+    finishes = []
+    monkeypatch.setattr(capture.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        capture.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+    monkeypatch.setattr(
+        bundle, "save_bundle", lambda value, **kwargs: bundle.validate_bundle(value, fixture=False)
+    )
+    monkeypatch.setattr(
+        capture, "finish_proxy", lambda address, count: finishes.append((address, count))
+    )
+
+    def fetch(path: str, _proxy: str, timeout: float, _remaining: int) -> bytes:
+        attempts.append((path, clock[0], timeout))
+        return html() if path == bundle.LOGIN_PATH else b"fixture"
+
+    monkeypatch.setattr(capture, "fetch", fetch)
+    receipt = {"http_get_attempts": 0, "completed": []}
+    assert capture.capture("172.18.0.3", receipt)["mode"] == "public_capture"
+    assert [item[0] for item in attempts] == [bundle.LOGIN_PATH, *bundle.ASSETS]
+    assert all(
+        second[1] - first[1] >= 0.5 for first, second in zip(attempts, attempts[1:], strict=False)
+    )
+    assert receipt["http_get_attempts"] == len(receipt["completed"]) == 25
+    assert finishes == [("172.18.0.3", 25)]
+
+
+def test_total_capture_deadline_stops_without_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [0.0]
+    monkeypatch.setattr(capture.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        capture.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+
+    def fetch(path: str, *_args: object) -> bytes:
+        clock[0] += 8
+        return html() if path == bundle.LOGIN_PATH else b"fixture"
+
+    monkeypatch.setattr(capture, "fetch", fetch)
+    receipt = {"http_get_attempts": 0, "completed": []}
+    with pytest.raises(TimeoutError):
+        capture.capture("172.18.0.3", receipt)
+    assert receipt["http_get_attempts"] == 15
+    assert clock[0] == 120
+
+
+def test_streaming_body_cannot_extend_wall_clock_alarm() -> None:
+    class Streaming:
+        status = 200
+
+        def getheader(self, name: str, default: str = "") -> str:
+            return "text/html" if name == "Content-Type" else default
+
+        def read(self, _size: int) -> bytes:
+            time.sleep(0.02)
+            return b"x"
+
+    previous = signal.signal(signal.SIGALRM, capture.alarm)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 0.03)
+        with pytest.raises(TimeoutError):
+            capture.read_response(Streaming(), bundle.LOGIN_PATH, 1024)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+@pytest.mark.parametrize(
+    "url,method,kind,headers",
+    [
+        (bundle.ORIGIN + bundle.LOGIN_PATH, "POST", "document", {}),
+        (bundle.ORIGIN + bundle.ASSETS[7], "GET", "fetch", {}),
+        (bundle.ORIGIN + bundle.ASSETS[7], "GET", "xhr", {}),
+        (bundle.ORIGIN + bundle.ASSETS[7], "GET", "script", {"Cookie": "private"}),
+        (bundle.ORIGIN + bundle.ASSETS[7] + "?private=yes", "GET", "script", {}),
+        (bundle.ORIGIN + "/favicon.ico", "GET", "other", {}),
+        ("https://evil.invalid/x.js", "GET", "script", {}),
+        ("data:text/html,fixture", "GET", "document", {}),
+    ],
+)
+def test_renderer_refuses_any_dynamic_or_unmapped_request(url, method, kind, headers) -> None:
+    guard = render.RenderGuard(bundle.fixture_bundle())
+    assert guard.allow(url, method, kind, headers) is None
+    assert guard.blocked
+
+
+def test_renderer_document_once_and_maximum_64_responses() -> None:
+    guard = render.RenderGuard(bundle.fixture_bundle())
+    assert guard.allow(bundle.ORIGIN + bundle.LOGIN_PATH, "GET", "document", {})
+    assert guard.allow(bundle.ORIGIN + bundle.LOGIN_PATH, "GET", "document", {}) is None
+    guard = render.RenderGuard(bundle.fixture_bundle())
+    for _ in range(64):
+        assert guard.allow(bundle.ORIGIN + bundle.ASSETS[7], "GET", "script", {})
+    assert guard.allow(bundle.ORIGIN + bundle.ASSETS[7], "GET", "script", {}) is None
+    assert guard.reason == "request_budget"
+
+
+def test_late_browser_cleanup_failure_invalidates_provisional_dom(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        bundle, "open_bundle", lambda: io.BytesIO(bundle.encode_bundle(bundle.fixture_bundle()))
+    )
+
+    async def late_error(_value: dict, receipt: dict) -> None:
+        receipt.update(state="DOM_OBSERVED", blocked_reason="none")
+        raise RuntimeError("close failed")
+
+    monkeypatch.setattr(render, "render", late_error)
+    assert render.child(True) == 1
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["state"] == "UNKNOWN" and receipt["blocked_reason"] == "runtime_failure"
+    assert receipt["connected_site"] is False
+
+
+def test_private_bundle_refuses_symlink_and_removes_after_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    private = tmp_path / "private"
+    monkeypatch.setattr(bundle, "PRIVATE_DIR", private)
+    monkeypatch.setattr(bundle, "BUNDLE_PATH", private / "bundle.json")
+    bundle.save_bundle(bundle.fixture_bundle(), fixture=True)
+    assert private.stat().st_mode & 0o777 == 0o700
+    assert bundle.BUNDLE_PATH.stat().st_mode & 0o777 == 0o600
+    with bundle.open_bundle() as stream:
+        assert bundle.decode_bundle(stream, fixture=True)["mode"] == "synthetic_fixture"
+    bundle.remove_bundle()
+    assert not private.exists()
+    private.mkdir(mode=0o700)
+    bundle.BUNDLE_PATH.symlink_to(tmp_path / "unrelated")
+    with pytest.raises(OSError):
+        bundle.open_bundle()
+
+
+@pytest.mark.parametrize(
+    "text,worker,expected",
+    [
+        ("Public login", False, "DOM_OBSERVED"),
+        ("captcha", False, "UNKNOWN"),
+        ("Public login", True, "UNKNOWN"),
+    ],
+)
+def test_renderer_runs_full_adapter_and_challenge_gate_without_network(
+    monkeypatch: pytest.MonkeyPatch,
+    text: str,
+    worker: bool,
+    expected: str,
+) -> None:
+    fulfilled = []
+    closed = []
+
+    class Route:
+        request = SimpleNamespace(
+            url=bundle.ORIGIN + bundle.LOGIN_PATH,
+            method="GET",
+            resource_type="document",
+            headers={},
+        )
+
+        async def abort(self) -> None:
+            raise AssertionError("positive document must use captured bytes")
+
+        async def fulfill(self, **kwargs) -> None:
+            fulfilled.append(kwargs)
+
+    class Page:
+        main_frame = object()
+        handlers = {}
+
+        def on(self, event, handler) -> None:
+            self.handlers[event] = handler
+
+        async def goto(self, url, **_kwargs) -> None:
+            assert url == bundle.ORIGIN + bundle.LOGIN_PATH
+            await context.handler(Route())
+            if worker:
+                self.handlers["worker"](None)
+
+        async def inner_text(self, selector) -> str:
+            assert selector == "body"
+            return text
+
+    class Context:
+        async def route(self, pattern, handler) -> None:
+            assert pattern == "**/*"
+            self.handler = handler
+
+        async def route_web_socket(self, pattern, handler) -> None:
+            assert pattern == "**/*" and handler
+
+        async def new_page(self) -> Page:
+            return Page()
+
+        def on(self, *_args) -> None:
+            pass
+
+        async def cookies(self) -> list:
+            return []
+
+        async def close(self) -> None:
+            closed.append("context")
+
+    context = Context()
+
+    class Browser:
+        async def new_context(self, **kwargs) -> Context:
+            assert kwargs == {
+                "accept_downloads": False,
+                "service_workers": "block",
+                "java_script_enabled": True,
+            }
+            return context
+
+        async def close(self) -> None:
+            closed.append("browser")
+
+    class API:
+        async def __aenter__(self):
+            self.chromium = self
+            return self
+
+        async def __aexit__(self, *_args) -> None:
+            closed.append("playwright")
+
+        async def launch(self, **kwargs) -> Browser:
+            assert kwargs["chromium_sandbox"] is True
+            return Browser()
+
+    module = ModuleType("playwright.async_api")
+    module.async_playwright = API
+    monkeypatch.setitem(sys.modules, "playwright.async_api", module)
+    monkeypatch.setattr(render, "require_network_none", lambda: None)
+    times = iter([0, 15])
+    monkeypatch.setattr(render, "time", SimpleNamespace(monotonic=lambda: next(times)))
+
+    async def inspect(_page) -> bool:
+        return True
+
+    monkeypatch.setattr(render, "inspect_rendered_login_dom", inspect)
+    receipt = {}
+    asyncio.run(render.render(bundle.fixture_bundle(), receipt))
+    assert receipt["state"] == expected
+    assert closed == ["context", "browser", "playwright"]
+    assert len(fulfilled) == 1
+    assert fulfilled[0]["headers"] == {
+        "Content-Type": "text/html",
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+    }
+    assert b"fixture-root" in fulfilled[0]["body"]
