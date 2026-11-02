@@ -9,6 +9,7 @@ import subprocess
 import sys
 import textwrap
 from dataclasses import replace
+from fractions import Fraction
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -188,7 +189,8 @@ def _observe_ready(
     monkeypatch: pytest.MonkeyPatch,
     *,
     memory: int = 2048 * 1024,
-    load: float = 0.0,
+    load: float | None = 0.0,
+    cpu: float = 2.0,
     storage: host.StorageSnapshot | None = None,
 ) -> None:
     storage = storage or safe_storage()
@@ -199,7 +201,17 @@ def _observe_ready(
     monkeypatch.setattr(host, "_browser_root_entries", lambda _e: None)
     monkeypatch.setattr(host, "_browser_inventory", lambda **_k: None)
     monkeypatch.setattr(host, "_browser_port_free", lambda: None)
-    monkeypatch.setattr(host, "_observe_browser_capacity", lambda: (memory, 2, load, 512, storage))
+    monkeypatch.setattr(
+        host,
+        "_observe_browser_capacity",
+        lambda: (
+            memory,
+            host.CpuCapacity(2, 2, Fraction(str(cpu)), "configured"),
+            load,
+            512,
+            storage,
+        ),
+    )
     monkeypatch.setattr(host, "_storage_snapshot", lambda: storage)
 
     def read_only(*args: str, **_kwargs: object) -> str:
@@ -220,7 +232,8 @@ def test_image_free_phase_needs_no_owner_and_preserves_policy(
     host.phase("infrastructure-preflight", "", SHA, "b" * 64, infrastructure_budget=budget)
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 2
-    assert "cpu_affinity=2 load1=0.000000 cpu_estimate=2.000000" in lines[0]
+    assert "daemon_startup_cpu_count=2 effective_cpus=2 cpu_ceiling=2.000000" in lines[0]
+    assert "cpu_scope=configured load1=0.000000 load_policy=advisory" in lines[0]
     assert f"budget={budget}" in lines[1]
     assert "result=PASS meaning=configured_reserve_not_benchmark" in lines[1]
     assert "daemon=stopped" not in "\n".join(lines)
@@ -230,7 +243,7 @@ def test_image_free_phase_needs_no_owner_and_preserves_policy(
     "changes",
     [
         {"memory": 1000 * 1024},
-        {"load": 0.01},
+        {"cpu": 1.99},
         {"storage": replace(safe_storage(), stage_free_bytes=1024)},
     ],
 )

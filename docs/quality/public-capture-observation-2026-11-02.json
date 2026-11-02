@@ -1,0 +1,255 @@
+{
+  "schema": 1,
+  "source_sha": "6f7fa0939d28df7c315440bba15237b0c1bfbe77",
+  "run_id": 41512196530,
+  "job_id": 125506598762,
+  "run_attempt": 1,
+  "operation": "chromium-capture-25",
+  "conclusion": "failure",
+  "public_capture_complete": true,
+  "render_accepted": false,
+  "connected_site": false,
+  "denied_resource_identity": "NOT_RECORDED",
+  "captured_total_bytes": 2287897,
+  "public_retry_authorized": false,
+  "host_operations": false,
+  "receipts": [
+    {
+      "recorded_at": "2026-11-02T19:41:47.7478091Z",
+      "receipt": {
+        "mode": "public_observation_source",
+        "source_sha": "6f7fa0939d28df7c315440bba15237b0c1bfbe77",
+        "operation": "--capture-25"
+      }
+    },
+    {
+      "recorded_at": "2026-11-02T19:41:50.0211671Z",
+      "receipt": {
+        "mode": "runner_egress_probe",
+        "state": "PASS",
+        "post": false
+      }
+    },
+    {
+      "recorded_at": "2026-11-02T19:41:50.8414194Z",
+      "receipt": {
+        "mode": "offline_chromium_startup",
+        "result": "pass"
+      }
+    },
+    {
+      "recorded_at": "2026-11-02T19:42:09.0908061Z",
+      "receipt": {
+        "mode": "bounded_public_capture",
+        "state": "CAPTURED",
+        "reason": "none",
+        "http_get_attempts": 25,
+        "completed": [
+          {
+            "path": "/auth/login",
+            "status": 200,
+            "bytes": 33185,
+            "sha256": "f05715bd4d657cfdedae4ce33444b15ee0be3d7b335528b56ac89b8ce710dbdd"
+          },
+          {
+            "path": "/_next/static/css/110f3266bb0e84b9.css",
+            "status": 200,
+            "bytes": 6129,
+            "sha256": "a85d2620bb062b9a638d394c23429f308bbe1207f733aa997ec99b8c6ac4540e"
+          },
+          {
+            "path": "/_next/static/media/ed68d641ffbc51c9-s.p.ttf",
+            "status": 200,
+            "bytes": 27804,
+            "sha256": "b9caf9f553cbfbfc8ddcd56d1c652f1e2ff02b15727b260aa207e6f21d535d9a"
+          },
+          {
+            "path": "/_next/static/media/c5521e49e0ab5d76-s.p.ttf",
+            "status": 200,
+            "bytes": 27516,
+            "sha256": "758d94b645b47f499974f8168fabc26b857ec1815abbf0776f0355a4300f4912"
+          },
+          {
+            "path": "/_next/static/media/d5b340b61a9d747a-s.p.ttf",
+            "status": 200,
+            "bytes": 27652,
+            "sha256": "589cb67ddf0dfcea2a83f0bcd8dc2d5e3835f3adcce2b94b05ea706275f3d55a"
+          },
+          {
+            "path": "/_next/static/media/542b704cac92f33f-s.p.ttf",
+            "status": 200,
+            "bytes": 28064,
+            "sha256": "888b3fdb0cb3cc4d497138e82e7bca202b14fffe6779454e5cd47bea9f6446b4"
+          },
+          {
+            "path": "/_next/static/media/9079e785e8d9e991-s.p.ttf",
+            "status": 200,
+            "bytes": 25272,
+            "sha256": "e596c1e416111011af9998a537738ed97423c432ea1fd4a8eeb2d409ca6ad16c"
+          },
+          {
+            "path": "/_next/static/media/309b60d940dcc6d8-s.p.ttf",
+            "status": 200,
+            "bytes": 25872,
+            "sha256": "14aba4e9a7fb85d5615df11911e6f2e3306bfaadef31f71479f788309ab0af6b"
+          },
+          {
+            "path": "/_next/static/chunks/polyfills-42372ed130431b0a.js",
+            "status": 200,
+            "bytes": 112594,
+            "sha256": "0973c1d64c88adc8e3c950410cb58b288f72118d5965b78049438deb8f2f9683"
+          },
+          {
+            "path": "/_next/static/chunks/webpack-ccfdb9bd91362889.js",
+            "status": 200,
+            "bytes": 4553,
+            "sha256": "f2c7739f6e4d65254e5d94b97b5b87de8e25893332e8a037a07345ed17d26a7f"
+          },
+          {
+            "path": "/_next/static/chunks/framework-d1ea9e652f7756a8.js",
+            "status": 200,
+            "bytes": 181637,
+            "sha256": "709aa914d704fee749d6c7e7432cae44811a9761292441fc0be2f3cc800b3893"
+          },
+          {
+            "path": "/_next/static/chunks/main-2bcb7c5cd03d4c7a.js",
+            "status": 200,
+            "bytes": 118639,
+            "sha256": "e0fd74a4c519bbb88602e06b775de879b9c86150e5a8c2b43eb819bbebc7c1cd"
+          },
+          {
+            "path": "/_next/static/chunks/pages/_app-e24083c41ff8470e.js",
+            "status": 200,
+            "bytes": 1467644,
+            "sha256": "dbf5f05d29d5832ed8991a2ea811cc5289a1edf146279ee3ffd511cde183f985"
+          },
+          {
+            "path": "/_next/static/chunks/9819-2c4a72013c59320c.js",
+            "status": 200,
+            "bytes": 37486,
+            "sha256": "c286c7e8da70fe27e82a81863fba292f35df9718b71cae972d3e4e255cb40079"
+          },
+          {
+            "path": "/_next/static/chunks/2739-6943ce35cb75f338.js",
+            "status": 200,
+            "bytes": 5430,
+            "sha256": "fefc04c6753bcca2a8351bb147115130dce0976cd1b19f642f1d287ae9f88328"
+          },
+          {
+            "path": "/_next/static/chunks/4860-acdc20894c93fa01.js",
+            "status": 200,
+            "bytes": 41662,
+            "sha256": "001fd73e1d40d0c26c1031e060c3045e3680705ed05d7feddabb649e2c968db7"
+          },
+          {
+            "path": "/_next/static/chunks/83-a1c7ae20bcf7e033.js",
+            "status": 200,
+            "bytes": 11368,
+            "sha256": "75f7e783d0f2821accd44fd9ed724719a53d4a6212de68f2207507bff67d819b"
+          },
+          {
+            "path": "/_next/static/chunks/5326-c518c1546ef3384f.js",
+            "status": 200,
+            "bytes": 9394,
+            "sha256": "bd05bcbf0a34da6e913be4c6f3e5daf7dcac165473c77be9aa0ac9648a14e174"
+          },
+          {
+            "path": "/_next/static/chunks/3955-5547d64248c3c4c2.js",
+            "status": 200,
+            "bytes": 26549,
+            "sha256": "95b037119f73b49ee5c7a87537450aa545feee17623ae8d99731bb514cd717a3"
+          },
+          {
+            "path": "/_next/static/chunks/7216-4aebbb51b60525b0.js",
+            "status": 200,
+            "bytes": 12522,
+            "sha256": "f8b3414baa15277ce309b4fe772ec1f71da81fe76ddc324091c64531a2396a8e"
+          },
+          {
+            "path": "/_next/static/chunks/7243-ddb1335e09b2ad50.js",
+            "status": 200,
+            "bytes": 10272,
+            "sha256": "c3ddc086f0e4edfb34770741a2a967632a099974b65c928c384dbfd643b1e431"
+          },
+          {
+            "path": "/_next/static/chunks/7507-47dcca8ca6668a7a.js",
+            "status": 200,
+            "bytes": 15076,
+            "sha256": "889da81732ebe2b78ce5e17f75b9a8c507ae519131687e932ca2c7e2bc7fb027"
+          },
+          {
+            "path": "/_next/static/chunks/pages/auth/login-148f8537fd25f3f5.js",
+            "status": 200,
+            "bytes": 16911,
+            "sha256": "7a78a16c2117ff7a3c499a4ee7b5ffe72484d94d4e1b59dc7be5ec9245b79151"
+          },
+          {
+            "path": "/_next/static/ZjtPdUbA-bZTrUy51xKDH/_buildManifest.js",
+            "status": 200,
+            "bytes": 14589,
+            "sha256": "934f0b8d8f5eaa09dba561901caf7d3611330ba313e108d20c121a5f9e98208c"
+          },
+          {
+            "path": "/_next/static/ZjtPdUbA-bZTrUy51xKDH/_ssgManifest.js",
+            "status": 200,
+            "bytes": 77,
+            "sha256": "6f5b4aa00d2f8d6aed9935b471806bf7acef464d0c1d390260e5fe27f800c67e"
+          }
+        ],
+        "connected_site": false,
+        "observed_at": "2026-11-02T19:41:50.956431+00:00",
+        "source_sha": "6f7fa0939d28df7c315440bba15237b0c1bfbe77"
+      }
+    },
+    {
+      "recorded_at": "2026-11-02T19:42:10.1005942Z",
+      "receipt": {
+        "mode": "offline_chromium_startup",
+        "result": "pass"
+      }
+    },
+    {
+      "recorded_at": "2026-11-02T19:42:10.2668585Z",
+      "receipt": {
+        "mode": "renderer_kernel_network_none",
+        "state": "PASS"
+      }
+    },
+    {
+      "recorded_at": "2026-11-02T19:42:11.7144004Z",
+      "receipt": {
+        "mode": "offline_capture_render",
+        "provenance": "public_capture",
+        "state": "UNKNOWN",
+        "connected_site": false,
+        "internal_requests": 30,
+        "blocked_reason": "resource_outside_map"
+      }
+    },
+    {
+      "recorded_at": "2026-11-02T19:42:11.8415204Z",
+      "receipt": {
+        "mode": "exact_fqdn_proxy",
+        "accepted_tunnels": 25,
+        "upstream_connections": 25,
+        "state": "complete"
+      }
+    },
+    {
+      "recorded_at": "2026-11-02T19:42:13.3972243Z",
+      "receipt": {
+        "mode": "runner_egress_probe",
+        "state": "PASS",
+        "post": true
+      }
+    },
+    {
+      "recorded_at": "2026-11-02T19:42:13.8726307Z",
+      "receipt": {
+        "mode": "runner_selective_cleanup",
+        "state": "PASS"
+      }
+    }
+  ]
+}
+

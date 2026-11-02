@@ -164,6 +164,28 @@ async def inspect_login_dom(page: PublicLoginDomPort) -> bool:
     return await submit.is_disabled()
 
 
+async def inspect_rendered_login_dom(page: PublicLoginDomPort) -> bool:
+    """Read-only form evidence after bounded offline hydration, never live readiness."""
+    if await page.locator("form").count() != 1:
+        return False
+    if await page.locator(
+        'form[aria-hidden="true"], [aria-hidden="true"] form, form[inert], [inert] form'
+    ).count():
+        return False
+    controls = [
+        page.locator(selector)
+        for selector in (
+            'form input[type="email"]',
+            'form input[type="password"]',
+            'form button[type="submit"], form input[type="submit"]',
+        )
+    ]
+    for control in controls:
+        if await control.count() != 1 or not await control.is_visible():
+            return False
+    return await controls[-1].is_disabled()
+
+
 def sanitized_resources(values: object) -> list[dict[str, str]]:
     """Keep only bounded public same-origin asset paths; never query/fragment/userinfo."""
     if not isinstance(values, list) or len(values) > 64:

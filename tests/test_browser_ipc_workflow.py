@@ -125,12 +125,12 @@ def test_browser_host_staging_is_marker_first_and_three_atomic_ssh_stdin_uploads
     # accepting only its old three-field prefix would reject a real install.
     pattern = staging.split('stage_pattern="', 1)[1].split('"', 1)[0]
     assert "namespace=new-only no_worker=yes" in pattern
-    assert "mem_kib=[0-9]+ cpu_headroom=[0-9]+[.][0-9]{2}" in pattern
+    assert "mem_kib=[0-9]+ cpu_ceiling=[0-9]+[.][0-9]{2}" in pattern
     assert "stage_free_mib=[0-9]+ docker_free_mib=[0-9]+" in pattern
     concrete = pattern.replace("$GITHUB_RUN_ID", "123456789")
     receipt = (
         "BOCA_BROWSER_STAGE_PASS attempt=123456789 uid=10001 owner=existing"
-        " namespace=new-only no_worker=yes mem_kib=1677722 cpu_headroom=2.00"
+        " namespace=new-only no_worker=yes mem_kib=1677722 cpu_ceiling=2.00"
         " pids_free=512 stage_free_mib=4096 docker_free_mib=8192"
     )
     assert re.fullmatch(concrete, receipt)

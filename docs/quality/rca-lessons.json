@@ -346,6 +346,40 @@
         "tests/test_telegram_storage_gate.py::test_real_beta_gate_rejects_unknown_duplicate_or_malformed_ledger_before_ddl",
         "tests/test_telegram_storage_gate.py::test_real_beta_gate_preserves_existing_accepted_delivery_fence_on_repeated_migration"
       ]
+    },
+    {
+      "id": "RCA-260",
+      "issue": 260,
+      "fix_pr": 261,
+      "root_cause": "The private rootless configuration reader opened an input with O_RDONLY before checking its file type, so a FIFO without a writer blocked instead of failing closed.",
+      "prevention": "Open with O_NONBLOCK and O_NOFOLLOW, require one-link regular private files, and revalidate descriptor identity, links and timestamps after bounded reads; preserve unexpected filesystem entries.",
+      "regression_tests": [
+        "tests/test_infrastructure_preflight.py::test_private_fifo_is_rejected_without_blocking"
+      ]
+    },
+    {
+      "id": "RCA-262",
+      "issue": 262,
+      "fix_pr": 263,
+      "root_cause": "The new public capture renderer could retain provisional DOM success after late Chromium cleanup failed, while awaiting text inside any() created an async generator and broke the positive DOM gate.",
+      "prevention": "Commit DOM success only after all context, browser and Playwright cleanup succeeds; await challenge text before a synchronous predicate and exercise the complete positive and late-failure adapter paths without network.",
+      "regression_tests": [
+        "tests/test_public_observer_capture.py::test_late_browser_cleanup_failure_invalidates_provisional_dom",
+        "tests/test_public_observer_capture.py::test_renderer_runs_full_adapter_and_challenge_gate_without_network"
+      ]
+    },
+    {
+      "id": "RCA-259",
+      "issue": 259,
+      "fix_pr": 261,
+      "root_cause": "The browser host gate subtracted one-minute load average from the SSH process CPU affinity, treating runnable and I/O-wait task counts as idle CPU. A two-CPU full topology was falsely rejected for any positive load, while ancestor quotas and container-branch cpusets were ignored.",
+      "prevention": "Resolve the dedicated rootless systemd container branch and applicable ancestor quotas/cpusets, use the verified configured CPU ceiling with unchanged numerical thresholds, and report load only as advisory; unknown identity or controls remain NO_GO.",
+      "regression_tests": [
+        "tests/test_host_cpu_capacity.py::test_io_load_does_not_reject_two_cpu_browser_and_telegram",
+        "tests/test_host_cpu_capacity.py::test_every_container_ancestor_quota_limits_ceiling",
+        "tests/test_host_cpu_capacity.py::test_expected_kernel_control_missing_is_unknown_not_unlimited",
+        "tests/test_host_cpu_capacity.py::test_advisory_load_survives_exact_real_receipt_workflow_parser"
+      ]
     }
   ]
 }

@@ -21,10 +21,13 @@ The historical baseline `032de0ebb923b4f80154e93cee3dfd1b254687ed` already
 contains owner enrollment, the isolated Chromium IPC worker, dual-image
 release and selective installation/cleanup. PR #254 adds the bounded real
 public-document observer; PR #255 adds browser-local Telegram setup.
-PR #253's lifecycle candidate composes owner shutdown, guarded daemon start,
-exact installed identities, optional sender and explicit recovery. Its final
-merge/checks and host state are recorded in [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208),
-not inferred from this architecture. No deployed BETA is established here.
+PR #253 integrated owner shutdown, guarded daemon start, exact installed
+identities, optional sender and explicit recovery at `5ddfba5`. PR #263 is
+also integrated; verified main is `6f7fa0939d28df7c315440bba15237b0c1bfbe77`,
+with CI 41511631024 and security 41511631004 PASS.
+[Current status](BETA_INTEGRATION_STATUS.md) separates these checks from
+unmerged PR #261 and host evidence. No deployed BETA is
+established here; operational receipts remain in [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
 
 The controller/browser pair remains UID10001/UID10002, with socket-only IPC
 and no IP network in the browser worker. Its aggregate budget is
@@ -44,9 +47,15 @@ The default sender remains disabled until the protected one-shot proof;
 that proof binds bot, destination and source SHA. Complete it before the first
 persistent simulation; the acceptance journey uses scratch SQLite instead.
 
-A public-document observation and a complete public-site validation are
-separate: run 41481095746 returned UNKNOWN, despite passing isolation/cleanup.
-See [the factual report](quality/public-source-validation-2026-11-02.md).
+The capture integrated by [PR #263](https://github.com/mbalbo2023/boca-socios-assistant/pull/263)
+separates bounded fetching from network-none Chromium. The authorized real
+run 41512196530 fetched 25 permitted GETs, all HTTP 200, but Chromium returned
+`UNKNOWN resource_outside_map`; isolation and cleanup passed. The missing URL
+was not identified. #264 corrects diagnostics in a separate branch, with no
+additional public GET authorized. This result does not prove a site outage or
+complete acceptance; even a positive captured render reports
+`connected_site=false`. See [the factual report](quality/public-source-validation-2026-11-02.md),
+including the earlier one-document UNKNOWN observation 41481095746.
 
 Historical implementation lineage follows; old TLS paths are not current
 operating instructions:
@@ -115,27 +124,47 @@ quantity remains 1 independently of the number of sessions observed.
 
 ## Resource isolation
 
-Compose project name boca-socios, separate volumes boca_data and boca_key,
-network boca_private,
-the current dormant Compose has no host port, shared mount, Docker socket or
-privileged container. The functional private-access candidate must explicitly
-review its changed ingress/health contract; these current flags are not proof
-that a future panel is already accessible.
-The dormant controller is capped at 0.5 vCPU, 256 MiB RAM, 64 PIDs, nonroot and
-read-only filesystem. The separate beta Compose #171 passed disposable CI
-validation with host-loopback TLS and effective isolation; it is not a host
-installation. Future workers require separate resource budgets,
-load testing and approval.
+Compose project name boca-socios, separate data/key/owner volumes and the
+validated Boca network remain isolated from unrelated workloads. The dormant
+Compose has no host port; served BETA #224 binds only `127.0.0.1:8443` through
+SSH, without TLS. The controller is capped at 0.5 vCPU, 256 MiB and 64 PIDs,
+nonroot with a read-only filesystem. The integrated browser overlay adds the
+separate UID10002 worker with 1 CPU, 768 MiB, 128 PIDs and socket-only IPC;
+Telegram remains separately gated. Disposable CI proves those tested
+boundaries, not installation or available capacity on the droplet.
 
-Compose project isolation is **not a separate host/kernel**; heavy browser
-workers may require another independent compute environment.
+Compose project isolation is **not a separate host/kernel**. Host capacity
+and application measurements require their own evidence; no different compute
+environment is selected by this architecture.
+
+Draft #261 / [ADR0103](ADR/0103-pre-release-infrastructure-observation.md)
+adds a pre-release infrastructure boundary: prove the prepared daemon's
+effective configuration and empty metadata, temporarily start only that daemon,
+collect aggregate observations, then verify it stopped. No image or application
+resource is created. Observation and numeric reserves are distinct. The
+reviewed CPU correction derives `cpu_ceiling` from ancestor quotas/cpusets and
+effective configuration of the containers' `user.slice` branch, with
+`cpu_scope=materialized` or `configured`. Docker's startup CPU count is only
+an extra ceiling; load is advisory, not free CPU. Numerical CPU/RAM/PID
+requirements and container caps remain unchanged. The same collector serves
+browser/sender preflights; the legacy singleton contract remains separate.
+
+[ADR0104](ADR/0104-existing-smoke-resource-observations.md) instruments the
+existing disposable-runner HTTP/SQLite, IPC/restart and offline sender phases.
+Only fixed cgroup counters are returned; unavailable evidence is `UNKNOWN`.
+CPU deltas require the same runtime/cgroup; lifetime peaks include observation
+overhead. Sender and pair run separately, so no simultaneous three-service
+budget or droplet capacity is demonstrated. Historical #261 checks on `42eb497e…`
+precede the CPU correction; its final candidate needs exact-SHA checks recorded
+in #45. Independent CPU review passed 290 focal tests, not a host operation.
 
 ## Observability
 
 Structured logs: event type, opaque member/event IDs, state transitions and
 duration. No usernames/passwords, token values, full redirects, cookies or
-authorization headers. Dormant healthcheck reads migration status; explicit
-BETA health #173 verifies local TLS/loop and a fixed synthetic event. Neither
+authorization headers. Dormant healthcheck reads migration status; current
+BETA health verifies the configured local HTTP loop and a fixed synthetic
+event; #173's TLS transport is historical. Neither
 health mode proves Site, Telegram or tablet access.
 
 

@@ -14,6 +14,7 @@ import stat
 import subprocess
 import sys
 from copy import deepcopy
+from fractions import Fraction
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -701,8 +702,12 @@ def test_post_pull_host_capacity_is_bounded_before_side_effects(
     monkeypatch.setattr(host, "_validate_docker_boundary", lambda: None)
     monkeypatch.setattr(host, "_storage_snapshot", lambda: object())
     monkeypatch.setattr(host, "_validate_storage_capacity", lambda _: None)
-    monkeypatch.setattr(host.os, "sched_getaffinity", lambda _: set(range(2)))
-    monkeypatch.setattr(host.os, "getloadavg", lambda: (2 - cpu, 0.0, 0.0))
+    monkeypatch.setattr(
+        host,
+        "_cpu_structural_capacity",
+        lambda: host.CpuCapacity(2, 2, Fraction(str(cpu)), "materialized"),
+    )
+    monkeypatch.setattr(host.os, "getloadavg", lambda: (64.0, 0.0, 0.0))
     original_read = Path.read_text
 
     def read(self: Path, *args: object, **kwargs: object) -> str:

@@ -15,16 +15,24 @@ infrastructure**.
 > passed 1663 tests plus 31 subtests and the real offline Chromium UI proof;
 > [security 41481913075](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913075)
 > passed. These are the PR's receipts, not a substitute for final-main checks.
-> PR #253 contains the reviewed lifecycle/recovery and durable Telegram
-> candidate; its merge, final checks and activation receipts are tracked in
-> [canonical checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
-> [Public observation 41481095746](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481095746)
-> actually ran Chromium on the permitted initial document: `UNKNOWN`, with
-> pre/post isolation and cleanup PASS. The complete site is still unvalidated;
-> [the report](docs/quality/public-source-validation-2026-11-02.md) records the
-> observed resources and a bounded proposal awaiting separate approval.
-> The latest documented host inspection found the dedicated daemon stopped
-> and its socket absent; the port check saw `127.0.0.1:8443 FREE reserved=no`
+> PR #253 integrated lifecycle/recovery and durable Telegram gates in
+> `5ddfba568d0b53168f51c0e5b33c363ba24c505e`. PR #263 is also integrated;
+> verified main is `6f7fa0939d28df7c315440bba15237b0c1bfbe77`, with
+> [CI 41511631024](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41511631024)
+> and [security 41511631004](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41511631004)
+> PASS. PR #261 remains unmerged; its historical `42eb497e…` checks precede
+> the reviewed CPU correction. [Status](docs/BETA_INTEGRATION_STATUS.md#pr-261-evidencia-histórica-y-cierre-pendiente)
+> keeps those receipts separate from the final candidate checks still required.
+> [Authorized public capture 41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530)
+> fetched 25 permitted GETs, all HTTP 200. Real offline Chromium returned
+> `UNKNOWN resource_outside_map`; pre/post isolation and cleanup passed.
+> The missing URL was not identified; #264 is a diagnostic correction in a
+> separate branch, with no further public GET authorized. The complete site
+> remains unaccepted; see [the report](docs/quality/public-source-validation-2026-11-02.md).
+> [Host inspection 41495516709](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41495516709)
+> found the daemon inactive/dead and its socket absent, with capacity not evaluated;
+> [port check 41497093298](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41497093298)
+> saw `127.0.0.1:8443 FREE reserved=no`
 > only at that instant. No BETA install, current dual release, real private
 > activation URL, Chrome/GPM persistence or Telegram delivery is established.
 > Finish documentation before release and freeze main through activation and
@@ -150,11 +158,17 @@ disposable controller/network/image/staged-Compose artifacts, while preserving
 owner/key/data volumes and retaining the failed deploy status. This is
 integrated code/test behavior, **not** proof of a cleanup or BETA installation on the droplet;
 unknown or interrupted cleanup remains NO_GO and forbids blind retries.
-The lifecycle candidate in PR #253 adds explicit existing-container start,
+The lifecycle integrated in PR #253 adds explicit existing-container start,
 restart, status and acceptance, plus optional Telegram start and recovery;
 see the [operation table](docs/OPERATIONS.md#protected-browser-lifecycle-contract).
 The pair budget is `1.5cpu-1024m-192pids`; owner-ready Telegram lifecycle uses
 `1.75cpu-1152m-224pids`. Neither is a claim of available host capacity.
+Draft #261/ADR0103 separates aggregate observations from numeric reserves,
+which remain unchanged. Its reviewed CPU criterion uses the container branch's
+structural `cpu_ceiling`; load is advisory, not free CPU. ADR0104 measures the
+existing CI workloads. Missing counters remain UNKNOWN and three-service
+concurrency is unmeasured. Final exact-SHA checks and the protected host
+operation remain pending.
 Complete Telegram setup/test before the first persistent simulation; the
 BETA acceptance probe uses temporary SQLite. The authenticated
 `/telegram/configurar` form from PR #255 produces only ciphertext and the
@@ -162,7 +176,7 @@ protected bot/destination pins. It does not install or enable a sender.
 
 The entirely synthetic Chromium journey (#25) and its on-demand and Unix IPC
 contracts (#227, ADR0093/0094) are integrated for offline tests, never real
-Boca navigation. This code cut adds optional `BOCA_BROWSER_BACKEND=ipc` for a
+Boca navigation. The integrated optional `BOCA_BROWSER_BACKEND=ipc` uses a
 separately isolated, UID10002 Browser Worker with a local Unix socket;
 **the default `off` keeps the existing in-process simulation stub**. The
 opt-in setting has no usable worker until a separately reviewed image,

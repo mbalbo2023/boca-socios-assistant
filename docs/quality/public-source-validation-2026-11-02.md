@@ -1,6 +1,10 @@
 # Validación pública Boca Socios — 2026-11-02
 
-**Resultado: observación del documento inicial ejecutada; sitio completo todavía no validado.**
+**Estado vigente: captura autorizada de 25 recursos ejecutada; render UNKNOWN por un recurso fuera del mapa. Sitio completo todavía no validado.**
+
+El recibo actual corresponde a [41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530): todos los GET respondieron HTTP 200, aislamiento y limpieza PASS. La identidad del recurso faltante no quedó registrada; RCA #264 prepara diagnóstico, sin nuevo intento público autorizado. Los detalles figuran al final.
+
+## Antecedente histórico: observación de un documento
 Recibo saneado: [public-observation-2026-11-02.json](public-observation-2026-11-02.json).
 Ejecución: [Actions 41481095746](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481095746),
 SHA `b0e46dbd1cc09ae625c65799a2fb75ca052ab5d8`,
@@ -25,7 +29,7 @@ afirmar, por coincidencia numérica, que fueron la hoja CSS y las seis fuentes.
 
 ## Causa y efecto sobre el despliegue
 
-La política vigente permite un único documento y mantiene JavaScript apagado
+La política de aquel modo permitía un único documento y mantenía JavaScript apagado
 y los subrecursos bloqueados. El clasificador conservador rechaza como prueba
 positiva un formulario cuyo documento contiene scripts o estilos. Las
 referencias JS/CSS observadas son compatibles con ese rechazo; `unknown` no
@@ -36,15 +40,17 @@ externas aún no verificadas**. No es evidencia de un defecto de despliegue y
 no justifica reinstalar la BETA. La simulación permanece separada. No hubo
 repetición, descarga adicional ni nueva modificación de código para este informe.
 
-## Propuesta concreta pendiente de aprobación
+## Contrato de la ampliación autorizada antes del dispatch
 
-Recomendación: una única captura ampliada, anónima y secuencial en un runner
+El propietario autorizó continuar este alcance concreto. El candidato de
+[ADR 0105](../ADR/0105-bounded-public-capture-offline-render.md) implementa una
+única captura ampliada, anónima y secuencial en un runner
 desechable de Actions; después, render de los bytes reales capturados en
 Chromium **sin salida de red**. No se propone una página inventada ni navegación
 libre. Este paso permitiría comprobar el render con las dependencias conocidas;
 no acreditaría por sí solo el sitio conectado completo, una sesión o reservas.
 
-| Límite propuesto | Alcance exacto |
+| Límite autorizado | Alcance exacto |
 | --- | --- |
 | Documentos | Un GET nuevo a `/auth/login`; el HTML anterior no fue conservado |
 | Estáticos | Como máximo los 24 paths exactos enumerados abajo; cada uno una sola vez |
@@ -74,10 +80,10 @@ sesión, no se completa CAPTCHA ni se interactúa con filas o formularios. Una
 dependencia nueva se informa de forma saneada para una decisión posterior;
 no se declara GREEN porque la página esté parcialmente renderizada.
 
-### Paths estáticos conocidos que delimitarían la autorización
+### Paths estáticos conocidos que delimitan la autorización
 
 Todos pertenecen al único origen indicado arriba. La lista es una allowlist
-propuesta de referencias observadas, **no una declaración de necesidad runtime**.
+de referencias observadas, **no una declaración de necesidad runtime**.
 
 | Tipo | Path exacto |
 | --- | --- |
@@ -106,8 +112,75 @@ propuesta de referencias observadas, **no una declaración de necesidad runtime*
 | JavaScript | `/_next/static/ZjtPdUbA-bZTrUy51xKDH/_buildManifest.js` |
 | JavaScript | `/_next/static/ZjtPdUbA-bZTrUy51xKDH/_ssgManifest.js` |
 
-La ampliación supera la autorización vigente de un GET. **No está ejecutada
-ni implementada por este informe.** Requiere aprobación de ese alcance,
-implementación revisada, CI sobre el SHA exacto y comprobación previa del
-aislamiento. Ninguna parte necesita cambiar el droplet, sus puertos, servicios
-o contenedores.
+La ampliación se autorizó para una sola ejecución con estos límites;
+se ejecutó después en 41512196530, con el resultado incompleto registrado al final. El código candidato exige coincidencia exacta
+de los 24 estáticos; una referencia ausente también produce STOP, sin
+descargar las demás por inercia. Requiere revisión independiente, CI y smoke
+Docker/Chromium sobre el SHA exacto antes del dispatch manual único. La
+observación de DOM auténtico offline conservará `connected_site=false` y no
+satisface por sí sola la carga completa del sitio conectado. Ninguna parte
+necesita cambiar el droplet, sus puertos, servicios o contenedores.
+
+## Evidencia histórica del candidato #263, sin tráfico público en sus tests
+
+El [PR #263](https://github.com/mbalbo2023/boca-socios-assistant/pull/263),
+head `9c693cb296e037af397e3ade2634f6264f717782`, pasó
+[CI 41508912214](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41508912214)
+con 1902 tests y 31 subtests, y
+[seguridad 41508912267](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41508912267).
+El [smoke real Docker/Chromium 41508912351](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41508912351),
+job `125495324095`, verificó aislamiento anterior/posterior, renderer sin red,
+formulario sintético creado por JS, rechazo esperado de fetch, WebSocket,
+navegación y Worker, y limpieza selectiva: PASS; `public_connections=0`.
+
+El checkout ejecutado fue el merge de prueba
+`c470c530c3f93895722fe22c7168a6957ced723e`, cuyo árbol
+`b3d12d0d09f224e0ba25316024dbd7a78be13cf7` coincide exactamente con el head.
+La revisión independiente comprobó los 12 blobs y 134 pruebas focales, sin
+P0/P1 pendientes. RCA #262 conserva los dos defectos detectados durante esa
+revisión y sus regresiones. Esta evidencia corresponde a ese corte: cambios
+posteriores de documentación, registro RCA o base requieren checks del nuevo
+candidato. Este smoke no ejecutó la captura pública ni validó el sitio real;
+la posterior ejecución autorizada y su resultado se registran a continuación.
+
+
+## Captura pública autorizada ejecutada: resultado incompleto
+
+[Run 41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530),
+job `125506598762`, intento 1, ejecutó `chromium-capture-25` sobre main
+`6f7fa0939d28df7c315440bba15237b0c1bfbe77`, después de
+[CI 41511631024](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41511631024)
+y [seguridad 41511631004](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41511631004)
+PASS. El PR #263 ya está integrado. La observación comenzó el
+2026-11-02 a las 16:41:50 ART y la limpieza finalizó a las 16:42:13 ART.
+
+| Comprobación real | Resultado |
+| --- | --- |
+| Captura de los 25 paths autorizados | 25 GET, todos HTTP 200; 2287897 bytes de cuerpos |
+| Proxy TLS | 25 túneles aceptados y 25 conexiones upstream; estado complete |
+| Chromium con los bytes reales | Arranque PASS; renderer con network none PASS |
+| Resultado del render | UNKNOWN, resource_outside_map, 30 solicitudes internas |
+| Identidad del recurso adicional | NO REGISTRADA por el recibo actual; no inferir URL ni número exacto de dependencias faltantes |
+| Aislamiento antes/después y limpieza selectiva | PASS |
+| Login, credenciales, fila, reserva, droplet | No ejecutados |
+
+[Recibos saneados completos](public-capture-observation-2026-11-02.json)
+conservan paths aprobados, tamaños, hashes y estados. Los cuerpos, headers,
+cookies y HTML no se guardaron en artifacts ni logs. La copia privada temporal
+se eliminó. No hay evidencia de caída de Boca ni de un bloqueo anti-bot: los
+25 recursos respondieron; el render se detuvo por la barrera local al intentar
+una dependencia fuera del mapa permitido. El sitio sigue sin aceptación completa.
+
+La diferencia entre 30 solicitudes internas y 25 cuerpos capturados no identifica
+cinco dependencias nuevas: pueden existir repeticiones y solicitudes detenidas
+tras el primer rechazo. No inventar URLs, necesidades de API o permisos desde
+ese conteo. RCA #264 registra la insuficiencia diagnóstica del renderer: sólo
+se imprimió el motivo, sin identidad saneada del recurso denegado.
+
+El próximo cambio de código añade diagnóstico limitado y regresiones,
+conservando el STOP, el presupuesto y la allowlist. Una nueva ejecución
+pública requiere autorización del dueño; no se ha repetido ni se ampliará
+la lista automáticamente. Primero hay que integrar/revisar ese diagnóstico
+y comprobar CI, seguridad y smoke offline del nuevo SHA. Esta captura no
+publicó imágenes ni instaló/modificó recursos del droplet.
+
