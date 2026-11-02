@@ -434,6 +434,21 @@
         "tests/test_infrastructure_diagnostics.py::test_ssh_capture_is_bounded_before_parser_reads_it",
         "tests/test_infrastructure_diagnostics.py::test_capture_files_are_untrusted_and_never_echoed"
       ]
+    },
+    {
+      "id": "RCA-271",
+      "issue": 271,
+      "fix_pr": 272,
+      "root_cause": "The effective-unit check required display rows for empty Exec arrays, but the official systemd renderer omits those rows even with --all. A valid seven-row response was rejected before daemon start. The exact historical host output was not retained.",
+      "prevention": "Keep six strict scalar properties and require six explicit typed Properties.Get results with exact signature, five empty hooks and one canonical argv vector. Missing properties, malformed output, command drift and read failures remain NO_GO without side effects or raw diagnostics.",
+      "regression_tests": [
+        "tests/test_effective_unit_shape.py::test_effective_unit_accepts_official_omitted_empty_hooks_with_typed_presence",
+        "tests/test_effective_unit_shape.py::test_effective_unit_rejects_every_nonempty_hook",
+        "tests/test_effective_unit_shape.py::test_effective_unit_requires_six_complete_typed_property_results",
+        "tests/test_effective_unit_shape.py::test_effective_unit_rejects_invalid_typed_runtime_metadata",
+        "tests/test_effective_unit_shape.py::test_effective_unit_rejection_cannot_reach_daemon_start",
+        "tests/test_effective_unit_shape.py::test_effective_unit_busctl_failures_keep_fixed_diagnostics_without_raw_output"
+      ]
     }
   ]
 }
