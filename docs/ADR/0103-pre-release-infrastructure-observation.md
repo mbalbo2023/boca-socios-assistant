@@ -1,10 +1,23 @@
 # ADR 0103: preflight de infraestructura antes de publicar imágenes
 
-**Estado:** candidato de PR #261 para #259 y corrección #260, 2026-11-02.
-La preparación inicial partió de `5ddfba568d0b53168f51c0e5b33c363ba24c505e`;
-la corrección CPU se agrega después de los recibos reales del smoke del
-candidato `42eb497e8b597cd86035d08370dc935cba9b0f17`. No se ha ejecutado este
-preflight nuevo en el host. SHA final, revisión y checks se registran en #45.
+**Estado:** integrado por PR #261; presente junto con #266 en main
+`7300c1021522a28091387a1b53c4f21dd8ad5e12`, 2026-11-02.
+[CI 41522036069](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522036069)
+y [seguridad 41522035980](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522035980)
+PASS. El preflight autorizado
+[41537794166/job125593988779](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41537794166/job/125593988779)
+falló en el control inicial de sólo lectura: marcador, arranque, observación
+y restauración quedaron SKIPPED, sin efectos del intento. Su motivo se perdió
+por el defecto de observabilidad RCA #268 y no puede reconstruirse desde ese
+recibo. La inspección posterior 41538696464 observó el daemon detenido, pero
+no identifica la condición original ni evalúa capacidad. El candidato de
+[ADR0109](0109-readonly-infrastructure-diagnostics.md) añade una inspección
+diagnóstica sin efectos; requiere revisión, checks y merge antes de ejecutarse.
+No sustituye este preflight ni relaja sus controles. Evidencia posterior: #45.
+
+La preparación histórica partió de `5ddfba568d0b53168f51c0e5b33c363ba24c505e`;
+la corrección CPU siguió al smoke del candidato
+`42eb497e8b597cd86035d08370dc935cba9b0f17`. El contrato siguiente se conserva.
 
 ## Problema y decisión
 

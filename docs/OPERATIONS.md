@@ -10,7 +10,7 @@ release/install/cleanup #237/#239/#242–#249. PR #254 merged at
 (1663 tests plus 31 subtests and real offline Chromium UI proof) and
 [security 41481913075](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913075)
 before merge. PR #253 integrated lifecycle/recovery and durable Telegram in
-`5ddfba568d0b53168f51c0e5b33c363ba24c505e`. The documented main cut
+`5ddfba568d0b53168f51c0e5b33c363ba24c505e`. The historical main cut
 `6f7fa0939d28df7c315440bba15237b0c1bfbe77` includes PR #263, with CI 41511631024
 and security 41511631004 PASS. PR #261 was unmerged at that cut. Its historical
 `42eb497e8b597cd86035d08370dc935cba9b0f17` checks precede the reviewed CPU
@@ -19,29 +19,55 @@ correction and cannot validate the final candidate; see the
 Later smoke [41514375981](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41514375981)
 on `7cfc9b6…` exited 2 despite CI passing 2081 tests.
 [RCA #265 / ADR0107](ADR/0107-opaque-owner-cli-operands.md) records the
-independently reviewed argument-terminator correction in this candidate; it
+independently reviewed argument-terminator correction integrated by #261; it
 reproduces a compatible defect without proving the unrecorded random value from that
-run. Final exact-SHA CI/security and real Docker smoke checks are still required.
-Final integration checks and operational state are maintained in
+run. These earlier cuts remain historical. Main
+`7300c1021522a28091387a1b53c4f21dd8ad5e12` includes #261 and #266:
+[CI 41522036069](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522036069)
+passed 2166 tests plus 31 subtests and 34 RCA lessons/114 executed selectors;
+[security 41522035980](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522035980)
+passed. New candidates require their own checks. Operational state is maintained in
 [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
 No matching current dual release, BETA installation, real activation URL,
 physical Chrome/GPM persistence or Telegram delivery is established here.
 
-[Authorized public capture 41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530/job/125506598762)
-ran on 2026-11-02, 16:41:50–16:42:13 ART: 25 permitted GETs returned HTTP 200,
-with 25 TLS connections. Real Chromium under `network=none` returned
-`UNKNOWN resource_outside_map` after 30 counted internal requests;
-pre/post isolation and cleanup passed. The receipt does not identify the
-missing URL or establish an outage of the official site. This version implements
-the #264 diagnostic correction in #266/[ADR0106](ADR/0106-sanitized-public-render-denials.md):
-at most eight sanitized records/4096 ASCII JSON bytes, arbitrary paths redacted
-and cancellations after STOP counted separately. It cannot recover the historical
-URL or expand the capture map. Exact-SHA checks and a new capture authorization
-remain required; no further public GET is authorized. Full-site acceptance remains
-open. The [report](quality/public-source-validation-2026-11-02.md) also preserves
-the earlier one-document UNKNOWN run 41481095746.
+[Authorized public capture 41537796470](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41537796470/job/125593993374)
+completed 25 permitted GETs, all HTTP 200, and 25 proxy connections. Chromium
+under `network=none` remained UNKNOWN: a denied script GET had
+`same_origin=false`, `query_redacted=true`, `path=null`, `path_class=external`.
+Its host and function are unknown; do not infer analytics, challenge or another
+provider from those flags. The renderer evaluated 25 requests and cancelled
+five after STOP; those cancellations are not new dependencies or public GETs.
+Startup, network-none, pre/post isolation and selective cleanup passed.
+#266/[ADR0106](ADR/0106-sanitized-public-render-denials.md) supplied the bounded
+diagnostic without expanding the capture map. The owner authorized this capture
+and the infrastructure test; both ran. No further public GET or blind retry is
+authorized. Full-site acceptance remains open, without evidence of an outage or
+block by Boca. The [report](quality/public-source-validation-2026-11-02.md)
+preserves the earlier UNKNOWN captures 41481095746 and 41512196530; the latter's
+unrecorded URL cannot be recovered from this new receipt.
 
-[Read-only inspection 41495516709](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41495516709/job/125449321031)
+[Infrastructure preflight 41537794166](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41537794166/job/125593988779)
+failed at step 28, the initial read-only `infrastructure-check`. The attempt
+marker, daemon start, observation and restoration steps were SKIPPED: no
+installation or residue-producing effect occurred. RCA #268 records that the
+workflow lost the diagnostic reason; it cannot be recovered retrospectively.
+This does not establish which host condition failed. The next candidate adds
+`infrastructure-inspect` below; activation remains blocked until state and
+policy are established, without rerunning the failed preflight blindly.
+
+[Later read-only inspection 41538696464](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41538696464/job/125597016052)
+at 2026-11-02 19:36:40 ART reached SSH as UID10001, with private runtime and
+owned user bus. The rootless socket was absent, rootful socket not writable,
+and the dedicated daemon inactive/dead/result=success. It observed
+MemAvailable=1015044 KiB, legacy `cpu_headroom=1.80` and PIDs UNKNOWN;
+capacity remained NOT_EVALUATED. The legacy estimate is not a decision under
+the reviewed CPU policy. `dockerd 29.7.2` is the binary version, not an active
+Engine verification. The three fixed DB candidates were absent; global
+location remains UNVERIFIED. This snapshot neither identifies the earlier
+failed condition nor proves readiness to activate.
+
+[Earlier read-only inspection 41495516709](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41495516709/job/125449321031)
 at 2026-11-02 14:54:42 ART found the dedicated Boca unit inactive/dead and its
 private socket absent, so prerequisites remained NO_GO. It observed
 MemAvailable=1020020 KiB, CPU estimate=0.27 and free PIDs=UNKNOWN;
@@ -143,10 +169,10 @@ droplet or create a service database. ADR0053 states the WAL/concurrency limits.
 
 ## Candidate pre-release infrastructure observation
 
-This version implements #261 / [ADR0103](ADR/0103-pre-release-infrastructure-observation.md):
-`infrastructure-preflight` in the existing protected workflow. It was absent
-from the documented main cut `6f7fa0`; no host execution is established here.
-After integration, exact-main checks and specific authorization, its inputs are `service=controller`,
+#261 / [ADR0103](ADR/0103-pre-release-infrastructure-observation.md) integrated
+`infrastructure-preflight` in the existing protected workflow. Its authorized
+host execution 41537794166 failed before the attempt marker, as recorded above.
+The operation's inputs remain `service=controller`,
 the exact `source_sha`, and budget `1.5cpu-1024m-192pids` or
 `1.75cpu-1152m-224pids`; image and release fields stay blank. It requires both
 `BOCA_HOST_READONLY_ENV_READY=ready` and `BOCA_DEPLOY_ENV_READY=ready`, because
@@ -155,7 +181,8 @@ it may temporarily start the already prepared dedicated daemon.
 The operation verifies the loaded unit/configuration and empty private
 container metadata before starting only that daemon. It observes Engine,
 cgroup delegation, empty inventory, Boca storage and the permitted loopback
-port, then always attempts verified restoration to stopped. It creates no
+port, then attempts verified restoration to stopped after the attempt marker.
+An initial read-only rejection does not enter that effect/restore phase. It creates no
 image, application container, volume, key or owner, and performs no Docker
 deletion. A failed earlier check stays NO_GO even if restoration succeeds;
 an unverified stop or lost SSH is INDETERMINADO and blocks activation/retry.
@@ -174,8 +201,29 @@ materialized; `daemon_startup_cpu_count` is only an additional conservative
 limit. Load is advisory, never measured free CPU. An unverified ceiling stays
 UNKNOWN/NO_GO. The 1.75/2.0 CPU requirements, RAM/PID reserves and service caps
 do not change. This structural ceiling does not reserve CPU or predict
-contention/latency. Independent CPU review passed 290 focal tests; final
-candidate checks and authorized host evidence remain pending.
+contention/latency. Independent CPU review passed 290 focal tests and #261
+passed its candidate checks. The host policy was not reached in 41537794166;
+the diagnostic correction requires its own checks before further investigation.
+
+### Read-only infrastructure diagnostic candidate — RCA #268
+
+[ADR0109](ADR/0109-readonly-infrastructure-diagnostics.md) adds
+`operation=infrastructure-inspect` to the same workflow. After review, checks
+and merge, use exact current `source_sha`, `service=controller` and either
+`1.5cpu-1024m-192pids` or `1.75cpu-1152m-224pids`. Image/release fields,
+envelopes, capability hash and recovery run ID must be empty. Only
+`BOCA_HOST_READONLY_ENV_READY=ready` is required; the operation does not use
+deploy readiness to authorize effects. The selected budget validates inputs,
+not capacity.
+
+One bounded SSH call runs the existing `infrastructure-check`. There is no
+attempt marker, start, stop, Docker operation, image pull, observation/policy
+phase or cleanup: this path has no effect to undo. It captures bounded stdout,
+stderr and exit status; the parser accepts only exact receipts or allowlisted
+fixed reasons and never prints raw stderr. An exact successful check can report
+stopped/prepared with capacity NOT_EVALUATED. A known rejected condition remains
+NO_GO; unknown output or transport failure is INDETERMINATE and remains failed.
+It neither recovers the old reason nor substitutes for a successful preflight.
 
 [ADR0104](ADR/0104-existing-smoke-resource-observations.md) adds bounded cgroup
 observations around the existing CI HTTP/SQLite, IPC/restart and offline sender

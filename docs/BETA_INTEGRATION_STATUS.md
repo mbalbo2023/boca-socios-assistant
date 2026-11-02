@@ -2,6 +2,21 @@
 
 ## Estado comprobado 2026-11-02 — aplicación no instalada
 
+El corte de main `7300c1021522a28091387a1b53c4f21dd8ad5e12` integra #261 y
+#266. [CI 41522036069](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522036069)
+pasó 2166 pruebas +31 subtests y 34 RCA/114 selectores ejecutados;
+[seguridad 41522035980](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522035980)
+PASS. El propietario autorizó las dos pruebas posteriores y continuar el
+trabajo: preflight 41537794166 y captura 41537796470 ya se ejecutaron. No
+siguen pendientes de aquella autorización; sus resultados se distinguen abajo
+de los checks de código y de cualquier operación futura.
+
+El preflight falló antes de producir efectos y perdió el motivo del rechazo.
+RCA #268 añade como candidato `infrastructure-inspect`, una única comprobación
+SSH de sólo lectura con diagnóstico acotado; no arranca ni detiene recursos.
+Revisión, checks y merge preceden su ejecución. La activación sigue bloqueada
+hasta establecer el estado y evaluar la política, sin reintento ciego.
+
 La base histórica `032de0ebb923b4f80154e93cee3dfd1b254687ed` ya integró
 #224/#226/#229 y #237/#239/#242–#249. PR #254 se integró como
 `b0e46dbd1cc09ae625c65799a2fb75ca052ab5d8`; PR #255 como
@@ -29,8 +44,8 @@ y validación PR del release 41518026926 PASS. El smoke superó el listener,
 24 solicitudes sintéticas, IPC real, arranque/parada/reinicio del mismo par,
 sender offline y los pasos de limpieza. Emitió diez recibos OBSERVED; no
 midió tres servicios simultáneos ni el droplet. CI/seguridad postmerge
-41518842124/41518842093 y los checks del siguiente candidato #266 se
-registran en #45 antes de cualquier operación protegida. No hay publicación
+41518842124/41518842093 y los checks posteriores de #266 se
+conservan en #45; el corte integrado comprobado figura arriba. No hay publicación
 ni despliegue por estos merges.
 
 El candidato intermedio #266 `f54485241617194eee316c7a79dc7e79a89580ba`
@@ -41,20 +56,20 @@ falló una prueba antigua que buscaba `tls` en bytes cifrados aleatorios
 reproduce ese falso positivo con una sal sintética válida. La corrección de
 esta versión verifica esquema y bundle descifrado reales, mantiene negativos
 TLS/clave privada y obtuvo revisión independiente con 57 pruebas focales PASS.
-Producción y entropía permanecen intactas. El candidato corregido exige sus
-propios checks; el fallo anterior no se transforma en PASS ni autoriza un
-reintento protegido.
+Producción y entropía permanecen intactas. La corrección se integró en #266
+y sus checks posteriores figuran arriba; el fallo histórico no se transforma
+en PASS ni autoriza un reintento protegido.
 
 | Frente | Evidencia comprobada | Pendiente de aceptación |
 | --- | --- | --- |
-| Host | [41495516709/job125449321031](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41495516709/job/125449321031), 2026-11-02 14:54:42 ART: daemon inactive/dead, socket ausente; MemAvailable 1020020 KiB, estimación CPU 0.27, PIDs UNKNOWN; capacidad NOT_EVALUATED | Autorizar y ejecutar `infrastructure-preflight`, ya integrado por #261, antes de release; capacidad/aislamiento efectivos e instalación mantienen sus gates; no repetir preparación inicial |
+| Host | [Preflight 41537794166/job125593988779](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41537794166/job/125593988779): FAIL en control inicial, antes de efectos; motivo perdido. [Inspección 41538696464/job125597016052](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41538696464/job/125597016052), 19:36:40 ART: daemon inactive/dead, socket ausente, capacidad NOT_EVALUATED | Integrar/revisar/checks de RCA #268 y ejecutar `infrastructure-inspect` sólo lectura; establecer causa actual y evaluar política antes de activar. No repetir preparación inicial ni el preflight a ciegas |
 | Puerto | [41497093298/job125454798607](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41497093298/job/125454798607): `127.0.0.1:8443 FREE reserved=no` a las 15:04:45 ART del 2026-11-02 | Nueva comprobación justo antes del uso; listener y forwarding reales |
 | Release | Publicación dual integrada en código | Dos digests/manifiestos reales del mismo release y SHA final aprobado |
 | Ciclo operativo | PR #253 integrado en `5ddfba5`: start/restart/status/acceptance y sender-start/recover con identidad y presupuesto explícitos | Comprobación host sobre el SHA final; no hay instalación ni reinicio probado en el droplet |
-| Recursos | Implementación #261, ADR0103/0104: observación/política separadas, medición del smoke y corrección `cpu_ceiling` con revisión independiente/290 pruebas focales PASS; [informe de recursos](quality/resource-observation-2026-11-02.md) | Checks del candidato final registrados en #45 y observación host; requisitos numéricos/caps sin cambio, sin extrapolar el runner al droplet ni sumar picos no simultáneos |
+| Recursos | #261 integrado, ADR0103/0104; smoke y `cpu_ceiling` revisados. Inspección posterior: MemAvailable 1015044 KiB, `cpu_headroom=1.80` legacy no decisorio, PIDs UNKNOWN; [informe histórico de recursos](quality/resource-observation-2026-11-02.md) | Política host aún NOT_EVALUATED; checks propios de RCA #268. Requisitos/caps sin cambio; no extrapolar runner ni interpretar la estimación legacy como CPU libre |
 | Telegram privado | PR #255 integrado; [CI 41481913145](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913145): 1663 pruebas + 31 subtests y Chromium UI offline PASS; [seguridad 41481913075](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913075) PASS | Recibo real de prepare, formulario en tablet, custodia de token/destino, one-shot y recepción humana |
 | Chrome/passkey | Owner-enroll integrado; localhost HTTP sobre SSH | Enlace de un uso real, create→get, Google Password Manager, segundo acceso y persistencia tras reinicio |
-| Sitio oficial | #263 integrado; [captura real 41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530/job/125506598762): 25 GET permitidos/HTTP 200, Chromium real `network=none`, UNKNOWN `resource_outside_map`; aislamiento previo/posterior y cleanup PASS | Sitio completo no aceptado; URL histórica no identificada. Diagnóstico saneado #264 implementado en esta versión, #266/[ADR0106](ADR/0106-sanitized-public-render-denials.md); faltan checks exactos y una nueva captura autorizada. No hay nuevos GET autorizados ni evidencia de caída del sitio |
+| Sitio oficial | [Captura autorizada 41537796470/job125593993374](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41537796470/job/125593993374): 25 GET/200, Chromium `network=none`, UNKNOWN; script GET con `same_origin=false`, query redactada y `path=null`; aislamiento/cleanup PASS | Host y función del script desconocidos; no se infieren desde el recibo. Sitio completo sin aceptación, sin evidencia de caída o bloqueo de Boca. No nuevos GET ni expansión/reintento automáticos |
 | Entornos | Observación inicial 2026-11-02: main-only, reviewers off, bypass disponible; READY release/deploy/read-only y secretos SSH existentes | Verificar configuración de activación exacta y permisos; marcadores solos no acreditan capacidad ni consentimiento |
 
 Como antecedente previo al merge, #263 pasó [CI 41508912214](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41508912214)
@@ -73,6 +88,22 @@ sitio conectado completo, login, fila o reserva.
 Inspect/port-check no ejecutaron Docker ni una instalación: no generaron
 residuos de instalación y no corresponde inventar su limpieza. La DB se
 inspeccionó sólo en tres rutas de metadata; ubicación global UNVERIFIED.
+
+El preflight 41537794166 falló en el paso 28, `infrastructure-check`, antes
+del marcador. Arranque, observación y restauración quedaron SKIPPED; no hubo
+recursos de instalación que limpiar. El defecto de observabilidad ocultó el
+motivo, que no puede recuperarse retrospectivamente. La inspección posterior
+41538696464 sí alcanzó SSH como UID10001: runtime privado, bus owned, socket
+rootless ausente, rootful no escribible, daemon inactive/dead/result=success.
+`dockerd 29.7.2` identifica el binario, no un Engine activo verificado.
+No identifica cuál condición falló antes ni evalúa capacidad. Las tres rutas
+fijas de DB estaban ausentes; la búsqueda global sigue UNVERIFIED.
+
+La captura posterior autorizada completó 25 conexiones del proxy y 25 GET/200;
+el renderer contó 25 solicitudes evaluadas y cinco cancelaciones posteriores
+al STOP. Son contadores separados, no cinco dependencias nuevas ni cinco GET
+públicos adicionales. El [informe público](quality/public-source-validation-2026-11-02.md)
+conserva ambas capturas y sus límites; no divulga ni reconstruye la URL redactada.
 
 ### PR #261: evidencia histórica e integración comprobada
 
@@ -123,12 +154,14 @@ de la rama `user.slice`, cuotas ancestrales, cpusets y configuración efectiva.
 es sólo otro límite. Load es advisory, no CPU libre. Los requisitos CPU
 1.75/2.0, RAM 1536/1792 MiB, PIDs 256/288 y caps permanecen intactos.
 Un techo no comprobable sigue UNKNOWN/NO_GO. Los checks finales de #261
-pasaron en 41518027202/41518026922/41518027065; los nuevos checks de #266
-y la operación protegida en el droplet conservan sus gates. La concurrencia de tres servicios no
+pasaron en 41518027202/41518026922/41518027065; #266 también está integrado.
+El preflight posterior falló antes de evaluar política; RCA #268 mantiene sus
+propios gates de integración y diagnóstico. La concurrencia de tres servicios no
 está medida y los recibos del runner no acreditan capacidad host.
 
-Secuencia: integrar/revisar #266 y sus checks finales → autorizar
-y comprobar `infrastructure-preflight` → evaluar observaciones → aprobación
+Secuencia: integrar/revisar RCA #268 y sus checks finales → ejecutar
+`infrastructure-inspect` sólo lectura → establecer causa/estado y resolver
+el bloqueo con alcance concreto → completar y evaluar `infrastructure-preflight` → aprobación
 específica/release dual → preflight de imágenes/topología → owner-prepare y owner-enroll físico → instalación → aceptación
 sintética temporal → formulario/custodia y prueba Telegram con outbox vacío
 → sender explícito → simulación persistente, reinicio y acceso físico repetido.
@@ -520,15 +553,16 @@ transporte y pruebas propias. [Issue #168](https://github.com/mbalbo2023/boca-so
 registra la provisión/recepción Telegram pendiente; [issue #113](https://github.com/mbalbo2023/boca-socios-assistant/issues/113)
 registra el puente Site no resuelto.
 
-La cadena pendiente es: integrar/verificar #266 y congelar main
-→ autorizar/ejecutar `infrastructure-preflight` de #261 y evaluar sus recibos
+La cadena pendiente es: integrar/verificar RCA #268 → inspección diagnóstica
+de sólo lectura → resolver el bloqueo y completar/evaluar el preflight
+→ congelar main
 → autorizar/publicar release dual exacta → preflight de imágenes/aislamiento → owner-prepare
 y owner-enroll real → instalación/aceptación temporal → Telegram antes de la
 primera simulación persistente → E2E desde interfaz real y reinicio/reanudación.
-La captura pública limitada de #263 ya se ejecutó y quedó UNKNOWN. Esta versión
-implementa el diagnóstico saneado #264 en #266/ADR0106; faltan checks exactos y
-autorización concreta para una nueva captura. No identifica retrospectivamente
-la URL histórica ni autoriza nuevos GET. El sitio completo sigue sin aceptación. La
+Las capturas públicas autorizadas 41512196530 y 41537796470 quedaron UNKNOWN.
+#266/ADR0106 está integrado y el segundo run emitió la metadata saneada del
+script denegado, sin revelar su host o función. No identifica retrospectivamente
+la primera URL ni autoriza nuevos GET. El sitio completo sigue sin aceptación. La
 parada de 41272785626 cerró las pruebas de preparación, no una instalación
 BETA. El workflow `first-install` instala sólo un controlador dormido; #191
 agrega `beta-install` y #200 `beta-acceptance` con parada, ambos sin dispatch
