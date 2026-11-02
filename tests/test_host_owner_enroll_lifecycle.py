@@ -33,7 +33,7 @@ def test_enrollment_container_has_one_host_loopback_port_and_disposable_mount() 
     ]
     assert all("boca_owner" not in a and "boca_key" not in a and "boca_data" not in a for a in args)
     assert not any("docker.sock" in a or "--network=host" in a for a in args)
-    assert args[-5:] == ("boca_socios.owner_enrollment", SUBJECT, DIGEST, "A" * 43, "b" * 64)
+    assert args[-6:] == ("boca_socios.owner_enrollment", "--", SUBJECT, DIGEST, "A" * 43, "b" * 64)
 
 
 def test_offline_staged_import_is_no_network_with_readonly_staging() -> None:

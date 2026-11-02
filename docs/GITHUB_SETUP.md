@@ -57,15 +57,24 @@ needed. These observations do not authorize bypass, publication, installation
 or a readiness marker change. A concrete candidate and the owner's specific
 protected-operation approval remain required. Do not enable BETA or browser
 readiness while the corresponding host/code gates are unresolved. The latest
-host evidence is [inspection 41471945717](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41471945717)
-(dedicated daemon stopped, socket absent, prerequisite NO_GO) and
-[port check 41473018271](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41473018271)
-(`127.0.0.1:8443 FREE reserved=no`); neither installs the application.
+host evidence is [inspection 41495516709](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41495516709)
+at 2026-11-02 14:54:42 ART (daemon inactive/dead, socket absent, prerequisite
+NO_GO, capacity NOT_EVALUATED) and [port check 41497093298](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41497093298)
+at 15:04:45 ART (`127.0.0.1:8443 FREE reserved=no`); neither installs the application.
 
 Branch-ruleset, Actions-policy and security-feature observations below retain
 their historical dates; this environment inspection did not reverify them.
 
 ## Activation coordinates and frozen source
+
+The documented main cut `6f7fa0939d28df7c315440bba15237b0c1bfbe77` includes
+merged PRs #253/#263; CI 41511631024 and security 41511631004 passed. PR #261's
+historical `42eb497e8b597cd86035d08370dc935cba9b0f17` checks precede the CPU
+correction. [Status](BETA_INTEGRATION_STATUS.md) keeps those receipts separate
+from final-candidate checks, including the reviewed
+[owner argv fix](ADR/0107-opaque-owner-cli-operands.md). At the documented cut
+#261 was unmerged and its host operation had not run. Subsequent main/checks
+are recorded in #45; PR validation does not publish images or verify GitHub settings.
 
 PR #255 integrated `/telegram/configurar` and proved its synthetic browser-local
 sealing flow in CI 41481913145, with security 41481913075 PASS. Owner entry stays
@@ -83,7 +92,7 @@ and `BOCA_TELEGRAM_OWNER_READY` under their approved phase. A marker is not
 proof of configuration, identity, capacity or permission. Do not enable a
 sender solely because a form generated ciphertext.
 
-PR #253's lifecycle candidate requires both digest refs, the same successful
+The lifecycle integrated in PR #253 requires both digest refs, the same successful
 release, exact current `source_sha`, `service=controller` and reviewed budget.
 `beta-browser-install` uses `1.5cpu-1024m-192pids`; existing browser/dual Telegram
 operations use the full `1.75cpu-1152m-224pids` once owner Telegram is ready.
@@ -91,6 +100,18 @@ Sender-start/recover require that full budget. `failed_telegram_run_id` is
 required only for `beta-browser-telegram-recover`; GitHub validates the exact
 completed failed first attempt and its successful effect marker. Never use
 Re-run jobs as recovery or present a new run as ownership of old resources.
+
+This version implements #261's `operation=infrastructure-preflight` before release. After
+integration and specific approval, it uses exact current `source_sha`,
+`service=controller`, either pair/full-three budget above and blank image/release
+inputs. Both existing deploy/read-only READY markers are required: temporary
+start of the verified empty Boca daemon is a protected effect. No BETA/browser/
+Telegram marker, private owner context or release is inferred from this check.
+Its required verified final state is stopped; observation and numeric reserves
+have separate receipts. The reviewed CPU criterion uses structural `cpu_ceiling`,
+with load advisory and existing numerical requirements unchanged. See [ADR0103](ADR/0103-pre-release-infrastructure-observation.md)
+and [the operation contract](OPERATIONS.md#candidate-pre-release-infrastructure-observation).
+No setting was changed by the candidate or these documentation updates.
 
 Freeze main after final documentation/review/checks and before release.
 Keep it frozen through owner enrollment, install, Telegram and recovery;

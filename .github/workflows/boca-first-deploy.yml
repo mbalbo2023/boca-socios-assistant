@@ -8,7 +8,7 @@ on:
         description: Boca-only host operation; browser IPC is a separate, opt-in, protected BETA gate
         required: true
         type: choice
-        options: [inspect-prerequisites, port-check, prepare-rootless, preflight, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
+        options: [inspect-prerequisites, port-check, prepare-rootless, preflight, infrastructure-preflight, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
         description: Exact current main commit approved for the operation
         required: true
@@ -84,7 +84,7 @@ jobs:
           uv sync --frozen
       - name: Check dispatch and first-install boundaries offline
         run: |
-          uv run pytest -q tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_beta_browser_deploy_contract.py tests/test_browser_ipc_workflow.py tests/test_host_browser_lifecycle.py tests/test_host_browser_ipc_file_stage.py tests/test_host_browser_ipc_install.py tests/test_host_browser_ipc_cleanup.py tests/test_host_browser_ipc_cross_contract.py tests/test_host_first_deploy.py tests/test_host_loopback_port.py tests/test_host_beta_install.py tests/test_host_beta_cleanup.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_owner_bootstrap.py tests/test_host_owner_bootstrap.py tests/test_host_owner_enroll_lifecycle.py tests/test_host_owner_enroll_cleanup.py tests/test_host_operation_gate.py tests/test_main_ref_gate.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_telegram_one_shot.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
+          uv run pytest -q tests/test_owner_enrollment_argv.py tests/test_host_cpu_capacity.py tests/test_infrastructure_preflight.py tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_beta_browser_deploy_contract.py tests/test_browser_ipc_workflow.py tests/test_host_browser_lifecycle.py tests/test_host_browser_ipc_file_stage.py tests/test_host_browser_ipc_install.py tests/test_host_browser_ipc_cleanup.py tests/test_host_browser_ipc_cross_contract.py tests/test_host_first_deploy.py tests/test_host_loopback_port.py tests/test_host_beta_install.py tests/test_host_beta_cleanup.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_owner_bootstrap.py tests/test_host_owner_bootstrap.py tests/test_host_owner_enroll_lifecycle.py tests/test_host_owner_enroll_cleanup.py tests/test_host_operation_gate.py tests/test_main_ref_gate.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_telegram_one_shot.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
       - name: Validate optional served BETA Compose model without host access
         env:
@@ -243,7 +243,7 @@ jobs:
             --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
             --tmpfs /tmp:rw,noexec,nosuid,size=4m \
             --mount type=volume,source=boca-socios_boca_owner,target=/run/owner,volume-nocopy \
-            "$BOCA_IMAGE" python -m boca_socios.owner_bootstrap prepare "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")"
+            "$BOCA_IMAGE" python -m boca_socios.owner_bootstrap -- prepare "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")"
           [[ "$receipt" =~ ^BOCA_OWNER_BOOTSTRAP\ state=PREPARED\ public_key=([A-Za-z0-9_-]{43})\ fingerprint=([0-9a-f]{64})$ ]]
           public="${BASH_REMATCH[1]}"
           fingerprint="${BASH_REMATCH[2]}"
@@ -257,13 +257,13 @@ jobs:
               --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
               --tmpfs /tmp:rw,noexec,nosuid,size=4m \
               --mount type=volume,source=boca-socios_boca_owner,target=/run/owner,volume-nocopy \
-              "$BOCA_IMAGE" python -m boca_socios.owner_bootstrap install "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")" = \
+              "$BOCA_IMAGE" python -m boca_socios.owner_bootstrap -- install "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")" = \
             "BOCA_OWNER_BOOTSTRAP state=CONFIGURED fingerprint=$fingerprint"
           test "$(docker run --rm --pull never --user 10001:10001 --network none --read-only \
             --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
             --tmpfs /tmp:rw,noexec,nosuid,size=4m \
             --mount type=volume,source=boca-socios_boca_owner,target=/run/owner,volume-nocopy,readonly \
-            "$BOCA_IMAGE" python -m boca_socios.owner_bootstrap verify "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")" = \
+            "$BOCA_IMAGE" python -m boca_socios.owner_bootstrap -- verify "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")" = \
             "BOCA_OWNER_BOOTSTRAP state=VERIFIED fingerprint=$fingerprint"
           docker volume rm boca-socios_boca_owner
           rm -rf "$fixture"
@@ -302,7 +302,7 @@ jobs:
           recipient="$(docker run --rm --pull never --user 10001:10001 --network none --read-only \
             --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
             --mount type=volume,source=boca-socios_boca_owner,target=/run/owner,volume-nocopy \
-            "$BOCA_IMAGE" python -m boca_socios.owner_bootstrap prepare "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")"
+            "$BOCA_IMAGE" python -m boca_socios.owner_bootstrap -- prepare "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")"
           [[ "$recipient" =~ ^BOCA_OWNER_BOOTSTRAP\ state=PREPARED\ public_key=([A-Za-z0-9_-]{43})\ fingerprint=([0-9a-f]{64})$ ]]
           public="${BASH_REMATCH[1]}"
           fingerprint="${BASH_REMATCH[2]}"
@@ -320,7 +320,7 @@ jobs:
             --restart no --no-healthcheck --read-only --cap-drop ALL \
             --security-opt no-new-privileges --pids-limit 32 --memory 128m --cpus 0.5 \
             --mount "type=volume,source=$stage,target=/run/enrollment,volume-nocopy" \
-            "$BOCA_IMAGE" python -m boca_socios.owner_enrollment \
+            "$BOCA_IMAGE" python -m boca_socios.owner_enrollment -- \
             "$BOCA_OWNER_SUBJECT" "$private_digest" "$public" "$fingerprint"
           state="$(docker inspect --format '{{.State.Status}}/{{.State.ExitCode}}' "$temporary")"
           if [[ "$state" != running/0 ]]; then
@@ -364,12 +364,12 @@ jobs:
             --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
             --mount type=volume,source=boca-socios_boca_owner,target=/run/owner,volume-nocopy \
             --mount "type=volume,source=$stage,target=/run/enrollment,volume-nocopy,readonly" \
-            "$BOCA_IMAGE" python -m boca_socios.owner_bootstrap install-staged "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")" = \
+            "$BOCA_IMAGE" python -m boca_socios.owner_bootstrap -- install-staged "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")" = \
             "BOCA_OWNER_BOOTSTRAP state=CONFIGURED fingerprint=$fingerprint"
           test "$(docker run --rm --pull never --user 10001:10001 --network none --read-only \
             --cap-drop ALL --security-opt no-new-privileges --pids-limit 16 --memory 64m --cpus 0.25 \
             --mount type=volume,source=boca-socios_boca_owner,target=/run/owner,volume-nocopy,readonly \
-            "$BOCA_IMAGE" python -m boca_socios.owner_bootstrap verify "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")" = \
+            "$BOCA_IMAGE" python -m boca_socios.owner_bootstrap -- verify "$BOCA_PANEL_ORIGIN" "$BOCA_OWNER_SUBJECT")" = \
             "BOCA_OWNER_BOOTSTRAP state=VERIFIED fingerprint=$fingerprint"
           printf 'BOCA_ENROLL_SMOKE state=PASSED listener=127.0.0.1:8443 owner_mount=offline_only\n'
       - name: Exercise sealed Telegram custody in a disposable offline Boca volume
@@ -576,26 +576,7 @@ jobs:
         run: |
           container="$(docker compose -p boca-socios -f compose.beta.yaml ps -q controller)"
           [[ "$container" =~ ^[0-9a-f]{64}$ ]]
-          docker exec --user 10001:10001 "$container" \
-            python -m boca_socios.acceptance.host_probe \
-            > "$RUNNER_TEMP/boca-synthetic-probe.receipt" 2>/dev/null
-          PYTHONPATH=src python3 - "$RUNNER_TEMP/boca-synthetic-probe.receipt" <<'PY'
-          import sys
-          from pathlib import Path
-          from boca_socios.host_first_deploy import _validate_beta_acceptance_receipt
-
-          try:
-              path = Path(sys.argv[1])
-              if path.stat().st_size > 385:
-                  raise ValueError("synthetic receipt exceeds bounded output")
-              raw = path.read_text(encoding="ascii")
-              if raw.count("\n") != 1 or not raw.endswith("\n"):
-                  raise ValueError("unexpected synthetic receipt lines")
-              print(_validate_beta_acceptance_receipt(raw[:-1]))
-          except (OSError, UnicodeError, ValueError):
-              print("BOCA_NO_GO: disposable synthetic receipt invalid", file=sys.stderr)
-              raise SystemExit(1) from None
-          PY
+          PYTHONPATH=src python3 scripts/check_browser_lifecycle_runtime.py acceptance "$container"
       - name: Verify actual dual-service inspect and retained-container restart on disposable runner
         run: |
           set -euo pipefail
@@ -616,15 +597,11 @@ jobs:
             up --no-build --no-deps --wait --wait-timeout 90 -d controller
           controller="$(docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml ps -q controller)"
           worker="$(docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml ps -q browser-worker)"
-          PYTHONPATH=src python3 scripts/check_browser_lifecycle_runtime.py pair running "$controller" "$worker"
-          docker exec --user 10001:10001 "$controller" python -c \
-            'import asyncio; from boca_socios.browser.ipc_client import UnixSyntheticBrowser; from boca_socios.browser.contracts import SimulationOutcome; assert asyncio.run(UnixSyntheticBrowser(timeout_seconds=25).simulate_general_reservation()) is SimulationOutcome.RESERVED_IN_SIMULATOR'
+          PYTHONPATH=src python3 scripts/check_browser_lifecycle_runtime.py pair running "$controller" "$worker" startup
           docker stop --time 10 "$controller" "$worker"
           PYTHONPATH=src python3 scripts/check_browser_lifecycle_runtime.py pair stopped "$controller" "$worker"
           docker start "$worker" "$controller"
-          PYTHONPATH=src python3 scripts/check_browser_lifecycle_runtime.py pair running "$controller" "$worker"
-          docker exec --user 10001:10001 "$controller" python -c \
-            'import asyncio; from boca_socios.browser.ipc_client import UnixSyntheticBrowser; from boca_socios.browser.contracts import SimulationOutcome; assert asyncio.run(UnixSyntheticBrowser(timeout_seconds=25).simulate_general_reservation()) is SimulationOutcome.RESERVED_IN_SIMULATOR'
+          PYTHONPATH=src python3 scripts/check_browser_lifecycle_runtime.py pair running "$controller" "$worker" restart
           docker stop --time 10 "$controller" "$worker"
       - name: Verify offline sender readiness and never-started production network inspect
         run: |
@@ -729,7 +706,9 @@ jobs:
           else
             test -z "$BOCA_FAILED_TELEGRAM_RUN_ID"
           fi
-          if [[ "$BOCA_OPERATION" = beta-browser-install ]]; then
+          if [[ "$BOCA_OPERATION" = infrastructure-preflight ]]; then
+            [[ "$BOCA_BUDGET" = 1.5cpu-1024m-192pids || "$BOCA_BUDGET" = 1.75cpu-1152m-224pids ]]
+          elif [[ "$BOCA_OPERATION" = beta-browser-install ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
           elif [[ "$BOCA_OPERATION" = beta-browser-telegram-start || ( "$BOCA_TELEGRAM_OWNER_READY" = ready && ( "$BOCA_OPERATION" = beta-browser-* || ( "$BOCA_OPERATION" = telegram-* && -n "$BOCA_BROWSER_IMAGE_REF" ) ) ) ]]; then
             test "$BOCA_BUDGET" = 1.75cpu-1152m-224pids
@@ -743,6 +722,13 @@ jobs:
           if [[ "$BOCA_OPERATION" != owner-install ]]; then test -z "$BOCA_OWNER_ENVELOPE"; fi
           if [[ "$BOCA_OPERATION" != owner-enroll ]]; then test -z "$BOCA_OWNER_CAPABILITY_SHA256"; fi
           case "$BOCA_OPERATION" in
+            infrastructure-preflight)
+              test "$BOCA_HOST_READONLY_ENV_READY" = ready
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test -z "$BOCA_IMAGE_REF"
+              test -z "$BOCA_RELEASE_RUN_ID"
+              test -z "$BOCA_SITE_ENVELOPE"
+              ;;
             inspect-prerequisites|port-check|preflight)
               test "$BOCA_HOST_READONLY_ENV_READY" = ready
               test -z "$BOCA_IMAGE_REF"
@@ -868,6 +854,11 @@ jobs:
         run: |
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref.json"
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref.json" "$BOCA_SOURCE_SHA"
+      - name: Validate image-free infrastructure coordinates before SSH
+        if: inputs.operation == 'infrastructure-preflight'
+        env:
+          PYTHONPATH: src
+        run: python scripts/check_deploy_inputs.py --infrastructure-preflight "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_SERVICE" "$BOCA_BUDGET" "$BOCA_RELEASE_RUN_ID"
       - name: Validate immutable inputs and successful matching release
         if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic' || inputs.operation == 'site-prepare' || inputs.operation == 'site-install' || inputs.operation == 'site-verify' || startsWith(inputs.operation, 'owner-') || inputs.operation == 'beta-install' || startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'beta-acceptance' || startsWith(inputs.operation, 'telegram-')
         env:
@@ -1020,7 +1011,7 @@ jobs:
           BOCA_OWNER_ENVELOPE: ${{ inputs.owner_envelope }}
         run: |
           set +e
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - "$BOCA_OPERATION" "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' "$BOCA_OWNER_ENVELOPE")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - -- "$BOCA_OPERATION" "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' "$BOCA_OWNER_ENVELOPE")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-owner.receipt" 2>/dev/null
           owner_rc=$?
           set -e
@@ -1048,7 +1039,7 @@ jobs:
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
         run: |
           set +e
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - owner-enroll-start "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' '' "$BOCA_OWNER_CAPABILITY_SHA256")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - -- owner-enroll-start "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' '' "$BOCA_OWNER_CAPABILITY_SHA256")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-owner-enroll-start.receipt" 2>/dev/null
           enroll_rc=$?
           set -e
@@ -1067,7 +1058,7 @@ jobs:
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
         run: |
           set +e
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - owner-enroll-wait "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' '' "$BOCA_OWNER_CAPABILITY_SHA256")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - -- owner-enroll-wait "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' '' "$BOCA_OWNER_CAPABILITY_SHA256")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-owner-enroll-wait.receipt" 2>/dev/null
           wait_rc=$?
           set -e
@@ -1094,7 +1085,7 @@ jobs:
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
         run: |
           set +e
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - owner-enroll-finish "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' '' "$BOCA_OWNER_CAPABILITY_SHA256")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - -- owner-enroll-finish "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' '' "$BOCA_OWNER_CAPABILITY_SHA256")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-owner-enroll-finish.receipt" 2>/dev/null
           finish_rc=$?
           set -e
@@ -1151,6 +1142,94 @@ jobs:
             printf 'Boca Site credential custody operation: `%s` completed; receipt above. No BETA service started.\n\n' "$phase"
             printf 'Commit: `%s`\n\nImage: `%s`\n\nRelease run: `%s`\n' "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" "$BOCA_RELEASE_RUN_ID"
           } >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify inactive prepared daemon before image-free infrastructure preflight
+        if: inputs.operation == 'infrastructure-preflight'
+        run: |
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - infrastructure-check "$BOCA_SOURCE_SHA")"
+          set +e
+          timeout --signal=TERM --kill-after=5s 60s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py > "$RUNNER_TEMP/boca-infra-check.receipt" 2>/dev/null
+          phase_rc=$?
+          set -e
+          receipt=''
+          if [[ "$phase_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-infra-check.receipt")"; fi
+          expected="BOCA_INFRA_DAEMON state=PREPARED source_sha=$BOCA_SOURCE_SHA containers=absent daemon=stopped"
+          if [[ "$phase_rc" -ne 0 || "$receipt" != "$expected" ]]; then
+            printf 'Boca infrastructure preflight: NO_GO; initial stopped boundary unverified. No start attempted. If SSH failed, host state is INDETERMINADO; no automatic retry.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+      - name: Recheck current main immediately before temporary infrastructure daemon start
+        if: inputs.operation == 'infrastructure-preflight'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-infra-main-ref.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-infra-main-ref.json" "$BOCA_SOURCE_SHA"
+      - name: Mark only temporary infrastructure daemon attempt
+        id: boca_infra_attempt
+        if: inputs.operation == 'infrastructure-preflight'
+        run: printf 'started=true\n' >> "$GITHUB_OUTPUT"
+      - name: Start only verified empty prepared daemon for infrastructure observation
+        if: inputs.operation == 'infrastructure-preflight'
+        run: |
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - infrastructure-start "$BOCA_SOURCE_SHA")"
+          set +e
+          timeout --signal=TERM --kill-after=5s 90s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py > "$RUNNER_TEMP/boca-infra-start.receipt" 2>/dev/null
+          phase_rc=$?
+          set -e
+          receipt=''
+          if [[ "$phase_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-infra-start.receipt")"; fi
+          expected="BOCA_INFRA_DAEMON state=STARTED source_sha=$BOCA_SOURCE_SHA containers=absent application=not_started"
+          if [[ "$phase_rc" -ne 0 || "$receipt" != "$expected" ]]; then
+            printf 'Boca infrastructure preflight: NO_GO on temporary daemon start; mandatory verified stop follows. No application start or retry.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+      - name: Observe infrastructure and evaluate unchanged reserve before release
+        id: boca_infra_observation
+        if: inputs.operation == 'infrastructure-preflight'
+        run: |
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - infrastructure-preflight '' "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" --infrastructure-budget "$BOCA_BUDGET")"
+          set +e
+          timeout --signal=TERM --kill-after=5s 90s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-infra-observation.receipt" 2>/dev/null
+          phase_rc=$?
+          set -e
+          if [[ "$BOCA_BUDGET" = 1.5cpu-1024m-192pids ]]; then limits='memory_mib=1536 cpu_required=1[.]75 pids_required=256'; else limits='memory_mib=1792 cpu_required=2[.]00 pids_required=288'; fi
+          observation="^BOCA_INFRA_OBSERVATION source_sha=$BOCA_SOURCE_SHA engine=[0-9]+[.][0-9]+[.][0-9]+ memory_kib=[0-9]+ daemon_startup_cpu_count=[0-9]+ effective_cpus=[0-9]+ cpu_ceiling=[0-9]+[.][0-9]{6} cpu_scope=(materialized|configured) load1=([0-9]+[.][0-9]{6}|UNKNOWN) load_policy=advisory pids_free=[0-9]+ stage_free_bytes=[0-9]+ stage_inodes=[0-9]+ docker_free_bytes=[0-9]+ docker_inodes=[0-9]+$"
+          policy="^BOCA_INFRA_POLICY source_sha=$BOCA_SOURCE_SHA budget=${BOCA_BUDGET//./[.]} $limits memory=(PASS|NO_GO) cpu=(PASS|NO_GO) pids=(PASS|NO_GO) storage=(PASS|NO_GO) result=(PASS|NO_GO) meaning=configured_reserve_not_benchmark$"
+          if [[ "$(wc -c < "$RUNNER_TEMP/boca-infra-observation.receipt")" -gt 1024 ]]; then exit 1; fi
+          mapfile -t lines < "$RUNNER_TEMP/boca-infra-observation.receipt"
+          if [[ ${#lines[@]} -ne 2 || ! "${lines[0]}" =~ $observation || ! "${lines[1]}" =~ $policy ]]; then
+            printf 'Boca infrastructure preflight: NO_GO; observations unverified. If SSH failed, state is INDETERMINADO until the following stop is verified.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if ! cmp -s "$RUNNER_TEMP/boca-infra-observation.receipt" <(printf '%s\n' "${lines[@]}"); then
+            printf 'Boca infrastructure preflight: NO_GO; noncanonical or truncated observation receipt.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf '%s\n' "${lines[@]}" >> "$GITHUB_STEP_SUMMARY"
+          printf 'CPU ceiling uses the verified container cgroup branch and ancestor quotas/cpusets, capped by Docker startup CPU count. Load1 is advisory; no idle CPU, measured host performance or installation permission is claimed.\n' >> "$GITHUB_STEP_SUMMARY"
+          [[ "$phase_rc" -eq 0 && "${lines[1]}" = *' memory=PASS cpu=PASS pids=PASS storage=PASS result=PASS '* ]]
+      - name: Always restore verified stopped daemon after infrastructure attempt
+        id: boca_infra_stop
+        if: always() && inputs.operation == 'infrastructure-preflight' && steps.boca_infra_attempt.outputs.started == 'true'
+        run: |
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - infrastructure-stop "$BOCA_SOURCE_SHA")"
+          set +e
+          timeout --signal=TERM --kill-after=5s 90s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py > "$RUNNER_TEMP/boca-infra-stop.receipt" 2>/dev/null
+          stop_rc=$?
+          set -e
+          receipt=''
+          if [[ "$stop_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-infra-stop.receipt")"; fi
+          expected="BOCA_INFRA_DAEMON state=STOPPED source_sha=$BOCA_SOURCE_SHA containers=absent data=preserved"
+          if [[ "$stop_rc" -ne 0 || "$receipt" != "$expected" ]]; then
+            printf 'Boca infrastructure preflight: NO_GO INDETERMINADO. Dedicated daemon stop is unverified; preserve all resources, stop activation and recover by explicit Boca-only inspection when connectivity returns. No automatic retry.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf 'Boca temporary daemon restored: `%s`. No image, volume or container was created by this operation; no Docker cleanup/delete was performed. Earlier failures remain NO_GO.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+      - name: Record pre-release infrastructure result only after verified stop
+        if: inputs.operation == 'infrastructure-preflight' && success() && steps.boca_infra_stop.outcome == 'success'
+        run: |
+          printf 'BOCA_INFRA_PREFLIGHT state=PASS source_sha=%s daemon=stopped application=not_installed capacity=configured_reserve_only performance=unmeasured\n' "$BOCA_SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Check prerequisites for dedicated rootless service preparation
         if: inputs.operation == 'prepare-rootless'
         run: |
@@ -1291,7 +1370,7 @@ jobs:
           BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
         run: |
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - beta-preflight "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - -- beta-preflight "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py
       - name: Recheck current main before BETA install
         if: inputs.operation == 'beta-install'
@@ -1311,7 +1390,7 @@ jobs:
           BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
         run: |
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - beta-stage "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - -- beta-stage "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py
           scp -F "$RUNNER_TEMP/boca-ssh/config" -p compose.beta.yaml boca-target:/srv/boca-socios/compose.beta.yaml
       - name: Validate resolved served BETA host Compose model
@@ -1323,7 +1402,7 @@ jobs:
           BOCA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
           PYTHONPATH: src
         run: |
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - beta-config "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - -- beta-config "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-beta-host-model.json"
           python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-beta-host-model.json" "$BOCA_IMAGE_REF"
       - name: Recheck current main immediately before BETA app and key effects
@@ -1354,10 +1433,10 @@ jobs:
           BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
         run: |
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - beta-apply "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - -- beta-apply "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py
           {
-            printf 'Boca served BETA host-local install: simulation controller healthy; private host loopback TLS verified. Tablet, Site and Telegram are separate gates.\n\n'
+            printf 'Boca served BETA host-local install: simulation controller healthy; private host loopback verified. Tablet, Site and Telegram are separate gates.\n\n'
             printf 'Commit: `%s`\n\nImage: `%s`\n\nRelease run: `%s`\n\nService: `controller`\n' "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" "$BOCA_RELEASE_RUN_ID"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Stop only positively identified Boca BETA controller on failure
@@ -1367,7 +1446,7 @@ jobs:
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
         run: |
           set +e
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - beta-rollback "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - -- beta-rollback "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-beta-rollback.receipt" 2>/dev/null
           rollback_rc=$?
           set -e
@@ -1481,14 +1560,14 @@ jobs:
           BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
         run: |
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - browser-preflight "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id "$GITHUB_RUN_ID")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id "$GITHUB_RUN_ID" -- browser-preflight "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
           set +e
           timeout --signal=TERM --kill-after=5s 60s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-browser-preflight.receipt" 2>/dev/null
           phase_rc=$?
           set -e
           receipt=''
           if [[ "$phase_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-browser-preflight.receipt")"; fi
-          pattern='^BOCA_BROWSER_PREFLIGHT_PASS uid=10001 owner=existing namespace=new-only port=127[.]0[.]0[.]1:8443 state=FREE mem_kib=[0-9]+ cpu_headroom=[0-9]+[.][0-9]{2} pids_free=[0-9]+ stage_free_mib=[0-9]+ docker_free_mib=[0-9]+$'
+          pattern='^BOCA_BROWSER_PREFLIGHT_PASS uid=10001 owner=existing namespace=new-only port=127[.]0[.]0[.]1:8443 state=FREE mem_kib=[0-9]+ cpu_ceiling=[0-9]+[.][0-9]{2} pids_free=[0-9]+ stage_free_mib=[0-9]+ docker_free_mib=[0-9]+$'
           if [[ "$phase_rc" -ne 0 || ${#receipt} -gt 256 || ! "$receipt" =~ $pattern ]]; then
             printf 'Boca browser IPC: NO_GO on read-only preflight; no install attempt started.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
@@ -1513,14 +1592,14 @@ jobs:
         run: |
           # Host browser-stage records one new-only attempt marker BEFORE any pull.
           # It does not create a container, IPC volume, bridge or staged file.
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - browser-stage "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id "$GITHUB_RUN_ID")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id "$GITHUB_RUN_ID" -- browser-stage "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
           set +e
           timeout --signal=TERM --kill-after=5s 60s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-browser-stage.receipt" 2>/dev/null
           stage_rc=$?
           set -e
           receipt=''
           if [[ "$stage_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-browser-stage.receipt")"; fi
-          stage_pattern="^BOCA_BROWSER_STAGE_PASS attempt=$GITHUB_RUN_ID uid=10001 owner=existing namespace=new-only no_worker=yes mem_kib=[0-9]+ cpu_headroom=[0-9]+[.][0-9]{2} pids_free=[0-9]+ stage_free_mib=[0-9]+ docker_free_mib=[0-9]+$"
+          stage_pattern="^BOCA_BROWSER_STAGE_PASS attempt=$GITHUB_RUN_ID uid=10001 owner=existing namespace=new-only no_worker=yes mem_kib=[0-9]+ cpu_ceiling=[0-9]+[.][0-9]{2} pids_free=[0-9]+ stage_free_mib=[0-9]+ docker_free_mib=[0-9]+$"
           if [[ "$stage_rc" -ne 0 || ${#receipt} -gt 320 || ! "$receipt" =~ $stage_pattern ]]; then
             printf 'Boca browser IPC marker: NO_GO; selective cleanup follows for this attempt.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
@@ -1563,7 +1642,7 @@ jobs:
           BOCA_BROWSER_ATTEMPT_ID: ${{ github.run_id }}
           PYTHONPATH: src
         run: |
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - browser-config "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id "$GITHUB_RUN_ID")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id "$GITHUB_RUN_ID" -- browser-config "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
           timeout --signal=TERM --kill-after=5s 60s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-browser-host-model.json" 2>/dev/null
           python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-host-model.json" "$BOCA_IMAGE_REF" --topology=browser-ipc-v2
       - name: Recheck main and only Boca loopback 8443 before browser effects
@@ -1593,7 +1672,7 @@ jobs:
         run: |
           # Host browser-apply enforces worker-first health, local synthetic IPC,
           # no real provider, then private controller bound ONLY to 127.0.0.1:8443.
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - browser-apply "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id "$GITHUB_RUN_ID")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id "$GITHUB_RUN_ID" -- browser-apply "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
           set +e
           timeout --signal=TERM --kill-after=5s 600s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-browser-install.receipt" 2>/dev/null
           apply_rc=$?
@@ -1643,7 +1722,7 @@ jobs:
           BOCA_TELEGRAM_EXPECTED_BOT_ID: ${{ secrets.BOCA_TELEGRAM_EXPECTED_BOT_ID }}
           BOCA_TELEGRAM_EXPECTED_CHAT_HMAC: ${{ secrets.BOCA_TELEGRAM_EXPECTED_CHAT_HMAC }}
         run: |
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - browser-telegram-preflight "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' "$BOCA_TELEGRAM_EXPECTED_BOT_ID" "$BOCA_TELEGRAM_EXPECTED_CHAT_HMAC" --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id existing --telegram-attempt-id "$GITHUB_RUN_ID")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id existing --telegram-attempt-id "$GITHUB_RUN_ID" -- browser-telegram-preflight "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' "$BOCA_TELEGRAM_EXPECTED_BOT_ID" "$BOCA_TELEGRAM_EXPECTED_CHAT_HMAC")"
           set +e
           timeout --signal=TERM --kill-after=5s 120s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-browser-telegram-preflight.receipt" 2>/dev/null
           preflight_rc=$?
@@ -1687,7 +1766,7 @@ jobs:
             expected_bot="$BOCA_TELEGRAM_EXPECTED_BOT_ID"
             expected_chat="$BOCA_TELEGRAM_EXPECTED_CHAT_HMAC"
           fi
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - "$phase" "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' "$expected_bot" "$expected_chat" --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id existing "${sender_args[@]}")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id existing "${sender_args[@]}" -- "$phase" "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' "$expected_bot" "$expected_chat")"
           set +e
           timeout --signal=TERM --kill-after=5s 600s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-browser-lifecycle.receipt" 2>/dev/null
           lifecycle_rc=$?
@@ -1719,7 +1798,7 @@ jobs:
         run: |
           runtime_attempt="$GITHUB_RUN_ID"
           if [[ "$BOCA_OPERATION" = beta-browser-telegram-recover ]]; then runtime_attempt="$BOCA_FAILED_TELEGRAM_RUN_ID"; fi
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - browser-telegram-cleanup "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' "$BOCA_TELEGRAM_EXPECTED_BOT_ID" "$BOCA_TELEGRAM_EXPECTED_CHAT_HMAC" --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id existing --telegram-attempt-id "$runtime_attempt")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id existing --telegram-attempt-id "$runtime_attempt" -- browser-telegram-cleanup "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' "$BOCA_TELEGRAM_EXPECTED_BOT_ID" "$BOCA_TELEGRAM_EXPECTED_CHAT_HMAC")"
           set +e
           timeout --signal=TERM --kill-after=5s 180s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-browser-telegram-cleanup.receipt" 2>/dev/null
           cleanup_rc=$?
@@ -1769,7 +1848,7 @@ jobs:
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
         run: |
           set +e
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - beta-acceptance "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - -- beta-acceptance "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-beta-acceptance.receipt" 2>/dev/null
           acceptance_rc=$?
           set -e
@@ -1862,7 +1941,7 @@ jobs:
           if [[ -n "$BOCA_BROWSER_IMAGE_REF" ]]; then
             browser_args=(--browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id existing)
           fi
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - "$BOCA_OPERATION" "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" "$BOCA_TELEGRAM_ENVELOPE" "$expected_bot" "$expected_chat" "${browser_args[@]}")"
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - "${browser_args[@]}" -- "$BOCA_OPERATION" "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" "$BOCA_TELEGRAM_ENVELOPE" "$expected_bot" "$expected_chat")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-telegram-phase.receipt" 2>/dev/null
           phase_rc=$?
           set -e

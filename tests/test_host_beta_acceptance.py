@@ -258,7 +258,7 @@ def test_protected_workflow_runs_probe_then_boca_only_stop_in_one_job() -> None:
         < workflow.index("Remove only synthetic Boca resources from disposable runner")
     )
     assert 'docker exec --user 10001:10001 "$container"' in workflow
-    assert "_validate_beta_acceptance_receipt(raw[:-1])" in workflow
+    assert 'scripts/check_browser_lifecycle_runtime.py acceptance "$container"' in workflow
     assert "beta-acceptance" in workflow
     assert 'test "$BOCA_BETA_ENV_READY" = ready' in workflow
     assert "python scripts/check_release_run.py" in workflow

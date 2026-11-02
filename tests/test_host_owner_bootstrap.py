@@ -77,7 +77,7 @@ def test_container_is_network_free_capped_and_owner_volume_only() -> None:
         assert args[args.index("--cap-drop") + 1] == "ALL"
         assert args[args.index("--tmpfs") + 1] == "/tmp:rw,noexec,nosuid,size=4m"  # noqa: S108
         assert "--read-only" in args and "--pull" in args
-        assert args[-5:] == ("-m", "boca_socios.owner_bootstrap", operation, ORIGIN, SUBJECT)
+        assert args[-6:] == ("-m", "boca_socios.owner_bootstrap", "--", operation, ORIGIN, SUBJECT)
         mount = args[args.index("--mount") + 1]
         assert mount.startswith(f"type=volume,source={host.OWNER_VOLUME},target=/run/owner")
         assert mount.endswith(",readonly") is (operation == "verify")

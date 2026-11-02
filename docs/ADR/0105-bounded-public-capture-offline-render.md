@@ -124,4 +124,8 @@ The first candidate passed hosted CI, security and the real offline
 Docker/Chromium smoke; the [source report](../quality/public-source-validation-2026-11-02.md)
 records exact head, test-merge SHA, equivalent tree and run receipts. Any
 later candidate still needs its own final checks and review. The authorized
-one-time public capture and its resulting receipts remain pending.
+one-time capture subsequently ran as 41512196530 on main 6f7fa0939d28df7c315440bba15237b0c1bfbe77:
+all 25 GETs returned 200, but the real offline renderer stopped UNKNOWN on an
+unmapped resource. Isolation and cleanup passed. The source report preserves
+the receipts; RCA #264 addresses missing denied-resource identity. No further
+public request is authorized by this correction or observation.

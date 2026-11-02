@@ -6,28 +6,100 @@ La base histórica `032de0ebb923b4f80154e93cee3dfd1b254687ed` ya integró
 #224/#226/#229 y #237/#239/#242–#249. PR #254 se integró como
 `b0e46dbd1cc09ae625c65799a2fb75ca052ab5d8`; PR #255 como
 `dada569a2d71ad4411a73ebdaca1186ed3be6936`. No rehacer esos componentes.
-PR #253 contiene el candidato posterior de ciclo de vida, recuperación y
-sender durable. Su merge y los checks de main definitivo se registran en el
+PR #253 integró ciclo de vida, recuperación y sender durable en `5ddfba5`.
+PR #263 también está integrado; el main del corte documental comprobado fue
+`6f7fa0939d28df7c315440bba15237b0c1bfbe77`, con
+[CI 41511631024](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41511631024)
+y [seguridad 41511631004](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41511631004)
+PASS. Ese corte precede la integración de #261. Su candidato final, los
+checks posteriores y el estado operativo se registran en el
 [checkpoint canónico #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
 Los resultados anteriores no se trasladan a un SHA nuevo.
 
 | Frente | Evidencia comprobada | Pendiente de aceptación |
 | --- | --- | --- |
-| Host | [41471945717](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41471945717): daemon Boca loaded/inactive/dead, socket ausente; SSH UID10001/bus/cgroup observados | Arranque protegido existente, Engine/capacidad/aislamiento y aplicación instalada; no repetir preparación inicial |
-| Puerto | [41473018271](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41473018271): `127.0.0.1:8443 FREE reserved=no` a las 12:35 ART | Nueva comprobación justo antes del uso; listener y forwarding reales |
+| Host | [41495516709/job125449321031](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41495516709/job/125449321031), 2026-11-02 14:54:42 ART: daemon inactive/dead, socket ausente; MemAvailable 1020020 KiB, estimación CPU 0.27, PIDs UNKNOWN; capacidad NOT_EVALUATED | Integrar/revisar y autorizar `infrastructure-preflight` de #261 antes de release; capacidad/aislamiento efectivos e instalación mantienen sus gates; no repetir preparación inicial |
+| Puerto | [41497093298/job125454798607](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41497093298/job/125454798607): `127.0.0.1:8443 FREE reserved=no` a las 15:04:45 ART del 2026-11-02 | Nueva comprobación justo antes del uso; listener y forwarding reales |
 | Release | Publicación dual integrada en código | Dos digests/manifiestos reales del mismo release y SHA final aprobado |
-| Ciclo operativo | PR #253 incorpora start/restart/status/acceptance y sender-start/recover con identidad y presupuesto explícitos | Merge/checks exactos y comprobación host; no hay instalación ni reinicio probado |
+| Ciclo operativo | PR #253 integrado en `5ddfba5`: start/restart/status/acceptance y sender-start/recover con identidad y presupuesto explícitos | Comprobación host sobre el SHA final; no hay instalación ni reinicio probado en el droplet |
+| Recursos | Implementación #261, ADR0103/0104: observación/política separadas, medición del smoke y corrección `cpu_ceiling` con revisión independiente/290 pruebas focales PASS; [informe de recursos](quality/resource-observation-2026-11-02.md) | Checks del candidato final registrados en #45 y observación host; requisitos numéricos/caps sin cambio, sin extrapolar el runner al droplet ni sumar picos no simultáneos |
 | Telegram privado | PR #255 integrado; [CI 41481913145](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913145): 1663 pruebas + 31 subtests y Chromium UI offline PASS; [seguridad 41481913075](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913075) PASS | Recibo real de prepare, formulario en tablet, custodia de token/destino, one-shot y recepción humana |
 | Chrome/passkey | Owner-enroll integrado; localhost HTTP sobre SSH | Enlace de un uso real, create→get, Google Password Manager, segundo acceso y persistencia tras reinicio |
-| Sitio oficial | [41481095746](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481095746): documento público real UNKNOWN; aislamiento previo/posterior y cleanup PASS | Sitio completo sin validar; [captura limitada](quality/public-source-validation-2026-11-02.md) de hasta 25 GET aprobada e implementada en PR #263/ADR0105; revisión y smoke inicial PASS, integración final y ejecución pública pendientes, sin login/fila/reserva |
+| Sitio oficial | #263 integrado; [captura real 41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530/job/125506598762): 25 GET permitidos/HTTP 200, Chromium real `network=none`, UNKNOWN `resource_outside_map`; aislamiento previo/posterior y cleanup PASS | Sitio completo no aceptado. URL faltante no identificada; RCA #264 corrige diagnóstico en rama separada, sin nueva autorización GET. No atribuirlo a caída del sitio |
 | Entornos | Observación inicial 2026-11-02: main-only, reviewers off, bypass disponible; READY release/deploy/read-only y secretos SSH existentes | Verificar configuración de activación exacta y permisos; marcadores solos no acreditan capacidad ni consentimiento |
+
+Como antecedente previo al merge, #263 pasó [CI 41508912214](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41508912214)
+(1902 pruebas + 31 subtests), [seguridad 41508912267](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41508912267)
+y [smoke Docker/Chromium 41508912351](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41508912351),
+con `public_connections=0`. El checkout fue el merge PR
+`c470c530c3f93895722fe22c7168a6957ced723e`, árbol
+`b3d12d0d09f224e0ba25316024dbd7a78be13cf7`, idéntico al head `9c693cb296e037af397e3ade2634f6264f717782`.
+Ese smoke fue offline. La captura pública autorizada posterior ocurrió el
+2026-11-02, 16:41:50–16:42:13 ART: 25 GET/200, 25 conexiones TLS y 30
+peticiones internas contabilizadas por Chromium, con el resultado UNKNOWN
+indicado arriba. No identificó la URL fuera del mapa; el [informe público](quality/public-source-validation-2026-11-02.md)
+conserva el alcance y el antecedente de un GET 41481095746. No acredita un
+sitio conectado completo, login, fila o reserva.
 
 Inspect/port-check no ejecutaron Docker ni una instalación: no generaron
 residuos de instalación y no corresponde inventar su limpieza. La DB se
 inspeccionó sólo en tres rutas de metadata; ubicación global UNVERIFIED.
 
-Secuencia: fuente/review/checks finales → aprobación específica/release dual
-→ preflight → owner-prepare y owner-enroll físico → instalación → aceptación
+### PR #261: evidencia histórica y cierre pendiente
+
+El corte posterior `7cfc9b60564f8c7bb8a589c86e15153c77bc948d` obtuvo
+[CI 41514375866](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41514375866)
+PASS (2081 pruebas +31 subtests) y seguridad PASS, pero el
+[smoke 41514375981](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41514375981/job/125514028659)
+falló antes del ciclo BETA: listener temporal `exited/2`,
+`loopback_unreachable`. Sus etapas posteriores quedaron sin ejecutar; no
+corresponde GO de integración. Los pasos de limpieza hospedada terminaron,
+pero el fallback best-effort no prueba por sí solo un inventario final.
+[RCA #265](https://github.com/mbalbo2023/boca-socios-assistant/issues/265)
+reprodujo que una clave pública válida comenzando con `-` es interpretada
+como opción por argparse. La clave aleatoria del run no quedó registrada:
+la relación con ese fallo concreto sigue inferida. La corrección de
+[ADR0107](ADR/0107-opaque-owner-cli-operands.md), incluida en esta versión,
+cubre el comando de producción, smoke, transporte SSH del owner y
+reconocimiento estricto de limpieza. Recibió revisión independiente y 128
+pruebas focales PASS; conserva los operandos/opciones y las dos formas
+exactas de identidad legacy/nueva. Se exige comprobar el candidato corregido
+en CI, seguridad y smoke antes del merge; sus recibos se registran en #45.
+Sin reintento ciego ni operación en el droplet.
+
+En el corte documental previo al merge de #261, su primer candidato,
+anterior a la corrección CPU,
+`42eb497e8b597cd86035d08370dc935cba9b0f17`, sobre main `5ddfba5`, se comprobó
+mediante checkout del merge PR `07b1b11a73b486142c3528a4896a20d5df59e57c`;
+ambos tienen árbol `ebf53c7dfb082d25257acd2ed6f8bebb54e36499`:
+
+| Comprobación del mismo árbol (checkout merge PR) | Resultado |
+| --- | --- |
+| [CI 41507866223](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41507866223) | SUCCESS |
+| [Seguridad de imágenes 41507865955](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41507865955) | SUCCESS |
+| [Smoke Docker/validación de deploy 41507865954](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41507865954) | SUCCESS en runner desechable |
+| [Validación PR del release 41507865916](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41507865916) | SUCCESS, sin publicación |
+
+Los cuatro son runs `pull_request`, intento 1. Son evidencia histórica del
+corte previo a la corrección CPU y esta reconciliación; no validan el candidato
+final. Su SHA, revisión y checks exactos se registran en #45 antes del merge.
+
+[ADR0103](ADR/0103-pre-release-infrastructure-observation.md) agrega el
+preflight sin imágenes y restauración verificada del daemon detenido;
+[ADR0104](ADR/0104-existing-smoke-resource-observations.md) mide las cargas
+ya existentes de CI, sin repetirlas. La corrección CPU recibió GO independiente
+con 290 pruebas focales: reemplaza afinidad-SSH menos loadavg por `cpu_ceiling`
+de la rama `user.slice`, cuotas ancestrales, cpusets y configuración efectiva.
+`cpu_scope` distingue `materialized`/`configured`; `daemon_startup_cpu_count`
+es sólo otro límite. Load es advisory, no CPU libre. Los requisitos CPU
+1.75/2.0, RAM 1536/1792 MiB, PIDs 256/288 y caps permanecen intactos.
+Un techo no comprobable sigue UNKNOWN/NO_GO. Faltan checks del candidato final
+y la operación protegida en el droplet. La concurrencia de tres servicios no
+está medida y los recibos del runner no acreditan capacidad host.
+
+Secuencia: integrar/revisar fuente y documentación, checks finales → autorizar
+y comprobar `infrastructure-preflight` → evaluar observaciones → aprobación
+específica/release dual → preflight de imágenes/topología → owner-prepare y owner-enroll físico → instalación → aceptación
 sintética temporal → formulario/custodia y prueba Telegram con outbox vacío
 → sender explícito → simulación persistente, reinicio y acceso físico repetido.
 La aceptación termina detenida; la disponibilidad posterior exige start
@@ -419,10 +491,13 @@ registra la provisión/recepción Telegram pendiente; [issue #113](https://githu
 registra el puente Site no resuelto.
 
 La cadena pendiente es: integrar/verificar el candidato final y congelar main
-→ autorizar/publicar release dual exacta → capacidad/aislamiento → owner-prepare
+→ autorizar/ejecutar `infrastructure-preflight` de #261 y evaluar sus recibos
+→ autorizar/publicar release dual exacta → preflight de imágenes/aislamiento → owner-prepare
 y owner-enroll real → instalación/aceptación temporal → Telegram antes de la
 primera simulación persistente → E2E desde interfaz real y reinicio/reanudación.
-El sitio completo continúa pendiente bajo su propia autorización limitada. La
+La captura pública limitada de #263 ya se ejecutó y quedó UNKNOWN; #264
+atiende el diagnóstico sin autorizar nuevos GET. El sitio completo sigue sin
+aceptación. La
 parada de 41272785626 cerró las pruebas de preparación, no una instalación
 BETA. El workflow `first-install` instala sólo un controlador dormido; #191
 agrega `beta-install` y #200 `beta-acceptance` con parada, ambos sin dispatch

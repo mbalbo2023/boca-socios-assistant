@@ -10,7 +10,13 @@ from boca_socios.deploy_inputs import DeployInputError, validate_deploy_inputs
 def main() -> int:
     flags = sys.argv[1:-5]
     if (
-        flags not in ([], ["--browser-ipc-v2"], ["--browser-ipc-v2", "--telegram-runtime"])
+        flags
+        not in (
+            [],
+            ["--browser-ipc-v2"],
+            ["--browser-ipc-v2", "--telegram-runtime"],
+            ["--infrastructure-preflight"],
+        )
         or len(sys.argv) < 6
     ):
         print(
@@ -23,6 +29,7 @@ def main() -> int:
             *sys.argv[-5:],
             browser_ipc_v2="--browser-ipc-v2" in flags,
             telegram_runtime="--telegram-runtime" in flags,
+            infrastructure_preflight="--infrastructure-preflight" in flags,
         )
     except DeployInputError as exc:
         print(f"BOCA_NO_GO: {exc}", file=sys.stderr)

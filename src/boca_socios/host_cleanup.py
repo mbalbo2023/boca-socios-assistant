@@ -845,6 +845,14 @@ def _enroll_container_id(
     config = record.get("Config")
     labels = config.get("Labels") if isinstance(config, dict) else None
     command = config.get("Cmd") if isinstance(config, dict) else None
+    # Preserve recognition of an exited legacy attempt. Only the exact new
+    # eight-argument shape has a terminator; a legacy subject may itself be "--".
+    if (
+        isinstance(command, list)
+        and len(command) == 8
+        and command[:4] == ["python", "-m", "boca_socios.owner_enrollment", "--"]
+    ):
+        command = command[:3] + command[4:]
     host = record.get("HostConfig")
     state = record.get("State")
     mounts = record.get("Mounts")

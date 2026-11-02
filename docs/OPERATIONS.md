@@ -1,6 +1,6 @@
 # Safe operations — verified evidence and gated procedures
 
-## Current state
+## Documented state and current checkpoint
 
 Historical baseline `032de0` already integrated #224/#226/#229 and browser
 release/install/cleanup #237/#239/#242–#249. PR #254 merged at
@@ -9,40 +9,49 @@ release/install/cleanup #237/#239/#242–#249. PR #254 merged at
 [CI 41481913145](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913145)
 (1663 tests plus 31 subtests and real offline Chromium UI proof) and
 [security 41481913075](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913075)
-before merge. PR #253 is the subsequent lifecycle/recovery candidate; exact
-final-main checks and operational state are maintained in
+before merge. PR #253 integrated lifecycle/recovery and durable Telegram in
+`5ddfba568d0b53168f51c0e5b33c363ba24c505e`. The documented main cut
+`6f7fa0939d28df7c315440bba15237b0c1bfbe77` includes PR #263, with CI 41511631024
+and security 41511631004 PASS. PR #261 was unmerged at that cut. Its historical
+`42eb497e8b597cd86035d08370dc935cba9b0f17` checks precede the reviewed CPU
+correction and cannot validate the final candidate; see the
+[evidence and pending checks](BETA_INTEGRATION_STATUS.md).
+Later smoke [41514375981](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41514375981)
+on `7cfc9b6…` exited 2 despite CI passing 2081 tests.
+[RCA #265 / ADR0107](ADR/0107-opaque-owner-cli-operands.md) records the
+independently reviewed argument-terminator correction in this candidate; it
+reproduces a compatible defect without proving the unrecorded random value from that
+run. Final exact-SHA CI/security and real Docker smoke checks are still required.
+Final integration checks and operational state are maintained in
 [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
 No matching current dual release, BETA installation, real activation URL,
 physical Chrome/GPM persistence or Telegram delivery is established here.
 
-[Real public observation 41481095746](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481095746)
-returned UNKNOWN for the permitted initial document, with pre/post isolation
-and cleanup PASS. This does not establish a browser or deployment failure,
-nor full-site acceptance. The [report](quality/public-source-validation-2026-11-02.md)
-records the already approved capture of up to 25 anonymous fixed-path GETs.
-PR #263/ADR0105 implements `chromium-capture-25` in the existing source
-workflow. CI and the real offline isolation/cleanup smoke passed the initial
-candidate; the report identifies its exact head, tested merge and equal tree.
-Use the final integrated SHA with its successful checks for the single manual
-capture. No public dispatch has occurred for this expanded scope. Any new
-resource, query, redirect, API or other destination requires a separate
-decision; no automatic expansion or retry. A positive offline captured DOM
-does not establish a connected site, login, queue or ticket action.
+[Authorized public capture 41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530/job/125506598762)
+ran on 2026-11-02, 16:41:50–16:42:13 ART: 25 permitted GETs returned HTTP 200,
+with 25 TLS connections. Real Chromium under `network=none` returned
+`UNKNOWN resource_outside_map` after 30 counted internal requests;
+pre/post isolation and cleanup passed. The receipt does not identify the
+missing URL or establish an outage of the official site. #264 tracks a
+diagnostic correction in a separate branch; no further public GET is
+authorized. Full-site acceptance remains open. The [report](quality/public-source-validation-2026-11-02.md)
+also preserves the earlier one-document UNKNOWN run 41481095746.
 
-[Read-only inspection 41471945717](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41471945717)
-at 12:28:47 ART reached SSH as UID10001, observed the owned user bus and
-delegated cpu/memory/pids controllers, and reported the shared rootful socket
-not writable. The dedicated Boca unit was loaded/inactive/dead, result=success,
-and its private socket was absent, so the prerequisite job failed closed.
+[Read-only inspection 41495516709](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41495516709/job/125449321031)
+at 2026-11-02 14:54:42 ART found the dedicated Boca unit inactive/dead and its
+private socket absent, so prerequisites remained NO_GO. It observed
+MemAvailable=1020020 KiB, CPU estimate=0.27 and free PIDs=UNKNOWN;
+the capacity gate was NOT_EVALUATED. These aggregate readings do not measure
+free CPU or validate application capacity.
 No Docker operation, install, cleanup or residue-producing attempt occurred.
 DB candidates were absent only at the three fixed metadata paths; global DB
-location remains UNVERIFIED. [Port check 41473018271](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41473018271)
-at 12:35 ART observed `FREE address=127.0.0.1 port=8443 reserved=no`.
+location remains UNVERIFIED. [Port check 41497093298](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41497093298/job/125454798607)
+at 2026-11-02 15:04:45 ART observed `FREE address=127.0.0.1 port=8443 reserved=no`.
 This does not reserve the port or verify Engine version, capacity, listener,
 tablet forwarding, rootless health or application readiness.
 
 The baseline audit reproduced lifecycle gaps between owner shutdown, browser
-startup, stop/acceptance, Telegram and restart. PR #253 supplies the candidate
+startup, stop/acceptance, Telegram and restart. PR #253 integrated the
 correction described below. Source tests and review do not establish host
 execution. Do not rerun first-time `prepare-rootless` or use another service
 to start Boca; only the guarded existing-daemon transition is permitted.
@@ -128,10 +137,55 @@ for the source/integration cut. PR #141 separately fixed the migration function
 through synthetic fixtures; merging it did not run Database.migrate on the
 droplet or create a service database. ADR0053 states the WAL/concurrency limits.
 
+## Candidate pre-release infrastructure observation
+
+This version implements #261 / [ADR0103](ADR/0103-pre-release-infrastructure-observation.md):
+`infrastructure-preflight` in the existing protected workflow. It was absent
+from the documented main cut `6f7fa0`; no host execution is established here.
+After integration, exact-main checks and specific authorization, its inputs are `service=controller`,
+the exact `source_sha`, and budget `1.5cpu-1024m-192pids` or
+`1.75cpu-1152m-224pids`; image and release fields stay blank. It requires both
+`BOCA_HOST_READONLY_ENV_READY=ready` and `BOCA_DEPLOY_ENV_READY=ready`, because
+it may temporarily start the already prepared dedicated daemon.
+
+The operation verifies the loaded unit/configuration and empty private
+container metadata before starting only that daemon. It observes Engine,
+cgroup delegation, empty inventory, Boca storage and the permitted loopback
+port, then always attempts verified restoration to stopped. It creates no
+image, application container, volume, key or owner, and performs no Docker
+deletion. A failed earlier check stays NO_GO even if restoration succeeds;
+an unverified stop or lost SSH is INDETERMINADO and blocks activation/retry.
+Do not use first-time `prepare-rootless` to substitute for this transition.
+
+`BOCA_INFRA_OBSERVATION` records aggregate evidence;
+`BOCA_INFRA_POLICY` separately applies the unchanged numeric reserves:
+1536 MiB/1.75 CPU/256 free PIDs for the pair, or 1792 MiB/2 CPU/288 free PIDs
+with Telegram, plus 4 GiB/50,000 free inodes in each checked filesystem.
+The reviewed CPU correction replaces SSH-affinity minus loadavg with
+`cpu_ceiling`: the minimum of ancestor quotas, effective cpusets and loaded
+configuration for the rootless containers' `user.slice` branch. It does not
+use `docker.service` as the container parent. `cpu_scope=materialized` or
+`configured` distinguishes a present cgroup from effective policy not yet
+materialized; `daemon_startup_cpu_count` is only an additional conservative
+limit. Load is advisory, never measured free CPU. An unverified ceiling stays
+UNKNOWN/NO_GO. The 1.75/2.0 CPU requirements, RAM/PID reserves and service caps
+do not change. This structural ceiling does not reserve CPU or predict
+contention/latency. Independent CPU review passed 290 focal tests; final
+candidate checks and authorized host evidence remain pending.
+
+[ADR0104](ADR/0104-existing-smoke-resource-observations.md) adds bounded cgroup
+observations around the existing CI HTTP/SQLite, IPC/restart and offline sender
+workloads. The candidate smoke ran on a disposable runner; it is not droplet
+evidence. Missing counters remain `UNKNOWN`; peaks include observation overhead
+and apply to the current cgroup lifetime. The sender runs after the pair stops,
+so three-service concurrency is unmeasured and individual peaks must not be
+summed as a simultaneous peak. See the [resource report](quality/resource-observation-2026-11-02.md).
+
 ## Protected browser lifecycle contract
 
-This is the code contract of PR #253, not a record of completed host operations.
-Before use, confirm its merge and successful exact-SHA checks in checkpoint #45.
+This is the code contract integrated by PR #253 in `5ddfba5`, not a record of
+completed host operations. Before use, verify the final frozen SHA and its
+successful checks in checkpoint #45.
 Use only [boca-first-deploy.yml](https://github.com/mbalbo2023/boca-socios-assistant/actions/workflows/boca-first-deploy.yml).
 `source_sha`, both image digests, release run and staged hashes must identify
 the same frozen main/release; `service=controller`. No terminal work is required
@@ -492,9 +546,10 @@ Google Password Manager persistence and iOS compatibility remain physical
 gates. SSH encrypts the remote path, **not** an app-to-localhost connection
 inside Android; do not claim general HTTPS-equivalent protection.
 
-The activation sequence is: complete/review the lifecycle correction and exact
-checks; approve the concrete protected operation; publish the exact dual release;
-verify capacity/isolation and the private token handoff; run `owner-prepare`,
+The activation sequence is: finish integration/review and exact checks;
+after #261 integration, authorize and verify the image-free infrastructure
+operation and evaluate its observations; approve/publish the exact dual release;
+verify image-specific capacity/isolation and the private token handoff; run `owner-prepare`,
 then `owner-enroll` with real Chrome create→get; verify offline custody and
 selective cleanup; then install the BETA and prove login/restart/resume.
 Owner enrollment precedes installation because the BETA requires its credential.
@@ -627,8 +682,11 @@ image and release-run fields. #140 added fixed-path DB/WAL/SHM metadata receipts
 without opening SQLite or file contents; ADR0054 defines their narrow scope. It checks socket and cgroup **metadata as UID
 10001**, differentiating `absent` from `unavailable`, without running Docker
 or altering the host. A failed job reports unproven prerequisites; a metadata
-candidate is not proof that a Docker daemon is rootless or healthy. The
-existing `preflight` remains mandatory before any release/install decision.
+candidate is not proof that a Docker daemon is rootless or healthy. The legacy
+`preflight` needs an active daemon and checks the dormant controller budget.
+The #261 implementation adds the separately gated pre-release operation described above;
+neither metadata inspection nor that operation replaces the final
+image/topology-specific installation preflight.
 The environment must first be verified and marked ready as an **environment**
 (pinned identity and main-only branch rule), independently
 of the daemon's readiness. See [ADR 0037](ADR/0037-host-prerequisite-inspection.md).
@@ -667,7 +725,7 @@ cannot establish that image storage has headroom.
 | Network | Boca-only bridge | No shared network |
 | Secrets | Boca-only key volume, separate from DB | No copied/reused keys |
 | Image | Boca-only tag + digest | No reused images |
-| Host ports | None initially | None altered |
+| Host ports | None in dormant model; BETA only `127.0.0.1:8443` | None altered |
 | CPU/RAM controller | 0.5 vCPU / 256 MiB | Existing capacity protected |
 | Deployment lock | Boca-specific | Never invoke another project's deployment lock |
 
@@ -704,8 +762,8 @@ cannot establish that image storage has headroom.
 
 ## Explicitly prohibited
 
-docker system prune, docker volume prune, mass cleanup, restarting Docker
-daemon, reboot, host-wide network changes, shared Compose files, altering
+docker system prune, docker volume prune, mass cleanup, restarting a shared
+Docker daemon, reboot, host-wide network changes, shared Compose files, altering
 other services' ports or workflows, disabling host timers, publishing new
 ports without approval and production SSH outside the owner-approved
 Actions workflow.

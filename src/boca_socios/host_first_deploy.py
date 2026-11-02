@@ -13,6 +13,7 @@ import errno
 import hashlib
 import http.client
 import json
+import math
 import os
 import platform
 import pwd
@@ -24,6 +25,7 @@ import stat
 import subprocess
 import sys
 from dataclasses import dataclass, replace
+from fractions import Fraction
 from pathlib import Path
 from time import monotonic, sleep
 from typing import cast
@@ -91,6 +93,7 @@ ROOTFUL_SOCKET = Path("/var/run/docker.sock")
 CGROUP_CONTROLLERS = Path(
     "/sys/fs/cgroup/user.slice/user-10001.slice/user@10001.service/cgroup.controllers"
 )
+CPU_CGROUP_ROOT = Path("/sys/fs/cgroup")
 IMAGE_PATTERN = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z")
 SHA_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
@@ -1432,6 +1435,7 @@ def _owner_container(image: str, operation: str, origin: str, subject: str) -> t
         "python",
         "-m",
         "boca_socios.owner_bootstrap",
+        "--",
         operation,
         origin,
         subject,
@@ -1493,6 +1497,7 @@ def _owner_enroll_container(
         "python",
         "-m",
         "boca_socios.owner_enrollment",
+        "--",
         subject,
         digest,
         public,
@@ -3087,7 +3092,7 @@ def _browser_port_free() -> None:
         raise PreflightError("private Boca localhost:8443 is not free") from exc
 
 
-def _browser_engine_version() -> None:
+def _browser_engine_version() -> str:
     """Docker <28 can expose loopback-published TCP to adjacent L2 hosts.
 
     This is a browser-v2-only stop gate; never update the shared daemon or
@@ -3098,6 +3103,292 @@ def _browser_engine_version() -> None:
     match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", value)
     if match is None or int(match.group(1)) < 28:
         raise PreflightError("Docker Engine >=28 required for private localhost publication")
+    return value
+
+
+@dataclass(frozen=True)
+class CpuCapacity:
+    """Structural ceiling, never idle CPU or a performance measurement."""
+
+    daemon_startup_count: int
+    effective_cpus: int
+    ceiling: Fraction
+    scope: str
+
+
+def _cpu_read(parent: int, name: str, *, expected: os.stat_result | None = None) -> str:
+    """Bounded kernel/config reads; a FIFO or symlink cannot block the probe."""
+
+    def identity(value: os.stat_result) -> tuple[int, ...]:
+        return (
+            value.st_dev,
+            value.st_ino,
+            value.st_mode,
+            value.st_uid,
+            value.st_gid,
+            value.st_nlink,
+            value.st_size,
+            value.st_mtime_ns,
+            value.st_ctime_ns,
+        )
+
+    descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or (
+            expected is not None and identity(metadata) != identity(expected)
+        ):
+            raise PreflightError("CPU structural ceiling UNKNOWN: invalid or changed control file")
+        raw = os.read(descriptor, 4097)
+        if len(raw) > 4096 or (
+            expected is not None and identity(os.fstat(descriptor)) != identity(metadata)
+        ):
+            raise PreflightError(
+                "CPU structural ceiling UNKNOWN: oversized or changed control file"
+            )
+        return raw.decode("ascii").strip()
+    finally:
+        os.close(descriptor)
+
+
+def _cpu_mask(value: str, *, separator: str, empty: bool = False) -> frozenset[int]:
+    if not value and empty:
+        return frozenset()
+    selected: set[int] = set()
+    for part in value.split(separator):
+        match = re.fullmatch(r"(0|[1-9][0-9]{0,5})(?:-(0|[1-9][0-9]{0,5}))?", part)
+        if match is None:
+            raise PreflightError("CPU structural ceiling UNKNOWN: invalid CPU mask")
+        first = int(match.group(1))
+        last = int(match.group(2) or first)
+        if last < first or last >= 1_000_000:
+            raise PreflightError("CPU structural ceiling UNKNOWN: invalid CPU range")
+        values = set(range(first, last + 1))
+        if selected & values:
+            raise PreflightError("CPU structural ceiling UNKNOWN: repeated CPU range")
+        selected.update(values)
+    if not selected:
+        raise PreflightError("CPU structural ceiling UNKNOWN: empty effective CPU mask")
+    return frozenset(selected)
+
+
+def _cpu_systemd_quota(value: str) -> Fraction | None:
+    # systemd FORMAT_TIMESPAN(..., 0), not an integer-microseconds interface.
+    if value == "infinity":
+        return None
+    scales = {
+        "y": Fraction(31557600),
+        "month": Fraction(2629800),
+        "w": Fraction(604800),
+        "d": Fraction(86400),
+        "h": Fraction(3600),
+        "min": Fraction(60),
+        "s": Fraction(1),
+        "ms": Fraction(1, 1000),
+        "us": Fraction(1, 1000000),
+    }
+    result = Fraction(0)
+    previous = Fraction(10**12)
+    for token in value.split(" "):
+        match = re.fullmatch(r"([0-9]{1,18}(?:[.][0-9]{1,6})?)(month|min|ms|us|[ywdhs])", token)
+        if match is None:
+            raise PreflightError("CPU structural ceiling UNKNOWN: invalid systemd quota")
+        scale = scales[match.group(2)]
+        if scale >= previous:
+            raise PreflightError("CPU structural ceiling UNKNOWN: repeated quota unit")
+        previous = scale
+        result += Fraction(match.group(1)) * scale
+    if result <= 0:
+        raise PreflightError("CPU structural ceiling UNKNOWN: nonpositive quota")
+    return result
+
+
+def _cpu_systemd_properties(unit: str | None, keys: tuple[str, ...]) -> dict[str, str]:
+    if not _safe_dir(ROOTLESS_SOCKET.parent) or any(
+        _socket_state(path) != "owned" for path in (PRIVATE_MANAGER_SOCKET, USER_BUS_SOCKET)
+    ):
+        raise PreflightError("CPU structural ceiling UNKNOWN: private manager unproven")
+    raw = _run(
+        "/usr/bin/systemctl",
+        "--user",
+        "--no-pager",
+        "show",
+        "--all",
+        *((unit,) if unit else ()),
+        "--property=" + ",".join(keys),
+        env={
+            "PATH": "/usr/bin:/bin",
+            "LC_ALL": "C",
+            "XDG_RUNTIME_DIR": "/run/user/10001",
+            "DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/10001/bus",
+        },
+        timeout=5,
+    )
+    if len(raw) > 4096:
+        raise PreflightError("CPU structural ceiling UNKNOWN: manager response oversized")
+    result: dict[str, str] = {}
+    for line in raw.splitlines():
+        key, separator, value = line.partition("=")
+        if not separator or key not in keys or key in result:
+            raise PreflightError("CPU structural ceiling UNKNOWN: manager response invalid")
+        result[key] = value
+    if set(result) != set(keys):
+        raise PreflightError("CPU structural ceiling UNKNOWN: manager response incomplete")
+    return result
+
+
+def _cpu_default_parent() -> None:
+    # The protected daemon start already verifies the exact unit/config bytes.
+    # Recheck the relevant private config before applying Moby's default parent.
+    home = Path(pwd.getpwuid(10001).pw_dir)
+    descriptor = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for component in (".config", "docker"):
+            metadata = os.fstat(descriptor)
+            if metadata.st_uid != 10001 or stat.S_IMODE(metadata.st_mode) != 0o700:
+                raise PreflightError("CPU structural ceiling UNKNOWN: private config unproven")
+            following = os.open(
+                component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
+            )
+            os.close(descriptor)
+            descriptor = following
+        metadata = os.fstat(descriptor)
+        config_metadata = os.stat("daemon.json", dir_fd=descriptor, follow_symlinks=False)
+        if (
+            metadata.st_uid != 10001
+            or stat.S_IMODE(metadata.st_mode) != 0o700
+            or config_metadata.st_uid != 10001
+            or stat.S_IMODE(config_metadata.st_mode) != 0o600
+            or config_metadata.st_nlink != 1
+        ):
+            raise PreflightError("CPU structural ceiling UNKNOWN: private config unproven")
+        pairs = json.loads(
+            _cpu_read(descriptor, "daemon.json", expected=config_metadata), object_pairs_hook=list
+        )
+        if not isinstance(pairs, list) or any(
+            not isinstance(pair, tuple) or len(pair) != 2 or not isinstance(pair[0], str)
+            for pair in pairs
+        ):
+            raise PreflightError("CPU structural ceiling UNKNOWN: config invalid")
+        config = dict(pairs)
+        if (
+            len(config) != len(pairs)
+            or config.get("cgroup-parent", "") != ""
+            or config.get("exec-opts") != ["native.cgroupdriver=systemd"]
+        ):
+            raise PreflightError("CPU structural ceiling UNKNOWN: default parent unproven")
+    finally:
+        os.close(descriptor)
+
+
+def _cpu_online() -> frozenset[int]:
+    descriptor = os.open("/sys/devices/system/cpu", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        return _cpu_mask(_cpu_read(descriptor, "online"), separator=",")
+    finally:
+        os.close(descriptor)
+
+
+def _cpu_structural_capacity() -> CpuCapacity:
+    """Resolve Docker's rootless systemd branch without creating its cgroup.
+
+    Moby uses user.slice by default; runc places that slice below the private
+    manager's ControlGroup. The daemon's own service cgroup is a sibling, not
+    the container parent. Missing undelegated cpuset controls inherit the last
+    proven ancestor mask. Missing required/illegible controls are UNKNOWN.
+    """
+    descriptors: list[int] = []
+    try:
+        _cpu_default_parent()
+        info = _json_object(_run("docker", "info", "--format", "{{json .}}"), "CPU daemon info")
+        count = info.get("NCPU")
+        if type(count) is not int or not 0 < count < 1_000_000:
+            raise PreflightError("CPU structural ceiling UNKNOWN: daemon startup count")
+        manager_keys = ("ControlGroup", "SystemState")
+        slice_keys = (
+            "LoadState",
+            "NeedDaemonReload",
+            "ActiveState",
+            "ControlGroup",
+            "CPUQuotaPerSecUSec",
+            "AllowedCPUs",
+        )
+        manager = _cpu_systemd_properties(None, manager_keys)
+        unit = _cpu_systemd_properties("user.slice", slice_keys)
+        expected = "/" + str(CGROUP_CONTROLLERS.parent.relative_to(CPU_CGROUP_ROOT))
+        if (
+            manager["ControlGroup"] != expected
+            or manager["SystemState"] not in {"running", "degraded"}
+            or unit["LoadState"] != "loaded"
+            or unit["NeedDaemonReload"] != "no"
+            or unit["ActiveState"] not in {"active", "inactive"}
+        ):
+            raise PreflightError("CPU structural ceiling UNKNOWN: manager/slice identity")
+        selected = _cpu_online()
+        ceiling = Fraction(count)
+        # Effective loaded configuration also covers an inactive implicit slice.
+        quota = _cpu_systemd_quota(unit["CPUQuotaPerSecUSec"])
+        if quota is not None:
+            ceiling = min(ceiling, quota)
+        allowed = _cpu_mask(unit["AllowedCPUs"], separator=" ", empty=True)
+        if allowed:
+            selected &= allowed
+        descriptors.append(os.open(CPU_CGROUP_ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
+        components = (*Path(expected).parts[1:], "user.slice")
+        enabled = set(_cpu_read(descriptors[-1], "cgroup.controllers").split())
+        if "cpuset" in enabled:
+            selected &= _cpu_mask(
+                _cpu_read(descriptors[-1], "cpuset.cpus.effective"), separator=","
+            )
+        scope = "materialized"
+        for index, component in enumerate(components):
+            parent = descriptors[-1]
+            enabled = set(_cpu_read(parent, "cgroup.subtree_control").split())
+            try:
+                descriptor = os.open(
+                    component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent
+                )
+            except FileNotFoundError:
+                if (
+                    index != len(components) - 1
+                    or unit["ActiveState"] != "inactive"
+                    or unit["ControlGroup"]
+                ):
+                    raise
+                scope = "configured"
+                # LoadUnit resolves implicit slices and their drop-ins without
+                # starting them. Running/degraded uses AllowedCPUs, not the
+                # distinct startup mask. Never infer unlimited from absence.
+                break
+            descriptors.append(descriptor)
+            if "cpu" in enabled:
+                raw = _cpu_read(descriptor, "cpu.max")
+                match = re.fullmatch(r"(max|[1-9][0-9]{0,17}) ([1-9][0-9]{0,17})", raw)
+                if match is None:
+                    raise PreflightError("CPU structural ceiling UNKNOWN: invalid kernel quota")
+                if match.group(1) != "max":
+                    ceiling = min(ceiling, Fraction(int(match.group(1)), int(match.group(2))))
+            elif index != len(components) - 1:
+                # The independently verified manager delegation requires CPU
+                # at all these ancestors. Its future child may not enable it
+                # until a scope requests CPUAccounting; use loaded config then.
+                raise PreflightError("CPU structural ceiling UNKNOWN: delegation changed")
+            if "cpuset" in enabled:
+                selected &= _cpu_mask(_cpu_read(descriptor, "cpuset.cpus.effective"), separator=",")
+        if scope == "materialized" and unit["ControlGroup"] != expected + "/user.slice":
+            raise PreflightError("CPU structural ceiling UNKNOWN: slice cgroup mismatch")
+        if (
+            not selected
+            or manager != _cpu_systemd_properties(None, manager_keys)
+            or unit != _cpu_systemd_properties("user.slice", slice_keys)
+        ):
+            raise PreflightError("CPU structural ceiling UNKNOWN: empty or changed context")
+        return CpuCapacity(count, len(selected), min(ceiling, Fraction(len(selected))), scope)
+    except (OSError, ValueError, KeyError, UnicodeError, TypeError) as exc:
+        raise PreflightError("CPU structural ceiling UNKNOWN: controls unavailable") from exc
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
 
 
 def _browser_capacity(
@@ -3108,13 +3399,28 @@ def _browser_capacity(
     The 1 GiB/192 PIDs combined container budget needs room for Docker and
     bounded one-shot probes too. An indeterminate delegated limit is NO_GO.
     """
+    memory, observed_cpu, _load, free_pids, storage = _observe_browser_capacity()
+    _validate_storage_capacity(storage)
+    cpu = observed_cpu.ceiling
+    if memory < memory_mib * 1024 or cpu < cpu_required or free_pids < pids_required:
+        raise PreflightError("browser IPC host capacity below reserved budget")
+    return memory, float(cpu), free_pids, storage
+
+
+def _observe_browser_capacity() -> tuple[int, CpuCapacity, float | None, int, StorageSnapshot]:
+    """Observe aggregate metadata; configured reserve policy is evaluated separately."""
     _validate_docker_boundary()
     storage = _storage_snapshot()
-    _validate_storage_capacity(storage)
+    cpu = _cpu_structural_capacity()
+    try:
+        load: float | None = os.getloadavg()[0]
+        if load is not None and (not math.isfinite(load) or not 0 <= load < 1_000_000):
+            load = None
+    except (OSError, ValueError, OverflowError):
+        load = None
     try:
         meminfo = Path("/proc/meminfo").read_text(encoding="ascii")
         memory = re.search(r"^MemAvailable:\s+(\d+) kB$", meminfo, re.MULTILINE)
-        cpu = max(0.0, len(os.sched_getaffinity(0)) - os.getloadavg()[0])
         pids_dir = CGROUP_CONTROLLERS.parent
         pids_current = pids_dir.joinpath("pids.current").read_text(encoding="ascii").strip()
         pids_max = pids_dir.joinpath("pids.max").read_text(encoding="ascii").strip()
@@ -3128,11 +3434,83 @@ def _browser_capacity(
         ):
             raise PreflightError("rootless CPU/memory/PID headroom is unproven")
         free_pids = int(pids_max) - int(pids_current)
+        if free_pids < 0:
+            raise PreflightError("rootless PID counters are inconsistent")
     except (OSError, ValueError, OverflowError) as exc:
         raise PreflightError("rootless CPU/memory/PID headroom is unavailable") from exc
-    if int(memory.group(1)) < memory_mib * 1024 or cpu < cpu_required or free_pids < pids_required:
-        raise PreflightError("browser IPC host capacity below reserved budget")
-    return int(memory.group(1)), cpu, free_pids, storage
+    return int(memory.group(1)), cpu, load, free_pids, storage
+
+
+def _infrastructure_budget(resource_budget: str) -> tuple[int, float, int]:
+    budgets = {
+        "1.5cpu-1024m-192pids": (1536, 1.75, 256),
+        "1.75cpu-1152m-224pids": (1792, 2.0, 288),
+    }
+    if resource_budget not in budgets:
+        raise PreflightError("invalid infrastructure reserve policy selection")
+    return budgets[resource_budget]
+
+
+def _infrastructure_preflight(source_sha: str, resource_budget: str) -> None:
+    """No image, owner, staging, container, volume or application effects."""
+    required_memory, required_cpu, required_pids = _infrastructure_budget(resource_budget)
+    _require_dedicated_identity()
+    _validate_docker_boundary()
+    engine = _browser_engine_version()
+    if platform.machine() != "x86_64":
+        raise PreflightError("infrastructure architecture is unsupported")
+    _browser_root_entries(set())
+    _browser_inventory(containers=set(), volumes=set(), bridges=set())
+    if not {"--no-build", "--no-deps", "--wait"} <= set(
+        _run("docker", "compose", "up", "--help").split()
+    ) or "--format" not in _run("docker", "compose", "config", "--help"):
+        raise PreflightError("Docker Compose bounded operations are unavailable")
+    _browser_port_free()
+    memory, observed_cpu, load, pids, storage = _observe_browser_capacity()
+    cpu = observed_cpu.ceiling
+    after = _storage_snapshot()
+    _validate_storage_continuity(storage, after, require_capacity=False)
+    _browser_inventory(containers=set(), volumes=set(), bridges=set())
+    _browser_root_entries(set())
+    _browser_port_free()
+    checks = {
+        "memory": memory >= required_memory * 1024,
+        "cpu": cpu >= required_cpu,
+        "pids": pids >= required_pids,
+        "storage": min(
+            storage.stage_free_bytes,
+            storage.docker_free_bytes,
+            after.stage_free_bytes,
+            after.docker_free_bytes,
+        )
+        >= 4 * 1024**3
+        and min(
+            storage.stage_inodes, storage.docker_inodes, after.stage_inodes, after.docker_inodes
+        )
+        >= 50_000,
+    }
+    print(
+        f"BOCA_INFRA_OBSERVATION source_sha={source_sha} engine={engine}"
+        f" memory_kib={memory} daemon_startup_cpu_count={observed_cpu.daemon_startup_count}"
+        f" effective_cpus={observed_cpu.effective_cpus} cpu_ceiling={float(cpu):.6f}"
+        f" cpu_scope={observed_cpu.scope} load1={format(load, '.6f') if load is not None else 'UNKNOWN'}"
+        f" load_policy=advisory pids_free={pids}"
+        f" stage_free_bytes={after.stage_free_bytes} stage_inodes={after.stage_inodes}"
+        f" docker_free_bytes={after.docker_free_bytes} docker_inodes={after.docker_inodes}",
+        flush=True,
+    )
+    outcome = "PASS" if all(checks.values()) else "NO_GO"
+    details = " ".join(f"{name}={'PASS' if result else 'NO_GO'}" for name, result in checks.items())
+    print(
+        f"BOCA_INFRA_POLICY source_sha={source_sha} budget={resource_budget}"
+        f" memory_mib={required_memory} cpu_required={required_cpu:.2f} pids_required={required_pids}"
+        f" {details} result={outcome} meaning=configured_reserve_not_benchmark",
+        flush=True,
+    )
+    if outcome != "PASS":
+        raise PreflightError(
+            "infrastructure configured reserve not satisfied; performance unmeasured"
+        )
 
 
 def _browser_preflight_inventory() -> tuple[int, float, int, StorageSnapshot]:
@@ -3187,7 +3565,7 @@ def _browser_stage(
     print(
         f"BOCA_BROWSER_STAGE_PASS attempt={attempt_id} uid=10001 owner=existing"
         " namespace=new-only no_worker=yes"
-        f" mem_kib={memory} cpu_headroom={cpu:.2f} pids_free={pids}"
+        f" mem_kib={memory} cpu_ceiling={cpu:.2f} pids_free={pids}"
         f" stage_free_mib={storage.stage_free_bytes // 1024**2}"
         f" docker_free_mib={storage.docker_free_bytes // 1024**2}"
     )
@@ -4548,7 +4926,7 @@ def _browser_phase(
         print(
             "BOCA_BROWSER_PREFLIGHT_PASS uid=10001 owner=existing namespace=new-only"
             " port=127.0.0.1:8443 state=FREE"
-            f" mem_kib={memory} cpu_headroom={cpu:.2f} pids_free={pids}"
+            f" mem_kib={memory} cpu_ceiling={cpu:.2f} pids_free={pids}"
             f" stage_free_mib={storage.stage_free_bytes // 1024**2}"
             f" docker_free_mib={storage.docker_free_bytes // 1024**2}"
         )
@@ -5791,7 +6169,31 @@ def phase(
     browser_seccomp_sha: str = "",
     browser_attempt_id: str = "",
     telegram_attempt_id: str = "",
+    infrastructure_budget: str = "",
 ) -> None:
+    if phase_name == "infrastructure-preflight":
+        _validate_coordinates(image, source_sha, compose_sha, read_only_preflight=True)
+        if any(
+            (
+                envelope,
+                beta_owner,
+                telegram_envelope,
+                expected_bot_id,
+                expected_chat_hmac,
+                owner_envelope,
+                enroll_digest,
+                browser_image,
+                browser_overlay_sha,
+                browser_seccomp_sha,
+                browser_attempt_id,
+                telegram_attempt_id,
+            )
+        ):
+            raise PreflightError("unexpected private or image context in infrastructure preflight")
+        _infrastructure_preflight(source_sha, infrastructure_budget)
+        return
+    if infrastructure_budget:
+        raise PreflightError("infrastructure budget supplied to unrelated phase")
     sender_phase = phase_name in {
         "browser-telegram-preflight",
         "browser-telegram-start",
@@ -6136,6 +6538,7 @@ def main() -> int:
         "phase",
         choices=(
             "inspect-prerequisites",
+            "infrastructure-preflight",
             "port-check",
             "observe",
             "preflight",
@@ -6192,6 +6595,7 @@ def main() -> int:
     parser.add_argument("--browser-seccomp-sha", default="")
     parser.add_argument("--browser-attempt-id", default="")
     parser.add_argument("--telegram-attempt-id", default="")
+    parser.add_argument("--infrastructure-budget", default="")
     args = parser.parse_args()
     try:
         phase(
@@ -6213,6 +6617,11 @@ def main() -> int:
             **(
                 {"telegram_attempt_id": args.telegram_attempt_id}
                 if args.telegram_attempt_id
+                else {}
+            ),
+            **(
+                {"infrastructure_budget": args.infrastructure_budget}
+                if args.infrastructure_budget
                 else {}
             ),
         )

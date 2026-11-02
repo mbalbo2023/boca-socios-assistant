@@ -23,7 +23,22 @@ def validate_deploy_inputs(
     *,
     browser_ipc_v2: bool = False,
     telegram_runtime: bool = False,
+    infrastructure_preflight: bool = False,
 ) -> None:
+    if type(infrastructure_preflight) is not bool:
+        raise DeployInputError("infrastructure preflight must be explicitly selected")
+    if infrastructure_preflight:
+        if (
+            image_ref
+            or release_run_id
+            or browser_ipc_v2 is not False
+            or telegram_runtime is not False
+            or not _SHA.fullmatch(source_sha)
+            or service != "controller"
+            or resource_budget not in {"1.5cpu-1024m-192pids", "1.75cpu-1152m-224pids"}
+        ):
+            raise DeployInputError("invalid image-free infrastructure preflight coordinates")
+        return
     if not _IMAGE.fullmatch(image_ref):
         raise DeployInputError("invalid immutable image reference")
     if not _SHA.fullmatch(source_sha):
