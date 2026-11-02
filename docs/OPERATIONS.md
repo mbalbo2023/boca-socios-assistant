@@ -47,6 +47,16 @@ block by Boca. The [report](quality/public-source-validation-2026-11-02.md)
 preserves the earlier UNKNOWN captures 41481095746 and 41512196530; the latter's
 unrecorded URL cannot be recovered from this new receipt.
 
+The later [ADR0110 candidate](ADR/0110-public-denied-authority-metadata.md)
+adds `scheme`, a validated `authority` or null, and `host_kind` to the first
+causal denial. `dns_syntax` proves syntax only; it does not establish public
+DNS answers, ownership or the script's role. No lookup or connection occurs.
+Userinfo/query/fragment and arbitrary paths remain omitted; hostname labels
+are intentionally visible when accepted. Review and exact-SHA checks precede
+integration. The 25-GET map, STOP and network barriers are unchanged. This
+metadata cannot reconstruct the authority of 41537796470; no new public
+observation is authorized by the candidate.
+
 [Infrastructure preflight 41537794166](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41537794166/job/125593988779)
 failed at step 28, the initial read-only `infrastructure-check`. The attempt
 marker, daemon start, observation and restoration steps were SKIPPED: no

@@ -259,6 +259,9 @@ def test_denied_navigation_identifies_only_sanitized_cause_and_separates_prior_s
             "query_redacted": True,
             "fragment_redacted": True,
             "userinfo_redacted": False,
+            "scheme": "https",
+            "authority": bundle.HOST,
+            "host_kind": "dns_syntax",
         }
     ]
     # A request aborted because the guard already stopped is not a newly
@@ -300,6 +303,143 @@ def test_safe_static_diagnostic_identity_never_expands_the_render_map() -> None:
     assert guard.reason == "resource_outside_map"
     assert guard.diagnostics()["denied_requests"][0]["path"] == path
     assert guard.diagnostics()["denied_requests"][0]["path_class"] == "next_static"
+
+
+def test_denied_authority_exposes_only_canonical_host_and_port_without_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def forbidden_lookup(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("diagnostic must not resolve a host")
+
+    monkeypatch.setattr(render.socket, "getaddrinfo", forbidden_lookup)
+    value = render.authority_metadata(
+        "https://fixture-user:fixture-secret@CDN.Example.org:443/private-path?secret=yes#private"
+    )
+    assert value == {
+        "scheme": "https",
+        "authority": "cdn.example.org:443",
+        "host_kind": "dns_syntax",
+    }
+    assert all(
+        secret not in json.dumps(value)
+        for secret in ("fixture-user", "fixture-secret", "private", "secret=yes")
+    )
+    assert render.authority_metadata("wss://cdn.example.org./x") == {
+        "scheme": "wss",
+        "authority": "cdn.example.org",
+        "host_kind": "dns_syntax",
+    }
+
+
+@pytest.mark.parametrize(
+    "authority",
+    [
+        "localhost",
+        "host.local",
+        "host.internal",
+        "host.home.arpa",
+        "host.invalid",
+        "host.test",
+        "127.0.0.1",
+        "10.0.0.1",
+        "169.254.169.254",
+        "192.0.2.1",
+        "224.0.0.1",
+        "0.0.0.0",  # noqa: S104 - rejected metadata fixture, no bind or network call
+        "[::1]",
+        "[fe80::1]",
+        "[ff02::1]",
+        "[2001:db8::1]",
+        "[::ffff:127.0.0.1]",
+        "[2001:4860:4860::8888%eth0]",
+        "127.1",
+        "2130706433",
+        "0x7f000001",
+        "0177.0.0.1",
+        "0x7f.0.0.1",
+        "example.0x1",
+        "cdn.example.org:0",
+        "cdn.example.org:65536",
+        "cdn.example.org:",
+        "cdn.example.org:00443",
+        "cdn.example.org:443:80",
+        "cdn%2eexample.org",
+        "cdn.example.org\\@example.net",
+        "a@b@cdn.example.org",
+        "cdn.example.org\r\nX-Header:private",
+        "cdn.example.org\x7f",
+        "cdñ.example.org",
+        "-cdn.example.org",
+        "cdn-.example.org",
+        "cdn..example.org",
+        "a" * 64 + ".example.org",
+        ".".join(["a" * 63] * 4),
+    ],
+)
+def test_denied_authority_redacts_nonpublic_ambiguous_or_malformed_hosts(authority: str) -> None:
+    value = render.authority_metadata("https://" + authority + "/private?token=private#private")
+    assert value["authority"] is None and value["host_kind"] == "redacted"
+    assert "private" not in json.dumps(value)
+
+
+@pytest.mark.parametrize(
+    "url,authority,kind",
+    [
+        ("https://8.8.8.8/x", "8.8.8.8", "global_ipv4"),
+        ("https://[2001:4860:4860::8888]:8443/x", "[2001:4860:4860::8888]:8443", "global_ipv6"),
+        ("https://xn--bcher-kva.example.org/x", "xn--bcher-kva.example.org", "dns_syntax"),
+        (
+            "https://bocasocios-gw.bocajuniors.com.ar/x",
+            "bocasocios-gw.bocajuniors.com.ar",
+            "dns_syntax",
+        ),
+        (
+            "https://bocasocios.bocajuniors.com.ar.evil.com/x",
+            "bocasocios.bocajuniors.com.ar.evil.com",
+            "dns_syntax",
+        ),
+        ("http://bocasocios.bocajuniors.com.ar/x", "bocasocios.bocajuniors.com.ar", "dns_syntax"),
+    ],
+)
+def test_denied_authority_classification_is_syntax_not_destination_permission(
+    url: str, authority: str, kind: str
+) -> None:
+    guard = render.RenderGuard(bundle.fixture_bundle())
+    assert guard.allow(url, "GET", "script", {}) is None
+    denial = guard.diagnostics()["denied_requests"][0]
+    assert denial["authority"] == authority and denial["host_kind"] == kind
+    assert guard.reason == "resource_outside_map" and denial["same_origin"] is False
+    assert render.valid_diagnostics(guard.diagnostics())
+
+
+def test_denied_authority_supervisor_revalidates_framing_types_and_origin() -> None:
+    good = render.denied_metadata(
+        "https://cdn.example.org/script?private", "GET", "script", "resource_outside_map"
+    )
+    assert render.valid_diagnostics({"denied_requests": [good], "cancelled_after_stop": 0})
+    for field, value in (
+        ("authority", "user:private@cdn.example.org"),
+        ("authority", "cdn.example.org/private?secret#private"),
+        ("authority", "CDN.EXAMPLE.ORG"),
+        ("authority", "127.1"),
+        ("authority", "cdn.example.org:00443"),
+        ("authority", ["cdn.example.org"]),
+        ("scheme", "javascript"),
+        ("scheme", True),
+        ("host_kind", "public_dns"),
+        ("host_kind", "global_ipv4"),
+        ("same_origin", True),
+    ):
+        assert not render.valid_diagnostics(
+            {"denied_requests": [{**good, field: value}], "cancelled_after_stop": 0}
+        )
+    long_host = ".".join(["a" * 63] * 3 + ["a" * 61])
+    item = render.denied_metadata(
+        "https://" + long_host + ":65535/x", "GET", "script", "resource_outside_map"
+    )
+    value = {"denied_requests": [item] * 8, "cancelled_after_stop": 0}
+    assert len(json.dumps(value, separators=(",", ":")).encode("ascii")) > 4096
+    assert not render.valid_diagnostics(value)
 
 
 def test_supervisor_rejects_diagnostic_schema_privacy_and_size_violations() -> None:

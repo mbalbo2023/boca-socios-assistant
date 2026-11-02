@@ -236,3 +236,23 @@ posteriores al STOP como nuevas decisiones. Las correcciones se integraron en
 checks de main `7300c1` figuran arriba. La segunda captura real comprobó la salida
 saneada, manteniendo UNKNOWN. Esto no identifica retrospectivamente el recurso
 de 41512196530, no valida el sitio completo ni autoriza otro GET.
+
+## Extensión candidata de metadata, sin una nueva captura
+
+[ADR0110](../ADR/0110-public-denied-authority-metadata.md) amplía el mismo primer
+rechazo con `scheme` (`http`, `https`, `ws`, `wss` o null), `authority`
+(hostname/IP canónico con puerto explícito válido, o null) y `host_kind`
+(`dns_syntax`, `global_ipv4`, `global_ipv6` o `redacted`). El supervisor vuelve
+a validar el esquema y mantiene ocho entradas/4096 bytes. Se omiten userinfo,
+query y fragmento; el tratamiento anterior de paths seguros no cambia.
+
+Una autoridad DNS aceptada se publica intencionalmente: `dns_syntax` no prueba
+resolución pública, propiedad, ausencia de etiquetas identificadoras ni función
+del script. No se consulta DNS ni se contacta esa autoridad. El código conserva
+STOP, los 25 GET y paths exactos, 64 respuestas internas, proxy, red y limpieza.
+Revisión y checks del SHA exacto preceden su integración.
+
+41537796470 sigue UNKNOWN y no registró autoridad. Esta extensión no puede
+recuperarla ni atribuirle una función retrospectivamente. Una nueva observación
+real necesita autorización concreta y todavía no se ha realizado; el candidato
+no autoriza nuevos GET, destinos ni reintentos.

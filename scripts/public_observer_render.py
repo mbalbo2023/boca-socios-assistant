@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import ipaddress
 import json
 import re
 import signal
@@ -50,6 +51,123 @@ NEXT_STATIC_DIAGNOSTIC = re.compile(
     r"/_next/static/(?:chunks/(?:[0-9]{1,8}|webpack|framework|main|polyfills)-[0-9a-f]{16}\.js"
     r"|css/[0-9a-f]{16}\.css|media/[0-9a-f]{16}-s\.p\.ttf)"
 )
+AUTHORITY_SCHEMES = {"http", "https", "ws", "wss"}
+LOCAL_DNS_SUFFIXES = {
+    "localhost",
+    "local",
+    "localdomain",
+    "internal",
+    "lan",
+    "home",
+    "home.arpa",
+    "invalid",
+    "test",
+    "example",
+    "onion",
+}
+
+
+def authority_metadata(url: str) -> dict:
+    """Identify a rejected network authority without resolving or contacting it."""
+    result = {"scheme": None, "authority": None, "host_kind": "redacted"}
+    if (
+        len(url) > 2048
+        or "\\" in url
+        or any(ord(char) < 33 or 127 <= ord(char) <= 159 for char in url)
+    ):
+        return result
+    try:
+        parsed = urlsplit(url)
+        if parsed.scheme not in AUTHORITY_SCHEMES:
+            return result
+        result["scheme"] = parsed.scheme
+        if parsed.netloc.count("@") > 1:
+            return result
+        raw = parsed.netloc.rsplit("@", 1)[-1]
+        host = parsed.hostname
+        if (
+            host is None
+            or not host.isascii()
+            or not raw
+            or len(raw) > 260
+            or any(char in raw for char in "%/?#\\")
+        ):
+            return result
+        if raw.startswith("["):
+            tail = raw[raw.index("]") + 1 :]
+            if tail and not tail.startswith(":"):
+                return result
+            port_text = tail[1:] if tail else None
+        else:
+            if raw.count(":") > 1:
+                return result
+            port_text = raw.rsplit(":", 1)[1] if ":" in raw else None
+        if port_text is not None and (
+            re.fullmatch(r"[1-9][0-9]{0,4}", port_text) is None or int(port_text) > 65535
+        ):
+            return result
+        port = parsed.port
+        if port != (int(port_text) if port_text is not None else None):
+            return result
+        host = host.lower().removesuffix(".")
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            labels = host.split(".")
+            if (
+                raw.startswith("[")
+                or len(host) > 253
+                or len(labels) < 2
+                or any(
+                    re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label) is None
+                    for label in labels
+                )
+                or re.fullmatch(r"(?:[0-9]+|0x[0-9a-f]+)", labels[-1])
+                or any(
+                    host == suffix or host.endswith("." + suffix) for suffix in LOCAL_DNS_SUFFIXES
+                )
+            ):
+                return result
+            host_kind = "dns_syntax"  # No assertion about DNS answers, ownership or provider role.
+        else:
+            if (
+                not address.is_global
+                or address.is_multicast
+                or address.is_reserved
+                or address.is_loopback
+                or address.is_link_local
+                or address.is_unspecified
+                or address.is_private
+            ):
+                return result
+            host_kind = "global_ipv4" if address.version == 4 else "global_ipv6"
+            host = str(address) if address.version == 4 else f"[{address.compressed}]"
+        result.update(
+            authority=host + (f":{port}" if port is not None else ""), host_kind=host_kind
+        )
+    except ValueError:
+        return result
+    return result
+
+
+def valid_authority_metadata(item: dict) -> bool:
+    scheme, authority, host_kind = (item[key] for key in ("scheme", "authority", "host_kind"))
+    if scheme is not None and (not isinstance(scheme, str) or scheme not in AUTHORITY_SCHEMES):
+        return False
+    if authority is None:
+        return host_kind == "redacted"
+    if (
+        not isinstance(authority, str)
+        or not 1 <= len(authority) <= 259
+        or scheme is None
+        or not isinstance(host_kind, str)
+    ):
+        return False
+    return authority_metadata(f"{scheme}://{authority}/") == {
+        "scheme": scheme,
+        "authority": authority,
+        "host_kind": host_kind,
+    }
 
 
 def diagnostic_path_class(path: str) -> str:
@@ -61,7 +179,7 @@ def diagnostic_path_class(path: str) -> str:
 
 
 def denied_metadata(url: str, method: str, kind: str, cause: str) -> dict:
-    """Never return raw URLs, arbitrary paths, sensitive values or their hashes."""
+    """Omit URL userinfo/query/fragment and arbitrary paths; expose validated host syntax."""
     item = {
         "cause": cause if cause in DIAGNOSTIC_CAUSES else "resource_outside_map",
         "method": method if method in DIAGNOSTIC_METHODS else "OTHER",
@@ -72,6 +190,7 @@ def denied_metadata(url: str, method: str, kind: str, cause: str) -> dict:
         "query_redacted": "?" in url,
         "fragment_redacted": "#" in url,
         "userinfo_redacted": False,
+        **authority_metadata(url),
     }
     if len(url) > 2048 or any(ord(char) < 33 for char in url):
         return item
@@ -112,9 +231,14 @@ def valid_diagnostics(value: object) -> bool:
         "query_redacted",
         "fragment_redacted",
         "userinfo_redacted",
+        "scheme",
+        "authority",
+        "host_kind",
     }
     for item in items:
         if not isinstance(item, dict) or set(item) != fields:
+            return False
+        if not valid_authority_metadata(item):
             return False
         if any(
             type(item[field]) is not bool
@@ -133,7 +257,12 @@ def valid_diagnostics(value: object) -> bool:
             return False
         path = item["path"]
         if item["same_origin"]:
-            if item["userinfo_redacted"]:
+            if (
+                item["userinfo_redacted"]
+                or item["scheme"] != "https"
+                or item["authority"] != bundle.HOST
+                or item["host_kind"] != "dns_syntax"
+            ):
                 return False
             if path is None:
                 if item["path_class"] != "redacted":
@@ -460,6 +589,19 @@ def main() -> int:
                     or denials[0]["method"] != "GET"
                     or denials[0]["kind"] != "document"
                     or denials[0]["query_redacted"] is not True
+                    or denials[0]["scheme"] != "https"
+                    or denials[0]["authority"] != bundle.HOST
+                    or denials[0]["host_kind"] != "dns_syntax"
+                ):
+                    result = 1
+            if args == ["--fixture-websocket"]:
+                denials = receipt["diagnostics"]["denied_requests"]
+                if (
+                    len(denials) != 1
+                    or denials[0]["scheme"] != "wss"
+                    or denials[0]["authority"] != bundle.HOST
+                    or denials[0]["host_kind"] != "dns_syntax"
+                    or denials[0]["same_origin"] is not False
                 ):
                     result = 1
             receipt["expected_stop_verified"] = result == 0
