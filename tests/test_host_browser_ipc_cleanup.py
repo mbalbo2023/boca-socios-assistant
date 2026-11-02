@@ -31,6 +31,10 @@ class FakeDocker:
         self.images = {IMAGE, BROWSER}
         self.volumes = set(PERSISTENT) | {IPC_VOLUME}
         self.network = True
+        self.network_id = "a" * 64
+        self.network_inspects = 0
+        self.replace_before_recheck = False
+        self.replace_before_remove = False
         self.foreign = False
         self.other_peer = False
         self.port = "8443"
@@ -190,13 +194,16 @@ class FakeDocker:
         if args[:2] == ("network", "ls"):
             return NETWORK if self.network else ""
         if args[:2] == ("network", "inspect"):
+            self.network_inspects += 1
+            if self.replace_before_recheck and self.network_inspects >= 2:
+                self.network_id = "f" * 64
             peers = {CONTROLLER: {}} if "controller" in self.containers else {}
             if self.other_peer:
                 peers["foreign"] = {}
             return json.dumps(
                 {
                     "Name": NETWORK,
-                    "Id": "a" * 64,
+                    "Id": self.network_id,
                     "Driver": "bridge",
                     "Internal": False,
                     "Labels": {
@@ -207,7 +214,13 @@ class FakeDocker:
                 }
             )
         if args[:2] == ("network", "rm"):
-            assert args[2:] == (NETWORK,)
+            if self.replace_before_remove:
+                self.network_id = "f" * 64
+                # Docker refuses the disappeared exact ID; the new bridge
+                # with the same name remains untouched.
+                if args[2:] != (self.network_id,):
+                    raise cleanup.CleanupError("old bridge ID no longer exists")
+            assert args[2:] == (self.network_id,)
             self.network = False
             return NETWORK
         if args[:2] == ("image", "inspect"):
@@ -547,6 +560,39 @@ def test_seccomp_duplicate_json_key_rejected_even_with_matching_stage_digest(
     assert not any(command[:2] == ("container", "stop") for command in docker.commands)
 
 
+def test_seccomp_same_size_swap_between_sha_check_and_effective_read_never_deletes(
+    case: tuple[FakeDocker, dict[str, object], dict[str, Path]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    docker, marker, files = case
+    changed = files["seccomp"].read_text().replace("SCMP_ACT_ERRNO", "SCMP_ACT_ALLOW")
+    assert len(changed.encode()) == files["seccomp"].stat().st_size
+    docker.seccomp_profile = '{"defaultAction":"SCMP_ACT_ALLOW","syscalls":[]}'
+    original_read = cleanup._browser_ipc_read_private
+    seccomp_reads = 0
+
+    def swap_after_two_good_reads(path: Path, metadata: os.stat_result, limit: int) -> bytes:
+        nonlocal seccomp_reads
+        if path == files["seccomp"]:
+            seccomp_reads += 1
+            # Initial _browser_ipc_stages + nested _browser_ipc_stage both pass
+            # the reviewed SHA. Replace in place immediately before the
+            # effective JSON read, preserving owner, inode and byte count.
+            if seccomp_reads == 3:
+                path.write_text(changed)
+        return original_read(path, metadata, limit)
+
+    monkeypatch.setattr(cleanup, "_browser_ipc_read_private", swap_after_two_good_reads)
+    with pytest.raises(cleanup.CleanupError):
+        run_cleanup(marker)
+    assert seccomp_reads == 3
+    assert files["marker"].exists() and files["seccomp"].exists()
+    assert docker.images == {IMAGE, BROWSER} and docker.volumes == PERSISTENT | {IPC_VOLUME}
+    assert not any(
+        command[:2] in {("container", "stop"), ("container", "rm")} for command in docker.commands
+    )
+
+
 def test_large_exact_worker_inspect_remains_bounded_without_general_relaxation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -573,6 +619,31 @@ def test_mid_cleanup_error_is_indeterminate_and_does_not_retry(
     assert docker.images == {IMAGE, BROWSER}
     assert docker.network
     assert sum(cmd[:2] == ("container", "rm") for cmd in docker.commands) == 1
+
+
+@pytest.mark.parametrize("when", ["before-recheck", "before-remove"])
+def test_reused_bridge_name_cannot_remove_replacement_network(
+    case: tuple[FakeDocker, dict[str, object], dict[str, Path]],
+    when: str,
+) -> None:
+    docker, marker, files = case
+    docker.containers = {}  # No mutations may precede the bridge gate.
+    docker.replace_before_recheck = when == "before-recheck"
+    docker.replace_before_remove = when == "before-remove"
+    expected = cleanup.CleanupError if when == "before-recheck" else cleanup.CleanupIndeterminate
+    with pytest.raises(expected):
+        run_cleanup(marker)
+    assert docker.network and docker.network_id == "f" * 64
+    assert files["marker"].exists()
+    assert docker.images == {IMAGE, BROWSER} and docker.volumes == PERSISTENT | {IPC_VOLUME}
+    assert not any(
+        command[:2] in {("image", "rm"), ("volume", "rm")} for command in docker.commands
+    )
+    if when == "before-remove":
+        assert ("network", "rm", "a" * 64) in docker.commands
+        assert ("network", "rm", NETWORK) not in docker.commands
+    else:
+        assert not any(command[:2] == ("network", "rm") for command in docker.commands)
 
 
 @pytest.mark.parametrize("replacement", ["fifo", "symlink"])

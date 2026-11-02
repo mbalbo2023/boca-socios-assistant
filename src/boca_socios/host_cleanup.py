@@ -1146,6 +1146,10 @@ def _browser_ipc_embedded_seccomp(marker: dict[str, object] | None) -> str:
 
     try:
         raw = _browser_ipc_read_private(BROWSER_IPC_SECCOMP, metadata, 32768)
+        # The first _browser_ipc_stage check cannot authorize these bytes:
+        # another UID10001 process could replace the file between opens.
+        if hashlib.sha256(raw).hexdigest() != seccomp_sha:
+            raise CleanupError("browser IPC seccomp changed during effective-profile verification")
         text = raw.decode("utf-8")
         if not isinstance(json.loads(text, object_pairs_hook=unique_fields), dict):
             raise CleanupError("browser IPC seccomp profile is not a JSON object")
@@ -1518,14 +1522,14 @@ def _browser_ipc_volumes(marker: dict[str, object] | None) -> frozenset[str]:
 def _browser_ipc_network(
     controller: str | None,
     marker: dict[str, object] | None,
-) -> bool:
+) -> str | None:
     names = set(
         _run(
             "network", "ls", "--format", "{{.Name}}", "--filter", "name=^boca-socios_"
         ).splitlines()
     )
     if not names:
-        return False
+        return None
     if names != {BETA_NETWORK} or marker is None or marker["bridge_absent"] is not True:
         raise CleanupError("browser IPC bridge network lacks new-only provenance")
     try:
@@ -1547,7 +1551,7 @@ def _browser_ipc_network(
         or set(peers) - ({controller} if controller else set())
     ):
         raise CleanupError("browser IPC bridge identity or peers uncertain")
-    return True
+    return str(record["Id"])
 
 
 def _browser_ipc_image(image: str, source_sha: str) -> tuple[bool, int]:
@@ -1572,7 +1576,7 @@ def _browser_ipc_inventory(
     dict[str, object] | None,
     dict[str, str],
     frozenset[str],
-    bool,
+    str | None,
     dict[Path, bool],
     dict[Path, bool],
     tuple[bool, int],
@@ -1670,11 +1674,13 @@ def clean_failed_browser_ipc_install(
                 raise CleanupError("browser IPC container remained after removal")
 
         if bridge:
-            if not _browser_ipc_network(None, marker):
-                raise CleanupError("browser IPC bridge disappeared before removal")
+            if _browser_ipc_network(None, marker) != bridge:
+                raise CleanupError("browser IPC bridge ID changed before removal")
             attempted = True
-            _run("network", "rm", BETA_NETWORK)
-            if _browser_ipc_network(None, marker):
+            # Delete by its validated 64-hex ID, not a reusable network name.
+            # A replacement Boca-named bridge cannot be targeted by accident.
+            _run("network", "rm", bridge)
+            if _browser_ipc_network(None, marker) is not None:
                 raise CleanupError("browser IPC bridge remained after removal")
 
         image_status = (
@@ -1779,7 +1785,7 @@ def clean_failed_browser_ipc_install(
     result = BrowserIPCCleanupResult(
         removed_controller="controller" in containers,
         removed_worker="worker" in containers,
-        removed_network=bridge,
+        removed_network=bridge is not None,
         retained_network=False,
         removed_ipc_volume=BROWSER_IPC_VOLUME in volumes,
         removed_image=bool(marker and marker["controller_image_absent"] and controller_image[0]),
