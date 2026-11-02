@@ -13,6 +13,7 @@ import errno
 import hashlib
 import http.client
 import json
+import math
 import os
 import platform
 import pwd
@@ -3087,7 +3088,7 @@ def _browser_port_free() -> None:
         raise PreflightError("private Boca localhost:8443 is not free") from exc
 
 
-def _browser_engine_version() -> None:
+def _browser_engine_version() -> str:
     """Docker <28 can expose loopback-published TCP to adjacent L2 hosts.
 
     This is a browser-v2-only stop gate; never update the shared daemon or
@@ -3098,6 +3099,7 @@ def _browser_engine_version() -> None:
     match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", value)
     if match is None or int(match.group(1)) < 28:
         raise PreflightError("Docker Engine >=28 required for private localhost publication")
+    return value
 
 
 def _browser_capacity(
@@ -3108,18 +3110,31 @@ def _browser_capacity(
     The 1 GiB/192 PIDs combined container budget needs room for Docker and
     bounded one-shot probes too. An indeterminate delegated limit is NO_GO.
     """
+    memory, affinity, load, free_pids, storage = _observe_browser_capacity()
+    _validate_storage_capacity(storage)
+    cpu = max(0.0, affinity - load)
+    if memory < memory_mib * 1024 or cpu < cpu_required or free_pids < pids_required:
+        raise PreflightError("browser IPC host capacity below reserved budget")
+    return memory, cpu, free_pids, storage
+
+
+def _observe_browser_capacity() -> tuple[int, int, float, int, StorageSnapshot]:
+    """Observe aggregate metadata; configured reserve policy is evaluated separately."""
     _validate_docker_boundary()
     storage = _storage_snapshot()
-    _validate_storage_capacity(storage)
     try:
         meminfo = Path("/proc/meminfo").read_text(encoding="ascii")
         memory = re.search(r"^MemAvailable:\s+(\d+) kB$", meminfo, re.MULTILINE)
-        cpu = max(0.0, len(os.sched_getaffinity(0)) - os.getloadavg()[0])
+        affinity = len(os.sched_getaffinity(0))
+        load = os.getloadavg()[0]
         pids_dir = CGROUP_CONTROLLERS.parent
         pids_current = pids_dir.joinpath("pids.current").read_text(encoding="ascii").strip()
         pids_max = pids_dir.joinpath("pids.max").read_text(encoding="ascii").strip()
         if (
             memory is None
+            or not 0 < affinity < 1_000_000
+            or not math.isfinite(load)
+            or not 0 <= load < 1_000_000
             or not pids_current.isdecimal()
             or not pids_max.isdecimal()
             or pids_current.startswith("0")
@@ -3128,11 +3143,81 @@ def _browser_capacity(
         ):
             raise PreflightError("rootless CPU/memory/PID headroom is unproven")
         free_pids = int(pids_max) - int(pids_current)
+        if free_pids < 0:
+            raise PreflightError("rootless PID counters are inconsistent")
     except (OSError, ValueError, OverflowError) as exc:
         raise PreflightError("rootless CPU/memory/PID headroom is unavailable") from exc
-    if int(memory.group(1)) < memory_mib * 1024 or cpu < cpu_required or free_pids < pids_required:
-        raise PreflightError("browser IPC host capacity below reserved budget")
-    return int(memory.group(1)), cpu, free_pids, storage
+    return int(memory.group(1)), affinity, load, free_pids, storage
+
+
+def _infrastructure_budget(resource_budget: str) -> tuple[int, float, int]:
+    budgets = {
+        "1.5cpu-1024m-192pids": (1536, 1.75, 256),
+        "1.75cpu-1152m-224pids": (1792, 2.0, 288),
+    }
+    if resource_budget not in budgets:
+        raise PreflightError("invalid infrastructure reserve policy selection")
+    return budgets[resource_budget]
+
+
+def _infrastructure_preflight(source_sha: str, resource_budget: str) -> None:
+    """No image, owner, staging, container, volume or application effects."""
+    required_memory, required_cpu, required_pids = _infrastructure_budget(resource_budget)
+    _require_dedicated_identity()
+    _validate_docker_boundary()
+    engine = _browser_engine_version()
+    if platform.machine() != "x86_64":
+        raise PreflightError("infrastructure architecture is unsupported")
+    _browser_root_entries(set())
+    _browser_inventory(containers=set(), volumes=set(), bridges=set())
+    if not {"--no-build", "--no-deps", "--wait"} <= set(
+        _run("docker", "compose", "up", "--help").split()
+    ) or "--format" not in _run("docker", "compose", "config", "--help"):
+        raise PreflightError("Docker Compose bounded operations are unavailable")
+    _browser_port_free()
+    memory, affinity, load, pids, storage = _observe_browser_capacity()
+    cpu = max(0.0, affinity - load)
+    after = _storage_snapshot()
+    _validate_storage_continuity(storage, after, require_capacity=False)
+    _browser_inventory(containers=set(), volumes=set(), bridges=set())
+    _browser_root_entries(set())
+    _browser_port_free()
+    checks = {
+        "memory": memory >= required_memory * 1024,
+        "cpu": cpu >= required_cpu,
+        "pids": pids >= required_pids,
+        "storage": min(
+            storage.stage_free_bytes,
+            storage.docker_free_bytes,
+            after.stage_free_bytes,
+            after.docker_free_bytes,
+        )
+        >= 4 * 1024**3
+        and min(
+            storage.stage_inodes, storage.docker_inodes, after.stage_inodes, after.docker_inodes
+        )
+        >= 50_000,
+    }
+    print(
+        f"BOCA_INFRA_OBSERVATION source_sha={source_sha} engine={engine}"
+        f" memory_kib={memory} cpu_affinity={affinity} load1={load:.6f}"
+        f" cpu_estimate={cpu:.6f} pids_free={pids}"
+        f" stage_free_bytes={after.stage_free_bytes} stage_inodes={after.stage_inodes}"
+        f" docker_free_bytes={after.docker_free_bytes} docker_inodes={after.docker_inodes}",
+        flush=True,
+    )
+    outcome = "PASS" if all(checks.values()) else "NO_GO"
+    details = " ".join(f"{name}={'PASS' if result else 'NO_GO'}" for name, result in checks.items())
+    print(
+        f"BOCA_INFRA_POLICY source_sha={source_sha} budget={resource_budget}"
+        f" memory_mib={required_memory} cpu_required={required_cpu:.2f} pids_required={required_pids}"
+        f" {details} result={outcome} meaning=configured_reserve_not_benchmark",
+        flush=True,
+    )
+    if outcome != "PASS":
+        raise PreflightError(
+            "infrastructure configured reserve not satisfied; performance unmeasured"
+        )
 
 
 def _browser_preflight_inventory() -> tuple[int, float, int, StorageSnapshot]:
@@ -5791,7 +5876,31 @@ def phase(
     browser_seccomp_sha: str = "",
     browser_attempt_id: str = "",
     telegram_attempt_id: str = "",
+    infrastructure_budget: str = "",
 ) -> None:
+    if phase_name == "infrastructure-preflight":
+        _validate_coordinates(image, source_sha, compose_sha, read_only_preflight=True)
+        if any(
+            (
+                envelope,
+                beta_owner,
+                telegram_envelope,
+                expected_bot_id,
+                expected_chat_hmac,
+                owner_envelope,
+                enroll_digest,
+                browser_image,
+                browser_overlay_sha,
+                browser_seccomp_sha,
+                browser_attempt_id,
+                telegram_attempt_id,
+            )
+        ):
+            raise PreflightError("unexpected private or image context in infrastructure preflight")
+        _infrastructure_preflight(source_sha, infrastructure_budget)
+        return
+    if infrastructure_budget:
+        raise PreflightError("infrastructure budget supplied to unrelated phase")
     sender_phase = phase_name in {
         "browser-telegram-preflight",
         "browser-telegram-start",
@@ -6136,6 +6245,7 @@ def main() -> int:
         "phase",
         choices=(
             "inspect-prerequisites",
+            "infrastructure-preflight",
             "port-check",
             "observe",
             "preflight",
@@ -6192,6 +6302,7 @@ def main() -> int:
     parser.add_argument("--browser-seccomp-sha", default="")
     parser.add_argument("--browser-attempt-id", default="")
     parser.add_argument("--telegram-attempt-id", default="")
+    parser.add_argument("--infrastructure-budget", default="")
     args = parser.parse_args()
     try:
         phase(
@@ -6213,6 +6324,11 @@ def main() -> int:
             **(
                 {"telegram_attempt_id": args.telegram_attempt_id}
                 if args.telegram_attempt_id
+                else {}
+            ),
+            **(
+                {"infrastructure_budget": args.infrastructure_budget}
+                if args.infrastructure_budget
                 else {}
             ),
         )

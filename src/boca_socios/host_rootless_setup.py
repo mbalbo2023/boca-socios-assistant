@@ -540,17 +540,31 @@ def _read_private(home: Path, relative: tuple[str, ...], expected: str) -> None:
     if parent is None:
         raise SetupError("reviewed_service_configuration_missing")
     try:
-        fd = os.open(relative[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)
+        fd = os.open(
+            relative[-1],
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=parent,
+        )
         with os.fdopen(fd, "r", encoding="utf-8") as source:
             metadata = os.fstat(source.fileno())
             if (
                 not stat.S_ISREG(metadata.st_mode)
                 or metadata.st_uid != UID
                 or stat.S_IMODE(metadata.st_mode) != 0o600
+                or metadata.st_nlink != 1
                 or metadata.st_size > 4096
             ):
                 raise SetupError("reviewed_service_configuration_unsafe")
             actual = source.read(4097)
+            after = os.fstat(source.fileno())
+            linked = os.stat(relative[-1], dir_fd=parent, follow_symlinks=False)
+            if (
+                (metadata.st_dev, metadata.st_ino, metadata.st_mtime_ns, metadata.st_ctime_ns)
+                != (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_ctime_ns)
+                or (after.st_dev, after.st_ino) != (linked.st_dev, linked.st_ino)
+                or after.st_nlink != 1
+            ):
+                raise SetupError("reviewed_service_configuration_changed")
         if actual != expected:
             raise SetupError("reviewed_service_configuration_mismatch")
     except OSError as exc:
@@ -559,7 +573,7 @@ def _read_private(home: Path, relative: tuple[str, ...], expected: str) -> None:
         os.close(parent)
 
 
-def _stop_service_state(home: Path) -> str:
+def _stop_service_state(home: Path, *, allow_failed: bool = False) -> str:
     raw = _command(
         home,
         "/usr/bin/systemctl",
@@ -586,6 +600,20 @@ def _stop_service_state(home: Path) -> str:
         if not re.fullmatch(r"[1-9][0-9]{0,9}", fields.get("MainPID", "")):
             raise SetupError("dedicated_service_state_unverified")
         return "active"
+    if (
+        allow_failed
+        and fields.get("ActiveState") == "failed"
+        and fields.get("SubState") == "failed"
+        and fields.get("MainPID") == "0"
+    ):
+        return "failed"
+    if (
+        allow_failed
+        and fields.get("ActiveState") == "activating"
+        and fields.get("SubState") == "start"
+        and re.fullmatch(r"0|[1-9][0-9]{0,9}", fields.get("MainPID", ""))
+    ):
+        return "starting"
     raise SetupError("dedicated_service_state_unverified")
 
 
@@ -1150,7 +1178,7 @@ def _verified_browser_ipc_image(
     )
 
 
-def _verified_containers(home: Path) -> tuple[list[str], list[str]]:
+def _verified_containers(home: Path, *, require_empty: bool = False) -> tuple[list[str], list[str]]:
     """Read the complete dedicated inventory before any container effect."""
     endpoint = "--host=unix:///run/user/10001/docker.sock"
     raw = _command(home, "/usr/bin/docker", endpoint, "info", "--format", "{{json .}}")
@@ -1175,6 +1203,10 @@ def _verified_containers(home: Path) -> tuple[list[str], list[str]]:
         or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids)
     ):
         raise SetupError("dedicated_container_inventory_unverified")
+    if require_empty:
+        if ids:
+            raise SetupError("existing_container_preserved_no_preflight")
+        return [], []
     records = [
         json.loads(
             _command(
@@ -1314,7 +1346,7 @@ def _verified_enablement(home: Path) -> None:
         os.close(parent)
 
 
-def _existing_daemon_boundary(source_sha: str) -> tuple[Path, str]:
+def _existing_daemon_boundary(source_sha: str, *, allow_failed: bool = False) -> tuple[Path, str]:
     """Read the prepared unit's fixed identity before recovery/start effects."""
     if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
         raise SetupError("invalid_start_coordinates")
@@ -1331,7 +1363,10 @@ def _existing_daemon_boundary(source_sha: str) -> tuple[Path, str]:
     _read_private(home, CONFIG, _config(home))
     _read_private(home, UNIT, _unit())
     _verified_enablement(home)
-    return home, _stop_service_state(home)
+    state = (
+        _stop_service_state(home, allow_failed=True) if allow_failed else _stop_service_state(home)
+    )
+    return home, state
 
 
 def _require_stopped_runtime() -> None:
@@ -1360,6 +1395,15 @@ def start_existing(source_sha: str) -> None:
     if state != "inactive":
         raise SetupError("dedicated_service_already_active")
     _require_stopped_runtime()
+    _start_stopped_daemon(home)
+    print(
+        f"BOCA_ROOTLESS_START state=READY source_sha={source_sha}"
+        " inventory=known_stopped data=preserved"
+    )
+
+
+def _start_stopped_daemon(home: Path, *, require_empty: bool = False) -> None:
+    """Shared start mechanics; callers must authenticate the inactive unit first."""
     if (
         _command(home, "/usr/bin/loginctl", "show-user", "10001", "--property=Linger", "--value")
         != "yes"
@@ -1376,12 +1420,121 @@ def start_existing(source_sha: str) -> None:
             time.sleep(0.5)
     if _stop_service_state(home) != "active":
         raise SetupError("dedicated_service_not_running")
-    _, running = _verified_containers(home)
+    _, running = (
+        _verified_containers(home, require_empty=True)
+        if require_empty
+        else _verified_containers(home)
+    )
     if running:
         raise SetupError("dedicated_container_already_running_no_test")
+
+
+def _preflight_empty_containers(home: Path) -> None:
+    """Read only the fixed private metadata directory; never start saved apps."""
+    descriptor = _directory(home, (*DATA, "containers"), create=False)
+    if descriptor is None:
+        raise SetupError("prepared_container_metadata_unavailable")
+    try:
+        with os.scandir(descriptor) as entries:
+            if next(entries, None) is not None:
+                raise SetupError("existing_container_metadata_preserved_no_preflight")
+    finally:
+        os.close(descriptor)
+
+
+def _preflight_effective_unit(home: Path) -> None:
+    """A stale loaded unit must not execute different commands during a probe."""
+    expected = {
+        "LoadState": "loaded",
+        "NeedDaemonReload": "no",
+        "Type": "exec",
+        "Restart": "no",
+        "Delegate": "yes",
+        "KillMode": "mixed",
+        "ExecCondition": "",
+        "ExecStartPre": "",
+        "ExecStartPost": "",
+        "ExecStop": "",
+        "ExecStopPost": "",
+    }
+    raw = _command(
+        home,
+        "/usr/bin/systemctl",
+        "--user",
+        "show",
+        "--all",
+        "docker.service",
+        "--property=" + ",".join((*expected, "ExecStart")),
+    )
+    pairs = [line.split("=", 1) for line in raw.splitlines()]
+    if len(raw) > 16_384 or len(pairs) != len(expected) + 1 or any(len(p) != 2 for p in pairs):
+        raise SetupError("effective_preflight_unit_unverified")
+    fields = dict(pairs)
+    if set(fields) != {*expected, "ExecStart"} or any(
+        fields[key] != value for key, value in expected.items()
+    ):
+        raise SetupError("effective_preflight_unit_changed")
+    argv = next(line[10:] for line in _unit().splitlines() if line.startswith("ExecStart="))
+    argv = argv.replace("%h", str(home))
+    # Runtime timestamps/PID/status may describe an earlier legitimate run.
+    # They are never executed or logged. The executable, argv and error policy
+    # must match exactly, with one and only one command structure.
+    prefix = "{ path=/usr/bin/env ; argv[]=" + argv + " ; ignore_errors=no ; "
+    if re.fullmatch(re.escape(prefix) + r"[^{}\r\n]+ \}", fields["ExecStart"]) is None:
+        raise SetupError("effective_preflight_command_changed")
+
+
+def _infrastructure_stopped(source_sha: str) -> Path:
+    home, state = _existing_daemon_boundary(source_sha)
+    if state != "inactive":
+        raise SetupError("infrastructure_preflight_requires_stopped_daemon")
+    _preflight_effective_unit(home)
+    _require_stopped_runtime()
+    _preflight_empty_containers(home)
+    return home
+
+
+def infrastructure_check(source_sha: str) -> None:
+    _infrastructure_stopped(source_sha)
     print(
-        f"BOCA_ROOTLESS_START state=READY source_sha={source_sha}"
-        " inventory=known_stopped data=preserved"
+        f"BOCA_INFRA_DAEMON state=PREPARED source_sha={source_sha} containers=absent daemon=stopped"
+    )
+
+
+def infrastructure_start(source_sha: str) -> None:
+    home = _infrastructure_stopped(source_sha)
+    _start_stopped_daemon(home, require_empty=True)
+    if _verified_containers(home, require_empty=True) != ([], []):
+        raise SetupError("existing_container_preserved_no_preflight")
+    print(
+        f"BOCA_INFRA_DAEMON state=STARTED source_sha={source_sha} containers=absent application=not_started"
+    )
+
+
+def infrastructure_stop(source_sha: str) -> None:
+    """Restore only this prepared daemon, never stop/remove a container."""
+    home, state = _existing_daemon_boundary(source_sha, allow_failed=True)
+    _preflight_effective_unit(home)
+    _preflight_empty_containers(home)
+    if state != "inactive":
+        if state == "active" or _entry(RUNTIME, ("docker.sock",)) is not None:
+            _socket(RUNTIME / "docker.sock")
+            if _verified_containers(home, require_empty=True) != ([], []):
+                raise SetupError("existing_container_preserved_no_daemon_stop")
+        _command(home, "/usr/bin/systemctl", "--user", "stop", "docker.service", timeout=35)
+        if _stop_service_state(home) != "inactive":
+            raise SetupError("dedicated_service_stop_unverified")
+    for attempt in range(10):
+        try:
+            _require_stopped_runtime()
+            break
+        except SetupError:
+            if attempt == 9:
+                raise
+            time.sleep(0.2)
+    _preflight_empty_containers(home)
+    print(
+        f"BOCA_INFRA_DAEMON state=STOPPED source_sha={source_sha} containers=absent data=preserved"
     )
 
 
@@ -1427,7 +1580,17 @@ def stop_test(source_sha: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Boca dedicated rootless service preparation")
     parser.add_argument(
-        "phase", choices=("check", "apply", "inspect-existing", "start-existing", "stop-test")
+        "phase",
+        choices=(
+            "check",
+            "apply",
+            "inspect-existing",
+            "start-existing",
+            "stop-test",
+            "infrastructure-check",
+            "infrastructure-start",
+            "infrastructure-stop",
+        ),
     )
     parser.add_argument("source_sha")
     args = parser.parse_args()
@@ -1435,6 +1598,9 @@ def main() -> int:
         "stop-test": "BOCA_STOP_TEST",
         "start-existing": "BOCA_ROOTLESS_START",
         "inspect-existing": "BOCA_ROOTLESS_RECOVERY",
+        "infrastructure-check": "BOCA_INFRA_DAEMON",
+        "infrastructure-start": "BOCA_INFRA_DAEMON",
+        "infrastructure-stop": "BOCA_INFRA_DAEMON",
     }.get(args.phase, "BOCA_ROOTLESS_SETUP")
     try:
         if args.phase == "stop-test":
@@ -1443,6 +1609,12 @@ def main() -> int:
             start_existing(args.source_sha)
         elif args.phase == "inspect-existing":
             inspect_existing(args.source_sha)
+        elif args.phase == "infrastructure-check":
+            infrastructure_check(args.source_sha)
+        elif args.phase == "infrastructure-start":
+            infrastructure_start(args.source_sha)
+        elif args.phase == "infrastructure-stop":
+            infrastructure_stop(args.source_sha)
         else:
             prepare(args.phase, args.source_sha)
     except SetupError as exc:
