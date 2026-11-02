@@ -37,6 +37,10 @@ infrastructure**.
 > no path disclosed; its host and function are unknown. Isolation and cleanup
 > passed. No further public GET or automatic retry is authorized;
 > see [the report](docs/quality/public-source-validation-2026-11-02.md).
+> The later [ADR0110 candidate](docs/ADR/0110-public-denied-authority-metadata.md)
+> adds bounded `scheme`/`authority`/`host_kind` metadata to the first denial,
+> without DNS lookup, contact or a wider capture map. It cannot identify the
+> authority omitted from 41537796470; a future observation needs its own authorization.
 > [Read-only inspection 41538696464](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41538696464)
 > at 19:36:40 ART found the daemon inactive/dead and its socket absent, with
 > capacity not evaluated. It does not identify the earlier failed condition.

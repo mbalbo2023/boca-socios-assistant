@@ -5,6 +5,12 @@ Status: code candidate for RCA #264, based on main
 No new public request or host operation is authorized or performed by this
 change. The previously approved single capture has already been consumed.
 
+Subsequent candidate: [ADR0110](0110-public-denied-authority-metadata.md) adds
+validated `scheme`/`authority`/`host_kind` fields without contacting the authority.
+The omission of external authorities below records the original ADR0106 schema;
+the extension cannot recover the authority omitted from run 41537796470 or
+authorize another capture.
+
 ## Observed failure and cause
 
 [Run 41512196530, job 125506598762](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530/job/125506598762)

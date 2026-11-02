@@ -105,6 +105,13 @@ al STOP. Son contadores separados, no cinco dependencias nuevas ni cinco GET
 públicos adicionales. El [informe público](quality/public-source-validation-2026-11-02.md)
 conserva ambas capturas y sus límites; no divulga ni reconstruye la URL redactada.
 
+El candidato posterior [ADR0110](ADR/0110-public-denied-authority-metadata.md)
+añade `scheme`/`authority`/`host_kind` al primer rechazo, con validación y
+redacción acotadas, sin resolver DNS ni contactar ese destino. Requiere revisión,
+checks e integración propios. No cambia STOP, allowlist ni red, y no recupera
+la autoridad ausente de 41537796470. Sólo una nueva observación expresamente
+autorizada podría aportar ese dato; aquí no se ejecuta ni autoriza.
+
 ### PR #261: evidencia histórica e integración comprobada
 
 El corte posterior `7cfc9b60564f8c7bb8a589c86e15153c77bc948d` obtuvo
