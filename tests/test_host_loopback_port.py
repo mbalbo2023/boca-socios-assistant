@@ -116,9 +116,22 @@ def test_socket_creation_error_is_redacted(
 
 def test_workflow_uses_existing_protected_read_only_gate_and_rechecks_before_beta_effects() -> None:
     workflow = Path(".github/workflows/boca-first-deploy.yml").read_text(encoding="utf-8")
+    port_command = "python3 - port-check '' \"$BOCA_SOURCE_SHA\""
+
+    def step(name: str) -> str:
+        return workflow.split(f"      - name: {name}\n", 1)[1].split("      - name:", 1)[0]
+
     assert "inspect-prerequisites|port-check|preflight" in workflow
-    assert "if: inputs.operation == 'port-check'" in workflow
-    assert workflow.count("python3 - port-check '' \"$BOCA_SOURCE_SHA\"") == 2
+    assert workflow.count(port_command) == 3
+    readonly = step("Check only Boca host loopback 8443 without Docker")
+    legacy_beta = step("Recheck Boca loopback 8443 before BETA app and key effects")
+    browser_beta = step("Recheck main and only Boca loopback 8443 before browser effects")
+    assert "if: inputs.operation == 'port-check'" in readonly
+    assert "if: inputs.operation == 'beta-install'" in legacy_beta
+    assert "if: inputs.operation == 'beta-browser-install'" in browser_beta
+    for proof in (readonly, legacy_beta, browser_beta):
+        assert proof.count(port_command) == 1
+        assert "BOCA_PORT_CHECK state=FREE address=127.0.0.1 port=8443 reserved=no" in proof
     assert workflow.index("Confirm current main HEAD before host access") < workflow.index(
         "Check only Boca host loopback 8443 without Docker"
     )
@@ -127,3 +140,10 @@ def test_workflow_uses_existing_protected_read_only_gate_and_rechecks_before_bet
         < (workflow.index("Recheck Boca loopback 8443 before BETA app and key effects"))
         < workflow.index("Initialize new-only BETA and start isolated controller")
     )
+    assert (
+        workflow.index("Verify exact staged browser host model and private seccomp proof")
+        < workflow.index("Recheck main and only Boca loopback 8443 before browser effects")
+        < workflow.index("Start worker then controller only after healthy private socket proof")
+    )
+    assert "python scripts/check_main_ref.py" in browser_beta
+    assert '"$BOCA_SOURCE_SHA"' in browser_beta
