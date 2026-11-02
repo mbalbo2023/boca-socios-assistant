@@ -7,6 +7,8 @@ import io
 import json
 import os
 import stat
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
@@ -112,6 +114,87 @@ def test_each_reviewed_file_is_installed_atomically_without_temp_residue(
     )
 
 
+@pytest.mark.parametrize(
+    "tamper",
+    ["symlink", "wrong-hash", "mode", "uid", "hardlink", "fifo", "directory"],
+)
+def test_other_slots_preexisting_final_must_be_exact_verified_regular_inode(
+    private_stage: tuple[Path, dict[str, object]], tmp_path: Path, tamper: str
+) -> None:
+    root, _ = private_stage
+    previous = root / FIELDS["base"][0]
+    wrong_owner: dict[str, int] = {}
+    if tamper == "symlink":
+        previous.symlink_to(root / stage.MARKER)
+    elif tamper == "wrong-hash":
+        previous.write_bytes(b"different bytes")
+        previous.chmod(0o600)
+    elif tamper == "fifo":
+        os.mkfifo(previous, 0o600)
+    elif tamper == "directory":
+        previous.mkdir(mode=0o700)
+    else:
+        previous.write_bytes(PAYLOADS["base"])
+        previous.chmod(0o600)
+        if tamper == "mode":
+            previous.chmod(0o640)
+        elif tamper == "uid":
+            wrong_owner[previous.name] = 10002
+        elif tamper == "hardlink":
+            os.link(previous, tmp_path / "foreign-hardlink")
+    with pytest.raises(stage.StageError):
+        _as_dedicated_boca(lambda: _stage("overlay"), uid_by_name=wrong_owner)
+    assert not (root / FIELDS["overlay"][0]).exists()
+    assert not (root / f".browser-ipc-overlay-{ATTEMPT}.part").exists()
+
+
+def test_other_slot_partial_blocks_staging_without_touching_rollback_residue(
+    private_stage: tuple[Path, dict[str, object]],
+) -> None:
+    root, _ = private_stage
+    residue = root / f".browser-ipc-base-{ATTEMPT}.part"
+    residue.write_bytes(b"interrupted base upload")
+    residue.chmod(0o600)
+    with pytest.raises(stage.StageError):
+        _as_dedicated_boca(lambda: _stage("overlay"))
+    assert residue.read_bytes() == b"interrupted base upload"
+    assert not (root / FIELDS["overlay"][0]).exists()
+    assert not (root / f".browser-ipc-overlay-{ATTEMPT}.part").exists()
+
+
+def test_fifo_marker_without_writer_fails_without_hanging(
+    private_stage: tuple[Path, dict[str, object]],
+) -> None:
+    root, _ = private_stage
+    marker = root / stage.MARKER
+    marker.unlink()
+    os.mkfifo(marker, 0o600)
+    # The unpatched O_RDONLY open would wait forever for a FIFO writer.
+    # Probe the actual standalone helper in a killable, bounded child.
+    script = """
+import os
+import sys
+from boca_socios import host_browser_file_stage as stage
+
+dirfd = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    stage._read_marker_coordinates(dirfd, {"version": "browser-ipc-new-only-v2"}, "beta_compose_sha", "a" * 64)
+except stage.StageError:
+    raise SystemExit(0)
+finally:
+    os.close(dirfd)
+raise SystemExit(1)
+"""
+    result = subprocess.run(  # noqa: S603 - fixed interpreter, local synthetic FIFO only
+        [sys.executable, "-c", script, str(root)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=1,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+
+
 @pytest.mark.parametrize("payload", [b"", b"changed", b"x" * 32_769, b"partial\x00"])
 def test_bad_bytes_are_rejected_before_creating_a_file(
     private_stage: tuple[Path, dict[str, object]], payload: bytes
@@ -187,6 +270,25 @@ def test_marker_field_tampering_fails_closed(
     # hashes are syntactically checked, then compared by their own stage calls.
     slot = next((slot for slot, (_, field) in FIELDS.items() if field == key), "base")
     with pytest.raises(stage.StageError):
+        _as_dedicated_boca(lambda: _stage(slot))
+    assert not (root / FIELDS[slot][0]).exists()
+
+
+@pytest.mark.parametrize(
+    ("slot", "other_hash"),
+    [
+        ("base", "seccomp_sha"),
+        ("overlay", "beta_compose_sha"),
+        ("seccomp", "overlay_compose_sha"),
+    ],
+)
+def test_nonselected_hash_must_be_a_string_not_a_64_digit_json_integer(
+    private_stage: tuple[Path, dict[str, object]], slot: str, other_hash: str
+) -> None:
+    root, marker = private_stage
+    marker[other_hash] = int("1" * 64)
+    (root / stage.MARKER).write_text(json.dumps(marker), encoding="ascii")
+    with pytest.raises(stage.StageError, match="marker"):
         _as_dedicated_boca(lambda: _stage(slot))
     assert not (root / FIELDS[slot][0]).exists()
 

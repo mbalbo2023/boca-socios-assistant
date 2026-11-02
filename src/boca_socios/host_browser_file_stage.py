@@ -91,13 +91,19 @@ def stage_file(
         ):
             raise StageError("private Boca staging directory identity changed")
 
-        if not _read_marker_coordinates(dirfd, required, marker_key, expected_sha):
-            raise StageError("reviewed stage digest is not in protected marker")
+        marker_hashes = _read_marker_coordinates(dirfd, required, marker_key, expected_sha)
 
         allowed = {MARKER, *(value[0] for value in FILES.values())}
-        allowed |= {f".browser-ipc-{name}-{attempt_id}.part" for name in FILES}
-        if not set(os.listdir(dirfd)) <= allowed:
+        entries = set(os.listdir(dirfd))
+        # Every .part is proof of an interrupted attempt. Stop and preserve
+        # the residue for the separate same-run selective rollback contract.
+        if not entries <= allowed:
             raise StageError("private staging directory contains unexpected entries")
+        if filename in entries:
+            raise StageError("reviewed browser file is already staged")
+        for other_filename, other_field in FILES.values():
+            if other_filename in entries:
+                _verify_existing_final(dirfd, other_filename, marker_hashes[other_field])
 
         # O_EXCL forbids replacing either an existing final target or a
         # same-attempt partial upload. Hardlink is atomic and cannot clobber.
@@ -129,12 +135,41 @@ def stage_file(
         os.close(dirfd)
 
 
+def _verify_existing_final(dirfd: int, filename: str, expected_sha: str) -> None:
+    """Prove prior successful uploads before allowing a subsequent slot."""
+    try:
+        fd = os.open(
+            filename,
+            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=dirfd,
+        )
+        with os.fdopen(fd, "rb") as handle:
+            meta = os.fstat(handle.fileno())
+            if (
+                not stat.S_ISREG(meta.st_mode)
+                or meta.st_uid != 10001
+                or stat.S_IMODE(meta.st_mode) != 0o600
+                or meta.st_nlink != 1
+                or not 0 < meta.st_size <= 32_768
+            ):
+                raise StageError("previous browser staged inode identity is unsafe")
+            payload = handle.read(32_769)
+            if len(payload) != meta.st_size or hashlib.sha256(payload).hexdigest() != expected_sha:
+                raise StageError("previous browser staged file differs from reviewed hash")
+    except OSError as exc:
+        raise StageError("previous browser staged inode is unavailable") from exc
+
+
 def _read_marker_coordinates(
     dirfd: int, expected: dict[str, str], field: str, content_sha: str
-) -> bool:
+) -> dict[str, str]:
     """Authenticate the same private pre-pull marker by a single selected hash."""
     try:
-        fd = os.open(MARKER, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=dirfd)
+        fd = os.open(
+            MARKER,
+            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=dirfd,
+        )
         with os.fdopen(fd, "rb") as handle:
             meta = os.fstat(handle.fileno())
             if (
@@ -166,12 +201,14 @@ def _read_marker_coordinates(
         or record["bridge_absent"] is not True
         or record["ipc_volume_absent"] is not True
         or any(
-            not SHA.fullmatch(str(record.get(key, "")))
+            type(record.get(key)) is not str or not SHA.fullmatch(record[key])
             for key in ("beta_compose_sha", "overlay_compose_sha", "seccomp_sha")
         )
     ):
         raise StageError("private marker is not this protected new-only attempt")
-    return record.get(field) == content_sha
+    if record.get(field) != content_sha:
+        raise StageError("reviewed stage digest is not in protected marker")
+    return {key: record[key] for key in ("beta_compose_sha", "overlay_compose_sha", "seccomp_sha")}
 
 
 def main(argv: list[str] | None = None, data_stream: BinaryIO | None = None) -> int:
