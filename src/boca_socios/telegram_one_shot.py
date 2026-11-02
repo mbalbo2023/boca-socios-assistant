@@ -1,8 +1,8 @@
 """One explicit synthetic Telegram test, after protected owner and host gates.
 
-This entrypoint is never imported by the panel or default worker. A real
-network request is possible only when a separate protected host operation
-provides a verified bot/destination assertion and runs this fixed command.
+The worker reuses only the offline readiness gate. A real network request is
+possible only when a separate protected host operation provides a verified
+bot/destination assertion and runs the explicit test command.
 """
 
 from __future__ import annotations
@@ -20,9 +20,10 @@ import sys
 import time
 from collections.abc import Callable
 from contextlib import closing
+from math import isfinite
 from pathlib import Path
 from typing import Protocol
-from uuid import NAMESPACE_URL, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from boca_socios.notify.outbox import DeliveryState, NoticeKind, NotificationRequest
 from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
@@ -115,14 +116,12 @@ def _request(
                 raise OneShotError("identity_unverified") from None
 
 
-def check_identity(
+def _pin_owner_configuration(
     transport: TelegramTransport,
     expected_bot_id: int,
     expected_chat_hmac: str,
-    *,
-    connection_factory: Callable[..., _Connection] = http.client.HTTPSConnection,
-) -> None:
-    """Prove token authentication and a separately attested private destination."""
+) -> tuple[str, int]:
+    """Match protected owner pins and two private-file reads without network."""
     if (
         type(expected_bot_id) is not int
         or not 0 < expected_bot_id < 2**52
@@ -131,6 +130,8 @@ def check_identity(
     ):
         raise OneShotError("owner_assertion_unavailable")
     token, destination = transport._configuration()
+    if token.partition(":")[0] != str(expected_bot_id):
+        raise OneShotError("bot_identity_mismatch")
     if not 0 < destination < 2**52:
         raise OneShotError("private_destination_required")
     if not hmac.compare_digest(
@@ -140,6 +141,43 @@ def check_identity(
         expected_chat_hmac,
     ):
         raise OneShotError("owner_destination_mismatch")
+    transport._pin_configuration(token, destination)
+    return token, destination
+
+
+def acceptance_notice_id(
+    transport: TelegramTransport,
+    source_sha: str,
+    expected_bot_id: int,
+    expected_chat_hmac: str,
+) -> UUID:
+    """Bind the single acceptance fence to the exact release and private pair.
+
+    Only the opaque UUID enters SQLite. A generic historical heartbeat, a
+    different source or a replaced secret cannot authorize this worker.
+    """
+    if re.fullmatch(r"[0-9a-f]{40}", source_sha) is None:
+        raise OneShotError("source_unverified")
+    token, _destination = _pin_owner_configuration(transport, expected_bot_id, expected_chat_hmac)
+    binding = hmac.new(
+        token.encode("ascii"),
+        f"boca-telegram-ready-v1:{source_sha}:{expected_bot_id}:{expected_chat_hmac}".encode(
+            "ascii"
+        ),
+        hashlib.sha256,
+    ).hexdigest()
+    return uuid5(NOTICE_ID, binding)
+
+
+def check_identity(
+    transport: TelegramTransport,
+    expected_bot_id: int,
+    expected_chat_hmac: str,
+    *,
+    connection_factory: Callable[..., _Connection] = http.client.HTTPSConnection,
+) -> None:
+    """Prove token authentication and a separately attested private destination."""
+    token, destination = _pin_owner_configuration(transport, expected_bot_id, expected_chat_hmac)
     bot = _request(token, "getMe", None, connection_factory)
     if (
         type(bot.get("id")) is not int
@@ -157,15 +195,60 @@ def check_identity(
     transport._pin_configuration(token, destination)
 
 
+def verify_ready(
+    database: Path,
+    transport: TelegramTransport,
+    source_sha: str,
+    expected_bot_id: int,
+    expected_chat_hmac: str,
+) -> None:
+    """Read a prior bound API acceptance without migration, claim or HTTP."""
+    notice_id = acceptance_notice_id(transport, source_sha, expected_bot_id, expected_chat_hmac)
+    verify_storage(database)
+    try:
+        with closing(
+            sqlite3.connect(database.as_uri() + "?mode=ro", uri=True, timeout=3)
+        ) as connection:
+            connection.execute("PRAGMA query_only=ON")
+            connection.execute("PRAGMA trusted_schema=OFF")
+            row = connection.execute(
+                """SELECT n.kind, n.state, n.attempts, a.state, a.attempt_number,
+                   a.provider_message_id, n.accepted_at, a.settled_at
+                   FROM notification_outbox n JOIN telegram_delivery_attempts a
+                   ON n.idempotency_key=a.idempotency_key WHERE n.idempotency_key=?""",
+                (str(notice_id),),
+            ).fetchone()
+            uncertain = connection.execute(
+                "SELECT 1 FROM telegram_delivery_attempts WHERE state!='api_accepted' LIMIT 1"
+            ).fetchone()
+        if (
+            row is None
+            or row[:5] != ("heartbeat", "accepted", 1, "api_accepted", 1)
+            or type(row[5]) is not int
+            or row[5] <= 0
+            or type(row[6]) not in (int, float)
+            or not isfinite(row[6])
+            or row[6] < 0
+            or row[6] != row[7]
+            or uncertain is not None
+        ):
+            raise OneShotError("api_acceptance_unverified")
+    except (OSError, sqlite3.DatabaseError):
+        raise OneShotError("api_acceptance_unverified") from None
+    # Preserve the pin across the readiness read and every subsequent tick.
+    transport.preflight()
+
+
 async def deliver_once(
     database: Path,
     sender: TelegramSender,
     source_sha: str,
     *,
+    notice_id: UUID = NOTICE_ID,
     clock: Callable[[], float] = time.time,
 ) -> str:
     """Fence one static heartbeat in existing SQLite before the send attempt."""
-    if re.fullmatch(r"[0-9a-f]{40}", source_sha) is None:
+    if re.fullmatch(r"[0-9a-f]{40}", source_sha) is None or type(notice_id) is not UUID:
         raise OneShotError("source_unverified")
     verify_storage(database)
     try:
@@ -178,18 +261,18 @@ async def deliver_once(
             raise OneShotError("existing_notice_or_attempt_preserved")
         outbox = SqliteNotificationOutbox(database)
         notice = outbox.enqueue(
-            NotificationRequest(NOTICE_ID, NoticeKind.HEARTBEAT), now=clock(), ttl_seconds=600
+            NotificationRequest(notice_id, NoticeKind.HEARTBEAT), now=clock(), ttl_seconds=600
         )
         if notice.state is not DeliveryState.PENDING or notice.attempts != 0:
             raise OneShotError("synthetic_notice_unverified")
         report = await TelegramDeliveryCoordinator(
             outbox, sender, clock, max_per_tick=1, timeout_seconds=5
         ).tick()
-        record = outbox.get(NOTICE_ID)
+        record = outbox.get(notice_id)
         with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:
             marker = connection.execute(
                 "SELECT state, provider_message_id FROM telegram_delivery_attempts WHERE idempotency_key=?",
-                (str(NOTICE_ID),),
+                (str(notice_id),),
             ).fetchone()
             total = connection.execute("SELECT COUNT(*) FROM telegram_delivery_attempts").fetchone()
         if (
@@ -214,8 +297,9 @@ async def deliver_once(
 
 def main(argv: tuple[str, ...] | None = None) -> int:
     args = tuple(sys.argv[1:]) if argv is None else argv
+    label = "READY" if args and args[0] == "verify-ready" else "TEST"
     try:
-        if len(args) != 4 or args[0] != "test":
+        if len(args) != 4 or args[0] not in {"test", "verify-ready"}:
             raise OneShotError("invalid_phase")
         _, source_sha, bot_id, chat_hmac = args
         if re.fullmatch(r"[1-9][0-9]{0,15}", bot_id) is None:
@@ -233,10 +317,18 @@ def main(argv: tuple[str, ...] | None = None) -> int:
         require_effective_limits()
         verify_custody()
         transport = TelegramTransport(TOKEN, CHAT)
+        if args[0] == "verify-ready":
+            verify_ready(DATABASE, transport, source_sha, int(bot_id), chat_hmac)
+            print(
+                f"BOCA_TELEGRAM_READY state=VERIFIED source_sha={source_sha}"
+                " api_accepted=1 identity=pinned"
+            )
+            return 0
+        notice_id = acceptance_notice_id(transport, source_sha, int(bot_id), chat_hmac)
         check_identity(transport, int(bot_id), chat_hmac)
-        result = asyncio.run(deliver_once(DATABASE, transport, source_sha))
+        result = asyncio.run(deliver_once(DATABASE, transport, source_sha, notice_id=notice_id))
     except Exception:
-        print("BOCA_TELEGRAM_TEST state=NO_GO", file=sys.stderr)
+        print(f"BOCA_TELEGRAM_{label} state=NO_GO", file=sys.stderr)
         return 1
     print(
         f"BOCA_TELEGRAM_TEST state={result} source_sha={source_sha} synthetic=1 human_receipt=unverified"

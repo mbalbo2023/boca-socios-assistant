@@ -22,6 +22,7 @@ def validate_deploy_inputs(
     release_run_id: str,
     *,
     browser_ipc_v2: bool = False,
+    telegram_runtime: bool = False,
 ) -> None:
     if not _IMAGE.fullmatch(image_ref):
         raise DeployInputError("invalid immutable image reference")
@@ -31,7 +32,11 @@ def validate_deploy_inputs(
         raise DeployInputError("only controller is allowed")
     if type(browser_ipc_v2) is not bool:
         raise DeployInputError("browser IPC mode must be explicitly selected")
+    if type(telegram_runtime) is not bool or telegram_runtime and not browser_ipc_v2:
+        raise DeployInputError("Telegram runtime requires the explicit dual browser topology")
     expected_budget = "1.5cpu-1024m-192pids" if browser_ipc_v2 else "0.5cpu-256m-64pids"
+    if telegram_runtime:
+        expected_budget = "1.75cpu-1152m-224pids"
     if resource_budget != expected_budget:
         raise DeployInputError("invalid resource budget")
     if not _RUN.fullmatch(release_run_id):

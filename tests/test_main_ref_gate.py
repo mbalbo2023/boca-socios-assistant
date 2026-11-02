@@ -48,96 +48,39 @@ def test_current_main_and_first_attempt_are_checked_before_ssh_and_apply() -> No
     assert workflow.index('test "$GITHUB_RUN_ATTEMPT" = 1') < workflow.index(
         "Configure pinned SSH host key"
     )
-    checks = [
-        start
-        for start in range(len(workflow))
-        if workflow.startswith("python scripts/check_main_ref.py", start)
-    ]
-    # The second owner-enrollment main recheck is intentionally after the
-    # 15-minute browser proof and before any private-key import.
-    # The opt-in browser IPC install adds exactly two main-ref rechecks:
-    # before writing its one-attempt marker and immediately before effects.
-    assert len(checks) == 16
-    assert checks[0] < workflow.index("Configure pinned SSH host key")
-    assert (
-        workflow.index("Recheck current main before Site custody operation")
-        < checks[1]
-        < workflow.index("Prepare, install or verify only Boca Site owner-volume custody")
-    )
-    assert (
-        workflow.index("Recheck current main before owner custody operation")
-        < checks[2]
-        < workflow.index("Prepare, install or verify only Boca owner-volume public passkey custody")
-    )
-    assert (
-        workflow.index("Recheck current main after Chrome proof before owner private-key import")
-        < checks[3]
-        < workflow.index("Finish one-use Chrome enrollment with offline owner custody")
-    )
-    assert (
-        workflow.index("Check prerequisites for dedicated rootless service preparation")
-        < checks[4]
-        < workflow.index("Prepare only dedicated Boca rootless user service")
-    )
-    assert (
-        workflow.index("Recheck current main before stopping Boca tests")
-        < checks[5]
-        < workflow.index("Stop and verify dedicated Boca test services")
-    )
-    assert (
-        workflow.index("Read-only host capacity and Boca namespace before first install")
-        < checks[6]
-        < workflow.index("Stage only reviewed Boca Compose file")
-    )
-    assert (
-        workflow.index("Validate resolved host Compose model")
-        < checks[7]
-        < workflow.index("Pull verified digest and start only Boca controller")
-    )
-    assert (
-        workflow.index("Read-only BETA capacity, owner custody and empty app namespace")
-        < checks[8]
-        < workflow.index("Stage only reviewed served BETA Compose file")
-    )
-    assert (
-        workflow.index("Validate resolved served BETA host Compose model")
-        < checks[9]
-        < workflow.index("Initialize new-only BETA and start isolated controller")
-    )
-    assert (
-        workflow.index("Read-only owner and new-only browser IPC host preflight")
-        < checks[10]
-        < workflow.index("Mark browser IPC staging attempt for immediate selective cleanup")
-    )
-    assert (
-        workflow.index("Verify exact staged browser host model and private seccomp proof")
-        < checks[11]
-        < workflow.index("Start worker then controller only after healthy private socket proof")
-    )
-    for step in (
-        "Recheck current main before new-only browser staging",
-        "Recheck main and only Boca loopback 8443 before browser effects",
-    ):
-        section = workflow.split(f"      - name: {step}\n", 1)[1].split("      - name:", 1)[0]
+    sections = {
+        section.splitlines()[0]: section for section in workflow.split("      - name: ")[1:]
+    }
+    checks_before_effects = {
+        "Confirm current main HEAD before host access": "Configure pinned SSH host key",
+        "Recheck current main before Site custody operation": "Prepare, install or verify only Boca Site owner-volume custody",
+        "Recheck current main before owner custody operation": "Mark owner custody host attempt before starting dedicated daemon",
+        "Recheck current main after Chrome proof before owner private-key import": "Finish one-use Chrome enrollment with offline owner custody",
+        "Recheck current main before preparing dedicated rootless service": "Prepare only dedicated Boca rootless user service",
+        "Recheck current main before stopping Boca tests": "Stop and verify dedicated Boca test services",
+        "Recheck current main HEAD before staging": "Mark Boca staging attempt after read-only preflight",
+        "Recheck current main HEAD before effectful install": "Pull verified digest and start only Boca controller",
+        "Recheck current main before BETA install": "Mark BETA staging attempt after owner-only preflight",
+        "Recheck current main immediately before BETA app and key effects": "Initialize new-only BETA and start isolated controller",
+        "Recheck current main immediately before browser daemon start": "Mark protected browser daemon start attempt",
+        "Recheck current main before new-only browser staging": "Mark browser IPC staging attempt for immediate selective cleanup",
+        "Recheck main and only Boca loopback 8443 before browser effects": "Start worker then controller only after healthy private socket proof",
+        "Recheck current main before existing browser lifecycle": "Mark existing browser lifecycle attempt",
+        "Recheck main before explicit Telegram sender creation": "Mark only new Telegram sender attempt for immediate cleanup",
+        "Recheck current main before BETA acceptance": "Mark protected BETA acceptance host attempt",
+        "Recheck current main before Telegram post-install custody": "Mark Telegram host attempt before starting existing Boca daemon",
+    }
+    for check, effect in checks_before_effects.items():
+        section = sections[check]
         assert "python scripts/check_main_ref.py" in section
         assert '"$BOCA_SOURCE_SHA"' in section
-    assert (
-        workflow.index("Recheck current main before BETA acceptance")
-        < checks[12]
-        < workflow.index("Mark protected BETA acceptance host attempt")
-    )
-    assert (
-        workflow.index("Stop positively identified Boca services after BETA acceptance")
-        < checks[13]
-        < workflow.rindex('boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py')
-    )
-    assert (
-        workflow.index("Recheck current main before Telegram post-install custody")
-        < checks[14]
-        < workflow.index("Mark Telegram host attempt before starting existing Boca daemon")
-    )
-    assert (
-        workflow.index("Stop positively identified Boca services after Telegram custody")
-        < checks[15]
-        < workflow.rindex('boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py')
-    )
+        assert "continue-on-error" not in section
+        assert workflow.index("      - name: " + check) < workflow.index("      - name: " + effect)
+    for finalizer in (
+        "Stop positively identified Boca services after BETA acceptance",
+        "Stop positively identified Boca services after Telegram custody",
+    ):
+        section = sections[finalizer]
+        assert section.index("python scripts/check_main_ref.py") < section.index(
+            "python3 - stop-test"
+        )

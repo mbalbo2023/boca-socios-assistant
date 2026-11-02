@@ -7,6 +7,7 @@ preserved. Failure after a write is partial state requiring a separate review.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import pwd
@@ -29,6 +30,9 @@ TELEGRAM_TEST_MOUNTS = {
     ("volume", "boca-socios_boca_data", "/data", True, "local"),
     ("volume", "boca-socios_boca_telegram", "/run/telegram", False, "local"),
 }
+BROWSER_STAGE = Path("/srv/boca-socios")
+BROWSER_ATTEMPT_LABEL = "boca.socios.browser-ipc-attempt"
+BROWSER_REF = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}\Z")
 
 
 class SetupError(ValueError):
@@ -597,7 +601,17 @@ def _verified_telegram_image(
     revision = labels.get("org.opencontainers.image.revision") if isinstance(labels, dict) else None
     service = labels.get("com.docker.compose.service") if isinstance(labels, dict) else None
     command = config.get("Cmd")
-    worker = command == ["python", "-m", "boca_socios.notify.telegram_worker", "serve"]
+    legacy_worker = command == ["python", "-m", "boca_socios.notify.telegram_worker", "serve"]
+    worker = (
+        isinstance(command, list)
+        and len(command) == 7
+        and command[:4] == ["python", "-m", "boca_socios.notify.telegram_worker", "serve"]
+        and command[4] == revision
+        and isinstance(command[5], str)
+        and re.fullmatch(r"[1-9][0-9]{0,15}", command[5]) is not None
+        and isinstance(command[6], str)
+        and re.fullmatch(r"[0-9a-f]{64}", command[6]) is not None
+    )
     one_shot = (
         isinstance(command, list)
         and len(command) == 7
@@ -613,14 +627,46 @@ def _verified_telegram_image(
         or TELEGRAM_IMAGE.fullmatch(image_ref) is None
         or not isinstance(image_id, str)
         or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None
-        or not ((service == "telegram" and worker) or (service == "telegram-test" and one_shot))
+        or not (
+            (service == "telegram" and (worker or legacy_worker))
+            or (service == "telegram-test" and one_shot)
+        )
         or config.get("User") != "10001:10001"
         or not isinstance(revision, str)
         or re.fullmatch(r"[0-9a-f]{40}", revision) is None
     ):
         return False
-    if service == "telegram-test" and not _verified_telegram_test_isolation(home, endpoint, record):
+    if (service == "telegram-test" or worker) and not _verified_telegram_test_isolation(
+        home, endpoint, record, worker=worker
+    ):
         return False
+    if worker:
+        runtime_attempt = (
+            labels.get("boca.socios.telegram-runtime-attempt") if isinstance(labels, dict) else None
+        )
+        if (
+            not isinstance(runtime_attempt, str)
+            or re.fullmatch(r"[1-9][0-9]{0,19}", runtime_attempt) is None
+        ):
+            return False
+        host = record.get("HostConfig")
+        if (
+            not isinstance(host, dict)
+            or any(
+                host.get(name) != value
+                for name, value in {
+                    "Init": True,
+                    "RestartPolicy": {"Name": "no", "MaximumRetryCount": 0},
+                    "IpcMode": "private",
+                    "CgroupnsMode": "private",
+                    "UsernsMode": "",
+                    "UTSMode": "",
+                }.items()
+            )
+            or host.get("PidMode") not in ("", "private")
+            or host.get("Devices") not in (None, [])
+        ):
+            return False
     try:
         image = json.loads(
             _command(
@@ -648,15 +694,18 @@ def _verified_telegram_image(
         and image_labels.get("org.opencontainers.image.revision") == revision
         and (
             service != "telegram-test"
+            and not worker
             or (
                 isinstance(image_config, dict)
-                and _telegram_test_environment(config.get("Env"), image_config.get("Env"))
+                and _telegram_test_environment(
+                    config.get("Env"), image_config.get("Env"), worker=worker
+                )
             )
         )
     )
 
 
-def _telegram_test_environment(actual: object, base: object) -> bool:
+def _telegram_test_environment(actual: object, base: object, *, worker: bool = False) -> bool:
     """No container-only overrides beyond the reviewed one-shot values."""
 
     def entries(value: object) -> dict[str, str] | None:
@@ -676,10 +725,14 @@ def _telegram_test_environment(actual: object, base: object) -> bool:
         BOCA_ENGINE_MODE="off",
         BOCA_TELEGRAM_DISPATCH_MODE="explicit",
     )
+    if worker:
+        baseline["BOCA_DB_PATH"] = "/data/boca.sqlite3"
     return observed == baseline
 
 
-def _verified_telegram_test_isolation(home: Path, endpoint: str, record: dict[str, object]) -> bool:
+def _verified_telegram_test_isolation(
+    home: Path, endpoint: str, record: dict[str, object], *, worker: bool = False
+) -> bool:
     host, config, mounts = record.get("HostConfig"), record.get("Config"), record.get("Mounts")
     network_settings = record.get("NetworkSettings")
     state = record.get("State")
@@ -701,17 +754,22 @@ def _verified_telegram_test_isolation(home: Path, endpoint: str, record: dict[st
         }.items()
     ):
         return False
+    health = config.get("Healthcheck")
     if (
-        config.get("Entrypoint") is not None
+        config.get("Entrypoint") not in ((None, []) if worker else (None,))
         or config.get("WorkingDir") != "/app"
-        or config.get("Healthcheck")
-        != {
-            "Test": ["NONE"],
-            "Interval": 30_000_000_000,
-            "Timeout": 5_000_000_000,
-            "StartPeriod": 15_000_000_000,
-            "Retries": 3,
-        }
+        or (
+            (not isinstance(health, dict) or health.get("Test") != ["NONE"])
+            if worker
+            else health
+            != {
+                "Test": ["NONE"],
+                "Interval": 30_000_000_000,
+                "Timeout": 5_000_000_000,
+                "StartPeriod": 15_000_000_000,
+                "Retries": 3,
+            }
+        )
     ):
         return False
     if (
@@ -722,11 +780,11 @@ def _verified_telegram_test_isolation(home: Path, endpoint: str, record: dict[st
         or host.get("ReadonlyRootfs") is not True
         or host.get("Privileged") is not False
         or host.get("PublishAllPorts") is not False
-        or host.get("PortBindings") != {}
+        or host.get("PortBindings") not in ((None, {}) if worker else ({},))
         or host.get("NetworkMode") != TELEGRAM_TEST_NETWORK
         or host.get("CapDrop") != ["ALL"]
         or host.get("CapAdd") not in (None, [])
-        or host.get("SecurityOpt") != ["no-new-privileges"]
+        or host.get("SecurityOpt") != ["no-new-privileges:true" if worker else "no-new-privileges"]
         or host.get("Tmpfs") != {"/tmp": "rw,noexec,nosuid,size=8m"}  # noqa: S108 - private container
         or not isinstance(mounts, list)
         or len(mounts) != 2
@@ -743,7 +801,7 @@ def _verified_telegram_test_isolation(home: Path, endpoint: str, record: dict[st
         }
         != TELEGRAM_TEST_MOUNTS
         or not isinstance(network_settings, dict)
-        or network_settings.get("Ports") != {}
+        or network_settings.get("Ports") not in ((None, {}) if worker else ({},))
         or not isinstance(state, dict)
         or type(state.get("Running")) is not bool
     ):
@@ -781,8 +839,312 @@ def _verified_telegram_test_isolation(home: Path, endpoint: str, record: dict[st
         and isinstance(labels, dict)
         and labels.get("com.docker.compose.project") == "boca-socios"
         and labels.get("com.docker.compose.network") == "telegram_egress"
+        and (
+            not worker
+            or isinstance(config.get("Labels"), dict)
+            and all(
+                labels.get(name) == config["Labels"].get(name)
+                for name in (
+                    "boca.socios.browser-ipc-attempt",
+                    "boca.socios.telegram-runtime-attempt",
+                )
+            )
+        )
         and isinstance(peers, dict)
         and set(peers) == ({record.get("Id")} if state["Running"] else set())
+    )
+
+
+def _browser_control_file(name: str, limit: int) -> bytes:
+    """Read a fixed private staged file, including FIFO/symlink race protection."""
+    if name not in {
+        "browser-ipc-attempt.json",
+        "compose.beta.yaml",
+        "compose.beta.browser.yaml",
+        "seccomp_profile.json",
+    }:
+        raise SetupError("browser_stop_control_name_unreviewed")
+    directory = _directory(BROWSER_STAGE, (), create=False)
+    if directory is None:
+        raise SetupError("browser_stop_control_missing")
+    try:
+        root = os.fstat(directory)
+        if root.st_uid != UID or root.st_gid != UID or stat.S_IMODE(root.st_mode) != 0o700:
+            raise SetupError("browser_stop_control_unsafe")
+        fd = os.open(
+            name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=directory
+        )
+        try:
+            before = os.fstat(fd)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != UID
+                or before.st_gid != UID
+                or stat.S_IMODE(before.st_mode) != 0o600
+                or before.st_nlink != 1
+                or not 0 < before.st_size <= limit
+            ):
+                raise SetupError("browser_stop_control_unsafe")
+            raw = bytearray()
+            while len(raw) <= limit:
+                part = os.read(fd, limit + 1 - len(raw))
+                if not part:
+                    break
+                raw.extend(part)
+            after = os.fstat(fd)
+            current = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            current_root = BROWSER_STAGE.lstat()
+            if (current_root.st_dev, current_root.st_ino) != (root.st_dev, root.st_ino):
+                raise SetupError("browser_stop_control_changed")
+
+            def identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
+                return (
+                    value.st_dev,
+                    value.st_ino,
+                    value.st_size,
+                    value.st_mtime_ns,
+                    value.st_ctime_ns,
+                )
+
+            if (
+                identity(before) != identity(after)
+                or identity(after) != identity(current)
+                or len(raw) != before.st_size
+            ):
+                raise SetupError("browser_stop_control_changed")
+            return bytes(raw)
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise SetupError("browser_stop_control_unavailable") from exc
+    finally:
+        os.close(directory)
+
+
+def _browser_stop_context() -> tuple[dict[str, object], dict[str, object]]:
+    """Bind stopped/running IPC services to their unchanged install marker."""
+    raw = _browser_control_file("browser-ipc-attempt.json", 1024)
+    marker = json.loads(raw)
+    digests = {
+        "beta_compose_sha": "compose.beta.yaml",
+        "overlay_compose_sha": "compose.beta.browser.yaml",
+        "seccomp_sha": "seccomp_profile.json",
+    }
+    flags = {
+        "controller_image_absent",
+        "browser_image_absent",
+        "bridge_absent",
+        "ipc_volume_absent",
+    }
+    if (
+        not isinstance(marker, dict)
+        or set(marker)
+        != {"version", "attempt_id", "source_sha", "controller_digest", "browser_digest"}
+        | set(digests)
+        | flags
+        or raw
+        != json.dumps(marker, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(
+            "ascii"
+        )
+        or marker["version"] != "browser-ipc-new-only-v2"
+        or any(type(marker[name]) is not bool for name in flags)
+        or marker["bridge_absent"] is not True
+        or marker["ipc_volume_absent"] is not True
+    ):
+        raise SetupError("browser_stop_marker_unverified")
+    patterns = {
+        "attempt_id": r"[1-9][0-9]{0,19}",
+        "source_sha": r"[0-9a-f]{40}",
+        "controller_digest": TELEGRAM_IMAGE.pattern,
+        "browser_digest": BROWSER_REF.pattern,
+        **{name: r"[0-9a-f]{64}" for name in digests},
+    }
+    if any(
+        not isinstance(marker[name], str) or re.fullmatch(pattern, marker[name]) is None
+        for name, pattern in patterns.items()
+    ):
+        raise SetupError("browser_stop_marker_unverified")
+    content: dict[str, bytes] = {}
+    for name, filename in digests.items():
+        content[name] = _browser_control_file(filename, 32768)
+        if hashlib.sha256(content[name]).hexdigest() != marker[name]:
+            raise SetupError("browser_stop_staged_hash_changed")
+    profile = json.loads(content["seccomp_sha"])
+    if not isinstance(profile, dict) or profile.get("defaultAction") != "SCMP_ACT_ERRNO":
+        raise SetupError("browser_stop_seccomp_unverified")
+    return marker, profile
+
+
+def _verified_browser_ipc_image(
+    home: Path,
+    endpoint: str,
+    record: dict[str, object],
+    context: tuple[dict[str, object], dict[str, object]],
+) -> bool:
+    """Positive identity before stop; never execute a container-side probe here."""
+    marker, profile = context
+    config, host = record.get("Config"), record.get("HostConfig")
+    network = record.get("NetworkSettings")
+    state = record.get("State")
+    if (
+        not isinstance(config, dict)
+        or not isinstance(host, dict)
+        or not isinstance(network, dict)
+        or not isinstance(state, dict)
+        or type(state.get("Running")) is not bool
+    ):
+        return False
+    labels = config.get("Labels")
+    if not isinstance(labels, dict):
+        return False
+    service = labels.get("com.docker.compose.service")
+    worker = service == "browser-worker"
+    image_ref = marker["browser_digest" if worker else "controller_digest"]
+    if (
+        service not in {"controller", "browser-worker"}
+        or labels.get("com.docker.compose.container-number") != "1"
+        or labels.get(BROWSER_ATTEMPT_LABEL) != marker["attempt_id"]
+        or labels.get("org.opencontainers.image.revision") != marker["source_sha"]
+        or config.get("Image") != image_ref
+        or config.get("User") != ("10002:10002" if worker else "10001:10001")
+        or config.get("Entrypoint") not in (None, [])
+        or config.get("Cmd")
+        != (
+            ["python", "-m", "boca_socios.browser.ipc_worker"]
+            if worker
+            else ["python", "-m", "boca_socios.runtime", "serve-beta"]
+        )
+    ):
+        return False
+    entries = config.get("Env")
+    if not isinstance(entries, list) or any(
+        not isinstance(item, str) or "=" not in item for item in entries
+    ):
+        return False
+    environment = dict(item.split("=", 1) for item in entries)
+    required = {
+        "BOCA_ENVIRONMENT": "staging",
+        "BOCA_RUNTIME_MODE": "simulation",
+        "BOCA_ENGINE_MODE": "off",
+        **({"BOCA_OBSERVER_STOP": "1"} if worker else {"BOCA_BROWSER_BACKEND": "ipc"}),
+    }
+    if len(environment) != len(entries) or any(
+        environment.get(name) != value for name, value in required.items()
+    ):
+        return False
+    ports = {} if worker else {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
+    observed_ports = (
+        (None, {})
+        if worker
+        else ((ports,) if state["Running"] else (ports, None, {}, {"8443/tcp": None}))
+    )
+    options = host.get("SecurityOpt")
+    if not isinstance(options, list) or not all(isinstance(item, str) for item in options):
+        return False
+    if worker:
+        seccomp = [item.removeprefix("seccomp=") for item in options if item.startswith("seccomp=")]
+        if len(options) != 2 or "no-new-privileges:true" not in options or len(seccomp) != 1:
+            return False
+        try:
+            if json.loads(seccomp[0]) != profile:
+                return False
+        except ValueError:
+            return False
+    elif options != ["no-new-privileges:true"]:
+        return False
+    if (
+        host.get("ReadonlyRootfs") is not True
+        or host.get("Privileged") is not False
+        or host.get("PublishAllPorts") is not False
+        or host.get("Init") is not True
+        or host.get("RestartPolicy", {}).get("Name") != "no"
+        or host.get("NetworkMode") != ("none" if worker else "boca-socios_boca_private")
+        or host.get("PidMode") not in ("", "private")
+        or host.get("IpcMode") != "private"
+        or host.get("CgroupnsMode") != "private"
+        or host.get("UsernsMode") != ""
+        or host.get("UTSMode") != ""
+        or host.get("Devices") not in (None, [])
+        or host.get("CapDrop") != ["ALL"]
+        or (
+            host.get("CapAdd") != ["SYS_CHROOT"] if worker else host.get("CapAdd") not in (None, [])
+        )
+    ):
+        return False
+    if (
+        host.get("NanoCpus") != (1_000_000_000 if worker else 500_000_000)
+        or host.get("Memory") != (805_306_368 if worker else 268_435_456)
+        or host.get("PidsLimit") != (128 if worker else 64)
+        or host.get("PortBindings") not in ((None, {}) if worker else (ports,))
+        or network.get("Ports") not in observed_ports
+        or host.get("Tmpfs")
+        != (
+            {"/tmp": "rw,noexec,nosuid,size=32m", "/home/boca-browser": "rw,noexec,nosuid,size=16m"}  # noqa: S108 - container tmpfs
+            if worker
+            else {"/tmp": "rw,noexec,nosuid,size=16m"}  # noqa: S108 - container tmpfs
+        )  # noqa: S108 - private container tmpfs
+        or worker
+        and host.get("ShmSize") != 67_108_864
+    ):
+        return False
+    attached = network.get("Networks")
+    if not isinstance(attached, dict) or not set(attached) <= {
+        "none" if worker else "boca-socios_boca_private"
+    }:
+        return False
+    expected_mounts = {
+        ("volume", "boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", worker, "local")
+    }
+    if not worker:
+        expected_mounts |= {
+            ("volume", "boca-socios_boca_data", "/data", True, "local"),
+            ("volume", "boca-socios_boca_key", "/run/secrets", False, "local"),
+            ("volume", "boca-socios_boca_owner", "/run/owner", False, "local"),
+        }
+    mounts = record.get("Mounts")
+    if (
+        not isinstance(mounts, list)
+        or len(mounts) != len(expected_mounts)
+        or {
+            (
+                item.get("Type"),
+                item.get("Name"),
+                item.get("Destination"),
+                item.get("RW"),
+                item.get("Driver"),
+            )
+            for item in mounts
+            if isinstance(item, dict)
+        }
+        != expected_mounts
+    ):
+        return False
+    image_id = record.get("Image")
+    if not isinstance(image_id, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None:
+        return False
+    try:
+        image = json.loads(
+            _command(
+                home,
+                "/usr/bin/docker",
+                endpoint,
+                "image",
+                "inspect",
+                "--format",
+                "{{json .}}",
+                image_id,
+            )
+        )
+    except (SetupError, ValueError):
+        return False
+    image_config = image.get("Config") if isinstance(image, dict) else None
+    image_labels = image_config.get("Labels") if isinstance(image_config, dict) else None
+    return (
+        isinstance(image, dict)
+        and image.get("Id") == image_id
+        and image.get("RepoDigests") == [image_ref]
+        and isinstance(image_labels, dict)
+        and image_labels.get("org.opencontainers.image.revision") == marker["source_sha"]
     )
 
 
@@ -811,13 +1173,37 @@ def _verified_containers(home: Path) -> tuple[list[str], list[str]]:
         or any(not re.fullmatch(r"[0-9a-f]{64}", item) for item in ids)
     ):
         raise SetupError("dedicated_container_inventory_unverified")
-    running: list[str] = []
-    for container_id in ids:
-        record = json.loads(
+    records = [
+        json.loads(
             _command(
                 home, "/usr/bin/docker", endpoint, "inspect", "--format", "{{json .}}", container_id
             )
         )
+        for container_id in ids
+    ]
+    try:
+        BROWSER_STAGE.joinpath("browser-ipc-attempt.json").lstat()
+        browser_present = True
+    except FileNotFoundError:
+        browser_present = False
+    except OSError as exc:
+        raise SetupError("browser_stop_marker_unavailable") from exc
+    for record in records:
+        config = record.get("Config") if isinstance(record, dict) else None
+        labels = config.get("Labels") if isinstance(config, dict) else None
+        if isinstance(labels, dict) and (
+            labels.get("com.docker.compose.service") == "browser-worker"
+            or BROWSER_ATTEMPT_LABEL in labels
+        ):
+            browser_present = True
+    running: list[str] = []
+    browser_context: tuple[dict[str, object], dict[str, object]] | None = None
+    if browser_present:
+        try:
+            browser_context = _browser_stop_context()
+        except (SetupError, ValueError, TypeError, KeyError, AttributeError) as exc:
+            raise SetupError("unknown_container_preserved_no_stop") from exc
+    for container_id, record in zip(ids, records, strict=True):
         config = record.get("Config") if isinstance(record, dict) else None
         labels = config.get("Labels") if isinstance(config, dict) else None
         state = record.get("State") if isinstance(record, dict) else None
@@ -830,7 +1216,8 @@ def _verified_containers(home: Path) -> tuple[list[str], list[str]]:
             or record.get("Id") != container_id
             or not isinstance(labels, dict)
             or labels.get("com.docker.compose.project") != "boca-socios"
-            or service not in {"controller", "browser", "proxy", "telegram", "telegram-test"}
+            or service
+            not in {"controller", "browser", "browser-worker", "proxy", "telegram", "telegram-test"}
             or not isinstance(number, str)
             or not re.fullmatch(r"[1-9][0-9]{0,2}", number)
             or record.get("Name") != f"/boca-socios-{service}-{number}"
@@ -838,12 +1225,35 @@ def _verified_containers(home: Path) -> tuple[list[str], list[str]]:
             or type(state.get("Running")) is not bool
         ):
             raise SetupError("unknown_container_preserved_no_stop")
+        if browser_context is not None and service in {"browser", "proxy"}:
+            raise SetupError("unknown_container_preserved_no_stop")
+        if browser_context is not None and service in {"telegram", "telegram-test"}:
+            marker, _ = browser_context
+            if (
+                not isinstance(config, dict)
+                or config.get("Image") != marker["controller_digest"]
+                or labels.get("org.opencontainers.image.revision") != marker["source_sha"]
+                or (
+                    service == "telegram"
+                    and labels.get(BROWSER_ATTEMPT_LABEL) != marker["attempt_id"]
+                )
+            ):
+                raise SetupError("unknown_container_preserved_no_stop")
+        if browser_context is not None and service in {"controller", "browser-worker"}:
+            try:
+                verified = _verified_browser_ipc_image(home, endpoint, record, browser_context)
+            except (SetupError, ValueError, TypeError, KeyError, AttributeError):
+                verified = False
+            if not verified:
+                raise SetupError("unknown_container_preserved_no_stop")
         if service in {"telegram", "telegram-test"} and (
             number != "1" or not _verified_telegram_image(home, endpoint, record, config)
         ):
             raise SetupError("unknown_container_preserved_no_stop")
         if state["Running"]:
             running.append(container_id)
+    if browser_context is not None and _browser_stop_context() != browser_context:
+        raise SetupError("browser_stop_control_changed")
     return ids, running
 
 
@@ -902,8 +1312,8 @@ def _verified_enablement(home: Path) -> None:
         os.close(parent)
 
 
-def start_existing(source_sha: str) -> None:
-    """Start only the stopped, reviewed Boca user daemon; preserve its app state."""
+def _existing_daemon_boundary(source_sha: str) -> tuple[Path, str]:
+    """Read the prepared unit's fixed identity before recovery/start effects."""
     if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
         raise SetupError("invalid_start_coordinates")
     home = _identity()
@@ -919,11 +1329,35 @@ def start_existing(source_sha: str) -> None:
     _read_private(home, CONFIG, _config(home))
     _read_private(home, UNIT, _unit())
     _verified_enablement(home)
-    if _stop_service_state(home) != "inactive":
-        raise SetupError("dedicated_service_already_active")
+    return home, _stop_service_state(home)
+
+
+def _require_stopped_runtime() -> None:
     for name in ("docker.sock", "dockerd-rootless", "containerd-rootless"):
         if _entry(RUNTIME, (name,)) is not None:
             raise SetupError("stale_dedicated_socket_unverified")
+
+
+def inspect_existing(source_sha: str) -> None:
+    """Read-only recovery preflight; never start a daemon or application."""
+    home, state = _existing_daemon_boundary(source_sha)
+    if state == "inactive":
+        _require_stopped_runtime()
+    else:
+        _socket(RUNTIME / "docker.sock")
+        _verified_containers(home)
+    print(
+        f"BOCA_ROOTLESS_RECOVERY state={state.upper()} source_sha={source_sha}"
+        " config=verified application_start=forbidden"
+    )
+
+
+def start_existing(source_sha: str) -> None:
+    """Start only the stopped, reviewed Boca user daemon; preserve its app state."""
+    home, state = _existing_daemon_boundary(source_sha)
+    if state != "inactive":
+        raise SetupError("dedicated_service_already_active")
+    _require_stopped_runtime()
     if (
         _command(home, "/usr/bin/loginctl", "show-user", "10001", "--property=Linger", "--value")
         != "yes"
@@ -990,18 +1424,23 @@ def stop_test(source_sha: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Boca dedicated rootless service preparation")
-    parser.add_argument("phase", choices=("check", "apply", "start-existing", "stop-test"))
+    parser.add_argument(
+        "phase", choices=("check", "apply", "inspect-existing", "start-existing", "stop-test")
+    )
     parser.add_argument("source_sha")
     args = parser.parse_args()
     prefix = {
         "stop-test": "BOCA_STOP_TEST",
         "start-existing": "BOCA_ROOTLESS_START",
+        "inspect-existing": "BOCA_ROOTLESS_RECOVERY",
     }.get(args.phase, "BOCA_ROOTLESS_SETUP")
     try:
         if args.phase == "stop-test":
             stop_test(args.source_sha)
         elif args.phase == "start-existing":
             start_existing(args.source_sha)
+        elif args.phase == "inspect-existing":
+            inspect_existing(args.source_sha)
         else:
             prepare(args.phase, args.source_sha)
     except SetupError as exc:

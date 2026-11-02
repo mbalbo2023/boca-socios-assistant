@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 
+from boca_socios.notify import telegram_worker as worker
 from boca_socios.notify.outbox import DeliveryState, NoticeKind, NotificationRequest
 from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
 from boca_socios.notify.telegram_delivery import TelegramDeliveryCoordinator
@@ -72,6 +73,60 @@ def test_worker_cli_requires_explicit_serve_and_redacts_configuration(capsys) ->
     assert main([], {}) == 2
     assert main(["serve"], {"BOCA_TELEGRAM_DISPATCH_MODE": "secret-looking-value"}) == 2
     assert capsys.readouterr().err == "TELEGRAM_WORKER_NO_GO\nTELEGRAM_WORKER_NO_GO\n"
+
+
+def test_worker_requires_identity_bound_acceptance_before_build_or_claim(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(worker, "require_effective_limits", lambda: calls.append("limits"))
+    monkeypatch.setattr(worker, "verify_custody", lambda: calls.append("custody"))
+
+    def reject(*_args):
+        calls.append("ready")
+        raise ValueError("synthetic secret must not escape")
+
+    monkeypatch.setattr(worker, "verify_ready", reject)
+    monkeypatch.setattr(
+        worker, "build_coordinator", lambda *_args: pytest.fail("claim construction forbidden")
+    )
+    assert main(["serve"], valid_environment()) == 2
+    assert calls == []
+    assert main(["serve", "a" * 40, "12345", "b" * 64], valid_environment()) == 2
+    assert calls == ["limits", "custody", "ready"]
+    assert capsys.readouterr().err == "TELEGRAM_WORKER_NO_GO\nTELEGRAM_WORKER_NO_GO\n"
+
+
+def test_worker_only_runs_after_offline_gate_with_same_transport(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[object] = []
+    marker = object()
+    monkeypatch.setattr(worker, "require_effective_limits", lambda: calls.append("limits"))
+    monkeypatch.setattr(worker, "verify_custody", lambda: calls.append("custody"))
+    monkeypatch.setattr(worker, "TelegramTransport", lambda *_args: marker)
+    monkeypatch.setattr(worker, "verify_ready", lambda *args: calls.append(("ready", args)))
+    monkeypatch.setattr(
+        worker,
+        "build_coordinator",
+        lambda *args: calls.append(("coordinator", args)) or marker,
+    )
+
+    async def stopped(coordinator, _stopping):
+        calls.append(("run", coordinator))
+
+    monkeypatch.setattr(worker, "run_worker", stopped)
+    assert main(["serve", "a" * 40, "12345", "b" * 64], valid_environment()) == 0
+    assert calls == [
+        "limits",
+        "custody",
+        ("ready", (worker._DATABASE, marker, "a" * 40, 12345, "b" * 64)),
+        ("coordinator", (worker._DATABASE, marker)),
+        ("run", marker),
+    ]
+    assert capsys.readouterr().out == (
+        f"BOCA_TELEGRAM_READY state=VERIFIED source_sha={'a' * 40} api_accepted=1 identity=pinned\n"
+    )
 
 
 class WorkerLifecycleTests(unittest.TestCase):
@@ -141,10 +196,24 @@ def test_telegram_compose_is_separate_off_by_default_and_bounded() -> None:
     worker = composed["services"]["telegram"]
     assert worker["profiles"] == ["telegram-opt-in"]
     assert worker["image"] == "${BOCA_IMAGE:?BOCA_IMAGE_digest_is_required}"
-    assert worker["command"] == ["python", "-m", "boca_socios.notify.telegram_worker", "serve"]
+    assert worker["command"] == [
+        "python",
+        "-m",
+        "boca_socios.notify.telegram_worker",
+        "serve",
+        "${BOCA_SOURCE_SHA:?BOCA_SOURCE_SHA_required}",
+        "${BOCA_TELEGRAM_EXPECTED_BOT_ID:?BOCA_TELEGRAM_EXPECTED_BOT_ID_required}",
+        "${BOCA_TELEGRAM_EXPECTED_CHAT_HMAC:?BOCA_TELEGRAM_EXPECTED_CHAT_HMAC_required}",
+    ]
     assert worker["user"] == "10001:10001"
     assert worker["restart"] == "no"
     assert worker["healthcheck"] == {"disable": True}
+    assert worker["ipc"] == "private"
+    assert worker["cgroup"] == "private"
+    assert worker["labels"] == {
+        "boca.socios.browser-ipc-attempt": "${BOCA_BROWSER_ATTEMPT_ID:?BOCA_BROWSER_ATTEMPT_ID_required}",
+        "boca.socios.telegram-runtime-attempt": "${BOCA_TELEGRAM_ATTEMPT_ID:?BOCA_TELEGRAM_ATTEMPT_ID_required}",
+    }
     assert worker["read_only"] is True
     assert worker["cap_drop"] == ["ALL"]
     assert worker["security_opt"] == ["no-new-privileges:true"]
@@ -160,7 +229,9 @@ def test_telegram_compose_is_separate_off_by_default_and_bounded() -> None:
         "boca_data": {"external": True, "name": "boca-socios_boca_data"},
         "boca_telegram": {"external": True, "name": "boca-socios_boca_telegram"},
     }
-    assert composed["networks"] == {"telegram_egress": {"driver": "bridge"}}
+    assert composed["networks"] == {
+        "telegram_egress": {"driver": "bridge", "labels": worker["labels"]}
+    }
     assert worker["environment"] == valid_environment()
     assert "bot_token" not in json.dumps(composed["services"])
     assert "chat_id" not in json.dumps(composed["services"])

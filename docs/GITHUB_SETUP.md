@@ -38,7 +38,34 @@ control's actual state in Settings rather than inferring it from this file.
    settings. A pin configured in GitHub is not evidence of host connectivity.
 8. Run and verify CI; then activate required status checks.
 
-## Revalidated state on 2026-10-29
+## Observed environment state on 2026-11-02
+
+The GitHub Settings UI was inspected during recovery from verified
+`main=032de0ebb923b4f80154e93cee3dfd1b254687ed`:
+
+| Control | Observation |
+| --- | --- |
+| `boca-image-release` branch policy | `main` only; required reviewers off; administrative bypass available |
+| Release variables | `BOCA_RELEASE_ENV_READY=ready`; no release secret configured |
+| `boca-first-deploy` branch policy | `main` only; required reviewers off; administrative bypass available |
+| Deploy variables | `BOCA_DEPLOY_ENV_READY=ready`, `BOCA_HOST_READONLY_ENV_READY=ready`, and the existing host variable |
+| Deploy secret names | Only the existing dedicated SSH key and pinned known-hosts secrets; values were not disclosed |
+| Missing activation configuration | `BOCA_BETA_ENV_READY`, `BOCA_BROWSER_ENV_READY`, Telegram readiness markers, owner origin/subject and protected bot/destination assertions |
+
+The release and host workflows are integrated on `main`. No new SSH key is
+needed. These observations do not authorize bypass, publication, installation
+or a readiness marker change. A concrete candidate and the owner's specific
+protected-operation approval remain required. Do not enable BETA or browser
+readiness while the corresponding host/code gates are unresolved. The latest
+host evidence is [inspection 41471945717](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41471945717)
+(dedicated daemon stopped, socket absent, prerequisite NO_GO) and
+[port check 41473018271](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41473018271)
+(`127.0.0.1:8443 FREE reserved=no`); neither installs the application.
+
+Branch-ruleset, Actions-policy and security-feature observations below retain
+their historical dates; this environment inspection did not reverify them.
+
+## Historical revalidation on 2026-10-29
 
 - `protect-main` ruleset 26163295 is active on the default branch. It
   requires a PR, linear history and exact required `quality-and-tests` and

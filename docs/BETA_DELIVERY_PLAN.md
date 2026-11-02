@@ -21,6 +21,52 @@ para completar la BETA sintética, Site conectado, Telegram y deploy validado
 por Actions, sin reservas ni compras reales. El alcance anterior de preparación
 queda como historial; ninguna autorización es evidencia de instalación.
 
+## Corte de ejecución 2026-11-02 y siguiente candidato
+
+La base integrada verificada es `032de0ebb923b4f80154e93cee3dfd1b254687ed`:
+CI [41459830809](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459830809)
+y seguridad [41459831000](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459831000)
+exitosos. El panel HTTP/owner-enroll, runtime Chromium IPC, publicación dual,
+seguridad, Compose, staging e instalación/limpieza están integrados
+(#224/#226/#229/#237/#239/#242–#249). Falta ejecución operativa, no volver a
+implementar esos módulos. La auditoría del baseline detectó fallos del ciclo
+protegido: daemon detenido después de owner, arranque ausente antes de browser
+install, aceptación/parada/Telegram incompatibles y falta de reinicio/reanudación
+verificado. Deben corregirse y probarse en el candidato antes de activarlo.
+
+La inspección [41471945717](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41471945717)
+a las 12:28:47 ART encontró el daemon dedicado cargado pero detenido, socket
+ausente y prerequisite NO_GO; SSH UID10001, bus y delegación cgroup sí fueron
+observados. No hubo Docker ni instalación. El control
+[41473018271](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41473018271)
+a las 12:35 ART mostró `127.0.0.1:8443 FREE reserved=no`; no reserva puerto ni
+prueba recursos. Engine, capacidad BETA y almacenamiento siguen pendientes.
+DB candidatos ausentes sólo en tres rutas; ubicación global UNVERIFIED.
+
+La secuencia final es: código/revisión/checks exactos → configuración protegida
+verificada → autorización específica/publicación dual → preflight/capacidad →
+`owner-prepare` → `owner-enroll` con Chrome y custodia offline → instalación
+BETA → bot/Telegram/acceso real → reinicio y segundo acceso → aceptación.
+La ceremonia precede la instalación porque el panel requiere su credencial.
+La URL privada de un uso no existe hasta generar su llave y servir el alta;
+Actions recibe sólo SHA-256, nunca el bearer. Preparar el forward Termius
+tablet `127.0.0.1:8443` → droplet `127.0.0.1:8443` antes de iniciar la ventana
+de 900 segundos. Origen único `http://localhost:8443`, sin HTTPS/certificados
+ni Termux. Google Password Manager, cookie localhost y reutilización de
+passkey después del reinicio requieren comprobación física en Chrome Android.
+
+Los entornos GitHub son main-only, sin reviewers requeridos y con bypass
+administrativo disponible. Release/deploy/read-only READY están presentes;
+BETA/BROWSER/Telegram markers y owner origin/subject faltan. Los secretos SSH
+ya existen y no se vuelven a pedir. La BETA sigue no instalada y no hay
+release dual del SHA actual verificada. Ver [estado](BETA_INTEGRATION_STATUS.md)
+y [configuración](GITHUB_SETUP.md); cada candidato nuevo tiene checks propios.
+
+## Historial de decisiones e integración anterior
+
+Los cortes siguientes se conservan como antecedentes. Sus estados de candidato,
+ausencia de integración o TLS no sustituyen la secuencia vigente anterior.
+
 **Decisión posterior 2026-11-01:** el panel Boca local en el droplet es la
 interfaz principal de la BETA. Usa el puerto ya configurado
 `127.0.0.1:8443` y forwarding privado desde la tablet; no se crea puerto
@@ -165,7 +211,7 @@ de usarlo. Preparar el daemon no instala ni acepta la aplicación.
 | --- | --- | --- |
 | Datos | Destino lógico futuro `/data/boca.sqlite3`, volumen `boca-socios_boca_data`, clave en volumen externo separado | Existencia global actual UNVERIFIED; no sobrescribir una DB hallada ni migrar datos reales por inferencia |
 | Docker | Preparar servicio rootless dedicado Boca y comprobar recursos | No reinstalar Docker por inferirlo de una unidad ausente; único canal Actions protegido |
-| Panel | Propia aplicación Boca sirve panel privado y accede localmente a SQLite | Elegir/probar identidad, sesión/TLS y acceso concreto; el navegador no recibe DB/clave/SSH/socket |
+| Panel | Propia aplicación Boca sirve panel privado y accede localmente a SQLite | Probar identidad, sesión y acceso SSH por `http://localhost:8443`; el navegador no recibe DB/clave/SSH/socket |
 | Alta | `Socios > Agregar socio` obligatorio, sobre servicio cifrado existente | Sólo datos/credenciales sintéticos en esta BETA; alta local no verifica identidad ni elegibilidad Boca |
 | Coordinación | Comandos y estado persistente; pausa visible en ambigüedad | No reejecución ciega ni éxito externo inventado |
 | Avisos | Estado/avisos locales funcionales; ensayos del dispatcher sintético | Transporte #162, worker #188, helper #199, custodia #203 y prueba única #204 integrados opt-in; bot/destino, provisión host y recepción siguen pendientes |
@@ -184,12 +230,12 @@ diferido; no se eliminan los requisitos de custodia/recuperación para alta real
 | B1 | Plan/contratos y seguimiento: esta documentación | Matriz de alcance, alta obligatoria, decisiones, owners y evidencias registradas | Dirección del dueño |
 | B2 | Servicio preparado #120; parada #156 y ALREADY_STOPPED en 41282301501; #191 preflight host beta integrado sin ejecución | Rootless propio sano; namespace candidato y procedencia de almacenamiento verificados; capacidad/cgroups/permisos de aplicación probados. No reemplazar una DB por inferencia | Destino delegado y propuesta concreta por Actions |
 | B3 | Coordinador130, comandos149, loop161, ciclo164 y TLS173 integrados; RCA canónico187 | Comandos iniciar/detener/estado; guardia persistente, idempotencia, pausa ambigua y replay seguro probados | Contrato servido de B7 y panel B4 |
-| B4 | Lectura128, formulario148, panel WSGI163, TLS173, preflight owner189, custodia #208 y origen exacto #214 integrados; este cambio #215 incorpora emisor local sólo en código, sin inscripción física ni forwarding #209 | Acceso privado tablet; Socios > Agregar socio cifrado/atómico; errores, duplicados, denegación y estado posterior visibles | B3 contrato; servicio de alta/clave/DB |
+| B4 | Lectura128, formulario148, panel163, preflight189, custodia208, origen HTTP224/226 y owner-enroll229 integrados; sin inscripción física ni forwarding probado | Acceso privado tablet; Socios > Agregar socio cifrado/atómico; errores, duplicados, denegación y estado posterior visibles | B3 contrato; servicio de alta/clave/DB |
 | B5 | Dispatcher134, Telegram162, `/avisos`163, worker188, custodia199/203 y prueba única204 integrados; recorrido host/recepción pendientes | Proyección fiel de estados persistidos, límites/restart/dedup; razón ambigua durable sin llamar entrega real a aceptación de API | Resultados persistidos de B3; UI B4 y provisión #168 |
-| B6 | Chromium/medición | Una sesión aislada con recursos, parada y errores medidos en entorno candidato; alcance de egress explícito | Presupuesto separado; observación real no inferida de test offline |
-| B7 | TLS173, Compose171 y operación protegida `beta-install`191 integrados; no ejecutados en host | Programa arrancado conecta B3/B4/B5; health funcional, acceso privado y manifiesto por componente; instalación desechable probada | B2–B6 según componentes del candidato |
+| B6 | Chromium IPC237, seguridad242, Compose243 e instalador246/247 integrados; sin ejecución host ni observación pública real | Una sesión aislada con recursos, parada y errores medidos en entorno candidato; alcance de egress explícito | Presupuesto separado; observación real no inferida de test offline |
+| B7 | HTTP224, Compose243 y `beta-browser-install`246 integrados; ciclo completo corregido/revisado pendiente al baseline | Programa arrancado conecta B3/B4/B5; health funcional, acceso privado y manifiesto por componente; instalación desechable probada | B2–B6 según componentes del candidato |
 | B8 | HTTP loopback170, probe TLS190 y smoke de contenedor limitado200; E2E host pendiente | Suite E2E, lint/types, RCA, seguridad e imágenes sobre mismo SHA; rapidez/recursos y revisión exacta | B7 consolidado |
-| B9 | Release 41312460820 publicó imagen/manifiesto para `8fdbec97...` de #214; sólo GHCR, sin pull/install; código #191 sin dispatch | SHA→digest/manifiesto→proceso instalado trazables; nueva release para HEAD final y capacidad revalidada; sólo workflow y mutex Boca | B2 apto, B8 verde, decisión final del candidato |
+| B9 | Publicación dual239 y workflow246 integrados; sin release dual del baseline032de0 ni instalación verificadas | SHA→dos digests/manifiestos del mismo release→procesos instalados trazables; nueva release para HEAD final y capacidad revalidada; sólo workflow y mutex Boca | B2 apto, B8 verde, decisión final del candidato |
 | B10 | Aceptación/parada protegida200 integrada, sin dispatch | Recorrido desde interfaz real/tablet, persistencia/reinicio, límites, denegación y avisos; acta de versión/pendientes | B9 y matriz de aceptación |
 
 Estos IDs no son estados de la aplicación. Cada cambio de estado de una entrega
@@ -302,7 +348,7 @@ comandos bajo la sesión de dueño. Su identidad no está provisionada ni servid
 en el host; un puerto de pruebas no es acceso privado operativo.
 [Las opciones concretas de acceso/bootstrap](https://github.com/mbalbo2023/boca-socios-assistant/issues/17#issuecomment-6551922108)
 son antecedentes de diseño. Falta un contrato configurado y probando
-identidad, origen TLS y rechazo de terceros. Incluir consulta de estado
+identidad, origen HTTP localhost sobre SSH y rechazo de terceros. Incluir consulta de estado
 después del alta desde la misma sesión autorizada y expiración/denegación
 en la aceptación HTTP real.
 
@@ -326,7 +372,7 @@ de cierre.
 
 | Recorrido | Antes de desplegar | En droplet, después de instalación autorizada |
 | --- | --- | --- |
-| Acceso privado | Usuario no autorizado/permiso insuficiente/CSRF/replay rechazados; secretos ausentes de respuestas/logs | Acceso desde tablet autorizado y rechazo real de tercero; TLS/sesión del acceso concreto |
+| Acceso privado | Usuario no autorizado/permiso insuficiente/CSRF/replay rechazados; secretos ausentes de respuestas/logs | Acceso desde tablet autorizado y rechazo real de tercero; forward SSH, HTTP localhost y sesión del acceso concreto |
 | Alta de socio | E2E formulario→servicio→cifrado/DB/auditoría→lista; error/duplicado/doble clic/reinicio; ninguna fila parcial | Alta sintética desde panel real; estado tras reinicio controlado; clave separada y permisos comprobados |
 | Una entrada | Un socio/evento, cantidad1; concurrencia/alias/doble comando/replay sin nueva intención indebida | Repetición sintética desde interfaz sin multiplicar intención; no equivale a ticket Boca |
 | Start/stop/status | Comandos idempotentes, parada repetible, reloj/expiración y fallos; UI refleja estado durable | Estado fechado consistente con proceso instalado; parada sin tocar otro proyecto |

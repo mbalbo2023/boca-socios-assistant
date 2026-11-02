@@ -263,6 +263,39 @@
       ]
     },
     {
+      "id": "RCA-251",
+      "issue": 251,
+      "fix_pr": 253,
+      "root_cause": "The durable Telegram worker lacked an identity-bound prior API acceptance gate and a protected start path compatible with the installed browser topology; attempted sender cleanup also depended on unrelated base-service health.",
+      "prevention": "Require the exact private configuration and acceptance fence before claims; validate the installed pair and new sender attempt separately, then clean only positively identified new residues without depending on base-service health.",
+      "regression_tests": [
+        "tests/test_telegram_worker.py::test_worker_requires_identity_bound_acceptance_before_build_or_claim",
+        "tests/test_telegram_one_shot.py::test_readiness_requires_the_same_pinned_identity_and_prior_api_acceptance",
+        "tests/test_telegram_one_shot.py::test_old_acceptance_cannot_authorize_a_new_private_pair",
+        "tests/test_telegram_one_shot.py::test_generic_acceptance_and_ambiguous_identity_proof_do_not_enable_worker",
+        "tests/test_telegram_one_shot.py::test_readiness_rejects_incomplete_or_inconsistent_api_receipt",
+        "tests/test_host_browser_runtime_lifecycle.py::test_sender_failure_cleanup_removes_only_new_sender_and_network_and_reports_capacity",
+        "tests/test_host_browser_runtime_lifecycle.py::test_sender_cleanup_refuses_other_run_before_first_destructive_action",
+        "tests/test_host_browser_runtime_lifecycle.py::test_cleanup_identifies_unhealthy_or_stopped_pair_without_requiring_health_or_mutating_it"
+      ]
+    },
+    {
+      "id": "RCA-250",
+      "issue": 250,
+      "fix_pr": 253,
+      "root_cause": "Owner enrollment stopped the dedicated daemon, browser installation did not resume it, and the legacy stop and acceptance inventory rejected the integrated browser topology or accepted a controller through legacy identity checks.",
+      "prevention": "Recheck current main before guarded start, validate the complete exact installed topology before every stop or resume, and perform marked attempt cleanup on both failure and cancellation.",
+      "regression_tests": [
+        "tests/test_host_browser_lifecycle.py::test_browser_install_starts_prepared_daemon_before_preflight",
+        "tests/test_host_browser_lifecycle.py::test_guarded_stop_accepts_exact_installed_controller_and_browser_worker",
+        "tests/test_host_browser_lifecycle.py::test_controller_cannot_fall_back_to_legacy_when_browser_worker_exists",
+        "tests/test_host_browser_lifecycle.py::test_sender_cleanup_only_after_absent_proof_and_on_failure_or_cancellation",
+        "tests/test_host_browser_runtime_lifecycle.py::test_dual_acceptance_exercises_real_ipc_and_existing_http_probe",
+        "tests/test_host_browser_runtime_lifecycle.py::test_existing_dual_start_never_initializes_or_recreates_storage",
+        "tests/test_host_browser_runtime_lifecycle.py::test_stale_ipc_worker_failure_never_starts_controller_or_retries"
+      ]
+    },
+    {
       "id": "RCA-27",
       "issue": 27,
       "fix_pr": 254,
