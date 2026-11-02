@@ -98,6 +98,7 @@ def home(csrf: str) -> bytes:
         '<p><a href="/comandos">Iniciar, detener o consultar simulaciones</a></p>'
         '<p><a href="/estado">Consultar estado local</a></p>'
         '<p><a href="/avisos">Consultar avisos locales y estado Telegram</a></p>'
+        '<p><a href="/telegram/configurar">Configurar Telegram con un recibo aprobado</a></p>'
         '<section aria-labelledby="pending"><h2 id="pending">Funciones no habilitadas</h2><ul>'
         "<li>Fuentes de eventos, categorías y horarios oficiales: pendientes de integración.</li>"
         "<li>Varias sesiones de navegador y sus límites: pendientes de validación.</li>"
