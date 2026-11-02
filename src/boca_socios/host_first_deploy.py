@@ -3646,7 +3646,7 @@ def _browser_worker_probe(container: str) -> None:
         raise PreflightError("worker effective UID/cgroup/seccomp/no-egress unproven")
 
 
-def _browser_effective_seccomp_options(value: object) -> None:
+def _browser_effective_seccomp_options(value: object, expected_sha: str) -> None:
     """Docker CLI sends compact effective JSON, not the staged host pathname.
 
     Compare exact UTF-8 JSON bytes with whitespace removed *outside* quoted
@@ -3655,6 +3655,8 @@ def _browser_effective_seccomp_options(value: object) -> None:
     in-worker kernel probe must also report Seccomp=2 and filter count >= 1.
     """
     raw = _browser_root_file(BROWSER_SECCOMP.name, max_size=32_768)
+    if hashlib.sha256(raw).hexdigest() != expected_sha:
+        raise PreflightError("browser effective seccomp file differs from reviewed SHA-256")
     try:
         json.loads(raw, object_pairs_hook=_browser_json_pairs)
         compact = bytearray()
@@ -3684,7 +3686,7 @@ def _browser_effective_seccomp_options(value: object) -> None:
 
 
 def _browser_worker_postflight(
-    container: str, browser_image: str, source_sha: str, attempt_id: str
+    container: str, browser_image: str, source_sha: str, attempt_id: str, seccomp_sha: str
 ) -> None:
     record = _browser_inspect_record(container)
     config, host = _browser_check_service_labels(
@@ -3735,7 +3737,7 @@ def _browser_worker_postflight(
         }
     ):
         raise PreflightError("browser worker Docker isolation changed")
-    _browser_effective_seccomp_options(host.get("SecurityOpt"))
+    _browser_effective_seccomp_options(host.get("SecurityOpt"), seccomp_sha)
     networks = record.get("NetworkSettings")
     if not isinstance(networks, dict) or networks.get("Ports") not in (None, {}):
         raise PreflightError("browser worker has unexpected IP ports")
@@ -3958,9 +3960,11 @@ def _browser_apply(
         raise PreflightError("worker image pre-attempt marker is stale")
     _browser_compose_model(image, origin, owner, browser_image, attempt_id)
     _browser_pull_both(image, browser_image, source_sha)
-    _browser_read_marker(
+    marker_after_pull = _browser_read_marker(
         image, source_sha, beta_sha, browser_image, overlay_sha, seccomp_sha, attempt_id
     )
+    if marker_after_pull != marker:
+        raise PreflightError("browser IPC pre-attempt inventory marker changed after image pulls")
     _browser_verify_staged(beta_sha, overlay_sha, seccomp_sha)
     _browser_staged_inventory(volumes={OWNER_VOLUME})
     _browser_port_free()
@@ -3990,7 +3994,7 @@ def _browser_apply(
         volumes={OWNER_VOLUME, BROWSER_IPC_VOLUME}, containers={worker}, bridges=bridges
     )
     _browser_validate_ipc_volume(attempt_id)
-    _browser_worker_postflight(worker, browser_image, source_sha, attempt_id)
+    _browser_worker_postflight(worker, browser_image, source_sha, attempt_id, seccomp_sha)
     _browser_synthetic_socket_smoke(image, attempt_id)
     _browser_staged_inventory(
         volumes={OWNER_VOLUME, BROWSER_IPC_VOLUME}, containers={worker}, bridges=bridges
@@ -4046,6 +4050,13 @@ def _browser_apply(
         bridges=bridges,
     )
     _browser_port_free()
+    if (
+        _browser_read_marker(
+            image, source_sha, beta_sha, browser_image, overlay_sha, seccomp_sha, attempt_id
+        )
+        != marker
+    ):
+        raise PreflightError("browser IPC pre-attempt inventory marker changed before controller")
     _browser_verify_staged(beta_sha, overlay_sha, seccomp_sha)
     _browser_compose_model(image, origin, owner, browser_image, attempt_id)
     _run(
@@ -4068,13 +4079,20 @@ def _browser_apply(
         volumes={OWNER_VOLUME, BROWSER_IPC_VOLUME, KEY_VOLUME, DATA_VOLUME},
         bridges={BROWSER_BRIDGE},
     )
-    _browser_worker_postflight(worker, browser_image, source_sha, attempt_id)
+    _browser_worker_postflight(worker, browser_image, source_sha, attempt_id, seccomp_sha)
     _browser_controller_postflight(controller, image, source_sha, attempt_id, origin, owner)
     _browser_validate_ipc_volume(attempt_id)
     _validate_owner_volume()
     _validate_key_volume()
     _validate_data_volume()
     _beta_loopback_health(controller, origin)
+    if (
+        _browser_read_marker(
+            image, source_sha, beta_sha, browser_image, overlay_sha, seccomp_sha, attempt_id
+        )
+        != marker
+    ):
+        raise PreflightError("browser IPC pre-attempt inventory marker changed before completion")
     _validate_storage_continuity(after_pull, _storage_snapshot())
     print(
         f"BOCA_BROWSER_IPC_INSTALL_PASS attempt={attempt_id} source_sha={source_sha}"

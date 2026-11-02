@@ -539,8 +539,9 @@ def test_kernel_effective_seccomp_json_not_path_or_permissive_variant(
 ) -> None:
     profile = b'{ "defaultAction": "SCMP_ACT_ERRNO", "comment": "keep space in text" }\n'
     monkeypatch.setattr(host, "_browser_root_file", lambda *args, **kwargs: profile)
+    reviewed_sha = hashlib.sha256(profile).hexdigest()
     compact = 'seccomp={"defaultAction":"SCMP_ACT_ERRNO","comment":"keep space in text"}'
-    host._browser_effective_seccomp_options(["no-new-privileges:true", compact])
+    host._browser_effective_seccomp_options(["no-new-privileges:true", compact], reviewed_sha)
     for invalid in (
         ["no-new-privileges:true", "seccomp=/srv/boca-socios/seccomp_profile.json"],
         ["no-new-privileges:true", compact.replace("ERRNO", "ALLOW")],
@@ -550,16 +551,54 @@ def test_kernel_effective_seccomp_json_not_path_or_permissive_variant(
         [],
     ):
         with pytest.raises(PreflightError):
-            host._browser_effective_seccomp_options(invalid)
-    monkeypatch.setattr(
-        host,
-        "_browser_root_file",
-        lambda *args, **kwargs: (
-            b'{"defaultAction":"SCMP_ACT_ERRNO","defaultAction":"SCMP_ACT_ALLOW"}'
-        ),
-    )
+            host._browser_effective_seccomp_options(invalid, reviewed_sha)
+    duplicate_profile = b'{"defaultAction":"SCMP_ACT_ERRNO","defaultAction":"SCMP_ACT_ALLOW"}'
+    monkeypatch.setattr(host, "_browser_root_file", lambda *args, **kwargs: duplicate_profile)
     with pytest.raises(PreflightError, match="invalid"):
-        host._browser_effective_seccomp_options(["no-new-privileges:true", compact])
+        host._browser_effective_seccomp_options(
+            ["no-new-privileges:true", compact], hashlib.sha256(duplicate_profile).hexdigest()
+        )
+
+
+def test_effective_seccomp_rechecks_reviewed_sha_after_staged_verify_and_swap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An in-place same-length profile swap cannot be blessed by inspect postflight."""
+    base = b"reviewed base compose"
+    overlay = b"reviewed browser compose"
+    seccomp = (
+        b'{"defaultAction":"SCMP_ACT_ERRNO","archMap":[{}],'
+        b'"syscalls":[{"names":["read"],"action":"SCMP_ACT_ALLOW"}]}'
+    )
+    altered = seccomp.replace(b"SCMP_ACT_ERRNO", b"SCMP_ACT_ALLOW", 1)
+    assert len(altered) == len(seccomp) and altered != seccomp
+    reviewed_sha = hashlib.sha256(seccomp).hexdigest()
+    files = {
+        host.BETA_COMPOSE.name: base,
+        host.BROWSER_COMPOSE.name: overlay,
+        host.BROWSER_SECCOMP.name: seccomp,
+    }
+    monkeypatch.setattr(host, "_browser_root_entries", lambda *args: None)
+    monkeypatch.setattr(host, "_browser_root_file", lambda name, **kwargs: files[name])
+    host._browser_verify_staged(
+        hashlib.sha256(base).hexdigest(),
+        hashlib.sha256(overlay).hexdigest(),
+        reviewed_sha,
+    )
+
+    # The staging root retained its path/UID/mode; only the file bytes changed.
+    files[host.BROWSER_SECCOMP.name] = altered
+    record = worker_record()
+    record["HostConfig"]["SecurityOpt"] = [  # type: ignore[index]
+        "no-new-privileges:true",
+        "seccomp=" + altered.decode("utf-8"),
+    ]
+    monkeypatch.setattr(host, "_browser_inspect_record", lambda container: record)
+    monkeypatch.setattr(host, "_browser_worker_probe", lambda container: None)
+    with pytest.raises(
+        PreflightError, match="effective seccomp file differs from reviewed SHA-256"
+    ):
+        host._browser_worker_postflight(WORKER_ID, BROWSER_IMAGE, SOURCE, ATTEMPT, reviewed_sha)
 
 
 @pytest.mark.parametrize("kind", ["fifo", "symlink", "regular"])
@@ -854,12 +893,12 @@ def test_worker_postflight_rejects_privilege_network_or_restart_drift(
 ) -> None:
     record = worker_record()
     monkeypatch.setattr(host, "_browser_inspect_record", lambda container: record)
-    monkeypatch.setattr(host, "_browser_effective_seccomp_options", lambda _: None)
+    monkeypatch.setattr(host, "_browser_effective_seccomp_options", lambda *args: None)
     monkeypatch.setattr(host, "_browser_worker_probe", lambda _: None)
-    host._browser_worker_postflight(WORKER_ID, BROWSER_IMAGE, SOURCE, ATTEMPT)
+    host._browser_worker_postflight(WORKER_ID, BROWSER_IMAGE, SOURCE, ATTEMPT, SECCOMP_SHA)
     record[section][field] = value  # type: ignore[index]
     with pytest.raises(PreflightError):
-        host._browser_worker_postflight(WORKER_ID, BROWSER_IMAGE, SOURCE, ATTEMPT)
+        host._browser_worker_postflight(WORKER_ID, BROWSER_IMAGE, SOURCE, ATTEMPT, SECCOMP_SHA)
 
 
 def controller_record() -> dict[str, object]:
@@ -962,15 +1001,37 @@ def test_controller_postflight_rejects_port_mount_or_no_retry_drift(
         host._browser_controller_postflight(CONTROLLER_ID, IMAGE, SOURCE, ATTEMPT, ORIGIN, OWNER)
 
 
+@pytest.mark.parametrize(
+    ("marker_flip_at", "flipped_flag"),
+    [
+        (0, ""),
+        (2, "controller_image_absent"),
+        (2, "browser_image_absent"),
+        (3, "controller_image_absent"),
+        (4, "browser_image_absent"),
+    ],
+)
 def test_browser_apply_orders_worker_socket_before_keys_and_controller(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    marker_flip_at: int,
+    flipped_flag: str,
 ) -> None:
     events: list[str] = []
     capacity = SimpleNamespace(stage_free_bytes=8 * 1024**3, docker_free_bytes=8 * 1024**3)
     monkeypatch.setattr(host, "_browser_engine_version", lambda: None)
-    monkeypatch.setattr(
-        host, "_browser_read_marker", lambda *args: events.append("marker") or marker()
-    )
+    read_count = 0
+
+    def read_marker(*args: object) -> dict[str, object]:
+        nonlocal read_count
+        read_count += 1
+        events.append("marker")
+        result = marker()
+        if read_count == marker_flip_at:
+            result[flipped_flag] = False
+        return result
+
+    monkeypatch.setattr(host, "_browser_read_marker", read_marker)
     monkeypatch.setattr(host, "_browser_verify_staged", lambda *args: events.append("sha"))
     monkeypatch.setattr(
         host, "_browser_staged_inventory", lambda **kwargs: events.append("inventory")
@@ -1042,9 +1103,34 @@ def test_browser_apply_orders_worker_socket_before_keys_and_controller(
         raise AssertionError(f"unreviewed Docker call {args}")
 
     monkeypatch.setattr(host, "_run", run)
+    if marker_flip_at:
+        with pytest.raises(PreflightError, match="pre-attempt inventory marker changed"):
+            host._browser_apply(
+                IMAGE,
+                SOURCE,
+                BETA_SHA,
+                ORIGIN,
+                OWNER,
+                BROWSER_IMAGE,
+                OVERLAY_SHA,
+                SECCOMP_SHA,
+                ATTEMPT,
+            )
+        assert read_count == marker_flip_at
+        assert "BOCA_BROWSER_IPC_INSTALL_PASS" not in capsys.readouterr().out
+        if marker_flip_at == 2:
+            assert "pull-both" in events and "ipc-create" not in events
+            assert "key-create" not in events and "up-controller" not in events
+        elif marker_flip_at == 3:
+            assert "data-init" in events and "up-controller" not in events
+        else:
+            assert "up-controller" in events and "loopback" in events
+        return
+
     host._browser_apply(
         IMAGE, SOURCE, BETA_SHA, ORIGIN, OWNER, BROWSER_IMAGE, OVERLAY_SHA, SECCOMP_SHA, ATTEMPT
     )
+    assert read_count == 4
     assert events.count("capacity") == 2
     before, after = [index for index, item in enumerate(events) if item == "capacity"]
     assert before < events.index("pull-both") < after < events.index("ipc-create")
