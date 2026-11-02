@@ -15,7 +15,13 @@ _RUN = re.compile(r"[1-9][0-9]{0,11}\Z")
 
 
 def validate_deploy_inputs(
-    image_ref: str, source_sha: str, service: str, resource_budget: str, release_run_id: str
+    image_ref: str,
+    source_sha: str,
+    service: str,
+    resource_budget: str,
+    release_run_id: str,
+    *,
+    browser_ipc_v2: bool = False,
 ) -> None:
     if not _IMAGE.fullmatch(image_ref):
         raise DeployInputError("invalid immutable image reference")
@@ -23,7 +29,10 @@ def validate_deploy_inputs(
         raise DeployInputError("invalid source commit SHA")
     if service != "controller":
         raise DeployInputError("only controller is allowed")
-    if resource_budget != "0.5cpu-256m-64pids":
+    if type(browser_ipc_v2) is not bool:
+        raise DeployInputError("browser IPC mode must be explicitly selected")
+    expected_budget = "1.5cpu-1024m-192pids" if browser_ipc_v2 else "0.5cpu-256m-64pids"
+    if resource_budget != expected_budget:
         raise DeployInputError("invalid resource budget")
     if not _RUN.fullmatch(release_run_id):
         raise DeployInputError("invalid release run ID")
