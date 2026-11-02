@@ -39,6 +39,18 @@ jobs:
         run: |
           docker compose -f compose.yaml config --format json > "$RUNNER_TEMP/boca-compose.json"
           uv run python scripts/check_deploy_contract.py "$RUNNER_TEMP/boca-compose.json" "$BOCA_IMAGE"
+      - name: Validate optional dual-service IPC Compose resolution without host access
+        env:
+          BOCA_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          BOCA_BROWSER_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          BOCA_PANEL_ORIGIN: http://localhost:8443
+          BOCA_OWNER_SUBJECT: synthetic-ci-owner
+          BOCA_BROWSER_ATTEMPT_ID: "123456"
+          BOCA_BROWSER_SECCOMP_PATH: /srv/boca-socios/seccomp_profile.json
+          PYTHONPATH: src
+        run: |
+          docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml config --format json > "$RUNNER_TEMP/boca-ipc-v2-model.json"
+          uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-ipc-v2-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
       - name: Validate opt-in Telegram Compose syntax
         env:
           BOCA_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
