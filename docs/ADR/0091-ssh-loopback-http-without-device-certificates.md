@@ -2,6 +2,12 @@
 
 **Status:** integrated by PR #224, with #226 and the later owner-enrollment PR #229 present in verified baseline `032de0ebb923b4f80154e93cee3dfd1b254687ed`. Post-merge [CI 41459830809](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459830809) and [security 41459831000](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459831000) passed for that baseline. The implementation base `8a7bcf433a83071cc5ccee327c35743d349ce930` is historical. There has been **no physical tablet enrollment or Boca BETA installation**. The read-only host inspection and port check of 2026-11-02 are recorded in OPERATIONS; they did not activate this route.
 
+The later PR #255 proves its separate private Telegram UI in offline Chromium;
+that does not prove this Android owner ceremony. PR #253's lifecycle candidate
+adds explicit same-SHA start/restart/acceptance and recovery. Freeze main before
+release; record subsequent physical access and deployment receipts in
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
+
 ## Owner decision and scope
 
 The BETA Compose, protected owner/acceptance host helper and protected Actions

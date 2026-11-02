@@ -2,6 +2,13 @@
 
 **Status:** protected host integration for [issue #225](https://github.com/mbalbo2023/boca-socios-assistant/issues/225) was merged in PR #229, after #224/#226. It is present in verified baseline `032de0ebb923b4f80154e93cee3dfd1b254687ed`, whose [CI 41459830809](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459830809) and [security 41459831000](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459831000) passed. **Integrated code; not activated or physically tested.** No bearer token, usable activation link or owner passkey has been issued. A new exact release, protected host gates and physical Chrome acceptance are still required. The original implementation base was `4b1d219c2ba1739dc20c9c103170beedff8c1607`; candidate language below records the design boundaries, not an unmerged task.
 
+The later lifecycle candidate PR #253 composes owner shutdown with guarded
+existing-daemon start before browser installation; it does not rerun owner
+preparation or issue the private URL by itself. Keep the same frozen source
+through release, ceremony, installation and recovery. Physical Chrome/GPM,
+second access and post-restart evidence belong to
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
+
 ## Decision and browser contract
 
 The owner requested one private URL with a one-use key that opens directly in Chrome on the tablet, through the existing Termius SSH forward. No terminal, certificate authority, generated TLS certificate, public web host or shared reverse proxy may be required. The only origin is `http://localhost:8443`, with WebAuthn RP `localhost`; the only eventual droplet host publication is `127.0.0.1:8443:8443/tcp`. All other apps, ports, shared Docker installations, proxies, firewalls and web-server configurations are strictly out of scope. If the port is occupied, stop; never remove the occupant.

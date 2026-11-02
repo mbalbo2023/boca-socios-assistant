@@ -103,10 +103,41 @@ credential enrollment. Do not recreate the existing SSH deployment secret.
 - Rotate any real password that has previously been disclosed outside the
   approved encrypted enrollment channel before using it in production.
 
+## Private Telegram setup and protected lifecycle
+
+PR #255's authenticated `/telegram/configurar` page accepts only the public
+recipient receipt from an approved `telegram-prepare` run in its fragment.
+It clears that fragment before enabling credential entry, validates canonical
+receipt/fingerprint and X25519, then uses the existing HKDF/AES-GCM envelope
+contract. Route-specific CSP denies connections and form submission; POST
+never reads a credential body. No token/chat plaintext is sent to the panel,
+Actions, logs or web storage. Browser strings cannot promise physical erasure.
+
+Only three outputs are copied: ciphertext to `telegram_envelope`; canonical
+bot ID to `BOCA_TELEGRAM_EXPECTED_BOT_ID`; HMAC-SHA256(token, private-chat ID)
+to `BOCA_TELEGRAM_EXPECTED_CHAT_HMAC`. The latter two are protected environment
+Secrets. The UI admits positive canonical IDs below 2^52 and exposes no chat
+ID. Receipt fingerprint consistency is not issuer authentication: verify the
+protected source run before supplying its public link. The offline Chromium
+receipt in PR #255 proves this synthetic UI, not Android/GPM or a real send.
+
+The lifecycle/recovery candidate in PR #253 requires exact current SHA,
+matching dual release and installed marker. Freeze main from release through
+owner enrollment, installation, Telegram and recovery; even a documentation
+merge would change the required source. Write operational receipts to
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
+Do not reuse an old readiness proof after a source upgrade. A failed sender
+attempt is cleaned by its own runtime label; SSH loss means INDETERMINADO,
+not permission for a retry. Explicit recovery validates the old failed run
+and preserves all volumes, controller/browser and foreign resources.
+
 ## Boundary with third parties
 
 Do not manufacture signed Queue-it tokens, change queue proof, bypass WAF or
 CAPTCHA, probe nonpublic endpoints or run synthetic load against Boca.
-Live interactions remain disabled until a separate technically reviewed,
-consented test milestone with a resource cap.
+The authorized initial-document observation ran in41481095746 with isolation
+and cleanup PASS but semantic UNKNOWN. It did not log in or validate the full
+site. Any additional requests need the distinct bounded approval described in
+[the public report](quality/public-source-validation-2026-11-02.md); no automatic
+retry or allowance expansion follows from UNKNOWN.
 

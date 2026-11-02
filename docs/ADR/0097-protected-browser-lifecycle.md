@@ -146,3 +146,16 @@ The sender runs only in `network=none` with an invented custody and acceptance
 ledger. Its production network configuration is created and inspected stopped,
 never started. This does not establish a real Bot API acceptance or delivery.
 No success is recorded until that hosted smoke actually runs.
+
+The first real pair smoke, run `41483687457`, reached healthy controller and
+worker but failed their strict Docker inspection. Bounded diagnostic run
+`41485137010` established the exact cause: Compose reports the sole allowed
+capability as `["CAP_SYS_CHROOT"]`; the fixture-derived predicate expected
+`["SYS_CHROOT"]`. All other worker boundary fields matched. Both runs completed
+their selective runner cleanup; the sender test was skipped and is not PASS.
+The production and standalone stop predicates now accept only those two
+single-item representations of the same capability. Extra, duplicate, mixed,
+lowercase or different capabilities remain forbidden. The diagnostic keeps
+real observations intact and never serializes credential values, raw commands,
+labels or mounts. This is a representation/coverage defect, not permission
+to relax seccomp, resource, mount, namespace or network controls.

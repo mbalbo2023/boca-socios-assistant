@@ -6,12 +6,19 @@ verified baseline `032de0ebb923b4f80154e93cee3dfd1b254687ed`.
 [CI 41459830809](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459830809)
 and [security 41459831000](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459831000)
 passed for that exact baseline. No current dual-image publication, running
-host worker, owner passkey or BETA installation is verified. The 2026-11-02
-audit found gaps in the protected browser lifecycle; their correction,
-review and exact checks remain activation gates. Original #237 main
+host worker, owner passkey or BETA installation is verified. The baseline audit found lifecycle gaps; the later PR #253 candidate
+addresses them. Final review/checks and actual activation remain separate gates. Original #237 main
 `46f184fc49747f98246ac82047d9786b65239168`, local base `a14d900b95d45b257b429356469f4cd9cae22144`,
 1172 tests/31 subtests and the #241 base `ef34cb40b150f9cfc891c5d7e0e3e48f151358f9`
 are historical receipts, not evidence for a newer candidate.
+
+PR #253 subsequently supplies the protected lifecycle/recovery candidate,
+with explicit pair budget `1.5cpu-1024m-192pids` and owner-ready Telegram
+budget `1.75cpu-1152m-224pids`. PR #254's real public observation 41481095746
+returned UNKNOWN with isolation/cleanup PASS; it does not validate the full
+site. PR #255's offline Chromium UI proof covers Telegram sealing only.
+Final merge/checks, same-source release and physical host evidence remain
+separate in [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
 
 ## Decision
 

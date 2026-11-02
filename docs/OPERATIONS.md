@@ -2,13 +2,24 @@
 
 ## Current state
 
-Verified baseline on 2026-11-02: `032de0ebb923b4f80154e93cee3dfd1b254687ed`.
-Owner enrollment #229, browser runtime #237, dual-image release #239,
-security #242 and Compose/staging/install/cleanup #243–#249 are integrated.
-[CI 41459830809](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459830809)
-and [security 41459831000](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459831000)
-passed on that SHA. No matching dual-image release, host BETA installation,
-private activation URL, physical Chrome passkey or Telegram delivery is verified.
+Historical baseline `032de0` already integrated #224/#226/#229 and browser
+release/install/cleanup #237/#239/#242–#249. PR #254 merged at
+`b0e46dbd1cc09ae625c65799a2fb75ca052ab5d8`; PR #255 merged at
+`dada569a2d71ad4411a73ebdaca1186ed3be6936`. Its private Telegram form passed
+[CI 41481913145](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913145)
+(1663 tests plus 31 subtests and real offline Chromium UI proof) and
+[security 41481913075](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913075)
+before merge. PR #253 is the subsequent lifecycle/recovery candidate; exact
+final-main checks and operational state are maintained in
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
+No matching current dual release, BETA installation, real activation URL,
+physical Chrome/GPM persistence or Telegram delivery is established here.
+
+[Real public observation 41481095746](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481095746)
+returned UNKNOWN for the permitted initial document, with pre/post isolation
+and cleanup PASS. This does not establish a browser or deployment failure,
+nor full-site acceptance. The [report and bounded proposal](quality/public-source-validation-2026-11-02.md)
+require separate approval before additional requests.
 
 [Read-only inspection 41471945717](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41471945717)
 at 12:28:47 ART reached SSH as UID10001, observed the owned user bus and
@@ -22,12 +33,11 @@ at 12:35 ART observed `FREE address=127.0.0.1 port=8443 reserved=no`.
 This does not reserve the port or verify Engine version, capacity, listener,
 tablet forwarding, rootless health or application readiness.
 
-The baseline audit reproduced lifecycle gaps: owner operations stop the
-daemon but browser install does not start it; legacy stop/acceptance and
-Telegram inventories do not accept the installed browser topology; no reviewed
-browser restart/resume operation proves persistent access. Correct these in
-the candidate, review independently and rerun exact-SHA gates before activation.
-Do not rerun first-time `prepare-rootless` or use another service to start Boca.
+The baseline audit reproduced lifecycle gaps between owner shutdown, browser
+startup, stop/acceptance, Telegram and restart. PR #253 supplies the candidate
+correction described below. Source tests and review do not establish host
+execution. Do not rerun first-time `prepare-rootless` or use another service
+to start Boca; only the guarded existing-daemon transition is permitted.
 
 GitHub environments were inspected on 2026-11-02: both are main-only, required
 reviewers are off and administrative bypass is available. Release READY is set;
@@ -109,6 +119,87 @@ See issue #45 for the current scoped decision and BETA_INTEGRATION_STATUS.md
 for the source/integration cut. PR #141 separately fixed the migration function
 through synthetic fixtures; merging it did not run Database.migrate on the
 droplet or create a service database. ADR0053 states the WAL/concurrency limits.
+
+## Protected browser lifecycle contract
+
+This is the code contract of PR #253, not a record of completed host operations.
+Before use, confirm its merge and successful exact-SHA checks in checkpoint #45.
+Use only [boca-first-deploy.yml](https://github.com/mbalbo2023/boca-socios-assistant/actions/workflows/boca-first-deploy.yml).
+`source_sha`, both image digests, release run and staged hashes must identify
+the same frozen main/release; `service=controller`. No terminal work is required
+from the tablet owner.
+
+| Operation | Purpose and required state |
+| --- | --- |
+| `beta-browser-install` | New-only pair after owner custody; guarded start of the already prepared daemon, then capacity/identity checks and atomic staging |
+| `beta-browser-status` | Read-only inspection of the existing pair/optional sender; does not start stopped resources |
+| `beta-browser-start` | Resume the verified stopped daemon and same installed service IDs; no initialization, pull or recreation |
+| `beta-browser-restart` | Bounded stop/start of the verified running topology; preserve data, key and owner |
+| `beta-browser-acceptance` | Synthetic IPC and local HTTP acceptance, then mandatory Boca-only stop; use explicit start afterward |
+| `beta-browser-telegram-start` | Create the sender only after custody and same-source one-shot proof; no implicit activation by the form |
+| `beta-browser-telegram-recover` | After connectivity returns, remove only the proven failed run's sender and empty egress, then stop; never start applications or repeat a send |
+
+The install/pair budget is `1.5cpu-1024m-192pids`. Once
+`BOCA_TELEGRAM_OWNER_READY=ready`, existing browser lifecycle and dual-topology
+Telegram phases declare `1.75cpu-1152m-224pids`; sender-start/recovery require
+the full budget. Owner custody, inspection and standalone stop retain their
+`0.5cpu-256m-64pids` input. These are declared caps, not a capacity receipt.
+The pair preflight separately requires at least 1.5 GiB memory, 1.75 CPU and 256
+free PIDs; a complete three-service start uses its larger reserve checks.
+
+Before a sender attempt, prove sender/egress absent and record the current run
+marker. Immediate selective cleanup runs after failure/cancellation. With SSH
+loss or unverifiable cleanup, mark INDETERMINADO and stop activation. Recovery
+requires `failed_telegram_run_id` from the exact completed failed/cancelled/
+timed-out first attempt, with a successful attempt marker verified by GitHub.
+It checks the original SHA/digests/owner and old runtime label; an inactive
+daemon may be started solely to inspect/clean, never to start applications.
+Unknown provenance prevents removal. Preserve all owner/key/data/Telegram
+volumes and every foreign resource. A new run must not adopt old leftovers.
+
+**Freeze main before publication and keep it frozen through all owner, install,
+Telegram and recovery phases.** Merge this documentation before release. Use
+checkpoint #45 for subsequent SHA/check/run receipts without further commits.
+If main advances after an uncertain failure, the current-main gate blocks
+recovery; a separate reviewed recovery change is required, not a substituted
+SHA, bypass or blind retry. Upgrading an installed source is outside this
+same-SHA lifecycle contract.
+
+## Telegram setup before the first persistent simulation
+
+Complete `telegram-migrate` and `telegram-prepare` with the controller/browser
+stopped. These custody operations start only the dedicated daemon and end in
+Boca-only stop. Verify the public receipt, then use `beta-browser-start` to
+serve the panel without a sender. After passkey login, open the approved
+`http://localhost:8443/telegram/configurar#recipient=…` receipt link.
+This is a public-recipient template, not an issued activation URL.
+
+The owner fills the bot token and positive private-chat ID in that private
+page. Chrome encrypts locally and derives the bot ID/chat HMAC. Copy only the
+three displayed outputs to their indicated destinations: encrypted envelope
+into `telegram_envelope`; the two pins into environment Secrets
+`BOCA_TELEGRAM_EXPECTED_BOT_ID` and `BOCA_TELEGRAM_EXPECTED_CHAT_HMAC`.
+Never request token/chat plaintext in chat, Actions inputs or a terminal.
+The form's success is not installation, identity verification or delivery.
+
+Stop Boca with `stop-test` before `telegram-install`; perform protected
+install/verify/test with the reviewed coordinates. `telegram-test` must run
+before the first persistent simulation, while the outbox is empty. Its API
+receipt needs separate human delivery confirmation. The BETA acceptance probe
+uses temporary SQLite in `/tmp` and does not contaminate that outbox.
+The custody/test phases finish with the daemon and pair stopped. After the
+approved owner-readiness setting, run `beta-browser-start` with the full
+`1.75cpu-1152m-224pids` budget to resume the verified pair; only then run
+`beta-browser-telegram-start`, which requires that pair already active and
+does not start its daemon.
+Readiness binds token, destination and source SHA: restart at the same SHA
+preserves it; a future source upgrade needs a separate reviewed procedure.
+
+## Historical preparation evidence
+
+The previous receipts and implementation lineage below remain historical.
+Their TLS or unmerged-candidate statements do not replace the current SSH-only
+contract or supply missing host/tablet/Telegram evidence.
 
 ## Functional BETA preparation and final operation
 

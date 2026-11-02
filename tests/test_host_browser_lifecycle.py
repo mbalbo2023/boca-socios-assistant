@@ -173,6 +173,38 @@ def test_guarded_stop_accepts_exact_installed_controller_and_browser_worker() ->
 
 
 @pytest.mark.parametrize(
+    "capabilities,allowed",
+    [
+        (["SYS_CHROOT"], True),
+        (["CAP_SYS_CHROOT"], True),  # Real Compose inspect in run 41485137010.
+        (["SYS_CHROOT", "CAP_SYS_CHROOT"], False),
+        (["CAP_SYS_CHROOT", "CAP_SYS_CHROOT"], False),
+        (["CAP_SYS_CHROOT", "CAP_SYS_ADMIN"], False),
+        (["CAP_SYS_ADMIN"], False),
+        (["cap_sys_chroot"], False),
+        ([], False),
+        ("CAP_SYS_CHROOT", False),
+    ],
+)
+def test_observed_compose_capability_keeps_exact_single_exception(
+    capabilities: object, allowed: bool
+) -> None:
+    records = [record(worker=False), record(worker=True)]
+    records[1]["HostConfig"]["CapAdd"] = capabilities
+    calls: list[tuple[str, ...]] = []
+    with (
+        patch.object(host, "_browser_stop_context", return_value=context()),
+        patch.object(host, "_command", side_effect=fake_command(records, calls)),
+    ):
+        if allowed:
+            assert host._stop_test_containers(HOME) == 2
+        else:
+            with pytest.raises(host.SetupError, match="unknown_container_preserved_no_stop"):
+                host._stop_test_containers(HOME)
+    assert len([argv for argv in calls if argv[2] == "stop"]) == (2 if allowed else 0)
+
+
+@pytest.mark.parametrize(
     "scope,field,value",
     [
         ("HostConfig", "NetworkMode", "host"),

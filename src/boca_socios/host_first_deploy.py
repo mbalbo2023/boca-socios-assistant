@@ -3798,7 +3798,8 @@ def _browser_worker_postflight(
         or host.get("PidsLimit") != 128
         or host.get("ShmSize") != 67_108_864
         or host.get("CapDrop") != ["ALL"]
-        or host.get("CapAdd") != ["SYS_CHROOT"]
+        # Docker inspect may canonicalize the sole reviewed capability.
+        or host.get("CapAdd") not in (["SYS_CHROOT"], ["CAP_SYS_CHROOT"])
         or host.get("PortBindings") not in (None, {})
         or host.get("Tmpfs")
         != {

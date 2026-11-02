@@ -50,7 +50,7 @@ no acreditaría por sí solo el sitio conectado completo, una sesión o reservas
 | Estáticos | Como máximo los 24 paths exactos enumerados abajo; cada uno una sola vez |
 | Presupuesto público total | Hasta 25 GET; concurrencia 1; al menos 500 ms entre solicitudes |
 | Destino | Solo `https://bocasocios.bocajuniors.com.ar:443`, TLS verificado y barrera de red comprobada |
-| Exclusiones | Sin GET a `/` ni `/favicon.ico`; sin otros dominios, paths, queries, redirects, reintentos, POST, credenciales o cookies entrantes |
+| Exclusiones | Sin GET a `/` ni `/favicon.ico`; sin otros dominios, paths, queries, redirects, reintentos, POST o credenciales; no enviar `Cookie` ni conservar/reutilizar `Set-Cookie` |
 | Tiempo | 8 s por solicitud y 120 s para toda la captura; el primer límite alcanzado detiene el intento |
 | Tamaño | HTML ≤1 MiB; JS ≤2 MiB por archivo; CSS ≤512 KiB; fuentes ≤1 MiB por archivo; total ≤12 MiB |
 | Persistencia | Bytes únicamente en almacenamiento temporal privado del runner, eliminados al terminar; sin HTML, headers, cookies, HAR ni capturas en artefactos públicos |

@@ -65,6 +65,40 @@ host evidence is [inspection 41471945717](https://github.com/mbalbo2023/boca-soc
 Branch-ruleset, Actions-policy and security-feature observations below retain
 their historical dates; this environment inspection did not reverify them.
 
+## Activation coordinates and frozen source
+
+PR #255 integrated `/telegram/configurar` and proved its synthetic browser-local
+sealing flow in CI 41481913145, with security 41481913075 PASS. Owner entry stays
+on `http://localhost:8443`; do not add HTTPS/certificates or another port.
+The approved `telegram-prepare` public receipt supplies the fragment link.
+The private form produces ciphertext for input `telegram_envelope`, plus
+`BOCA_TELEGRAM_EXPECTED_BOT_ID` and `BOCA_TELEGRAM_EXPECTED_CHAT_HMAC` for
+Secrets in `boca-first-deploy`. It never sends token/chat plaintext to GitHub.
+Use the existing SSH secrets; never request or rotate them as routine setup.
+
+Before protected operations, verify actual values/presence of
+`BOCA_BETA_PANEL_ORIGIN`, `BOCA_BETA_OWNER_SUBJECT`,
+`BOCA_BETA_ENV_READY`, `BOCA_BROWSER_ENV_READY`, `BOCA_TELEGRAM_ENV_READY`
+and `BOCA_TELEGRAM_OWNER_READY` under their approved phase. A marker is not
+proof of configuration, identity, capacity or permission. Do not enable a
+sender solely because a form generated ciphertext.
+
+PR #253's lifecycle candidate requires both digest refs, the same successful
+release, exact current `source_sha`, `service=controller` and reviewed budget.
+`beta-browser-install` uses `1.5cpu-1024m-192pids`; existing browser/dual Telegram
+operations use the full `1.75cpu-1152m-224pids` once owner Telegram is ready.
+Sender-start/recover require that full budget. `failed_telegram_run_id` is
+required only for `beta-browser-telegram-recover`; GitHub validates the exact
+completed failed first attempt and its successful effect marker. Never use
+Re-run jobs as recovery or present a new run as ownership of old resources.
+
+Freeze main after final documentation/review/checks and before release.
+Keep it frozen through owner enrollment, install, Telegram and recovery;
+record final SHA, digests, checks and real receipts in
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
+A later SHA requires separate reviewed upgrade/recovery handling; no old
+Telegram readiness proof or manifest is automatically reusable.
+
 ## Historical revalidation on 2026-10-29
 
 - `protect-main` ruleset 26163295 is active on the default branch. It

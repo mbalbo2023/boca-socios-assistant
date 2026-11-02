@@ -760,3 +760,49 @@ def test_cleanup_identifies_unhealthy_or_stopped_pair_without_requiring_health_o
         host._browser_installed(
             *COORDS, running=True, allow_service_failed=True, require_capacity=False
         )
+
+
+@pytest.mark.parametrize("capabilities", [["SYS_CHROOT"], ["CAP_SYS_CHROOT"]])
+def test_worker_accepts_only_exact_reviewed_capability_with_docker_canonical_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+    capabilities: list[str],
+) -> None:
+    record = worker_record()
+    record["HostConfig"]["CapAdd"] = capabilities
+    monkeypatch.setattr(host, "_browser_inspect_record", lambda _: record)
+    monkeypatch.setattr(host, "_browser_effective_seccomp_options", lambda *args: None)
+    observed = []
+    monkeypatch.setattr(host, "_browser_worker_probe", lambda cid: observed.append(cid))
+    host._browser_worker_postflight(WORKER_ID, BROWSER_IMAGE, SOURCE, ATTEMPT, SECCOMP_SHA)
+    assert observed == [WORKER_ID]
+
+
+@pytest.mark.parametrize(
+    "capabilities",
+    [
+        [],
+        None,
+        "CAP_SYS_CHROOT",
+        ["cap_sys_chroot"],
+        ["CAP_CAP_SYS_CHROOT"],
+        ["CAP_SYS_ADMIN"],
+        ["CAP_SYS_CHROOT", "CAP_SYS_ADMIN"],
+        ["CAP_SYS_CHROOT", "CAP_SYS_CHROOT"],
+        ["SYS_CHROOT", "CAP_SYS_CHROOT"],
+    ],
+)
+def test_worker_capability_prefix_never_accepts_extra_duplicate_or_unreviewed_privileges(
+    monkeypatch: pytest.MonkeyPatch,
+    capabilities: object,
+) -> None:
+    record = worker_record()
+    record["HostConfig"]["CapAdd"] = capabilities
+    monkeypatch.setattr(host, "_browser_inspect_record", lambda _: record)
+    monkeypatch.setattr(host, "_browser_effective_seccomp_options", lambda *args: None)
+    monkeypatch.setattr(
+        host,
+        "_browser_worker_probe",
+        lambda _: pytest.fail("unreviewed capability reached kernel probe"),
+    )
+    with pytest.raises(host.PreflightError, match="isolation"):
+        host._browser_worker_postflight(WORKER_ID, BROWSER_IMAGE, SOURCE, ATTEMPT, SECCOMP_SHA)

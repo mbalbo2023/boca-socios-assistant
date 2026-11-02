@@ -64,6 +64,7 @@ class FakeDocker:
         self.port = "8443"
         self.worker_network = "none"
         self.worker_mount = IPC_VOLUME
+        self.worker_capabilities: object = ["SYS_CHROOT"]
         self.seccomp_profile = '{"defaultAction":"SCMP_ACT_ERRNO","syscalls":[]}'
         self.seccomp_override: str | None = None
         self.mutate_then_fail = False
@@ -119,7 +120,7 @@ class FakeDocker:
             "Privileged": False,
             "RestartPolicy": {"Name": "no"},
             "CapDrop": ["ALL"],
-            "CapAdd": [] if controller else ["SYS_CHROOT"],
+            "CapAdd": [] if controller else self.worker_capabilities,
             "Memory": 256 * 1024**2 if controller else 768 * 1024**2,
             "NanoCpus": 500_000_000 if controller else 1_000_000_000,
             "PidsLimit": 64 if controller else 128,
@@ -1140,3 +1141,54 @@ def test_cli_indeterminate_requires_manual_review_without_browser_retry(
     output = capsys.readouterr().err
     assert "BOCA_BROWSER_IPC_CLEANUP_INDETERMINATE" in output
     assert "do not retry automatically" in output
+
+
+@pytest.mark.parametrize("capabilities", [["SYS_CHROOT"], ["CAP_SYS_CHROOT"]])
+def test_cleanup_accepts_only_exact_worker_capability_with_docker_canonical_prefix(
+    case: tuple[FakeDocker, dict[str, object], dict[str, Path]],
+    capabilities: list[str],
+) -> None:
+    docker, marker, _ = case
+    docker.worker_capabilities = capabilities
+    result = run_cleanup(marker)
+    assert result.removed_worker and result.removed_controller
+    assert docker.containers == {} and docker.volumes == PERSISTENT
+    assert not any("--force" in command or "--volumes" in command for command in docker.commands)
+
+
+@pytest.mark.parametrize(
+    "capabilities",
+    [
+        [],
+        None,
+        "CAP_SYS_CHROOT",
+        ["cap_sys_chroot"],
+        ["CAP_CAP_SYS_CHROOT"],
+        ["CAP_SYS_ADMIN"],
+        ["CAP_SYS_CHROOT", "CAP_SYS_ADMIN"],
+        ["CAP_SYS_CHROOT", "CAP_SYS_CHROOT"],
+        ["SYS_CHROOT", "CAP_SYS_CHROOT"],
+    ],
+)
+def test_cleanup_capability_prefix_cannot_authorize_other_or_duplicate_worker_privileges(
+    case: tuple[FakeDocker, dict[str, object], dict[str, Path]],
+    capabilities: object,
+) -> None:
+    docker, marker, files = case
+    docker.worker_capabilities = capabilities
+    with pytest.raises(cleanup.CleanupError):
+        run_cleanup(marker)
+    assert files["marker"].exists()
+    assert docker.volumes == PERSISTENT | {IPC_VOLUME}
+    assert docker.containers == {"controller": True, "worker": True}
+    assert not any(
+        command[:2]
+        in {
+            ("container", "stop"),
+            ("container", "rm"),
+            ("network", "rm"),
+            ("image", "rm"),
+            ("volume", "rm"),
+        }
+        for command in docker.commands
+    )

@@ -304,6 +304,20 @@
       "regression_tests": [
         "tests/test_public_observer_isolation.py::test_pytest_entrypoint_collects_observer_tests_without_pythonpath"
       ]
+    },
+    {
+      "id": "RCA-256",
+      "issue": 256,
+      "fix_pr": 253,
+      "root_cause": "Real Docker Compose inspection canonicalized the sole SYS_CHROOT capability to CAP_SYS_CHROOT; postflight, stop and selective worker cleanup incorrectly rejected this equivalent representation.",
+      "prevention": "Accept exactly either one-element capability spelling in the three inspect predicates; keep all other security checks and reject extra, duplicate, mixed, differently cased or non-list representations.",
+      "regression_tests": [
+        "tests/test_host_browser_lifecycle.py::test_observed_compose_capability_keeps_exact_single_exception",
+        "tests/test_host_browser_runtime_lifecycle.py::test_worker_accepts_only_exact_reviewed_capability_with_docker_canonical_prefix",
+        "tests/test_host_browser_runtime_lifecycle.py::test_worker_capability_prefix_never_accepts_extra_duplicate_or_unreviewed_privileges",
+        "tests/test_host_browser_ipc_cleanup.py::test_cleanup_accepts_only_exact_worker_capability_with_docker_canonical_prefix",
+        "tests/test_host_browser_ipc_cleanup.py::test_cleanup_capability_prefix_cannot_authorize_other_or_duplicate_worker_privileges"
+      ]
     }
   ]
 }

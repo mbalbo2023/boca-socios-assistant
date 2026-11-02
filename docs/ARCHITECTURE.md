@@ -17,19 +17,36 @@ Unverified third-party behavior stays behind interfaces.
 
 ## Functional BETA code and deployment boundary
 
-The verified baseline `032de0ebb923b4f80154e93cee3dfd1b254687ed` integrates
-the SSH-only HTTP panel and first-owner ceremony (#224/#226/#229), optional
-UID10002 Chromium IPC worker (#237), dual-image release (#239), security
-correction (#242), Compose overlay (#243) and staged installation/cleanup
-(#244–#249). The application is not installed. The current audit found that
-the baseline's protected lifecycle does not yet compose owner shutdown,
-browser startup, browser-aware stop/acceptance, Telegram and restart; a
-reviewed correction and new exact-candidate checks precede activation.
+The historical baseline `032de0ebb923b4f80154e93cee3dfd1b254687ed` already
+contains owner enrollment, the isolated Chromium IPC worker, dual-image
+release and selective installation/cleanup. PR #254 adds the bounded real
+public-document observer; PR #255 adds browser-local Telegram setup.
+PR #253's lifecycle candidate composes owner shutdown, guarded daemon start,
+exact installed identities, optional sender and explicit recovery. Its final
+merge/checks and host state are recorded in [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208),
+not inferred from this architecture. No deployed BETA is established here.
+
+The controller/browser pair remains UID10001/UID10002, with socket-only IPC
+and no IP network in the browser worker. Its aggregate budget is
+`1.5cpu-1024m-192pids`; an owner-ready Telegram lifecycle declares
+`1.75cpu-1152m-224pids`. The sender has only data and dedicated Telegram
+custody mounts, no published port, and its own validated egress bridge.
+Restart/resume preserves the same verified container IDs, data and keys;
+there is no pull/recreation or automatic restart loop. Recovery binds the
+failed sender run ID and cannot start applications or resend a message.
+
 The only permitted origin is `http://localhost:8443` through SSH, with host
-binding `127.0.0.1:8443`. No HTTPS, certificate, proxy or additional port is
-part of this BETA. Owner preparation and Chrome create→get enrollment must
-finish before installation, because the installed panel requires its public
-credential. See [current evidence](BETA_INTEGRATION_STATUS.md).
+binding `127.0.0.1:8443`. Owner preparation and physical Chrome create→get
+must finish before installation. The Telegram setup GET is owner-authenticated;
+its fixed JavaScript seals credentials and derives expected bot ID/chat HMAC
+locally. No plaintext Telegram endpoint, new mount or port is introduced.
+The default sender remains disabled until the protected one-shot proof;
+that proof binds bot, destination and source SHA. Complete it before the first
+persistent simulation; the acceptance journey uses scratch SQLite instead.
+
+A public-document observation and a complete public-site validation are
+separate: run 41481095746 returned UNKNOWN, despite passing isolation/cleanup.
+See [the factual report](quality/public-source-validation-2026-11-02.md).
 
 Historical implementation lineage follows; old TLS paths are not current
 operating instructions:

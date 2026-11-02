@@ -1067,7 +1067,9 @@ def _verified_browser_ipc_image(
         or host.get("Devices") not in (None, [])
         or host.get("CapDrop") != ["ALL"]
         or (
-            host.get("CapAdd") != ["SYS_CHROOT"] if worker else host.get("CapAdd") not in (None, [])
+            host.get("CapAdd") not in (["SYS_CHROOT"], ["CAP_SYS_CHROOT"])
+            if worker
+            else host.get("CapAdd") not in (None, [])
         )
     ):
         return False

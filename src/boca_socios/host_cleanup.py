@@ -1712,7 +1712,7 @@ def _browser_ipc_container_ids(
                 or actual_mounts != {(BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", True)}
                 or len(mounts) != 1
                 or host.get("CapDrop") != ["ALL"]
-                or host.get("CapAdd") != ["SYS_CHROOT"]
+                or host.get("CapAdd") not in (["SYS_CHROOT"], ["CAP_SYS_CHROOT"])
                 or type(host.get("PidsLimit")) is not int
                 or not 0 < host["PidsLimit"] <= 128
                 or type(host.get("Memory")) is not int
