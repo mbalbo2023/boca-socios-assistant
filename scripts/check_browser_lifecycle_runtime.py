@@ -363,6 +363,14 @@ def main() -> None:
         )
         == "PASS"
     )
+    offline_record = json.loads(docker("inspect", "--format", "{{json .}}", offline_id))
+    print(
+        "BOCA_CI_DOCKER_INSPECT "
+        + json.dumps(
+            inspection_summary(offline_record, service="telegram-offline"), sort_keys=True
+        ),
+        flush=True,
+    )
     docker("stop", "--time", "10", offline_id)
     docker("rm", offline_id)
     # The production network/container are CREATED but NEVER STARTED here.

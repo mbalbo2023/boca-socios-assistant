@@ -332,6 +332,20 @@
         "tests/test_browser_ipc.py::test_kernel_peer_wrong_worker_identity_sends_no_command",
         "tests/test_browser_ipc.py::test_kernel_peer_wrong_controller_identity_never_reads_or_starts_browser"
       ]
+    },
+    {
+      "id": "RCA-258",
+      "issue": 258,
+      "fix_pr": 253,
+      "root_cause": "The Telegram storage gate required contiguous migrations 1 through 6, but real BETA initialization creates 1, 2, 3, 5 and 6. Migration 4 belongs to optional credential-key rotation, and the old synthetic fixture hid the contract mismatch.",
+      "prevention": "Validate the exact required BETA migration set with optional version 4 and phase-specific version 7, verify every checksum by its actual version, and exercise additive idempotent Telegram migration from the real initializer while preserving data, keys and delivery fences.",
+      "regression_tests": [
+        "tests/test_telegram_storage_gate.py::test_real_beta_initializer_can_enable_telegram_without_activating_key_policy",
+        "tests/test_telegram_storage_gate.py::test_real_beta_gate_rejects_missing_required_migration_before_any_ddl",
+        "tests/test_telegram_storage_gate.py::test_real_beta_gate_checks_every_actual_version_hash_before_any_ddl",
+        "tests/test_telegram_storage_gate.py::test_real_beta_gate_rejects_unknown_duplicate_or_malformed_ledger_before_ddl",
+        "tests/test_telegram_storage_gate.py::test_real_beta_gate_preserves_existing_accepted_delivery_fence_on_repeated_migration"
+      ]
     }
   ]
 }
