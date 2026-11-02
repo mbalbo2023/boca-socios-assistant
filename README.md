@@ -16,25 +16,30 @@ infrastructure**.
 > [security 41481913075](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913075)
 > passed. These are the PR's receipts, not a substitute for final-main checks.
 > PR #253 integrated lifecycle/recovery and durable Telegram gates in
-> `5ddfba568d0b53168f51c0e5b33c363ba24c505e`. PR #263 is also integrated;
-> the documented main cut is `6f7fa0939d28df7c315440bba15237b0c1bfbe77`, with
-> [CI 41511631024](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41511631024)
-> and [security 41511631004](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41511631004)
-> PASS. At that cut PR #261 was unmerged; its historical `42eb497e…` checks
-> precede the CPU and [owner argv corrections](docs/ADR/0107-opaque-owner-cli-operands.md).
-> [Status](docs/BETA_INTEGRATION_STATUS.md) separates those receipts from
-> the final exact-SHA checks required; subsequent SHA/checks belong in
+> `5ddfba568d0b53168f51c0e5b33c363ba24c505e`. PRs #261/#263/#266 are integrated
+> in main `7300c1021522a28091387a1b53c4f21dd8ad5e12`:
+> [CI 41522036069](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522036069)
+> passed 2166 tests plus 31 subtests and 34 RCA lessons/114 executed selectors;
+> [security 41522035980](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522035980)
+> passed. [Status](docs/BETA_INTEGRATION_STATUS.md) preserves earlier cuts and
+> failures. New candidates require their own checks; operational receipts belong in
 > [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
-> [Authorized public capture 41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530)
-> fetched 25 permitted GETs, all HTTP 200. Real offline Chromium returned
-> `UNKNOWN resource_outside_map`; pre/post isolation and cleanup passed.
-> The missing URL was not identified. This version implements the sanitized
-> diagnostic correction for #264 in #266/[ADR0106](docs/ADR/0106-sanitized-public-render-denials.md);
-> exact-SHA checks and authorization for a new capture remain required. No
-> further public GET is authorized, and the complete site remains unaccepted;
+> The owner-authorized preflight and public capture both ran. Infrastructure
+> [41537794166](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41537794166)
+> failed its initial read-only check, before any marker, start, observation or
+> restoration. RCA #268 records the lost diagnostic; its historical reason cannot
+> be recovered. This candidate adds bounded, read-only `infrastructure-inspect`
+> in the existing workflow ([ADR0109](docs/ADR/0109-readonly-infrastructure-diagnostics.md));
+> review/checks/merge must precede that diagnostic operation. Activation remains blocked.
+> [Public capture 41537796470](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41537796470)
+> fetched 25 permitted GETs, all HTTP 200. Chromium remained UNKNOWN after a
+> denied script GET outside the exact accepted origin, with query redacted and
+> no path disclosed; its host and function are unknown. Isolation and cleanup
+> passed. No further public GET or automatic retry is authorized;
 > see [the report](docs/quality/public-source-validation-2026-11-02.md).
-> [Host inspection 41495516709](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41495516709)
-> found the daemon inactive/dead and its socket absent, with capacity not evaluated;
+> [Read-only inspection 41538696464](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41538696464)
+> at 19:36:40 ART found the daemon inactive/dead and its socket absent, with
+> capacity not evaluated. It does not identify the earlier failed condition.
 > [port check 41497093298](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41497093298)
 > saw `127.0.0.1:8443 FREE reserved=no`
 > only at that instant. No BETA install, current dual release, real private

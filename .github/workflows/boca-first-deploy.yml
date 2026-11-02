@@ -8,7 +8,7 @@ on:
         description: Boca-only host operation; browser IPC is a separate, opt-in, protected BETA gate
         required: true
         type: choice
-        options: [inspect-prerequisites, port-check, prepare-rootless, preflight, infrastructure-preflight, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
+        options: [inspect-prerequisites, port-check, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
         description: Exact current main commit approved for the operation
         required: true
@@ -84,7 +84,7 @@ jobs:
           uv sync --frozen
       - name: Check dispatch and first-install boundaries offline
         run: |
-          uv run pytest -q tests/test_owner_enrollment_argv.py tests/test_host_cpu_capacity.py tests/test_infrastructure_preflight.py tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_beta_browser_deploy_contract.py tests/test_browser_ipc_workflow.py tests/test_host_browser_lifecycle.py tests/test_host_browser_ipc_file_stage.py tests/test_host_browser_ipc_install.py tests/test_host_browser_ipc_cleanup.py tests/test_host_browser_ipc_cross_contract.py tests/test_host_first_deploy.py tests/test_host_loopback_port.py tests/test_host_beta_install.py tests/test_host_beta_cleanup.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_owner_bootstrap.py tests/test_host_owner_bootstrap.py tests/test_host_owner_enroll_lifecycle.py tests/test_host_owner_enroll_cleanup.py tests/test_host_operation_gate.py tests/test_main_ref_gate.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_telegram_one_shot.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
+          uv run pytest -q tests/test_infrastructure_diagnostics.py tests/test_owner_enrollment_argv.py tests/test_host_cpu_capacity.py tests/test_infrastructure_preflight.py tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_beta_browser_deploy_contract.py tests/test_browser_ipc_workflow.py tests/test_host_browser_lifecycle.py tests/test_host_browser_ipc_file_stage.py tests/test_host_browser_ipc_install.py tests/test_host_browser_ipc_cleanup.py tests/test_host_browser_ipc_cross_contract.py tests/test_host_first_deploy.py tests/test_host_loopback_port.py tests/test_host_beta_install.py tests/test_host_beta_cleanup.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_owner_bootstrap.py tests/test_host_owner_bootstrap.py tests/test_host_owner_enroll_lifecycle.py tests/test_host_owner_enroll_cleanup.py tests/test_host_operation_gate.py tests/test_main_ref_gate.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_telegram_one_shot.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
       - name: Validate optional served BETA Compose model without host access
         env:
@@ -706,7 +706,7 @@ jobs:
           else
             test -z "$BOCA_FAILED_TELEGRAM_RUN_ID"
           fi
-          if [[ "$BOCA_OPERATION" = infrastructure-preflight ]]; then
+          if [[ "$BOCA_OPERATION" = infrastructure-preflight || "$BOCA_OPERATION" = infrastructure-inspect ]]; then
             [[ "$BOCA_BUDGET" = 1.5cpu-1024m-192pids || "$BOCA_BUDGET" = 1.75cpu-1152m-224pids ]]
           elif [[ "$BOCA_OPERATION" = beta-browser-install ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
@@ -729,7 +729,7 @@ jobs:
               test -z "$BOCA_RELEASE_RUN_ID"
               test -z "$BOCA_SITE_ENVELOPE"
               ;;
-            inspect-prerequisites|port-check|preflight)
+            inspect-prerequisites|port-check|preflight|infrastructure-inspect)
               test "$BOCA_HOST_READONLY_ENV_READY" = ready
               test -z "$BOCA_IMAGE_REF"
               test -z "$BOCA_RELEASE_RUN_ID"
@@ -855,7 +855,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref.json"
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref.json" "$BOCA_SOURCE_SHA"
       - name: Validate image-free infrastructure coordinates before SSH
-        if: inputs.operation == 'infrastructure-preflight'
+        if: inputs.operation == 'infrastructure-preflight' || inputs.operation == 'infrastructure-inspect'
         env:
           PYTHONPATH: src
         run: python scripts/check_deploy_inputs.py --infrastructure-preflight "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_SERVICE" "$BOCA_BUDGET" "$BOCA_RELEASE_RUN_ID"
@@ -1143,20 +1143,29 @@ jobs:
             printf 'Commit: `%s`\n\nImage: `%s`\n\nRelease run: `%s`\n' "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" "$BOCA_RELEASE_RUN_ID"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Verify inactive prepared daemon before image-free infrastructure preflight
-        if: inputs.operation == 'infrastructure-preflight'
+        if: inputs.operation == 'infrastructure-preflight' || inputs.operation == 'infrastructure-inspect'
         run: |
           remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - infrastructure-check "$BOCA_SOURCE_SHA")"
           set +e
-          timeout --signal=TERM --kill-after=5s 60s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py > "$RUNNER_TEMP/boca-infra-check.receipt" 2>/dev/null
+          (
+            umask 077
+            ulimit -f 4 || exit 125
+            timeout --signal=TERM --kill-after=5s 60s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py > "$RUNNER_TEMP/boca-infra-check.receipt" 2> "$RUNNER_TEMP/boca-infra-check.error"
+          ) 2>/dev/null
           phase_rc=$?
           set -e
-          receipt=''
-          if [[ "$phase_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-infra-check.receipt")"; fi
-          expected="BOCA_INFRA_DAEMON state=PREPARED source_sha=$BOCA_SOURCE_SHA containers=absent daemon=stopped"
-          if [[ "$phase_rc" -ne 0 || "$receipt" != "$expected" ]]; then
-            printf 'Boca infrastructure preflight: NO_GO; initial stopped boundary unverified. No start attempted. If SSH failed, host state is INDETERMINADO; no automatic retry.\n' >> "$GITHUB_STEP_SUMMARY"
+          set +e
+          python3 scripts/check_infrastructure_diagnostic.py "$BOCA_SOURCE_SHA" "$phase_rc" "$RUNNER_TEMP/boca-infra-check.receipt" "$RUNNER_TEMP/boca-infra-check.error" >> "$GITHUB_STEP_SUMMARY"
+          diagnostic_rc=$?
+          set -e
+          if [[ "$diagnostic_rc" -ne 0 ]]; then
+            printf 'Boca infrastructure boundary: NO_GO; no start attempted. An INDETERMINATE receipt requires fresh explicit read-only diagnosis; no automatic retry.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+      - name: Record read-only infrastructure inspection without daemon effects
+        if: inputs.operation == 'infrastructure-inspect'
+        run: |
+          printf 'BOCA_INFRA_INSPECT state=PASS source_sha=%s daemon=stopped start_attempted=no capacity=not_evaluated application=not_started\n' "$BOCA_SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Recheck current main immediately before temporary infrastructure daemon start
         if: inputs.operation == 'infrastructure-preflight'
         env:

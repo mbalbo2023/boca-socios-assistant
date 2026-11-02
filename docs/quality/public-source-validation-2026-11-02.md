@@ -1,8 +1,44 @@
 # Validación pública Boca Socios — 2026-11-02
 
-**Estado vigente: captura autorizada de 25 recursos ejecutada; render UNKNOWN por un recurso fuera del mapa. Sitio completo todavía no validado.**
+**Estado vigente: segunda captura expresamente autorizada ejecutada; 25 GET/200, render UNKNOWN. Sitio completo todavía no validado.**
 
-El recibo actual corresponde a [41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530): todos los GET respondieron HTTP 200, aislamiento y limpieza PASS. La identidad del recurso faltante no quedó registrada. La corrección de RCA #264 en [PR #266](https://github.com/mbalbo2023/boca-socios-assistant/pull/266) añade diagnóstico saneado, sin autorizar otro intento público. Los detalles figuran al final.
+El recibo actual es
+[41537796470/job125593993374](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41537796470/job/125593993374),
+sobre main `7300c1021522a28091387a1b53c4f21dd8ad5e12`, con #261/#266 integrados.
+[CI 41522036069](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522036069)
+pasó 2166 pruebas +31 subtests y 34 RCA/114 selectores;
+[seguridad 41522035980](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522035980)
+PASS. El propietario autorizó esta captura y el preflight de infraestructura;
+ambas pruebas se ejecutaron. No se mantiene pendiente aquella autorización ni
+se extiende a nuevos GET, reintentos o recursos.
+
+| Comprobación de la nueva captura | Resultado |
+| --- | --- |
+| Paths públicos permitidos | 25 GET, todos HTTP 200 |
+| Proxy | 25 conexiones; sin ampliación del presupuesto |
+| Chromium | Arranque y `network=none` PASS; render UNKNOWN |
+| Rechazo causal saneado | `method=GET`, `kind=script`, `same_origin=false`, `query_redacted=true`, `path=null`, `path_class=external` |
+| Contabilidad interna | 25 solicitudes evaluadas; cinco cancelaciones posteriores al STOP |
+| Aislamiento previo/posterior y limpieza selectiva | PASS |
+| Host y función del script denegado | Desconocidos; no hay URL ni contenido que permitan inferirlos |
+
+Los [recibos saneados completos](public-capture-diagnostic-2026-11-02.json)
+conservan los diez eventos de esta ejecución, incluidos los 25 paths permitidos
+y sus hashes; no contienen los cuerpos ni la URL redactada.
+
+El rechazo describe una solicitud fuera del origen exacto aceptado por el
+sanitizador; no revela un dominio ni identifica una función. No permite
+atribuirlo a analítica, CAPTCHA, un proveedor concreto o un bloqueo de Boca.
+La consulta está redactada y el path no se publica. Las cinco cancelaciones
+posteriores no son cinco dependencias nuevas ni cinco GET públicos adicionales.
+El renderer sin red no descargó el script denegado. Los 25 GET/200 y las
+barreras PASS tampoco demuestran el sitio completo conectado.
+
+La primera captura 41512196530, conservada más abajo, no registró su URL
+denegada. El nuevo recibo no permite reconstruirla ni afirmar que ambos
+rechazos correspondan al mismo recurso. No se conservan cuerpos privados para
+una inspección posterior. No hay nuevos GET, expansión automática ni retry
+autorizados por este informe; la siguiente decisión necesita evidencia concreta.
 
 ## Antecedente histórico: observación de un documento
 Recibo saneado: [public-observation-2026-11-02.json](public-observation-2026-11-02.json).
@@ -37,10 +73,11 @@ demuestra una caída de Boca ni un fallo del navegador o del instalador.
 
 Clasificación: **límite de validación impuesto por la política y dependencias
 externas aún no verificadas**. No es evidencia de un defecto de despliegue y
-no justifica reinstalar la BETA. La simulación permanece separada. No hubo
-repetición, descarga adicional ni nueva modificación de código para este informe.
+no justifica reinstalar la BETA. La simulación permanece separada. En aquel
+corte no hubo repetición ni descarga adicional; las capturas autorizadas
+posteriores se registran por separado en este informe.
 
-## Contrato de la ampliación autorizada antes del dispatch
+## Contrato histórico de la ampliación autorizada antes del primer dispatch
 
 El propietario autorizó continuar este alcance concreto. El candidato de
 [ADR 0105](../ADR/0105-bounded-public-capture-offline-render.md) implementa una
@@ -113,7 +150,9 @@ de referencias observadas, **no una declaración de necesidad runtime**.
 | JavaScript | `/_next/static/ZjtPdUbA-bZTrUy51xKDH/_ssgManifest.js` |
 
 La ampliación se autorizó para una sola ejecución con estos límites;
-se ejecutó después en 41512196530, con el resultado incompleto registrado al final. El código candidato exige coincidencia exacta
+se ejecutó después en 41512196530, con el resultado incompleto registrado abajo.
+La segunda captura 41537796470 tuvo una autorización posterior propia y mantuvo
+los mismos límites. El código exige coincidencia exacta
 de los 24 estáticos; una referencia ausente también produce STOP, sin
 descargar las demás por inercia. Requiere revisión independiente, CI y smoke
 Docker/Chromium sobre el SHA exacto antes del dispatch manual único. La
@@ -144,7 +183,7 @@ candidato. Este smoke no ejecutó la captura pública ni validó el sitio real;
 la posterior ejecución autorizada y su resultado se registran a continuación.
 
 
-## Captura pública autorizada ejecutada: resultado incompleto
+## Primera captura pública autorizada: resultado incompleto
 
 [Run 41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530),
 job `125506598762`, intento 1, ejecutó `chromium-capture-25` sobre main
@@ -177,17 +216,23 @@ tras el primer rechazo. No inventar URLs, necesidades de API o permisos desde
 ese conteo. RCA #264 registra la insuficiencia diagnóstica del renderer: sólo
 se imprimió el motivo, sin identidad saneada del recurso denegado.
 
-El próximo cambio de código añade diagnóstico limitado y regresiones,
-conservando el STOP, el presupuesto y la allowlist. Una nueva ejecución
-pública requiere autorización del dueño; no se ha repetido ni se ampliará
-la lista automáticamente. Primero hay que integrar/revisar ese diagnóstico
-y comprobar CI, seguridad y smoke offline del nuevo SHA. Esta captura no
-publicó imágenes ni instaló/modificó recursos del droplet.
+En ese corte se propuso el diagnóstico limitado y sus regresiones, conservando
+el STOP, presupuesto y allowlist. Se integró después en #266 y la segunda
+ejecución recibió autorización propia, como se registra arriba. Ninguna de las
+dos capturas publicó imágenes ni instaló/modificó recursos del droplet; no
+amplían la lista ni habilitan una repetición automática.
 
 
 
-## Diagnóstico posterior preparado, sin nueva observación pública
+## Diagnóstico integrado en #266 antes de la segunda captura
 
 [ADR0106](../ADR/0106-sanitized-public-render-denials.md) conserva la primera causa del rechazo y separa las cancelaciones posteriores al STOP. Sólo expone enums, flags de redacción y paths públicos estrictamente reconocidos: hasta ocho entradas y 4096 bytes; nunca valores de query/fragment, credenciales, cookies, cuerpos ni paths arbitrarios. El supervisor revalida el esquema. La lista de captura, los destinos, los 25 GET, el límite de 64 respuestas internas y la prohibición de reintentos permanecen intactos.
 
-La revisión independiente obtuvo 151 pruebas focales PASS y casos adversariales de privacidad/contabilidad satisfactorios. El primer corte reprodujo la ausencia del diagnóstico; otra regresión reprodujo su pérdida al contar las cancelaciones posteriores al STOP como nuevas decisiones. Ambas correcciones requieren CI/seguridad y el smoke Chromium offline del SHA integrado; los recibos exactos se registran en #45. Este cambio no identifica retrospectivamente el recurso de 41512196530, no valida el sitio completo ni autoriza un nuevo GET.
+La revisión independiente obtuvo 151 pruebas focales PASS y casos adversariales
+de privacidad/contabilidad satisfactorios. El primer corte reprodujo la ausencia
+del diagnóstico; otra regresión reprodujo su pérdida al contar cancelaciones
+posteriores al STOP como nuevas decisiones. Las correcciones se integraron en
+#266; sus recibos exactos de revisión/checks/smoke se conservan en #45 y los
+checks de main `7300c1` figuran arriba. La segunda captura real comprobó la salida
+saneada, manteniendo UNKNOWN. Esto no identifica retrospectivamente el recurso
+de 41512196530, no valida el sitio completo ni autoriza otro GET.
