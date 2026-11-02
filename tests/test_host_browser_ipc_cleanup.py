@@ -17,6 +17,7 @@ BROWSER = "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "b" * 64
 SOURCE = "c" * 40
 CONTROLLER = "d" * 64
 WORKER = "e" * 64
+PROBE = "1" * 64
 ATTEMPT = "41360122998"
 NETWORK = "boca-socios_boca_private"
 IPC_VOLUME = "boca-socios_boca_browser_ipc"
@@ -28,6 +29,18 @@ class FakeDocker:
 
     def __init__(self, storage: Path) -> None:
         self.containers: dict[str, bool] = {"controller": True, "worker": True}
+        self.probe_phase: str | None = None
+        self.probe_running = True
+        self.probe_bad_mount = False
+        self.probe_bad_label = False
+        self.probe_bad_ports = False
+        self.probe_bad_caps = False
+        self.probe_bad_command = False
+        self.probe_bad_image = False
+        self.probe_bad_user = False
+        self.probe_bad_security = False
+        self.probe_bad_env = False
+        self.duplicate_probe = False
         self.images = {IMAGE, BROWSER}
         self.volumes = set(PERSISTENT) | {IPC_VOLUME}
         self.network = True
@@ -141,6 +154,73 @@ class FakeDocker:
             },
         }
 
+    def _probe(self) -> dict[str, object]:
+        phase = self.probe_phase
+        assert phase is not None
+        spec = cleanup._browser_ipc_probe_spec(phase)
+        assert spec is not None
+        mounts = [
+            {
+                "Type": "volume",
+                "Driver": "local",
+                "Name": name,
+                "Destination": destination,
+                "RW": rw,
+            }
+            for name, destination, rw in sorted(spec.mounts)
+        ]
+        if self.probe_bad_mount:
+            mounts[0]["Name"] = "boca-socios_boca_owner"
+        labels = {
+            "com.docker.compose.project": "boca-socios",
+            "org.opencontainers.image.revision": SOURCE,
+            "boca.socios.browser-ipc-attempt": ATTEMPT,
+            "boca.socios.browser-ipc-phase": phase,
+        }
+        if self.probe_bad_label:
+            labels["boca.socios.browser-ipc-phase"] = "different"
+        return {
+            "Id": PROBE,
+            "Name": f"/boca-socios-browser-ipc-probe-{phase}-{ATTEMPT}",
+            "Config": {
+                "Image": IMAGE
+                if self.probe_bad_image
+                else (BROWSER if spec.image_is_browser else IMAGE),
+                "User": "30000:30000" if self.probe_bad_user else spec.user,
+                "Cmd": ["sh", "-c", "unreviewed"] if self.probe_bad_command else list(spec.command),
+                "Entrypoint": None,
+                "Labels": labels,
+                "Env": [
+                    "BOCA_ENVIRONMENT=staging",
+                    "BOCA_RUNTIME_MODE=simulation",
+                    "BOCA_ENGINE_MODE=off",
+                ]
+                + (["BOCA_ENGINE_MODE=live"] if self.probe_bad_env else []),
+            },
+            "HostConfig": {
+                "NetworkMode": "none",
+                "PortBindings": {"8444/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8444"}]}
+                if self.probe_bad_ports
+                else {},
+                "ReadonlyRootfs": True,
+                "Privileged": False,
+                "RestartPolicy": {"Name": "no"},
+                "CapDrop": ["ALL"],
+                "CapAdd": ["SYS_ADMIN"] if self.probe_bad_caps else list(spec.capabilities),
+                "Memory": spec.memory,
+                "NanoCpus": spec.nano_cpus,
+                "PidsLimit": spec.pids,
+                "SecurityOpt": ["seccomp=unconfined"]
+                if self.probe_bad_security
+                else ["no-new-privileges"],
+                "PublishAllPorts": False,
+                "Devices": [],
+            },
+            "Mounts": mounts,
+            "State": {"Running": self.probe_running, "Restarting": False},
+            "NetworkSettings": {"Ports": {}, "Networks": {"none": {}}},
+        }
+
     def __call__(self, *args: str) -> str:
         self.commands.append(args)
         if args[:3] == ("ps", "-a", "-q"):
@@ -153,17 +233,35 @@ class FakeDocker:
             identities = ([CONTROLLER] if "controller" in self.containers else []) + (
                 [WORKER] if "worker" in self.containers else []
             )
+            if self.probe_phase is not None:
+                identities.append(PROBE)
+            if self.duplicate_probe:
+                identities.append("2" * 64)
             if self.foreign and ("--filter" not in args):
                 identities.append("f" * 64)
             return "\n".join(identities)
         if args[:2] == ("container", "inspect"):
+            if args[-1] == "2" * 64:
+                second = self._probe()
+                second["Id"] = "2" * 64
+                return json.dumps(second)
+            if args[-1] == PROBE:
+                return json.dumps(self._probe())
             return json.dumps(self._container("controller" if args[-1] == CONTROLLER else "worker"))
         if args[:2] == ("container", "stop"):
+            if args[-1] == PROBE:
+                assert args[2:4] == ("--time", "8")
+                self.probe_running = False
+                return PROBE
             service = "controller" if args[-1] == CONTROLLER else "worker"
             assert args[2] == "--time" and args[3] == ("30" if service == "controller" else "8")
             self.containers[service] = False
             return args[-1]
         if args[:2] == ("container", "rm"):
+            if args[-1] == PROBE:
+                assert not self.probe_running
+                self.probe_phase = None
+                return PROBE
             service = "controller" if args[-1] == CONTROLLER else "worker"
             assert not self.containers[service]
             self.containers.pop(service)
@@ -388,6 +486,104 @@ def test_only_zero_one_or_two_exact_containers_removed(
             ("container", "stop", "--time", "8", WORKER)
         ) < docker.commands.index(("container", "stop", "--time", "30", CONTROLLER))
     assert "BOCA_BROWSER_IPC_CLEANUP state=CLEANED" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "ipc-dir-init",
+        "synthetic-ipc",
+        "key-init",
+        "key-verify",
+        "owner-check",
+        "config-check",
+        "data-init",
+    ],
+)
+@pytest.mark.parametrize("services", [set(), {"worker"}, {"worker", "controller"}])
+def test_orphaned_named_phase_probe_is_selectively_stopped_before_services(
+    case: tuple[FakeDocker, dict[str, object], dict[str, Path]],
+    phase: str,
+    services: set[str],
+) -> None:
+    docker, marker, _ = case
+    docker.containers = {service: True for service in services}
+    docker.probe_phase = phase
+    docker.probe_running = True
+    result = run_cleanup(marker)
+    assert result.removed_probe
+    assert result.removed_controller == ("controller" in services)
+    assert result.removed_worker == ("worker" in services)
+    assert docker.probe_phase is None and docker.containers == {}
+    assert docker.volumes == PERSISTENT
+    assert docker.commands.index(
+        ("container", "stop", "--time", "8", PROBE)
+    ) < docker.commands.index(("container", "rm", PROBE))
+    for service_id in (WORKER, CONTROLLER):
+        if any(
+            command[:2] == ("container", "stop") and command[-1] == service_id
+            for command in docker.commands
+        ):
+            assert docker.commands.index(("container", "rm", PROBE)) < next(
+                i
+                for i, command in enumerate(docker.commands)
+                if command[:2] == ("container", "stop") and command[-1] == service_id
+            )
+    assert not any("--force" in command or "--volumes" in command for command in docker.commands)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "mount",
+        "phase-label",
+        "port",
+        "capability",
+        "duplicate-probe",
+        "command",
+        "image",
+        "user",
+        "security",
+        "duplicate-env",
+    ],
+)
+def test_unreviewed_or_duplicated_helper_blocks_cleanup_without_deleting(
+    case: tuple[FakeDocker, dict[str, object], dict[str, Path]],
+    change: str,
+) -> None:
+    docker, marker, files = case
+    docker.containers = {}
+    docker.probe_phase = "ipc-dir-init"
+    if change == "mount":
+        docker.probe_bad_mount = True
+    elif change == "phase-label":
+        docker.probe_bad_label = True
+    elif change == "port":
+        docker.probe_bad_ports = True
+    elif change == "capability":
+        docker.probe_bad_caps = True
+    elif change == "command":
+        docker.probe_bad_command = True
+    elif change == "image":
+        docker.probe_bad_image = True
+    elif change == "user":
+        docker.probe_bad_user = True
+    elif change == "security":
+        docker.probe_bad_security = True
+    elif change == "duplicate-env":
+        docker.probe_phase = "owner-check"
+        docker.probe_bad_env = True
+    else:
+        docker.duplicate_probe = True
+    with pytest.raises(cleanup.CleanupError):
+        run_cleanup(marker)
+    assert docker.probe_phase is not None and files["marker"].exists()
+    assert docker.images == {IMAGE, BROWSER} and docker.volumes == PERSISTENT | {IPC_VOLUME}
+    assert not any(
+        command[:2]
+        in {("container", "stop"), ("container", "rm"), ("network", "rm"), ("image", "rm")}
+        for command in docker.commands
+    )
 
 
 def test_images_preexisting_are_retained_and_cleanup_idempotent(

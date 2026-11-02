@@ -46,6 +46,23 @@ BROWSER_IPC_SECCOMP = ROOT / "seccomp_profile.json"
 BROWSER_IPC_VOLUME = "boca-socios_boca_browser_ipc"
 BROWSER_IPC_WORKER = "/boca-socios-browser-worker-1"
 BROWSER_IPC_ATTEMPT_LABEL = "boca.socios.browser-ipc-attempt"
+BROWSER_IPC_PROBE_PHASE_LABEL = "boca.socios.browser-ipc-phase"
+BROWSER_IPC_DIR_INIT_CODE = (
+    "import os,stat; p='/run/boca-browser-ipc'; "
+    "os.chown(p,10002,10002); os.chmod(p,0o711); "
+    "s=os.stat(p,follow_symlinks=False); "
+    "assert stat.S_ISDIR(s.st_mode) and s.st_uid==10002 and s.st_gid==10002 "
+    "and stat.S_IMODE(s.st_mode)==0o711; print('BOCA_BROWSER_IPC_DIR_PASS')"
+)
+BROWSER_IPC_SYNTHETIC_CODE = (
+    "import asyncio; "
+    "from boca_socios.browser.ipc_client import UnixSyntheticBrowser; "
+    "from boca_socios.browser.contracts import SimulationOutcome; "
+    "outcome=asyncio.run(UnixSyntheticBrowser(timeout_seconds=25)."
+    "simulate_general_reservation()); "
+    "assert outcome is SimulationOutcome.RESERVED_IN_SIMULATOR; "
+    "print('BOCA_BROWSER_IPC_SYNTHETIC_PASS')"
+)
 BROWSER_IMAGE_PATTERN = re.compile(
     r"ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}\Z"
 )
@@ -115,6 +132,7 @@ class BrowserIPCCleanupResult:
 
     removed_controller: bool
     removed_worker: bool
+    removed_probe: bool
     removed_network: bool
     retained_network: bool
     removed_ipc_volume: bool
@@ -1319,6 +1337,94 @@ def _browser_ipc_stages(
     return actual_finals, actual_partials
 
 
+@dataclass(frozen=True)
+class _BrowserIPCProbeSpec:
+    image_is_browser: bool
+    user: str
+    command: tuple[str, ...]
+    mounts: frozenset[tuple[str, str, bool]]
+    capabilities: tuple[str, ...]
+    pids: int = 16
+    memory: int = 64 * 1024**2
+    nano_cpus: int = 250_000_000
+
+
+def _browser_ipc_probe_spec(phase: str) -> _BrowserIPCProbeSpec | None:
+    """The seven reviewed, sequential one-shot phases; never arbitrary run."""
+    ipc_rw = frozenset({(BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", True)})
+    ipc_ro = frozenset({(BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", False)})
+    key_rw = frozenset({("boca-socios_boca_key", "/run/secrets", True)})
+    key_ro = frozenset({("boca-socios_boca_key", "/run/secrets", False)})
+    owner_ro = frozenset({("boca-socios_boca_owner", "/run/owner", False)})
+    data_rw = frozenset({("boca-socios_boca_data", "/data", True)})
+    specs = {
+        "ipc-dir-init": _BrowserIPCProbeSpec(
+            True,
+            "0:0",
+            ("python", "-c", BROWSER_IPC_DIR_INIT_CODE),
+            ipc_rw,
+            ("CHOWN", "FOWNER"),
+        ),
+        "synthetic-ipc": _BrowserIPCProbeSpec(
+            False,
+            "10001:10001",
+            ("python", "-c", BROWSER_IPC_SYNTHETIC_CODE),
+            ipc_ro,
+            (),
+        ),
+        "key-init": _BrowserIPCProbeSpec(
+            False,
+            "0:0",
+            ("python", "-m", "boca_socios.security.key_custody", "init"),
+            key_rw,
+            ("CHOWN",),
+        ),
+        "key-verify": _BrowserIPCProbeSpec(
+            False,
+            "10001:10001",
+            ("python", "-m", "boca_socios.security.key_custody", "verify"),
+            key_ro,
+            (),
+        ),
+        "owner-check": _BrowserIPCProbeSpec(
+            False,
+            "10001:10001",
+            ("python", "-m", "boca_socios.runtime", "check-beta-owner"),
+            owner_ro,
+            (),
+        ),
+        "config-check": _BrowserIPCProbeSpec(
+            False,
+            "10001:10001",
+            ("python", "-m", "boca_socios.runtime", "check-beta-config"),
+            owner_ro | key_ro,
+            (),
+        ),
+        "data-init": _BrowserIPCProbeSpec(
+            False,
+            "10001:10001",
+            ("python", "-m", "boca_socios.runtime", "init-beta"),
+            data_rw | key_ro,
+            (),
+            pids=64,
+            memory=256 * 1024**2,
+            nano_cpus=500_000_000,
+        ),
+    }
+    return specs.get(phase)
+
+
+def _browser_ipc_probe_phase(name: object, attempt_id: str) -> str | None:
+    if not isinstance(name, str):
+        return None
+    prefix = "/boca-socios-browser-ipc-probe-"
+    suffix = "-" + attempt_id
+    if not (name.startswith(prefix) and name.endswith(suffix)):
+        return None
+    phase = name[len(prefix) : -len(suffix)]
+    return phase if _browser_ipc_probe_spec(phase) is not None else None
+
+
 def _browser_ipc_container_ids(
     image: str,
     source_sha: str,
@@ -1355,7 +1461,7 @@ def _browser_ipc_container_ids(
         all_ids != project
         or all_ids != attempts
         or all_ids != names
-        or len(all_ids) > 2
+        or len(all_ids) > 3
         or any(re.fullmatch(r"[0-9a-f]{64}", item) is None for item in all_ids)
         or (marker is None and all_ids)
     ):
@@ -1470,7 +1576,61 @@ def _browser_ipc_container_ids(
             ):
                 raise CleanupError("browser IPC worker egress or sandbox differs")
         else:
-            raise CleanupError("browser IPC container name is unreviewed")
+            phase = _browser_ipc_probe_phase(name, attempt_id)
+            spec = _browser_ipc_probe_spec(phase) if phase is not None else None
+            if spec is None:
+                raise CleanupError("browser IPC one-shot probe name is unreviewed")
+            kind = "probe"
+            configured_caps = host.get("CapAdd")
+            expected_caps = list(spec.capabilities)
+            if (
+                config.get("Image") != (browser_image if spec.image_is_browser else image)
+                or config.get("User") != spec.user
+                or config.get("Cmd") != list(spec.command)
+                or config.get("Entrypoint") not in (None, [])
+                or labels.get("com.docker.compose.service") is not None
+                or labels.get(BROWSER_IPC_PROBE_PHASE_LABEL) != phase
+                or host.get("NetworkMode") != "none"
+                or host.get("PortBindings") not in (None, {})
+                or ports not in (None, {})
+                or set(network["Networks"]) != {"none"}
+                or host.get("CapDrop") != ["ALL"]
+                or (
+                    configured_caps not in (None, [])
+                    if not expected_caps
+                    else configured_caps != expected_caps
+                )
+                or host.get("SecurityOpt")
+                not in (["no-new-privileges"], ["no-new-privileges:true"])
+                or host.get("Devices") not in (None, [])
+                or host.get("PublishAllPorts") is not False
+                or host.get("PidsLimit") != spec.pids
+                or host.get("Memory") != spec.memory
+                or host.get("NanoCpus") != spec.nano_cpus
+                or len(mounts) != len(spec.mounts)
+                or actual_mounts != spec.mounts
+                or any(m.get("Driver") != "local" for m in mounts)
+            ):
+                raise CleanupError("browser IPC one-shot probe isolation or phase differs")
+            if phase in {"owner-check", "config-check", "data-init"}:
+                entries = config.get("Env")
+                if not isinstance(entries, list) or any(
+                    type(entry) is not str for entry in entries
+                ):
+                    raise CleanupError("browser IPC probe simulation environment unavailable")
+                environment: dict[str, str] = {}
+                for entry in entries:
+                    key, separator, value = entry.partition("=")
+                    if separator != "=" or not key or key in environment:
+                        raise CleanupError("browser IPC probe environment is ambiguous")
+                    environment[key] = value
+                required_env = {
+                    "BOCA_ENVIRONMENT": "staging",
+                    "BOCA_RUNTIME_MODE": "simulation",
+                    "BOCA_ENGINE_MODE": "off",
+                }
+                if any(environment.get(key) != value for key, value in required_env.items()):
+                    raise CleanupError("browser IPC probe lacks simulation-only gates")
         if kind in found:
             raise CleanupError("browser IPC service has multiple containers")
         found[kind] = container_id
@@ -1604,6 +1764,8 @@ def _browser_ipc_inventory(
             raise CleanupError("browser IPC running controller image unavailable")
         if "worker" in containers and not worker_image[0]:
             raise CleanupError("browser IPC running worker image unavailable")
+        if "probe" in containers and (not controller_image[0] or not worker_image[0]):
+            raise CleanupError("browser IPC one-shot probe image provenance unavailable")
     return marker, containers, volumes, bridge, files, partials, controller_image, worker_image
 
 
@@ -1642,7 +1804,7 @@ def clean_failed_browser_ipc_install(
         return _browser_ipc_container_ids(image, source_sha, browser_image, attempt_id, marker)
 
     try:
-        for service, stop_seconds in (("worker", "8"), ("controller", "30")):
+        for service, stop_seconds in (("probe", "8"), ("worker", "8"), ("controller", "30")):
             container_id = containers.get(service)
             if container_id is None:
                 continue
@@ -1785,6 +1947,7 @@ def clean_failed_browser_ipc_install(
     result = BrowserIPCCleanupResult(
         removed_controller="controller" in containers,
         removed_worker="worker" in containers,
+        removed_probe="probe" in containers,
         removed_network=bridge is not None,
         retained_network=False,
         removed_ipc_volume=BROWSER_IPC_VOLUME in volumes,
