@@ -412,6 +412,7 @@ def case(
 
     original_lstat = Path.lstat
     original_fstat = os.fstat
+    original_stat = os.stat
 
     def owned_lstat(path: Path) -> os.stat_result | SimpleNamespace:
         metadata = original_lstat(path)
@@ -433,7 +434,7 @@ def case(
             pointed = Path(os.readlink(f"/proc/self/fd/{descriptor}"))
         except OSError:
             return metadata
-        if pointed in files.values():
+        if pointed in {root, *files.values()}:
             return SimpleNamespace(
                 st_mode=metadata.st_mode,
                 st_uid=10001,
@@ -445,8 +446,31 @@ def case(
             )
         return metadata
 
+    def owned_stat(
+        path: str | os.PathLike[str], *args: object, **kwargs: object
+    ) -> os.stat_result | SimpleNamespace:
+        metadata = original_stat(path, *args, **kwargs)
+        directory = kwargs.get("dir_fd")
+        if isinstance(directory, int):
+            try:
+                resolved_dir = Path(os.readlink(f"/proc/self/fd/{directory}"))
+            except OSError:
+                return metadata
+            if resolved_dir == root and Path(path).name in {file.name for file in files.values()}:
+                return SimpleNamespace(
+                    st_mode=metadata.st_mode,
+                    st_uid=10001,
+                    st_gid=10001,
+                    st_size=metadata.st_size,
+                    st_nlink=metadata.st_nlink,
+                    st_ino=metadata.st_ino,
+                    st_dev=metadata.st_dev,
+                )
+        return metadata
+
     monkeypatch.setattr(Path, "lstat", owned_lstat)
     monkeypatch.setattr(os, "fstat", owned_fstat)
+    monkeypatch.setattr(os, "stat", owned_stat)
     monkeypatch.setattr(cleanup, "ROOT", root)
     monkeypatch.setattr(cleanup, "BETA_COMPOSE", finals["base"])
     monkeypatch.setattr(cleanup, "BROWSER_IPC_OVERLAY", finals["overlay"])
@@ -483,6 +507,118 @@ def run_cleanup(marker: dict[str, object]) -> cleanup.BrowserIPCCleanupResult:
         str(marker["seccomp_sha"]),
         ATTEMPT,
     )
+
+
+@pytest.mark.parametrize(
+    "slots", [("base",), ("overlay",), ("seccomp",), ("base", "overlay", "seccomp")]
+)
+def test_crash_after_link_before_unlink_removes_only_exact_same_inode_pair(
+    case: tuple[FakeDocker, dict[str, object], dict[str, Path]],
+    slots: tuple[str, ...],
+) -> None:
+    docker, marker, files = case
+    # C2d invokes staging before browser-apply; no new Docker resources exist
+    # when the final/.part hardlink publication window is interrupted.
+    docker.containers = {}
+    docker.network = False
+    docker.images = set()
+    docker.volumes = set(PERSISTENT)
+    for slot in slots:
+        final = files[slot]
+        partial = files[f"partial-{slot}"]
+        partial.unlink()
+        os.link(final, partial)  # C2a1 crash between os.link(final) and unlink(.part)
+        assert final.stat().st_ino == partial.stat().st_ino
+        assert final.stat().st_nlink == partial.stat().st_nlink == 2
+    result = run_cleanup(marker)
+    assert result.removed_partials == 3
+    assert not any(path.exists() for path in files.values())
+    assert docker.volumes == PERSISTENT
+    assert docker.containers == {} and not docker.images and not docker.network
+    assert all(not path.is_symlink() for path in files.values())
+
+
+@pytest.mark.parametrize(
+    "change", ["third-hardlink", "wrong-slot", "wrong-bytes", "wrong-mode", "symlink-counterpart"]
+)
+def test_unproven_staging_link_never_deletes_anything(
+    case: tuple[FakeDocker, dict[str, object], dict[str, Path]],
+    change: str,
+    tmp_path: Path,
+) -> None:
+    docker, marker, files = case
+    final = files["base"]
+    partial = files["partial-base"]
+    partial.unlink()
+    if change == "symlink-counterpart":
+        partial.symlink_to(final)
+    elif change == "wrong-slot":
+        other = files["partial-overlay"]
+        other.unlink()
+        os.link(final, other)
+        partial.write_bytes(b"interrupted")
+        partial.chmod(0o600)
+    else:
+        os.link(final, partial)
+        if change == "third-hardlink":
+            os.link(final, tmp_path / "foreign-hardlink")
+        elif change == "wrong-bytes":
+            final.write_bytes(b"different reviewed bytes")
+        elif change == "wrong-mode":
+            final.chmod(0o644)
+    with pytest.raises(cleanup.CleanupError):
+        run_cleanup(marker)
+    assert files["marker"].exists() and final.exists()
+    assert docker.volumes == PERSISTENT | {IPC_VOLUME}
+    assert docker.images == {IMAGE, BROWSER} and docker.network
+    assert not any(
+        command[:2]
+        in {
+            ("container", "stop"),
+            ("container", "rm"),
+            ("network", "rm"),
+            ("volume", "rm"),
+            ("image", "rm"),
+        }
+        for command in docker.commands
+    )
+    if change == "third-hardlink":
+        assert (tmp_path / "foreign-hardlink").read_bytes() == final.read_bytes()
+
+
+def test_dirfd_nofollow_refuses_symlink_swap_during_exact_stage_unlink(
+    case: tuple[FakeDocker, dict[str, object], dict[str, Path]],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    docker, marker, files = case
+    docker.containers = {}
+    docker.network = False
+    docker.images = set()
+    docker.volumes = set(PERSISTENT)
+    foreign = tmp_path / "foreign-owner-artifact"
+    foreign.write_bytes(b"must-never-delete-foreign")
+    partial = files["partial-base"]
+    original_open = os.open
+    swapped = False
+
+    def swap_when_dirfd_pins_name(
+        path: str | os.PathLike[str], flags: int, *args: object, **kwargs: object
+    ) -> int:
+        nonlocal swapped
+        if path == partial.name and kwargs.get("dir_fd") is not None and not swapped:
+            assert flags & os.O_NOFOLLOW and flags & os.O_NONBLOCK
+            swapped = True
+            partial.unlink()
+            partial.symlink_to(foreign)
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", swap_when_dirfd_pins_name)
+    with pytest.raises(cleanup.CleanupIndeterminate):
+        run_cleanup(marker)
+    assert swapped and partial.is_symlink() and files["marker"].exists()
+    assert foreign.read_bytes() == b"must-never-delete-foreign"
+    assert docker.volumes == PERSISTENT
 
 
 @pytest.mark.parametrize("services", [set(), {"controller"}, {"worker"}, {"controller", "worker"}])

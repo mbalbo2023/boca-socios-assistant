@@ -1113,7 +1113,9 @@ def _browser_ipc_coordinates(
         raise CleanupError("invalid immutable browser IPC attempt coordinates")
 
 
-def _browser_ipc_read_private(path: Path, metadata: os.stat_result, limit: int) -> bytes:
+def _browser_ipc_read_private(
+    path: Path, metadata: os.stat_result, limit: int, *, expected_links: int = 1
+) -> bytes:
     """A pathname swap to FIFO/symlink cannot block or redirect a provenance read."""
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
@@ -1123,7 +1125,7 @@ def _browser_ipc_read_private(path: Path, metadata: os.stat_result, limit: int) 
                 not stat.S_ISREG(opened.st_mode)
                 or opened.st_uid != metadata.st_uid
                 or opened.st_gid != metadata.st_gid
-                or opened.st_nlink != 1
+                or opened.st_nlink != expected_links
                 or opened.st_dev != metadata.st_dev
                 or opened.st_ino != metadata.st_ino
                 or opened.st_size != metadata.st_size
@@ -1287,19 +1289,31 @@ def _browser_ipc_attempt_marker(
     return value
 
 
-def _browser_ipc_stage(path: Path, sha: str | None, *, partial: bool = False) -> bool:
-    """Check a single exact, private regular file; a partial has no final hash."""
+def _browser_ipc_stage(
+    path: Path,
+    sha: str | None,
+    *,
+    partial: bool = False,
+    pair: tuple[Path, str] | None = None,
+) -> bool:
+    """Admit only one inode, or the exact reviewed final+.part two-link pair.
+
+    The staging helper publishes a final name with link(2), then removes its
+    original .part name. A crash between those two calls has exactly two links
+    to *one* regular UID10001 inode. Other hardlinks are never disposable.
+    """
     try:
         metadata = path.lstat()
     except FileNotFoundError:
         return False
     except OSError as exc:
         raise CleanupError("browser IPC staged file unavailable") from exc
+    links = metadata.st_nlink
     if (
         not stat.S_ISREG(metadata.st_mode)
         or metadata.st_uid != 10001
         or metadata.st_gid != 10001
-        or metadata.st_nlink != 1
+        or links not in (1, 2)
         or (
             stat.S_IMODE(metadata.st_mode) != 0o600
             if partial
@@ -1308,6 +1322,32 @@ def _browser_ipc_stage(path: Path, sha: str | None, *, partial: bool = False) ->
         or metadata.st_size > 32768
     ):
         raise CleanupError("browser IPC staged file identity unsafe")
+    if links == 2:
+        if pair is None or path.parent != ROOT or pair[0].parent != ROOT or pair[0] == path:
+            raise CleanupError("browser IPC staged file has unproven hardlink")
+        sibling, paired_sha = pair
+        try:
+            counterpart = sibling.lstat()
+        except OSError as exc:
+            raise CleanupError("browser IPC staged hardlink counterpart unavailable") from exc
+        if (
+            not stat.S_ISREG(counterpart.st_mode)
+            or counterpart.st_uid != 10001
+            or counterpart.st_gid != 10001
+            or counterpart.st_nlink != 2
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or stat.S_IMODE(counterpart.st_mode) != 0o600
+            or counterpart.st_dev != metadata.st_dev
+            or counterpart.st_ino != metadata.st_ino
+            or counterpart.st_size != metadata.st_size
+            or DIGEST_PATTERN.fullmatch(paired_sha) is None
+            or (sha is not None and sha != paired_sha)
+        ):
+            raise CleanupError("browser IPC staged hardlink pair is not exact")
+        raw = _browser_ipc_read_private(path, metadata, 32768, expected_links=2)
+        if hashlib.sha256(raw).hexdigest() != paired_sha:
+            raise CleanupError("browser IPC staged hardlink bytes differ from reviewed source")
+        return True
     if sha is not None:
         raw = _browser_ipc_read_private(path, metadata, 32768)
         if len(raw) != metadata.st_size or hashlib.sha256(raw).hexdigest() != sha:
@@ -1322,19 +1362,129 @@ def _browser_ipc_stages(
     seccomp_sha: str,
     attempt_id: str,
 ) -> tuple[dict[Path, bool], dict[Path, bool]]:
-    finals = {
-        BETA_COMPOSE: beta_sha,
-        BROWSER_IPC_OVERLAY: overlay_sha,
-        BROWSER_IPC_SECCOMP: seccomp_sha,
-    }
-    partials = {
-        ROOT / f".browser-ipc-{kind}-{attempt_id}.part" for kind in ("base", "overlay", "seccomp")
-    }
-    actual_finals = {path: _browser_ipc_stage(path, sha) for path, sha in finals.items()}
-    actual_partials = {path: _browser_ipc_stage(path, None, partial=True) for path in partials}
+    slots = (
+        ("base", BETA_COMPOSE, beta_sha),
+        ("overlay", BROWSER_IPC_OVERLAY, overlay_sha),
+        ("seccomp", BROWSER_IPC_SECCOMP, seccomp_sha),
+    )
+    actual_finals: dict[Path, bool] = {}
+    actual_partials: dict[Path, bool] = {}
+    for kind, final, sha in slots:
+        partial_path = ROOT / f".browser-ipc-{kind}-{attempt_id}.part"
+        actual_finals[final] = _browser_ipc_stage(final, sha, pair=(partial_path, sha))
+        actual_partials[partial_path] = _browser_ipc_stage(
+            partial_path, None, partial=True, pair=(final, sha)
+        )
     if marker is None and (any(actual_finals.values()) or any(actual_partials.values())):
         raise CleanupError("browser IPC staged files lack attempt provenance")
     return actual_finals, actual_partials
+
+
+def _browser_ipc_unlink_stage(
+    path: Path,
+    sha: str | None,
+    *,
+    partial: bool = False,
+    pair: tuple[Path, str] | None = None,
+) -> None:
+    """Delete one reviewed Boca basename through a pinned private directory FD.
+
+    A two-link pair must still consist of the exact final+.part names with
+    matching SHA. Revalidate both inode and directory immediately before and
+    after unlinkat; a changed pathname or a third hardlink is never accepted.
+    """
+    if path.parent != ROOT or not _browser_ipc_stage(path, sha, partial=partial, pair=pair):
+        raise CleanupError("browser IPC stage changed before unlink")
+    metadata = path.lstat()
+    root_meta = ROOT.lstat()
+    directory = -1
+    opened_file = -1
+    try:
+        directory = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        pinned_root = os.fstat(directory)
+        if (
+            not stat.S_ISDIR(pinned_root.st_mode)
+            or pinned_root.st_uid != 10001
+            or pinned_root.st_gid != 10001
+            or stat.S_IMODE(pinned_root.st_mode) != 0o700
+            or pinned_root.st_dev != root_meta.st_dev
+            or pinned_root.st_ino != root_meta.st_ino
+        ):
+            raise CleanupError("browser IPC cleanup directory was replaced")
+        opened_file = os.open(
+            path.name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=directory,
+        )
+        opened_meta = os.fstat(opened_file)
+        if (
+            not stat.S_ISREG(opened_meta.st_mode)
+            or opened_meta.st_uid != 10001
+            or opened_meta.st_gid != 10001
+            or opened_meta.st_dev != metadata.st_dev
+            or opened_meta.st_ino != metadata.st_ino
+            or opened_meta.st_nlink != metadata.st_nlink
+            or opened_meta.st_size != metadata.st_size
+            or stat.S_IMODE(opened_meta.st_mode) != stat.S_IMODE(metadata.st_mode)
+        ):
+            raise CleanupError("browser IPC staged inode changed before unlink")
+        current = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+        if (
+            current.st_dev != opened_meta.st_dev
+            or current.st_ino != opened_meta.st_ino
+            or current.st_nlink != opened_meta.st_nlink
+            or current.st_uid != 10001
+            or current.st_gid != 10001
+        ):
+            raise CleanupError("browser IPC staged name changed before unlink")
+        expected_sha = (
+            sha
+            if sha is not None
+            else pair[1]
+            if pair is not None and opened_meta.st_nlink == 2
+            else None
+        )
+        if expected_sha is not None:
+            if hashlib.sha256(os.read(opened_file, 32769)).hexdigest() != expected_sha:
+                raise CleanupError("browser IPC stage content changed before unlink")
+        if opened_meta.st_nlink == 2:
+            if pair is None:
+                raise CleanupError("browser IPC unpaired staged hardlink")
+            sibling, _ = pair
+            if sibling.parent != ROOT:
+                raise CleanupError("browser IPC staged hardlink leaves private directory")
+            sibling_meta = os.stat(sibling.name, dir_fd=directory, follow_symlinks=False)
+            if (
+                not stat.S_ISREG(sibling_meta.st_mode)
+                or sibling_meta.st_dev != opened_meta.st_dev
+                or sibling_meta.st_ino != opened_meta.st_ino
+                or sibling_meta.st_nlink != 2
+                or sibling_meta.st_uid != 10001
+                or sibling_meta.st_gid != 10001
+                or stat.S_IMODE(sibling_meta.st_mode) != 0o600
+            ):
+                raise CleanupError("browser IPC paired name changed before unlink")
+        os.unlink(path.name, dir_fd=directory)
+        try:
+            os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise CleanupError("browser IPC staged basename remained after unlink")
+        if opened_meta.st_nlink == 2 and pair is not None:
+            remaining, expected_sha = pair
+            if not _browser_ipc_stage(remaining, expected_sha):
+                raise CleanupError("browser IPC reviewed counterpart missing after unlink")
+        root_after = ROOT.lstat()
+        if root_after.st_dev != pinned_root.st_dev or root_after.st_ino != pinned_root.st_ino:
+            raise CleanupError("browser IPC cleanup directory moved during unlink")
+    except OSError as exc:
+        raise CleanupError("browser IPC pinned staging unlink failed") from exc
+    finally:
+        if opened_file >= 0:
+            os.close(opened_file)
+        if directory >= 0:
+            os.close(directory)
 
 
 @dataclass(frozen=True)
@@ -1905,12 +2055,18 @@ def clean_failed_browser_ipc_install(
 
         # A partial has no final content hash; exact name, attempt ID, owner,
         # link count, regular type, private mode and size are its only authority.
+        pairs = {
+            ROOT / f".browser-ipc-base-{attempt_id}.part": (BETA_COMPOSE, beta_sha),
+            ROOT / f".browser-ipc-overlay-{attempt_id}.part": (BROWSER_IPC_OVERLAY, overlay_sha),
+            ROOT / f".browser-ipc-seccomp-{attempt_id}.part": (BROWSER_IPC_SECCOMP, seccomp_sha),
+        }
         for path, existed in sorted(partials.items()):
             if existed:
-                if not _browser_ipc_stage(path, None, partial=True):
+                paired = pairs[path]
+                if not _browser_ipc_stage(path, None, partial=True, pair=paired):
                     raise CleanupError("browser IPC partial changed before removal")
                 attempted = True
-                path.unlink()
+                _browser_ipc_unlink_stage(path, None, partial=True, pair=paired)
         for path, existed in sorted(files.items()):
             if existed:
                 expected_sha = {
@@ -1921,7 +2077,7 @@ def clean_failed_browser_ipc_install(
                 if not _browser_ipc_stage(path, expected_sha):
                     raise CleanupError("browser IPC staged artifact changed before removal")
                 attempted = True
-                path.unlink()
+                _browser_ipc_unlink_stage(path, expected_sha)
 
         if marker is not None:
             if (
