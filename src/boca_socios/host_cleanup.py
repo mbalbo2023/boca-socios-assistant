@@ -205,7 +205,15 @@ def _run(*args: str) -> str:
         ):
             raise ImageAbsent("exact Boca image absent")
         raise CleanupError("Boca-only Docker query or operation failed")
-    if len(result.stdout) > 16_384:
+    # A pinned 32 KiB browser seccomp document is embedded (minified) in
+    # Docker's HostConfig.SecurityOpt. An exact container inspect is still
+    # bounded, but needs more room than the generic metadata limit.
+    inspected_container = (
+        args[:4] == ("container", "inspect", "--format", "{{json .}}")
+        and len(args) == 5
+        and re.fullmatch(r"[0-9a-f]{64}", args[4]) is not None
+    )
+    if len(result.stdout) > (65_536 if inspected_container else 16_384):
         raise CleanupError("Boca Docker metadata exceeds bounded output")
     return result.stdout.strip()
 
@@ -1114,6 +1122,56 @@ def _browser_ipc_read_private(path: Path, metadata: os.stat_result, limit: int) 
     return raw
 
 
+def _browser_ipc_embedded_seccomp(marker: dict[str, object] | None) -> str:
+    """Match Docker CLI's json.Compact of the *reviewed staged profile*.
+
+    `docker --security-opt seccomp=/path` sends its compact JSON to the daemon,
+    not the path. Checking for a path in HostConfig would reject every valid
+    worker; checking only the `seccomp=` prefix would permit `unconfined`.
+    """
+    if marker is None or type(marker.get("seccomp_sha")) is not str:
+        raise CleanupError("browser IPC worker lacks reviewed staged seccomp profile")
+    seccomp_sha = marker["seccomp_sha"]
+    if not isinstance(seccomp_sha, str) or not _browser_ipc_stage(BROWSER_IPC_SECCOMP, seccomp_sha):
+        raise CleanupError("browser IPC worker lacks reviewed staged seccomp profile")
+    metadata = BROWSER_IPC_SECCOMP.lstat()
+
+    def unique_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        value: dict[str, object] = {}
+        for key, child in pairs:
+            if key in value:
+                raise CleanupError("browser IPC seccomp has duplicate JSON keys")
+            value[key] = child
+        return value
+
+    try:
+        raw = _browser_ipc_read_private(BROWSER_IPC_SECCOMP, metadata, 32768)
+        text = raw.decode("utf-8")
+        if not isinstance(json.loads(text, object_pairs_hook=unique_fields), dict):
+            raise CleanupError("browser IPC seccomp profile is not a JSON object")
+    except (UnicodeError, ValueError) as exc:
+        raise CleanupError("browser IPC staged seccomp profile invalid") from exc
+    # Docker CLI parseSecurityOpts uses encoding/json.Compact: it removes
+    # whitespace outside strings but preserves original bytes within them.
+    compact: list[str] = []
+    in_string = escaped = False
+    for char in text:
+        if in_string:
+            compact.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            compact.append(char)
+            in_string = True
+        elif char not in " \t\n\r":
+            compact.append(char)
+    return "seccomp=" + "".join(compact)
+
+
 def _browser_ipc_attempt_marker(
     image: str,
     source_sha: str,
@@ -1376,6 +1434,7 @@ def _browser_ipc_container_ids(
                 raise CleanupError("browser IPC controller ports or mounts differ")
         elif name == BROWSER_IPC_WORKER:
             kind = "worker"
+            expected_seccomp = _browser_ipc_embedded_seccomp(marker)
             if (
                 config.get("Image") != browser_image
                 or config.get("User") != "10002:10002"
@@ -1403,7 +1462,7 @@ def _browser_ipc_container_ids(
                 or not isinstance(host.get("SecurityOpt"), list)
                 or len(host["SecurityOpt"]) != 2
                 or "no-new-privileges:true" not in host["SecurityOpt"]
-                or "seccomp=/srv/boca-socios/seccomp_profile.json" not in host["SecurityOpt"]
+                or expected_seccomp not in host["SecurityOpt"]
             ):
                 raise CleanupError("browser IPC worker egress or sandbox differs")
         else:
@@ -1808,7 +1867,14 @@ def main(argv: list[str] | None = None) -> int:
         else:
             clean_failed_install(args.image, args.source_sha, args.compose_sha)
     except CleanupIndeterminate:
-        print("BOCA_CLEANUP_INDETERMINADO: re-inventory Boca before retry", file=sys.stderr)
+        if args.browser_ipc_v2:
+            print(
+                "BOCA_BROWSER_IPC_CLEANUP_INDETERMINATE: manual Boca-only inventory; "
+                "do not retry automatically",
+                file=sys.stderr,
+            )
+        else:
+            print("BOCA_CLEANUP_INDETERMINADO: re-inventory Boca before retry", file=sys.stderr)
         return 1
     except (CleanupError, OSError, ValueError) as exc:
         print(f"BOCA_CLEANUP_NO_GO: {exc}", file=sys.stderr)

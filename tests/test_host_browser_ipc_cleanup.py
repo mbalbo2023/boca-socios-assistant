@@ -36,6 +36,8 @@ class FakeDocker:
         self.port = "8443"
         self.worker_network = "none"
         self.worker_mount = IPC_VOLUME
+        self.seccomp_profile = '{"defaultAction":"SCMP_ACT_ERRNO","syscalls":[]}'
+        self.seccomp_override: str | None = None
         self.mutate_then_fail = False
         self.commands: list[tuple[str, ...]] = []
         self.storage = storage
@@ -97,7 +99,7 @@ class FakeDocker:
             if controller
             else [
                 "no-new-privileges:true",
-                "seccomp=/srv/boca-socios/seccomp_profile.json",
+                self.seccomp_override or ("seccomp=" + self.seccomp_profile),
             ],
         }
         if not controller:
@@ -240,7 +242,10 @@ def case(
         "seccomp": root / "seccomp_profile.json",
     }
     for name, path in finals.items():
-        path.write_text(f"reviewed-{name}\n")
+        if name == "seccomp":
+            path.write_text('{\n  "defaultAction": "SCMP_ACT_ERRNO",\n  "syscalls": []\n}\n')
+        else:
+            path.write_text(f"reviewed-{name}\n")
         path.chmod(0o600)
     marker: dict[str, object] = {
         "version": "browser-ipc-new-only-v2",
@@ -501,6 +506,61 @@ def test_uncertain_inventory_refuses_before_any_mutation(
     )
 
 
+@pytest.mark.parametrize(
+    "security_opt",
+    [
+        "seccomp=/srv/boca-socios/seccomp_profile.json",
+        "seccomp=unconfined",
+        'seccomp={"defaultAction":"SCMP_ACT_ALLOW","syscalls":[]}',
+    ],
+)
+def test_worker_security_opt_must_embed_exact_reviewed_json(
+    case: tuple[FakeDocker, dict[str, object], dict[str, Path]],
+    security_opt: str,
+) -> None:
+    docker, marker, files = case
+    docker.seccomp_override = security_opt
+    with pytest.raises(cleanup.CleanupError):
+        run_cleanup(marker)
+    assert files["marker"].exists()
+    assert docker.images == {IMAGE, BROWSER} and docker.volumes == PERSISTENT | {IPC_VOLUME}
+    assert not any(
+        command[:2] in {("container", "stop"), ("container", "rm")} for command in docker.commands
+    )
+
+
+def test_seccomp_duplicate_json_key_rejected_even_with_matching_stage_digest(
+    case: tuple[FakeDocker, dict[str, object], dict[str, Path]],
+) -> None:
+    docker, marker, files = case
+    files["seccomp"].write_text(
+        '{"defaultAction":"SCMP_ACT_ERRNO","defaultAction":"SCMP_ACT_ALLOW"}'
+    )
+    marker["seccomp_sha"] = hashlib.sha256(files["seccomp"].read_bytes()).hexdigest()
+    files["marker"].write_bytes(
+        json.dumps(marker, sort_keys=True, separators=(",", ":")).encode("ascii")
+    )
+    with pytest.raises(cleanup.CleanupError):
+        run_cleanup(marker)
+    assert files["seccomp"].exists() and files["marker"].exists()
+    assert docker.images == {IMAGE, BROWSER}
+    assert not any(command[:2] == ("container", "stop") for command in docker.commands)
+
+
+def test_large_exact_worker_inspect_remains_bounded_without_general_relaxation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(returncode=0, stdout="x" * 20_000, stderr="")
+
+    monkeypatch.setattr(cleanup.subprocess, "run", fake_run)
+    assert len(cleanup._run("container", "inspect", "--format", "{{json .}}", WORKER)) == 20_000
+    with pytest.raises(cleanup.CleanupError, match="bounded output"):
+        cleanup._run("volume", "inspect", "--format", "{{json .}}", IPC_VOLUME)
+    with pytest.raises(cleanup.CleanupError, match="bounded output"):
+        cleanup._run("container", "inspect", "--format", "{{json .}}", "bad-id")
+
+
 def test_mid_cleanup_error_is_indeterminate_and_does_not_retry(
     case: tuple[FakeDocker, dict[str, object], dict[str, Path]],
 ) -> None:
@@ -578,3 +638,34 @@ def test_cli_rejects_invalid_arity_before_any_docker_operation(
     assert "BOCA_CLEANUP_NO_GO" in capsys.readouterr().err
     assert cleanup.main([IMAGE, SOURCE, str(marker["beta_compose_sha"]), BROWSER]) == 1
     assert not docker.commands
+
+
+def test_cli_indeterminate_requires_manual_review_without_browser_retry(
+    case: tuple[FakeDocker, dict[str, object], dict[str, Path]],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _, marker, _ = case
+
+    def uncertain(*_args: object) -> None:
+        raise cleanup.CleanupIndeterminate("simulated mid-operation failure")
+
+    monkeypatch.setattr(cleanup, "clean_failed_browser_ipc_install", uncertain)
+    assert (
+        cleanup.main(
+            [
+                "--browser-ipc-v2",
+                IMAGE,
+                SOURCE,
+                str(marker["beta_compose_sha"]),
+                BROWSER,
+                str(marker["overlay_compose_sha"]),
+                str(marker["seccomp_sha"]),
+                ATTEMPT,
+            ]
+        )
+        == 1
+    )
+    output = capsys.readouterr().err
+    assert "BOCA_BROWSER_IPC_CLEANUP_INDETERMINATE" in output
+    assert "do not retry automatically" in output
