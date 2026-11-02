@@ -1,19 +1,24 @@
 # ADR 0103: preflight de infraestructura antes de publicar imágenes
 
-**Estado:** integrado por PR #261; presente junto con #266 en main
-`7300c1021522a28091387a1b53c4f21dd8ad5e12`, 2026-11-02.
-[CI 41522036069](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522036069)
-y [seguridad 41522035980](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522035980)
+**Estado:** integrado por PR #261; presente junto con #266/#269/#270 en main
+`fe70271f940dbc6fc1f422907f5e7254eb2ae508`, 2026-11-02.
+[CI 41544296010](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41544296010)
+y [seguridad 41544295980](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41544295980)
 PASS. El preflight autorizado
 [41537794166/job125593988779](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41537794166/job/125593988779)
 falló en el control inicial de sólo lectura: marcador, arranque, observación
 y restauración quedaron SKIPPED, sin efectos del intento. Su motivo se perdió
 por el defecto de observabilidad RCA #268 y no puede reconstruirse desde ese
 recibo. La inspección posterior 41538696464 observó el daemon detenido, pero
-no identifica la condición original ni evalúa capacidad. El candidato de
-[ADR0109](0109-readonly-infrastructure-diagnostics.md) añade una inspección
-diagnóstica sin efectos; requiere revisión, checks y merge antes de ejecutarse.
-No sustituye este preflight ni relaja sus controles. Evidencia posterior: #45.
+no identifica la condición original ni evalúa capacidad. PR #269 integró
+[ADR0109](0109-readonly-infrastructure-diagnostics.md). Su inspección
+[41542349197](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41542349197/job/125609403017)
+devolvió `effective_preflight_unit_unverified`, `rc=1`, transporte confirmado
+y `start_attempted=no`. RCA #271 reproduce un parser incompatible con arrays
+Exec vacíos omitidos por systemd, pero los campos exactos de aquel host no se
+capturaron. La corrección candidata de lectura tipada
+[ADR0111](0111-typed-effective-unit-properties.md) no sustituye este preflight
+ni relaja sus controles; no hay PASS de capacidad. Evidencia posterior: #45.
 
 La preparación histórica partió de `5ddfba568d0b53168f51c0e5b33c363ba24c505e`;
 la corrección CPU siguió al smoke del candidato

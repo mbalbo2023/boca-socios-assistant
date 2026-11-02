@@ -1,9 +1,12 @@
 # ADR 0109: diagnóstico acotado de la frontera de infraestructura
 
-**Estado:** candidato para [RCA #268](https://github.com/mbalbo2023/boca-socios-assistant/issues/268),
-2026-11-02, basado en main `7300c1021522a28091387a1b53c4f21dd8ad5e12`.
-La revisión y los checks del candidato exacto preceden el merge; no se ha
-ejecutado esta nueva operación en el host.
+**Estado:** integrado por PR #269 para
+[RCA #268](https://github.com/mbalbo2023/boca-socios-assistant/issues/268),
+2026-11-02, en main `4b0c65becea753151d39acaf12f9bbacc6199407`.
+CI/seguridad postmerge 41541729447/41541729743 PASS, con 2235 pruebas
++31 subtests. La operación autorizada 41542349197 ya se ejecutó y devolvió
+un rechazo acotado; la activación sigue bloqueada. Presente en el corte
+posterior main `fe70271f940dbc6fc1f422907f5e7254eb2ae508`.
 
 ## Incidente y evidencia
 
@@ -25,6 +28,22 @@ La posterior inspección existente
 sí conectó y observó UID10001, daemon inactive/dead y socket ausente, sin
 operaciones Docker. Es una observación nueva; no reconstruye la razón perdida
 ni prueba las comparaciones de configuración del chequeo más estricto.
+
+El nuevo [infrastructure-inspect 41542349197/job125609403017](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41542349197/job/125609403017),
+20:03:38–20:03:40 ART, sí conservó el diagnóstico del helper:
+`state=NO_GO`, `rc=1`, `transport=confirmed`,
+`reason=effective_preflight_unit_unverified`, `start_attempted=no`.
+No hubo arranque ni operación Docker; capacidad no evaluada. Esto confirma
+el rechazo actual de la lectura de la unidad, no recupera el motivo del primer run.
+[RCA #271 y prueba independiente](https://github.com/mbalbo2023/boca-socios-assistant/issues/271#issuecomment-6590959214)
+demuestran que el renderer oficial de systemd v255 omite arrays Exec vacíos incluso
+con `--all`, mientras el parser exigía sus líneas. El output exacto del host no
+quedó registrado: no se atribuyen campos omitidos concretos ni una causa host
+completa a esa reproducción. La corrección candidata
+[ADR0111](0111-typed-effective-unit-properties.md) se revisa por separado:
+mantiene seis propiedades escalares estrictas y lee los seis arrays Exec
+con tipos D-Bus explícitos, sin tratar una propiedad omitida como array vacío.
+No cambia razones publicables, acciones ni política de capacidad.
 
 ## Decisión y alcance
 

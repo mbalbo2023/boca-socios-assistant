@@ -1,5 +1,7 @@
 # Safe operations — verified evidence and gated procedures
 
+La reiteración del dueño está registrada, pero la revisión automática volvió a bloquear el dispatch antes de ejecutarlo; no existe un nuevo run. Véase el [bloqueo actualizado](https://github.com/mbalbo2023/boca-socios-assistant/issues/27#issuecomment-6591174050). La captura sigue pendiente por ese control de plataforma.
+
 ## Documented state and current checkpoint
 
 Historical baseline `032de0` already integrated #224/#226/#229 and browser
@@ -22,12 +24,13 @@ on `7cfc9b6…` exited 2 despite CI passing 2081 tests.
 independently reviewed argument-terminator correction integrated by #261; it
 reproduces a compatible defect without proving the unrecorded random value from that
 run. These earlier cuts remain historical. Main
-`7300c1021522a28091387a1b53c4f21dd8ad5e12` includes #261 and #266:
-[CI 41522036069](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522036069)
-passed 2166 tests plus 31 subtests and 34 RCA lessons/114 executed selectors;
-[security 41522035980](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522035980)
-passed. New candidates require their own checks. Operational state is maintained in
-[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
+`fe70271f940dbc6fc1f422907f5e7254eb2ae508` includes #261/#266/#269/#270:
+[postmerge CI 41544296010](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41544296010)
+and [security 41544295980](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41544295980)
+passed. The five #270 candidate checks also passed, including 2283 tests plus
+31 subtests and 35 RCA lessons/119 selectors. New candidates require their
+own checks. Operational state is maintained in
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6590928836).
 No matching current dual release, BETA installation, real activation URL,
 physical Chrome/GPM persistence or Telegram delivery is established here.
 
@@ -41,30 +44,43 @@ five after STOP; those cancellations are not new dependencies or public GETs.
 Startup, network-none, pre/post isolation and selective cleanup passed.
 #266/[ADR0106](ADR/0106-sanitized-public-render-denials.md) supplied the bounded
 diagnostic without expanding the capture map. The owner authorized this capture
-and the infrastructure test; both ran. No further public GET or blind retry is
-authorized. Full-site acceptance remains open, without evidence of an outage or
+and the infrastructure test; both ran. Following a later blocked dispatch, the
+owner reaffirmed continuation of the same 25-GET diagnostic without another
+confirmation. This does not expand the map or enable blind retry. Full-site
+acceptance remains open, without evidence of an outage or
 block by Boca. The [report](quality/public-source-validation-2026-11-02.md)
 preserves the earlier UNKNOWN captures 41481095746 and 41512196530; the latter's
 unrecorded URL cannot be recovered from this new receipt.
 
-The later [ADR0110 candidate](ADR/0110-public-denied-authority-metadata.md)
-adds `scheme`, a validated `authority` or null, and `host_kind` to the first
+PR #270 integrated [ADR0110](ADR/0110-public-denied-authority-metadata.md),
+adding `scheme`, a validated `authority` or null, and `host_kind` to the first
 causal denial. `dns_syntax` proves syntax only; it does not establish public
 DNS answers, ownership or the script's role. No lookup or connection occurs.
 Userinfo/query/fragment and arbitrary paths remain omitted; hostname labels
-are intentionally visible when accepted. Review and exact-SHA checks precede
-integration. The 25-GET map, STOP and network barriers are unchanged. This
+are intentionally visible when accepted. Its five candidate checks and postmerge
+CI/security passed. The 25-GET map, STOP and network barriers are unchanged. This
 metadata cannot reconstruct the authority of 41537796470; no new public
-observation is authorized by the candidate.
+observation is authorized by this integration alone. The owner subsequently
+reaffirmed the same-scope diagnostic; no new capture result is established in
+this cut. The earlier blocked dispatch created no run or public traffic.
 
 [Infrastructure preflight 41537794166](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41537794166/job/125593988779)
 failed at step 28, the initial read-only `infrastructure-check`. The attempt
 marker, daemon start, observation and restoration steps were SKIPPED: no
 installation or residue-producing effect occurred. RCA #268 records that the
 workflow lost the diagnostic reason; it cannot be recovered retrospectively.
-This does not establish which host condition failed. The next candidate adds
-`infrastructure-inspect` below; activation remains blocked until state and
-policy are established, without rerunning the failed preflight blindly.
+This does not establish which host condition failed. PR #269 integrated
+`infrastructure-inspect` below and its authorized run already occurred:
+[41542349197/job125609403017](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41542349197/job/125609403017),
+on main `4b0c65becea753151d39acaf12f9bbacc6199407`, 20:03:38–20:03:40 ART.
+It returned `NO_GO`, `rc=1`, `transport=confirmed`,
+`reason=effective_preflight_unit_unverified`, `start_attempted=no`.
+No Docker operation or capacity evaluation occurred. [RCA #271](https://github.com/mbalbo2023/boca-socios-assistant/issues/271#issuecomment-6590959214)
+reproduces the parser rejecting empty Exec arrays omitted by the official
+systemd v255 renderer even with `--all`. The exact host output was not captured; neither its
+omitted fields nor the full host cause are proven. The read correction requires
+review and exact checks; activation remains blocked until state and policy
+are established, without rerunning the failed preflight blindly.
 
 [Later read-only inspection 41538696464](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41538696464/job/125597016052)
 at 2026-11-02 19:36:40 ART reached SSH as UID10001, with private runtime and
@@ -177,7 +193,7 @@ for the source/integration cut. PR #141 separately fixed the migration function
 through synthetic fixtures; merging it did not run Database.migrate on the
 droplet or create a service database. ADR0053 states the WAL/concurrency limits.
 
-## Candidate pre-release infrastructure observation
+## Pre-release infrastructure observation
 
 #261 / [ADR0103](ADR/0103-pre-release-infrastructure-observation.md) integrated
 `infrastructure-preflight` in the existing protected workflow. Its authorized
@@ -212,14 +228,14 @@ limit. Load is advisory, never measured free CPU. An unverified ceiling stays
 UNKNOWN/NO_GO. The 1.75/2.0 CPU requirements, RAM/PID reserves and service caps
 do not change. This structural ceiling does not reserve CPU or predict
 contention/latency. Independent CPU review passed 290 focal tests and #261
-passed its candidate checks. The host policy was not reached in 41537794166;
-the diagnostic correction requires its own checks before further investigation.
+passed its candidate checks. The host policy was not reached in 41537794166
+or the later read-only inspection. RCA #271 requires its own review and checks.
 
-### Read-only infrastructure diagnostic candidate — RCA #268
+### Read-only infrastructure diagnostic — RCA #268, integrated by #269
 
-[ADR0109](ADR/0109-readonly-infrastructure-diagnostics.md) adds
-`operation=infrastructure-inspect` to the same workflow. After review, checks
-and merge, use exact current `source_sha`, `service=controller` and either
+[ADR0109](ADR/0109-readonly-infrastructure-diagnostics.md) integrated
+`operation=infrastructure-inspect` in the same workflow. Use the exact current
+`source_sha`, `service=controller` and either
 `1.5cpu-1024m-192pids` or `1.75cpu-1152m-224pids`. Image/release fields,
 envelopes, capability hash and recovery run ID must be empty. Only
 `BOCA_HOST_READONLY_ENV_READY=ready` is required; the operation does not use
@@ -234,6 +250,13 @@ fixed reasons and never prints raw stderr. An exact successful check can report
 stopped/prepared with capacity NOT_EVALUATED. A known rejected condition remains
 NO_GO; unknown output or transport failure is INDETERMINATE and remains failed.
 It neither recovers the old reason nor substitutes for a successful preflight.
+The first execution, 41542349197, returned the fixed unit-verification rejection
+above; it did not issue the PASS receipt. Candidate
+[ADR0111](ADR/0111-typed-effective-unit-properties.md) separates six scalar
+properties from typed Exec arrays read over the user bus. Empty arrays must be
+explicit and `ExecStart` remains an exact single command; absence cannot stand
+in for emptiness. This read correction changes no effects or capacity policy
+and is not a host validation result.
 
 [ADR0104](ADR/0104-existing-smoke-resource-observations.md) adds bounded cgroup
 observations around the existing CI HTTP/SQLite, IPC/restart and offline sender
@@ -608,9 +631,9 @@ Google Password Manager persistence and iOS compatibility remain physical
 gates. SSH encrypts the remote path, **not** an app-to-localhost connection
 inside Android; do not claim general HTTPS-equivalent protection.
 
-The activation sequence is: finish integration/review and exact checks;
-after #261 integration, authorize and verify the image-free infrastructure
-operation and evaluate its observations; approve/publish the exact dual release;
+The activation sequence is: finish RCA #271 review/integration and exact checks;
+verify the unit with read-only inspection, then complete the image-free
+infrastructure preflight and evaluate its observations; approve/publish the exact dual release;
 verify image-specific capacity/isolation and the private token handoff; run `owner-prepare`,
 then `owner-enroll` with real Chrome create→get; verify offline custody and
 selective cleanup; then install the BETA and prove login/restart/resume.

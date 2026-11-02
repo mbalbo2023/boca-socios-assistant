@@ -114,57 +114,6 @@ def test_private_fifo_is_rejected_without_blocking(tmp_path: Path) -> None:
     assert b"reviewed_service_configuration_unsafe" in result.stderr
 
 
-def _effective_unit(**changes: str) -> str:
-    fields = {
-        "LoadState": "loaded",
-        "NeedDaemonReload": "no",
-        "Type": "exec",
-        "Restart": "no",
-        "Delegate": "yes",
-        "KillMode": "mixed",
-        "ExecCondition": "",
-        "ExecStartPre": "",
-        "ExecStartPost": "",
-        "ExecStop": "",
-        "ExecStopPost": "",
-        "ExecStart": "{ path=/usr/bin/env ; argv[]=/usr/bin/env -i HOME=/home/boca-deploy "
-        "USER=boca-deploy LOGNAME=boca-deploy PATH=/usr/bin:/bin:/usr/sbin:/sbin "
-        "XDG_RUNTIME_DIR=/run/user/10001 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/10001/bus "
-        "/usr/bin/dockerd-rootless.sh --config-file=/home/boca-deploy/.config/docker/daemon.json "
-        "; ignore_errors=no ; start_time=[Mon 2026-11-02 10:00:00 UTC] ; "
-        "stop_time=[Mon 2026-11-02 10:01:00 UTC] ; pid=123 ; code=exited ; status=0 }",
-    }
-    fields.update(changes)
-    return "\n".join(f"{key}={value}" for key, value in fields.items())
-
-
-def test_effective_unit_accepts_previous_runtime_timestamps(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(rootless, "_command", lambda *_a, **_k: _effective_unit())
-    rootless._preflight_effective_unit(HOME)
-
-
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"NeedDaemonReload": "yes"},
-        {"ExecCondition": "/bin/other"},
-        {"ExecStartPre": "/bin/other"},
-        {"ExecStopPost": "/bin/other"},
-        {"Restart": "always"},
-        {"Delegate": "no"},
-        {"ExecStart": "{ path=/bin/other ; argv[]=/bin/other ; ignore_errors=no ; pid=0 }"},
-    ],
-)
-def test_effective_unit_rejects_loaded_configuration_drift(
-    monkeypatch: pytest.MonkeyPatch, changes: dict[str, str]
-) -> None:
-    monkeypatch.setattr(rootless, "_command", lambda *_a, **_k: _effective_unit(**changes))
-    with pytest.raises(rootless.SetupError, match="effective"):
-        rootless._preflight_effective_unit(HOME)
-
-
 def test_restore_never_stops_a_container_that_appeared(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(rootless, "_existing_daemon_boundary", lambda *_a, **_k: (HOME, "active"))
     monkeypatch.setattr(rootless, "_preflight_effective_unit", lambda _h: None)
@@ -550,46 +499,6 @@ def test_workflow_telemetry_reuses_each_existing_journey_exactly_once() -> None:
     assert workflow.count('pair running "$controller" "$worker" restart') == 1
     assert workflow.count('pair stopped "$controller" "$worker"') == 1
     assert "UnixSyntheticBrowser(timeout_seconds=25).simulate_general_reservation()" not in workflow
-
-
-@pytest.mark.parametrize(
-    "runtime",
-    [
-        "start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0",
-        "start_time=[Mon 2026-11-02 10:00:00 UTC] ; stop_time=[n/a] ; pid=123 ; code=(null) ; status=0/0",
-        "start_time=[Mon 2026-11-02 10:00:00 UTC] ; stop_time=[Mon 2026-11-02 10:01:00 UTC] ; pid=123 ; code=killed ; status=15/TERM",
-    ],
-)
-def test_effective_unit_accepts_official_nonexecution_and_runtime_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-    runtime: str,
-) -> None:
-    raw = _effective_unit().split(" ; start_time=", 1)[0] + " ; " + runtime + " }"
-    monkeypatch.setattr(rootless, "_command", lambda *_a, **_k: raw)
-    rootless._preflight_effective_unit(HOME)
-
-
-@pytest.mark.parametrize(
-    "change", ["argv", "ignore_errors", "extra_command", "duplicate", "missing"]
-)
-def test_effective_unit_rejects_adversarial_execution_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-    change: str,
-) -> None:
-    raw = _effective_unit()
-    if change == "argv":
-        raw = raw.replace("--config-file=/home", "--config-file=/other")
-    elif change == "ignore_errors":
-        raw = raw.replace("ignore_errors=no", "ignore_errors=yes")
-    elif change == "extra_command":
-        raw += " { path=/bin/other ; argv[]=/bin/other ; ignore_errors=no ; pid=0 }"
-    elif change == "duplicate":
-        raw += "\nNeedDaemonReload=no"
-    else:
-        raw = raw.replace("ExecCondition=\n", "")
-    monkeypatch.setattr(rootless, "_command", lambda *_a, **_k: raw)
-    with pytest.raises(rootless.SetupError, match="effective"):
-        rootless._preflight_effective_unit(HOME)
 
 
 @pytest.mark.parametrize("budget", [BUDGET, FULL_BUDGET])

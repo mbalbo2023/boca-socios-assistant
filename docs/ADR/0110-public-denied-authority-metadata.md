@@ -1,17 +1,34 @@
 # ADR 0110: Identify a rejected script authority without contacting it
 
-Status: implementation candidate under issue #27, development baseline main
-`7300c1021522a28091387a1b53c4f21dd8ad5e12`, 2026-11-02 ART. The exact
-integration base and final checks are recorded in the pull request and #45.
+La reiteración del dueño está registrada, pero la revisión automática volvió a bloquear el dispatch antes de ejecutarlo; no existe un nuevo run. Véase el [bloqueo actualizado](https://github.com/mbalbo2023/boca-socios-assistant/issues/27#issuecomment-6591174050). La captura sigue pendiente por ese control de plataforma.
+
+Status: integrated by PR #270 in main
+`fe70271f940dbc6fc1f422907f5e7254eb2ae508`, 2026-11-02 ART. The development
+baseline was `7300c1021522a28091387a1b53c4f21dd8ad5e12`; the final candidate
+was `6604799918060dcbc2b8362638f724fb58f5bf5b`, on the main cut after #269.
+Its five checks passed: CI 41542179140 (2283 tests plus 31 subtests), security
+41542179044, offline browser isolation 41542179350, Docker smoke 41542179148
+and PR release validation 41542179079. Postmerge CI 41544296010 and security
+41544295980 passed. No image publication or host deployment occurred.
 This is an offline diagnostic extension, not approval for another public
 capture or any additional destination. Runtime changes are limited to the
 renderer, with regression tests and reconciled documentation. The
 first-rejection behavior from ADR0106 is reused.
 
+The [postmerge capture attempt](https://github.com/mbalbo2023/boca-socios-assistant/issues/27#issuecomment-6591032497)
+was rejected by automatic approval review before the dispatch click: general
+continuation was judged insufficient for a new public observation. No workflow
+run or new public traffic occurred then. The owner subsequently reaffirmed
+continuation of this same 25-GET diagnostic without another confirmation;
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6590928836)
+records that mandate. The last source result remains UNKNOWN until a new
+receipt exists; the authorization does not expand the map or permit blind retry.
+
 ## Evidence and narrow purpose
 
 [Run 41537796470](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41537796470)
-captured the 25 permitted documents/assets, all HTTP 200, on the stated main.
+captured the 25 permitted documents/assets, all HTTP 200, on the historical
+main `7300c1021522a28091387a1b53c4f21dd8ad5e12`.
 The isolated renderer returned UNKNOWN. The first denial was a GET script
 outside the exact permitted origin, with a query; five later requests were
 cancelled after STOP. Pre/post probes, 25-tunnel receipt and cleanup passed.
@@ -95,6 +112,6 @@ The existing offline navigation and WebSocket fixtures now require the new
 authority fields in their receipts; their URLs, behavior and public request
 count are unchanged. Hosted smoke must still report their expected UNKNOWN,
 all network probes and cleanup on the exact reviewed SHA. Local tests are
-not proof of a new public observation. Any future real capture requires its
-own concrete authorization; this candidate performs none and cannot reveal
-the hostname omitted from the previous run.
+not proof of a new public observation. The owner-authorized continuation of
+the same diagnostic still needs its own real receipt; this code cannot reveal
+the hostname omitted from the previous run or authorize a wider capture map.

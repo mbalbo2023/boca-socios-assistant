@@ -68,6 +68,30 @@ every unrelated service, host configuration and application repository.
 
 ## Approved BETA preparation scope
 
+### Owner continuity instruction — 2026-11-02
+
+The owner explicitly reiterated: “Ya te dije explícitamente no tenés que
+pedirme autorización, esto que quede grabado”. The durable decision is in
+[issue #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6591142632).
+Continue the agreed work without asking the owner to reconfirm the same
+scope. Carry existing authorization across turns, agents and handoffs;
+record each material action and its evidence in GitHub immediately, not only
+in chat. This clarification controls any older wording that would prompt
+again for a routine step already authorized.
+
+The reiterated instruction followed notice of the platform's rejected public
+observation dispatch. Root interpreted it as continuation of that specific
+single `chromium-capture-25` diagnostic with the existing 25-path map, origin,
+budgets and STOP behavior; the platform nevertheless rejected the dispatch
+again, so that operation remains blocked. Record any actual source SHA/run/result separately
+from the earlier rejected attempt, which created no run. It does not widen
+destinations, enable real login/tickets, change resource/security gates or
+authorize bypassing platform controls. If a control blocks an action, record
+the concrete blocker and continue independent work; do not seek a workaround
+or ask the same authorization question repeatedly.
+
+### Existing delivery boundaries
+
 [ADR 0056](docs/ADR/0056-approved-simulation-beta-delivery.md) and the
 [delivery plan](docs/BETA_DELIVERY_PLAN.md) record the owner-approved stage:
 private simulation BETA including mandatory **Socios > Agregar socio**,

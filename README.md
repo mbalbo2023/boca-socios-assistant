@@ -1,5 +1,7 @@
 # Boca Socios Assistant
 
+La reiteración del dueño está registrada, pero la revisión automática volvió a bloquear el dispatch antes de ejecutarlo; no existe un nuevo run. Véase el [bloqueo actualizado](https://github.com/mbalbo2023/boca-socios-assistant/issues/27#issuecomment-6591174050). La captura sigue pendiente por ese control de plataforma.
+
 Public, simulation-first engineering project for a consent-based Boca Juniors
 membership and ticket-assistance workflow. This repository is owned by
 **mbalbo2023** and remains isolated from **all unrelated applications and
@@ -16,31 +18,41 @@ infrastructure**.
 > [security 41481913075](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913075)
 > passed. These are the PR's receipts, not a substitute for final-main checks.
 > PR #253 integrated lifecycle/recovery and durable Telegram gates in
-> `5ddfba568d0b53168f51c0e5b33c363ba24c505e`. PRs #261/#263/#266 are integrated
-> in main `7300c1021522a28091387a1b53c4f21dd8ad5e12`:
-> [CI 41522036069](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522036069)
-> passed 2166 tests plus 31 subtests and 34 RCA lessons/114 executed selectors;
-> [security 41522035980](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41522035980)
-> passed. [Status](docs/BETA_INTEGRATION_STATUS.md) preserves earlier cuts and
-> failures. New candidates require their own checks; operational receipts belong in
-> [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
+> `5ddfba568d0b53168f51c0e5b33c363ba24c505e`. PRs #261/#263/#266/#269/#270
+> are integrated in main `fe70271f940dbc6fc1f422907f5e7254eb2ae508`:
+> [postmerge CI 41544296010](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41544296010)
+> and [security 41544295980](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41544295980)
+> passed. The five #270 candidate checks passed, including 2283 tests plus
+> 31 subtests; they are code/runner evidence, not host acceptance.
+> [Status](docs/BETA_INTEGRATION_STATUS.md) preserves earlier cuts and failures.
+> New candidates require their own checks; operational receipts belong in
+> [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6590928836).
 > The owner-authorized preflight and public capture both ran. Infrastructure
 > [41537794166](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41537794166)
 > failed its initial read-only check, before any marker, start, observation or
 > restoration. RCA #268 records the lost diagnostic; its historical reason cannot
-> be recovered. This candidate adds bounded, read-only `infrastructure-inspect`
-> in the existing workflow ([ADR0109](docs/ADR/0109-readonly-infrastructure-diagnostics.md));
-> review/checks/merge must precede that diagnostic operation. Activation remains blocked.
+> be recovered. PR #269 integrated bounded, read-only `infrastructure-inspect`
+> ([ADR0109](docs/ADR/0109-readonly-infrastructure-diagnostics.md)). Its authorized
+> [run 41542349197](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41542349197/job/125609403017)
+> at 20:03 ART returned `NO_GO`, `rc=1`, `transport=confirmed`,
+> `reason=effective_preflight_unit_unverified`, `start_attempted=no`.
+> [RCA #271](https://github.com/mbalbo2023/boca-socios-assistant/issues/271#issuecomment-6590959214)
+> reproduces the parser's rejection of empty Exec arrays omitted by systemd's
+> v255 renderer even with `--all`. The exact omitted host fields were not
+> captured; this compatible defect does not prove the complete host cause.
+> The correction needs independent review and exact checks. Capacity remains
+> unevaluated and activation blocked.
 > [Public capture 41537796470](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41537796470)
 > fetched 25 permitted GETs, all HTTP 200. Chromium remained UNKNOWN after a
 > denied script GET outside the exact accepted origin, with query redacted and
 > no path disclosed; its host and function are unknown. Isolation and cleanup
-> passed. No further public GET or automatic retry is authorized;
+> passed. The owner reaffirmed continuation of the same 25-GET diagnostic;
+> no new capture result is established at this cut. No map expansion or automatic retry;
 > see [the report](docs/quality/public-source-validation-2026-11-02.md).
-> The later [ADR0110 candidate](docs/ADR/0110-public-denied-authority-metadata.md)
-> adds bounded `scheme`/`authority`/`host_kind` metadata to the first denial,
+> PR #270 integrated [ADR0110](docs/ADR/0110-public-denied-authority-metadata.md),
+> adding bounded `scheme`/`authority`/`host_kind` metadata to the first denial,
 > without DNS lookup, contact or a wider capture map. It cannot identify the
-> authority omitted from 41537796470; a future observation needs its own authorization.
+> authority omitted from 41537796470; the authorized continuation still needs its own receipt.
 > [Read-only inspection 41538696464](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41538696464)
 > at 19:36:40 ART found the daemon inactive/dead and its socket absent, with
 > capacity not evaluated. It does not identify the earlier failed condition.
