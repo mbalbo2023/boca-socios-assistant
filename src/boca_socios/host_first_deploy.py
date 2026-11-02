@@ -26,6 +26,7 @@ import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
 from time import monotonic, sleep
+from typing import cast
 from urllib.parse import urlsplit
 
 ROOT = Path("/srv/boca-socios")
@@ -45,6 +46,39 @@ ENROLL_NETWORK_OPTIONS = {
     "com.docker.network.bridge.enable_icc": "false",
     "com.docker.network.bridge.host_binding_ipv4": "127.0.0.1",
 }
+# Opt-in browser-ipc-v2 ONLY. The legacy singleton beta-install contract above
+# and below is intentionally unchanged; these coordinates require their own
+# protected, new-only attempt marker and dedicated cleanup in the SAME job.
+BROWSER_COMPOSE = ROOT / "compose.beta.browser.yaml"
+BROWSER_SECCOMP = ROOT / "seccomp_profile.json"
+BROWSER_MARKER = ROOT / "browser-ipc-attempt.json"
+BROWSER_IPC_VOLUME = "boca-socios_boca_browser_ipc"
+BROWSER_BRIDGE = "boca-socios_boca_private"
+BROWSER_IMAGE_PATTERN = re.compile(
+    r"ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}\Z"
+)
+BROWSER_ATTEMPT_PATTERN = re.compile(r"[1-9][0-9]{0,19}\Z")
+BROWSER_MARKER_VERSION = "browser-ipc-new-only-v2"
+BROWSER_ATTEMPT_LABEL = "boca.socios.browser-ipc-attempt"
+BROWSER_STAGE_FILENAMES = frozenset(
+    {"compose.beta.yaml", "compose.beta.browser.yaml", "seccomp_profile.json"}
+)
+BROWSER_MARKER_KEYS = frozenset(
+    {
+        "version",
+        "attempt_id",
+        "source_sha",
+        "controller_digest",
+        "browser_digest",
+        "beta_compose_sha",
+        "overlay_compose_sha",
+        "seccomp_sha",
+        "controller_image_absent",
+        "browser_image_absent",
+        "bridge_absent",
+        "ipc_volume_absent",
+    }
+)
 TELEGRAM_VOLUME = "boca-socios_boca_telegram"
 TELEGRAM_NETWORK = "boca-socios_telegram_egress"
 TELEGRAM_TEST_NAME = "boca-socios-telegram-test-1"
@@ -2640,6 +2674,1489 @@ def _beta_phase(
     )
 
 
+def _browser_coordinates(
+    image: str,
+    source_sha: str,
+    beta_sha: str,
+    origin: str,
+    owner: str,
+    browser_image: str,
+    overlay_sha: str,
+    seccomp_sha: str,
+    attempt_id: str,
+) -> None:
+    """Keep every browser phase bound to reviewed immutable, private inputs."""
+    _validate_coordinates(image, source_sha, beta_sha)
+    _validate_owner_context(origin, owner)
+    if (
+        not BROWSER_IMAGE_PATTERN.fullmatch(browser_image)
+        or not DIGEST_PATTERN.fullmatch(overlay_sha)
+        or not DIGEST_PATTERN.fullmatch(seccomp_sha)
+        or not BROWSER_ATTEMPT_PATTERN.fullmatch(attempt_id)
+        or browser_image == image
+        or len({beta_sha, overlay_sha, seccomp_sha}) != 3
+    ):
+        raise PreflightError("invalid immutable browser IPC coordinates")
+
+
+def _browser_root_entries(expected: set[str] | frozenset[str]) -> None:
+    _require_dedicated_identity()
+    if not _safe_dir(ROOT):
+        raise PreflightError("private Boca staging directory is unsafe")
+    metadata = ROOT.lstat()
+    if metadata.st_gid != 10001 or stat.S_IMODE(metadata.st_mode) != 0o700:
+        raise PreflightError("private Boca staging directory identity changed")
+    try:
+        entries = {item.name for item in ROOT.iterdir()}
+    except OSError as exc:
+        raise PreflightError("Boca staging directory cannot be inventoried") from exc
+    if entries != expected:
+        raise PreflightError("Boca browser staging contains unexpected files")
+
+
+def _browser_root_file(name: str, *, max_size: int) -> bytes:
+    """Read only a proven regular Boca file; FIFO cannot block the workflow.
+
+    The final filename is resolved relative to the already-checked directory
+    descriptor, with O_NOFOLLOW and O_NONBLOCK before fstat/read. A symlink,
+    FIFO, device, replaced inode, wrong UID/mode or oversize is always NO_GO.
+    """
+    if name not in BROWSER_STAGE_FILENAMES | {BROWSER_MARKER.name}:
+        raise PreflightError("unreviewed Boca browser staging filename")
+    if not _safe_dir(ROOT):
+        raise PreflightError("Boca staging directory is unavailable")
+    directory = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        root_stat = os.fstat(directory)
+        if (
+            not stat.S_ISDIR(root_stat.st_mode)
+            or root_stat.st_uid != 10001
+            or root_stat.st_gid != 10001
+            or stat.S_IMODE(root_stat.st_mode) != 0o700
+        ):
+            raise PreflightError("Boca staging directory descriptor is unsafe")
+        descriptor = os.open(
+            name,
+            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=directory,
+        )
+        try:
+            before = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != 10001
+                or before.st_gid != 10001
+                or before.st_nlink != 1
+                or stat.S_IMODE(before.st_mode) != 0o600
+                or not 0 < before.st_size <= max_size
+            ):
+                raise PreflightError("Boca browser staged file identity is unsafe")
+            data = bytearray()
+            while len(data) <= max_size:
+                chunk = os.read(descriptor, max_size + 1 - len(data))
+                if not chunk:
+                    break
+                data.extend(chunk)
+            after = os.fstat(descriptor)
+            if (
+                len(data) != before.st_size
+                or len(data) > max_size
+                or (
+                    before.st_dev,
+                    before.st_ino,
+                    before.st_size,
+                    before.st_mtime_ns,
+                    before.st_ctime_ns,
+                )
+                != (
+                    after.st_dev,
+                    after.st_ino,
+                    after.st_size,
+                    after.st_mtime_ns,
+                    after.st_ctime_ns,
+                )
+            ):
+                raise PreflightError("Boca browser staged file changed while reading")
+            if (ROOT.lstat().st_dev, ROOT.lstat().st_ino) != (
+                root_stat.st_dev,
+                root_stat.st_ino,
+            ):
+                raise PreflightError("Boca staging directory replaced while reading")
+            return bytes(data)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise PreflightError("Boca browser staged file unavailable") from exc
+    finally:
+        os.close(directory)
+
+
+def _browser_json_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    record: dict[str, object] = {}
+    for key, value in pairs:
+        if key in record:
+            raise PreflightError("duplicate browser IPC JSON field")
+        record[key] = value
+    return record
+
+
+def _browser_read_marker(
+    image: str,
+    source_sha: str,
+    beta_sha: str,
+    browser_image: str,
+    overlay_sha: str,
+    seccomp_sha: str,
+    attempt_id: str,
+) -> dict[str, object]:
+    raw = _browser_root_file(BROWSER_MARKER.name, max_size=1024)
+    try:
+        marker = json.loads(raw, object_pairs_hook=_browser_json_pairs)
+    except (UnicodeError, ValueError, TypeError) as exc:
+        raise PreflightError("browser IPC attempt marker is invalid") from exc
+    if not isinstance(marker, dict) or set(marker) != BROWSER_MARKER_KEYS:
+        raise PreflightError("browser IPC attempt marker schema changed")
+    canonical = json.dumps(marker, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode(
+        "ascii"
+    )
+    if raw != canonical:
+        raise PreflightError("browser IPC marker is not canonical for selective cleanup")
+    expected = {
+        "version": BROWSER_MARKER_VERSION,
+        "attempt_id": attempt_id,
+        "source_sha": source_sha,
+        "controller_digest": image,
+        "browser_digest": browser_image,
+        "beta_compose_sha": beta_sha,
+        "overlay_compose_sha": overlay_sha,
+        "seccomp_sha": seccomp_sha,
+    }
+    for name, value in expected.items():
+        if type(marker[name]) is not str or marker[name] != value:
+            raise PreflightError("browser IPC attempt marker coordinates differ")
+    for name in (
+        "controller_image_absent",
+        "browser_image_absent",
+        "bridge_absent",
+        "ipc_volume_absent",
+    ):
+        if type(marker[name]) is not bool:
+            raise PreflightError("browser IPC attempt marker preexistence is invalid")
+    if marker["bridge_absent"] is not True or marker["ipc_volume_absent"] is not True:
+        raise PreflightError("browser IPC attempt is not new-only")
+    return marker
+
+
+def _browser_write_marker(marker: dict[str, object]) -> None:
+    """Exclusive 0600 creation; never replace an existing file or symlink."""
+    _browser_root_entries(set())
+    raw = json.dumps(marker, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode(
+        "ascii"
+    )
+    if not 0 < len(raw) <= 1024 or set(marker) != BROWSER_MARKER_KEYS:
+        raise PreflightError("invalid browser IPC marker payload")
+    directory = os.open(ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        root_stat = os.fstat(directory)
+        if root_stat.st_uid != 10001 or root_stat.st_gid != 10001:
+            raise PreflightError("browser staging root identity changed")
+        fd = os.open(
+            BROWSER_MARKER.name,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=directory,
+        )
+        created = os.fstat(fd)
+        try:
+            os.fchmod(fd, 0o600)
+            offset = 0
+            while offset < len(raw):
+                offset += os.write(fd, raw[offset:])
+            os.fsync(fd)
+        except OSError:
+            # Only our freshly O_EXCL-created inode may be removed here.
+            entry = BROWSER_MARKER.lstat()
+            if (
+                (entry.st_dev, entry.st_ino) == (created.st_dev, created.st_ino)
+                and entry.st_uid == 10001
+                and stat.S_ISREG(entry.st_mode)
+            ):
+                os.unlink(BROWSER_MARKER.name, dir_fd=directory)
+            raise
+        finally:
+            os.close(fd)
+        os.fsync(directory)
+    except OSError as exc:
+        raise PreflightError("browser IPC marker could not be staged safely") from exc
+    finally:
+        os.close(directory)
+
+
+def _browser_verify_staged(beta_sha: str, overlay_sha: str, seccomp_sha: str) -> None:
+    _browser_root_entries(BROWSER_STAGE_FILENAMES | {BROWSER_MARKER.name})
+    for name, digest in (
+        (BETA_COMPOSE.name, beta_sha),
+        (BROWSER_COMPOSE.name, overlay_sha),
+        (BROWSER_SECCOMP.name, seccomp_sha),
+    ):
+        data = _browser_root_file(name, max_size=32_768)
+        if hashlib.sha256(data).hexdigest() != digest:
+            raise PreflightError("browser IPC staged file differs from reviewed SHA-256")
+        if name == BROWSER_SECCOMP.name:
+            try:
+                profile = json.loads(data, object_pairs_hook=_browser_json_pairs)
+            except (UnicodeError, ValueError, TypeError) as exc:
+                raise PreflightError("browser seccomp JSON is invalid") from exc
+            if (
+                not isinstance(profile, dict)
+                or profile.get("defaultAction") != "SCMP_ACT_ERRNO"
+                or not isinstance(profile.get("archMap"), list)
+                or not profile["archMap"]
+                or not isinstance(profile.get("syscalls"), list)
+                or not profile["syscalls"]
+            ):
+                raise PreflightError("reviewed browser seccomp deny-by-default profile missing")
+
+
+def _browser_docker_ids() -> set[str]:
+    ids = set(_run("docker", "ps", "-a", "-q", "--no-trunc").splitlines())
+    if any(re.fullmatch(r"[0-9a-f]{64}", container) is None for container in ids):
+        raise PreflightError("dedicated Docker container inventory is malformed")
+    return ids
+
+
+def _browser_inventory(
+    *,
+    containers: set[str],
+    volumes: set[str],
+    bridges: set[str],
+) -> None:
+    """A Boca-exclusive rootless daemon; foreign objects are a hard stop."""
+    actual_ids = _browser_docker_ids()
+    named_ids = set(
+        _run(
+            "docker", "ps", "-a", "-q", "--no-trunc", "--filter", "name=^/boca-socios-"
+        ).splitlines()
+    )
+    labeled_ids = set(
+        _run(
+            "docker",
+            "ps",
+            "-a",
+            "-q",
+            "--no-trunc",
+            "--filter",
+            f"label=com.docker.compose.project={PROJECT}",
+        ).splitlines()
+    )
+    if actual_ids != containers or named_ids != containers or labeled_ids != containers:
+        raise PreflightError("dedicated Boca daemon contains an unexpected container")
+    all_volumes = set(_run("docker", "volume", "ls", "-q").splitlines())
+    boca_volumes = _names("volume", "name=^boca-socios_")
+    if all_volumes != volumes or boca_volumes != volumes:
+        raise PreflightError("dedicated Boca volume inventory changed")
+    all_networks = set(_run("docker", "network", "ls", "--format", "{{.Name}}").splitlines())
+    boca_networks = _names("network", "name=^boca-socios_")
+    if (
+        not all_networks <= {"none", "host", "bridge"} | bridges
+        or boca_networks != bridges
+        or not bridges <= all_networks
+    ):
+        raise PreflightError("dedicated Boca network inventory changed")
+
+
+def _browser_image_absent(image: str, source_sha: str) -> bool:
+    """Inspect the *exact digest*; list output cannot prove nonexistence.
+
+    Only Docker's literal `No such image: <exact-ref>` for this invocation
+    counts as absent. A daemon outage, permissions error, malformed output,
+    mismatched revision or ambiguous diagnostic is a hard NO_GO. This evidence
+    controls later NEW-only image deletion by the dedicated cleanup helper.
+    """
+    if not (IMAGE_PATTERN.fullmatch(image) or BROWSER_IMAGE_PATTERN.fullmatch(image)):
+        raise PreflightError("unreviewed browser IPC image reference")
+    environment = dict(os.environ)
+    for name in (
+        "DOCKER_CONTEXT",
+        "DOCKER_CONFIG",
+        "DOCKER_TLS",
+        "DOCKER_TLS_VERIFY",
+        "DOCKER_CERT_PATH",
+    ):
+        environment.pop(name, None)
+    environment["DOCKER_HOST"] = f"unix://{ROOTLESS_SOCKET}"
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed Docker inspect, no shell
+            ("docker", "image", "inspect", "--format", "{{json .}}", image),  # noqa: S607 - same rootless Docker CLI as _run
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=20,
+            env=environment,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise PreflightError("browser IPC exact image inventory unavailable") from exc
+    if (
+        result.returncode == 1
+        and result.stdout == ""
+        and result.stderr.strip()
+        in {
+            f"Error: No such image: {image}",
+            f"Error response from daemon: No such image: {image}",
+        }
+    ):
+        return True
+    if result.returncode != 0 or result.stderr or not 0 < len(result.stdout) <= 65_536:
+        raise PreflightError("browser IPC exact image inventory is ambiguous")
+    record = _json_object(result.stdout, "browser IPC exact image")
+    digests = record.get("RepoDigests")
+    config = record.get("Config")
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    if (
+        digests != [image]
+        or record.get("RepoTags") not in (None, [])
+        or type(record.get("Size")) is not int
+        or cast(int, record["Size"]) <= 0
+        or not isinstance(labels, dict)
+        or labels.get("org.opencontainers.image.revision") != source_sha
+    ):
+        raise PreflightError("preexisting browser IPC image identity is unproven")
+    return False
+
+
+def _browser_port_free() -> None:
+    """A bind/close, no contact with the host listener or other ports."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.bind(("127.0.0.1", 8443))
+    except OSError as exc:
+        raise PreflightError("private Boca localhost:8443 is not free") from exc
+
+
+def _browser_engine_version() -> None:
+    """Docker <28 can expose loopback-published TCP to adjacent L2 hosts.
+
+    This is a browser-v2-only stop gate; never update the shared daemon or
+    mutate its networking as a workaround. Unknown/prerelease versions need a
+    separate protected isolation review, not a guessed rootless exemption.
+    """
+    value = _run("docker", "version", "--format", "{{.Server.Version}}")
+    match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", value)
+    if match is None or int(match.group(1)) < 28:
+        raise PreflightError("Docker Engine >=28 required for private localhost publication")
+
+
+def _browser_capacity() -> tuple[int, float, int, StorageSnapshot]:
+    """Reserve 1.5 GiB host memory, 1.75 CPU and 256 delegated PIDs.
+
+    The 1 GiB/192 PIDs combined container budget needs room for Docker and
+    bounded one-shot probes too. An indeterminate delegated limit is NO_GO.
+    """
+    _validate_docker_boundary()
+    storage = _storage_snapshot()
+    _validate_storage_capacity(storage)
+    try:
+        meminfo = Path("/proc/meminfo").read_text(encoding="ascii")
+        memory = re.search(r"^MemAvailable:\s+(\d+) kB$", meminfo, re.MULTILINE)
+        cpu = max(0.0, len(os.sched_getaffinity(0)) - os.getloadavg()[0])
+        pids_dir = CGROUP_CONTROLLERS.parent
+        pids_current = pids_dir.joinpath("pids.current").read_text(encoding="ascii").strip()
+        pids_max = pids_dir.joinpath("pids.max").read_text(encoding="ascii").strip()
+        if (
+            memory is None
+            or not pids_current.isdecimal()
+            or not pids_max.isdecimal()
+            or pids_current.startswith("0")
+            and pids_current != "0"
+            or pids_max.startswith("0")
+        ):
+            raise PreflightError("rootless CPU/memory/PID headroom is unproven")
+        free_pids = int(pids_max) - int(pids_current)
+    except (OSError, ValueError, OverflowError) as exc:
+        raise PreflightError("rootless CPU/memory/PID headroom is unavailable") from exc
+    if int(memory.group(1)) < 1536 * 1024 or cpu < 1.75 or free_pids < 256:
+        raise PreflightError("browser IPC host capacity below reserved budget")
+    return int(memory.group(1)), cpu, free_pids, storage
+
+
+def _browser_preflight_inventory() -> tuple[int, float, int, StorageSnapshot]:
+    _browser_root_entries(set())
+    _browser_inventory(containers=set(), volumes={OWNER_VOLUME}, bridges=set())
+    _validate_owner_volume()
+    if _run("docker", "ps", "-a", "-q", "--filter", f"volume={OWNER_VOLUME}"):
+        raise PreflightError("private Boca owner volume is attached")
+    _browser_port_free()
+    return _browser_capacity()
+
+
+def _browser_staged_inventory(
+    *,
+    volumes: set[str],
+    containers: set[str] | None = None,
+    bridges: set[str] | None = None,
+) -> None:
+    _browser_inventory(
+        containers=set() if containers is None else containers,
+        volumes=volumes,
+        bridges=set() if bridges is None else bridges,
+    )
+    _validate_owner_volume()
+
+
+def _browser_stage(
+    image: str,
+    source_sha: str,
+    beta_sha: str,
+    browser_image: str,
+    overlay_sha: str,
+    seccomp_sha: str,
+    attempt_id: str,
+) -> None:
+    memory, cpu, pids, storage = _browser_preflight_inventory()
+    marker: dict[str, object] = {
+        "version": BROWSER_MARKER_VERSION,
+        "attempt_id": attempt_id,
+        "source_sha": source_sha,
+        "controller_digest": image,
+        "browser_digest": browser_image,
+        "beta_compose_sha": beta_sha,
+        "overlay_compose_sha": overlay_sha,
+        "seccomp_sha": seccomp_sha,
+        "controller_image_absent": _browser_image_absent(image, source_sha),
+        "browser_image_absent": _browser_image_absent(browser_image, source_sha),
+        "bridge_absent": True,
+        "ipc_volume_absent": True,
+    }
+    _browser_write_marker(marker)
+    print(
+        f"BOCA_BROWSER_STAGE_PASS attempt={attempt_id} uid=10001 owner=existing"
+        " namespace=new-only no_worker=yes"
+        f" mem_kib={memory} cpu_headroom={cpu:.2f} pids_free={pids}"
+        f" stage_free_mib={storage.stage_free_bytes // 1024**2}"
+        f" docker_free_mib={storage.docker_free_bytes // 1024**2}"
+    )
+
+
+def _browser_compose_args(*arguments: str) -> tuple[str, ...]:
+    return (
+        "docker",
+        "compose",
+        "-p",
+        PROJECT,
+        "-f",
+        str(BETA_COMPOSE),
+        "-f",
+        str(BROWSER_COMPOSE),
+        *arguments,
+    )
+
+
+def _browser_compose_env(
+    image: str, origin: str, owner: str, browser_image: str, attempt_id: str
+) -> dict[str, str]:
+    return {
+        **_beta_compose_env(image, origin, owner),
+        "BOCA_BROWSER_IMAGE": browser_image,
+        "BOCA_BROWSER_ATTEMPT_ID": attempt_id,
+        "BOCA_BROWSER_SECCOMP_PATH": str(BROWSER_SECCOMP),
+    }
+
+
+def _browser_compose_model(
+    image: str, origin: str, owner: str, browser_image: str, attempt_id: str
+) -> str:
+    """Host-side essential boundary, in addition to runner's full C1 validator."""
+    raw = _run(
+        *_browser_compose_args("config", "--format", "json"),
+        env=_browser_compose_env(image, origin, owner, browser_image, attempt_id),
+    )
+    if not 0 < len(raw) <= 65_536:
+        raise PreflightError("resolved browser IPC Compose model is unbounded")
+    model = _json_object(raw, "browser IPC Compose")
+    if set(model) != {"name", "services", "volumes", "networks"} or model["name"] != PROJECT:
+        raise PreflightError("resolved browser IPC project boundary changed")
+    services = model.get("services")
+    volumes = model.get("volumes")
+    networks = model.get("networks")
+    if (
+        not isinstance(services, dict)
+        or set(services) != {"controller", "browser-worker"}
+        or not isinstance(volumes, dict)
+        or set(volumes) != {"boca_owner", "boca_key", "boca_data", "boca_browser_ipc"}
+        or not isinstance(networks, dict)
+        or set(networks) != {"boca_private"}
+    ):
+        raise PreflightError("browser IPC services or named resources changed")
+    controller = services["controller"]
+    worker = services["browser-worker"]
+    if not isinstance(controller, dict) or not isinstance(worker, dict):
+        raise PreflightError("browser IPC service metadata invalid")
+    expected_port = [
+        {
+            "mode": "ingress",
+            "host_ip": "127.0.0.1",
+            "target": 8443,
+            "published": "8443",
+            "protocol": "tcp",
+        }
+    ]
+    expected_labels = {BROWSER_ATTEMPT_LABEL: attempt_id}
+    if (
+        controller.get("image") != image
+        or controller.get("user") != "10001:10001"
+        or controller.get("restart") != "no"
+        or controller.get("command") != ["python", "-m", "boca_socios.runtime", "serve-beta"]
+        or controller.get("ports") != expected_port
+        or controller.get("labels") != expected_labels
+        or controller.get("networks") != {"boca_private": None}
+        or controller.get("read_only") is not True
+        or not isinstance(controller.get("environment"), dict)
+        or controller["environment"].get("BOCA_BROWSER_BACKEND") != "ipc"
+        or controller["environment"].get("BOCA_RUNTIME_MODE") != "simulation"
+        or controller["environment"].get("BOCA_ENGINE_MODE") != "off"
+        or controller["environment"].get("BOCA_PANEL_ORIGIN") != origin
+        or controller["environment"].get("BOCA_OWNER_SUBJECT") != owner
+    ):
+        raise PreflightError("browser IPC controller isolation changed")
+    expected_worker = {
+        "image": browser_image,
+        "command": ["python", "-m", "boca_socios.browser.ipc_worker"],
+        "user": "10002:10002",
+        "network_mode": "none",
+        "restart": "no",
+        "read_only": True,
+        "cgroup": "private",
+        "ipc": "private",
+        "cap_drop": ["ALL"],
+        "cap_add": ["SYS_CHROOT"],
+        "pids_limit": 128,
+        "mem_limit": "805306368",
+        "cpus": 1,
+        "security_opt": ["no-new-privileges:true", f"seccomp={BROWSER_SECCOMP}"],
+        "labels": expected_labels,
+        "environment": {
+            "BOCA_ENVIRONMENT": "staging",
+            "BOCA_RUNTIME_MODE": "simulation",
+            "BOCA_ENGINE_MODE": "off",
+        },
+    }
+    if (
+        any(
+            type(worker.get(key)) is not type(value) or worker.get(key) != value
+            for key, value in expected_worker.items()
+        )
+        or "ports" in worker
+        or "networks" in worker
+        or worker.get("privileged") is not None
+        or worker.get("init") is not True
+        or worker.get("shm_size") != "67108864"
+        or worker.get("stop_grace_period") != "8s"
+        or worker.get("tmpfs")
+        != [
+            "/tmp:rw,noexec,nosuid,size=32m",  # noqa: S108 - container tmpfs
+            "/home/boca-browser:rw,noexec,nosuid,size=16m",
+        ]
+    ):
+        raise PreflightError("browser IPC worker isolation changed")
+    for service, expected_mounts in (
+        (
+            controller,
+            {
+                ("boca_data", "/data", False),
+                ("boca_key", "/run/secrets", True),
+                ("boca_owner", "/run/owner", True),
+                ("boca_browser_ipc", "/run/boca-browser-ipc", True),
+            },
+        ),
+        (worker, {("boca_browser_ipc", "/run/boca-browser-ipc", False)}),
+    ):
+        mounts = service.get("volumes")
+        if not isinstance(mounts, list) or len(mounts) != len(expected_mounts):
+            raise PreflightError("browser IPC service mounts changed")
+        observed: set[tuple[str, str, bool]] = set()
+        for mount in mounts:
+            if (
+                not isinstance(mount, dict)
+                or set(mount) - {"type", "source", "target", "volume", "read_only"}
+                or mount.get("type") != "volume"
+                or type(mount.get("source")) is not str
+                or type(mount.get("target")) is not str
+                or not isinstance(mount.get("volume", {}), dict)
+                or mount.get("volume", {})
+            ):
+                raise PreflightError("browser IPC service mount options changed")
+            observed.add((mount["source"], mount["target"], mount.get("read_only", False)))
+        if observed != expected_mounts:
+            raise PreflightError("browser IPC owner/key/data/worker mount boundary changed")
+    if volumes["boca_browser_ipc"] != {
+        "name": BROWSER_IPC_VOLUME,
+        "external": True,
+    }:
+        raise PreflightError("browser IPC external volume changed")
+    return raw
+
+
+def _browser_validate_image(image: str, source_sha: str) -> None:
+    if _browser_image_absent(image, source_sha):
+        raise PreflightError("browser IPC pulled image did not become inspectable")
+
+
+def _browser_pull_both(image: str, browser_image: str, source_sha: str) -> None:
+    before = _storage_snapshot()
+    _validate_storage_capacity(before)
+    for reference in (image, browser_image):
+        _run("docker", "pull", reference)
+        _browser_validate_image(reference, source_sha)
+    _validate_storage_continuity(before, _storage_snapshot())
+
+
+def _browser_validate_ipc_volume(attempt_id: str) -> None:
+    volume = _json_object(
+        _run("docker", "volume", "inspect", "--format", "{{json .}}", BROWSER_IPC_VOLUME),
+        "browser IPC volume",
+    )
+    docker_root = _checked_docker_storage_dir()
+    expected = docker_root / "volumes" / BROWSER_IPC_VOLUME / "_data"
+    labels = volume.get("Labels")
+    if (
+        volume.get("Name") != BROWSER_IPC_VOLUME
+        or volume.get("Driver") != "local"
+        or volume.get("Scope") != "local"
+        or volume.get("Options") not in (None, {})
+        or volume.get("Mountpoint") != str(expected)
+        or not isinstance(labels, dict)
+        or labels
+        != {
+            "com.docker.compose.project": PROJECT,
+            "com.docker.compose.volume": "boca_browser_ipc",
+            BROWSER_ATTEMPT_LABEL: attempt_id,
+        }
+    ):
+        raise PreflightError("browser IPC volume is not privately identified")
+    try:
+        if expected.resolve(strict=True) != expected:
+            raise PreflightError("browser IPC mountpoint is redirected")
+    except (OSError, RuntimeError) as exc:
+        raise PreflightError("browser IPC volume mountpoint is unavailable") from exc
+
+
+def _browser_named_probe(phase_name: str, attempt_id: str, command: tuple[str, ...]) -> str:
+    """Give every `docker run --rm` a C2b-cleanable positive attempt ID.
+
+    A lost CLI/SSH can leave a daemon container alive despite `--rm`. Exactly
+    one of seven known named probes may exist at a time, so the same protected
+    job can inspect/stop it selectively without touching any other workload.
+    """
+    permitted = {
+        "ipc-dir-init",
+        "synthetic-ipc",
+        "key-init",
+        "key-verify",
+        "owner-check",
+        "config-check",
+        "data-init",
+    }
+    if (
+        phase_name not in permitted
+        or not BROWSER_ATTEMPT_PATTERN.fullmatch(attempt_id)
+        or command[:3] != ("docker", "run", "--rm")
+        or "--name" in command
+        or "--label" in command
+        or "--detach" in command
+        or "-d" in command
+    ):
+        raise PreflightError("unreviewed browser IPC one-shot helper")
+    return _run(
+        "docker",
+        "run",
+        "--name",
+        f"boca-socios-browser-ipc-probe-{phase_name}-{attempt_id}",
+        "--label",
+        f"com.docker.compose.project={PROJECT}",
+        "--label",
+        f"{BROWSER_ATTEMPT_LABEL}={attempt_id}",
+        "--label",
+        f"boca.socios.browser-ipc-phase={phase_name}",
+        "--ipc=private",
+        "--cgroupns=private",
+        *command[2:],
+        timeout=75 if phase_name == "synthetic-ipc" else 120,
+    )
+
+
+def _browser_create_key(image: str, attempt_id: str) -> None:
+    """Legacy key custody, with named helpers only for the opt-in v2 path."""
+    created = _run(
+        "docker",
+        "volume",
+        "create",
+        "--driver",
+        "local",
+        "--label",
+        f"com.docker.compose.project={PROJECT}",
+        "--label",
+        "com.docker.compose.volume=boca_key",
+        KEY_VOLUME,
+    )
+    if created != KEY_VOLUME:
+        raise PreflightError("unexpected browser IPC key volume creation")
+    _validate_key_volume()
+    if (
+        _browser_named_probe("key-init", attempt_id, _key_container(image, "init"))
+        != "BOCA_KEY_READY"
+    ):
+        raise PreflightError("browser IPC key initialization is unverified")
+    _validate_key_volume()
+    if (
+        _browser_named_probe("key-verify", attempt_id, _key_container(image, "verify"))
+        != "BOCA_KEY_READY"
+    ):
+        raise PreflightError("browser IPC key access is unverified")
+
+
+def _browser_create_ipc_volume(browser_image: str, attempt_id: str) -> None:
+    created = _run(
+        "docker",
+        "volume",
+        "create",
+        "--driver",
+        "local",
+        "--label",
+        f"com.docker.compose.project={PROJECT}",
+        "--label",
+        "com.docker.compose.volume=boca_browser_ipc",
+        "--label",
+        f"{BROWSER_ATTEMPT_LABEL}={attempt_id}",
+        BROWSER_IPC_VOLUME,
+    )
+    if created != BROWSER_IPC_VOLUME:
+        raise PreflightError("browser IPC volume creation had unexpected identity")
+    _browser_validate_ipc_volume(attempt_id)
+    # A bounded one-shot rootless user-namespace tool gives the socket-only
+    # volume UID10002 / mode0711. It never sees owner/key/data or the network.
+    initializer = (
+        "import os,stat; p='/run/boca-browser-ipc'; "
+        "os.chown(p,10002,10002); os.chmod(p,0o711); "
+        "s=os.stat(p,follow_symlinks=False); "
+        "assert stat.S_ISDIR(s.st_mode) and s.st_uid==10002 and s.st_gid==10002 "
+        "and stat.S_IMODE(s.st_mode)==0o711; print('BOCA_BROWSER_IPC_DIR_PASS')"
+    )
+    receipt = _browser_named_probe(
+        "ipc-dir-init",
+        attempt_id,
+        (
+            "docker",
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--user",
+            "0:0",
+            "--network",
+            "none",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--cap-add",
+            "CHOWN",
+            "--cap-add",
+            "FOWNER",
+            "--security-opt",
+            "no-new-privileges",
+            "--pids-limit",
+            "16",
+            "--memory",
+            "64m",
+            "--cpus",
+            "0.25",
+            "--mount",
+            f"type=volume,source={BROWSER_IPC_VOLUME},target=/run/boca-browser-ipc,volume-nocopy",
+            browser_image,
+            "python",
+            "-c",
+            initializer,
+        ),
+    )
+    if receipt != "BOCA_BROWSER_IPC_DIR_PASS":
+        raise PreflightError("browser IPC directory owner or mode is unverified")
+    _browser_validate_ipc_volume(attempt_id)
+
+
+def _browser_service_id(
+    service: str, image: str, origin: str, owner: str, browser_image: str, attempt_id: str
+) -> str:
+    if service not in {"controller", "browser-worker"}:
+        raise PreflightError("unknown Boca IPC service")
+    container = _run(
+        *_browser_compose_args("ps", "-q", service),
+        env=_browser_compose_env(image, origin, owner, browser_image, attempt_id),
+    )
+    if re.fullmatch(r"[0-9a-f]{64}", container) is None:
+        raise PreflightError("expected one exact Boca IPC service ID")
+    return container
+
+
+def _browser_inspect_record(container: str) -> dict[str, object]:
+    raw = _run("docker", "inspect", "--format", "{{json .}}", container)
+    if not 0 < len(raw) < 65_536:
+        raise PreflightError("Boca IPC container inspection is unbounded")
+    record = _json_object(raw, "browser IPC container")
+    if record.get("Id") != container:
+        raise PreflightError("Boca IPC container identity changed")
+    return record
+
+
+def _browser_config_and_host(
+    record: dict[str, object],
+) -> tuple[dict[str, object], dict[str, object]]:
+    config, host = record.get("Config"), record.get("HostConfig")
+    if not isinstance(config, dict) or not isinstance(host, dict):
+        raise PreflightError("Boca IPC config or host isolation is unavailable")
+    return config, host
+
+
+def _browser_check_service_labels(
+    record: dict[str, object],
+    *,
+    container: str,
+    service: str,
+    image: str,
+    source_sha: str,
+    user: str,
+    attempt_id: str,
+) -> tuple[dict[str, object], dict[str, object]]:
+    config, host = _browser_config_and_host(record)
+    state = record.get("State")
+    labels = config.get("Labels")
+    restart = host.get("RestartPolicy")
+    if (
+        record.get("Name") != f"/{PROJECT}-{service}-1"
+        or config.get("Image") != image
+        or config.get("User") != user
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.service") != service
+        or labels.get(BROWSER_ATTEMPT_LABEL) != attempt_id
+        or labels.get("org.opencontainers.image.revision") != source_sha
+        or not isinstance(state, dict)
+        or state.get("Running") is not True
+        or state.get("Restarting") is not False
+        or not isinstance(state.get("Health"), dict)
+        or state["Health"].get("Status") != "healthy"
+        or type(record.get("RestartCount")) is not int
+        or record["RestartCount"] != 0
+        or not isinstance(restart, dict)
+        or restart.get("Name") != "no"
+        or restart.get("MaximumRetryCount") != 0
+        or host.get("ReadonlyRootfs") is not True
+        or host.get("Privileged") is not False
+        or host.get("PublishAllPorts") is not False
+        or host.get("Init") is not True
+    ):
+        raise PreflightError("Boca IPC service identity, health or no-retry boundary changed")
+    return config, host
+
+
+def _browser_check_mounts(record: dict[str, object], *, controller: bool) -> None:
+    mounts = record.get("Mounts")
+    expected = (
+        {
+            (DATA_VOLUME, "/data", True),
+            (KEY_VOLUME, "/run/secrets", False),
+            (OWNER_VOLUME, "/run/owner", False),
+            (BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", False),
+        }
+        if controller
+        else {(BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", True)}
+    )
+    if not isinstance(mounts, list) or len(mounts) != len(expected):
+        raise PreflightError("Boca IPC service has an unexpected mount count")
+    actual: set[tuple[str, str, bool]] = set()
+    for mount in mounts:
+        if (
+            not isinstance(mount, dict)
+            or mount.get("Type") != "volume"
+            or mount.get("Driver") != "local"
+            or type(mount.get("Name")) is not str
+            or type(mount.get("Destination")) is not str
+            or type(mount.get("RW")) is not bool
+        ):
+            raise PreflightError("Boca IPC service mount is unsafe")
+        actual.add((mount["Name"], mount["Destination"], mount["RW"]))
+    if actual != expected:
+        raise PreflightError("Boca IPC service mount leaves approved volume boundary")
+
+
+def _browser_worker_probe(container: str) -> None:
+    """Kernel-observed cgroup/no-egress/seccomp, not only a seccomp path string."""
+    code = (
+        "import json,os,pathlib; p=pathlib.Path; "
+        "c=p('/sys/fs/cgroup'); "
+        "q,t=map(int,(c/'cpu.max').read_text().split()); "
+        "s=dict(x.split(':',1) for x in p('/proc/self/status').read_text().splitlines() "
+        "if ':' in x); "
+        "print(json.dumps({'uid':os.geteuid(),'gid':os.getegid(),"
+        "'cpu_quota':q,'cpu_period':t,"
+        "'memory_bytes':int((c/'memory.max').read_text()),"
+        "'pids_limit':int((c/'pids.max').read_text()),"
+        "'seccomp':int(s['Seccomp']),'filters':int(s['Seccomp_filters']),"
+        "'no_new_privs':int(s['NoNewPrivs']),"
+        "'interfaces':sorted(os.listdir('/sys/class/net'))},sort_keys=True))"
+    )
+    raw = _run(
+        "docker",
+        "exec",
+        "--user",
+        "10002:10002",
+        container,
+        "python",
+        "-c",
+        code,
+        timeout=15,
+    )
+    if len(raw) > 512:
+        raise PreflightError("worker kernel isolation receipt is unbounded")
+    evidence = _json_object(raw, "worker kernel isolation")
+    if (
+        set(evidence)
+        != {
+            "uid",
+            "gid",
+            "cpu_quota",
+            "cpu_period",
+            "memory_bytes",
+            "pids_limit",
+            "seccomp",
+            "filters",
+            "no_new_privs",
+            "interfaces",
+        }
+        or any(type(evidence[key]) is not int for key in evidence if key != "interfaces")
+        or evidence["uid"] != 10002
+        or evidence["gid"] != 10002
+        or not 0 < cast(int, evidence["cpu_period"]) <= 1_000_000
+        or evidence["cpu_quota"] != evidence["cpu_period"]
+        or evidence["memory_bytes"] != 805_306_368
+        or evidence["pids_limit"] != 128
+        or evidence["seccomp"] != 2
+        or cast(int, evidence["filters"]) < 1
+        or evidence["no_new_privs"] != 1
+        or evidence["interfaces"] != ["lo"]
+    ):
+        raise PreflightError("worker effective UID/cgroup/seccomp/no-egress unproven")
+
+
+def _browser_effective_seccomp_options(value: object, expected_sha: str) -> None:
+    """Docker CLI sends compact effective JSON, not the staged host pathname.
+
+    Compare exact UTF-8 JSON bytes with whitespace removed *outside* quoted
+    strings, mirroring Docker's json.Compact. Keeping string escapes/key order
+    makes even a subtly different or injected profile NO_GO. The separate
+    in-worker kernel probe must also report Seccomp=2 and filter count >= 1.
+    """
+    raw = _browser_root_file(BROWSER_SECCOMP.name, max_size=32_768)
+    if hashlib.sha256(raw).hexdigest() != expected_sha:
+        raise PreflightError("browser effective seccomp file differs from reviewed SHA-256")
+    try:
+        json.loads(raw, object_pairs_hook=_browser_json_pairs)
+        compact = bytearray()
+        quoted = False
+        escaped = False
+        for item in raw:
+            if quoted:
+                compact.append(item)
+                if escaped:
+                    escaped = False
+                elif item == ord("\\"):
+                    escaped = True
+                elif item == ord('"'):
+                    quoted = False
+            elif item == ord('"'):
+                quoted = True
+                compact.append(item)
+            elif item not in (ord(" "), ord("\t"), ord("\r"), ord("\n")):
+                compact.append(item)
+        if quoted or escaped:
+            raise PreflightError("browser seccomp JSON string is incomplete")
+        effective = "seccomp=" + compact.decode("utf-8")
+    except (UnicodeError, ValueError, TypeError) as exc:
+        raise PreflightError("browser effective seccomp JSON is invalid") from exc
+    if value != ["no-new-privileges:true", effective]:
+        raise PreflightError("worker did not load exact reviewed effective seccomp JSON")
+
+
+def _browser_worker_postflight(
+    container: str, browser_image: str, source_sha: str, attempt_id: str, seccomp_sha: str
+) -> None:
+    record = _browser_inspect_record(container)
+    config, host = _browser_check_service_labels(
+        record,
+        container=container,
+        service="browser-worker",
+        image=browser_image,
+        source_sha=source_sha,
+        user="10002:10002",
+        attempt_id=attempt_id,
+    )
+    environment = config.get("Env")
+    if not isinstance(environment, list) or any(type(item) is not str for item in environment):
+        raise PreflightError("worker environment could not be verified")
+    variables: dict[str, str] = {}
+    for entry in environment:
+        if "=" not in entry:
+            raise PreflightError("worker environment entry is invalid")
+        name, value = entry.split("=", 1)
+        if name in variables:
+            raise PreflightError("worker environment has duplicate names")
+        variables[name] = value
+    expected = {
+        "BOCA_ENVIRONMENT": "staging",
+        "BOCA_RUNTIME_MODE": "simulation",
+        "BOCA_ENGINE_MODE": "off",
+        "BOCA_OBSERVER_STOP": "1",
+    }
+    if (
+        {name: value for name, value in variables.items() if name.startswith("BOCA_")} != expected
+        or config.get("Cmd") != ["python", "-m", "boca_socios.browser.ipc_worker"]
+        or config.get("Entrypoint") not in (None, [])
+        or config.get("ExposedPorts") not in (None, {})
+        or host.get("NetworkMode") != "none"
+        or host.get("IpcMode") != "private"
+        or host.get("CgroupnsMode") != "private"
+        or host.get("NanoCpus") != 1_000_000_000
+        or host.get("Memory") != 805_306_368
+        or host.get("PidsLimit") != 128
+        or host.get("ShmSize") != 67_108_864
+        or host.get("CapDrop") != ["ALL"]
+        or host.get("CapAdd") != ["SYS_CHROOT"]
+        or host.get("PortBindings") not in (None, {})
+        or host.get("Tmpfs")
+        != {
+            "/tmp": "rw,noexec,nosuid,size=32m",  # noqa: S108 - container tmpfs
+            "/home/boca-browser": "rw,noexec,nosuid,size=16m",
+        }
+    ):
+        raise PreflightError("browser worker Docker isolation changed")
+    _browser_effective_seccomp_options(host.get("SecurityOpt"), seccomp_sha)
+    networks = record.get("NetworkSettings")
+    if not isinstance(networks, dict) or networks.get("Ports") not in (None, {}):
+        raise PreflightError("browser worker has unexpected IP ports")
+    attached = networks.get("Networks")
+    if not isinstance(attached, dict) or not set(attached) <= {"none"}:
+        raise PreflightError("browser worker has an IP network attachment")
+    for endpoint in attached.values():
+        if (
+            not isinstance(endpoint, dict)
+            or endpoint.get("IPAddress") not in (None, "")
+            or endpoint.get("GlobalIPv6Address") not in (None, "")
+        ):
+            raise PreflightError("browser worker received an IP address")
+    _browser_check_mounts(record, controller=False)
+    _browser_worker_probe(container)
+
+
+def _browser_worker_network_inventory() -> set[str]:
+    """Compose may precreate Boca's bridge when starting a network-none worker."""
+    boca = _names("network", "name=^boca-socios_")
+    if boca not in (set(), {BROWSER_BRIDGE}):
+        raise PreflightError("browser IPC worker created an unexpected network")
+    if boca:
+        record = _json_object(
+            _run("docker", "network", "inspect", "--format", "{{json .}}", BROWSER_BRIDGE),
+            "browser IPC staged bridge",
+        )
+        labels = record.get("Labels")
+        if (
+            record.get("Name") != BROWSER_BRIDGE
+            or record.get("Driver") != "bridge"
+            or record.get("Scope") != "local"
+            or record.get("Internal") is not False
+            or record.get("Attachable") is not False
+            or record.get("Ingress") is not False
+            or not isinstance(labels, dict)
+            or labels.get("com.docker.compose.project") != PROJECT
+            or labels.get("com.docker.compose.network") != "boca_private"
+            or record.get("Containers") not in (None, {})
+        ):
+            raise PreflightError("browser IPC pre-controller bridge is unsafe")
+    return boca
+
+
+def _browser_synthetic_socket_smoke(image: str, attempt_id: str) -> None:
+    """Kernel SO_PEERCRED across UID10001->10002 for ONE fixed fake command.
+
+    Uses a short-lived, network-none controller-image probe with the single
+    IPC mount RO. The worker's Chromium sandbox operates only fake HTML.
+    Never mounts owner/key/data, never supplies a member/event/URL or retries.
+    """
+    code = (
+        "import asyncio; "
+        "from boca_socios.browser.ipc_client import UnixSyntheticBrowser; "
+        "from boca_socios.browser.contracts import SimulationOutcome; "
+        "outcome=asyncio.run(UnixSyntheticBrowser(timeout_seconds=25)."
+        "simulate_general_reservation()); "
+        "assert outcome is SimulationOutcome.RESERVED_IN_SIMULATOR; "
+        "print('BOCA_BROWSER_IPC_SYNTHETIC_PASS')"
+    )
+    receipt = _browser_named_probe(
+        "synthetic-ipc",
+        attempt_id,
+        (
+            "docker",
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--user",
+            "10001:10001",
+            "--network",
+            "none",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            "--pids-limit",
+            "16",
+            "--memory",
+            "64m",
+            "--cpus",
+            "0.25",
+            "--mount",
+            f"type=volume,source={BROWSER_IPC_VOLUME},target=/run/boca-browser-ipc,volume-nocopy,readonly",
+            image,
+            "python",
+            "-c",
+            code,
+        ),
+    )
+    if receipt != "BOCA_BROWSER_IPC_SYNTHETIC_PASS":
+        raise PreflightError("cross-container SO_PEERCRED and synthetic IPC unverified")
+
+
+def _browser_controller_postflight(
+    container: str,
+    image: str,
+    source_sha: str,
+    attempt_id: str,
+    origin: str,
+    owner: str,
+) -> None:
+    record = _browser_inspect_record(container)
+    config, host = _browser_check_service_labels(
+        record,
+        container=container,
+        service="controller",
+        image=image,
+        source_sha=source_sha,
+        user="10001:10001",
+        attempt_id=attempt_id,
+    )
+    environment = config.get("Env")
+    if not isinstance(environment, list) or any(type(item) is not str for item in environment):
+        raise PreflightError("browser IPC controller environment invalid")
+    variables: dict[str, str] = {}
+    for entry in environment:
+        if "=" not in entry:
+            raise PreflightError("browser IPC controller environment entry invalid")
+        name, value = entry.split("=", 1)
+        if name in variables:
+            raise PreflightError("browser IPC controller environment duplicates")
+        variables[name] = value
+    for name, expected in {
+        "BOCA_ENVIRONMENT": "staging",
+        "BOCA_RUNTIME_MODE": "simulation",
+        "BOCA_ENGINE_MODE": "off",
+        "BOCA_BROWSER_BACKEND": "ipc",
+        "BOCA_PANEL_ORIGIN": origin,
+        "BOCA_OWNER_SUBJECT": owner,
+        "BOCA_DB_PATH": "/data/boca.sqlite3",
+        "BOCA_MASTER_KEY_FILE": "/run/secrets/boca_master_key",
+        "BOCA_PASSKEY_CREDENTIAL_ID_FILE": "/run/owner/credential_id",
+        "BOCA_PASSKEY_PUBLIC_KEY_DER_FILE": "/run/owner/public_key.der",
+        "BOCA_BIND_HOST": "0.0.0.0",  # noqa: S104 - container bridge, host loopback
+        "BOCA_BIND_PORT": "8443",
+        "BOCA_HEALTH_MODE": "beta",
+    }.items():
+        if variables.get(name) != expected:
+            raise PreflightError("browser IPC controller runtime selector changed")
+    if any(
+        name in variables
+        for name in (
+            "BOCA_TLS_CERT_FILE",
+            "BOCA_TLS_KEY_FILE",
+            "BOCA_HEALTH_CA_FILE",
+            "BOCA_SITE_BRIDGE_MODE",
+            "BOCA_TELEGRAM_TOKEN",
+        )
+    ):
+        raise PreflightError("browser IPC controller gained external/TLS configuration")
+    expected_ports = {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
+    networks = record.get("NetworkSettings")
+    if not isinstance(networks, dict):
+        raise PreflightError("browser IPC controller network inventory invalid")
+    attached = networks.get("Networks")
+    if not isinstance(attached, dict) or set(attached) != {BROWSER_BRIDGE}:
+        raise PreflightError("browser IPC controller joined unexpected network")
+    endpoint = attached[BROWSER_BRIDGE]
+    if (
+        not isinstance(endpoint, dict)
+        or type(endpoint.get("NetworkID")) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", endpoint["NetworkID"]) is None
+        or host.get("NetworkMode") != BROWSER_BRIDGE
+        or host.get("PortBindings") != expected_ports
+        or networks.get("Ports") != expected_ports
+        or host.get("NanoCpus") != 500_000_000
+        or host.get("Memory") != 268_435_456
+        or host.get("PidsLimit") != 64
+        or host.get("CapDrop") != ["ALL"]
+        or host.get("CapAdd") not in (None, [])
+        or host.get("SecurityOpt") != ["no-new-privileges:true"]
+        or host.get("CgroupnsMode") not in ("", "private")
+        or host.get("Tmpfs")
+        != {
+            "/tmp": "rw,noexec,nosuid,size=16m"  # noqa: S108 - container tmpfs
+        }
+        or config.get("Cmd") != ["python", "-m", "boca_socios.runtime", "serve-beta"]
+        or config.get("Entrypoint") not in (None, [])
+    ):
+        raise PreflightError("browser IPC controller HostConfig/port boundary changed")
+    _browser_check_mounts(record, controller=True)
+    _validate_boca_network(container, endpoint["NetworkID"])
+    limits = _cgroup_limits(container)
+    if (
+        type(limits.cpu_quota) is not int
+        or type(limits.cpu_period) is not int
+        or not 0 < limits.cpu_period <= 1_000_000
+        or 2 * limits.cpu_quota != limits.cpu_period
+        or limits.memory_bytes != 268_435_456
+        or limits.pids_limit != 64
+    ):
+        raise PreflightError("browser IPC controller effective cgroup limits changed")
+
+
+def _browser_apply(
+    image: str,
+    source_sha: str,
+    beta_sha: str,
+    origin: str,
+    owner: str,
+    browser_image: str,
+    overlay_sha: str,
+    seccomp_sha: str,
+    attempt_id: str,
+) -> None:
+    _browser_engine_version()
+    marker = _browser_read_marker(
+        image, source_sha, beta_sha, browser_image, overlay_sha, seccomp_sha, attempt_id
+    )
+    _browser_verify_staged(beta_sha, overlay_sha, seccomp_sha)
+    _browser_staged_inventory(volumes={OWNER_VOLUME})
+    _browser_port_free()
+    _browser_capacity()
+    if _browser_image_absent(image, source_sha) != marker["controller_image_absent"]:
+        raise PreflightError("controller image pre-attempt marker is stale")
+    if _browser_image_absent(browser_image, source_sha) != marker["browser_image_absent"]:
+        raise PreflightError("worker image pre-attempt marker is stale")
+    _browser_compose_model(image, origin, owner, browser_image, attempt_id)
+    _browser_pull_both(image, browser_image, source_sha)
+    marker_after_pull = _browser_read_marker(
+        image, source_sha, beta_sha, browser_image, overlay_sha, seccomp_sha, attempt_id
+    )
+    if marker_after_pull != marker:
+        raise PreflightError("browser IPC pre-attempt inventory marker changed after image pulls")
+    _browser_verify_staged(beta_sha, overlay_sha, seccomp_sha)
+    _browser_staged_inventory(volumes={OWNER_VOLUME})
+    _browser_port_free()
+    # The memory/CPU/PID capacity gate must pass AFTER both image pulls, and
+    # BEFORE creating IPC, key/data volumes or launching either service.
+    _, _, _, after_pull = _browser_capacity()
+    _browser_create_ipc_volume(browser_image, attempt_id)
+    _browser_staged_inventory(volumes={OWNER_VOLUME, BROWSER_IPC_VOLUME})
+    environment = _browser_compose_env(image, origin, owner, browser_image, attempt_id)
+    _run(
+        *_browser_compose_args(
+            "up",
+            "--no-build",
+            "--no-deps",
+            "--wait",
+            "--wait-timeout",
+            "90",
+            "-d",
+            "browser-worker",
+        ),
+        env=environment,
+        timeout=110,
+    )
+    worker = _browser_service_id("browser-worker", image, origin, owner, browser_image, attempt_id)
+    bridges = _browser_worker_network_inventory()
+    _browser_staged_inventory(
+        volumes={OWNER_VOLUME, BROWSER_IPC_VOLUME}, containers={worker}, bridges=bridges
+    )
+    _browser_validate_ipc_volume(attempt_id)
+    _browser_worker_postflight(worker, browser_image, source_sha, attempt_id, seccomp_sha)
+    _browser_synthetic_socket_smoke(image, attempt_id)
+    _browser_staged_inventory(
+        volumes={OWNER_VOLUME, BROWSER_IPC_VOLUME}, containers={worker}, bridges=bridges
+    )
+    # The synthetic worker has proven a real UID10001/10002 AF_UNIX exchange.
+    # Only now may the established BETA owner/key/data new-only path proceed.
+    _beta_check_receipt(
+        _browser_named_probe(
+            "owner-check",
+            attempt_id,
+            _beta_check_container(image, origin, owner, "check-beta-owner"),
+        ),
+        "check-beta-owner",
+    )
+    _browser_create_key(image, attempt_id)
+    _validate_key_volume()
+    _browser_staged_inventory(
+        volumes={OWNER_VOLUME, BROWSER_IPC_VOLUME, KEY_VOLUME},
+        containers={worker},
+        bridges=bridges,
+    )
+    _beta_check_receipt(
+        _browser_named_probe(
+            "config-check",
+            attempt_id,
+            _beta_check_container(image, origin, owner, "check-beta-config"),
+        ),
+        "check-beta-config",
+    )
+    created = _run(
+        "docker",
+        "volume",
+        "create",
+        "--driver",
+        "local",
+        "--label",
+        f"com.docker.compose.project={PROJECT}",
+        "--label",
+        "com.docker.compose.volume=boca_data",
+        DATA_VOLUME,
+    )
+    if created != DATA_VOLUME:
+        raise PreflightError("browser IPC BETA data volume creation was unexpected")
+    _validate_data_volume()
+    if _browser_named_probe("data-init", attempt_id, _beta_init_container(image)):
+        raise PreflightError("browser IPC new-only BETA init output was unexpected")
+    _validate_owner_volume()
+    _validate_key_volume()
+    _validate_data_volume()
+    _browser_staged_inventory(
+        volumes={OWNER_VOLUME, BROWSER_IPC_VOLUME, KEY_VOLUME, DATA_VOLUME},
+        containers={worker},
+        bridges=bridges,
+    )
+    _browser_port_free()
+    if (
+        _browser_read_marker(
+            image, source_sha, beta_sha, browser_image, overlay_sha, seccomp_sha, attempt_id
+        )
+        != marker
+    ):
+        raise PreflightError("browser IPC pre-attempt inventory marker changed before controller")
+    _browser_verify_staged(beta_sha, overlay_sha, seccomp_sha)
+    _browser_compose_model(image, origin, owner, browser_image, attempt_id)
+    _run(
+        *_browser_compose_args(
+            "up",
+            "--no-build",
+            "--no-deps",
+            "--wait",
+            "--wait-timeout",
+            "90",
+            "-d",
+            "controller",
+        ),
+        env=environment,
+        timeout=110,
+    )
+    controller = _browser_service_id("controller", image, origin, owner, browser_image, attempt_id)
+    _browser_inventory(
+        containers={worker, controller},
+        volumes={OWNER_VOLUME, BROWSER_IPC_VOLUME, KEY_VOLUME, DATA_VOLUME},
+        bridges={BROWSER_BRIDGE},
+    )
+    _browser_worker_postflight(worker, browser_image, source_sha, attempt_id, seccomp_sha)
+    _browser_controller_postflight(controller, image, source_sha, attempt_id, origin, owner)
+    _browser_validate_ipc_volume(attempt_id)
+    _validate_owner_volume()
+    _validate_key_volume()
+    _validate_data_volume()
+    _beta_loopback_health(controller, origin)
+    if (
+        _browser_read_marker(
+            image, source_sha, beta_sha, browser_image, overlay_sha, seccomp_sha, attempt_id
+        )
+        != marker
+    ):
+        raise PreflightError("browser IPC pre-attempt inventory marker changed before completion")
+    _validate_storage_continuity(after_pull, _storage_snapshot())
+    print(
+        f"BOCA_BROWSER_IPC_INSTALL_PASS attempt={attempt_id} source_sha={source_sha}"
+        " services=controller,browser-worker host=127.0.0.1:8443"
+        " worker_network=none ipc=synthetic owner=preserved engine=off"
+    )
+
+
+def _browser_phase(
+    operation: str,
+    image: str,
+    source_sha: str,
+    beta_sha: str,
+    origin: str,
+    owner: str,
+    browser_image: str,
+    overlay_sha: str,
+    seccomp_sha: str,
+    attempt_id: str,
+) -> None:
+    _browser_engine_version()
+    if operation == "browser-preflight":
+        memory, cpu, pids, storage = _browser_preflight_inventory()
+        _browser_image_absent(image, source_sha)
+        _browser_image_absent(browser_image, source_sha)
+        print(
+            "BOCA_BROWSER_PREFLIGHT_PASS uid=10001 owner=existing namespace=new-only"
+            " port=127.0.0.1:8443 state=FREE"
+            f" mem_kib={memory} cpu_headroom={cpu:.2f} pids_free={pids}"
+            f" stage_free_mib={storage.stage_free_bytes // 1024**2}"
+            f" docker_free_mib={storage.docker_free_bytes // 1024**2}"
+        )
+        return
+    if operation == "browser-stage":
+        _browser_stage(
+            image, source_sha, beta_sha, browser_image, overlay_sha, seccomp_sha, attempt_id
+        )
+        return
+    _browser_read_marker(
+        image, source_sha, beta_sha, browser_image, overlay_sha, seccomp_sha, attempt_id
+    )
+    _browser_verify_staged(beta_sha, overlay_sha, seccomp_sha)
+    if operation == "browser-config":
+        _browser_staged_inventory(volumes={OWNER_VOLUME})
+        _browser_port_free()
+        _browser_capacity()
+        print(_browser_compose_model(image, origin, owner, browser_image, attempt_id))
+        return
+    if operation == "browser-apply":
+        _browser_apply(
+            image,
+            source_sha,
+            beta_sha,
+            origin,
+            owner,
+            browser_image,
+            overlay_sha,
+            seccomp_sha,
+            attempt_id,
+        )
+        return
+    raise PreflightError("unknown browser IPC phase")
+
+
 def _site_phase(operation: str, image: str, source_sha: str, envelope: str) -> None:
     if (envelope and operation != "site-install") or (operation == "site-install" and not envelope):
         raise PreflightError("sealed Site envelope required only for install")
@@ -3423,7 +4940,56 @@ def phase(
     expected_chat_hmac: str = "",
     owner_envelope: str = "",
     enroll_digest: str = "",
+    *,
+    browser_image: str = "",
+    browser_overlay_sha: str = "",
+    browser_seccomp_sha: str = "",
+    browser_attempt_id: str = "",
 ) -> None:
+    browser = phase_name.startswith("browser-")
+    if browser:
+        if phase_name not in {
+            "browser-preflight",
+            "browser-stage",
+            "browser-config",
+            "browser-apply",
+        }:
+            raise PreflightError("unknown browser IPC phase")
+        if (
+            telegram_envelope
+            or expected_bot_id
+            or expected_chat_hmac
+            or owner_envelope
+            or enroll_digest
+        ):
+            raise PreflightError("unexpected private context in browser IPC phase")
+        _browser_coordinates(
+            image,
+            source_sha,
+            compose_sha,
+            envelope,
+            beta_owner,
+            browser_image,
+            browser_overlay_sha,
+            browser_seccomp_sha,
+            browser_attempt_id,
+        )
+        _validate_docker_boundary()
+        _browser_phase(
+            phase_name,
+            image,
+            source_sha,
+            compose_sha,
+            envelope,
+            beta_owner,
+            browser_image,
+            browser_overlay_sha,
+            browser_seccomp_sha,
+            browser_attempt_id,
+        )
+        return
+    if browser_image or browser_overlay_sha or browser_seccomp_sha or browser_attempt_id:
+        raise PreflightError("browser IPC coordinates supplied to legacy phase")
     beta = phase_name.startswith("beta-")
     telegram = phase_name.startswith("telegram-")
     owner_custody = phase_name.startswith("owner-")
@@ -3672,6 +5238,10 @@ def main() -> int:
             "beta-apply",
             "beta-rollback",
             "beta-acceptance",
+            "browser-preflight",
+            "browser-stage",
+            "browser-config",
+            "browser-apply",
             "telegram-migrate",
             "telegram-prepare",
             "telegram-install",
@@ -3689,6 +5259,10 @@ def main() -> int:
     parser.add_argument("expected_chat_hmac", nargs="?", default="")
     parser.add_argument("owner_envelope", nargs="?", default="")
     parser.add_argument("enroll_digest", nargs="?", default="")
+    parser.add_argument("--browser-image", default="")
+    parser.add_argument("--browser-overlay-sha", default="")
+    parser.add_argument("--browser-seccomp-sha", default="")
+    parser.add_argument("--browser-attempt-id", default="")
     args = parser.parse_args()
     try:
         phase(
@@ -3703,6 +5277,10 @@ def main() -> int:
             args.expected_chat_hmac,
             args.owner_envelope,
             args.enroll_digest,
+            browser_image=args.browser_image,
+            browser_overlay_sha=args.browser_overlay_sha,
+            browser_seccomp_sha=args.browser_seccomp_sha,
+            browser_attempt_id=args.browser_attempt_id,
         )
     except (PreflightError, OSError, ValueError, TypeError, KeyError) as exc:
         print(f"BOCA_NO_GO: {exc}", file=sys.stderr)

@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import textwrap
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/boca-first-deploy.yml"
@@ -252,15 +257,126 @@ def test_browser_ssh_transport_has_per_phase_deadlines_with_cleanup_headroom() -
     )
 
 
+@pytest.mark.parametrize(
+    "failed_step",
+    [
+        "Record preexisting Boca images and atomically stage reviewed browser files",
+        "Verify exact staged browser host model and private seccomp proof",
+        "Recheck main and only Boca loopback 8443 before browser effects",
+        "Start worker then controller only after healthy private socket proof",
+    ],
+)
+def test_browser_early_or_late_failure_cannot_skip_same_job_cleanup(failed_step: str) -> None:
+    workflow = _workflow()
+    mark = "Mark browser IPC staging attempt for immediate selective cleanup"
+    cleanup = "Immediately clean only positively identified failed browser IPC attempt"
+    assert workflow.index(mark) < workflow.index(failed_step) < workflow.index(cleanup)
+    assert "started=true" in _step(mark)
+    assert (
+        "if: always() && failure() && inputs.operation == 'beta-browser-install' && "
+        "steps.boca_browser_stage_attempt.outputs.started == 'true'"
+    ) in _step(cleanup)
+    # No unrelated action after the final effect and before its recovery gate.
+    after_apply = workflow.split(
+        "      - name: Start worker then controller only after healthy private socket proof\n", 1
+    )[1]
+    assert after_apply.split("      - name:", 1)[1].startswith(
+        " Immediately clean only positively identified failed browser IPC attempt\n"
+    )
+
+
+def test_failed_browser_cleanup_script_attempts_one_bounded_ssh_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Offline injection into real cleanup shell; ``ssh`` is a local stub."""
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    log = tmp_path / "ssh-calls"
+    fake_ssh = fakebin / "ssh"
+    fake_ssh.write_text(
+        '#!/bin/sh\nprintf "one-attempt\\n" >> "$BOCA_MOCK_SSH_LOG"\nexit 42\n',
+        encoding="utf-8",
+    )
+    fake_ssh.chmod(0o700)
+    for name, value in (
+        ("boca-beta-compose.sha", "d" * 64),
+        ("boca-browser-overlay.sha", "e" * 64),
+        ("boca-browser-seccomp.sha", "f" * 64),
+    ):
+        (tmp_path / name).write_text(value + "\n", encoding="ascii")
+    summary = tmp_path / "summary"
+    env = {
+        **os.environ,
+        "PATH": str(fakebin) + os.pathsep + os.environ["PATH"],
+        "RUNNER_TEMP": str(tmp_path),
+        "GITHUB_STEP_SUMMARY": str(summary),
+        "GITHUB_RUN_ID": "123456789",
+        "BOCA_MOCK_SSH_LOG": str(log),
+        "BOCA_IMAGE_REF": "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "a" * 64,
+        "BOCA_BROWSER_IMAGE_REF": (
+            "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "b" * 64
+        ),
+        "BOCA_SOURCE_SHA": "c" * 40,
+    }
+    run = _step("Immediately clean only positively identified failed browser IPC attempt")
+    script = textwrap.dedent(run.split("        run: |\n", 1)[1])
+    result = subprocess.run(  # noqa: S603 - fixed bash, offline local SSH stub only
+        ["/bin/bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    assert result.returncode == 0  # The earlier workflow failure stays failed.
+    assert log.read_text(encoding="utf-8") == "one-attempt\n"
+    assert "original NO_GO" in summary.read_text(encoding="utf-8")
+    assert "NO_GO INDETERMINADO" in summary.read_text(encoding="utf-8")
+    assert "no retry" in summary.read_text(encoding="utf-8")
+
+
 def test_browser_ci_covers_new_gate_and_legacy_contract_separately() -> None:
     workflow = _workflow()
     validation = workflow.split("  pr-validation:\n", 1)[1].split("  pr-runtime-smoke:\n", 1)[0]
     assert "tests/test_browser_ipc_workflow.py" in validation
     assert "tests/test_beta_browser_deploy_contract.py" in validation
     assert "tests/test_host_browser_ipc_file_stage.py" in validation
+    assert "tests/test_host_browser_ipc_install.py" in validation
+    assert "tests/test_host_browser_ipc_cleanup.py" in validation
+    assert "tests/test_host_browser_ipc_cross_contract.py" in validation
     assert "tests/test_beta_deploy_contract.py" in validation
     assert "scripts/check_repo_policy.py" in validation
     assert "Validate optional served BETA Compose model" in validation
     assert "Validate opt-in dual-service browser IPC Compose model offline" in validation
     assert "--topology=browser-ipc-v2" in validation
     assert "-f compose.beta.yaml -f compose.beta.browser.yaml" in validation
+
+
+def test_pr_runner_disposable_docker_probe_checks_real_inspect_defaults() -> None:
+    workflow = _workflow()
+    smoke = _step("Verify disposable browser IPC one-shot Docker inspect and auto-remove defaults")
+    runner = workflow.split("  pr-runtime-smoke:\n", 1)[1].split("  deploy:\n", 1)[0]
+    assert (
+        "Verify disposable browser IPC one-shot Docker inspect and auto-remove defaults" in runner
+    )
+    assert runner.index("Build local simulation image only") < runner.index(
+        "Verify disposable browser IPC one-shot Docker inspect"
+    )
+    for proof in (
+        "docker run -d --rm --pull never --cidfile",
+        '"$BOCA_IMAGE" python -c',
+        "--network none --ipc=private --cgroupns=private",
+        "--read-only --cap-drop ALL --security-opt no-new-privileges",
+        '"AutoRemove"] is True',
+        '"UsernsMode"] == host["UTSMode"] == ""',
+        '"PidMode"] in ("", "private")',
+        '"IpcMode"] == host["CgroupnsMode"] == "private"',
+        "trap cleanup_probe EXIT",
+        '"boca.ci.ipc-probe=$GITHUB_RUN_ID"',
+        "docker stop -t 2",
+        'test "$removed" = yes',
+    ):
+        assert proof in smoke
+    assert "--publish" not in smoke and "--privileged" not in smoke
+    assert "docker volume" not in smoke and "ssh " not in smoke
