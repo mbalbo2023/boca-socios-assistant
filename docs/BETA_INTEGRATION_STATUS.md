@@ -35,7 +35,7 @@ ni despliegue por estos merges.
 
 | Frente | Evidencia comprobada | Pendiente de aceptación |
 | --- | --- | --- |
-| Host | [41495516709/job125449321031](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41495516709/job/125449321031), 2026-11-02 14:54:42 ART: daemon inactive/dead, socket ausente; MemAvailable 1020020 KiB, estimación CPU 0.27, PIDs UNKNOWN; capacidad NOT_EVALUATED | Integrar/revisar y autorizar `infrastructure-preflight` de #261 antes de release; capacidad/aislamiento efectivos e instalación mantienen sus gates; no repetir preparación inicial |
+| Host | [41495516709/job125449321031](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41495516709/job/125449321031), 2026-11-02 14:54:42 ART: daemon inactive/dead, socket ausente; MemAvailable 1020020 KiB, estimación CPU 0.27, PIDs UNKNOWN; capacidad NOT_EVALUATED | Autorizar y ejecutar `infrastructure-preflight`, ya integrado por #261, antes de release; capacidad/aislamiento efectivos e instalación mantienen sus gates; no repetir preparación inicial |
 | Puerto | [41497093298/job125454798607](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41497093298/job/125454798607): `127.0.0.1:8443 FREE reserved=no` a las 15:04:45 ART del 2026-11-02 | Nueva comprobación justo antes del uso; listener y forwarding reales |
 | Release | Publicación dual integrada en código | Dos digests/manifiestos reales del mismo release y SHA final aprobado |
 | Ciclo operativo | PR #253 integrado en `5ddfba5`: start/restart/status/acceptance y sender-start/recover con identidad y presupuesto explícitos | Comprobación host sobre el SHA final; no hay instalación ni reinicio probado en el droplet |
@@ -62,7 +62,7 @@ Inspect/port-check no ejecutaron Docker ni una instalación: no generaron
 residuos de instalación y no corresponde inventar su limpieza. La DB se
 inspeccionó sólo en tres rutas de metadata; ubicación global UNVERIFIED.
 
-### PR #261: evidencia histórica y cierre pendiente
+### PR #261: evidencia histórica e integración comprobada
 
 El corte posterior `7cfc9b60564f8c7bb8a589c86e15153c77bc948d` obtuvo
 [CI 41514375866](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41514375866)
@@ -110,11 +110,12 @@ de la rama `user.slice`, cuotas ancestrales, cpusets y configuración efectiva.
 `cpu_scope` distingue `materialized`/`configured`; `daemon_startup_cpu_count`
 es sólo otro límite. Load es advisory, no CPU libre. Los requisitos CPU
 1.75/2.0, RAM 1536/1792 MiB, PIDs 256/288 y caps permanecen intactos.
-Un techo no comprobable sigue UNKNOWN/NO_GO. Faltan checks del candidato final
-y la operación protegida en el droplet. La concurrencia de tres servicios no
+Un techo no comprobable sigue UNKNOWN/NO_GO. Los checks finales de #261
+pasaron en 41518027202/41518026922/41518027065; los nuevos checks de #266
+y la operación protegida en el droplet conservan sus gates. La concurrencia de tres servicios no
 está medida y los recibos del runner no acreditan capacidad host.
 
-Secuencia: integrar/revisar fuente y documentación, checks finales → autorizar
+Secuencia: integrar/revisar #266 y sus checks finales → autorizar
 y comprobar `infrastructure-preflight` → evaluar observaciones → aprobación
 específica/release dual → preflight de imágenes/topología → owner-prepare y owner-enroll físico → instalación → aceptación
 sintética temporal → formulario/custodia y prueba Telegram con outbox vacío
@@ -507,7 +508,7 @@ transporte y pruebas propias. [Issue #168](https://github.com/mbalbo2023/boca-so
 registra la provisión/recepción Telegram pendiente; [issue #113](https://github.com/mbalbo2023/boca-socios-assistant/issues/113)
 registra el puente Site no resuelto.
 
-La cadena pendiente es: integrar/verificar el candidato final y congelar main
+La cadena pendiente es: integrar/verificar #266 y congelar main
 → autorizar/ejecutar `infrastructure-preflight` de #261 y evaluar sus recibos
 → autorizar/publicar release dual exacta → preflight de imágenes/aislamiento → owner-prepare
 y owner-enroll real → instalación/aceptación temporal → Telegram antes de la

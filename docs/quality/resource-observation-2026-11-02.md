@@ -208,6 +208,8 @@ RAM thresholds remain 1536/1792 MiB and task thresholds 256/288; all service
 caps are unchanged. The smoke observations do not calibrate those RAM/task
 margins. No server resizing, new infrastructure or other workload change
 is selected. The final delta passed independent review and 290 focused
-tests; exact-candidate hosted checks and the protected host preflight are
-still required. No droplet capacity or performance is inferred from this fix.
+tests. Those candidate checks subsequently passed in 41518027202, 41518026922
+and 41518027065, as recorded above. The new #266 candidate needs its own
+checks; the protected host preflight remains pending. No droplet capacity or
+performance is inferred from this fix.
 
