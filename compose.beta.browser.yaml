@@ -1,0 +1,69 @@
+# Optional browser-ipc-v2 overlay. NEVER selected by legacy beta-install.
+# Future use requires a reviewed protected workflow, preprovisioned IPC volume,
+# pinned browser image, verified seccomp file and positive Boca-only host gates.
+# No browser IP networking, published port, owner/key/data mount or live provider.
+name: boca-socios
+
+services:
+  controller:
+    # No daemon restart or invisible retry when the IPC worker stops.
+    restart: "no"
+    environment:
+      BOCA_BROWSER_BACKEND: ipc
+    labels:
+      boca.socios.browser-ipc-attempt: ${BOCA_BROWSER_ATTEMPT_ID:?single_reviewed_GitHub_run_required}
+    volumes:
+      - boca_browser_ipc:/run/boca-browser-ipc:ro
+
+  browser-worker:
+    image: ${BOCA_BROWSER_IMAGE:?reviewed_browser_digest_required}
+    command: ["python", "-m", "boca_socios.browser.ipc_worker"]
+    user: "10002:10002"
+    init: true
+    restart: "no"
+    stop_grace_period: 8s
+    environment:
+      BOCA_ENVIRONMENT: staging
+      BOCA_RUNTIME_MODE: simulation
+      BOCA_ENGINE_MODE: "off"
+    labels:
+      boca.socios.browser-ipc-attempt: ${BOCA_BROWSER_ATTEMPT_ID:?single_reviewed_GitHub_run_required}
+    volumes:
+      - boca_browser_ipc:/run/boca-browser-ipc
+    network_mode: "none"
+    cgroup: private
+    ipc: private
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+      - /home/boca-browser:rw,noexec,nosuid,size=16m
+    shm_size: 64m
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=${BOCA_BROWSER_SECCOMP_PATH:?reviewed_Boca_seccomp_path_required}
+    cap_drop:
+      - ALL
+    # Only the verified Playwright Chromium sandbox exception (ADR 0020).
+    cap_add:
+      - SYS_CHROOT
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: 1.00
+    healthcheck:
+      # Read-only local socket/cgroup/lo proof; never sends an IPC command.
+      test:
+        - CMD
+        - python
+        - -c
+        - "from boca_socios.browser.on_demand import validate_worker_boundary; from boca_socios.browser.ipc_worker import validate_no_egress_namespace; from boca_socios.browser.ipc_protocol import SOCKET_PATH, socket_identity; validate_worker_boundary(); validate_no_egress_namespace(); socket_identity(SOCKET_PATH)"
+      interval: 2s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  # External=new-only/protected preprovisioning; mode 0711 and UID/GID 10002
+  # are required by ADR 0094 and cannot be established by Compose alone.
+  boca_browser_ipc:
+    external: true
+    name: boca-socios_boca_browser_ipc

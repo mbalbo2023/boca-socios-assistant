@@ -1,0 +1,343 @@
+"""The opt-in IPC overlay cannot weaken legacy BETA or permit worker egress."""
+
+from __future__ import annotations
+
+import json
+import runpy
+import sys
+from copy import deepcopy
+from pathlib import Path
+
+import pytest
+
+from boca_socios.deploy_contract import (
+    ContractError,
+    validate_beta_browser_contract,
+    validate_beta_contract,
+)
+from test_beta_deploy_contract import ORIGIN, OWNER, beta_model
+from test_deploy_contract import IMAGE
+
+BROWSER_IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "b" * 64
+ATTEMPT = "123456"
+SECCOMP = "/srv/boca-socios/seccomp_profile.json"
+IPC_VOLUME = "boca-socios_boca_browser_ipc"
+WORKER_HEALTH = (
+    "from boca_socios.browser.on_demand import validate_worker_boundary; "
+    "from boca_socios.browser.ipc_worker import validate_no_egress_namespace; "
+    "from boca_socios.browser.ipc_protocol import SOCKET_PATH, socket_identity; "
+    "validate_worker_boundary(); validate_no_egress_namespace(); socket_identity(SOCKET_PATH)"
+)
+
+
+def browser_model() -> dict[str, object]:
+    candidate = deepcopy(beta_model())
+    services = candidate["services"]  # type: ignore[index]
+    controller = services["controller"]
+    controller["restart"] = "no"
+    controller["environment"]["BOCA_BROWSER_BACKEND"] = "ipc"
+    controller["labels"] = {"boca.socios.browser-ipc-attempt": ATTEMPT}
+    controller["volumes"].append(
+        {
+            "type": "volume",
+            "source": "boca_browser_ipc",
+            "target": "/run/boca-browser-ipc",
+            "read_only": True,
+        }
+    )
+    services["browser-worker"] = {
+        "image": BROWSER_IMAGE,
+        "command": ["python", "-m", "boca_socios.browser.ipc_worker"],
+        "entrypoint": None,
+        "user": "10002:10002",
+        "init": True,
+        "restart": "no",
+        "stop_grace_period": "8s",
+        "environment": {
+            "BOCA_ENVIRONMENT": "staging",
+            "BOCA_RUNTIME_MODE": "simulation",
+            "BOCA_ENGINE_MODE": "off",
+        },
+        "labels": {"boca.socios.browser-ipc-attempt": ATTEMPT},
+        "volumes": [
+            {
+                "type": "volume",
+                "source": "boca_browser_ipc",
+                "target": "/run/boca-browser-ipc",
+                "read_only": False,
+            }
+        ],
+        "network_mode": "none",
+        "cgroup": "private",
+        "ipc": "private",
+        "read_only": True,
+        "tmpfs": [
+            "/tmp:rw,noexec,nosuid,size=32m",  # noqa: S108 - container tmpfs
+            "/home/boca-browser:rw,noexec,nosuid,size=16m",
+        ],
+        "shm_size": "67108864",
+        "security_opt": ["no-new-privileges:true", f"seccomp={SECCOMP}"],
+        "cap_drop": ["ALL"],
+        "cap_add": ["SYS_CHROOT"],
+        "pids_limit": 128,
+        "mem_limit": "805306368",
+        "cpus": 1,
+        "healthcheck": {
+            "test": ["CMD", "python", "-c", WORKER_HEALTH],
+            "interval": "2s",
+            "timeout": "3s",
+            "retries": 3,
+            "start_period": "5s",
+        },
+    }
+    candidate["volumes"]["boca_browser_ipc"] = {  # type: ignore[index]
+        "name": IPC_VOLUME,
+        "external": True,
+    }
+    return candidate
+
+
+def valid(model: object) -> None:
+    validate_beta_browser_contract(model, IMAGE, BROWSER_IMAGE, ORIGIN, OWNER, SECCOMP, ATTEMPT)
+
+
+def test_versioned_browser_overlay_passes_but_legacy_singleton_rejects_it() -> None:
+    valid(browser_model())
+    validate_beta_contract(beta_model(), IMAGE, ORIGIN, OWNER)
+    with pytest.raises(ContractError):
+        validate_beta_contract(browser_model(), IMAGE, ORIGIN, OWNER)
+    with pytest.raises(ContractError):
+        valid(beta_model())
+
+
+def test_compose_normalizes_one_cpu_to_json_integer_not_float() -> None:
+    """Keep strict JSON-type checks aligned with actual Docker Compose config."""
+    candidate = browser_model()
+    cpu = candidate["services"]["browser-worker"]["cpus"]  # type: ignore[index]
+    assert cpu == 1 and type(cpu) is int
+    valid(candidate)
+    candidate["services"]["browser-worker"]["cpus"] = 1.0  # type: ignore[index]
+    with pytest.raises(ContractError):
+        valid(candidate)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("image", IMAGE),
+        ("image", "ghcr.io/mbalbo2023/boca-socios-assistant-browser:latest"),
+        ("command", ["sh", "-c", "python -m boca_socios.browser.ipc_worker"]),
+        ("entrypoint", ["/bin/sh"]),
+        ("user", "0:0"),
+        ("init", False),
+        ("restart", "always"),
+        ("stop_grace_period", "60s"),
+        ("network_mode", "bridge"),
+        ("network_mode", "host"),
+        ("cgroup", "host"),
+        ("ipc", "host"),
+        ("read_only", False),
+        ("tmpfs", []),
+        ("shm_size", "134217728"),
+        ("security_opt", ["seccomp=unconfined"]),
+        ("cap_drop", []),
+        ("cap_add", ["NET_ADMIN"]),
+        ("pids_limit", 129),
+        ("mem_limit", "805306369"),
+        ("cpus", 2.0),
+        ("healthcheck", {"test": ["CMD", "true"]}),
+        ("ports", [{"host_ip": "127.0.0.1", "published": "8444", "target": 8444}]),
+        ("privileged", True),
+        ("volumes", []),
+        ("labels", {}),
+    ],
+)
+def test_worker_mutations_fail_closed(field: str, value: object) -> None:
+    candidate = browser_model()
+    candidate["services"]["browser-worker"][field] = value  # type: ignore[index]
+    with pytest.raises(ContractError):
+        valid(candidate)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("BOCA_RUNTIME_MODE", "live"),
+        ("BOCA_ENGINE_MODE", "on"),
+        ("BOCA_PANEL_ORIGIN", ORIGIN),
+        ("BOCA_OWNER_SUBJECT", OWNER),
+        ("BOCA_TELEGRAM_TOKEN", "synthetic-fixture-token"),
+    ],
+)
+def test_worker_environment_cannot_gain_live_or_private_context(field: str, value: str) -> None:
+    candidate = browser_model()
+    candidate["services"]["browser-worker"]["environment"][field] = value  # type: ignore[index]
+    with pytest.raises(ContractError):
+        valid(candidate)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("restart", "unless-stopped"),
+        ("image", BROWSER_IMAGE),
+        ("cap_add", ["SYS_ADMIN"]),
+        ("network_mode", "none"),
+        ("ports", []),
+        ("labels", {}),
+    ],
+)
+def test_controller_cannot_change_reviewed_legacy_boundary(field: str, value: object) -> None:
+    candidate = browser_model()
+    candidate["services"]["controller"][field] = value  # type: ignore[index]
+    with pytest.raises(ContractError):
+        valid(candidate)
+
+
+def test_controller_socket_must_be_readonly_and_only_one_new_mount() -> None:
+    candidate = browser_model()
+    candidate["services"]["controller"]["volumes"][3]["read_only"] = False  # type: ignore[index]
+    with pytest.raises(ContractError):
+        valid(candidate)
+    candidate = browser_model()
+    candidate["services"]["controller"]["volumes"].append(  # type: ignore[index]
+        {"type": "bind", "source": "/var/run", "target": "/other"}
+    )
+    with pytest.raises(ContractError):
+        valid(candidate)
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "value"),
+    [
+        ("services", "foreign-worker", {}),
+        ("networks", "default", {"name": "unreviewed"}),
+        ("volumes", "shared", {"name": "another-app"}),
+    ],
+)
+def test_no_extra_service_network_or_volume(section: str, field: str, value: object) -> None:
+    candidate = browser_model()
+    candidate[section][field] = value  # type: ignore[index]
+    with pytest.raises(ContractError):
+        valid(candidate)
+
+
+def test_ipc_volume_must_be_external_and_private_to_boca() -> None:
+    for value in ({"name": IPC_VOLUME, "external": False}, {"name": "shared", "external": True}):
+        candidate = browser_model()
+        candidate["volumes"]["boca_browser_ipc"] = value  # type: ignore[index]
+        with pytest.raises(ContractError):
+            valid(candidate)
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["boca_data", "boca_key", "boca_owner", "foreign_bind", "/srv/boca-socios"],
+)
+def test_worker_mount_cannot_share_owner_key_data_or_host(source: str) -> None:
+    candidate = browser_model()
+    candidate["services"]["browser-worker"]["volumes"][0]["source"] = source  # type: ignore[index]
+    with pytest.raises(ContractError):
+        valid(candidate)
+
+
+@pytest.mark.parametrize("attempt", ["", "0", "001", "1;id", "-1", "123456789012345678901"])
+def test_protected_attempt_is_decimal_and_bounded(attempt: str) -> None:
+    with pytest.raises(ContractError):
+        validate_beta_browser_contract(
+            browser_model(), IMAGE, BROWSER_IMAGE, ORIGIN, OWNER, SECCOMP, attempt
+        )
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "relative/seccomp_profile.json",
+        "/tmp/seccomp_profile.json",  # noqa: S108 - intentionally forbidden host path
+        "/srv/boca-socios/../secret/seccomp_profile.json",
+        "/srv/boca-socios/reviewed/seccomp_profile.json",
+        "/srv/other-app/seccomp_profile.json",
+        "/srv/boca-socios/docker//seccomp_profile.json",
+    ],
+)
+def test_seccomp_path_is_fixed_boca_private_candidate(path: str) -> None:
+    candidate = browser_model()
+    candidate["services"]["browser-worker"]["security_opt"][1] = f"seccomp={path}"  # type: ignore[index]
+    with pytest.raises(ContractError):
+        validate_beta_browser_contract(
+            candidate, IMAGE, BROWSER_IMAGE, ORIGIN, OWNER, path, ATTEMPT
+        )
+
+
+def test_unpinned_or_nonbrowser_companion_digest_is_rejected() -> None:
+    for browser_image in (
+        IMAGE,
+        BROWSER_IMAGE + "suffix",
+        BROWSER_IMAGE.replace("@sha256:", ":latest"),
+    ):
+        with pytest.raises(ContractError):
+            validate_beta_browser_contract(
+                browser_model(), IMAGE, browser_image, ORIGIN, OWNER, SECCOMP, ATTEMPT
+            )
+
+
+def test_cli_is_explicit_v2_without_relaxing_existing_legacy_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    checker = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts/check_beta_deploy_contract.py")
+    )["main"]
+    document = tmp_path / "resolved.json"
+    monkeypatch.setenv("BOCA_PANEL_ORIGIN", ORIGIN)
+    monkeypatch.setenv("BOCA_OWNER_SUBJECT", OWNER)
+    monkeypatch.setenv("BOCA_BROWSER_IMAGE", BROWSER_IMAGE)
+    monkeypatch.setenv("BOCA_BROWSER_SECCOMP_PATH", SECCOMP)
+    monkeypatch.setenv("BOCA_BROWSER_ATTEMPT_ID", ATTEMPT)
+    document.write_text(json.dumps(beta_model()))
+    monkeypatch.setattr(sys, "argv", ["check_beta_deploy_contract.py", str(document), IMAGE])
+    assert checker() == 0
+    assert "BETA_COMPOSE_PASS" in capsys.readouterr().out
+
+    document.write_text(json.dumps(browser_model()))
+    assert checker() == 1
+    assert "BETA_COMPOSE_NO_GO" in capsys.readouterr().err
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["check_beta_deploy_contract.py", str(document), IMAGE, "--topology=browser-ipc-v2"],
+    )
+    assert checker() == 0
+    assert "BETA_BROWSER_COMPOSE_PASS" in capsys.readouterr().out
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["check_beta_deploy_contract.py", str(document), IMAGE, "--topology=unreviewed"],
+    )
+    assert checker() == 1
+    assert "BETA_COMPOSE_NO_GO" in capsys.readouterr().err
+
+
+def test_ci_resolves_real_compose_overlay_and_validates_it_before_merge() -> None:
+    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "Validate optional dual-service IPC Compose resolution without host access" in workflow
+    assert (
+        "docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml config --format json"
+        in workflow
+    )
+    assert (
+        'scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-ipc-v2-model.json" '
+        '"$BOCA_IMAGE" --topology=browser-ipc-v2' in workflow
+    )
+    for required in (
+        "BOCA_BROWSER_IMAGE:",
+        'BOCA_BROWSER_ATTEMPT_ID: "123456"',
+        "BOCA_BROWSER_SECCOMP_PATH: /srv/boca-socios/seccomp_profile.json",
+        "BOCA_PANEL_ORIGIN: http://localhost:8443",
+        "BOCA_OWNER_SUBJECT: synthetic-ci-owner",
+    ):
+        assert required in workflow
+    assert workflow.index("Validate optional dual-service IPC Compose resolution") < workflow.index(
+        "Lint"
+    )
