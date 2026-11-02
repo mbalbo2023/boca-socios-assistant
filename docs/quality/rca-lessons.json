@@ -346,6 +346,17 @@
         "tests/test_telegram_storage_gate.py::test_real_beta_gate_rejects_unknown_duplicate_or_malformed_ledger_before_ddl",
         "tests/test_telegram_storage_gate.py::test_real_beta_gate_preserves_existing_accepted_delivery_fence_on_repeated_migration"
       ]
+    },
+    {
+      "id": "RCA-262",
+      "issue": 262,
+      "fix_pr": 263,
+      "root_cause": "The new public capture renderer could retain provisional DOM success after late Chromium cleanup failed, while awaiting text inside any() created an async generator and broke the positive DOM gate.",
+      "prevention": "Commit DOM success only after all context, browser and Playwright cleanup succeeds; await challenge text before a synchronous predicate and exercise the complete positive and late-failure adapter paths without network.",
+      "regression_tests": [
+        "tests/test_public_observer_capture.py::test_late_browser_cleanup_failure_invalidates_provisional_dom",
+        "tests/test_public_observer_capture.py::test_renderer_runs_full_adapter_and_challenge_gate_without_network"
+      ]
     }
   ]
 }

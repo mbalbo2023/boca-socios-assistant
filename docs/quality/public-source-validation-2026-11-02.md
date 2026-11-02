@@ -36,7 +36,7 @@ externas aún no verificadas**. No es evidencia de un defecto de despliegue y
 no justifica reinstalar la BETA. La simulación permanece separada. No hubo
 repetición, descarga adicional ni nueva modificación de código para este informe.
 
-## Ampliación autorizada; implementación y ejecución pendientes de validación
+## Ampliación autorizada; candidato probado, ejecución pública pendiente
 
 El propietario autorizó continuar este alcance concreto. El candidato de
 [ADR 0105](../ADR/0105-bounded-public-capture-offline-render.md) implementa una
@@ -116,3 +116,25 @@ Docker/Chromium sobre el SHA exacto antes del dispatch manual único. La
 observación de DOM auténtico offline conservará `connected_site=false` y no
 satisface por sí sola la carga completa del sitio conectado. Ninguna parte
 necesita cambiar el droplet, sus puertos, servicios o contenedores.
+
+## Evidencia del candidato #263, sin tráfico público
+
+El [PR #263](https://github.com/mbalbo2023/boca-socios-assistant/pull/263),
+head `9c693cb296e037af397e3ade2634f6264f717782`, pasó
+[CI 41508912214](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41508912214)
+con 1902 tests y 31 subtests, y
+[seguridad 41508912267](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41508912267).
+El [smoke real Docker/Chromium 41508912351](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41508912351),
+job `125495324095`, verificó aislamiento anterior/posterior, renderer sin red,
+formulario sintético creado por JS, rechazo esperado de fetch, WebSocket,
+navegación y Worker, y limpieza selectiva: PASS; `public_connections=0`.
+
+El checkout ejecutado fue el merge de prueba
+`c470c530c3f93895722fe22c7168a6957ced723e`, cuyo árbol
+`b3d12d0d09f224e0ba25316024dbd7a78be13cf7` coincide exactamente con el head.
+La revisión independiente comprobó los 12 blobs y 134 pruebas focales, sin
+P0/P1 pendientes. RCA #262 conserva los dos defectos detectados durante esa
+revisión y sus regresiones. Esta evidencia corresponde a ese corte: cambios
+posteriores de documentación, registro RCA o base requieren checks del nuevo
+candidato. La captura pública única todavía no fue ejecutada y no se declara
+validado el sitio real a partir de este smoke sintético.

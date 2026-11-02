@@ -47,6 +47,11 @@ persistent simulation; the acceptance journey uses scratch SQLite instead.
 A public-document observation and a complete public-site validation are
 separate: run 41481095746 returned UNKNOWN, despite passing isolation/cleanup.
 See [the factual report](quality/public-source-validation-2026-11-02.md).
+PR #263/ADR0105 separates an authorized, bounded anonymous capture from
+rendering genuine bytes in a different network-none Chromium container.
+The initial candidate passed independent review and hosted isolation/cleanup
+checks; the real capture is pending. Its potential positive result remains
+`connected_site=false`, with no credentials, cookies or live actions.
 
 Historical implementation lineage follows; old TLS paths are not current
 operating instructions:

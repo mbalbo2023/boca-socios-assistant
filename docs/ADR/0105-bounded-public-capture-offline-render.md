@@ -119,5 +119,9 @@ inside `any()` created an async generator. Regressions
 `test_late_browser_cleanup_failure_invalidates_provisional_dom` and
 `test_renderer_runs_full_adapter_and_challenge_gate_without_network` cover
 the corrected paths. No public rerun or server installation was used to
-diagnose either issue. CI, independent final review, the approved one-time
-capture and the resulting receipts remain pending for this candidate.
+diagnose either issue. RCA #262 and fixing PR #263 record both regressions.
+The first candidate passed hosted CI, security and the real offline
+Docker/Chromium smoke; the [source report](../quality/public-source-validation-2026-11-02.md)
+records exact head, test-merge SHA, equivalent tree and run receipts. Any
+later candidate still needs its own final checks and review. The authorized
+one-time public capture and its resulting receipts remain pending.

@@ -22,7 +22,10 @@ infrastructure**.
 > actually ran Chromium on the permitted initial document: `UNKNOWN`, with
 > pre/post isolation and cleanup PASS. The complete site is still unvalidated;
 > [the report](docs/quality/public-source-validation-2026-11-02.md) records the
-> observed resources and a bounded proposal awaiting separate approval.
+> observed resources. The owner-approved capture of at most 25 anonymous GETs
+> is implemented in PR #263/ADR0105, with independent review and hosted offline
+> Docker/Chromium smoke. The real capture remains pending; even a positive
+> render of genuine captured bytes reports `connected_site=false`.
 > The latest documented host inspection found the dedicated daemon stopped
 > and its socket absent; the port check saw `127.0.0.1:8443 FREE reserved=no`
 > only at that instant. No BETA install, current dual release, real private
