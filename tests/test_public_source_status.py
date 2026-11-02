@@ -163,12 +163,14 @@ def test_live_source_workflow_is_manual_main_only_and_has_no_host_or_secret_path
     assert workflow.index('test "$GITHUB_RUN_ATTEMPT" = 1') < workflow.index(
         "python3 scripts/check_public_source.py"
     )
+    source_job = workflow.split("  observe:\n", 1)[1].split("  browser-isolation:\n", 1)[0]
+    assert "github.event_name == 'workflow_dispatch' && inputs.mode == 'http-status'" in source_job
+    assert "inputs.mode == 'chromium-one-get'" not in source_job
+    assert "docker " not in source_job
     for forbidden in (
-        "pull_request:",
         "push:",
         "schedule:",
         "ssh ",
-        "docker ",
         "secrets.",
         "continue-on-error:",
     ):

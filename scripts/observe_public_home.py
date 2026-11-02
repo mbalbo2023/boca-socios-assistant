@@ -7,11 +7,12 @@ No credentials, queue page, CAPTCHA, checkout or user-supplied URL is accepted.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import os
 import sys
 from typing import Protocol
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 HOME_URL = "https://bocasocios.bocajuniors.com.ar/"
 LOGIN_URL = HOME_URL + "auth/login"
@@ -61,7 +62,9 @@ class RoutePort(Protocol):
 
     async def abort(self) -> None: ...
 
-    async def fetch(self, *, max_redirects: int, timeout: float) -> ResponsePort: ...
+    async def fetch(
+        self, *, max_redirects: int, max_retries: int, timeout: float
+    ) -> ResponsePort: ...
 
     async def fulfill(self, *, response: ResponsePort) -> None: ...
 
@@ -161,18 +164,59 @@ async def inspect_login_dom(page: PublicLoginDomPort) -> bool:
     return await submit.is_disabled()
 
 
-async def observe(api: object, *, check_dom: bool = False) -> str:
+def sanitized_resources(values: object) -> list[dict[str, str]]:
+    """Keep only bounded public same-origin asset paths; never query/fragment/userinfo."""
+    if not isinstance(values, list) or len(values) > 64:
+        return []
+    found: list[dict[str, str]] = []
+    for value in values:
+        if not isinstance(value, dict) or set(value) != {"kind", "url"}:
+            continue
+        kind, raw = value["kind"], value["url"]
+        if kind not in {"script", "link", "img", "source"} or not isinstance(raw, str):
+            continue
+        try:
+            parsed = urlsplit(urljoin(LOGIN_URL, raw))
+        except ValueError:
+            continue
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc != HOST
+            or not parsed.path.startswith("/")
+            or len(parsed.path) > 256
+            or not parsed.path.isascii()
+            or any(ord(char) < 33 for char in parsed.path)
+        ):
+            continue
+        item = {"kind": kind, "url": urlunsplit(("https", HOST, parsed.path, "", ""))}
+        if item not in found:
+            found.append(item)
+    return found
+
+
+async def observe(
+    api: object,
+    *,
+    check_dom: bool = False,
+    proxy_server: str | None = None,
+    evidence: dict[str, object] | None = None,
+) -> str:
     """Observe exactly one public document, fail closed on any extra request."""
     # api is the Playwright object in production; a fake is injected in tests.
+    proxy_args = {} if proxy_server is None else {"proxy": {"server": proxy_server}}
     browser = await api.chromium.launch(  # type: ignore[attr-defined]
         headless=True,
         chromium_sandbox=True,
         timeout=10_000,
         args=["--disable-background-networking"],
+        **proxy_args,
     )
     try:
         context = await browser.new_context(
-            accept_downloads=False, service_workers="block", java_script_enabled=False
+            accept_downloads=False,
+            service_workers="block",
+            java_script_enabled=False,
+            **proxy_args,
         )
         try:
             document_count = 0
@@ -195,7 +239,9 @@ async def observe(api: object, *, check_dom: bool = False) -> str:
                     document_count += 1
                 # Playwright's continue_ follows redirects without another route
                 # callback. fetch(max_redirects=0) prevents that extra visit.
-                response = await route.fetch(max_redirects=0, timeout=5_000)
+                if evidence is not None:
+                    evidence["route_fetch_count"] = document_count
+                response = await route.fetch(max_redirects=0, max_retries=0, timeout=5_000)
                 if response.status != 200:
                     blocked = True
                     await route.abort()
@@ -210,10 +256,24 @@ async def observe(api: object, *, check_dom: bool = False) -> str:
             visible_text = await asyncio.wait_for(page.inner_text("body"), timeout=3)
             if blocked:
                 return "blocked"
+            gate = document_gate(response.status, page.url, visible_text)
+            if gate is not None:
+                return gate
+            if evidence is not None:
+                values = await asyncio.wait_for(
+                    page.locator("script[src], link[href], img[src], source[src]").evaluate_all(
+                        "nodes => ({truncated: nodes.length > 64, items: "
+                        "nodes.slice(0, 64).map(node => ({kind: node.tagName.toLowerCase(), "
+                        "url: node.getAttribute('src') || node.getAttribute('href') || ''}))})"
+                    ),
+                    timeout=3,
+                )
+                if not isinstance(values, dict) or type(values.get("truncated")) is not bool:
+                    raise ValueError("invalid resource inventory")
+                evidence["referenced_assets"] = sanitized_resources(values.get("items"))
+                evidence["inventory_truncated"] = values["truncated"]
+                evidence["discarded_assets"] = discarded_assets
             if check_dom:
-                gate = document_gate(response.status, page.url, visible_text)
-                if gate is not None:
-                    return gate
                 # This reads selectors/state only. No fill, click or submit.
                 dom_ok = await asyncio.wait_for(inspect_login_dom(page), timeout=3)
                 if blocked:
@@ -233,21 +293,45 @@ def main(argv: list[str] | None = None) -> int:
         argv = sys.argv[1:]
     public_view = argv == ["--ack-one-public-visit"]
     dom_view = argv == ["--ack-one-public-visit", "--check-public-login-dom"]
+    isolated_view = argv == ["--isolated-one-get"]
     if (
-        not (public_view or dom_view)
+        not (public_view or dom_view or isolated_view)
         or os.environ.get("BOCA_PUBLIC_OBSERVATION") != "one-shot"
         or os.environ.get("BOCA_OBSERVER_STOP", "1") != "0"
     ):
         print("public_observer_disabled", file=sys.stderr)
         return 2
     try:
+        proxy_server = None
+        evidence: dict[str, object] | None = None
+        if isolated_view:
+            proxy_ip = ipaddress.IPv4Address(os.environ.get("BOCA_PUBLIC_PROXY_IP", ""))
+            if not proxy_ip.is_private or proxy_ip.is_loopback or proxy_ip.is_unspecified:
+                raise ValueError("invalid isolated proxy")
+            proxy_server = f"http://{proxy_ip}:18080"
+            evidence = {
+                "route_fetch_count": 0,
+                "referenced_assets": [],
+                "inventory_truncated": False,
+                "discarded_assets": 0,
+            }
         from playwright.async_api import async_playwright
 
         async def run() -> str:
             async with async_playwright() as api:
+                if isolated_view:
+                    return await asyncio.wait_for(
+                        observe(api, check_dom=True, proxy_server=proxy_server, evidence=evidence),
+                        timeout=25,
+                    )
                 return await asyncio.wait_for(observe(api, check_dom=dom_view), timeout=25)
 
         state = asyncio.run(run())
+        if isolated_view:
+            print(
+                json.dumps({"mode": "initial_public_document", "state": state, **(evidence or {})})
+            )
+            return 0 if state == "login_form_disabled" else 1
         if state != ("login_form_disabled" if dom_view else "login_visible"):
             print(f"public_observer_stopped: {state}", file=sys.stderr)
             return 1

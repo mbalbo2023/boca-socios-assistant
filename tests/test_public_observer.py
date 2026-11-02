@@ -204,8 +204,9 @@ def test_dom_cli_is_explicit_and_offline_mocked(
         "aborted_css_is_not_live_visibility_proof",
     ],
 )
+@pytest.mark.parametrize("isolated", [False, True])
 def test_browser_context_closes_on_block_and_never_navigates_again(
-    visible_text: str, form_count: int, asset_request: bool, expected: str
+    visible_text: str, form_count: int, asset_request: bool, expected: str, isolated: bool
 ) -> None:
     module = observer()
 
@@ -234,8 +235,10 @@ def test_browser_context_closes_on_block_and_never_navigates_again(
                     self.fulfilled = False
                     self.aborted = False
 
-                async def fetch(self, *, max_redirects: int, timeout: float) -> Response:
-                    assert max_redirects == 0 and timeout == 5_000
+                async def fetch(
+                    self, *, max_redirects: int, max_retries: int, timeout: float
+                ) -> Response:
+                    assert max_redirects == 0 and max_retries == 0 and timeout == 5_000
                     return Response()
 
                 async def fulfill(self, *, response: Response) -> None:
@@ -264,6 +267,7 @@ def test_browser_context_closes_on_block_and_never_navigates_again(
         def locator(self, selector: str) -> object:
             assert visible_text != "CAPTCHA", "challenge must stop before DOM reads"
             selectors = {
+                "script[src], link[href], img[src], source[src]",
                 'script, link[rel~="stylesheet"], style',
                 'form[aria-hidden="true"], [aria-hidden="true"] form, form[inert], [inert] form',
                 "form",
@@ -274,6 +278,10 @@ def test_browser_context_closes_on_block_and_never_navigates_again(
             assert selector in selectors
 
             class Field:
+                async def evaluate_all(self, expression: str) -> dict[str, object]:
+                    assert "nodes.slice(0, 64)" in expression
+                    return {"items": [], "truncated": False}
+
                 async def count(self) -> int:
                     return (
                         0
@@ -319,6 +327,7 @@ def test_browser_context_closes_on_block_and_never_navigates_again(
                 "accept_downloads": False,
                 "service_workers": "block",
                 "java_script_enabled": False,
+                **({"proxy": {"server": "http://172.28.0.2:18080"}} if isolated else {}),
             }
             return context
 
@@ -330,12 +339,28 @@ def test_browser_context_closes_on_block_and_never_navigates_again(
     class Chromium:
         async def launch(self, **kwargs: object) -> Browser:
             assert kwargs["chromium_sandbox"] is True
+            assert kwargs.get("proxy") == (
+                {"server": "http://172.28.0.2:18080"} if isolated else None
+            )
             return browser
 
     class API:
         chromium = Chromium()
 
-    assert asyncio.run(module.observe(API(), check_dom=True)) == expected
+    evidence: dict[str, object] = {}
+    assert (
+        asyncio.run(
+            module.observe(
+                API(),
+                check_dom=True,
+                proxy_server="http://172.28.0.2:18080" if isolated else None,
+                evidence=evidence if isolated else None,
+            )
+        )
+        == expected
+    )
+    if isolated:
+        assert evidence["route_fetch_count"] == 1
     assert page.visits == [module.LOGIN_URL]
     assert browser.closed and context.closed
 
@@ -571,8 +596,8 @@ def test_redirect_response_is_aborted_without_followup_navigation() -> None:
         request = Request()
         aborted = False
 
-        async def fetch(self, *, max_redirects: int, timeout: float) -> object:
-            assert max_redirects == 0 and timeout == 5_000
+        async def fetch(self, *, max_redirects: int, max_retries: int, timeout: float) -> object:
+            assert max_redirects == 0 and max_retries == 0 and timeout == 5_000
             requests.append(self.request.url)
 
             class Redirect:
@@ -651,7 +676,8 @@ def test_second_navigation_post_and_foreign_domain_stop_observation(
             )()
             self.aborted = False
 
-        async def fetch(self, *, max_redirects: int, timeout: float) -> Response:
+        async def fetch(self, *, max_redirects: int, max_retries: int, timeout: float) -> Response:
+            assert max_redirects == 0 and max_retries == 0
             fetched.append(self.request.url)
             return Response()
 
