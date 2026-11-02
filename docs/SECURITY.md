@@ -43,8 +43,13 @@ credential enrollment. Do not recreate the existing SSH deployment secret.
 
 - No conversationally supplied secrets may enter repository history.
 - The integrated enrollment UI code must be served through a protected owner-only interface with
-  encryption at the server boundary, TLS, request size limits, CSRF/session
+  encryption at the server boundary, request size limits, CSRF/session
   protection and no request body logging.
+  The selected BETA route is exactly `http://localhost:8443` over SSH,
+  publishing only host `127.0.0.1:8443`. ADR0091 supersedes the historical
+  HTTPS/TLS bootstrap route; certificates, CA installation and Termux are not
+  required or permitted. SSH protects the remote transport; the tablet must
+  retain control of its local forwarded port.
 - On failure to decrypt or read key: fail closed, no plaintext fallback.
 - `check-beta-owner/config` #189 validates owner passkey/TLS files without
   opening a listener or database; #191 gates new-only installation on those
@@ -56,8 +61,8 @@ credential enrollment. Do not recreate the existing SSH deployment secret.
   provider, never in a Chrome cookie or host volume. The `__Host-boca_session`
   cookie is HttpOnly/Secure/SameSite Strict and expires by server policy after
   15 minutes idle, 8 hours absolute or process restart. Device persistence and
-  cross-platform use are physical acceptance gates; TLS expiry still needs a
-  reviewed rotation path.
+  cross-platform use are physical acceptance gates. No TLS certificate or
+  certificate rotation applies to the selected SSH-only BETA route.
 - Telegram's default-off worker #188, sealed helper #199, protected
   schema/custody #203 and one-shot identity/send gate #204 have only synthetic
   tests. No bot token, numeric private chat destination, host volume or Bot API
@@ -74,7 +79,7 @@ credential enrollment. Do not recreate the existing SSH deployment secret.
   **reproducible dependency selection**, not a guarantee of bit-for-bit
   identical images or a substitute for vulnerability scanning.
 - The separate UID10002 browser image is subject to the same blocking
-  HIGH/CRITICAL OS+library Trivy policy as the controller. #241 tracks a
+  HIGH/CRITICAL OS+library Trivy policy as the controller. Historically, #241 tracked a
   confirmed browser scan failure from release PR #239; its code-only
   candidate removes the unused vulnerable GStreamer Bad plug-in **and shared
   library**, and pins six fixed Python base packages plus four audited
@@ -83,13 +88,18 @@ credential enrollment. Do not recreate the existing SSH deployment secret.
   image-security and release PR scans plus the no-network synthetic Chromium
   smoke before any browser digest can be released. No suppressions or
   assumption of host installation are permitted.
-  A later hosted #241 scan exposed genuinely vulnerable `pip` vendor libraries,
+  A later hosted #241 scan exposed vulnerable `pip` vendor libraries,
   `setuptools/_vendor`, `virtualenv` and Ubuntu `libbrotli1` despite fixed
   global package metadata. The next code-only cut updates `libbrotli1`
   to its Noble security version, fixes build-time virtualenv, and removes
   complete unused Python build-tool distributions (including the actual
   vendored code and seed caches) **after** the locked Browser Worker venv
-  is built. Its success remains unverified until another strict hosted scan.
+  is built. The correction was integrated by #242. Exact baseline
+  `032de0ebb923b4f80154e93cee3dfd1b254687ed` passed
+  [security 41459831000](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459831000)
+  and [CI 41459830809](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459830809).
+  This verifies that code cut, not published current digests or host execution;
+  every changed candidate still requires its own scans and release evidence.
 - Rotate any real password that has previously been disclosed outside the
   approved encrypted enrollment channel before using it in production.
 

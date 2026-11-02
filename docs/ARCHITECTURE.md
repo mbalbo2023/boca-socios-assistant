@@ -17,6 +17,23 @@ Unverified third-party behavior stays behind interfaces.
 
 ## Functional BETA code and deployment boundary
 
+The verified baseline `032de0ebb923b4f80154e93cee3dfd1b254687ed` integrates
+the SSH-only HTTP panel and first-owner ceremony (#224/#226/#229), optional
+UID10002 Chromium IPC worker (#237), dual-image release (#239), security
+correction (#242), Compose overlay (#243) and staged installation/cleanup
+(#244–#249). The application is not installed. The current audit found that
+the baseline's protected lifecycle does not yet compose owner shutdown,
+browser startup, browser-aware stop/acceptance, Telegram and restart; a
+reviewed correction and new exact-candidate checks precede activation.
+The only permitted origin is `http://localhost:8443` through SSH, with host
+binding `127.0.0.1:8443`. No HTTPS, certificate, proxy or additional port is
+part of this BETA. Owner preparation and Chrome create→get enrollment must
+finish before installation, because the installed panel requires its public
+credential. See [current evidence](BETA_INTEGRATION_STATUS.md).
+
+Historical implementation lineage follows; old TLS paths are not current
+operating instructions:
+
 The default Compose runtime remains dormant. PRs #161/#164 integrate the
 persistent local command loop and lifecycle; #163 integrates a same-origin
 owner passkey panel; #170 tests disposable HTTP loopback; #173 adds explicit

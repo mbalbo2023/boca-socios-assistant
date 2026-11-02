@@ -1,6 +1,48 @@
 # Estado de integración BETA
 
-## Corte integrado #224/#226 y candidato de host #225 — sin efectos en el droplet
+## Estado comprobado 2026-11-02 — aplicación no instalada
+
+Base integrada verificada: `032de0ebb923b4f80154e93cee3dfd1b254687ed`.
+[CI 41459830809](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459830809)
+y [seguridad 41459831000](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459831000)
+pasaron sobre ese SHA. #224/#226, #229 (alta owner), #231/#232/#233/#236/#237
+(simulación y navegador), #239 (publicación dual), #242 (seguridad),
+#243 (Compose), #244/#245/#247/#248/#249 (staging/instalación/limpieza) y
+#246 (workflow protegido) están integrados. No rehacerlos ni usar las
+descripciones históricas de candidato como backlog de implementación.
+
+| Frente | Evidencia actual | Pendiente real |
+| --- | --- | --- |
+| Host | [41471945717](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41471945717), 12:28:47 ART: SSH UID10001 correcto, bus propio, cgroup cpu/memory/pids; daemon Boca loaded/inactive/dead/result=success, socket ausente; prerequisite NO_GO | Corregir transición protegida de daemon detenido a instalación; comprobar Docker Engine>=28, capacidad BETA y aislamiento efectivo. No repetir `prepare-rootless` |
+| Puerto | [41473018271](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41473018271), 12:35 ART: `127.0.0.1:8443 FREE reserved=no` | Repetir control justo antes del uso; no hay listener ni forwarding probado |
+| Imágenes | Código dual de release y escaneos integrados; checks anteriores verdes sobre main032de0 | Publicación dual real y manifiestos/digests del mismo release sobre el candidato final exacto |
+| Ciclo operativo | La auditoría reprodujo incompatibilidades del baseline: owner detiene daemon, browser install no lo arranca, stop/acceptance/Telegram no admiten toda la topología, falta reinicio/reanudación protegido | Corrección mínima, pruebas, revisión independiente y CI exactos; luego recibos de host. Código propuesto no es una corrección desplegada |
+| Chrome/passkey | `owner-prepare` y `owner-enroll` integrados; origen `http://localhost:8443`, RP `localhost`, sin certificados | Entrega privada de llave, Chrome create→get, custodia offline, limpieza, segundo acceso y persistencia tras reinicio. Ninguna URL real emitida |
+| Bot/notificaciones | Panel, cifrado, comandos, simulación, avisos y Telegram opt-in integrados | Host/tablet, bot/destino privados verificados, entrega limitada y recibo; Telegram API no demuestra lectura humana |
+| Sitio oficial | Pruebas Chromium sintéticas disponibles | Observación pública autorizada real con egress verificable y presupuesto de solicitudes; no login/cola/reserva |
+| Configuración GitHub | Entornos main-only, reviewers off, bypass administrativo disponible; release/deploy/read-only READY presentes; sólo secretos SSH existentes | Owner origin/subject, BETA/BROWSER/Telegram markers y assertions privados ausentes; no declarar listo por el marcador. Ver GITHUB_SETUP |
+
+La inspección y el port-check no ejecutaron Docker, instalaron la aplicación
+ni produjeron residuos de un intento de instalación. No corresponde inventar
+un recibo de limpieza. La ausencia de DB candidatos se verificó sólo en tres
+rutas fijas; ubicación global UNVERIFIED. No se abrió, migró o reemplazó DB.
+
+La secuencia de acceso requiere **owner-prepare → owner-enroll → instalación
+BETA**, porque ésta exige la credencial pública ya custodiada. El alta usa
+una llave de 256 bits generada fuera de GitHub: Actions recibe sólo su SHA-256.
+El servicio de alta dura 900 segundos y se limpia tras éxito o fallo. La
+passkey privada permanece en el proveedor Android elegido, no en una cookie.
+Ni el administrador Google ni el segundo acceso físico se pueden certificar
+con pruebas sintéticas.
+
+Los cambios posteriores de este candidato y sus checks se registran en el PR
+y [checkpoint canónico #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
+No reutilizar la evidencia de main032de0 como aprobación de un SHA nuevo.
+
+## Historial: corte #224/#226 y candidato #225 antes de su integración
+
+Los siguientes cortes conservan sus estados y enlaces originales; sus frases
+«candidato», «no integrado» o TLS describen esas fechas, no el estado actual.
 
 `main=4b1d219c2ba1739dc20c9c103170beedff8c1607` incluye
 [PR #224](https://github.com/mbalbo2023/boca-socios-assistant/pull/224) y
@@ -51,7 +93,7 @@ alta sintética, comando durable, estado y avisos se reutilizan; no se
 duplican. Login/cola/reserva/compra real en Boca quedan fuera de la BETA de
 simulación autorizada.
 
-## Corte verificado y alcance
+## Historial: corte verificado y alcance anterior
 
 Corte de evidencia previo a esta actualización documental: `main` era
 `6d3007a3ca1dfdba428cb7595486b1166a1d02b6` (PR #205 integrado). La publicación de imagen #198
@@ -129,7 +171,7 @@ UNVERIFIED; el destino lógico futuro es `/data/boca.sqlite3` en el volumen
 | Calidad/release | Corte previo a este cambio: main #214 `8fdbec97262a525821eb87f3fbc27f1841a5d2ec`, CI 41312228362 y scan 41312228548 SUCCESS; release 41312460820 publicó imagen/manifiesto sólo para ese SHA | Nueva release y manifiesto para la HEAD final exacta antes de instalar; CI no demuestra capacidad/postflight ni acceso tablet |
 | Aceptación sintética | #170 HTTP loopback desechable, #190 probe TLS en contenedor y #200 operación protegida de aceptación/parada | Sin ejecución host/tablet, Site, Telegram ni recursos medidos del droplet |
 
-## Evidencia exacta de este corte
+## Historial: evidencia exacta de esos cortes
 
 - [PR #161](https://github.com/mbalbo2023/boca-socios-assistant/pull/161)
   integró el loop de comandos en `77bf93c29dc59d5db0b5cf57c2c6ba2a14e8f39e`;
@@ -374,10 +416,10 @@ transporte y pruebas propias. [Issue #168](https://github.com/mbalbo2023/boca-so
 registra la provisión/recepción Telegram pendiente; [issue #113](https://github.com/mbalbo2023/boca-socios-assistant/issues/113)
 registra el puente Site no resuelto.
 
-La cadena pendiente es: panel/runtime empaquetado con acceso privado verificable
-→ imagen/Compose/release por digest sobre SHA exacto → capacidad/aislamiento
-del host y datos/clave compatibles → instalación manual protegida → E2E
-sintético desde interfaz real y medición → nueva parada Boca verificable. La
+La cadena pendiente es: corregir/revisar el ciclo operativo completo y sus
+checks → autorizar/publicar release dual sobre SHA exacto → capacidad y
+aislamiento → owner-prepare y owner-enroll real → instalación protegida → E2E
+sintético desde interfaz real, Telegram, reinicio/reanudación y medición. La
 parada de 41272785626 cerró las pruebas de preparación, no una instalación
 BETA. El workflow `first-install` instala sólo un controlador dormido; #191
 agrega `beta-install` y #200 `beta-acceptance` con parada, ambos sin dispatch

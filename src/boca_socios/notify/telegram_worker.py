@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import signal
 import sys
 import time
@@ -24,6 +25,8 @@ from boca_socios.notify.telegram_delivery import (
     TelegramDeliveryStopped,
 )
 from boca_socios.notify.telegram_transport import TelegramSender, TelegramTransport
+from boca_socios.telegram_bootstrap import verify as verify_custody
+from boca_socios.telegram_one_shot import require_effective_limits, verify_ready
 
 _DATABASE = Path("/data/boca.sqlite3")
 _TOKEN = Path("/run/telegram/bot_token")
@@ -81,14 +84,26 @@ def main(
     env = os.environ if environment is None else environment
     previous_handlers: dict[signal.Signals, signal.Handlers] = {}
     try:
-        if list(args) != ["serve"]:
+        if len(args) != 4 or args[0] != "serve":
             raise ValueError("Telegram worker requires explicit serve")
+        _, source_sha, bot_id, chat_hmac = args
+        if re.fullmatch(r"[1-9][0-9]{0,15}", bot_id) is None:
+            raise ValueError("Telegram worker requires owner assertion")
         validate_worker_environment(env)
-        coordinator = build_coordinator(_DATABASE, TelegramTransport(_TOKEN, _DESTINATION))
+        require_effective_limits()
+        verify_custody()
+        transport = TelegramTransport(_TOKEN, _DESTINATION)
+        verify_ready(_DATABASE, transport, source_sha, int(bot_id), chat_hmac)
+        coordinator = build_coordinator(_DATABASE, transport)
         stopping = Event()
         for sig in (signal.SIGINT, signal.SIGTERM):
             previous_handlers[sig] = cast(signal.Handlers, signal.getsignal(sig))
             signal.signal(sig, lambda _signal, _frame: stopping.set())
+        print(
+            f"BOCA_TELEGRAM_READY state=VERIFIED source_sha={source_sha}"
+            " api_accepted=1 identity=pinned",
+            flush=True,
+        )
         asyncio.run(run_worker(coordinator, stopping))
     except Exception:
         # The Bot API request path contains the token. No exception or traceback
