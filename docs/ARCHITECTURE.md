@@ -23,10 +23,10 @@ release and selective installation/cleanup. PR #254 adds the bounded real
 public-document observer; PR #255 adds browser-local Telegram setup.
 PR #253 integrated owner shutdown, guarded daemon start, exact installed
 identities, optional sender and explicit recovery at `5ddfba5`. PR #263 is
-also integrated; verified main is `6f7fa0939d28df7c315440bba15237b0c1bfbe77`,
-with CI 41511631024 and security 41511631004 PASS.
-[Current status](BETA_INTEGRATION_STATUS.md) separates these checks from
-unmerged PR #261 and host evidence. No deployed BETA is
+also integrated in the documented main cut `6f7fa0939d28df7c315440bba15237b0c1bfbe77`,
+with CI 41511631024 and security 41511631004 PASS; #261 was unmerged at that cut.
+[Current status](BETA_INTEGRATION_STATUS.md) separates historical checks,
+this version's implementation and host evidence. No deployed BETA is
 established here; operational receipts remain in [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
 
 The controller/browser pair remains UID10001/UID10002, with socket-only IPC
@@ -137,8 +137,8 @@ Compose project isolation is **not a separate host/kernel**. Host capacity
 and application measurements require their own evidence; no different compute
 environment is selected by this architecture.
 
-Draft #261 / [ADR0103](ADR/0103-pre-release-infrastructure-observation.md)
-adds a pre-release infrastructure boundary: prove the prepared daemon's
+This version implements #261 / [ADR0103](ADR/0103-pre-release-infrastructure-observation.md)
+as a pre-release infrastructure boundary: prove the prepared daemon's
 effective configuration and empty metadata, temporarily start only that daemon,
 collect aggregate observations, then verify it stopped. No image or application
 resource is created. Observation and numeric reserves are distinct. The
@@ -155,8 +155,9 @@ Only fixed cgroup counters are returned; unavailable evidence is `UNKNOWN`.
 CPU deltas require the same runtime/cgroup; lifetime peaks include observation
 overhead. Sender and pair run separately, so no simultaneous three-service
 budget or droplet capacity is demonstrated. Historical #261 checks on `42eb497e…`
-precede the CPU correction; its final candidate needs exact-SHA checks recorded
-in #45. Independent CPU review passed 290 focal tests, not a host operation.
+precede the CPU correction and the reviewed [owner argv fix](ADR/0107-opaque-owner-cli-operands.md);
+final exact-SHA checks belong in #45. Independent CPU review passed 290 focal
+tests, not a host operation.
 
 ## Observability
 

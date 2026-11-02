@@ -1,5 +1,14 @@
 # Resource observations and capacity policy — 2026-11-02
 
+The later candidate `7cfc9b60564f8c7bb8a589c86e15153c77bc948d` passed
+CI (2081 tests +31 subtests), but its
+[Docker smoke 41514375981](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41514375981/job/125514028659)
+failed in temporary enrollment before the measured lifecycle phases.
+It emitted no replacement lifecycle profile. The ten observations below
+remain historical evidence from the earlier candidate, not measurements of
+that failed run. RCA #265 and the integration status document the failure
+and require a corrected candidate before merge. No host run occurred.
+
 ## Verified starting point
 
 Main `5ddfba568d0b53168f51c0e5b33c363ba24c505e`, tree

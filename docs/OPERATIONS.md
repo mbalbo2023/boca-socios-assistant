@@ -1,6 +1,6 @@
 # Safe operations — verified evidence and gated procedures
 
-## Current state
+## Documented state and current checkpoint
 
 Historical baseline `032de0` already integrated #224/#226/#229 and browser
 release/install/cleanup #237/#239/#242–#249. PR #254 merged at
@@ -10,12 +10,18 @@ release/install/cleanup #237/#239/#242–#249. PR #254 merged at
 (1663 tests plus 31 subtests and real offline Chromium UI proof) and
 [security 41481913075](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913075)
 before merge. PR #253 integrated lifecycle/recovery and durable Telegram in
-`5ddfba568d0b53168f51c0e5b33c363ba24c505e`. PR #263 is now integrated in
-verified main `6f7fa0939d28df7c315440bba15237b0c1bfbe77`, with CI 41511631024
-and security 41511631004 PASS. PR #261 remains unmerged. Its historical
+`5ddfba568d0b53168f51c0e5b33c363ba24c505e`. The documented main cut
+`6f7fa0939d28df7c315440bba15237b0c1bfbe77` includes PR #263, with CI 41511631024
+and security 41511631004 PASS. PR #261 was unmerged at that cut. Its historical
 `42eb497e8b597cd86035d08370dc935cba9b0f17` checks precede the reviewed CPU
 correction and cannot validate the final candidate; see the
-[evidence and pending checks](BETA_INTEGRATION_STATUS.md#pr-261-evidencia-histórica-y-cierre-pendiente).
+[evidence and pending checks](BETA_INTEGRATION_STATUS.md).
+Later smoke [41514375981](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41514375981)
+on `7cfc9b6…` exited 2 despite CI passing 2081 tests.
+[RCA #265 / ADR0107](ADR/0107-opaque-owner-cli-operands.md) records the
+independently reviewed argument-terminator correction in this candidate; it
+reproduces a compatible defect without proving the unrecorded random value from that
+run. Final exact-SHA CI/security and real Docker smoke checks are still required.
 Final integration checks and operational state are maintained in
 [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
 No matching current dual release, BETA installation, real activation URL,
@@ -133,10 +139,10 @@ droplet or create a service database. ADR0053 states the WAL/concurrency limits.
 
 ## Candidate pre-release infrastructure observation
 
-Draft #261 / [ADR0103](ADR/0103-pre-release-infrastructure-observation.md)
-adds `infrastructure-preflight` to the existing protected workflow. It is not
-available on verified main `6f7fa0` and has not run on the host. After merge,
-exact-main checks and specific authorization, its inputs are `service=controller`,
+This version implements #261 / [ADR0103](ADR/0103-pre-release-infrastructure-observation.md):
+`infrastructure-preflight` in the existing protected workflow. It was absent
+from the documented main cut `6f7fa0`; no host execution is established here.
+After integration, exact-main checks and specific authorization, its inputs are `service=controller`,
 the exact `source_sha`, and budget `1.5cpu-1024m-192pids` or
 `1.75cpu-1152m-224pids`; image and release fields stay blank. It requires both
 `BOCA_HOST_READONLY_ENV_READY=ready` and `BOCA_DEPLOY_ENV_READY=ready`, because
@@ -678,8 +684,8 @@ without opening SQLite or file contents; ADR0054 defines their narrow scope. It 
 or altering the host. A failed job reports unproven prerequisites; a metadata
 candidate is not proof that a Docker daemon is rootless or healthy. The legacy
 `preflight` needs an active daemon and checks the dormant controller budget.
-Draft #261 adds the separately gated pre-release operation described above;
-neither metadata inspection nor that future operation replaces the final
+The #261 implementation adds the separately gated pre-release operation described above;
+neither metadata inspection nor that operation replaces the final
 image/topology-specific installation preflight.
 The environment must first be verified and marked ready as an **environment**
 (pinned identity and main-only branch rule), independently

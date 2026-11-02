@@ -17,12 +17,14 @@ infrastructure**.
 > passed. These are the PR's receipts, not a substitute for final-main checks.
 > PR #253 integrated lifecycle/recovery and durable Telegram gates in
 > `5ddfba568d0b53168f51c0e5b33c363ba24c505e`. PR #263 is also integrated;
-> verified main is `6f7fa0939d28df7c315440bba15237b0c1bfbe77`, with
+> the documented main cut is `6f7fa0939d28df7c315440bba15237b0c1bfbe77`, with
 > [CI 41511631024](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41511631024)
 > and [security 41511631004](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41511631004)
-> PASS. PR #261 remains unmerged; its historical `42eb497e…` checks precede
-> the reviewed CPU correction. [Status](docs/BETA_INTEGRATION_STATUS.md#pr-261-evidencia-histórica-y-cierre-pendiente)
-> keeps those receipts separate from the final candidate checks still required.
+> PASS. At that cut PR #261 was unmerged; its historical `42eb497e…` checks
+> precede the CPU and [owner argv corrections](docs/ADR/0107-opaque-owner-cli-operands.md).
+> [Status](docs/BETA_INTEGRATION_STATUS.md) separates those receipts from
+> the final exact-SHA checks required; subsequent SHA/checks belong in
+> [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
 > [Authorized public capture 41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530)
 > fetched 25 permitted GETs, all HTTP 200. Real offline Chromium returned
 > `UNKNOWN resource_outside_map`; pre/post isolation and cleanup passed.
@@ -163,12 +165,12 @@ restart, status and acceptance, plus optional Telegram start and recovery;
 see the [operation table](docs/OPERATIONS.md#protected-browser-lifecycle-contract).
 The pair budget is `1.5cpu-1024m-192pids`; owner-ready Telegram lifecycle uses
 `1.75cpu-1152m-224pids`. Neither is a claim of available host capacity.
-Draft #261/ADR0103 separates aggregate observations from numeric reserves,
-which remain unchanged. Its reviewed CPU criterion uses the container branch's
+This version implements #261/ADR0103: it separates aggregate observations
+from numeric reserves, which remain unchanged. Its reviewed CPU criterion uses the container branch's
 structural `cpu_ceiling`; load is advisory, not free CPU. ADR0104 measures the
 existing CI workloads. Missing counters remain UNKNOWN and three-service
-concurrency is unmeasured. Final exact-SHA checks and the protected host
-operation remain pending.
+concurrency is unmeasured. Exact-SHA checks and the protected host operation
+require their own receipts in #45.
 Complete Telegram setup/test before the first persistent simulation; the
 BETA acceptance probe uses temporary SQLite. The authenticated
 `/telegram/configurar` form from PR #255 produces only ciphertext and the

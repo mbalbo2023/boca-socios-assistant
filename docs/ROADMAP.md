@@ -5,10 +5,11 @@ El [plan de entrega](BETA_DELIVERY_PLAN.md) define aceptación; el
 [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
 separan código, comprobaciones y ejecución host. El baseline `032de0` es histórico;
 PR #254/#255, el ciclo/recuperación #253 y la captura #263 están integrados en
-el main comprobado `6f7fa0939d28df7c315440bba15237b0c1bfbe77`, con CI
-41511631024 y seguridad 41511631004 PASS. #261 sigue sin integrar; los
-[checks del corte 42eb497e…](BETA_INTEGRATION_STATUS.md#pr-261-evidencia-histórica-y-cierre-pendiente)
-son históricos, anteriores a su corrección CPU. El SHA final necesita checks propios.
+el corte documentado de main `6f7fa0939d28df7c315440bba15237b0c1bfbe77`, con CI
+41511631024 y seguridad 41511631004 PASS. En ese corte #261 seguía sin integrar; los
+[checks del corte 42eb497e…](BETA_INTEGRATION_STATUS.md) son históricos, anteriores
+a su corrección CPU y al [fix argv revisado de RCA #265](ADR/0107-opaque-owner-cli-operands.md).
+El SHA final necesita checks propios; el estado posterior se registra en #45.
 No hay BETA instalada
 acreditada en esta documentación. La autorización ampliada
 [#45/6552258326](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6552258326)
@@ -25,14 +26,14 @@ funcionalidad operativa.
 | Panel/alta | Servicio cifrado #31, panel/controles #163, custodia #208, HTTP localhost #224/#226 y alta protegida #229 integrados | #209/#225: entrega privada de llave, `owner-prepare` → `owner-enroll`, UV real, forwarding, E2E y rechazo de terceros; no HTTPS/certificados/Termux |
 | Persistencia de acceso | #217 exige passkey descubrible; la clave privada queda en el proveedor Android y la cookie del panel es temporal | Google Password Manager, segundo acceso y persistencia tras reinicio/reanudación del servicio; compatibilidad iOS separada, sin certificado que renovar |
 | Aceptación | HTTP loopback #170, probe TLS #190 y operación protegida de aceptación/parada #200 integrados | Host/tablet/Site/Telegram y recursos/latencia reales con recibos aparte |
-| Imagen/deploy | Publicación dual #239, seguridad #242, Compose #243, staging/instalación/limpieza #244–#249 y ciclo #253 integrados; main `6f7fa0` con CI/seguridad PASS | Checks del SHA final y dos digests del mismo release; marcas BETA/BROWSER, owner, preflight y aprobación concreta; no publicación dual actual |
+| Imagen/deploy | Publicación dual #239, seguridad #242, Compose #243, staging/instalación/limpieza #244–#249 y ciclo #253 integrados; corte `6f7fa0` con CI/seguridad PASS | Checks del SHA final y dos digests del mismo release; marcas BETA/BROWSER, owner, preflight y aprobación concreta; no publicación dual actual |
 | Ciclo operativo | PR #253 integrado: arranque/stop/acceptance, restart/resume, sender y recovery del run exacto | Recibos host; mantener identidad, topología, presupuesto y cleanup |
 | Recursos #259 | #261/ADR0103 incorpora `cpu_ceiling` estructural de `user.slice` y load advisory; revisión independiente/290 pruebas focales PASS. ADR0104 mide el smoke existente | Checks del candidato final y preflight real; requisitos CPU 1.75/2.0, RAM 1536/1792 MiB, PIDs 256/288 y caps intactos; concurrencia de tres servicios no medida |
 | Navegador | #263 integrado; [captura real 41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530): 25 GET/200, Chromium offline UNKNOWN `resource_outside_map`, aislamiento/cleanup PASS | RCA #264: diagnóstico de URL faltante aún desconocida; no nuevos GET autorizados. Sitio completo sin aceptación, sin atribuirlo a caída externa |
 | Recuperación de deploy | `first-install` ya tenía limpieza selectiva #97; #219/PR #220 corrigió que el rollback BETA conservaba restos Docker/Compose descartables | Integrado tras CI y revisión; en un fallo real, mismo Actions intenta limpiar artefactos inequívocos, preserva volúmenes y verifica recibo; incierto implica NO_GO/inventario, jamás prune global ni retry ciego |
 | Site #113 | Demo privada v10 D1 desactivada; helper #178, cliente #179, custodia #181 y RCA inventario #196 | Ya no bloquea la BETA del panel local. Mantener privado/offline; baja posterior a validar el reemplazo, sin fecha ni activación inferida |
 | Telegram #162 | Custodia/one-shot existentes; formulario privado #255 y Chromium UI offline PASS; sender durable en #253 | Configurar y probar antes de primera simulación persistente; API/recepción humana separadas, pins y readiness ligados al SHA |
-| Documentación | Main con #253/#263, candidato final #261 y captura pública UNKNOWN separados de aceptación operativa | Revisión final antes de release y congelar main; registrar SHA/checks/operación/cleanup en #45 sin invalidar lifecycle |
+| Documentación | Corte de main con #253/#263, implementación de esta versión y captura pública UNKNOWN separados de aceptación operativa | Revisión final antes de release y congelar main; registrar SHA/checks/operación/cleanup en #45 sin invalidar lifecycle |
 
 La secuencia de host es: integrar/revisar candidato final y checks exactos →
 autorizar/comprobar `infrastructure-preflight` de #261 y evaluar sus recibos →

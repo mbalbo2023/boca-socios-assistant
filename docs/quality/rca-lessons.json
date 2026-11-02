@@ -380,6 +380,20 @@
         "tests/test_host_cpu_capacity.py::test_expected_kernel_control_missing_is_unknown_not_unlimited",
         "tests/test_host_cpu_capacity.py::test_advisory_load_survives_exact_real_receipt_workflow_parser"
       ]
+    },
+    {
+      "id": "RCA-265",
+      "issue": 265,
+      "fix_pr": 261,
+      "root_cause": "Valid enrollment public keys and opaque owner subjects may begin with a hyphen. Callers omitted the argparse option terminator, causing exit2 before serving or executing a phase. The failed hosted run did not preserve its key; its linkage remains inferred.",
+      "prevention": "Keep reviewed flags before an explicit terminator and owner operands afterward in smoke, SSH transport and container commands. Selective cleanup recognizes only exact legacy or terminated enrollment argv and preserves unproved resources.",
+      "regression_tests": [
+        "tests/test_owner_enrollment_argv.py::test_dash_prefixed_public_key_from_real_caller_reaches_enrollment_cli",
+        "tests/test_owner_enrollment_argv.py::test_dash_prefixed_owner_from_production_bootstrap_reaches_cli",
+        "tests/test_owner_enrollment_argv.py::test_each_protected_owner_transport_reaches_host_cli_without_changing_options",
+        "tests/test_owner_enrollment_argv.py::test_cleanup_recognizes_exact_legacy_and_terminated_enrollment_commands",
+        "tests/test_owner_enrollment_argv.py::test_uncertain_enrollment_argv_preserves_every_resource_before_cleanup"
+      ]
     }
   ]
 }

@@ -7,11 +7,12 @@ La base histórica `032de0ebb923b4f80154e93cee3dfd1b254687ed` ya integró
 `b0e46dbd1cc09ae625c65799a2fb75ca052ab5d8`; PR #255 como
 `dada569a2d71ad4411a73ebdaca1186ed3be6936`. No rehacer esos componentes.
 PR #253 integró ciclo de vida, recuperación y sender durable en `5ddfba5`.
-PR #263 también está integrado; el main comprobado es
+PR #263 también está integrado; el main del corte documental comprobado fue
 `6f7fa0939d28df7c315440bba15237b0c1bfbe77`, con
 [CI 41511631024](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41511631024)
 y [seguridad 41511631004](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41511631004)
-PASS. El candidato final de #261 y el estado operativo se registran en el
+PASS. Ese corte precede la integración de #261. Su candidato final, los
+checks posteriores y el estado operativo se registran en el
 [checkpoint canónico #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
 Los resultados anteriores no se trasladan a un SHA nuevo.
 
@@ -21,7 +22,7 @@ Los resultados anteriores no se trasladan a un SHA nuevo.
 | Puerto | [41497093298/job125454798607](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41497093298/job/125454798607): `127.0.0.1:8443 FREE reserved=no` a las 15:04:45 ART del 2026-11-02 | Nueva comprobación justo antes del uso; listener y forwarding reales |
 | Release | Publicación dual integrada en código | Dos digests/manifiestos reales del mismo release y SHA final aprobado |
 | Ciclo operativo | PR #253 integrado en `5ddfba5`: start/restart/status/acceptance y sender-start/recover con identidad y presupuesto explícitos | Comprobación host sobre el SHA final; no hay instalación ni reinicio probado en el droplet |
-| Recursos | #261 sin integrar, ADR0103/0104: observación/política separadas, medición del smoke y corrección `cpu_ceiling` con revisión independiente/290 pruebas focales PASS; [informe de recursos](quality/resource-observation-2026-11-02.md) | Checks del candidato final y observación host pendientes; requisitos numéricos/caps sin cambio, sin extrapolar el runner al droplet ni sumar picos no simultáneos |
+| Recursos | Implementación #261, ADR0103/0104: observación/política separadas, medición del smoke y corrección `cpu_ceiling` con revisión independiente/290 pruebas focales PASS; [informe de recursos](quality/resource-observation-2026-11-02.md) | Checks del candidato final registrados en #45 y observación host; requisitos numéricos/caps sin cambio, sin extrapolar el runner al droplet ni sumar picos no simultáneos |
 | Telegram privado | PR #255 integrado; [CI 41481913145](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913145): 1663 pruebas + 31 subtests y Chromium UI offline PASS; [seguridad 41481913075](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913075) PASS | Recibo real de prepare, formulario en tablet, custodia de token/destino, one-shot y recepción humana |
 | Chrome/passkey | Owner-enroll integrado; localhost HTTP sobre SSH | Enlace de un uso real, create→get, Google Password Manager, segundo acceso y persistencia tras reinicio |
 | Sitio oficial | #263 integrado; [captura real 41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530/job/125506598762): 25 GET permitidos/HTTP 200, Chromium real `network=none`, UNKNOWN `resource_outside_map`; aislamiento previo/posterior y cleanup PASS | Sitio completo no aceptado. URL faltante no identificada; RCA #264 corrige diagnóstico en rama separada, sin nueva autorización GET. No atribuirlo a caída del sitio |
@@ -46,7 +47,28 @@ inspeccionó sólo en tres rutas de metadata; ubicación global UNVERIFIED.
 
 ### PR #261: evidencia histórica y cierre pendiente
 
-PR #261 sigue sin integrar. Su primer corte, anterior a la corrección CPU,
+El corte posterior `7cfc9b60564f8c7bb8a589c86e15153c77bc948d` obtuvo
+[CI 41514375866](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41514375866)
+PASS (2081 pruebas +31 subtests) y seguridad PASS, pero el
+[smoke 41514375981](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41514375981/job/125514028659)
+falló antes del ciclo BETA: listener temporal `exited/2`,
+`loopback_unreachable`. Sus etapas posteriores quedaron sin ejecutar; no
+corresponde GO de integración. Los pasos de limpieza hospedada terminaron,
+pero el fallback best-effort no prueba por sí solo un inventario final.
+[RCA #265](https://github.com/mbalbo2023/boca-socios-assistant/issues/265)
+reprodujo que una clave pública válida comenzando con `-` es interpretada
+como opción por argparse. La clave aleatoria del run no quedó registrada:
+la relación con ese fallo concreto sigue inferida. La corrección de
+[ADR0107](ADR/0107-opaque-owner-cli-operands.md), incluida en esta versión,
+cubre el comando de producción, smoke, transporte SSH del owner y
+reconocimiento estricto de limpieza. Recibió revisión independiente y 128
+pruebas focales PASS; conserva los operandos/opciones y las dos formas
+exactas de identidad legacy/nueva. Se exige comprobar el candidato corregido
+en CI, seguridad y smoke antes del merge; sus recibos se registran en #45.
+Sin reintento ciego ni operación en el droplet.
+
+En el corte documental previo al merge de #261, su primer candidato,
+anterior a la corrección CPU,
 `42eb497e8b597cd86035d08370dc935cba9b0f17`, sobre main `5ddfba5`, se comprobó
 mediante checkout del merge PR `07b1b11a73b486142c3528a4896a20d5df59e57c`;
 ambos tienen árbol `ebf53c7dfb082d25257acd2ed6f8bebb54e36499`:

@@ -67,13 +67,14 @@ their historical dates; this environment inspection did not reverify them.
 
 ## Activation coordinates and frozen source
 
-Verified main is `6f7fa0939d28df7c315440bba15237b0c1bfbe77`, including merged
-PRs #253/#263; CI 41511631024 and security 41511631004 passed. PR #261's
+The documented main cut `6f7fa0939d28df7c315440bba15237b0c1bfbe77` includes
+merged PRs #253/#263; CI 41511631024 and security 41511631004 passed. PR #261's
 historical `42eb497e8b597cd86035d08370dc935cba9b0f17` checks precede the CPU
-correction. [Status](BETA_INTEGRATION_STATUS.md#pr-261-evidencia-histórica-y-cierre-pendiente)
-keeps those receipts separate from final-candidate checks. #261 is not an
-integrated or dispatched host operation; PR validation does not publish
-images or verify GitHub settings.
+correction. [Status](BETA_INTEGRATION_STATUS.md) keeps those receipts separate
+from final-candidate checks, including the reviewed
+[owner argv fix](ADR/0107-opaque-owner-cli-operands.md). At the documented cut
+#261 was unmerged and its host operation had not run. Subsequent main/checks
+are recorded in #45; PR validation does not publish images or verify GitHub settings.
 
 PR #255 integrated `/telegram/configurar` and proved its synthetic browser-local
 sealing flow in CI 41481913145, with security 41481913075 PASS. Owner entry stays
@@ -100,7 +101,7 @@ required only for `beta-browser-telegram-recover`; GitHub validates the exact
 completed failed first attempt and its successful effect marker. Never use
 Re-run jobs as recovery or present a new run as ownership of old resources.
 
-Draft #261 adds `operation=infrastructure-preflight` before release. After
+This version implements #261's `operation=infrastructure-preflight` before release. After
 integration and specific approval, it uses exact current `source_sha`,
 `service=controller`, either pair/full-three budget above and blank image/release
 inputs. Both existing deploy/read-only READY markers are required: temporary
