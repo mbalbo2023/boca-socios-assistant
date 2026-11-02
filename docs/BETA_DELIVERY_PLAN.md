@@ -1,5 +1,7 @@
 # Plan de entrega y aceptación de la BETA funcional
 
+La reiteración del dueño está registrada, pero la revisión automática volvió a bloquear el dispatch antes de ejecutarlo; no existe un nuevo run. Véase el [bloqueo actualizado](https://github.com/mbalbo2023/boca-socios-assistant/issues/27#issuecomment-6591174050). La captura sigue pendiente por ese control de plataforma.
+
 ## Alcance y fuente de verdad
 
 El dueño aprobó comenzar las recomendaciones del plan y mantener su avance en
@@ -21,7 +23,7 @@ para completar la BETA sintética, Site conectado, Telegram y deploy validado
 por Actions, sin reservas ni compras reales. El alcance anterior de preparación
 queda como historial; ninguna autorización es evidencia de instalación.
 
-## Corte de ejecución 2026-11-02 y candidato final
+## Corte comprobado 2026-11-02 y siguiente dependencia
 
 El baseline histórico032de0 ya integró HTTP/owner, simulador, IPC, publicación
 dual, seguridad e instalación/cleanup; no se vuelven a desarrollar.
@@ -31,21 +33,35 @@ formulario Telegram privado; CI 41481913145 pasó 1663 pruebas + 31 subtests y
 Chromium real offline para cifrado/pins/copia; seguridad 41481913075 pasó.
 Son recibos de ese PR, no checks del siguiente main.
 
-PR #253 contiene el candidato de corrección del ciclo completo, sender y
-recuperación. Su estado final, revisión y checks exactos se registran en
-[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
-La documentación describe el contrato, no afirma un merge o despliegue futuro.
-La observación pública real 41481095746 terminó UNKNOWN, con aislamiento y
-cleanup PASS: [recibo/inventario/propuesta](quality/public-source-validation-2026-11-02.md).
-La página completa sigue sin validar; ampliar solicitudes requiere aprobación.
+PR #253 integró ciclo completo, sender y recuperación en `5ddfba5`.
+El corte actual main `fe70271f940dbc6fc1f422907f5e7254eb2ae508` incluye
+#261/#263/#266/#269/#270. CI postmerge 41544296010 y seguridad 41544295980
+PASS; los cinco checks del candidato #270 también pasaron, incluyendo
+2283 pruebas +31 subtests. Sus recibos y pasos posteriores se conservan en
+[checkpoint vigente #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6590928836)
+y [estado de integración](BETA_INTEGRATION_STATUS.md). No rehacer código integrado
+ni presentar estos checks como despliegue o aceptación física.
 
-La inspección 41471945717 halló daemon Boca detenido/socket ausente sin operar
-Docker; port-check41473018271 observó 8443 libre sin reservarlo. Engine,
-capacidad, datos globales, instalación, forwarding y passkey físicos siguen
-sin comprobar. No hubo residuos de instalación en esas inspecciones.
+La captura autorizada más reciente 41537796470 completó 25 GET/200, aislamiento
+y cleanup PASS, pero Chromium quedó UNKNOWN por un script externo denegado.
+Su host y función no se conocen. #270 integró metadata de autoridad para una
+observación futura. Tras un intento bloqueado antes del dispatch, el dueño
+reafirmó continuar el mismo diagnóstico de 25 GET sin confirmación repetida.
+No hay recibo nuevo en este corte ni ampliación del mapa. El [informe público](quality/public-source-validation-2026-11-02.md)
+conserva los recibos históricos y sus límites.
 
-El orden obligatorio es código/revisión/merge/checks → aprobación específica
-→ release dual de main congelado → preflight → owner-prepare/owner-enroll
+La inspección sólo lectura #269/41542349197, 20:03 ART, obtuvo
+`effective_preflight_unit_unverified`, `rc=1`, transporte confirmado y
+`start_attempted=no`. RCA #271 demuestra que el parser rechaza arrays Exec
+vacíos omitidos por el renderer oficial de systemd v255; no se capturaron los
+campos exactos del host. La corrección candidata requiere revisión y checks.
+Engine, capacidad, datos globales, instalación, forwarding y passkey físicos
+siguen sin comprobar. El port-check 41497093298 observó 8443 libre a las
+15:04:45 ART sin reservarlo. No hubo residuos de instalación por estas inspecciones.
+
+El orden obligatorio es corrección #271/revisión/merge/checks → inspección
+sólo lectura → completar/evaluar preflight de infraestructura → aprobación
+específica/release dual de main congelado → preflight de imágenes/aislamiento → owner-prepare/owner-enroll
 físico → install/acceptance temporal → configuración y prueba Telegram con
 outbox vacío → sender explícito → simulación persistente, reinicio y segundo
 acceso con passkey. La aceptación detiene Boca: se reanuda con
@@ -236,12 +252,12 @@ diferido; no se eliminan los requisitos de custodia/recuperación para alta real
 | ID | Entrega y estado en el corte base | Criterio de cierre | Depende de |
 | --- | --- | --- | --- |
 | B1 | Plan/contratos y seguimiento: esta documentación | Matriz de alcance, alta obligatoria, decisiones, owners y evidencias registradas | Dirección del dueño |
-| B2 | Servicio preparado #120; parada #156 y ALREADY_STOPPED en 41282301501; #191 preflight host beta integrado sin ejecución | Rootless propio sano; namespace candidato y procedencia de almacenamiento verificados; capacidad/cgroups/permisos de aplicación probados. No reemplazar una DB por inferencia | Destino delegado y propuesta concreta por Actions |
+| B2 | Servicio preparado #120 y parada #156 históricos; preflight #261 falló antes de efectos; inspect #269/41542349197 conservó `effective_preflight_unit_unverified`; corrección #271 en curso | Rootless propio sano; namespace candidato y procedencia de almacenamiento verificados; capacidad/cgroups/permisos de aplicación probados. No reemplazar una DB por inferencia | Corrección revisada/checks, diagnóstico y preflight por Actions |
 | B3 | Coordinador130, comandos149, loop161, ciclo164 y TLS173 integrados; RCA canónico187 | Comandos iniciar/detener/estado; guardia persistente, idempotencia, pausa ambigua y replay seguro probados | Contrato servido de B7 y panel B4 |
 | B4 | Lectura128, formulario148, panel163, preflight189, custodia208, origen HTTP224/226 y owner-enroll229 integrados; sin inscripción física ni forwarding probado | Acceso privado tablet; Socios > Agregar socio cifrado/atómico; errores, duplicados, denegación y estado posterior visibles | B3 contrato; servicio de alta/clave/DB |
 | B5 | Dispatcher134, Telegram162, `/avisos`163, worker188, custodia199/203 y prueba única204 integrados; recorrido host/recepción pendientes | Proyección fiel de estados persistidos, límites/restart/dedup; razón ambigua durable sin llamar entrega real a aceptación de API | Resultados persistidos de B3; UI B4 y provisión #168 |
-| B6 | Chromium IPC #237, seguridad242, Compose243 e instalador246/247 integrados; sin ejecución host; observación real 41481095746 UNKNOWN, sitio completo pendiente | Una sesión aislada con recursos, parada y errores medidos en entorno candidato; alcance de egress explícito | Presupuesto separado; observación real no inferida de test offline |
-| B7 | HTTP224, Compose243 y `beta-browser-install`246 integrados; ciclo completo y recovery en candidato PR #253, sin aceptación host | Programa arrancado conecta B3/B4/B5; health funcional, acceso privado y manifiesto por componente; instalación desechable probada | B2–B6 según componentes del candidato |
+| B6 | Chromium IPC #237, seguridad242, Compose243 e instalador246/247 integrados; sin ejecución host; observación real 41537796470 UNKNOWN y metadata #270 integrada sin nueva captura | Una sesión aislada con recursos, parada y errores medidos en entorno candidato; alcance de egress explícito | Presupuesto separado; observación real no inferida de test offline |
+| B7 | HTTP224, Compose243, `beta-browser-install`246 y ciclo completo/recovery PR #253 integrados, sin aceptación host | Programa arrancado conecta B3/B4/B5; health funcional, acceso privado y manifiesto por componente; instalación desechable probada | B2–B6 según componentes del candidato |
 | B8 | HTTP loopback170, probe TLS190 y smoke de contenedor limitado200; E2E host pendiente | Suite E2E, lint/types, RCA, seguridad e imágenes sobre mismo SHA; rapidez/recursos y revisión exacta | B7 consolidado |
 | B9 | Publicación dual239 y workflow246 integrados; sin release dual del candidato final ni instalación verificadas | SHA→dos digests/manifiestos del mismo release→procesos instalados trazables; nueva release para HEAD final y capacidad revalidada; sólo workflow y mutex Boca | B2 apto, B8 verde, decisión final del candidato |
 | B10 | Aceptación/parada protegida200 integrada, sin dispatch | Recorrido desde interfaz real/tablet, persistencia/reinicio, límites, denegación y avisos; acta de versión/pendientes | B9 y matriz de aceptación |

@@ -178,6 +178,7 @@ def _command_reason(command: tuple[str, ...]) -> str:
     if command[0] == "/usr/bin/docker" and len(command) > 2 and command[2] == "stop":
         return "boca_container_stop_failed"
     return {
+        "/usr/bin/busctl": "user_service_metadata_failed",
         "/usr/bin/loginctl": "dedicated_linger_query_failed",
         "/usr/bin/rootlesskit": "rootless_namespace_failed",
         "/usr/bin/dockerd": "daemon_config_validation_failed",
@@ -1442,6 +1443,13 @@ def _preflight_empty_containers(home: Path) -> None:
         os.close(descriptor)
 
 
+def _effective_property_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    fields = dict(pairs)
+    if len(fields) != len(pairs):
+        raise SetupError("effective_preflight_unit_unverified")
+    return fields
+
+
 def _preflight_effective_unit(home: Path) -> None:
     """A stale loaded unit must not execute different commands during a probe."""
     expected = {
@@ -1451,11 +1459,6 @@ def _preflight_effective_unit(home: Path) -> None:
         "Restart": "no",
         "Delegate": "yes",
         "KillMode": "mixed",
-        "ExecCondition": "",
-        "ExecStartPre": "",
-        "ExecStartPost": "",
-        "ExecStop": "",
-        "ExecStopPost": "",
     }
     raw = _command(
         home,
@@ -1464,23 +1467,80 @@ def _preflight_effective_unit(home: Path) -> None:
         "show",
         "--all",
         "docker.service",
-        "--property=" + ",".join((*expected, "ExecStart")),
+        "--property=" + ",".join(expected),
     )
     pairs = [line.split("=", 1) for line in raw.splitlines()]
-    if len(raw) > 16_384 or len(pairs) != len(expected) + 1 or any(len(p) != 2 for p in pairs):
+    if len(raw) > 16_384 or len(pairs) != len(expected) or any(len(p) != 2 for p in pairs):
         raise SetupError("effective_preflight_unit_unverified")
     fields = dict(pairs)
-    if set(fields) != {*expected, "ExecStart"} or any(
-        fields[key] != value for key, value in expected.items()
-    ):
+    if set(fields) != set(expected) or any(fields[key] != value for key, value in expected.items()):
         raise SetupError("effective_preflight_unit_changed")
+
+    # systemctl's custom Exec* renderer omits empty arrays even with --all.
+    # Properties.Get instead proves each fixed property's presence and type:
+    # busctl exits nonzero if any is absent and emits one JSON object per name.
+    properties = (
+        "ExecCondition",
+        "ExecStartPre",
+        "ExecStartPost",
+        "ExecStop",
+        "ExecStopPost",
+        "ExecStart",
+    )
+    raw = _command(
+        home,
+        "/usr/bin/busctl",
+        "--user",
+        "--no-pager",
+        "--json=short",
+        "get-property",
+        "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1/unit/docker_2eservice",
+        "org.freedesktop.systemd1.Service",
+        *properties,
+    )
+    lines = raw.splitlines()
+    if len(raw) > 16_384 or len(lines) != len(properties):
+        raise SetupError("effective_preflight_unit_unverified")
+    values: list[list[object]] = []
+    for line in lines:
+        try:
+            value = json.loads(line, object_pairs_hook=_effective_property_fields)
+        except (ValueError, RecursionError):
+            raise SetupError("effective_preflight_unit_unverified") from None
+        if (
+            not isinstance(value, dict)
+            or set(value) != {"type", "data"}
+            or value["type"] != "a(sasbttttuii)"
+            or not isinstance(value["data"], list)
+        ):
+            raise SetupError("effective_preflight_unit_unverified")
+        values.append(value["data"])
+    if any(values[:-1]):
+        raise SetupError("effective_preflight_unit_changed")
+    if len(values[-1]) != 1:
+        raise SetupError("effective_preflight_command_changed")
+    command = values[-1][0]
+    if not isinstance(command, list):
+        raise SetupError("effective_preflight_command_changed")
     argv = next(line[10:] for line in _unit().splitlines() if line.startswith("ExecStart="))
-    argv = argv.replace("%h", str(home))
-    # Runtime timestamps/PID/status may describe an earlier legitimate run.
-    # They are never executed or logged. The executable, argv and error policy
-    # must match exactly, with one and only one command structure.
-    prefix = "{ path=/usr/bin/env ; argv[]=" + argv + " ; ignore_errors=no ; "
-    if re.fullmatch(re.escape(prefix) + r"[^{}\r\n]+ \}", fields["ExecStart"]) is None:
+    # The reviewed unit has literal space-delimited tokens; _identity rejects
+    # whitespace and systemd specifiers in the account home before this check.
+    expected_argv = [token.replace("%h", str(home)) for token in argv.split(" ")]
+    if (
+        len(command) != 10
+        or command[0] != "/usr/bin/env"
+        or command[1] != expected_argv
+        or command[2] is not False
+    ):
+        raise SetupError("effective_preflight_command_changed")
+    # Prior runtime metadata is not command identity, but must retain the exact
+    # D-Bus signature: four uint64 timestamps, uint32 PID, two int32 values.
+    bounds = [(0, 2**64 - 1)] * 4 + [(0, 2**32 - 1)] + [(-(2**31), 2**31 - 1)] * 2
+    if any(
+        type(value) is not int or not lower <= value <= upper
+        for value, (lower, upper) in zip(command[3:], bounds, strict=True)
+    ):
         raise SetupError("effective_preflight_command_changed")
 
 

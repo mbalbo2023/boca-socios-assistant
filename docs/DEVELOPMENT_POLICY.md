@@ -14,6 +14,15 @@ and owner approval before changes.
 Earlier blanket autonomy statements do not authorize a new operation. The
 current scoped approvals and verified state are recorded in issue #45.
 
+The owner's [2026-11-02 continuity instruction](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6591142632)
+requires continuing agreed work without repeatedly asking permission. Recover
+and carry forward that authorization across turns and handoffs. The concrete
+public diagnostic described in that record was still blocked by platform
+approval review after this reiteration; no new run was created. Its existing
+map, budgets and isolation remain binding. Record steps and results immediately in
+GitHub. Platform blocks are documented, not bypassed, and do not suspend
+independent work or justify asking the same question again.
+
 ## Approved delivery and maintenance
 
 [ADR0056](ADR/0056-approved-simulation-beta-delivery.md) and
