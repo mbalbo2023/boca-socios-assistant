@@ -5,15 +5,148 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import re
 import signal
 import socket
 import subprocess
 import sys
 import time
+from urllib.parse import urlsplit
 
 from . import public_observer_bundle as bundle
 from .observe_public_home import CHALLENGE_MARKERS, inspect_rendered_login_dom
 from .public_observer_capture import alarm
+
+DIAGNOSTIC_METHODS = {"GET", "POST", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS", "OTHER"}
+DIAGNOSTIC_KINDS = {
+    "document",
+    "stylesheet",
+    "image",
+    "media",
+    "font",
+    "script",
+    "texttrack",
+    "xhr",
+    "fetch",
+    "eventsource",
+    "websocket",
+    "manifest",
+    "ping",
+    "other",
+}
+DIAGNOSTIC_CAUSES = {
+    "request_budget",
+    "active_or_credential_request",
+    "dynamic_request",
+    "resource_outside_map",
+    "navigation",
+    "resource_type",
+    "websocket",
+}
+KNOWN_DIAGNOSTIC_PATHS = {*bundle.ASSETS, bundle.LOGIN_PATH, "/", "/favicon.ico"}
+# Identification only: these patterns MUST NOT authorize a request or fetch.
+# Arbitrary filenames, page segments and opaque path values remain redacted.
+NEXT_STATIC_DIAGNOSTIC = re.compile(
+    r"/_next/static/(?:chunks/(?:[0-9]{1,8}|webpack|framework|main|polyfills)-[0-9a-f]{16}\.js"
+    r"|css/[0-9a-f]{16}\.css|media/[0-9a-f]{16}-s\.p\.ttf)"
+)
+
+
+def diagnostic_path_class(path: str) -> str:
+    if path in KNOWN_DIAGNOSTIC_PATHS:
+        return "known"
+    if len(path) <= 256 and NEXT_STATIC_DIAGNOSTIC.fullmatch(path):
+        return "next_static"
+    return "redacted"
+
+
+def denied_metadata(url: str, method: str, kind: str, cause: str) -> dict:
+    """Never return raw URLs, arbitrary paths, sensitive values or their hashes."""
+    item = {
+        "cause": cause if cause in DIAGNOSTIC_CAUSES else "resource_outside_map",
+        "method": method if method in DIAGNOSTIC_METHODS else "OTHER",
+        "kind": kind if kind in DIAGNOSTIC_KINDS else "other",
+        "same_origin": False,
+        "path": None,
+        "path_class": "invalid",
+        "query_redacted": "?" in url,
+        "fragment_redacted": "#" in url,
+        "userinfo_redacted": False,
+    }
+    if len(url) > 2048 or any(ord(char) < 33 for char in url):
+        return item
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return item
+    item["userinfo_redacted"] = "@" in parsed.netloc
+    if parsed.scheme != "https" or parsed.netloc != bundle.HOST:
+        item["path_class"] = "external"
+        return item
+    item["same_origin"] = True
+    item["path_class"] = diagnostic_path_class(parsed.path)
+    if item["path_class"] != "redacted":
+        item["path"] = parsed.path
+    return item
+
+
+def valid_diagnostics(value: object) -> bool:
+    """Supervisor boundary: strict schema, identical path grammar and ASCII byte cap."""
+    if not isinstance(value, dict) or set(value) != {"denied_requests", "cancelled_after_stop"}:
+        return False
+    items = value["denied_requests"]
+    if (
+        not isinstance(items, list)
+        or len(items) > 8
+        or type(value["cancelled_after_stop"]) is not int
+        or not 0 <= value["cancelled_after_stop"] <= 65535
+    ):
+        return False
+    fields = {
+        "cause",
+        "method",
+        "kind",
+        "same_origin",
+        "path",
+        "path_class",
+        "query_redacted",
+        "fragment_redacted",
+        "userinfo_redacted",
+    }
+    for item in items:
+        if not isinstance(item, dict) or set(item) != fields:
+            return False
+        if any(
+            type(item[field]) is not bool
+            for field in ("same_origin", "query_redacted", "fragment_redacted", "userinfo_redacted")
+        ):
+            return False
+        if (
+            not isinstance(item["cause"], str)
+            or item["cause"] not in DIAGNOSTIC_CAUSES
+            or not isinstance(item["method"], str)
+            or item["method"] not in DIAGNOSTIC_METHODS
+            or not isinstance(item["kind"], str)
+            or item["kind"] not in DIAGNOSTIC_KINDS
+            or not isinstance(item["path_class"], str)
+        ):
+            return False
+        path = item["path"]
+        if item["same_origin"]:
+            if item["userinfo_redacted"]:
+                return False
+            if path is None:
+                if item["path_class"] != "redacted":
+                    return False
+            elif (
+                not isinstance(path, str)
+                or diagnostic_path_class(path) == "redacted"
+                or item["path_class"] != diagnostic_path_class(path)
+            ):
+                return False
+        elif path is not None or item["path_class"] not in {"external", "invalid"}:
+            return False
+    return len(json.dumps(value, ensure_ascii=True, separators=(",", ":")).encode("ascii")) <= 4096
 
 
 class RenderGuard:
@@ -23,6 +156,20 @@ class RenderGuard:
         self.documents = 0
         self.blocked = False
         self.reason = "none"
+        self.denied_requests: list[dict] = []
+        self.cancelled_after_stop = 0
+
+    def diagnostics(self) -> dict:
+        return {
+            "denied_requests": list(self.denied_requests),
+            "cancelled_after_stop": self.cancelled_after_stop,
+        }
+
+    def deny(self, url: str, method: str, kind: str, reason: str) -> None:
+        if not self.blocked:
+            # STOP is terminal, so only the first causal rejection is retained.
+            self.denied_requests.append(denied_metadata(url, method, kind, reason))
+        self.stop(reason)
 
     def stop(self, reason: str) -> None:
         self.blocked = True
@@ -30,19 +177,22 @@ class RenderGuard:
             self.reason = reason
 
     def allow(self, url: str, method: str, kind: str, headers: dict) -> dict | None:
+        if self.blocked:
+            self.cancelled_after_stop = min(65535, self.cancelled_after_stop + 1)
+            return None
         self.requests += 1
         item = self.entries.get(url)
-        if self.blocked or self.requests > 64:
-            self.stop("request_budget")
+        if self.requests > 64:
+            self.deny(url, method, kind, "request_budget")
         elif method != "GET" or any(key.lower() in {"cookie", "authorization"} for key in headers):
-            self.stop("active_or_credential_request")
+            self.deny(url, method, kind, "active_or_credential_request")
         elif kind in {"fetch", "xhr", "websocket", "eventsource", "ping"}:
-            self.stop("dynamic_request")
+            self.deny(url, method, kind, "dynamic_request")
         elif item is None:
-            self.stop("resource_outside_map")
+            self.deny(url, method, kind, "resource_outside_map")
         elif kind == "document":
             if url != bundle.ORIGIN + bundle.LOGIN_PATH or self.documents:
-                self.stop("navigation")
+                self.deny(url, method, kind, "navigation")
             else:
                 self.documents += 1
         elif (kind, item["mime"]) not in {
@@ -50,7 +200,7 @@ class RenderGuard:
             ("stylesheet", "text/css"),
             ("font", "font/ttf"),
         }:
-            self.stop("resource_type")
+            self.deny(url, method, kind, "resource_type")
         return None if self.blocked else item
 
 
@@ -100,7 +250,7 @@ async def render(value: dict, receipt: dict) -> None:
                     )
 
                 async def websocket(route: object) -> None:
-                    guard.stop("websocket")
+                    guard.deny(route.url, "GET", "websocket", "websocket")
                     await route.close(code=1008, reason="offline observation")
 
                 await context.route("**/*", route_request)
@@ -114,7 +264,7 @@ async def render(value: dict, receipt: dict) -> None:
                 page.on(
                     "framenavigated",
                     lambda frame: (
-                        guard.stop("navigation")
+                        guard.deny(frame.url, "OTHER", "document", "navigation")
                         if frame != page.main_frame
                         or frame.url != bundle.ORIGIN + bundle.LOGIN_PATH
                         else None
@@ -140,20 +290,24 @@ async def render(value: dict, receipt: dict) -> None:
                         "internal_requests": guard.requests,
                         "blocked_reason": guard.reason,
                         "state": "DOM_OBSERVED" if dom and not guard.blocked else "UNKNOWN",
+                        "diagnostics": guard.diagnostics(),
                     }
                 )
             except Exception:
                 guard.stop("runtime_failure")
             finally:
-                if context is not None:
-                    await context.close()
-                receipt.update(
-                    {
-                        "internal_requests": guard.requests,
-                        "blocked_reason": guard.reason,
-                        "state": "DOM_OBSERVED" if dom and not guard.blocked else "UNKNOWN",
-                    }
-                )
+                try:
+                    if context is not None:
+                        await context.close()
+                finally:
+                    receipt.update(
+                        {
+                            "internal_requests": guard.requests,
+                            "blocked_reason": guard.reason,
+                            "state": "DOM_OBSERVED" if dom and not guard.blocked else "UNKNOWN",
+                            "diagnostics": guard.diagnostics(),
+                        }
+                    )
         finally:
             await browser.close()
 
@@ -166,6 +320,7 @@ def child(fixture: bool) -> int:
         "connected_site": False,
         "internal_requests": 0,
         "blocked_reason": "runtime_failure",
+        "diagnostics": {"denied_requests": [], "cancelled_after_stop": 0},
     }
     try:
         with bundle.open_bundle() as stream:
@@ -190,7 +345,10 @@ def main() -> int:
             b'new WebSocket("wss://bocasocios.bocajuniors.com.ar/offline-fixture");',
             "websocket",
         ),
-        "--fixture-navigation": (b'location.href = "/offline-fixture";', "resource_outside_map"),
+        "--fixture-navigation": (
+            b'location.href = "/favicon.ico?boca_fixture=fixture-private-value#fixture-fragment";',
+            "resource_outside_map",
+        ),
         "--fixture-worker": (
             b'new Worker(URL.createObjectURL(new Blob(["postMessage(1)"],'
             b'{type:"application/javascript"})));',
@@ -208,6 +366,7 @@ def main() -> int:
         "provenance": "synthetic_fixture" if fixture else "public_capture",
         "internal_requests": 0,
         "blocked_reason": "deadline_or_transfer",
+        "diagnostics": {"denied_requests": [], "cancelled_after_stop": 0},
     }
     try:
         require_network_none()
@@ -247,6 +406,7 @@ def main() -> int:
             or value["state"] not in {"DOM_OBSERVED", "UNKNOWN"}
             or type(value["internal_requests"]) is not int
             or not 0 <= value["internal_requests"] <= 65
+            or not valid_diagnostics(value["diagnostics"])
             or value["blocked_reason"]
             not in {
                 "none",
@@ -268,6 +428,19 @@ def main() -> int:
             }
         ):
             raise ValueError("render receipt")
+        diagnostic = value["diagnostics"]
+        if (
+            value["state"] == "DOM_OBSERVED"
+            and (
+                diagnostic["denied_requests"]
+                or diagnostic["cancelled_after_stop"]
+                or value["blocked_reason"] != "none"
+            )
+        ) or (
+            diagnostic["denied_requests"]
+            and diagnostic["denied_requests"][0]["cause"] != value["blocked_reason"]
+        ):
+            raise ValueError("contradictory render receipt")
         receipt = value
         result = 0 if run.returncode == 0 and receipt["state"] == "DOM_OBSERVED" else 1
         if args[0] in negative_fixtures:
@@ -279,6 +452,16 @@ def main() -> int:
                 and receipt["blocked_reason"] == reason
                 else 1
             )
+            if args == ["--fixture-navigation"]:
+                denials = receipt["diagnostics"]["denied_requests"]
+                if (
+                    len(denials) != 1
+                    or denials[0]["path"] != "/favicon.ico"
+                    or denials[0]["method"] != "GET"
+                    or denials[0]["kind"] != "document"
+                    or denials[0]["query_redacted"] is not True
+                ):
+                    result = 1
             receipt["expected_stop_verified"] = result == 0
     except (Exception, KeyboardInterrupt):
         receipt["state"] = "UNKNOWN"

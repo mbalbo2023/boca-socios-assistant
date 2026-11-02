@@ -242,6 +242,89 @@ def test_renderer_document_once_and_maximum_64_responses() -> None:
     assert guard.reason == "request_budget"
 
 
+def test_denied_navigation_identifies_only_sanitized_cause_and_separates_prior_stop() -> None:
+    guard = render.RenderGuard(bundle.fixture_bundle())
+    url = bundle.ORIGIN + "/favicon.ico?token=fixture-secret#private-fragment"
+    assert guard.allow(url, "GET", "document", {}) is None
+    assert guard.reason == "resource_outside_map"
+    diagnostic = guard.diagnostics()
+    assert diagnostic["denied_requests"] == [
+        {
+            "cause": "resource_outside_map",
+            "method": "GET",
+            "kind": "document",
+            "same_origin": True,
+            "path": "/favicon.ico",
+            "path_class": "known",
+            "query_redacted": True,
+            "fragment_redacted": True,
+            "userinfo_redacted": False,
+        }
+    ]
+    # A request aborted because the guard already stopped is not a newly
+    # discovered dependency, even when its URL itself is outside the map.
+    assert guard.allow(bundle.ORIGIN + bundle.ASSETS[0], "GET", "stylesheet", {}) is None
+    assert guard.allow(bundle.ORIGIN + "/second-unknown", "GET", "image", {}) is None
+    guard.stop("resource_failure")  # requestfailed emitted by our own abort
+    assert guard.reason == "resource_outside_map"
+    assert guard.diagnostics()["denied_requests"] == diagnostic["denied_requests"]
+    assert guard.diagnostics()["cancelled_after_stop"] == 2
+    assert "fixture-secret" not in json.dumps(guard.diagnostics())
+    assert "private-fragment" not in json.dumps(guard.diagnostics())
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        bundle.ORIGIN + "/account/fixture-secret/avatar.png?token=fixture-secret#fixture-secret",
+        "https://person:fixture-secret@" + bundle.HOST + "/favicon.ico?fixture-secret",
+        "https://external.invalid/fixture-secret?fixture-secret#fixture-secret",
+        bundle.ORIGIN + "/_next/static/chunks/fixture-secret-0123456789abcdef.js",
+        bundle.ORIGIN + "/_next/static/chunks/1234-0123456789abcdef.js%3Ffixture-secret",
+        "data:text/plain,fixture-secret",
+        "blob:" + bundle.ORIGIN + "/fixture-secret",
+        bundle.ORIGIN + "/fixture-secret" * 1000,
+    ],
+)
+def test_denied_metadata_never_exports_arbitrary_paths_userinfo_or_values(url: str) -> None:
+    value = render.denied_metadata(url, "fixture-secret", "fixture-secret", "resource_outside_map")
+    assert value["path"] is None
+    assert "fixture-secret" not in json.dumps(value)
+    assert value["method"] == "OTHER" and value["kind"] == "other"
+
+
+def test_safe_static_diagnostic_identity_never_expands_the_render_map() -> None:
+    path = "/_next/static/chunks/1234-0123456789abcdef.js"
+    guard = render.RenderGuard(bundle.fixture_bundle())
+    assert guard.allow(bundle.ORIGIN + path, "GET", "script", {}) is None
+    assert guard.reason == "resource_outside_map"
+    assert guard.diagnostics()["denied_requests"][0]["path"] == path
+    assert guard.diagnostics()["denied_requests"][0]["path_class"] == "next_static"
+
+
+def test_supervisor_rejects_diagnostic_schema_privacy_and_size_violations() -> None:
+    item = render.denied_metadata(
+        bundle.ORIGIN + "/favicon.ico?private", "GET", "document", "resource_outside_map"
+    )
+    good = {"denied_requests": [item], "cancelled_after_stop": 0}
+    assert render.valid_diagnostics(good)
+    for field, value in (
+        ("query_redacted", 1),
+        ("same_origin", "true"),
+        ("path", "/account/fixture-secret"),
+        ("method", "fixture-secret"),
+        ("kind", "fixture-secret"),
+        ("headers", {"Cookie": "fixture-secret"}),
+    ):
+        bad = {"denied_requests": [{**item, field: value}], "cancelled_after_stop": 0}
+        assert not render.valid_diagnostics(bad)
+    assert not render.valid_diagnostics({"denied_requests": [item] * 9, "cancelled_after_stop": 0})
+    assert not render.valid_diagnostics({"denied_requests": [item], "cancelled_after_stop": True})
+    assert not render.valid_diagnostics(
+        {"denied_requests": [{**item, "path": "/" + "x" * 4096}], "cancelled_after_stop": 0}
+    )
+
+
 def test_late_browser_cleanup_failure_invalidates_provisional_dom(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -281,17 +364,21 @@ def test_private_bundle_refuses_symlink_and_removes_after_read(
 
 
 @pytest.mark.parametrize(
-    "text,worker,expected",
+    "text,worker,denied,close_error,expected",
     [
-        ("Public login", False, "DOM_OBSERVED"),
-        ("captcha", False, "UNKNOWN"),
-        ("Public login", True, "UNKNOWN"),
+        ("Public login", False, False, False, "DOM_OBSERVED"),
+        ("captcha", False, False, False, "UNKNOWN"),
+        ("Public login", True, False, False, "UNKNOWN"),
+        ("Public login", False, True, False, "UNKNOWN"),
+        ("Public login", False, True, True, "UNKNOWN"),
     ],
 )
 def test_renderer_runs_full_adapter_and_challenge_gate_without_network(
     monkeypatch: pytest.MonkeyPatch,
     text: str,
     worker: bool,
+    denied: bool,
+    close_error: bool,
     expected: str,
 ) -> None:
     fulfilled = []
@@ -299,14 +386,16 @@ def test_renderer_runs_full_adapter_and_challenge_gate_without_network(
 
     class Route:
         request = SimpleNamespace(
-            url=bundle.ORIGIN + bundle.LOGIN_PATH,
+            url=bundle.ORIGIN
+            + ("/favicon.ico?token=fixture-secret" if denied else bundle.LOGIN_PATH),
             method="GET",
             resource_type="document",
             headers={},
         )
 
         async def abort(self) -> None:
-            raise AssertionError("positive document must use captured bytes")
+            assert denied, "positive document must use captured bytes"
+            page.handlers["requestfailed"](None)
 
         async def fulfill(self, **kwargs) -> None:
             fulfilled.append(kwargs)
@@ -321,12 +410,23 @@ def test_renderer_runs_full_adapter_and_challenge_gate_without_network(
         async def goto(self, url, **_kwargs) -> None:
             assert url == bundle.ORIGIN + bundle.LOGIN_PATH
             await context.handler(Route())
+            if denied:
+                secondary = Route()
+                secondary.request = SimpleNamespace(
+                    url=bundle.ORIGIN + bundle.ASSETS[0],
+                    method="GET",
+                    resource_type="stylesheet",
+                    headers={},
+                )
+                await context.handler(secondary)
             if worker:
                 self.handlers["worker"](None)
 
         async def inner_text(self, selector) -> str:
             assert selector == "body"
             return text
+
+    page = Page()
 
     class Context:
         async def route(self, pattern, handler) -> None:
@@ -337,7 +437,7 @@ def test_renderer_runs_full_adapter_and_challenge_gate_without_network(
             assert pattern == "**/*" and handler
 
         async def new_page(self) -> Page:
-            return Page()
+            return page
 
         def on(self, *_args) -> None:
             pass
@@ -347,6 +447,8 @@ def test_renderer_runs_full_adapter_and_challenge_gate_without_network(
 
         async def close(self) -> None:
             closed.append("context")
+            if close_error:
+                raise RuntimeError("synthetic close failure")
 
     context = Context()
 
@@ -386,9 +488,24 @@ def test_renderer_runs_full_adapter_and_challenge_gate_without_network(
 
     monkeypatch.setattr(render, "inspect_rendered_login_dom", inspect)
     receipt = {}
-    asyncio.run(render.render(bundle.fixture_bundle(), receipt))
+    if close_error:
+        with pytest.raises(RuntimeError):
+            asyncio.run(render.render(bundle.fixture_bundle(), receipt))
+    else:
+        asyncio.run(render.render(bundle.fixture_bundle(), receipt))
     assert receipt["state"] == expected
-    assert closed == ["context", "browser", "playwright"]
+    assert closed == (
+        ["context", "context", "browser", "playwright"]
+        if close_error
+        else ["context", "browser", "playwright"]
+    )
+    if denied:
+        assert not fulfilled
+        assert receipt["blocked_reason"] == "resource_outside_map"
+        assert receipt["diagnostics"]["cancelled_after_stop"] == 1
+        assert receipt["diagnostics"]["denied_requests"][0]["path"] == "/favicon.ico"
+        assert "fixture-secret" not in json.dumps(receipt)
+        return
     assert len(fulfilled) == 1
     assert fulfilled[0]["headers"] == {
         "Content-Type": "text/html",
@@ -396,3 +513,92 @@ def test_renderer_runs_full_adapter_and_challenge_gate_without_network(
         "X-Content-Type-Options": "nosniff",
     }
     assert b"fixture-root" in fulfilled[0]["body"]
+
+
+@pytest.mark.parametrize(
+    "state,cancelled,cause",
+    [
+        ("DOM_OBSERVED", 0, "resource_outside_map"),
+        ("DOM_OBSERVED", 1, None),
+        ("UNKNOWN", 0, "resource_outside_map"),
+    ],
+)
+def test_supervisor_refuses_positive_or_inconsistent_denial_receipts(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    state: str,
+    cancelled: int,
+    cause: str | None,
+) -> None:
+    item = render.denied_metadata(
+        bundle.ORIGIN + "/favicon.ico?private", "GET", "document", "resource_outside_map"
+    )
+    child_value = {
+        "mode": "offline_capture_render",
+        "state": state,
+        "connected_site": False,
+        "provenance": "synthetic_fixture",
+        "internal_requests": 2,
+        "blocked_reason": "none",
+        "diagnostics": {
+            "denied_requests": [item] if cause else [],
+            "cancelled_after_stop": cancelled,
+        },
+    }
+    monkeypatch.setattr(render.sys, "argv", ["render", "--fixture-render"])
+    monkeypatch.setattr(render, "require_network_none", lambda: None)
+    monkeypatch.setattr(bundle, "save_bundle", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bundle, "remove_bundle", lambda: None)
+    monkeypatch.setattr(render.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(render.signal, "setitimer", lambda *_args: None)
+    monkeypatch.setattr(
+        render.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout=json.dumps(child_value), returncode=0),
+    )
+    assert render.main() == 1
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["state"] == "UNKNOWN"
+    assert receipt["diagnostics"] == {"denied_requests": [], "cancelled_after_stop": 0}
+    assert "private" not in json.dumps(receipt)
+
+
+def test_many_post_stop_cancellations_preserve_causal_diagnostic_through_supervisor(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    guard = render.RenderGuard(bundle.fixture_bundle())
+    assert (
+        guard.allow(bundle.ORIGIN + "/favicon.ico?token=fixture-secret", "GET", "document", {})
+        is None
+    )
+    for _ in range(70):
+        assert guard.allow(bundle.ORIGIN + bundle.ASSETS[0], "GET", "stylesheet", {}) is None
+    assert guard.requests == 1
+    assert guard.cancelled_after_stop == 70
+    value = {
+        "mode": "offline_capture_render",
+        "state": "UNKNOWN",
+        "connected_site": False,
+        "provenance": "synthetic_fixture",
+        "internal_requests": guard.requests,
+        "blocked_reason": guard.reason,
+        "diagnostics": guard.diagnostics(),
+    }
+    monkeypatch.setattr(render.sys, "argv", ["render", "--fixture-render"])
+    monkeypatch.setattr(render, "require_network_none", lambda: None)
+    monkeypatch.setattr(bundle, "save_bundle", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(bundle, "remove_bundle", lambda: None)
+    monkeypatch.setattr(render.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(render.signal, "setitimer", lambda *_args: None)
+    monkeypatch.setattr(
+        render.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(stdout=json.dumps(value), returncode=1),
+    )
+    assert render.main() == 1
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["state"] == "UNKNOWN" and receipt["blocked_reason"] == "resource_outside_map"
+    assert receipt["diagnostics"]["cancelled_after_stop"] == 70
+    assert receipt["diagnostics"]["denied_requests"][0]["path"] == "/favicon.ico"
+    assert "fixture-secret" not in json.dumps(receipt)

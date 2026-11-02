@@ -394,6 +394,20 @@
         "tests/test_owner_enrollment_argv.py::test_cleanup_recognizes_exact_legacy_and_terminated_enrollment_commands",
         "tests/test_owner_enrollment_argv.py::test_uncertain_enrollment_argv_preserves_every_resource_before_cleanup"
       ]
+    },
+    {
+      "id": "RCA-264",
+      "issue": 264,
+      "fix_pr": 266,
+      "root_cause": "The offline renderer stopped safely on a resource outside its capture map but omitted the rejected identity. Later STOP cancellations could also overflow the supervisor decision-count bound and discard the causal diagnostic.",
+      "prevention": "Emit strictly sanitized and revalidated causal metadata within eight items/4096 bytes. Separate bounded post-STOP cancellations from evaluated requests, preserve the first cause through abort/close failures, and retain all network and request limits.",
+      "regression_tests": [
+        "tests/test_public_observer_capture.py::test_denied_navigation_identifies_only_sanitized_cause_and_separates_prior_stop",
+        "tests/test_public_observer_capture.py::test_denied_metadata_never_exports_arbitrary_paths_userinfo_or_values",
+        "tests/test_public_observer_capture.py::test_safe_static_diagnostic_identity_never_expands_the_render_map",
+        "tests/test_public_observer_capture.py::test_supervisor_rejects_diagnostic_schema_privacy_and_size_violations",
+        "tests/test_public_observer_capture.py::test_many_post_stop_cancellations_preserve_causal_diagnostic_through_supervisor"
+      ]
     }
   ]
 }

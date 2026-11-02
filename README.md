@@ -28,9 +28,11 @@ infrastructure**.
 > [Authorized public capture 41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530)
 > fetched 25 permitted GETs, all HTTP 200. Real offline Chromium returned
 > `UNKNOWN resource_outside_map`; pre/post isolation and cleanup passed.
-> The missing URL was not identified; #264 is a diagnostic correction in a
-> separate branch, with no further public GET authorized. The complete site
-> remains unaccepted; see [the report](docs/quality/public-source-validation-2026-11-02.md).
+> The missing URL was not identified. This version implements the sanitized
+> diagnostic correction for #264 in #266/[ADR0106](docs/ADR/0106-sanitized-public-render-denials.md);
+> exact-SHA checks and authorization for a new capture remain required. No
+> further public GET is authorized, and the complete site remains unaccepted;
+> see [the report](docs/quality/public-source-validation-2026-11-02.md).
 > [Host inspection 41495516709](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41495516709)
 > found the daemon inactive/dead and its socket absent, with capacity not evaluated;
 > [port check 41497093298](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41497093298)

@@ -32,10 +32,14 @@ ran on 2026-11-02, 16:41:50–16:42:13 ART: 25 permitted GETs returned HTTP 200,
 with 25 TLS connections. Real Chromium under `network=none` returned
 `UNKNOWN resource_outside_map` after 30 counted internal requests;
 pre/post isolation and cleanup passed. The receipt does not identify the
-missing URL or establish an outage of the official site. #264 tracks a
-diagnostic correction in a separate branch; no further public GET is
-authorized. Full-site acceptance remains open. The [report](quality/public-source-validation-2026-11-02.md)
-also preserves the earlier one-document UNKNOWN run 41481095746.
+missing URL or establish an outage of the official site. This version implements
+the #264 diagnostic correction in #266/[ADR0106](ADR/0106-sanitized-public-render-denials.md):
+at most eight sanitized records/4096 ASCII JSON bytes, arbitrary paths redacted
+and cancellations after STOP counted separately. It cannot recover the historical
+URL or expand the capture map. Exact-SHA checks and a new capture authorization
+remain required; no further public GET is authorized. Full-site acceptance remains
+open. The [report](quality/public-source-validation-2026-11-02.md) also preserves
+the earlier one-document UNKNOWN run 41481095746.
 
 [Read-only inspection 41495516709](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41495516709/job/125449321031)
 at 2026-11-02 14:54:42 ART found the dedicated Boca unit inactive/dead and its
