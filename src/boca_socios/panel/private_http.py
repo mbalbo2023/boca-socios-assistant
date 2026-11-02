@@ -21,7 +21,7 @@ from uuid import UUID
 
 from boca_socios.notify.projection import list_local_notices
 from boca_socios.owner_origin import owner_rp_host
-from boca_socios.panel import private_ui
+from boca_socios.panel import private_ui, telegram_setup_ui
 from boca_socios.panel.enrollment_http import EnrollmentApplication
 from boca_socios.panel.local_status import read_local_status
 from boca_socios.panel.members import MemberDirectory
@@ -65,12 +65,13 @@ def _response(
     *,
     extra: tuple[str, str] | None = None,
     html: bool = True,
+    csp: str = private_ui.CSP,
 ) -> list[bytes]:
     headers = [
         ("Content-Type", "text/html; charset=utf-8" if html else "application/json"),
         ("Content-Length", str(len(body))),
         ("Cache-Control", "no-store"),
-        ("Content-Security-Policy", private_ui.CSP),
+        ("Content-Security-Policy", csp),
         ("X-Content-Type-Options", "nosniff"),
         ("Referrer-Policy", "no-referrer"),
         ("X-Frame-Options", "DENY"),
@@ -194,6 +195,8 @@ class PrivatePanelApplication:
                 return _error(start, 400, "Solicitud inválida.")
             if path == "/":
                 return _response(start, 200, private_ui.home(session.csrf))
+            if path == "/telegram/configurar":
+                return _response(start, 200, telegram_setup_ui.page(), csp=telegram_setup_ui.CSP)
             if path == "/socios":
                 return _response(start, 200, private_ui.members(self._directory.list_members()))
             if path == "/comandos":
