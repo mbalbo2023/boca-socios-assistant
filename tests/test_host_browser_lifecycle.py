@@ -715,3 +715,31 @@ def test_recovery_requires_exact_failed_run_and_never_calls_application_start(
     )[1].split("      - name:", 1)[0]
     assert "inputs.operation == 'beta-browser-telegram-recover'" in stop
     assert "steps.boca_browser_telegram_recovery_attempt.outputs.started == 'true'" in stop
+
+
+def test_real_docker_diagnostic_does_not_serialize_private_configuration() -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "boca_lifecycle_runtime_probe", ROOT / "scripts/check_browser_lifecycle_runtime.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    candidate = record(worker=True)
+    candidate["Config"].update(
+        Cmd=["private-command-value"],
+        Entrypoint=["private-entrypoint-value"],
+        Labels={"private-label": "private-label-value"},
+    )
+    candidate["Config"]["Env"].append("BOCA_TELEGRAM_TOKEN=private-token-value")
+    candidate["Config"]["Env"].append("SECRET=private-environment-value")
+    candidate["HostConfig"]["Binds"] = ["private-bind-value"]
+    candidate["Mounts"] = [{"Source": "private-mount-value"}]
+    summary = module.inspection_summary(candidate, service="browser-worker")
+    assert summary["isolation"]["CapAdd"] == ["SYS_CHROOT"]
+    assert summary["worker_command_matches"] is False
+    assert summary["entrypoint_absent"] is False
+    assert "BOCA_TELEGRAM_TOKEN" in summary["boca_environment_keys"]
+    assert "private-" not in json.dumps(summary)

@@ -69,6 +69,46 @@ def docker(*args: str, timeout: int = 30) -> str:
     return result.stdout.strip()
 
 
+def inspection_summary(record: dict, *, service: str) -> dict:
+    """Only fixed, nonsecret Docker boundary fields from a synthetic CI object."""
+    config, host = record["Config"], record["HostConfig"]
+    environment = dict(item.split("=", 1) for item in config.get("Env", []) if "=" in item)
+    return {
+        "service": service,
+        "running": record["State"]["Running"],
+        "entrypoint_absent": config.get("Entrypoint") in (None, []),
+        "worker_command_matches": config.get("Cmd")
+        == ["python", "-m", "boca_socios.browser.ipc_worker"],
+        "boca_environment_keys": sorted(key for key in environment if key.startswith("BOCA_")),
+        "required_environment_matches": all(
+            environment.get(key) == value
+            for key, value in {
+                "BOCA_ENVIRONMENT": "staging",
+                "BOCA_RUNTIME_MODE": "simulation",
+                "BOCA_ENGINE_MODE": "off",
+                **({"BOCA_OBSERVER_STOP": "1"} if service == "browser-worker" else {}),
+            }.items()
+        ),
+        "exposed_ports": config.get("ExposedPorts"),
+        "isolation": {
+            name: host.get(name)
+            for name in (
+                "NetworkMode",
+                "IpcMode",
+                "CgroupnsMode",
+                "NanoCpus",
+                "Memory",
+                "PidsLimit",
+                "ShmSize",
+                "CapDrop",
+                "CapAdd",
+                "PortBindings",
+                "Tmpfs",
+            )
+        },
+    }
+
+
 def main() -> None:
     if len(sys.argv) == 3 and sys.argv[1] == "seed-sender":
         assert re.fullmatch(r"[0-9a-f]{40}", sys.argv[2])
@@ -151,6 +191,13 @@ def main() -> None:
         if running:
             deploy._browser_wait_healthy(worker)
             deploy._browser_wait_healthy(controller)
+        for container, service in ((worker, "browser-worker"), (controller, "controller")):
+            raw_record = json.loads(docker("inspect", "--format", "{{json .}}", container))
+            print(
+                "BOCA_CI_DOCKER_INSPECT "
+                + json.dumps(inspection_summary(raw_record, service=service), sort_keys=True),
+                flush=True,
+            )
         deploy._browser_worker_postflight(
             worker,
             browser_image,
