@@ -2,17 +2,33 @@ name: Boca public source status
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: One exclusive public observation (never both)
+        type: choice
+        default: http-status
+        required: true
+        options:
+          - http-status
+          - chromium-one-get
+  pull_request:
+    paths:
+      - .github/workflows/boca-source-status.yml
+      - scripts/observe_public_home.py
+      - scripts/public_observer_*.py
+      - scripts/run_public_observer_isolated.sh
+      - tests/test_public_observer*.py
 
 permissions:
   contents: read
 
 concurrency:
-  group: boca-source-status
+  group: ${{ github.event_name == 'pull_request' && format('boca-source-status-pr-{0}', github.event.pull_request.number) || 'boca-source-status' }}
   cancel-in-progress: false
 
 jobs:
   observe:
-    if: github.ref == 'refs/heads/main' && github.repository == 'mbalbo2023/boca-socios-assistant' && github.actor == 'mbalbo2023'
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'http-status' && github.ref == 'refs/heads/main' && github.repository == 'mbalbo2023/boca-socios-assistant' && github.actor == 'mbalbo2023'
     name: public-source-status
     runs-on: ubuntu-24.04
     timeout-minutes: 3
@@ -50,3 +66,46 @@ jobs:
               summary.write(f"- Reason: `{observation.reason}`\n\n")
               summary.write("One public request from a GitHub runner. No login, queue or reservation was checked. External source status is an alert, not deployment authorization.\n")
           PY
+
+  browser-isolation:
+    name: public-browser-isolation
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'chromium-one-get' && github.ref == 'refs/heads/main' && github.repository == 'mbalbo2023/boca-socios-assistant' && github.actor == 'mbalbo2023')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Reject reruns before any public request
+        run: test "$GITHUB_RUN_ATTEMPT" = 1
+      - name: Checkout exact selected source without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build isolated browser on this disposable runner
+        env:
+          BOCA_OBSERVER_IMAGE: boca-observer:${{ github.sha }}
+        run: docker build --file Dockerfile.browser --label "org.boca.public-image=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --tag "$BOCA_OBSERVER_IMAGE" .
+      - name: Verify OS denial and Chromium sandbox without a public request
+        if: github.event_name == 'pull_request'
+        env:
+          BOCA_OBSERVER_IMAGE: boca-observer:${{ github.sha }}
+        run: timeout --signal=TERM --kill-after=10s 120s bash scripts/run_public_observer_isolated.sh --offline-check
+      - name: Observe one initial public document after OS denial probes
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'chromium-one-get'
+        env:
+          BOCA_OBSERVER_IMAGE: boca-observer:${{ github.sha }}
+        run: timeout --signal=TERM --kill-after=10s 120s bash scripts/run_public_observer_isolated.sh --one-get
+      - name: Record observation scope
+        if: always()
+        run: |
+          printf '%s\n' 'This job tests initial public HTML only. It does not prove full SPA loading, login, queue, or reservation. One Playwright route.fetch and one TLS tunnel are separately counted; encrypted HTTP is not independently inspected.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove only this runner image if the attempt stopped before wrapper cleanup
+        if: always()
+        env:
+          BOCA_OBSERVER_IMAGE: boca-observer:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker info --format '{{.ServerVersion}}' >/dev/null
+          if docker image inspect "$BOCA_OBSERVER_IMAGE" >/dev/null 2>&1; then
+            [[ "$(docker image inspect --format '{{index .Config.Labels "org.boca.public-image"}}' "$BOCA_OBSERVER_IMAGE")" == "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" ]]
+            docker image rm "$BOCA_OBSERVER_IMAGE" >/dev/null
+          fi
+          [[ -z "$(docker image ls -q --filter "reference=$BOCA_OBSERVER_IMAGE")" ]]
