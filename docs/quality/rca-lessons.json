@@ -261,6 +261,16 @@
         "tests/test_public_observer.py::test_inline_event_handler_probe_is_generic_and_reads_names_only",
         "tests/test_public_observer.py::test_ci_runs_real_chromium_public_fixtures_only_with_os_network_none"
       ]
+    },
+    {
+      "id": "RCA-27",
+      "issue": 27,
+      "fix_pr": 254,
+      "root_cause": "Two observer regression modules imported checkout-only scripts as installed packages. Local python -m pytest added the checkout root, masking collection errors in the hosted pytest console entrypoint.",
+      "prevention": "Load reviewed script modules by exact checkout path and execute a clean subprocess regression using the actual pytest console entrypoint with PYTHONPATH removed.",
+      "regression_tests": [
+        "tests/test_public_observer_isolation.py::test_pytest_entrypoint_collects_observer_tests_without_pythonpath"
+      ]
     }
   ]
 }

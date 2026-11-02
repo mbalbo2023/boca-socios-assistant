@@ -2,12 +2,57 @@
 
 from __future__ import annotations
 
+import importlib.util
 import subprocess
+import sys
 from pathlib import Path
 
-from scripts.observe_public_home import HOST, sanitized_resources
-
 ROOT = Path(__file__).resolve().parents[1]
+_SPEC = importlib.util.spec_from_file_location(
+    "public_observer_isolation_test_subject", ROOT / "scripts/observe_public_home.py"
+)
+assert _SPEC and _SPEC.loader
+_OBSERVER = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(_OBSERVER)
+HOST = _OBSERVER.HOST
+sanitized_resources = _OBSERVER.sanitized_resources
+
+
+def test_pytest_entrypoint_collects_observer_tests_without_pythonpath(tmp_path: Path) -> None:
+    """Match CI's console entrypoint: no cwd import help from python -m pytest."""
+    for relative in (
+        "pyproject.toml",
+        "scripts/observe_public_home.py",
+        "scripts/public_observer_proxy.py",
+        "tests/test_public_observer_isolation.py",
+        "tests/test_public_observer_proxy.py",
+    ):
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((ROOT / relative).read_bytes())
+    entrypoint = Path(sys.executable).parent / "pytest"
+    assert entrypoint.is_file()
+    result = subprocess.run(  # noqa: S603 - installed pytest entrypoint, copied local test source
+        [
+            str(entrypoint),
+            "--collect-only",
+            "-q",
+            "tests/test_public_observer_isolation.py",
+            "tests/test_public_observer_proxy.py",
+        ],
+        cwd=tmp_path,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+            "PYTHONNOUSERSITE": "1",
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "test_connect_permits_only_exact_authority" in result.stdout
 
 
 def test_dependency_inventory_removes_sensitive_url_components_and_external_targets() -> None:

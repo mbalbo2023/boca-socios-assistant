@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import socket
 import ssl
+from pathlib import Path
 
 import pytest
-from scripts import public_observer_proxy as proxy
+
+_SPEC = importlib.util.spec_from_file_location(
+    "public_observer_proxy_test_subject",
+    Path(__file__).resolve().parents[1] / "scripts/public_observer_proxy.py",
+)
+assert _SPEC and _SPEC.loader
+proxy = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(proxy)
 
 
 def hello(host: str = proxy.HOST, *, extra: bytes = b"") -> bytes:

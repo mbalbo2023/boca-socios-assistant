@@ -99,3 +99,28 @@ classification, safe dependency reporting and workflow mode separation.
 Passing these tests is not evidence that the runner kernel or the real site
 has passed. Hosted offline isolation must succeed on the exact reviewed SHA
 before a manual real run; the final public receipt remains pending.
+
+## RCA: pytest console collection, PR #254
+
+Hosted [CI 41478292867](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41478292867)
+failed collecting the two new test modules with `ModuleNotFoundError: scripts`.
+The tests had imported repository scripts as an installed package. Local
+`python -m pytest` implicitly included the working directory; CI's existing
+`uv run pytest` console entrypoint did not. This was a test-import defect, not
+a failed kernel isolation probe or justification to change CI/PYTHONPATH.
+
+Both tests now load their exact source file through `importlib`, matching the
+existing observer-test convention. Regression
+`tests/test_public_observer_isolation.py::test_pytest_entrypoint_collects_observer_tests_without_pythonpath`
+copies the current test/source bytes into a temporary tree and invokes the
+installed pytest **console entrypoint** for collection with no PYTHONPATH or
+user site packages. It reproduced the two collection errors before the fix;
+after the fix, both modules collect. It collects only and cannot recursively
+execute itself or issue network traffic.
+
+The separate hosted offline isolation
+[run 41478292230](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41478292230),
+job 125389553712, passed the actual pre/post network-denial probes, Chromium
+startup and selective cleanup with `public_connections=0` on the preceding
+candidate. That evidence does not waive CI on the corrected exact SHA, and no
+public GET has been performed.
