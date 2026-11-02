@@ -32,10 +32,39 @@ jobs:
           SOURCE_SHA: ${{ github.sha }}
           IMAGE: boca-release-validation:${{ github.sha }}
         run: test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
+      - name: Build one local browser worker image
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          IMAGE: boca-browser-release-validation:${{ github.sha }}
+        run: docker build --file Dockerfile.browser --label "org.opencontainers.image.revision=$SOURCE_SHA" --tag "$IMAGE" .
+      - name: Verify browser source revision label
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          IMAGE: boca-browser-release-validation:${{ github.sha }}
+        run: test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
+      - name: Require the reviewed browser IPC worker command
+        env:
+          IMAGE: boca-browser-release-validation:${{ github.sha }}
+        run: >-
+          test "$(docker image inspect --format '{{json .Config.Cmd}}' "$IMAGE")"
+          = '["python","-m","boca_socios.browser.ipc_worker"]'
       - name: Scan before any image publication
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: boca-release-validation:${{ github.sha }}
+          version: v0.76.1
+          cache: "false"
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: "false"
+          exit-code: "1"
+          format: table
+          timeout: 10m
+      - name: Scan browser image before any publication
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: boca-browser-release-validation:${{ github.sha }}
           version: v0.76.1
           cache: "false"
           scanners: vuln
@@ -91,10 +120,39 @@ jobs:
           IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
           SOURCE_SHA: ${{ github.sha }}
         run: test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
+      - name: Build one local browser worker image
+        env:
+          IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: docker build --file Dockerfile.browser --label "org.opencontainers.image.revision=$SOURCE_SHA" --tag "$IMAGE" .
+      - name: Verify browser source revision label
+        env:
+          IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
+      - name: Require the reviewed browser IPC worker command
+        env:
+          IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}
+        run: >-
+          test "$(docker image inspect --format '{{json .Config.Cmd}}' "$IMAGE")"
+          = '["python","-m","boca_socios.browser.ipc_worker"]'
       - name: Scan the image that will be published
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
+          version: v0.76.1
+          cache: "false"
+          scanners: vuln
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: "false"
+          exit-code: "1"
+          format: table
+          timeout: 10m
+      - name: Scan browser image before any publication
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}
           version: v0.76.1
           cache: "false"
           scanners: vuln
@@ -123,21 +181,36 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
         run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GHCR_USER" --password-stdin
-      - name: Publish scanned image and record immutable digest
+      - name: Publish both scanned images and record immutable digests
         id: publish
         env:
-          IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
+          CONTROLLER_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
+          BROWSER_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}
           PYTHONPATH: src
         run: |
           set -euo pipefail
-          docker push "$IMAGE" | tee "$RUNNER_TEMP/boca-push.log"
-          image_ref="$(python scripts/parse_image_digest.py "$RUNNER_TEMP/boca-push.log" "$GITHUB_SHA")"
+          # Publish browser first: a failed controller push cannot leave a
+          # controller-only successful release manifest. Both pushes must pass.
+          docker push "$BROWSER_IMAGE" | tee "$RUNNER_TEMP/boca-browser-push.log"
+          browser_ref="$(python scripts/parse_image_digest.py "$RUNNER_TEMP/boca-browser-push.log" "$GITHUB_SHA" --role browser)"
+          docker push "$CONTROLLER_IMAGE" | tee "$RUNNER_TEMP/boca-push.log"
+          image_ref="$(python scripts/parse_image_digest.py "$RUNNER_TEMP/boca-push.log" "$GITHUB_SHA" --role controller)"
           printf 'image_ref=%s\n' "$image_ref" >> "$GITHUB_OUTPUT"
+          printf 'browser_image_ref=%s\n' "$browser_ref" >> "$GITHUB_OUTPUT"
           python -m boca_socios.release_manifest write "$image_ref" "$GITHUB_SHA" "$GITHUB_RUN_ID" \
             > "$RUNNER_TEMP/boca-release-manifest.json"
+          python -m boca_socios.browser_release_manifest write \
+            "$image_ref" "$browser_ref" "$GITHUB_SHA" "$GITHUB_RUN_ID" \
+            > "$RUNNER_TEMP/boca-browser-release-manifest.json"
+          python -m boca_socios.release_manifest verify \
+            "$RUNNER_TEMP/boca-release-manifest.json" "$image_ref" "$GITHUB_SHA" "$GITHUB_RUN_ID"
+          python -m boca_socios.browser_release_manifest verify \
+            "$RUNNER_TEMP/boca-browser-release-manifest.json" \
+            "$image_ref" "$browser_ref" "$GITHUB_SHA" "$GITHUB_RUN_ID"
           {
             printf 'Commit: `%s`\n\n' "$GITHUB_SHA"
-            printf 'Immutable image: `%s`\n\n' "$image_ref"
+            printf 'Controller digest: `%s`\n\n' "$image_ref"
+            printf 'Browser worker digest: `%s`\n\n' "$browser_ref"
             printf 'Actions run: `%s`\n' "$GITHUB_RUN_ID"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve exact published digest for the guarded install
@@ -145,6 +218,14 @@ jobs:
         with:
           name: boca-release-manifest
           path: ${{ runner.temp }}/boca-release-manifest.json
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 30
+      - name: Preserve paired browser release evidence for a future guarded install
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: boca-browser-release-manifest
+          path: ${{ runner.temp }}/boca-browser-release-manifest.json
           if-no-files-found: error
           overwrite: false
           retention-days: 30
