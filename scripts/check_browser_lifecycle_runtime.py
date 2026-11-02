@@ -109,6 +109,50 @@ def inspection_summary(record: dict, *, service: str) -> dict:
     }
 
 
+def peer_receipt(raw: str) -> dict:
+    """Validate diagnostic shape only; the production guard still authorizes."""
+    if len(raw) > 160:
+        raise ValueError("IPC peer diagnostic is unbounded")
+    value = json.loads(raw)
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"pid", "uid", "gid"}
+        or any(type(item) is not int or not -(2**31) <= item < 2**31 for item in value.values())
+    ):
+        raise ValueError("IPC peer diagnostic shape is invalid")
+    return value
+
+
+PEER_DIAGNOSTIC = """
+import json, socket, struct, time
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as endpoint:
+    deadline = time.monotonic() + 3
+    endpoint.settimeout(3)
+    endpoint.connect('/run/boca-browser-ipc/synthetic.sock')
+    pid, uid, gid = struct.unpack('3i', endpoint.getsockopt(
+        socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))
+    # Send no frame. EOF makes the worker reject the incomplete request, and
+    # draining its bounded reply avoids leaving an active handler behind.
+    endpoint.shutdown(socket.SHUT_WR)
+    received = 0
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('diagnostic reply deadline')
+            endpoint.settimeout(remaining)
+            chunk = endpoint.recv(67 - received)
+            if not chunk:
+                break
+            received += len(chunk)
+            if received > 66:
+                raise RuntimeError('unbounded diagnostic reply')
+    except ConnectionResetError:
+        pass
+print(json.dumps({'pid':pid,'uid':uid,'gid':gid}, sort_keys=True))
+"""
+
+
 def main() -> None:
     if len(sys.argv) == 3 and sys.argv[1] == "seed-sender":
         assert re.fullmatch(r"[0-9a-f]{40}", sys.argv[2])
@@ -219,6 +263,20 @@ def main() -> None:
             assert rootless._verified_browser_ipc_image(
                 home, "local-ci", inspected(container), (marker, json.loads(seccomp))
             )
+        if running:
+            peer = peer_receipt(
+                docker(
+                    "exec",
+                    "--user",
+                    "10001:10001",
+                    controller,
+                    "python",
+                    "-c",
+                    PEER_DIAGNOSTIC,
+                    timeout=8,
+                )
+            )
+            print("BOCA_CI_IPC_PEER " + json.dumps(peer, sort_keys=True), flush=True)
         print(
             f"BOCA_CI_BROWSER_LIFECYCLE state=PASS services=2 running={str(running).lower()}"
             " inspect=real kernel=real_when_running images=local_unpublished provider=not_contacted"

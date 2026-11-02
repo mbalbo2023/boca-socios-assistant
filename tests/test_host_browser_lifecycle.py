@@ -749,7 +749,7 @@ def test_recovery_requires_exact_failed_run_and_never_calls_application_start(
     assert "steps.boca_browser_telegram_recovery_attempt.outputs.started == 'true'" in stop
 
 
-def test_real_docker_diagnostic_does_not_serialize_private_configuration() -> None:
+def _runtime_smoke_module():
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
@@ -758,6 +758,11 @@ def test_real_docker_diagnostic_does_not_serialize_private_configuration() -> No
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def test_real_docker_diagnostic_does_not_serialize_private_configuration() -> None:
+    module = _runtime_smoke_module()
 
     candidate = record(worker=True)
     candidate["Config"].update(
@@ -775,3 +780,95 @@ def test_real_docker_diagnostic_does_not_serialize_private_configuration() -> No
     assert summary["entrypoint_absent"] is False
     assert "BOCA_TELEGRAM_TOKEN" in summary["boca_environment_keys"]
     assert "private-" not in json.dumps(summary)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"pid":0,"uid":10002,"gid":10002,"secret":"private"}',
+        '{"pid":true,"uid":10002,"gid":10002}',
+        '{"pid":0,"uid":10002}',
+        '{"pid":0,"uid":10002,"gid":2147483648}',
+        '{"pid":0,"uid":"10002","gid":10002}',
+        "[0,10002,10002]",
+        '"private"',
+        " " * 161,
+    ],
+)
+def test_peer_diagnostic_refuses_unbounded_or_non_numeric_output(raw: str) -> None:
+    module = _runtime_smoke_module()
+    assert module.peer_receipt('{"pid":0,"uid":10002,"gid":10002}') == {
+        "pid": 0,
+        "uid": 10002,
+        "gid": 10002,
+    }
+    with pytest.raises(ValueError):
+        module.peer_receipt(raw)
+
+
+@pytest.mark.parametrize(
+    "chunks,expire,error",
+    [
+        ([b"\x00", b"\x18BOCA_SYNTHETIC_V1_NO_GO", b""], False, None),
+        ([b"x" * 66, b""], False, None),
+        ([b"x" * 67], False, RuntimeError),
+        ([b"\x00", b""], True, TimeoutError),
+    ],
+)
+def test_peer_diagnostic_drains_fragmented_stream_with_total_byte_and_time_bounds(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    chunks: list[bytes],
+    expire: bool,
+    error: type[Exception] | None,
+) -> None:
+    import socket
+    import struct
+    import time
+
+    module = _runtime_smoke_module()
+    clock = [0.0]
+    answers = iter(chunks)
+    reads: list[int] = []
+
+    class Endpoint:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def settimeout(self, seconds):
+            assert 0 < seconds <= 3
+
+        def connect(self, path):
+            assert path == "/run/boca-browser-ipc/synthetic.sock"
+
+        def getsockopt(self, level, option, length):
+            assert (level, option, length) == (socket.SOL_SOCKET, socket.SO_PEERCRED, 12)
+            return struct.pack("3i", 0, 10002, 10002)
+
+        def shutdown(self, direction):
+            assert direction == socket.SHUT_WR
+
+        def recv(self, limit):
+            reads.append(limit)
+            assert 0 < limit <= 67
+            if expire:
+                clock[0] = 4.0
+            return next(answers)
+
+    monkeypatch.setattr(socket, "socket", lambda *args: Endpoint())
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    if error:
+        with pytest.raises(error):
+            exec(module.PEER_DIAGNOSTIC, {})  # noqa: S102 - exact repository diagnostic
+        assert not capsys.readouterr().out
+    else:
+        exec(module.PEER_DIAGNOSTIC, {})  # noqa: S102 - exact repository diagnostic
+        assert module.peer_receipt(capsys.readouterr().out.strip()) == {
+            "pid": 0,
+            "uid": 10002,
+            "gid": 10002,
+        }
+    assert reads
