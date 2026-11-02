@@ -28,7 +28,7 @@ def test_browser_option_is_separately_gated_without_weakening_legacy_operations(
     assert "browser_image_ref:" in workflow
     assert "BOCA_BROWSER_IMAGE_REF: ${{ inputs.browser_image_ref }}" in workflow
     assert "BOCA_BROWSER_ENV_READY: ${{ vars.BOCA_BROWSER_ENV_READY }}" in workflow
-    assert "options: [0.5cpu-256m-64pids, 1.5cpu-1024m-192pids]" in workflow
+    assert "options: [0.5cpu-256m-64pids, 1.5cpu-1024m-192pids, 1.75cpu-1152m-224pids]" in workflow
     gate = _step("Require verified protected environment and matching main commit")
     for proof in (
         'test "$GITHUB_RUN_ATTEMPT" = 1',
@@ -37,7 +37,7 @@ def test_browser_option_is_separately_gated_without_weakening_legacy_operations(
         'if [[ "$BOCA_OPERATION" = beta-browser-install ]]; then',
         'test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids',
         'test "$BOCA_BUDGET" = 0.5cpu-256m-64pids',
-        'if [[ "$BOCA_OPERATION" != beta-browser-install ]]; then test -z "$BOCA_BROWSER_IMAGE_REF"; fi',
+        'if [[ "$BOCA_OPERATION" != beta-browser-* && "$BOCA_OPERATION" != telegram-* ]]; then test -z "$BOCA_BROWSER_IMAGE_REF"; fi',
         "beta-browser-install)",
         'test "$BOCA_DEPLOY_ENV_READY" = ready',
         'test "$BOCA_BETA_ENV_READY" = ready',
@@ -65,13 +65,13 @@ def test_browser_requires_both_signed_off_digests_from_exact_same_release_before
     workflow = _workflow()
     legacy = _step("Validate immutable inputs and successful matching release")
     companion = _step("Require same-run immutable browser companion release manifest")
-    assert "inputs.operation == 'beta-browser-install'" in legacy
+    assert "startsWith(inputs.operation, 'beta-browser-')" in legacy
     assert "python scripts/check_release_run.py" in legacy
     assert "--name boca-release-manifest" in legacy
     assert "python -m boca_socios.release_manifest verify" in legacy
     assert 'python scripts/check_deploy_inputs.py --browser-ipc-v2 "$BOCA_IMAGE_REF"' in legacy
     assert 'python scripts/check_deploy_inputs.py "$BOCA_IMAGE_REF"' in legacy
-    assert "inputs.operation == 'beta-browser-install'" in companion
+    assert "startsWith(inputs.operation, 'beta-browser-')" in companion
     assert '[[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]' in companion
     assert 'gh run download "$BOCA_RELEASE_RUN_ID"' in companion
     assert "--name boca-browser-release-manifest" in companion
@@ -95,7 +95,7 @@ def test_browser_runner_validates_three_reviewed_files_and_two_service_contract(
     assert "sha256sum docker/seccomp_profile.json" in hashing
     assert "sha256sum compose.beta.yaml" in _step("Hash reviewed served BETA Compose file")
     model = _step("Validate exact optional dual-service IPC Compose model before SSH")
-    assert "inputs.operation == 'beta-browser-install'" in model
+    assert "startsWith(inputs.operation, 'beta-browser-')" in model
     assert "BOCA_BROWSER_IMAGE: ${{ inputs.browser_image_ref }}" in model
     assert "BOCA_BROWSER_SECCOMP_PATH: /srv/boca-socios/seccomp_profile.json" in model
     assert "BOCA_BROWSER_ATTEMPT_ID: ${{ github.run_id }}" in model
@@ -192,7 +192,7 @@ def test_browser_failure_uses_only_same_job_immediate_positive_id_cleanup() -> N
     workflow = _workflow()
     cleanup = _step("Immediately clean only positively identified failed browser IPC attempt")
     assert (
-        "if: always() && failure() && inputs.operation == 'beta-browser-install' && "
+        "if: always() && (failure() || cancelled()) && inputs.operation == 'beta-browser-install' && "
         "steps.boca_browser_stage_attempt.outputs.started == 'true'"
     ) in cleanup
     assert "--browser-ipc-v2" in cleanup
@@ -220,7 +220,9 @@ def test_browser_failure_uses_only_same_job_immediate_positive_id_cleanup() -> N
         "Immediately clean only positively identified failed browser IPC attempt"
     )
     assert (
-        workflow.count("if: always() && failure() && inputs.operation == 'beta-browser-install'")
+        workflow.count(
+            "if: always() && (failure() || cancelled()) && inputs.operation == 'beta-browser-install'"
+        )
         == 1
     )
 
@@ -273,7 +275,7 @@ def test_browser_early_or_late_failure_cannot_skip_same_job_cleanup(failed_step:
     assert workflow.index(mark) < workflow.index(failed_step) < workflow.index(cleanup)
     assert "started=true" in _step(mark)
     assert (
-        "if: always() && failure() && inputs.operation == 'beta-browser-install' && "
+        "if: always() && (failure() || cancelled()) && inputs.operation == 'beta-browser-install' && "
         "steps.boca_browser_stage_attempt.outputs.started == 'true'"
     ) in _step(cleanup)
     # No unrelated action after the final effect and before its recovery gate.

@@ -1,18 +1,24 @@
 # ADR 0095: Opt-in synthetic IPC backend and separate UID10002 browser image
 
-**Status:** the original #227 code-only runtime/image cut was integrated in
-PR #237 on main `46f184fc49747f98246ac82047d9786b65239168` (historical
-local base `a14d900b95d45b257b429356469f4cd9cae22144`). It included the
-corrected IPC STOP/post-read fence #236, the offline Playwright image #232,
-command regressions #231 and owner-enrollment #229. Its local verification
-was 1172 pytest cases and 31 subtests; that receipt did **not** demonstrate
-browser image security or any deployment. The following #241 security
-remediation is rebased onto main
-`ef34cb40b150f9cfc891c5d7e0e3e48f151358f9` (including #240 offline
-Chromium fixtures), and remains a **separate unmerged, code-only candidate**
-until exact-commit hosted CI and review. Neither phase authorizes Compose or host
-changes, application ports, Docker cleanup outside Boca or owner passkey
-activation #225.
+**Status:** runtime/image #237, security remediation #242, dual release #239,
+Compose #243 and staged installation/cleanup #244–#249 are integrated in
+verified baseline `032de0ebb923b4f80154e93cee3dfd1b254687ed`.
+[CI 41459830809](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459830809)
+and [security 41459831000](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459831000)
+passed for that exact baseline. No current dual-image publication, running
+host worker, owner passkey or BETA installation is verified. The baseline audit found lifecycle gaps; the later PR #253 candidate
+addresses them. Final review/checks and actual activation remain separate gates. Original #237 main
+`46f184fc49747f98246ac82047d9786b65239168`, local base `a14d900b95d45b257b429356469f4cd9cae22144`,
+1172 tests/31 subtests and the #241 base `ef34cb40b150f9cfc891c5d7e0e3e48f151358f9`
+are historical receipts, not evidence for a newer candidate.
+
+PR #253 subsequently supplies the protected lifecycle/recovery candidate,
+with explicit pair budget `1.5cpu-1024m-192pids` and owner-ready Telegram
+budget `1.75cpu-1152m-224pids`. PR #254's real public observation 41481095746
+returned UNKNOWN with isolation/cleanup PASS; it does not validate the full
+site. PR #255's offline Chromium UI proof covers Telegram sealing only.
+Final merge/checks, same-source release and physical host evidence remain
+separate in [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
 
 ## Decision
 
@@ -65,9 +71,9 @@ revision label and manifest in the existing reviewed release system.
 The default Dockerfile command does not publish a port; no Docker daemon,
 credential, owner/key/data volume or host path is mounted by this code.
 
-## Remaining gates, not implemented here
+## Host boundaries, later integrated by #243–#249; execution still pending
 
-An approved later contract must define a separate `browser-ipc-v2` Compose
+The later #243–#249 contract defines a separate `browser-ipc-v2` Compose
 overlay with `network_mode: none`, UID/GID10002, private cgroups no greater
 than 1 CPU/768 MiB/128 PIDs, read-only root, bounded tmpfs/shm, reviewed
 seccomp/sandbox and **only** a new Boca-scoped Unix IPC mount. No worker
@@ -91,7 +97,7 @@ the central writer reconciles operational status and #45 after review.
 the owner approves specific host/Compose scope and later execution based on
 fresh inventory and exact-main release/digest/security/cleanup evidence.
 
-## Security remediation after PR #237: issue #241 (candidate)
+## Historical security remediation after PR #237: issue #241 and PR #242
 
 The separately reviewed release PR #239 (candidate `1b7c354ab4302a4b74ad3d81e86bd3c5c8ef1482`)
 failed its real hosted [browser image Trivy gate](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41358385474):
@@ -151,7 +157,7 @@ vulnerable executable code. The final worker still runs only Playwright from
 the untouched locked `.venv`. No live URL, credential, extra port or host
 image publication is involved.
 
-**Current decision remains NO-GO** until the exact new PR candidate's strict
+**Historical decision at that failed scan was NO-GO** until the exact new PR candidate's strict
 browser Trivy and existing `--network none` Chromium sandbox/DOM smoke both
 pass on GitHub-hosted runners. Local static and Python unit tests cannot
 prove actual package removal or the scanner result.

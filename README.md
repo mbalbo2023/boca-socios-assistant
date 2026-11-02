@@ -5,7 +5,33 @@ membership and ticket-assistance workflow. This repository is owned by
 **mbalbo2023** and remains isolated from **all unrelated applications and
 infrastructure**.
 
-> **Current release: SIMULATION ONLY; BETA application not installed.**
+> **SIMULATION ONLY. Code evidence and deployed acceptance remain separate.**
+> Historical baseline `032de0ebb923b4f80154e93cee3dfd1b254687ed` already integrated
+> #224/#226/#229 and #237/#239/#242–#249; do not redo those implementations.
+> PR #254 merged as `b0e46dbd1cc09ae625c65799a2fb75ca052ab5d8`; PR #255
+> merged as `dada569a2d71ad4411a73ebdaca1186ed3be6936`. The latter adds the
+> private Telegram setup form, browser-local encryption and owner pins.
+> [PR #255 CI 41481913145](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913145)
+> passed 1663 tests plus 31 subtests and the real offline Chromium UI proof;
+> [security 41481913075](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913075)
+> passed. These are the PR's receipts, not a substitute for final-main checks.
+> PR #253 contains the reviewed lifecycle/recovery and durable Telegram
+> candidate; its merge, final checks and activation receipts are tracked in
+> [canonical checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
+> [Public observation 41481095746](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481095746)
+> actually ran Chromium on the permitted initial document: `UNKNOWN`, with
+> pre/post isolation and cleanup PASS. The complete site is still unvalidated;
+> [the report](docs/quality/public-source-validation-2026-11-02.md) records the
+> observed resources and a bounded proposal awaiting separate approval.
+> The latest documented host inspection found the dedicated daemon stopped
+> and its socket absent; the port check saw `127.0.0.1:8443 FREE reserved=no`
+> only at that instant. No BETA install, current dual release, real private
+> activation URL, Chrome/GPM persistence or Telegram delivery is established.
+> Finish documentation before release and freeze main through activation and
+> recovery; subsequent operational evidence belongs in #45, without moving SHA.
+>
+> Historical preparation and release evidence follows; it does not validate
+> the current candidate:
 > The manual Boca workflow inspected the host and prepared its dedicated
 > rootless service (#120), then passed a read-only preflight for the dormant
 > controller (#124). The protected stop-test #156/41272785626 subsequently
@@ -80,9 +106,9 @@ start/stop/status, durable local notices and restart/idempotency tests. Reuse
 the existing encrypted enrollment service; tests use synthetic credentials.
 The own-application panel, entrypoint, owner preflight #189, and local
 runtime libraries are integrated in code, without application installation.
-PR #208 integrated a separate protected, sealed owner passkey/TLS custody
-path in code. Its synthetic checks do not enroll the owner or make the
-tablet's exact HTTPS origin reachable; those remain deployment gates.
+PR #208 integrated protected owner custody; #224/#229 added the current
+SSH-only HTTP and public-passkey-only enrollment path. Historical TLS tests
+do not establish tablet access, and no certificate is required for this BETA.
 The protected `port-check` choice in the manual workflow tests only the fixed
 host-loopback `127.0.0.1:8443` by a short bind/close; a FREE receipt does not
 reserve a port or establish tablet access.
@@ -98,8 +124,8 @@ the single stored credential also needs cross-device proof for Android/iOS.
 The former tablet-local TLS WebAuthn emitter (#215, ADR0089) remains only as
 historical code and is **not** the owner's enrollment procedure. The requested
 one-time activation URL must instead be served from the droplet on the same
-isolated Boca port, with a privately delivered single-use key. The #225/ADR0092
-core candidate implements the **unserved** `/activar#key=…` browser flow and
+isolated Boca port, with a privately delivered single-use key. The integrated
+#225/PR #229/ADR0092 code implements the **unserved** `/activar#key=…` flow and
 WebAuthn proof, producing a v2 encrypted envelope in a separate disposable
 staging volume without mounting the owner's X25519 private key. The #225
 `owner-enroll` operation, positive rootless/volume checks, offline
@@ -124,6 +150,16 @@ disposable controller/network/image/staged-Compose artifacts, while preserving
 owner/key/data volumes and retaining the failed deploy status. This is
 integrated code/test behavior, **not** proof of a cleanup or BETA installation on the droplet;
 unknown or interrupted cleanup remains NO_GO and forbids blind retries.
+The lifecycle candidate in PR #253 adds explicit existing-container start,
+restart, status and acceptance, plus optional Telegram start and recovery;
+see the [operation table](docs/OPERATIONS.md#protected-browser-lifecycle-contract).
+The pair budget is `1.5cpu-1024m-192pids`; owner-ready Telegram lifecycle uses
+`1.75cpu-1152m-224pids`. Neither is a claim of available host capacity.
+Complete Telegram setup/test before the first persistent simulation; the
+BETA acceptance probe uses temporary SQLite. The authenticated
+`/telegram/configurar` form from PR #255 produces only ciphertext and the
+protected bot/destination pins. It does not install or enable a sender.
+
 The entirely synthetic Chromium journey (#25) and its on-demand and Unix IPC
 contracts (#227, ADR0093/0094) are integrated for offline tests, never real
 Boca navigation. This code cut adds optional `BOCA_BROWSER_BACKEND=ipc` for a
@@ -147,8 +183,8 @@ with no host dispatch, configured bot, verified destination or real send.
 The offline #25 Playwright CI smoke (PR #232), #227 synthetic adapter and
 IPC/STOP guards (PRs #233/#236), #228 restart/notice regressions (PR #231),
 and #168 Telegram identity pinning (PR #230) **are merged as code/tests**.
-This new optional Browser Worker runtime/image cut remains a separate
-unmerged candidate until its own exact-SHA CI and review. None proves a
+The Browser Worker runtime/image #237, security #242, dual release #239 and
+Compose/install/cleanup #243–#249 are integrated. They do not prove a
 running browser sidecar, real Telegram dispatch or BETA installation on the
 droplet; see the [status table](docs/BETA_INTEGRATION_STATUS.md).
 

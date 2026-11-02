@@ -43,8 +43,13 @@ credential enrollment. Do not recreate the existing SSH deployment secret.
 
 - No conversationally supplied secrets may enter repository history.
 - The integrated enrollment UI code must be served through a protected owner-only interface with
-  encryption at the server boundary, TLS, request size limits, CSRF/session
+  encryption at the server boundary, request size limits, CSRF/session
   protection and no request body logging.
+  The selected BETA route is exactly `http://localhost:8443` over SSH,
+  publishing only host `127.0.0.1:8443`. ADR0091 supersedes the historical
+  HTTPS/TLS bootstrap route; certificates, CA installation and Termux are not
+  required or permitted. SSH protects the remote transport; the tablet must
+  retain control of its local forwarded port.
 - On failure to decrypt or read key: fail closed, no plaintext fallback.
 - `check-beta-owner/config` #189 validates owner passkey/TLS files without
   opening a listener or database; #191 gates new-only installation on those
@@ -56,8 +61,8 @@ credential enrollment. Do not recreate the existing SSH deployment secret.
   provider, never in a Chrome cookie or host volume. The `__Host-boca_session`
   cookie is HttpOnly/Secure/SameSite Strict and expires by server policy after
   15 minutes idle, 8 hours absolute or process restart. Device persistence and
-  cross-platform use are physical acceptance gates; TLS expiry still needs a
-  reviewed rotation path.
+  cross-platform use are physical acceptance gates. No TLS certificate or
+  certificate rotation applies to the selected SSH-only BETA route.
 - Telegram's default-off worker #188, sealed helper #199, protected
   schema/custody #203 and one-shot identity/send gate #204 have only synthetic
   tests. No bot token, numeric private chat destination, host volume or Bot API
@@ -74,7 +79,7 @@ credential enrollment. Do not recreate the existing SSH deployment secret.
   **reproducible dependency selection**, not a guarantee of bit-for-bit
   identical images or a substitute for vulnerability scanning.
 - The separate UID10002 browser image is subject to the same blocking
-  HIGH/CRITICAL OS+library Trivy policy as the controller. #241 tracks a
+  HIGH/CRITICAL OS+library Trivy policy as the controller. Historically, #241 tracked a
   confirmed browser scan failure from release PR #239; its code-only
   candidate removes the unused vulnerable GStreamer Bad plug-in **and shared
   library**, and pins six fixed Python base packages plus four audited
@@ -83,20 +88,56 @@ credential enrollment. Do not recreate the existing SSH deployment secret.
   image-security and release PR scans plus the no-network synthetic Chromium
   smoke before any browser digest can be released. No suppressions or
   assumption of host installation are permitted.
-  A later hosted #241 scan exposed genuinely vulnerable `pip` vendor libraries,
+  A later hosted #241 scan exposed vulnerable `pip` vendor libraries,
   `setuptools/_vendor`, `virtualenv` and Ubuntu `libbrotli1` despite fixed
   global package metadata. The next code-only cut updates `libbrotli1`
   to its Noble security version, fixes build-time virtualenv, and removes
   complete unused Python build-tool distributions (including the actual
   vendored code and seed caches) **after** the locked Browser Worker venv
-  is built. Its success remains unverified until another strict hosted scan.
+  is built. The correction was integrated by #242. Exact baseline
+  `032de0ebb923b4f80154e93cee3dfd1b254687ed` passed
+  [security 41459831000](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459831000)
+  and [CI 41459830809](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41459830809).
+  This verifies that code cut, not published current digests or host execution;
+  every changed candidate still requires its own scans and release evidence.
 - Rotate any real password that has previously been disclosed outside the
   approved encrypted enrollment channel before using it in production.
+
+## Private Telegram setup and protected lifecycle
+
+PR #255's authenticated `/telegram/configurar` page accepts only the public
+recipient receipt from an approved `telegram-prepare` run in its fragment.
+It clears that fragment before enabling credential entry, validates canonical
+receipt/fingerprint and X25519, then uses the existing HKDF/AES-GCM envelope
+contract. Route-specific CSP denies connections and form submission; POST
+never reads a credential body. No token/chat plaintext is sent to the panel,
+Actions, logs or web storage. Browser strings cannot promise physical erasure.
+
+Only three outputs are copied: ciphertext to `telegram_envelope`; canonical
+bot ID to `BOCA_TELEGRAM_EXPECTED_BOT_ID`; HMAC-SHA256(token, private-chat ID)
+to `BOCA_TELEGRAM_EXPECTED_CHAT_HMAC`. The latter two are protected environment
+Secrets. The UI admits positive canonical IDs below 2^52 and exposes no chat
+ID. Receipt fingerprint consistency is not issuer authentication: verify the
+protected source run before supplying its public link. The offline Chromium
+receipt in PR #255 proves this synthetic UI, not Android/GPM or a real send.
+
+The lifecycle/recovery candidate in PR #253 requires exact current SHA,
+matching dual release and installed marker. Freeze main from release through
+owner enrollment, installation, Telegram and recovery; even a documentation
+merge would change the required source. Write operational receipts to
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
+Do not reuse an old readiness proof after a source upgrade. A failed sender
+attempt is cleaned by its own runtime label; SSH loss means INDETERMINADO,
+not permission for a retry. Explicit recovery validates the old failed run
+and preserves all volumes, controller/browser and foreign resources.
 
 ## Boundary with third parties
 
 Do not manufacture signed Queue-it tokens, change queue proof, bypass WAF or
 CAPTCHA, probe nonpublic endpoints or run synthetic load against Boca.
-Live interactions remain disabled until a separate technically reviewed,
-consented test milestone with a resource cap.
+The authorized initial-document observation ran in41481095746 with isolation
+and cleanup PASS but semantic UNKNOWN. It did not log in or validate the full
+site. Any additional requests need the distinct bounded approval described in
+[the public report](quality/public-source-validation-2026-11-02.md); no automatic
+retry or allowance expansion follows from UNKNOWN.
 

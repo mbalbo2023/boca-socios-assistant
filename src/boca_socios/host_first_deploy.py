@@ -60,6 +60,7 @@ BROWSER_IMAGE_PATTERN = re.compile(
 BROWSER_ATTEMPT_PATTERN = re.compile(r"[1-9][0-9]{0,19}\Z")
 BROWSER_MARKER_VERSION = "browser-ipc-new-only-v2"
 BROWSER_ATTEMPT_LABEL = "boca.socios.browser-ipc-attempt"
+TELEGRAM_ATTEMPT_LABEL = "boca.socios.telegram-runtime-attempt"
 BROWSER_STAGE_FILENAMES = frozenset(
     {"compose.beta.yaml", "compose.beta.browser.yaml", "seccomp_profile.json"}
 )
@@ -82,6 +83,7 @@ BROWSER_MARKER_KEYS = frozenset(
 TELEGRAM_VOLUME = "boca-socios_boca_telegram"
 TELEGRAM_NETWORK = "boca-socios_telegram_egress"
 TELEGRAM_TEST_NAME = "boca-socios-telegram-test-1"
+TELEGRAM_WORKER_NAME = "boca-socios-telegram-1"
 ROOTLESS_SOCKET = Path("/run/user/10001/docker.sock")
 PRIVATE_MANAGER_SOCKET = Path("/run/user/10001/systemd/private")
 USER_BUS_SOCKET = Path("/run/user/10001/bus")
@@ -628,6 +630,54 @@ def _database_candidate_metadata() -> str:
     return "\n".join(lines)
 
 
+def _readonly_capacity_metadata() -> str:
+    """Aggregate metadata only; never infer daemon readiness from a binary."""
+    memory, cpu, pids, engine = "unknown", "unknown", "unknown", "unknown"
+    try:
+        matched = re.search(
+            r"^MemAvailable:\s+(\d+) kB$",
+            Path("/proc/meminfo").read_text(encoding="ascii"),
+            re.MULTILINE,
+        )
+        if matched is not None:
+            memory = str(int(matched.group(1)))
+        measured = max(0.0, len(os.sched_getaffinity(0)) - os.getloadavg()[0])
+        if measured < 1_000_000:
+            cpu = f"{measured:.2f}"
+        directory = CGROUP_CONTROLLERS.parent
+        current = (directory / "pids.current").read_text(encoding="ascii").strip()
+        maximum = (directory / "pids.max").read_text(encoding="ascii").strip()
+        if re.fullmatch(r"0|[1-9][0-9]{0,9}", current) and re.fullmatch(
+            r"[1-9][0-9]{0,9}", maximum
+        ):
+            pids = str(max(0, int(maximum) - int(current)))
+    except (OSError, ValueError, OverflowError):
+        pass
+    executable = shutil.which("dockerd")
+    if executable is not None:
+        try:
+            result = subprocess.run(  # noqa: S603 - fixed --version, no shell or daemon access
+                (executable, "--version"),
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+            )
+            match = re.fullmatch(
+                r"Docker version ([0-9]+\.[0-9]+\.[0-9]+), build [0-9A-Za-z.-]+\s*", result.stdout
+            )
+            if result.returncode == 0 and match is not None:
+                engine = match.group(1)
+        except (OSError, subprocess.SubprocessError, UnicodeError):
+            pass
+    return (
+        f"BOCA_HOST_CAPACITY mem_kib={memory} cpu_headroom={cpu} pids_free={pids}"
+        f" dockerd_binary_version={engine} daemon_version=unverified storage=unverified"
+        " capacity_gate=not_evaluated"
+    )
+
+
 def inspect_prerequisites() -> None:
     """Observe only Boca's private runtime; metadata is not a Docker preflight."""
     uid = _require_dedicated_identity()
@@ -662,6 +712,7 @@ def inspect_prerequisites() -> None:
         f" rootful={rootful} controllers={controllers}"
     )
     print(_rootless_service_metadata(runtime_safe and private == bus == "owned"))
+    print(_readonly_capacity_metadata())
     print(_database_candidate_metadata())
     if state != "METADATA_CANDIDATE":
         raise PreflightError("prerequisite metadata unproven; no Docker operation attempted")
@@ -865,7 +916,9 @@ def _validate_storage_capacity(snapshot: StorageSnapshot) -> None:
         raise PreflightError("insufficient Boca staging or rootless Docker storage")
 
 
-def _validate_storage_continuity(before: StorageSnapshot, after: StorageSnapshot) -> None:
+def _validate_storage_continuity(
+    before: StorageSnapshot, after: StorageSnapshot, *, require_capacity: bool = True
+) -> None:
     if (
         before.docker_root != after.docker_root
         or before.driver != after.driver
@@ -878,7 +931,8 @@ def _validate_storage_continuity(before: StorageSnapshot, after: StorageSnapshot
         or before.socket_inode != after.socket_inode
     ):
         raise PreflightError("Boca rootless Docker storage topology changed")
-    _validate_storage_capacity(after)
+    if require_capacity:
+        _validate_storage_capacity(after)
 
 
 def collect_snapshot(*, beta_staged: bool = False) -> HostSnapshot:
@@ -2138,7 +2192,7 @@ def _validate_boca_network(container: str, network_id: str) -> None:
         or labels.get("com.docker.compose.project") != PROJECT
         or labels.get("com.docker.compose.network") != "boca_private"
         or not isinstance(containers, dict)
-        or set(containers) != {container}
+        or set(containers) != ({container} if container else set())
     ):
         raise PreflightError("Boca private network identity or peers changed")
 
@@ -3046,7 +3100,9 @@ def _browser_engine_version() -> None:
         raise PreflightError("Docker Engine >=28 required for private localhost publication")
 
 
-def _browser_capacity() -> tuple[int, float, int, StorageSnapshot]:
+def _browser_capacity(
+    *, memory_mib: int = 1536, cpu_required: float = 1.75, pids_required: int = 256
+) -> tuple[int, float, int, StorageSnapshot]:
     """Reserve 1.5 GiB host memory, 1.75 CPU and 256 delegated PIDs.
 
     The 1 GiB/192 PIDs combined container budget needs room for Docker and
@@ -3074,7 +3130,7 @@ def _browser_capacity() -> tuple[int, float, int, StorageSnapshot]:
         free_pids = int(pids_max) - int(pids_current)
     except (OSError, ValueError, OverflowError) as exc:
         raise PreflightError("rootless CPU/memory/PID headroom is unavailable") from exc
-    if int(memory.group(1)) < 1536 * 1024 or cpu < 1.75 or free_pids < 256:
+    if int(memory.group(1)) < memory_mib * 1024 or cpu < cpu_required or free_pids < pids_required:
         raise PreflightError("browser IPC host capacity below reserved budget")
     return int(memory.group(1)), cpu, free_pids, storage
 
@@ -3524,6 +3580,8 @@ def _browser_check_service_labels(
     source_sha: str,
     user: str,
     attempt_id: str,
+    running: bool = True,
+    verify_runtime: bool = True,
 ) -> tuple[dict[str, object], dict[str, object]]:
     config, host = _browser_config_and_host(record)
     state = record.get("State")
@@ -3539,10 +3597,13 @@ def _browser_check_service_labels(
         or labels.get(BROWSER_ATTEMPT_LABEL) != attempt_id
         or labels.get("org.opencontainers.image.revision") != source_sha
         or not isinstance(state, dict)
-        or state.get("Running") is not True
+        or state.get("Running") is not running
         or state.get("Restarting") is not False
-        or not isinstance(state.get("Health"), dict)
-        or state["Health"].get("Status") != "healthy"
+        or running
+        and verify_runtime
+        and (
+            not isinstance(state.get("Health"), dict) or state["Health"].get("Status") != "healthy"
+        )
         or type(record.get("RestartCount")) is not int
         or record["RestartCount"] != 0
         or not isinstance(restart, dict)
@@ -3686,7 +3747,14 @@ def _browser_effective_seccomp_options(value: object, expected_sha: str) -> None
 
 
 def _browser_worker_postflight(
-    container: str, browser_image: str, source_sha: str, attempt_id: str, seccomp_sha: str
+    container: str,
+    browser_image: str,
+    source_sha: str,
+    attempt_id: str,
+    seccomp_sha: str,
+    *,
+    running: bool = True,
+    verify_runtime: bool = True,
 ) -> None:
     record = _browser_inspect_record(container)
     config, host = _browser_check_service_labels(
@@ -3697,6 +3765,8 @@ def _browser_worker_postflight(
         source_sha=source_sha,
         user="10002:10002",
         attempt_id=attempt_id,
+        running=running,
+        verify_runtime=verify_runtime,
     )
     environment = config.get("Env")
     if not isinstance(environment, list) or any(type(item) is not str for item in environment):
@@ -3728,7 +3798,8 @@ def _browser_worker_postflight(
         or host.get("PidsLimit") != 128
         or host.get("ShmSize") != 67_108_864
         or host.get("CapDrop") != ["ALL"]
-        or host.get("CapAdd") != ["SYS_CHROOT"]
+        # Docker inspect may canonicalize the sole reviewed capability.
+        or host.get("CapAdd") not in (["SYS_CHROOT"], ["CAP_SYS_CHROOT"])
         or host.get("PortBindings") not in (None, {})
         or host.get("Tmpfs")
         != {
@@ -3752,7 +3823,8 @@ def _browser_worker_postflight(
         ):
             raise PreflightError("browser worker received an IP address")
     _browser_check_mounts(record, controller=False)
-    _browser_worker_probe(container)
+    if running and verify_runtime:
+        _browser_worker_probe(container)
 
 
 def _browser_worker_network_inventory() -> set[str]:
@@ -3841,6 +3913,9 @@ def _browser_controller_postflight(
     attempt_id: str,
     origin: str,
     owner: str,
+    *,
+    running: bool = True,
+    verify_runtime: bool = True,
 ) -> None:
     record = _browser_inspect_record(container)
     config, host = _browser_check_service_labels(
@@ -3851,6 +3926,8 @@ def _browser_controller_postflight(
         source_sha=source_sha,
         user="10001:10001",
         attempt_id=attempt_id,
+        running=running,
+        verify_runtime=verify_runtime,
     )
     environment = config.get("Env")
     if not isinstance(environment, list) or any(type(item) is not str for item in environment):
@@ -3905,7 +3982,11 @@ def _browser_controller_postflight(
         or re.fullmatch(r"[0-9a-f]{64}", endpoint["NetworkID"]) is None
         or host.get("NetworkMode") != BROWSER_BRIDGE
         or host.get("PortBindings") != expected_ports
-        or networks.get("Ports") != expected_ports
+        or (
+            networks.get("Ports") != expected_ports
+            if running
+            else networks.get("Ports") not in (None, {}, {"8443/tcp": None})
+        )
         or host.get("NanoCpus") != 500_000_000
         or host.get("Memory") != 268_435_456
         or host.get("PidsLimit") != 64
@@ -3922,7 +4003,11 @@ def _browser_controller_postflight(
     ):
         raise PreflightError("browser IPC controller HostConfig/port boundary changed")
     _browser_check_mounts(record, controller=True)
+    if not running:
+        return
     _validate_boca_network(container, endpoint["NetworkID"])
+    if not verify_runtime:
+        return
     limits = _cgroup_limits(container)
     if (
         type(limits.cpu_quota) is not int
@@ -4101,6 +4186,311 @@ def _browser_apply(
     )
 
 
+def _browser_existing_attempt(
+    image: str,
+    source_sha: str,
+    beta_sha: str,
+    browser_image: str,
+    overlay_sha: str,
+    seccomp_sha: str,
+) -> str:
+    """Resolve an installed attempt only from the protected canonical marker."""
+    _require_dedicated_identity()
+    raw = _browser_root_file(BROWSER_MARKER.name, max_size=1024)
+    try:
+        marker = json.loads(raw, object_pairs_hook=_browser_json_pairs)
+    except (ValueError, TypeError, UnicodeError) as exc:
+        raise PreflightError("installed browser marker unavailable") from exc
+    attempt = marker.get("attempt_id") if isinstance(marker, dict) else None
+    if type(attempt) is not str or not BROWSER_ATTEMPT_PATTERN.fullmatch(attempt):
+        raise PreflightError("installed browser attempt unavailable")
+    _browser_read_marker(
+        image, source_sha, beta_sha, browser_image, overlay_sha, seccomp_sha, attempt
+    )
+    return attempt
+
+
+@dataclass(frozen=True)
+class BrowserInstalled:
+    controller: str
+    worker: str
+    marker: dict[str, object]
+    telegram: bool
+    sender: str = ""
+
+
+def _browser_installed(
+    image: str,
+    source_sha: str,
+    beta_sha: str,
+    origin: str,
+    owner: str,
+    browser_image: str,
+    overlay_sha: str,
+    seccomp_sha: str,
+    attempt_id: str,
+    *,
+    running: bool,
+    telegram_owner: tuple[str, str] = ("", ""),
+    allow_sender_failed: bool = False,
+    require_capacity: bool = True,
+    allow_service_failed: bool = False,
+) -> BrowserInstalled:
+    """Exact dual topology, including stopped-state proof before any start.
+
+    No initialization, migration, pull, creation or deletion occurs here.
+    Telegram custody may exist; an active sender is a separate explicit gate.
+    """
+    _browser_engine_version()
+    marker = _browser_read_marker(
+        image, source_sha, beta_sha, browser_image, overlay_sha, seccomp_sha, attempt_id
+    )
+    _browser_verify_staged(beta_sha, overlay_sha, seccomp_sha)
+    _browser_compose_model(image, origin, owner, browser_image, attempt_id)
+    ids: list[str] = []
+    service_states: list[bool] = []
+    for service, reference in (("controller", image), ("browser-worker", browser_image)):
+        container = _run(
+            "docker",
+            "ps",
+            "-a",
+            "-q",
+            "--no-trunc",
+            "--filter",
+            f"name=^/{PROJECT}-{service}-1$",
+        )
+        if re.fullmatch(r"[0-9a-f]{64}", container) is None:
+            raise PreflightError("installed browser service identity unavailable")
+        record = _browser_inspect_record(container)
+        observed = running
+        if allow_service_failed:
+            state = record.get("State")
+            if not isinstance(state, dict) or type(state.get("Running")) is not bool:
+                raise PreflightError("installed browser service state unavailable during cleanup")
+            observed = state["Running"]
+        service_states.append(observed)
+        _browser_validate_image(reference, source_sha)
+        image_id = _run("docker", "image", "inspect", "--format", "{{.Id}}", reference)
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) or record.get("Image") != image_id:
+            raise PreflightError("installed browser service image ID differs from approved digest")
+        ids.append(container)
+    controller, worker = ids
+    controller_running, worker_running = service_states
+    if controller == worker:
+        raise PreflightError("installed browser services have duplicate identity")
+    volumes = set(_run("docker", "volume", "ls", "-q").splitlines())
+    required = {OWNER_VOLUME, KEY_VOLUME, DATA_VOLUME, BROWSER_IPC_VOLUME}
+    if volumes not in (required, required | {TELEGRAM_VOLUME}):
+        raise PreflightError("installed browser volume inventory changed")
+    networks = _names("network", "name=^boca-socios_")
+    if networks not in ({BROWSER_BRIDGE}, {BROWSER_BRIDGE, TELEGRAM_NETWORK}):
+        raise PreflightError("installed browser network inventory changed")
+    expected_ids = {controller, worker}
+    actual_ids = _browser_docker_ids()
+    sender = ""
+    sender_attempt = ""
+    sender_running = running
+    if actual_ids != expected_ids:
+        if len(actual_ids - expected_ids) != 1 or not expected_ids < actual_ids:
+            raise PreflightError("installed browser daemon gained unknown containers")
+        if (
+            not all(telegram_owner)
+            or TELEGRAM_VOLUME not in volumes
+            or TELEGRAM_NETWORK not in networks
+        ):
+            raise PreflightError("installed Telegram owner or resources unavailable")
+        sender = next(iter(actual_ids - expected_ids))
+        sender_running = running
+        if allow_sender_failed:
+            sender_state = _browser_inspect_record(sender).get("State")
+            if not isinstance(sender_state, dict) or type(sender_state.get("Running")) is not bool:
+                raise PreflightError("Telegram sender state unavailable")
+            sender_running = sender_state["Running"]
+        sender_attempt = _telegram_worker_inspect(
+            sender, image, source_sha, *telegram_owner, attempt_id, running=sender_running
+        )
+        if sender_running and not allow_sender_failed:
+            _telegram_worker_ready(sender, source_sha)
+        expected_ids.add(sender)
+    _browser_inventory(containers=expected_ids, volumes=volumes, bridges=networks)
+    _browser_worker_postflight(
+        worker,
+        browser_image,
+        source_sha,
+        attempt_id,
+        seccomp_sha,
+        running=worker_running,
+        verify_runtime=not allow_service_failed,
+    )
+    _browser_controller_postflight(
+        controller,
+        image,
+        source_sha,
+        attempt_id,
+        origin,
+        owner,
+        running=controller_running,
+        verify_runtime=not allow_service_failed,
+    )
+    if not controller_running:
+        record = _browser_inspect_record(controller)
+        network = cast(dict[str, object], record["NetworkSettings"])
+        attached = cast(dict[str, dict[str, str]], network["Networks"])
+        _validate_boca_network("", attached[BROWSER_BRIDGE]["NetworkID"])
+    _browser_validate_ipc_volume(attempt_id)
+    _validate_owner_volume()
+    _validate_key_volume()
+    _validate_data_volume()
+    if TELEGRAM_VOLUME in volumes:
+        _telegram_volume()
+    if TELEGRAM_NETWORK in networks:
+        _telegram_egress(sender if running and (not allow_sender_failed or sender_running) else "")
+        if sender:
+            network_record = _json_object(
+                _run("docker", "network", "inspect", "--format", "{{json .}}", TELEGRAM_NETWORK),
+                "Telegram runtime network",
+            )
+            labels = network_record.get("Labels")
+            if (
+                not isinstance(labels, dict)
+                or labels.get(BROWSER_ATTEMPT_LABEL) != attempt_id
+                or labels.get(TELEGRAM_ATTEMPT_LABEL) != sender_attempt
+            ):
+                raise PreflightError("Telegram sender and egress attempts differ")
+    capacity = _storage_snapshot()
+    if require_capacity:
+        _validate_storage_capacity(capacity)
+    if marker != _browser_read_marker(
+        image, source_sha, beta_sha, browser_image, overlay_sha, seccomp_sha, attempt_id
+    ):
+        raise PreflightError("installed browser marker changed during validation")
+    return BrowserInstalled(controller, worker, marker, TELEGRAM_VOLUME in volumes, sender)
+
+
+def _browser_wait_healthy(container: str) -> None:
+    deadline = monotonic() + 90
+    while monotonic() < deadline:
+        record = _browser_inspect_record(container)
+        state = record.get("State")
+        if not isinstance(state, dict) or state.get("Running") is not True:
+            raise PreflightError("started browser service exited")
+        health = state.get("Health")
+        if isinstance(health, dict) and health.get("Status") == "healthy":
+            return
+        if not isinstance(health, dict) or health.get("Status") != "starting":
+            raise PreflightError("started browser service health failed")
+        sleep(0.5)
+    raise PreflightError("started browser service health deadline expired")
+
+
+def _browser_lifecycle(
+    operation: str,
+    image: str,
+    source_sha: str,
+    beta_sha: str,
+    origin: str,
+    owner: str,
+    browser_image: str,
+    overlay_sha: str,
+    seccomp_sha: str,
+    attempt_id: str,
+    expected_bot_id: str = "",
+    expected_chat_hmac: str = "",
+) -> None:
+    coordinates = (
+        image,
+        source_sha,
+        beta_sha,
+        origin,
+        owner,
+        browser_image,
+        overlay_sha,
+        seccomp_sha,
+        attempt_id,
+    )
+    owner_assertion = (expected_bot_id, expected_chat_hmac)
+    initial = _browser_installed(
+        *coordinates, running=operation != "browser-start", telegram_owner=owner_assertion
+    )
+    before_storage = _storage_snapshot()
+    if operation == "browser-restart":
+        # Stop only the exact verified IDs, preserving data, keys and ownership.
+        for container in tuple(filter(None, (initial.sender, initial.controller, initial.worker))):
+            if _run("docker", "stop", "--time", "35", container, timeout=45) != container:
+                raise PreflightError("existing browser service stop is unverified")
+        stopped = _browser_installed(*coordinates, running=False, telegram_owner=owner_assertion)
+        if stopped != initial:
+            raise PreflightError("installed browser identity changed while stopping")
+    if operation in {"browser-start", "browser-restart"}:
+        if initial.sender:
+            _browser_capacity(memory_mib=1792, cpu_required=2.0, pids_required=288)
+        else:
+            _browser_capacity()
+        _browser_port_free()
+        # No compose up/recreate: restart:no remains mandatory.
+        for container in tuple(filter(None, (initial.worker, initial.controller, initial.sender))):
+            if _run("docker", "start", container, timeout=30) != container:
+                raise PreflightError("existing browser service start is unverified")
+            if container == initial.sender:
+                _telegram_worker_ready(container, source_sha)
+            else:
+                _browser_wait_healthy(container)
+        if (
+            _browser_installed(*coordinates, running=True, telegram_owner=owner_assertion)
+            != initial
+        ):
+            raise PreflightError("installed browser identity changed while starting")
+    _beta_loopback_health(initial.controller, origin)
+    receipt = ""
+    if operation == "browser-acceptance":
+        # Exercise the real isolated browser from the actual controller identity.
+        code = (
+            "import asyncio; from boca_socios.browser.ipc_client import UnixSyntheticBrowser; "
+            "from boca_socios.browser.contracts import SimulationOutcome; "
+            "r=asyncio.run(UnixSyntheticBrowser(timeout_seconds=25).simulate_general_reservation()); "
+            "assert r is SimulationOutcome.RESERVED_IN_SIMULATOR; "
+            "print('BOCA_BROWSER_IPC_SYNTHETIC_PASS')"
+        )
+        if (
+            _run(
+                "docker",
+                "exec",
+                "--user",
+                "10001:10001",
+                initial.controller,
+                "python",
+                "-c",
+                code,
+                timeout=35,
+            )
+            != "BOCA_BROWSER_IPC_SYNTHETIC_PASS"
+        ):
+            raise PreflightError("installed controller browser IPC acceptance unverified")
+        receipt = _validate_beta_acceptance_receipt(
+            _run(
+                "docker",
+                "exec",
+                "--user",
+                "10001:10001",
+                initial.controller,
+                "python",
+                "-m",
+                "boca_socios.acceptance.host_probe",
+                timeout=120,
+            )
+        )
+    if _browser_installed(*coordinates, running=True, telegram_owner=owner_assertion) != initial:
+        raise PreflightError("installed browser identity changed before lifecycle completion")
+    _validate_storage_continuity(before_storage, _storage_snapshot())
+    if receipt:
+        print(receipt)
+    print(
+        f"BOCA_BROWSER_LIFECYCLE_PASS operation={operation} source_sha={source_sha}"
+        f" attempt={attempt_id} services=controller,browser-worker{',telegram' if initial.sender else ''}"
+        " host=127.0.0.1:8443 data=preserved key=preserved owner=preserved engine=off"
+    )
+
+
 def _browser_phase(
     operation: str,
     image: str,
@@ -4112,8 +4502,45 @@ def _browser_phase(
     overlay_sha: str,
     seccomp_sha: str,
     attempt_id: str,
+    expected_bot_id: str = "",
+    expected_chat_hmac: str = "",
+    *,
+    telegram_attempt_id: str = "",
 ) -> None:
     _browser_engine_version()
+    if operation.startswith("browser-telegram-"):
+        _browser_telegram_phase(
+            operation,
+            image,
+            source_sha,
+            beta_sha,
+            origin,
+            owner,
+            browser_image,
+            overlay_sha,
+            seccomp_sha,
+            attempt_id,
+            expected_bot_id,
+            expected_chat_hmac,
+            telegram_attempt_id,
+        )
+        return
+    if operation in {"browser-start", "browser-restart", "browser-status", "browser-acceptance"}:
+        _browser_lifecycle(
+            operation,
+            image,
+            source_sha,
+            beta_sha,
+            origin,
+            owner,
+            browser_image,
+            overlay_sha,
+            seccomp_sha,
+            attempt_id,
+            expected_bot_id,
+            expected_chat_hmac,
+        )
+        return
     if operation == "browser-preflight":
         memory, cpu, pids, storage = _browser_preflight_inventory()
         _browser_image_absent(image, source_sha)
@@ -4414,9 +4841,30 @@ def _telegram_container(image: str, module: str, action: str, *, writable: bool)
 
 
 def _telegram_installed(
-    image: str, source_sha: str, compose_sha: str, origin: str, owner: str
+    image: str,
+    source_sha: str,
+    compose_sha: str,
+    origin: str,
+    owner: str,
+    *browser_context: str,
 ) -> bool:
     """Require a stopped controller from this exact release before any effect."""
+    if browser_context:
+        if len(browser_context) != 4:
+            raise PreflightError("incomplete Telegram browser context")
+        browser_image, overlay_sha, seccomp_sha, attempt_id = browser_context
+        return _browser_installed(
+            image,
+            source_sha,
+            compose_sha,
+            origin,
+            owner,
+            browser_image,
+            overlay_sha,
+            seccomp_sha,
+            attempt_id,
+            running=False,
+        ).telegram
     _verify_beta_compose(compose_sha)
     ids = _run("docker", "ps", "-a", "-q", "--no-trunc").splitlines()
     if len(ids) != 1 or not re.fullmatch(r"[0-9a-f]{64}", ids[0]):
@@ -4544,7 +4992,7 @@ def _telegram_installed(
     return TELEGRAM_VOLUME in volumes
 
 
-def _telegram_egress() -> None:
+def _telegram_egress(container: str = "") -> None:
     network = _json_object(
         _run("docker", "network", "inspect", "--format", "{{json .}}", TELEGRAM_NETWORK),
         "Telegram egress network",
@@ -4557,7 +5005,9 @@ def _telegram_egress() -> None:
         or network.get("Internal") is not False
         or network.get("Attachable") is not False
         or network.get("Ingress") is not False
-        or network.get("Containers") != {}
+        or not isinstance(network.get("Containers"), dict)
+        or set(cast(dict[str, object], network["Containers"]))
+        != ({container} if container else set())
         or not isinstance(labels, dict)
         or labels.get("com.docker.compose.project") != PROJECT
         or labels.get("com.docker.compose.network") != "telegram_egress"
@@ -4622,6 +5072,377 @@ def _telegram_test_container(
     )
 
 
+def _telegram_worker_container(
+    image: str, source_sha: str, bot_id: str, chat_hmac: str, attempt_id: str, runtime_attempt: str
+) -> tuple[str, ...]:
+    command = list(_telegram_test_container(image, source_sha, bot_id, chat_hmac))
+    command[command.index(TELEGRAM_TEST_NAME)] = TELEGRAM_WORKER_NAME
+    command[command.index("com.docker.compose.service=telegram-test")] = (
+        "com.docker.compose.service=telegram"
+    )
+    command[-5] = "boca_socios.notify.telegram_worker"
+    command[-4] = "serve"
+    command[command.index("no-new-privileges")] = "no-new-privileges:true"
+    return (
+        *command[:2],
+        "--detach",
+        "--init",
+        "--restart",
+        "no",
+        "--ipc=private",
+        "--cgroupns=private",
+        "--label",
+        f"{BROWSER_ATTEMPT_LABEL}={attempt_id}",
+        "--label",
+        f"{TELEGRAM_ATTEMPT_LABEL}={runtime_attempt}",
+        "--env",
+        "BOCA_DB_PATH=/data/boca.sqlite3",
+        *command[2:],
+    )
+
+
+def _telegram_worker_inspect(
+    container: str,
+    image: str,
+    source_sha: str,
+    bot_id: str,
+    chat_hmac: str,
+    attempt_id: str,
+    *,
+    running: bool,
+    runtime_attempt: str = "",
+) -> str:
+    if re.fullmatch(r"[1-9][0-9]{0,15}", bot_id) is None or not DIGEST_PATTERN.fullmatch(chat_hmac):
+        raise PreflightError("Telegram runtime owner assertion unavailable")
+    record = _browser_inspect_record(container)
+    config, host = _browser_config_and_host(record)
+    state = record.get("State")
+    labels = config.get("Labels")
+    expected_command = [
+        "python",
+        "-m",
+        "boca_socios.notify.telegram_worker",
+        "serve",
+        source_sha,
+        bot_id,
+        chat_hmac,
+    ]
+    image_record = _json_object(
+        _run("docker", "image", "inspect", "--format", "{{json .}}", image), "Telegram worker image"
+    )
+    image_config = image_record.get("Config")
+    entries = config.get("Env")
+    if not isinstance(image_config, dict) or not isinstance(entries, list):
+        raise PreflightError("Telegram worker environment unavailable")
+    # The source image plus the same four test variables and one exact DB path.
+    actual = [
+        item
+        for item in entries
+        if not isinstance(item, str) or not item.startswith("BOCA_DB_PATH=")
+    ]
+    baseline = image_config.get("Env")
+    if not isinstance(baseline, list):
+        raise PreflightError("Telegram worker image environment unavailable")
+    base = [
+        item
+        for item in baseline
+        if not isinstance(item, str) or not item.startswith("BOCA_DB_PATH=")
+    ]
+    if (
+        entries.count("BOCA_DB_PATH=/data/boca.sqlite3") != 1
+        or len(actual) != len(entries) - 1
+        or not _telegram_test_environment(actual, base)
+    ):
+        raise PreflightError("Telegram worker environment differs from reviewed image")
+    if (
+        record.get("Name") != f"/{TELEGRAM_WORKER_NAME}"
+        or record.get("Image") != image_record.get("Id")
+        or not isinstance(image_record.get("RepoDigests"), list)
+        or image not in cast(list[object], image_record["RepoDigests"])
+        or not isinstance(image_config.get("Labels"), dict)
+        or image_config["Labels"].get("org.opencontainers.image.revision") != source_sha
+        or config.get("Image") != image
+        or config.get("User") != "10001:10001"
+        or config.get("WorkingDir") != "/app"
+        or config.get("Entrypoint") not in (None, [])
+        or config.get("Cmd") != expected_command
+        or not isinstance(config.get("Healthcheck"), dict)
+        or cast(dict[str, object], config["Healthcheck"]).get("Test") != ["NONE"]
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.service") != "telegram"
+        or labels.get("com.docker.compose.container-number") != "1"
+        or labels.get(BROWSER_ATTEMPT_LABEL) != attempt_id
+        or not isinstance(labels.get(TELEGRAM_ATTEMPT_LABEL), str)
+        or not BROWSER_ATTEMPT_PATTERN.fullmatch(labels[TELEGRAM_ATTEMPT_LABEL])
+        or (runtime_attempt and labels.get(TELEGRAM_ATTEMPT_LABEL) != runtime_attempt)
+        or labels.get("org.opencontainers.image.revision") != source_sha
+        or not isinstance(state, dict)
+        or state.get("Running") is not running
+        or state.get("Restarting") is not False
+        or record.get("RestartCount") != 0
+        or host.get("RestartPolicy") != {"Name": "no", "MaximumRetryCount": 0}
+        or host.get("NanoCpus") != 250_000_000
+        or host.get("Memory") != 134_217_728
+        or host.get("PidsLimit") != 32
+        or host.get("ReadonlyRootfs") is not True
+        or host.get("Privileged") is not False
+        or host.get("PublishAllPorts") is not False
+        or host.get("Init") is not True
+        or host.get("IpcMode") != "private"
+        or host.get("CgroupnsMode") != "private"
+        or host.get("NetworkMode") != TELEGRAM_NETWORK
+        or host.get("PortBindings") not in ({}, None)
+        or host.get("CapDrop") != ["ALL"]
+        or host.get("CapAdd") not in ([], None)
+        or host.get("SecurityOpt") != ["no-new-privileges:true"]
+        or host.get("Tmpfs") != {"/tmp": "rw,noexec,nosuid,size=8m"}  # noqa: S108 - container tmpfs
+    ):
+        raise PreflightError("Telegram worker identity or isolation changed")
+    mounts = record.get("Mounts")
+    expected_mounts = {
+        ("volume", DATA_VOLUME, "/data", True, "local"),
+        ("volume", TELEGRAM_VOLUME, "/run/telegram", False, "local"),
+    }
+    if (
+        not isinstance(mounts, list)
+        or len(mounts) != 2
+        or {
+            (
+                item.get("Type"),
+                item.get("Name"),
+                item.get("Destination"),
+                item.get("RW"),
+                item.get("Driver"),
+            )
+            for item in mounts
+            if isinstance(item, dict)
+        }
+        != expected_mounts
+    ):
+        raise PreflightError("Telegram worker mounts changed")
+    network = record.get("NetworkSettings")
+    if (
+        not isinstance(network, dict)
+        or network.get("Ports") not in ({}, None)
+        or not isinstance(network.get("Networks"), dict)
+        or set(network["Networks"]) != {TELEGRAM_NETWORK}
+    ):
+        raise PreflightError("Telegram worker network changed")
+    return cast(str, cast(dict[str, object], labels)[TELEGRAM_ATTEMPT_LABEL])
+
+
+def _telegram_worker_ready(container: str, source_sha: str) -> None:
+    expected = (
+        f"BOCA_TELEGRAM_READY state=VERIFIED source_sha={source_sha} api_accepted=1 identity=pinned"
+    )
+    deadline = monotonic() + 15
+    while monotonic() < deadline:
+        record = _browser_inspect_record(container)
+        state = record.get("State")
+        started = state.get("StartedAt") if isinstance(state, dict) else None
+        if (
+            not isinstance(state, dict)
+            or state.get("Running") is not True
+            or not isinstance(started, str)
+            or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z", started) is None
+        ):
+            raise PreflightError("Telegram worker startup failed")
+        receipt = _run("docker", "logs", "--since", started, "--tail", "2", container, timeout=5)
+        if receipt == expected:
+            return
+        if receipt:
+            raise PreflightError("Telegram worker ready receipt is unverified")
+        sleep(0.2)
+    raise PreflightError("Telegram worker ready receipt timed out")
+
+
+def _browser_telegram_phase(
+    operation: str,
+    image: str,
+    source_sha: str,
+    beta_sha: str,
+    origin: str,
+    owner: str,
+    browser_image: str,
+    overlay_sha: str,
+    seccomp_sha: str,
+    attempt_id: str,
+    bot_id: str,
+    chat_hmac: str,
+    runtime_attempt: str,
+) -> None:
+    coordinates = (
+        image,
+        source_sha,
+        beta_sha,
+        origin,
+        owner,
+        browser_image,
+        overlay_sha,
+        seccomp_sha,
+        attempt_id,
+    )
+    if (
+        re.fullmatch(r"[1-9][0-9]{0,15}", bot_id) is None
+        or not DIGEST_PATTERN.fullmatch(chat_hmac)
+        or not BROWSER_ATTEMPT_PATTERN.fullmatch(runtime_attempt)
+    ):
+        raise PreflightError("Telegram owner identity missing")
+    cleanup = operation == "browser-telegram-cleanup"
+    initial = _browser_installed(
+        *coordinates,
+        running=True,
+        telegram_owner=(bot_id, chat_hmac),
+        allow_sender_failed=cleanup,
+        require_capacity=not cleanup,
+        allow_service_failed=cleanup,
+    )
+    if not initial.telegram:
+        raise PreflightError("Telegram private custody must already exist")
+    networks = _names("network", "name=^boca-socios_")
+    before_storage = _storage_snapshot()
+    if cleanup:
+        if TELEGRAM_NETWORK in networks:
+            network = _json_object(
+                _run("docker", "network", "inspect", "--format", "{{json .}}", TELEGRAM_NETWORK),
+                "Telegram startup network",
+            )
+            labels = network.get("Labels")
+            if (
+                not isinstance(labels, dict)
+                or labels.get(BROWSER_ATTEMPT_LABEL) != attempt_id
+                or labels.get(TELEGRAM_ATTEMPT_LABEL) != runtime_attempt
+            ):
+                raise PreflightError("Telegram cleanup cannot identify startup network")
+        if initial.sender:
+            record = _browser_inspect_record(initial.sender)
+            state = cast(dict[str, object], record["State"])
+            # Check the current run before the first stop/remove; install identity
+            # alone cannot distinguish a concurrent or prior sender attempt.
+            _telegram_worker_inspect(
+                initial.sender,
+                image,
+                source_sha,
+                bot_id,
+                chat_hmac,
+                attempt_id,
+                running=bool(state["Running"]),
+                runtime_attempt=runtime_attempt,
+            )
+            if state["Running"]:
+                if (
+                    _run("docker", "stop", "--time", "10", initial.sender, timeout=20)
+                    != initial.sender
+                ):
+                    raise PreflightError("Telegram failed-start stop unverified")
+            _telegram_worker_inspect(
+                initial.sender,
+                image,
+                source_sha,
+                bot_id,
+                chat_hmac,
+                attempt_id,
+                running=False,
+                runtime_attempt=runtime_attempt,
+            )
+            if _run("docker", "rm", initial.sender) != initial.sender:
+                raise PreflightError("Telegram failed-start removal unverified")
+        if TELEGRAM_NETWORK in networks:
+            _telegram_egress()
+            if _run("docker", "network", "rm", TELEGRAM_NETWORK) != TELEGRAM_NETWORK:
+                raise PreflightError("Telegram failed-start network removal unverified")
+        after = _browser_installed(
+            *coordinates,
+            running=True,
+            telegram_owner=(bot_id, chat_hmac),
+            require_capacity=False,
+            allow_service_failed=True,
+        )
+        if (
+            after.sender
+            or TELEGRAM_NETWORK in _names("network", "name=^boca-socios_")
+            or (after.controller, after.worker, after.marker)
+            != (initial.controller, initial.worker, initial.marker)
+        ):
+            raise PreflightError("Telegram failed-start residues remain")
+        after_storage = _storage_snapshot()
+        _validate_storage_continuity(before_storage, after_storage, require_capacity=False)
+        print(
+            f"BOCA_BROWSER_TELEGRAM_CLEANUP_STORAGE attempt={runtime_attempt}"
+            f" before_stage_free_bytes={before_storage.stage_free_bytes}"
+            f" after_stage_free_bytes={after_storage.stage_free_bytes}"
+            f" before_stage_inodes={before_storage.stage_inodes}"
+            f" after_stage_inodes={after_storage.stage_inodes}"
+            f" before_docker_free_bytes={before_storage.docker_free_bytes}"
+            f" after_docker_free_bytes={after_storage.docker_free_bytes}"
+            f" before_docker_inodes={before_storage.docker_inodes}"
+            f" after_docker_inodes={after_storage.docker_inodes}"
+        )
+        print(
+            f"BOCA_BROWSER_TELEGRAM_CLEANUP_PASS source_sha={source_sha} attempt={attempt_id} sender=absent network=absent data=preserved key=preserved owner=preserved"
+        )
+        return
+    if initial.sender or TELEGRAM_NETWORK in networks:
+        raise PreflightError("Telegram startup requires absent sender and egress; no blind retry")
+    _browser_capacity(memory_mib=512, cpu_required=0.5, pids_required=64)
+    if operation == "browser-telegram-preflight":
+        print(
+            f"BOCA_BROWSER_TELEGRAM_PREFLIGHT_PASS source_sha={source_sha} attempt={attempt_id} sender=absent network=absent"
+        )
+        return
+    if operation != "browser-telegram-start":
+        raise PreflightError("unknown Telegram browser lifecycle operation")
+    created = _run(
+        "docker",
+        "network",
+        "create",
+        "--driver",
+        "bridge",
+        "--label",
+        f"com.docker.compose.project={PROJECT}",
+        "--label",
+        "com.docker.compose.network=telegram_egress",
+        "--label",
+        f"{BROWSER_ATTEMPT_LABEL}={attempt_id}",
+        "--label",
+        f"{TELEGRAM_ATTEMPT_LABEL}={runtime_attempt}",
+        TELEGRAM_NETWORK,
+    )
+    if re.fullmatch(r"[0-9a-f]{64}", created) is None:
+        raise PreflightError("Telegram startup egress creation unverified")
+    _telegram_egress()
+    sender = _run(
+        *_telegram_worker_container(
+            image, source_sha, bot_id, chat_hmac, attempt_id, runtime_attempt
+        )
+    )
+    if re.fullmatch(r"[0-9a-f]{64}", sender) is None:
+        raise PreflightError("Telegram startup identity unverified")
+    _telegram_worker_ready(sender, source_sha)
+    final = _browser_installed(*coordinates, running=True, telegram_owner=(bot_id, chat_hmac))
+    if final.sender != sender or (final.controller, final.worker, final.marker) != (
+        initial.controller,
+        initial.worker,
+        initial.marker,
+    ):
+        raise PreflightError("Telegram startup changed installed identities")
+    _telegram_worker_inspect(
+        sender,
+        image,
+        source_sha,
+        bot_id,
+        chat_hmac,
+        attempt_id,
+        running=True,
+        runtime_attempt=runtime_attempt,
+    )
+    _validate_storage_continuity(before_storage, _storage_snapshot())
+    print(
+        f"BOCA_BROWSER_LIFECYCLE_PASS operation={operation} source_sha={source_sha} attempt={attempt_id} services=controller,browser-worker,telegram host=127.0.0.1:8443 data=preserved key=preserved owner=preserved engine=off"
+    )
+
+
 def _telegram_test_environment(actual: object, base: object) -> bool:
     """Compare the test's environment with the immutable image plus four fixed values."""
 
@@ -4646,12 +5467,19 @@ def _telegram_test_environment(actual: object, base: object) -> bool:
 
 
 def _telegram_test_finished(
-    image: str, source_sha: str, expected_bot_id: str, expected_chat_hmac: str, controller_id: str
+    image: str,
+    source_sha: str,
+    expected_bot_id: str,
+    expected_chat_hmac: str,
+    controller_id: str,
+    baseline_ids: set[str] | None = None,
 ) -> str:
     ids = _run("docker", "ps", "-a", "-q", "--no-trunc").splitlines()
+    baseline = {controller_id} if baseline_ids is None else baseline_ids
     if (
-        len(ids) != 2
-        or controller_id not in ids
+        len(ids) != len(baseline) + 1
+        or not baseline <= set(ids)
+        or controller_id not in baseline
         or any(re.fullmatch(r"[0-9a-f]{64}", value) is None for value in ids)
     ):
         raise PreflightError("Telegram test container inventory changed")
@@ -4761,8 +5589,9 @@ def _telegram_test_phase(
     owner: str,
     expected_bot_id: str,
     expected_chat_hmac: str,
+    *browser_context: str,
 ) -> None:
-    if not _telegram_installed(image, source_sha, compose_sha, origin, owner):
+    if not _telegram_installed(image, source_sha, compose_sha, origin, owner, *browser_context):
         raise PreflightError("Telegram private volume unavailable")
     custody = _run(*_telegram_container(image, "telegram_bootstrap", "verify", writable=False))
     schema = _run(*_telegram_container(image, "telegram_storage_gate", "verify", writable=False))
@@ -4789,10 +5618,13 @@ def _telegram_test_phase(
         if re.fullmatch(r"[0-9a-f]{64}", created) is None:
             raise PreflightError("Telegram egress creation unverified")
     _telegram_egress()
-    _telegram_installed(image, source_sha, compose_sha, origin, owner)
-    controller_id = _run("docker", "ps", "-a", "-q", "--no-trunc")
-    if re.fullmatch(r"[0-9a-f]{64}", controller_id) is None:
+    _telegram_installed(image, source_sha, compose_sha, origin, owner, *browser_context)
+    baseline_ids = set(_run("docker", "ps", "-a", "-q", "--no-trunc").splitlines())
+    if len(baseline_ids) != (2 if browser_context else 1) or any(
+        re.fullmatch(r"[0-9a-f]{64}", value) is None for value in baseline_ids
+    ):
         raise PreflightError("Telegram controller inventory changed")
+    controller_id = sorted(baseline_ids)[0]
     receipt = _run(
         *_telegram_test_container(image, source_sha, expected_bot_id, expected_chat_hmac)
     )
@@ -4802,15 +5634,20 @@ def _telegram_test_phase(
     ):
         raise PreflightError("Telegram API acceptance receipt unverified")
     container_id = _telegram_test_finished(
-        image, source_sha, expected_bot_id, expected_chat_hmac, controller_id
+        image,
+        source_sha,
+        expected_bot_id,
+        expected_chat_hmac,
+        controller_id,
+        baseline_ids if browser_context else None,
     )
     if _run("docker", "rm", container_id) != container_id:
         raise PreflightError("Telegram disposable test removal unverified")
-    _telegram_installed(image, source_sha, compose_sha, origin, owner)
+    _telegram_installed(image, source_sha, compose_sha, origin, owner, *browser_context)
     _telegram_egress()
     if _run("docker", "network", "rm", TELEGRAM_NETWORK) != TELEGRAM_NETWORK:
         raise PreflightError("Telegram disposable egress removal unverified")
-    _telegram_installed(image, source_sha, compose_sha, origin, owner)
+    _telegram_installed(image, source_sha, compose_sha, origin, owner, *browser_context)
     print(receipt)
 
 
@@ -4824,6 +5661,7 @@ def _telegram_phase(
     envelope: str,
     expected_bot_id: str = "",
     expected_chat_hmac: str = "",
+    *browser_context: str,
 ) -> None:
     if (operation == "telegram-install") != bool(envelope):
         raise PreflightError("sealed Telegram envelope required only for install")
@@ -4836,10 +5674,17 @@ def _telegram_phase(
             raise PreflightError("Telegram owner assertion missing")
     elif expected_bot_id or expected_chat_hmac:
         raise PreflightError("unexpected Telegram owner assertion")
-    present = _telegram_installed(image, source_sha, compose_sha, origin, owner)
+    present = _telegram_installed(image, source_sha, compose_sha, origin, owner, *browser_context)
     if operation == "telegram-test":
         _telegram_test_phase(
-            image, source_sha, compose_sha, origin, owner, expected_bot_id, expected_chat_hmac
+            image,
+            source_sha,
+            compose_sha,
+            origin,
+            owner,
+            expected_bot_id,
+            expected_chat_hmac,
+            *browser_context,
         )
         return
     if operation == "telegram-migrate":
@@ -4857,7 +5702,7 @@ def _telegram_phase(
         if receipt != "BOCA_TELEGRAM_STORAGE state=VERIFIED schema=0007":
             raise PreflightError("Telegram database schema unverified")
     if operation == "telegram-migrate":
-        _telegram_installed(image, source_sha, compose_sha, origin, owner)
+        _telegram_installed(image, source_sha, compose_sha, origin, owner, *browser_context)
         print(f"BOCA_TELEGRAM_HOST state=SCHEMA_READY source_sha={source_sha} schema=0007")
         return
     if operation == "telegram-prepare" and not present:
@@ -4911,7 +5756,7 @@ def _telegram_phase(
             raise PreflightError("Boca Telegram directory preparation had unexpected output")
     if operation not in {"telegram-prepare", "telegram-install", "telegram-verify"}:
         raise PreflightError("unknown Telegram phase")
-    if not _telegram_installed(image, source_sha, compose_sha, origin, owner):
+    if not _telegram_installed(image, source_sha, compose_sha, origin, owner, *browser_context):
         raise PreflightError("Boca Telegram private volume unavailable")
     action = operation.removeprefix("telegram-")
     output = _run(
@@ -4924,7 +5769,7 @@ def _telegram_phase(
         pattern = rf"BOCA_TELEGRAM_BOOTSTRAP state={'CONFIGURED' if action == 'install' else 'VERIFIED'} fingerprint=[0-9a-f]{{64}}"
     if re.fullmatch(pattern, output) is None or len(output) > 180:
         raise PreflightError("Boca Telegram custody receipt unverified")
-    _telegram_installed(image, source_sha, compose_sha, origin, owner)
+    _telegram_installed(image, source_sha, compose_sha, origin, owner, *browser_context)
     print(output)
 
 
@@ -4945,7 +5790,18 @@ def phase(
     browser_overlay_sha: str = "",
     browser_seccomp_sha: str = "",
     browser_attempt_id: str = "",
+    telegram_attempt_id: str = "",
 ) -> None:
+    sender_phase = phase_name in {
+        "browser-telegram-preflight",
+        "browser-telegram-start",
+        "browser-telegram-cleanup",
+    }
+    if sender_phase:
+        if not BROWSER_ATTEMPT_PATTERN.fullmatch(telegram_attempt_id):
+            raise PreflightError("Telegram startup attempt must be a protected Actions run ID")
+    elif telegram_attempt_id:
+        raise PreflightError("Telegram startup attempt supplied to unrelated phase")
     browser = phase_name.startswith("browser-")
     if browser:
         if phase_name not in {
@@ -4953,16 +5809,49 @@ def phase(
             "browser-stage",
             "browser-config",
             "browser-apply",
+            "browser-start",
+            "browser-restart",
+            "browser-status",
+            "browser-acceptance",
+            "browser-telegram-preflight",
+            "browser-telegram-start",
+            "browser-telegram-cleanup",
         }:
             raise PreflightError("unknown browser IPC phase")
-        if (
-            telegram_envelope
-            or expected_bot_id
-            or expected_chat_hmac
-            or owner_envelope
-            or enroll_digest
-        ):
+        if telegram_envelope or owner_envelope or enroll_digest:
             raise PreflightError("unexpected private context in browser IPC phase")
+        browser_lifecycle = phase_name in {
+            "browser-start",
+            "browser-restart",
+            "browser-status",
+            "browser-acceptance",
+            "browser-telegram-preflight",
+            "browser-telegram-start",
+            "browser-telegram-cleanup",
+        }
+        if (sender_phase or expected_bot_id or expected_chat_hmac) and (
+            not browser_lifecycle
+            or re.fullmatch(r"[1-9][0-9]{0,15}", expected_bot_id) is None
+            or not DIGEST_PATTERN.fullmatch(expected_chat_hmac)
+        ):
+            raise PreflightError("unexpected or invalid Telegram owner assertion")
+        if browser_attempt_id == "existing" and phase_name in {
+            "browser-start",
+            "browser-restart",
+            "browser-status",
+            "browser-acceptance",
+            "browser-telegram-preflight",
+            "browser-telegram-start",
+            "browser-telegram-cleanup",
+        }:
+            browser_attempt_id = _browser_existing_attempt(
+                image,
+                source_sha,
+                compose_sha,
+                browser_image,
+                browser_overlay_sha,
+                browser_seccomp_sha,
+            )
         _browser_coordinates(
             image,
             source_sha,
@@ -4986,9 +5875,40 @@ def phase(
             browser_overlay_sha,
             browser_seccomp_sha,
             browser_attempt_id,
+            *((expected_bot_id, expected_chat_hmac) if expected_bot_id else ()),
+            **({"telegram_attempt_id": telegram_attempt_id} if sender_phase else {}),
         )
         return
-    if browser_image or browser_overlay_sha or browser_seccomp_sha or browser_attempt_id:
+    browser_context: tuple[str, ...] = ()
+    if phase_name.startswith("telegram-") and browser_image:
+        if browser_attempt_id != "existing":
+            raise PreflightError("Telegram browser operation requires installed attempt")
+        browser_attempt_id = _browser_existing_attempt(
+            image,
+            source_sha,
+            compose_sha,
+            browser_image,
+            browser_overlay_sha,
+            browser_seccomp_sha,
+        )
+        _browser_coordinates(
+            image,
+            source_sha,
+            compose_sha,
+            envelope,
+            beta_owner,
+            browser_image,
+            browser_overlay_sha,
+            browser_seccomp_sha,
+            browser_attempt_id,
+        )
+        browser_context = (
+            browser_image,
+            browser_overlay_sha,
+            browser_seccomp_sha,
+            browser_attempt_id,
+        )
+    elif browser_image or browser_overlay_sha or browser_seccomp_sha or browser_attempt_id:
         raise PreflightError("browser IPC coordinates supplied to legacy phase")
     beta = phase_name.startswith("beta-")
     telegram = phase_name.startswith("telegram-")
@@ -5093,6 +6013,7 @@ def phase(
             telegram_envelope,
             expected_bot_id,
             expected_chat_hmac,
+            *browser_context,
         )
         return
     if phase_name.startswith("site-"):
@@ -5242,6 +6163,13 @@ def main() -> int:
             "browser-stage",
             "browser-config",
             "browser-apply",
+            "browser-start",
+            "browser-restart",
+            "browser-status",
+            "browser-acceptance",
+            "browser-telegram-preflight",
+            "browser-telegram-start",
+            "browser-telegram-cleanup",
             "telegram-migrate",
             "telegram-prepare",
             "telegram-install",
@@ -5263,6 +6191,7 @@ def main() -> int:
     parser.add_argument("--browser-overlay-sha", default="")
     parser.add_argument("--browser-seccomp-sha", default="")
     parser.add_argument("--browser-attempt-id", default="")
+    parser.add_argument("--telegram-attempt-id", default="")
     args = parser.parse_args()
     try:
         phase(
@@ -5281,6 +6210,11 @@ def main() -> int:
             browser_overlay_sha=args.browser_overlay_sha,
             browser_seccomp_sha=args.browser_seccomp_sha,
             browser_attempt_id=args.browser_attempt_id,
+            **(
+                {"telegram_attempt_id": args.telegram_attempt_id}
+                if args.telegram_attempt_id
+                else {}
+            ),
         )
     except (PreflightError, OSError, ValueError, TypeError, KeyError) as exc:
         print(f"BOCA_NO_GO: {exc}", file=sys.stderr)

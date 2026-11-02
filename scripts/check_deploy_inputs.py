@@ -8,16 +8,21 @@ from boca_socios.deploy_inputs import DeployInputError, validate_deploy_inputs
 
 
 def main() -> int:
-    browser_ipc_v2 = len(sys.argv) == 7 and sys.argv[1] == "--browser-ipc-v2"
-    if not browser_ipc_v2 and len(sys.argv) != 6:
+    flags = sys.argv[1:-5]
+    if (
+        flags not in ([], ["--browser-ipc-v2"], ["--browser-ipc-v2", "--telegram-runtime"])
+        or len(sys.argv) < 6
+    ):
         print(
-            "usage: check_deploy_inputs.py [--browser-ipc-v2] IMAGE SHA SERVICE BUDGET RELEASE_RUN_ID",
+            "usage: check_deploy_inputs.py [--browser-ipc-v2 [--telegram-runtime]] IMAGE SHA SERVICE BUDGET RELEASE_RUN_ID",
             file=sys.stderr,
         )
         return 2
     try:
         validate_deploy_inputs(
-            *sys.argv[2:] if browser_ipc_v2 else sys.argv[1:], browser_ipc_v2=browser_ipc_v2
+            *sys.argv[-5:],
+            browser_ipc_v2="--browser-ipc-v2" in flags,
+            telegram_runtime="--telegram-runtime" in flags,
         )
     except DeployInputError as exc:
         print(f"BOCA_NO_GO: {exc}", file=sys.stderr)

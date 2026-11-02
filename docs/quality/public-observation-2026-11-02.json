@@ -1,0 +1,129 @@
+{
+  "source_sha": "b0e46dbd1cc09ae625c65799a2fb75ca052ab5d8",
+  "run_url": "https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481095746",
+  "observed_at": "2026-11-02T13:25:15-03:00",
+  "receipt": {
+    "mode": "initial_public_document",
+    "state": "unknown",
+    "route_fetch_count": 1,
+    "referenced_assets": [
+      {
+        "kind": "link",
+        "url": "https://bocasocios.bocajuniors.com.ar/favicon.ico"
+      },
+      {
+        "kind": "link",
+        "url": "https://bocasocios.bocajuniors.com.ar/"
+      },
+      {
+        "kind": "link",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/media/ed68d641ffbc51c9-s.p.ttf"
+      },
+      {
+        "kind": "link",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/media/c5521e49e0ab5d76-s.p.ttf"
+      },
+      {
+        "kind": "link",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/media/d5b340b61a9d747a-s.p.ttf"
+      },
+      {
+        "kind": "link",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/media/542b704cac92f33f-s.p.ttf"
+      },
+      {
+        "kind": "link",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/media/9079e785e8d9e991-s.p.ttf"
+      },
+      {
+        "kind": "link",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/media/309b60d940dcc6d8-s.p.ttf"
+      },
+      {
+        "kind": "link",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/css/110f3266bb0e84b9.css"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/chunks/polyfills-42372ed130431b0a.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/chunks/webpack-ccfdb9bd91362889.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/chunks/framework-d1ea9e652f7756a8.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/chunks/main-2bcb7c5cd03d4c7a.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/chunks/pages/_app-e24083c41ff8470e.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/chunks/9819-2c4a72013c59320c.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/chunks/2739-6943ce35cb75f338.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/chunks/4860-acdc20894c93fa01.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/chunks/83-a1c7ae20bcf7e033.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/chunks/5326-c518c1546ef3384f.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/chunks/3955-5547d64248c3c4c2.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/chunks/7216-4aebbb51b60525b0.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/chunks/7243-ddb1335e09b2ad50.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/chunks/7507-47dcca8ca6668a7a.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/chunks/pages/auth/login-148f8537fd25f3f5.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/ZjtPdUbA-bZTrUy51xKDH/_buildManifest.js"
+      },
+      {
+        "kind": "script",
+        "url": "https://bocasocios.bocajuniors.com.ar/_next/static/ZjtPdUbA-bZTrUy51xKDH/_ssgManifest.js"
+      }
+    ],
+    "inventory_truncated": false,
+    "discarded_assets": 7
+  },
+  "proxy": {
+    "accepted_tunnels": 1,
+    "upstream_connections": 1,
+    "state": "complete"
+  },
+  "isolation": {
+    "pre": "PASS",
+    "post": "PASS"
+  },
+  "cleanup": "PASS",
+  "full_site_validated": false
+}

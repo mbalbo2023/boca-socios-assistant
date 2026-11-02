@@ -54,6 +54,11 @@ jobs:
       - name: Validate opt-in Telegram Compose syntax
         env:
           BOCA_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          BOCA_SOURCE_SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          BOCA_TELEGRAM_EXPECTED_BOT_ID: "123"
+          BOCA_TELEGRAM_EXPECTED_CHAT_HMAC: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          BOCA_BROWSER_ATTEMPT_ID: "123456"
+          BOCA_TELEGRAM_ATTEMPT_ID: "123457"
         run: docker compose -f compose.telegram.json --profile telegram-opt-in config --format json > "$RUNNER_TEMP/boca-telegram-compose.json"
       - name: Lint
         run: uv run ruff check .

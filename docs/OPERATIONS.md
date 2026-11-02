@@ -2,7 +2,51 @@
 
 ## Current state
 
-**SSH-local owner enrollment candidate #225 / ADR0092 (code only):**
+Historical baseline `032de0` already integrated #224/#226/#229 and browser
+release/install/cleanup #237/#239/#242–#249. PR #254 merged at
+`b0e46dbd1cc09ae625c65799a2fb75ca052ab5d8`; PR #255 merged at
+`dada569a2d71ad4411a73ebdaca1186ed3be6936`. Its private Telegram form passed
+[CI 41481913145](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913145)
+(1663 tests plus 31 subtests and real offline Chromium UI proof) and
+[security 41481913075](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913075)
+before merge. PR #253 is the subsequent lifecycle/recovery candidate; exact
+final-main checks and operational state are maintained in
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
+No matching current dual release, BETA installation, real activation URL,
+physical Chrome/GPM persistence or Telegram delivery is established here.
+
+[Real public observation 41481095746](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481095746)
+returned UNKNOWN for the permitted initial document, with pre/post isolation
+and cleanup PASS. This does not establish a browser or deployment failure,
+nor full-site acceptance. The [report and bounded proposal](quality/public-source-validation-2026-11-02.md)
+require separate approval before additional requests.
+
+[Read-only inspection 41471945717](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41471945717)
+at 12:28:47 ART reached SSH as UID10001, observed the owned user bus and
+delegated cpu/memory/pids controllers, and reported the shared rootful socket
+not writable. The dedicated Boca unit was loaded/inactive/dead, result=success,
+and its private socket was absent, so the prerequisite job failed closed.
+No Docker operation, install, cleanup or residue-producing attempt occurred.
+DB candidates were absent only at the three fixed metadata paths; global DB
+location remains UNVERIFIED. [Port check 41473018271](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41473018271)
+at 12:35 ART observed `FREE address=127.0.0.1 port=8443 reserved=no`.
+This does not reserve the port or verify Engine version, capacity, listener,
+tablet forwarding, rootless health or application readiness.
+
+The baseline audit reproduced lifecycle gaps between owner shutdown, browser
+startup, stop/acceptance, Telegram and restart. PR #253 supplies the candidate
+correction described below. Source tests and review do not establish host
+execution. Do not rerun first-time `prepare-rootless` or use another service
+to start Boca; only the guarded existing-daemon transition is permitted.
+
+GitHub environments were inspected on 2026-11-02: both are main-only, required
+reviewers are off and administrative bypass is available. Release READY is set;
+deploy/read-only READY are set. Only SSH key/known-hosts secrets and the host
+variable are present in deploy; BETA/BROWSER/Telegram readiness and owner
+origin/subject are absent. See [settings evidence](GITHUB_SETUP.md). No bypass
+or setting change is implied by this observation.
+
+**SSH-local owner enrollment #225 / PR #229 / ADR0092 (integrated code only):**
 PR #224 integrated `http://localhost:8443` at
 `main=93c14ee5d939fd7d6abf56a57843c23c32b281c3`, with no certificate
 requirement and no droplet effect. The proposed first-owner URL
@@ -10,10 +54,10 @@ requirement and no droplet effect. The proposed first-owner URL
 is not a usable credential. The #225 source can verify WebAuthn create→get
 and stage only encrypted v2 ciphertext. The HTTP container is forbidden to
 mount the owner volume, which holds an X25519 private recipient key.
-Protected host orchestration, the same-job deletion of verified temporary
-Docker artifacts after success/failure, offline `owner_bootstrap.install`
-and `verify`, private handoff of a real one-use link, an exact release and
-physical Chrome/Termius testing are still separate gates. Until then,
+Protected host orchestration, same-job selective deletion after success/failure
+and offline `owner_bootstrap.install-staged`/`verify` are integrated.
+Their host execution, private handoff of a real one-use link, an exact release
+and physical Chrome/Termius testing remain separate gates. Until then,
 **NO-GO** for owner activation or BETA. No web server/proxy/firewall, other
 app, other port or existing droplet service may be changed; `8443` BUSY
 means stop. See [ADR0092](ADR/0092-one-use-ssh-chrome-owner-enrollment.md).
@@ -75,6 +119,87 @@ See issue #45 for the current scoped decision and BETA_INTEGRATION_STATUS.md
 for the source/integration cut. PR #141 separately fixed the migration function
 through synthetic fixtures; merging it did not run Database.migrate on the
 droplet or create a service database. ADR0053 states the WAL/concurrency limits.
+
+## Protected browser lifecycle contract
+
+This is the code contract of PR #253, not a record of completed host operations.
+Before use, confirm its merge and successful exact-SHA checks in checkpoint #45.
+Use only [boca-first-deploy.yml](https://github.com/mbalbo2023/boca-socios-assistant/actions/workflows/boca-first-deploy.yml).
+`source_sha`, both image digests, release run and staged hashes must identify
+the same frozen main/release; `service=controller`. No terminal work is required
+from the tablet owner.
+
+| Operation | Purpose and required state |
+| --- | --- |
+| `beta-browser-install` | New-only pair after owner custody; guarded start of the already prepared daemon, then capacity/identity checks and atomic staging |
+| `beta-browser-status` | Read-only inspection of the existing pair/optional sender; does not start stopped resources |
+| `beta-browser-start` | Resume the verified stopped daemon and same installed service IDs; no initialization, pull or recreation |
+| `beta-browser-restart` | Bounded stop/start of the verified running topology; preserve data, key and owner |
+| `beta-browser-acceptance` | Synthetic IPC and local HTTP acceptance, then mandatory Boca-only stop; use explicit start afterward |
+| `beta-browser-telegram-start` | Create the sender only after custody and same-source one-shot proof; no implicit activation by the form |
+| `beta-browser-telegram-recover` | After connectivity returns, remove only the proven failed run's sender and empty egress, then stop; never start applications or repeat a send |
+
+The install/pair budget is `1.5cpu-1024m-192pids`. Once
+`BOCA_TELEGRAM_OWNER_READY=ready`, existing browser lifecycle and dual-topology
+Telegram phases declare `1.75cpu-1152m-224pids`; sender-start/recovery require
+the full budget. Owner custody, inspection and standalone stop retain their
+`0.5cpu-256m-64pids` input. These are declared caps, not a capacity receipt.
+The pair preflight separately requires at least 1.5 GiB memory, 1.75 CPU and 256
+free PIDs; a complete three-service start uses its larger reserve checks.
+
+Before a sender attempt, prove sender/egress absent and record the current run
+marker. Immediate selective cleanup runs after failure/cancellation. With SSH
+loss or unverifiable cleanup, mark INDETERMINADO and stop activation. Recovery
+requires `failed_telegram_run_id` from the exact completed failed/cancelled/
+timed-out first attempt, with a successful attempt marker verified by GitHub.
+It checks the original SHA/digests/owner and old runtime label; an inactive
+daemon may be started solely to inspect/clean, never to start applications.
+Unknown provenance prevents removal. Preserve all owner/key/data/Telegram
+volumes and every foreign resource. A new run must not adopt old leftovers.
+
+**Freeze main before publication and keep it frozen through all owner, install,
+Telegram and recovery phases.** Merge this documentation before release. Use
+checkpoint #45 for subsequent SHA/check/run receipts without further commits.
+If main advances after an uncertain failure, the current-main gate blocks
+recovery; a separate reviewed recovery change is required, not a substituted
+SHA, bypass or blind retry. Upgrading an installed source is outside this
+same-SHA lifecycle contract.
+
+## Telegram setup before the first persistent simulation
+
+Complete `telegram-migrate` and `telegram-prepare` with the controller/browser
+stopped. These custody operations start only the dedicated daemon and end in
+Boca-only stop. Verify the public receipt, then use `beta-browser-start` to
+serve the panel without a sender. After passkey login, open the approved
+`http://localhost:8443/telegram/configurar#recipient=…` receipt link.
+This is a public-recipient template, not an issued activation URL.
+
+The owner fills the bot token and positive private-chat ID in that private
+page. Chrome encrypts locally and derives the bot ID/chat HMAC. Copy only the
+three displayed outputs to their indicated destinations: encrypted envelope
+into `telegram_envelope`; the two pins into environment Secrets
+`BOCA_TELEGRAM_EXPECTED_BOT_ID` and `BOCA_TELEGRAM_EXPECTED_CHAT_HMAC`.
+Never request token/chat plaintext in chat, Actions inputs or a terminal.
+The form's success is not installation, identity verification or delivery.
+
+Stop Boca with `stop-test` before `telegram-install`; perform protected
+install/verify/test with the reviewed coordinates. `telegram-test` must run
+before the first persistent simulation, while the outbox is empty. Its API
+receipt needs separate human delivery confirmation. The BETA acceptance probe
+uses temporary SQLite in `/tmp` and does not contaminate that outbox.
+The custody/test phases finish with the daemon and pair stopped. After the
+approved owner-readiness setting, run `beta-browser-start` with the full
+`1.75cpu-1152m-224pids` budget to resume the verified pair; only then run
+`beta-browser-telegram-start`, which requires that pair already active and
+does not start its daemon.
+Readiness binds token, destination and source SHA: restart at the same SHA
+preserves it; a future source upgrade needs a separate reviewed procedure.
+
+## Historical preparation evidence
+
+The previous receipts and implementation lineage below remain historical.
+Their TLS or unmerged-candidate statements do not replace the current SSH-only
+contract or supply missing host/tablet/Telegram evidence.
 
 ## Functional BETA preparation and final operation
 
@@ -176,7 +301,7 @@ boundaries. No Site host phase was dispatched. See ADR0082.
 
 ## Protected served BETA and acceptance — code only
 
-**Newer candidate #223 / ADR0091:** the selected droplet/tunnel origin is
+**Integrated #224 / ADR0091:** the selected droplet/tunnel origin is
 `http://localhost:8443`, without a device TLS certificate or CA. The
 `beta-install` package still publishes **only** host `127.0.0.1:8443` from
 the dedicated Boca rootless container. It must not configure, restart, proxy,
@@ -184,7 +309,7 @@ or modify any host web server, other application or port. An occupied or
 unavailable 8443 is a fail-closed **STOP**, not a reason to stop the occupant.
 The historical TLS code/release receipts below document earlier candidates;
 neither they nor synthetic acceptance mean an installed panel. The one-use
-Chrome registration link is still unimplemented and is an activation blocker.
+Chrome registration link is implemented by #229 but has not been activated.
 
 PR #189 integrated image-side `check-beta-owner/config` without listener in
 `63965b087fbd6d7a68308302bb8baf2e08975674` (candidate `b2b34a17`, CI
@@ -228,9 +353,9 @@ above. Issue #209 holds
 the private tablet route and first-owner ceremony. Do not set the BETA marker
 or run `beta-install` from a synthetic fixture.
 
-**Chrome passkey enrollment, issue #225 — protected PR candidate only:** The
+**Chrome passkey enrollment, issue #225 / PR #229 — integrated, not activated:** The
 owner chose `http://localhost:8443` through Termius SSH forwarding (PRs
-#224/#226, ADR0091), with **no HTTPS, certificates or Termux**. The PR adds
+#224/#226, ADR0091), with **no HTTPS, certificates or Termux**. The PR integrated
 `owner-enroll` to the same `boca-first-deploy.yml`; it cannot be executed
 from a pull request. Inputs remain exact-main SHA, reviewed release run/digest,
 fixed `controller`/budget and a SHA-256 **hash** of the one-use private
@@ -264,7 +389,7 @@ No real link, private key, tablet proof, new port publication or droplet
 side effect exists from this change. The [ADR0092](ADR/0092-one-use-ssh-chrome-owner-enrollment.md)
 tracks the code/physical gates separately.
 
-The earlier 2026-11-01 GitHub environment inspection found no
+The historical 2026-11-01 GitHub environment inspection found no
 `BOCA_RELEASE_ENV_READY`; this release marker was then enabled and release
 #198 succeeded for the source SHA above. The deploy environment still lacks
 `BOCA_BETA_ENV_READY`, both Telegram readiness markers, protected bot/chat
@@ -333,19 +458,20 @@ not start Boca. The owner selected a private local tablet forward and kept
 Site decommission pending. ADR0088's old candidate origin
 `https://localhost:8443` is superseded for the SSH-only BETA by
 `http://localhost:8443` in ADR0091, without device certificates or CA.
-Do not dispatch owner custody or BETA install until the physical tablet route,
-one-time enrollment authorization and real passkey are verified. The present single owner
+Owner preparation requires its specific protected scope and exact release;
+owner enrollment then proves the passkey through the physical tablet route.
+Do not install the BETA before that proof and offline custody verification. The single owner
 credential needs separate Android/iOS interoperability proof. No terminal
 operation by the owner replaces the gated Actions host workflow.
 
-## First-owner registration on Chrome — new host link still pending
+## First-owner registration on Chrome — implemented, activation pending
 
 The old #215/ADR0089 one-use **device-local** Python/TLS emitter is retained
 for historical audit only; **do not ask the owner to run it**. Per #223/ADR0091,
 the planned Chrome flow must be served by a temporary Boca-only registration
 service on the *same* droplet host loopback 8443 through Termius SSH. The
-owner wants one private URL with a short-lived 256-bit one-use key. No such
-URL/endpoint exists yet. The design must prevent token exposure in publicly
+owner wants one private URL with a short-lived 256-bit one-use key. The endpoint
+is integrated but not served on the host. Its contract prevents token exposure in publicly
 accessible GitHub Actions logs, workflow dispatch history, PRs or screenshots;
 authorization must be consumed atomically before creating a discoverable
 WebAuthn passkey, and the physical create→get ceremony must verify the user.
@@ -358,10 +484,14 @@ Google Password Manager persistence and iOS compatibility remain physical
 gates. SSH encrypts the remote path, **not** an app-to-localhost connection
 inside Android; do not claim general HTTPS-equivalent protection.
 
-The current sequence is **NO-GO for host operations**: review a private token
-handoff, implement the single-use host enrollment phase, verify the real Chrome
-flow and forwarding, then perform the separate protected owner and BETA phases
-with exact HEAD/release/port/isolation gates. Do not touch a shared web server,
+The activation sequence is: complete/review the lifecycle correction and exact
+checks; approve the concrete protected operation; publish the exact dual release;
+verify capacity/isolation and the private token handoff; run `owner-prepare`,
+then `owner-enroll` with real Chrome create→get; verify offline custody and
+selective cleanup; then install the BETA and prove login/restart/resume.
+Owner enrollment precedes installation because the BETA requires its credential.
+Only the URL-key SHA-256 enters Actions, never the bearer. Prepare the tablet
+forward before the 900-second enrollment window. Do not touch a shared web server,
 create a public listener, add a new host port, or run another workload's Docker
 command. Failed Boca BETA staging still invokes the immediate selective cleanup
 of ADR0090, preserving all persistent and uncertain volumes.

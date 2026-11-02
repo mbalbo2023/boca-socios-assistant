@@ -83,7 +83,10 @@ def verify_peer(writer: asyncio.StreamWriter, *, uid: int, gid: int) -> None:
         pid, actual_uid, actual_gid = struct.unpack("3i", raw)
     except (OSError, ValueError, struct.error):
         raise SyntheticIPCError("ipc_peer_unverified") from None
-    if pid <= 0 or actual_uid != uid or actual_gid != gid:
+    # Linux pid_vnr() returns 0 when the peer is invisible in this PID
+    # namespace. Authenticate the exact kernel-mapped UID/GID; a PID, even
+    # positive, does not prove container identity. See ADR0101.
+    if pid < 0 or actual_uid != uid or actual_gid != gid:
         raise SyntheticIPCError("ipc_peer_unverified")
 
 

@@ -30,6 +30,7 @@ MIGRATIONS = (
     "0006_beta_commands.sql",
     "0007_telegram_delivery.sql",
 )
+_BETA_MIGRATIONS = frozenset({1, 2, 3, 5, 6})
 
 
 class StorageGateError(ValueError):
@@ -52,7 +53,11 @@ def _identity(path: Path) -> tuple[int, int]:
 
 
 def verify(path: Path = DATABASE, *, require_telegram: bool = True) -> None:
-    """Require a contiguous exact ledger, real tables and a sound read-only DB."""
+    """Require the exact BETA ledger, optional key policy and explicit Telegram.
+
+    Migration 4 belongs to opt-in credential-key rewrap, not BETA init. Its
+    absence cannot disable Telegram, and its presence must retain its checksum.
+    """
     identity = _identity(path)
     uri = f"file:{quote(str(path), safe='/')}?mode=ro"
     with closing(sqlite3.connect(uri, uri=True, timeout=3)) as connection:
@@ -61,18 +66,21 @@ def verify(path: Path = DATABASE, *, require_telegram: bool = True) -> None:
         rows = connection.execute(
             "SELECT version, checksum FROM schema_migrations ORDER BY version LIMIT 8"
         ).fetchall()
-        expected_count = 7 if require_telegram else 6
-        if len(rows) != expected_count:
+        required_versions = _BETA_MIGRATIONS | ({7} if require_telegram else set())
+        versions = {version for version, _ in rows}
+        if (
+            len(versions) != len(rows)
+            or any(type(version) is not int for version, _ in rows)
+            or versions not in (required_versions, required_versions | {4})
+        ):
             raise StorageGateError("schema_ledger")
-        for index, (version, checksum) in enumerate(rows, 1):
+        for version, checksum in rows:
             sql = (
-                files("boca_socios.storage.migrations").joinpath(MIGRATIONS[index - 1]).read_bytes()
+                files("boca_socios.storage.migrations")
+                .joinpath(MIGRATIONS[version - 1])
+                .read_bytes()
             )
-            if (
-                type(version) is not int
-                or version != index
-                or checksum != hashlib.sha256(sql).hexdigest()
-            ):
+            if checksum != hashlib.sha256(sql).hexdigest():
                 raise StorageGateError("schema_checksum")
         required = {"ticket_requests", "notification_outbox", "beta_commands"}
         if require_telegram:
@@ -95,7 +103,7 @@ def verify(path: Path = DATABASE, *, require_telegram: bool = True) -> None:
 
 
 def migrate(path: Path = DATABASE) -> None:
-    """Only 1..6 or a verified 1..7 may be present before migration."""
+    """Add only Telegram 7 to exact BETA storage; never activate key policy 4."""
     try:
         verify(path, require_telegram=True)
         return

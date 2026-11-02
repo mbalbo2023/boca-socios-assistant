@@ -14,7 +14,8 @@ from uuid import UUID
 import pytest
 
 from boca_socios import telegram_one_shot as shot
-from boca_socios.notify.outbox import NoticeKind
+from boca_socios.notify.outbox import NoticeKind, NotificationRequest
+from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
 from boca_socios.notify.telegram_transport import (
     TelegramAck,
     TelegramNotice,
@@ -238,3 +239,214 @@ def test_ambiguous_send_is_terminal_and_never_replayed(
         assert connection.execute("SELECT state FROM telegram_delivery_attempts").fetchone() == (
             "ambiguous",
         )
+
+
+def test_readiness_requires_the_same_pinned_identity_and_prior_api_acceptance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "boca.sqlite3"
+    _database(path)
+    monkeypatch.setattr(shot, "verify_storage", lambda _path: None)
+    transport = _transport(tmp_path)
+    notice_id = shot.acceptance_notice_id(transport, SHA, 12345, _assertion(CHAT))
+    assert notice_id != shot.NOTICE_ID
+    assert notice_id == shot.acceptance_notice_id(transport, SHA, 12345, _assertion(CHAT))
+    with pytest.raises(shot.OneShotError, match="api_acceptance_unverified"):
+        shot.verify_ready(path, transport, SHA, 12345, _assertion(CHAT))
+    sender = _Sender()
+    assert (
+        asyncio.run(shot.deliver_once(path, sender, SHA, notice_id=notice_id, clock=lambda: 1000.0))
+        == "API_ACCEPTED"
+    )
+    shot.verify_ready(path, transport, SHA, 12345, _assertion(CHAT))
+    # A fresh process proves the same acceptance without any HTTP request.
+    restarted = TelegramTransport(
+        tmp_path / "bot_token",
+        tmp_path / "chat_id",
+        connection_factory=lambda **_kwargs: pytest.fail("readiness must stay offline"),
+    )
+    shot.verify_ready(path, restarted, SHA, 12345, _assertion(CHAT))
+    assert len(sender.calls) == 1 and sender.calls[0].idempotency_key == notice_id
+    with pytest.raises(shot.OneShotError, match="api_acceptance_unverified"):
+        shot.verify_ready(path, restarted, "b" * 40, 12345, _assertion(CHAT))
+    with pytest.raises(shot.OneShotError, match="bot_identity_mismatch"):
+        shot.verify_ready(path, restarted, SHA, 54321, _assertion(CHAT))
+    with pytest.raises(shot.OneShotError, match="owner_destination_mismatch"):
+        shot.verify_ready(path, restarted, SHA, 12345, "f" * 64)
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM telegram_delivery_attempts").fetchone() == (
+            1,
+        )
+
+
+@pytest.mark.parametrize("historical", [True, False])
+def test_generic_acceptance_and_ambiguous_identity_proof_do_not_enable_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, historical: bool
+) -> None:
+    path = tmp_path / "boca.sqlite3"
+    _database(path)
+    monkeypatch.setattr(shot, "verify_storage", lambda _path: None)
+    transport = _transport(tmp_path)
+    bound = shot.acceptance_notice_id(transport, SHA, 12345, _assertion(CHAT))
+    sender = _Sender(ambiguous=not historical)
+    if historical:
+        asyncio.run(shot.deliver_once(path, sender, SHA, clock=lambda: 1000.0))
+    else:
+        with pytest.raises(shot.OneShotError):
+            asyncio.run(shot.deliver_once(path, sender, SHA, notice_id=bound, clock=lambda: 1000.0))
+    with pytest.raises(shot.OneShotError, match="api_acceptance_unverified"):
+        shot.verify_ready(path, transport, SHA, 12345, _assertion(CHAT))
+    assert len(sender.calls) == 1
+
+
+@pytest.mark.parametrize("replacement", ["token", "destination"])
+def test_readiness_pins_before_first_claim_and_refuses_replaced_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replacement: str
+) -> None:
+    path = tmp_path / "boca.sqlite3"
+    _database(path)
+    monkeypatch.setattr(shot, "verify_storage", lambda _path: None)
+    transport = _transport(tmp_path)
+    bound = shot.acceptance_notice_id(transport, SHA, 12345, _assertion(CHAT))
+    asyncio.run(shot.deliver_once(path, _Sender(), SHA, notice_id=bound, clock=lambda: 1000.0))
+    shot.verify_ready(path, transport, SHA, 12345, _assertion(CHAT))
+    selected = tmp_path / ("bot_token" if replacement == "token" else "chat_id")
+    selected.chmod(0o600)
+    selected.write_text(
+        "12345:different-synthetic-token" if replacement == "token" else "987654321"
+    )
+    selected.chmod(0o400)
+    with pytest.raises(TelegramUnconfirmed, match="configuration changed"):
+        transport.preflight()
+
+
+@pytest.mark.parametrize("replacement", ["token", "destination"])
+def test_old_acceptance_cannot_authorize_a_new_private_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, replacement: str
+) -> None:
+    path = tmp_path / "boca.sqlite3"
+    _database(path)
+    monkeypatch.setattr(shot, "verify_storage", lambda _path: None)
+    transport = _transport(tmp_path)
+    bound = shot.acceptance_notice_id(transport, SHA, 12345, _assertion(CHAT))
+    asyncio.run(shot.deliver_once(path, _Sender(), SHA, notice_id=bound, clock=lambda: 1000.0))
+    token = "12345:different-synthetic-token" if replacement == "token" else TOKEN
+    chat = "987654321" if replacement == "destination" else CHAT
+    for filename, content in (("bot_token", token), ("chat_id", chat)):
+        selected = tmp_path / filename
+        selected.chmod(0o600)
+        selected.write_text(content)
+        selected.chmod(0o400)
+    restarted = TelegramTransport(tmp_path / "bot_token", tmp_path / "chat_id")
+    assertion = hmac.new(token.encode(), chat.encode(), hashlib.sha256).hexdigest()
+    with pytest.raises(shot.OneShotError, match="api_acceptance_unverified"):
+        shot.verify_ready(path, restarted, SHA, 12345, assertion)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "UPDATE notification_outbox SET state='exhausted', accepted_at=NULL",
+        "UPDATE notification_outbox SET kind='state_changed'",
+        "UPDATE notification_outbox SET attempts=2",
+        "UPDATE telegram_delivery_attempts SET attempt_number=2",
+        "UPDATE telegram_delivery_attempts SET state='prepared', settled_at=NULL, "
+        "provider_message_id=NULL",
+        "DELETE FROM telegram_delivery_attempts",
+    ],
+)
+def test_readiness_rejects_incomplete_or_inconsistent_api_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    path = tmp_path / "boca.sqlite3"
+    _database(path)
+    monkeypatch.setattr(shot, "verify_storage", lambda _path: None)
+    transport = _transport(tmp_path)
+    bound = shot.acceptance_notice_id(transport, SHA, 12345, _assertion(CHAT))
+    asyncio.run(shot.deliver_once(path, _Sender(), SHA, notice_id=bound, clock=lambda: 1000.0))
+    with sqlite3.connect(path) as connection:
+        connection.execute(change)
+    with pytest.raises(shot.OneShotError, match="api_acceptance_unverified"):
+        shot.verify_ready(path, transport, SHA, 12345, _assertion(CHAT))
+
+
+def test_readiness_refuses_unresolved_attempt_without_claiming_pending_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "boca.sqlite3"
+    _database(path)
+    monkeypatch.setattr(shot, "verify_storage", lambda _path: None)
+    transport = _transport(tmp_path)
+    bound = shot.acceptance_notice_id(transport, SHA, 12345, _assertion(CHAT))
+    asyncio.run(shot.deliver_once(path, _Sender(), SHA, notice_id=bound, clock=lambda: 1000.0))
+    pending = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+    outbox = SqliteNotificationOutbox(path)
+    outbox.enqueue(NotificationRequest(pending, NoticeKind.HEARTBEAT), now=1001.0)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "INSERT INTO telegram_delivery_attempts "
+            "(idempotency_key,attempt_number,state,prepared_at) VALUES (?,1,'prepared',1001)",
+            (str(pending),),
+        )
+    with pytest.raises(shot.OneShotError, match="api_acceptance_unverified"):
+        shot.verify_ready(path, transport, SHA, 12345, _assertion(CHAT))
+    assert outbox.get(pending).attempts == 0
+
+
+def test_verify_ready_cli_never_calls_identity_or_delivery_api(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[str] = []
+    for key, value in {
+        "BOCA_ENVIRONMENT": "staging",
+        "BOCA_RUNTIME_MODE": "simulation",
+        "BOCA_ENGINE_MODE": "off",
+        "BOCA_TELEGRAM_DISPATCH_MODE": "explicit",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(shot, "require_effective_limits", lambda: calls.append("limits"))
+    monkeypatch.setattr(shot, "verify_custody", lambda: calls.append("custody"))
+    monkeypatch.setattr(shot, "verify_ready", lambda *_args: calls.append("ready"))
+    monkeypatch.setattr(shot, "check_identity", lambda *_args: pytest.fail("network forbidden"))
+    monkeypatch.setattr(shot, "deliver_once", lambda *_args: pytest.fail("send forbidden"))
+    assert shot.main(("verify-ready", SHA, "12345", _assertion(CHAT))) == 0
+    assert calls == ["limits", "custody", "ready"]
+    assert capsys.readouterr().out == (
+        f"BOCA_TELEGRAM_READY state=VERIFIED source_sha={SHA} api_accepted=1 identity=pinned\n"
+    )
+
+
+def test_one_shot_cli_records_the_identity_bound_acceptance_and_cannot_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "boca.sqlite3"
+    _database(path)
+    transport = _transport(tmp_path)
+    sender = _Sender()
+    monkeypatch.setattr(shot, "DATABASE", path)
+    monkeypatch.setattr(shot, "verify_storage", lambda _path: None)
+    monkeypatch.setattr(shot, "verify_custody", lambda: None)
+    monkeypatch.setattr(shot, "require_effective_limits", lambda: None)
+    monkeypatch.setattr(shot, "TelegramTransport", lambda *_args: transport)
+    monkeypatch.setattr(transport, "send", sender.send)
+    monkeypatch.setattr(shot, "check_identity", lambda *_args: None)
+    for key, value in {
+        "BOCA_ENVIRONMENT": "staging",
+        "BOCA_RUNTIME_MODE": "simulation",
+        "BOCA_ENGINE_MODE": "off",
+        "BOCA_TELEGRAM_DISPATCH_MODE": "explicit",
+    }.items():
+        monkeypatch.setenv(key, value)
+    args = ("test", SHA, "12345", _assertion(CHAT))
+    assert shot.main(args) == 0
+    assert sender.calls[0].idempotency_key == shot.acceptance_notice_id(
+        transport, SHA, 12345, _assertion(CHAT)
+    )
+    shot.verify_ready(path, transport, SHA, 12345, _assertion(CHAT))
+    assert shot.main(args) == 1
+    assert len(sender.calls) == 1
+    output = capsys.readouterr()
+    assert output.out == (
+        f"BOCA_TELEGRAM_TEST state=API_ACCEPTED source_sha={SHA} synthetic=1 human_receipt=unverified\n"
+    )
+    assert output.err == "BOCA_TELEGRAM_TEST state=NO_GO\n"

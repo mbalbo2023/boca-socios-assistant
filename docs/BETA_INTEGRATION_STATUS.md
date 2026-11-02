@@ -1,6 +1,50 @@
 # Estado de integración BETA
 
-## Corte integrado #224/#226 y candidato de host #225 — sin efectos en el droplet
+## Estado comprobado 2026-11-02 — aplicación no instalada
+
+La base histórica `032de0ebb923b4f80154e93cee3dfd1b254687ed` ya integró
+#224/#226/#229 y #237/#239/#242–#249. PR #254 se integró como
+`b0e46dbd1cc09ae625c65799a2fb75ca052ab5d8`; PR #255 como
+`dada569a2d71ad4411a73ebdaca1186ed3be6936`. No rehacer esos componentes.
+PR #253 contiene el candidato posterior de ciclo de vida, recuperación y
+sender durable. Su merge y los checks de main definitivo se registran en el
+[checkpoint canónico #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6563012208).
+Los resultados anteriores no se trasladan a un SHA nuevo.
+
+| Frente | Evidencia comprobada | Pendiente de aceptación |
+| --- | --- | --- |
+| Host | [41471945717](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41471945717): daemon Boca loaded/inactive/dead, socket ausente; SSH UID10001/bus/cgroup observados | Arranque protegido existente, Engine/capacidad/aislamiento y aplicación instalada; no repetir preparación inicial |
+| Puerto | [41473018271](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41473018271): `127.0.0.1:8443 FREE reserved=no` a las 12:35 ART | Nueva comprobación justo antes del uso; listener y forwarding reales |
+| Release | Publicación dual integrada en código | Dos digests/manifiestos reales del mismo release y SHA final aprobado |
+| Ciclo operativo | PR #253 incorpora start/restart/status/acceptance y sender-start/recover con identidad y presupuesto explícitos | Merge/checks exactos y comprobación host; no hay instalación ni reinicio probado |
+| Telegram privado | PR #255 integrado; [CI 41481913145](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913145): 1663 pruebas + 31 subtests y Chromium UI offline PASS; [seguridad 41481913075](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481913075) PASS | Recibo real de prepare, formulario en tablet, custodia de token/destino, one-shot y recepción humana |
+| Chrome/passkey | Owner-enroll integrado; localhost HTTP sobre SSH | Enlace de un uso real, create→get, Google Password Manager, segundo acceso y persistencia tras reinicio |
+| Sitio oficial | [41481095746](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41481095746): documento público real UNKNOWN; aislamiento previo/posterior y cleanup PASS | Sitio completo sin validar; [propuesta limitada](quality/public-source-validation-2026-11-02.md) pendiente de aprobación, sin login/fila/reserva |
+| Entornos | Observación inicial 2026-11-02: main-only, reviewers off, bypass disponible; READY release/deploy/read-only y secretos SSH existentes | Verificar configuración de activación exacta y permisos; marcadores solos no acreditan capacidad ni consentimiento |
+
+Inspect/port-check no ejecutaron Docker ni una instalación: no generaron
+residuos de instalación y no corresponde inventar su limpieza. La DB se
+inspeccionó sólo en tres rutas de metadata; ubicación global UNVERIFIED.
+
+Secuencia: fuente/review/checks finales → aprobación específica/release dual
+→ preflight → owner-prepare y owner-enroll físico → instalación → aceptación
+sintética temporal → formulario/custodia y prueba Telegram con outbox vacío
+→ sender explícito → simulación persistente, reinicio y acceso físico repetido.
+La aceptación termina detenida; la disponibilidad posterior exige start
+explícito. El presupuesto del par es `1.5cpu-1024m-192pids`, y del ciclo con
+owner Telegram listo `1.75cpu-1152m-224pids`.
+
+Congelar main durante release/alta/install/Telegram/recovery. Registrar en #45
+el SHA final, CI, seguridad, digests, runs, limpieza y evidencia física; no
+crear un commit documental después de release que invalide el SHA operativo.
+La prueba Telegram vincula token/destino/SHA y no se hereda a un upgrade.
+Un fallo incierto detiene activación; recovery requiere el run fallido exacto,
+misma procedencia y conectividad, sin iniciar apps ni reenviar mensajes.
+
+## Historial: corte #224/#226 y candidato #225 antes de su integración
+
+Los siguientes cortes conservan sus estados y enlaces originales; sus frases
+«candidato», «no integrado» o TLS describen esas fechas, no el estado actual.
 
 `main=4b1d219c2ba1739dc20c9c103170beedff8c1607` incluye
 [PR #224](https://github.com/mbalbo2023/boca-socios-assistant/pull/224) y
@@ -51,7 +95,7 @@ alta sintética, comando durable, estado y avisos se reutilizan; no se
 duplican. Login/cola/reserva/compra real en Boca quedan fuera de la BETA de
 simulación autorizada.
 
-## Corte verificado y alcance
+## Historial: corte verificado y alcance anterior
 
 Corte de evidencia previo a esta actualización documental: `main` era
 `6d3007a3ca1dfdba428cb7595486b1166a1d02b6` (PR #205 integrado). La publicación de imagen #198
@@ -129,7 +173,7 @@ UNVERIFIED; el destino lógico futuro es `/data/boca.sqlite3` en el volumen
 | Calidad/release | Corte previo a este cambio: main #214 `8fdbec97262a525821eb87f3fbc27f1841a5d2ec`, CI 41312228362 y scan 41312228548 SUCCESS; release 41312460820 publicó imagen/manifiesto sólo para ese SHA | Nueva release y manifiesto para la HEAD final exacta antes de instalar; CI no demuestra capacidad/postflight ni acceso tablet |
 | Aceptación sintética | #170 HTTP loopback desechable, #190 probe TLS en contenedor y #200 operación protegida de aceptación/parada | Sin ejecución host/tablet, Site, Telegram ni recursos medidos del droplet |
 
-## Evidencia exacta de este corte
+## Historial: evidencia exacta de esos cortes
 
 - [PR #161](https://github.com/mbalbo2023/boca-socios-assistant/pull/161)
   integró el loop de comandos en `77bf93c29dc59d5db0b5cf57c2c6ba2a14e8f39e`;
@@ -374,10 +418,11 @@ transporte y pruebas propias. [Issue #168](https://github.com/mbalbo2023/boca-so
 registra la provisión/recepción Telegram pendiente; [issue #113](https://github.com/mbalbo2023/boca-socios-assistant/issues/113)
 registra el puente Site no resuelto.
 
-La cadena pendiente es: panel/runtime empaquetado con acceso privado verificable
-→ imagen/Compose/release por digest sobre SHA exacto → capacidad/aislamiento
-del host y datos/clave compatibles → instalación manual protegida → E2E
-sintético desde interfaz real y medición → nueva parada Boca verificable. La
+La cadena pendiente es: integrar/verificar el candidato final y congelar main
+→ autorizar/publicar release dual exacta → capacidad/aislamiento → owner-prepare
+y owner-enroll real → instalación/aceptación temporal → Telegram antes de la
+primera simulación persistente → E2E desde interfaz real y reinicio/reanudación.
+El sitio completo continúa pendiente bajo su propia autorización limitada. La
 parada de 41272785626 cerró las pruebas de preparación, no una instalación
 BETA. El workflow `first-install` instala sólo un controlador dormido; #191
 agrega `beta-install` y #200 `beta-acceptance` con parada, ambos sin dispatch
@@ -388,4 +433,5 @@ suplen esos pasos. No hacer backup/restore ahora; sigue diferido.
 El historial detallado del candidato offline #24 y de cortes previos permanece
 en [la versión anterior de este documento](https://github.com/mbalbo2023/boca-socios-assistant/blob/1441d55a632d4a545b21ee7f6f2b0a4140ab2320/docs/BETA_INTEGRATION_STATUS.md);
 sus tablas no describen el estado vigente. Regla 84 exige reconciliar este
-archivo, README, ROADMAP, plan y #45 con cada resultado real antes del cierre.
+archivo, README, ROADMAP y plan antes de release; durante activación, registrar
+los resultados reales en #45 sin cambiar el SHA congelado.

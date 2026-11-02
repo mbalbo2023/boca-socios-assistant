@@ -2,13 +2,31 @@
   "name": "boca-socios",
   "services": {
     "telegram": {
-      "profiles": ["telegram-opt-in"],
+      "profiles": [
+        "telegram-opt-in"
+      ],
       "image": "${BOCA_IMAGE:?BOCA_IMAGE_digest_is_required}",
-      "command": ["python", "-m", "boca_socios.notify.telegram_worker", "serve"],
+      "command": [
+        "python",
+        "-m",
+        "boca_socios.notify.telegram_worker",
+        "serve",
+        "${BOCA_SOURCE_SHA:?BOCA_SOURCE_SHA_required}",
+        "${BOCA_TELEGRAM_EXPECTED_BOT_ID:?BOCA_TELEGRAM_EXPECTED_BOT_ID_required}",
+        "${BOCA_TELEGRAM_EXPECTED_CHAT_HMAC:?BOCA_TELEGRAM_EXPECTED_CHAT_HMAC_required}"
+      ],
       "user": "10001:10001",
       "restart": "no",
-      "healthcheck": {"disable": true},
+      "healthcheck": {
+        "disable": true
+      },
       "init": true,
+      "ipc": "private",
+      "cgroup": "private",
+      "labels": {
+        "boca.socios.browser-ipc-attempt": "${BOCA_BROWSER_ATTEMPT_ID:?BOCA_BROWSER_ATTEMPT_ID_required}",
+        "boca.socios.telegram-runtime-attempt": "${BOCA_TELEGRAM_ATTEMPT_ID:?BOCA_TELEGRAM_ATTEMPT_ID_required}"
+      },
       "environment": {
         "BOCA_ENVIRONMENT": "staging",
         "BOCA_RUNTIME_MODE": "simulation",
@@ -16,20 +34,45 @@
         "BOCA_DB_PATH": "/data/boca.sqlite3",
         "BOCA_TELEGRAM_DISPATCH_MODE": "explicit"
       },
-      "volumes": ["boca_data:/data", "boca_telegram:/run/telegram:ro"],
-      "networks": ["telegram_egress"],
+      "volumes": [
+        "boca_data:/data",
+        "boca_telegram:/run/telegram:ro"
+      ],
+      "networks": [
+        "telegram_egress"
+      ],
       "read_only": true,
-      "tmpfs": ["/tmp:rw,noexec,nosuid,size=8m"],
-      "security_opt": ["no-new-privileges:true"],
-      "cap_drop": ["ALL"],
+      "tmpfs": [
+        "/tmp:rw,noexec,nosuid,size=8m"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "cap_drop": [
+        "ALL"
+      ],
       "pids_limit": 32,
       "mem_limit": "128m",
       "cpus": 0.25
     }
   },
   "volumes": {
-    "boca_data": {"external": true, "name": "boca-socios_boca_data"},
-    "boca_telegram": {"external": true, "name": "boca-socios_boca_telegram"}
+    "boca_data": {
+      "external": true,
+      "name": "boca-socios_boca_data"
+    },
+    "boca_telegram": {
+      "external": true,
+      "name": "boca-socios_boca_telegram"
+    }
   },
-  "networks": {"telegram_egress": {"driver": "bridge"}}
+  "networks": {
+    "telegram_egress": {
+      "driver": "bridge",
+      "labels": {
+        "boca.socios.browser-ipc-attempt": "${BOCA_BROWSER_ATTEMPT_ID:?BOCA_BROWSER_ATTEMPT_ID_required}",
+        "boca.socios.telegram-runtime-attempt": "${BOCA_TELEGRAM_ATTEMPT_ID:?BOCA_TELEGRAM_ATTEMPT_ID_required}"
+      }
+    }
+  }
 }
