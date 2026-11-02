@@ -2,7 +2,7 @@
 
 **Estado vigente: captura autorizada de 25 recursos ejecutada; render UNKNOWN por un recurso fuera del mapa. Sitio completo todavía no validado.**
 
-El recibo actual corresponde a [41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530): todos los GET respondieron HTTP 200, aislamiento y limpieza PASS. La identidad del recurso faltante no quedó registrada; RCA #264 prepara diagnóstico, sin nuevo intento público autorizado. Los detalles figuran al final.
+El recibo actual corresponde a [41512196530](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41512196530): todos los GET respondieron HTTP 200, aislamiento y limpieza PASS. La identidad del recurso faltante no quedó registrada. La corrección de RCA #264 en [PR #266](https://github.com/mbalbo2023/boca-socios-assistant/pull/266) añade diagnóstico saneado, sin autorizar otro intento público. Los detalles figuran al final.
 
 ## Antecedente histórico: observación de un documento
 Recibo saneado: [public-observation-2026-11-02.json](public-observation-2026-11-02.json).
@@ -184,3 +184,10 @@ la lista automáticamente. Primero hay que integrar/revisar ese diagnóstico
 y comprobar CI, seguridad y smoke offline del nuevo SHA. Esta captura no
 publicó imágenes ni instaló/modificó recursos del droplet.
 
+
+
+## Diagnóstico posterior preparado, sin nueva observación pública
+
+[ADR0106](../ADR/0106-sanitized-public-render-denials.md) conserva la primera causa del rechazo y separa las cancelaciones posteriores al STOP. Sólo expone enums, flags de redacción y paths públicos estrictamente reconocidos: hasta ocho entradas y 4096 bytes; nunca valores de query/fragment, credenciales, cookies, cuerpos ni paths arbitrarios. El supervisor revalida el esquema. La lista de captura, los destinos, los 25 GET, el límite de 64 respuestas internas y la prohibición de reintentos permanecen intactos.
+
+La revisión independiente obtuvo 151 pruebas focales PASS y casos adversariales de privacidad/contabilidad satisfactorios. El primer corte reprodujo la ausencia del diagnóstico; otra regresión reprodujo su pérdida al contar las cancelaciones posteriores al STOP como nuevas decisiones. Ambas correcciones requieren CI/seguridad y el smoke Chromium offline del SHA integrado; los recibos exactos se registran en #45. Este cambio no identifica retrospectivamente el recurso de 41512196530, no valida el sitio completo ni autoriza un nuevo GET.

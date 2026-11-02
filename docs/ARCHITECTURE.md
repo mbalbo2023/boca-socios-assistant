@@ -51,9 +51,13 @@ The capture integrated by [PR #263](https://github.com/mbalbo2023/boca-socios-as
 separates bounded fetching from network-none Chromium. The authorized real
 run 41512196530 fetched 25 permitted GETs, all HTTP 200, but Chromium returned
 `UNKNOWN resource_outside_map`; isolation and cleanup passed. The missing URL
-was not identified. #264 corrects diagnostics in a separate branch, with no
-additional public GET authorized. This result does not prove a site outage or
-complete acceptance; even a positive captured render reports
+was not identified. This version implements the #264 correction in
+#266/[ADR0106](ADR/0106-sanitized-public-render-denials.md): sanitized denials are
+bounded to eight records/4096 ASCII JSON bytes, arbitrary paths are redacted,
+and later STOP cancellations have a separate counter. Diagnostic recognition
+does not extend the capture map. Exact-SHA checks and a newly authorized capture
+remain required; no additional public GET is authorized. This result does not
+prove a site outage or complete acceptance; even a positive captured render reports
 `connected_site=false`. See [the factual report](quality/public-source-validation-2026-11-02.md),
 including the earlier one-document UNKNOWN observation 41481095746.
 

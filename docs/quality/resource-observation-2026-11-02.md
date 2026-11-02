@@ -1,5 +1,34 @@
 # Resource observations and capacity policy — 2026-11-02
 
+## Latest successful existing-smoke profile
+
+The corrected candidate `3e34717735064cdae7dcbcef120f3b381f6cf7e4` passed
+[smoke 41518027065/job125526497976](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41518027065/job/125526497976)
+on test-merge `12ea553d7f86a6cbff06b6f0ed4ba5c30c3d7d95`. Its tree
+`a32cedf8f68ec6977653da65e528efdfac5fe060` equals integrated main
+`32506362be24d350424cfc1911627d038ff8059c`. All ten receipts were OBSERVED
+at 2026-11-02 17:21:24–17:22:16 ART; the
+[complete sanitized counters](resource-observation-2026-11-02-261-final.json)
+retain their original timestamps and provenance.
+
+| Service / phase | Cgroup lifetime peak MiB | Peak tasks |
+| --- | ---: | ---: |
+| Controller / HTTP acceptance | 47.16 | 9 |
+| Browser worker / initial IPC | 188.38 | 79 |
+| Browser worker / restart IPC | 188.39 | 79 |
+| Offline sender / ready | 40.27 | 8 |
+
+The existing 24-request synthetic HTTP probe passed with median 1.93 ms and
+p95 11.78 ms. Real dual-service inspection, kernel IPC, retained-container
+restart and isolated sender readiness passed; cleanup steps completed.
+These are sequential observations of the existing runner scenarios, with
+observer overhead and cumulative peaks. Do not add them into a simultaneous
+three-service requirement or extrapolate to host capacity. No Bot API,
+public-site request or droplet operation occurred. Container caps and the
+numeric host policy remain unchanged.
+
+## Historical failed candidate
+
 The later candidate `7cfc9b60564f8c7bb8a589c86e15153c77bc948d` passed
 CI (2081 tests +31 subtests), but its
 [Docker smoke 41514375981](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41514375981/job/125514028659)
@@ -179,6 +208,8 @@ RAM thresholds remain 1536/1792 MiB and task thresholds 256/288; all service
 caps are unchanged. The smoke observations do not calibrate those RAM/task
 margins. No server resizing, new infrastructure or other workload change
 is selected. The final delta passed independent review and 290 focused
-tests; exact-candidate hosted checks and the protected host preflight are
-still required. No droplet capacity or performance is inferred from this fix.
+tests. Those candidate checks subsequently passed in 41518027202, 41518026922
+and 41518027065, as recorded above. The new #266 candidate needs its own
+checks; the protected host preflight remains pending. No droplet capacity or
+performance is inferred from this fix.
 

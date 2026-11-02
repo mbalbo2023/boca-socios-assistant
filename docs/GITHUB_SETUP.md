@@ -76,6 +76,11 @@ from final-candidate checks, including the reviewed
 #261 was unmerged and its host operation had not run. Subsequent main/checks
 are recorded in #45; PR validation does not publish images or verify GitHub settings.
 
+This version includes #266/[ADR0106](ADR/0106-sanitized-public-render-denials.md),
+the sanitized diagnostic correction for RCA #264. It requires exact-SHA checks
+and hosted offline smoke evidence. The previous public capture remains UNKNOWN;
+a new capture requires specific authorization, with no new GET authorized here.
+
 PR #255 integrated `/telegram/configurar` and proved its synthetic browser-local
 sealing flow in CI 41481913145, with security 41481913075 PASS. Owner entry stays
 on `http://localhost:8443`; do not add HTTPS/certificates or another port.
