@@ -33,6 +33,18 @@ midió tres servicios simultáneos ni el droplet. CI/seguridad postmerge
 registran en #45 antes de cualquier operación protegida. No hay publicación
 ni despliegue por estos merges.
 
+El candidato intermedio #266 `f54485241617194eee316c7a79dc7e79a89580ba`
+pasó seguridad, Chromium offline y lifecycle, pero
+[CI 41519743366](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41519743366)
+falló una prueba antigua que buscaba `tls` en bytes cifrados aleatorios
+(2158 pruebas +31 subtests PASS). [RCA267/ADR0108](ADR/0108-structural-owner-envelope-tests.md)
+reproduce ese falso positivo con una sal sintética válida. La corrección de
+esta versión verifica esquema y bundle descifrado reales, mantiene negativos
+TLS/clave privada y obtuvo revisión independiente con 57 pruebas focales PASS.
+Producción y entropía permanecen intactas. El candidato corregido exige sus
+propios checks; el fallo anterior no se transforma en PASS ni autoriza un
+reintento protegido.
+
 | Frente | Evidencia comprobada | Pendiente de aceptación |
 | --- | --- | --- |
 | Host | [41495516709/job125449321031](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41495516709/job/125449321031), 2026-11-02 14:54:42 ART: daemon inactive/dead, socket ausente; MemAvailable 1020020 KiB, estimación CPU 0.27, PIDs UNKNOWN; capacidad NOT_EVALUATED | Autorizar y ejecutar `infrastructure-preflight`, ya integrado por #261, antes de release; capacidad/aislamiento efectivos e instalación mantienen sus gates; no repetir preparación inicial |

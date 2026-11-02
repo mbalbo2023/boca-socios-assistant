@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import os
 from pathlib import Path
 
@@ -11,7 +14,12 @@ from cryptography.hazmat.primitives.asymmetric import ec, x25519
 
 from boca_socios.config import Settings
 from boca_socios.host_first_deploy import _validate_owner_context
-from boca_socios.owner_bootstrap import RecipientReceipt, seal_for_recipient
+from boca_socios.owner_bootstrap import (
+    BootstrapError,
+    RecipientReceipt,
+    _decrypt,
+    seal_for_recipient,
+)
 from boca_socios.owner_origin import owner_rp_host
 from boca_socios.panel.enrollment_http import EnrollmentApplication
 from boca_socios.panel.owner_sessions import OwnerSessions
@@ -27,6 +35,18 @@ def _public() -> bytes:
         ec.generate_private_key(ec.SECP256R1())
         .public_key()
         .public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+    )
+
+
+def _recipient() -> tuple[x25519.X25519PrivateKey, RecipientReceipt]:
+    private = x25519.X25519PrivateKey.generate()
+    public = private.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    return private, RecipientReceipt(
+        "PREPARED",
+        base64.urlsafe_b64encode(public).rstrip(b"=").decode(),
+        hashlib.sha256(public).hexdigest(),
     )
 
 
@@ -129,24 +149,82 @@ def test_http_localhost_panel_and_enrollment_require_exact_origin(tmp_path: Path
         assert int(statuses[0].split()[0]) == expected
 
 
-def test_http_localhost_owner_envelope_only_contains_public_passkey_material() -> None:
-    private = x25519.X25519PrivateKey.generate()
-    public = private.public_key().public_bytes(
-        serialization.Encoding.Raw, serialization.PublicFormat.Raw
-    )
-    import base64
-    import hashlib
-    import json
-
-    recipient = RecipientReceipt(
-        "PREPARED",
-        base64.urlsafe_b64encode(public).rstrip(b"=").decode(),
-        hashlib.sha256(public).hexdigest(),
-    )
-    sealed = seal_for_recipient(
-        recipient, {"credential_id": os.urandom(32), "public_key.der": _public()}, ORIGIN, "owner"
-    )
+@pytest.mark.parametrize("encoded_tls_salt", [False, True], ids=["random-salt", "encoded-tls-salt"])
+def test_http_localhost_owner_envelope_only_contains_public_passkey_material(
+    monkeypatch: pytest.MonkeyPatch, encoded_tls_salt: bool
+) -> None:
+    if encoded_tls_salt:
+        original_urandom = os.urandom
+        # Valid synthetic salt whose base64url starts with "tls". Other entropy
+        # and all production cryptography remain unchanged.
+        salt = bytes.fromhex("b65b00") + bytes(13)
+        monkeypatch.setattr(
+            "boca_socios.owner_bootstrap.os.urandom",
+            lambda size: salt if size == 16 else original_urandom(size),
+        )
+    private, recipient = _recipient()
+    bundle = {"credential_id": os.urandom(32), "public_key.der": _public()}
+    sealed = seal_for_recipient(recipient, bundle, ORIGIN, "owner")
     envelope = json.loads(sealed)
+    assert set(envelope) == {
+        "version",
+        "repository",
+        "purpose",
+        "uid",
+        "panel_origin",
+        "owner_subject",
+        "recipient_public_key",
+        "recipient_fingerprint",
+        "ephemeral_public_key",
+        "salt",
+        "nonce",
+        "ciphertext",
+    }
     assert envelope["purpose"] == "boca-owner-passkey-v2"
     assert envelope["panel_origin"] == ORIGIN
-    assert b"tls" not in sealed
+    if encoded_tls_salt:
+        assert envelope["salt"] == "tlsAAAAAAAAAAAAAAAAAAA"
+    restored = _decrypt(
+        sealed,
+        private.private_bytes(
+            serialization.Encoding.Raw,
+            serialization.PrivateFormat.Raw,
+            serialization.NoEncryption(),
+        ),
+        recipient,
+        ORIGIN,
+        "owner",
+    )
+    assert set(restored) == {"credential_id", "public_key.der"}
+    assert restored == bundle
+
+
+@pytest.mark.parametrize(
+    "artifact",
+    ["tls.crt", "tls.key", "health-ca.pem", "private_key.der", "owner_recipient_x25519.key"],
+)
+def test_http_owner_envelope_rejects_tls_and_private_artifact_fields(artifact: str) -> None:
+    _, recipient = _recipient()
+    bundle = {
+        "credential_id": os.urandom(32),
+        "public_key.der": _public(),
+        artifact: b"synthetic-disallowed-material",
+    }
+    with pytest.raises(BootstrapError, match="invalid_owner_material"):
+        seal_for_recipient(recipient, bundle, ORIGIN, "owner")
+
+
+def test_http_owner_envelope_rejects_private_der_in_public_key_slot() -> None:
+    _, recipient = _recipient()
+    private_der = ec.generate_private_key(ec.SECP256R1()).private_bytes(
+        serialization.Encoding.DER,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    with pytest.raises(BootstrapError, match="invalid_owner_material"):
+        seal_for_recipient(
+            recipient,
+            {"credential_id": os.urandom(32), "public_key.der": private_der},
+            ORIGIN,
+            "owner",
+        )
