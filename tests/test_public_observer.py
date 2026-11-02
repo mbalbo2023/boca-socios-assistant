@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import importlib.util
 import json
+import socket
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -17,6 +19,19 @@ def observer():  # type: ignore[no-untyped-def]
     spec = importlib.util.spec_from_file_location("public_observer", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def offline_chromium_runner():  # type: ignore[no-untyped-def]
+    root = Path(__file__).resolve().parents[1]
+    path = root / "scripts" / "run_public_observer_offline_chromium.py"
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    spec = importlib.util.spec_from_file_location("public_offline_chromium", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses resolves its import-time module.
     spec.loader.exec_module(module)
     return module
 
@@ -172,17 +187,25 @@ def test_dom_cli_is_explicit_and_offline_mocked(
 
 
 @pytest.mark.parametrize(
-    "visible_text,form_count,expected",
+    "visible_text,form_count,asset_request,expected",
     [
-        ("Ingresá a Boca Socios. Iniciar sesión", 1, "login_form_disabled"),
-        ("", 0, "unknown"),  # Next.js CSR shell, JS and assets intentionally disabled.
-        ("Bienvenidos a la cuenta del club", 1, "login_form_disabled"),
-        ("CAPTCHA", 1, "challenge"),
+        ("Ingresá a Boca Socios. Iniciar sesión", 1, False, "login_form_disabled"),
+        ("", 0, False, "unknown"),  # Next.js CSR shell, JS intentionally disabled.
+        ("Bienvenidos a la cuenta del club", 1, False, "login_form_disabled"),
+        ("CAPTCHA", 1, False, "challenge"),
+        # Aborted CSS could hide a form in the real hydrated/styled page.
+        ("Bienvenidos a la cuenta del club", 1, True, "unknown"),
     ],
-    ids=["original_copy", "csr_empty_shell", "copy_changed", "challenge_preempts_dom"],
+    ids=[
+        "original_copy",
+        "csr_empty_shell",
+        "copy_changed",
+        "challenge_preempts_dom",
+        "aborted_css_is_not_live_visibility_proof",
+    ],
 )
 def test_browser_context_closes_on_block_and_never_navigates_again(
-    visible_text: str, form_count: int, expected: str
+    visible_text: str, form_count: int, asset_request: bool, expected: str
 ) -> None:
     module = observer()
 
@@ -225,17 +248,24 @@ def test_browser_context_closes_on_block_and_never_navigates_again(
             document = Route(url, "document")
             await context.handler(document)
             assert document.fulfilled and not document.aborted
-            asset = Route(module.HOME_URL + "_next/static/app.css", "stylesheet")
-            await context.handler(asset)
-            assert asset.aborted and not asset.fulfilled
+            if asset_request:
+                asset = Route(module.HOME_URL + "_next/static/app.css", "stylesheet")
+                await context.handler(asset)
+                assert asset.aborted and not asset.fulfilled
             return Response()
 
         async def inner_text(self, _selector: str) -> str:
             return visible_text
 
+        async def evaluate(self, expression: str) -> bool:
+            assert "getAttributeNames()" in expression and "startsWith('on')" in expression
+            return False
+
         def locator(self, selector: str) -> object:
             assert visible_text != "CAPTCHA", "challenge must stop before DOM reads"
             selectors = {
+                'script, link[rel~="stylesheet"], style',
+                'form[aria-hidden="true"], [aria-hidden="true"] form, form[inert], [inert] form',
                 "form",
                 'form input[type="email"]',
                 'form input[type="password"]',
@@ -245,7 +275,17 @@ def test_browser_context_closes_on_block_and_never_navigates_again(
 
             class Field:
                 async def count(self) -> int:
-                    return form_count
+                    return (
+                        0
+                        if selector
+                        not in {
+                            "form",
+                            'form input[type="email"]',
+                            'form input[type="password"]',
+                            'form button[type="submit"], form input[type="submit"]',
+                        }
+                        else form_count
+                    )
 
                 async def is_visible(self) -> bool:
                     return True
@@ -301,17 +341,20 @@ def test_browser_context_closes_on_block_and_never_navigates_again(
 
 
 @pytest.mark.parametrize(
-    "form_count,email_count,password_count,button_count,disabled,visible,expected",
+    "form_count,email_count,password_count,button_count,disabled,visible,dependencies,hidden_parent,inline_handler,expected",
     [
-        (1, 1, 1, 1, True, True, True),
-        (0, 0, 0, 0, False, False, False),  # Next.js shell lacking server-rendered inputs.
-        (2, 1, 1, 1, True, True, False),
-        (1, 0, 1, 1, True, True, False),
-        (1, 1, 0, 1, True, True, False),
-        (1, 2, 1, 1, True, True, False),
-        (1, 1, 1, 2, True, True, False),
-        (1, 1, 1, 1, False, True, False),
-        (1, 1, 1, 1, True, False, False),  # Hidden controls cannot prove visible login.
+        (1, 1, 1, 1, True, True, 0, 0, False, True),
+        (0, 0, 0, 0, False, False, 0, 0, False, False),  # CSR shell without initial form.
+        (2, 1, 1, 1, True, True, 0, 0, False, False),
+        (1, 0, 1, 1, True, True, 0, 0, False, False),
+        (1, 1, 0, 1, True, True, 0, 0, False, False),
+        (1, 2, 1, 1, True, True, 0, 0, False, False),
+        (1, 1, 1, 2, True, True, 0, 0, False, False),
+        (1, 1, 1, 1, False, True, 0, 0, False, False),
+        (1, 1, 1, 1, True, False, 0, 0, False, False),  # CSS-hidden controls.
+        (1, 1, 1, 1, True, True, 1, 0, False, False),  # Stylesheet/script not observed.
+        (1, 1, 1, 1, True, True, 0, 1, False, False),  # aria-hidden ancestor.
+        (1, 1, 1, 1, True, True, 0, 0, True, False),  # body onload or any on* attribute.
     ],
 )
 def test_login_dom_inspection_is_read_only_and_fails_closed(
@@ -321,6 +364,9 @@ def test_login_dom_inspection_is_read_only_and_fails_closed(
     button_count: int,
     disabled: bool,
     visible: bool,
+    dependencies: int,
+    hidden_parent: int,
+    inline_handler: bool,
     expected: bool,
 ) -> None:
     module = observer()
@@ -344,8 +390,19 @@ def test_login_dom_inspection_is_read_only_and_fails_closed(
             return disabled
 
     class Page:
+        async def evaluate(self, expression: str) -> bool:
+            assert "getAttributeNames()" in expression and "startsWith('on')" in expression
+            read_methods.append("event_handler_names_only")
+            return inline_handler
+
         def locator(self, selector: str) -> Field:
             mapping = {
+                'script, link[rel~="stylesheet"], style': Field(
+                    "unverified_dependency", dependencies
+                ),
+                'form[aria-hidden="true"], [aria-hidden="true"] form, form[inert], [inert] form': Field(
+                    "hidden_ancestor", hidden_parent
+                ),
                 "form": Field("form", form_count),
                 'form input[type="email"]': Field("email", email_count),
                 'form input[type="password"]': Field("password", password_count),
@@ -357,11 +414,148 @@ def test_login_dom_inspection_is_read_only_and_fails_closed(
 
     assert asyncio.run(module.inspect_login_dom(Page())) is expected
     assert all(
-        method.startswith(("count:", "is_visible:", "is_disabled:")) for method in read_methods
+        method.startswith(("count:", "is_visible:", "is_disabled:", "event_handler_names_only"))
+        for method in read_methods
     )
     assert not any(method.startswith("is_disabled:") for method in read_methods) or (
         form_count == 1 and button_count == 1 and email_count == 1 and password_count == 1
     )
+
+
+def test_real_chromium_fixture_runner_is_inert_without_explicit_offline_ack(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    runner = offline_chromium_runner()
+    assert runner.main([]) == 2
+    assert capsys.readouterr().err == "offline_public_dom_disabled\n"
+    assert {case.name for case in runner.FIXTURES} == {
+        "ssr_disabled",
+        "csr_empty_shell",
+        "css_dependency",
+        "hydration_dependency",
+        "inline_onload_hydration_dependency",
+        "generic_onpointerdown_dependency",
+        "inline_css_dependency",
+        "challenge_preempts_form",
+        "enabled_submit",
+        "hidden_form",
+        "aria_hidden_form",
+    }
+    for case in runner.FIXTURES:
+        assert "<html>" in case.html
+        assert "bocasocios" not in case.html.casefold()
+        assert "http://" not in case.html
+        assert "https://" not in case.html or "https://assets.example.invalid/" in case.html
+        assert case.expected in {"login_form_disabled", "unknown", "challenge"}
+
+    # The code executed inside Chromium may use only inline fixture HTML.
+    path = Path(runner.__file__)
+    parsed = ast.parse(path.read_text(encoding="utf-8"))
+    called_methods = {
+        node.func.attr
+        for node in ast.walk(parsed)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert "set_content" in called_methods
+    assert not called_methods.intersection(
+        {"goto", "fetch", "continue_", "post", "click", "fill", "press", "screenshot"}
+    )
+
+
+def test_inline_event_handler_probe_is_generic_and_reads_names_only() -> None:
+    probe = observer().INLINE_HANDLER_NAME_PROBE
+    assert "getAttributeNames()" in probe
+    assert "startsWith('on')" in probe
+    assert "shadowRoot" in probe
+    assert "getAttribute(" not in probe
+    assert "attributes[" not in probe
+    assert "onload" not in probe and "onpointerdown" not in probe
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"state": "unknown"},
+        {"cases": 8},
+        {"cases": True},
+        {"page_requests_aborted": 0},
+        {"page_requests_aborted": 100},
+        {"page_requests_aborted": False},
+        {"html": "forbidden page content"},
+    ],
+)
+def test_offline_chromium_receipt_never_claims_unexecuted_or_partial_fixtures(
+    change: dict[str, object],
+) -> None:
+    runner = offline_chromium_runner()
+    receipt: dict[str, object] = {
+        "mode": "offline_public_login_dom",
+        "state": "PASS",
+        "cases": len(runner.FIXTURES),
+        "page_requests_aborted": 1,
+    }
+    receipt.update(change)
+    with pytest.raises(ValueError, match="offline_public_dom_receipt_unverified"):
+        runner.validate_receipt(receipt)
+
+
+def test_offline_chromium_requires_uid_and_only_loopback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = offline_chromium_runner()
+    monkeypatch.setattr(runner.os, "geteuid", lambda: 10002)
+    monkeypatch.setattr(runner.os, "getegid", lambda: 10002)
+    monkeypatch.setattr(socket, "if_nameindex", lambda: [(1, "lo")])
+    runner.assert_offline_worker_boundary()
+    monkeypatch.setattr(socket, "if_nameindex", lambda: [(1, "lo"), (2, "eth0")])
+    with pytest.raises(RuntimeError, match="offline_network_namespace_unverified"):
+        runner.assert_offline_worker_boundary()
+    monkeypatch.setattr(socket, "if_nameindex", lambda: [(1, "lo")])
+    monkeypatch.setattr(runner.os, "geteuid", lambda: 0)
+    with pytest.raises(RuntimeError, match="offline_worker_identity_unverified"):
+        runner.assert_offline_worker_boundary()
+
+
+def test_offline_chromium_failure_exposes_only_exception_class(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runner = offline_chromium_runner()
+
+    async def rejected() -> dict[str, object]:
+        raise ValueError("untrusted page content and cookies must not be reported")
+
+    monkeypatch.setattr(runner, "run", rejected)
+    assert runner.main(["--run-offline-fixtures"]) == 1
+    report = capsys.readouterr()
+    assert report.out == ""
+    assert report.err == "offline_public_dom_stopped: ValueError\n"
+
+
+def test_ci_runs_real_chromium_public_fixtures_only_with_os_network_none() -> None:
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    observe = workflow.split("- name: Run public-login structural fixtures", 1)[1].split(
+        "- name: Clean disposable browser runner resources", 1
+    )[0]
+    assert "--network none" in observe
+    assert "--security-opt seccomp=docker/seccomp_profile.json" in observe
+    assert "--security-opt no-new-privileges" in observe
+    assert "--cap-drop ALL --cap-add SYS_CHROOT" in observe
+    assert "--user 10002:10002" in observe
+    assert "--memory=768m --cpus=1" in observe
+    assert "--pids-limit=128" in observe
+    assert "--run-offline-fixtures" in observe
+    assert "run_public_observer_offline_chromium.py,target=/app/scripts/" in observe
+    assert "readonly" in observe
+    assert "--ack-one-public-visit" not in observe
+    assert "BOCA_OBSERVER_STOP=0" not in observe
+    assert "check_public_source.py" not in observe
+    cleanup = workflow.split("- name: Clean disposable browser runner resources", 1)[1]
+    assert "if: always()" in cleanup
+    assert "BOCA_PUBLIC_BROWSER_NAME" in cleanup
+    assert 'for name in "$BOCA_BROWSER_NAME" "$BOCA_PUBLIC_BROWSER_NAME"' in cleanup
+    manual_source = (root / ".github/workflows/boca-source-status.yml").read_text(encoding="utf-8")
+    assert "run_public_observer_offline_chromium" not in manual_source
 
 
 def test_redirect_response_is_aborted_without_followup_navigation() -> None:
