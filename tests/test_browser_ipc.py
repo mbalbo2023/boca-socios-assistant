@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import os
 import socket
+import struct
 import tempfile
 from collections.abc import Iterator
 from contextlib import suppress
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -26,12 +28,127 @@ from boca_socios.browser.ipc_protocol import (
     SyntheticIPCError,
     framed,
     read_frame,
+    verify_peer,
 )
 from boca_socios.browser.ipc_worker import UnixSyntheticWorker, validate_no_egress_namespace
 from boca_socios.domain.policy import TicketIntent
 from boca_socios.integration.beta import BetaCoordinator, CommandState
 from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
 from boca_socios.storage.database import Database
+
+
+def kernel_peer_writer(raw: bytes) -> Mock:
+    endpoint = Mock(spec=socket.socket)
+    endpoint.getsockopt.return_value = raw
+    writer = Mock(spec=asyncio.StreamWriter)
+    writer.get_extra_info.return_value = endpoint
+    return writer
+
+
+@pytest.mark.parametrize("uid", [10001, 10002])
+@pytest.mark.parametrize("pid", [0, 321])
+def test_kernel_peer_accepts_exact_credentials_with_namespace_invisible_pid(
+    uid: int, pid: int
+) -> None:
+    writer = kernel_peer_writer(struct.pack("3i", pid, uid, uid))
+    verify_peer(writer, uid=uid, gid=uid)
+    writer.get_extra_info.assert_called_once_with("socket")
+    writer.get_extra_info.return_value.getsockopt.assert_called_once_with(
+        socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")
+    )
+
+
+@pytest.mark.parametrize("uid", [10001, 10002])
+@pytest.mark.parametrize(
+    ("pid", "actual_uid", "actual_gid"),
+    [
+        (-1, None, None),
+        (0, 0, None),
+        (0, None, 0),
+        (0, 10003, None),
+        (0, None, 10003),
+        (0, -1, None),
+        (0, None, -1),
+        (0, -1, -1),
+        (0, 65534, None),
+        (0, None, 65534),
+        (321, 10003, None),
+        (321, None, 10003),
+    ],
+)
+def test_kernel_peer_rejects_unproved_identity_even_with_namespace_invisible_pid(
+    uid: int, pid: int, actual_uid: int | None, actual_gid: int | None
+) -> None:
+    raw = struct.pack(
+        "3i",
+        pid,
+        uid if actual_uid is None else actual_uid,
+        uid if actual_gid is None else actual_gid,
+    )
+    with pytest.raises(SyntheticIPCError, match="^ipc_peer_unverified$"):
+        verify_peer(kernel_peer_writer(raw), uid=uid, gid=uid)
+
+
+@pytest.mark.parametrize("raw", [b"", b"\x00" * 11, b"\x00" * 13])
+def test_kernel_peer_rejects_malformed_credentials(raw: bytes) -> None:
+    with pytest.raises(SyntheticIPCError, match="^ipc_peer_unverified$"):
+        verify_peer(kernel_peer_writer(raw), uid=10002, gid=10002)
+
+
+@pytest.mark.parametrize("error", [OSError("unavailable"), ValueError("closed")])
+def test_kernel_peer_rejects_failed_credential_read(error: Exception) -> None:
+    writer = kernel_peer_writer(struct.pack("3i", 0, 10002, 10002))
+    writer.get_extra_info.return_value.getsockopt.side_effect = error
+    with pytest.raises(SyntheticIPCError, match="^ipc_peer_unverified$"):
+        verify_peer(writer, uid=10002, gid=10002)
+
+
+@pytest.mark.parametrize("missing", ["socket", "SO_PEERCRED"])
+def test_kernel_peer_requires_socket_and_platform_credential_support(
+    missing: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    writer = kernel_peer_writer(struct.pack("3i", 0, 10002, 10002))
+    if missing == "socket":
+        writer.get_extra_info.return_value = None
+    else:
+        monkeypatch.delattr(socket, "SO_PEERCRED")
+    with pytest.raises(SyntheticIPCError, match="^ipc_peer_unverified$"):
+        verify_peer(writer, uid=10002, gid=10002)
+
+
+def test_kernel_peer_wrong_worker_identity_sends_no_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        writer = kernel_peer_writer(struct.pack("3i", 0, 0, 10002))
+        reader = Mock(spec=asyncio.StreamReader)
+        monkeypatch.setattr(client_module, "_check_controller_identity", lambda: None)
+        monkeypatch.setattr(client_module, "socket_identity", lambda *args, **kwargs: (1, 2))
+        monkeypatch.setattr(
+            asyncio, "open_unix_connection", AsyncMock(return_value=(reader, writer))
+        )
+        with pytest.raises(SyntheticIPCError, match="^ipc_peer_unverified$"):
+            await UnixSyntheticBrowser().simulate_general_reservation()
+        writer.write.assert_not_called()
+        reader.readexactly.assert_not_called()
+        writer.close.assert_called_once_with()
+
+    asyncio.run(exercise())
+
+
+def test_kernel_peer_wrong_controller_identity_never_reads_or_starts_browser() -> None:
+    async def exercise() -> None:
+        writer = kernel_peer_writer(struct.pack("3i", 0, 10001, 65534))
+        reader = Mock(spec=asyncio.StreamReader)
+        fake = FakeBrowser()
+        sidecar = UnixSyntheticWorker(fake, boundary_check=lambda: None)
+        await sidecar._handle(reader, writer)
+        assert fake.calls == 0
+        reader.readexactly.assert_not_called()
+        writer.write.assert_not_called()
+        writer.close.assert_called_once_with()
+
+    asyncio.run(exercise())
 
 
 @pytest.fixture

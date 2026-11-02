@@ -774,11 +774,13 @@ def test_real_docker_diagnostic_does_not_serialize_private_configuration() -> No
     candidate["Config"]["Env"].append("SECRET=private-environment-value")
     candidate["HostConfig"]["Binds"] = ["private-bind-value"]
     candidate["Mounts"] = [{"Source": "private-mount-value"}]
+    candidate["NetworkSettings"]["Networks"]["none"] = {"IPAddress": "private-address-value"}
     summary = module.inspection_summary(candidate, service="browser-worker")
     assert summary["isolation"]["CapAdd"] == ["SYS_CHROOT"]
     assert summary["worker_command_matches"] is False
     assert summary["entrypoint_absent"] is False
     assert "BOCA_TELEGRAM_TOKEN" in summary["boca_environment_keys"]
+    assert summary["network_names"] == ["none"]
     assert "private-" not in json.dumps(summary)
 
 
@@ -872,3 +874,81 @@ def test_peer_diagnostic_drains_fragmented_stream_with_total_byte_and_time_bound
             "gid": 10002,
         }
     assert reads
+
+
+@pytest.mark.parametrize(
+    "reply,error,uid",
+    [
+        (b"", None, 10003),
+        (ConnectionResetError, None, 10003),
+        (b"\x00", RuntimeError, 10003),
+        (TimeoutError, TimeoutError, 10003),
+        (b"", AssertionError, 10001),
+    ],
+)
+def test_foreign_uid_probe_requires_actual_foreign_identity_and_eof_without_sending(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    reply: bytes | type[Exception],
+    error: type[Exception] | None,
+    uid: int,
+) -> None:
+    import socket
+    import time
+
+    module = _runtime_smoke_module()
+    connections: list[str] = []
+
+    class Endpoint:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def settimeout(self, seconds):
+            assert 0 < seconds <= 3
+
+        def connect(self, path):
+            assert path == "/run/boca-browser-ipc/synthetic.sock"
+            connections.append(path)
+
+        def recv(self, limit):
+            assert limit == 1
+            if isinstance(reply, type):
+                raise reply
+            return reply
+
+        # send/sendall/shutdown are deliberately absent: the probe sends nothing.
+
+    monkeypatch.setattr(os, "geteuid", lambda: uid)
+    monkeypatch.setattr(os, "getegid", lambda: uid)
+    monkeypatch.setattr(socket, "socket", lambda *args: Endpoint())
+    monkeypatch.setattr(time, "monotonic", lambda: 0.0)
+    if error:
+        with pytest.raises(error):
+            exec(module.FOREIGN_UID_PROBE, {})  # noqa: S102 - exact repository negative probe
+        assert not capsys.readouterr().out
+    else:
+        exec(module.FOREIGN_UID_PROBE, {})  # noqa: S102 - exact repository negative probe
+        assert capsys.readouterr().out.strip() == module.FOREIGN_UID_RECEIPT
+    assert len(connections) == (1 if uid == 10003 else 0)
+
+
+@pytest.mark.parametrize("field", ["Id", "Image", "RestartCount", "StartedAt", "Running", "Health"])
+def test_foreign_uid_probe_requires_services_to_retain_runtime_identity(field: str) -> None:
+    import copy
+
+    module = _runtime_smoke_module()
+    candidate = record(worker=True)
+    candidate["RestartCount"] = 0
+    candidate["State"].update(StartedAt="synthetic-start", Health={"Status": "healthy"})
+    original = module.runtime_identity(candidate)
+    changed = copy.deepcopy(candidate)
+    if field in {"Id", "Image", "RestartCount"}:
+        changed[field] = "changed"
+    elif field == "Health":
+        changed["State"]["Health"]["Status"] = "unhealthy"
+    else:
+        changed["State"][field] = "changed"
+    assert module.runtime_identity(changed) != original

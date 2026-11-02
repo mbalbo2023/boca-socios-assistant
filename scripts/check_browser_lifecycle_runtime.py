@@ -72,10 +72,14 @@ def docker(*args: str, timeout: int = 30) -> str:
 def inspection_summary(record: dict, *, service: str) -> dict:
     """Only fixed, nonsecret Docker boundary fields from a synthetic CI object."""
     config, host = record["Config"], record["HostConfig"]
+    network = record.get("NetworkSettings", {})
     environment = dict(item.split("=", 1) for item in config.get("Env", []) if "=" in item)
     return {
         "service": service,
         "running": record["State"]["Running"],
+        "state_status": record["State"].get("Status"),
+        "network_ports": network.get("Ports"),
+        "network_names": sorted(network.get("Networks", {})),
         "entrypoint_absent": config.get("Entrypoint") in (None, []),
         "worker_command_matches": config.get("Cmd")
         == ["python", "-m", "boca_socios.browser.ipc_worker"],
@@ -151,6 +155,40 @@ with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as endpoint:
         pass
 print(json.dumps({'pid':pid,'uid':uid,'gid':gid}, sort_keys=True))
 """
+
+
+FOREIGN_UID_RECEIPT = "BOCA_CI_IPC_FOREIGN_UID state=REJECTED uid=10003 sent_bytes=0"
+FOREIGN_UID_PROBE = """
+import os, socket, time
+assert os.geteuid() == os.getegid() == 10003
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as endpoint:
+    deadline = time.monotonic() + 3
+    endpoint.settimeout(3)
+    endpoint.connect('/run/boca-browser-ipc/synthetic.sock')
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError('foreign peer deadline')
+    endpoint.settimeout(remaining)
+    # No frame and no write-half close: only the worker can close this peer.
+    try:
+        if endpoint.recv(1) != b'':
+            raise RuntimeError('foreign peer received a protocol response')
+    except ConnectionResetError:
+        pass
+print('BOCA_CI_IPC_FOREIGN_UID state=REJECTED uid=10003 sent_bytes=0')
+"""
+
+
+def runtime_identity(record: dict) -> tuple:
+    state = record["State"]
+    return (
+        record["Id"],
+        record["Image"],
+        record["RestartCount"],
+        state["StartedAt"],
+        state["Running"],
+        state.get("Health", {}).get("Status"),
+    )
 
 
 def main() -> None:
@@ -235,8 +273,10 @@ def main() -> None:
         if running:
             deploy._browser_wait_healthy(worker)
             deploy._browser_wait_healthy(controller)
+        identities = {}
         for container, service in ((worker, "browser-worker"), (controller, "controller")):
             raw_record = json.loads(docker("inspect", "--format", "{{json .}}", container))
+            identities[container] = runtime_identity(raw_record)
             print(
                 "BOCA_CI_DOCKER_INSPECT "
                 + json.dumps(inspection_summary(raw_record, service=service), sort_keys=True),
@@ -277,6 +317,23 @@ def main() -> None:
                 )
             )
             print("BOCA_CI_IPC_PEER " + json.dumps(peer, sort_keys=True), flush=True)
+            rejected = docker(
+                "exec",
+                "--user",
+                "10003:10003",
+                controller,
+                "python",
+                "-c",
+                FOREIGN_UID_PROBE,
+                timeout=8,
+            )
+            if rejected != FOREIGN_UID_RECEIPT:
+                raise RuntimeError("foreign peer rejection receipt unverified")
+            for container in (controller, worker):
+                after = json.loads(docker("inspect", "--format", "{{json .}}", container))
+                if runtime_identity(after) != identities[container]:
+                    raise RuntimeError("service changed during foreign peer rejection")
+            print(FOREIGN_UID_RECEIPT + " services=unchanged", flush=True)
         print(
             f"BOCA_CI_BROWSER_LIFECYCLE state=PASS services=2 running={str(running).lower()}"
             " inspect=real kernel=real_when_running images=local_unpublished provider=not_contacted"
@@ -328,6 +385,12 @@ def main() -> None:
     created[0] = "create"
     created.remove("--detach")
     sender = docker(*created)
+    sender_record = json.loads(docker("inspect", "--format", "{{json .}}", sender))
+    print(
+        "BOCA_CI_DOCKER_INSPECT "
+        + json.dumps(inspection_summary(sender_record, service="telegram"), sort_keys=True),
+        flush=True,
+    )
     deploy._telegram_worker_inspect(
         sender,
         controller_image,

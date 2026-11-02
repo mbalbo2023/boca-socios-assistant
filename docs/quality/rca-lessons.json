@@ -318,6 +318,20 @@
         "tests/test_host_browser_ipc_cleanup.py::test_cleanup_accepts_only_exact_worker_capability_with_docker_canonical_prefix",
         "tests/test_host_browser_ipc_cleanup.py::test_cleanup_capability_prefix_cannot_authorize_other_or_duplicate_worker_privileges"
       ]
+    },
+    {
+      "id": "RCA-257",
+      "issue": 257,
+      "fix_pr": 253,
+      "root_cause": "SO_PEERCRED reports PID zero for an authenticated peer in a sibling PID namespace. Requiring a positive visible PID rejected the real isolated worker despite its exact kernel UID and GID.",
+      "prevention": "Accept namespace-invisible PID zero only with exact kernel UID and GID, preserve socket ownership and inode checks, reject malformed or unavailable credentials, and exercise IPC across real containers before and after restart without sharing namespaces.",
+      "regression_tests": [
+        "tests/test_browser_ipc.py::test_kernel_peer_accepts_exact_credentials_with_namespace_invisible_pid",
+        "tests/test_browser_ipc.py::test_kernel_peer_rejects_unproved_identity_even_with_namespace_invisible_pid",
+        "tests/test_browser_ipc.py::test_kernel_peer_rejects_malformed_credentials",
+        "tests/test_browser_ipc.py::test_kernel_peer_wrong_worker_identity_sends_no_command",
+        "tests/test_browser_ipc.py::test_kernel_peer_wrong_controller_identity_never_reads_or_starts_browser"
+      ]
     }
   ]
 }
