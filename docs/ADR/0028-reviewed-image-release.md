@@ -19,7 +19,8 @@ and Actions run ID in the summary. The tag is merely a locator; a later
 deploy must use the digest. The workflow does not reach any host, create
 keys, visit Boca or deploy. GHCR visibility/read access and the target host's
 architecture must be verified separately before a deployment candidate. The
-scan covers the controller, not the separate Chromium worker image.
+original scan covered only the controller; the dual-image extension below
+adds a separate Chromium worker build and scan before any release.
 
 Limitations: the vulnerability database changes over time; the runner's
 amd64 image is not a multiarch release. GitHub environment configuration,
@@ -31,12 +32,15 @@ does not permit publication or deployment by itself.
 
 ## Extensión propuesta para BETA: dos imágenes, un solo release protegido
 
-**Estado al revisar el candidato (2026-11-01):** rama rebasada sobre main
-`46f184fc49747f98246ac82047d9786b65239168`, que integra el worker IPC
-de PR #237; la autorización comprende
-desarrollo, pruebas y revisión, **no** ejecutar `workflow_dispatch`, crear el
-paquete GHCR ni instalar nada en un host. Lo anterior describe el diseño
-histórico que publicaba sólo el controlador.
+**Historial del candidato:** este diseño nació sobre main
+`46f184fc49747f98246ac82047d9786b65239168` con el worker IPC de #237.
+Tras integrar #240/#242, el HEAD de PR #239 revisado el 2026-11-02 es
+`241a4dbb59c698921446e43d545bddf179c2b7d8`, con base
+`e0d16df64616516390965e8c6c11e912618c672a`. Son referencias históricas
+de la revisión, no `main` perpetuo. La autorización comprende desarrollo,
+pruebas y revisión, **no** ejecutar `workflow_dispatch`, crear el paquete
+GHCR ni instalar nada en un host. La sección anterior describe el release
+original que publicaba solamente el controlador.
 
 El mismo `.github/workflows/release-image.yml` suma el worker de Chromium de
 `Dockerfile.browser`, sin crear otro workflow de despliegue ni iniciar releases
