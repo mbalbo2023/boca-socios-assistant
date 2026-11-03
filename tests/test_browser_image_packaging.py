@@ -22,6 +22,23 @@ def test_browser_image_installs_pinned_package_and_fixed_worker_entrypoint() -> 
     assert "--no-sandbox" not in text
 
 
+def test_browser_image_explicitly_installs_chromium_and_system_dependencies() -> None:
+    """Only the isolated worker image may install pinned Playwright Chromium OS libs."""
+    browser = (Path(__file__).resolve().parents[1] / "Dockerfile.browser").read_text(
+        encoding="utf-8"
+    )
+    command = "/app/.venv/bin/python -m playwright install --with-deps chromium"
+    assert command in browser
+    assert browser.index("uv sync --locked --only-group browser") < browser.index(command)
+    assert browser.index(command) < browser.index("-m pip uninstall --yes setuptools")
+    assert browser.index(command) < browser.index("USER 10002:10002")
+    assert "playwright install --with-deps firefox" not in browser
+    assert "playwright install --with-deps webkit" not in browser
+    install_step = browser.split(command, 1)[1].split("\n\n", 1)[0]
+    assert "dpkg-query -W -f='${Version}' libbrotli1" in install_step
+    assert "for pkg in gstreamer1.0-plugins-bad libgstreamer-plugins-bad1.0-0" in install_step
+
+
 def test_controller_image_does_not_gain_browser_dependency_or_entrypoint() -> None:
     root = Path(__file__).resolve().parents[1]
     controller = (root / "Dockerfile").read_text(encoding="utf-8")

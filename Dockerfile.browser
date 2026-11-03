@@ -45,6 +45,19 @@ RUN python -m pip install --disable-pip-version-check --no-cache-dir --no-deps -
 COPY pyproject.toml uv.lock README.md ./
 RUN uv sync --locked --only-group browser --no-editable --no-cache
 
+# The owner-controlled browser modules are opaque and are not present yet.
+# Install only the locked Chromium binary and its OS dependencies at image
+# build time, as explicitly requested; never start a browser or contact Boca.
+# Playwright may invoke apt, so reassert the existing strict security fixes.
+RUN /app/.venv/bin/python -m playwright install --with-deps chromium && \
+    test "$(dpkg-query -W -f='${Version}' libbrotli1)" = "1.1.0-2ubuntu0.1" && \
+    for pkg in gstreamer1.0-plugins-bad libgstreamer-plugins-bad1.0-0; do \
+      if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q 'install ok installed'; then \
+        exit 1; \
+      fi; \
+    done && \
+    apt-get clean
+
 # Runtime needs only the locked /app/.venv Playwright interpreter and bundled
 # Chromium. Global pip >=26.2 carries vulnerable *real* vendored libraries in
 # pip/_vendor/bom.cdx.json; setuptools and virtualenv contain their own vendor
