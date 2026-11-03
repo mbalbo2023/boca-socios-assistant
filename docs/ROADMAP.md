@@ -42,6 +42,15 @@ incluye Site conectado, Telegram y deploy validado por Actions, con datos
 sintéticos y sin reserva/compra real. No convierte un PR o una demo en
 funcionalidad operativa.
 
+El siguiente cuadro se conserva como **historial del corte anterior a
+PR #272**. El actual main `ea753ccab29d112b374a07b167d92e68c714cddd`
+incorporó #272 con CI/seguridad PASS; la inspección #289 pasó y el preflight
+#290 falló en observación, con parada exitosa. Su RCA específico es #274.
+La corrección del veto preventivo está en **PR #273 candidato**. Las reservas
+CPU/RAM/PIDs antiguas de la fila #259 dejan de ser condiciones de entrada
+cuando la corrección pase sus checks y se integre. Continuar sin duplicar
+preparación rootless ni repetir el run fallido; medir después del despliegue.
+
 ## Secuencia con gates verificables
 
 | Frente | Entregado al corte | Próximo gate y responsable |
