@@ -1881,21 +1881,34 @@ def _network_probe(*, icc_true: bool = False) -> None:
     without changing the hardened owner-enrollment network. The exact network
     has to be absent before and after; uncertain objects remain untouched.
     """
-    if not _safe_dir(ROOT) or any(ROOT.iterdir()):
-        raise PreflightError("Boca network probe requires empty staging")
-    _site_daemon_empty()
-    volumes = _names("volume", "name=^boca-socios_")
-    if volumes != {OWNER_VOLUME} or _names("network", "name=^boca-socios_"):
-        raise PreflightError("Boca network probe requires empty namespace")
-    validate_site_snapshot(collect_snapshot(), volumes, require_owner=True)
-    _validate_owner_volume()
-    _validate_storage_capacity(_storage_snapshot())
+    # All phases emit fixed labels only. In particular, a failed preflight
+    # must not leave the runner with only an ambiguous, absent receipt.
+    phase = "preflight_boundary"
+    try:
+        if not _safe_dir(ROOT) or any(ROOT.iterdir()):
+            raise PreflightError("Boca network probe requires empty staging")
+        phase = "preflight_namespace"
+        _site_daemon_empty()
+        volumes = _names("volume", "name=^boca-socios_")
+        if volumes != {OWNER_VOLUME} or _names("network", "name=^boca-socios_"):
+            raise PreflightError("Boca network probe requires empty namespace")
+        validate_site_snapshot(collect_snapshot(), volumes, require_owner=True)
+        phase = "preflight_owner_volume"
+        _validate_owner_volume()
+        phase = "preflight_storage"
+        _validate_storage_capacity(_storage_snapshot())
+    except (PreflightError, OSError):
+        # On preflight failures, remote cleanup is not proven. The workflow's
+        # independent Boca-only cleanup/stop steps are still mandatory.
+        print(f"BOCA_NETWORK_PROBE result=NO_GO reason={phase} cleanup=INDETERMINATE")
+        raise
 
     outcome = "PASS"
     reason = "none"
     cleanup = "VERIFIED"
     try:
         try:
+            phase = "network_create"
             created = _run(
                 "docker",
                 "network",
@@ -1916,18 +1929,26 @@ def _network_probe(*, icc_true: bool = False) -> None:
             )
             if re.fullmatch(r"[0-9a-f]{64}", created) is None:
                 raise PreflightError("Docker network create returned unexpected ID")
+            phase = "network_inspect"
             if icc_true:
                 _owner_enroll_network("", icc_true=True)
             else:
                 _owner_enroll_network("")
         except PreflightError as exc:
             outcome = "NO_GO"
-            reason = _network_probe_error(exc)
+            if phase == "network_inspect":
+                reason = phase
+            else:
+                classifier = _network_probe_error(exc)
+                reason = phase if classifier == "unclassified" else classifier
     finally:
         try:
             _network_probe_cleanup(icc_true=icc_true)
         except PreflightError:
             cleanup = "INDETERMINATE"
+            if outcome == "PASS":
+                outcome = "NO_GO"
+                reason = "cleanup"
 
     print(f"BOCA_NETWORK_PROBE result={outcome} reason={reason} cleanup={cleanup}")
     if outcome != "PASS" or cleanup != "VERIFIED":

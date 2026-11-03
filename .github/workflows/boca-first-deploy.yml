@@ -1020,9 +1020,16 @@ jobs:
           set -e
           receipt=''
           if [[ "$probe_rc" -eq 0 || "$probe_rc" -eq 1 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-network-probe.receipt")"; fi
-          pattern='^BOCA_NETWORK_PROBE result=(PASS|NO_GO) reason=(none|firewall|firewall_backend_mismatch|firewall_table_missing|firewall_chain_missing|firewall_chain_add_unsupported|firewall_operation_unsupported|firewall_match_unavailable|firewall_bridge_netfilter_unavailable|firewall_unsupported|firewall_permission|firewall_lock_denied|ipam_exhausted|ipam_overlap|already_exists|permission|invalid_config|unsupported|timeout|unclassified) cleanup=(VERIFIED|INDETERMINATE)$'
+          pattern='^BOCA_NETWORK_PROBE result=(PASS|NO_GO) reason=(none|preflight_boundary|preflight_namespace|preflight_owner_volume|preflight_storage|network_create|network_inspect|cleanup|firewall|firewall_backend_mismatch|firewall_table_missing|firewall_chain_missing|firewall_chain_add_unsupported|firewall_operation_unsupported|firewall_match_unavailable|firewall_bridge_netfilter_unavailable|firewall_unsupported|firewall_permission|firewall_lock_denied|ipam_exhausted|ipam_overlap|already_exists|permission|invalid_config|unsupported|timeout|unclassified) cleanup=(VERIFIED|INDETERMINATE)$'
           if [[ ${#receipt} -gt 180 || ! "$receipt" =~ $pattern ]]; then
-            printf 'Boca network probe: NO_GO unclassified; host output withheld.\n' >> "$GITHUB_STEP_SUMMARY"
+            if [[ "$probe_rc" -eq 124 || "$probe_rc" -eq 137 ]]; then
+              failure_reason=ssh_timeout
+            elif [[ "$probe_rc" -ne 0 && "$probe_rc" -ne 1 ]]; then
+              failure_reason=ssh_rc_unexpected
+            else
+              failure_reason=receipt_invalid
+            fi
+            printf 'Boca network probe: NO_GO reason=%s; host output withheld.\n' "$failure_reason" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           printf 'Boca rootless network probe (%s): %s. Diagnostic only, no application or owner secret.\n' "$BOCA_OPERATION" "$receipt" >> "$GITHUB_STEP_SUMMARY"
