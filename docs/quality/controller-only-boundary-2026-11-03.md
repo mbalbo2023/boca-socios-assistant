@@ -34,5 +34,7 @@ los módulos reservados si el titular decide activarlos más adelante.
 - El despliegue futuro sólo puede realizarse desde el workflow manual Boca,
   sin `beta-browser-install` ni tareas de navegación.
 
-Registrar commit, ejecución y resultado real de este candidato en PR #291 y
-en [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+Registrar commit, ejecución y resultado real de este candidato en
+[issue #291](https://github.com/mbalbo2023/boca-socios-assistant/issues/291),
+[PR #292](https://github.com/mbalbo2023/boca-socios-assistant/pull/292)
+y en [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
