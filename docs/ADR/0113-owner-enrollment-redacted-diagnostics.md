@@ -11,7 +11,7 @@ stopped rootless Boca daemon. Two successive owner-enroll attempts
 [#305](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41566871210)
 and [#306](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41568180039)
 failed inside **Start disposable owner enrollment only on Boca loopback 8443**.
-Both later selected Bocа-only cleanup and daemon stop steps were SUCCESS.
+Both later selected Boca-only cleanup and daemon stop steps were SUCCESS.
 Neither reached the READY receipt. No passkey, panel or BETA deployment followed.
 
 The **cause of the host start failure is unknown**. The known code/contract

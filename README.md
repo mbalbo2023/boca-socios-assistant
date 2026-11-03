@@ -6,7 +6,7 @@ Release [#298](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/
 Los intentos reales de `owner-enroll` [#305](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41566871210) y [#306](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41568180039) fallaron antes de `READY`; en ambos, cleanup selectivo y parada del daemon completaron SUCCESS. **No hay passkey ni BETA instaladas.** La causa específica del fallo host no es verificable desde los logs: se descartaba stderr.
 El [PR #276](https://github.com/mbalbo2023/boca-socios-assistant/pull/276) y [ADR0113](docs/ADR/0113-owner-enrollment-redacted-diagnostics.md) proponen etiquetas de fase seguras y salida censurada estricta. Código candidato; no habilitar nuevo host hasta checks, review, main/release exactos. No atribuir la falla al túnel ni a capacidad sin recibo.
 
-## Decisión vigente sobre recursos (2026-11-02, candidato #273)
+## Decisión vigente sobre recursos (2026-11-02, PR #273 integrado)
 
 El dueño corrigió expresamente la condición anterior: la BETA debe
 **desplegarse de forma aislada y medirse después de su instalación**, no
