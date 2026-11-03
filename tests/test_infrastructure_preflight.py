@@ -184,7 +184,7 @@ def test_image_free_phase_needs_no_owner_and_preserves_policy(
     assert "daemon_startup_cpu_count=2 effective_cpus=2 cpu_ceiling=2.000000" in lines[0]
     assert "cpu_scope=configured load1=0.000000 load_policy=advisory" in lines[0]
     assert f"budget={budget}" in lines[1]
-    assert "result=PASS meaning=configured_reserve_not_benchmark" in lines[1]
+    assert "result=OBSERVED meaning=postdeploy_measurement_required" in lines[1]
     assert "daemon=stopped" not in "\n".join(lines)
 
 
@@ -196,15 +196,32 @@ def test_image_free_phase_needs_no_owner_and_preserves_policy(
         {"storage": replace(safe_storage(), stage_free_bytes=1024)},
     ],
 )
-def test_observation_survives_unchanged_policy_failure_without_claiming_performance(
+def test_low_advisory_observation_does_not_veto_unmeasured_beta(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], changes: dict
 ) -> None:
     _observe_ready(monkeypatch, **changes)
-    with pytest.raises(host.PreflightError, match="performance unmeasured"):
-        host._infrastructure_preflight(SHA, FULL_BUDGET)
+    host._infrastructure_preflight(SHA, FULL_BUDGET)
     raw = capsys.readouterr().out
     assert raw.startswith("BOCA_INFRA_OBSERVATION ")
-    assert "result=NO_GO meaning=configured_reserve_not_benchmark" in raw
+    assert "BELOW" in raw
+    assert "result=OBSERVED meaning=postdeploy_measurement_required" in raw
+
+
+def test_low_resources_are_accepted_as_advisory_by_actual_workflow(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    _observe_ready(monkeypatch, memory=900 * 1024, cpu=0.5)
+    host._infrastructure_preflight(SHA, FULL_BUDGET)
+    receipt = capsys.readouterr().out
+    assert "memory=BELOW" in receipt and "cpu=BELOW" in receipt
+    result = _run_step(
+        "Observe infrastructure and evaluate unchanged reserve before release",
+        tmp_path,
+        receipt=receipt,
+        budget=FULL_BUDGET,
+    )
+    assert result.returncode == 0, result.stderr
+    assert receipt in (tmp_path / "summary").read_text()
 
 
 def test_changed_storage_prevents_an_observation_receipt(
