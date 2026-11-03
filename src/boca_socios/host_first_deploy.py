@@ -1912,6 +1912,7 @@ def _owner_enroll_start(
         # A fixed phase code is safe for Actions; raw host details remain private.
         raise PreflightError(f"owner enrollment phase={phase_code}") from exc
 
+
 def _owner_enroll_wait(
     image: str, source_sha: str, compose_sha: str, origin: str, subject: str, digest: str
 ) -> None:
