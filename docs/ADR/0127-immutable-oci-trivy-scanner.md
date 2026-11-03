@@ -1,6 +1,6 @@
 # ADR 0127: fail-closed Trivy through the publisher's immutable OCI image
 
-**Status:** Draft proposal for [RCA #300](https://github.com/mbalbo2023/boca-socios-assistant/issues/300), 2026-11-03 ART. No release or droplet operation.
+**Status:** Draft [PR #301](https://github.com/mbalbo2023/boca-socios-assistant/pull/301) for [RCA #300](https://github.com/mbalbo2023/boca-socios-assistant/issues/300), 2026-11-03 ART. No release or droplet operation.
 
 ## Observation, not speculation
 
