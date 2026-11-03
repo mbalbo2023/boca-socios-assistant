@@ -35,12 +35,16 @@ Narrow, fail-closed observability change to the existing manually triggered
    inspection had passed. Preserve unknown objects. If the network had already
    failed, preserve the original classified reason and set
    `cleanup=INDETERMINATE`.
-4. The Actions runner accepts **only** an anchored fixed receipt and known
-   zero/one return-code combinations. An absent or malformed receipt results
-   in `receipt_invalid`; SSH/remote unexpected return codes result in
-   `ssh_rc_unexpected`; timeout status 124/137 results in `ssh_timeout`.
-   Runner labels are not passed off as host observations. Raw SSH stdout and
-   stderr remain withheld from the job summary.
+4. The Actions runner rejects transport failure **before inspecting or
+   printing any receipt**. Status 124 gives `ssh_timeout`; 137 means
+   `ssh_terminated` (SIGKILL/termination **without** assuming a timeout);
+   other unexpected SSH/remote return codes give `ssh_rc_unexpected`.
+   For expected rc 0/1, it then accepts only an anchored fixed receipt with
+   coherent status: rc 0 requires `PASS reason=none cleanup=VERIFIED`; rc 1
+   requires `NO_GO` and a non-`none` reason. Absent, malformed or inconsistent
+   receipts give `receipt_invalid`. Runner labels are not passed off as
+   host observations. Raw SSH stdout and stderr remain withheld from the job
+   summary.
 5. The independent `always()` diagnostic-network cleanup and dedicated
    rootless Boca daemon stop remain mandatory, even if the preceding step
    fails. No blind retries, firewall/kernel changes, global Docker commands,
@@ -62,7 +66,8 @@ run proves otherwise.
 | Creation fails without a known Docker subcause | `NO_GO reason=network_create cleanup=VERIFIED` | fail |
 | Inspection fails, exact network removed | `NO_GO reason=network_inspect cleanup=VERIFIED` | fail |
 | Cleanup fails, uncertain Boca network retained | `NO_GO reason=cleanup cleanup=INDETERMINATE` | fail |
-| SSH timeout, unexpected rc, invalid/missing receipt | fixed runner-only reason, host output withheld | fail |
+| SSH rc 124 timeout, 137 termination, unexpected rc | respectively `ssh_timeout`, `ssh_terminated`, `ssh_rc_unexpected`, with no trusted host receipt | fail |
+| Missing, malformed or inconsistent host receipt | `receipt_invalid`, host output withheld | fail |
 | Valid creation, inspection and exact cleanup | `PASS reason=none cleanup=VERIFIED` | diagnostic pass only |
 
 Unit tests in `tests/test_network_probe_phase_receipts.py` verify the sanitized

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -151,6 +154,7 @@ def test_workflow_distinguishes_invalid_receipt_and_ssh_failures_without_new_dis
         "network_inspect",
         "cleanup",
         "ssh_timeout",
+        "ssh_terminated",
         "ssh_rc_unexpected",
         "receipt_invalid",
     ):
@@ -159,3 +163,90 @@ def test_workflow_distinguishes_invalid_receipt_and_ssh_failures_without_new_dis
     assert "if: always() && startsWith(inputs.operation, 'network-probe')" in workflow
     assert "docker system prune" not in workflow
     assert "--network=host" not in workflow
+
+
+@pytest.mark.parametrize(
+    ("remote_status", "host_receipt", "expected_status", "reason"),
+    [
+        (124, "BOCA_NETWORK_PROBE result=PASS reason=none cleanup=VERIFIED", 1, "ssh_timeout"),
+        (137, "BOCA_NETWORK_PROBE result=PASS reason=none cleanup=VERIFIED", 1, "ssh_terminated"),
+        (
+            255,
+            "BOCA_NETWORK_PROBE result=PASS reason=none cleanup=VERIFIED",
+            1,
+            "ssh_rc_unexpected",
+        ),
+        (1, "BOCA_NETWORK_PROBE result=PASS reason=none cleanup=VERIFIED", 1, "receipt_invalid"),
+        (
+            0,
+            "BOCA_NETWORK_PROBE result=NO_GO reason=network_create cleanup=VERIFIED",
+            1,
+            "receipt_invalid",
+        ),
+        (
+            0,
+            "BOCA_NETWORK_PROBE result=PASS reason=network_create cleanup=VERIFIED",
+            1,
+            "receipt_invalid",
+        ),
+        (
+            0,
+            "BOCA_NETWORK_PROBE result=PASS reason=none cleanup=INDETERMINATE",
+            1,
+            "receipt_invalid",
+        ),
+        (1, "BOCA_NETWORK_PROBE result=NO_GO reason=none cleanup=VERIFIED", 1, "receipt_invalid"),
+        (1, "", 1, "receipt_invalid"),
+        (0, "garbled remote output: PRIVATE_DETAILS", 1, "receipt_invalid"),
+        (
+            1,
+            "BOCA_NETWORK_PROBE result=NO_GO reason=network_create cleanup=VERIFIED",
+            1,
+            "network_create",
+        ),
+        (0, "BOCA_NETWORK_PROBE result=PASS reason=none cleanup=VERIFIED", 0, "none"),
+    ],
+)
+def test_workflow_receipt_gate_executes_offline_and_rejects_unsupported_statuses(
+    tmp_path: Path, remote_status: int, host_receipt: str, expected_status: int, reason: str
+) -> None:
+    """Execute only the step's local shell with a fake `timeout`, never remote SSH."""
+    repository = Path(__file__).resolve().parents[1]
+    workflow = (repository / ".github/workflows/boca-first-deploy.yml").read_text()
+    snippet = (
+        workflow.split(
+            "      - name: Boca rootless network probe without app image or published port\n",
+            1,
+        )[1]
+        .split("        run: |\n", 1)[1]
+        .split("      - name: Always verify absence of Boca temporary diagnostic network\n", 1)[0]
+    )
+    script = textwrap.dedent(snippet)
+    (tmp_path / "boca-compose.sha").write_text("fixture_sha\n", encoding="utf-8")
+    result_file = tmp_path / "summary.txt"
+    env = dict(os.environ)
+    env.update(
+        {
+            "RUNNER_TEMP": str(tmp_path),
+            "GITHUB_STEP_SUMMARY": str(result_file),
+            "BOCA_OPERATION": "network-probe-icc-true",
+            "BOCA_SOURCE_SHA": "fixture_sha",
+            "FAKE_PROBE_RC": str(remote_status),
+            "FAKE_HOST_OUTPUT": host_receipt,
+        }
+    )
+    fake_timeout = 'timeout() { printf \'%s\\n\' "$FAKE_HOST_OUTPUT"; return "$FAKE_PROBE_RC"; }\n'
+    result = subprocess.run(  # noqa: S603 - local offline shell, fake timeout, no SSH process
+        ["/bin/bash", "-c", fake_timeout + script],
+        cwd=repository,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    summary = result_file.read_text(encoding="utf-8")
+    assert result.returncode == expected_status
+    assert f"reason={reason}" in summary
+    assert "PRIVATE_DETAILS" not in summary + result.stdout + result.stderr
+    if remote_status not in (0, 1) or reason == "receipt_invalid":
+        assert "result=PASS" not in summary + result.stdout

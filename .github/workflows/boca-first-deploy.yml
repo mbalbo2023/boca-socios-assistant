@@ -1018,18 +1018,35 @@ jobs:
           timeout --signal=TERM --kill-after=5s 60s ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-network-probe.receipt" 2>/dev/null
           probe_rc=$?
           set -e
-          receipt=''
-          if [[ "$probe_rc" -eq 0 || "$probe_rc" -eq 1 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-network-probe.receipt")"; fi
+          # Transport failure is classified before looking at any untrusted
+          # receipt. Exit 137 is SIGKILL/termination, not necessarily timeout.
+          failure_reason=''
+          if [[ "$probe_rc" -eq 124 ]]; then
+            failure_reason=ssh_timeout
+          elif [[ "$probe_rc" -eq 137 ]]; then
+            failure_reason=ssh_terminated
+          elif [[ "$probe_rc" -ne 0 && "$probe_rc" -ne 1 ]]; then
+            failure_reason=ssh_rc_unexpected
+          fi
+          if [[ -n "$failure_reason" ]]; then
+            printf 'Boca network probe: NO_GO reason=%s; host output withheld.\n' "$failure_reason" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          receipt="$(cat "$RUNNER_TEMP/boca-network-probe.receipt" 2>/dev/null || true)"
           pattern='^BOCA_NETWORK_PROBE result=(PASS|NO_GO) reason=(none|preflight_boundary|preflight_namespace|preflight_owner_volume|preflight_storage|network_create|network_inspect|cleanup|firewall|firewall_backend_mismatch|firewall_table_missing|firewall_chain_missing|firewall_chain_add_unsupported|firewall_operation_unsupported|firewall_match_unavailable|firewall_bridge_netfilter_unavailable|firewall_unsupported|firewall_permission|firewall_lock_denied|ipam_exhausted|ipam_overlap|already_exists|permission|invalid_config|unsupported|timeout|unclassified) cleanup=(VERIFIED|INDETERMINATE)$'
           if [[ ${#receipt} -gt 180 || ! "$receipt" =~ $pattern ]]; then
-            if [[ "$probe_rc" -eq 124 || "$probe_rc" -eq 137 ]]; then
-              failure_reason=ssh_timeout
-            elif [[ "$probe_rc" -ne 0 && "$probe_rc" -ne 1 ]]; then
-              failure_reason=ssh_rc_unexpected
-            else
-              failure_reason=receipt_invalid
+            printf 'Boca network probe: NO_GO reason=receipt_invalid; host output withheld.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          # A valid-looking PASS with a failed remote process (or an impossible
+          # PASS/reason combination) must never appear as trusted evidence.
+          if [[ "$probe_rc" -eq 0 ]]; then
+            if [[ "${BASH_REMATCH[1]}" != PASS || "${BASH_REMATCH[2]}" != none || "${BASH_REMATCH[3]}" != VERIFIED ]]; then
+              printf 'Boca network probe: NO_GO reason=receipt_invalid; host output withheld.\n' >> "$GITHUB_STEP_SUMMARY"
+              exit 1
             fi
-            printf 'Boca network probe: NO_GO reason=%s; host output withheld.\n' "$failure_reason" >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "${BASH_REMATCH[1]}" != NO_GO || "${BASH_REMATCH[2]}" == none ]]; then
+            printf 'Boca network probe: NO_GO reason=receipt_invalid; host output withheld.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           printf 'Boca rootless network probe (%s): %s. Diagnostic only, no application or owner secret.\n' "$BOCA_OPERATION" "$receipt" >> "$GITHUB_STEP_SUMMARY"
