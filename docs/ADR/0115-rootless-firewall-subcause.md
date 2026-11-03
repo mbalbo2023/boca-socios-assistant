@@ -1,7 +1,7 @@
 # ADR 0115 — Rootless Docker firewall subcause, no host-wide workaround
 
 **Status:** PR #278 integrated on `main=b1610b7d0a378671bf2884486ec2c0ddf2c53936`;
-follow-up diagnostic candidate PR #279. RCA #275 remains open. This ADR
+follow-up diagnostic PR #279. RCA #275 remains open. This ADR
 records host evidence and diagnostic changes, **not** host repair or deployment.
 
 ## Subsequent host observation — protected run #337
@@ -21,7 +21,7 @@ mean `Operation not supported`, an unloaded iptables match, or a
 `bridge-nf-call-iptables` reference. These are alternatives, **not three
 confirmed findings**; no specific kernel module, rule or backend is proven.
 
-## Follow-up candidate PR #279 — four fixed subcategories
+## Follow-up PR #279 — four fixed subcategories
 
 In the same bounded private-stderr classification, distinguish:
 
@@ -33,7 +33,7 @@ In the same bounded private-stderr classification, distinguish:
   `bridge-nf-call-iptables` path.
 
 An ambiguous bridge-netfilter mention still returns the historical
-`firewall_unsupported` fallback. This candidate does not inspect a module,
+`firewall_unsupported` fallback. This change does not inspect a module,
 select a backend, change kernel state or guarantee a fix. Tests must prove
 the code is deterministic and does not expose command stderr. Only the
 receipt allowlist changes in the **same** manual workflow; exact SHA/actor,
@@ -60,7 +60,7 @@ permissions, failure chain, or a problem with another application's firewall.
 
 ## Safe offline enhancement
 
-On the feature branch, refine the **existing** `network-probe` result to
+Integrated PR #278 refined the **existing** `network-probe` result to
 return only fixed bounded categories when Docker's underlying stderr actually
 contains a recognized message:
 
@@ -90,7 +90,7 @@ compatible solution for this particular host. Even
 `enable_ip_masquerade=false` does not promise that Docker will avoid
 all firewall rules.
 
-A future actual **subcause receipt** may justify evaluating the smallest
+A narrower confirmed **host cause receipt** may justify evaluating the smallest
 Boca-scoped change. Test it without modifying Porota or global iptables,
 UFW, nftables, sysctl, the default Docker daemon, host routes or other
 ports. Do not silently use the Docker default bridge or host networking,
