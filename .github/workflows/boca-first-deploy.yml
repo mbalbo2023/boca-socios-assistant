@@ -8,7 +8,7 @@ on:
         description: Boca-only host operation; browser IPC is a separate, opt-in, protected BETA gate
         required: true
         type: choice
-        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
+        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
         description: Exact current main commit approved for the operation
         required: true
@@ -724,7 +724,7 @@ jobs:
               test -z "$BOCA_RELEASE_RUN_ID"
               test -z "$BOCA_SITE_ENVELOPE"
               ;;
-            network-probe|network-probe-icc-true)
+            network-probe|network-probe-icc-true|network-probe-icc-true-cleanup-only)
               test "$BOCA_HOST_READONLY_ENV_READY" = ready
               test "$BOCA_DEPLOY_ENV_READY" = ready
               test -z "$BOCA_IMAGE_REF"
@@ -988,7 +988,7 @@ jobs:
             exit 1
           fi
       - name: Boca rootless network probe without app image or published port
-        if: startsWith(inputs.operation, 'network-probe')
+        if: startsWith(inputs.operation, 'network-probe') && inputs.operation != 'network-probe-icc-true-cleanup-only'
         run: |
           set +e
           remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - "$BOCA_OPERATION" '' "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")")"
@@ -1036,7 +1036,7 @@ jobs:
         run: |
           set +e
           cleanup_phase=network-probe-cleanup
-          if [[ "$BOCA_OPERATION" = network-probe-icc-true ]]; then cleanup_phase=network-probe-icc-true-cleanup; fi
+          if [[ "$BOCA_OPERATION" = network-probe-icc-true || "$BOCA_OPERATION" = network-probe-icc-true-cleanup-only ]]; then cleanup_phase=network-probe-icc-true-cleanup; fi
           remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - "$cleanup_phase" '' "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")")"
           timeout --signal=TERM --kill-after=5s 60s ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-network-cleanup.receipt" 2>/dev/null
           cleanup_rc=$?
