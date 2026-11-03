@@ -1040,14 +1040,17 @@ jobs:
         run: |
           set +e
           remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - -- owner-enroll-start "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' '' "$BOCA_OWNER_CAPABILITY_SHA256")"
-          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-owner-enroll-start.receipt" 2>/dev/null
+          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-owner-enroll-start.receipt" 2> "$RUNNER_TEMP/boca-owner-enroll-start.stderr"
           enroll_rc=$?
           set -e
           receipt=''
           if [[ "$enroll_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-owner-enroll-start.receipt")"; fi
           pattern='^BOCA_OWNER_ENROLL state=READY address=127[.]0[.]0[.]1 port=8443 ttl=900 source_sha=([0-9a-f]{40})$'
           if [[ "$enroll_rc" -ne 0 || ${#receipt} -gt 200 || ! "$receipt" =~ $pattern || "${BASH_REMATCH[1]}" != "$BOCA_SOURCE_SHA" ]]; then
-            printf 'Boca owner enrollment: NO_GO before Chrome use. Immediate selective cleanup follows; no port occupant may be changed.\n' >> "$GITHUB_STEP_SUMMARY"
+            # Fail closed: the remote stderr is held only in the runner's private temp file.
+            # Publish a fixed reviewed phase code; never print/upload raw host stderr.
+            reason="$(PYTHONPATH=src python3 -m boca_socios.owner_enroll_diagnostic "$RUNNER_TEMP/boca-owner-enroll-start.stderr")"
+            printf 'Boca owner enrollment: NO_GO reason=%s before Chrome use. Immediate selective cleanup follows; no port occupant may be changed.\n' "$reason" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           printf 'Boca owner enrollment: `%s`. Open the previously generated private URL in Chrome through Termius now; this summary contains NO bearer key. TTL begins with the temporary server.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"

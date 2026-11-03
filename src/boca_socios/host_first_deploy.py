@@ -1797,97 +1797,120 @@ def _owner_enroll_ready() -> bool:
 def _owner_enroll_start(
     image: str, source_sha: str, origin: str, subject: str, digest: str, compose_sha: str = ""
 ) -> None:
-    if DIGEST_PATTERN.fullmatch(digest) is None:
-        raise PreflightError("owner capability digest must be SHA-256 hex")
-    _owner_enroll_preflight(image, source_sha, origin, subject)
-    if not _owner_enroll_port_free():
-        raise PreflightError("Boca loopback port 8443 BUSY; no occupant changed")
-    before = _storage_snapshot()
-    existing_image = _owner_enroll_image_preexisting(image)
-    _owner_enroll_write_marker(image, source_sha, compose_sha, digest, existing_image)
-    _run("docker", "pull", image)
-    digests = json.loads(
-        _run("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image)
-    )
-    revision = _run(
-        "docker",
-        "image",
-        "inspect",
-        "--format",
-        '{{index .Config.Labels "org.opencontainers.image.revision"}}',
-        image,
-    )
-    if not isinstance(digests, list) or image not in digests or revision != source_sha:
-        raise PreflightError("owner enrollment image differs from reviewed release")
-    _validate_storage_continuity(before, _storage_snapshot())
-    receipt = _owner_receipt(
-        _run(*_owner_container(image, "inspect-prepared", origin, subject)), "prepare"
-    )
-    match = re.fullmatch(
-        r"BOCA_OWNER_BOOTSTRAP state=ALREADY_PREPARED public_key=([A-Za-z0-9_-]{43}) fingerprint=([0-9a-f]{64})",
-        receipt,
-    )
-    if match is None:
-        raise PreflightError("owner X25519 recipient must be prepared before enrollment")
-    _site_daemon_empty()
-    _validate_owner_volume()
-    created = _run(
-        "docker",
-        "volume",
-        "create",
-        "--driver",
-        "local",
-        "--label",
-        f"com.docker.compose.project={PROJECT}",
-        "--label",
-        "com.docker.compose.volume=owner_enroll_staging",
-        ENROLL_VOLUME,
-    )
-    if created != ENROLL_VOLUME:
-        raise PreflightError("temporary Boca staging volume creation unverified")
-    _owner_enroll_volume()
-    if _run(*_owner_enroll_init_container(image)):
-        raise PreflightError("temporary Boca staging ownership preparation unverified")
-    _owner_enroll_volume()
-    network = _run(
-        "docker",
-        "network",
-        "create",
-        "--driver",
-        "bridge",
-        "--opt",
-        "com.docker.network.bridge.enable_ip_masquerade=false",
-        "--opt",
-        "com.docker.network.bridge.enable_icc=false",
-        "--opt",
-        "com.docker.network.bridge.host_binding_ipv4=127.0.0.1",
-        "--label",
-        f"com.docker.compose.project={PROJECT}",
-        "--label",
-        "com.docker.compose.network=owner_enroll_private",
-        ENROLL_NETWORK,
-    )
-    if re.fullmatch(r"[0-9a-f]{64}", network) is None:
-        raise PreflightError("temporary Boca network creation unverified")
-    _owner_enroll_network("")
-    launched = _run(
-        *_owner_enroll_container(image, source_sha, subject, digest, match[1], match[2])
-    )
-    if re.fullmatch(r"[0-9a-f]{64}", launched) is None:
-        raise PreflightError("temporary Boca container launch unverified")
-    container, running, _ = _owner_enroll_container_state(image, source_sha)
-    if launched != container or not running:
-        raise PreflightError("temporary Boca enrollment listener did not start")
-    _owner_enroll_network(container)
-    deadline = monotonic() + 10
-    while monotonic() < deadline:
-        if _owner_enroll_ready():
-            print(
-                f"BOCA_OWNER_ENROLL state=READY address=127.0.0.1 port=8443 ttl=900 source_sha={source_sha}"
-            )
-            return
-        sleep(0.25)
-    raise PreflightError("temporary Boca enrollment listener not ready")
+    phase_code = "preflight"
+    try:
+        phase_code = "coordinates"
+        if DIGEST_PATTERN.fullmatch(digest) is None:
+            raise PreflightError("owner capability digest must be SHA-256 hex")
+        phase_code = "preflight"
+        _owner_enroll_preflight(image, source_sha, origin, subject)
+        phase_code = "port"
+        if not _owner_enroll_port_free():
+            raise PreflightError("Boca loopback port 8443 BUSY; no occupant changed")
+        phase_code = "storage"
+        before = _storage_snapshot()
+        phase_code = "image_inventory"
+        existing_image = _owner_enroll_image_preexisting(image)
+        phase_code = "marker"
+        _owner_enroll_write_marker(image, source_sha, compose_sha, digest, existing_image)
+        phase_code = "pull"
+        _run("docker", "pull", image)
+        phase_code = "image_provenance"
+        digests = json.loads(
+            _run("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image)
+        )
+        revision = _run(
+            "docker",
+            "image",
+            "inspect",
+            "--format",
+            '{{index .Config.Labels "org.opencontainers.image.revision"}}',
+            image,
+        )
+        if not isinstance(digests, list) or image not in digests or revision != source_sha:
+            raise PreflightError("owner enrollment image differs from reviewed release")
+        phase_code = "storage_continuity"
+        _validate_storage_continuity(before, _storage_snapshot())
+        phase_code = "recipient"
+        receipt = _owner_receipt(
+            _run(*_owner_container(image, "inspect-prepared", origin, subject)), "prepare"
+        )
+        match = re.fullmatch(
+            r"BOCA_OWNER_BOOTSTRAP state=ALREADY_PREPARED public_key=([A-Za-z0-9_-]{43}) fingerprint=([0-9a-f]{64})",
+            receipt,
+        )
+        if match is None:
+            raise PreflightError("owner X25519 recipient must be prepared before enrollment")
+        _site_daemon_empty()
+        _validate_owner_volume()
+        phase_code = "volume_create"
+        created = _run(
+            "docker",
+            "volume",
+            "create",
+            "--driver",
+            "local",
+            "--label",
+            f"com.docker.compose.project={PROJECT}",
+            "--label",
+            "com.docker.compose.volume=owner_enroll_staging",
+            ENROLL_VOLUME,
+        )
+        if created != ENROLL_VOLUME:
+            raise PreflightError("temporary Boca staging volume creation unverified")
+        phase_code = "volume_verify"
+        _owner_enroll_volume()
+        phase_code = "volume_permissions"
+        if _run(*_owner_enroll_init_container(image)):
+            raise PreflightError("temporary Boca staging ownership preparation unverified")
+        _owner_enroll_volume()
+        phase_code = "network_create"
+        network = _run(
+            "docker",
+            "network",
+            "create",
+            "--driver",
+            "bridge",
+            "--opt",
+            "com.docker.network.bridge.enable_ip_masquerade=false",
+            "--opt",
+            "com.docker.network.bridge.enable_icc=false",
+            "--opt",
+            "com.docker.network.bridge.host_binding_ipv4=127.0.0.1",
+            "--label",
+            f"com.docker.compose.project={PROJECT}",
+            "--label",
+            "com.docker.compose.network=owner_enroll_private",
+            ENROLL_NETWORK,
+        )
+        if re.fullmatch(r"[0-9a-f]{64}", network) is None:
+            raise PreflightError("temporary Boca network creation unverified")
+        phase_code = "network_verify"
+        _owner_enroll_network("")
+        phase_code = "container_create"
+        launched = _run(
+            *_owner_enroll_container(image, source_sha, subject, digest, match[1], match[2])
+        )
+        if re.fullmatch(r"[0-9a-f]{64}", launched) is None:
+            raise PreflightError("temporary Boca container launch unverified")
+        phase_code = "container_verify"
+        container, running, _ = _owner_enroll_container_state(image, source_sha)
+        if launched != container or not running:
+            raise PreflightError("temporary Boca enrollment listener did not start")
+        _owner_enroll_network(container)
+        phase_code = "listener_health"
+        deadline = monotonic() + 10
+        while monotonic() < deadline:
+            if _owner_enroll_ready():
+                print(
+                    f"BOCA_OWNER_ENROLL state=READY address=127.0.0.1 port=8443 ttl=900 source_sha={source_sha}"
+                )
+                return
+            sleep(0.25)
+        raise PreflightError("temporary Boca enrollment listener not ready")
+    except (PreflightError, OSError, ValueError, TypeError, KeyError) as exc:
+        # A fixed phase code is safe for Actions; raw host details remain private.
+        raise PreflightError(f"owner enrollment phase={phase_code}") from exc
 
 
 def _owner_enroll_wait(
