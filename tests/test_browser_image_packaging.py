@@ -101,7 +101,4 @@ def test_existing_security_workflow_scans_browser_as_strictly_as_controller() ->
     )
     assert workflow.count("run: bash scripts/trivy_scan_image.sh") == 2
     browser_scan = workflow.split("- name: Scan browser OS and library vulnerabilities\n", 1)[1]
-    assert (
-        'run: bash scripts/trivy_scan_image.sh "boca-browser-scan:$GITHUB_SHA"'
-        in browser_scan
-    )
+    assert 'run: bash scripts/trivy_scan_image.sh "boca-browser-scan:$GITHUB_SHA"' in browser_scan

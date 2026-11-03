@@ -20,6 +20,9 @@ def test_trivy_image_pinned_by_both_semver_and_immutable_publisher_digest() -> N
     assert "--pull=missing" in SCAN
     assert "--cap-drop=ALL" in SCAN
     assert "--security-opt=no-new-privileges" in SCAN
+    assert '--user "$(id -u):$(id -g)" --group-add "$socket_gid"' in SCAN
+    assert "--env HOME=/tmp --env TRIVY_CACHE_DIR=/tmp/trivy-cache" in SCAN
+    assert "target=/tmp/trivy-cache" in SCAN
     assert (
         "--mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock,readonly" in SCAN
     )
@@ -104,6 +107,9 @@ def test_trivy_cli_uses_pinned_docker_source_and_propagates_scanner_failure(
         encoding="utf-8",
     )
     fake_docker.chmod(0o700)
+    fake_stat = tmp_path / "stat"
+    fake_stat.write_text("#!/bin/sh\nprintf '123\\n'\n", encoding="utf-8")
+    fake_stat.chmod(0o700)
     log_path = tmp_path / "calls.log"
     env = os.environ.copy()
     env.update(
@@ -134,5 +140,8 @@ def test_trivy_cli_uses_pinned_docker_source_and_propagates_scanner_failure(
     assert calls[0] == "image inspect boca-socios-scan:" + "a" * 40
     assert "run --rm --pull=missing" in calls[1]
     assert "--image-src docker" in calls[1]
+    assert "--user" in calls[1]
+    assert "--group-add" in calls[1]
+    assert "TRIVY_CACHE_DIR=/tmp/trivy-cache" in calls[1]
     assert "--severity HIGH,CRITICAL --ignore-unfixed=false --exit-code 1" in calls[1]
     assert "sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c" in calls[1]
