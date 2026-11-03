@@ -1,8 +1,8 @@
 # Boca Socios Assistant
 
-## Prioridad del 03/11: verificar Chrome físico antes del piloto real
+## Prioridad del 03/11: comprobar Chrome físico y login público antes del piloto real
 
-El titular priorizó la prueba del sitio real antes de las 12:00 ART. La autenticación de Fernando en Cloud Browser no quedó verificada pese a la confirmación del titular de que las credenciales son correctas. El bot de este repositorio **todavía no inicia una sesión real ni reserva entradas**. El candidato [issue #281](https://github.com/mbalbo2023/boca-socios-assistant/issues/281) agrega exclusivamente una inspección del **binario Chrome/Chromium existente** bajo UID 10001 a través del único workflow protegido: no lo lanza, instala ni autentica. El resultado físico sigue **PENDIENTE** y no hay BETA instalada. Véase [ADR0117](docs/ADR/0117-host-chrome-readonly-inventory.md). No mezclar con la venta de la final a las 14:00 en la plataforma de CONMEBOL.
+El titular priorizó la prueba del sitio real antes de las 12:00 ART. La autenticación de Fernando en Cloud Browser no quedó verificada pese a la confirmación del titular de que las credenciales son correctas. El bot de este repositorio **todavía no inicia una sesión real ni reserva entradas**. El [run físico #347](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41655307167) en main `4f9718d` confirmó **`google-chrome-stable` presente para UID 10001** con el PR #282 integrado. El [issue #283](https://github.com/mbalbo2023/boca-socios-assistant/issues/283) propone un único GET público en ese Chrome contra login, **sin credenciales** y con perfil temporal. Sólo después de recibir su prueba física sabremos si Chrome abre la página; no confundir con sesión autenticada ni BETA instalada. Véanse [ADR0117](docs/ADR/0117-host-chrome-readonly-inventory.md) y [ADR0118](docs/ADR/0118-one-shot-public-login-chrome-smoke.md). No mezclar con la venta de la final a las 14:00 en la plataforma de CONMEBOL.
 
 ## RCA #275 — red Docker rootless, recibo real #342 (2026-11-03 ART)
 

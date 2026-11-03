@@ -1,8 +1,8 @@
 # Safe operations — verified evidence and gated procedures
 
-## Piloto conectado: Chrome del droplet sin suponer instalación (03/11/2026)
+## Piloto conectado: Chrome físico encontrado; nueva prueba pública acotada (03/11/2026)
 
-La nueva operación propuesta `chrome-host-inspect` de [issue #281](https://github.com/mbalbo2023/boca-socios-assistant/issues/281) se limita a buscar cuatro ejecutables permitidos en el PATH del usuario Boca UID 10001. Requiere `source_sha` idéntico al `main` actual, `service=controller`, presupuesto `0.5cpu-256m-64pids`, entorno de lectura habilitado y entradas privadas/image/release vacías. Tras merge y CI de `main` GREEN, seleccionar manualmente esa operación en **Boca first deploy**. Un recibo `PRESENT` sólo significa que hay un binario en el PATH; no implica navegador operativo, sesión de Fernando, cola ni reserva. Un `ABSENT` tampoco autoriza instalar paquetes. No exponer rutas de host ni errores. Ver [ADR0117](ADR/0117-host-chrome-readonly-inventory.md). No alterar otros workloads ni debilitar aislamiento.
+La operación `chrome-host-inspect` de [issue #281](https://github.com/mbalbo2023/boca-socios-assistant/issues/281) ya dio recibo físico [#347](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41655307167) `PRESENT google-chrome-stable uid=10001`. Ahora [issue #283](https://github.com/mbalbo2023/boca-socios-assistant/issues/283) agrega **`chrome-host-public-smoke`**, con URL única fija de login de Boca, navegador headless existente, sandbox activo, perfil privado efímero y grupo de procesos terminado aun ante timeout. No se transmiten credenciales ni se opera cola/reserva. Requiere `source_sha` idéntico a `main`, `service=controller`, presupuesto `0.5cpu-256m-64pids`, entorno de lectura habilitado, entradas privadas/image/release vacías; sólo disparar tras CI y seguridad de PR y main GREEN. El recibo es sólo `FORM_VISIBLE|OTHER_PAGE|CHALLENGE|NO_GO` y cleanup; un challenge o un login no completado no justifican bypass. Ver [ADR0118](ADR/0118-one-shot-public-login-chrome-smoke.md). No alterar otros workloads.
 
 ## RCA #275 — diagnóstico rootless #342 y experimento ICC=true (2026-11-03 ART)
 
