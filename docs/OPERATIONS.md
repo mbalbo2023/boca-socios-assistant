@@ -1,5 +1,20 @@
 # Safe operations — verified evidence and gated procedures
 
+## Decisión vigente sobre recursos (2026-11-02, candidato #273)
+
+El dueño corrigió expresamente la condición anterior: la BETA debe
+**desplegarse de forma aislada y medirse después de su instalación**, no
+bloquearse por márgenes preventivos de CPU/RAM/PIDs que nunca se calibraron
+con el runtime real. [Issue #259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259)
+y [ADR0112](ADR/0112-postdeploy-resource-observation.md) contienen el
+razonamiento y los límites. El PR #273 sigue **candidato, no integrado**:
+ningún documento atribuye esta conducta a main hasta merge y checks.
+Permanecen obligatorios SHA/digests, identidad rootless, seguridad,
+aislamiento, puerto único 8443, espacio seguro para Docker y limpieza
+selectiva ante fallo; los caps del contenedor no son una medida de uso real.
+El run #290 falló en observación; la restauración detenida pasó. La BETA
+aún no fue instalada y la captura pública continúa bloqueada.
+
 La reiteración del dueño está registrada, pero la revisión automática volvió a bloquear el dispatch antes de ejecutarlo; no existe un nuevo run. Véase el [bloqueo actualizado](https://github.com/mbalbo2023/boca-socios-assistant/issues/27#issuecomment-6591174050). La captura sigue pendiente por ese control de plataforma.
 
 ## Documented state and current checkpoint
