@@ -49,8 +49,10 @@ volúmenes, Docker ni redes de aplicaciones ajenas.
 2. Excluir exclusivamente ambos archivos de Ruff y Mypy, impedir su importación
    por Pytest, retirar el paso Chromium «synthetic ticket flow» que los ejecutaba y
    deselectar sólo los cuatro módulos de tests con importación directa. La
-   cobertura de controlador, seguridad, infraestructura y los demás fixtures
-   Chromium offline continúa activa.
+   prueba de ciclo real del par con `browser-worker` en el runner descartable
+   del workflow de despliegue también queda fuera: arrancaba el módulo opaco
+   y no podía acreditarse bajo estas reglas. La cobertura de controlador,
+   seguridad, infraestructura y los demás fixtures Chromium offline sigue activa.
 3. Conservar el historial RCA y eximir únicamente los selectores históricos
    que dependen de estos dos archivos, bajo hashes fijos, manifiesto de
    atestación externa, prueba de integridad y prueba de separación del

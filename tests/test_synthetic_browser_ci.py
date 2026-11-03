@@ -76,6 +76,16 @@ def test_linters_types_and_local_tests_exclude_only_owner_blackbox_modules() -> 
     } <= set(config["tool"]["pytest"]["ini_options"]["addopts"])
 
 
+def test_first_deploy_pr_smoke_keeps_controller_but_never_starts_owner_worker() -> None:
+    workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text(encoding="utf-8")
+    runner = workflow.split("  pr-runtime-smoke:\n", 1)[1].split("  deploy:\n", 1)[0]
+    assert "Run synthetic loopback HTTP acceptance inside capped disposable controller" in runner
+    assert "Verify offline sender readiness and never-started production network inspect" in runner
+    assert "Verify actual dual-service inspect and retained-container restart" not in runner
+    assert "up --no-build --no-deps --wait --wait-timeout 90 -d browser-worker" not in runner
+    assert "python -m boca_socios.browser.ipc_worker" not in runner
+
+
 def test_synthetic_browser_receipt_requires_exact_allowlisted_fields() -> None:
     parser = run_path(str(ROOT / "scripts/check_synthetic_browser_receipt.py"))
     assert parser["validate_receipt"](
