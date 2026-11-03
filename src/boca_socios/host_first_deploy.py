@@ -48,6 +48,12 @@ ENROLL_NETWORK_OPTIONS = {
     "com.docker.network.bridge.enable_icc": "false",
     "com.docker.network.bridge.host_binding_ipv4": "127.0.0.1",
 }
+# RCA #275 diagnostic ONLY: no container is ever attached to this temporary
+# ICC=true variant. The real one-use owner enrollment keeps ICC=false.
+PROBE_ICC_TRUE_OPTIONS = {
+    **ENROLL_NETWORK_OPTIONS,
+    "com.docker.network.bridge.enable_icc": "true",
+}
 # Opt-in browser-ipc-v2 ONLY. The legacy singleton beta-install contract above
 # and below is intentionally unchanged; these coordinates require their own
 # protected, new-only attempt marker and dedicated cleanup in the SAME job.
@@ -1753,7 +1759,7 @@ def _owner_enroll_container_state(image: str, source_sha: str) -> tuple[str, boo
     return container, state["Running"], state["ExitCode"]
 
 
-def _owner_enroll_network(container: str) -> None:
+def _owner_enroll_network(container: str, *, icc_true: bool = False) -> None:
     names = _names("network", "name=^boca-socios_")
     if names != {ENROLL_NETWORK}:
         raise PreflightError("temporary Boca network inventory unverified")
@@ -1766,7 +1772,7 @@ def _owner_enroll_network(container: str) -> None:
         record.get("Name") != ENROLL_NETWORK
         or record.get("Driver") != "bridge"
         or record.get("Internal") is not False
-        or record.get("Options") != ENROLL_NETWORK_OPTIONS
+        or record.get("Options") != (PROBE_ICC_TRUE_OPTIONS if icc_true else ENROLL_NETWORK_OPTIONS)
         or not isinstance(labels, dict)
         or labels.get("com.docker.compose.project") != PROJECT
         or labels.get("com.docker.compose.network") != "owner_enroll_private"
@@ -1850,12 +1856,15 @@ def _network_probe_error(error: PreflightError) -> str:
     return "unclassified"
 
 
-def _network_probe_cleanup() -> None:
+def _network_probe_cleanup(*, icc_true: bool = False) -> None:
     """Remove only the exactly identified unused Boca diagnostic network."""
     _site_daemon_empty()
     names = _names("network", "name=^boca-socios_")
     if names == {ENROLL_NETWORK}:
-        _owner_enroll_network("")
+        if icc_true:
+            _owner_enroll_network("", icc_true=True)
+        else:
+            _owner_enroll_network("")
         _run("docker", "network", "rm", ENROLL_NETWORK)
     elif names:
         raise PreflightError("unverified rootless network inventory")
@@ -1864,12 +1873,13 @@ def _network_probe_cleanup() -> None:
     _site_daemon_empty()
 
 
-def _network_probe() -> None:
+def _network_probe(*, icc_true: bool = False) -> None:
     """Reproduce only the rootless Boca bridge creation, with proven cleanup.
 
     No image, container, published port, third-party traffic, or owner data
-    mutation. The exact network has to be absent before starting and absent
-    after cleanup; an uncertain object is preserved and reported INDETERMINATE.
+    mutation. The explicit ICC=true variant only tests the upstream Moby RCA
+    without changing the hardened owner-enrollment network. The exact network
+    has to be absent before and after; uncertain objects remain untouched.
     """
     if not _safe_dir(ROOT) or any(ROOT.iterdir()):
         raise PreflightError("Boca network probe requires empty staging")
@@ -1895,7 +1905,7 @@ def _network_probe() -> None:
                 "--opt",
                 "com.docker.network.bridge.enable_ip_masquerade=false",
                 "--opt",
-                "com.docker.network.bridge.enable_icc=false",
+                f"com.docker.network.bridge.enable_icc={'true' if icc_true else 'false'}",
                 "--opt",
                 "com.docker.network.bridge.host_binding_ipv4=127.0.0.1",
                 "--label",
@@ -1906,13 +1916,16 @@ def _network_probe() -> None:
             )
             if re.fullmatch(r"[0-9a-f]{64}", created) is None:
                 raise PreflightError("Docker network create returned unexpected ID")
-            _owner_enroll_network("")
+            if icc_true:
+                _owner_enroll_network("", icc_true=True)
+            else:
+                _owner_enroll_network("")
         except PreflightError as exc:
             outcome = "NO_GO"
             reason = _network_probe_error(exc)
     finally:
         try:
-            _network_probe_cleanup()
+            _network_probe_cleanup(icc_true=icc_true)
         except PreflightError:
             cleanup = "INDETERMINATE"
 
@@ -6316,7 +6329,12 @@ def phase(
     telegram_attempt_id: str = "",
     infrastructure_budget: str = "",
 ) -> None:
-    if phase_name in {"network-probe", "network-probe-cleanup"}:
+    if phase_name in {
+        "network-probe",
+        "network-probe-cleanup",
+        "network-probe-icc-true",
+        "network-probe-icc-true-cleanup",
+    }:
         _validate_coordinates(image, source_sha, compose_sha, read_only_preflight=True)
         if any(
             (
@@ -6337,11 +6355,12 @@ def phase(
         ):
             raise PreflightError("unexpected private context in Boca network probe")
         _validate_docker_boundary()
-        if phase_name == "network-probe-cleanup":
-            _network_probe_cleanup()
+        icc_true = "icc-true" in phase_name
+        if phase_name.endswith("cleanup"):
+            _network_probe_cleanup(icc_true=icc_true)
             print("BOCA_NETWORK_PROBE_CLEANUP state=VERIFIED network=absent")
         else:
-            _network_probe()
+            _network_probe(icc_true=icc_true)
         return
     if phase_name == "infrastructure-preflight":
         _validate_coordinates(image, source_sha, compose_sha, read_only_preflight=True)
@@ -6713,6 +6732,8 @@ def main() -> int:
             "infrastructure-preflight",
             "network-probe",
             "network-probe-cleanup",
+            "network-probe-icc-true",
+            "network-probe-icc-true-cleanup",
             "port-check",
             "observe",
             "preflight",

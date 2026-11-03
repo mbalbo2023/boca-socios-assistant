@@ -219,7 +219,7 @@ def test_owner_workflow_stops_daemon_in_same_job_on_failure() -> None:
     )[1].split("      - name:", 1)[0]
     assert (
         "if: always() && (startsWith(inputs.operation, 'owner-') || "
-        "inputs.operation == 'network-probe') && "
+        "startsWith(inputs.operation, 'network-probe')) && "
         "steps.boca_owner_attempt.outputs.started == 'true'"
     ) in section
     assert "steps.boca_owner_attempt.outputs.started == 'true'" in section

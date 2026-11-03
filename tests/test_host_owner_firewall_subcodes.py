@@ -127,4 +127,4 @@ def test_rootless_network_probe_never_changes_the_global_firewall() -> None:
     assert "iptables -F" not in workflow
     assert "update-alternatives --set" not in workflow
     assert "docker system prune" not in workflow
-    assert "if: always() && inputs.operation == 'network-probe'" in workflow
+    assert "if: always() && startsWith(inputs.operation, 'network-probe')" in workflow
