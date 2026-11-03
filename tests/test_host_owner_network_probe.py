@@ -57,9 +57,9 @@ def _probe_environment(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(host, "_storage_snapshot", lambda: object())
     monkeypatch.setattr(host, "_validate_storage_capacity", lambda *_args: None)
     monkeypatch.setattr(
-        host, "_owner_enroll_network", lambda *_args: (
-            None if state["network"] else pytest.fail("no network to validate")
-        ),
+        host,
+        "_owner_enroll_network",
+        lambda *_args: None if state["network"] else pytest.fail("no network to validate"),
     )
     return state
 
@@ -105,7 +105,8 @@ def test_network_probe_classifies_real_denial_without_raw_stderr(
     def run(*args: str, **_kw: object) -> str:
         state["commands"].append(args)
         failure = subprocess.CalledProcessError(
-            1, args,
+            1,
+            args,
             stderr="iptables denied; SECRET_DO_NOT_LOG",
         )
         raise host.PreflightError("docker network failed") from failure
@@ -123,6 +124,7 @@ def test_network_probe_does_not_remove_unverified_network(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     state = _probe_environment(monkeypatch)
+
     def run(*args: str, **_kw: object) -> str:
         state["commands"].append(args)
         assert args[:3] == ("docker", "network", "create")
@@ -131,7 +133,8 @@ def test_network_probe_does_not_remove_unverified_network(
 
     monkeypatch.setattr(host, "_run", run)
     monkeypatch.setattr(
-        host, "_owner_enroll_network",
+        host,
+        "_owner_enroll_network",
         lambda *_args: (_ for _ in ()).throw(host.PreflightError("unverified identity")),
     )
     with pytest.raises(host.PreflightError, match="Boca network probe NO_GO"):
@@ -147,7 +150,7 @@ def test_network_probe_refuses_nonempty_network_inventory_before_effect(
     monkeypatch.setattr(
         host,
         "_names",
-        lambda kind, *_args: ({host.OWNER_VOLUME} if kind == "volume" else {"foreign"}),
+        lambda kind, *_args: {host.OWNER_VOLUME} if kind == "volume" else {"foreign"},
     )
     monkeypatch.setattr(host, "_run", lambda *_args: pytest.fail("side effect"))
     with pytest.raises(host.PreflightError, match="namespace"):
@@ -160,7 +163,10 @@ def test_network_probe_rejects_private_context_before_daemon(
     monkeypatch.setattr(host, "_validate_docker_boundary", lambda: pytest.fail("daemon"))
     with pytest.raises(host.PreflightError, match="unexpected"):
         host.phase(
-            "network-probe", "", SHA, COMPOSE_SHA,
+            "network-probe",
+            "",
+            SHA,
+            COMPOSE_SHA,
             enroll_digest="not-allowed",
         )
 
