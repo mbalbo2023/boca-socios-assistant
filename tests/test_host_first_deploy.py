@@ -308,7 +308,7 @@ def test_observe_uses_only_bounded_read_only_docker_queries(
         ): "",
         ("docker", "ps", "-a", "-q", "--filter", "name=^/boca-socios-"): "",
         ("docker", "volume", "ls", "-q", "--filter", "name=^boca-socios_"): "",
-        ("docker", "network", "ls", "-q", "--filter", "name=^boca-socios_"): "",
+        ("docker", "network", "ls", "--format", "{{.Name}}", "--filter", "name=^boca-socios_"): "",
     }
     observed: list[tuple[str, ...]] = []
 

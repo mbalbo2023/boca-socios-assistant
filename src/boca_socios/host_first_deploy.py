@@ -812,7 +812,16 @@ def _beta_root_ready() -> bool:
 
 
 def _names(kind: str, label: str) -> set[str]:
-    return set(_run("docker", kind, "ls", "-q", "--filter", label).splitlines())
+    # Docker CLI `--quiet` has different contracts: `volume ls -q` returns
+    # volume names, but `network ls -q` returns IDs. Every caller compares
+    # this inventory to an allowlist of names, including selective cleanup.
+    if kind == "network":
+        return set(
+            _run("docker", "network", "ls", "--format", "{{.Name}}", "--filter", label).splitlines()
+        )
+    if kind == "volume":
+        return set(_run("docker", "volume", "ls", "-q", "--filter", label).splitlines())
+    raise PreflightError("unsupported Docker inventory kind")
 
 
 def _checked_docker_storage_identity() -> tuple[Path, str, tuple[tuple[str, str], ...]]:

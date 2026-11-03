@@ -185,3 +185,113 @@ def test_network_probe_uses_same_protected_workflow_with_daemon_stop() -> None:
     assert "src/boca_socios/host_first_deploy.py" in workflow
     assert "--network=host" not in workflow
     assert "docker system prune" not in workflow
+
+
+def test_network_inventory_uses_real_docker_name_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Docker network -q returns IDs, unlike volume -q, which returns names."""
+    calls: list[tuple[str, ...]] = []
+
+    def run(*args: str) -> str:
+        calls.append(args)
+        if args[1] == "network":
+            assert args == (
+                "docker",
+                "network",
+                "ls",
+                "--format",
+                "{{.Name}}",
+                "--filter",
+                "name=^boca-socios_",
+            )
+            return host.ENROLL_NETWORK
+        assert args == (
+            "docker",
+            "volume",
+            "ls",
+            "-q",
+            "--filter",
+            "name=^boca-socios_",
+        )
+        return host.OWNER_VOLUME
+
+    monkeypatch.setattr(host, "_run", run)
+    assert host._names("network", "name=^boca-socios_") == {host.ENROLL_NETWORK}
+    assert host._names("volume", "name=^boca-socios_") == {host.OWNER_VOLUME}
+    with pytest.raises(host.PreflightError, match="unsupported"):
+        host._names("container", "name=^boca-socios_")
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize("trusted", [True, False])
+def test_selective_cleanup_inspects_exact_network_before_removal(
+    monkeypatch: pytest.MonkeyPatch, trusted: bool
+) -> None:
+    """Existing diagnostic network is never removed without a matched identity."""
+    import json
+
+    state = {"present": True, "removed": False}
+    network = {
+        "Name": host.ENROLL_NETWORK,
+        "Driver": "bridge",
+        "Internal": False,
+        "Options": dict(host.PROBE_ICC_TRUE_OPTIONS),
+        "Labels": {
+            "com.docker.compose.project": host.PROJECT if trusted else "foreign",
+            "com.docker.compose.network": "owner_enroll_private",
+        },
+        "Containers": {},
+    }
+
+    def run(*args: str) -> str:
+        if args == (
+            "docker",
+            "network",
+            "ls",
+            "--format",
+            "{{.Name}}",
+            "--filter",
+            "name=^boca-socios_",
+        ):
+            return host.ENROLL_NETWORK if state["present"] else ""
+        if args == (
+            "docker",
+            "network",
+            "inspect",
+            "--format",
+            "{{json .}}",
+            host.ENROLL_NETWORK,
+        ):
+            return json.dumps(network)
+        if args == ("docker", "network", "rm", host.ENROLL_NETWORK):
+            assert trusted, "foreign network must never be removed"
+            state["removed"] = True
+            state["present"] = False
+            return host.ENROLL_NETWORK
+        pytest.fail(f"unapproved Docker operation: {args}")
+
+    monkeypatch.setattr(host, "_run", run)
+    monkeypatch.setattr(host, "_site_daemon_empty", lambda: None)
+    if trusted:
+        host._network_probe_cleanup(icc_true=True)
+        assert state == {"present": False, "removed": True}
+    else:
+        with pytest.raises(host.PreflightError, match="isolation unverified"):
+            host._network_probe_cleanup(icc_true=True)
+        assert state == {"present": True, "removed": False}
+
+
+def test_protected_cleanup_only_can_never_create_a_network() -> None:
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
+    ).read_text(encoding="utf-8")
+    assert "network-probe-icc-true-cleanup-only" in workflow
+    assert (
+        "if: startsWith(inputs.operation, 'network-probe') && "
+        "inputs.operation != 'network-probe-icc-true-cleanup-only'"
+    ) in workflow
+    assert (
+        '"$BOCA_OPERATION" = network-probe-icc-true-cleanup-only '
+        "]]; then cleanup_phase=network-probe-icc-true-cleanup"
+    ) in workflow
