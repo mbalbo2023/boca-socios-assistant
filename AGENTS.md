@@ -24,6 +24,28 @@ every unrelated service, host configuration and application repository.
 - Do not assume multi-session support means independent Queue-it positions.
   No bypasses of Queue-it, WAF, CAPTCHA or rate limits.
 
+## Owner-only browser modules and site navigation — 2026-11-03
+
+The owner has reserved **exclusive programming authority** over
+`src/boca_socios/browser/synthetic.py` and
+`src/boca_socios/browser/ipc_worker.py`. Agents MUST NOT open their contents,
+interpret their behavior, refactor, regenerate, edit or replace their bytes,
+or use their internal logic to propose navigation behavior, unless the owner
+issues a **new, explicit, file-specific authorization**. The two files supplied
+on 2026-11-03 may be copied **byte-for-byte**, identified by SHA-256, and staged
+in an isolated draft PR under [issue #288](https://github.com/mbalbo2023/boca-socios-assistant/issues/288).
+Their staging is not functional code review, authorization to merge, or a
+validated release. The owner retains responsibility for assessing navigation
+behavior and any later revisions. See
+`docs/ADR/0121-owner-controlled-browser-navigation.md`.
+
+Site navigation is **entirely owner-operated**. Agents must not launch or
+automate real Boca/Queue-it navigation in any browser on the droplet or on
+another surface, or dispatch diagnostics that navigate the site. The Boca
+controller-only simulation BETA may continue to be prepared and deployed
+under its preexisting exact-SHA safety gates with its browser backend `off`;
+no browser-worker/CDP activation is implied by this instruction.
+
 ## Development protocol
 
 1. Recover exact main HEAD, open PRs, open work items, CI status and current
