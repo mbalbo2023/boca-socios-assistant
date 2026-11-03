@@ -40,8 +40,10 @@ def test_probe_only_classifies_known_docker_errors(message: str, code: str) -> N
         assert host._network_probe_error(error) == code
 
 
-def _probe_environment(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def _probe_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
     state: dict[str, Any] = {"network": False, "commands": []}
+    monkeypatch.setattr(host, "ROOT", tmp_path)
+    monkeypatch.setattr(host, "_safe_dir", lambda *_args: True)
 
     def names(kind: str, *_args: str) -> set[str]:
         if kind == "volume":
@@ -65,9 +67,9 @@ def _probe_environment(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 def test_network_probe_creates_only_exact_boca_bridge_and_cleans(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    state = _probe_environment(monkeypatch)
+    state = _probe_environment(monkeypatch, tmp_path)
 
     def run(*args: str, **kwargs: object) -> str:
         assert not kwargs
@@ -98,9 +100,9 @@ def test_network_probe_creates_only_exact_boca_bridge_and_cleans(
 
 
 def test_network_probe_classifies_real_denial_without_raw_stderr(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    state = _probe_environment(monkeypatch)
+    state = _probe_environment(monkeypatch, tmp_path)
 
     def run(*args: str, **_kw: object) -> str:
         state["commands"].append(args)
@@ -121,9 +123,9 @@ def test_network_probe_classifies_real_denial_without_raw_stderr(
 
 
 def test_network_probe_does_not_remove_unverified_network(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    state = _probe_environment(monkeypatch)
+    state = _probe_environment(monkeypatch, tmp_path)
 
     def run(*args: str, **_kw: object) -> str:
         state["commands"].append(args)
@@ -144,9 +146,9 @@ def test_network_probe_does_not_remove_unverified_network(
 
 
 def test_network_probe_refuses_nonempty_network_inventory_before_effect(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _probe_environment(monkeypatch)
+    _probe_environment(monkeypatch, tmp_path)
     monkeypatch.setattr(
         host,
         "_names",
