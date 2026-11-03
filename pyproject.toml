@@ -30,12 +30,26 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers --strict-config"
+addopts = [
+  "-ra",
+  "--strict-markers",
+  "--strict-config",
+  # Owner-controlled, externally validated blackbox modules: no local import/execute.
+  "--ignore=tests/test_synthetic_browser_worker.py",
+  "--ignore=tests/test_browser_playwright_factory.py",
+  "--ignore=tests/test_browser_on_demand.py",
+  "--ignore=tests/test_browser_ipc.py",
+]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 100
 src = ["src", "tests"]
+# Preserve owner-provided browser bytes verbatim; do not lint or reformat them.
+extend-exclude = [
+  "src/boca_socios/browser/synthetic.py",
+  "src/boca_socios/browser/ipc_worker.py",
+]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "I", "B", "UP", "S"]
@@ -51,4 +65,12 @@ strict = true
 warn_unused_ignores = true
 show_error_codes = true
 files = ["src"]
+exclude = [
+  "^src/boca_socios/browser/synthetic[.]py$",
+  "^src/boca_socios/browser/ipc_worker[.]py$",
+]
+
+[[tool.mypy.overrides]]
+module = ["boca_socios.browser.synthetic", "boca_socios.browser.ipc_worker"]
+follow_imports = "skip"
 

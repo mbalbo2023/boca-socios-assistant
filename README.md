@@ -6,17 +6,23 @@ El dueño se reservó en exclusiva la programación de
 `browser/synthetic.py` y `browser/ipc_worker.py`, y toda navegación por el
 sitio de Boca. Los agentes no pueden interpretar ni modificar esos dos
 módulos sin autorización explícita posterior, ni navegar Boca desde el
-droplet. Los dos archivos recibidos se preparan **byte por byte** en el
-Draft de [issue #288](https://github.com/mbalbo2023/boca-socios-assistant/issues/288)
-con huellas SHA-256; esto **no acredita** compatibilidad, revisión funcional,
-merge o despliegue. La BETA de panel/controlador puede continuar únicamente
-sin navegador externo, backend `off`, sujeto a los gates independientes.
+droplet. Los dos archivos recibidos se preservan **byte por byte** en
+[PR #289](https://github.com/mbalbo2023/boca-socios-assistant/pull/289)
+con huellas SHA-256. Posteriormente el propietario los declaró **caja negra
+validada externamente**, sin exigir a los agentes certificación funcional ni
+permitirles inspección. Autorizó fusionar y desplegar con exclusiones
+específicas de Ruff, Mypy, Pytest y el recorrido Chromium sintético que
+dependía de esos módulos. Las pruebas de los demás componentes, controles de
+seguridad y gates físicos siguen vigentes; no se declara un despliegue sin
+recibo real. La BETA del controlador mantiene backend `off` y navegación
+exclusivamente a cargo del dueño.
 
-Ver [ADR0121](docs/ADR/0121-owner-controlled-browser-navigation.md).
+Ver [ADR0121](docs/ADR/0121-owner-controlled-browser-navigation.md) y
+[ADR0123](docs/ADR/0123-owner-blackbox-rca-exception.md).
 
-## Prioridad del 03/11: comprobar Chrome físico y login público antes del piloto real
+## Histórico sustituido el 03/11: Chrome físico y login público
 
-El titular priorizó la prueba del sitio real antes de las 12:00 ART. La autenticación de Fernando en Cloud Browser no quedó verificada pese a la confirmación del titular de que las credenciales son correctas. El bot de este repositorio **todavía no inicia una sesión real ni reserva entradas**. El [run físico #347](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41655307167) en main `4f9718d` confirmó **`google-chrome-stable` presente para UID 10001** con el PR #282 integrado. El [issue #283](https://github.com/mbalbo2023/boca-socios-assistant/issues/283) propone un único GET público en ese Chrome contra login, **sin credenciales** y con perfil temporal. Sólo después de recibir su prueba física sabremos si Chrome abre la página; no confundir con sesión autenticada ni BETA instalada. Véanse [ADR0117](docs/ADR/0117-host-chrome-readonly-inventory.md) y [ADR0118](docs/ADR/0118-one-shot-public-login-chrome-smoke.md). No mezclar con la venta de la final a las 14:00 en la plataforma de CONMEBOL.
+El titular había priorizado la prueba del sitio real antes de las 12:00 ART. La autenticación de Fernando en Cloud Browser no quedó verificada pese a la confirmación del titular de que las credenciales son correctas. El bot de este repositorio **todavía no inicia una sesión real ni reserva entradas**. El [run físico #347](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41655307167) en main `4f9718d` confirmó **`google-chrome-stable` presente para UID 10001** con el PR #282 integrado. El [issue #283](https://github.com/mbalbo2023/boca-socios-assistant/issues/283) proponía un único GET público contra login, pero la nueva decisión reserva **toda navegación del sitio** al propietario. Los agentes no lo ejecutarán. Véanse [ADR0117](docs/ADR/0117-host-chrome-readonly-inventory.md) y [ADR0118](docs/ADR/0118-one-shot-public-login-chrome-smoke.md), como referencias históricas; no equivalen a sesión autenticada ni BETA instalada.
 
 ## RCA #275 — red Docker rootless, recibo real #342 (2026-11-03 ART)
 

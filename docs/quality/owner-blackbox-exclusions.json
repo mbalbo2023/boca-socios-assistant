@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "authority_issue": 288,
+  "owner_attestation": "externally_validated_by_owner_2026-11-03",
+  "protected_sha256": {
+    "src/boca_socios/browser/synthetic.py": "52cd3996548eb318253aecd11d9ffc5bfa04c609be400fdb1ce4863dba4eeeaa",
+    "src/boca_socios/browser/ipc_worker.py": "b1286e77b0ff2ee0bc2473b27895bbe1b0f376a4efcf921f5f1c88aabc649ebe"
+  },
+  "exempt_regression_selectors": [
+    "tests/test_browser_ipc.py::test_close_during_slow_socket_teardown_fences_late_success",
+    "tests/test_browser_ipc.py::test_kernel_peer_accepts_exact_credentials_with_namespace_invisible_pid",
+    "tests/test_browser_ipc.py::test_kernel_peer_rejects_malformed_credentials",
+    "tests/test_browser_ipc.py::test_kernel_peer_rejects_unproved_identity_even_with_namespace_invisible_pid",
+    "tests/test_browser_ipc.py::test_kernel_peer_wrong_controller_identity_never_reads_or_starts_browser",
+    "tests/test_browser_ipc.py::test_kernel_peer_wrong_worker_identity_sends_no_command",
+    "tests/test_browser_ipc.py::test_stop_during_partial_frame_never_starts_browser",
+    "tests/test_browser_ipc.py::test_worker_stop_between_fake_success_and_reply_sends_no_go",
+    "tests/test_browser_on_demand.py::test_close_during_stubborn_context_exit_never_returns_late_success",
+    "tests/test_browser_on_demand.py::test_external_stop_swallowed_during_teardown_does_not_claim_success",
+    "tests/test_browser_on_demand.py::test_timeout_swallowed_during_context_exit_never_returns_late_success"
+  ]
+}

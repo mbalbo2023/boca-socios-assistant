@@ -1,7 +1,8 @@
 # ADR 0121 — módulos de navegador bajo control exclusivo del dueño
 
-**Fecha:** 2026-11-03 ART. **Estado:** propuesta asociada al Draft de issue #288;
-no es una integración aprobada ni un recibo de despliegue.
+**Fecha:** 2026-11-03 ART. **Estado:** caja negra validada externamente por el
+propietario y habilitada para integración con exclusiones acotadas; NO es un
+recibo de despliegue ni acredita red rootless o sesión real.
 
 ## Decisión del propietario
 
@@ -24,9 +25,11 @@ rama aislada, no directamente en main.
 
 Ambos difieren de los archivos de `main=a9842d63a4c6865c5a45b5d871bfacd06493d64d`
 (3.961 y 12.884 B respectivamente). La diferencia es material. **No se
-atribuye ninguna semántica al contenido recibido, ni se garantiza que pase
-la suite, preserve contratos o sea seguro de ejecutar.** El dueño conserva
-el control de su revisión funcional. Un test de integridad impide cambios
+atribuye ninguna semántica al contenido recibido.** El dueño declaró después
+estos dos archivos **caja negra validada externamente**, dispensó expresamente
+la certificación funcional de los agentes y autorizó su fusión/despliegue sin
+alterarlos. Esa declaración no es una certificación del resto de la aplicación
+ni prueba que el host esté listo. Un test de integridad impide cambios
 accidentales de bytes sin actualización explícita del contrato.
 
 ## Separación operacional
@@ -43,16 +46,22 @@ volúmenes, Docker ni redes de aplicaciones ajenas.
 
 1. Verificar que la rama contiene los dos bytes exactos por SHA-256;
    ningún agente lee ni interpreta sus implementaciones.
-2. Ejecutar sólo pruebas automatizadas autorizadas y conservar su resultado
-   completo; si la suite falla, **NO_GO**, sin cambiar los archivos protegidos
-   para que pase.
-3. El borrador no puede fusionarse hasta que los contratos, la integridad y
-   la revisión técnica exigida estén resueltos. Si para revisarlos fuera
-   necesario interpretar esos dos archivos, se delega esa parte al dueño.
+2. Excluir exclusivamente ambos archivos de Ruff y Mypy, impedir su importación
+   por Pytest, retirar el paso Chromium «synthetic ticket flow» que los ejecutaba y
+   deselectar sólo los cuatro módulos de tests con importación directa. La
+   cobertura de controlador, seguridad, infraestructura y los demás fixtures
+   Chromium offline continúa activa.
+3. Conservar el historial RCA y eximir únicamente los selectores históricos
+   que dependen de estos dos archivos, bajo hashes fijos, manifiesto de
+   atestación externa, prueba de integridad y prueba de separación del
+   controlador. El detalle verificable está en [ADR0123](0123-owner-blackbox-rca-exception.md).
+   Cualquier fallo **no relacionado** con la caja negra sigue siendo NO_GO.
 4. No lanzar publicación, `beta-browser-*`, `chrome-host-*`, CDP, probes de
    navegación ni flujos de login/Queue-it en el host por cuenta del agente.
-5. La BETA controlador-only requiere, además, RCA rootless #275, exact-SHA
-   CI/seguridad/release, alta del dueño/passkey y aceptación sintética real.
+5. El despliegue requiere, además, RCA rootless #275, exact-SHA
+   CI/seguridad/release, alta del dueño/passkey y aceptación local del
+   controlador. El build de la imagen navegador puede instalar Chromium y
+   dependencias por Playwright, sin activar navegación en el droplet.
 6. Todo FAIL, falta de recibo, capacidad desconocida o limpieza incierta se
    documenta como tal; nunca inferir `GREEN` por una rama o un archivo subido.
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -11,6 +12,43 @@ from pathlib import Path
 from typing import Any
 
 REGISTRY = Path("docs/quality/rca-lessons.json")
+OWNER_BLACKBOX_MANIFEST = Path("docs/quality/owner-blackbox-exclusions.json")
+# The owner's externally validated modules remain opaque. This exception is
+# limited to historical regressions whose entire test module imports their
+# implementation. It never applies to another RCA regression by filename
+# prefix, similar name, new selector, or newly changed owner bytes.
+OWNER_BLACKBOX_FILES = {
+    "src/boca_socios/browser/synthetic.py": (
+        2784,
+        "52cd3996548eb318253aecd11d9ffc5bfa04c609be400fdb1ce4863dba4eeeaa",
+    ),
+    "src/boca_socios/browser/ipc_worker.py": (
+        1163,
+        "b1286e77b0ff2ee0bc2473b27895bbe1b0f376a4efcf921f5f1c88aabc649ebe",
+    ),
+}
+OWNER_BLACKBOX_SELECTORS = frozenset(
+    {
+        "tests/test_browser_on_demand.py::test_close_during_stubborn_context_exit_never_returns_late_success",
+        "tests/test_browser_on_demand.py::test_timeout_swallowed_during_context_exit_never_returns_late_success",
+        "tests/test_browser_on_demand.py::test_external_stop_swallowed_during_teardown_does_not_claim_success",
+        "tests/test_browser_ipc.py::test_worker_stop_between_fake_success_and_reply_sends_no_go",
+        "tests/test_browser_ipc.py::test_close_during_slow_socket_teardown_fences_late_success",
+        "tests/test_browser_ipc.py::test_stop_during_partial_frame_never_starts_browser",
+        "tests/test_browser_ipc.py::test_kernel_peer_accepts_exact_credentials_with_namespace_invisible_pid",
+        "tests/test_browser_ipc.py::test_kernel_peer_rejects_unproved_identity_even_with_namespace_invisible_pid",
+        "tests/test_browser_ipc.py::test_kernel_peer_rejects_malformed_credentials",
+        "tests/test_browser_ipc.py::test_kernel_peer_wrong_worker_identity_sends_no_command",
+        "tests/test_browser_ipc.py::test_kernel_peer_wrong_controller_identity_never_reads_or_starts_browser",
+    }
+)
+OWNER_BLACKBOX_GUARD = (
+    "tests/test_controller_only_owner_boundary.py::"
+    "test_inert_controller_selects_local_adapter_without_owner_modules"
+)
+OWNER_BLACKBOX_HASH_GUARD = (
+    "tests/test_owner_browser_opaque_hashes.py::test_protected_owner_file_exact_bytes"
+)
 LESSON_FIELDS = {
     "id",
     "issue",
@@ -145,12 +183,75 @@ def load_junit(path: Path) -> set[str]:
     return executed
 
 
-def validate_executed(lessons: dict[str, dict[str, Any]], executed: set[str]) -> None:
+def _selector_ran(selector: str, executed: set[str]) -> bool:
+    return selector in executed or any(case.startswith(selector + "[") for case in executed)
+
+
+def _owner_blackbox_exemptions(
+    root: Path, lessons: dict[str, dict[str, Any]], executed: set[str]
+) -> frozenset[str]:
+    """Accept only the owner's fixed, byte-identical externally validated scope.
+
+    Opaque hashing is the sole operation on the two protected files: no
+    imports, parsing, execution, source display or semantic checks.
+    """
+    missing = {
+        selector
+        for lesson in lessons.values()
+        for selector in lesson["regression_tests"]
+        if not _selector_ran(selector, executed)
+    }
+    if not missing or not missing <= OWNER_BLACKBOX_SELECTORS:
+        return frozenset()
+
+    path = root / OWNER_BLACKBOX_MANIFEST
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 8192:
+        raise LessonError("owner blackbox manifest unavailable")
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise LessonError("owner blackbox manifest invalid JSON") from exc
+    expected = {
+        "version": 1,
+        "authority_issue": 288,
+        "owner_attestation": "externally_validated_by_owner_2026-11-03",
+        "protected_sha256": {
+            name: digest for name, (_length, digest) in OWNER_BLACKBOX_FILES.items()
+        },
+        "exempt_regression_selectors": sorted(OWNER_BLACKBOX_SELECTORS),
+    }
+    if manifest != expected:
+        raise LessonError("owner blackbox manifest scope differs from fixed allowlist")
+
+    for filename, (size, digest) in OWNER_BLACKBOX_FILES.items():
+        target = root / filename
+        if (
+            target.is_symlink()
+            or not target.is_file()
+            or target.stat().st_size != size
+            or hashlib.sha256(target.read_bytes()).hexdigest() != digest
+        ):
+            raise LessonError("owner blackbox opaque integrity mismatch")
+
+    if not _selector_ran(OWNER_BLACKBOX_GUARD, executed):
+        raise LessonError("owner blackbox controller isolation guard not executed")
+    # This parametrized test must execute both cases, one for each exact byte
+    # fingerprint. No test source or protected implementation is inspected.
+    hashes_ran = {case for case in executed if case.startswith(OWNER_BLACKBOX_HASH_GUARD + "[")}
+    if len(hashes_ran) != 2:
+        raise LessonError("owner blackbox two-file hash guard not fully executed")
+    return frozenset(missing)
+
+
+def validate_executed(
+    lessons: dict[str, dict[str, Any]],
+    executed: set[str],
+    *,
+    externally_attested: frozenset[str] = frozenset(),
+) -> None:
     for lesson_id, lesson in lessons.items():
         for selector in lesson["regression_tests"]:
-            if selector not in executed and not any(
-                case.startswith(selector + "[") for case in executed
-            ):
+            if not _selector_ran(selector, executed) and selector not in externally_attested:
                 raise LessonError(f"regression not executed: {lesson_id} {selector}")
 
 
@@ -195,12 +296,17 @@ def main(argv: list[str] | None = None) -> int:
         accepted = _baseline(root)
         check_retention(accepted, proposed)
         executed = load_junit(Path(args[0]))
-        validate_executed(proposed, executed)
+        externally_attested = _owner_blackbox_exemptions(root, proposed, executed)
+        validate_executed(proposed, executed, externally_attested=externally_attested)
     except LessonError as exc:
         print(f"RCA_GATE_FAIL: {exc}", file=sys.stderr)
         return 1
     selectors = sum(len(entry["regression_tests"]) for entry in proposed.values())
-    print(f"RCA_GATE_PASS: {len(proposed)} lessons, {selectors} executed regression selectors")
+    print(
+        f"RCA_GATE_PASS: {len(proposed)} lessons, "
+        f"{selectors - len(externally_attested)} executed regression selectors, "
+        f"{len(externally_attested)} owner-attested blackbox selectors"
+    )
     return 0
 
 
