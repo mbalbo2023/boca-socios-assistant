@@ -1,5 +1,9 @@
 # Estado de integración BETA
 
+## Prioridad 03/11 antes de 12:00 — verificación del navegador del droplet
+
+El usuario pidió un piloto de login/cola/reserva en el sitio real y propuso Chrome del droplet. El sitio de Boca Socios respondió al navegador de ChatGPT, pero **no se acreditó sesión autenticada** de Fernando; el usuario confirma que sus credenciales son correctas. No se inició cola ni reserva. El código actual sólo simula reservas. El [issue #281](https://github.com/mbalbo2023/boca-socios-assistant/issues/281) introduce como candidato una **inspección sin lanzamiento** para conocer si Chrome/Chromium ya está instalado bajo UID 10001; resultado host todavía desconocido. No suponer BETA desplegada por CI ni por este probe. Los cambios ICC=true de [PR #280](https://github.com/mbalbo2023/boca-socios-assistant/pull/280) son diagnóstico aislado, no un fix del alta real. Ver [ADR0117](ADR/0117-host-chrome-readonly-inventory.md).
+
 ## RCA #275 — diagnóstico físico #342 y prueba ICC=true autorizada (2026-11-03 ART)
 
 El [run #342](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41640672050) en `main=d9ad6d492592c403eed70ae85af63f8b1821a67d` dio **`BOCA_NETWORK_PROBE result=NO_GO reason=firewall_bridge_netfilter_unavailable cleanup=VERIFIED`**. El PR #279 y los [checks postmerge](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41640180891) de CI y [seguridad](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41640181029) ya pasaron. La red temporal quedó ausente y el daemon Boca detenido; no se instaló BETA/Chrome/Telegram ni se abrió un puerto. #317/#329/#337 son evidencias previas menos específicas.

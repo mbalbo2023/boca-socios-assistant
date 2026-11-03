@@ -1,5 +1,9 @@
 # Repository settings to configure after bootstrap
 
+## Inspección Chrome existente — manual y de sólo lectura (03/11/2026)
+
+La operación candidata `chrome-host-inspect` de [issue #281](https://github.com/mbalbo2023/boca-socios-assistant/issues/281) debe utilizar **el mismo workflow Boca first deploy**, branch `main`, actor propietario y SHA exacto. Env `BOCA_HOST_READONLY_ENV_READY=ready`, sin image/release/secret/envelopes; `service=controller` y `resource_budget=0.5cpu-256m-64pids`. Un único SSH ejecuta script Python de inventario **sin iniciar navegador**, imprime sólo recibo fijo y no modifica el host. No habilitar runners o workflows alternativos ni borrar protecciones. Check de CI, merge, CI postmerge y luego dispatch manual: un código propuesto o CI GREEN **no son recibo del droplet**. Ver [ADR0117](ADR/0117-host-chrome-readonly-inventory.md).
+
 ## RCA #275 — recibo #342, opción diagnóstica ICC=true (2026-11-03 ART)
 
 En [run protegido #342](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41640672050), `main=d9ad6d492592c403eed70ae85af63f8b1821a67d`, se acreditó **`BOCA_NETWORK_PROBE result=NO_GO reason=firewall_bridge_netfilter_unavailable cleanup=VERIFIED`**; limpieza independiente y parada del daemon rootless Boca SUCCESS. El [PR #279](https://github.com/mbalbo2023/boca-socios-assistant/pull/279) ya está integrado y sus verificaciones postmerge [CI](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41640180891)/[seguridad](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41640181029) pasaron. Los diagnósticos #317, #329 y #337 son históricos. No se instaló BETA, ni Chrome, ni Telegram, ni puerto.

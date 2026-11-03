@@ -1,5 +1,9 @@
 # Boca Socios Assistant
 
+## Prioridad del 03/11: verificar Chrome físico antes del piloto real
+
+El titular priorizó la prueba del sitio real antes de las 12:00 ART. La autenticación de Fernando en Cloud Browser no quedó verificada pese a la confirmación del titular de que las credenciales son correctas. El bot de este repositorio **todavía no inicia una sesión real ni reserva entradas**. El candidato [issue #281](https://github.com/mbalbo2023/boca-socios-assistant/issues/281) agrega exclusivamente una inspección del **binario Chrome/Chromium existente** bajo UID 10001 a través del único workflow protegido: no lo lanza, instala ni autentica. El resultado físico sigue **PENDIENTE** y no hay BETA instalada. Véase [ADR0117](docs/ADR/0117-host-chrome-readonly-inventory.md). No mezclar con la venta de la final a las 14:00 en la plataforma de CONMEBOL.
+
 ## RCA #275 — red Docker rootless, recibo real #342 (2026-11-03 ART)
 
 El [run protegido #342](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41640672050), sobre `main=d9ad6d492592c403eed70ae85af63f8b1821a67d` (PR #279 integrado), confirmó **`BOCA_NETWORK_PROBE result=NO_GO reason=firewall_bridge_netfilter_unavailable cleanup=VERIFIED`**. La limpieza independiente y la parada del daemon exclusivo de Boca pasaron. Es más preciso que #337 (`firewall_unsupported`), #329 (`firewall`) y #317 (`network_create`), pero no prueba por sí solo el estado global del módulo `br_netfilter`. No se instaló BETA, Chrome ni Telegram. [CI postmerge](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41640180891) y [seguridad](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41640181029) pasaron.

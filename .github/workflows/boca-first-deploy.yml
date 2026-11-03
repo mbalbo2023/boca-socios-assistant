@@ -8,7 +8,7 @@ on:
         description: Boca-only host operation; browser IPC is a separate, opt-in, protected BETA gate
         required: true
         type: choice
-        options: [inspect-prerequisites, port-check, network-probe, network-probe-icc-true, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
+        options: [inspect-prerequisites, chrome-host-inspect, port-check, network-probe, network-probe-icc-true, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
         description: Exact current main commit approved for the operation
         required: true
@@ -729,7 +729,7 @@ jobs:
               test -z "$BOCA_RELEASE_RUN_ID"
               test -z "$BOCA_SITE_ENVELOPE"
               ;;
-            inspect-prerequisites|port-check|preflight|infrastructure-inspect)
+            inspect-prerequisites|chrome-host-inspect|port-check|preflight|infrastructure-inspect)
               test "$BOCA_HOST_READONLY_ENV_READY" = ready
               test -z "$BOCA_IMAGE_REF"
               test -z "$BOCA_RELEASE_RUN_ID"
@@ -1326,6 +1326,22 @@ jobs:
         run: |
           remote_command="$(python3 -c 'import shlex, sys; print(shlex.join(sys.argv[1:]))' python3 - inspect-prerequisites "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py
+      - name: Inspect only existing Boca host Chrome executable without launching it
+        if: inputs.operation == 'chrome-host-inspect'
+        run: |
+          set +e
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - "$BOCA_SOURCE_SHA")"
+          timeout --signal=TERM --kill-after=5s 30s ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_chrome_inspect.py > "$RUNNER_TEMP/boca-chrome-inspect.receipt" 2>/dev/null
+          inspect_rc=$?
+          set -e
+          receipt="$(cat "$RUNNER_TEMP/boca-chrome-inspect.receipt")"
+          if [[ "$inspect_rc" -eq 0 && "$receipt" =~ ^BOCA_HOST_CHROME\ state=(PRESENT|ABSENT)\ kind=(google-chrome-stable|google-chrome|chromium|chromium-browser|none)\ uid=10001$ ]]; then
+            printf 'Boca host Chrome inventory: `%s`. Binary presence only; not launched or authenticated.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' "$receipt"
+          else
+            printf 'Boca host Chrome inventory: NO_GO; host output withheld.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
       - name: Check only Boca host loopback 8443 without Docker
         if: inputs.operation == 'port-check'
         run: |
