@@ -16,25 +16,41 @@ DIGEST = "c" * 64
 
 @pytest.mark.parametrize(
     "phase",
-    ["preflight", "port", "storage", "image_inventory", "marker", "pull",
-     "image_provenance", "storage_continuity", "recipient", "volume_create",
-     "volume_verify", "volume_permissions", "network_create", "network_verify",
-     "container_create", "container_verify", "listener_health"],
+    [
+        "preflight",
+        "port",
+        "storage",
+        "image_inventory",
+        "marker",
+        "pull",
+        "image_provenance",
+        "storage_continuity",
+        "recipient",
+        "volume_create",
+        "volume_verify",
+        "volume_permissions",
+        "network_create",
+        "network_verify",
+        "container_create",
+        "container_verify",
+        "listener_health",
+    ],
 )
 def test_only_reviewed_owner_enroll_phase_codes_pass(phase: str) -> None:
-    assert diagnostic.classify(
-        f"BOCA_NO_GO: owner enrollment phase={phase}\n".encode()
-    ) == phase
+    assert diagnostic.classify(f"BOCA_NO_GO: owner enrollment phase={phase}\n".encode()) == phase
 
 
 @pytest.mark.parametrize(
     "payload",
-    [b"", b"ssh: connection reset",
-     b"BOCA_NO_GO: owner enrollment phase=secret\n",
-     b"BOCA_NO_GO: owner enrollment phase=port\nSECRET=value\n",
-     b"BOCA_NO_GO: owner enrollment phase=port\x00",
-     b"BOCA_NO_GO: owner enrollment phase=port\r\n",
-     b"x" * 4097],
+    [
+        b"",
+        b"ssh: connection reset",
+        b"BOCA_NO_GO: owner enrollment phase=secret\n",
+        b"BOCA_NO_GO: owner enrollment phase=port\nSECRET=value\n",
+        b"BOCA_NO_GO: owner enrollment phase=port\x00",
+        b"BOCA_NO_GO: owner enrollment phase=port\r\n",
+        b"x" * 4097,
+    ],
 )
 def test_unknown_stderr_never_echoes_sensitive_data(payload: bytes) -> None:
     assert diagnostic.classify(payload) == "unclassified"
@@ -49,7 +65,9 @@ def test_reader_rejects_symlink(tmp_path: Path, capsys: pytest.CaptureFixture[st
     assert capsys.readouterr().out == "unclassified\n"
 
 
-def test_reader_accepts_single_bounded_reason(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_reader_accepts_single_bounded_reason(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     target = tmp_path / "receipt"
     target.write_text("BOCA_NO_GO: owner enrollment phase=preflight\n")
     assert diagnostic.main([str(target)]) == 0
@@ -59,6 +77,7 @@ def test_reader_accepts_single_bounded_reason(tmp_path: Path, capsys: pytest.Cap
 def test_start_redacts_original_exception(monkeypatch: pytest.MonkeyPatch) -> None:
     def bad(*_a: object) -> None:
         raise host.PreflightError("private_host_details_do_not_print")
+
     monkeypatch.setattr(host, "_owner_enroll_preflight", bad)
     with pytest.raises(host.PreflightError, match=r"^owner enrollment phase=preflight$") as caught:
         host._owner_enroll_start(IMAGE, SHA, "http://localhost:8443", "synthetic", DIGEST)
@@ -74,8 +93,9 @@ def test_busy_port_never_reaches_docker(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_workflow_redacts_only_ephemeral_stderr_and_preserves_cleanup() -> None:
-    text = (Path(__file__).resolve().parents[1] /
-            ".github/workflows/boca-first-deploy.yml").read_text(encoding="utf-8")
+    text = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
+    ).read_text(encoding="utf-8")
     start = text.index("Start disposable owner enrollment only on Boca loopback 8443")
     cleanup = text.index("Clean Boca-only disposable owner enrollment artifacts")
     fragment = text[start:cleanup]
