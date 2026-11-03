@@ -84,7 +84,7 @@ jobs:
           uv sync --frozen
       - name: Check dispatch and first-install boundaries offline
         run: |
-          uv run pytest -q tests/test_effective_unit_shape.py tests/test_infrastructure_diagnostics.py tests/test_owner_enrollment_argv.py tests/test_host_cpu_capacity.py tests/test_infrastructure_preflight.py tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_beta_browser_deploy_contract.py tests/test_browser_ipc_workflow.py tests/test_host_browser_lifecycle.py tests/test_host_browser_ipc_file_stage.py tests/test_host_browser_ipc_install.py tests/test_host_browser_ipc_cleanup.py tests/test_host_browser_ipc_cross_contract.py tests/test_host_first_deploy.py tests/test_host_loopback_port.py tests/test_host_beta_install.py tests/test_host_beta_cleanup.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_owner_bootstrap.py tests/test_host_owner_bootstrap.py tests/test_host_owner_enroll_lifecycle.py tests/test_host_owner_enroll_cleanup.py tests/test_host_operation_gate.py tests/test_main_ref_gate.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_telegram_one_shot.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
+          uv run pytest -q tests/test_effective_unit_shape.py tests/test_infrastructure_diagnostics.py tests/test_kernel_netfilter_readonly.py tests/test_owner_enrollment_argv.py tests/test_host_cpu_capacity.py tests/test_infrastructure_preflight.py tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_beta_browser_deploy_contract.py tests/test_browser_ipc_workflow.py tests/test_host_browser_lifecycle.py tests/test_host_browser_ipc_file_stage.py tests/test_host_browser_ipc_install.py tests/test_host_browser_ipc_cleanup.py tests/test_host_browser_ipc_cross_contract.py tests/test_host_first_deploy.py tests/test_host_loopback_port.py tests/test_host_beta_install.py tests/test_host_beta_cleanup.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_owner_bootstrap.py tests/test_host_owner_bootstrap.py tests/test_host_owner_enroll_lifecycle.py tests/test_host_owner_enroll_cleanup.py tests/test_host_operation_gate.py tests/test_main_ref_gate.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_telegram_one_shot.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
           uv run python scripts/check_repo_policy.py
       - name: Validate optional served BETA Compose model without host access
         env:
@@ -1214,6 +1214,28 @@ jobs:
         if: inputs.operation == 'infrastructure-inspect'
         run: |
           printf 'BOCA_INFRA_INSPECT state=PASS source_sha=%s daemon=stopped start_attempted=no capacity=not_evaluated application=not_started\n' "$BOCA_SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Observe bridge netfilter kernel hints without host changes
+        if: inputs.operation == 'infrastructure-inspect'
+        run: |
+          set +e
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - kernel-bridge-inspect "$BOCA_SOURCE_SHA")"
+          (
+            umask 077
+            ulimit -f 4 || exit 125
+            timeout --signal=TERM --kill-after=5s 60s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py > "$RUNNER_TEMP/boca-kernel-bridge.receipt" 2>/dev/null
+          )
+          inspect_rc=$?
+          set -e
+          receipt=''
+          if [[ "$inspect_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-kernel-bridge.receipt")"; fi
+          pattern='^BOCA_KERNEL_BRIDGE state=OBSERVED source_sha=([0-9a-f]{40}) module=(present|absent|unknown) nf_call_iptables=(0|1|unavailable|unreadable|invalid) write_ops=none$'
+          if [[ "$inspect_rc" -ne 0 || ${#receipt} -gt 180 || ! "$receipt" =~ $pattern || "${BASH_REMATCH[1]}" != "$BOCA_SOURCE_SHA" ]]; then
+            printf 'BOCA_KERNEL_BRIDGE state=INDETERMINATE source_sha=%s write_ops=none reason=transport_or_receipt_unverified\n' "$BOCA_SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf '%s\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Kernel hints only: no module/sysctl changes and no ICC=false admission verdict.\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$receipt"
       - name: Recheck current main immediately before temporary infrastructure daemon start
         if: inputs.operation == 'infrastructure-preflight'
         env:

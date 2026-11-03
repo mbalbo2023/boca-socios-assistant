@@ -1,5 +1,18 @@
 # Estado de integración BETA
 
+## Última evidencia rootless — 03/11/2026, NO_GO para ICC=false
+
+Main verificado `b7e6e59af1ad15693528f888d4d2341de6038b56` tras PR #297.
+La comprobación temporal `ICC=true` [#41720576622](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41720576622)
+dio `PASS cleanup=VERIFIED`; la comprobación `ICC=false` que importa para el
+alta de dueño [#41721217453](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41721217453)
+dio `NO_GO reason=firewall_bridge_netfilter_unavailable cleanup=VERIFIED`.
+Ambas dejaron el daemon Boca detenido. **No hay BETA desplegada**. Una nueva
+lectura de kernel, [ADR0125](ADR/0125-readonly-kernel-bridge-hints.md), se
+prepara como cambio al `infrastructure-inspect` protegido; no se ejecutó aún
+en el host ni es reparación de `ICC=false`. Los antecedentes posteriores a
+run #342 y #345 en los apartados siguientes son históricos, no el último gate.
+
 ## Prioridad 03/11 antes de 12:00 — verificación del navegador del droplet
 
 El usuario pidió un piloto de login/cola/reserva en el sitio real y propuso Chrome del droplet. El sitio de Boca Socios respondió al navegador de ChatGPT, pero **no se acreditó sesión autenticada** de Fernando; el usuario confirma que sus credenciales son correctas. No se inició cola ni reserva. El código actual sólo simula reservas. El [run protegido #347](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41655307167) confirmó **`google-chrome-stable` presente bajo UID 10001**, PR #282 integrado. Siguiente candidata separada [#283](https://github.com/mbalbo2023/boca-socios-assistant/issues/283): prueba pública con Chrome real, URL fija de login, sin credenciales, sin cola y perfil efímero. Ningún resultado de presencia indica autenticación ni BETA instalada. Ver [ADR0118](ADR/0118-one-shot-public-login-chrome-smoke.md).

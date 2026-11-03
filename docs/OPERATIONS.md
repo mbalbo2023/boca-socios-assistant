@@ -1,5 +1,24 @@
 # Safe operations — verified evidence and gated procedures
 
+## Inspección del kernel por workflow protegido — candidata 2026-11-03
+
+La operación existente `infrastructure-inspect` de
+`.github/workflows/boca-first-deploy.yml` recibe una nueva fase de **lectura
+únicamente**, descrita en [ADR0125](ADR/0125-readonly-kernel-bridge-hints.md).
+Cuando esta candidata esté integrada en `main` con checks verdes, el dueño
+podrá invocarla desde una terminal autenticada con `gh workflow run`, `--ref
+main`, `operation=infrastructure-inspect`, SHA HEAD exacto, `service=controller`,
+`resource_budget=1.5cpu-1024m-192pids`, imágenes/release/envelopes vacíos.
+El workflow verifica que el daemon Boca está detenido y solicita sólo las
+lecturas `/sys/module/br_netfilter` y `bridge-nf-call-iptables` por SSH dedicado.
+La salida `BOCA_KERNEL_BRIDGE state=OBSERVED ... write_ops=none` es indicio del
+kernel, **no** autorización de red, instalación o `owner-enroll`; un transporte
+o recibo no verificable se clasifica `INDETERMINATE`. No habrá `modprobe`,
+`sudo`, escrituras sysctl ni acceso a Docker. Todavía no hay ejecución física
+ni garantía de compatibilidad `ICC=false`. Regla 84: enlazar el run real en
+[#275](https://github.com/mbalbo2023/boca-socios-assistant/issues/275)
+y [#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+
 ## Piloto conectado: Chrome físico encontrado; nueva prueba pública acotada (03/11/2026)
 
 La operación `chrome-host-inspect` de [issue #281](https://github.com/mbalbo2023/boca-socios-assistant/issues/281) ya dio recibo físico [#347](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41655307167) `PRESENT google-chrome-stable uid=10001`. Ahora [issue #283](https://github.com/mbalbo2023/boca-socios-assistant/issues/283) agrega **`chrome-host-public-smoke`**, con URL única fija de login de Boca, navegador headless existente, sandbox activo, perfil privado efímero y grupo de procesos terminado aun ante timeout. No se transmiten credenciales ni se opera cola/reserva. Requiere `source_sha` idéntico a `main`, `service=controller`, presupuesto `0.5cpu-256m-64pids`, entorno de lectura habilitado, entradas privadas/image/release vacías; sólo disparar tras CI y seguridad de PR y main GREEN. El recibo es sólo `FORM_VISIBLE|OTHER_PAGE|CHALLENGE|NO_GO` y cleanup; un challenge o un login no completado no justifican bypass. Ver [ADR0118](ADR/0118-one-shot-public-login-chrome-smoke.md). No alterar otros workloads.
