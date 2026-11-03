@@ -684,14 +684,14 @@ def test_browser_preflight_stage_writes_marker_after_new_only_capacity(
     ("memory_kib", "cpu", "current", "maximum", "accepted"),
     [
         (1536 * 1024, 1.75, "100", "356", True),
-        (1536 * 1024 - 1, 1.75, "100", "356", False),
-        (1536 * 1024, 1.74, "100", "356", False),
-        (1536 * 1024, 1.75, "100", "355", False),
+        (1536 * 1024 - 1, 1.75, "100", "356", True),
+        (1536 * 1024, 1.74, "100", "356", True),
+        (1536 * 1024, 1.75, "100", "355", True),
         (1536 * 1024, 1.75, "100", "max", False),
         (1536 * 1024, 1.75, "100", "1not-number", False),
     ],
 )
-def test_post_pull_host_capacity_is_bounded_before_side_effects(
+def test_post_pull_metadata_is_observed_without_unbenchmarked_reserve(
     monkeypatch: pytest.MonkeyPatch,
     memory_kib: int,
     cpu: float,
