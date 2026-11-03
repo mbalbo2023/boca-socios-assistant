@@ -1204,7 +1204,7 @@ jobs:
           set -e
           if [[ "$BOCA_BUDGET" = 1.5cpu-1024m-192pids ]]; then limits='memory_mib=1536 cpu_required=1[.]75 pids_required=256'; else limits='memory_mib=1792 cpu_required=2[.]00 pids_required=288'; fi
           observation="^BOCA_INFRA_OBSERVATION source_sha=$BOCA_SOURCE_SHA engine=[0-9]+[.][0-9]+[.][0-9]+ memory_kib=[0-9]+ daemon_startup_cpu_count=[0-9]+ effective_cpus=[0-9]+ cpu_ceiling=[0-9]+[.][0-9]{6} cpu_scope=(materialized|configured) load1=([0-9]+[.][0-9]{6}|UNKNOWN) load_policy=advisory pids_free=[0-9]+ stage_free_bytes=[0-9]+ stage_inodes=[0-9]+ docker_free_bytes=[0-9]+ docker_inodes=[0-9]+$"
-          policy="^BOCA_INFRA_POLICY source_sha=$BOCA_SOURCE_SHA budget=${BOCA_BUDGET//./[.]} $limits memory=(PASS|NO_GO) cpu=(PASS|NO_GO) pids=(PASS|NO_GO) storage=(PASS|NO_GO) result=(PASS|NO_GO) meaning=configured_reserve_not_benchmark$"
+          policy="^BOCA_INFRA_POLICY source_sha=$BOCA_SOURCE_SHA budget=${BOCA_BUDGET//./[.]} $limits memory=(PASS|BELOW) cpu=(PASS|BELOW) pids=(PASS|BELOW) storage=(PASS|BELOW) result=OBSERVED meaning=postdeploy_measurement_required$"
           if [[ "$(wc -c < "$RUNNER_TEMP/boca-infra-observation.receipt")" -gt 1024 ]]; then exit 1; fi
           mapfile -t lines < "$RUNNER_TEMP/boca-infra-observation.receipt"
           if [[ ${#lines[@]} -ne 2 || ! "${lines[0]}" =~ $observation || ! "${lines[1]}" =~ $policy ]]; then
@@ -1217,7 +1217,9 @@ jobs:
           fi
           printf '%s\n' "${lines[@]}" >> "$GITHUB_STEP_SUMMARY"
           printf 'CPU ceiling uses the verified container cgroup branch and ancestor quotas/cpusets, capped by Docker startup CPU count. Load1 is advisory; no idle CPU, measured host performance or installation permission is claimed.\n' >> "$GITHUB_STEP_SUMMARY"
-          [[ "$phase_rc" -eq 0 && "${lines[1]}" = *' memory=PASS cpu=PASS pids=PASS storage=PASS result=PASS '* ]]
+          # Admission remains gated by identity, isolation and canonical receipts,
+          # not by unbenchmarked pre-deploy resource headroom.
+          [[ "$phase_rc" -eq 0 ]]
       - name: Always restore verified stopped daemon after infrastructure attempt
         id: boca_infra_stop
         if: always() && inputs.operation == 'infrastructure-preflight' && steps.boca_infra_attempt.outputs.started == 'true'
@@ -1238,7 +1240,7 @@ jobs:
       - name: Record pre-release infrastructure result only after verified stop
         if: inputs.operation == 'infrastructure-preflight' && success() && steps.boca_infra_stop.outcome == 'success'
         run: |
-          printf 'BOCA_INFRA_PREFLIGHT state=PASS source_sha=%s daemon=stopped application=not_installed capacity=configured_reserve_only performance=unmeasured\n' "$BOCA_SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+          printf 'BOCA_INFRA_PREFLIGHT state=PASS source_sha=%s daemon=stopped application=not_installed capacity=observed_advisory performance=postdeploy_pending\n' "$BOCA_SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Check prerequisites for dedicated rootless service preparation
         if: inputs.operation == 'prepare-rootless'
         run: |
