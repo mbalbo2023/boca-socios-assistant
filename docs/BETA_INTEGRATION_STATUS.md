@@ -17,7 +17,7 @@ aún no fue instalada y la captura pública continúa bloqueada.
 
 La reiteración del dueño está registrada, pero la revisión automática volvió a bloquear el dispatch antes de ejecutarlo; no existe un nuevo run. Véase el [bloqueo actualizado](https://github.com/mbalbo2023/boca-socios-assistant/issues/27#issuecomment-6591174050). La captura sigue pendiente por ese control de plataforma.
 
-## Estado comprobado 2026-11-02 — aplicación no instalada
+## Corte histórico de 2026-11-02 previo a PR #272 — aplicación no instalada
 
 El corte de main `fe70271f940dbc6fc1f422907f5e7254eb2ae508` integra
 #261/#263/#266/#269/#270. [CI postmerge 41544296010](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41544296010)
@@ -42,8 +42,10 @@ reproduce que el renderer oficial de systemd v255 omite arrays Exec vacíos
 incluso con `--all` y el parser
 rechaza esa salida compatible. El output exacto del host no se capturó, por
 lo que no se conocen sus campos omitidos ni se da por probada la causa completa.
-La corrección de lectura se revisa con pruebas propias antes de integrarse;
-la activación sigue bloqueada hasta comprobar estado y política. El
+Esta era la situación antes de integrar el PR #272. La inspección #289
+posterior fue PASS, sin arranque; el preflight #290 falló durante observación
+con parada verificada. El candidato #273 trata la holgura preventiva como
+advisory sin alterar seguridad, y aún no constituye host BETA instalado. El
 [checkpoint vigente #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6590928836)
 registra pasos y recibos posteriores para continuar sin duplicar trabajo.
 
