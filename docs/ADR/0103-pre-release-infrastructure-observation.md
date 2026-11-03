@@ -87,6 +87,13 @@ realizar recuperación Boca-only explícita al recuperar conectividad; nunca
 un reintento automático. La cancelación o pérdida del runner puede impedir
 incluso ejecutar `always()`; no se declara éxito por haberlo programado.
 
+> **Cambio de decisión 2026-11-02:** la política numérica descrita en
+> este ADR era histórica. El dueño rechazó la holgura no calibrada como veto
+> antes del deploy. La [ADR0112](0112-postdeploy-resource-observation.md)
+> contiene la decisión vigente propuesta en PR #273: recibo informativo
+> PASS/BELOW con `result=OBSERVED`, sin cambiar caps, seguridad ni
+> limpieza selectiva. La medición real queda después de instalar la BETA.
+
 ## Observación y política son distintas
 
 El recibo `BOCA_INFRA_OBSERVATION` contiene sólo SHA y métricas agregadas:

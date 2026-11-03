@@ -484,7 +484,7 @@ def sender_phase_fixture(
     return commands, state, capacity
 
 
-def test_sender_preflight_is_readonly_and_reserves_residual_capacity(
+def test_sender_preflight_is_readonly_and_observes_resources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     commands, _, capacity = sender_phase_fixture(monkeypatch)
@@ -492,7 +492,7 @@ def test_sender_preflight_is_readonly_and_reserves_residual_capacity(
         "browser-telegram-preflight", *COORDS, BOT_ID, CHAT_HMAC, RUNTIME_ATTEMPT
     )
     assert commands == []
-    assert capacity == [{"memory_mib": 512, "cpu_required": 0.5, "pids_required": 64}]
+    assert capacity == [{}]
 
 
 def test_sender_start_creates_only_current_attempt_network_and_fixed_sender(
@@ -650,7 +650,7 @@ def test_full3_restart_preserves_sender_identity_stops_sender_first_and_starts_l
         SENDER_ID,
     ]
     assert ready == [(SENDER_ID, SOURCE)]
-    assert capacities == [{"memory_mib": 1792, "cpu_required": 2.0, "pids_required": 288}]
+    assert capacities == [{}]
 
 
 @pytest.mark.parametrize(

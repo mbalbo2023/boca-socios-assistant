@@ -1,5 +1,20 @@
 # Repository settings to configure after bootstrap
 
+## Decisión vigente sobre recursos (2026-11-02, candidato #273)
+
+El dueño corrigió expresamente la condición anterior: la BETA debe
+**desplegarse de forma aislada y medirse después de su instalación**, no
+bloquearse por márgenes preventivos de CPU/RAM/PIDs que nunca se calibraron
+con el runtime real. [Issue #259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259)
+y [ADR0112](ADR/0112-postdeploy-resource-observation.md) contienen el
+razonamiento y los límites. El PR #273 sigue **candidato, no integrado**:
+ningún documento atribuye esta conducta a main hasta merge y checks.
+Permanecen obligatorios SHA/digests, identidad rootless, seguridad,
+aislamiento, puerto único 8443, espacio seguro para Docker y limpieza
+selectiva ante fallo; los caps del contenedor no son una medida de uso real.
+El run #290 falló en observación; la restauración detenida pasó. La BETA
+aún no fue instalada y la captura pública continúa bloqueada.
+
 Creating CODEOWNERS and CI files is not enough to enforce policy.
 
 **Public repository target, 2026-10-29:** GitHub Free supports enforced
@@ -112,10 +127,14 @@ integration and specific approval, it uses exact current `source_sha`,
 inputs. Both existing deploy/read-only READY markers are required: temporary
 start of the verified empty Boca daemon is a protected effect. No BETA/browser/
 Telegram marker, private owner context or release is inferred from this check.
-Its required verified final state is stopped; observation and numeric reserves
-have separate receipts. The reviewed CPU criterion uses structural `cpu_ceiling`,
-with load advisory and existing numerical requirements unchanged. See [ADR0103](ADR/0103-pre-release-infrastructure-observation.md)
-and [the operation contract](OPERATIONS.md#candidate-pre-release-infrastructure-observation).
+Its required verified final state is stopped. Under the updated owner decision
+[ADR0112](ADR/0112-postdeploy-resource-observation.md), CPU/RAM/PID buffer
+comparisons are **advisory observations**, not required minimum headroom:
+`BOCA_INFRA_POLICY result=OBSERVED` reports reference thresholds and flags.
+The structural `cpu_ceiling` and load are not a benchmark of actual BETA use.
+Identity, topology, storage safety, release provenance and verified restoration
+remain hard requirements. See historical [ADR0103](ADR/0103-pre-release-infrastructure-observation.md)
+and the [operation contract](OPERATIONS.md#pre-release-infrastructure-observation).
 No setting was changed by the candidate or these documentation updates.
 
 Freeze main after final documentation/review/checks and before release.

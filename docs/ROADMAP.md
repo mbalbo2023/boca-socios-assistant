@@ -1,5 +1,20 @@
 # Backlog y dependencias de la BETA
 
+## Decisión vigente sobre recursos (2026-11-02, candidato #273)
+
+El dueño corrigió expresamente la condición anterior: la BETA debe
+**desplegarse de forma aislada y medirse después de su instalación**, no
+bloquearse por márgenes preventivos de CPU/RAM/PIDs que nunca se calibraron
+con el runtime real. [Issue #259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259)
+y [ADR0112](ADR/0112-postdeploy-resource-observation.md) contienen el
+razonamiento y los límites. El PR #273 sigue **candidato, no integrado**:
+ningún documento atribuye esta conducta a main hasta merge y checks.
+Permanecen obligatorios SHA/digests, identidad rootless, seguridad,
+aislamiento, puerto único 8443, espacio seguro para Docker y limpieza
+selectiva ante fallo; los caps del contenedor no son una medida de uso real.
+El run #290 falló en observación; la restauración detenida pasó. La BETA
+aún no fue instalada y la captura pública continúa bloqueada.
+
 La reiteración del dueño está registrada, pero la revisión automática volvió a bloquear el dispatch antes de ejecutarlo; no existe un nuevo run. Véase el [bloqueo actualizado](https://github.com/mbalbo2023/boca-socios-assistant/issues/27#issuecomment-6591174050). La captura sigue pendiente por ese control de plataforma.
 
 El [plan de entrega](BETA_DELIVERY_PLAN.md) define aceptación; el
@@ -26,6 +41,15 @@ acreditada en esta documentación. La autorización ampliada
 incluye Site conectado, Telegram y deploy validado por Actions, con datos
 sintéticos y sin reserva/compra real. No convierte un PR o una demo en
 funcionalidad operativa.
+
+El siguiente cuadro se conserva como **historial del corte anterior a
+PR #272**. El actual main `ea753ccab29d112b374a07b167d92e68c714cddd`
+incorporó #272 con CI/seguridad PASS; la inspección #289 pasó y el preflight
+#290 falló en observación, con parada exitosa. Su RCA específico es #274.
+La corrección del veto preventivo está en **PR #273 candidato**. Las reservas
+CPU/RAM/PIDs antiguas de la fila #259 dejan de ser condiciones de entrada
+cuando la corrección pase sus checks y se integre. Continuar sin duplicar
+preparación rootless ni repetir el run fallido; medir después del despliegue.
 
 ## Secuencia con gates verificables
 

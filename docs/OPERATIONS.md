@@ -1,5 +1,20 @@
 # Safe operations — verified evidence and gated procedures
 
+## Decisión vigente sobre recursos (2026-11-02, candidato #273)
+
+El dueño corrigió expresamente la condición anterior: la BETA debe
+**desplegarse de forma aislada y medirse después de su instalación**, no
+bloquearse por márgenes preventivos de CPU/RAM/PIDs que nunca se calibraron
+con el runtime real. [Issue #259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259)
+y [ADR0112](ADR/0112-postdeploy-resource-observation.md) contienen el
+razonamiento y los límites. El PR #273 sigue **candidato, no integrado**:
+ningún documento atribuye esta conducta a main hasta merge y checks.
+Permanecen obligatorios SHA/digests, identidad rootless, seguridad,
+aislamiento, puerto único 8443, espacio seguro para Docker y limpieza
+selectiva ante fallo; los caps del contenedor no son una medida de uso real.
+El run #290 falló en observación; la restauración detenida pasó. La BETA
+aún no fue instalada y la captura pública continúa bloqueada.
+
 La reiteración del dueño está registrada, pero la revisión automática volvió a bloquear el dispatch antes de ejecutarlo; no existe un nuevo run. Véase el [bloqueo actualizado](https://github.com/mbalbo2023/boca-socios-assistant/issues/27#issuecomment-6591174050). La captura sigue pendiente por ese control de plataforma.
 
 ## Documented state and current checkpoint
@@ -214,23 +229,25 @@ deletion. A failed earlier check stays NO_GO even if restoration succeeds;
 an unverified stop or lost SSH is INDETERMINADO and blocks activation/retry.
 Do not use first-time `prepare-rootless` to substitute for this transition.
 
-`BOCA_INFRA_OBSERVATION` records aggregate evidence;
-`BOCA_INFRA_POLICY` separately applies the unchanged numeric reserves:
-1536 MiB/1.75 CPU/256 free PIDs for the pair, or 1792 MiB/2 CPU/288 free PIDs
-with Telegram, plus 4 GiB/50,000 free inodes in each checked filesystem.
-The reviewed CPU correction replaces SSH-affinity minus loadavg with
-`cpu_ceiling`: the minimum of ancestor quotas, effective cpusets and loaded
-configuration for the rootless containers' `user.slice` branch. It does not
-use `docker.service` as the container parent. `cpu_scope=materialized` or
-`configured` distinguishes a present cgroup from effective policy not yet
-materialized; `daemon_startup_cpu_count` is only an additional conservative
-limit. Load is advisory, never measured free CPU. An unverified ceiling stays
-UNKNOWN/NO_GO. The 1.75/2.0 CPU requirements, RAM/PID reserves and service caps
-do not change. This structural ceiling does not reserve CPU or predict
-contention/latency. Independent CPU review passed 290 focal tests and #261
-passed its candidate checks. The host policy was not reached in 41537794166
-or the later read-only inspection. RCA #271 requires its own review and checks.
+`BOCA_INFRA_OBSERVATION` registra únicamente metadata agregada y
+validada, no consumo medido de la BETA. La política anterior exigía
+1536/1792 MiB, 1.75/2 CPU y 256/288 PIDs libres más almacenamiento;
+esa reserva preventiva fue introducida sin benchmark de la BETA.
+**Decisión nueva del dueño [ADR0112](ADR/0112-postdeploy-resource-observation.md):**
+estos valores ahora sólo son referencias de dimensionamiento;
+`BOCA_INFRA_POLICY` produce `result=OBSERVED
+meaning=postdeploy_measurement_required` y flags `PASS/BELOW` informativos,
+sin veto por ese margen. El workflow mantiene la comprobación estricta
+del recibo, SHA, inventario/puerto, transporte y parada del daemon.
+Persisten los caps internos de CPU/RAM/PIDs y la protección de almacenamiento
+previa/tras pulls, además de limpieza selectiva. El CPU ceiling estructural
+no implica CPU libre medida; loadavg no es un gate. Medir consumo auténtico,
+salud y latencia de controller/Chromium/Telegram tras instalar la BETA.
 
+**Recibo anterior histórico:** el run #290 falló en el paso de observación
+previo sin publicar valores verificables en logs comunes; la parada del daemon
+SUCCESS no transforma el NO_GO en deploy. PR #273 corrige el contrato sin
+reintentar #290.
 ### Read-only infrastructure diagnostic — RCA #268, integrated by #269
 
 [ADR0109](ADR/0109-readonly-infrastructure-diagnostics.md) integrated

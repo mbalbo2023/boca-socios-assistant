@@ -3391,19 +3391,19 @@ def _cpu_structural_capacity() -> CpuCapacity:
             os.close(descriptor)
 
 
-def _browser_capacity(
-    *, memory_mib: int = 1536, cpu_required: float = 1.75, pids_required: int = 256
-) -> tuple[int, float, int, StorageSnapshot]:
-    """Reserve 1.5 GiB host memory, 1.75 CPU and 256 delegated PIDs.
+def _browser_capacity() -> tuple[int, float, int, StorageSnapshot]:
+    """Observe resources before operations, without an unbenchmarked admission veto.
 
-    The 1 GiB/192 PIDs combined container budget needs room for Docker and
-    bounded one-shot probes too. An indeterminate delegated limit is NO_GO.
+    Container-specific cgroup caps and storage safety checks remain enforced.
+    CPU/memory/PID consumption must be measured on the deployed BETA; the old
+    1536/1792 MiB and 1.75/2 CPU preventive buffers were not benchmarks.
+    Invalid or nonpositive physical resource observations still fail closed.
     """
     memory, observed_cpu, _load, free_pids, storage = _observe_browser_capacity()
     _validate_storage_capacity(storage)
     cpu = observed_cpu.ceiling
-    if memory < memory_mib * 1024 or cpu < cpu_required or free_pids < pids_required:
-        raise PreflightError("browser IPC host capacity below reserved budget")
+    if memory <= 0 or cpu <= 0 or free_pids <= 0:
+        raise PreflightError("host resource counters show no capacity to launch Boca")
     return memory, float(cpu), free_pids, storage
 
 
@@ -3499,18 +3499,16 @@ def _infrastructure_preflight(source_sha: str, resource_budget: str) -> None:
         f" docker_free_bytes={after.docker_free_bytes} docker_inodes={after.docker_inodes}",
         flush=True,
     )
-    outcome = "PASS" if all(checks.values()) else "NO_GO"
-    details = " ".join(f"{name}={'PASS' if result else 'NO_GO'}" for name, result in checks.items())
+    # These values are capacity-planning references, not measured BETA needs.
+    # Under the owner's approved sequence, publish the complete observation
+    # and measure actual use only after a synthetic, isolated deployment.
+    details = " ".join(f"{name}={'PASS' if result else 'BELOW'}" for name, result in checks.items())
     print(
         f"BOCA_INFRA_POLICY source_sha={source_sha} budget={resource_budget}"
         f" memory_mib={required_memory} cpu_required={required_cpu:.2f} pids_required={required_pids}"
-        f" {details} result={outcome} meaning=configured_reserve_not_benchmark",
+        f" {details} result=OBSERVED meaning=postdeploy_measurement_required",
         flush=True,
     )
-    if outcome != "PASS":
-        raise PreflightError(
-            "infrastructure configured reserve not satisfied; performance unmeasured"
-        )
 
 
 def _browser_preflight_inventory() -> tuple[int, float, int, StorageSnapshot]:
@@ -4431,8 +4429,8 @@ def _browser_apply(
     _browser_verify_staged(beta_sha, overlay_sha, seccomp_sha)
     _browser_staged_inventory(volumes={OWNER_VOLUME})
     _browser_port_free()
-    # The memory/CPU/PID capacity gate must pass AFTER both image pulls, and
-    # BEFORE creating IPC, key/data volumes or launching either service.
+    # Recheck observable host state and storage after both image pulls, before
+    # IPC/key/data effects. Actual RAM/CPU/PID demand is measured post-deploy.
     _, _, _, after_pull = _browser_capacity()
     _browser_create_ipc_volume(browser_image, attempt_id)
     _browser_staged_inventory(volumes={OWNER_VOLUME, BROWSER_IPC_VOLUME})
@@ -4800,10 +4798,7 @@ def _browser_lifecycle(
         if stopped != initial:
             raise PreflightError("installed browser identity changed while stopping")
     if operation in {"browser-start", "browser-restart"}:
-        if initial.sender:
-            _browser_capacity(memory_mib=1792, cpu_required=2.0, pids_required=288)
-        else:
-            _browser_capacity()
+        _browser_capacity()
         _browser_port_free()
         # No compose up/recreate: restart:no remains mandatory.
         for container in tuple(filter(None, (initial.worker, initial.controller, initial.sender))):
@@ -5763,7 +5758,7 @@ def _browser_telegram_phase(
         return
     if initial.sender or TELEGRAM_NETWORK in networks:
         raise PreflightError("Telegram startup requires absent sender and egress; no blind retry")
-    _browser_capacity(memory_mib=512, cpu_required=0.5, pids_required=64)
+    _browser_capacity()
     if operation == "browser-telegram-preflight":
         print(
             f"BOCA_BROWSER_TELEGRAM_PREFLIGHT_PASS source_sha={source_sha} attempt={attempt_id} sender=absent network=absent"

@@ -25,6 +25,17 @@ independent work or justify asking the same question again.
 
 ## Approved delivery and maintenance
 
+**Owner resource-gate correction (2026-11-02):** Numeric pre-release
+CPU/RAM/PID buffers without an actual BETA benchmark are now advisory and
+cannot veto installation merely for being below a chosen estimate. The
+approved engineering correction is tracked in [issue #259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259)
+and candidate [ADR0112](ADR/0112-postdeploy-resource-observation.md).
+All isolation/cgroup caps, exact image provenance, positive-identity rootless,
+loopback port, real storage safety and fail-closed/cleanup requirements remain
+binding. Measure actual synthetic BETA resource use **after deployment**;
+record metrics before approving any future dimensioning change. This is not
+authorization to affect another application or to bypass platform controls.
+
 [ADR0056](ADR/0056-approved-simulation-beta-delivery.md) and
 [BETA_DELIVERY_PLAN](BETA_DELIVERY_PLAN.md) record the approved next stage,
 including private enrollment and synthetic E2E/restart/one-ticket acceptance.

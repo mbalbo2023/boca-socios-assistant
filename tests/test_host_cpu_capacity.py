@@ -25,7 +25,7 @@ def test_io_load_does_not_reject_two_cpu_browser_and_telegram(
         ),
     )
     monkeypatch.setattr(host, "_validate_storage_capacity", lambda _: None)
-    assert host._browser_capacity(memory_mib=1792, cpu_required=2.0, pids_required=288)[1] == 2.0
+    assert host._browser_capacity()[1] == 2.0
 
 
 @pytest.mark.parametrize(

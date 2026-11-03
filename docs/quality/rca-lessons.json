@@ -449,6 +449,21 @@
         "tests/test_effective_unit_shape.py::test_effective_unit_rejection_cannot_reach_daemon_start",
         "tests/test_effective_unit_shape.py::test_effective_unit_busctl_failures_keep_fixed_diagnostics_without_raw_output"
       ]
+    },
+    {
+      "id": "RCA-274",
+      "issue": 274,
+      "fix_pr": 273,
+      "root_cause": "Unbenchmarked preventive host RAM/CPU/PID buffers were enforced as a predeploy admission veto, though no complete Boca BETA consumption measurement existed. Run #290 failed at its observation step; public logs do not establish which concrete metric triggered it.",
+      "prevention": "Keep exact advisory predeploy observations, not unbenchmarked admission vetoes. Preserve rootless identity, port 8443 isolation, cgroup caps, storage safety, SHA/digest provenance and selective cleanup. Measure actual BETA resource use and latency after installation.",
+      "regression_tests": [
+        "tests/test_infrastructure_preflight.py::test_low_advisory_observation_does_not_veto_unmeasured_beta",
+        "tests/test_infrastructure_preflight.py::test_low_resources_are_accepted_as_advisory_by_actual_workflow",
+        "tests/test_infrastructure_preflight.py::test_workflow_rejects_missing_or_forged_observations",
+        "tests/test_host_browser_ipc_install.py::test_post_pull_metadata_is_observed_without_unbenchmarked_reserve",
+        "tests/test_host_browser_runtime_lifecycle.py::test_sender_preflight_is_readonly_and_observes_resources",
+        "tests/test_host_browser_runtime_lifecycle.py::test_full3_restart_preserves_sender_identity_stops_sender_first_and_starts_last"
+      ]
     }
   ]
 }
