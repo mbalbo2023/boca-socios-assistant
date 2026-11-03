@@ -1822,6 +1822,20 @@ def _network_probe_error(error: PreflightError) -> str:
     return "unclassified"
 
 
+def _network_probe_cleanup() -> None:
+    """Remove only the exactly identified unused Boca diagnostic network."""
+    _site_daemon_empty()
+    names = _names("network", "name=^boca-socios_")
+    if names == {ENROLL_NETWORK}:
+        _owner_enroll_network("")
+        _run("docker", "network", "rm", ENROLL_NETWORK)
+    elif names:
+        raise PreflightError("unverified rootless network inventory")
+    if _names("network", "name=^boca-socios_"):
+        raise PreflightError("temporary Boca network was not removed")
+    _site_daemon_empty()
+
+
 def _network_probe() -> None:
     """Reproduce only the rootless Boca bridge creation, with proven cleanup.
 
@@ -1870,15 +1884,7 @@ def _network_probe() -> None:
             reason = _network_probe_error(exc)
     finally:
         try:
-            names = _names("network", "name=^boca-socios_")
-            if names == {ENROLL_NETWORK}:
-                _owner_enroll_network("")
-                _run("docker", "network", "rm", ENROLL_NETWORK)
-            elif names:
-                raise PreflightError("unverified rootless network inventory")
-            if _names("network", "name=^boca-socios_"):
-                raise PreflightError("temporary Boca network was not removed")
-            _site_daemon_empty()
+            _network_probe_cleanup()
         except PreflightError:
             cleanup = "INDETERMINATE"
 
@@ -6282,7 +6288,7 @@ def phase(
     telegram_attempt_id: str = "",
     infrastructure_budget: str = "",
 ) -> None:
-    if phase_name == "network-probe":
+    if phase_name in {"network-probe", "network-probe-cleanup"}:
         _validate_coordinates(image, source_sha, compose_sha, read_only_preflight=True)
         if any(
             (
@@ -6303,7 +6309,11 @@ def phase(
         ):
             raise PreflightError("unexpected private context in Boca network probe")
         _validate_docker_boundary()
-        _network_probe()
+        if phase_name == "network-probe-cleanup":
+            _network_probe_cleanup()
+            print("BOCA_NETWORK_PROBE_CLEANUP state=VERIFIED network=absent")
+        else:
+            _network_probe()
         return
     if phase_name == "infrastructure-preflight":
         _validate_coordinates(image, source_sha, compose_sha, read_only_preflight=True)
@@ -6674,6 +6684,7 @@ def main() -> int:
             "inspect-prerequisites",
             "infrastructure-preflight",
             "network-probe",
+            "network-probe-cleanup",
             "port-check",
             "observe",
             "preflight",
