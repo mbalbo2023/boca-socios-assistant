@@ -1,5 +1,22 @@
 # Boca Socios Assistant
 
+## Checkpoint rootless físico — 03/11/2026 (RCA #275)
+
+Sobre `main=b7e6e59af1ad15693528f888d4d2341de6038b56`, el
+[run #41720576622](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41720576622)
+probó una red temporal `ICC=true` sólo diagnóstica: `PASS`, limpieza verificada.
+El [run #41721217453](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41721217453)
+con el `ICC=false` exigido para `owner-enroll` devolvió
+`NO_GO reason=firewall_bridge_netfilter_unavailable cleanup=VERIFIED`;
+el daemon exclusivo se detuvo sin instalar BETA. La nueva
+[ADR0125](docs/ADR/0125-readonly-kernel-bridge-hints.md) propone añadir dos
+lecturas de kernel **sin efectos** a la operación protegida existente
+`infrastructure-inspect`. Hasta que pase CI, sea fusionada y se ejecute
+físicamente, no hay recibo del estado del módulo ni autorización para tocar
+kernel/firewall global o relajar `ICC=false`. [Issue #275](https://github.com/mbalbo2023/boca-socios-assistant/issues/275)
+y [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
+mantienen la evidencia más reciente.
+
 ## Nueva frontera de titularidad — 03/11/2026
 
 El dueño se reservó en exclusiva la programación de

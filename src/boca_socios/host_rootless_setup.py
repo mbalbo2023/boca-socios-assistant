@@ -1561,6 +1561,59 @@ def infrastructure_check(source_sha: str) -> None:
     )
 
 
+def _kernel_bridge_snapshot(
+    module_path: Path = Path("/sys/module/br_netfilter"),
+    setting_path: Path = Path("/proc/sys/net/bridge/bridge-nf-call-iptables"),
+) -> tuple[str, str]:
+    """Read two fixed kernel hints; never load a module or change a setting.
+
+    The sysfs directory may be absent for built-in or unavailable support, so
+    neither field alone is an admission verdict for Docker ICC=false.
+    """
+    try:
+        module_metadata = os.stat(module_path, follow_symlinks=False)
+    except FileNotFoundError:
+        module = "absent"
+    except OSError:
+        module = "unknown"
+    else:
+        module = "present" if stat.S_ISDIR(module_metadata.st_mode) else "unknown"
+
+    try:
+        descriptor = os.open(
+            setting_path,
+            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+    except FileNotFoundError:
+        return module, "unavailable"
+    except OSError:
+        return module, "unreadable"
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return module, "invalid"
+        value = os.read(descriptor, 16)
+    except OSError:
+        return module, "unreadable"
+    finally:
+        os.close(descriptor)
+    return module, value.decode("ascii", errors="replace").strip() if value in {
+        b"0\n",
+        b"1\n",
+    } else "invalid"
+
+
+def kernel_bridge_inspect(source_sha: str) -> None:
+    """A fixed, read-only host hint for incident #275; not a deploy gate."""
+    if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise SetupError("invalid_kernel_inspect_coordinates")
+    _identity()
+    module, setting = _kernel_bridge_snapshot()
+    print(
+        f"BOCA_KERNEL_BRIDGE state=OBSERVED source_sha={source_sha}"
+        f" module={module} nf_call_iptables={setting} write_ops=none"
+    )
+
+
 def infrastructure_start(source_sha: str) -> None:
     home = _infrastructure_stopped(source_sha)
     _start_stopped_daemon(home, require_empty=True)
@@ -1648,6 +1701,7 @@ def main() -> int:
             "start-existing",
             "stop-test",
             "infrastructure-check",
+            "kernel-bridge-inspect",
             "infrastructure-start",
             "infrastructure-stop",
         ),
@@ -1659,6 +1713,7 @@ def main() -> int:
         "start-existing": "BOCA_ROOTLESS_START",
         "inspect-existing": "BOCA_ROOTLESS_RECOVERY",
         "infrastructure-check": "BOCA_INFRA_DAEMON",
+        "kernel-bridge-inspect": "BOCA_KERNEL_BRIDGE",
         "infrastructure-start": "BOCA_INFRA_DAEMON",
         "infrastructure-stop": "BOCA_INFRA_DAEMON",
     }.get(args.phase, "BOCA_ROOTLESS_SETUP")
@@ -1671,6 +1726,8 @@ def main() -> int:
             inspect_existing(args.source_sha)
         elif args.phase == "infrastructure-check":
             infrastructure_check(args.source_sha)
+        elif args.phase == "kernel-bridge-inspect":
+            kernel_bridge_inspect(args.source_sha)
         elif args.phase == "infrastructure-start":
             infrastructure_start(args.source_sha)
         elif args.phase == "infrastructure-stop":
