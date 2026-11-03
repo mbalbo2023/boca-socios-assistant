@@ -455,7 +455,7 @@
       "issue": 274,
       "fix_pr": 273,
       "root_cause": "Unbenchmarked preventive host RAM/CPU/PID buffers were enforced as a predeploy admission veto, though no complete Boca BETA consumption measurement existed. Run #290 failed at its observation step; public logs do not establish which concrete metric triggered it.",
-      "prevention": "Treat pre-deploy resource buffer comparisons as advisory with strictly validated canonical observations; preserve rootless identity, localhost-only access, cgroup caps, real storage safety, exact release provenance, post-pull continuity and selective cleanup; validate actual consumption through post-deployment synthetic acceptance.",
+      "prevention": "Keep exact advisory predeploy observations, not unbenchmarked admission vetoes. Preserve rootless identity, port 8443 isolation, cgroup caps, storage safety, SHA/digest provenance and selective cleanup. Measure actual BETA resource use and latency after installation.",
       "regression_tests": [
         "tests/test_infrastructure_preflight.py::test_low_advisory_observation_does_not_veto_unmeasured_beta",
         "tests/test_infrastructure_preflight.py::test_low_resources_are_accepted_as_advisory_by_actual_workflow",
