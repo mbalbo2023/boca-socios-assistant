@@ -68,6 +68,19 @@ every unrelated service, host configuration and application repository.
 
 ## Approved BETA preparation scope
 
+### Owner correction: capacity is observed after BETA deployment
+
+The owner expressly rejected unbenchmarked preventive RAM/CPU/PID headroom
+as an admission requirement; use the [ADR0112](docs/ADR/0112-postdeploy-resource-observation.md)
+candidate and [issue #259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259)
+for implementation/review. Maintain hard container cgroup caps, rootless
+identity, SHA/digest provenance, port 8443 isolation, real storage safety
+and positive-identity cleanup. Do not claim the PR is merged or the BETA
+installed. Measure actual synthetic runtime after deployment and document it.
+Existing authorization covers continuing this scope without reconfirmation;
+request the owner's assistance only for an actual manual action or physical
+Chrome/Telegram test.
+
 ### Owner continuity instruction — 2026-11-02
 
 The owner explicitly reiterated: “Ya te dije explícitamente no tenés que
