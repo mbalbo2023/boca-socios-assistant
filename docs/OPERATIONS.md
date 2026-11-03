@@ -1,5 +1,9 @@
 # Safe operations — verified evidence and gated procedures
 
+## Piloto conectado: Chrome del droplet sin suponer instalación (03/11/2026)
+
+La nueva operación propuesta `chrome-host-inspect` de [issue #281](https://github.com/mbalbo2023/boca-socios-assistant/issues/281) se limita a buscar cuatro ejecutables permitidos en el PATH del usuario Boca UID 10001. Requiere `source_sha` idéntico al `main` actual, `service=controller`, presupuesto `0.5cpu-256m-64pids`, entorno de lectura habilitado y entradas privadas/image/release vacías. Tras merge y CI de `main` GREEN, seleccionar manualmente esa operación en **Boca first deploy**. Un recibo `PRESENT` sólo significa que hay un binario en el PATH; no implica navegador operativo, sesión de Fernando, cola ni reserva. Un `ABSENT` tampoco autoriza instalar paquetes. No exponer rutas de host ni errores. Ver [ADR0117](ADR/0117-host-chrome-readonly-inventory.md). No alterar otros workloads ni debilitar aislamiento.
+
 ## RCA #275 — diagnóstico rootless #342 y experimento ICC=true (2026-11-03 ART)
 
 [Run #342](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41640672050) sobre `main=d9ad6d492592c403eed70ae85af63f8b1821a67d`: **`BOCA_NETWORK_PROBE result=NO_GO reason=firewall_bridge_netfilter_unavailable cleanup=VERIFIED`**; la red temporal quedó ausente y el daemon exclusivo detenido. El host no recibió imagen, contenedor, puerto ni BETA. #317/#329/#337 se conservan como diagnósticos históricos menos precisos; CI/seguridad postmerge de #279 GREEN.
