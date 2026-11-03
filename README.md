@@ -55,8 +55,12 @@ infrastructure**.
 > reproduces the parser's rejection of empty Exec arrays omitted by systemd's
 > v255 renderer even with `--all`. The exact omitted host fields were not
 > captured; this compatible defect does not prove the complete host cause.
-> The correction needs independent review and exact checks. Capacity remains
-> unevaluated and activation blocked.
+> Historical RCA #271 was integrated by PR #272, with postmerge CI/security
+> success on `main=ea753ccab29d112b374a07b167d92e68c714cddd`.
+> Protected `infrastructure-inspect` #289 then PASSed with daemon stopped;
+> infrastructure-preflight #290 subsequently failed its observation step,
+> while the mandatory daemon stop succeeded. The resource decision is now
+> tracked in issue #274/PR #273; BETA installation remains unverified.
 > [Public capture 41537796470](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41537796470)
 > fetched 25 permitted GETs, all HTTP 200. Chromium remained UNKNOWN after a
 > denied script GET outside the exact accepted origin, with query redacted and
