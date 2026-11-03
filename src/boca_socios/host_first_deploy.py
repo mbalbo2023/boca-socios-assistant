@@ -6282,6 +6282,29 @@ def phase(
     telegram_attempt_id: str = "",
     infrastructure_budget: str = "",
 ) -> None:
+    if phase_name == "network-probe":
+        _validate_coordinates(image, source_sha, compose_sha, read_only_preflight=True)
+        if any(
+            (
+                envelope,
+                beta_owner,
+                telegram_envelope,
+                expected_bot_id,
+                expected_chat_hmac,
+                owner_envelope,
+                enroll_digest,
+                browser_image,
+                browser_overlay_sha,
+                browser_seccomp_sha,
+                browser_attempt_id,
+                telegram_attempt_id,
+                infrastructure_budget,
+            )
+        ):
+            raise PreflightError("unexpected private context in Boca network probe")
+        _validate_docker_boundary()
+        _network_probe()
+        return
     if phase_name == "infrastructure-preflight":
         _validate_coordinates(image, source_sha, compose_sha, read_only_preflight=True)
         if any(
@@ -6650,6 +6673,7 @@ def main() -> int:
         choices=(
             "inspect-prerequisites",
             "infrastructure-preflight",
+            "network-probe",
             "port-check",
             "observe",
             "preflight",
