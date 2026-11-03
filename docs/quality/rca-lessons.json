@@ -464,6 +464,20 @@
         "tests/test_host_browser_runtime_lifecycle.py::test_sender_preflight_is_readonly_and_observes_resources",
         "tests/test_host_browser_runtime_lifecycle.py::test_full3_restart_preserves_sender_identity_stops_sender_first_and_starts_last"
       ]
+    },
+    {
+      "id": "RCA-275",
+      "issue": 275,
+      "fix_pr": 276,
+      "root_cause": "The protected owner-enroll start step discarded remote stderr and converted all failed host starts to a generic NO_GO, hiding the failing stage in real runs #305 and #306.",
+      "prevention": "Report only fixed host-owned start phase codes via a bounded ephemeral runner file; forbid raw stderr, retain the failed result and always perform Boca-only cleanup and daemon stop.",
+      "regression_tests": [
+        "tests/test_owner_enroll_diagnostic.py::test_only_reviewed_owner_enroll_phase_codes_pass",
+        "tests/test_owner_enroll_diagnostic.py::test_unknown_stderr_never_echoes_sensitive_data",
+        "tests/test_owner_enroll_diagnostic.py::test_reader_rejects_symlink",
+        "tests/test_owner_enroll_diagnostic.py::test_start_redacts_original_exception",
+        "tests/test_owner_enroll_diagnostic.py::test_workflow_redacts_only_ephemeral_stderr_and_preserves_cleanup"
+      ]
     }
   ]
 }

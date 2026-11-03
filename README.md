@@ -1,5 +1,11 @@
 # Boca Socios Assistant
 
+## RCA #275 — owner-enroll real, aún sin passkey (2026-11-02 ART)
+
+Release [#298](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41559973013) y `owner-prepare` [#304](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41564606055) GREEN para `main=0e830e3eed941de1da70cef8b42bda9f20258b65`.
+Los intentos reales de `owner-enroll` [#305](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41566871210) y [#306](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41568180039) fallaron antes de `READY`; en ambos, cleanup selectivo y parada del daemon completaron SUCCESS. **No hay passkey ni BETA instaladas.** La causa específica del fallo host no es verificable desde los logs: se descartaba stderr.
+El [PR #276](https://github.com/mbalbo2023/boca-socios-assistant/pull/276) y [ADR0113](docs/ADR/0113-owner-enrollment-redacted-diagnostics.md) proponen etiquetas de fase seguras y salida censurada estricta. Código candidato; no habilitar nuevo host hasta checks, review, main/release exactos. No atribuir la falla al túnel ni a capacidad sin recibo.
+
 ## Decisión vigente sobre recursos (2026-11-02, candidato #273)
 
 El dueño corrigió expresamente la condición anterior: la BETA debe
@@ -7,8 +13,7 @@ El dueño corrigió expresamente la condición anterior: la BETA debe
 bloquearse por márgenes preventivos de CPU/RAM/PIDs que nunca se calibraron
 con el runtime real. [Issue #259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259)
 y [ADR0112](docs/ADR/0112-postdeploy-resource-observation.md) contienen el
-razonamiento y los límites. El PR #273 sigue **candidato, no integrado**:
-ningún documento atribuye esta conducta a main hasta merge y checks.
+razonamiento y los límites. El PR #273 fue integrado y verificado en `main=0e830e3eed941de1da70cef8b42bda9f20258b65` con CI y seguridad postmerge GREEN. La decisión sigue vigente.
 Permanecen obligatorios SHA/digests, identidad rootless, seguridad,
 aislamiento, puerto único 8443, espacio seguro para Docker y limpieza
 selectiva ante fallo; los caps del contenedor no son una medida de uso real.
