@@ -74,13 +74,17 @@ Engine, capacidad, datos globales, instalación, forwarding y passkey físicos
 siguen sin comprobar. El port-check 41497093298 observó 8443 libre a las
 15:04:45 ART sin reservarlo. No hubo residuos de instalación por estas inspecciones.
 
-El orden obligatorio es corrección #271/revisión/merge/checks → inspección
-sólo lectura → completar/evaluar preflight de infraestructura → aprobación
-específica/release dual de main congelado → preflight de imágenes/aislamiento → owner-prepare/owner-enroll
-físico → install/acceptance temporal → configuración y prueba Telegram con
-outbox vacío → sender explícito → simulación persistente, reinicio y segundo
-acceso con passkey. La aceptación detiene Boca: se reanuda con
-`beta-browser-start`, nunca repitiendo una instalación new-only.
+El orden operativo actual, una vez integrado y verificado el candidato #273,
+es: comprobación de identidad/rootless/almacenamiento/puerto y observación de
+recursos **sin veto por holgura no medida** → release dual inmutable del
+`main` congelado → validación de imágenes/aislamiento → custodia owner y alta
+privada Chrome bajo SSH (intervención física del dueño) → instalación BETA
+aislada → pruebas y **medición real de uso/latencia en el host** → Telegram
+(custodia, prueba API y confirmación humana) → simulación persistente,
+reinicio y segundo acceso passkey. La aceptación detiene sólo Boca y se
+reanuda con `beta-browser-start`, nunca repitiendo instalación new-only.
+Toda decisión de dimensionamiento posterior depende de los recibos reales;
+la autorización de continuar el alcance ya fue otorgada por el dueño.
 
 El ciclo ofrece start/restart/status/acceptance, sender-start y
 `beta-browser-telegram-recover`. Par: `1.5cpu-1024m-192pids`; ciclo con owner
