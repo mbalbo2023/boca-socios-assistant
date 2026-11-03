@@ -92,7 +92,9 @@ class TelegramTransport:
             before = path.lstat()
             if not stat.S_ISREG(before.st_mode) or stat.S_IMODE(before.st_mode) & 0o077:
                 raise ValueError("invalid secret file")
-            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            # A concurrent replacement with a FIFO must fail immediately,
+            # rather than hang before the post-open inode verification.
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             try:
                 after = os.fstat(descriptor)
                 if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):

@@ -1,6 +1,7 @@
 """Telegram boundary tests use a fake HTTP connection and temporary SQLite only."""
 
 import asyncio
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -295,6 +296,22 @@ class TelegramTransportTests(unittest.TestCase):
                 finally:
                     secret.write_text(original, encoding="utf-8")
                     secret.chmod(0o600)
+
+    def test_private_secret_open_is_nonblocking_against_fifo_swap(self):
+        """A regular file can become a FIFO after lstat; open must not hang."""
+        original_open = os.open
+        opened: list[Path] = []
+
+        def guarded_open(path, flags, *args, **kwargs):
+            self.assertTrue(flags & os.O_NOFOLLOW)
+            self.assertTrue(flags & os.O_NONBLOCK, "blocking secret open permits FIFO race")
+            opened.append(Path(path))
+            return original_open(path, flags, *args, **kwargs)
+
+        with patch("boca_socios.notify.telegram_transport.os.open", side_effect=guarded_open):
+            self.transport().preflight()
+        self.assertEqual(opened.count(self.token), 2)
+        self.assertEqual(opened.count(self.destination), 2)
 
 
 if __name__ == "__main__":
