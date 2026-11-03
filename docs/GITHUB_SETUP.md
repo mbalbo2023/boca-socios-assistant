@@ -127,10 +127,14 @@ integration and specific approval, it uses exact current `source_sha`,
 inputs. Both existing deploy/read-only READY markers are required: temporary
 start of the verified empty Boca daemon is a protected effect. No BETA/browser/
 Telegram marker, private owner context or release is inferred from this check.
-Its required verified final state is stopped; observation and numeric reserves
-have separate receipts. The reviewed CPU criterion uses structural `cpu_ceiling`,
-with load advisory and existing numerical requirements unchanged. See [ADR0103](ADR/0103-pre-release-infrastructure-observation.md)
-and [the operation contract](OPERATIONS.md#candidate-pre-release-infrastructure-observation).
+Its required verified final state is stopped. Under the updated owner decision
+[ADR0112](ADR/0112-postdeploy-resource-observation.md), CPU/RAM/PID buffer
+comparisons are **advisory observations**, not required minimum headroom:
+`BOCA_INFRA_POLICY result=OBSERVED` reports reference thresholds and flags.
+The structural `cpu_ceiling` and load are not a benchmark of actual BETA use.
+Identity, topology, storage safety, release provenance and verified restoration
+remain hard requirements. See historical [ADR0103](ADR/0103-pre-release-infrastructure-observation.md)
+and the [operation contract](OPERATIONS.md#pre-release-infrastructure-observation).
 No setting was changed by the candidate or these documentation updates.
 
 Freeze main after final documentation/review/checks and before release.
