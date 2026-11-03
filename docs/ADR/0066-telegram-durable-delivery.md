@@ -26,6 +26,10 @@ del API**, no entrega al dispositivo, lectura humana ni reserva.
 El token y chat ID se leen de dos archivos externos regulares, no symlinks,
 legibles sólo por su dueño (sin bits de grupo/otros). El adaptador no guarda
 esos valores en DB, imagen, GitHub ni `repr`; errores públicos son genéricos.
+En la lectura se usa `O_NOFOLLOW | O_NONBLOCK`: incluso si un archivo regular
+es sustituido por un FIFO entre `lstat` y `open`, la apertura no puede quedar
+bloqueada esperando un escritor. Después de abrir se conserva la verificación
+de identidad `dev/inode`, longitud y configuración privada ya existente.
 La prueba previa a reclamar un aviso exige archivos y formato válidos. Aun así,
 un cambio entre prueba previa y envío se trata como incertidumbre, nunca como
 permiso para repetir. La conexión usa TLS del sistema, plazo de socket de tres

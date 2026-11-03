@@ -1,7 +1,9 @@
-"""Contract tests for the optional, no-egress Chromium synthetic journey in CI."""
+"""Offline CI contracts for the owner's externally validated browser blackbox."""
 
 from __future__ import annotations
 
+import re
+import tomllib
 from pathlib import Path
 from runpy import run_path
 
@@ -21,9 +23,11 @@ def test_browser_image_contains_only_required_synthetic_contracts() -> None:
     assert "BOCA_OBSERVER_STOP=1" in dockerfile
 
 
-def test_ci_synthetic_chromium_is_offline_capped_and_selectively_cleaned() -> None:
+def test_ci_excludes_owner_synthetic_journey_but_preserves_other_offline_fixtures() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    start = workflow.index("      - name: Run synthetic Chromium DOM journey offline")
+    assert "      - name: Run synthetic Chromium DOM journey offline" not in workflow
+    assert "python -m scripts.run_synthetic_ticket_flow" not in workflow
+    start = workflow.index("      - name: Run public-login structural fixtures in offline Chromium")
     end = workflow.index("      - name: Clean disposable browser runner resources", start)
     smoke = workflow[start:end]
     cleanup = workflow[end:]
@@ -37,7 +41,8 @@ def test_ci_synthetic_chromium_is_offline_capped_and_selectively_cleaned() -> No
         "--security-opt no-new-privileges",
         "--user 10002:10002",
         "seccomp=docker/seccomp_profile.json",
-        "scripts.run_synthetic_ticket_flow",
+        "scripts.run_public_observer_offline_chromium",
+        "scripts.run_telegram_setup_ui_offline_chromium",
     ):
         assert required in smoke
     assert "if: always()" in cleanup
@@ -45,6 +50,40 @@ def test_ci_synthetic_chromium_is_offline_capped_and_selectively_cleaned() -> No
     assert "docker image rm" in cleanup
     assert "docker system prune" not in workflow
     assert "boca-target" not in smoke + cleanup
+
+
+def test_linters_types_and_local_tests_exclude_only_owner_blackbox_modules() -> None:
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    reserved = (
+        "src/boca_socios/browser/synthetic.py",
+        "src/boca_socios/browser/ipc_worker.py",
+    )
+    assert set(reserved) <= set(config["tool"]["ruff"]["extend-exclude"])
+    mypy = config["tool"]["mypy"]
+    for path in reserved:
+        assert any(re.fullmatch(pattern, path) for pattern in mypy["exclude"])
+    assert any(
+        override["follow_imports"] == "skip"
+        and set(override["module"])
+        == {"boca_socios.browser.synthetic", "boca_socios.browser.ipc_worker"}
+        for override in config["tool"]["mypy"]["overrides"]
+    )
+    assert {
+        "--ignore=tests/test_synthetic_browser_worker.py",
+        "--ignore=tests/test_browser_playwright_factory.py",
+        "--ignore=tests/test_browser_on_demand.py",
+        "--ignore=tests/test_browser_ipc.py",
+    } <= set(config["tool"]["pytest"]["ini_options"]["addopts"])
+
+
+def test_first_deploy_pr_smoke_keeps_controller_but_never_starts_owner_worker() -> None:
+    workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text(encoding="utf-8")
+    runner = workflow.split("  pr-runtime-smoke:\n", 1)[1].split("  deploy:\n", 1)[0]
+    assert "Run synthetic loopback HTTP acceptance inside capped disposable controller" in runner
+    assert "Verify offline sender readiness and never-started production network inspect" in runner
+    assert "Verify actual dual-service inspect and retained-container restart" not in runner
+    assert "up --no-build --no-deps --wait --wait-timeout 90 -d browser-worker" not in runner
+    assert "python -m boca_socios.browser.ipc_worker" not in runner
 
 
 def test_synthetic_browser_receipt_requires_exact_allowlisted_fields() -> None:

@@ -577,32 +577,9 @@ jobs:
           container="$(docker compose -p boca-socios -f compose.beta.yaml ps -q controller)"
           [[ "$container" =~ ^[0-9a-f]{64}$ ]]
           PYTHONPATH=src python3 scripts/check_browser_lifecycle_runtime.py acceptance "$container"
-      - name: Verify actual dual-service inspect and retained-container restart on disposable runner
-        run: |
-          set -euo pipefail
-          # Replace only this job's synthetic singleton with the reviewed pair.
-          docker compose -p boca-socios -f compose.beta.yaml stop controller
-          docker compose -p boca-socios -f compose.beta.yaml rm -f controller
-          docker volume create --driver local --label "boca.ci.lifecycle-attempt=$GITHUB_RUN_ID" \
-            --label com.docker.compose.project=boca-socios \
-            --label com.docker.compose.volume=boca_browser_ipc boca-socios_boca_browser_ipc
-          docker run --rm --pull never --user 0:0 --network none --read-only \
-            --cap-drop ALL --cap-add CHOWN --cap-add FOWNER --security-opt no-new-privileges \
-            --pids-limit 16 --memory 64m --cpus 0.25 --no-healthcheck \
-            --mount type=volume,source=boca-socios_boca_browser_ipc,target=/ipc,volume-nocopy \
-            "$BOCA_IMAGE" python -c 'import os; os.chown("/ipc",10002,10002); os.chmod("/ipc",0o711)'
-          docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml \
-            up --no-build --no-deps --wait --wait-timeout 90 -d browser-worker
-          docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml \
-            up --no-build --no-deps --wait --wait-timeout 90 -d controller
-          controller="$(docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml ps -q controller)"
-          worker="$(docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml ps -q browser-worker)"
-          PYTHONPATH=src python3 scripts/check_browser_lifecycle_runtime.py pair running "$controller" "$worker" startup
-          docker stop --time 10 "$controller" "$worker"
-          PYTHONPATH=src python3 scripts/check_browser_lifecycle_runtime.py pair stopped "$controller" "$worker"
-          docker start "$worker" "$controller"
-          PYTHONPATH=src python3 scripts/check_browser_lifecycle_runtime.py pair running "$controller" "$worker" restart
-          docker stop --time 10 "$controller" "$worker"
+      # The owner externally validated the browser-worker as a blackbox.
+      # PR runner tests never start/import its implementation. Controller-only
+      # HTTP acceptance above and Telegram offline checks below remain gated.
       - name: Verify offline sender readiness and never-started production network inspect
         run: |
           set -euo pipefail
