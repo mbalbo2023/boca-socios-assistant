@@ -4,6 +4,10 @@
 follow-up diagnostic PR #279. RCA #275 remains open. This ADR
 records host evidence and diagnostic changes, **not** host repair or deployment.
 
+## Additional physical evidence — protected run #342 (2026-11-03 ART)
+
+Following integration of #279 at `main=d9ad6d492592c403eed70ae85af63f8b1821a67d`, the [protected rootless probe #342](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41640672050) returned exactly `BOCA_NETWORK_PROBE result=NO_GO reason=firewall_bridge_netfilter_unavailable cleanup=VERIFIED`. The independent cleanup and dedicated Boca rootless daemon stop succeeded. This is specific evidence about the *subprocess diagnostic*, **not** direct proof that a global kernel module is unloaded, or authority to load it. No app image, container, port, BETA, Chrome enrollment or Telegram was installed. Owner enrollment still uses ICC=false. See [ADR0116](0116-rootless-icc-true-differential-probe.md) for the owner-approved isolated ICC=true differential experiment; no production alteration is implied.
+
 ## Subsequent host observation — protected run #337
 
 The owner executed [run #337 / 41636437171](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41636437171)

@@ -180,7 +180,7 @@ def test_network_probe_uses_same_protected_workflow_with_daemon_stop() -> None:
     assert "network-probe" in workflow
     assert "Boca rootless network probe" in workflow
     assert "BOCA_NETWORK_PROBE result=" in workflow
-    assert "if: always() && inputs.operation == 'network-probe'" in workflow
+    assert "if: always() && startsWith(inputs.operation, 'network-probe')" in workflow
     assert "src/boca_socios/host_rootless_setup.py" in workflow
     assert "src/boca_socios/host_first_deploy.py" in workflow
     assert "--network=host" not in workflow
