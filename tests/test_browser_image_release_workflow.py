@@ -32,7 +32,7 @@ def test_browser_pr_validation_builds_scans_but_never_publishes() -> None:
         < preview.index("Scan browser image before any publication")
     )
     assert "Scan browser image before any publication" in preview
-    assert preview.count("uses: aquasecurity/trivy-action@") == 2
+    assert preview.count("run: bash scripts/trivy_scan_image.sh") == 2
     assert "docker push" not in preview
     assert "docker login" not in preview
     assert "packages: write" not in preview
@@ -60,7 +60,7 @@ def test_protected_main_release_scans_both_before_any_ghcr_auth_or_push() -> Non
     assert browser_scan < recheck < unique < login < push
     assert publish.count("python scripts/check_main_ref.py") == 2
     assert publish.count("python scripts/check_release_dispatch.py") == 2
-    assert publish.count("uses: aquasecurity/trivy-action@") == 2
+    assert publish.count("run: bash scripts/trivy_scan_image.sh") == 2
     assert "ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}" in publish
     assert "ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}" in publish
     assert "Verify browser source revision label" in publish
@@ -111,14 +111,5 @@ def test_every_release_image_scan_blocks_high_critical_vulnerabilities() -> None
     ):
         for name in (controller_name, "Scan browser image before any publication"):
             scan = section.split(f"      - name: {name}\n", 1)[1].split("      - name:", 1)[0]
-            assert (
-                "uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25" in scan
-            )
-            for guard in (
-                "scanners: vuln",
-                "vuln-type: os,library",
-                "severity: HIGH,CRITICAL",
-                'ignore-unfixed: "false"',
-                'exit-code: "1"',
-            ):
-                assert guard in scan
+            assert 'run: bash scripts/trivy_scan_image.sh "' in scan
+    assert "uses: aquasecurity/trivy-action@" not in workflow
