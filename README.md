@@ -1,6 +1,23 @@
 # Boca Socios Assistant
 
-## Prioridad del 03/11: comprobar Chrome físico y login público antes del piloto real
+## Piloto privado de Fernando — prefila real, ingreso todavía sin acreditar (03/11/2026)
+
+Al continuar el acceso en Cloud Browser, **el sitio oficial** redirigió el login a
+una prefila Queue-it para Boca vs. Defensa y Justicia (07/11/2026): la fila
+abrirá a las **13:00 ART** y la portada de Boca Socios anuncia la venta
+prioritaria a las **14:00 ART**. Esta observación ocurrió en el navegador de
+ChatGPT y **no** en el Chrome del droplet; no acredita cuenta de Fernando,
+posición admitida ni reserva. Se conservó la pestaña sin nuevas posiciones,
+sin publicar su identificador; [issue #285](https://github.com/mbalbo2023/boca-socios-assistant/issues/285).
+
+La prueba física [#350](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41658478693)
+sí acreditó `BOCA_CHROME_PUBLIC state=FORM_VISIBLE cleanup=VERIFIED` con Chrome
+del droplet, **sólo formulario público**. El candidato de
+[ADR0119](docs/ADR/0119-host-pilot-private-one-shot-intake.md) implementa
+únicamente entrada WSGI privada de un uso, todavía **inactiva**, sin listener,
+driver Chrome conectado o host deploy. Su prueba local tampoco acredita login.
+
+## Antecedente del 03/11: comprobar Chrome físico y login público antes del piloto real
 
 El titular priorizó la prueba del sitio real antes de las 12:00 ART. La autenticación de Fernando en Cloud Browser no quedó verificada pese a la confirmación del titular de que las credenciales son correctas. El bot de este repositorio **todavía no inicia una sesión real ni reserva entradas**. El [run físico #347](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41655307167) en main `4f9718d` confirmó **`google-chrome-stable` presente para UID 10001** con el PR #282 integrado. El [issue #283](https://github.com/mbalbo2023/boca-socios-assistant/issues/283) propone un único GET público en ese Chrome contra login, **sin credenciales** y con perfil temporal. Sólo después de recibir su prueba física sabremos si Chrome abre la página; no confundir con sesión autenticada ni BETA instalada. Véanse [ADR0117](docs/ADR/0117-host-chrome-readonly-inventory.md) y [ADR0118](docs/ADR/0118-one-shot-public-login-chrome-smoke.md). No mezclar con la venta de la final a las 14:00 en la plataforma de CONMEBOL.
 

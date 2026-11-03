@@ -1,5 +1,25 @@
 # Safe operations — verified evidence and gated procedures
 
+## Estado de la prueba real y componente de acceso privado (03/11/2026 ART)
+
+La navegación a Boca Socios en Cloud Browser fue redirigida a **prefila
+Queue-it**, con apertura de fila **13:00 ART** para Boca vs. Defensa y Justicia
+(07/11/2026); venta prioritaria anunciada **14:00 ART** en la portada oficial.
+La página no acreditó ingreso de Fernando ni reserva. La pestaña se preservó;
+no divulgar su identificador de fila, pasar cookies ni intentar otra posición.
+Es evidencia **distinta** del run de Chrome del host
+[#350](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41658478693)
+`FORM_VISIBLE cleanup=VERIFIED`.
+
+El módulo candidato `host_pilot_intake` de
+[ADR0119](ADR/0119-host-pilot-private-one-shot-intake.md) sólo define el
+formulario privado y su rechazo/consumo de un uso (HTML + WSGI); **no abre el
+puerto**, no tiene driver real de Chrome, no solicita credenciales a GitHub
+ni realiza autenticación. No se puede utilizar `http://localhost:8443/piloto`
+hasta contar con PR review, adaptador y servidor temporal aprobados, operación
+protegida, enlace privado efectivo y recibo físico de sesión. El modo
+actual de producto sigue siendo **SIMULATION ONLY**. Ver [issue #285](https://github.com/mbalbo2023/boca-socios-assistant/issues/285).
+
 ## Piloto conectado: Chrome físico encontrado; nueva prueba pública acotada (03/11/2026)
 
 La operación `chrome-host-inspect` de [issue #281](https://github.com/mbalbo2023/boca-socios-assistant/issues/281) ya dio recibo físico [#347](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41655307167) `PRESENT google-chrome-stable uid=10001`. Ahora [issue #283](https://github.com/mbalbo2023/boca-socios-assistant/issues/283) agrega **`chrome-host-public-smoke`**, con URL única fija de login de Boca, navegador headless existente, sandbox activo, perfil privado efímero y grupo de procesos terminado aun ante timeout. No se transmiten credenciales ni se opera cola/reserva. Requiere `source_sha` idéntico a `main`, `service=controller`, presupuesto `0.5cpu-256m-64pids`, entorno de lectura habilitado, entradas privadas/image/release vacías; sólo disparar tras CI y seguridad de PR y main GREEN. El recibo es sólo `FORM_VISIBLE|OTHER_PAGE|CHALLENGE|NO_GO` y cleanup; un challenge o un login no completado no justifican bypass. Ver [ADR0118](ADR/0118-one-shot-public-login-chrome-smoke.md). No alterar otros workloads.

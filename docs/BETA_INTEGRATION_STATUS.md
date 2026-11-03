@@ -1,5 +1,22 @@
 # Estado de integración BETA
 
+## Corte 03/11 — prefila oficial y candidato privado inerte
+
+La página de login redirigió **Cloud Browser** a la prefila oficial Queue-it
+para Boca vs. Defensa y Justicia (07/11/2026), apertura **13:00 ART**; la
+portada Boca Socios anuncia venta prioritaria desde **14:00 ART**. La sesión
+de Fernando no está acreditada y no hubo reserva. Esta evidencia no pertenece
+al Chrome físico del droplet: el último recibo protegido
+[#350](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41658478693)
+sólo prueba el formulario público y limpieza. [Issue #285](https://github.com/mbalbo2023/boca-socios-assistant/issues/285).
+
+El componente WSGI `host_pilot_intake` de
+[ADR0119](ADR/0119-host-pilot-private-one-shot-intake.md) está en desarrollo:
+**sin listener, sin Chrome conectado, sin credenciales reales, sin host deploy**.
+No confundir tests offline con capacidad para operar ni mover el producto fuera
+de SIMULATION ONLY. Sigue pendiente el canal de entrega privada por SSH 8443
+y la prueba real posterior al paso legítimo de la fila.
+
 ## Prioridad 03/11 antes de 12:00 — verificación del navegador del droplet
 
 El usuario pidió un piloto de login/cola/reserva en el sitio real y propuso Chrome del droplet. El sitio de Boca Socios respondió al navegador de ChatGPT, pero **no se acreditó sesión autenticada** de Fernando; el usuario confirma que sus credenciales son correctas. No se inició cola ni reserva. El código actual sólo simula reservas. El [run protegido #347](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41655307167) confirmó **`google-chrome-stable` presente bajo UID 10001**, PR #282 integrado. Siguiente candidata separada [#283](https://github.com/mbalbo2023/boca-socios-assistant/issues/283): prueba pública con Chrome real, URL fija de login, sin credenciales, sin cola y perfil efímero. Ningún resultado de presencia indica autenticación ni BETA instalada. Ver [ADR0118](ADR/0118-one-shot-public-login-chrome-smoke.md).
