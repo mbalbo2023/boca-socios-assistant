@@ -1614,6 +1614,100 @@ def kernel_bridge_inspect(source_sha: str) -> None:
     )
 
 
+def _read_kernel_module_index(path: Path) -> bytes | None:
+    """Read a bounded regular module catalogue, without following its final link."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        return None
+    try:
+        metadata = os.fstat(descriptor)
+        limit = 4 * 1024 * 1024
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
+            return None
+        data = bytearray()
+        while len(data) <= limit:
+            chunk = os.read(descriptor, min(65536, limit + 1 - len(data)))
+            if not chunk:
+                return bytes(data)
+            data.extend(chunk)
+        return None
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+
+
+def _index_mentions_bridge(data: bytes, *, dependencies: bool) -> bool:
+    """Catalogue hints only: a listed file is not proof it can be loaded."""
+    for line in data.splitlines():
+        candidate = line.partition(b":")[0] if dependencies else line
+        filename = candidate.rsplit(b"/", 1)[-1]
+        if re.fullmatch(rb"br_netfilter\.ko(?:\.(?:gz|xz|zst))?", filename):
+            return True
+    return False
+
+
+def _kernel_module_availability_snapshot(
+    modules_root: Path = Path("/lib/modules"),
+    disabled_path: Path = Path("/proc/sys/kernel/modules_disabled"),
+    kernel_release: str | None = None,
+) -> tuple[str, str]:
+    """Inspect local kernel module indexes and policy, without kernel writes."""
+    release = kernel_release if kernel_release is not None else os.uname().release
+    if release not in {".", ".."} and re.fullmatch(r"[A-Za-z0-9._+-]{1,120}", release):
+        directory = modules_root / release
+        builtin = _read_kernel_module_index(directory / "modules.builtin")
+        dependencies = _read_kernel_module_index(directory / "modules.dep")
+        builtin_hit = builtin is not None and _index_mentions_bridge(builtin, dependencies=False)
+        dependency_hit = dependencies is not None and _index_mentions_bridge(
+            dependencies, dependencies=True
+        )
+        if builtin_hit and dependency_hit:
+            index = "inconsistent"
+        elif builtin_hit:
+            index = "builtin"
+        elif dependency_hit:
+            index = "listed"
+        elif builtin is None or dependencies is None:
+            index = "unknown"
+        else:
+            index = "not_listed"
+    else:
+        index = "unknown"
+
+    try:
+        descriptor = os.open(
+            disabled_path,
+            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+    except FileNotFoundError:
+        return index, "unavailable"
+    except OSError:
+        return index, "unreadable"
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return index, "invalid"
+        value = os.read(descriptor, 16)
+    except OSError:
+        return index, "unreadable"
+    finally:
+        os.close(descriptor)
+    return index, value.decode("ascii").strip() if value in {b"0\n", b"1\n"} else "invalid"
+
+
+def kernel_availability_inspect(source_sha: str) -> None:
+    """Publish only enum-sized module hints; never load or configure modules."""
+    if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise SetupError("invalid_kernel_inspect_coordinates")
+    _identity()
+    index, disabled = _kernel_module_availability_snapshot()
+    print(
+        f"BOCA_KERNEL_AVAIL state=OBSERVED source_sha={source_sha}"
+        f" index={index} modules_disabled={disabled} write_ops=none"
+    )
+
+
 def infrastructure_start(source_sha: str) -> None:
     home = _infrastructure_stopped(source_sha)
     _start_stopped_daemon(home, require_empty=True)
@@ -1702,6 +1796,7 @@ def main() -> int:
             "stop-test",
             "infrastructure-check",
             "kernel-bridge-inspect",
+            "kernel-availability-inspect",
             "infrastructure-start",
             "infrastructure-stop",
         ),
@@ -1714,6 +1809,7 @@ def main() -> int:
         "inspect-existing": "BOCA_ROOTLESS_RECOVERY",
         "infrastructure-check": "BOCA_INFRA_DAEMON",
         "kernel-bridge-inspect": "BOCA_KERNEL_BRIDGE",
+        "kernel-availability-inspect": "BOCA_KERNEL_AVAIL",
         "infrastructure-start": "BOCA_INFRA_DAEMON",
         "infrastructure-stop": "BOCA_INFRA_DAEMON",
     }.get(args.phase, "BOCA_ROOTLESS_SETUP")
@@ -1728,6 +1824,8 @@ def main() -> int:
             infrastructure_check(args.source_sha)
         elif args.phase == "kernel-bridge-inspect":
             kernel_bridge_inspect(args.source_sha)
+        elif args.phase == "kernel-availability-inspect":
+            kernel_availability_inspect(args.source_sha)
         elif args.phase == "infrastructure-start":
             infrastructure_start(args.source_sha)
         elif args.phase == "infrastructure-stop":

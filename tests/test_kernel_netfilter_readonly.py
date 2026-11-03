@@ -27,6 +27,7 @@ def _run_kernel_step(
     receipt: str,
     code: int = 0,
     error: str = "",
+    step_name: str = "Observe bridge netfilter kernel hints without host changes",
 ) -> subprocess.CompletedProcess[str]:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -36,11 +37,7 @@ def _run_kernel_step(
         'printf "%s" "$FIXTURE_STDERR" >&2\nexit "$FIXTURE_RC"\n'
     )
     ssh.chmod(0o700)
-    script = textwrap.dedent(
-        _step("Observe bridge netfilter kernel hints without host changes").split(
-            "        run: |\n", 1
-        )[1]
-    )
+    script = textwrap.dedent(_step(step_name).split("        run: |\n", 1)[1])
     return subprocess.run(  # noqa: S603 - fake SSH, not a host invocation
         ["/bin/bash", "-e", "-o", "pipefail", "-c", script],
         cwd=ROOT,
@@ -183,3 +180,164 @@ def test_protected_kernel_step_fail_closed_without_leak(
     summary = (tmp_path / "summary").read_text()
     assert "state=INDETERMINATE" in summary
     assert "PRIVATE_SENTINEL" not in summary + result.stdout + result.stderr
+
+
+def _module_catalogue(tmp_path: Path) -> tuple[Path, Path, Path]:
+    root = tmp_path / "modules"
+    release = root / "6.8.0-test"
+    release.mkdir(parents=True)
+    builtin = release / "modules.builtin"
+    dependencies = release / "modules.dep"
+    builtin.write_bytes(b"")
+    dependencies.write_bytes(b"")
+    disabled = tmp_path / "modules_disabled"
+    disabled.write_text("0\n")
+    return root, builtin, disabled
+
+
+def test_module_catalogue_distinguishes_builtin_listed_and_absent(tmp_path: Path) -> None:
+    root, builtin, disabled = _module_catalogue(tmp_path)
+    dependencies = builtin.with_name("modules.dep")
+    snapshot = lambda: rootless._kernel_module_availability_snapshot(  # noqa: E731
+        root, disabled, "6.8.0-test"
+    )
+    assert snapshot() == ("not_listed", "0")
+    builtin.write_bytes(b"kernel/net/bridge/br_netfilter.ko\n")
+    assert snapshot() == ("builtin", "0")
+    builtin.write_bytes(b"")
+    dependencies.write_bytes(
+        b"kernel/net/bridge/br_netfilter.ko.zst: kernel/net/core/some_module.ko.zst\n"
+    )
+    assert snapshot() == ("listed", "0")
+    builtin.write_bytes(b"kernel/net/bridge/br_netfilter.ko\n")
+    assert snapshot() == ("inconsistent", "0")
+    disabled.write_text("1\n")
+    assert snapshot() == ("inconsistent", "1")
+
+
+def test_module_catalogue_refuses_false_names_missing_or_untrusted_paths(
+    tmp_path: Path,
+) -> None:
+    root, builtin, disabled = _module_catalogue(tmp_path)
+    dependencies = builtin.with_name("modules.dep")
+    dependencies.write_bytes(
+        b"kernel/net/bridge/not_br_netfilter.ko: dependency\n"
+        b"kernel/net/bridge/br_netfilter.ko_extra: dependency\n"
+    )
+    assert rootless._kernel_module_availability_snapshot(root, disabled, "6.8.0-test") == (
+        "not_listed",
+        "0",
+    )
+    dependencies.unlink()
+    dependencies.symlink_to(tmp_path / "untrusted")
+    assert rootless._kernel_module_availability_snapshot(root, disabled, "6.8.0-test") == (
+        "unknown",
+        "0",
+    )
+    assert rootless._kernel_module_availability_snapshot(root, disabled, "../outside") == (
+        "unknown",
+        "0",
+    )
+    disabled.unlink()
+    disabled.symlink_to(tmp_path / "untrusted")
+    assert rootless._kernel_module_availability_snapshot(root, disabled, "6.8.0-test") == (
+        "unknown",
+        "unreadable",
+    )
+
+
+def test_module_catalogue_bounded_regular_reads(tmp_path: Path) -> None:
+    root, builtin, disabled = _module_catalogue(tmp_path)
+    dependencies = builtin.with_name("modules.dep")
+    dependencies.write_bytes(b"z" * (4 * 1024 * 1024 + 1))
+    assert rootless._kernel_module_availability_snapshot(root, disabled, "6.8.0-test") == (
+        "unknown",
+        "0",
+    )
+    dependencies.unlink()
+    os.mkfifo(dependencies)
+    assert rootless._kernel_module_availability_snapshot(root, disabled, "6.8.0-test") == (
+        "unknown",
+        "0",
+    )
+    disabled.write_text("INVALID\n")
+    assert rootless._kernel_module_availability_snapshot(root, disabled, "6.8.0-test") == (
+        "unknown",
+        "invalid",
+    )
+
+
+def test_kernel_availability_inspect_has_only_identity_and_bounded_reads(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(rootless, "_identity", lambda: calls.append("identity"))
+    monkeypatch.setattr(
+        rootless,
+        "_kernel_module_availability_snapshot",
+        lambda *_a: calls.append("read") or ("listed", "0"),
+    )
+    for name in ("_command", "_start_stopped_daemon", "prepare", "stop_test"):
+        monkeypatch.setattr(rootless, name, lambda *_a, **_k: pytest.fail("effect"))
+    rootless.kernel_availability_inspect(SHA)
+    assert calls == ["identity", "read"]
+    assert capsys.readouterr().out == (
+        f"BOCA_KERNEL_AVAIL state=OBSERVED source_sha={SHA}"
+        " index=listed modules_disabled=0 write_ops=none\n"
+    )
+    with pytest.raises(rootless.SetupError, match="invalid_kernel_inspect_coordinates"):
+        rootless.kernel_availability_inspect("not-a-sha")
+
+
+def test_protected_availability_step_is_readonly_and_canonical(tmp_path: Path) -> None:
+    name = "Inspect kernel module catalogue and load policy without changes"
+    step = _step(name)
+    assert "if: inputs.operation == 'infrastructure-inspect'" in step
+    assert "python3 - kernel-availability-inspect" in step
+    assert "timeout --signal=TERM --kill-after=5s 60s ssh " in step
+    for forbidden in ("modprobe", "sysctl -w", "iptables ", "docker ", "sudo "):
+        assert forbidden not in step
+    receipt = (
+        f"BOCA_KERNEL_AVAIL state=OBSERVED source_sha={SHA}"
+        " index=listed modules_disabled=0 write_ops=none\n"
+    )
+    run = _run_kernel_step(tmp_path, receipt=receipt, step_name=name)
+    assert run.returncode == 0, run.stderr
+    assert receipt in (tmp_path / "summary").read_text()
+
+
+@pytest.mark.parametrize(
+    ("receipt", "code", "error"),
+    [
+        ("PRIVATE_SENTINEL", 0, ""),
+        (
+            f"BOCA_KERNEL_AVAIL state=OBSERVED source_sha={'b' * 40} index=listed modules_disabled=0 write_ops=none\n",
+            0,
+            "",
+        ),
+        (
+            f"BOCA_KERNEL_AVAIL state=OBSERVED source_sha={SHA} index=loadable modules_disabled=0 write_ops=none\n",
+            0,
+            "",
+        ),
+        (
+            f"BOCA_KERNEL_AVAIL state=OBSERVED source_sha={SHA} index=builtin modules_disabled=0 write_ops=none\n",
+            2,
+            "PRIVATE_SENTINEL",
+        ),
+    ],
+)
+def test_protected_availability_step_withholds_untrusted_receipts(
+    tmp_path: Path, receipt: str, code: int, error: str
+) -> None:
+    run = _run_kernel_step(
+        tmp_path,
+        receipt=receipt,
+        code=code,
+        error=error,
+        step_name="Inspect kernel module catalogue and load policy without changes",
+    )
+    assert run.returncode == 1
+    combined = run.stdout + run.stderr + (tmp_path / "summary").read_text()
+    assert "state=INDETERMINATE" in combined
+    assert "PRIVATE_SENTINEL" not in combined

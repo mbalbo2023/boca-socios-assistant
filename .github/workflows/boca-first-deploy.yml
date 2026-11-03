@@ -1236,6 +1236,28 @@ jobs:
           printf '%s\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
           printf 'Kernel hints only: no module/sysctl changes and no ICC=false admission verdict.\n' >> "$GITHUB_STEP_SUMMARY"
           printf '%s\n' "$receipt"
+      - name: Inspect kernel module catalogue and load policy without changes
+        if: inputs.operation == 'infrastructure-inspect'
+        run: |
+          set +e
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - kernel-availability-inspect "$BOCA_SOURCE_SHA")"
+          (
+            umask 077
+            ulimit -f 4 || exit 125
+            timeout --signal=TERM --kill-after=5s 60s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py > "$RUNNER_TEMP/boca-kernel-availability.receipt" 2>/dev/null
+          )
+          inspect_rc=$?
+          set -e
+          receipt=''
+          if [[ "$inspect_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-kernel-availability.receipt")"; fi
+          pattern='^BOCA_KERNEL_AVAIL state=OBSERVED source_sha=([0-9a-f]{40}) index=(builtin|listed|not_listed|unknown|inconsistent) modules_disabled=(0|1|unavailable|unreadable|invalid) write_ops=none$'
+          if [[ "$inspect_rc" -ne 0 || ${#receipt} -gt 190 || ! "$receipt" =~ $pattern || "${BASH_REMATCH[1]}" != "$BOCA_SOURCE_SHA" ]]; then
+            printf 'BOCA_KERNEL_AVAIL state=INDETERMINATE source_sha=%s write_ops=none reason=transport_or_receipt_unverified\n' "$BOCA_SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf '%s\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Catalogue and policy hints only: no kernel change or authorization to load a module.\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$receipt"
       - name: Recheck current main immediately before temporary infrastructure daemon start
         if: inputs.operation == 'infrastructure-preflight'
         env:

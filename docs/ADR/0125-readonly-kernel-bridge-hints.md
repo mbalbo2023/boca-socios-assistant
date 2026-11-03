@@ -1,7 +1,9 @@
 # ADR 0125 — read-only rootless bridge/netfilter host hints
 
-**Date:** 2026-11-03 ART. **Status:** proposed implementation, not a physical
-receipt or an approved workaround for ICC=false. Tracked by [#275](https://github.com/mbalbo2023/boca-socios-assistant/issues/275).
+**Date:** 2026-11-03 ART. **Status:** PR #298 merged into
+`main=a83e105d4ccec2cc59dfabce77142750de733630`; physical read-only
+inspection succeeded in [run #41726757589](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41726757589).
+It is **not** an approved workaround for ICC=false. Tracked by [#275](https://github.com/mbalbo2023/boca-socios-assistant/issues/275).
 
 ## Evidence and purpose
 
@@ -42,10 +44,12 @@ visible module and sysctl=1 cannot change `ICC=false` or admit BETA.
 No `sudo`, `modprobe`, `sysctl -w`, Docker invocation, container, bridge,
 firewall edit, host port, root account, app/worker start, personal data or Boca
 navigation. Protected blackbox modules remain untouched. No other service,
-especially Porota, is accessed. Run only after current-main CI/security green
-and branch-protected merge, by the owner dispatching the protected workflow
-from Termius. Host result is UNKNOWN until that specific run's exact receipt
-is recorded in #275 and #45.
+especially Porota, is accessed. The owner dispatched the protected workflow
+from Termius, with the observed receipt
+`BOCA_KERNEL_BRIDGE state=OBSERVED source_sha=a83e105d4ccec2cc59dfabce77142750de733630 module=absent nf_call_iptables=unavailable write_ops=none`.
+The inspection succeeded without changing the host. The module's catalogue
+availability remains **UNKNOWN**; see the subsequent read-only candidate
+[ADR0126](0126-readonly-kernel-module-availability.md).
 
 If hints indicate missing effective capability, separately assess the impact
 of any privileged global kernel action and obtain specific owner approval; no
