@@ -27,6 +27,18 @@ from boca_socios import host_first_deploy as host
         ),
         (
             "iptables v1.8.7 (nf_tables): CHAIN_ADD failed (Operation not supported): chain FORWARD",
+            "firewall_chain_add_unsupported",
+        ),
+        (
+            "iptables v1.8.7 (nf_tables): Couldn't process rule: Operation not supported",
+            "firewall_operation_unsupported",
+        ),
+        (
+            "iptables: stat /proc/sys/net/bridge/bridge-nf-call-iptables: no such file or directory",
+            "firewall_bridge_netfilter_unavailable",
+        ),
+        (
+            "iptables: bridge-nf-call-iptables disabled (unspecified)",
             "firewall_unsupported",
         ),
         (
@@ -43,7 +55,7 @@ from boca_socios import host_first_deploy as host
         ),
         (
             "iptables: Couldn't load match 'set':No such file or directory",
-            "firewall_unsupported",
+            "firewall_match_unavailable",
         ),
         (
             "iptables -t filter -I FORWARD -j ACCEPT failed with exit status 1",
@@ -97,6 +109,10 @@ def test_protected_workflow_accepts_only_bounded_subreason_receipts() -> None:
     assert "firewall_backend_mismatch" in step
     assert "firewall_table_missing" in step
     assert "firewall_chain_missing" in step
+    assert "firewall_chain_add_unsupported" in step
+    assert "firewall_operation_unsupported" in step
+    assert "firewall_match_unavailable" in step
+    assert "firewall_bridge_netfilter_unavailable" in step
     assert "firewall_unsupported" in step
     assert "firewall_permission" in step
     assert "firewall_lock_denied" in step

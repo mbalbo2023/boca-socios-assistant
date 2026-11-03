@@ -1020,7 +1020,7 @@ jobs:
           set -e
           receipt=''
           if [[ "$probe_rc" -eq 0 || "$probe_rc" -eq 1 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-network-probe.receipt")"; fi
-          pattern='^BOCA_NETWORK_PROBE result=(PASS|NO_GO) reason=(none|firewall|firewall_backend_mismatch|firewall_table_missing|firewall_chain_missing|firewall_unsupported|firewall_permission|firewall_lock_denied|ipam_exhausted|ipam_overlap|already_exists|permission|invalid_config|unsupported|timeout|unclassified) cleanup=(VERIFIED|INDETERMINATE)$'
+          pattern='^BOCA_NETWORK_PROBE result=(PASS|NO_GO) reason=(none|firewall|firewall_backend_mismatch|firewall_table_missing|firewall_chain_missing|firewall_chain_add_unsupported|firewall_operation_unsupported|firewall_match_unavailable|firewall_bridge_netfilter_unavailable|firewall_unsupported|firewall_permission|firewall_lock_denied|ipam_exhausted|ipam_overlap|already_exists|permission|invalid_config|unsupported|timeout|unclassified) cleanup=(VERIFIED|INDETERMINATE)$'
           if [[ ${#receipt} -gt 180 || ! "$receipt" =~ $pattern ]]; then
             printf 'Boca network probe: NO_GO unclassified; host output withheld.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1

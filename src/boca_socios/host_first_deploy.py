@@ -1820,12 +1820,17 @@ def _network_probe_error(error: PreflightError) -> str:
             return "firewall_table_missing"
         if "no chain/target/match by that name" in message or "chain does not exist" in message:
             return "firewall_chain_missing"
-        if (
-            "operation not supported" in message
-            or "couldn't load match" in message
-            or "could not load match" in message
-            or "bridge-nf-call-iptables" in message
+        if "bridge-nf-call-iptables" in message and any(
+            marker in message for marker in ("no such file", "not found", "does not exist")
         ):
+            return "firewall_bridge_netfilter_unavailable"
+        if "couldn't load match" in message or "could not load match" in message:
+            return "firewall_match_unavailable"
+        if "chain_add failed" in message and "operation not supported" in message:
+            return "firewall_chain_add_unsupported"
+        if "operation not supported" in message:
+            return "firewall_operation_unsupported"
+        if "bridge-nf-call-iptables" in message:
             return "firewall_unsupported"
         if "permission denied" in message or "operation not permitted" in message:
             return "firewall_permission"
