@@ -17,7 +17,7 @@ COMPOSE_SHA = "c" * 64
 @pytest.mark.parametrize(
     ("message", "code"),
     [
-        ("iptables v1.8: Permission denied", "firewall"),
+        ("iptables v1.8: Permission denied", "firewall_permission"),
         ("failed to add nftables rules", "firewall"),
         ("could not find an available, non-overlapping IPv4 address pool", "ipam_exhausted"),
         ("Pool overlaps with other one on this address space", "ipam_overlap"),
