@@ -1802,20 +1802,19 @@ def _network_probe_error(error: PreflightError) -> str:
     if not isinstance(cause, subprocess.CalledProcessError):
         return "unclassified"
     detail = cause.stderr
-    if (
-        not isinstance(detail, str)
-        or len(detail) > 4096
-        or "\x00" in detail
-        or "\r" in detail
-    ):
+    if not isinstance(detail, str) or len(detail) > 4096 or "\x00" in detail or "\r" in detail:
         return "unclassified"
     message = detail.lower()
     if any(marker in message for marker in ("iptables", "nftables", "netfilter", "xtables")):
         # Only machine-owned category codes leave the host. These patterns
         # distinguish known Docker firewall failure families, not host facts.
-        if "xtables.lock" in message and ("permission denied" in message or "cannot open" in message or "can't open" in message):
+        if "xtables.lock" in message and (
+            "permission denied" in message or "cannot open" in message or "can't open" in message
+        ):
             return "firewall_lock_denied"
-        if ("incompatible" in message and ("nft" in message or "legacy" in message)) or "use 'nft' tool" in message:
+        if (
+            "incompatible" in message and ("nft" in message or "legacy" in message)
+        ) or "use 'nft' tool" in message:
             return "firewall_backend_mismatch"
         if "table does not exist" in message or "no such table" in message:
             return "firewall_table_missing"

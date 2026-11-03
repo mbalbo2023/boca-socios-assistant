@@ -59,7 +59,8 @@ from boca_socios import host_first_deploy as host
 )
 def test_rootless_firewall_subreason_is_fixed_code(stderr: str, expected: str) -> None:
     error = subprocess.CalledProcessError(
-        1, ("docker", "network", "create", "boca-socios_owner_enroll_private"),
+        1,
+        ("docker", "network", "create", "boca-socios_owner_enroll_private"),
         stderr=stderr + "\nPRIVATE_DATA_MUST_NOT_BE_PRINTED",
     )
     try:
@@ -89,7 +90,9 @@ def test_protected_workflow_accepts_only_bounded_subreason_receipts() -> None:
     workflow = (
         Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
     ).read_text(encoding="utf-8")
-    step = workflow.split("- name: Boca rootless network probe without app image or published port")[1]
+    step = workflow.split(
+        "- name: Boca rootless network probe without app image or published port"
+    )[1]
     step = step.split("- name: Always verify absence", 1)[0]
     assert "firewall_backend_mismatch" in step
     assert "firewall_table_missing" in step
@@ -97,7 +100,7 @@ def test_protected_workflow_accepts_only_bounded_subreason_receipts() -> None:
     assert "firewall_unsupported" in step
     assert "firewall_permission" in step
     assert "firewall_lock_denied" in step
-    assert '2>/dev/null' in step
+    assert "2>/dev/null" in step
     assert "printf '%s\\n' \"$receipt\"" in step
 
 
@@ -108,4 +111,4 @@ def test_rootless_network_probe_never_changes_the_global_firewall() -> None:
     assert "iptables -F" not in workflow
     assert "update-alternatives --set" not in workflow
     assert "docker system prune" not in workflow
-    assert 'if: always() && inputs.operation == \'network-probe\'' in workflow
+    assert "if: always() && inputs.operation == 'network-probe'" in workflow
