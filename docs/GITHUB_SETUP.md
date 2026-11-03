@@ -1,10 +1,12 @@
 # Repository settings to configure after bootstrap
 
-## RCA #275 — owner-enroll real, aún sin passkey (2026-11-02 ART)
+## RCA #275 — red rootless Boca y operación de diagnóstico (2026-11-03 ART)
 
-Release [#298](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41559973013) y `owner-prepare` [#304](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41564606055) GREEN para `main=0e830e3eed941de1da70cef8b42bda9f20258b65`.
-Los intentos reales de `owner-enroll` [#305](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41566871210) y [#306](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41568180039) fallaron antes de `READY`; en ambos, cleanup selectivo y parada del daemon completaron SUCCESS. **No hay passkey ni BETA instaladas.** La causa específica del fallo host no es verificable desde los logs: se descartaba stderr.
-El [PR #276](https://github.com/mbalbo2023/boca-socios-assistant/pull/276) y [ADR0113](ADR/0113-owner-enrollment-redacted-diagnostics.md) proponen etiquetas de fase seguras y salida censurada estricta. Código candidato; no habilitar nuevo host hasta checks, review, main/release exactos. No atribuir la falla al túnel ni a capacidad sin recibo.
+La release [#309](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41571168470) corresponde a `main=87de141787b3d56fe025a5f110fbb05e8e3ca5f4`. `owner-prepare` [#304](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41564606055) estaba GREEN. Los intentos [#305](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41566871210) y [#306](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41568180039) fallaron antes de READY, pero los errores específicos del host estaban ocultos. El PR #276 integró diagnóstico de fase redacted.
+
+**Nueva evidencia auténtica:** el dueño mostró el Job Summary del [run #317](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41573026189) con `NO_GO reason=network_create`, cleanup `CLEANED`, red/staging/marker/imágenes temporales removidas y `BOCA_STOP_TEST state=STOPPED containers=0 data=preserved`. El mensaje de Docker subyacente no fue publicado: no atribuir causa a firewall/IPAM/permisos/saturación ni al túnel Termius sin prueba. **No hay passkey, panel BETA ni Telegram real instalados**.
+
+El [PR #277](https://github.com/mbalbo2023/boca-socios-assistant/pull/277) y [ADR0114](ADR/0114-rootless-boca-network-probe.md) proponen una sola operación `network-probe` dentro del workflow protegido Boca: crear exclusivamente el puente temporal ya previsto, clasificar errores de Docker sin exponer datos y verificar limpieza/daemon stop. **Es candidato, no ejecución en el droplet.** No repetir owner-enroll hasta obtener resultado del diagnóstico y validar una corrección.
 
 ## Decisión vigente sobre recursos (2026-11-02, PR #273 integrado)
 
