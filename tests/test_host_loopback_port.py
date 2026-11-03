@@ -121,7 +121,7 @@ def test_workflow_uses_existing_protected_read_only_gate_and_rechecks_before_bet
     def step(name: str) -> str:
         return workflow.split(f"      - name: {name}\n", 1)[1].split("      - name:", 1)[0]
 
-    assert "inspect-prerequisites|port-check|preflight" in workflow
+    assert "inspect-prerequisites|chrome-host-inspect|port-check|preflight" in workflow
     assert workflow.count(port_command) == 3
     readonly = step("Check only Boca host loopback 8443 without Docker")
     legacy_beta = step("Recheck Boca loopback 8443 before BETA app and key effects")
