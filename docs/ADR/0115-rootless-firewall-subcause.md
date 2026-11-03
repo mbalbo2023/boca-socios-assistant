@@ -1,7 +1,44 @@
 # ADR 0115 — Rootless Docker firewall subcause, no host-wide workaround
 
-**Status:** candidate PR #278, RCA #275. This ADR is an evidence-based
-diagnostic refinement, not a claim of host repair or deployment.
+**Status:** PR #278 integrated on `main=b1610b7d0a378671bf2884486ec2c0ddf2c53936`;
+follow-up diagnostic candidate PR #279. RCA #275 remains open. This ADR
+records host evidence and diagnostic changes, **not** host repair or deployment.
+
+## Subsequent host observation — protected run #337
+
+The owner executed [run #337 / 41636437171](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41636437171)
+on that exact `main`, with `operation=network-probe`, no image or release
+inputs. The actual log reported:
+
+`BOCA_NETWORK_PROBE result=NO_GO reason=firewall_unsupported cleanup=VERIFIED`
+
+Source/SSH, dedicated rootless daemon start, independent network cleanup
+and daemon stop succeeded. No image, container, port, private Chrome proof,
+passkey, BETA or Telegram operation ran. The classification narrows #329's
+`firewall` to a *family* of unsupported firewall operations, but the host
+stderr was intentionally not disclosed. In PR #278's classifier the code can
+mean `Operation not supported`, an unloaded iptables match, or a
+`bridge-nf-call-iptables` reference. These are alternatives, **not three
+confirmed findings**; no specific kernel module, rule or backend is proven.
+
+## Follow-up candidate PR #279 — four fixed subcategories
+
+In the same bounded private-stderr classification, distinguish:
+
+- `firewall_chain_add_unsupported`: explicit CHAIN_ADD failure with
+  `Operation not supported`;
+- `firewall_operation_unsupported`: other explicit unsupported operation;
+- `firewall_match_unavailable`: explicit iptables match load failure;
+- `firewall_bridge_netfilter_unavailable`: an explicitly absent
+  `bridge-nf-call-iptables` path.
+
+An ambiguous bridge-netfilter mention still returns the historical
+`firewall_unsupported` fallback. This candidate does not inspect a module,
+select a backend, change kernel state or guarantee a fix. Tests must prove
+the code is deterministic and does not expose command stderr. Only the
+receipt allowlist changes in the **same** manual workflow; exact SHA/actor,
+rootless identity, network options, cleanup and stopped daemon remain
+unchanged. No new host operation occurs from an ordinary PR check.
 
 ## Observed on the Boca droplet (2026-11-03 ART)
 
