@@ -1802,10 +1802,33 @@ def _network_probe_error(error: PreflightError) -> str:
     if not isinstance(cause, subprocess.CalledProcessError):
         return "unclassified"
     detail = cause.stderr
-    if not isinstance(detail, str) or len(detail) > 4096:
+    if not isinstance(detail, str) or len(detail) > 4096 or "\x00" in detail or "\r" in detail:
         return "unclassified"
     message = detail.lower()
-    if "iptables" in message or "nftables" in message or "netfilter" in message:
+    if any(marker in message for marker in ("iptables", "nftables", "netfilter", "xtables")):
+        # Only machine-owned category codes leave the host. These patterns
+        # distinguish known Docker firewall failure families, not host facts.
+        if "xtables.lock" in message and (
+            "permission denied" in message or "cannot open" in message or "can't open" in message
+        ):
+            return "firewall_lock_denied"
+        if (
+            "incompatible" in message and ("nft" in message or "legacy" in message)
+        ) or "use 'nft' tool" in message:
+            return "firewall_backend_mismatch"
+        if "table does not exist" in message or "no such table" in message:
+            return "firewall_table_missing"
+        if "no chain/target/match by that name" in message or "chain does not exist" in message:
+            return "firewall_chain_missing"
+        if (
+            "operation not supported" in message
+            or "couldn't load match" in message
+            or "could not load match" in message
+            or "bridge-nf-call-iptables" in message
+        ):
+            return "firewall_unsupported"
+        if "permission denied" in message or "operation not permitted" in message:
+            return "firewall_permission"
         return "firewall"
     if "could not find an available, non-overlapping" in message:
         return "ipam_exhausted"
