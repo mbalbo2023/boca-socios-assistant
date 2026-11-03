@@ -1,12 +1,10 @@
 # Repository settings to configure after bootstrap
 
-## RCA #275 — red rootless Boca y operación de diagnóstico (2026-11-03 ART)
+## RCA #275 — fallo de firewall del Docker rootless (corte 2026-11-03)
 
-La release [#309](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41571168470) corresponde a `main=87de141787b3d56fe025a5f110fbb05e8e3ca5f4`. `owner-prepare` [#304](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41564606055) estaba GREEN. Los intentos [#305](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41566871210) y [#306](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41568180039) fallaron antes de READY, pero los errores específicos del host estaban ocultos. El PR #276 integró diagnóstico de fase redacted.
+La prueba de host [#329](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41629150243), sobre `main=eee0173ebafebf31d372bba3816ca6aadd138ffd`, devolvió **`BOCA_NETWORK_PROBE result=NO_GO reason=firewall cleanup=VERIFIED`**. El `network_create` de [#317](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41573026189) ya había fallado. En #329 la verificación de limpieza y la parada del daemon Boca finalizaron `SUCCESS`; no se desplegó la BETA ni se creó la passkey. El código `firewall` solo acredita que el error de Docker menciona iptables/nftables/netfilter; **no identifica aún permisos, backend, tabla, cadena o módulo**.
 
-**Nueva evidencia auténtica:** el dueño mostró el Job Summary del [run #317](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41573026189) con `NO_GO reason=network_create`, cleanup `CLEANED`, red/staging/marker/imágenes temporales removidas y `BOCA_STOP_TEST state=STOPPED containers=0 data=preserved`. El mensaje de Docker subyacente no fue publicado: no atribuir causa a firewall/IPAM/permisos/saturación ni al túnel Termius sin prueba. **No hay passkey, panel BETA ni Telegram real instalados**.
-
-El [PR #277](https://github.com/mbalbo2023/boca-socios-assistant/pull/277) y [ADR0114](ADR/0114-rootless-boca-network-probe.md) proponen una sola operación `network-probe` dentro del workflow protegido Boca: crear exclusivamente el puente temporal ya previsto, clasificar errores de Docker sin exponer datos y verificar limpieza/daemon stop. **Es candidato, no ejecución en el droplet.** No repetir owner-enroll hasta obtener resultado del diagnóstico y validar una corrección.
+El [PR #277](https://github.com/mbalbo2023/boca-socios-assistant/pull/277) integró la prueba aislada de red; el [PR #278](https://github.com/mbalbo2023/boca-socios-assistant/pull/278) y [ADR0115](ADR/0115-rootless-firewall-subcause.md) son un **candidato en rama** que precisa las categorías de error con pruebas sintéticas, sin modificar Docker, firewall global, Porota ni servicios ajenos. Los tests de rama no son evidencia de ejecución en el droplet. Se conserva el único workflow de host protegido y su verificación de identidad/limpieza; no iniciar `owner-enroll` hasta que el RCA real esté resuelto.
 
 ## Decisión vigente sobre recursos (2026-11-02, PR #273 integrado)
 
