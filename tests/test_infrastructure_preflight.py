@@ -510,11 +510,11 @@ def test_preflight_rejects_private_context_before_host_access(
     observe.assert_not_called()
 
 
-def test_workflow_telemetry_reuses_each_existing_journey_exactly_once() -> None:
+def test_workflow_telemetry_excludes_owner_browser_journey() -> None:
     workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
-    assert workflow.count('pair running "$controller" "$worker" startup') == 1
-    assert workflow.count('pair running "$controller" "$worker" restart') == 1
-    assert workflow.count('pair stopped "$controller" "$worker"') == 1
+    assert 'pair running "$controller" "$worker" startup' not in workflow
+    assert 'pair running "$controller" "$worker" restart' not in workflow
+    assert 'pair stopped "$controller" "$worker"' not in workflow
     assert "UnixSyntheticBrowser(timeout_seconds=25).simulate_general_reservation()" not in workflow
 
 

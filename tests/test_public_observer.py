@@ -578,7 +578,10 @@ def test_ci_runs_real_chromium_public_fixtures_only_with_os_network_none() -> No
     cleanup = workflow.split("- name: Clean disposable browser runner resources", 1)[1]
     assert "if: always()" in cleanup
     assert "BOCA_PUBLIC_BROWSER_NAME" in cleanup
-    assert 'for name in "$BOCA_BROWSER_NAME" "$BOCA_PUBLIC_BROWSER_NAME"' in cleanup
+    assert (
+        'for name in "$BOCA_PUBLIC_BROWSER_NAME" "$BOCA_TELEGRAM_UI_NAME" '
+        '"$BOCA_TELEGRAM_VERIFY_NAME"; do'
+    ) in cleanup
     manual_source = (root / ".github/workflows/boca-source-status.yml").read_text(encoding="utf-8")
     assert "run_public_observer_offline_chromium" not in manual_source
 
