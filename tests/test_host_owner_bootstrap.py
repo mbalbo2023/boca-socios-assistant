@@ -217,6 +217,10 @@ def test_owner_workflow_stops_daemon_in_same_job_on_failure() -> None:
     section = workflow.split(
         "      - name: Stop only Boca services and daemon after owner custody"
     )[1].split("      - name:", 1)[0]
-    assert "if: always() && startsWith(inputs.operation, 'owner-')" in section
+    assert (
+        "if: always() && (startsWith(inputs.operation, 'owner-') || "
+        "inputs.operation == 'network-probe') && "
+        "steps.boca_owner_attempt.outputs.started == 'true'"
+    ) in section
     assert "steps.boca_owner_attempt.outputs.started == 'true'" in section
     assert "python3 - stop-test" in section

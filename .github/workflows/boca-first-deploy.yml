@@ -8,7 +8,7 @@ on:
         description: Boca-only host operation; browser IPC is a separate, opt-in, protected BETA gate
         required: true
         type: choice
-        options: [inspect-prerequisites, port-check, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
+        options: [inspect-prerequisites, port-check, network-probe, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
         description: Exact current main commit approved for the operation
         required: true
@@ -747,6 +747,13 @@ jobs:
               test -z "$BOCA_RELEASE_RUN_ID"
               test -z "$BOCA_SITE_ENVELOPE"
               ;;
+            network-probe)
+              test "$BOCA_HOST_READONLY_ENV_READY" = ready
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test -z "$BOCA_IMAGE_REF"
+              test -z "$BOCA_RELEASE_RUN_ID"
+              test -z "$BOCA_SITE_ENVELOPE"
+              ;;
             first-install|diagnostic)
               test "$BOCA_DEPLOY_ENV_READY" = ready
               test -n "$BOCA_IMAGE_REF"
@@ -977,7 +984,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-site.json"
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-site.json" "$BOCA_SOURCE_SHA"
       - name: Recheck current main before owner custody operation
-        if: startsWith(inputs.operation, 'owner-')
+        if: startsWith(inputs.operation, 'owner-') || inputs.operation == 'network-probe'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONPATH: src
@@ -986,10 +993,10 @@ jobs:
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-owner.json" "$BOCA_SOURCE_SHA"
       - name: Mark owner custody host attempt before starting dedicated daemon
         id: boca_owner_attempt
-        if: startsWith(inputs.operation, 'owner-')
+        if: startsWith(inputs.operation, 'owner-') || inputs.operation == 'network-probe'
         run: printf 'started=true\n' >> "$GITHUB_OUTPUT"
       - name: Start only the stopped prepared Boca rootless daemon for owner custody
-        if: startsWith(inputs.operation, 'owner-')
+        if: startsWith(inputs.operation, 'owner-') || inputs.operation == 'network-probe'
         run: |
           set +e
           remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - start-existing "$BOCA_SOURCE_SHA")"
@@ -1003,6 +1010,41 @@ jobs:
             printf 'Boca owner custody: prepared daemon start NO_GO; Boca-only stop follows.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+      - name: Boca rootless network probe without app image or published port
+        if: inputs.operation == 'network-probe'
+        run: |
+          set +e
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - network-probe '' "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")")"
+          timeout --signal=TERM --kill-after=5s 60s ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-network-probe.receipt" 2>/dev/null
+          probe_rc=$?
+          set -e
+          receipt=''
+          if [[ "$probe_rc" -eq 0 || "$probe_rc" -eq 1 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-network-probe.receipt")"; fi
+          pattern='^BOCA_NETWORK_PROBE result=(PASS|NO_GO) reason=(none|firewall|ipam_exhausted|ipam_overlap|already_exists|permission|invalid_config|unsupported|timeout|unclassified) cleanup=(VERIFIED|INDETERMINATE)$'
+          if [[ ${#receipt} -gt 180 || ! "$receipt" =~ $pattern ]]; then
+            printf 'Boca network probe: NO_GO unclassified; host output withheld.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf 'Boca rootless network probe: %s. Diagnostic only, no application or owner secret.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$receipt"
+          if [[ "$probe_rc" -ne 0 || "${BASH_REMATCH[1]}" != PASS || "${BASH_REMATCH[3]}" != VERIFIED ]]; then
+            exit 1
+          fi
+      - name: Always verify absence of Boca temporary diagnostic network
+        if: always() && inputs.operation == 'network-probe' && steps.boca_owner_attempt.outputs.started == 'true'
+        run: |
+          set +e
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - network-probe-cleanup '' "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")")"
+          timeout --signal=TERM --kill-after=5s 60s ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-network-cleanup.receipt" 2>/dev/null
+          cleanup_rc=$?
+          set -e
+          receipt=''
+          if [[ "$cleanup_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-network-cleanup.receipt")"; fi
+          if [[ "$receipt" != 'BOCA_NETWORK_PROBE_CLEANUP state=VERIFIED network=absent' ]]; then
+            printf 'Boca rootless network cleanup: NO_GO INDETERMINATE. No blind retry.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf 'Boca rootless network cleanup: VERIFIED absent. Owner data preserved.\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Prepare, install or verify only Boca owner-volume public passkey custody
         if: inputs.operation == 'owner-prepare' || inputs.operation == 'owner-install' || inputs.operation == 'owner-verify'
         env:
@@ -1117,7 +1159,7 @@ jobs:
           fi
           printf 'Boca owner enrollment selective cleanup: `%s`. Owner/key/data and all foreign resources preserved.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
       - name: Stop only Boca services and daemon after owner custody
-        if: always() && startsWith(inputs.operation, 'owner-') && steps.boca_owner_attempt.outputs.started == 'true'
+        if: always() && (startsWith(inputs.operation, 'owner-') || inputs.operation == 'network-probe') && steps.boca_owner_attempt.outputs.started == 'true'
         run: |
           set +e
           remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - stop-test "$BOCA_SOURCE_SHA")"

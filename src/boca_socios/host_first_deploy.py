@@ -1794,6 +1794,105 @@ def _owner_enroll_ready() -> bool:
         return False
 
 
+def _network_probe_error(error: PreflightError) -> str:
+    """Classify only a bounded Docker cause; never print vendor stderr."""
+    cause = error.__cause__
+    if isinstance(cause, subprocess.TimeoutExpired):
+        return "timeout"
+    if not isinstance(cause, subprocess.CalledProcessError):
+        return "unclassified"
+    detail = cause.stderr
+    if not isinstance(detail, str) or len(detail) > 4096:
+        return "unclassified"
+    message = detail.lower()
+    if "iptables" in message or "nftables" in message or "netfilter" in message:
+        return "firewall"
+    if "could not find an available, non-overlapping" in message:
+        return "ipam_exhausted"
+    if "pool overlaps" in message or "address pool overlaps" in message:
+        return "ipam_overlap"
+    if "already exists" in message:
+        return "already_exists"
+    if "operation not permitted" in message or "permission denied" in message:
+        return "permission"
+    if "invalid argument" in message:
+        return "invalid_config"
+    if "unsupported" in message or "not supported" in message:
+        return "unsupported"
+    return "unclassified"
+
+
+def _network_probe_cleanup() -> None:
+    """Remove only the exactly identified unused Boca diagnostic network."""
+    _site_daemon_empty()
+    names = _names("network", "name=^boca-socios_")
+    if names == {ENROLL_NETWORK}:
+        _owner_enroll_network("")
+        _run("docker", "network", "rm", ENROLL_NETWORK)
+    elif names:
+        raise PreflightError("unverified rootless network inventory")
+    if _names("network", "name=^boca-socios_"):
+        raise PreflightError("temporary Boca network was not removed")
+    _site_daemon_empty()
+
+
+def _network_probe() -> None:
+    """Reproduce only the rootless Boca bridge creation, with proven cleanup.
+
+    No image, container, published port, third-party traffic, or owner data
+    mutation. The exact network has to be absent before starting and absent
+    after cleanup; an uncertain object is preserved and reported INDETERMINATE.
+    """
+    if not _safe_dir(ROOT) or any(ROOT.iterdir()):
+        raise PreflightError("Boca network probe requires empty staging")
+    _site_daemon_empty()
+    volumes = _names("volume", "name=^boca-socios_")
+    if volumes != {OWNER_VOLUME} or _names("network", "name=^boca-socios_"):
+        raise PreflightError("Boca network probe requires empty namespace")
+    validate_site_snapshot(collect_snapshot(), volumes, require_owner=True)
+    _validate_owner_volume()
+    _validate_storage_capacity(_storage_snapshot())
+
+    outcome = "PASS"
+    reason = "none"
+    cleanup = "VERIFIED"
+    try:
+        try:
+            created = _run(
+                "docker",
+                "network",
+                "create",
+                "--driver",
+                "bridge",
+                "--opt",
+                "com.docker.network.bridge.enable_ip_masquerade=false",
+                "--opt",
+                "com.docker.network.bridge.enable_icc=false",
+                "--opt",
+                "com.docker.network.bridge.host_binding_ipv4=127.0.0.1",
+                "--label",
+                f"com.docker.compose.project={PROJECT}",
+                "--label",
+                "com.docker.compose.network=owner_enroll_private",
+                ENROLL_NETWORK,
+            )
+            if re.fullmatch(r"[0-9a-f]{64}", created) is None:
+                raise PreflightError("Docker network create returned unexpected ID")
+            _owner_enroll_network("")
+        except PreflightError as exc:
+            outcome = "NO_GO"
+            reason = _network_probe_error(exc)
+    finally:
+        try:
+            _network_probe_cleanup()
+        except PreflightError:
+            cleanup = "INDETERMINATE"
+
+    print(f"BOCA_NETWORK_PROBE result={outcome} reason={reason} cleanup={cleanup}")
+    if outcome != "PASS" or cleanup != "VERIFIED":
+        raise PreflightError("Boca network probe NO_GO")
+
+
 def _owner_enroll_start(
     image: str, source_sha: str, origin: str, subject: str, digest: str, compose_sha: str = ""
 ) -> None:
@@ -6189,6 +6288,33 @@ def phase(
     telegram_attempt_id: str = "",
     infrastructure_budget: str = "",
 ) -> None:
+    if phase_name in {"network-probe", "network-probe-cleanup"}:
+        _validate_coordinates(image, source_sha, compose_sha, read_only_preflight=True)
+        if any(
+            (
+                envelope,
+                beta_owner,
+                telegram_envelope,
+                expected_bot_id,
+                expected_chat_hmac,
+                owner_envelope,
+                enroll_digest,
+                browser_image,
+                browser_overlay_sha,
+                browser_seccomp_sha,
+                browser_attempt_id,
+                telegram_attempt_id,
+                infrastructure_budget,
+            )
+        ):
+            raise PreflightError("unexpected private context in Boca network probe")
+        _validate_docker_boundary()
+        if phase_name == "network-probe-cleanup":
+            _network_probe_cleanup()
+            print("BOCA_NETWORK_PROBE_CLEANUP state=VERIFIED network=absent")
+        else:
+            _network_probe()
+        return
     if phase_name == "infrastructure-preflight":
         _validate_coordinates(image, source_sha, compose_sha, read_only_preflight=True)
         if any(
@@ -6557,6 +6683,8 @@ def main() -> int:
         choices=(
             "inspect-prerequisites",
             "infrastructure-preflight",
+            "network-probe",
+            "network-probe-cleanup",
             "port-check",
             "observe",
             "preflight",
