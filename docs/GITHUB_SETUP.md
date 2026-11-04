@@ -1,5 +1,14 @@
 # Repository settings to configure after bootstrap
 
+## Contrato vigente para corrección del bloqueo rootless — 04/11/2026
+
+**Actualización 04/11/2026 (Regla 84, RCA [#275](https://github.com/mbalbo2023/boca-socios-assistant/issues/275)):** El [run protegido #41854591848](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41854591848) verificó `module=absent`, `nf_call_iptables=unavailable`, `index=listed`, `modules_disabled=0`, `write_ops=none` en `main=41fc15e261d002dc614124ac0f2d2e1bea81f896`; fue una **lectura exitosa**, no un deploy.
+
+El propietario ordenó flexibilizar el obstáculo y llegar a BETA. [PR #304](https://github.com/mbalbo2023/boca-socios-assistant/pull/304) / [ADR0128](ADR/0128-boca-only-owner-enroll-icc-compat.md) implementan el cambio **solo en la red temporal de `owner-enroll`**: `ICC=true`, UID rootless Boca, cero masquerade, exactamente un peer autorizado, host loopback `127.0.0.1:8443`; limpieza positiva con opciones concordantes. El `network-probe` histórico ICC=false y la variante diferencial ICC=true siguen separados; **no** se cargan módulos ni se modifica kernel/firewall global, Porota u otros servicios. Riesgo residual: menor aislamiento entre potenciales contenedores de esa única red; ningún segundo contenedor está autorizado.
+
+**Estado físico vigente: BETA NO instalada.** PR/CI, release dual exacto, alta Chrome real, `beta-install`, aceptación, recursos y Telegram todavía requieren evidencia. Además [issue #305](https://github.com/mbalbo2023/boca-socios-assistant/issues/305) rastrea arranque del daemon antes de instalación y reanudación controller-only después de aceptación. Nunca reutilizar `beta-install` para reanudar, ni activar el navegador BLACKBOX desde agente. Los apartados anteriores del 03/11 abajo son **cortes históricos**, no la instrucción operativa actual.
+
+
 ## Inspección Chrome existente — manual y de sólo lectura (03/11/2026)
 
 La operación `chrome-host-inspect` de [issue #281](https://github.com/mbalbo2023/boca-socios-assistant/issues/281) ya fue ejecutada desde el **mismo workflow Boca first deploy**, branch `main`: [run #347](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41655307167) PASS `PRESENT google-chrome-stable uid=10001`. Para la nueva prueba pública sin usuario de [#283](https://github.com/mbalbo2023/boca-socios-assistant/issues/283), elegir `chrome-host-public-smoke` únicamente tras merge y CI postmerge GREEN. Usar SHA exacto, `BOCA_HOST_READONLY_ENV_READY=ready`, sin image/release/secret/envelopes; `service=controller`, `resource_budget=0.5cpu-256m-64pids`. Un único SSH dispara Chrome headless instalado con sandbox, perfil efímero, URL login fija; ni formulario enviado, ni credenciales en logs. `CHALLENGE`, `OTHER_PAGE` y `NO_GO` son stoppers, no se evaden. No habilitar runners/workflows alternativos ni borrar protecciones. Ver [ADR0118](ADR/0118-one-shot-public-login-chrome-smoke.md).

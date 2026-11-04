@@ -48,12 +48,14 @@ ENROLL_NETWORK_OPTIONS = {
     "com.docker.network.bridge.enable_icc": "false",
     "com.docker.network.bridge.host_binding_ipv4": "127.0.0.1",
 }
-# RCA #275 diagnostic ONLY: no container is ever attached to this temporary
-# ICC=true variant. The real one-use owner enrollment keeps ICC=false.
+# RCA #275: keep the original ICC=false diagnostic unchanged. Owner-approved
+# enrollment uses the ICC=true profile only on its disposable Boca rootless
+# bridge: no masquerade, exactly one authorized peer, loopback host binding.
 PROBE_ICC_TRUE_OPTIONS = {
     **ENROLL_NETWORK_OPTIONS,
     "com.docker.network.bridge.enable_icc": "true",
 }
+OWNER_ENROLL_NETWORK_OPTIONS = dict(PROBE_ICC_TRUE_OPTIONS)
 # Opt-in browser-ipc-v2 ONLY. The legacy singleton beta-install contract above
 # and below is intentionally unchanged; these coordinates require their own
 # protected, new-only attempt marker and dedicated cleanup in the SAME job.
@@ -2044,7 +2046,7 @@ def _owner_enroll_start(
             "--opt",
             "com.docker.network.bridge.enable_ip_masquerade=false",
             "--opt",
-            "com.docker.network.bridge.enable_icc=false",
+            "com.docker.network.bridge.enable_icc=true",
             "--opt",
             "com.docker.network.bridge.host_binding_ipv4=127.0.0.1",
             "--label",
@@ -2056,7 +2058,7 @@ def _owner_enroll_start(
         if re.fullmatch(r"[0-9a-f]{64}", network) is None:
             raise PreflightError("temporary Boca network creation unverified")
         phase_code = "network_verify"
-        _owner_enroll_network("")
+        _owner_enroll_network("", icc_true=True)
         phase_code = "container_create"
         launched = _run(
             *_owner_enroll_container(image, source_sha, subject, digest, match[1], match[2])
@@ -2067,7 +2069,7 @@ def _owner_enroll_start(
         container, running, _ = _owner_enroll_container_state(image, source_sha)
         if launched != container or not running:
             raise PreflightError("temporary Boca enrollment listener did not start")
-        _owner_enroll_network(container)
+        _owner_enroll_network(container, icc_true=True)
         phase_code = "listener_health"
         deadline = monotonic() + 10
         while monotonic() < deadline:
@@ -2091,7 +2093,7 @@ def _owner_enroll_wait(
     _owner_enroll_read_marker(image, source_sha, compose_sha, digest)
     _validate_owner_volume()
     container, running, _ = _owner_enroll_container_state(image, source_sha)
-    _owner_enroll_network(container)
+    _owner_enroll_network(container, icc_true=True)
     if running:
         # The dedicated HTTP process has its own 900-second monotonic deadline.
         # Docker wait supplies a bounded additional host-side ceiling.
@@ -2100,7 +2102,7 @@ def _owner_enroll_wait(
     stopped, running, exit_code = _owner_enroll_container_state(image, source_sha)
     if stopped != container or running or exit_code != 0:
         raise PreflightError("owner enrollment HTTP did not finish successfully")
-    _owner_enroll_network(container)
+    _owner_enroll_network(container, icc_true=True)
     _owner_enroll_volume()
     print(f"BOCA_OWNER_ENROLL state=PROOF_STAGED source_sha={source_sha}")
 
@@ -2115,7 +2117,7 @@ def _owner_enroll_finish(
     container, running, exit_code = _owner_enroll_container_state(image, source_sha)
     if running or exit_code != 0:
         raise PreflightError("owner enrollment HTTP proof not staged successfully")
-    _owner_enroll_network(container)
+    _owner_enroll_network(container, icc_true=True)
     _owner_enroll_volume()
     _validate_owner_volume()
     receipt = _owner_receipt(

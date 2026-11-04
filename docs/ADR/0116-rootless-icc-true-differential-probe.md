@@ -1,5 +1,8 @@
 # ADR 0116 — Boca-only ICC=true network differential probe
 
+> **Estado histórico superado parcialmente (04/11/2026):** esta ADR preserva la autoridad y recibos de la prueba diferencial con cero peers. El propietario autorizó luego una relajación limitada a la red real desechable de owner-enroll en [ADR0128](0128-boca-only-owner-enroll-icc-compat.md) / [PR #304](https://github.com/mbalbo2023/boca-socios-assistant/pull/304). No reinterpretar las prohibiciones y planes del 03/11 aquí como veto de la nueva decisión, ni inferir de la prueba original una BETA ya desplegada.
+
+
 **Status: Physically attempted, still NO_GO; exact root cause not determined.** 2026-11-03 ART. This ADR records the diagnostic authority and genuine evidence. A passing offline test or merged PR is **not** a passing host receipt.
 
 **Latest differential evidence:** the [protected ICC=true run #345](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41653887958) returned the **runner-side** fallback `Boca network probe: NO_GO unclassified; host output withheld`; it did **not** prove that the remote Docker cause was `unclassified`. The failed stage is unknown. The candidate [ADR0122](0122-rootless-network-phase-receipts.md) proposes fixed, privacy-safe host/runner phase receipts before considering any additional physical probe; no retry is implied.
