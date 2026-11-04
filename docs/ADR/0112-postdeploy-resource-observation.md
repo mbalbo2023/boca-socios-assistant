@@ -1,8 +1,31 @@
 # ADR 0112 — Medición posdespliegue y separación de márgenes preventivos
 
-**Estado:** candidato PR #273, pendiente de CI/revisión/merge. **Fecha:** 2026-11-02 (ART).  
+**Estado:** integrado por PR #273; corrección residual bajo #307 en revisión (2026-11-04). **Fecha:** 2026-11-02 (ART).
 **Issue:** [#259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259).  
 **Decisión del dueño:** [#45, corrección vigente](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6592430471).
+
+## Hallazgo posterior — 04/11/2026, RCA #307
+
+Aunque el PR #273 implementó la política de recursos observados para
+`infrastructure-preflight` y las rutas browser, quedaron **dos vetos legacy**
+del controlador independiente: 768 MiB / 0,5 CPU durante `validate_snapshot`
+(reinvocado por cada fase de `beta-install`) y 512 MiB / 0,25 CPU durante
+`_beta_acceptance_status`. El segundo `beta-install` físico
+[#41890280818](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41890280818)
+rechazó `beta-apply` por memoria, pese a preflights PASS con 931.808 y
+914.340 KiB. No se conoce la lectura exacta del rechazo ni el consumo real
+de la BETA. Detención/limpieza Boca-only y daemon stop concluyeron SUCCESS.
+La BETA sigue sin instalar.
+
+[Issue #307](https://github.com/mbalbo2023/boca-socios-assistant/issues/307)
+extiende la misma decisión aprobada al controlador: los contadores no
+positivos o no finitos siguen siendo NO_GO, pero ninguna reserva arbitraria
+de host bloquea fases previas o aceptación. Se registrará
+`BOCA_BETA_CAPACITY phase=pre_apply state=OBSERVED` con valores redacted-safe.
+La salud, límites cgroup efectivos, almacenamiento, red, origen, SHA y
+medición sintética posterior siguen siendo comprobaciones obligatorias.
+Esta corrección es **candidata** hasta PR/revisión/CI/merge, no evidencia
+de instalación; no despachar de nuevo antes de esa secuencia.
 
 ## Contexto y evidencia
 
@@ -72,9 +95,9 @@ desplegar** la BETA y rechazó esos umbrales como requisito de admisión.
 
 ## Evidencia para integración y operación
 
-El PR #273 debe incluir regresiones que prueben observaciones por debajo de
-los márgenes, parser estricto y rechazo de metadata inválida/almacenamiento,
-más CI, seguridad, revisión técnica y postmerge sobre el SHA exacto. Sólo
-entonces podrá haber release dual inmutable y operaciones manuales protegidas.
-Ningún paso de este PR constituye despliegue ni valida Chrome/Telegram
-físicos. Mantener congelado main durante release y activación.
+El PR #273 ya integró regresiones de infraestructura/browser sobre el
+SHA de su propio corte. El residual #307 requiere regresiones adicionales
+del controlador —bajo reserva aceptada, métricas inválidas y aceptación
+posinstalación—, CI, seguridad, revisión técnica y postmerge sobre su SHA.
+Sólo después podrá haber nuevo release inmutable y operación manual
+protegida; un PASS de CI no valida instalación ni Telegram físicos.
