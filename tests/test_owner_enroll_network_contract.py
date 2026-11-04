@@ -34,7 +34,7 @@ def test_owner_enrollment_changes_only_its_private_docker_network() -> None:
     source = inspect.getsource(host._owner_enroll_start)
     assert '"com.docker.network.bridge.enable_icc=true"' in source
     assert '"com.docker.network.bridge.enable_icc=false"' not in source
-    assert "_owner_enroll_network(\"\", owner=True)" in source
+    assert "_owner_enroll_network(\"\", icc_true=True)" in source
     for forbidden in ("modprobe", "iptables", "sysctl", "--network=host"):
         assert forbidden not in source
 
