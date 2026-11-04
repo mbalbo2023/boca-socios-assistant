@@ -44,9 +44,13 @@ dispatched or that a host observation was obtained.
 
 ## Future cutover algorithm (NOT enabled)
 
-The host helper now has standalone **unreachable-from-workflow** primitives
-for worker and candidate `docker create` argv plus `_cutover_park_original`
-and `_cutover_restore_original`. Unit tests fake Docker, not the droplet.
+The host helper has standalone **unreachable-from-workflow** primitives for
+worker and candidate creation, worker preparation, original park/compensation,
+candidate activation/failure compensation, and positive-acceptance retirement.
+`host_cutover_stage.py` can atomically stage only reviewed public files in
+`/srv/boca-socios/cutover-a-<attempt_id>`; it does not replace the installed
+`compose.beta.yaml`. Offline tests fake Docker and use disposable local files,
+not the droplet. These helpers are **not wired into an orchestrated host phase**.
 No `docker compose up` is permitted while the original controller exists:
 Compose can reconcile an existing service with the same project/service label
 and inadvertently replace it.
@@ -59,24 +63,43 @@ and inadvertently replace it.
 | Candidate healthy | `docker create` candidate under exact original name, 127.0.0.1:8443, no restart, reviewed volume mounts and IPC RO; start exact ID; verify health and synthetic acceptance; preserve old ID stopped. |
 | Accept or recover | Only after positive acceptance retire exact parked original; on any earlier failure stop/remove **only** target attempt resources, rename back the exact original ID and restart; no volume/key/owner removal. If recovery is uncertain: NO_GO INDETERMINADO and no automatic retry. |
 
-The park primitive has tested compensation for (a) `docker rename` fails before
-any name change; (b) rename succeeds but a later check fails; (c) recovery
-itself fails, which is reported as indeterminate. It never acts by a mutable
-Compose service name. Candidate/worker builders specify `--restart no` and a
-single reviewed Boca service/volume namespace.
+The park primitive has tested compensation for (a) Docker restart-policy
+update has no effect or succeeds before a lost CLI receipt; (b) `docker stop`
+times out with/without effect; (c) `docker rename` fails before or after
+changing the name; (d) a recovery action fails (INDETERMINATE). The **exact
+original ID** switches `unless-stopped→no` before stop and back to
+`unless-stopped` only upon validated recovery, preventing a daemon restart from
+reviving the parked legacy controller during the port handoff. Worker and
+candidate builders specify `--restart=no` and a single Boca-only namespace.
+
+Worker preparation now has unreachable code-only compensation for partial
+volume init, `docker create` receipt loss, start failure and worker health
+failure, with exact worker ID and attempt-labeled IPC volume checks. Candidate
+activation independently tests the create/start/health/loopback path and
+removes **only** a positively identified attempt candidate before restoring
+the old ID; unexpected labels produce INDETERMINATE, never blind deletion.
+Retirement of the parked original is a distinct irreversible commit point
+guarded by positive candidate and worker health and localhost acceptance, and
+it then checks Compose singleton discovery from attempt-scoped files. If the
+retirement receipt or discovery is unclear, it does not restart the old ID
+over the candidate's bound port or retry a destructive command.
 
 ## Open physical NO_GO gates (do not mark done)
 
 1. **Legacy staging conflict.** `browser-stage` and
    `host_browser_file_stage.py` explicitly require an empty new-only
    `/srv/boca-socios`; the installed singleton has `compose.beta.yaml`.
-   Implement a separate atomic staging + attempt marker for in-place cutover
-   that records original inode/hash, supports interrupted transfer/recovery,
-   and never overwrites active original files before the authorized park.
-2. **No live execution path.** `cutover-a-observe` is intentionally the sole
-   new dispatch option. A reviewed protected `cutover-a-apply` with complete
-   worker start, candidate inspection, positive-ID compensating cleanup and
-   postflight has **not** been implemented or enabled.
+   A **code-only** independent stager now requires the exact live base hash,
+   saves its inode/device in an immutable O_EXCL attempt marker, accepts only
+   3 reviewed SHA256-bounded files, and quarantines a partial transfer.
+   Still **NO_GO** until the future single protected Action streams that
+   module to the same dedicated SSH identity and verifies resumed/aborted
+   transfer postconditions without leaving untracked stage residues.
+2. **No live execution path.** `cutover-a-observe` remains the sole new
+   dispatch option. Individual effectful helpers are code-only; no reviewed
+   protected `cutover-a-apply`, composed transaction marker/ownership lease,
+   verified installer, post-SSH timeout resume or one-shot recovery Action
+   exists. Even passing all fake Docker tests does **not** authorize host use.
 3. **Compose-created vs `docker create` identity.** Exercise both services
    on disposable Actions runner: `docker compose ps -q` must select only the
    exact candidate/worker after original retirement. During the bounded
@@ -89,16 +112,20 @@ single reviewed Boca service/volume namespace.
    to `docker compose ps -a`. Official Docker Compose `getDefaultFilters`
    also requires the presence of `com.docker.compose.config-hash`. Fix-forward
    requires each argv builder to take a SHA256 reviewed service hash and emit
-   that label; runner smoke now derives **separate** hashes from `docker
-   compose config --hash` for original, candidate and worker. No host action
-   occurred. A new exact-SHA hosted run must prove this correction; absent
-   that run, physical NO_GO remains.
+   that label; runner smoke derives **separate** hashes from `docker compose
+   config --hash` for original, candidate and worker. A227-F2 HEAD
+   `f872e6de46c489100ecaab02e174e1af6f97cf00` passed exact-SHA hosted
+   First Deploy `41933482012`, CI `41933482030`, Image security `41933482088`
+   and release PR validation `41933482111`, all SUCCESS on disposable runner,
+   **without host action**. Subsequent new cutover helpers still need their
+   own hosted runner simulation, including exact effective seccomp and Compose.
 4. **Legacy restart policy.** The installed original has `unless-stopped`,
    while the candidate must use `no`. A daemon restart mid-cutover could
-   revive the parked original and collide with localhost:8443. Design and
-   verify a temporary exact-ID `docker update --restart=no` under transition
-   ownership, restoring `unless-stopped` on original recovery. No change to
-   original policy is made by this PR.
+   revive the parked original and collide with localhost:8443. The code-only
+   park now positively checks a temporary exact-ID `docker update --restart=no`,
+   restoring `unless-stopped` during original recovery and preserving `no`
+   while parked. Physical daemon-restart and transport-loss simulations remain
+   mandatory; no real restart policy was changed.
 5. **No installed browser image/worker receipt.** The historical browser
    image digest was published, not deployed. The next target main SHA and
    paired release manifests must exist after reviewed PR integration; a
@@ -115,15 +142,40 @@ single reviewed Boca service/volume namespace.
    services. Only delete an exact attempt-created, positively labeled
    container/IPC volume; no generalized `docker prune`, backup or rollback
    of persistent data.
+8. **Single governable authority and Telegram V2.** The Telegram custody front
+   identified that a second independently dispatchable SSH gate introduces a
+   race against the first-deploy singleton. Any future Telegram V2 custody
+   operation must integrate in the **same** authenticated `host_first_deploy.py`
+   workflow/attempt/identity gate and remain simulation-only until separately
+   reviewed; do not introduce a second physical installer. No Telegram token
+   is read or transmitted by this cutover code.
+9. **Owner session upgrade dependency #321.** The owner's new single persistent
+   Chrome-session contract makes schema `0008_owner_browser_session` mandatory
+   for the future controller; the installed controller-only legacy is not
+   migrated. A future cutover must first verify a *separately reviewed*,
+   Boca-only stopped-controller additive migration and prove that the original
+   image can still resume against that schema during exact-ID compensation.
+   Neither this cutover code nor its Actions option runs that migration; an
+   unverified schema or legacy-read compatibility is physical **NO_GO**.
 
 ## Reproducible code-only evidence
 
 - `tests/test_host_cutover_adapter.py` uses mocked Docker records and
   validates immutable historical/target coordinates, read-only receipt,
   exact-ID park/compensation, rejected drift and isolated argv builders.
+- `tests/test_host_cutover_stage.py` validates isolated private O_EXCL staged
+  files, immutable original inode, bounded hashes, interrupted transfer,
+  symlink/replacement rejection and direct no-secret seccomp reads. Neither
+  tests nor cutover helpers read/execute the protected blackbox modules.
 - Existing `tests/test_browser_ipc_workflow.py` still verifies legacy/new-only
   branch guards, now accounting for the separately authenticated read-only
   cutover option. `pr-validation` includes the new tests.
+- Local 2026-11-04 ART, source-only cutover candidate: `uv sync --frozen
+  --offline` checked 15 packages; 55 focused tests PASS; full suite **2498
+  passed +31 subtests passed**; Ruff lint/format (390 files), Mypy (85
+  sources), repository policy and `git diff --check` PASS. These results are
+  local source/runner mocks, **not** a Docker host transition. Hosted PR checks
+  for this increment remain pending until the exact new commit is published.
 - This stage is **not a deployment**. No Action was dispatched and the original
   host BETA remains the only known installed service as reported in the
   canonical checkpoint.
