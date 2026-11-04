@@ -7007,6 +7007,7 @@ def main() -> int:
             "beta-apply",
             "beta-rollback",
             "beta-acceptance",
+            "beta-start",
             "browser-preflight",
             "browser-stage",
             "browser-config",
