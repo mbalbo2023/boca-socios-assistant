@@ -110,6 +110,22 @@ class PasskeyOwnerAuthentication:
         self._origin = origin
         self._owner = owner_subject
         self._permissions = permissions
+        # Hash only PUBLIC, trusted verifier configuration. An owner/session
+        # restored after restart is invalidated if key, RP, origin, subject or
+        # granted permissions change. No private credential material is stored.
+        scope = json.dumps(
+            {
+                "credential_id": _encode(credential_id),
+                "public_key_sha256": hashlib.sha256(public_key_der).hexdigest(),
+                "rp_id": rp_id,
+                "origin": origin,
+                "owner_subject": owner_subject,
+                "permissions": sorted(permissions),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        self._authorization_binding = hashlib.sha256(scope).digest()
         self._clock = clock
         self._lock = Lock()
         self._challenges: dict[bytes, float] = {}
@@ -119,6 +135,16 @@ class PasskeyOwnerAuthentication:
     @property
     def credential_id(self) -> str:
         return _encode(self._credential_id)
+
+    @property
+    def authorization_binding(self) -> bytes:
+        """SHA-256 binding to the configured public owner authenticator."""
+        return self._authorization_binding
+
+    @property
+    def authorized_permissions(self) -> frozenset[str]:
+        """Trusted permissions for rebuilding a cookie session after restart."""
+        return self._permissions
 
     def challenge(self) -> str | None:
         import secrets

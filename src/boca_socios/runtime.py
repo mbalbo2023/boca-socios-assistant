@@ -27,6 +27,7 @@ from boca_socios.integration.operational import (
     validate_existing_beta_storage,
 )
 from boca_socios.owner_origin import SSH_LOOPBACK_ORIGIN
+from boca_socios.panel.owner_session_store import OwnerBrowserSessionStore
 from boca_socios.panel.passkey import PasskeyOwnerAuthentication
 from boca_socios.panel.private_http import PrivatePanelApplication
 from boca_socios.security.credential_vault import CredentialVault
@@ -339,6 +340,14 @@ def initialize_beta(settings: Settings) -> None:
         initialize_new=True,
     )
     try:
+        # Initial install may opt into the owner session schema only here.
+        # Existing controllers require a separate, protected migration before
+        # the new panel version can start; build_beta_server never migrates.
+        if settings.owner_subject:
+            # A configured, private owner panel requires persistent auth. An
+            # ownerless offline storage initializer remains scoped to its
+            # synthetic ledgers and cannot fabricate an owner authorization.
+            OwnerBrowserSessionStore.migrate_schema(runtime.database)
         runtime.database.create_event(SIMULATION_EVENT_ID, SIMULATION_EVENT_LABEL)
     finally:
         runtime.close()

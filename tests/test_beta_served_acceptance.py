@@ -33,6 +33,7 @@ from boca_socios.browser.contracts import SimulationOutcome
 from boca_socios.domain.policy import TicketIntent
 from boca_socios.integration.command_store import CommandStore
 from boca_socios.integration.operational import LocalBetaRuntime
+from boca_socios.panel.owner_session_store import OwnerBrowserSessionStore
 from boca_socios.panel.passkey import PasskeyOwnerAuthentication
 from boca_socios.panel.private_http import PrivatePanelApplication
 from boca_socios.reservation_guard import ReservationAttemptGuard, ReservationResolution
@@ -220,6 +221,9 @@ def _intake_action(port: int, cookie: str, timings: list[float], action: str) ->
 def _app(
     runtime: LocalBetaRuntime, provider: PasskeyOwnerAuthentication
 ) -> PrivatePanelApplication:
+    # This fixture uses LocalBetaRuntime directly rather than initialize_beta;
+    # make the owner-only migration an explicit test-install step.
+    OwnerBrowserSessionStore(runtime.database, owner_subject="synthetic-owner").migrate()
     return PrivatePanelApplication(
         origin=ORIGIN,
         database_path=runtime.database.path,
@@ -375,10 +379,12 @@ def test_loopback_http_enrollment_command_notice_and_restart() -> None:
             )
             try:
                 new_provider, _, _ = _passkey(key, credential_id)
-                # A new process has a new session store. Old cookies cannot read data.
+                # New process, same trusted passkey: the owner Chrome cookie
+                # resumes without a new WebAuthn ceremony until revoked.
                 with _loopback(_app(restarted, new_provider)) as port:
-                    assert _request(port, "/avisos", cookie=cookie, timings=timings)[0] == 401
+                    assert _request(port, "/avisos", cookie=cookie, timings=timings)[0] == 200
                     fresh_cookie = _login(port, key, credential_id, timings)
+                    assert _request(port, "/avisos", cookie=cookie, timings=timings)[0] == 401
                     assert (
                         _request(
                             port, f"/comandos/{command_id}", cookie=fresh_cookie, timings=timings
@@ -735,8 +741,21 @@ def test_loopback_http_interrupted_command_recovery_does_not_replay_browser(
             )
             try:
                 with _loopback(_app(restarted, provider)) as port:
-                    # Authentication is process-local even when command state
-                    # and the offline outbox survive repeated startup.
+                    # Browser authorization survives controller restart; CSRF
+                    # and command operation IDs do not. A fresh passkey login
+                    # replaces the previous singleton token.
+                    if previous_cookie:
+                        assert (
+                            _request(
+                                port,
+                                f"/comandos/{command_id}",
+                                cookie=previous_cookie,
+                                timings=timings,
+                            )[0]
+                            == 200
+                        )
+                    assert _request(port, "/avisos", timings=timings)[0] == 401
+                    cookie = _login(port, key, credential_id, timings)
                     if previous_cookie:
                         assert (
                             _request(
@@ -747,8 +766,6 @@ def test_loopback_http_interrupted_command_recovery_does_not_replay_browser(
                             )[0]
                             == 401
                         )
-                    assert _request(port, "/avisos", timings=timings)[0] == 401
-                    cookie = _login(port, key, credential_id, timings)
                     status, _, detail = _request(
                         port, f"/comandos/{command_id}", cookie=cookie, timings=timings
                     )
