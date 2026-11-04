@@ -68,6 +68,8 @@ def test_official_notice_requires_provenance_and_is_not_an_actionable_match() ->
     assert notice.windows[2].closes_at is None
     assert notice.verification_state == "SOURCE_OBSERVED_UNVERIFIED"
     assert notice.actionable is False
+    assert notice.admission_channel_claim == "UNKNOWN"  # v1 defaults fail-closed
+    assert notice.admission_channel_excerpt is None
     projection = assess_official_notice(notice, at=datetime.fromisoformat("2026-11-04T19:00-03:00"))
     assert projection.phase == "UPCOMING_UNVERIFIED"
     assert projection.actionable is False
@@ -214,3 +216,74 @@ def test_catalog_deduplication_and_size_gate_are_fail_closed() -> None:
         build_observed_catalog((notice, notice))
     with pytest.raises(OfficialCatalogError):
         build_observed_catalog(notice for _ in range(21))
+
+
+@pytest.mark.parametrize(
+    ("channel", "excerpt"),
+    [
+        (
+            "BOCA_SOCIOS",
+            "Las socias y los socios deberán adquirir su adicional a través de Boca Socios.",
+        ),
+        (
+            "CONMEBOL",
+            "La Conmebol abrirá la venta prioritaria exclusivamente por su plataforma de tickets.",
+        ),
+        ("UNKNOWN", None),
+    ],
+)
+def test_v2_channel_claim_is_only_a_source_excerpt_assertion(
+    channel: str, excerpt: str | None
+) -> None:
+    raw = envelope()
+    raw.update(
+        {
+            "version": "official-notice-observation-v2",
+            "admission_channel_claim": channel,
+            "admission_channel_excerpt": excerpt,
+        }
+    )
+    notice = load_observed_notice(encoded(raw))
+    assert notice.admission_channel_claim == channel
+    assert notice.admission_channel_excerpt == excerpt
+    assert notice.verification_state == "SOURCE_OBSERVED_UNVERIFIED"
+    assert notice.actionable is False
+
+
+@pytest.mark.parametrize(
+    ("channel", "excerpt"),
+    [
+        ("BOCA_SOCIOS", None),
+        ("BOCA_SOCIOS", "Sólo por una plataforma del tercero, sin nombre público"),
+        ("CONMEBOL", "Sólo plataforma externa, club independiente"),
+        ("CONMEBOL", "Conmebol habilita la venta de entradas, sin más detalles"),
+        ("BOCA_SOCIOS", "Boca Socios o Conmebol: todavía sin definir la plataforma."),
+        ("CONMEBOL", "Conmebol y Boca Socios: plataforma de admisión sin aclarar."),
+        ("UNKNOWN", "A través de Boca Socios exclusivamente."),
+        ("UNKNOWN", ""),
+        ("FAKE_PLATFORM", "A través de Fake Platform"),
+    ],
+)
+def test_v2_rejects_channel_claims_without_bounded_consistent_quote(
+    channel: str, excerpt: str | None
+) -> None:
+    raw = envelope()
+    raw.update(
+        {
+            "version": "official-notice-observation-v2",
+            "admission_channel_claim": channel,
+            "admission_channel_excerpt": excerpt,
+        }
+    )
+    with pytest.raises(OfficialCatalogError):
+        load_observed_notice(encoded(raw))
+
+
+def test_v1_rejects_injected_channel_and_v2_requires_complete_claim() -> None:
+    raw = envelope()
+    raw["admission_channel_claim"] = "BOCA_SOCIOS"
+    with pytest.raises(OfficialCatalogError):
+        load_observed_notice(encoded(raw))
+    raw["version"] = "official-notice-observation-v2"
+    with pytest.raises(OfficialCatalogError):
+        load_observed_notice(encoded(raw))

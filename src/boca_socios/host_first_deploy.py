@@ -18,6 +18,7 @@ import os
 import platform
 import pwd
 import re
+import shlex
 import shutil
 import socket
 import ssl
@@ -70,6 +71,11 @@ BROWSER_IMAGE_PATTERN = re.compile(
 BROWSER_ATTEMPT_PATTERN = re.compile(r"[1-9][0-9]{0,19}\Z")
 BROWSER_MARKER_VERSION = "browser-ipc-new-only-v2"
 BROWSER_ATTEMPT_LABEL = "boca.socios.browser-ipc-attempt"
+# Option A is deliberately *not* the new-only browser-install path.  The
+# deployed singleton remains running while its historical Docker identity is
+# observed, and the read-only host gate below never stages files or images.
+CUTOVER_LEGACY_NAME = f"{PROJECT}-controller-1"
+CUTOVER_WORKER_NAME = f"{PROJECT}-browser-worker-1"
 TELEGRAM_ATTEMPT_LABEL = "boca.socios.telegram-runtime-attempt"
 BROWSER_STAGE_FILENAMES = frozenset(
     {"compose.beta.yaml", "compose.beta.browser.yaml", "seccomp_profile.json"}
@@ -4630,6 +4636,457 @@ def _browser_worker_postflight(
         _browser_worker_probe(container)
 
 
+def _cutover_validate_coordinates(
+    legacy_image: str,
+    legacy_sha: str,
+    legacy_compose_sha: str,
+    target_image: str,
+    target_sha: str,
+    browser_image: str,
+    expected_legacy_id: str,
+) -> None:
+    """Bind historical *installed* provenance independently from a new release.
+
+    GitHub Actions checks the two immutable release manifests separately.  A
+    caller-controlled SHA/digest alone is never sufficient permission for an
+    effect.  This function is used by the read-only observation and by offline
+    command-contract tests, never by the new-only browser-install branch.
+    """
+    _validate_coordinates(legacy_image, legacy_sha, legacy_compose_sha)
+    if (
+        not IMAGE_PATTERN.fullmatch(target_image)
+        or not SHA_PATTERN.fullmatch(target_sha)
+        or not BROWSER_IMAGE_PATTERN.fullmatch(browser_image)
+        or target_sha == legacy_sha
+        or target_image == legacy_image
+        or (expected_legacy_id != "" and re.fullmatch(r"[0-9a-f]{64}", expected_legacy_id) is None)
+    ):
+        raise PreflightError("cutover A historical and target release identities are unproven")
+
+
+def _cutover_observe(
+    legacy_image: str,
+    legacy_sha: str,
+    legacy_compose_sha: str,
+    origin: str,
+    owner: str,
+    target_image: str,
+    target_sha: str,
+    browser_image: str,
+    expected_legacy_id: str,
+) -> None:
+    """Observe the installed controller without interrupting Chrome/passkey.
+
+    This uses the *historical* beta Compose SHA, not the future candidate
+    Compose SHA.  It proves the singleton's existing ID, owner/key/data,
+    rootless daemon, precise localhost listener and fixed simulation policy.
+    It never pulls, creates, stops, stages or deletes Docker resources.
+    """
+    _cutover_validate_coordinates(
+        legacy_image,
+        legacy_sha,
+        legacy_compose_sha,
+        target_image,
+        target_sha,
+        browser_image,
+        expected_legacy_id,
+    )
+    _validate_owner_context(origin, owner)
+    _browser_engine_version()
+    diagnostic, _storage = _beta_acceptance_status(
+        legacy_image, legacy_sha, legacy_compose_sha, origin, owner
+    )
+    if expected_legacy_id and diagnostic.container_id != expected_legacy_id:
+        raise PreflightError("cutover A installed controller ID differs from historic receipt")
+    actual_volumes = _names("volume", "name=^boca-socios_")
+    required = {OWNER_VOLUME, KEY_VOLUME, DATA_VOLUME}
+    if actual_volumes not in (required, required | {TELEGRAM_VOLUME}):
+        raise PreflightError("cutover A original persistent Boca inventory changed")
+    _browser_inventory(
+        containers={diagnostic.container_id},
+        volumes=actual_volumes,
+        bridges={BROWSER_BRIDGE},
+    )
+    _browser_root_entries({BETA_COMPOSE.name})
+    if diagnostic.health != "healthy":
+        raise PreflightError("cutover A original controller is not healthy")
+    print(
+        "BOCA_CUTOVER_A_OBSERVE state=READY"
+        f" legacy_sha={legacy_sha} legacy_id={diagnostic.container_id}"
+        f" legacy_image={legacy_image} target_sha={target_sha}"
+        f" target_image={target_image} browser_image={browser_image}"
+        " original=RUNNING port=127.0.0.1:8443 worker=absent"
+        " owner=preserved key=preserved data=preserved effects=none"
+    )
+
+
+def _cutover_legacy_record(
+    container_id: str,
+    legacy_image: str,
+    legacy_sha: str,
+    *,
+    name: str,
+    running: bool,
+) -> dict[str, object]:
+    """Authenticate exact legacy ID on each side of any future handoff.
+
+    The stop/rename helpers below remain inaccessible from protected workflow
+    dispatch until the separate complete cutover/compensation design is
+    simulated on an isolated Docker runner and peer-reviewed.
+    """
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", container_id) is None
+        or not IMAGE_PATTERN.fullmatch(legacy_image)
+        or not SHA_PATTERN.fullmatch(legacy_sha)
+        or name != CUTOVER_LEGACY_NAME
+        and re.fullmatch(r"boca-socios-controller-legacy-[1-9][0-9]{0,19}", name) is None
+    ):
+        raise PreflightError("cutover A original controller coordinate invalid")
+    record = _browser_inspect_record(container_id)
+    config, host = _browser_config_and_host(record)
+    state = record.get("State")
+    labels = config.get("Labels")
+    restart = host.get("RestartPolicy")
+    network = record.get("NetworkSettings")
+    if (
+        record.get("Name") != f"/{name}"
+        or config.get("Image") != legacy_image
+        or config.get("User") != "10001:10001"
+        or config.get("Cmd") != ["python", "-m", "boca_socios.runtime", "serve-beta"]
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.service") != "controller"
+        or labels.get("com.docker.compose.container-number") != "1"
+        or labels.get("org.opencontainers.image.revision") != legacy_sha
+        or BROWSER_ATTEMPT_LABEL in labels
+        or not isinstance(state, dict)
+        or state.get("Running") is not running
+        or state.get("Restarting") is not False
+        or not isinstance(restart, dict)
+        or restart.get("Name") != "unless-stopped"
+        or restart.get("MaximumRetryCount") != 0
+        or host.get("NetworkMode") != BROWSER_BRIDGE
+        or host.get("PortBindings") != {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
+        or host.get("ReadonlyRootfs") is not True
+        or host.get("Privileged") is not False
+        or host.get("PublishAllPorts") is not False
+        or host.get("CapDrop") != ["ALL"]
+        or host.get("CapAdd") not in (None, [])
+        or host.get("Init") is not True
+        or host.get("NanoCpus") != 500_000_000
+        or host.get("Memory") != 268_435_456
+        or host.get("PidsLimit") != 64
+        or not isinstance(network, dict)
+        or set(network.get("Networks", {})) != {BROWSER_BRIDGE}
+    ):
+        raise PreflightError("cutover A original identity/restart/port isolation changed")
+    mounts = record.get("Mounts")
+    if not isinstance(mounts, list) or len(mounts) != 3:
+        raise PreflightError("cutover A original persistent mounts changed")
+    observed: set[tuple[str, str, bool]] = set()
+    for mount in mounts:
+        if (
+            not isinstance(mount, dict)
+            or mount.get("Type") != "volume"
+            or mount.get("Driver") != "local"
+            or type(mount.get("Name")) is not str
+            or type(mount.get("Destination")) is not str
+            or type(mount.get("RW")) is not bool
+        ):
+            raise PreflightError("cutover A original mount identity uncertain")
+        observed.add((mount["Name"], mount["Destination"], mount["RW"]))
+    if observed != {
+        (DATA_VOLUME, "/data", True),
+        (KEY_VOLUME, "/run/secrets", False),
+        (OWNER_VOLUME, "/run/owner", False),
+    }:
+        raise PreflightError("cutover A original owner/key/data custody changed")
+    return record
+
+
+def _cutover_park_original(
+    original_id: str,
+    legacy_image: str,
+    legacy_sha: str,
+    attempt_id: str,
+) -> None:
+    """Future handoff primitive: stop, exact-ID rename, or compensated resume.
+
+    Not wired into Actions: a complete host transition needs separately
+    reviewed stage/IPC, bounded worker, candidate and postflight recovery.
+    """
+    if not BROWSER_ATTEMPT_PATTERN.fullmatch(attempt_id):
+        raise PreflightError("cutover A attempt must be an immutable Actions run ID")
+    parked_name = f"{PROJECT}-controller-legacy-{attempt_id}"
+    _cutover_legacy_record(
+        original_id, legacy_image, legacy_sha, name=CUTOVER_LEGACY_NAME, running=True
+    )
+    try:
+        # A transport timeout from stop can occur *after* Docker stopped the
+        # container.  Include stop in the compensation scope rather than
+        # assuming an unsuccessful CLI return was effect-free.
+        _run("docker", "stop", "--time", "8", original_id, timeout=30)
+        _cutover_legacy_record(
+            original_id, legacy_image, legacy_sha, name=CUTOVER_LEGACY_NAME, running=False
+        )
+        _run("docker", "rename", original_id, parked_name, timeout=20)
+        _cutover_legacy_record(
+            original_id, legacy_image, legacy_sha, name=parked_name, running=False
+        )
+        _browser_port_free()
+    except (PreflightError, OSError, ValueError, KeyError, TypeError):
+        try:
+            snapshot = _browser_inspect_record(original_id)
+            current_state = snapshot.get("State")
+            if (
+                snapshot.get("Name") == f"/{CUTOVER_LEGACY_NAME}"
+                and isinstance(current_state, dict)
+                and current_state.get("Running") is True
+            ):
+                # The failed stop had no effect, so do not restart an already
+                # running controller or accidentally change the known port.
+                _cutover_legacy_record(
+                    original_id,
+                    legacy_image,
+                    legacy_sha,
+                    name=CUTOVER_LEGACY_NAME,
+                    running=True,
+                )
+            else:
+                _cutover_restore_original(original_id, legacy_image, legacy_sha, attempt_id)
+        except (PreflightError, OSError, ValueError, KeyError, TypeError) as exc:
+            raise PreflightError(
+                "cutover A park failed; original restoration INDETERMINATE, no retry"
+            ) from exc
+        raise PreflightError("cutover A park failed; exact original RUNNING again") from None
+
+
+def _cutover_restore_original(
+    original_id: str, legacy_image: str, legacy_sha: str, attempt_id: str
+) -> None:
+    """Recovery uses the original immutable ID, never a Compose service name."""
+    if not BROWSER_ATTEMPT_PATTERN.fullmatch(attempt_id):
+        raise PreflightError("cutover A recovery attempt is invalid")
+    parked = f"{PROJECT}-controller-legacy-{attempt_id}"
+    record = _browser_inspect_record(original_id)
+    if record.get("Name") == f"/{parked}":
+        _cutover_legacy_record(original_id, legacy_image, legacy_sha, name=parked, running=False)
+        _run("docker", "rename", original_id, CUTOVER_LEGACY_NAME, timeout=20)
+    _cutover_legacy_record(
+        original_id, legacy_image, legacy_sha, name=CUTOVER_LEGACY_NAME, running=False
+    )
+    _browser_port_free()
+    if _run("docker", "start", original_id, timeout=30) != original_id:
+        raise PreflightError("cutover A exact original start receipt unverified")
+    _browser_wait_healthy(original_id)
+    _cutover_legacy_record(
+        original_id, legacy_image, legacy_sha, name=CUTOVER_LEGACY_NAME, running=True
+    )
+
+
+def _cutover_worker_create_argv(
+    browser_image: str, source_sha: str, attempt_id: str, config_hash: str
+) -> tuple[str, ...]:
+    """Plan a worker without Compose reconciling/stopping the live singleton.
+
+    This is deliberately just an argv builder, not an authorized host phase.
+    Docker create/start and Compose discovery must pass disposable CI first.
+    Its image inherits the pinned OCI revision label and the reviewed seccomp
+    profile is a host-local, SHA-proven file, never supplied by the caller.
+    """
+    if (
+        not BROWSER_IMAGE_PATTERN.fullmatch(browser_image)
+        or not SHA_PATTERN.fullmatch(source_sha)
+        or not BROWSER_ATTEMPT_PATTERN.fullmatch(attempt_id)
+        or not DIGEST_PATTERN.fullmatch(config_hash)
+    ):
+        raise PreflightError("cutover A worker image or attempt unreviewed")
+    health = (
+        "from boca_socios.browser.on_demand import validate_worker_boundary; "
+        "from boca_socios.browser.ipc_worker import validate_no_egress_namespace; "
+        "from boca_socios.browser.ipc_protocol import SOCKET_PATH, socket_identity; "
+        "validate_worker_boundary(); validate_no_egress_namespace(); socket_identity(SOCKET_PATH)"
+    )
+    return (
+        "docker",
+        "create",
+        "--pull",
+        "never",
+        "--name",
+        CUTOVER_WORKER_NAME,
+        "--label",
+        f"com.docker.compose.project={PROJECT}",
+        "--label",
+        "com.docker.compose.service=browser-worker",
+        "--label",
+        "com.docker.compose.container-number=1",
+        "--label",
+        f"com.docker.compose.config-hash={config_hash}",
+        "--label",
+        "com.docker.compose.oneoff=False",
+        "--label",
+        f"{BROWSER_ATTEMPT_LABEL}={attempt_id}",
+        "--user",
+        "10002:10002",
+        "--restart",
+        "no",
+        "--init",
+        "--network",
+        "none",
+        "--ipc",
+        "private",
+        "--cgroupns",
+        "private",
+        "--read-only",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--security-opt",
+        f"seccomp={BROWSER_SECCOMP}",
+        "--cap-drop",
+        "ALL",
+        "--cap-add",
+        "SYS_CHROOT",
+        "--pids-limit",
+        "128",
+        "--memory",
+        "768m",
+        "--cpus",
+        "1.00",
+        "--shm-size",
+        "64m",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=32m",  # noqa: S108 - container tmpfs
+        "--tmpfs",
+        "/home/boca-browser:rw,noexec,nosuid,size=16m",
+        "--env",
+        "BOCA_ENVIRONMENT=staging",
+        "--env",
+        "BOCA_RUNTIME_MODE=simulation",
+        "--env",
+        "BOCA_ENGINE_MODE=off",
+        "--mount",
+        f"type=volume,source={BROWSER_IPC_VOLUME},target=/run/boca-browser-ipc,volume-nocopy",
+        "--health-cmd",
+        f"python -c {shlex.quote(health)}",
+        "--health-interval",
+        "2s",
+        "--health-timeout",
+        "3s",
+        "--health-retries",
+        "3",
+        "--health-start-period",
+        "5s",
+        browser_image,
+        "python",
+        "-m",
+        "boca_socios.browser.ipc_worker",
+    )
+
+
+def _cutover_candidate_create_argv(
+    target_image: str,
+    source_sha: str,
+    attempt_id: str,
+    origin: str,
+    owner: str,
+    config_hash: str,
+) -> tuple[str, ...]:
+    """Plan a no-restart candidate without touching the legacy controller.
+
+    The original must be positively parked and localhost free before a future
+    reviewed executor is permitted to send this command to Docker.
+    """
+    if (
+        not IMAGE_PATTERN.fullmatch(target_image)
+        or not SHA_PATTERN.fullmatch(source_sha)
+        or not BROWSER_ATTEMPT_PATTERN.fullmatch(attempt_id)
+        or not DIGEST_PATTERN.fullmatch(config_hash)
+    ):
+        raise PreflightError("cutover A candidate image or attempt unreviewed")
+    _validate_owner_context(origin, owner)
+    values = {
+        "BOCA_ENVIRONMENT": "staging",
+        "BOCA_RUNTIME_MODE": "simulation",
+        "BOCA_ENGINE_MODE": "off",
+        "BOCA_BROWSER_BACKEND": "ipc",
+        "BOCA_DB_PATH": "/data/boca.sqlite3",
+        "BOCA_MASTER_KEY_FILE": "/run/secrets/boca_master_key",
+        "BOCA_PANEL_ORIGIN": origin,
+        "BOCA_OWNER_SUBJECT": owner,
+        "BOCA_PASSKEY_CREDENTIAL_ID_FILE": "/run/owner/credential_id",
+        "BOCA_PASSKEY_PUBLIC_KEY_DER_FILE": "/run/owner/public_key.der",
+        "BOCA_BIND_HOST": "0.0.0.0",  # noqa: S104 - private container bridge only
+        "BOCA_BIND_PORT": "8443",
+        "BOCA_HEALTH_MODE": "beta",
+    }
+    return (
+        "docker",
+        "create",
+        "--pull",
+        "never",
+        "--name",
+        CUTOVER_LEGACY_NAME,
+        "--label",
+        f"com.docker.compose.project={PROJECT}",
+        "--label",
+        "com.docker.compose.service=controller",
+        "--label",
+        "com.docker.compose.container-number=1",
+        "--label",
+        f"com.docker.compose.config-hash={config_hash}",
+        "--label",
+        "com.docker.compose.oneoff=False",
+        "--label",
+        f"{BROWSER_ATTEMPT_LABEL}={attempt_id}",
+        "--user",
+        "10001:10001",
+        "--restart",
+        "no",
+        "--init",
+        "--network",
+        BROWSER_BRIDGE,
+        "--publish",
+        "127.0.0.1:8443:8443/tcp",
+        "--read-only",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--cap-drop",
+        "ALL",
+        "--pids-limit",
+        "64",
+        "--memory",
+        "256m",
+        "--cpus",
+        "0.50",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=16m",  # noqa: S108 - container tmpfs
+        *(arg for name, value in sorted(values.items()) for arg in ("--env", f"{name}={value}")),
+        "--mount",
+        f"type=volume,source={DATA_VOLUME},target=/data,volume-nocopy",
+        "--mount",
+        f"type=volume,source={KEY_VOLUME},target=/run/secrets,volume-nocopy,readonly",
+        "--mount",
+        f"type=volume,source={OWNER_VOLUME},target=/run/owner,volume-nocopy,readonly",
+        "--mount",
+        f"type=volume,source={BROWSER_IPC_VOLUME},target=/run/boca-browser-ipc,volume-nocopy,readonly",
+        "--health-cmd",
+        "python -m boca_socios.healthcheck",
+        "--health-interval",
+        "30s",
+        "--health-timeout",
+        "5s",
+        "--health-retries",
+        "3",
+        "--health-start-period",
+        "15s",
+        target_image,
+        "python",
+        "-m",
+        "boca_socios.runtime",
+        "serve-beta",
+    )
+
+
 def _browser_worker_network_inventory() -> set[str]:
     """Compose may precreate Boca's bridge when starting a network-none worker."""
     boca = _names("network", "name=^boca-socios_")
@@ -6592,7 +7049,41 @@ def phase(
     browser_attempt_id: str = "",
     telegram_attempt_id: str = "",
     infrastructure_budget: str = "",
+    target_image: str = "",
+    target_sha: str = "",
+    legacy_container_id: str = "",
 ) -> None:
+    if phase_name == "cutover-a-observe":
+        if any(
+            (
+                telegram_envelope,
+                expected_bot_id,
+                expected_chat_hmac,
+                owner_envelope,
+                enroll_digest,
+                browser_overlay_sha,
+                browser_seccomp_sha,
+                browser_attempt_id,
+                telegram_attempt_id,
+                infrastructure_budget,
+            )
+        ):
+            raise PreflightError("unexpected private/attempt argument in cutover observation")
+        _validate_docker_boundary()
+        _cutover_observe(
+            image,
+            source_sha,
+            compose_sha,
+            envelope,
+            beta_owner,
+            target_image,
+            target_sha,
+            browser_image,
+            legacy_container_id,
+        )
+        return
+    if target_image or target_sha or legacy_container_id:
+        raise PreflightError("cutover A coordinates supplied to unrelated host phase")
     if phase_name in {
         "network-probe",
         "network-probe-cleanup",
@@ -7034,6 +7525,7 @@ def main() -> int:
             "browser-telegram-preflight",
             "browser-telegram-start",
             "browser-telegram-cleanup",
+            "cutover-a-observe",
             "telegram-migrate",
             "telegram-prepare",
             "telegram-install",
@@ -7057,6 +7549,9 @@ def main() -> int:
     parser.add_argument("--browser-attempt-id", default="")
     parser.add_argument("--telegram-attempt-id", default="")
     parser.add_argument("--infrastructure-budget", default="")
+    parser.add_argument("--cutover-target-image", default="")
+    parser.add_argument("--cutover-target-sha", default="")
+    parser.add_argument("--cutover-legacy-id", default="")
     args = parser.parse_args()
     try:
         phase(
@@ -7085,6 +7580,9 @@ def main() -> int:
                 if args.infrastructure_budget
                 else {}
             ),
+            **({"target_image": args.cutover_target_image} if args.cutover_target_image else {}),
+            **({"target_sha": args.cutover_target_sha} if args.cutover_target_sha else {}),
+            **({"legacy_container_id": args.cutover_legacy_id} if args.cutover_legacy_id else {}),
         )
     except (PreflightError, OSError, ValueError, TypeError, KeyError) as exc:
         print(f"BOCA_NO_GO: {exc}", file=sys.stderr)

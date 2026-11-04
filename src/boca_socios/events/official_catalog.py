@@ -38,6 +38,7 @@ _TOP_FIELDS = frozenset(
         "windows",
     }
 )
+_TOP_FIELDS_V2 = _TOP_FIELDS | frozenset({"admission_channel_claim", "admission_channel_excerpt"})
 _WINDOW_FIELDS = frozenset({"member_category", "seat_area", "opens_at", "closes_at", "close_rule"})
 
 MemberCategory = Literal[
@@ -45,6 +46,7 @@ MemberCategory = Literal[
 ]
 SeatArea = Literal["generales", "plateas", "plateas_y_generales"]
 CloseRule = Literal["unspecified", "timestamp", "stadium_open"]
+AdmissionChannelClaim = Literal["BOCA_SOCIOS", "CONMEBOL", "UNKNOWN"]
 ObservationPhase = Literal["UPCOMING_UNVERIFIED", "HISTORICAL"]
 
 _CATEGORIES = frozenset(
@@ -77,6 +79,8 @@ class OfficialNotice:
     title: str
     kickoff_at: datetime
     windows: tuple[CategoryWindow, ...]
+    admission_channel_claim: AdmissionChannelClaim = "UNKNOWN"
+    admission_channel_excerpt: str | None = None
     verification_state: Literal["SOURCE_OBSERVED_UNVERIFIED"] = field(
         init=False, default="SOURCE_OBSERVED_UNVERIFIED"
     )
@@ -180,6 +184,35 @@ def _window(raw: object, kickoff: datetime) -> CategoryWindow:
     )
 
 
+def _admission_claim(obj: dict[str, object]) -> tuple[AdmissionChannelClaim, str | None]:
+    if obj["version"] == "official-notice-observation-v1":
+        # Existing observations cannot silently inherit any provider.
+        return "UNKNOWN", None
+    claim = obj["admission_channel_claim"]
+    excerpt = obj["admission_channel_excerpt"]
+    if type(claim) is not str or claim not in ("BOCA_SOCIOS", "CONMEBOL", "UNKNOWN"):
+        raise OfficialCatalogError("unsupported public admission channel assertion")
+    if claim == "UNKNOWN":
+        if excerpt is not None:
+            raise OfficialCatalogError("unknown channel cannot provide asserted channel proof")
+    elif (
+        type(excerpt) is not str
+        or not 20 <= len(excerpt) <= 320
+        or any(ord(character) < 32 or ord(character) == 127 for character in excerpt)
+    ):
+        raise OfficialCatalogError("missing, oversized or malformed public channel excerpt")
+    else:
+        lowered = excerpt.casefold()
+        if claim == "BOCA_SOCIOS" and ("boca socios" not in lowered or "conmebol" in lowered):
+            raise OfficialCatalogError("Boca Socios channel claim lacks textual evidence")
+        if claim == "CONMEBOL" and (
+            "conmebol" not in lowered or "plataforma" not in lowered or "boca socios" in lowered
+        ):
+            raise OfficialCatalogError("CONMEBOL external-channel claim lacks textual evidence")
+    # Assertions remain UNVERIFIED until independent provenance is checked.
+    return claim, excerpt  # type: ignore[return-value]
+
+
 def load_observed_notice(raw: str) -> OfficialNotice:
     """Validate a small **offline** reviewed observation; always UNVERIFIED.
 
@@ -199,9 +232,16 @@ def load_observed_notice(raw: str) -> OfficialNotice:
         decoded = json.loads(raw, object_pairs_hook=_unique_pairs, parse_constant=_reject_constant)
     except (ValueError, TypeError) as exc:
         raise OfficialCatalogError("source observation JSON is invalid") from exc
-    obj = _object(decoded, _TOP_FIELDS)
-    if obj["version"] != "official-notice-observation-v1":
+    if not isinstance(decoded, dict):
+        raise OfficialCatalogError("source observation must be a JSON object")
+    version = decoded.get("version")
+    if version == "official-notice-observation-v1":
+        obj = _object(decoded, _TOP_FIELDS)
+    elif version == "official-notice-observation-v2":
+        obj = _object(decoded, _TOP_FIELDS_V2)
+    else:
         raise OfficialCatalogError("unsupported source observation version")
+    channel_claim, channel_excerpt = _admission_claim(obj)
     url = _source_url(obj["source_url"])
     published_raw = obj["published_on"]
     if type(published_raw) is not str or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", published_raw):
@@ -241,6 +281,8 @@ def load_observed_notice(raw: str) -> OfficialNotice:
         title=title,
         kickoff_at=kickoff_at,
         windows=windows,
+        admission_channel_claim=channel_claim,
+        admission_channel_excerpt=channel_excerpt,
     )
 
 

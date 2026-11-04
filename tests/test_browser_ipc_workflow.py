@@ -37,7 +37,7 @@ def test_browser_option_is_separately_gated_without_weakening_legacy_operations(
         'if [[ "$BOCA_OPERATION" = beta-browser-install ]]; then',
         'test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids',
         'test "$BOCA_BUDGET" = 0.5cpu-256m-64pids',
-        'if [[ "$BOCA_OPERATION" != beta-browser-* && "$BOCA_OPERATION" != telegram-* ]]; then test -z "$BOCA_BROWSER_IMAGE_REF"; fi',
+        'if [[ "$BOCA_OPERATION" != beta-browser-* && "$BOCA_OPERATION" != telegram-* && "$BOCA_OPERATION" != cutover-a-observe ]]; then test -z "$BOCA_BROWSER_IMAGE_REF"; fi',
         "beta-browser-install)",
         'test "$BOCA_DEPLOY_ENV_READY" = ready',
         'test "$BOCA_BETA_ENV_READY" = ready',

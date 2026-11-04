@@ -207,6 +207,13 @@ class PrivatePanelApplication:
                 return _response(start, 200, private_ui.home(session.csrf))
             if path == "/telegram/configurar":
                 return _response(start, 200, telegram_setup_ui.page(), csp=telegram_setup_ui.CSP)
+            if path == "/telegram/emparejar":
+                return _response(
+                    start,
+                    200,
+                    telegram_setup_ui.pairing_page(),
+                    csp=telegram_setup_ui.PAIRING_CSP,
+                )
             if path == "/socios":
                 return _response(start, 200, private_ui.members(self._directory.list_members()))
             if path == "/comandos":

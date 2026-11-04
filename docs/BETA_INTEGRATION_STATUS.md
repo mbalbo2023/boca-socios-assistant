@@ -14,9 +14,19 @@ admisión de simulaciones** sin apagar panel ni fingir stop del worker (issue
 #314, PR DRAFT #316; sin feed automático estable comprobado ni admisión real)
 y retiro de opción Site complementario de la interfaz. El cutover-A sobre el
 controller existente requiere adaptador propio y pruebas host/Compose; #227,
-PR DRAFT #310 contiene sólo contratos puros. El pairing Telegram V2 está en
-la propuesta #317 pero aún carece de ruta/operación protegida y no puede
-recibir el token en la BETA física de este corte.
+PR DRAFT #310 contiene contratos puros y PR DRAFT #320 agrega observación
+histórica READ_ONLY y compensación inerte, con corrección de etiqueta Compose
+validada en CI. El pairing Telegram V2 está en la propuesta #317 y la
+candidata integral agrega ruta local autenticada `/telegram/emparejar` con CSP
+propio, parser y resolver de chat privado; **aún falta la operación protegida
+de descubrimiento/custodia**, por lo que no debe ingresar el token en la BETA
+física de este corte. #314 incorpora vistas accesibles offline y un claim
+de canal no verificado por evento.
+
+El nuevo requisito owner [#321](https://github.com/mbalbo2023/boca-socios-assistant/issues/321)
+es una única sesión persistente del mismo Chrome, sin vencimiento cotidiano
+de 15 minutos/8 horas ni nuevo PIN. Se prepara almacén persistente y upgrade
+de esquema, todavía no desplegados; la cookie podrá renovarse con cada uso.
 
 **Descartados** por el dueño: múltiples sesiones, rotación de clave maestra
 y eliminación total, login/fila/elegibilidad/reserva/compra reales, y

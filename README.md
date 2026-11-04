@@ -15,9 +15,19 @@ Autorizadas: **Telegram privado** (#315, [PR DRAFT #317](https://github.com/mbal
 (#314, [PR DRAFT #316](https://github.com/mbalbo2023/boca-socios-assistant/pull/316)).
 La transición del controller hacia el worker navegador sigue en #227
 ([PR DRAFT #310](https://github.com/mbalbo2023/boca-socios-assistant/pull/310));
-el contrato puro pasó CI, pero **no** existe cutover físico aprobado ni instalado.
-Telegram aún requiere adapter protegido de vinculación y una recepción humana
-de mensaje. La página V2 de pairing en #317 no está conectada al panel actual.
+el [PR DRAFT #320](https://github.com/mbalbo2023/boca-socios-assistant/pull/320)
+agrega observación de identidad histórica y compensación modelada, pero **no**
+existe cutover físico aprobado ni instalado. La candidata integral conecta
+`/telegram/emparejar` a la sesión autenticada y añade resolución privada de
+chat por Bot API, pero exige recibo público de custodia y un workflow protegido
+de instalación V2; **no** recibió token real ni envió aviso. Esta ruta tampoco
+está desplegada en el panel actual. El catálogo oficial dispone de vistas
+informativas offline, sin conectar categorías a reservas ni admisión.
+
+**Nuevo requisito [#321](https://github.com/mbalbo2023/boca-socios-assistant/issues/321):**
+mantener una sola sesión del dueño en el mismo Chrome al cerrar/reabrir pestaña
+y reiniciar controller, sin reingreso rutinario de passkey. Código de custodia
+y migración en desarrollo; el servidor físico aún usa sesión temporal.
 
 **Descartadas por el propietario:** varias sesiones del navegador, rotación de
 clave maestra y eliminación completa, login/fila/elegibilidad/reserva/compra

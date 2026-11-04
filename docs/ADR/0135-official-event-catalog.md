@@ -29,6 +29,18 @@ peticiones a Queue-it, ni una segunda sesión de navegador. Los módulos
   es fuente secundaria oficial para emparejamientos del torneo; **no informa**
   apertura de categorías/sectores de Boca Socios. No debe completarse una
   ventana con estimaciones basadas solo en el fixture.
+- **Control histórico del mismo canal** —
+  [Boca-River: información para socias y socios](https://www.bocajuniors.com.ar/noticias/boca-river-informacion-para-socias-y-socios)
+  publicó para el clásico del 01/11/2026 ventanas de generales 26/10 para
+  activos/interior y 27/10 para adherentes, plateas abonadas 26/10 a 31/10,
+  y vitalicios desde 28/10. Confirma la necesidad de conservar la **fecha
+  propia por categoría y encuentro**; es un aviso ya histórico, no datos vivos.
+- **Contraejemplo de canal** —
+  [Final a la vista, 02/11/2026](https://www.bocajuniors.com.ar/noticias/final-a-la-vista)
+  expresa que la venta prioritaria de la final sudamericana se realiza en
+  **la plataforma externa de CONMEBOL**, no necesariamente en Boca Socios.
+  Por lo tanto, **"publicado por Boca" no significa "operable en Boca Socios"**.
+  No hay aceptación de rutas de venta, endpoints ni automatización del tercero.
 - En búsquedas de fuente oficial no se pudo verificar un feed/API documentado,
   estable y autorizado para obtener automáticamente las ventanas por categoría.
   El hecho de que haya artículos indexados no acredita una API, cuota, cambio
@@ -81,6 +93,59 @@ informativos del único evento sintético permitido, documentar el estado
 `NO_VERIFICADO` y obtener evidencia de fuente oficial en un Action READ_ONLY
 antes de afirmar disponibilidad. El próximo deploy no puede declararse listo
 para operar entradas en Boca con este módulo.
+
+## Extensión de proyección informativa para la tablet (04/11)
+
+`src/boca_socios/events/official_presentation.py` provee **dos funciones
+offline, sin I/O ni persistencia**:
+
+- `export_observed_catalog_json` genera un manifiesto JSON con esquema `v1`,
+  `source_mode=OFFLINE_PREOBSERVED_ONLY`, `live_feed=false`,
+  `availability_verified=false`, `admission_channel_verified=false`,
+  `actionable=false`, URL, día publicado,
+  timestamp de observación, digest declarado, horarios, fase y
+  `observation_age_minutes`. El cálculo sólo mide antigüedad de una
+  transcripción respecto del corte suministrado: **no define FRESH ni promete
+  actualidad, cupos o elegibilidad**. Los instantes del corte se expresan en ART.
+- `render_observed_catalog_html` entrega un fragmento de HTML accesible para
+  Chrome/Android: jerarquía de encabezados H2/H3/H4, fechas con `<time>`,
+  vínculo explícito a la noticia de origen, aviso visible de NO VERIFICADO y
+  ventanas por categoría en una lista. Escapa títulos y atributos antes de
+  dibujarlos y **no incluye formularios, scripts ni controles de compra**.
+  Advierte expresamente que el canal de admisión no está verificado.
+  La fuente podría ser abierta manualmente por el usuario; **el agente no
+  automatiza navegación**.
+
+Ambas proyecciones requieren una observación previamente validada, mantienen
+el estado no operable incluso para horarios recientes y fallan ante relojes
+sin zona horaria o anteriores a la observación. Sus fixtures son sintéticas.
+No están todavía conectadas a la UI servida: `private_http.py` y los comandos
+siguen fuera del ownership de este frente. Conectarlas requerirá un PR de UI
+independiente, con una sección de lectura y sin derivación a TicketIntent.
+
+### Contrato v2 del canal *declarado*, sin promoción de confianza
+
+En la evidencia de `Final a la vista` el club anunció una plataforma externa
+CONMEBOL; en avisos de partidos locales anunció Boca Socios. El importador
+acepta ahora `official-notice-observation-v2`, manteniendo las mismas
+restricciones de URL oficial, sello temporal, digest **declarado** y ventanas,
+más dos campos **obligatorios**:
+
+- `admission_channel_claim`: `BOCA_SOCIOS`, `CONMEBOL` o `UNKNOWN`.
+- `admission_channel_excerpt`: texto corto observado en el mismo artículo,
+  sin datos personales y acotado a 20–320 caracteres cuando hay canal.
+  Para `BOCA_SOCIOS` debe contener «Boca Socios»; para `CONMEBOL`,
+  «Conmebol» y «plataforma». Extractos que mencionan ambos canales se
+  rechazan como ambiguos. `UNKNOWN` exige `null`.
+
+Este extracto y su relación con la URL son **afirmaciones del operador**,
+no una validación de la fuente ni un derecho de acceso. En JSON se conserva
+`admission_channel_verified=false` a nivel catálogo **y evento**; en HTML
+se indica «según transcripción no verificada» y que no habilita navegar ni
+operar. La observación v1 preexistente sigue admitida sin alteraciones pero
+su canal es **obligatoriamente `UNKNOWN`**, nunca Boca Socios por defecto.
+No se agregan URL externas a la lista permitida, descargas automáticas ni
+endpoints de CONMEBOL o Queue-it.
 
 ## Evidencia / Regla 84
 
