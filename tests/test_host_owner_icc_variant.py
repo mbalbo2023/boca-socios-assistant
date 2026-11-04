@@ -1,4 +1,4 @@
-"""Issue #275: the approved ICC=true differential probe has no BETA effects."""
+"""Issue #275: preserve probes while enabling Boca-only owner enrollment."""
 
 from __future__ import annotations
 
@@ -137,7 +137,7 @@ def test_valid_icc_true_phase_cannot_change_owner_enrollment(
     assert seen == [True]
 
 
-def test_icc_true_probe_has_same_hardened_workflow_and_real_owner_unchanged() -> None:
+def test_icc_true_probe_and_real_owner_use_only_private_boca_bridges() -> None:
     root = Path(__file__).resolve().parents[1]
     workflow = (root / ".github/workflows/boca-first-deploy.yml").read_text(encoding="utf-8")
     source = (root / "src/boca_socios/host_first_deploy.py").read_text(encoding="utf-8")
@@ -146,7 +146,8 @@ def test_icc_true_probe_has_same_hardened_workflow_and_real_owner_unchanged() ->
     assert "network-probe-icc-true" in source
     assert "startsWith(inputs.operation, 'network-probe')" in workflow
     assert "BOCA_NETWORK_PROBE result=" in workflow
-    assert "com.docker.network.bridge.enable_icc=false" in source  # owner-enroll unchanged
-    assert "com.docker.network.bridge.enable_icc=false" in workflow  # PR runner/owner retained
+    assert "com.docker.network.bridge.enable_icc=false" in source  # legacy probe
+    assert "com.docker.network.bridge.enable_icc=true" in source  # owner start
+    assert "com.docker.network.bridge.enable_icc=true" in workflow  # owner smoke
     assert "--network=host" not in workflow
     assert "docker system prune" not in workflow
