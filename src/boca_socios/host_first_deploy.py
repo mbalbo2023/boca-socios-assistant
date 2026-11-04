@@ -2808,8 +2808,6 @@ def _beta_acceptance_status(
     return diagnostic, capacity
 
 
-
-
 def _beta_resume_port_available() -> None:
     """Check the one permitted host loopback binding without contacting a service."""
     try:
@@ -2817,6 +2815,7 @@ def _beta_resume_port_available() -> None:
             probe.bind(("127.0.0.1", 8443))
     except OSError as exc:
         raise PreflightError("BETA resume exclusive loopback port unavailable") from exc
+
 
 def _beta_stopped_controller(
     image: str, source_sha: str, compose_sha: str, origin: str, owner: str
@@ -3005,9 +3004,7 @@ def _beta_resume_phase(
             if health != "starting" or attempt == 44:
                 raise PreflightError("BETA resumed controller health is not verified")
             sleep(2)
-        diagnostic, _ = _beta_acceptance_status(
-            image, source_sha, compose_sha, origin, owner
-        )
+        diagnostic, _ = _beta_acceptance_status(image, source_sha, compose_sha, origin, owner)
         if diagnostic.container_id != container or diagnostic.health != "healthy":
             raise PreflightError("BETA resume controller ID or health changed")
     except (PreflightError, OSError, ValueError, TypeError):
