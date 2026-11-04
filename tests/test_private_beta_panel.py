@@ -193,6 +193,28 @@ def test_passkey_requires_exact_origin_uv_signature_and_one_use_challenge() -> N
     assert provider.verify(proof) is None
 
 
+def test_owner_cookie_can_coexist_with_other_localhost_cookies_but_not_duplicates(
+    tmp_path: Path,
+) -> None:
+    """A browser shares localhost cookies across ports; Boca must select its own once."""
+    clock = [0.0]
+    provider, key, credential_id = _passkey(clock)
+    app, _ = _app(tmp_path / "boca.sqlite3", provider)
+    cookie = _login(app, key, credential_id)
+
+    # Unrelated cookies from another localhost service must not log out the owner.
+    assert _request(app, "/socios", cookie=f"other_service=on; {cookie}")[0] == 200
+    assert _request(app, "/socios", cookie=f"{cookie}; theme=dark")[0] == 200
+
+    # Ambiguous, malformed or duplicated Boca credentials still fail closed.
+    assert _request(app, "/socios", cookie=f"{cookie}; {cookie}")[0] == 401
+    assert _request(app, "/socios", cookie=f"__Host-boca_session=broken; {cookie}")[0] == 401
+    assert _request(app, "/socios", cookie="other_service=on")[0] == 401
+    assert _request(app, "/socios", cookie=f"{cookie}; other={'v' * 4096}")[0] == 401
+    extras = "; ".join(f"other_{index}=on" for index in range(32))
+    assert _request(app, "/socios", cookie=f"{cookie}; {extras}")[0] == 401
+
+
 def test_private_login_enrollment_listing_and_local_command_are_connected() -> None:
     clock = [0.0]
     provider, key, credential_id = _passkey(clock)
