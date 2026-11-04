@@ -2,6 +2,17 @@
 
 **Status:** Integration candidate for issue #60, 2026-10-29 (Argentina). No publication performed.
 
+**2026-11-03 proposed update (not yet merged):** [ADR0127](0127-immutable-oci-trivy-scanner.md)
+and [RCA #300](https://github.com/mbalbo2023/boca-socios-assistant/issues/300)
+replace the repeated **installer delivery mechanism** of Trivy with the
+publisher's immutable OCI scanner, after recurrent `curl` exit code 6 in
+[security run #41730744343](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41730744343)
+and [PR release check #41730744274](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41730744274).
+The following older paragraphs describe the historical Action-based design.
+Both image scans, severity/failure semantics and protected manual publication
+boundaries remain mandatory. **No release, BETA installation or scanner PASS
+is established by this proposal.**
+
 Add a Boca-only manual image release workflow on `main`. Build the controller
 once on a GitHub-hosted amd64 runner, scan that local image using the same
 pinned Trivy action and HIGH/CRITICAL OS/library fail gate as #55, and only

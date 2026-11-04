@@ -99,18 +99,6 @@ def test_existing_security_workflow_scans_browser_as_strictly_as_controller() ->
         "docker build --file Dockerfile.browser --tag boca-browser-scan:${{ github.sha }} ."
         in workflow
     )
-    assert (
-        workflow.count("uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25")
-        == 2
-    )
+    assert workflow.count("run: bash scripts/trivy_scan_image.sh") == 2
     browser_scan = workflow.split("- name: Scan browser OS and library vulnerabilities\n", 1)[1]
-    for line in (
-        "image-ref: boca-browser-scan:${{ github.sha }}",
-        "version: v0.76.1",
-        "scanners: vuln",
-        "vuln-type: os,library",
-        "severity: HIGH,CRITICAL",
-        'ignore-unfixed: "false"',
-        'exit-code: "1"',
-    ):
-        assert line in browser_scan
+    assert 'run: bash scripts/trivy_scan_image.sh "boca-browser-scan:$GITHUB_SHA"' in browser_scan

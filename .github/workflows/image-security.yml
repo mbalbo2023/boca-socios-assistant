@@ -26,30 +26,8 @@ jobs:
       - name: Build local controller image without publishing
         run: docker build --tag boca-socios-scan:${{ github.sha }} .
       - name: Scan OS and library vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: boca-socios-scan:${{ github.sha }}
-          version: v0.76.1
-          cache: "false"
-          scanners: vuln
-          vuln-type: os,library
-          severity: HIGH,CRITICAL
-          ignore-unfixed: "false"
-          exit-code: "1"
-          format: table
-          timeout: 10m
+        run: bash scripts/trivy_scan_image.sh "boca-socios-scan:$GITHUB_SHA"
       - name: Build local isolated browser worker image without publishing
         run: docker build --file Dockerfile.browser --tag boca-browser-scan:${{ github.sha }} .
       - name: Scan browser OS and library vulnerabilities
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: boca-browser-scan:${{ github.sha }}
-          version: v0.76.1
-          cache: "false"
-          scanners: vuln
-          vuln-type: os,library
-          severity: HIGH,CRITICAL
-          ignore-unfixed: "false"
-          exit-code: "1"
-          format: table
-          timeout: 10m
+        run: bash scripts/trivy_scan_image.sh "boca-browser-scan:$GITHUB_SHA"
