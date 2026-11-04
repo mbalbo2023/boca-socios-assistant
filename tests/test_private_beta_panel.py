@@ -21,6 +21,7 @@ from boca_socios.domain.policy import TicketIntent
 from boca_socios.integration.command_store import CommandStore
 from boca_socios.notify.outbox import NoticeKind, NotificationRequest
 from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
+from boca_socios.panel.owner_session_store import OwnerBrowserSessionStore
 from boca_socios.panel.passkey import PasskeyAssertion, PasskeyOwnerAuthentication
 from boca_socios.panel.private_http import PrivatePanelApplication
 from boca_socios.security.credential_vault import CredentialVault
@@ -139,6 +140,7 @@ def _app(
     db.migrate()
     SqliteNotificationOutbox(db).migrate()
     CommandStore(db).migrate()
+    OwnerBrowserSessionStore(db, owner_subject="owner").migrate()
     db.create_event(EVENT_ID, "Partido sintético")
     app = PrivatePanelApplication(
         origin=ORIGIN,
@@ -169,6 +171,7 @@ def _login(
     )
     assert status == 204 and body == b""
     assert "Secure" in headers["Set-Cookie"] and "HttpOnly" in headers["Set-Cookie"]
+    assert "Max-Age=34560000" in headers["Set-Cookie"]
     return headers["Set-Cookie"].split(";", 1)[0]
 
 
@@ -190,6 +193,76 @@ def _control_action(
         .decode(),
     }
     return _request(app, f"/control/{action}", cookie=cookie, method="POST", payload=fields)
+
+
+def test_owner_cookie_survives_controller_restart_and_logout_revokes_server_side() -> None:
+    clock = [0.0]
+    provider, key, credential_id = _passkey(clock)
+    with TemporaryDirectory() as directory:
+        path = Path(directory) / "boca.sqlite3"
+        app, db = _app(path, provider, FakeHost())
+        cookie = _login(app, key, credential_id)
+        first_status, headers, home = _request(app, "/", cookie=cookie)
+        assert first_status == 200 and b"Boca Socios" in home
+        assert headers["Set-Cookie"].startswith(cookie + ";")
+        assert "Max-Age=34560000" in headers["Set-Cookie"]
+        assert "Secure; HttpOnly; SameSite=Strict" in headers["Set-Cookie"]
+        status, _, old_form = _request(app, "/control", cookie=cookie)
+        assert status == 200
+        old_csrf = re.search(rb'name="csrf" value="([^\"]+)"', old_form).group(1).decode()
+        old_operation = (
+            re.search(rb'name="operation_id" value="([^\"]+)"', old_form).group(1).decode()
+        )
+        with db.connection() as connection:
+            persisted = connection.execute(
+                "SELECT singleton,token_sha256,verifier_sha256,owner_sha256"
+                " FROM owner_browser_session"
+            ).fetchone()
+        assert persisted is not None and persisted[0] == 1
+        assert all(isinstance(value, bytes) and len(value) == 32 for value in persisted[1:])
+        assert cookie.encode() not in persisted[1:]
+
+        # Same trusted verifier, same browser cookie, NEW controller lifetime:
+        # no passkey prompt. But old form's CSRF and operation never persist.
+        restarted = PrivatePanelApplication(
+            origin=ORIGIN,
+            database_path=path,
+            owner_subject="owner",
+            passkey=provider,
+            members=MemberEnrollmentService(db, CredentialVault(os.urandom(32))),
+            commands=FakeHost(),
+            events={EVENT_ID: "Partido sintético"},
+        )
+        status, headers, _ = _request(restarted, "/", cookie=cookie)
+        assert status == 200 and "Max-Age=34560000" in headers["Set-Cookie"]
+        assert _request(restarted, "/", cookie=cookie)[0] == 200  # same Chrome's next tab
+        old_submit = _request(
+            restarted,
+            "/control/reanudar",
+            method="POST",
+            cookie=cookie,
+            payload={"csrf": old_csrf, "operation_id": old_operation},
+        )
+        assert old_submit[0] == 403
+        fresh_status, _, fresh_page = _request(restarted, "/", cookie=cookie)
+        assert fresh_status == 200
+        fresh_csrf = re.search(rb'name="csrf" value="([^\"]+)"', fresh_page).group(1).decode()
+        assert fresh_csrf != old_csrf
+        status, headers, _ = _request(
+            restarted,
+            "/salir",
+            cookie=cookie,
+            method="POST",
+            payload={"csrf": fresh_csrf},
+        )
+        assert status == 200 and "Max-Age=0" in headers["Set-Cookie"]
+        assert "Max-Age=34560000" not in headers["Set-Cookie"]
+        assert _request(app, "/", cookie=cookie)[0] == 401
+        assert _request(restarted, "/", cookie=cookie)[0] == 401
+        with db.connection() as connection:
+            assert connection.execute("SELECT count(*) FROM owner_browser_session").fetchone() == (
+                0,
+            )
 
 
 def test_global_intake_pause_resume_never_stops_http_or_existing_commands() -> None:
@@ -287,7 +360,9 @@ def test_global_control_rejects_unauthorized_post_and_persists_idempotent_state(
         restart_cookie = _login(restarted, next_key, next_credential)
         assert b"Admitiendo" in _request(restarted, "/control", cookie=restart_cookie)[2]
         assert _control_action(restarted, restart_cookie, "pausar")[0] == 303
-        assert b"Pausada" in _request(app, "/control", cookie=cookie)[2]
+        # A new verified passkey login replaces and revokes the old browser token.
+        assert _request(app, "/control", cookie=cookie)[0] == 401
+        assert b"Pausada" in _request(restarted, "/control", cookie=restart_cookie)[2]
         with db.connection() as connection:
             assert connection.execute(
                 "SELECT action FROM audit_events WHERE action LIKE 'owner_simulation_intake_%' "
@@ -296,9 +371,9 @@ def test_global_control_rejects_unauthorized_post_and_persists_idempotent_state(
                 ("owner_simulation_intake_resumed",),
                 ("owner_simulation_intake_paused",),
             ]
-        # Repeated intent in another owner session causes no additional audit write.
+        # Repeated intent from the active owner causes no additional audit write.
         sleep(1.05)
-        assert _control_action(app, cookie, "pausar")[0] == 303
+        assert _control_action(restarted, restart_cookie, "pausar")[0] == 303
         with db.connection() as connection:
             assert connection.execute(
                 "SELECT count(*) FROM audit_events WHERE action LIKE 'owner_simulation_intake_%'"
@@ -576,6 +651,7 @@ def test_credential_rotation_and_revocation_are_local_idempotent_and_redacted() 
         db = Database(path)
         db.migrate()
         CommandStore(db).migrate()
+        OwnerBrowserSessionStore(db, owner_subject="owner").migrate()
         vault = CredentialVault(os.urandom(32))
         service = MemberEnrollmentService(db, vault)
         member_id = service.enroll(

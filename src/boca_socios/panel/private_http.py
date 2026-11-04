@@ -26,6 +26,7 @@ from boca_socios.panel import private_ui, telegram_setup_ui
 from boca_socios.panel.enrollment_http import EnrollmentApplication
 from boca_socios.panel.local_status import read_local_status
 from boca_socios.panel.members import MemberDirectory
+from boca_socios.panel.owner_session_store import OwnerBrowserSessionStore
 from boca_socios.panel.owner_sessions import OwnerSession, OwnerSessions
 from boca_socios.panel.passkey import PasskeyAssertion, PasskeyOwnerAuthentication
 from boca_socios.security.enrollment import (
@@ -153,7 +154,19 @@ class PrivatePanelApplication:
         self._intake_lock = Lock()
         self._events = dict(events)
         self._passkey = passkey
-        self._sessions = OwnerSessions(owner_subject=owner_subject, verify_owner=passkey.verify)
+        self._owner_browser_store = OwnerBrowserSessionStore(
+            self._database, owner_subject=owner_subject
+        )
+        # The controller must not serve a healthy panel whose passkey login
+        # cannot persist: migration 0008 is an explicit installation gate.
+        self._owner_browser_store.verify_schema()
+        self._sessions = OwnerSessions(
+            owner_subject=owner_subject,
+            verify_owner=passkey.verify,
+            persistent_store=self._owner_browser_store,
+            authorization_binding=passkey.authorization_binding,
+            restore_permissions=passkey.authorized_permissions,
+        )
         self._enroll = EnrollmentApplication(members, self._sessions, origin=origin, now=now)
         self._now = now
 
@@ -187,6 +200,18 @@ class PrivatePanelApplication:
         session = self._sessions.lookup(environ.get("HTTP_COOKIE", ""))
         if session is None:
             return _error(start, 401, "Ingrese con la llave de acceso del dueño.")
+        renewed = self._sessions.renew_cookie(environ.get("HTTP_COOKIE", ""), session)
+        if renewed is None:
+            return _error(start, 401, "La sesión del dueño fue revocada.")
+        original_start = start
+
+        def start_with_renewal(status: str, headers: list[tuple[str, str]]) -> object:
+            # Logout already clears the same cookie; never override it.
+            if not any(name.lower() == "set-cookie" for name, _ in headers):
+                headers.append(("Set-Cookie", renewed))
+            return original_start(status, headers)
+
+        start = start_with_renewal
         if path == "/socios/nuevo" or (path == "/socios" and method == "POST"):
             return self._enroll(environ, start)
         if path == "/socios" or (isinstance(path, str) and path.startswith("/socios/")):

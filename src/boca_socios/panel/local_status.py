@@ -63,6 +63,7 @@ _MIGRATIONS = {
     5: "0005_simulation_outcomes.sql",
     6: "0006_beta_commands.sql",
     7: "0007_telegram_delivery.sql",
+    8: "0008_owner_browser_session.sql",
 }
 _MAX_INTENTS = 200
 

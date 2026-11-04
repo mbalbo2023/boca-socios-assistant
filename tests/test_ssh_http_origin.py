@@ -22,10 +22,12 @@ from boca_socios.owner_bootstrap import (
 )
 from boca_socios.owner_origin import owner_rp_host
 from boca_socios.panel.enrollment_http import EnrollmentApplication
+from boca_socios.panel.owner_session_store import OwnerBrowserSessionStore
 from boca_socios.panel.owner_sessions import OwnerSessions
 from boca_socios.panel.passkey import PasskeyOwnerAuthentication
 from boca_socios.panel.passkey_registration import OwnerPasskeyRegistration
 from boca_socios.panel.private_http import PrivatePanelApplication
+from boca_socios.storage.database import Database
 
 ORIGIN = "http://localhost:8443"
 
@@ -117,6 +119,7 @@ def test_http_localhost_panel_and_enrollment_require_exact_origin(tmp_path: Path
         owner_subject="owner",
         permissions=frozenset({"members:enroll"}),
     )
+    OwnerBrowserSessionStore(Database(tmp_path / "boca.sqlite3"), owner_subject="owner").migrate()
     application = PrivatePanelApplication(
         origin=ORIGIN,
         database_path=tmp_path / "boca.sqlite3",

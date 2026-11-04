@@ -100,11 +100,43 @@ the already-tested offline V1 installer; no new write logic is introduced.
 The result also carries a redacted provisional receipt binding source SHA,
 recipient fingerprint, numeric bot ID, update ID, keyed chat identity HMAC and
 replay-fence HMAC, with `notification_receipt=UNVERIFIED` and
-`READY_FOR_PROTECTED_INSTALL`. The host must atomically consume the replay
-fence in dedicated custody before calling existing `telegram_bootstrap.install`
-and must later obtain the separate human-confirmed notification receipt. The
-Python dataclasses omit ciphertext, keyed chat proof and replay fence from
-their log representation. This is **not a physical install receipt**.
+`READY_FOR_PROTECTED_INSTALL`. The Python dataclasses omit ciphertext, keyed
+chat proof and replay fence from their log representation. This is **not a
+physical install receipt**.
+
+`src/boca_socios/telegram_pairing_install.py` now coordinates **local offline
+synthetic V2 custody** using the existing V1 `telegram_bootstrap.install`
+without changing its file format, API or physical behavior. It checks a fresh
+resolution receipt (maximum 10 minutes from the trusted resolver clock),
+source SHA, recipient key, bot ID, positive private chat, HMAC owner pin and
+single-use fence *before* any secret file write. Under an exclusive nonblocking
+directory lock it rejects any existing `bot_token`, `chat_id`, final marker or
+staging residue, writes the V1 pair once with the already-tested rootless
+exclusive-create installer, verifies the pair, then stages a keyed-integrity
+V2 receipt file as 0400 with fsync. A hardlink creates a final marker without
+overwriting an existing one; removing staging is the **last visibility event**
+under that lock, followed by directory fsync. A V2-gated reader requires the
+completed marker with nlink=1, no staging file, V1 pair integrity, exact SHA,
+recipient identity and HMAC metadata. Public receipt contains only SHA,
+recipient fingerprint, bot ID and `CUSTODY_COMMITTED_NO_SEND` /
+`notification_receipt=UNVERIFIED`; no token, chat ID or HMACs.
+
+**Important atomicity boundary:** Linux cannot atomically create the three
+separate legacy entries (`bot_token`, `chat_id`, fence) together. The new marker
+provides a fail-closed *V2 visibility commit*, **not atomic physical multi-file
+installation**. A crash between V1 writes or marker stages intentionally
+preserves partial files and locks out replay/second install; no cleanup or
+rollback is attempted. Old V1 verification alone could report a complete pair
+before the V2 marker is committed; therefore **the future host/sender MUST
+require `verify_v2_custody` and a completed protected workflow receipt before
+any sending**. This host gate is NOT implemented in this PR and remains NO_GO.
+The local `flock` is advisory and the legacy V1 installer does not acquire
+it; only a future exact-identity Boca host lease may exclude other V1
+operations. Until the host confirms such exclusivity and the real rootless
+filesystem supports the marker hardlink/fsync pattern, no physical GO follows.
+The module has no CLI, startup hook, route, network, deployment action or
+access to the real host; tests only use isolated temporary directories with
+fake BotFather-format tokens and simulated crash points.
 
 The protected host wrapper also needs a positive **no competing Telegram
 poller** assertion. `getUpdates` without `offset` does not acknowledge updates,
@@ -125,12 +157,13 @@ match the exact stopped controller and private recipient key at cutover time.
 1. Keep the original controller running until a reviewed, exact-SHA
    transition/custody operation exists; no `beta-browser-install` new-only
    attempt against the installed singleton.
-2. The source-only V2 local seal, decoder and read-only injectable Bot API
-   resolver exist. Integrate a V2 route behind existing owner authentication,
+2. The source-only V2 local seal, decoder, read-only injectable Bot API
+   resolver and fail-closed V2 custody coordinator exist. Integrate a V2 route behind existing owner authentication,
    trusted recipient link and protected host wrapper that executes resolver
    only within the Boca-specific network/custody identity. Capture V1 sealed
-   handoff privately, atomically consume replay fence, and then reuse the
-   existing offline V1 installer. Test a real private `getUpdates` receipt
+   handoff privately and run coordinator with exclusive actual host lease;
+   require final marker verification and genuine protected receipt before
+   lifting sender OFF. Test a real private `getUpdates` receipt
    once physically available. Keep V1 workflow rejecting raw V2 ciphertext.
 3. Stage Telegram 0007 migration and recipient key with controller stopped,
    under the sole protected Boca Actions workflow. Currently these are
@@ -146,8 +179,8 @@ match the exact stopped controller and private recipient key at cutover time.
 5. After any stop/restart, the old session cookie is invalid and owner
    re-authentication may be necessary; the passkey enrollment is preserved.
 
-Until the adapter/envelope/workflow are implemented, reviewed, GREEN and
+Until the adapter/host wrapper/workflow are implemented, reviewed, GREEN and
 physically dispatched with actual receipts, Telegram remains **OFF / NO_GO**.
-No third-party ID bot, provider call, token handling, owner input or host
+No third-party ID bot, provider call, real-token handling, owner input or host
 action was executed by this source-only PR. Keep all pending state visible
 in #45 per Rule 84.

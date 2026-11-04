@@ -353,8 +353,9 @@ def _first_visit(material: _Material, timings: list[float]) -> tuple[str, str, s
 def _restart_visit(
     material: _Material, timings: list[float], old_cookie: str, member_id: str, command_id: str
 ) -> None:
-    _require(_request(material, "/avisos", timings, cookie=old_cookie)[0] == 401)
+    _require(_request(material, "/avisos", timings, cookie=old_cookie)[0] == 200)
     cookie = _login(material, timings)
+    _require(_request(material, "/avisos", timings, cookie=old_cookie)[0] == 401)
     detail = _request(material, f"/comandos/{command_id}", timings, cookie=cookie)
     _require(detail[0] == 200 and b"Estado: completed" in detail[2])
     form = _request(material, "/comandos", timings, cookie=cookie)
