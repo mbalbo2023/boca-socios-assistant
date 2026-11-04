@@ -61,7 +61,7 @@ permissions:
 
 concurrency:
   group: ${{ github.event_name == 'pull_request' && format('boca-first-deploy-pr-{0}', github.event.pull_request.number) || 'boca-first-deploy' }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   pr-validation:
