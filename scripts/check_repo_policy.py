@@ -111,9 +111,7 @@ def check_policy(root: Path) -> list[str]:
                 )
                 pattern = r"^" + re.escape(release_concurrency) + r"(?=\n|$)"
                 if re.search(pattern, data, re.MULTILINE) is None:
-                    failures.append(
-                        "release workflow missing gate: isolated PR/manual concurrency"
-                    )
+                    failures.append("release workflow missing gate: isolated PR/manual concurrency")
             for forbidden in ("ssh ", "scp "):
                 if forbidden in data:
                     failures.append(f"forbidden workflow pattern in {workflow.name}: {forbidden}")
