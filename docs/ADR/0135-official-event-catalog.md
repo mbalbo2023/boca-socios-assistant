@@ -29,6 +29,18 @@ peticiones a Queue-it, ni una segunda sesión de navegador. Los módulos
   es fuente secundaria oficial para emparejamientos del torneo; **no informa**
   apertura de categorías/sectores de Boca Socios. No debe completarse una
   ventana con estimaciones basadas solo en el fixture.
+- **Control histórico del mismo canal** —
+  [Boca-River: información para socias y socios](https://www.bocajuniors.com.ar/noticias/boca-river-informacion-para-socias-y-socios)
+  publicó para el clásico del 01/11/2026 ventanas de generales 26/10 para
+  activos/interior y 27/10 para adherentes, plateas abonadas 26/10 a 31/10,
+  y vitalicios desde 28/10. Confirma la necesidad de conservar la **fecha
+  propia por categoría y encuentro**; es un aviso ya histórico, no datos vivos.
+- **Contraejemplo de canal** —
+  [Final a la vista, 02/11/2026](https://www.bocajuniors.com.ar/noticias/final-a-la-vista)
+  expresa que la venta prioritaria de la final sudamericana se realiza en
+  **la plataforma externa de CONMEBOL**, no necesariamente en Boca Socios.
+  Por lo tanto, **"publicado por Boca" no significa "operable en Boca Socios"**.
+  No hay aceptación de rutas de venta, endpoints ni automatización del tercero.
 - En búsquedas de fuente oficial no se pudo verificar un feed/API documentado,
   estable y autorizado para obtener automáticamente las ventanas por categoría.
   El hecho de que haya artículos indexados no acredita una API, cuota, cambio
@@ -81,6 +93,35 @@ informativos del único evento sintético permitido, documentar el estado
 `NO_VERIFICADO` y obtener evidencia de fuente oficial en un Action READ_ONLY
 antes de afirmar disponibilidad. El próximo deploy no puede declararse listo
 para operar entradas en Boca con este módulo.
+
+## Extensión de proyección informativa para la tablet (04/11)
+
+`src/boca_socios/events/official_presentation.py` provee **dos funciones
+offline, sin I/O ni persistencia**:
+
+- `export_observed_catalog_json` genera un manifiesto JSON con esquema `v1`,
+  `source_mode=OFFLINE_PREOBSERVED_ONLY`, `live_feed=false`,
+  `availability_verified=false`, `admission_channel_verified=false`,
+  `actionable=false`, URL, día publicado,
+  timestamp de observación, digest declarado, horarios, fase y
+  `observation_age_minutes`. El cálculo sólo mide antigüedad de una
+  transcripción respecto del corte suministrado: **no define FRESH ni promete
+  actualidad, cupos o elegibilidad**. Los instantes del corte se expresan en ART.
+- `render_observed_catalog_html` entrega un fragmento de HTML accesible para
+  Chrome/Android: jerarquía de encabezados H2/H3/H4, fechas con `<time>`,
+  vínculo explícito a la noticia de origen, aviso visible de NO VERIFICADO y
+  ventanas por categoría en una lista. Escapa títulos y atributos antes de
+  dibujarlos y **no incluye formularios, scripts ni controles de compra**.
+  Advierte expresamente que el canal de admisión no está verificado.
+  La fuente podría ser abierta manualmente por el usuario; **el agente no
+  automatiza navegación**.
+
+Ambas proyecciones requieren una observación previamente validada, mantienen
+el estado no operable incluso para horarios recientes y fallan ante relojes
+sin zona horaria o anteriores a la observación. Sus fixtures son sintéticas.
+No están todavía conectadas a la UI servida: `private_http.py` y los comandos
+siguen fuera del ownership de este frente. Conectarlas requerirá un PR de UI
+independiente, con una sección de lectura y sin derivación a TicketIntent.
 
 ## Evidencia / Regla 84
 
