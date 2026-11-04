@@ -233,6 +233,7 @@ def test_resume_refuses_unverified_telegram_volume(monkeypatch: pytest.MonkeyPat
         monkeypatch,
         volumes={host.DATA_VOLUME, host.KEY_VOLUME, host.OWNER_VOLUME, host.TELEGRAM_VOLUME},
     )
+
     def bad_telegram() -> None:
         raise host.PreflightError("Telegram volume not verified")
 
@@ -287,6 +288,7 @@ def test_resume_failure_stops_exact_controller_without_touching_volumes(
     monkeypatch.setattr(
         host, "_beta_acceptance_status", lambda *_args: pytest.fail("must not reach")
     )
+
     def run(*args: str) -> str:
         commands.append(args)
         if args == ("docker", "start", CONTAINER):
