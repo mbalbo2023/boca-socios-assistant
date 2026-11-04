@@ -39,10 +39,14 @@ class CutoverError(ValueError):
 
 @dataclass(frozen=True)
 class CutoverCoordinates:
-    main_sha: str
-    release_sha: str
-    controller_image: str
-    browser_image: str
+    # An already-installed controller is anchored to its historical receipt.
+    # Its revision is NOT the new candidate main SHA after a code-only PR merges.
+    legacy_sha: str
+    legacy_controller_image: str
+    target_main_sha: str
+    target_release_sha: str
+    target_controller_image: str
+    target_browser_image: str
     original_container_id: str
 
 
@@ -75,6 +79,11 @@ class ControllerEvidence:
 class InertTransitionPlan:
     original_container_id: str
     protected_volumes: frozenset[str]
+    legacy_source_sha: str
+    target_source_sha: str
+    legacy_controller_image: str
+    target_controller_image: str
+    target_browser_image: str
     reserved_host_binding: str = _BIND
     requires_explicit_approval: bool = True
     executable: bool = False
@@ -113,10 +122,16 @@ def plan_transition(
     before any effect. Nothing returned here authorizes an effect.
     """
     if (
-        not _SHA.fullmatch(coordinates.main_sha)
-        or coordinates.release_sha != coordinates.main_sha
-        or not _CONTROLLER.fullmatch(coordinates.controller_image)
-        or not _BROWSER.fullmatch(coordinates.browser_image)
+        not _SHA.fullmatch(coordinates.legacy_sha)
+        or not _SHA.fullmatch(coordinates.target_main_sha)
+        or coordinates.target_release_sha != coordinates.target_main_sha
+        or not _CONTROLLER.fullmatch(coordinates.legacy_controller_image)
+        or not _CONTROLLER.fullmatch(coordinates.target_controller_image)
+        or not _BROWSER.fullmatch(coordinates.target_browser_image)
+        or (
+            coordinates.legacy_sha != coordinates.target_main_sha
+            and coordinates.legacy_controller_image == coordinates.target_controller_image
+        )
         or not _ID.fullmatch(coordinates.original_container_id)
     ):
         raise CutoverError("transition source/release/image coordinates are not immutable")
@@ -125,8 +140,8 @@ def plan_transition(
         or observed.containers != frozenset({coordinates.original_container_id})
         or observed.project != "boca-socios"
         or observed.service != "controller"
-        or observed.revision_sha != coordinates.main_sha
-        or observed.image != coordinates.controller_image
+        or observed.revision_sha != coordinates.legacy_sha
+        or observed.image != coordinates.legacy_controller_image
         or observed.runtime_mode != "simulation"
         or observed.engine_mode != "off"
         or observed.browser_backend != "off"
@@ -142,6 +157,11 @@ def plan_transition(
     return InertTransitionPlan(
         original_container_id=coordinates.original_container_id,
         protected_volumes=observed.volumes,
+        legacy_source_sha=coordinates.legacy_sha,
+        target_source_sha=coordinates.target_main_sha,
+        legacy_controller_image=coordinates.legacy_controller_image,
+        target_controller_image=coordinates.target_controller_image,
+        target_browser_image=coordinates.target_browser_image,
     )
 
 

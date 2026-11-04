@@ -48,6 +48,46 @@ coordinates, foreign objects, changed mounts, occupied loopback belonging
 to another service, preservation and uncertain mid-cutover recovery with
 synthetic values only. No owner-controlled modules are opened or imported.
 
+### Option A code-only refinement (owner-approved 2026-11-04)
+
+The first inert contract accidentally required the original running
+controller revision to equal **current** `main`, which becomes false as soon
+as any new cutover code is merged. The revised `CutoverCoordinates` instead
+has independently anchored `legacy_sha` / `legacy_controller_image` (the
+actual original installation and its historical release) and
+`target_main_sha` / `target_release_sha` / both target image digests (the
+future reviewed release). Only target main and target release SHA must match;
+the existing controller is checked against its **legacy** revision and digest.
+This is a necessary provenance correction, **not evidence** that any new
+release has been produced or deployed.
+
+`src/boca_socios/browser_cutover_sequence.py` adds a **pure**, staged
+identity/inventory model: `WORKER_READY` with original still running;
+`LEGACY_PARKED` after original is stopped and its unique name retained;
+`CANDIDATE_HEALTHY` with original and candidate explicitly distinguished
+by immutable IDs while both temporarily carry Compose service `controller`;
+`ACCEPTED` after genuine synthetic acceptance and retirement of only the
+original container. Each transition is sequential and single-use. The model
+checks both SHAs/image digests, IPC worker network isolation, owner/key/data
+volume custody, exclusive loopback 8443 ownership, exact original and new
+container IDs, mounts, service labels and absence of unknown Boca objects.
+The separate recovery-completion gate rejects a claimed recovery until the
+**same original container ID** has returned to the exclusive loopback port
+healthy, the candidate and worker are absent, and persistent volumes remain
+accounted for (with an unused IPC volume allowed for later selective cleanup).
+The same values must be verified independently in a future protected host
+adapter immediately before any physical action; a caller-populated Python
+dataclass is not host proof. The model does **not** execute anything, prepare
+the worker, stop/rename/remove containers, perform rollback or validate a real
+socket. Those effectful adapter/workflow steps are still absent and NO_GO.
+
+`tests/test_browser_cutover_sequence.py` exercises all four phase gates and
+negative identity swaps, skipped/replayed phases, foreign objects, custody
+drift and premature deletion. These are fully synthetic tests, with no
+navigation or host operations. Until a separate host adapter, workflow
+integration and Actions evidence exist, the controller-only BETA must remain
+in place; neither the cutover nor the integrated browser is complete.
+
 ## Effectful transition architecture: owner decision still required
 
 Two choices remain:

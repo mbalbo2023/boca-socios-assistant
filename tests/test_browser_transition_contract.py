@@ -16,7 +16,9 @@ from boca_socios.browser_transition_contract import (
 )
 
 SHA = "a" * 40
+TARGET_SHA = "e" * 40
 CONTROLLER = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64
+TARGET_CONTROLLER = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "f" * 64
 BROWSER = "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "c" * 64
 CONTAINER = "d" * 64
 DATA = "boca-socios_boca_data"
@@ -27,10 +29,12 @@ PRIVATE = "boca-socios_boca_private"
 
 def coordinates() -> CutoverCoordinates:
     return CutoverCoordinates(
-        main_sha=SHA,
-        release_sha=SHA,
-        controller_image=CONTROLLER,
-        browser_image=BROWSER,
+        legacy_sha=SHA,
+        legacy_controller_image=CONTROLLER,
+        target_main_sha=TARGET_SHA,
+        target_release_sha=TARGET_SHA,
+        target_controller_image=TARGET_CONTROLLER,
+        target_browser_image=BROWSER,
         original_container_id=CONTAINER,
     )
 
@@ -59,6 +63,8 @@ def evidence() -> ControllerEvidence:
 def test_exact_existing_controller_yields_only_inert_scoped_plan() -> None:
     plan = plan_transition(coordinates(), evidence())
     assert plan.original_container_id == CONTAINER
+    assert plan.legacy_source_sha == SHA
+    assert plan.target_source_sha == TARGET_SHA
     assert plan.protected_volumes == frozenset({DATA, KEY, OWNER})
     assert plan.reserved_host_binding == "127.0.0.1:8443"
     assert plan.requires_explicit_approval
@@ -69,16 +75,31 @@ def test_exact_existing_controller_yields_only_inert_scoped_plan() -> None:
 @pytest.mark.parametrize(
     ("change", "value"),
     [
-        ("main_sha", "e" * 40),
-        ("release_sha", "e" * 40),
-        ("controller_image", BROWSER),
-        ("browser_image", CONTROLLER),
+        ("legacy_sha", "not-a-sha"),
+        ("target_main_sha", "not-a-sha"),
+        ("target_release_sha", SHA),
+        ("legacy_controller_image", BROWSER),
+        ("target_controller_image", CONTROLLER),
+        ("target_controller_image", BROWSER),
+        ("target_browser_image", CONTROLLER),
         ("original_container_id", "not-a-container"),
     ],
 )
 def test_immutable_coordinates_drift_is_no_go(change: str, value: str) -> None:
     with pytest.raises(CutoverError):
         plan_transition(replace(coordinates(), **{change: value}), evidence())
+
+
+def test_valid_new_release_must_not_be_confused_with_installed_legacy_revision() -> None:
+    assert coordinates().legacy_sha != coordinates().target_main_sha
+    plan = plan_transition(coordinates(), evidence())
+    assert plan.legacy_source_sha == SHA
+    assert plan.target_source_sha == TARGET_SHA
+    with pytest.raises(CutoverError):
+        plan_transition(
+            replace(coordinates(), target_release_sha=SHA),
+            replace(evidence(), revision_sha=TARGET_SHA),
+        )
 
 
 @pytest.mark.parametrize(
