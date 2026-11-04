@@ -572,6 +572,7 @@ jobs:
             --env BOCA_RUNTIME_MODE=simulation --env BOCA_ENGINE_MODE=off \
             --env BOCA_DB_PATH=/data/boca.sqlite3 \
             --env BOCA_MASTER_KEY_FILE=/run/secrets/boca_master_key \
+            --env "BOCA_OWNER_SUBJECT=$BOCA_OWNER_SUBJECT" \
             --mount type=volume,source=boca-socios_boca_data,target=/data \
             --mount type=volume,source=boca-socios_boca_key,target=/run/secrets,readonly \
             "$BOCA_IMAGE" python -m boca_socios.runtime init-beta

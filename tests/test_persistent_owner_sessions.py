@@ -13,6 +13,19 @@ PERMISSIONS = frozenset({"members:enroll", "members:read", "simulation:write"})
 BINDING = bytes.fromhex("b3" * 32)
 
 
+def test_disposable_first_deploy_initializes_owner_session_schema_with_owner_scope() -> None:
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
+    ).read_text(encoding="utf-8")
+    step = workflow.split(
+        "- name: Prepare synthetic owner bundle and new-only BETA database on disposable runner",
+        1,
+    )[1].split("- name: Inspect real disposable one-shot Docker isolation", 1)[0]
+    init_container = step.rsplit("docker run --rm", 1)[-1]
+    assert '--env "BOCA_OWNER_SUBJECT=$BOCA_OWNER_SUBJECT"' in init_container
+    assert '"$BOCA_IMAGE" python -m boca_socios.runtime init-beta' in init_container
+
+
 def _sessions(store: OwnerBrowserSessionStore, clock: list[float]) -> OwnerSessions:
     return OwnerSessions(
         owner_subject="owner",
