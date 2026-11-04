@@ -1,6 +1,41 @@
 # Boca Socios Assistant
 
-## RCA del primer beta-install físico — 04/11/2026 (issue #307)
+## Estado operativo comprobado — 04/11/2026, 16:33 ART
+
+**Controlador BETA instalado, aceptado y arrancado; BETA integral pendiente.**
+GitHub `main=cabce9f1e452e63ded115f447559a358dc0f4d1b` (PR #308,
+RCA #307 resuelto) publicó el par de imágenes en
+[release #41893887078](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41893887078).
+El [install #41896871289](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41896871289)
+registró `BOCA_BETA_INSTALL state=PASS`, controlador únicamente y HTTP
+loopback verificado. La
+[aceptación #41897278258](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897278258)
+pasó 24 peticiones sintéticas en el contenedor, con 1 socio, 1 intención,
+1 aviso local, p95 de 24,17 ms y pico de proceso de 43.648 KiB; sin contacto
+con Boca ni envío Telegram. El
+[start #41897569928](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897569928)
+observó `BOCA_BETA_START state=RUNNING` en `127.0.0.1:8443`, datos/clave/owner
+preservados y motor `off`. Este es un recibo puntual, **no** una prueba de
+disponibilidad continua ni de acceso desde la Samsung.
+
+Próximos cierres: Chrome Samsung por túnel SSH a
+`http://localhost:8443/ingresar`, autenticación y cookie, panel/alta/SQLite
+persistentes, navegador opt-in
+(imagen publicada, worker no instalado ni activo), Telegram (off, sin recibo
+de entrega), y aceptación integral/reinicio. [Issue #259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259)
+sigue abierto para capacidad del conjunto; [issue #285](https://github.com/mbalbo2023/boca-socios-assistant/issues/285)
+y [draft #287](https://github.com/mbalbo2023/boca-socios-assistant/pull/287)
+no son un piloto autenticado aprobado. Módulos BLACKBOX y navegación real
+reservados al dueño. Estado con evidencia y operaciones posteriores:
+[checkpoint canónico #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6640165355).
+La passkey de Chrome ya fue registrada en el owner-enroll físico; la sesión
+servida es temporal (15 min de inactividad, 8 h máximo, inválida tras restart).
+Ninguna de esas propiedades acredita por sí sola la persistencia observada
+en la tablet.
+
+## Historial anterior al despliegue exitoso (NO es el estado vigente)
+
+### RCA del primer beta-install físico — 04/11/2026 (issue #307)
 
 `main=3c5a0da3df527cfe58a98442ea471be81f9f06ab` (PR #306) produjo un
 release inmutable [#41873165726](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41873165726).

@@ -1,6 +1,20 @@
 # ADR0129 — Recuperación explícita del controlador BETA después de aceptación (04/11/2026)
 
-Estado: **candidata bajo issue #305** hasta merge y verificaciones por SHA. No constituye instalación física.
+Estado: **integrada por PR #306**; instalación/reanudación verificadas posteriormente por Actions en 2026-11-04. El texto de diseño original debajo es histórico.
+
+## Evidencia física posterior al merge
+
+El owner-enroll [#41887635433](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41887635433)
+completó el alta con PIN una vez. PR #308 consolidó la corrección de recursos
+en `main=cabce9f1e452e63ded115f447559a358dc0f4d1b`. Tras release
+[#41893887078](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41893887078),
+install [#41896871289](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41896871289)
+y aceptación sintética [#41897278258](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897278258)
+completaron PASS. La operación `beta-start`
+[#41897569928](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897569928)
+observó controller `RUNNING` en localhost:8443, datos/owner/clave preservados;
+no instaló navegador ni Telegram y no prueba sesión tablet ni disponibilidad
+prolongada. [Checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6640165355).
 
 ## Contexto y evidencia
 

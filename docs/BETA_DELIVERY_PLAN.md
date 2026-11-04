@@ -1,6 +1,26 @@
 # Plan de entrega y aceptación de la BETA funcional
 
-## Decisión vigente sobre recursos (2026-11-02, candidato #273)
+## Estado actual de la entrega — 04/11/2026, 16:33 ART
+
+La primera fase física se completó: controller-only instalado y arrancado en
+`127.0.0.1:8443`, motor apagado, misma fuente
+`cabce9f1e452e63ded115f447559a358dc0f4d1b`.
+Recibos: [release #41893887078](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41893887078),
+[install #41896871289](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41896871289),
+[aceptación sintética #41897278258](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897278258),
+[start #41897569928](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897569928).
+El controller tuvo 24 peticiones locales PASS pero **el objetivo BETA integral
+no está aceptado**: falta Chrome/Termius, sesión, alta y DB desde la tablet,
+browser-worker (imagen publicada; no instalado), Telegram (off), pruebas
+de reinicio/capacidad conjunta/avisos/voz. El arranque sólo acredita ese
+instante. Respetar BLACKBOX, sin tráfico real Boca ni reservas/compras.
+Para sesión nueva en Chrome: `http://localhost:8443/ingresar` mediante el
+forward de Termius. La passkey física ya fue enrolada, pero la cookie del
+panel expira tras 15 min de inactividad/8 h y se invalida al reiniciar;
+persistencia efectiva en la Samsung aún no probada.
+[Checkpoint canónico #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6640165355).
+
+## Decisión de recursos histórica — 2026-11-02, candidato #273
 
 El dueño corrigió expresamente la condición anterior: la BETA debe
 **desplegarse de forma aislada y medirse después de su instalación**, no
