@@ -200,6 +200,23 @@ def _hidden(page: bytes, name: str) -> str:
     return re.search(rb'name="' + name.encode() + rb'" value="([^\"]+)"', page).group(1).decode()
 
 
+def _intake_action(port: int, cookie: str, timings: list[float], action: str) -> None:
+    """Exercise owner-only admission control through real loopback HTTP."""
+    status, _, page = _request(port, "/control", cookie=cookie, timings=timings)
+    assert status == 200
+    assert (b"Pausada" if action == "reanudar" else b"Admitiendo") in page
+    assert f'action="/control/{action}"'.encode() in page
+    result = _request(
+        port,
+        f"/control/{action}",
+        method="POST",
+        cookie=cookie,
+        fields={"csrf": _hidden(page, "csrf"), "operation_id": _hidden(page, "operation_id")},
+        timings=timings,
+    )
+    assert result[0] == 303 and result[1]["Location"] == "/control"
+
+
 def _app(
     runtime: LocalBetaRuntime, provider: PasskeyOwnerAuthentication
 ) -> PrivatePanelApplication:
@@ -283,7 +300,21 @@ def test_loopback_http_enrollment_command_notice_and_restart() -> None:
                     timings=timings,
                 )
                 assert denied[0] == 403
-                # Enrollment and command writes share a one-second session rate gate.
+                # Owner admission defaults paused even when the host is ready.
+                assert (
+                    _request(
+                        port,
+                        "/comandos",
+                        method="POST",
+                        cookie=cookie,
+                        fields=command,
+                        timings=timings,
+                    )[0]
+                    == 409
+                )
+                # Enrollment and owner controls share a one-second write rate gate.
+                time.sleep(1.05)
+                _intake_action(port, cookie, timings, "reanudar")
                 time.sleep(1.05)
                 started = _request(
                     port,
@@ -321,6 +352,8 @@ def test_loopback_http_enrollment_command_notice_and_restart() -> None:
                 assert b"person@example.test" not in notices
                 assert b"Telegram no configurado" in notices
                 assert _request(port, "/estado", cookie=cookie, timings=timings)[0] == 200
+                time.sleep(1.05)
+                _intake_action(port, cookie, timings, "pausar")
             runtime.close()
             with sqlite3.connect(database_path) as connection:
                 before = connection.execute(
@@ -418,6 +451,19 @@ def test_loopback_http_stop_cancels_worker_and_survives_restart() -> None:
                         fields=command,
                         timings=timings,
                     )[0]
+                    == 409
+                )
+                _intake_action(port, cookie, timings, "reanudar")
+                time.sleep(1.05)
+                assert (
+                    _request(
+                        port,
+                        "/comandos",
+                        method="POST",
+                        cookie=cookie,
+                        fields=command,
+                        timings=timings,
+                    )[0]
                     == 303
                 )
                 assert browser.started.wait(2)
@@ -467,6 +513,8 @@ def test_loopback_http_stop_cancels_worker_and_survives_restart() -> None:
                     assert time.monotonic() < deadline
                     time.sleep(0.02)
                 assert browser.cancelled
+                time.sleep(1.05)
+                _intake_action(port, cookie, timings, "pausar")
             runtime.close()
             reopened = LocalBetaRuntime.start(
                 database_path=database_path,
@@ -531,6 +579,19 @@ def test_loopback_http_failed_browser_is_redacted_and_not_retried_after_restart(
                     "member_id": member_id,
                     "event_id": EVENT_ID,
                 }
+                assert (
+                    _request(
+                        port,
+                        "/comandos",
+                        method="POST",
+                        cookie=cookie,
+                        fields=command,
+                        timings=timings,
+                    )[0]
+                    == 409
+                )
+                _intake_action(port, cookie, timings, "reanudar")
+                time.sleep(1.05)
                 status, _, _ = _request(
                     port,
                     "/comandos",
@@ -578,6 +639,11 @@ def test_loopback_http_failed_browser_is_redacted_and_not_retried_after_restart(
                         "member_id": member_id,
                         "event_id": EVENT_ID,
                     }
+                    # Prior owner admission survives the controller restart.
+                    assert (
+                        b"Admitiendo"
+                        in _request(port, "/control", cookie=cookie, timings=timings)[2]
+                    )
                     status, headers, body = _request(
                         port,
                         "/comandos",
@@ -592,6 +658,8 @@ def test_loopback_http_failed_browser_is_redacted_and_not_retried_after_restart(
                         b"Sin avisos locales"
                         in _request(port, "/avisos", cookie=cookie, timings=timings)[2]
                     )
+                    time.sleep(1.05)
+                    _intake_action(port, cookie, timings, "pausar")
             finally:
                 reopened.close()
         finally:
@@ -697,6 +765,19 @@ def test_loopback_http_interrupted_command_recovery_does_not_replay_browser(
                         "member_id": member_id,
                         "event_id": EVENT_ID,
                     }
+                    assert (
+                        _request(
+                            port,
+                            "/comandos",
+                            method="POST",
+                            cookie=cookie,
+                            fields=retry,
+                            timings=timings,
+                        )[0]
+                        == 409
+                    )
+                    _intake_action(port, cookie, timings, "reanudar")
+                    time.sleep(1.05)
                     status, headers, _ = _request(
                         port,
                         "/comandos",
@@ -712,6 +793,8 @@ def test_loopback_http_interrupted_command_recovery_does_not_replay_browser(
                     assert (b"Aviso local" in notices) is resolved
                     assert (b"Sin avisos locales" in notices) is not resolved
                     assert b"interrupted@example.test" not in notices
+                    time.sleep(1.05)
+                    _intake_action(port, cookie, timings, "pausar")
                     previous_cookie = cookie
             finally:
                 restarted.close()

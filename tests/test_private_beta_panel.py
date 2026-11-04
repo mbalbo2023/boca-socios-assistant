@@ -172,6 +172,163 @@ def _login(
     return headers["Set-Cookie"].split(";", 1)[0]
 
 
+def _control_action(
+    app: PrivatePanelApplication, cookie: str, action: str
+) -> tuple[int, dict[str, str], bytes]:
+    status, _, page = _request(app, "/control", cookie=cookie)
+    assert status == 200
+    match = re.search(
+        rb'<form method="post" action="/control/(?:reanudar|pausar)">(.*?)</form>',
+        page,
+        re.S,
+    )
+    assert match is not None
+    fields = {
+        "csrf": re.search(rb'name="csrf" value="([^"]+)"', match.group(1)).group(1).decode(),
+        "operation_id": re.search(rb'name="operation_id" value="([^"]+)"', match.group(1))
+        .group(1)
+        .decode(),
+    }
+    return _request(app, f"/control/{action}", cookie=cookie, method="POST", payload=fields)
+
+
+def test_global_intake_pause_resume_never_stops_http_or_existing_commands() -> None:
+    clock = [0.0]
+    provider, key, credential_id = _passkey(clock)
+    host = FakeHost()
+    with TemporaryDirectory() as directory:
+        app, db = _app(Path(directory) / "boca.sqlite3", provider, host)
+        member = MemberEnrollmentService(db, CredentialVault(os.urandom(32))).enroll(
+            email="global@example.test",
+            password="test-password",
+            consent_recorded_at=datetime.now(UTC),
+        )
+        assert _request(app, "/control")[0] == 401
+        cookie = _login(app, key, credential_id)
+        assert _request(app, "/", cookie=cookie)[0] == 200
+        initial = _request(app, "/control", cookie=cookie)
+        assert initial[0] == 200 and b"Pausada" in initial[2]
+        _, _, form = _request(app, "/comandos", cookie=cookie)
+        fields = {
+            "csrf": re.search(rb'name="csrf" value="([^"]+)"', form).group(1).decode(),
+            "operation_id": re.search(rb'name="operation_id" value="([^"]+)"', form)
+            .group(1)
+            .decode(),
+            "member_id": member,
+            "event_id": EVENT_ID,
+        }
+        blocked = _request(app, "/comandos", cookie=cookie, method="POST", payload=fields)
+        assert blocked[0] == 409 and host.calls == []
+        started = _control_action(app, cookie, "reanudar")
+        assert started[0] == 303 and started[1]["Location"] == "/control"
+        assert b"Admitiendo" in _request(app, "/control", cookie=cookie)[2]
+        sleep(1.05)
+        accepted = _request(app, "/comandos", cookie=cookie, method="POST", payload=fields)
+        assert accepted[0] == 303 and len(host.calls) == 1
+        sleep(1.05)
+        paused = _control_action(app, cookie, "pausar")
+        assert paused[0] == 303 and paused[1]["Location"] == "/control"
+        panel = _request(app, "/control", cookie=cookie)
+        assert panel[0] == 200 and b"Pausada" in panel[2]
+        assert b"simulaciones en curso" in panel[2]
+        assert _request(app, "/", cookie=cookie)[0] == 200
+        assert _request(app, "/comandos", cookie=cookie)[0] == 200
+        assert _request(app, f"/comandos/{fields['operation_id']}", cookie=cookie)[0] in (
+            200,
+            404,
+        )
+        assert host.calls == [(fields["operation_id"], member, EVENT_ID)]
+        another = dict(fields, operation_id=str(uuid4()))
+        assert _request(app, "/comandos", cookie=cookie, method="POST", payload=another)[0] == 409
+
+
+def test_global_control_rejects_unauthorized_post_and_persists_idempotent_state() -> None:
+    clock = [0.0]
+    provider, key, credential_id = _passkey(clock)
+    with TemporaryDirectory() as directory:
+        path = Path(directory) / "boca.sqlite3"
+        app, db = _app(path, provider, FakeHost())
+        cookie = _login(app, key, credential_id)
+        _, _, form = _request(app, "/control", cookie=cookie)
+        operation_id = re.search(rb'name="operation_id" value="([^"]+)"', form).group(1).decode()
+        csrf = re.search(rb'name="csrf" value="([^"]+)"', form).group(1).decode()
+        for origin, token in (("https://evil.example.test", csrf), (ORIGIN, "bad")):
+            assert (
+                _request(
+                    app,
+                    "/control/reanudar",
+                    cookie=cookie,
+                    method="POST",
+                    payload={"csrf": token, "operation_id": operation_id},
+                    origin=origin,
+                )[0]
+                == 403
+            )
+        assert b"Pausada" in _request(app, "/control", cookie=cookie)[2]
+        assert _control_action(app, cookie, "reanudar")[0] == 303
+        assert b"Admitiendo" in _request(app, "/control", cookie=cookie)[2]
+        with db.connection() as connection:
+            assert connection.execute(
+                "SELECT action FROM audit_events WHERE action LIKE 'owner_simulation_intake_%'"
+            ).fetchall() == [("owner_simulation_intake_resumed",)]
+        # The restarted controller reads the durable owner decision from SQLite.
+        next_provider, next_key, next_credential = _passkey(clock)
+        restarted = PrivatePanelApplication(
+            origin=ORIGIN,
+            database_path=path,
+            owner_subject="owner",
+            passkey=next_provider,
+            members=MemberEnrollmentService(db, CredentialVault(os.urandom(32))),
+            commands=FakeHost(),
+            events={EVENT_ID: "Partido sintético"},
+        )
+        assert _request(restarted, "/control")[0] == 401
+        clock[0] = 3.0
+        restart_cookie = _login(restarted, next_key, next_credential)
+        assert b"Admitiendo" in _request(restarted, "/control", cookie=restart_cookie)[2]
+        assert _control_action(restarted, restart_cookie, "pausar")[0] == 303
+        assert b"Pausada" in _request(app, "/control", cookie=cookie)[2]
+        with db.connection() as connection:
+            assert connection.execute(
+                "SELECT action FROM audit_events WHERE action LIKE 'owner_simulation_intake_%' "
+                "ORDER BY rowid"
+            ).fetchall() == [
+                ("owner_simulation_intake_resumed",),
+                ("owner_simulation_intake_paused",),
+            ]
+        # Repeated intent in another owner session causes no additional audit write.
+        sleep(1.05)
+        assert _control_action(app, cookie, "pausar")[0] == 303
+        with db.connection() as connection:
+            assert connection.execute(
+                "SELECT count(*) FROM audit_events WHERE action LIKE 'owner_simulation_intake_%'"
+            ).fetchone() == (2,)
+        final_provider, final_key, final_credential = _passkey(clock)
+        final = PrivatePanelApplication(
+            origin=ORIGIN,
+            database_path=path,
+            owner_subject="owner",
+            passkey=final_provider,
+            members=MemberEnrollmentService(db, CredentialVault(os.urandom(32))),
+            commands=FakeHost(),
+            events={EVENT_ID: "Partido sintético"},
+        )
+        clock[0] = 6.0
+        final_cookie = _login(final, final_key, final_credential)
+        assert b"Pausada" in _request(final, "/control", cookie=final_cookie)[2]
+
+
+def test_global_control_refuses_to_claim_active_when_command_host_failed() -> None:
+    clock = [0.0]
+    provider, key, credential_id = _passkey(clock)
+    with TemporaryDirectory() as directory:
+        app, _ = _app(Path(directory) / "boca.sqlite3", provider, None)
+        cookie = _login(app, key, credential_id)
+        response = _control_action(app, cookie, "reanudar")
+        assert response[0] == 503
+        assert b"Pausada" in _request(app, "/control", cookie=cookie)[2]
+
+
 def test_passkey_requires_exact_origin_uv_signature_and_one_use_challenge() -> None:
     clock = [0.0]
     provider, key, credential_id = _passkey(clock)
@@ -226,6 +383,8 @@ def test_private_login_enrollment_listing_and_local_command_are_connected() -> N
         with db.connection() as connection:
             member_id = connection.execute("SELECT member_id FROM members").fetchone()[0]
             assert connection.execute("SELECT count(*) FROM credentials").fetchone() == (1,)
+        sleep(1.05)
+        assert _control_action(app, cookie, "reanudar")[0] == 303
         status, _, command_page = _request(app, "/comandos", cookie=cookie)
         assert status == 200 and b"Iniciar simulaci" in command_page
         command_id = (
@@ -280,6 +439,8 @@ def test_new_command_key_redirects_to_existing_canonical_result() -> None:
             canonical, TicketIntent(member_id, EVENT_ID), now=1.0, max_pending=16
         )
         cookie = _login(app, key, credential_id)
+        assert _control_action(app, cookie, "reanudar")[0] == 303
+        sleep(1.05)
         status, _, form = _request(app, "/comandos", cookie=cookie)
         assert status == 200
         new_id = re.search(rb'name="operation_id" value="([^"]+)"', form).group(1).decode()
@@ -318,6 +479,8 @@ def test_malformed_command_result_never_becomes_a_redirect() -> None:
             consent_recorded_at=datetime.now(UTC),
         )
         cookie = _login(app, key, credential_id)
+        assert _control_action(app, cookie, "reanudar")[0] == 303
+        sleep(1.05)
         status, _, form = _request(app, "/comandos", cookie=cookie)
         assert status == 200
         fields = {
@@ -347,6 +510,7 @@ def test_cross_origin_csrf_and_spoofed_tls_never_start_simulation() -> None:
             consent_recorded_at=datetime.now(UTC),
         )
         cookie = _login(app, key, credential_id)
+        assert _control_action(app, cookie, "reanudar")[0] == 303
         _, _, page = _request(app, "/comandos", cookie=cookie)
         fields = {
             "csrf": re.search(rb'name="csrf" value="([^"]+)"', page).group(1).decode(),
