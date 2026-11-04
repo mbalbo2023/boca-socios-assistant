@@ -49,7 +49,7 @@ def test_browser_option_is_separately_gated_without_weakening_legacy_operations(
         assert proof in gate
     for legacy in (
         "owner-enroll)",
-        "beta-install|beta-acceptance)",
+        "beta-install|beta-start|beta-acceptance)",
         "telegram-migrate|telegram-prepare|telegram-install|telegram-verify|telegram-test)",
         'if [[ "$BOCA_OPERATION" = owner-enroll ]]',
     ):
