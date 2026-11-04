@@ -63,6 +63,7 @@ class PairingInstallReceipt:
     recipient_fingerprint: str
     bot_id: int
     discovery_update_id: int
+    pairing_observed_at: int
     state: str = "READY_FOR_PROTECTED_INSTALL"
     notification_receipt: str = "UNVERIFIED"
     expected_chat_hmac: str = field(default="", repr=False)
@@ -256,6 +257,7 @@ def plan_private_telegram_pairing(
             recipient_fingerprint=recipient.fingerprint,
             bot_id=bot_id,
             discovery_update_id=found.update_id,
+            pairing_observed_at=now,
             expected_chat_hmac=chat_hmac,
             one_time_fence=fence,
         ),
