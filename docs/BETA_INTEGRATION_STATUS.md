@@ -1,5 +1,15 @@
 # Estado de integración BETA
 
+## Validaciones en paralelo — PR #306 (04/11/2026, NO deploy)
+
+Los checks de CI y seguridad de imágenes ya son independientes. El candidato
+#306 sustituye la cola no cancelable de validaciones antiguas de Release PR y
+First Deploy PR por cancelación **limitada al evento pull_request**; la
+operación protegida `workflow_dispatch` mantiene serialización y todos
+sus controles. Esta edición necesita cuatro checks GREEN del SHA final,
+revisión técnica, merge y checks postmerge. **BETA física aún no instalada**.
+Detalle y regresión: ADR0129.
+
 ## Ciclo protegido de despliegue BETA — candidato #305, 04/11/2026
 
 [PR #304](https://github.com/mbalbo2023/boca-socios-assistant/pull/304) **fusionado** en `main=5398669d5c32ca64ba113cddcc20363502c85c1e`: CI postmerge [#41859364620](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41859364620) y seguridad de imágenes postmerge [#41859364192](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41859364192) **GREEN**. Esto habilita el perfil ICC=true solo en la red temporal privada de owner-enroll, sin módulo br_netfilter ni firewall global; **no instala BETA**.
