@@ -73,9 +73,27 @@ def _record() -> dict[str, object]:
             "Ports": {"8443/tcp": None},
         },
         "Mounts": [
-            {"Type": "volume", "Driver": "local", "Name": host.DATA_VOLUME, "Destination": "/data", "RW": True},
-            {"Type": "volume", "Driver": "local", "Name": host.KEY_VOLUME, "Destination": "/run/secrets", "RW": False},
-            {"Type": "volume", "Driver": "local", "Name": host.OWNER_VOLUME, "Destination": "/run/owner", "RW": False},
+            {
+                "Type": "volume",
+                "Driver": "local",
+                "Name": host.DATA_VOLUME,
+                "Destination": "/data",
+                "RW": True,
+            },
+            {
+                "Type": "volume",
+                "Driver": "local",
+                "Name": host.KEY_VOLUME,
+                "Destination": "/run/secrets",
+                "RW": False,
+            },
+            {
+                "Type": "volume",
+                "Driver": "local",
+                "Name": host.OWNER_VOLUME,
+                "Destination": "/run/owner",
+                "RW": False,
+            },
         ],
     }
 
@@ -88,11 +106,7 @@ def _setup(
     containers: list[str] | None = None,
 ) -> list[tuple[str, ...]]:
     metadata = copy.deepcopy(_record() if record is None else record)
-    present = (
-        {host.DATA_VOLUME, host.KEY_VOLUME, host.OWNER_VOLUME}
-        if volumes is None
-        else volumes
-    )
+    present = {host.DATA_VOLUME, host.KEY_VOLUME, host.OWNER_VOLUME} if volumes is None else volumes
     ids = [CONTAINER] if containers is None else containers
     commands: list[tuple[str, ...]] = []
     monkeypatch.setattr(host, "_verify_beta_compose", lambda *_args: None)
@@ -111,9 +125,7 @@ def _setup(
         host,
         "_validate_boca_network",
         lambda candidate, net: (
-            None
-            if candidate == "" and net == NETWORK
-            else pytest.fail("unverified BETA network")
+            None if candidate == "" and net == NETWORK else pytest.fail("unverified BETA network")
         ),
     )
 
@@ -209,7 +221,10 @@ def test_resume_rejects_any_unknown_volume_but_accepts_verified_telegram_custody
     _setup(monkeypatch, volumes=unexpected)
     with pytest.raises(host.PreflightError):
         host._beta_stopped_controller(IMAGE, SOURCE_SHA, COMPOSE_SHA, ORIGIN, OWNER)
-    _setup(monkeypatch, volumes={host.DATA_VOLUME, host.KEY_VOLUME, host.OWNER_VOLUME, host.TELEGRAM_VOLUME})
+    _setup(
+        monkeypatch,
+        volumes={host.DATA_VOLUME, host.KEY_VOLUME, host.OWNER_VOLUME, host.TELEGRAM_VOLUME},
+    )
     assert host._beta_stopped_controller(IMAGE, SOURCE_SHA, COMPOSE_SHA, ORIGIN, OWNER) == CONTAINER
 
 
@@ -251,7 +266,9 @@ def test_resume_failure_stops_exact_controller_without_touching_volumes(
     commands: list[tuple[str, ...]] = []
     monkeypatch.setattr(host, "_validate_owner_context", lambda *_args: None)
     monkeypatch.setattr(host, "_beta_stopped_controller", lambda *_args: CONTAINER)
-    monkeypatch.setattr(host, "_beta_acceptance_status", lambda *_args: pytest.fail("must not reach"))
+    monkeypatch.setattr(
+        host, "_beta_acceptance_status", lambda *_args: pytest.fail("must not reach")
+    )
     def run(*args: str) -> str:
         commands.append(args)
         if args == ("docker", "start", CONTAINER):
@@ -261,6 +278,7 @@ def test_resume_failure_stops_exact_controller_without_touching_volumes(
         if args == ("docker", "inspect", "--format", "{{.State.Health.Status}}", CONTAINER):
             return "unhealthy"
         pytest.fail("unexpected command")
+
     monkeypatch.setattr(host, "_run", run)
     with pytest.raises(host.PreflightError, match="health"):
         host._beta_resume_phase(IMAGE, SOURCE_SHA, COMPOSE_SHA, ORIGIN, OWNER)
@@ -276,9 +294,7 @@ def test_beta_dispatch_resumes_without_entering_new_only_inventory(
 ) -> None:
     calls: list[tuple[str, ...]] = []
     monkeypatch.setattr(host, "_validate_owner_context", lambda *_args: None)
-    monkeypatch.setattr(
-        host, "_beta_resume_phase", lambda *args: calls.append(args)
-    )
+    monkeypatch.setattr(host, "_beta_resume_phase", lambda *args: calls.append(args))
     monkeypatch.setattr(
         host, "_beta_inventory", lambda **_kwargs: pytest.fail("new-only branch reached")
     )
@@ -287,17 +303,17 @@ def test_beta_dispatch_resumes_without_entering_new_only_inventory(
 
 
 def test_protected_workflow_starts_daemon_before_new_install_and_resumes_after_acceptance() -> None:
-    content = (Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml").read_text(
-        encoding="utf-8"
-    )
+    content = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
+    ).read_text(encoding="utf-8")
     assert "beta-start" in content
     assert "if: inputs.operation == 'beta-install' || inputs.operation == 'beta-start'" in content
-    assert content.index("Start only previously prepared and stopped Boca rootless daemon") < content.index(
-        "Read-only BETA capacity, owner custody and empty app namespace"
-    )
-    assert content.index("Recheck current main immediately before BETA controller resume") < content.index(
-        "Resume only positively identified stopped BETA controller"
-    )
+    assert content.index(
+        "Start only previously prepared and stopped Boca rootless daemon"
+    ) < content.index("Read-only BETA capacity, owner custody and empty app namespace")
+    assert content.index(
+        "Recheck current main immediately before BETA controller resume"
+    ) < content.index("Resume only positively identified stopped BETA controller")
     assert content.index("Invoke bounded synthetic BETA acceptance") < content.index(
         "Stop positively identified Boca services after BETA acceptance"
     )
