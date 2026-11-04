@@ -228,6 +228,19 @@ def test_resume_rejects_any_unknown_volume_but_accepts_verified_telegram_custody
     assert host._beta_stopped_controller(IMAGE, SOURCE_SHA, COMPOSE_SHA, ORIGIN, OWNER) == CONTAINER
 
 
+def test_resume_refuses_unverified_telegram_volume(monkeypatch: pytest.MonkeyPatch) -> None:
+    _setup(
+        monkeypatch,
+        volumes={host.DATA_VOLUME, host.KEY_VOLUME, host.OWNER_VOLUME, host.TELEGRAM_VOLUME},
+    )
+    def bad_telegram() -> None:
+        raise host.PreflightError("Telegram volume not verified")
+
+    monkeypatch.setattr(host, "_telegram_volume", bad_telegram)
+    with pytest.raises(host.PreflightError, match="Telegram volume"):
+        host._beta_stopped_controller(IMAGE, SOURCE_SHA, COMPOSE_SHA, ORIGIN, OWNER)
+
+
 def test_resume_reuses_stopped_controller_id_and_emits_bounded_receipt(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -253,6 +266,11 @@ def test_resume_reuses_stopped_controller_id_and_emits_bounded_receipt(
         ("docker", "start", CONTAINER),
         ("docker", "inspect", "--format", "{{.State.Health.Status}}", CONTAINER),
     ]
+    assert len(
+        f"BOCA_BETA_START state=RUNNING source_sha={SOURCE_SHA} image={IMAGE}"
+        " service=controller host=127.0.0.1:8443"
+        " data=preserved key=preserved owner=preserved engine=off"
+    ) <= 360
     assert capsys.readouterr().out.strip() == (
         f"BOCA_BETA_START state=RUNNING source_sha={SOURCE_SHA} image={IMAGE}"
         " service=controller host=127.0.0.1:8443"
