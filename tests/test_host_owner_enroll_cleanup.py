@@ -29,6 +29,7 @@ class FakeEnrollDocker:
         self.volume_dir = volume_dir
         self.foreign_container = False
         self.foreign_peer = False
+        self.icc_downgrade = False
         self.wrong_mount = False
         self.wrong_volume_label = False
         self.stopped_ports_cleared = False
@@ -118,7 +119,14 @@ class FakeEnrollDocker:
                     "Name": cleanup.ENROLL_NETWORK,
                     "Driver": "bridge",
                     "Internal": False,
-                    "Options": cleanup.ENROLL_NETWORK_OPTIONS,
+                    "Options": (
+                        {
+                            **cleanup.ENROLL_NETWORK_OPTIONS,
+                            "com.docker.network.bridge.enable_icc": "false",
+                        }
+                        if self.icc_downgrade
+                        else cleanup.ENROLL_NETWORK_OPTIONS
+                    ),
                     "Labels": {
                         "com.docker.compose.project": "boca-socios",
                         "com.docker.compose.network": "owner_enroll_private",
@@ -260,7 +268,16 @@ def test_enrollment_cleanup_removes_only_proven_disposable_artifacts(
 
 
 @pytest.mark.parametrize(
-    "unsafe", ["foreign-container", "foreign-peer", "mount", "volume", "stage-label", "marker"]
+    "unsafe",
+    [
+        "foreign-container",
+        "foreign-peer",
+        "icc-downgrade",
+        "mount",
+        "volume",
+        "stage-label",
+        "marker",
+    ],
 )
 def test_enrollment_cleanup_rejects_uncertain_provenance_without_deletion(
     enroll_case: tuple[FakeEnrollDocker, Path, Path], unsafe: str
@@ -270,6 +287,8 @@ def test_enrollment_cleanup_rejects_uncertain_provenance_without_deletion(
         docker.foreign_container = True
     elif unsafe == "foreign-peer":
         docker.foreign_peer = True
+    elif unsafe == "icc-downgrade":
+        docker.icc_downgrade = True
     elif unsafe == "mount":
         docker.wrong_mount = True
     elif unsafe == "volume":
