@@ -169,14 +169,26 @@ jobs:
             done
           }
           trap cleanup_cutover_labels EXIT
+          # Docker Compose *also* requires the config-hash label to list
+          # manually created containers. Derive it from each reviewed resolved
+          # service model, including the different legacy/candidate variants.
+          original_hash_line="$(docker compose -p boca-socios -f compose.beta.yaml config --hash controller)"
+          candidate_hash_line="$(docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml config --hash controller)"
+          worker_hash_line="$(docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml config --hash browser-worker)"
+          [[ "$original_hash_line" =~ ^controller\ [0-9a-f]{64}$ ]]
+          [[ "$candidate_hash_line" =~ ^controller\ [0-9a-f]{64}$ ]]
+          [[ "$worker_hash_line" =~ ^browser-worker\ [0-9a-f]{64}$ ]]
+          original_hash="${original_hash_line#controller }"
+          candidate_hash="${candidate_hash_line#controller }"
+          worker_hash="${worker_hash_line#browser-worker }"
           labels=(--label com.docker.compose.project=boca-socios --label com.docker.compose.container-number=1 --label com.docker.compose.oneoff=False --label "boca.ci.cutover-label-probe=$GITHUB_RUN_ID")
-          original_id="$(docker create --pull never --name "$original_name" --network none --restart no "${labels[@]}" --label com.docker.compose.service=controller "$BOCA_IMAGE" python -c 'pass')"
-          worker_id="$(docker create --pull never --name "$worker_name" --network none --restart no "${labels[@]}" --label com.docker.compose.service=browser-worker "$BOCA_BROWSER_IMAGE" python -c 'pass')"
+          original_id="$(docker create --pull never --name "$original_name" --network none --restart no "${labels[@]}" --label "com.docker.compose.config-hash=$original_hash" --label com.docker.compose.service=controller "$BOCA_IMAGE" python -c 'pass')"
+          worker_id="$(docker create --pull never --name "$worker_name" --network none --restart no "${labels[@]}" --label "com.docker.compose.config-hash=$worker_hash" --label com.docker.compose.service=browser-worker "$BOCA_BROWSER_IMAGE" python -c 'pass')"
           [[ "$original_id" =~ ^[0-9a-f]{64}$ && "$worker_id" =~ ^[0-9a-f]{64}$ ]]
           test "$(docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml ps -a -q browser-worker)" = "$worker_id"
           docker rename "$original_id" "$parked_name"
           test "$(docker inspect --format '{{.Id}}' "$parked_name")" = "$original_id"
-          candidate_id="$(docker create --pull never --name "$original_name" --network none --restart no "${labels[@]}" --label com.docker.compose.service=controller "$BOCA_IMAGE" python -c 'pass')"
+          candidate_id="$(docker create --pull never --name "$original_name" --network none --restart no "${labels[@]}" --label "com.docker.compose.config-hash=$candidate_hash" --label com.docker.compose.service=controller "$BOCA_IMAGE" python -c 'pass')"
           [[ "$candidate_id" =~ ^[0-9a-f]{64}$ && "$candidate_id" != "$original_id" ]]
           # The transient duplicate controller service labels are expected.
           # Physical cutover may NOT rely on compose ps until old ID retires.

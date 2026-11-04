@@ -4885,7 +4885,7 @@ def _cutover_restore_original(
 
 
 def _cutover_worker_create_argv(
-    browser_image: str, source_sha: str, attempt_id: str
+    browser_image: str, source_sha: str, attempt_id: str, config_hash: str
 ) -> tuple[str, ...]:
     """Plan a worker without Compose reconciling/stopping the live singleton.
 
@@ -4898,6 +4898,7 @@ def _cutover_worker_create_argv(
         not BROWSER_IMAGE_PATTERN.fullmatch(browser_image)
         or not SHA_PATTERN.fullmatch(source_sha)
         or not BROWSER_ATTEMPT_PATTERN.fullmatch(attempt_id)
+        or not DIGEST_PATTERN.fullmatch(config_hash)
     ):
         raise PreflightError("cutover A worker image or attempt unreviewed")
     health = (
@@ -4919,6 +4920,8 @@ def _cutover_worker_create_argv(
         "com.docker.compose.service=browser-worker",
         "--label",
         "com.docker.compose.container-number=1",
+        "--label",
+        f"com.docker.compose.config-hash={config_hash}",
         "--label",
         "com.docker.compose.oneoff=False",
         "--label",
@@ -4981,7 +4984,12 @@ def _cutover_worker_create_argv(
 
 
 def _cutover_candidate_create_argv(
-    target_image: str, source_sha: str, attempt_id: str, origin: str, owner: str
+    target_image: str,
+    source_sha: str,
+    attempt_id: str,
+    origin: str,
+    owner: str,
+    config_hash: str,
 ) -> tuple[str, ...]:
     """Plan a no-restart candidate without touching the legacy controller.
 
@@ -4992,6 +5000,7 @@ def _cutover_candidate_create_argv(
         not IMAGE_PATTERN.fullmatch(target_image)
         or not SHA_PATTERN.fullmatch(source_sha)
         or not BROWSER_ATTEMPT_PATTERN.fullmatch(attempt_id)
+        or not DIGEST_PATTERN.fullmatch(config_hash)
     ):
         raise PreflightError("cutover A candidate image or attempt unreviewed")
     _validate_owner_context(origin, owner)
@@ -5023,6 +5032,8 @@ def _cutover_candidate_create_argv(
         "com.docker.compose.service=controller",
         "--label",
         "com.docker.compose.container-number=1",
+        "--label",
+        f"com.docker.compose.config-hash={config_hash}",
         "--label",
         "com.docker.compose.oneoff=False",
         "--label",

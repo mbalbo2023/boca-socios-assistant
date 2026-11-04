@@ -83,6 +83,16 @@ single reviewed Boca service/volume namespace.
    transition two objects may have `service=controller`, so service lookup
    alone is forbidden. Inspect exact healthcheck, effective seccomp and all
    labels. Fake-Docker unit tests do not prove this compatibility.
+   **CI RCA A227-F1 (2026-11-04):** PR #320 initial First Deploy runner
+   `41932123724` failed at the disposable label-topology probe: manual
+   `docker create` objects with project/service/oneoff labels were invisible
+   to `docker compose ps -a`. Official Docker Compose `getDefaultFilters`
+   also requires the presence of `com.docker.compose.config-hash`. Fix-forward
+   requires each argv builder to take a SHA256 reviewed service hash and emit
+   that label; runner smoke now derives **separate** hashes from `docker
+   compose config --hash` for original, candidate and worker. No host action
+   occurred. A new exact-SHA hosted run must prove this correction; absent
+   that run, physical NO_GO remains.
 4. **Legacy restart policy.** The installed original has `unless-stopped`,
    while the candidate must use `no`. A daemon restart mid-cutover could
    revive the parked original and collide with localhost:8443. Design and

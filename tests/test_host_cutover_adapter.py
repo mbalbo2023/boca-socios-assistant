@@ -22,6 +22,7 @@ WORKER_IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "e" 
 LEGACY_COMPOSE_SHA = "f" * 64
 ORIGINAL_ID = "1" * 64
 ATTEMPT = "41897569929"
+CONFIG_HASH = "a" * 64
 ORIGIN = "http://localhost:8443"
 OWNER = "test-owner"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -317,7 +318,7 @@ def test_compensation_failure_is_explicitly_indeterminate(monkeypatch: pytest.Mo
 
 
 def test_worker_create_argv_is_single_service_no_egress_and_no_restart() -> None:
-    argv = host._cutover_worker_create_argv(WORKER_IMAGE, TARGET_SHA, ATTEMPT)
+    argv = host._cutover_worker_create_argv(WORKER_IMAGE, TARGET_SHA, ATTEMPT, CONFIG_HASH)
     assert argv[:5] == ("docker", "create", "--pull", "never", "--name")
     assert argv[5] == host.CUTOVER_WORKER_NAME
     assert argv[argv.index("--network") + 1] == "none"
@@ -331,12 +332,15 @@ def test_worker_create_argv_is_single_service_no_egress_and_no_restart() -> None
         for volume in (host.DATA_VOLUME, host.KEY_VOLUME, host.OWNER_VOLUME)
     )
     assert WORKER_IMAGE in argv and "--publish" not in argv
+    assert f"com.docker.compose.config-hash={CONFIG_HASH}" in argv
     assert "--rm" not in argv and "--privileged" not in argv
     assert "docker compose" not in " ".join(argv)
 
 
 def test_candidate_argv_reuses_exact_volume_names_no_invisible_restart() -> None:
-    argv = host._cutover_candidate_create_argv(TARGET_IMAGE, TARGET_SHA, ATTEMPT, ORIGIN, OWNER)
+    argv = host._cutover_candidate_create_argv(
+        TARGET_IMAGE, TARGET_SHA, ATTEMPT, ORIGIN, OWNER, CONFIG_HASH
+    )
     assert argv[:2] == ("docker", "create")
     assert argv[argv.index("--name") + 1] == "boca-socios-controller-1"
     assert argv[argv.index("--restart") + 1] == "no"
@@ -347,6 +351,7 @@ def test_candidate_argv_reuses_exact_volume_names_no_invisible_restart() -> None
     assert "BOCA_ENGINE_MODE=off" in argv
     assert "BOCA_RUNTIME_MODE=simulation" in argv
     assert "BOCA_BROWSER_BACKEND=ipc" in argv
+    assert f"com.docker.compose.config-hash={CONFIG_HASH}" in argv
     assert "BOCA_TELEGRAM_TOKEN" not in " ".join(argv)
     assert "--privileged" not in argv and "--cap-add" not in argv
     assert "docker compose" not in " ".join(argv)
@@ -354,11 +359,17 @@ def test_candidate_argv_reuses_exact_volume_names_no_invisible_restart() -> None
 
 def test_command_builders_reject_unsourced_coordinates() -> None:
     with pytest.raises(host.PreflightError):
-        host._cutover_worker_create_argv(LEGACY_IMAGE, TARGET_SHA, ATTEMPT)
+        host._cutover_worker_create_argv(LEGACY_IMAGE, TARGET_SHA, ATTEMPT, CONFIG_HASH)
     with pytest.raises(host.PreflightError):
-        host._cutover_worker_create_argv(WORKER_IMAGE, TARGET_SHA, "not-an-actions-run")
+        host._cutover_worker_create_argv(
+            WORKER_IMAGE, TARGET_SHA, "not-an-actions-run", CONFIG_HASH
+        )
     with pytest.raises(host.PreflightError):
-        host._cutover_candidate_create_argv(TARGET_IMAGE, TARGET_SHA, ATTEMPT, "http://evil", OWNER)
+        host._cutover_candidate_create_argv(
+            TARGET_IMAGE, TARGET_SHA, ATTEMPT, "http://evil", OWNER, CONFIG_HASH
+        )
+    with pytest.raises(host.PreflightError):
+        host._cutover_worker_create_argv(WORKER_IMAGE, TARGET_SHA, ATTEMPT, "not-a-hash")
 
 
 def test_workflow_exposes_only_readonly_cutover_and_separate_legacy_release_proof() -> None:
@@ -374,6 +385,10 @@ def test_workflow_exposes_only_readonly_cutover_and_separate_legacy_release_proo
     assert '"$BOCA_LEGACY_RELEASE_RUN_ID"' in text
     assert "boca-cutover-legacy-compose.sha" in text
     assert "original=RUNNING worker=absent effects=none" in text
+    assert "config --hash controller" in text
+    assert "config --hash browser-worker" in text
+    assert "com.docker.compose.config-hash=$candidate_hash" in text
+    assert "com.docker.compose.config-hash=$worker_hash" in text
     assert (
         "docker compose up"
         not in text[
