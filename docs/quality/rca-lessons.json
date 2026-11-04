@@ -496,8 +496,8 @@
       "id": "RCA-307",
       "issue": 307,
       "fix_pr": 308,
-      "root_cause": "The controller preflight and beta-apply repeatedly enforced a fixed 768 MiB MemAvailable/0.5 CPU headroom veto despite the approved unbenchmarked-resource advisory policy; installed acceptance had a separate 512 MiB/0.25 CPU veto. Physical beta-install run 41890280818 passed earlier snapshots but failed beta-apply on the stale memory threshold, without logging its final memory value.",
-      "prevention": "Keep host RAM/CPU headroom observational before and after install, reject nonpositive/nonfinite measurements, log a bounded pre-apply observation, and measure real consumption through protected synthetic acceptance. Preserve hard cgroup caps, rootless identity, SHA, storage, network and positive Boca-only cleanup.",
+      "root_cause": "The beta-install helper still required 768 MiB MemAvailable and 0.5 CPU at each inventory despite approved advisory policy; acceptance also required 512 MiB/0.25 CPU. In protected run 41890280818 an earlier PASS became beta-apply NO_GO with no final memory value.",
+      "prevention": "Record valid host RAM/CPU observations rather than unbenchmarked vetoes. Reject invalid metadata; preserve rootless identity, hard cgroups, SHA, storage, network and Boca-only cleanup. Measure real consumption in protected synthetic acceptance.",
       "regression_tests": [
         "tests/test_host_first_deploy.py::test_valid_low_host_headroom_is_advisory_before_install",
         "tests/test_host_first_deploy.py::test_unsafe_host_snapshot_is_no_go",
