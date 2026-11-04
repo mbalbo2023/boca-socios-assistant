@@ -1,6 +1,54 @@
 # Estado de integración BETA
 
-## Estado físico vigente — 04/11/2026, #307 (NO DEPLOY)
+## Decisión owner y QA de frentes DRAFT — 04/11/2026, después de 19:20 ART
+
+El owner confirmó **acceso autenticado** desde Samsung Chrome al controller
+privado `localhost:8443`, con Termius/passkey; la permanencia de sesión después
+de reiniciar navegador aún no se verificó. `main=cabce9f1e452e63ded115f447559a358dc0f4d1b`
+y los recibos físicos abajo siguen siendo el último despliegue: **ninguna
+función de esta ola está instalada**.
+
+Autorizadas **Telegram privado** (issue #315, PR DRAFT #317), **pausa/reanudar
+admisión de simulaciones** sin apagar panel ni fingir stop del worker (issue
+#313, PR DRAFT #318), **catálogo informativo de eventos oficiales** (issue
+#314, PR DRAFT #316; sin feed automático estable comprobado ni admisión real)
+y retiro de opción Site complementario de la interfaz. El cutover-A sobre el
+controller existente requiere adaptador propio y pruebas host/Compose; #227,
+PR DRAFT #310 contiene sólo contratos puros. El pairing Telegram V2 está en
+la propuesta #317 pero aún carece de ruta/operación protegida y no puede
+recibir el token en la BETA física de este corte.
+
+**Descartados** por el dueño: múltiples sesiones, rotación de clave maestra
+y eliminación total, login/fila/elegibilidad/reserva/compra reales, y
+backup/restauración. No planificar ni habilitar estas familias. Sólo se
+realizaron tests y PRs DRAFT; el proceso de integración, release y despliegue
+requiere superar los gates pendientes sin afectar Porota ni otros servicios.
+
+[Decisión canónica #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6644077845) ·
+[Integración de PR previos #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6644301519).
+
+## Estado físico actualizado — 04/11/2026, 16:33 ART
+
+`main=cabce9f1e452e63ded115f447559a358dc0f4d1b`. PR #308 y RCA #307
+integrados; issues #305/#307 cerrados. El
+[release dual #41893887078](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41893887078),
+[install #41896871289](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41896871289),
+[aceptación local #41897278258](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897278258)
+y [start #41897569928](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897569928)
+son `completed/success`, mismo SHA. La instalación es controller-only;
+aceptación sintética con 24 requests, 1 socio/1 intención/1 aviso, `engine=off`,
+`site=not_contacted` y `telegram=not_sent`. El último arranque registró
+`RUNNING` en `127.0.0.1:8443` con datos/clave/owner preservados.
+
+**No es BETA integral GREEN:** faltan prueba de Chrome Samsung vía Termius,
+passkey/cookie persistente, flujo privado de alta/DB en la tablet, instalación
+y aceptación del worker navegador (imagen publicada pero apagada), custodia
+y recepción Telegram, reinicio/recuperación y medición conjunta. #259 abierto,
+#285 y draft #287 no activados. Mantener BLACKBOX protegida y cero navegación
+real por agentes. El start prueba un instante, no liveness prolongado.
+[Handoff de evidencia #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6640165355).
+
+## Corte histórico previo — 04/11/2026, #307 (NO DEPLOY en ese instante)
 
 - `main=3c5a0da3df527cfe58a98442ea471be81f9f06ab`, PR #306 fusionado;
   [release #41873165726](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41873165726)

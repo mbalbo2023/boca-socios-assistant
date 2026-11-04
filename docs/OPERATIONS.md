@@ -1,6 +1,33 @@
 # Safe operations — verified evidence and gated procedures
 
-## Bloqueo actual de instalación BETA — 04/11/2026, RCA #307
+## Estado operativo vigente — 04/11/2026, 16:33 ART
+
+El controlador **sí está instalado**: `main=cabce9f1e452e63ded115f447559a358dc0f4d1b`,
+release [41893887078](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41893887078),
+install [41896871289](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41896871289)
+`PASS`, aceptación sintética [41897278258](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897278258)
+`PASS` (24 requests), y último start
+[41897569928](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897569928)
+`RUNNING` en `127.0.0.1:8443`, `engine=off`, `site=off`, Telegram `off`.
+Los volúmenes de datos/clave/owner se preservaron. **No reejecutar** el
+primer install, el alta por PIN ni la aceptación ya verde para comprobar
+el panel. La comprobación tablet aún es obligatoria: Termius SSH forwarding
+local `8443` → remoto `127.0.0.1:8443`, Chrome Android
+`http://localhost:8443/ingresar` para sesión nueva (`/` exige cookie). La
+passkey de owner se registró previamente; cookie temporal: inactividad 15 min,
+límite absoluto 8 h, invalidación tras reinicio. No certificar la
+sesión/cookie hasta observarla físicamente.
+
+La imagen browser está publicada pero **no instalada/activada**; no despachar
+`beta-browser-install` sobre este controlador sin validar el contrato
+new-only, ocupación del puerto y transición conservadora de almacenamiento.
+No activar BLACKBOX ni navegar el sitio por agentes. Telegram requiere
+custodia y prueba Bot API, luego comprobación humana; ningún mensaje real
+acreditado. Para estado y bloqueos futuros, usar el
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6640165355).
+Sólo Actions Boca para operaciones de host; limpieza exclusivamente selectiva.
+
+## Historial previo — RCA del beta-install rechazado antes del fix #307
 
 El último `beta-install` protegido [#41890280818](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41890280818)
 pasó el gate `BOCA_BETA_ENV_READY=ready`, SHA/release, arranque existente del

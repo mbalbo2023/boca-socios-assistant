@@ -1,6 +1,67 @@
 # Boca Socios Assistant
 
-## RCA del primer beta-install físico — 04/11/2026 (issue #307)
+## Nuevo corte de desarrollo — 04/11/2026, después de las 19:20 ART
+
+El propietario **confirmó acceso exitoso en Samsung Chrome** al panel privado
+`http://localhost:8443` mediante Termius y passkey. Es una observación humana
+puntual: **no** demuestra persistencia de sesión al reiniciar Chrome ni la
+salud de un worker navegador. El controller-only instalado permanece anclado
+al `main=cabce9f1e452e63ded115f447559a358dc0f4d1b`; los avances siguientes
+son **candidatos de código, no desplegados**.
+
+Autorizadas: **Telegram privado** (#315, [PR DRAFT #317](https://github.com/mbalbo2023/boca-socios-assistant/pull/317)),
+**pausa/reanudación general de simulaciones** y retiro de Site del panel
+(#313, [PR DRAFT #318](https://github.com/mbalbo2023/boca-socios-assistant/pull/318)), y **fuentes oficiales de eventos/categorías/horarios**
+(#314, [PR DRAFT #316](https://github.com/mbalbo2023/boca-socios-assistant/pull/316)).
+La transición del controller hacia el worker navegador sigue en #227
+([PR DRAFT #310](https://github.com/mbalbo2023/boca-socios-assistant/pull/310));
+el contrato puro pasó CI, pero **no** existe cutover físico aprobado ni instalado.
+Telegram aún requiere adapter protegido de vinculación y una recepción humana
+de mensaje. La página V2 de pairing en #317 no está conectada al panel actual.
+
+**Descartadas por el propietario:** varias sesiones del navegador, rotación de
+clave maestra y eliminación completa, login/fila/elegibilidad/reserva/compra
+reales en Boca y backup/restauración. No reactivar ni presentar estas funciones
+como pendientes para BETA. El Site complementario se retira **de la interfaz**,
+sin modificar infraestructura ajena. Ningún PR de esta ola fue fusionado ni
+desplegado; [checkpoint canónico #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6644301519).
+
+## Estado operativo comprobado — 04/11/2026, 16:33 ART
+
+**Controlador BETA instalado, aceptado y arrancado; BETA integral pendiente.**
+GitHub `main=cabce9f1e452e63ded115f447559a358dc0f4d1b` (PR #308,
+RCA #307 resuelto) publicó el par de imágenes en
+[release #41893887078](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41893887078).
+El [install #41896871289](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41896871289)
+registró `BOCA_BETA_INSTALL state=PASS`, controlador únicamente y HTTP
+loopback verificado. La
+[aceptación #41897278258](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897278258)
+pasó 24 peticiones sintéticas en el contenedor, con 1 socio, 1 intención,
+1 aviso local, p95 de 24,17 ms y pico de proceso de 43.648 KiB; sin contacto
+con Boca ni envío Telegram. El
+[start #41897569928](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897569928)
+observó `BOCA_BETA_START state=RUNNING` en `127.0.0.1:8443`, datos/clave/owner
+preservados y motor `off`. Este es un recibo puntual, **no** una prueba de
+disponibilidad continua ni de acceso desde la Samsung.
+
+Próximos cierres: Chrome Samsung por túnel SSH a
+`http://localhost:8443/ingresar`, autenticación y cookie, panel/alta/SQLite
+persistentes, navegador opt-in
+(imagen publicada, worker no instalado ni activo), Telegram (off, sin recibo
+de entrega), y aceptación integral/reinicio. [Issue #259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259)
+sigue abierto para capacidad del conjunto; [issue #285](https://github.com/mbalbo2023/boca-socios-assistant/issues/285)
+y [draft #287](https://github.com/mbalbo2023/boca-socios-assistant/pull/287)
+no son un piloto autenticado aprobado. Módulos BLACKBOX y navegación real
+reservados al dueño. Estado con evidencia y operaciones posteriores:
+[checkpoint canónico #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6640165355).
+La passkey de Chrome ya fue registrada en el owner-enroll físico; la sesión
+servida es temporal (15 min de inactividad, 8 h máximo, inválida tras restart).
+Ninguna de esas propiedades acredita por sí sola la persistencia observada
+en la tablet.
+
+## Historial anterior al despliegue exitoso (NO es el estado vigente)
+
+### RCA del primer beta-install físico — 04/11/2026 (issue #307)
 
 `main=3c5a0da3df527cfe58a98442ea471be81f9f06ab` (PR #306) produjo un
 release inmutable [#41873165726](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41873165726).

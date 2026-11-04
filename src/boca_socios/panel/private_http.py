@@ -15,9 +15,10 @@ from dataclasses import asdict
 from datetime import UTC, datetime
 from http import HTTPStatus
 from pathlib import Path
+from threading import Lock
 from typing import Protocol
 from urllib.parse import parse_qsl, urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from boca_socios.notify.projection import list_local_notices
 from boca_socios.owner_origin import owner_rp_host
@@ -35,6 +36,8 @@ from boca_socios.storage.database import Database
 
 StartResponse = Callable[[str, list[tuple[str, str]]], object]
 _UUID_PATH = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_INTAKE_PAUSED = "owner_simulation_intake_paused"
+_INTAKE_RESUMED = "owner_simulation_intake_resumed"
 
 
 class OwnerMemberService(Protocol):
@@ -144,6 +147,10 @@ class PrivatePanelApplication:
         self._members = members
         self._directory = MemberDirectory(database_path)
         self._commands = commands
+        # Within one controller process, order admission vs owner pause. SQLite
+        # audit_events is the durable authority: re-read it for each action.
+        # A pause never stops HTTP or claims to cancel already admitted work.
+        self._intake_lock = Lock()
         self._events = dict(events)
         self._passkey = passkey
         self._sessions = OwnerSessions(owner_subject=owner_subject, verify_owner=passkey.verify)
@@ -188,6 +195,9 @@ class PrivatePanelApplication:
         if path == "/comandos" or (isinstance(path, str) and path.startswith("/comandos/")):
             if "simulation:write" not in session.permissions:
                 return _error(start, 403, "Permiso insuficiente.")
+        if path == "/control" or (isinstance(path, str) and path.startswith("/control/")):
+            if "simulation:write" not in session.permissions:
+                return _error(start, 403, "Permiso insuficiente.")
         if path in ("/estado", "/avisos") and "local-status:read" not in session.permissions:
             return _error(start, 403, "Permiso insuficiente.")
         if method == "GET":
@@ -201,6 +211,8 @@ class PrivatePanelApplication:
                 return _response(start, 200, private_ui.members(self._directory.list_members()))
             if path == "/comandos":
                 return self._command_list(start, session)
+            if path == "/control":
+                return self._control_page(start, session)
             if path == "/estado":
                 snapshot = read_local_status(self._database_path, observed_at=self._now())
                 data = asdict(snapshot)
@@ -235,6 +247,8 @@ class PrivatePanelApplication:
             )
         if path == "/comandos":
             return self._begin(environ, session, start)
+        if path in ("/control/reanudar", "/control/pausar"):
+            return self._set_intake(environ, path.rsplit("/", 1)[-1], session, start)
         if isinstance(path, str) and path.startswith("/comandos/") and path.endswith("/detener"):
             command_id = path.removeprefix("/comandos/").removesuffix("/detener")
             return self._stop(environ, command_id, session, start)
@@ -386,6 +400,83 @@ class PrivatePanelApplication:
             ),
         )
 
+    def _control_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
+        operation_id = self._sessions.new_operation(session)
+        if operation_id is None:
+            return _error(start, 429, "Demasiados formularios abiertos. Vuelva a ingresar.")
+        with self._intake_lock:
+            accepting = self._read_intake()
+            ready = self._commands is not None and not self._commands.failed
+        if accepting is None:
+            return _error(start, 503, "Estado de admisión no disponible. No inicie simulaciones.")
+        return _response(
+            start,
+            200,
+            private_ui.global_simulation_control(accepting, ready, session.csrf, operation_id),
+        )
+
+    def _set_intake(
+        self,
+        environ: Mapping[str, object],
+        action: str,
+        session: OwnerSession,
+        start: StartResponse,
+    ) -> list[bytes]:
+        fields = self._form(environ, expected={"csrf", "operation_id"})
+        if fields is None or _canonical_uuid(fields["operation_id"]) is None:
+            return _error(start, 400, "Control inválido.")
+        fingerprint = f"global-simulation-intake:{action}".encode("ascii")
+        result, operation = self._sessions.reserve(
+            session, fields["operation_id"], fields["csrf"], fingerprint
+        )
+        if result:
+            if result == 303:
+                return self._redirect(start, "/control")
+            return _error(start, result, "Control ya procesado o no autorizado. Consulte estado.")
+        assert operation is not None
+        try:
+            with self._intake_lock:
+                if action == "reanudar":
+                    if self._commands is None or self._commands.failed:
+                        raise RuntimeError("local command host unavailable")
+                self._write_intake(accepting=action == "reanudar")
+        except Exception:
+            self._sessions.finish(operation, 503)
+            return _error(start, 503, "Control incierto. Consulte el estado antes de repetir.")
+        self._sessions.finish(operation, 303)
+        return self._redirect(start, "/control")
+
+    def _read_intake(self) -> bool | None:
+        """Read the latest owner admission decision; missing ledger fails closed."""
+        try:
+            with self._database.connection() as connection:
+                row = connection.execute(
+                    "SELECT action FROM audit_events WHERE action IN (?, ?) "
+                    "ORDER BY rowid DESC LIMIT 1",
+                    (_INTAKE_PAUSED, _INTAKE_RESUMED),
+                ).fetchone()
+        except Exception:
+            return None
+        return row is not None and row[0] == _INTAKE_RESUMED
+
+    def _write_intake(self, *, accepting: bool) -> None:
+        """Idempotent durable control, without schema migration or side effects."""
+        desired = _INTAKE_RESUMED if accepting else _INTAKE_PAUSED
+        with self._database.connection() as connection, connection:
+            # A writer transaction orders successive controls in SQLite, even
+            # when their HTTP requests arrive in separate processes.
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT action FROM audit_events WHERE action IN (?, ?) "
+                "ORDER BY rowid DESC LIMIT 1",
+                (_INTAKE_PAUSED, _INTAKE_RESUMED),
+            ).fetchone()
+            if row is None or row[0] != desired:
+                connection.execute(
+                    "INSERT INTO audit_events(audit_id,action) VALUES (?,?)",
+                    (str(uuid4()), desired),
+                )
+
     def _begin(
         self, environ: Mapping[str, object], session: OwnerSession, start: StartResponse
     ) -> list[bytes]:
@@ -397,31 +488,41 @@ class PrivatePanelApplication:
             return _error(start, 422, "Seleccione un socio y evento de simulación válidos.")
         if not self._directory.active_member(member_id):
             return _error(start, 409, "El socio no tiene credencial local activa.")
-        fingerprint = json.dumps(fields, sort_keys=True).encode()
-        result, operation = self._sessions.reserve(
-            session, fields["operation_id"], fields["csrf"], fingerprint
-        )
-        if result:
-            if result == 303 and operation is not None and operation.member_id:
-                return self._redirect(start, f"/comandos/{operation.member_id}")
-            return _error(start, result, "Comando ya procesado o no autorizado. Consulte estado.")
-        assert operation is not None
-        try:
-            if self._commands is None or self._commands.failed:
-                raise RuntimeError("command host unavailable")
-            snapshot = self._commands.begin(
-                fields["operation_id"], member_id=member_id, event_id=fields["event_id"]
+        with self._intake_lock:
+            accepting = self._read_intake()
+            if accepting is None:
+                return _error(
+                    start, 503, "Estado de admisión no disponible. No inicie simulaciones."
+                )
+            if not accepting:
+                return _error(start, 409, "Nuevas simulaciones pausadas. Reanude desde Control.")
+            fingerprint = json.dumps(fields, sort_keys=True).encode()
+            result, operation = self._sessions.reserve(
+                session, fields["operation_id"], fields["csrf"], fingerprint
             )
-            canonical = _canonical_uuid(getattr(snapshot, "command_id", None))
-            if canonical is None:
-                raise RuntimeError("canonical command result is unavailable")
-        except Exception:
-            self._sessions.finish(operation, 503)
-            return _error(
-                start, 503, "Resultado incierto. Consulte el historial; no repita con otro ID."
-            )
-        self._sessions.finish(operation, 303, canonical)
-        return self._redirect(start, f"/comandos/{canonical}")
+            if result:
+                if result == 303 and operation is not None and operation.member_id:
+                    return self._redirect(start, f"/comandos/{operation.member_id}")
+                return _error(
+                    start, result, "Comando ya procesado o no autorizado. Consulte estado."
+                )
+            assert operation is not None
+            try:
+                if self._commands is None or self._commands.failed:
+                    raise RuntimeError("command host unavailable")
+                snapshot = self._commands.begin(
+                    fields["operation_id"], member_id=member_id, event_id=fields["event_id"]
+                )
+                canonical = _canonical_uuid(getattr(snapshot, "command_id", None))
+                if canonical is None:
+                    raise RuntimeError("canonical command result is unavailable")
+            except Exception:
+                self._sessions.finish(operation, 503)
+                return _error(
+                    start, 503, "Resultado incierto. Consulte el historial; no repita con otro ID."
+                )
+            self._sessions.finish(operation, 303, canonical)
+            return self._redirect(start, f"/comandos/{canonical}")
 
     def _command_detail(
         self, command_id: str, session: OwnerSession, start: StartResponse

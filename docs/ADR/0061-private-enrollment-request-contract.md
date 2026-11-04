@@ -90,3 +90,22 @@ erasure, verified membership identity, real enrollment/key custody, real admin
 authentication, command controls and notice projections remain explicit work.
 Backup/restore remains deferred. The code does not publish a Site, operate the
 droplet, modify other projects, enable a port or establish a deployed BETA.
+
+## 2026-11-04 — localhost cookie coexistence regression (#228)
+
+An HTTP `Cookie` header can carry cookies belonging to unrelated localhost
+services because browser cookies are not isolated by TCP port. The previously
+single-cookie-only parser rejected a valid Boca session as soon as the browser
+also sent another cookie, causing an HTTP 401 even after a valid passkey
+assertion. This defect is reproduced by
+`test_owner_cookie_can_coexist_with_other_localhost_cookies_but_not_duplicates`.
+
+The scoped candidate accepts exactly one syntactically valid
+`__Host-boca_session` alongside unrelated cookies, while failing closed for
+duplicate or malformed Boca session credentials, absent sessions, oversized
+headers and excess cookie fields. It changes neither session lifetimes
+(15-minute idle / 8-hour absolute), restart revocation nor origin/CSRF/
+WebAuthn checks. These are code/fixture facts only; acceptance of the cookie
+by the owner's physical Samsung Chrome remains unverified until tested over
+the existing SSH-localhost tunnel. No additional host or third-party network
+operation is implied.

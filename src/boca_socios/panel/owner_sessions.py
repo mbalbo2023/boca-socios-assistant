@@ -15,6 +15,8 @@ from time import monotonic
 from uuid import uuid4
 
 _COOKIE = re.compile(r"__Host-boca_session=([A-Za-z0-9_-]{43})")
+_MAX_COOKIE_HEADER = 4096
+_MAX_COOKIES = 32
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -84,10 +86,23 @@ class OwnerSessions:
 
     @staticmethod
     def _key(cookie: object) -> bytes | None:
-        if not isinstance(cookie, str) or len(cookie) > 100:
+        if not isinstance(cookie, str) or len(cookie) > _MAX_COOKIE_HEADER:
             return None
-        match = _COOKIE.fullmatch(cookie)
-        return hashlib.sha256(match.group(1).encode("ascii")).digest() if match else None
+        parts = cookie.split(";")
+        if len(parts) > _MAX_COOKIES:
+            return None
+        token: str | None = None
+        for part in parts:
+            pair = part.strip()
+            name, separator, _ = pair.partition("=")
+            if not separator or not name:
+                return None
+            if name == "__Host-boca_session":
+                match = _COOKIE.fullmatch(pair)
+                if token is not None or match is None:
+                    return None
+                token = match.group(1)
+        return hashlib.sha256(token.encode("ascii")).digest() if token is not None else None
 
     def authenticate(self, proof: object) -> str | None:
         """Called only after the hosting authenticator verifies its proof.

@@ -1,6 +1,32 @@
 # Backlog y dependencias de la BETA
 
-## Contrato vigente para corrección del bloqueo rootless — 04/11/2026
+## Prioridades operativas — 04/11/2026, posterior al primer deploy
+
+`main=cabce9f1e452e63ded115f447559a358dc0f4d1b`:
+[release #41893887078](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41893887078),
+[install #41896871289](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41896871289),
+[aceptación #41897278258](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897278258)
+y [start #41897569928](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897569928)
+GREEN. El último observó controller `RUNNING` localhost:8443 con motor
+apagado. El acceso Android y BETA integral siguen sin aceptación real.
+
+1. Verificar Samsung Chrome + Termius (`/ingresar`), passkey/cookie y panel;
+   evitar repetir PIN y no solicitar secretos en chat.
+2. Diagnosticar e implementar transición controller instalado → navegador
+   opcional sin reejecutar `beta-browser-install` new-only ni perder datos,
+   y probar recursos combinados [#259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259).
+   La navegación BLACKBOX queda bajo control del propietario.
+3. Reconciliar formulario privado/alta/SQLite cifrada, durabilidad,
+   idempotencia y avisos en pruebas integrales. [#285](https://github.com/mbalbo2023/boca-socios-assistant/issues/285)
+   y [draft #287](https://github.com/mbalbo2023/boca-socios-assistant/pull/287)
+   no están desplegados.
+4. Habilitar custodia/identidad Telegram por vía protegida y obtener recibos
+   API y recepción humana sin publicar tokens.
+5. Validar conjunto, recuperación, recursos reales y experiencia por voz;
+   registrar cada cierre en [#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6640165355)
+   (Regla 84). Nunca navegar ni reservar en Boca por agentes.
+
+## Historial de bloqueo rootless — 04/11/2026 (superado para controller)
 
 **Actualización 04/11/2026 (Regla 84, RCA [#275](https://github.com/mbalbo2023/boca-socios-assistant/issues/275)):** El [run protegido #41854591848](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41854591848) verificó `module=absent`, `nf_call_iptables=unavailable`, `index=listed`, `modules_disabled=0`, `write_ops=none` en `main=41fc15e261d002dc614124ac0f2d2e1bea81f896`; fue una **lectura exitosa**, no un deploy.
 

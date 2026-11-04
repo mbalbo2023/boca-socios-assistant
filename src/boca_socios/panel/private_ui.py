@@ -95,21 +95,59 @@ def home(csrf: str) -> bytes:
         "<h1>Boca Socios Assistant</h1><p>Modo de simulación. "
         "Ninguna acción reserva ni compra entradas en Boca.</p>"
         '<p><a href="/socios">Consultar o agregar socios</a></p>'
+        '<p><a href="/control">Pausar o reanudar nuevas simulaciones</a></p>'
         '<p><a href="/comandos">Iniciar, detener o consultar simulaciones</a></p>'
         '<p><a href="/estado">Consultar estado local</a></p>'
         '<p><a href="/avisos">Consultar avisos locales y estado Telegram</a></p>'
         '<p><a href="/telegram/configurar">Configurar Telegram con un recibo aprobado</a></p>'
         '<section aria-labelledby="pending"><h2 id="pending">Funciones no habilitadas</h2><ul>'
-        "<li>Fuentes de eventos, categorías y horarios oficiales: pendientes de integración.</li>"
-        "<li>Varias sesiones de navegador y sus límites: pendientes de validación.</li>"
-        "<li>Rotación de clave maestra y eliminación completa: pendientes de custodia.</li>"
-        "<li>Backup y restauración: diferidos hasta una versión productiva fiable.</li>"
-        "<li>Login, fila, elegibilidad, reserva y compra reales en Boca: no habilitados.</li>"
-        "<li>Site complementario: conexión y estado operativo sujetos a su propio recibo.</li>"
+        "<li>Fuentes de eventos, categorías y horarios oficiales: integración autorizada; "
+        "todavía sin evidencia de activación.</li>"
+        "<li>Varias sesiones de navegador y sus límites: fuera de alcance por decisión "
+        "del propietario.</li>"
+        "<li>Rotación de clave maestra y eliminación completa: fuera de alcance por "
+        "decisión del propietario.</li>"
+        "<li>Backup y restauración: excluidos de esta BETA.</li>"
+        "<li>Login, fila, elegibilidad, reserva y compra reales en Boca: no habilitados "
+        "y fuera de alcance.</li>"
         "</ul></section>"
         '<form action="/salir" method="post">'
         f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
         '<button type="submit">Cerrar sesión</button></form>',
+    )
+
+
+def global_simulation_control(
+    accepting: bool,
+    host_ready: bool,
+    csrf: str,
+    operation_id: str,
+) -> bytes:
+    """Explain that the control governs admission, not process or provider lifecycle."""
+    state = "Admitiendo nuevas simulaciones locales" if accepting else "Pausada"
+    availability = (
+        "El servicio de simulación local está disponible."
+        if host_ready
+        else "El servicio de simulación local no está disponible."
+    )
+    action = "pausar" if accepting else "reanudar"
+    label = "Pausar nuevas simulaciones" if accepting else "Reanudar nuevas simulaciones"
+    return _page(
+        "Control de simulaciones",
+        "<h1>Control de simulaciones</h1>"
+        f'<p role="status">Estado: {state}. {availability}</p>'
+        "<p>Este control sólo acepta o bloquea nuevas simulaciones locales. "
+        "No inicia ni apaga el contenedor, el panel, Telegram ni el navegador; "
+        "tampoco detiene simulaciones en curso. Para detener una, abra "
+        "el detalle del comando.</p>"
+        "<p>El acceso al panel permanece disponible durante la pausa. "
+        "La decisión queda registrada localmente y se conserva tras reiniciar el panel; "
+        "si aún no existe una decisión registrada, las nuevas simulaciones empiezan pausadas.</p>"
+        f'<form method="post" action="/control/{action}">'
+        f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
+        f'<input type="hidden" name="operation_id" value="{escape(operation_id, quote=True)}">'
+        f'<button type="submit">{label}</button></form>'
+        '<p><a href="/comandos">Consultar simulaciones y detener una en curso</a></p>',
     )
 
 

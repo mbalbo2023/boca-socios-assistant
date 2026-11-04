@@ -49,6 +49,16 @@ class TelegramSender(Protocol):
     async def send(self, notice: TelegramNotice) -> TelegramAck: ...
 
 
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Do not accept a contradictory provider receipt via last-key-wins JSON."""
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate provider receipt field")
+        result[key] = value
+    return result
+
+
 class _HttpResponse(Protocol):
     status: int
 
@@ -165,7 +175,7 @@ class TelegramTransport:
             raw = response.read(4097)
             if response.status != 200 or len(raw) > 4096:
                 raise TelegramUnconfirmed("Telegram API acceptance unconfirmed")
-            payload = json.loads(raw)
+            payload = json.loads(raw, object_pairs_hook=_unique_json_object)
             if not isinstance(payload, dict) or payload.get("ok") is not True:
                 raise TelegramUnconfirmed("Telegram API acceptance unconfirmed")
             result = payload.get("result")
