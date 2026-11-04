@@ -2772,8 +2772,11 @@ def _beta_acceptance_status(
     _verify_beta_compose(compose_sha)
     snapshot = collect_snapshot(beta_staged=True)
     volumes = _names("volume", "name=^boca-socios_")
-    if volumes != {OWNER_VOLUME, KEY_VOLUME, DATA_VOLUME}:
+    base_volumes = {OWNER_VOLUME, KEY_VOLUME, DATA_VOLUME}
+    if volumes not in (base_volumes, base_volumes | {TELEGRAM_VOLUME}):
         raise PreflightError("installed Boca namespace differs from reviewed BETA")
+    if TELEGRAM_VOLUME in volumes:
+        _telegram_volume()
     network_ids = _run(
         "docker", "network", "ls", "--no-trunc", "-q", "--filter", "name=^boca-socios_"
     ).splitlines()
@@ -2803,6 +2806,217 @@ def _beta_acceptance_status(
     capacity = _storage_snapshot()
     _validate_storage_capacity(capacity)
     return diagnostic, capacity
+
+
+def _beta_resume_port_available() -> None:
+    """Check the one permitted host loopback binding without contacting a service."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", 8443))
+    except OSError as exc:
+        raise PreflightError("BETA resume exclusive loopback port unavailable") from exc
+
+
+def _beta_stopped_controller(
+    image: str, source_sha: str, compose_sha: str, origin: str, owner: str
+) -> str:
+    """Authenticate one previously installed, stopped Boca controller before start.
+
+    No compose up/pull, volume creation, database init, browser or Telegram effects.
+    Docker is the *dedicated* Boca rootless daemon, validated by the caller.
+    """
+    _verify_beta_compose(compose_sha)
+    volumes = _names("volume", "name=^boca-socios_")
+    required_volumes = {OWNER_VOLUME, KEY_VOLUME, DATA_VOLUME}
+    if volumes not in (required_volumes, required_volumes | {TELEGRAM_VOLUME}):
+        raise PreflightError("BETA resume volume namespace changed")
+    _validate_owner_volume()
+    _validate_key_volume()
+    _validate_data_volume()
+    if TELEGRAM_VOLUME in volumes:
+        _telegram_volume()
+    if _names("network", "name=^boca-socios_") != {"boca-socios_boca_private"}:
+        raise PreflightError("BETA resume network namespace changed")
+    ids = _run("docker", "ps", "-a", "-q", "--no-trunc").splitlines()
+    if len(ids) != 1 or re.fullmatch(r"[0-9a-f]{64}", ids[0]) is None:
+        raise PreflightError("BETA resume requires one stopped Boca controller")
+    container = ids[0]
+    for args in (
+        ("--filter", f"label=com.docker.compose.project={PROJECT}"),
+        ("--filter", "name=^/boca-socios-controller-1$"),
+    ):
+        if _run("docker", "ps", "-a", "-q", "--no-trunc", *args).splitlines() != [container]:
+            raise PreflightError("BETA resume controller identity is ambiguous")
+    record = _json_object(
+        _run("docker", "inspect", "--format", "{{json .}}", container), "BETA resume controller"
+    )
+    config, host = record.get("Config"), record.get("HostConfig")
+    state, network = record.get("State"), record.get("NetworkSettings")
+    if (
+        not isinstance(config, dict)
+        or not isinstance(host, dict)
+        or not isinstance(state, dict)
+        or not isinstance(network, dict)
+    ):
+        raise PreflightError("BETA resume Docker metadata is incomplete")
+    labels = config.get("Labels")
+    expected_ports = {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
+    restart = host.get("RestartPolicy")
+    if (
+        record.get("Id") != container
+        or record.get("Name") != "/boca-socios-controller-1"
+        or config.get("Image") != image
+        or config.get("User") != "10001:10001"
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.service") != "controller"
+        or labels.get("com.docker.compose.container-number") != "1"
+        or labels.get("org.opencontainers.image.revision") != source_sha
+        or state.get("Running") is not False
+        or state.get("Restarting") is not False
+        or state.get("Status") != "exited"
+        or config.get("Cmd") != ["python", "-m", "boca_socios.runtime", "serve-beta"]
+        or config.get("Entrypoint") not in (None, [])
+        or host.get("NetworkMode") != "boca-socios_boca_private"
+        or host.get("PortBindings") != expected_ports
+        or host.get("PublishAllPorts") is not False
+        or host.get("NanoCpus") != 500_000_000
+        or host.get("Memory") != 268_435_456
+        or host.get("PidsLimit") != 64
+        or host.get("ReadonlyRootfs") is not True
+        or host.get("Privileged") is not False
+        or host.get("CapDrop") != ["ALL"]
+        or host.get("CapAdd") not in (None, [])
+        or host.get("SecurityOpt") != ["no-new-privileges:true"]
+        or host.get("CgroupnsMode") not in ("", "private")
+        or host.get("Tmpfs") != {"/tmp": "rw,noexec,nosuid,size=16m"}  # noqa: S108
+        or not isinstance(restart, dict)
+        or restart.get("Name") != "unless-stopped"
+        or restart.get("MaximumRetryCount") != 0
+    ):
+        raise PreflightError("BETA resume stopped controller contract changed")
+    entries = config.get("Env")
+    if not isinstance(entries, list) or any(type(entry) is not str for entry in entries):
+        raise PreflightError("BETA resume environment is unavailable")
+    environment: dict[str, str] = {}
+    for entry in entries:
+        if "=" not in entry:
+            raise PreflightError("BETA resume environment is malformed")
+        name, value = entry.split("=", 1)
+        if name in environment:
+            raise PreflightError("BETA resume environment has duplicate keys")
+        environment[name] = value
+    expected_environment = {
+        "BOCA_ENVIRONMENT": "staging",
+        "BOCA_RUNTIME_MODE": "simulation",
+        "BOCA_ENGINE_MODE": "off",
+        "BOCA_PANEL_ORIGIN": origin,
+        "BOCA_OWNER_SUBJECT": owner,
+        "BOCA_DB_PATH": "/data/boca.sqlite3",
+        "BOCA_MASTER_KEY_FILE": "/run/secrets/boca_master_key",
+        "BOCA_PASSKEY_CREDENTIAL_ID_FILE": "/run/owner/credential_id",
+        "BOCA_PASSKEY_PUBLIC_KEY_DER_FILE": "/run/owner/public_key.der",
+        "BOCA_BIND_HOST": "0.0.0.0",  # noqa: S104 - only container bridge
+        "BOCA_BIND_PORT": "8443",
+        "BOCA_HEALTH_MODE": "beta",
+    }
+    if any(environment.get(name) != value for name, value in expected_environment.items()):
+        raise PreflightError("BETA resume simulation or owner context changed")
+    if (
+        any(
+            name in environment
+            for name in (
+                "BOCA_BROWSER_BACKEND",
+                "BOCA_TLS_CERT_FILE",
+                "BOCA_TLS_KEY_FILE",
+                "BOCA_HEALTH_CA_FILE",
+                "BOCA_TELEGRAM_TOKEN",
+            )
+        )
+        or environment.get("BOCA_SITE_BRIDGE_MODE", "off") != "off"
+    ):
+        raise PreflightError("BETA resume external access selector was activated")
+    attached = network.get("Networks")
+    if not isinstance(attached, dict) or set(attached) != {"boca-socios_boca_private"}:
+        raise PreflightError("BETA resume network attachment changed")
+    endpoint = attached["boca-socios_boca_private"]
+    if not isinstance(endpoint, dict):
+        raise PreflightError("BETA resume network endpoint is unavailable")
+    network_id = endpoint.get("NetworkID")
+    if not isinstance(network_id, str) or re.fullmatch(r"[0-9a-f]{64}", network_id) is None:
+        raise PreflightError("BETA resume network ID is uncertain")
+    if network.get("Ports") not in (None, {}, {"8443/tcp": None}, expected_ports):
+        raise PreflightError("BETA resume stopped port exposure is unexpected")
+    mounts = record.get("Mounts")
+    if not isinstance(mounts, list) or len(mounts) != 3:
+        raise PreflightError("BETA resume volume mounts changed")
+    mounted: set[tuple[str, str, bool]] = set()
+    for mount in mounts:
+        if (
+            not isinstance(mount, dict)
+            or mount.get("Type") != "volume"
+            or mount.get("Driver") != "local"
+            or not isinstance(mount.get("Name"), str)
+            or not isinstance(mount.get("Destination"), str)
+            or type(mount.get("RW")) is not bool
+        ):
+            raise PreflightError("BETA resume volume identity is invalid")
+        mounted.add((mount["Name"], mount["Destination"], mount["RW"]))
+    if mounted != {
+        (DATA_VOLUME, "/data", True),
+        (KEY_VOLUME, "/run/secrets", False),
+        (OWNER_VOLUME, "/run/owner", False),
+    }:
+        raise PreflightError("BETA resume volume custody changed")
+    _validate_boca_network("", network_id)
+    digests = json.loads(
+        _run("docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image)
+    )
+    revision = _run(
+        "docker",
+        "image",
+        "inspect",
+        "--format",
+        '{{index .Config.Labels "org.opencontainers.image.revision"}}',
+        image,
+    )
+    if not isinstance(digests, list) or image not in digests or revision != source_sha:
+        raise PreflightError("BETA resume image no longer matches reviewed release")
+    _beta_resume_port_available()
+    _run(*_beta_compose_args("config", "-q"), env=_beta_compose_env(image, origin, owner))
+    return container
+
+
+def _beta_resume_phase(
+    image: str, source_sha: str, compose_sha: str, origin: str, owner: str
+) -> None:
+    """Resume the installed singleton, never reinstall or rebuild its volumes."""
+    _validate_owner_context(origin, owner)
+    container = _beta_stopped_controller(image, source_sha, compose_sha, origin, owner)
+    try:
+        started = _run("docker", "start", container)
+        if started != container:
+            raise PreflightError("BETA resumed unexpected controller ID")
+        for attempt in range(45):
+            health = _run("docker", "inspect", "--format", "{{.State.Health.Status}}", container)
+            if health == "healthy":
+                break
+            if health != "starting" or attempt == 44:
+                raise PreflightError("BETA resumed controller health is not verified")
+            sleep(2)
+        diagnostic, _ = _beta_acceptance_status(image, source_sha, compose_sha, origin, owner)
+        if diagnostic.container_id != container or diagnostic.health != "healthy":
+            raise PreflightError("BETA resume controller ID or health changed")
+    except (PreflightError, OSError, ValueError, TypeError):
+        # Only the exact authenticated Boca controller may be stopped. No volume
+        # deletion, compose up/down, image pulls or access to other services.
+        _run("docker", "stop", "--time", "30", container)
+        raise
+    print(
+        f"BOCA_BETA_START state=RUNNING source_sha={source_sha} image={image}"
+        " service=controller host=127.0.0.1:8443"
+        " data=preserved key=preserved owner=preserved engine=off"
+    )
 
 
 def _beta_acceptance_phase(
@@ -2845,6 +3059,9 @@ def _beta_phase(
         return
     if operation == "beta-acceptance":
         _beta_acceptance_phase(image, source_sha, compose_sha, origin, owner)
+        return
+    if operation == "beta-start":
+        _beta_resume_phase(image, source_sha, compose_sha, origin, owner)
         return
     staged = operation in {"beta-config", "beta-apply"}
     if staged:
@@ -6572,6 +6789,7 @@ def phase(
             "beta-apply",
             "beta-rollback",
             "beta-acceptance",
+            "beta-start",
         }:
             raise PreflightError("unknown BETA deployment phase")
         _validate_owner_context(envelope, beta_owner)
@@ -6789,6 +7007,7 @@ def main() -> int:
             "beta-apply",
             "beta-rollback",
             "beta-acceptance",
+            "beta-start",
             "browser-preflight",
             "browser-stage",
             "browser-config",

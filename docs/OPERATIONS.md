@@ -1,5 +1,23 @@
 # Safe operations — verified evidence and gated procedures
 
+## Aceleración de checks PR (candidata #306, 04/11/2026)
+
+La concurrencia de `release-image.yml` y `boca-first-deploy.yml` cancela
+**únicamente validaciones antiguas de un mismo PR**, al cambiar su SHA.
+Los disparos físicos `workflow_dispatch` siguen serializados: no se admiten
+dos escritores sobre Docker rootless, volumen de datos ni puerto
+`127.0.0.1:8443`. El ajuste no publica imágenes ni inicia el host, no
+reduce Trivy, CI o gates de seguridad y exige pruebas y revisión del SHA
+final. Hasta recibo físico, la BETA permanece **NO instalada**. ADR0129.
+
+## Ciclo protegido de despliegue BETA — candidato #305, 04/11/2026
+
+[PR #304](https://github.com/mbalbo2023/boca-socios-assistant/pull/304) **fusionado** en `main=5398669d5c32ca64ba113cddcc20363502c85c1e`: CI postmerge [#41859364620](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41859364620) y seguridad de imágenes postmerge [#41859364192](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41859364192) **GREEN**. Esto habilita el perfil ICC=true solo en la red temporal privada de owner-enroll, sin módulo br_netfilter ni firewall global; **no instala BETA**.
+
+La nueva candidata [#305](https://github.com/mbalbo2023/boca-socios-assistant/issues/305) / [ADR0129](ADR/0129-controller-only-beta-resume.md) corrige dos dependencias antes del release final: `start-existing` de la unidad Boca antes de `beta-install` tras owner-enroll, y operación `beta-start` para reanudar **solo el controlador instalado**, conservando identidad/digest, tres volúmenes y el volumen Telegram adicional únicamente si se verifica. La aceptación detiene el servicio; `beta-start` debe devolverlo a RUNNING sin `compose up`, reinstalación ni reinicialización de DB/clave. Todas las operaciones por Actions protegidas, `source_sha=main`, servicio controller, imagen por digest, recibos acotados y limpieza selectiva tras fallos. No usar `beta-browser-start` para reanudar el panel; blackboxes intocables.
+
+**Estado del nuevo desarrollo:** rama `feature/305-boca-beta-lifecycle` en validación, aún **NO fusionada ni desplegada**. Después de integración y postmerge GREEN: release dual, pruebas físicas de owner-enroll/Chrome, instalación, aceptación, reanudación, Telegram y recursos reales. No reutilizar SHA antiguo para instalar.
+
 ## Contrato vigente para corrección del bloqueo rootless — 04/11/2026
 
 **Actualización 04/11/2026 (Regla 84, RCA [#275](https://github.com/mbalbo2023/boca-socios-assistant/issues/275)):** El [run protegido #41854591848](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41854591848) verificó `module=absent`, `nf_call_iptables=unavailable`, `index=listed`, `modules_disabled=0`, `write_ops=none` en `main=41fc15e261d002dc614124ac0f2d2e1bea81f896`; fue una **lectura exitosa**, no un deploy.

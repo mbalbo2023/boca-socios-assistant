@@ -25,6 +25,7 @@ def _run_gate(
     *,
     read_only_ready: str = "",
     deploy_ready: str = "",
+    beta_ready: str = "",
     image: str = "",
     release_run: str = "",
     source_sha: str = SHA,
@@ -39,6 +40,7 @@ def _run_gate(
         "BOCA_OPERATION": operation,
         "BOCA_HOST_READONLY_ENV_READY": read_only_ready,
         "BOCA_DEPLOY_ENV_READY": deploy_ready,
+        "BOCA_BETA_ENV_READY": beta_ready,
         "BOCA_IMAGE_REF": image,
         "BOCA_RELEASE_RUN_ID": release_run,
         "BOCA_SOURCE_SHA": source_sha,
@@ -132,3 +134,29 @@ def test_host_gate_is_before_checkout_and_ssh() -> None:
         < workflow.index("      - name: Checkout exact main commit")
         < workflow.index("      - name: Configure pinned SSH host key")
     )
+
+
+@pytest.mark.parametrize("operation", ["beta-install", "beta-start", "beta-acceptance"])
+def test_beta_lifecycle_requires_exact_private_environment_and_release(
+    operation: str,
+) -> None:
+    context = {
+        "deploy_ready": "ready",
+        "beta_ready": "ready",
+        "image": "reviewed-controller-digest",
+        "release_run": "123",
+        "owner_origin": "http://localhost:8443",
+        "owner_subject": "synthetic-owner",
+    }
+    assert _run_gate(operation, **context).returncode == 0
+    for changed in (
+        {"deploy_ready": ""},
+        {"beta_ready": ""},
+        {"image": ""},
+        {"release_run": ""},
+        {"owner_origin": "https://localhost:8443"},
+        {"owner_subject": ""},
+        {"source_sha": "b" * 40},
+        {"run_attempt": "2"},
+    ):
+        assert _run_gate(operation, **{**context, **changed}).returncode != 0
