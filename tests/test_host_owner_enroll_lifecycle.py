@@ -178,12 +178,19 @@ def _container_metadata() -> dict[str, object]:
 
 @pytest.mark.parametrize(
     "tamper",
-    ["none", "internal", "masquerade", "host-wildcard", "foreign-peer"],
+    [
+        "none",
+        "internal",
+        "masquerade",
+        "icc-downgrade",
+        "host-wildcard",
+        "foreign-peer",
+    ],
 )
 def test_owner_enroll_bridge_requires_publishable_gateway_and_no_masquerade(
     monkeypatch: pytest.MonkeyPatch, tamper: str
 ) -> None:
-    options = dict(host.ENROLL_NETWORK_OPTIONS)
+    options = dict(host.OWNER_ENROLL_NETWORK_OPTIONS)
     metadata: dict[str, object] = {
         "Name": host.ENROLL_NETWORK,
         "Driver": "bridge",
@@ -199,6 +206,8 @@ def test_owner_enroll_bridge_requires_publishable_gateway_and_no_masquerade(
         metadata["Internal"] = True
     elif tamper == "masquerade":
         options["com.docker.network.bridge.enable_ip_masquerade"] = "true"
+    elif tamper == "icc-downgrade":
+        options["com.docker.network.bridge.enable_icc"] = "false"
     elif tamper == "host-wildcard":
         options["com.docker.network.bridge.host_binding_ipv4"] = "0.0.0.0"  # noqa: S104 - rejected fixture
     elif tamper == "foreign-peer":
@@ -206,10 +215,10 @@ def test_owner_enroll_bridge_requires_publishable_gateway_and_no_masquerade(
     monkeypatch.setattr(host, "_names", lambda *_args: {host.ENROLL_NETWORK})
     monkeypatch.setattr(host, "_run", lambda *_args: json.dumps(metadata))
     if tamper == "none":
-        host._owner_enroll_network(CONTAINER_ID)
+        host._owner_enroll_network(CONTAINER_ID, icc_true=True)
     else:
         with pytest.raises(host.PreflightError, match="network isolation unverified"):
-            host._owner_enroll_network(CONTAINER_ID)
+            host._owner_enroll_network(CONTAINER_ID, icc_true=True)
 
 
 @pytest.mark.parametrize(
@@ -323,7 +332,7 @@ def test_lifecycle_workflow_enforces_same_job_cleanup_before_daemon_stop() -> No
     assert "BOCA_OWNER_CAPABILITY_SHA256" in workflow
     assert "if: always() && inputs.operation == 'owner-enroll'" in workflow
     assert "com.docker.network.bridge.enable_ip_masquerade=false" in workflow
-    assert "com.docker.network.bridge.enable_icc=false" in workflow
+    assert "com.docker.network.bridge.enable_icc=true" in workflow
     assert "com.docker.network.bridge.host_binding_ipv4=127.0.0.1" in workflow
     start = workflow.index("Start disposable owner enrollment only on Boca loopback 8443")
     wait = workflow.index("Wait only for one-use Chrome proof to reach offline staging")
