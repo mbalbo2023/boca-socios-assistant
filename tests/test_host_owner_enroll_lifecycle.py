@@ -280,7 +280,9 @@ def test_offline_install_happens_only_after_http_stops_and_verify_matches(
     monkeypatch.setattr(host, "_validate_owner_volume", lambda: actions.append("owner-validated"))
     monkeypatch.setattr(host, "_owner_enroll_container_state", lambda *_args: next(states))
     monkeypatch.setattr(
-        host, "_owner_enroll_network", lambda *_args, **_kwargs: actions.append("network-validated")
+        host,
+        "_owner_enroll_network",
+        lambda *_args, **_kwargs: actions.append("network-validated"),
     )
     monkeypatch.setattr(host, "_owner_enroll_volume", lambda: actions.append("staging-validated"))
     monkeypatch.setattr(host, "_owner_container", lambda _image, phase, *_args: ("docker", phase))
