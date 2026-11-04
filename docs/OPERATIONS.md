@@ -1,5 +1,15 @@
 # Safe operations — verified evidence and gated procedures
 
+## Aceleración de checks PR (candidata #306, 04/11/2026)
+
+La concurrencia de `release-image.yml` y `boca-first-deploy.yml` cancela
+**únicamente validaciones antiguas de un mismo PR**, al cambiar su SHA.
+Los disparos físicos `workflow_dispatch` siguen serializados: no se admiten
+dos escritores sobre Docker rootless, volumen de datos ni puerto
+`127.0.0.1:8443`. El ajuste no publica imágenes ni inicia el host, no
+reduce Trivy, CI o gates de seguridad y exige pruebas y revisión del SHA
+final. Hasta recibo físico, la BETA permanece **NO instalada**. ADR0129.
+
 ## Ciclo protegido de despliegue BETA — candidato #305, 04/11/2026
 
 [PR #304](https://github.com/mbalbo2023/boca-socios-assistant/pull/304) **fusionado** en `main=5398669d5c32ca64ba113cddcc20363502c85c1e`: CI postmerge [#41859364620](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41859364620) y seguridad de imágenes postmerge [#41859364192](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41859364192) **GREEN**. Esto habilita el perfil ICC=true solo en la red temporal privada de owner-enroll, sin módulo br_netfilter ni firewall global; **no instala BETA**.
