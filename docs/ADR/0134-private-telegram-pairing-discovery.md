@@ -1,0 +1,115 @@
+# ADR 0134 — Private Telegram chat discovery without external ID bots
+
+**2026-11-04 ART · Issue #168 / BETA #45 · DRAFT CODE CONTRACT ONLY.**
+
+## Owner decision and actual installed state
+
+The owner has a BotFather token, authorized Telegram notifications, and
+successfully authenticated the Samsung Chrome panel at `localhost:8443`.
+The installed release (`main=cabce9f1e452e63ded115f447559a358dc0f4d1b`)
+is the **controller-only** simulation BETA; no Telegram token, destination,
+sender or physical delivery has been verified. Browser-worker is uninstalled.
+The owner cancelled multi-session, master-key rotation/deletion, live Boca
+login/queue/reservation/purchases, Site integration and backups. Do not
+reintroduce these features as a side effect of Telegram setup.
+
+The existing `/telegram/configurar` page remains intentionally disabled
+without the authenticated `telegram-prepare` recipient receipt. It currently
+expects both a token and positive private-chat ID and creates a v1 sealed
+envelope plus two owner pins. This candidate does **not** change that deployed
+contract or claim that the token can be entered into the old panel yet.
+
+## Owner-friendly pairing proposal
+
+Avoid third-party ID-discovery bots and token-bearing browser URL/history.
+The future private setup page can instead generate a 24–64 character
+cryptographically random, base64url-safe pairing code in local WebCrypto.
+The owner opens **their own BotFather-created bot** and sends exactly
+`/start <pairing-code>` in its private conversation. The page locally seals
+the bot token plus pairing code under a recipient X25519 key from a verified
+protected `telegram-prepare` receipt. That would be a deliberately versioned
+new envelope; the existing v1 token+chat envelope must **not** silently be
+repurposed. Neither token nor pairing code may appear in public Actions logs,
+issues, PRs, CLI arguments, browser URL, or the app HTTP request body.
+
+A separate, explicitly reviewed protected operation would retrieve Bot API
+`getUpdates` using the token **only inside dedicated Telegram custody**.
+It must perform TLS/digest/rootless/volume/owner/active-session gates, reject
+existing webhook configuration or conflicts without modifying them, and
+accept exactly one fresh private message whose sender ID equals the private
+chat ID and whose text matches the pairing code. No guessing by username,
+most recent chat or multiple candidates. Telegram's Bot API `getUpdates` and
+private Chat fields are documented at https://core.telegram.org/bots/api .
+The chosen ID would be stored privately with the token; then the existing
+`getMe`, `getChat`, bot/destination owner pin and single synthetic notice
+gates must be reconciled, with independent human receipt confirmation.
+Do not send a real message or start a sender during discovery by default.
+
+## Implemented scope in this candidate
+
+`src/boca_socios/telegram_private_chat_discovery.py` provides a **pure**
+strict parser for the future protected `getUpdates` response and an immutable
+in-memory candidate (`chat_id`, `update_id`). It never touches token, HTTP,
+Docker, browser or disk. It rejects oversized/non-UTF-8/noncanonical JSON,
+duplicate keys/IDs, response failures, non-private/group/bot messages,
+sender/chat mismatch, malformed IDs, old/future timestamps, incorrect code,
+missing or multiple confirmations. Errors contain no token, pairing code or
+chat ID. `not_before` and `now` must be supplied from trusted host state by
+the future adapter, not inferred from untrusted Telegram messages. No
+`getUpdates` offset is advanced, so this contract does not consume updates.
+Tests use entirely fictitious JSON and require no network or real token.
+
+`src/boca_socios/panel/telegram_setup_ui.py` additionally exposes the
+**unrouted** `pairing_page()` prototype, its independent `PAIRING_SCRIPT` and
+script-hash-only `PAIRING_CSP`. Existing V1 `page()`, `SCRIPT`, `CSP` and installed
+route remain untouched. On `http://localhost:8443` only, the V2 page checks
+the canonical fingerprint-checked public recipient receipt, uses native
+WebCrypto X25519/HKDF/AES-GCM and generates a fresh **192-bit** pairing code.
+The code may be copied as `/start <code>` directly into the owner's private
+bot chat. The bot token is entered only in a password field in that local
+page, never inserted into the address bar, copied with `/start` or sent in
+plaintext to the server. On seal, token+code are encrypted into a
+purpose/version/domain-separated V2 envelope and the token field is erased.
+On navigation, local input/ciphertext/code fields are cleared.
+
+`src/boca_socios/telegram_pairing_bootstrap.py` provides only the **offline**
+strict decoder `unseal_pairing()`. It does **not** install or store the token,
+resolve a Telegram chat ID, invoke the Bot API, activate senders, alter existing
+V1 (`bot_token + chat_id`) custody or touch the droplet. Cross-language native
+Node WebCrypto-to-Python tests verify the exact new envelope, fingerprint,
+AEAD tamper rejection, V1/V2 separation, negative privacy paths and CSP.
+
+The new `pairing_page()` is **NOT YET ROUTED**. No new URL is active in the
+deployed controller. The V2 ciphertext must **NOT** be submitted to the old
+`telegram-install` V1 workflow. Tests run with fake credentials only; not a
+receipt of physical Telegram delivery. Any run's preparatory receipt must
+match the exact stopped controller and private recipient key at cutover time.
+
+## Physical sequence and remaining work — NOT YET AVAILABLE
+
+1. Keep the original controller running until a reviewed, exact-SHA
+   transition/custody operation exists; no `beta-browser-install` new-only
+   attempt against the installed singleton.
+2. The source-only V2 local seal and strict decoder exist. Integrate a V2 route
+   behind existing owner authentication, a verified recipient link, **separate
+   V2 protected install** and the getUpdates adapter; test a real private
+   `getUpdates` receipt once available. Keep V1 workflow rejecting V2 data.
+3. Stage Telegram 0007 migration and recipient key with controller stopped,
+   under the sole protected Boca Actions workflow. Currently these are
+   distinct `telegram-migrate` and `telegram-prepare` operations, each
+   requiring verified stopped identity and Boca-only daemon stop. The
+   controller-only matching resume path is **`beta-start`**, not
+   `beta-browser-start` while worker uninstalled. Any combined workflow
+   needs its own strict identity/cleanup review; don't dispatch it today.
+4. Owner pairs token in private Chrome and sends the one-time command **within
+   the protected adapter's one-hour matching window**;
+   protected discovery and identity verification bind the private destination.
+   One-shot notification and human receipt precede sender activation.
+5. After any stop/restart, the old session cookie is invalid and owner
+   re-authentication may be necessary; the passkey enrollment is preserved.
+
+Until the adapter/envelope/workflow are implemented, reviewed, GREEN and
+physically dispatched with actual receipts, Telegram remains **OFF / NO_GO**.
+No third-party ID bot, provider call, token handling, owner input or host
+action was executed by this source-only PR. Keep all pending state visible
+in #45 per Rule 84.
