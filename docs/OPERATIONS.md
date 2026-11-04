@@ -1,5 +1,30 @@
 # Safe operations — verified evidence and gated procedures
 
+## Bloqueo actual de instalación BETA — 04/11/2026, RCA #307
+
+El último `beta-install` protegido [#41890280818](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41890280818)
+pasó el gate `BOCA_BETA_ENV_READY=ready`, SHA/release, arranque existente del
+daemon Boca, inventario/staging de owner, Compose y disponibilidad de
+`127.0.0.1:8443`. `beta-preflight` registró MemAvailable de 931.808 y
+914.340 KiB; nueve segundos después `beta-apply` releyó el inventario y
+emitió `BOCA_NO_GO: insufficient available host memory`. No hay dato público
+del valor final ni benchmark de consumo. La causa de software identificada
+es el umbral **768 MiB** que persiste en `validate_snapshot`, incompatible
+con la política de [ADR0112](ADR/0112-postdeploy-resource-observation.md)
+de reservar los umbrales preventivos para observación; aceptación aún usa
+512 MiB/0,25 CPU. El [issue #307](https://github.com/mbalbo2023/boca-socios-assistant/issues/307)
+centraliza el fix-forward.
+
+Las etapas de detención del controlador, limpieza selectiva y parada del
+daemon exclusivo finalizaron SUCCESS. No hubo instalación acreditada; no
+reintentar sobre el mismo SHA. Una nueva ejecución requiere PR revisado,
+CI/security exactos, integración, release por digest y nuevo recibo de
+entorno protegido. La observación posinstalación comprobará rendimiento
+real; los cgroups (0,5 CPU, 256 MiB, 64 PIDs), aislamiento y resguardo de
+volúmenes no se flexibilizan. El navegador interno autenticado de GitHub
+ofrece `Run workflow`; intentar usarlo para el próximo despacho sin comandos
+de Termius, nunca para saltar el gate protegido.
+
 ## Aceleración de checks PR (candidata #306, 04/11/2026)
 
 La concurrencia de `release-image.yml` y `boca-first-deploy.yml` cancela
