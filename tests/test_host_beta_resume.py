@@ -31,7 +31,7 @@ def _record() -> dict[str, object]:
         "BOCA_MASTER_KEY_FILE": "/run/secrets/boca_master_key",
         "BOCA_PASSKEY_CREDENTIAL_ID_FILE": "/run/owner/credential_id",
         "BOCA_PASSKEY_PUBLIC_KEY_DER_FILE": "/run/owner/public_key.der",
-        "BOCA_BIND_HOST": "0.0.0.0",
+        "BOCA_BIND_HOST": "0.0.0.0",  # noqa: S104 - offline container-only fixture
         "BOCA_BIND_PORT": "8443",
         "BOCA_HEALTH_MODE": "beta",
     }
@@ -64,7 +64,7 @@ def _record() -> dict[str, object]:
             "CapAdd": None,
             "SecurityOpt": ["no-new-privileges:true"],
             "CgroupnsMode": "private",
-            "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=16m"},
+            "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=16m"},  # noqa: S108 - exact mount contract
             "RestartPolicy": {"Name": "unless-stopped", "MaximumRetryCount": 0},
         },
         "State": {"Running": False, "Restarting": False, "Status": "exited"},
@@ -158,8 +158,8 @@ def test_stopped_exact_controller_can_be_resumed_without_effectful_preflight(
         ("HostConfig", "Memory", 0),
         ("HostConfig", "PidsLimit", 0),
         ("HostConfig", "CapAdd", ["SYS_ADMIN"]),
-        ("HostConfig", "PortBindings", {"8443/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8443"}]}),
-        ("NetworkSettings", "Ports", {"8443/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8443"}]}),
+        ("HostConfig", "PortBindings", {"8443/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8443"}]}),  # noqa: S104 - rejected exposure fixture
+        ("NetworkSettings", "Ports", {"8443/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8443"}]}),  # noqa: S104 - rejected exposure fixture
     ],
 )
 def test_resume_rejects_stopped_controller_identity_drift(
