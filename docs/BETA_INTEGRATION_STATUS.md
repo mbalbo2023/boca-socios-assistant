@@ -1,5 +1,26 @@
 # Estado de integración BETA
 
+## Estado físico vigente — 04/11/2026, #307 (NO DEPLOY)
+
+- `main=3c5a0da3df527cfe58a98442ea471be81f9f06ab`, PR #306 fusionado;
+  [release #41873165726](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41873165726)
+  y [owner-enroll PIN #41887635433](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41887635433) completados.
+- [beta-install #41889141825](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41889141825):
+  NO_GO antes de SSH por variable `BOCA_BETA_ENV_READY` vacía.
+- [beta-install #41890280818](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41890280818):
+  gate `ready`, identidad rootless, owner, staging, Compose, SHA/release y
+  puerto 8443 FREE pasaron. `beta-apply` falló por veto preventivo de RAM
+  `MemAvailable < 768 MiB`; la lectura exacta del instante de fallo no se
+  publicó. Últimas observaciones previas: 931.808/914.340 KiB. Detención
+  identificada, limpieza selectiva y daemon stop: pasos SUCCESS.
+- [RCA #307](https://github.com/mbalbo2023/boca-socios-assistant/issues/307):
+  proponer observación numérica sin veto arbitrario, con contadores válidos,
+  cgroups estrictos, storage/identity gates y medición sintética posterior.
+  **Sólo candidata de código; ninguna BETA instalada, medida ni reiniciada.**
+
+Los siguientes apartados de #306/#305 son **cortes de desarrollo previos** y
+no reemplazan este recibo físico.
+
 ## Validaciones en paralelo — PR #306 (04/11/2026, NO deploy)
 
 Los checks de CI y seguridad de imágenes ya son independientes. El candidato
