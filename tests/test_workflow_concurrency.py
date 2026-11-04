@@ -48,7 +48,10 @@ def test_all_manual_operations_keep_one_constant_host_mutex() -> None:
 def test_running_operations_are_never_cancelled_and_push_cannot_deploy() -> None:
     workflow = (ROOT / WORKFLOW).read_text()
     block = workflow.split("\nconcurrency:\n", 1)[1].split("\njobs:\n", 1)[0]
-    assert block.strip().splitlines() == [f"group: {GROUP}", "  cancel-in-progress: false"]
+    assert block.strip().splitlines() == [
+        f"group: {GROUP}",
+        "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+    ]
     triggers = workflow.split("\non:\n", 1)[1].split("\npermissions:\n", 1)[0]
     assert re.findall(r"^  ([a-z_]+):", triggers, re.MULTILINE) == [
         "pull_request",
@@ -87,5 +90,15 @@ def test_policy_rejects_shared_pr_group_or_split_manual_mutex(tmp_path: Path) ->
     ):
         target.write_text(workflow.replace(f"  group: {GROUP}", f"  group: {replacement}"))
         assert any("concurrency" in finding for finding in check_policy(tmp_path)), replacement
-    target.write_text(workflow.replace("cancel-in-progress: false", "cancel-in-progress: true"))
-    assert any("concurrency" in finding for finding in check_policy(tmp_path))
+    for replacement in (
+        "cancel-in-progress: false",
+        "cancel-in-progress: true",
+        "cancel-in-progress: ${{ github.event_name == 'workflow_dispatch' }}",
+    ):
+        target.write_text(
+            workflow.replace(
+                "cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+                replacement,
+            )
+        )
+        assert any("concurrency" in finding for finding in check_policy(tmp_path))
