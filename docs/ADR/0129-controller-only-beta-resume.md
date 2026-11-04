@@ -28,3 +28,20 @@ Estado: **candidata bajo issue #305** hasta merge y verificaciones por SHA. No c
 `owner-prepare` → `owner-enroll` (daemon detenido) → `beta-install` (start-existing primero) → `beta-acceptance` (detiene) → operaciones Telegram protegidas (pueden detener) → `beta-start` final (reanudación controller-only) → medición de recursos/Chrome físico por el propietario.
 
 La evidencia de cada paso y el identificador del último run deben quedar en #45 y #305 según regla 84.
+
+## Concurrencia para reducir la cola de validaciones PR (04/11/2026)
+
+El candidato #306 incorpora una corrección de CI exclusivamente para validaciones
+de `pull_request`: `release-image.yml` y `boca-first-deploy.yml` cancelan las
+ejecuciones de SHAs antiguos del **mismo PR** cuando llega una nueva revisión.
+Antes tenían `cancel-in-progress: false`, que retenía validaciones ya
+sustituidas e incrementaba la latencia hasta obtener cuatro checks actuales.
+
+La expresión `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`
+evalúa `false` para `workflow_dispatch`. El release físico, el despliegue
+Boca y las operaciones sobre el daemon rootless siguen serializados, con
+ambientes, identidad, SHA, digest, escaneo, cleanup y gates intactos. Los
+workflows CI e Image Security ya usaban cancelación de PR y no se modifican.
+La regresión en `tests/test_host_beta_resume.py` verifica estas fronteras.
+No hay ejecución física, publicación de imagen ni instalación derivada de
+esta edición; el estado seguirá siendo **NO DEPLOY** hasta un recibo protegido.
