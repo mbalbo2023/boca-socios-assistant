@@ -267,11 +267,14 @@ def test_resume_reuses_stopped_controller_id_and_emits_bounded_receipt(
         ("docker", "start", CONTAINER),
         ("docker", "inspect", "--format", "{{.State.Health.Status}}", CONTAINER),
     ]
-    assert len(
-        f"BOCA_BETA_START state=RUNNING source_sha={SOURCE_SHA} image={IMAGE}"
-        " service=controller host=127.0.0.1:8443"
-        " data=preserved key=preserved owner=preserved engine=off"
-    ) <= 360
+    assert (
+        len(
+            f"BOCA_BETA_START state=RUNNING source_sha={SOURCE_SHA} image={IMAGE}"
+            " service=controller host=127.0.0.1:8443"
+            " data=preserved key=preserved owner=preserved engine=off"
+        )
+        <= 360
+    )
     assert capsys.readouterr().out.strip() == (
         f"BOCA_BETA_START state=RUNNING source_sha={SOURCE_SHA} image={IMAGE}"
         " service=controller host=127.0.0.1:8443"

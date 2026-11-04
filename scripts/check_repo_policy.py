@@ -94,7 +94,7 @@ def check_policy(root: Path) -> list[str]:
                 "  group: ${{ github.event_name == 'pull_request' && "
                 "format('boca-first-deploy-pr-{0}', github.event.pull_request.number) "
                 "|| 'boca-first-deploy' }}\n"
-                "  cancel-in-progress: false\n"
+                "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n"
             )
             pattern = r"^" + re.escape(concurrency) + r"(?=\n|$)"
             if re.search(pattern, data, re.MULTILINE) is None:
@@ -102,6 +102,18 @@ def check_policy(root: Path) -> list[str]:
                     "first-deploy workflow missing gate: isolated PR/manual concurrency"
                 )
         else:
+            if workflow.name == "release-image.yml":
+                # PR-only cancellation must not interrupt an owner-protected release.
+                release_concurrency = (
+                    "concurrency:\n"
+                    "  group: boca-image-release-${{ github.ref }}\n"
+                    "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n"
+                )
+                pattern = r"^" + re.escape(release_concurrency) + r"(?=\n|$)"
+                if re.search(pattern, data, re.MULTILINE) is None:
+                    failures.append(
+                        "release workflow missing gate: isolated PR/manual concurrency"
+                    )
             for forbidden in ("ssh ", "scp "):
                 if forbidden in data:
                     failures.append(f"forbidden workflow pattern in {workflow.name}: {forbidden}")
