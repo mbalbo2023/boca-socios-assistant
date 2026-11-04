@@ -478,6 +478,19 @@
         "tests/test_owner_enroll_diagnostic.py::test_start_redacts_original_exception",
         "tests/test_owner_enroll_diagnostic.py::test_workflow_redacts_only_ephemeral_stderr_and_preserves_cleanup"
       ]
+    },
+    {
+      "id": "RCA-300",
+      "issue": 300,
+      "fix_pr": 301,
+      "root_cause": "Two workflows shared the same GitHub Releases Trivy installer. Three hosted attempts ended with curl-compatible exit code 6 after resolving v0.76.1 but before scanning; the failed hostname is unknown.",
+      "prevention": "Use the publisher's immutable OCI Trivy 0.76.1 on hosted runners for all six scans. Require exact local SHA and Docker-only source, unchanged HIGH/CRITICAL OS/library coverage including unfixed CVEs, and fail closed on scan or network error.",
+      "regression_tests": [
+        "tests/test_trivy_oci_scanner.py::test_trivy_image_pinned_by_both_semver_and_immutable_publisher_digest",
+        "tests/test_trivy_oci_scanner.py::test_all_six_trivy_gates_keep_exact_local_sha_and_high_critical_fail_closed",
+        "tests/test_trivy_oci_scanner.py::test_trivy_failure_cannot_skip_release_login_or_report_success",
+        "tests/test_trivy_oci_scanner.py::test_trivy_cli_uses_pinned_docker_source_and_propagates_scanner_failure"
+      ]
     }
   ]
 }

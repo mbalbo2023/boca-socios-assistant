@@ -1629,7 +1629,7 @@ def _read_kernel_module_index(path: Path) -> bytes | None:
         while len(data) <= limit:
             chunk = os.read(descriptor, min(65536, limit + 1 - len(data)))
             if not chunk:
-                return bytes(data)
+                return bytes(data) if len(data) == metadata.st_size else None
             data.extend(chunk)
         return None
     except OSError:
@@ -1638,14 +1638,35 @@ def _read_kernel_module_index(path: Path) -> bytes | None:
         os.close(descriptor)
 
 
-def _index_mentions_bridge(data: bytes, *, dependencies: bool) -> bool:
-    """Catalogue hints only: a listed file is not proof it can be loaded."""
+_KERNEL_MODULE_PATH = re.compile(
+    rb"(?:[A-Za-z0-9_.+-]+/)+[A-Za-z0-9_.+-]+\.ko(?:\.(?:gz|xz|zst))?"
+)
+
+
+def _index_mentions_bridge(data: bytes, *, dependencies: bool) -> bool | None:
+    """Return unknown for malformed or incomplete catalogues, even with a hit."""
+    if data and not data.endswith(b"\n"):
+        return None
+    found = False
     for line in data.splitlines():
-        candidate = line.partition(b":")[0] if dependencies else line
+        if not line:
+            return None
+        if dependencies:
+            candidate, separator, remainder = line.partition(b":")
+            if separator != b":" or (remainder and remainder[:1] not in (b" ", b"\t")):
+                return None
+            if any(
+                _KERNEL_MODULE_PATH.fullmatch(path) is None for path in remainder.split()
+            ):
+                return None
+        else:
+            candidate = line
+        if _KERNEL_MODULE_PATH.fullmatch(candidate) is None:
+            return None
         filename = candidate.rsplit(b"/", 1)[-1]
         if re.fullmatch(rb"br_netfilter\.ko(?:\.(?:gz|xz|zst))?", filename):
-            return True
-    return False
+            found = True
+    return found
 
 
 def _kernel_module_availability_snapshot(
@@ -1659,18 +1680,22 @@ def _kernel_module_availability_snapshot(
         directory = modules_root / release
         builtin = _read_kernel_module_index(directory / "modules.builtin")
         dependencies = _read_kernel_module_index(directory / "modules.dep")
-        builtin_hit = builtin is not None and _index_mentions_bridge(builtin, dependencies=False)
-        dependency_hit = dependencies is not None and _index_mentions_bridge(
-            dependencies, dependencies=True
+        builtin_hit = (
+            _index_mentions_bridge(builtin, dependencies=False) if builtin is not None else None
         )
-        if builtin_hit and dependency_hit:
+        dependency_hit = (
+            _index_mentions_bridge(dependencies, dependencies=True)
+            if dependencies is not None
+            else None
+        )
+        if builtin_hit is None or dependency_hit is None:
+            index = "unknown"
+        elif builtin_hit and dependency_hit:
             index = "inconsistent"
         elif builtin_hit:
             index = "builtin"
         elif dependency_hit:
             index = "listed"
-        elif builtin is None or dependencies is None:
-            index = "unknown"
         else:
             index = "not_listed"
     else:

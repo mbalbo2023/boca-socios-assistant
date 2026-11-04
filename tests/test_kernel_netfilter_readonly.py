@@ -221,8 +221,8 @@ def test_module_catalogue_refuses_false_names_missing_or_untrusted_paths(
     root, builtin, disabled = _module_catalogue(tmp_path)
     dependencies = builtin.with_name("modules.dep")
     dependencies.write_bytes(
-        b"kernel/net/bridge/not_br_netfilter.ko: dependency\n"
-        b"kernel/net/bridge/br_netfilter.ko_extra: dependency\n"
+        b"kernel/net/bridge/not_br_netfilter.ko: kernel/net/core/valid.ko\n"
+        b"kernel/net/bridge/br_netfilter_extra.ko: kernel/net/core/valid.ko\n"
     )
     assert rootless._kernel_module_availability_snapshot(root, disabled, "6.8.0-test") == (
         "not_listed",
@@ -243,6 +243,44 @@ def test_module_catalogue_refuses_false_names_missing_or_untrusted_paths(
     assert rootless._kernel_module_availability_snapshot(root, disabled, "6.8.0-test") == (
         "unknown",
         "unreadable",
+    )
+
+
+@pytest.mark.parametrize("hit_in", ["builtin", "dependencies"])
+def test_module_catalogue_does_not_trust_one_index_when_other_missing(
+    tmp_path: Path, hit_in: str
+) -> None:
+    root, builtin, disabled = _module_catalogue(tmp_path)
+    dependencies = builtin.with_name("modules.dep")
+    if hit_in == "builtin":
+        builtin.write_bytes(b"kernel/net/bridge/br_netfilter.ko\n")
+        dependencies.unlink()
+    else:
+        dependencies.write_bytes(b"kernel/net/bridge/br_netfilter.ko.zst: \n")
+        builtin.unlink()
+    assert rootless._kernel_module_availability_snapshot(root, disabled, "6.8.0-test") == (
+        "unknown",
+        "0",
+    )
+
+
+@pytest.mark.parametrize("malformed_in", ["builtin", "dependencies", "truncated"])
+def test_module_catalogue_does_not_trust_hit_when_other_index_malformed(
+    tmp_path: Path, malformed_in: str
+) -> None:
+    root, builtin, disabled = _module_catalogue(tmp_path)
+    dependencies = builtin.with_name("modules.dep")
+    builtin.write_bytes(b"kernel/net/bridge/br_netfilter.ko\n")
+    dependencies.write_bytes(b"kernel/net/bridge/br_netfilter.ko.zst: \n")
+    if malformed_in == "builtin":
+        builtin.write_bytes(b"not-a-valid-module-record\n")
+    elif malformed_in == "dependencies":
+        dependencies.write_bytes(b"kernel/net/bridge/br_netfilter.ko.zst\n")
+    else:
+        dependencies.write_bytes(b"kernel/net/bridge/br_netfilter.ko.zst: ")
+    assert rootless._kernel_module_availability_snapshot(root, disabled, "6.8.0-test") == (
+        "unknown",
+        "0",
     )
 
 

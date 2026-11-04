@@ -49,31 +49,9 @@ jobs:
           test "$(docker image inspect --format '{{json .Config.Cmd}}' "$IMAGE")"
           = '["python","-m","boca_socios.browser.ipc_worker"]'
       - name: Scan before any image publication
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: boca-release-validation:${{ github.sha }}
-          version: v0.76.1
-          cache: "false"
-          scanners: vuln
-          vuln-type: os,library
-          severity: HIGH,CRITICAL
-          ignore-unfixed: "false"
-          exit-code: "1"
-          format: table
-          timeout: 10m
+        run: bash scripts/trivy_scan_image.sh "boca-release-validation:$GITHUB_SHA"
       - name: Scan browser image before any publication
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: boca-browser-release-validation:${{ github.sha }}
-          version: v0.76.1
-          cache: "false"
-          scanners: vuln
-          vuln-type: os,library
-          severity: HIGH,CRITICAL
-          ignore-unfixed: "false"
-          exit-code: "1"
-          format: table
-          timeout: 10m
+        run: bash scripts/trivy_scan_image.sh "boca-browser-release-validation:$GITHUB_SHA"
 
   publish:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'mbalbo2023/boca-socios-assistant' && github.actor == 'mbalbo2023'
@@ -137,31 +115,9 @@ jobs:
           test "$(docker image inspect --format '{{json .Config.Cmd}}' "$IMAGE")"
           = '["python","-m","boca_socios.browser.ipc_worker"]'
       - name: Scan the image that will be published
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
-          version: v0.76.1
-          cache: "false"
-          scanners: vuln
-          vuln-type: os,library
-          severity: HIGH,CRITICAL
-          ignore-unfixed: "false"
-          exit-code: "1"
-          format: table
-          timeout: 10m
+        run: bash scripts/trivy_scan_image.sh "ghcr.io/mbalbo2023/boca-socios-assistant:sha-$GITHUB_SHA"
       - name: Scan browser image before any publication
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}
-          version: v0.76.1
-          cache: "false"
-          scanners: vuln
-          vuln-type: os,library
-          severity: HIGH,CRITICAL
-          ignore-unfixed: "false"
-          exit-code: "1"
-          format: table
-          timeout: 10m
+        run: bash scripts/trivy_scan_image.sh "ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-$GITHUB_SHA"
       - name: Recheck current main source before publication
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

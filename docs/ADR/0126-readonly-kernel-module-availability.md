@@ -38,6 +38,12 @@ Validate the release as a single safe component. Use fixed paths, `O_RDONLY`,
 catalogue**. No file names, other module contents or private paths appear in
 the public receipt. The catalogue parser recognizes only the exact
 `br_netfilter.ko` basename and common `.gz`, `.xz`, `.zst` compressed forms.
+**Both** catalogues must be present, complete and structurally valid before a
+positive or negative index classification; a hit in one cannot overrule a missing,
+malformed, symlinked or truncated other catalogue. `modules.builtin` accepts one
+module path per newline; `modules.dep` accepts a module path, colon, then zero or
+more module dependency paths. Reject invalid records and partial final lines as
+`unknown`. These extra checks remain strictly read-only and conservative.
 The `modules.dep` format is generated metadata; this is **a hint, not a
 guaranteed or stable ABI**. Unknown, missing, truncated, symlinked and
 malformed metadata cannot become a positive finding.
