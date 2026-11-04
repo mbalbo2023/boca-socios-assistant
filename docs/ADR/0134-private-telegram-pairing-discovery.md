@@ -79,6 +79,41 @@ V1 (`bot_token + chat_id`) custody or touch the droplet. Cross-language native
 Node WebCrypto-to-Python tests verify the exact new envelope, fingerprint,
 AEAD tamper rejection, V1/V2 separation, negative privacy paths and CSP.
 
+`src/boca_socios/telegram_pairing_resolver.py` now adds a **source-only,
+non-routed, non-dispatched** read-only Bot API resolver. Its four allowlisted
+HTTPS operations are `getMe`, `getWebhookInfo`, `getUpdates` and `getChat`.
+It rejects token-bot ID mismatch, any active/unknown webhook, absent/stale/
+duplicate/group pairing, mismatched `getChat`, non-200 responses, redirects,
+oversize payloads, malformed JSON and transport errors without reflecting
+token-bearing URLs or chat IDs. `getUpdates` uses no offset and does not edit
+`allowed_updates` or webhook state; this is a **non-acknowledging peek** of
+pending updates, not a durable consumer. Native Python SSL uses certificate
+verification, hostname verification, a 3-second connection timeout and an
+allowlisted fixed host. A host adapter still must enforce dedicated egress,
+rootless identity, read-only mounts, exact image/source, stopped controller,
+owner authorization and secret-safe output capture before allowing this call.
+Tests inject a fake transport, so **no real Telegram request was executed**.
+
+On unique discovery, the resolver builds an **in-memory V1 sealed ciphertext**
+using existing `telegram_bootstrap.seal_for_recipient()`. This is a handoff for
+the already-tested offline V1 installer; no new write logic is introduced.
+The result also carries a redacted provisional receipt binding source SHA,
+recipient fingerprint, numeric bot ID, update ID, keyed chat identity HMAC and
+replay-fence HMAC, with `notification_receipt=UNVERIFIED` and
+`READY_FOR_PROTECTED_INSTALL`. The host must atomically consume the replay
+fence in dedicated custody before calling existing `telegram_bootstrap.install`
+and must later obtain the separate human-confirmed notification receipt. The
+Python dataclasses omit ciphertext, keyed chat proof and replay fence from
+their log representation. This is **not a physical install receipt**.
+
+The protected host wrapper also needs a positive **no competing Telegram
+poller** assertion. `getUpdates` without `offset` does not acknowledge updates,
+but a concurrent consumer or previous bot-wide `allowed_updates` setting can
+cause a missing message. Do not clear pending updates, delete webhooks or change
+subscription settings automatically as a workaround. The safe response is
+NO_GO and a newly generated owner code/recipient envelope after diagnosing
+the conflicting integration. An issued code is accepted for at most one hour.
+
 The new `pairing_page()` is **NOT YET ROUTED**. No new URL is active in the
 deployed controller. The V2 ciphertext must **NOT** be submitted to the old
 `telegram-install` V1 workflow. Tests run with fake credentials only; not a
@@ -90,10 +125,13 @@ match the exact stopped controller and private recipient key at cutover time.
 1. Keep the original controller running until a reviewed, exact-SHA
    transition/custody operation exists; no `beta-browser-install` new-only
    attempt against the installed singleton.
-2. The source-only V2 local seal and strict decoder exist. Integrate a V2 route
-   behind existing owner authentication, a verified recipient link, **separate
-   V2 protected install** and the getUpdates adapter; test a real private
-   `getUpdates` receipt once available. Keep V1 workflow rejecting V2 data.
+2. The source-only V2 local seal, decoder and read-only injectable Bot API
+   resolver exist. Integrate a V2 route behind existing owner authentication,
+   trusted recipient link and protected host wrapper that executes resolver
+   only within the Boca-specific network/custody identity. Capture V1 sealed
+   handoff privately, atomically consume replay fence, and then reuse the
+   existing offline V1 installer. Test a real private `getUpdates` receipt
+   once physically available. Keep V1 workflow rejecting raw V2 ciphertext.
 3. Stage Telegram 0007 migration and recipient key with controller stopped,
    under the sole protected Boca Actions workflow. Currently these are
    distinct `telegram-migrate` and `telegram-prepare` operations, each
