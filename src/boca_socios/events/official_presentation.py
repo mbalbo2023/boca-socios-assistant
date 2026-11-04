@@ -34,6 +34,11 @@ _AREA_LABELS = {
     "plateas": "plateas",
     "plateas_y_generales": "plateas y generales",
 }
+_CHANNEL_LABELS = {
+    "BOCA_SOCIOS": "Boca Socios, según transcripción no verificada",
+    "CONMEBOL": "plataforma de CONMEBOL, según transcripción no verificada",
+    "UNKNOWN": "canal no determinado",
+}
 
 
 def _art_time(at: datetime) -> datetime:
@@ -83,6 +88,9 @@ def export_observed_catalog_json(notices: Iterable[OfficialNotice], *, at: datet
                 },
                 "observation_age_minutes": _observed_minutes(notice, at),
                 "verification_state": notice.verification_state,
+                "admission_channel_claim": notice.admission_channel_claim,
+                "admission_channel_excerpt": notice.admission_channel_excerpt,
+                "admission_channel_verified": False,
                 "phase": assessment.phase,
                 "actionable": False,
                 "windows": [_window_document(window) for window in notice.windows],
@@ -160,6 +168,7 @@ def render_observed_catalog_html(notices: Iterable[OfficialNotice], *, at: datet
         anchor = "boca-observed-" + escape(notice.event_key, quote=True)
         link = escape(notice.source_url, quote=True)
         published = escape(notice.published_on.isoformat())
+        channel_label = escape(_CHANNEL_LABELS[notice.admission_channel_claim])
         kickoff = _time(
             notice.kickoff_at,
             label=notice.kickoff_at.astimezone(_ART).strftime("%d/%m/%Y %H:%M ART"),
@@ -178,6 +187,8 @@ def render_observed_catalog_html(notices: Iterable[OfficialNotice], *, at: datet
                 "La antigüedad no acredita actualidad de la noticia.</p>",
                 f'<p><a href="{link}" rel="noopener noreferrer">'
                 "Ver aviso público oficial (fuente)</a>.</p>",
+                f"<p>Canal de admisión mencionado: {channel_label}. "
+                "Esta mención no autoriza navegación ni operaciones.</p>",
             ]
         )
         if notice.windows:

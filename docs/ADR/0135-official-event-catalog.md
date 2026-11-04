@@ -123,6 +123,30 @@ No están todavía conectadas a la UI servida: `private_http.py` y los comandos
 siguen fuera del ownership de este frente. Conectarlas requerirá un PR de UI
 independiente, con una sección de lectura y sin derivación a TicketIntent.
 
+### Contrato v2 del canal *declarado*, sin promoción de confianza
+
+En la evidencia de `Final a la vista` el club anunció una plataforma externa
+CONMEBOL; en avisos de partidos locales anunció Boca Socios. El importador
+acepta ahora `official-notice-observation-v2`, manteniendo las mismas
+restricciones de URL oficial, sello temporal, digest **declarado** y ventanas,
+más dos campos **obligatorios**:
+
+- `admission_channel_claim`: `BOCA_SOCIOS`, `CONMEBOL` o `UNKNOWN`.
+- `admission_channel_excerpt`: texto corto observado en el mismo artículo,
+  sin datos personales y acotado a 20–320 caracteres cuando hay canal.
+  Para `BOCA_SOCIOS` debe contener «Boca Socios»; para `CONMEBOL`,
+  «Conmebol» y «plataforma». Extractos que mencionan ambos canales se
+  rechazan como ambiguos. `UNKNOWN` exige `null`.
+
+Este extracto y su relación con la URL son **afirmaciones del operador**,
+no una validación de la fuente ni un derecho de acceso. En JSON se conserva
+`admission_channel_verified=false` a nivel catálogo **y evento**; en HTML
+se indica «según transcripción no verificada» y que no habilita navegar ni
+operar. La observación v1 preexistente sigue admitida sin alteraciones pero
+su canal es **obligatoriamente `UNKNOWN`**, nunca Boca Socios por defecto.
+No se agregan URL externas a la lista permitida, descargas automáticas ni
+endpoints de CONMEBOL o Queue-it.
+
 ## Evidencia / Regla 84
 
 Base `main=cabce9f1e452e63ded115f447559a358dc0f4d1b`, propiedad de #314

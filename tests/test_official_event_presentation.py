@@ -14,37 +14,48 @@ from boca_socios.events.official_presentation import (
 )
 
 
-def _notice(*, title: str = "Partido Sintético de Boca", key: str = "boca-ejemplo-2026"):
-    return load_observed_notice(
-        json.dumps(
+def _notice(
+    *,
+    title: str = "Partido Sintético de Boca",
+    key: str = "boca-ejemplo-2026",
+    channel: str | None = None,
+    excerpt: str | None = None,
+):
+    data: dict[str, object] = {
+        "version": "official-notice-observation-v1",
+        "source_url": "https://www.bocajuniors.com.ar/noticias/ejemplo-sintetico-no-publicado",
+        "published_on": "2026-11-03",
+        "observed_at": "2026-11-04T17:00:00-03:00",
+        "source_sha256": "b" * 64,
+        "event_key": key,
+        "title": title,
+        "kickoff_at": "2026-11-07T17:30:00-03:00",
+        "windows": [
             {
-                "version": "official-notice-observation-v1",
-                "source_url": "https://www.bocajuniors.com.ar/noticias/ejemplo-sintetico-no-publicado",
-                "published_on": "2026-11-03",
-                "observed_at": "2026-11-04T17:00:00-03:00",
-                "source_sha256": "b" * 64,
-                "event_key": key,
-                "title": title,
-                "kickoff_at": "2026-11-07T17:30:00-03:00",
-                "windows": [
-                    {
-                        "member_category": "abonados",
-                        "seat_area": "plateas",
-                        "opens_at": "2026-11-03T14:00:00-03:00",
-                        "closes_at": "2026-11-06T23:59:00-03:00",
-                        "close_rule": "timestamp",
-                    },
-                    {
-                        "member_category": "abono_solidario",
-                        "seat_area": "plateas",
-                        "opens_at": "2026-11-03T14:00:00-03:00",
-                        "closes_at": None,
-                        "close_rule": "stadium_open",
-                    },
-                ],
+                "member_category": "abonados",
+                "seat_area": "plateas",
+                "opens_at": "2026-11-03T14:00:00-03:00",
+                "closes_at": "2026-11-06T23:59:00-03:00",
+                "close_rule": "timestamp",
+            },
+            {
+                "member_category": "abono_solidario",
+                "seat_area": "plateas",
+                "opens_at": "2026-11-03T14:00:00-03:00",
+                "closes_at": None,
+                "close_rule": "stadium_open",
+            },
+        ],
+    }
+    if channel is not None:
+        data.update(
+            {
+                "version": "official-notice-observation-v2",
+                "admission_channel_claim": channel,
+                "admission_channel_excerpt": excerpt,
             }
         )
-    )
+    return load_observed_notice(json.dumps(data))
 
 
 def _cut() -> datetime:
@@ -67,6 +78,9 @@ def test_offline_json_exports_source_observation_age_and_never_claims_live_feed(
     assert event["source"]["sha256_asserted"] == "b" * 64
     assert event["observation_age_minutes"] == 95
     assert event["verification_state"] == "SOURCE_OBSERVED_UNVERIFIED"
+    assert event["admission_channel_claim"] == "UNKNOWN"
+    assert event["admission_channel_excerpt"] is None
+    assert event["admission_channel_verified"] is False
     assert event["phase"] == "UPCOMING_UNVERIFIED"
     assert event["actionable"] is False
     assert event["windows"][0]["exact_close_time_published"] is True
@@ -144,3 +158,35 @@ def test_duplicate_observations_cannot_be_displayed_as_two_matches() -> None:
         export_observed_catalog_json([notice, notice], at=_cut())
     with pytest.raises(OfficialCatalogError):
         render_observed_catalog_html([notice, notice], at=_cut())
+
+
+@pytest.mark.parametrize(
+    ("channel", "excerpt", "label"),
+    [
+        (
+            "BOCA_SOCIOS",
+            "La entrada se tramita por Boca Socios según la nota pública del club.",
+            "Boca Socios, según transcripción no verificada",
+        ),
+        (
+            "CONMEBOL",
+            "La Conmebol abre la venta exclusivamente por su plataforma de entradas.",
+            "plataforma de CONMEBOL, según transcripción no verificada",
+        ),
+    ],
+)
+def test_v2_claimed_channels_have_explicit_source_text_but_no_live_verification(
+    channel: str, excerpt: str, label: str
+) -> None:
+    notice = _notice(channel=channel, excerpt=excerpt)
+    document = json.loads(export_observed_catalog_json([notice], at=_cut()))
+    assert document["admission_channel_verified"] is False
+    entry = document["events"][0]
+    assert entry["admission_channel_claim"] == channel
+    assert entry["admission_channel_excerpt"] == excerpt
+    assert entry["admission_channel_verified"] is False
+    assert entry["actionable"] is False
+    html = render_observed_catalog_html([notice], at=_cut())
+    assert label in html
+    assert "no autoriza navegación ni operaciones" in html
+    assert "sin verificación en vivo" in html
