@@ -1,5 +1,17 @@
 # Boca Socios Assistant
 
+## Concurrencia del candidato de BETA #306 — 04/11/2026
+
+[PR #306](https://github.com/mbalbo2023/boca-socios-assistant/pull/306)
+incluye un ajuste de **validación de PR, no de despliegue**: las ejecuciones
+anteriores del mismo PR en Image Release y First Deploy pueden cancelarse al
+cambiar el SHA; las operaciones manuales `workflow_dispatch` siguen
+serializadas. CI, escaneo de imágenes, revisión técnica, SHA exacto, ambiente
+protegido y controles del droplet se conservan. Véase
+[ADR0129](docs/ADR/0129-controller-only-beta-resume.md).
+**No existe evidencia nueva de BETA instalada**; verificar cuatro checks
+del candidato y seguridad postmerge antes de cualquier release físico.
+
 ## Contrato vigente para corrección del bloqueo rootless — 04/11/2026
 
 **Actualización 04/11/2026 (Regla 84, RCA [#275](https://github.com/mbalbo2023/boca-socios-assistant/issues/275)):** El [run protegido #41854591848](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41854591848) verificó `module=absent`, `nf_call_iptables=unavailable`, `index=listed`, `modules_disabled=0`, `write_ops=none` en `main=41fc15e261d002dc614124ac0f2d2e1bea81f896`; fue una **lectura exitosa**, no un deploy.
