@@ -2945,7 +2945,7 @@ def _beta_stopped_controller(
     network_id = endpoint.get("NetworkID")
     if not isinstance(network_id, str) or re.fullmatch(r"[0-9a-f]{64}", network_id) is None:
         raise PreflightError("BETA resume network ID is uncertain")
-    if network.get("Ports") not in (None, {}, {"8443/tcp": None}):
+    if network.get("Ports") not in (None, {}, {"8443/tcp": None}, expected_ports):
         raise PreflightError("BETA resume stopped port exposure is unexpected")
     mounts = record.get("Mounts")
     if not isinstance(mounts, list) or len(mounts) != 3:
