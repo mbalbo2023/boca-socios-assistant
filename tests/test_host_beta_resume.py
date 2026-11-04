@@ -341,6 +341,7 @@ def test_protected_workflow_starts_daemon_before_new_install_and_resumes_after_a
     assert 'test "$BOCA_BETA_ENV_READY" = ready' in content
     assert "python scripts/check_release_run.py" in content
 
+
 def test_pr_validation_does_not_serialize_obsolete_shas_or_cancel_host_runs() -> None:
     """Superseded PR checks cancel; protected physical dispatch stays exclusive."""
     workflows = Path(__file__).resolve().parents[1] / ".github/workflows"
