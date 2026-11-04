@@ -165,12 +165,15 @@ def test_unknown_installed_volume_refuses_probe_before_diagnostic(
     ("memory_kib", "cpu_headroom", "network_id", "accepted"),
     [
         (600 * 1024, 0.3, "a" * 64, True),
-        (500 * 1024, 0.3, "a" * 64, False),
-        (600 * 1024, 0.2, "a" * 64, False),
+        (500 * 1024, 0.3, "a" * 64, True),
+        (600 * 1024, 0.2, "a" * 64, True),
+        (1, 0.0, "a" * 64, True),
+        (0, 0.3, "a" * 64, False),
+        (600 * 1024, float("nan"), "a" * 64, False),
         (600 * 1024, 0.3, "b" * 64, False),
     ],
 )
-def test_installed_headroom_and_network_id_are_checked_without_preinstall_threshold(
+def test_installed_headroom_is_advisory_but_invalid_metadata_and_network_are_rejected(
     monkeypatch: pytest.MonkeyPatch,
     memory_kib: int,
     cpu_headroom: float,
