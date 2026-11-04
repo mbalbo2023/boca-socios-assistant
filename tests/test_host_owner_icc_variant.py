@@ -146,7 +146,7 @@ def test_icc_true_probe_and_real_owner_use_only_private_boca_bridges() -> None:
     assert "network-probe-icc-true" in source
     assert "startsWith(inputs.operation, 'network-probe')" in workflow
     assert "BOCA_NETWORK_PROBE result=" in workflow
-    assert "com.docker.network.bridge.enable_icc=false" in source  # legacy probe
+    assert host.ENROLL_NETWORK_OPTIONS["com.docker.network.bridge.enable_icc"] == "false"
     assert "com.docker.network.bridge.enable_icc=true" in source  # owner start
     assert "com.docker.network.bridge.enable_icc=true" in workflow  # owner smoke
     assert "--network=host" not in workflow
