@@ -37,7 +37,7 @@ ENROLL_NETWORK = "boca-socios_owner_enroll_private"
 ENROLL_CONTAINER = "boca-socios-owner-enroll-1"
 ENROLL_NETWORK_OPTIONS = {
     "com.docker.network.bridge.enable_ip_masquerade": "false",
-    "com.docker.network.bridge.enable_icc": "false",
+    "com.docker.network.bridge.enable_icc": "true",
     "com.docker.network.bridge.host_binding_ipv4": "127.0.0.1",
 }
 BROWSER_IPC_MARKER = ROOT / "browser-ipc-attempt.json"
