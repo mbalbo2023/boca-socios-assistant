@@ -491,6 +491,18 @@
         "tests/test_trivy_oci_scanner.py::test_trivy_failure_cannot_skip_release_login_or_report_success",
         "tests/test_trivy_oci_scanner.py::test_trivy_cli_uses_pinned_docker_source_and_propagates_scanner_failure"
       ]
+    },
+    {
+      "id": "RCA-307",
+      "issue": 307,
+      "fix_pr": 308,
+      "root_cause": "The controller preflight and beta-apply repeatedly enforced a fixed 768 MiB MemAvailable/0.5 CPU headroom veto despite the approved unbenchmarked-resource advisory policy; installed acceptance had a separate 512 MiB/0.25 CPU veto. Physical beta-install run 41890280818 passed earlier snapshots but failed beta-apply on the stale memory threshold, without logging its final memory value.",
+      "prevention": "Keep host RAM/CPU headroom observational before and after install, reject nonpositive/nonfinite measurements, log a bounded pre-apply observation, and measure real consumption through protected synthetic acceptance. Preserve hard cgroup caps, rootless identity, SHA, storage, network and positive Boca-only cleanup.",
+      "regression_tests": [
+        "tests/test_host_first_deploy.py::test_valid_low_host_headroom_is_advisory_before_install",
+        "tests/test_host_first_deploy.py::test_unsafe_host_snapshot_is_no_go",
+        "tests/test_host_beta_acceptance.py::test_installed_headroom_is_advisory_but_invalid_metadata_and_network_are_rejected"
+      ]
     }
   ]
 }
