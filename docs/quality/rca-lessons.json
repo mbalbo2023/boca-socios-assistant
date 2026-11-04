@@ -491,6 +491,18 @@
         "tests/test_trivy_oci_scanner.py::test_trivy_failure_cannot_skip_release_login_or_report_success",
         "tests/test_trivy_oci_scanner.py::test_trivy_cli_uses_pinned_docker_source_and_propagates_scanner_failure"
       ]
+    },
+    {
+      "id": "RCA-307",
+      "issue": 307,
+      "fix_pr": 308,
+      "root_cause": "The beta-install helper still required 768 MiB MemAvailable and 0.5 CPU at each inventory despite approved advisory policy; acceptance also required 512 MiB/0.25 CPU. In protected run 41890280818 an earlier PASS became beta-apply NO_GO with no final memory value.",
+      "prevention": "Record valid host RAM/CPU observations rather than unbenchmarked vetoes. Reject invalid metadata; preserve rootless identity, hard cgroups, SHA, storage, network and Boca-only cleanup. Measure real consumption in protected synthetic acceptance.",
+      "regression_tests": [
+        "tests/test_host_first_deploy.py::test_valid_low_host_headroom_is_advisory_before_install",
+        "tests/test_host_first_deploy.py::test_unsafe_host_snapshot_is_no_go",
+        "tests/test_host_beta_acceptance.py::test_installed_headroom_is_advisory_but_invalid_metadata_and_network_are_rejected"
+      ]
     }
   ]
 }

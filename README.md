@@ -1,5 +1,32 @@
 # Boca Socios Assistant
 
+## RCA del primer beta-install físico — 04/11/2026 (issue #307)
+
+`main=3c5a0da3df527cfe58a98442ea471be81f9f06ab` (PR #306) produjo un
+release inmutable [#41873165726](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41873165726).
+El dueño completó el alta de Chrome con PIN en el paso protegido
+`owner-enroll` [#41887635433](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41887635433).
+El primer `beta-install` [#41889141825](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41889141825)
+fue rechazado por la variable de entorno vacía. Con el gate `ready`, el
+segundo [#41890280818](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41890280818)
+superó validaciones de SHA, release, daemon, owner, staging, configuración y
+puerto `127.0.0.1:8443 FREE`. El `beta-preflight` observó 931.808 y luego
+914.340 KiB de MemAvailable; el `beta-apply` posterior devolvió
+`BOCA_NO_GO: insufficient available host memory` sin registrar su cifra final.
+Las tres etapas de detención/limpieza selectiva pasaron, con volúmenes del
+dueño preservados; sus recibos detallados no son públicos.
+
+**BETA no instalada.** La causa de rechazo es el veto fijo de 768 MiB que
+quedó en `validate_snapshot`, pese a la decisión del dueño de considerar la
+holgura un dato observado y medir consumo real después de instalar. El veto
+de 512 MiB/0,25 CPU en aceptación requiere la misma reconciliación. El
+[issue #307](https://github.com/mbalbo2023/boca-socios-assistant/issues/307)
+contiene RCA y propuesta fix-forward; hasta PR, CI, revisión, merge, nuevo
+release y recibo protegido, **no repetir `beta-install`**. Límites estrictos
+del contenedor, identidad rootless, almacenamiento, limpieza y aislamiento
+siguen obligatorios. La sesión autenticada en GitHub se verificó en el
+navegador interno para futuros despachos manuales; no se lanzó un reintento.
+
 ## Concurrencia del candidato de BETA #306 — 04/11/2026
 
 [PR #306](https://github.com/mbalbo2023/boca-socios-assistant/pull/306)

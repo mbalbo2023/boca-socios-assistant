@@ -289,15 +289,24 @@ def validate_diagnostic(snapshot: DiagnosticSnapshot, image: str, source_sha: st
         raise PreflightError("Boca effective cgroup limits are unproven")
 
 
+def _validate_host_resource_observation(snapshot: HostSnapshot) -> None:
+    """Reject invalid counters, not unbenchmarked host resource headroom.
+
+    Pre/post-install resource use is measured during BETA acceptance. The
+    controller retains its separately verified hard cgroup CPU/RAM/PID caps.
+    """
+    if snapshot.available_memory_kib <= 0:
+        raise PreflightError("invalid host MemAvailable observation")
+    if not math.isfinite(snapshot.cpu_headroom) or snapshot.cpu_headroom < 0:
+        raise PreflightError("invalid host CPU headroom observation")
+
+
 def validate_snapshot(snapshot: HostSnapshot) -> None:
     if snapshot.arch != "x86_64":
         raise PreflightError("host architecture must be x86_64")
     if snapshot.uid != 10001:
         raise PreflightError("dedicated deploy identity must have UID 10001")
-    if snapshot.available_memory_kib < 768 * 1024:
-        raise PreflightError("insufficient available host memory")
-    if snapshot.cpu_headroom < 0.5:
-        raise PreflightError("insufficient approximate host CPU headroom")
+    _validate_host_resource_observation(snapshot)
     if (
         min(snapshot.available_disk_bytes, snapshot.docker_disk_bytes) < 4 * 1024**3
         or min(snapshot.available_inodes, snapshot.docker_inodes) < 50_000
@@ -2791,10 +2800,10 @@ def _beta_acceptance_status(
         or not snapshot.boca_network
     ):
         raise PreflightError("installed Boca controller identity or resources are unsafe")
-    # The preinstall 768 MiB/0.5 CPU headroom gate cannot be reused after the
-    # capped controller has started. Retain explicit installed-host reserves.
-    if snapshot.available_memory_kib < 512 * 1024 or snapshot.cpu_headroom < 0.25:
-        raise PreflightError("insufficient installed Boca host headroom")
+    # ADR0112/#307: CPU/RAM host headroom is observational after deployment.
+    # Invalid counters still fail; actual runtime/health and cgroup limits
+    # are verified by the downstream diagnostic and synthetic acceptance.
+    _validate_host_resource_observation(snapshot)
     _validate_owner_volume()
     _validate_key_volume()
     _validate_data_volume()
@@ -3085,6 +3094,12 @@ def _beta_phase(
         return
     if operation != "beta-apply":
         raise PreflightError("unknown BETA phase")
+    print(
+        "BOCA_BETA_CAPACITY phase=pre_apply state=OBSERVED"
+        f" mem_kib={snapshot.available_memory_kib}"
+        f" cpu_headroom={snapshot.cpu_headroom:.2f} postdeploy_measurement=required",
+        flush=True,
+    )
     _run(*_beta_compose_args("config", "-q"), env=compose_env)
     _beta_pull(image, source_sha)
     _verify_beta_compose(compose_sha)

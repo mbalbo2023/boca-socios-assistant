@@ -255,6 +255,23 @@ def test_first_deploy_preflight_passes_only_with_free_boca_namespace() -> None:
     validate_snapshot(safe_snapshot())
 
 
+@pytest.mark.parametrize(
+    ("memory_kib", "cpu_headroom"),
+    [
+        (400_000, 0.1),  # Previously vetoed by the unbenchmarked 768 MiB reserve.
+        (1, 0.0),  # Physically low, but still a valid observation.
+    ],
+)
+def test_valid_low_host_headroom_is_advisory_before_install(
+    memory_kib: int, cpu_headroom: float
+) -> None:
+    snapshot = replace(safe_snapshot(), available_memory_kib=memory_kib, cpu_headroom=cpu_headroom)
+    validate_snapshot(snapshot)
+    host.validate_beta_snapshot(
+        replace(snapshot, boca_volume=True), {host.OWNER_VOLUME}, expected={host.OWNER_VOLUME}
+    )
+
+
 def test_read_only_preflight_needs_no_image_or_release_and_does_not_mutate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -510,7 +527,7 @@ def test_host_preflight_modes_reject_swapped_image_contracts(
     [
         ("arch", "aarch64"),
         ("uid", 0),
-        ("available_memory_kib", 400_000),
+        ("available_memory_kib", 0),
         ("available_disk_bytes", 2 * 1024**3),
         ("available_inodes", 1_000),
         ("docker_disk_bytes", 2 * 1024**3),
@@ -519,7 +536,9 @@ def test_host_preflight_modes_reject_swapped_image_contracts(
         ("boca_containers", True),
         ("boca_volume", True),
         ("boca_network", True),
-        ("cpu_headroom", 0.1),
+        ("cpu_headroom", -1.0),
+        ("cpu_headroom", float("nan")),
+        ("cpu_headroom", float("inf")),
     ],
 )
 def test_unsafe_host_snapshot_is_no_go(field: str, value: object) -> None:
