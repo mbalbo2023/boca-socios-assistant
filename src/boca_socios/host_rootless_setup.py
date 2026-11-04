@@ -1638,9 +1638,7 @@ def _read_kernel_module_index(path: Path) -> bytes | None:
         os.close(descriptor)
 
 
-_KERNEL_MODULE_PATH = re.compile(
-    rb"(?:[A-Za-z0-9_.+-]+/)+[A-Za-z0-9_.+-]+\.ko(?:\.(?:gz|xz|zst))?"
-)
+_KERNEL_MODULE_PATH = re.compile(rb"(?:[A-Za-z0-9_.+-]+/)+[A-Za-z0-9_.+-]+\.ko(?:\.(?:gz|xz|zst))?")
 
 
 def _index_mentions_bridge(data: bytes, *, dependencies: bool) -> bool | None:
@@ -1655,9 +1653,7 @@ def _index_mentions_bridge(data: bytes, *, dependencies: bool) -> bool | None:
             candidate, separator, remainder = line.partition(b":")
             if separator != b":" or (remainder and remainder[:1] not in (b" ", b"\t")):
                 return None
-            if any(
-                _KERNEL_MODULE_PATH.fullmatch(path) is None for path in remainder.split()
-            ):
+            if any(_KERNEL_MODULE_PATH.fullmatch(path) is None for path in remainder.split()):
                 return None
         else:
             candidate = line
