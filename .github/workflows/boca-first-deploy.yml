@@ -1664,7 +1664,7 @@ jobs:
           receipt=''
           if [[ "$start_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-beta-start.receipt")"; fi
           pattern='^BOCA_BETA_START state=RUNNING source_sha=([0-9a-f]{40}) image=(ghcr[.]io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}) service=controller host=127[.]0[.]0[.]1:8443 data=preserved key=preserved owner=preserved engine=off$'
-          if [[ "$start_rc" -ne 0 || ${#receipt} -gt 240 || ! "$receipt" =~ $pattern || "${BASH_REMATCH[1]}" != "$BOCA_SOURCE_SHA" || "${BASH_REMATCH[2]}" != "$BOCA_IMAGE_REF" ]]; then
+          if [[ "$start_rc" -ne 0 || ${#receipt} -gt 360 || ! "$receipt" =~ $pattern || "${BASH_REMATCH[1]}" != "$BOCA_SOURCE_SHA" || "${BASH_REMATCH[2]}" != "$BOCA_IMAGE_REF" ]]; then
             printf 'Boca BETA controller resume NO_GO; no reinstall. Boca-only stop follows.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
