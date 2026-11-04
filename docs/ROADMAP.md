@@ -1,5 +1,24 @@
 # Backlog y dependencias de la BETA
 
+## Corte vigente rootless — 2026-11-03 ART
+
+PRs #289, #290, #296 y #298 ya fueron integrados, último `main`
+`a83e105d4ccec2cc59dfabce77142750de733630`. El
+[diagnóstico protegido #41726757589](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41726757589)
+fue GREEN como **lectura** y encontró `module=absent`,
+`nf_call_iptables=unavailable`, `write_ops=none`. El alta privada real
+`ICC=false` [#41721217453](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41721217453)
+permanece NO_GO, aun cuando la red diagnóstica `ICC=true` sí pasó.
+**No hay BETA instalada**. Siguiente candidato únicamente de lectura:
+[ADR0126](ADR/0126-readonly-kernel-module-availability.md); obtener recibo
+de disponibilidad de módulo con SHA/CI de nuevo PR antes de decidir una
+intervención global, rediseño de aislamiento o host exclusivo. La carga de
+módulos y el debilitamiento de ICC=false **no están aprobados**. Después de
+resolver este bloque, completar `owner-prepare`/`owner-enroll`, release
+inmutable, `beta-install`, aceptación, acceso por túnel a 8443 y Telegram,
+con cada gate y prueba física en el [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+Los apartados siguientes son cortes anteriores, no estado actual de main.
+
 ## Decisión vigente sobre recursos (2026-11-02, candidato #273)
 
 El dueño corrigió expresamente la condición anterior: la BETA debe

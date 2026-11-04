@@ -1,23 +1,23 @@
 # Safe operations — verified evidence and gated procedures
 
-## Inspección del kernel por workflow protegido — candidata 2026-11-03
+## Inspección del kernel por workflow protegido — evidencia 2026-11-03
 
-La operación existente `infrastructure-inspect` de
-`.github/workflows/boca-first-deploy.yml` recibe una nueva fase de **lectura
-únicamente**, descrita en [ADR0125](ADR/0125-readonly-kernel-bridge-hints.md).
-Cuando esta candidata esté integrada en `main` con checks verdes, el dueño
-podrá invocarla desde una terminal autenticada con `gh workflow run`, `--ref
-main`, `operation=infrastructure-inspect`, SHA HEAD exacto, `service=controller`,
-`resource_budget=1.5cpu-1024m-192pids`, imágenes/release/envelopes vacíos.
-El workflow verifica que el daemon Boca está detenido y solicita sólo las
-lecturas `/sys/module/br_netfilter` y `bridge-nf-call-iptables` por SSH dedicado.
-La salida `BOCA_KERNEL_BRIDGE state=OBSERVED ... write_ops=none` es indicio del
-kernel, **no** autorización de red, instalación o `owner-enroll`; un transporte
-o recibo no verificable se clasifica `INDETERMINATE`. No habrá `modprobe`,
-`sudo`, escrituras sysctl ni acceso a Docker. Todavía no hay ejecución física
-ni garantía de compatibilidad `ICC=false`. Regla 84: enlazar el run real en
-[#275](https://github.com/mbalbo2023/boca-socios-assistant/issues/275)
-y [#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+PR #298/[ADR0125](ADR/0125-readonly-kernel-bridge-hints.md) está fusionado.
+El [run #41726757589](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41726757589)
+de `infrastructure-inspect` sobre
+`main=a83e105d4ccec2cc59dfabce77142750de733630` devolvió
+`BOCA_KERNEL_BRIDGE state=OBSERVED ... module=absent nf_call_iptables=unavailable write_ops=none`.
+Fue lectura sin módulo cargado, puerto ni servicio iniciado. El green de
+workflow **no autoriza `owner-enroll` ni BETA**: la red real `ICC=false`
+continúa NO_GO. [ADR0126](ADR/0126-readonly-kernel-module-availability.md)
+describe la ampliación propuesta para verificar índices del módulo del kernel
+y política `modules_disabled`, no ejecutada todavía en el host. Una vez
+integrada con todos los gates, usar el mismo workflow manual, `--ref main`,
+SHA exacto, `service=controller`, `resource_budget=1.5cpu-1024m-192pids`,
+imágenes/release/envelopes vacíos. Ninguna fase corre `modprobe`, `sudo`,
+escrituras `sysctl`, Docker ni operaciones sobre otros servicios. Logs
+únicamente con recibos allowlisted; consola Termius devuelve resultado breve
+y copia OSC52, sin fotografías de pantalla.
 
 ## Piloto conectado: Chrome físico encontrado; nueva prueba pública acotada (03/11/2026)
 

@@ -2,20 +2,23 @@
 
 ## Checkpoint rootless físico — 03/11/2026 (RCA #275)
 
-Sobre `main=b7e6e59af1ad15693528f888d4d2341de6038b56`, el
-[run #41720576622](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41720576622)
-probó una red temporal `ICC=true` sólo diagnóstica: `PASS`, limpieza verificada.
-El [run #41721217453](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41721217453)
-con el `ICC=false` exigido para `owner-enroll` devolvió
-`NO_GO reason=firewall_bridge_netfilter_unavailable cleanup=VERIFIED`;
-el daemon exclusivo se detuvo sin instalar BETA. La nueva
-[ADR0125](docs/ADR/0125-readonly-kernel-bridge-hints.md) propone añadir dos
-lecturas de kernel **sin efectos** a la operación protegida existente
-`infrastructure-inspect`. Hasta que pase CI, sea fusionada y se ejecute
-físicamente, no hay recibo del estado del módulo ni autorización para tocar
-kernel/firewall global o relajar `ICC=false`. [Issue #275](https://github.com/mbalbo2023/boca-socios-assistant/issues/275)
+El PR #298 fue **fusionado** en
+`main=a83e105d4ccec2cc59dfabce77142750de733630`. Su diagnóstico protegido
+[run #41726757589](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41726757589)
+fue exitoso **como inspección de solo lectura** y emitió
+`BOCA_KERNEL_BRIDGE state=OBSERVED ... module=absent nf_call_iptables=unavailable write_ops=none`.
+La red temporal [ICC=true #41720576622](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41720576622)
+pasó sólo en modo diagnóstico; la red real de `owner-enroll`, con `ICC=false`,
+[falló #41721217453](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41721217453)
+con `reason=firewall_bridge_netfilter_unavailable cleanup=VERIFIED`. No se
+instaló BETA. El módulo no está cargado o visible, pero todavía se desconoce
+si está disponible para el kernel activo. [ADR0126](docs/ADR/0126-readonly-kernel-module-availability.md)
+propone una **nueva candidata read-only**, no ejecutada ni fusionada en ese
+corte, para distinguir disponibilidad de carga. No existe autorización para
+cargar módulos, modificar kernel/firewall global o relajar `ICC=false`.
+[Issue #275](https://github.com/mbalbo2023/boca-socios-assistant/issues/275)
 y [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
-mantienen la evidencia más reciente.
+son los registros de evidencia operativa.
 
 ## Nueva frontera de titularidad — 03/11/2026
 

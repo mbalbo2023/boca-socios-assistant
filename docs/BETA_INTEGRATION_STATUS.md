@@ -2,16 +2,18 @@
 
 ## Última evidencia rootless — 03/11/2026, NO_GO para ICC=false
 
-Main verificado `b7e6e59af1ad15693528f888d4d2341de6038b56` tras PR #297.
+Main verificado `a83e105d4ccec2cc59dfabce77142750de733630` tras PR #298.
 La comprobación temporal `ICC=true` [#41720576622](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41720576622)
-dio `PASS cleanup=VERIFIED`; la comprobación `ICC=false` que importa para el
-alta de dueño [#41721217453](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41721217453)
+dio `PASS cleanup=VERIFIED`; la comprobación `ICC=false` para el alta de
+dueño [#41721217453](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41721217453)
 dio `NO_GO reason=firewall_bridge_netfilter_unavailable cleanup=VERIFIED`.
-Ambas dejaron el daemon Boca detenido. **No hay BETA desplegada**. Una nueva
-lectura de kernel, [ADR0125](ADR/0125-readonly-kernel-bridge-hints.md), se
-prepara como cambio al `infrastructure-inspect` protegido; no se ejecutó aún
-en el host ni es reparación de `ICC=false`. Los antecedentes posteriores a
-run #342 y #345 en los apartados siguientes son históricos, no el último gate.
+El diagnóstico protegido [#41726757589](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41726757589)
+pasó con `module=absent nf_call_iptables=unavailable write_ops=none`, sin
+arrancar el daemon. **No hay BETA desplegada**. Ese recibo no distingue
+módulo ausente frente a módulo disponible no cargado; la nueva candidata
+[ADR0126](ADR/0126-readonly-kernel-module-availability.md) solo propone
+lecturas adicionales. Los apartados siguientes son cortes históricos, no
+el gate vigente de host.
 
 ## Prioridad 03/11 antes de 12:00 — verificación del navegador del droplet
 
