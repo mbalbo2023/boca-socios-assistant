@@ -1710,10 +1710,13 @@ def _read_owner_public_metadata(snapshot: Inventory) -> dict[str, object]:
             result["status"] = "FILES_INACCESSIBLE"
             return result
         opened.append(data_fd)
-        result["public_files"] = {
-            name: _safe_public_file_stat(data_fd, name) for name in OWNER_PUBLIC_FILES
-        }
-        result["status"] = "OBSERVED"
+        public_files = {name: _safe_public_file_stat(data_fd, name) for name in OWNER_PUBLIC_FILES}
+        result["public_files"] = public_files
+        result["status"] = (
+            "FILES_INACCESSIBLE"
+            if any(row["status"] == "UNAVAILABLE" for row in public_files.values())
+            else "OBSERVED"
+        )
     except (CleanupError, OSError, ValueError, KeyError, TypeError):
         result["status"] = "UNAVAILABLE"
         result["owner_directory"] = None
@@ -1772,7 +1775,7 @@ def _validate_owner_metadata(value: object) -> None:
                 raise CleanupError("owner public file metadata absent on observed directory")
             continue
         if (
-            value["status"] != "OBSERVED"
+            value["status"] not in ("OBSERVED", "FILES_INACCESSIBLE")
             or type(row) is not dict
             or row.get("status") not in ("PRESENT", "MISSING", "NOT_REGULAR", "UNAVAILABLE")
             or (row["status"] != "PRESENT" and set(row) != {"status"})
@@ -1789,6 +1792,16 @@ def _validate_owner_metadata(value: object) -> None:
             )
         ):
             raise CleanupError("owner public file metadata forged")
+    if value["status"] == "OBSERVED" and any(
+        row is None or row["status"] == "UNAVAILABLE" for row in files.values()
+    ):
+        raise CleanupError("owner public file visibility unverified")
+    if (
+        value["status"] == "FILES_INACCESSIBLE"
+        and any(row is not None for row in files.values())
+        and not any(row is not None and row["status"] == "UNAVAILABLE" for row in files.values())
+    ):
+        raise CleanupError("owner file inaccessibility claim not supported")
 
 
 def _read_rootless_storage_usage() -> dict[str, object]:

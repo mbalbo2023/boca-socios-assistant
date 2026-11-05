@@ -583,6 +583,16 @@ def test_owner_volume_metadata_only_stats_two_public_files_and_no_contents(
     forged = {**metadata, "public_files": {"private_secret.key": {"status": "PRESENT"}}}
     with pytest.raises(gc.CleanupError):
         gc._validate_owner_metadata(forged)
+    invisible = {
+        **metadata,
+        "public_files": {
+            **metadata["public_files"],
+            "public_key.der": {"status": "UNAVAILABLE"},
+        },
+    }
+    with pytest.raises(gc.CleanupError, match="visibility"):
+        gc._validate_owner_metadata(invisible)
+    gc._validate_owner_metadata({**invisible, "status": "FILES_INACCESSIBLE"})
 
 
 def test_owner_volume_metadata_refuses_other_mountpoints_without_file_inspection(
