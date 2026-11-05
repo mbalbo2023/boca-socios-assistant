@@ -63,6 +63,15 @@ def test_offline_extractor_preserves_five_public_windows_without_actionability()
     assert len(notice.source_sha256) == 64
 
 
+def test_public_article_zero_width_joiner_before_general_heading_is_format_only() -> None:
+    """Actual public source renders U+200D between prose and section heading."""
+    source = _fixture().decode().replace("<h2>GENERALES</h2>", "\u200d<h2>GENERALES</h2>")
+    jsonl = build_boca_defensa_offline_jsonl(source.encode(), observed_at=_OBSERVED)
+    notice = load_observed_notice(jsonl.strip())
+    assert notice.actionable is False
+    assert len(notice.windows) == 5
+
+
 @pytest.mark.parametrize(
     ("old", "new"),
     [
