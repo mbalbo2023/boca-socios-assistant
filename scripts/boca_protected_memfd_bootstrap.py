@@ -19,12 +19,22 @@ EXPECTED_ENTRIES = frozenset(
         "__main__.py",
         "compose.yaml",
         "compose.beta.yaml",
+        "compose.beta.browser.yaml",
+        "docker/seccomp_profile.json",
         "boca_socios/__init__.py",
         "boca_socios/host_first_deploy.py",
         "boca_socios/host_rootless_setup.py",
         "boca_socios/host_boca_cleanup.py",
         "boca_socios/host_boca_attempt.py",
         "boca_socios/host_boca_transaction.py",
+        "boca_socios/host_boca_cutover.py",
+        "boca_socios/host_cutover_stage.py",
+    }
+)
+OPTION_B_ENTRIES = frozenset(
+    {
+        "boca_socios/owner_session_disk_bootstrap.py",
+        "boca_socios/panel/owner_session_sql/0001_owner_browser_session.sql",
     }
 )
 MAX_ZIP = 512_000
@@ -40,8 +50,8 @@ def verify(raw: bytes, expected_sha: str) -> None:
         entries = package.infolist()
         names = [entry.filename for entry in entries]
         if (
-            set(names) != EXPECTED_ENTRIES
-            or len(names) != len(EXPECTED_ENTRIES)
+            set(names) not in (EXPECTED_ENTRIES, EXPECTED_ENTRIES | OPTION_B_ENTRIES)
+            or len(names) != len(set(names))
             or any(entry.is_dir() for entry in entries)
             or sum(entry.file_size for entry in entries) > MAX_UNCOMPRESSED
         ):

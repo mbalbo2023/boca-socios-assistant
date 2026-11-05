@@ -317,6 +317,66 @@ def test_image_remove_that_only_untags_does_not_pass_exact_id_postflight() -> No
     assert gc.Target("image", OLD_IMAGE) in receipt.known_residue
 
 
+@pytest.mark.parametrize("kind", ["container", "network", "volume"])
+def test_noop_delete_with_changed_eligibility_cannot_claim_absent_id(kind: str) -> None:
+    """Without ID-presence assertion, all three mutations falsely returned ACCEPT."""
+    source = _inventory()
+    selected = gc.Target(
+        kind,
+        {"container": OLD_ID, "network": STALE_NET, "volume": IPC}[kind],
+    )
+    snapshot = [
+        replace(
+            source,
+            containers=(source.containers[0], source.containers[1])
+            if kind == "container"
+            else (source.containers[0],),
+            images=(source.images[0], source.images[1])
+            if kind == "container"
+            else (source.images[0],),
+            networks=source.networks if kind == "network" else source.networks[:1],
+            volumes=source.volumes if kind == "volume" else source.volumes[:3],
+        )
+    ]
+    attempted: list[gc.Target] = []
+
+    def delete_but_drift(target: gc.Target) -> None:
+        assert target == selected
+        attempted.append(target)
+        old = snapshot[0]
+        if kind == "container":
+            # Old ID remains but loses its Boca-prefixed name.
+            snapshot[0] = replace(
+                old,
+                containers=(old.containers[0], replace(old.containers[1], name="/renamed")),
+            )
+        elif kind == "network":
+            # Same network ID becomes attached; no longer a cleanup candidate.
+            snapshot[0] = replace(
+                old,
+                networks=(old.networks[0], replace(old.networks[1], attached_ids=(ACTIVE_ID,))),
+            )
+        else:
+            # Same IPC volume becomes referenced; the volume itself survives.
+            snapshot[0] = replace(
+                old,
+                containers=(replace(old.containers[0], volumes=(DATA, IPC)),),
+            )
+
+    receipt = gc.execute(
+        "FAILURE",
+        ATTEMPT,
+        preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset({OLD_ID}) if kind == "container" else frozenset(),
+        probe=lambda: snapshot[0],
+        delete_exact=delete_but_drift,
+    )
+    assert attempted == [selected]
+    assert receipt.status == "NO_GO"
+    assert selected not in receipt.removed
+
+
 def test_dangling_image_with_exact_boca_source_label_is_cleanable() -> None:
     inventory = _inventory()
     inventory = replace(

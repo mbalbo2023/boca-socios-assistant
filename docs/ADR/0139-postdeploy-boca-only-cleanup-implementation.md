@@ -182,6 +182,47 @@ worker and compensation primitives in `host_first_deploy.py` remain code-only.
 `host_boca_cutover.run_cutover_a()` now formalizes an **inert injectable**
 single-process ordering contract for existing-controller cutover:
 
+### R11 reviewed-transport and stage-only Compose increment
+
+The authenticated memfd ZIP now includes the reviewed browser Compose overlay,
+seccomp profile, isolated cutover stage helper and sequencing module. It
+accepts **exactly two** source profiles: standalone `core` before #321 merges,
+or `core + owner_session_disk_bootstrap.py + 0001_owner_browser_session.sql`
+after Option B integration. Partial Option B, third-party ZIP entries, BLACKBOX
+and unreviewed code are rejected. The auth-owned stdlib-only helper is packaged
+under the private import name `boca_socios.owner_session_disk_bootstrap` to
+avoid executing the real `panel/__init__.py` and its transitive UI imports.
+The `core` profile can **never** authorize physical cutover because the Option
+B ledger dependency is absent. The legacy controller SQLite file remains
+schema 0001–0007 and is neither opened nor migrated by ZIP selftest.
+
+The existing strict `_browser_compose_model` validator can now receive three
+*optional, all-or-nothing* paths, and only when they are exactly
+`/srv/boca-socios/cutover-a-<run>/compose.beta.yaml`,
+`compose.beta.browser.yaml` and `seccomp_profile.json`; it refuses partial,
+outside or traversal variants **before** Docker. The legacy default path and
+environment remain byte-for-byte unchanged to all existing callers. An offline
+fake Docker regression asserts the reviewed staged model and exact arguments,
+including seccomp path; no host transition has been dispatched. The caller
+must independently prove stage-marker/files/inode SHA before using this model.
+
+This increment **does not** claim a complete HostCutoverBackend, atomic
+promotion of reviewed files or a protected effectful workflow. All remain
+physical NO_GO pending exact-ID positive receipts and selective postflight.
+
+Independent #323 architectural review also found a concrete *false ACCEPT*
+path in generic cleanup: a Docker target could remain in inventory under the
+same immutable ID but cease to match the eligibility predicate (new attachment,
+different name/labels). Merely checking that it disappeared from the proposed
+deletion set did **not** prove deletion. Cleanup now requires positive *absence*
+of every removed container/network/image **ID** or volume **name**, in addition
+to image global ID-only census; an unknown post-delete classification returns
+an explicit NO_GO receipt and never retries. Three adversarial fake-host tests
+cover no-op removal plus eligibility drift for container, network and volume.
+Frozen R11-2 QA: **2582 pytest PASS +31 subtests**; Ruff lint/format **402**
+files, MyPy **89** sources, repo policy and whitespace PASS. This remains
+offline-only and is not a valid host cleanup receipt.
+
 1. Exact legacy ID/image/commit/Compose, independent new target and two image
    digests, target/overlay/seccomp SHA256, owner and fixed localhost origin are
    rejected before any host call if malformed.

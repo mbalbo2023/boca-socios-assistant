@@ -178,23 +178,30 @@ class TransactionError(ValueError):
     """No install can be authorized until the entire host gate exists."""
 
 
-def _bundled_compose(path: str) -> bytes:
-    if path not in ("compose.yaml", "compose.beta.yaml"):
-        raise TransactionError("unreviewed Boca bundle Compose entry")
+def _bundled_reviewed_file(path: str) -> bytes:
+    if path not in (
+        "compose.yaml",
+        "compose.beta.yaml",
+        "compose.beta.browser.yaml",
+        "docker/seccomp_profile.json",
+    ):
+        raise TransactionError("unreviewed Boca bundle file entry")
     # Source package is the already verified SHA-pinned memfd ZIP. Never
     # import a Compose file from host filesystem or a secondary SSH session.
     with zipfile.ZipFile(sys.argv[0], "r") as package:
         data = package.read(path)
     if not 0 < len(data) <= 32768:
-        raise TransactionError("Boca bundled Compose size invalid")
+        raise TransactionError("Boca bundled reviewed file size invalid")
     return data
 
 
 def main() -> int:
     if len(sys.argv) == 2 and sys.argv[1] == "bundle-selftest":
         try:
-            assert hashlib.sha256(_bundled_compose("compose.yaml")).digest()
-            assert hashlib.sha256(_bundled_compose("compose.beta.yaml")).digest()
+            assert hashlib.sha256(_bundled_reviewed_file("compose.yaml")).digest()
+            assert hashlib.sha256(_bundled_reviewed_file("compose.beta.yaml")).digest()
+            assert hashlib.sha256(_bundled_reviewed_file("compose.beta.browser.yaml")).digest()
+            assert hashlib.sha256(_bundled_reviewed_file("docker/seccomp_profile.json")).digest()
         except (TransactionError, AssertionError, OSError, KeyError, zipfile.BadZipFile):
             print("BOCA_BUNDLE_SELFTEST state=NO_GO reason=source_unverified")
             return 1
