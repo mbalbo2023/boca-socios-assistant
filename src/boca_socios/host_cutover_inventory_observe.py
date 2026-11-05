@@ -44,12 +44,8 @@ _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
 _RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
 _B64 = re.compile(r"[A-Za-z0-9_-]{1,2750}\Z")
-_CONTROLLER = re.compile(
-    r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z"
-)
-_BROWSER = re.compile(
-    r"ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}\Z"
-)
+_CONTROLLER = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z")
+_BROWSER = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}\Z")
 _PROJECT = "boca-socios"
 _SOURCE = "https://github.com/mbalbo2023/boca-socios-assistant"
 _BRIDGE = "boca-socios_boca_private"
@@ -280,10 +276,7 @@ def _observation(io: CutoverInventoryIO, release: ReviewedTargetRelease) -> dict
         raise CutoverInventoryNoGo("Boca original rootless network/volumes changed")
     for volume in inventory.volumes:
         found = dict(volume.labels)
-        if (
-            len(found) != len(volume.labels)
-            or found.get("com.docker.compose.project") != _PROJECT
-        ):
+        if len(found) != len(volume.labels) or found.get("com.docker.compose.project") != _PROJECT:
             raise CutoverInventoryNoGo("Boca owner volume identity unverified")
     mount = io.field("volume", _DATA, "Mountpoint")
     if (
@@ -408,8 +401,7 @@ def selftest_main() -> int:
     ReviewedTargetRelease(
         target_source_sha="a" * 40,
         target_controller_image="ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64,
-        target_browser_image="ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
-        + "c" * 64,
+        target_browser_image="ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "c" * 64,
         target_release_run_id="1001",
         observe_run_id="1002",
     ).require()
@@ -417,10 +409,7 @@ def selftest_main() -> int:
     return 0
 
 
-
-def _official_observation(
-    io: CutoverInventoryIO, release: ReviewedTargetRelease
-) -> dict[str, str]:
+def _official_observation(io: CutoverInventoryIO, release: ReviewedTargetRelease) -> dict[str, str]:
     """Read the installed dual/tri-service Boca topology, without REQUESTED or exec."""
     from boca_socios import host_lifecycle_observe as lifecycle_observe
     from boca_socios import host_lifecycle_rootless_adapter as adapter
@@ -609,8 +598,7 @@ def official_selftest_main() -> int:
     ReviewedTargetRelease(
         target_source_sha="a" * 40,
         target_controller_image="ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64,
-        target_browser_image="ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
-        + "c" * 64,
+        target_browser_image="ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "c" * 64,
         target_release_run_id="1001",
         observe_run_id="1002",
     ).require()

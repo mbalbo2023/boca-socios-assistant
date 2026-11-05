@@ -177,12 +177,8 @@ class LegacyFakeIO:
             "HostConfig.NanoCpus": 500_000_000,
             "HostConfig.Memory": 268_435_456,
             "HostConfig.PidsLimit": 64,
-            "HostConfig.PortBindings": {
-                "8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]
-            },
-            "NetworkSettings.Ports": {
-                "8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]
-            },
+            "HostConfig.PortBindings": {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]},
+            "NetworkSettings.Ports": {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]},
             "NetworkSettings.Networks": {PRIVATE: {}},
             "State.Running": True,
             "State.Restarting": False,
@@ -244,9 +240,7 @@ def test_cutover_observe_exact_legacy_singleton_twice_without_effect(tmp_path: P
         "different_target",
     ],
 )
-def test_cutover_refuses_unproven_topology_without_effect(
-    tmp_path: Path, name: str
-) -> None:
+def test_cutover_refuses_unproven_topology_without_effect(tmp_path: Path, name: str) -> None:
     io = LegacyFakeIO(tmp_path)
     release = CUTOVER_RELEASE
     container = io.inventory_value.containers[0]
