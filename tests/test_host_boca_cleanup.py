@@ -885,9 +885,7 @@ def test_unlabelled_retired_legacy_image_requires_exact_precommit_attestation() 
             replace(
                 image,
                 source=None,
-                references=(
-                    "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "7" * 64,
-                ),
+                references=("ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "7" * 64,),
             )
             if image.ident == OLD_IMAGE
             else image
@@ -910,9 +908,7 @@ def test_unlabelled_retired_legacy_image_requires_exact_precommit_attestation() 
     attested = replace(
         retained,
         images=tuple(
-            replace(image, historical_legacy_attested=True)
-            if image.ident == OLD_IMAGE
-            else image
+            replace(image, historical_legacy_attested=True) if image.ident == OLD_IMAGE else image
             for image in retained.images
         ),
     )
@@ -976,7 +972,7 @@ def test_legacy_image_attestation_rejects_foreign_alias_or_identity_drift(
 
 
 def test_legacy_image_attestation_reads_only_old_boca_image_allowlisted_fields(
-    monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     reference = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "1" * 64
     revision = "a" * 40
