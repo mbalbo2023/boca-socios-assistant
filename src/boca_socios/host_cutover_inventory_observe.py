@@ -367,7 +367,7 @@ def _observation(io: CutoverInventoryIO, release: ReviewedTargetRelease) -> dict
         images and images[0].source not in (_SOURCE, None)
     ):
         raise CutoverInventoryNoGo("Boca historical image provenance unavailable")
-    if not images and controller.image_id not in inventory.global_image_ids:
+    if (not images or images[0].source is None) and controller.image_id not in inventory.global_image_ids:
         raise CutoverInventoryNoGo("Boca historical image provenance unavailable")
     if images and images[0].source is None and images[0].references != (
         "ghcr.io/mbalbo2023/boca-socios-assistant:unverified",
