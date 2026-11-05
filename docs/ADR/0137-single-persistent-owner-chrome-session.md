@@ -62,6 +62,18 @@ su propio volumen y su versión 0007 es independiente; el DB controller puede
 tener {1,2,3,5,6} y quizá 0004, sin 0007. `0008` es compatible tanto con un
 ledger 0006 como con un ledger 0007 válido, y no exige migrar Telegram.
 
+**RCA P0 de recuperación legacy (05/11/2026, código fuente exacto):** el
+controller instalado `main=cabce9f1e452e63ded115f447559a358dc0f4d1b`
+contiene migraciones empaquetadas **sólo 0001–0007**. Su
+`integration.operational.validate_existing_beta_storage()` construye un mapa
+de checksums exclusivamente desde esos archivos y **rechaza un registro 0008
+desconocido**; `panel.local_status._MIGRATIONS` tampoco admite 0008. Esto se
+verificó leyendo ambos archivos y el árbol `storage/migrations` del SHA exacto
+en GitHub, no por inferencia del código candidato. Aplicar 0008 a la DB física
+**antes del candidato haría fallar el reinicio del controller legacy** ante
+cualquier fracaso de cutover. Por tanto **NO-GO físico de la migración
+pre-cutover con ese legacy**, incluso si Docker stop/lock/0008 son perfectos.
+
 1. Integrar únicamente después de revisar PR DRAFT, CI y preflight por SHA;
    no desplegar este código contra la DB vieja por inferencia.
 2. El adaptador sólo-código `panel.owner_session_upgrade` define
@@ -98,6 +110,39 @@ ledger 0006 como con un ledger 0007 válido, y no exige migrar Telegram.
    RAM y no puede migrarse). Comprobar Chrome cerrar/abrir, mismo token
    renovado, reapertura tras reinicio controlado, logout y segundo login que
    invalida el anterior. Guardar únicamente recibos redactados en #321/#45.
+
+### Gate preventivo de compatibilidad y alternativas sin decisión de deploy
+
+- El nuevo módulo inerte `panel.owner_session_cutover_gate` define
+  `pre_cutover_upgrade_0008(DockerStoppedControllerEvidence,
+  LegacyResumeVerifier)`. **Rechaza siempre** el SHA legacy `cabce9f1…` antes
+  de abrir volumen o modificar DB, aun si un test doble declara éxito. Para
+  otro SHA no basta un manifest o JSON `resumable=true`: requiere un
+  `LegacyResumeVerifier` abstracto, **sin implementación host en este PR**,
+  vinculado exactamente a ID legacy, attempt ID, SHA, imagen digest y checksum
+  empaquetado 0008. El contrato del futuro host protegido exige probar el
+  **binario legacy original** ejecutando validación de esquema y arranque
+  read-only sobre una SQLite enteramente sintética con ledger 0008, sin montar
+  DB/owner/key reales; mantener imagen y lease canónico durante la migración.
+  Si falta, caduca o difiere cualquier evidencia, NO-GO sin DDL. La prueba
+  sintética es necesaria para desarrollar el gate, **nunca evidencia física**.
+- **Alternativa A (bridge legacy forward-compatible):** integrar, revisar y
+  desplegar primero un pequeño cambio en la versión controller-only para que
+  el binario que quedará como legacy conozca/verifique 0008 sin aplicarlo ni
+  cambiar sesiones. Comprobar su instalación y capacidad real de reinicio
+  contra un DB con 0008 antes de otra transición. Ventaja: mantiene una DB;
+  costo/riesgo: requiere otra release y operación física, parada/reanudación
+  gobernada y prueba de que no se altera la versión previa ni la custodia.
+- **Alternativa B (almacén exclusivo de sesión):** guardar el hash de
+  autenticación owner en un SQLite Boca independiente, sin modificar el
+  ledger de la DB controller legacy. Ventaja: legacy seguiría leyendo su
+  schema anterior; costo/riesgo: rediseño de transacciones, volumen/ruta,
+  bootstrap, key/owner binding, recuperación y nuevas pruebas. No se implementa
+  como cambio tácito al diseño aprobado de #321.
+- Ambas alternativas están **pendientes de elección/autorización de arquitectura
+  y evidencia posterior**. No hay rollback destructivo, eliminación de 0008,
+  backup ni orden real como camino de recuperación. La simple compatibilidad
+  del candidato nuevo con 0008 **no** prueba la recuperabilidad del legacy.
 
 ## Límites y exclusiones
 
