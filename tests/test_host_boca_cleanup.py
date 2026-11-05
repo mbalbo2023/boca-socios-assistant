@@ -277,14 +277,14 @@ def test_rootless_disk_cache_audit_only_outputs_aggregate_not_foreign_names(
                         "TotalCount": "1",
                         "Active": "1",
                         "Size": "2MB",
-                        "Reclaimable": "0B (0%)",
+                        "Reclaimable": "0B",
                     },
                     {
                         "Type": "Local Volumes",
                         "TotalCount": "3",
                         "Active": "3",
                         "Size": "5GB",
-                        "Reclaimable": "0B (0%)",
+                        "Reclaimable": "0 B",
                     },
                     {
                         "Type": "Build Cache",
@@ -338,6 +338,58 @@ def test_rootless_disk_cache_audit_only_outputs_aggregate_not_foreign_names(
     assert "PRIVATE_ENV" not in str(accounting)
     assert "ssh://private.example" not in str(accounting)
     assert calls[-1] == ("buildx", "du", "--builder", "default", "--format=json")
+
+
+def test_rootless_df_accepts_official_docker_json_reclaimable_without_percent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Docker CLI system-df example has `158B` without `(...%)`."""
+
+    def fake_docker(*args: str) -> str:
+        if args == ("system", "df", "--format", "{{json .}}"):
+            return "\n".join(
+                json.dumps(row)
+                for row in (
+                    {
+                        "Type": "Images",
+                        "TotalCount": "6",
+                        "Active": "2",
+                        "Size": "2.631GB",
+                        "Reclaimable": "2.498GB (94%)",
+                    },
+                    {
+                        "Type": "Containers",
+                        "TotalCount": "7",
+                        "Active": "1",
+                        "Size": "2.23kB",
+                        "Reclaimable": "1.114kB (49%)",
+                    },
+                    {
+                        "Type": "Local Volumes",
+                        "TotalCount": "1",
+                        "Active": "0",
+                        "Size": "256.5MB",
+                        "Reclaimable": "256.5MB (100%)",
+                    },
+                    {
+                        "Type": "Build Cache",
+                        "TotalCount": "5",
+                        "Active": "0",
+                        "Size": "158B",
+                        "Reclaimable": "158B",
+                    },
+                )
+            )
+        if args[0:2] == ("buildx", "ls"):
+            return "default:docker-container\n"
+        pytest.fail("unexpected Docker query")
+
+    monkeypatch.setattr(gc, "_docker", fake_docker)
+    accounting = gc._read_rootless_storage_usage()
+    gc._validate_rootless_disk_accounting(accounting)
+    assert accounting["system_df_status"] == "OBSERVED"
+    assert accounting["system_df"][0]["kind"] == "Build Cache"
+    assert accounting["system_df"][0]["reclaimable_display"] == "158B"
 
 
 def test_rootless_cache_audit_rejects_remote_buildx_and_receipt_forgery(
@@ -466,6 +518,116 @@ def test_host_crypto_probe_refuses_non_boca_uid(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(gc.os, "geteuid", lambda: 0)
     with pytest.raises(gc.CleanupError, match="rootless identity"):
         gc._probe_host_python_crypto()
+
+
+def test_owner_volume_metadata_only_stats_two_public_files_and_no_contents(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    owner = tmp_path / "docker" / "volumes" / gc.OWNER_VOLUME / "_data"
+    owner.mkdir(parents=True)
+    (owner / "credential_id").write_bytes(b"SECRET_CREDENTIAL_VALUE")
+    (owner / "public_key.der").write_bytes(b"PRIVATE_BUT_PUBLIC_CERT_BYTES")
+    (owner / "private_secret.key").write_bytes(b"MUST_NOT_READ")
+    root = tmp_path / "docker"
+    recorded: list[tuple[str, ...]] = []
+    uid, gid = os.geteuid(), os.getegid()
+    monkeypatch.setattr(gc, "EXPECTED_UID", uid)
+    monkeypatch.setattr(gc, "EXPECTED_GID", gid)
+    monkeypatch.setattr(gc.pwd, "getpwuid", lambda _uid: SimpleNamespace(pw_dir=str(tmp_path)))
+
+    def fake_docker(*args: str) -> str:
+        recorded.append(args)
+        if args == ("info", "--format", "{{json .}}"):
+            return json.dumps({"DockerRootDir": str(root)})
+        if args == (
+            "volume",
+            "inspect",
+            "--format",
+            "{{json .Mountpoint}}",
+            gc.OWNER_VOLUME,
+        ):
+            return json.dumps(str(owner))
+        pytest.fail("unapproved Docker command")
+
+    monkeypatch.setattr(gc, "_docker", fake_docker)
+    snapshot = _physical_observer_fixture(stale="unknown")
+    snapshot = replace(
+        snapshot,
+        disk=replace(
+            snapshot.disk,
+            docker_device=root.stat().st_dev,
+            docker_inode=root.stat().st_ino,
+        ),
+    )
+    metadata = gc._read_owner_public_metadata(snapshot)
+    gc._validate_owner_metadata(metadata)
+    assert metadata["status"] == "OBSERVED"
+    assert metadata["owner_directory"] == {"uid": uid, "gid": gid, "mode": 0o755}
+    assert metadata["public_files"]["credential_id"]["status"] == "PRESENT"
+    assert metadata["public_files"]["public_key.der"]["status"] == "PRESENT"
+    assert metadata["deletion_authorized"] is False
+    assert "SECRET_CREDENTIAL_VALUE" not in str(metadata)
+    assert "PRIVATE_BUT_PUBLIC_CERT_BYTES" not in str(metadata)
+    assert "MUST_NOT_READ" not in str(metadata)
+    assert len(recorded) == 2
+    assert all("exec" not in args and "rm" not in args for args in recorded)
+    receipt = gc.observe_postapply_cleanup(
+        ATTEMPT,
+        ACTIVE_ID,
+        probe=lambda: snapshot,
+        probe_owner_metadata=lambda _snapshot: metadata,
+    )
+    gc.verify_readonly_cleanup_receipt(
+        gc.canonical_readonly_cleanup_receipt(receipt), ATTEMPT, ACTIVE_ID
+    )
+    forged = {**metadata, "public_files": {"private_secret.key": {"status": "PRESENT"}}}
+    with pytest.raises(gc.CleanupError):
+        gc._validate_owner_metadata(forged)
+    invisible = {
+        **metadata,
+        "public_files": {
+            **metadata["public_files"],
+            "public_key.der": {"status": "UNAVAILABLE"},
+        },
+    }
+    with pytest.raises(gc.CleanupError, match="visibility"):
+        gc._validate_owner_metadata(invisible)
+    gc._validate_owner_metadata({**invisible, "status": "FILES_INACCESSIBLE"})
+
+
+def test_owner_volume_metadata_refuses_other_mountpoints_without_file_inspection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    uid, gid = os.geteuid(), os.getegid()
+    monkeypatch.setattr(gc, "EXPECTED_UID", uid)
+    monkeypatch.setattr(gc, "EXPECTED_GID", gid)
+    monkeypatch.setattr(gc.pwd, "getpwuid", lambda _uid: SimpleNamespace(pw_dir=str(tmp_path)))
+    monkeypatch.setattr(
+        gc,
+        "_docker",
+        lambda *_args: json.dumps({"DockerRootDir": str(tmp_path / "docker")}),
+    )
+    monkeypatch.setattr(gc, "_inspect_field", lambda *_args: str(tmp_path / "foreign"))
+    snapshot = _physical_observer_fixture(stale="unknown")
+    metadata = gc._read_owner_public_metadata(snapshot)
+    gc._validate_owner_metadata(metadata)
+    assert metadata["status"] == "UNAVAILABLE"
+    assert metadata["owner_directory"] is None
+    assert all(value is None for value in metadata["public_files"].values())
+
+
+def test_owner_public_file_stat_rejects_symlinks_without_following_target(tmp_path: Path) -> None:
+    (tmp_path / "private_secret").write_bytes(b"NEVER_EXPOSE_SECRET")
+    (tmp_path / "credential_id").symlink_to(tmp_path / "private_secret")
+    descriptor = os.open(tmp_path, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        result = gc._safe_public_file_stat(descriptor, "credential_id")
+        assert result == {"status": "NOT_REGULAR"}
+        with pytest.raises(gc.CleanupError):
+            gc._safe_public_file_stat(descriptor, "private_secret")
+    finally:
+        os.close(descriptor)
+    assert "NEVER_EXPOSE_SECRET" not in str(result)
 
 
 def _pinned_historical_retire_fixture(

@@ -878,7 +878,7 @@ def _inspect_field(kind: KIND, ident: str, field: str) -> object:
         ),
         "image": frozenset({"Id", "RepoTags", "RepoDigests", "Config.Labels", "Size"}),
         "network": frozenset({"Id", "Name", "Containers", "Labels"}),
-        "volume": frozenset({"Name", "Labels"}),
+        "volume": frozenset({"Name", "Labels", "Mountpoint"}),
     }
     if field not in fields[kind]:
         raise CleanupError("Docker field outside narrowly reviewed allowlist")
@@ -1324,11 +1324,14 @@ def execute_protected(
 # mutation/lease entrypoint above. Its sole dependency is the already reviewed
 # read-only inventory and pure positive-identity plan; the protected GitHub
 # workflow streams this module by stdin to the Boca-only rootless account.
-READONLY_CLEANUP_VERSION = "boca-cutover-cleanup-readonly-v3"
+READONLY_CLEANUP_VERSION = "boca-cutover-cleanup-readonly-v4"
 READONLY_CLEANUP_MAX_JSON = 8192
 READONLY_PROVENANCE_LIMIT = 8
 SYSTEM_DF_KINDS = frozenset({"Images", "Containers", "Local Volumes", "Build Cache"})
 SAFE_SIZE_DISPLAY = re.compile(r"[0-9]+(?:\.[0-9]+)?\s*(?:B|kB|MB|GB|TB|PB)\Z")
+SAFE_RECLAIMABLE_DISPLAY = re.compile(
+    r"[0-9]+(?:\.[0-9]+)?\s*(?:B|kB|MB|GB|TB|PB)(?:\s*\([0-9]{1,3}%\))?\Z"
+)
 
 # R28: fixed third-party-verifiable coordinates from physical #42116760086
 # and successful GitHub release #41559973013. This can NEVER accept another
@@ -1583,6 +1586,224 @@ def _validate_host_python_crypto(value: object) -> None:
         raise CleanupError("host Python read-only crypto proof invalid")
 
 
+OWNER_VOLUME = "boca-socios_boca_owner"
+OWNER_PUBLIC_FILES = ("credential_id", "public_key.der")
+
+
+def _empty_owner_metadata() -> dict[str, object]:
+    return {
+        "scope": "BOCA_ROOTLESS_OWNER_VOLUME_METADATA_ONLY",
+        "status": "NOT_OBSERVED",
+        "owner_directory": None,
+        "public_files": {name: None for name in OWNER_PUBLIC_FILES},
+        "host_process_uid_map": [],
+        "deletion_authorized": False,
+    }
+
+
+def _safe_public_file_stat(directory_fd: int, name: str) -> dict[str, int | str]:
+    """Only lstat allowlisted *public* credential metadata, never contents."""
+    if name not in OWNER_PUBLIC_FILES:
+        raise CleanupError("owner public file outside exact allowlist")
+    try:
+        item = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return {"status": "MISSING"}
+    except OSError:
+        return {"status": "UNAVAILABLE"}
+    if not stat.S_ISREG(item.st_mode):
+        return {"status": "NOT_REGULAR"}
+    return {
+        "status": "PRESENT",
+        "uid": item.st_uid,
+        "gid": item.st_gid,
+        "mode": stat.S_IMODE(item.st_mode),
+        "size": item.st_size,
+        "nlink": item.st_nlink,
+    }
+
+
+def _read_host_process_uid_map() -> list[list[int]]:
+    """Current observer process map only; NOT a container's UID mapping."""
+    try:
+        with open("/proc/self/uid_map", encoding="ascii") as handle:
+            raw = handle.read(512)
+        lines = raw.splitlines()
+        if not 1 <= len(lines) <= 8:
+            raise CleanupError("host process UID map unreadable")
+        ranges = [[int(value) for value in line.split()] for line in lines]
+        if any(
+            len(row) != 3 or any(not 0 <= value <= 2**32 for value in row) or row[2] == 0
+            for row in ranges
+        ):
+            raise CleanupError("host process UID map invalid")
+        return ranges
+    except (OSError, UnicodeError, ValueError, CleanupError):
+        return []
+
+
+def _read_owner_public_metadata(snapshot: Inventory) -> dict[str, object]:
+    """No file opens: only positive Boca volume mount and public stat metadata.
+
+    A subordinate UID may block host traversal. In that case retain directory
+    uid/gid/mode and mark file metadata unavailable; no Docker exec or secrets.
+    """
+    result = _empty_owner_metadata()
+    result["host_process_uid_map"] = _read_host_process_uid_map()
+    if not any(
+        volume.name == OWNER_VOLUME
+        and _labels(volume.labels).get("com.docker.compose.project") == BOCA_PROJECT
+        for volume in snapshot.volumes
+    ):
+        result["status"] = "VOLUME_MISSING"
+        return result
+
+    opened: list[int] = []
+    try:
+        if os.geteuid() != EXPECTED_UID or os.getegid() != EXPECTED_GID:
+            raise CleanupError("owner volume metadata requires Boca rootless UID")
+        raw_root = _json(_docker("info", "--format", "{{json .}}"))
+        root_name = raw_root.get("DockerRootDir")
+        mount_name = _inspect_field("volume", OWNER_VOLUME, "Mountpoint")
+        home = Path(pwd.getpwuid(EXPECTED_UID).pw_dir)
+        if (
+            not isinstance(root_name, str)
+            or not isinstance(mount_name, str)
+            or not root_name.startswith(str(home) + "/")
+            or ".." in Path(root_name).parts
+            or Path(mount_name) != Path(root_name) / "volumes" / OWNER_VOLUME / "_data"
+        ):
+            raise CleanupError("rootless owner volume mountpoint is not exact Boca path")
+        # capture_inventory() already attested this Docker storage root under
+        # owned Boca home. Recheck dev/inode against that bounded snapshot.
+        root_fd = os.open(root_name, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        opened.append(root_fd)
+        root_stat = os.fstat(root_fd)
+        if (root_stat.st_dev, root_stat.st_ino) != (
+            snapshot.disk.docker_device,
+            snapshot.disk.docker_inode,
+        ):
+            raise CleanupError("rootless owner volume storage root changed")
+        parent_fd = root_fd
+        for part in ("volumes", OWNER_VOLUME):
+            parent_fd = os.open(
+                part,
+                os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=parent_fd,
+            )
+            opened.append(parent_fd)
+        directory_stat = os.stat("_data", dir_fd=parent_fd, follow_symlinks=False)
+        if not stat.S_ISDIR(directory_stat.st_mode):
+            raise CleanupError("owner volume data directory is not a directory")
+        result["owner_directory"] = {
+            "uid": directory_stat.st_uid,
+            "gid": directory_stat.st_gid,
+            "mode": stat.S_IMODE(directory_stat.st_mode),
+        }
+        try:
+            data_fd = os.open(
+                "_data",
+                os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=parent_fd,
+            )
+        except OSError:
+            result["status"] = "FILES_INACCESSIBLE"
+            return result
+        opened.append(data_fd)
+        public_files = {name: _safe_public_file_stat(data_fd, name) for name in OWNER_PUBLIC_FILES}
+        result["public_files"] = public_files
+        result["status"] = (
+            "FILES_INACCESSIBLE"
+            if any(row["status"] == "UNAVAILABLE" for row in public_files.values())
+            else "OBSERVED"
+        )
+    except (CleanupError, OSError, ValueError, KeyError, TypeError):
+        result["status"] = "UNAVAILABLE"
+        result["owner_directory"] = None
+    finally:
+        for fd in reversed(opened):
+            os.close(fd)
+    return result
+
+
+def _validate_owner_metadata(value: object) -> None:
+    if (
+        type(value) is not dict
+        or set(value)
+        != {
+            "scope",
+            "status",
+            "owner_directory",
+            "public_files",
+            "host_process_uid_map",
+            "deletion_authorized",
+        }
+        or value["scope"] != "BOCA_ROOTLESS_OWNER_VOLUME_METADATA_ONLY"
+        or value["status"]
+        not in ("NOT_OBSERVED", "OBSERVED", "FILES_INACCESSIBLE", "VOLUME_MISSING", "UNAVAILABLE")
+        or value["deletion_authorized"] is not False
+        or type(value["host_process_uid_map"]) is not list
+        or len(value["host_process_uid_map"]) > 8
+        or any(
+            type(row) is not list
+            or len(row) != 3
+            or any(type(number) is not int or not 0 <= number <= 2**32 for number in row)
+            or row[2] == 0
+            for row in value["host_process_uid_map"]
+        )
+    ):
+        raise CleanupError("rootless owner volume metadata receipt invalid")
+    directory = value["owner_directory"]
+    if directory is not None and (
+        type(directory) is not dict
+        or set(directory) != {"uid", "gid", "mode"}
+        or any(type(item) is not int or not 0 <= item <= 2**32 for item in directory.values())
+        or directory["mode"] > 0o7777
+    ):
+        raise CleanupError("rootless owner directory metadata invalid")
+    if (value["status"] in ("NOT_OBSERVED", "VOLUME_MISSING", "UNAVAILABLE")) != (
+        directory is None
+    ):
+        raise CleanupError("rootless owner volume directory/status contradictory")
+    files = value["public_files"]
+    if type(files) is not dict or set(files) != set(OWNER_PUBLIC_FILES):
+        raise CleanupError("rootless owner public files allowlist invalid")
+    for name in OWNER_PUBLIC_FILES:
+        row = files[name]
+        if row is None:
+            if value["status"] == "OBSERVED":
+                raise CleanupError("owner public file metadata absent on observed directory")
+            continue
+        if (
+            value["status"] not in ("OBSERVED", "FILES_INACCESSIBLE")
+            or type(row) is not dict
+            or row.get("status") not in ("PRESENT", "MISSING", "NOT_REGULAR", "UNAVAILABLE")
+            or (row["status"] != "PRESENT" and set(row) != {"status"})
+            or (
+                row["status"] == "PRESENT"
+                and (
+                    set(row) != {"status", "uid", "gid", "mode", "size", "nlink"}
+                    or any(
+                        type(row[key]) is not int or not 0 <= row[key] <= 2**32
+                        for key in ("uid", "gid", "mode", "size", "nlink")
+                    )
+                    or row["mode"] > 0o7777
+                )
+            )
+        ):
+            raise CleanupError("owner public file metadata forged")
+    if value["status"] == "OBSERVED" and any(
+        row is None or row["status"] == "UNAVAILABLE" for row in files.values()
+    ):
+        raise CleanupError("owner public file visibility unverified")
+    if (
+        value["status"] == "FILES_INACCESSIBLE"
+        and any(row is not None for row in files.values())
+        and not any(row is not None and row["status"] == "UNAVAILABLE" for row in files.values())
+    ):
+        raise CleanupError("owner file inaccessibility claim not supported")
+
+
 def _read_rootless_storage_usage() -> dict[str, object]:
     """Read aggregate daemon cache/volume pressure; never reveal cache descriptions.
 
@@ -1620,11 +1841,7 @@ def _read_rootless_storage_usage() -> dict[str, object]:
                 or type(size) is not str
                 or SAFE_SIZE_DISPLAY.fullmatch(size.strip()) is None
                 or type(reclaimable) is not str
-                or re.fullmatch(
-                    r"[0-9]+(?:\.[0-9]+)?\s*(?:B|kB|MB|GB|TB|PB)\s*\([0-9]{1,3}%\)",
-                    reclaimable.strip(),
-                )
-                is None
+                or SAFE_RECLAIMABLE_DISPLAY.fullmatch(reclaimable.strip()) is None
             ):
                 raise CleanupError("Docker disk accounting numbers malformed")
             rows.append(
@@ -1725,11 +1942,7 @@ def _validate_rootless_disk_accounting(value: object) -> None:
             or type(row["size_display"]) is not str
             or SAFE_SIZE_DISPLAY.fullmatch(row["size_display"]) is None
             or type(row["reclaimable_display"]) is not str
-            or re.fullmatch(
-                r"[0-9]+(?:\.[0-9]+)?\s*(?:B|kB|MB|GB|TB|PB)\s*\([0-9]{1,3}%\)",
-                row["reclaimable_display"],
-            )
-            is None
+            or SAFE_RECLAIMABLE_DISPLAY.fullmatch(row["reclaimable_display"]) is None
         ):
             raise CleanupError("rootless disk accounting row evidence invalid")
         seen.add(kind)
@@ -1881,6 +2094,7 @@ def observe_postapply_cleanup(
     probe_provenance: Callable[[str, Inventory], dict[str, object]] | None = None,
     probe_storage: Callable[[], dict[str, object]] | None = None,
     probe_host_crypto: Callable[[], dict[str, object]] | None = None,
+    probe_owner_metadata: Callable[[Inventory], dict[str, object]] | None = None,
 ) -> dict[str, object]:
     """Two stable, Boca-only READ_ONLY snapshots and a *nonexecuted* cleanup plan.
 
@@ -1976,6 +2190,9 @@ def observe_postapply_cleanup(
         "host_python_crypto": probe_host_crypto()
         if probe_host_crypto is not None
         else _empty_host_python_crypto(),
+        "owner_volume_metadata": probe_owner_metadata(second)
+        if probe_owner_metadata is not None
+        else _empty_owner_metadata(),
         "before": _readonly_disk(first.disk),
         "after": _readonly_disk(second.disk),
         "original_preserved": True,
@@ -2049,6 +2266,7 @@ def verify_readonly_cleanup_receipt(
         "image_provenance",
         "storage_accounting",
         "host_python_crypto",
+        "owner_volume_metadata",
         "before",
         "after",
         "original_preserved",
@@ -2193,6 +2411,7 @@ def verify_readonly_cleanup_receipt(
         raise CleanupError("Boca public image provenance receipt untrusted")
     _validate_rootless_disk_accounting(obj["storage_accounting"])
     _validate_host_python_crypto(obj["host_python_crypto"])
+    _validate_owner_metadata(obj["owner_volume_metadata"])
     expected_classification = (
         "INDETERMINATE"
         if unknown
@@ -2223,6 +2442,7 @@ def _readonly_main(args: list[str]) -> int:
                 probe_provenance=_observe_boca_reference_image,
                 probe_storage=_read_rootless_storage_usage,
                 probe_host_crypto=_probe_host_python_crypto,
+                probe_owner_metadata=_read_owner_public_metadata,
             )
             sys.stdout.buffer.write(canonical_readonly_cleanup_receipt(receipt))
         else:
