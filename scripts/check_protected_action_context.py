@@ -64,6 +64,8 @@ _LIFECYCLE_SENDER = frozenset(
     {"sender_id", "sender_config_hash", "sender_attempt_id", "sender_state"}
 )
 _TELEGRAM_SENDER = frozenset({"sender_id", "sender_image", "sender_config_hash", "sender_attempt"})
+
+
 class ProtectedActionError(ValueError):
     """NO_GO before SSH; never include private or untrusted source values."""
 
