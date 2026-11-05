@@ -2,6 +2,7 @@
 
 All network, Docker, credentials and host claims are invented. No GO is granted.
 """
+
 from __future__ import annotations
 
 import os
@@ -29,9 +30,7 @@ def _inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(stage.time, "time", lambda: NOW)
     pins, coords, lease, reader, data = host_fixture(tmp_path, monkeypatch)
     assert coords.recipient_fingerprint == recipient.fingerprint
-    proof = stage.observe_owner_stage_under_same_lease(
-        pins, coords, lease=lease, io=reader
-    )
+    proof = stage.observe_owner_stage_under_same_lease(pins, coords, lease=lease, io=reader)
     assert proof.state == "OWNER_STAGE_VERIFIED_EGRESS_NO_GO"
     assert proof.sender_state == "OFF" and proof.bot_api_reads == 0
     assert proof.staged_at == NOW
@@ -61,9 +60,7 @@ def _invoke(tmp_path, args, monkeypatch, *, webhook: str = "", revoke: bool = Fa
 
     def recheck(phase, coordinates):
         assert coordinates == coords
-        verified = stage.observe_owner_stage_under_same_lease(
-            pins, coords, lease=lease, io=reader
-        )
+        verified = stage.observe_owner_stage_under_same_lease(pins, coords, lease=lease, io=reader)
         assert verified.staged_at == NOW
         phases.append(phase)
         return synthetic_host_claim(phase, coordinates, observed_at=NOW)
@@ -88,19 +85,25 @@ def _invoke(tmp_path, args, monkeypatch, *, webhook: str = "", revoke: bool = Fa
 
 def test_stage_owner_rechecked_each_get_and_ack_off(tmp_path, monkeypatch):
     args = _inputs(tmp_path, monkeypatch)
-    run, api, phases, commits, reader, data, lease = _invoke(
-        tmp_path, args, monkeypatch
-    )
+    run, api, phases, commits, reader, data, lease = _invoke(tmp_path, args, monkeypatch)
     result = run()
     assert result.state == "CUSTODY_COMMITTED_NO_SEND"
     assert result.sender_state == "OFF"
     assert result.human_notification_receipt == "UNVERIFIED"
     assert [method for method, _ in api.calls] == [
-        "getMe", "getWebhookInfo", "getUpdates", "getChat"
+        "getMe",
+        "getWebhookInfo",
+        "getUpdates",
+        "getChat",
     ]
     assert phases == [
-        "BEFORE_API", "BEFORE_getMe", "BEFORE_getWebhookInfo",
-        "BEFORE_getUpdates", "BEFORE_getChat", "BEFORE_COMMIT", "AFTER_COMMIT"
+        "BEFORE_API",
+        "BEFORE_getMe",
+        "BEFORE_getWebhookInfo",
+        "BEFORE_getUpdates",
+        "BEFORE_getChat",
+        "BEFORE_COMMIT",
+        "AFTER_COMMIT",
     ]
     assert commits == ["commit"]
     assert len(list(data.glob("boca_telegram_owner_nonce_v2_*.json"))) == 1
@@ -112,7 +115,9 @@ def test_stage_owner_rechecked_each_get_and_ack_off(tmp_path, monkeypatch):
 def test_failure_is_redacted_and_never_commits(tmp_path, monkeypatch, case):
     args = _inputs(tmp_path, monkeypatch)
     run, api, phases, commits, reader, data, _lease = _invoke(
-        tmp_path, args, monkeypatch,
+        tmp_path,
+        args,
+        monkeypatch,
         webhook="https://synthetic.invalid/hook" if case == "webhook" else "",
         revoke=case == "revoked_owner",
     )
