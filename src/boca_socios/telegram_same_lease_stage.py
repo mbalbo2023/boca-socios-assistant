@@ -212,7 +212,10 @@ def read_encrypted_telegram_stage(
                 if "owner_witness" in document
                 else None
             )
-            if witness is not None and not 0 <= document["staged_at"] - witness.challenged_at <= 120:
+            if (
+                witness is not None
+                and not 0 <= document["staged_at"] - witness.challenged_at <= 120
+            ):
                 raise ValueError("stage_owner_age")
         except (
             ValueError,

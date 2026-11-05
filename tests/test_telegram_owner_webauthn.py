@@ -242,6 +242,4 @@ def test_malformed_webauthn_fields_rejected_without_any_host_effect() -> None:
             challenged_at=issued,
             verifier_binding=witness.verifier_binding,
         )
-    assert verifier.verify_public_telegram_stage_signature(
-        witness.assertion, bytes(32)
-    ) is False
+    assert verifier.verify_public_telegram_stage_signature(witness.assertion, bytes(32)) is False

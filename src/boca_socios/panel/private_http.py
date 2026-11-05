@@ -405,9 +405,7 @@ class PrivatePanelApplication:
         self, environ: Mapping[str, object], session: OwnerSession, start: StartResponse
     ) -> list[bytes]:
         """Server-issued one-use, ciphertext-bound WebAuthn UV challenge."""
-        fields = self._form(
-            environ, expected={"csrf", "operation_id", "envelope_sha256"}
-        )
+        fields = self._form(environ, expected={"csrf", "operation_id", "envelope_sha256"})
         if (
             fields is None
             or _canonical_uuid(fields["operation_id"]) is None
@@ -449,8 +447,15 @@ class PrivatePanelApplication:
         fields = self._form(
             environ,
             expected={
-                "csrf", "operation_id", "envelope", "request_nonce", "challenged_at",
-                "credential_id", "client_data_json", "authenticator_data", "signature",
+                "csrf",
+                "operation_id",
+                "envelope",
+                "request_nonce",
+                "challenged_at",
+                "credential_id",
+                "client_data_json",
+                "authenticator_data",
+                "signature",
             },
         )
         if fields is None or _canonical_uuid(fields["operation_id"]) is None:
@@ -497,12 +502,9 @@ class PrivatePanelApplication:
             now = int(self._now().timestamp())
             if (
                 not 0 <= now - witness.challenged_at <= 120
-                or self._passkey.verify_telegram_stage_assertion(
-                    witness.assertion, challenge
-                ) is None
-                or not verify_stage_owner_witness(
-                    witness, envelope, self._passkey, staged_at=now
-                )
+                or self._passkey.verify_telegram_stage_assertion(witness.assertion, challenge)
+                is None
+                or not verify_stage_owner_witness(witness, envelope, self._passkey, staged_at=now)
             ):
                 raise TelegramOwnerWitnessError("telegram_owner_webauthn_unverified")
         except (TelegramOwnerWitnessError, ValueError, TypeError):
