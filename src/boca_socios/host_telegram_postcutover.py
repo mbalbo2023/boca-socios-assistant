@@ -15,6 +15,7 @@ from typing import Literal
 from boca_socios.host_boca_cleanup import (
     BocaJobLease,
     Container,
+    Image,
     Inventory,
     verify_protected_boca_job_lease,
 )
@@ -174,7 +175,7 @@ def _service(
     image_ref: str,
     config_hash: str,
     service: str,
-    images: dict[str, object],
+    images: dict[str, Image],
 ) -> None:
     labels = _labels(item.labels)
     image = images.get(item.image_id)
