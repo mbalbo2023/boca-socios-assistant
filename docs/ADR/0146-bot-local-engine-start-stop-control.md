@@ -43,6 +43,12 @@ podría dibujar un botón y un `REQUESTED`, no acreditar un Start/Stop físico.
   respuesta/estado con `HostLifecycleSnapshot` bajo la misma lease #328.
   Este PR **no** añade ese adapter, workflow o autorización; `main` y el
   droplet permanecen intactos.
+- Dependencia funcional explícita: con `BOCA_BROWSER_BACKEND=ipc`, las órdenes
+  del motor requieren el worker Chromium para funcionar. El contrato de
+  `LifecycleHostSnapshot` ahora rechaza reclamar `bot/start` si el worker no
+  está **RUNNING y HEALTHY**. `bot/stop` sigue autorizado aunque el worker
+  esté parado o enfermo, para garantizar detención segura. Este gate es
+  observación real exigida al futuro host adapter, no un flag inventado.
 
 ## Límites que prohíben presentar el control como desplegado
 
