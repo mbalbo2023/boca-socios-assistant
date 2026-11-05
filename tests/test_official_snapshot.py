@@ -40,7 +40,8 @@ def _envelope(number: int = 1) -> dict[str, object]:
 
 def _snapshot(tmp_path: Path, *documents: dict[str, object]) -> Path:
     path = tmp_path / OFFICIAL_SNAPSHOT_NAME
-    path.write_bytes(b"\n".join(json.dumps(doc).encode("utf-8") for doc in documents) + b"\n")
+    payload = b"\n".join(json.dumps(doc).encode("utf-8") for doc in documents)
+    path.write_bytes(payload + b"\n" if payload else b"")
     path.chmod(0o600)
     return path
 
@@ -65,6 +66,14 @@ def test_valid_two_line_snapshot_remains_nonactionable_and_sorted(tmp_path: Path
 def test_present_empty_snapshot_is_nonactionable(tmp_path: Path) -> None:
     path = _snapshot(tmp_path)
     assert load_official_snapshot(path) == ()
+
+
+def test_owner_readonly_snapshot_is_accepted_without_a_write(tmp_path: Path) -> None:
+    path = _snapshot(tmp_path, _envelope())
+    path.chmod(0o400)
+    before = path.stat()
+    assert len(load_official_snapshot(path)) == 1
+    assert path.stat() == before
 
 
 @pytest.mark.parametrize(
@@ -104,6 +113,14 @@ def test_twenty_one_notices_are_rejected_without_any_operation(tmp_path: Path) -
         load_official_snapshot(path)
 
 
+def test_snapshot_byte_budget_rejects_oversized_input_before_parsing(tmp_path: Path) -> None:
+    path = tmp_path / OFFICIAL_SNAPSHOT_NAME
+    path.write_bytes(b"x" * 400_000)
+    path.chmod(0o600)
+    with pytest.raises(OfficialSnapshotError, match="capacity"):
+        load_official_snapshot(path)
+
+
 def test_missing_parent_is_not_treated_as_a_valid_empty_snapshot(tmp_path: Path) -> None:
     with pytest.raises(OfficialSnapshotError):
         load_official_snapshot(tmp_path / "missing" / OFFICIAL_SNAPSHOT_NAME)
@@ -138,6 +155,22 @@ def test_symlink_file_and_hardlink_file_are_rejected(tmp_path: Path) -> None:
     os.link(outside, original)
     with pytest.raises(OfficialSnapshotError, match="link"):
         load_official_snapshot(original)
+
+
+def test_fifo_is_rejected_without_blocking_for_a_writer(tmp_path: Path) -> None:
+    path = tmp_path / OFFICIAL_SNAPSHOT_NAME
+    os.mkfifo(path, 0o600)
+    with pytest.raises(OfficialSnapshotError, match="regular"):
+        load_official_snapshot(path)
+
+
+def test_untrusted_parent_directory_mode_fails_before_child_read(tmp_path: Path) -> None:
+    parent = tmp_path / "public"
+    parent.mkdir(mode=0o700)
+    _snapshot(parent, _envelope())
+    parent.chmod(0o777)
+    with pytest.raises(OfficialSnapshotError, match="directory owner or mode"):
+        load_official_snapshot(parent / OFFICIAL_SNAPSHOT_NAME)
 
 
 def test_directory_alias_is_rejected_before_reading_outside_snapshot(
