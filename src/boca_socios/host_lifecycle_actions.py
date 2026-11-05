@@ -146,7 +146,6 @@ def _read_current(path: Path) -> LifecycleIntent | None:
         raise PhysicalAckUnavailable("Boca legacy owner lifecycle ledger unavailable") from None
 
 
-
 _PREPARE_RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
 
 
