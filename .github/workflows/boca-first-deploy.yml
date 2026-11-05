@@ -10,8 +10,8 @@ on:
         type: choice
         options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, cutover-a-observe, cutover-a-apply, official-notice-import, protected-go-prepare, lifecycle-apply, telegram-activate, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
-        description: Exact current main commit approved for the operation
-        required: true
+        description: Exact main SHA (blank allowed only for reviewed Cutover/import GO_B; derived from github.sha)
+        required: false
         type: string
       image_ref:
         description: Full reviewed GHCR digest for install/diagnostic; blank for inspection/preflight
@@ -94,7 +94,7 @@ on:
         required: false
         type: string
       protected_action_context:
-        description: Leave blank for Boca READ_ONLY PREPARE; APPLY uses only prior PREPARE run ID (digits), never JSON/PIN/secret
+        description: Blank for verified READ_ONLY PREPARE; APPLY short prior PREPARE run ID only (lifecycle/Cutover/import). No JSON or PIN.
         required: false
         type: string
       service:
@@ -782,7 +782,8 @@ jobs:
       BOCA_PROTECTED_ACTION_CONTEXT: ${{ inputs.protected_action_context }}
       BOCA_IMAGE_REF: ${{ inputs.image_ref }}
       BOCA_BROWSER_IMAGE_REF: ${{ inputs.browser_image_ref }}
-      BOCA_SOURCE_SHA: ${{ inputs.source_sha }}
+      BOCA_SOURCE_SHA: ${{ (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import') && github.sha || inputs.source_sha }}
+      BOCA_SOURCE_SHA_SUBMITTED: ${{ inputs.source_sha }}
       BOCA_SERVICE: ${{ inputs.service }}
       BOCA_BUDGET: ${{ inputs.resource_budget }}
       BOCA_RELEASE_RUN_ID: ${{ inputs.release_run_id }}
@@ -801,6 +802,55 @@ jobs:
       BOCA_OFFICIAL_NEWS_HTML_SHA256: ${{ inputs.official_news_html_sha256 }}
       BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC: ${{ inputs.official_news_observed_at_utc }}
     steps:
+      - name: Checkout exact reviewed main for legacy GO_B artifact discovery
+        if: inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Restore independently reviewed legacy PREPARE source for APPLY
+        if: (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import') && inputs.protected_action_context != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src:scripts
+        run: |
+          set -euo pipefail
+          [[ "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^[1-9][0-9]{0,19}$ ]]
+          test "$GITHUB_RUN_ID" != "$BOCA_PROTECTED_ACTION_CONTEXT"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BOCA_PROTECTED_ACTION_CONTEXT" \
+            > "$RUNNER_TEMP/boca-legacy-prepare-run.json"
+          mkdir -m 700 "$RUNNER_TEMP/boca-legacy-prepared"
+          gh run download "$BOCA_PROTECTED_ACTION_CONTEXT" --repo "$GITHUB_REPOSITORY" \
+            --name boca-protected-legacy-go-prepare --dir "$RUNNER_TEMP/boca-legacy-prepared"
+          python scripts/check_legacy_go_dispatch.py restore-early \
+            "$RUNNER_TEMP/boca-legacy-prepare-run.json" \
+            "$RUNNER_TEMP/boca-legacy-prepared/boca-legacy-prepare.coordinates.json" \
+            "$RUNNER_TEMP/boca-legacy-prepared/boca-legacy-prepare.receipt.json"
+      - name: Derive current main image and browser release from genuine Actions receipts
+        if: (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import') && inputs.protected_action_context == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src:scripts
+        run: |
+          set -euo pipefail
+          test -z "$BOCA_IMAGE_REF"
+          test -z "$BOCA_BROWSER_IMAGE_REF"
+          test -z "$BOCA_RELEASE_RUN_ID"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=100" \
+            > "$RUNNER_TEMP/boca-legacy-image-runs.json"
+          python scripts/check_legacy_go_dispatch.py select-current-release \
+            "$RUNNER_TEMP/boca-legacy-image-runs.json" \
+            "$RUNNER_TEMP/boca-legacy-current-release.id"
+          IFS= read -r reviewed_release_id < "$RUNNER_TEMP/boca-legacy-current-release.id"
+          mkdir -m 700 "$RUNNER_TEMP/boca-legacy-current-manifest" \
+            "$RUNNER_TEMP/boca-legacy-current-browser"
+          gh run download "$reviewed_release_id" --repo "$GITHUB_REPOSITORY" \
+            --name boca-release-manifest --dir "$RUNNER_TEMP/boca-legacy-current-manifest"
+          gh run download "$reviewed_release_id" --repo "$GITHUB_REPOSITORY" \
+            --name boca-browser-release-manifest --dir "$RUNNER_TEMP/boca-legacy-current-browser"
+          python scripts/check_legacy_go_dispatch.py verify-current-release \
+            "$RUNNER_TEMP/boca-legacy-current-manifest/boca-release-manifest.json" \
+            "$RUNNER_TEMP/boca-legacy-current-browser/boca-browser-release-manifest.json" \
+            "$RUNNER_TEMP/boca-legacy-current-release.id"
       - name: Require verified protected environment and matching main commit
         env:
           BOCA_HOST_READONLY_ENV_READY: ${{ vars.BOCA_HOST_READONLY_ENV_READY }}
@@ -819,6 +869,11 @@ jobs:
         run: |
           test "$GITHUB_RUN_ATTEMPT" = 1
           test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"
+          if [[ "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import ]]; then
+            [[ -z "$BOCA_SOURCE_SHA_SUBMITTED" || "$BOCA_SOURCE_SHA_SUBMITTED" = "$GITHUB_SHA" ]]
+            [[ -z "$BOCA_PROTECTED_ACTION_CONTEXT" || "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^[1-9][0-9]{0,19}$ ]]
+            [[ "$BOCA_PROTECTED_ACTION_CONTEXT" != "$GITHUB_RUN_ID" ]]
+          fi
           test "$BOCA_SERVICE" = controller
           if [[ "$BOCA_OPERATION" = beta-browser-telegram-recover ]]; then
             [[ "$BOCA_FAILED_TELEGRAM_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
@@ -830,7 +885,7 @@ jobs:
             [[ "$BOCA_BUDGET" = 1.5cpu-1024m-192pids || "$BOCA_BUDGET" = 1.75cpu-1152m-224pids ]]
           elif [[ "$BOCA_OPERATION" = beta-browser-install ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
-          elif [[ "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-activate ]]; then
+          elif [[ "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-activate ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
           elif [[ "$BOCA_OPERATION" = beta-browser-telegram-start || ( "$BOCA_TELEGRAM_OWNER_READY" = ready && ( "$BOCA_OPERATION" = beta-browser-* || ( "$BOCA_OPERATION" = telegram-* && -n "$BOCA_BROWSER_IMAGE_REF" ) ) ) ]]; then
             test "$BOCA_BUDGET" = 1.75cpu-1152m-224pids
@@ -839,7 +894,7 @@ jobs:
           else
             test "$BOCA_BUDGET" = 0.5cpu-256m-64pids
           fi
-          if [[ "$BOCA_OPERATION" != beta-browser-* && "$BOCA_OPERATION" != telegram-* && "$BOCA_OPERATION" != cutover-a-observe && "$BOCA_OPERATION" != cutover-a-apply && "$BOCA_OPERATION" != protected-go-prepare && "$BOCA_OPERATION" != lifecycle-apply ]]; then test -z "$BOCA_BROWSER_IMAGE_REF"; fi
+          if [[ "$BOCA_OPERATION" != beta-browser-* && "$BOCA_OPERATION" != telegram-* && "$BOCA_OPERATION" != cutover-a-observe && "$BOCA_OPERATION" != cutover-a-apply && "$BOCA_OPERATION" != official-notice-import && "$BOCA_OPERATION" != protected-go-prepare && "$BOCA_OPERATION" != lifecycle-apply ]]; then test -z "$BOCA_BROWSER_IMAGE_REF"; fi
           if [[ "$BOCA_OPERATION" != cutover-a-observe && "$BOCA_OPERATION" != cutover-a-apply ]]; then
             test -z "$BOCA_LEGACY_SOURCE_SHA"
             test -z "$BOCA_LEGACY_IMAGE_REF"
@@ -962,17 +1017,25 @@ jobs:
               test "$BOCA_BROWSER_ENV_READY" = ready
               test "$BOCA_BETA_PANEL_ORIGIN" = http://localhost:8443
               test -n "$BOCA_BETA_OWNER_SUBJECT"
-              [[ "$BOCA_LEGACY_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-              [[ "$BOCA_LEGACY_IMAGE_REF" =~ ^ghcr[.]io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}$ ]]
-              [[ "$BOCA_LEGACY_RELEASE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
-              [[ -z "$BOCA_LEGACY_CONTROLLER_ID" || "$BOCA_LEGACY_CONTROLLER_ID" =~ ^[0-9a-f]{64}$ ]]
-              if [[ "$BOCA_OPERATION" = cutover-a-apply ]]; then
-                # No inferred container identity may retire the legacy BETA.
-                [[ "$BOCA_LEGACY_CONTROLLER_ID" =~ ^[0-9a-f]{64}$ ]]
+              if [[ "$BOCA_OPERATION" = cutover-a-observe || -n "$BOCA_PROTECTED_ACTION_CONTEXT" ]]; then
+                [[ "$BOCA_LEGACY_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+                [[ "$BOCA_LEGACY_IMAGE_REF" =~ ^ghcr[.]io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}$ ]]
+                [[ "$BOCA_LEGACY_RELEASE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+                if [[ "$BOCA_OPERATION" = cutover-a-apply ]]; then
+                  [[ "$BOCA_LEGACY_CONTROLLER_ID" =~ ^[0-9a-f]{64}$ ]]
+                fi
+              else
+                # Historic SHA/image/CID are observed; never input by Tincho.
+                test -z "$BOCA_LEGACY_SOURCE_SHA"
+                test -z "$BOCA_LEGACY_IMAGE_REF"
+                test -z "$BOCA_LEGACY_RELEASE_RUN_ID"
+                test -z "$BOCA_LEGACY_CONTROLLER_ID"
               fi
               [[ "$BOCA_BROWSER_IMAGE_REF" =~ ^ghcr[.]io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}$ ]]
-              test "$BOCA_LEGACY_SOURCE_SHA" != "$BOCA_SOURCE_SHA"
-              test "$BOCA_LEGACY_IMAGE_REF" != "$BOCA_IMAGE_REF"
+              if [[ "$BOCA_OPERATION" = cutover-a-observe || -n "$BOCA_PROTECTED_ACTION_CONTEXT" ]]; then
+                test "$BOCA_LEGACY_SOURCE_SHA" != "$BOCA_SOURCE_SHA"
+                test "$BOCA_LEGACY_IMAGE_REF" != "$BOCA_IMAGE_REF"
+              fi
               test -n "$BOCA_IMAGE_REF"
               test -n "$BOCA_RELEASE_RUN_ID"
               test -z "$BOCA_SITE_ENVELOPE"
@@ -986,14 +1049,28 @@ jobs:
               test -n "$BOCA_IMAGE_REF"
               test -n "$BOCA_RELEASE_RUN_ID"
               test -z "$BOCA_SITE_ENVELOPE"
-              [[ "$BOCA_OFFICIAL_CONTROLLER_ID" =~ ^[0-9a-f]{64}$ ]]
-              [[ "$BOCA_OFFICIAL_NEWS_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
-              [[ "$BOCA_OFFICIAL_NEWS_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-              [[ "$BOCA_OFFICIAL_NEWS_ARTIFACT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
-              [[ "$BOCA_OFFICIAL_NEWS_ZIP_SHA256" =~ ^[0-9a-f]{64}$ ]]
-              [[ "$BOCA_OFFICIAL_NEWS_JSONL_SHA256" =~ ^[0-9a-f]{64}$ ]]
-              [[ "$BOCA_OFFICIAL_NEWS_HTML_SHA256" =~ ^[0-9a-f]{64}$ ]]
-              test -n "$BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC"
+              test "$BOCA_BROWSER_ENV_READY" = ready
+              [[ "$BOCA_BROWSER_IMAGE_REF" =~ ^ghcr[.]io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}$ ]]
+              if [[ -z "$BOCA_PROTECTED_ACTION_CONTEXT" ]]; then
+                # One short user-reviewed source run ID; 7 digests/CID observed.
+                [[ "$BOCA_OFFICIAL_NEWS_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+                test -z "$BOCA_OFFICIAL_CONTROLLER_ID"
+                test -z "$BOCA_OFFICIAL_NEWS_SOURCE_SHA"
+                test -z "$BOCA_OFFICIAL_NEWS_ARTIFACT_ID"
+                test -z "$BOCA_OFFICIAL_NEWS_ZIP_SHA256"
+                test -z "$BOCA_OFFICIAL_NEWS_JSONL_SHA256"
+                test -z "$BOCA_OFFICIAL_NEWS_HTML_SHA256"
+                test -z "$BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC"
+              else
+                [[ "$BOCA_OFFICIAL_CONTROLLER_ID" =~ ^[0-9a-f]{64}$ ]]
+                [[ "$BOCA_OFFICIAL_NEWS_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+                [[ "$BOCA_OFFICIAL_NEWS_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+                [[ "$BOCA_OFFICIAL_NEWS_ARTIFACT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+                [[ "$BOCA_OFFICIAL_NEWS_ZIP_SHA256" =~ ^[0-9a-f]{64}$ ]]
+                [[ "$BOCA_OFFICIAL_NEWS_JSONL_SHA256" =~ ^[0-9a-f]{64}$ ]]
+                [[ "$BOCA_OFFICIAL_NEWS_HTML_SHA256" =~ ^[0-9a-f]{64}$ ]]
+                test -n "$BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC"
+              fi
               ;;
             protected-go-prepare|lifecycle-apply)
               # New Boca actions are only reviewed after independent GO B.
@@ -1096,7 +1173,7 @@ jobs:
         run: |
           if [[ "$BOCA_BUDGET" = 1.75cpu-1152m-224pids ]]; then
             python scripts/check_deploy_inputs.py --browser-ipc-v2 --telegram-runtime "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_SERVICE" "$BOCA_BUDGET" "$BOCA_RELEASE_RUN_ID"
-          elif [[ "$BOCA_OPERATION" = beta-browser-* || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || ( "$BOCA_OPERATION" = telegram-* && -n "$BOCA_BROWSER_IMAGE_REF" ) ]]; then
+          elif [[ "$BOCA_OPERATION" = beta-browser-* || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || ( "$BOCA_OPERATION" = telegram-* && -n "$BOCA_BROWSER_IMAGE_REF" ) ]]; then
             python scripts/check_deploy_inputs.py --browser-ipc-v2 "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_SERVICE" "$BOCA_BUDGET" "$BOCA_RELEASE_RUN_ID"
           else
             python scripts/check_deploy_inputs.py "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_SERVICE" "$BOCA_BUDGET" "$BOCA_RELEASE_RUN_ID"
@@ -1110,7 +1187,7 @@ jobs:
             "$RUNNER_TEMP/boca-release-manifest/boca-release-manifest.json" \
             "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID"
       - name: Require same-run immutable browser companion release manifest
-        if: startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
+        if: startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
         env:
           PYTHONPATH: src
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1121,6 +1198,142 @@ jobs:
           python -m boca_socios.browser_release_manifest verify \
             "$RUNNER_TEMP/boca-browser-release-manifest/boca-browser-release-manifest.json" \
             "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID"
+      - name: Build reviewed Boca-only inventory ZIP for legacy PREPARE without effects
+        if: (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import') && inputs.protected_action_context == ''
+        env:
+          PYTHONPATH: src:scripts
+        run: |
+          set -euo pipefail
+          python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-legacy-inventory-review.pyz"
+          python scripts/check_legacy_go_dispatch.py observer-request \
+            "$RUNNER_TEMP/boca-legacy-inventory-request.token"
+      - name: Configure pinned READ_ONLY SSH exclusively for legacy PREPARE
+        if: (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import') && inputs.protected_action_context == ''
+        env:
+          BOCA_HOST: ${{ vars.BOCA_DEPLOY_HOST }}
+          BOCA_SSH_KEY: ${{ secrets.BOCA_DEPLOY_SSH_KEY }}
+          BOCA_KNOWN_HOSTS: ${{ secrets.BOCA_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$BOCA_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$ ]]
+          test -n "$BOCA_SSH_KEY"
+          test -n "$BOCA_KNOWN_HOSTS"
+          mkdir -m 700 "$RUNNER_TEMP/boca-legacy-readonly-ssh"
+          printf '%s\n' "$BOCA_SSH_KEY" > "$RUNNER_TEMP/boca-legacy-readonly-ssh/key"
+          printf '%s\n' "$BOCA_KNOWN_HOSTS" > "$RUNNER_TEMP/boca-legacy-readonly-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/boca-legacy-readonly-ssh/key" "$RUNNER_TEMP/boca-legacy-readonly-ssh/known_hosts"
+          {
+            printf 'Host boca-legacy-readonly\n'
+            printf '  HostName %s\n' "$BOCA_HOST"
+            printf '  User boca-deploy\n'
+            printf '  IdentityFile %s/boca-legacy-readonly-ssh/key\n' "$RUNNER_TEMP"
+            printf '  UserKnownHostsFile %s/boca-legacy-readonly-ssh/known_hosts\n' "$RUNNER_TEMP"
+            printf '  GlobalKnownHostsFile /dev/null\n'
+            printf '  StrictHostKeyChecking yes\n'
+            printf '  BatchMode yes\n'
+            printf '  IdentitiesOnly yes\n'
+            printf '  IdentityAgent none\n'
+            printf '  PasswordAuthentication no\n'
+            printf '  KbdInteractiveAuthentication no\n'
+            printf '  ClearAllForwardings yes\n'
+            printf '  RequestTTY no\n'
+            printf '  UpdateHostKeys no\n'
+            printf '  ConnectTimeout 10\n'
+            printf '  NumberOfPasswordPrompts 0\n'
+            printf '  ForwardAgent no\n'
+          } > "$RUNNER_TEMP/boca-legacy-readonly-ssh/config"
+          chmod 600 "$RUNNER_TEMP/boca-legacy-readonly-ssh/config"
+      - name: Observe ONLY Boca rootless original/installed controller before GO_B review
+        id: legacy_inventory_host_read
+        if: (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import') && inputs.protected_action_context == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src:scripts
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
+            > "$RUNNER_TEMP/boca-main-ref-legacy-inventory.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-legacy-inventory.json" "$BOCA_SOURCE_SHA"
+          test -s "$RUNNER_TEMP/boca-legacy-inventory-review.pyz"
+          test -s "$RUNNER_TEMP/boca-legacy-inventory-request.token"
+          IFS= read -r public_request < "$RUNNER_TEMP/boca-legacy-inventory-request.token"
+          digest="$(sha256sum "$RUNNER_TEMP/boca-legacy-inventory-review.pyz" | cut -d' ' -f1)"
+          mode=cutover-inventory-observe
+          if [[ "$BOCA_OPERATION" = official-notice-import ]]; then mode=official-inventory-observe; fi
+          remote_command="$(python3 - "$public_request" "$digest" "$mode" <<'PY'
+          import shlex
+          import sys
+
+          token, digest, mode = sys.argv[1:]
+          with open("scripts/boca_protected_memfd_bootstrap.py", encoding="utf-8") as source:
+              bootstrap = source.read()
+          print(shlex.join(["python3", "-c", bootstrap, digest, mode, token]))
+          PY
+          )"
+          # Sole host read: exactly named Boca original/installed controller.
+          # The reviewed helper owns rootless lease; lock metadata under /run
+          # is allowed, application/Docker mutations are ZERO.
+          timeout --signal=TERM --kill-after=5s 150s ssh \
+            -F "$RUNNER_TEMP/boca-legacy-readonly-ssh/config" \
+            -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+            boca-legacy-readonly "$remote_command" \
+            < "$RUNNER_TEMP/boca-legacy-inventory-review.pyz" \
+            > "$RUNNER_TEMP/boca-legacy-inventory-host.receipt" 2>/dev/null
+          python scripts/check_legacy_go_dispatch.py accept-observer \
+            "$RUNNER_TEMP/boca-legacy-inventory-host.receipt" \
+            "$RUNNER_TEMP/boca-legacy-inventory.observed.json"
+      - name: Resolve original Cutover image release by exact host-observed SHA
+        if: inputs.operation == 'cutover-a-apply' && inputs.protected_action_context == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src:scripts
+        run: |
+          set -euo pipefail
+          [[ "$BOCA_LEGACY_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$BOCA_LEGACY_SOURCE_SHA&per_page=100" \
+            > "$RUNNER_TEMP/boca-cutover-history-runs.json"
+          python scripts/check_legacy_go_dispatch.py select-legacy-release \
+            "$RUNNER_TEMP/boca-cutover-history-runs.json" \
+            "$RUNNER_TEMP/boca-legacy-inventory.observed.json" \
+            "$RUNNER_TEMP/boca-cutover-observed-release.id"
+          IFS= read -r historical_run < "$RUNNER_TEMP/boca-cutover-observed-release.id"
+          mkdir -m 700 "$RUNNER_TEMP/boca-cutover-observed-manifest"
+          gh run download "$historical_run" --repo "$GITHUB_REPOSITORY" \
+            --name boca-release-manifest --dir "$RUNNER_TEMP/boca-cutover-observed-manifest"
+          python scripts/check_legacy_go_dispatch.py verify-legacy-release \
+            "$RUNNER_TEMP/boca-cutover-observed-manifest/boca-release-manifest.json" \
+            "$RUNNER_TEMP/boca-legacy-inventory.observed.json" \
+            "$RUNNER_TEMP/boca-cutover-observed-release.id"
+      - name: Discover the one selected reviewed public notice artifact automatically
+        if: inputs.operation == 'official-notice-import' && inputs.protected_action_context == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src:scripts
+        run: |
+          set -euo pipefail
+          [[ "$BOCA_OFFICIAL_NEWS_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BOCA_OFFICIAL_NEWS_RUN_ID" \
+            > "$RUNNER_TEMP/boca-official-source-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BOCA_OFFICIAL_NEWS_RUN_ID/artifacts?per_page=100" \
+            > "$RUNNER_TEMP/boca-official-source-artifacts.json"
+          python scripts/check_legacy_go_dispatch.py select-official-artifact \
+            "$RUNNER_TEMP/boca-official-source-artifacts.json" \
+            "$RUNNER_TEMP/boca-official-observed-artifact.id"
+          IFS= read -r artifact_id < "$RUNNER_TEMP/boca-official-observed-artifact.id"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id" \
+            > "$RUNNER_TEMP/boca-official-artifact.json"
+          curl --fail --silent --show-error --location \
+            --connect-timeout 10 --max-time 40 \
+            --proto '=https' --proto-redir '=https' \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" \
+            -o "$RUNNER_TEMP/boca-official-artifact.zip"
+          python scripts/check_legacy_go_dispatch.py resolve-official-source \
+            "$RUNNER_TEMP/boca-official-source-run.json" \
+            "$RUNNER_TEMP/boca-official-artifact.json" \
+            "$RUNNER_TEMP/boca-official-artifact.zip" \
+            "$RUNNER_TEMP/boca-legacy-inventory.observed.json"
       - name: Authenticate separate historical controller release and original Compose file
         if: inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply'
         env:
@@ -1172,10 +1385,10 @@ jobs:
       - name: Hash reviewed Boca Compose file
         run: sha256sum compose.yaml | cut -d' ' -f1 > "$RUNNER_TEMP/boca-compose.sha"
       - name: Hash reviewed served BETA Compose file
-        if: inputs.operation == 'beta-install' || inputs.operation == 'beta-start' || startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'beta-acceptance' || startsWith(inputs.operation, 'telegram-') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
+        if: inputs.operation == 'beta-install' || inputs.operation == 'beta-start' || startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'beta-acceptance' || startsWith(inputs.operation, 'telegram-') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
         run: sha256sum compose.beta.yaml | cut -d' ' -f1 > "$RUNNER_TEMP/boca-beta-compose.sha"
       - name: Hash reviewed optional browser IPC overlay and seccomp
-        if: startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
+        if: startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
         run: |
           sha256sum compose.beta.browser.yaml | cut -d' ' -f1 > "$RUNNER_TEMP/boca-browser-overlay.sha"
           sha256sum docker/seccomp_profile.json | cut -d' ' -f1 > "$RUNNER_TEMP/boca-browser-seccomp.sha"
@@ -1199,7 +1412,7 @@ jobs:
           docker compose -p boca-socios -f compose.beta.yaml config --format json > "$RUNNER_TEMP/boca-beta-runner-model.json"
           python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-beta-runner-model.json" "$BOCA_IMAGE_REF"
       - name: Validate exact optional dual-service IPC Compose model before SSH
-        if: startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
+        if: startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
         env:
           BOCA_IMAGE: ${{ inputs.image_ref }}
           BOCA_BROWSER_IMAGE: ${{ inputs.browser_image_ref }}
@@ -1211,42 +1424,26 @@ jobs:
         run: |
           docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml config --format json > "$RUNNER_TEMP/boca-browser-runner-model.json"
           python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-runner-model.json" "$BOCA_IMAGE_REF" --topology=browser-ipc-v2
-      - name: Require independently approved Cutover A GO bound to the exact run and reviewed bytes
-        id: cutover_go_preflight
+      - name: Build exact reviewed Cutover A ZIP for both GO_B phases
         if: inputs.operation == 'cutover-a-apply'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}
-          BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
           PYTHONPATH: src:scripts
         run: |
           set -euo pipefail
-          # This independently controlled protected-Environment value is NOT
-          # a workflow_dispatch input. Default empty is always NO_GO.
-          [[ "$BOCA_CUTOVER_A_GO_BINDING_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-cutover.json"
-          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-cutover.json" "$BOCA_SOURCE_SHA"
           python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
-          python scripts/check_cutover_a_go.py --from-actions
-      - name: Require independent GO and exact official source artifact before SSH
-        id: official_import_go_preflight
-        if: inputs.operation == 'official-notice-import'
+      - name: Recheck exact official source before independent APPLY GO_B
+        if: inputs.operation == 'official-notice-import' && inputs.protected_action_context != ''
         env:
-          BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256: ${{ vars.BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256 }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PYTHONPATH: src
+          PYTHONPATH: src:scripts
         run: |
           set -euo pipefail
-          # Independent protected Environment approval; dispatch inputs alone
-          # can never turn the reviewed public notice into a host operation.
-          [[ "$BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256" =~ ^[0-9a-f]{64}$ ]]
           [[ "$BOCA_OFFICIAL_NEWS_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           [[ "$BOCA_OFFICIAL_NEWS_ARTIFACT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BOCA_OFFICIAL_NEWS_RUN_ID" > "$RUNNER_TEMP/boca-official-source-run.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$BOCA_OFFICIAL_NEWS_ARTIFACT_ID" > "$RUNNER_TEMP/boca-official-artifact.json"
-          # GitHub's archive endpoint redirects to a short-lived signed ZIP.
-          # The helper verifies independent metadata + entire ZIP SHA256,
-          # then receipt/JSONL/source digests before any host interaction.
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BOCA_OFFICIAL_NEWS_RUN_ID" \
+            > "$RUNNER_TEMP/boca-official-source-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$BOCA_OFFICIAL_NEWS_ARTIFACT_ID" \
+            > "$RUNNER_TEMP/boca-official-artifact.json"
           curl --fail --silent --show-error --location \
             --connect-timeout 10 --max-time 40 \
             --proto '=https' --proto-redir '=https' \
@@ -1254,7 +1451,68 @@ jobs:
             -H "Authorization: Bearer $GH_TOKEN" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$BOCA_OFFICIAL_NEWS_ARTIFACT_ID/zip" \
             -o "$RUNNER_TEMP/boca-official-artifact.zip"
-          python -m boca_socios.host_official_notice_actions runner-preflight \
+      - name: Prepare no-effect immutable Cutover or official GO_B review object
+        id: legacy_go_prepare
+        if: (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import') && inputs.protected_action_context == ''
+        env:
+          BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
+          PYTHONPATH: src:scripts
+        run: |
+          set -euo pipefail
+          # The PREPARE review object includes exact SHA/image/browser/release,
+          # observed host CID if applicable, original Compose or public notice
+          # ZIP bytes, owner subject digest and an immutable PREPARE run ID.
+          # It does NOT authorize any host effect: no GO env is read here.
+          python scripts/check_legacy_go_dispatch.py prepare
+          printf 'BOCA_LEGACY_PREPARE state=READY host_effects=0 prepared_run=%s\n' "$GITHUB_RUN_ID"
+      - name: Publish inert reviewed GO_B PREPARE coordinates and receipt
+        if: (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import') && inputs.protected_action_context == ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boca-protected-legacy-go-prepare
+          path: |
+            ${{ runner.temp }}/boca-legacy-prepare.coordinates.json
+            ${{ runner.temp }}/boca-legacy-prepare.receipt.json
+          if-no-files-found: error
+          retention-days: 2
+      - name: Require independently approved Cutover A GO_B bound to PREPARE and reviewed bytes
+        id: cutover_go_preflight
+        if: inputs.operation == 'cutover-a-apply' && inputs.protected_action_context != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}
+          BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
+          PYTHONPATH: src:scripts
+        run: |
+          set -euo pipefail
+          [[ "$BOCA_CUTOVER_A_GO_BINDING_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-cutover.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-cutover.json" "$BOCA_SOURCE_SHA"
+          # GH PREPARE success, source, owner, artifact and expiry revalidated
+          # before exact 3-file O_EXCL private evidence is ever staged.
+          python scripts/check_legacy_go_dispatch.py apply \
+            "$RUNNER_TEMP/boca-legacy-prepare-run.json" \
+            "$RUNNER_TEMP/boca-legacy-prepared/boca-legacy-prepare.coordinates.json" \
+            "$RUNNER_TEMP/boca-legacy-prepared/boca-legacy-prepare.receipt.json"
+          python scripts/check_cutover_a_go.py --prepared-from-actions
+      - name: Require independent official import GO_B and exact source ZIP
+        id: official_import_go_preflight
+        if: inputs.operation == 'official-notice-import' && inputs.protected_action_context != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256: ${{ vars.BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256 }}
+          BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
+          PYTHONPATH: src:scripts
+        run: |
+          set -euo pipefail
+          [[ "$BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-official.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-official.json" "$BOCA_SOURCE_SHA"
+          python scripts/check_legacy_go_dispatch.py apply \
+            "$RUNNER_TEMP/boca-legacy-prepare-run.json" \
+            "$RUNNER_TEMP/boca-legacy-prepared/boca-legacy-prepare.coordinates.json" \
+            "$RUNNER_TEMP/boca-legacy-prepared/boca-legacy-prepare.receipt.json"
+          python -m boca_socios.host_official_notice_actions runner-preflight-prepared \
             "$RUNNER_TEMP/boca-official-source-run.json" \
             "$RUNNER_TEMP/boca-official-artifact.json" \
             "$RUNNER_TEMP/boca-official-artifact.zip" \
@@ -1388,7 +1646,7 @@ jobs:
             --name boca-protected-go-prepare --dir "$RUNNER_TEMP"
           python scripts/check_protected_go_prepare.py --apply
       - name: Configure pinned SSH host key and dedicated identity
-        if: inputs.operation != 'protected-go-prepare'
+        if: inputs.operation != 'protected-go-prepare' && !((inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import') && inputs.protected_action_context == '')
         env:
           BOCA_HOST: ${{ vars.BOCA_DEPLOY_HOST }}
           BOCA_SSH_KEY: ${{ secrets.BOCA_DEPLOY_SSH_KEY }}
@@ -1479,7 +1737,7 @@ jobs:
           printf 'BOCA_LIFECYCLE state=APPLIED physical_ack=TRUE scope=boca-only verify=owner-Chrome-Samsung\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Import one reviewed official notice into the existing Boca volume
         id: official_import_host_apply
-        if: inputs.operation == 'official-notice-import'
+        if: inputs.operation == 'official-notice-import' && inputs.protected_action_context != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONPATH: src
@@ -1491,7 +1749,7 @@ jobs:
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-official-effect.json" "$BOCA_SOURCE_SHA"
           test -s "$RUNNER_TEMP/boca-official-import.token"
           test -s "$RUNNER_TEMP/boca-official-artifact.zip"
-          remote_command="$(python -m boca_socios.host_official_notice_actions runner-host-command "$RUNNER_TEMP/boca-official-import.token")"
+          remote_command="$(python -m boca_socios.host_official_notice_actions runner-host-command-prepared "$RUNNER_TEMP/boca-official-import.token" "$RUNNER_TEMP/boca-official-artifact.zip")"
           # One rootless Boca UID host transaction; host Bash holds the same
           # cooperative flock across exact CID/image attestation, the write,
           # readback and final inventory. No Docker pruning or restart occurs.
@@ -1502,7 +1760,7 @@ jobs:
             < "$RUNNER_TEMP/boca-official-artifact.zip" \
             > "$RUNNER_TEMP/boca-official-import-host.receipt" 2>/dev/null
       - name: Refuse missing or ambiguous official import receipt
-        if: ${{ always() && inputs.operation == 'official-notice-import' }}
+        if: ${{ always() && inputs.operation == 'official-notice-import' && inputs.protected_action_context != '' }}
         env:
           PYTHONPATH: src
           BOCA_OFFICIAL_IMPORT_PREFLIGHT: ${{ steps.official_import_go_preflight.outcome }}
@@ -1516,7 +1774,7 @@ jobs:
           printf 'BOCA_OFFICIAL_IMPORT state=ACCEPTED source=UNVERIFIED availability=UNVERIFIED actionable=false; physical Samsung Chrome panel observation still required.\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Apply exactly one reviewed Cutover A host transaction through memfd
         id: cutover_host_apply
-        if: inputs.operation == 'cutover-a-apply'
+        if: inputs.operation == 'cutover-a-apply' && inputs.protected_action_context != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONPATH: src:scripts
@@ -1558,7 +1816,7 @@ jobs:
             < "$RUNNER_TEMP/boca-cutover-a-review.pyz" \
             > "$RUNNER_TEMP/boca-cutover-a-host.receipt" 2>/dev/null
       - name: Fail closed on absent or ambiguous Cutover A host terminal receipt
-        if: ${{ always() && inputs.operation == 'cutover-a-apply' }}
+        if: ${{ always() && inputs.operation == 'cutover-a-apply' && inputs.protected_action_context != '' }}
         env:
           PYTHONPATH: src:scripts
           BOCA_CUTOVER_A_GO_PREFLIGHT: ${{ steps.cutover_go_preflight.outcome }}
