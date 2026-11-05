@@ -166,8 +166,8 @@ def apply_latest_owner_request(
     transport = adapter.ProductionRootlessDockerIO() if io is None else io
     preview = LifecycleIntent(
         operation_id="00000000-0000-4000-8000-000000000001",
-        component="bot",
-        target="stop",
+        component=installed.expected_component or "bot",
+        target=installed.expected_target or "stop",
         status="REQUESTED",
         requested_at="1970-01-01 00:00:00",
     )

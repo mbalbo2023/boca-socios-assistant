@@ -96,6 +96,36 @@ def test_one_pending_request_yields_one_verified_redacted_ack(
     assert "image" not in data and "token" not in data and "password" not in data
 
 
+@pytest.mark.parametrize(
+    ("component", "target"),
+    [
+        ("bot", "start"),
+        ("bot", "stop"),
+        ("chromium", "start"),
+        ("chromium", "stop"),
+    ],
+)
+def test_exact_action_pins_permit_each_of_four_requested_actions(
+    tmp_path: Path,
+    verified_io: tuple[FakeLedger, list[object]],
+    component: str,
+    target: str,
+) -> None:
+    ledger, effects = verified_io
+    ledger.state = _requested(component, target)
+    reviewed = replace(
+        _reviewed(tmp_path), expected_component=component, expected_target=target
+    )
+    receipt = actions.apply_latest_owner_request(
+        reviewed, lease=BocaJobLease("3456789012", 12, 1, True)
+    )
+    assert receipt.applied and receipt.component == component and receipt.target == target
+    assert len(effects) == 1
+    coordinates = effects[0]
+    assert isinstance(coordinates, LifecycleHostCoordinates)
+    assert (coordinates.component, coordinates.target) == (component, target)
+
+
 @pytest.mark.parametrize("state", [None, "APPLIED", "CLAIMED", "UNCERTAIN", "REFUSED"])
 def test_no_fresh_requested_fails_before_adapter_effect(
     tmp_path: Path,
