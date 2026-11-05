@@ -162,7 +162,7 @@ def test_host_expected_stage_and_owner_binding_are_independent(context: OwnerSta
         _review(_witness(), context=context)
 
 
-@pytest.mark.parametrize("when", [STAGED - 1, STAGED + 3601, NOW + 1])
+@pytest.mark.parametrize("when", [STAGED - 1, STAGED + 3601, STAGED])
 def test_future_or_expired_stage_never_passes(when: int) -> None:
     with pytest.raises(OwnerWitnessNoGo):
         _review(_witness(), trusted_now=when)
