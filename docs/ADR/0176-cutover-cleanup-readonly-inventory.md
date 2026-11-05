@@ -87,3 +87,31 @@ No borrar ni reintentar Cutover a partir de un mero resultado READ_ONLY verde.
 Sin modificaciones de Porota, otros servicios, puertos, HTTPS, backups,
 reservas/compras ni módulos BLACKBOX. Regla 84: actualizar #386/#323 con
 SHA, QA exacto y recibo físico *cuando exista*; el merge no es despliegue.
+
+## R25.2 — RCA presupuesto del preflight anterior a SSH
+
+La operación protegida READ_ONLY
+[#42110047550](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42110047550)
+falló en `Require verified protected environment and matching main commit`
+**antes de configurar SSH**. El workflow ya enumeraba `cutover-a-reconcile`
+en el `case` de identidad y entradas, pero no en el `elif` de presupuesto
+`1.5cpu-1024m-192pids`. Por ello caía al `else` que exigía
+`0.5cpu-256m-64pids`, contradictorio con el budget 1.5 seleccionado para
+diagnóstico Cutover. No hay evidencia nueva de lectura del host ni de
+operaciones Docker de ese run, por lo que `cleanup=INDETERMINATE` persiste.
+
+La corrección agrega **únicamente** `cutover-a-reconcile` a la condición
+existente de presupuesto 1.5, sin cambiar caps del contenedor ni políticas
+de otro workflow. Una prueba ejecuta offline el fragmento Bash verdadero
+del YAML: reproduce RED con el budget correcto y exige GREEN con 1.5 y
+NO_GO con 0.5. Otra prueba ejecuta el paso entero de validación de entorno
+con valores públicos ficticios y sin credenciales/host; una tercera acredita
+que una observación válida con `stage_preflight.reason=STAGE_COMPOSE_INODE_MODE`
+**sí permite** pasar al segundo lector Docker READ_ONLY del mismo run.
+
+La continuación no usa `always()`: si falla SSH, marcador o validación del
+primer lector, el segundo permanece SKIPPED. Si el primer JSON es válido
+pero Stage reporta NO_GO, el primer paso verifica y retorna éxito *como
+lectura*, por lo que se puede inspeccionar Docker sin autorizar retry ni
+limpieza. La evidencia física final requiere un despacho nuevo sobre main
+con este parche revisado, CI exacta, merge protegido y mismos límites Boca.

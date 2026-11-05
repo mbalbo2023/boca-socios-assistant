@@ -191,6 +191,110 @@ def test_postapply_cleanup_workflow_uses_existing_only_readonly_dispatch() -> No
     )
 
 
+def test_cutover_reconcile_budget_gate_accepts_only_exact_readonly_budget() -> None:
+    """Execute the real host preflight's budget branch offline, not a guessed regex."""
+    import subprocess
+
+    workflow = (Path(__file__).parents[1] / ".github/workflows/boca-first-deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    budget_branch = workflow.split(
+        '          if [[ "$BOCA_OPERATION" = infrastructure-preflight', 1
+    )[1].split('          if [[ "$BOCA_OPERATION" != beta-browser-*', 1)[0]
+    script = 'if [[ "$BOCA_OPERATION" = infrastructure-preflight' + budget_branch
+    for budget, expected_code in (("1.5cpu-1024m-192pids", 0), ("0.5cpu-256m-64pids", 1)):
+        result = subprocess.run(  # noqa: S603 - fixed offline bash and checkout YAML only
+            ["/bin/bash", "-euo", "pipefail", "-c", script],
+            env={
+                "PATH": "/usr/bin:/bin",
+                "BOCA_OPERATION": "cutover-a-reconcile",
+                "BOCA_BUDGET": budget,
+                "BOCA_BROWSER_IMAGE_REF": "",
+                "BOCA_TELEGRAM_OWNER_READY": "",
+            },
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        assert result.returncode == expected_code
+
+
+def test_cutover_reconcile_full_preflight_passes_offline_without_host_credentials() -> None:
+    """Exercise the entire manual job's immutable pre-SSH gate with synthetic inputs."""
+    import re
+    import subprocess
+
+    workflow = (Path(__file__).parents[1] / ".github/workflows/boca-first-deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    step = workflow.split(
+        "      - name: Require verified protected environment and matching main commit", 1
+    )[1].split("      - name: Reject legacy install routes", 1)[0]
+    command = step.split("        run: |\n", 1)[1]
+    fake_env = {name[1:]: "" for name in re.findall(r"\$[A-Z][A-Z0-9_]+", command)}
+    fake_env.update(
+        {
+            "PATH": "/usr/bin:/bin",
+            "BOCA_OPERATION": "cutover-a-reconcile",
+            "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_RUN_ID": "42110047551",
+            "GITHUB_SHA": "f" * 40,
+            "BOCA_SOURCE_SHA": "f" * 40,
+            "BOCA_SERVICE": "controller",
+            "BOCA_BUDGET": "1.5cpu-1024m-192pids",
+            "BOCA_PROTECTED_ACTION_CONTEXT": "42096941815",
+            "BOCA_INCIDENT_PREPARE_RUN_ID": "42091200929",
+            "BOCA_LEGACY_RELEASE_RUN_ID": "42091200929",
+            "BOCA_HOST_READONLY_ENV_READY": "ready",
+            "BOCA_DEPLOY_ENV_READY": "ready",
+        }
+    )
+    result = subprocess.run(  # noqa: S603 - fixed offline bash and checkout YAML only
+        ["/bin/bash", "-euo", "pipefail", "-c", command],
+        env=fake_env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_cleanup_readonly_continues_after_valid_stage_inode_no_go_observation() -> None:
+    """Stage mismatch is a data result, not a reason to skip Boca Docker inventory."""
+    import importlib.util
+
+    script = Path(__file__).parents[1] / "scripts/host_cutover_postapply_reconcile.py"
+    spec = importlib.util.spec_from_file_location("boca_stage_readonly_for_test", script)
+    assert spec is not None and spec.loader is not None
+    reconcile = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(reconcile)
+
+    observed = {
+        "version": "boca-postapply-reconcile-v1",
+        "incident_run_id": ATTEMPT,
+        "prepare_run_id": "42091200929",
+        "runtime_attested": False,
+        "go_for_retry": False,
+        "foreign_resources_touched": False,
+        "stage_preflight": {"reason": "STAGE_COMPOSE_INODE_MODE"},
+        "original": {"id": ACTIVE_ID, "running": True, "health": "healthy"},
+        "legacy_id": ACTIVE_ID,
+    }
+    raw = reconcile._canonical(observed) + b"\n"
+    accepted = reconcile.verify_runner(raw, ATTEMPT, "42091200929")
+    assert accepted["stage_preflight"]["reason"] == "STAGE_COMPOSE_INODE_MODE"
+    workflow = (Path(__file__).parents[1] / ".github/workflows/boca-first-deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    step = workflow.split("      - name: Plan Boca-only Docker cleanup READ_ONLY", 1)[1].split(
+        "      - name: Apply one exact-ID Boca owner lifecycle request", 1
+    )[0]
+    assert "if: inputs.operation == 'cutover-a-reconcile'" in step
+    assert "always()" not in step  # Do not bypass failed SSH/identity checks.
+
+
 def _inventory() -> gc.Inventory:
     return gc.Inventory(
         containers=(
