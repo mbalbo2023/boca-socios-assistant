@@ -131,7 +131,14 @@ def _open_no_parent_symlink(path: Path) -> int:
                 raise
             os.close(directory)
             directory = next_directory
-        return os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
+        # O_NONBLOCK is ignored for regular files but prevents an attacker-
+        # controlled FIFO from hanging protected runner preflight BEFORE fstat.
+        # The subsequent fstat still strictly requires a regular inode.
+        return os.open(
+            path.name,
+            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=directory,
+        )
     except OSError as exc:
         raise CutoverGoError("Cutover A GO artifact path or parent symlink untrusted") from exc
     finally:
