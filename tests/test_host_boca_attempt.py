@@ -94,6 +94,48 @@ def test_failed_attempt_only_explicit_created_id_is_retired(
         )
 
 
+def test_failure_without_created_id_refuses_unrecorded_labelled_controller(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A lost create receipt cannot grant deletion of an unseen attempt ID."""
+    _setup(monkeypatch, tmp_path)
+    intent, _ = attempt.intended("beta-install", RUN, SOURCE, BASE_SHA, None)
+    snapshot = cleanup.Inventory(
+        containers=(
+            cleanup.Container(
+                CONTROLLER,
+                "/boca-socios-controller-1",
+                "d" * 64,
+                False,
+                (
+                    ("com.docker.compose.project", "boca-socios"),
+                    ("com.docker.compose.service", "controller"),
+                    ("boca.socios.beta-install-attempt", RUN),
+                    ("boca.socios.source-sha", SOURCE),
+                ),
+            ),
+        ),
+        images=(),
+        networks=(),
+        volumes=(),
+        disk=cleanup.DiskInodes(100000, 1000),
+        global_image_ids=frozenset(),
+    )
+    monkeypatch.setattr(cleanup, "capture_inventory", lambda: snapshot)
+    monkeypatch.setattr(
+        cleanup,
+        "execute_protected",
+        lambda *_args, **_kwargs: pytest.fail("ambiguous failure must never delete"),
+    )
+    with cleanup.protected_boca_job_lease(RUN) as lease:
+        digest = attempt.begin(intent, lease=lease)
+        result = attempt.Result(RUN, digest, "FAILURE", None, None)
+        attempt.finish(result, lease=lease)
+        assert attempt.cleanup_ids(result, lease=lease) == (frozenset(), frozenset())
+        with pytest.raises(attempt.AttemptError, match="undeclared attempt controller"):
+            attempt.finalize_attempt(result, lease=lease, preserve_images=frozenset())
+
+
 def test_missing_result_is_no_go_no_guessed_retirement(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -27,6 +27,7 @@ SOURCES = (
     "src/boca_socios/host_boca_transaction.py",
     "src/boca_socios/host_boca_cutover.py",
     "src/boca_socios/host_boca_cutover_backend.py",
+    "src/boca_socios/host_boca_cutover_receipt.py",
     "src/boca_socios/host_cutover_stage.py",
 )
 # Source-owned by #321, merged only after that PR passes its own QA.  The

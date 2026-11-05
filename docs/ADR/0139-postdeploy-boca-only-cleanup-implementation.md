@@ -339,3 +339,49 @@ image release validation `41949228846`, image security `41949228937` and
 first-deploy validation `41949228860`. Their success predates this incremental
 code and proves **no physical host action**. Regla84 must record new exact-SHA
 checks separately after publication of this change.
+
+## A45-R11-4: same-lease terminal attestation and guarded GO boundary
+
+The protected concrete cutover still has **no effectful CLI dispatch** and
+`cutover-a-apply` remains **absent** from the GitHub Action's manual operation
+choices. The user authorized preparing an eventual single protected operation,
+not physically performing it without a separate exact-SHA GO. In particular,
+reviewing source or running synthetic host tests must never flip a host gate.
+
+`host_boca_cutover_receipt.TerminalRecord` now binds attempt, historical SHA
+and immutable controller ID, target SHA, terminal state, actual cleanup
+classification, recovery/irreversibility flags and optional candidate/worker
+IDs. A positive `ACCEPTED` record requires both living candidate and worker
+exact IDs **distinct from legacy and from each other**, an irreversible commit
+and a positive cleanup receipt; a positively `RECOVERED` failure requires the
+old ID restored and no commit. An ambiguous `NO_GO` preserves real uncertainty
+and must never be converted into acceptance.
+
+`run_cutover_a()` accepts an optional terminal sink and invokes it **after
+the unconditional Docker finalizer but before releasing the exact same
+canonical protected job lease**. The production-ready sink creates
+`/run/user/10001/boca-cutover-a-result-<run>.json` with O_EXCL and no replace,
+owner-only mode 0600, fd fsync, directory fsync, exact inode/mode/bytes
+readback and SHA256. A duplicate or symlink refuses; a partial/truncated
+marker is retained as evidence and never overwritten. No secret is printed.
+It is **not wired to any host invocation**: the existing entrypoint returns
+`NO_GO transaction_not_wired` for all effectful arguments.
+
+The GitHub PR-only workflow runs this independent five-test receipt suite;
+its `if: always()` assertion continues to require **zero host receipts** on PR.
+Future host Actions must assert an authenticated terminal record on both
+success and failure, under single SSH/memfd/lease and independently verified
+historical controller manifest, target controller manifest and same-release
+browser manifest, with the bundle SHA256 bound to that exact run. A missing
+host record (SSH interruption, killed runner, failed fsync) is **NO_GO**;
+Actions' finalizer is not a recovery guarantee or permission to guess cleanup.
+
+Integration drift in consolidated candidate #319 temporarily omitted the
+original `host_boca_transaction.py` contract, its matching test file, and a
+nine-line `host_boca_attempt.finalize_attempt()` guard that rejects an
+unrecorded but attempt-labelled controller on `FAILURE` when the created ID
+is unknown. The complete contract and guard must be restored alongside the
+tests; deleting the test from CI would mask a real unsafe cleanup condition.
+An extra adversarial test now requires that such a labelled unknown controller
+forces `AttemptError` with **zero calls to effectful cleanup**. No host
+effects, backups, BLACKBOX changes or service/port mutations were performed.

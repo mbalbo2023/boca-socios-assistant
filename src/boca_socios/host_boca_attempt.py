@@ -355,6 +355,15 @@ def finalize_attempt(
     intent, _ = read_intent(result.attempt_id, lease=lease)
     preserve, retire = cleanup_ids(result, lease=lease)
     snapshot = cleanup.capture_inventory()
+    if result.outcome == "FAILURE" and result.created_controller_id is None:
+        for container in snapshot.containers:
+            labels = dict(container.labels)
+            if (
+                labels.get("com.docker.compose.project") == cleanup.BOCA_PROJECT
+                and labels.get("com.docker.compose.service") == "controller"
+                and labels.get(OPERATIONS[intent.operation]) == result.attempt_id
+            ):
+                raise AttemptError("Boca finalizer undeclared attempt controller remains")
     for ident in preserve | retire:
         matches = [container for container in snapshot.containers if container.ident == ident]
         if len(matches) != 1:
