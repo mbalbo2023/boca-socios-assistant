@@ -24,8 +24,7 @@ def _historical_same_compose_plan() -> CutoverPlan:
         legacy_compose_sha="1" * 64,
         target_sha="b" * 40,
         target_image="ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "d" * 64,
-        browser_image="ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
-        + "e" * 64,
+        browser_image="ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "e" * 64,
         target_compose_sha="1" * 64,
         overlay_sha="3" * 64,
         seccomp_sha="4" * 64,
