@@ -178,13 +178,9 @@ def test_future_or_expired_stage_never_passes(when: int) -> None:
         (0, STAGED + 1),
     ],
 )
-def test_signed_but_stale_or_inconsistent_owner_event_denied(
-    proof_at: int, signed_at: int
-) -> None:
+def test_signed_but_stale_or_inconsistent_owner_event_denied(proof_at: int, signed_at: int) -> None:
     source = replace(_witness(), passkey_verified_at=proof_at, issued_at=signed_at)
-    source = replace(
-        source, auth_tag=hmac.digest(KEY, DOMAIN + _payload(source), hashlib.sha256)
-    )
+    source = replace(source, auth_tag=hmac.digest(KEY, DOMAIN + _payload(source), hashlib.sha256))
     with pytest.raises(OwnerWitnessNoGo):
         _review(source)
 
