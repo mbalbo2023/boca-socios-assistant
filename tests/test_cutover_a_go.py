@@ -256,10 +256,14 @@ def test_go_b_host_receipt_requires_canonical_redacted_postflight_with_exact_ids
     disk_before = cleanup.DiskInodes(2000, 200, 4000, 400, 8, 10, 16, 18)
     disk_after = cleanup.DiskInodes(3000, 208, 5000, 406, 8, 10, 16, 18)
     report = cleanup.CleanupReceipt(
-        "SUCCESS", request.plan.attempt_id, "ACCEPT",
-        disk_before, disk_after,
+        "SUCCESS",
+        request.plan.attempt_id,
+        "ACCEPT",
+        disk_before,
+        disk_after,
         (cleanup.Target("image", "sha256:" + "f" * 64),),
-        (), (),
+        (),
+        (),
     ).redacted_json()
     _file(path, exact_ack + b"BOCA_CUTOVER_A_POSTFLIGHT " + report.encode("ascii") + b"\n")
     assert go.assert_actions_host_receipt(env) == report
@@ -268,7 +272,9 @@ def test_go_b_host_receipt_requires_canonical_redacted_postflight_with_exact_ids
         exact_ack + b"BOCA_CUTOVER_A_POSTFLIGHT {}\n",
         exact_ack + b"BOCA_CUTOVER_A_POSTFLIGHT " + report.encode("ascii") + b"\nEXTRA\n",
         exact_ack.replace(b"cleanup=ACCEPT", b"cleanup=NO_GO")
-        + b"BOCA_CUTOVER_A_POSTFLIGHT " + report.encode("ascii") + b"\n",
+        + b"BOCA_CUTOVER_A_POSTFLIGHT "
+        + report.encode("ascii")
+        + b"\n",
     ):
         _file(path, malformed)
         with pytest.raises(go.CutoverGoError):

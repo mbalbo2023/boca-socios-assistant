@@ -186,10 +186,7 @@ class CleanupReceipt:
             or len(self.removed) > MAX_DELETIONS
             or len(self.known_residue) > MAX_DELETIONS
             or len(self.retained_uncertain) > MAX_OBJECTS
-            or (
-                self.status == "ACCEPT"
-                and (self.retained_uncertain or self.known_residue)
-            )
+            or (self.status == "ACCEPT" and (self.retained_uncertain or self.known_residue))
         ):
             raise CleanupError("Boca cleanup exact receipt evidence invalid")
 
@@ -221,13 +218,18 @@ class CleanupReceipt:
             result: list[dict[str, str]] = []
             for item in items:
                 if not isinstance(item, Target) or item.kind not in (
-                    "container", "image", "network", "volume"
+                    "container",
+                    "image",
+                    "network",
+                    "volume",
                 ):
                     raise CleanupError("Boca cleanup receipt target kind invalid")
                 valid = (
-                    item.kind != "volume" and type(item.ident) is str
+                    item.kind != "volume"
+                    and type(item.ident) is str
                     and HEX_ID.fullmatch(item.ident) is not None
-                    or item.kind == "volume" and type(item.ident) is str
+                    or item.kind == "volume"
+                    and type(item.ident) is str
                     and DOCKER_NAME.fullmatch(item.ident) is not None
                     and item.ident.startswith("boca-socios_")
                     and item.ident not in PERSISTENT_VOLUMES
@@ -240,8 +242,7 @@ class CleanupReceipt:
             return result
 
         if any(
-            type(reason) is not str
-            or re.fullmatch(r"[A-Za-z0-9:_.-]{1,220}", reason) is None
+            type(reason) is not str or re.fullmatch(r"[A-Za-z0-9:_.-]{1,220}", reason) is None
             for reason in self.retained_uncertain
         ):
             raise CleanupError("Boca cleanup receipt uncertainty contains unsafe text")

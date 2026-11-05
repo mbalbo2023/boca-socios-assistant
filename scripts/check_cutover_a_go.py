@@ -497,23 +497,38 @@ def write_actions_invocation_prepared(request: GoRequest, *, environ: Mapping[st
 _POSTFLIGHT_PREFIX = b"BOCA_CUTOVER_A_POSTFLIGHT "
 _POSTFLIGHT_KEYS = frozenset(
     {
-        "version", "scope", "attempt_id", "outcome", "status", "before", "after",
-        "removed", "retained_uncertain", "known_residue",
+        "version",
+        "scope",
+        "attempt_id",
+        "outcome",
+        "status",
+        "before",
+        "after",
+        "removed",
+        "retained_uncertain",
+        "known_residue",
     }
 )
 _POSTFLIGHT_DISK_KEYS = frozenset(
     {
-        "stage_bytes_free", "stage_inodes_free", "docker_bytes_free",
-        "docker_inodes_free", "stage_device", "stage_inode",
-        "docker_device", "docker_inode",
+        "stage_bytes_free",
+        "stage_inodes_free",
+        "docker_bytes_free",
+        "docker_inodes_free",
+        "stage_device",
+        "stage_inode",
+        "docker_device",
+        "docker_inode",
     }
 )
 _POSTFLIGHT_ID = re.compile(r"(?:sha256:)?[0-9a-f]{64}\Z")
 _POSTFLIGHT_VOLUME = re.compile(r"boca-socios_[A-Za-z0-9_.-]{1,110}\Z")
 _POSTFLIGHT_PRESERVE = frozenset(
     {
-        "boca-socios_boca_data", "boca-socios_boca_key",
-        "boca-socios_boca_owner", "boca-socios_boca_telegram",
+        "boca-socios_boca_data",
+        "boca-socios_boca_key",
+        "boca-socios_boca_owner",
+        "boca-socios_boca_telegram",
     }
 )
 
@@ -632,7 +647,7 @@ def assert_actions_host_receipt(environment: Mapping[str, str]) -> str | None:
         return None
     if not raw.startswith(expected):
         raise CutoverGoError("Cutover A GO_B terminal ACK absent")
-    postflight = raw[len(expected):]
+    postflight = raw[len(expected) :]
     if (
         not postflight.startswith(_POSTFLIGHT_PREFIX)
         or not postflight.endswith(b"\n")
@@ -640,7 +655,7 @@ def assert_actions_host_receipt(environment: Mapping[str, str]) -> str | None:
     ):
         raise CutoverGoError("Cutover A GO_B postflight receipt absent or ambiguous")
     return verify_postflight_json(
-        postflight[len(_POSTFLIGHT_PREFIX):-1], environment["GITHUB_RUN_ID"]
+        postflight[len(_POSTFLIGHT_PREFIX) : -1], environment["GITHUB_RUN_ID"]
     )
 
 

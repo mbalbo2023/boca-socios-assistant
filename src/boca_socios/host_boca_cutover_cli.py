@@ -210,9 +210,7 @@ def run_cli(
                 # Failures with positively observed cleanup still expose the
                 # bounded receipt for RCA. Ambiguous effects remain NO_GO.
                 postflight = detail.redacted_json()
-                if receipt.accepted and (
-                    detail.outcome != "SUCCESS" or detail.status != "ACCEPT"
-                ):
+                if receipt.accepted and (detail.outcome != "SUCCESS" or detail.status != "ACCEPT"):
                     raise CutoverCliError("Cutover A accepted cleanup result mismatched")
         if not receipt.accepted:
             if postflight:

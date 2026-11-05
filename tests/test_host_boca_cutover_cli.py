@@ -243,7 +243,13 @@ def test_prepared_cutover_cli_requires_separate_go_and_receipt(
         assert actual == plan and prepared_id == "50000000001"
         seen.append("prepared-effect")
         return CutoverReceipt(
-            plan.attempt_id, "ACCEPTED", "ACCEPT", False, True, NEW, WORKER,
+            plan.attempt_id,
+            "ACCEPTED",
+            "ACCEPT",
+            False,
+            True,
+            NEW,
+            WORKER,
             _cleanup_ok(plan),
         )
 
@@ -273,16 +279,21 @@ def test_prepared_cutover_without_complete_postflight_receipt_is_no_go(
 ) -> None:
     _, plan, digest = reviewed_context
     token = cli.encode_invocation(
-        plan, bundle_sha256=digest, go_binding_sha256=GO,
+        plan,
+        bundle_sha256=digest,
+        go_binding_sha256=GO,
         prepare_run_id="50000000001",
     )
     incomplete = CutoverReceipt(plan.attempt_id, "ACCEPTED", "ACCEPT", False, True, NEW, WORKER)
-    assert cli.run_cli(
-        token,
-        approved_go_binding_sha256=GO,
-        execute_prepared=lambda _plan, _prepare: incomplete,
-        reconcile=lambda _plan, _receipt: None,
-    ) == 3
+    assert (
+        cli.run_cli(
+            token,
+            approved_go_binding_sha256=GO,
+            execute_prepared=lambda _plan, _prepare: incomplete,
+            reconcile=lambda _plan, _receipt: None,
+        )
+        == 3
+    )
     assert capsys.readouterr().out == (
         "BOCA_CUTOVER_A_HOST state=NO_GO receipt=UNVERIFIED runtime=UNVERIFIED\n"
     )
@@ -294,24 +305,41 @@ def test_prepared_failed_cutover_emits_only_verified_failure_hygiene_with_no_go(
 ) -> None:
     _, plan, digest = reviewed_context
     token = cli.encode_invocation(
-        plan, bundle_sha256=digest, go_binding_sha256=GO,
+        plan,
+        bundle_sha256=digest,
+        go_binding_sha256=GO,
         prepare_run_id="50000000001",
     )
     disk = cleanup.DiskInodes(1000, 100, 3000, 300, 8, 10, 16, 18)
     cleaned = cleanup.CleanupReceipt(
-        "FAILURE", plan.attempt_id, "ACCEPT", disk, disk, (), (), (),
+        "FAILURE",
+        plan.attempt_id,
+        "ACCEPT",
+        disk,
+        disk,
+        (),
+        (),
+        (),
     )
     recovered = CutoverReceipt(
-        plan.attempt_id, "RECOVERED", "ACCEPT", True, False, None, None, cleaned,
+        plan.attempt_id,
+        "RECOVERED",
+        "ACCEPT",
+        True,
+        False,
+        None,
+        None,
+        cleaned,
     )
-    assert cli.run_cli(
-        token,
-        approved_go_binding_sha256=GO,
-        execute_prepared=lambda _plan, _prepare: recovered,
-        reconcile=lambda _plan, _receipt: None,
-    ) == 3
+    assert (
+        cli.run_cli(
+            token,
+            approved_go_binding_sha256=GO,
+            execute_prepared=lambda _plan, _prepare: recovered,
+            reconcile=lambda _plan, _receipt: None,
+        )
+        == 3
+    )
     observed = capsys.readouterr().out.splitlines()
     assert observed[-2] == "BOCA_CUTOVER_A_POSTFLIGHT " + cleaned.redacted_json()
-    assert observed[-1] == (
-        "BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED"
-    )
+    assert observed[-1] == ("BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED")
