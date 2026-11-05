@@ -25,11 +25,16 @@ def _build(tmp_path: Path) -> tuple[Path, str]:
 
 
 def _run(
-    raw: bytes, digest: str, mode: str = "bundle-selftest", *arguments: str
+    raw: bytes,
+    digest: str,
+    mode: str = "bundle-selftest",
+    *arguments: str,
+    stdlib_only: bool = False,
 ) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(  # noqa: S603 - fixed local Python and tested bootstrap path
         [
             sys.executable,
+            *(["-S"] if stdlib_only else []),
             str(ROOT / "scripts" / "boca_protected_memfd_bootstrap.py"),
             digest,
             mode,
@@ -54,6 +59,10 @@ def test_verified_memfd_zip_selftest_never_touches_host(tmp_path: Path) -> None:
             bootstrap.EXPECTED_ENTRIES | bootstrap.OPTION_B_ENTRIES,
         )
         assert all("synthetic.py" not in name and "ipc_worker.py" not in name for name in names)
+        assert "boca_socios/integration/command_host.py" not in names
+        assert "boca_socios/security/credential_vault.py" not in names
+        assert package.read("boca_socios/panel/__init__.py").startswith(b'"""Protected host')
+        assert package.read("boca_socios/integration/__init__.py").startswith(b'"""Protected host')
         assert package.read("compose.yaml") == (ROOT / "compose.yaml").read_bytes()
         assert package.read("compose.beta.yaml") == (ROOT / "compose.beta.yaml").read_bytes()
         assert (
@@ -192,3 +201,14 @@ def test_symlink_target_forbidden(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="fresh artifact"):
         builder.build(ROOT, marker)
     assert foreign.read_text() == "preserve"
+
+
+def test_lifecycle_memfd_stdlib_only_import_and_no_go_without_context(tmp_path: Path) -> None:
+    output, digest = _build(tmp_path)
+    raw = output.read_bytes()
+    tested = _run(raw, digest, "lifecycle-bridge-selftest", stdlib_only=True)
+    assert tested.returncode == 0, (tested.stdout, tested.stderr)
+    assert tested.stdout == (b"BOCA_LIFECYCLE_MEMFD state=PASS host=untouched blackbox=excluded\n")
+    missing_go = _run(raw, digest, "lifecycle-apply", stdlib_only=True)
+    assert missing_go.returncode == 3
+    assert json.loads(missing_go.stdout)["status"] == "NO_GO"

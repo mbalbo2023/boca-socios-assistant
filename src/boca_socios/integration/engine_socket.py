@@ -17,9 +17,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Event, Thread
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
-from boca_socios.integration.command_host import BetaCommandHost
+if TYPE_CHECKING:
+    from boca_socios.integration.command_host import BetaCommandHost
 
 ControlOp = Literal["status", "start", "stop"]
 ControlState = Literal["RUNNING", "STOPPED", "UNKNOWN"]
@@ -138,6 +139,10 @@ class LocalEngineSocket:
     """A single-threaded, UID-owned control plane in the controller's /tmp."""
 
     def __init__(self, commands: BetaCommandHost, *, path: Path = DEFAULT_SOCKET) -> None:
+        # The CLI-only import in the verified rootless host ZIP needs the
+        # stdlib wire receipt, not the controller scheduler/BLACKBOX graph.
+        from boca_socios.integration.command_host import BetaCommandHost
+
         if not isinstance(commands, BetaCommandHost) or not path.is_absolute():
             raise LocalEngineUnavailable("Boca engine controller or path invalid")
         self._commands = commands

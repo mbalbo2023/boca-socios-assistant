@@ -409,9 +409,12 @@ class RootlessLifecycleProbe:
             or not controller_healthy
             or worker_running != worker.running
             or controller_running != controller.running
+            # STOP must remain possible for an unhealthy but RUNNING worker;
+            # Chromium START and bot START keep the healthy-readiness gate.
             or worker_running
             and not worker_healthy
             and coordinates.component == "chromium"
+            and coordinates.target == "start"
         ):
             raise LifecycleAdapterNoGo("Boca controller/worker liveness is not authentic")
         return lifecycle.LifecycleHostSnapshot(

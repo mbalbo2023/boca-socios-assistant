@@ -173,6 +173,17 @@ def test_bot_start_refuses_unavailable_chromium_worker_without_claim(
     assert panel.current().status == "REQUESTED"
 
 
+def test_unhealthy_running_chromium_still_has_stoppable_physical_state(tmp_path: Path) -> None:
+    coords, panel, lease = _setup(tmp_path / "boca.sqlite3", "chromium", "stop")
+    fake = FakeBocaAttestor(replace(_snapshot(engine=False, worker=True), worker_healthy=False))
+    claim = host.claim_requested(coords, lease=lease, probe=fake)
+    assert claim.was_running is True
+    assert panel.current().status == "CLAIMED"
+    fake.snapshot = _snapshot(engine=False, worker=False)
+    host.acknowledge(claim, lease=lease, probe=fake, result="APPLIED", effect_attempted=True)
+    assert panel.current().status == "APPLIED"
+
+
 def test_bot_stop_must_work_even_when_chromium_worker_is_stopped(tmp_path: Path) -> None:
     coords, panel, lease = _setup(tmp_path / "boca.sqlite3", "bot", "stop")
     fake = FakeBocaAttestor(_snapshot(engine=True, worker=False))

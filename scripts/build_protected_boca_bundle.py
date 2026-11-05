@@ -30,7 +30,29 @@ SOURCES = (
     "src/boca_socios/host_boca_cutover_cli.py",
     "src/boca_socios/host_boca_cutover_receipt.py",
     "src/boca_socios/host_cutover_stage.py",
+    # Host-only lifecycle bridge and bounded stdlib dependency closure.
+    "src/boca_socios/host_lifecycle_actions.py",
+    "src/boca_socios/host_lifecycle_rootless_adapter.py",
+    "src/boca_socios/host_boca_lifecycle.py",
+    "src/boca_socios/panel/lifecycle_intents.py",
+    "src/boca_socios/integration/engine_socket.py",
+    "src/boca_socios/storage/__init__.py",
+    "src/boca_socios/storage/migrations/__init__.py",
+    "src/boca_socios/storage/migrations/0001_initial.sql",
+    "src/boca_socios/storage/migrations/0002_notification_outbox.sql",
+    "src/boca_socios/storage/migrations/0003_reservation_guard.sql",
+    "src/boca_socios/storage/migrations/0004_credential_key_policy.sql",
+    "src/boca_socios/storage/migrations/0005_simulation_outcomes.sql",
+    "src/boca_socios/storage/migrations/0006_beta_commands.sql",
+    "src/boca_socios/storage/migrations/0007_telegram_delivery.sql",
 )
+# The controller's normal panel/integration package initializers eagerly import
+# application modules. In the HOST-ONLY memfd package, only the reviewed
+# lifecycle receipt submodules may be imported; never BLACKBOX/navigation.
+HOST_ONLY_INIT = {
+    "boca_socios/panel/__init__.py": b'"""Protected host ledger-only namespace."""\n',
+    "boca_socios/integration/__init__.py": b'"""Protected host engine-wire-only namespace."""\n',
+}
 # Source-owned by #321, merged only after that PR passes its own QA.  The
 # standalone #320 bundle has the core profile; after integration it gains
 # BOTH exact Option B files. One present without the other is always NO_GO.
@@ -39,16 +61,23 @@ OPTION_B_SOURCES = (
     "src/boca_socios/panel/owner_session_sql/0001_owner_browser_session.sql",
 )
 OPTION_B_STDLIB_BUNDLE_NAME = "boca_socios/owner_session_disk_bootstrap.py"
-MAIN = ("from boca_socios.host_boca_transaction import main\nraise SystemExit(main())\n").encode(
-    "ascii"
-)
+MAIN = (
+    "import sys\n"
+    "if len(sys.argv) > 1 and sys.argv[1] in ('lifecycle-apply', 'lifecycle-bridge-selftest'):\n"
+    "    from boca_socios import host_lifecycle_actions as bridge\n"
+    "    if sys.argv[1] == 'lifecycle-bridge-selftest':\n"
+    "        raise SystemExit(bridge.selftest_main())\n"
+    "    raise SystemExit(bridge.main(sys.argv[2:]))\n"
+    "from boca_socios.host_boca_transaction import main\n"
+    "raise SystemExit(main())\n"
+).encode("ascii")
 MAX_SOURCE_BYTES = 768_000
 MAX_ARCHIVE_BYTES = 512_000
 
 
 def build(root: Path, target: Path) -> str:
     """Write a reproducible archive to a trusted runner-only target."""
-    files: dict[str, bytes] = {"__main__.py": MAIN}
+    files: dict[str, bytes] = {"__main__.py": MAIN, **HOST_ONLY_INIT}
     b_sources = tuple(root / rel for rel in OPTION_B_SOURCES)
     if any(source.exists() or source.is_symlink() for source in b_sources):
         if not all(source.is_file() and not source.is_symlink() for source in b_sources):

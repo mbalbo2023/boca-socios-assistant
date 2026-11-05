@@ -13,10 +13,11 @@ import sqlite3
 import stat
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 from uuid import UUID, uuid5
 
-from boca_socios.storage.database import Database
+if TYPE_CHECKING:
+    from boca_socios.storage.database import Database
 
 LifecycleComponent = Literal["bot", "chromium"]
 LifecycleTarget = Literal["start", "stop"]
@@ -137,6 +138,10 @@ class LifecycleIntentStore:
     """Append-only, one-global-pending guard on the existing Boca audit log."""
 
     def __init__(self, database: Database) -> None:
+        # Import only when constructing the panel DB facade. The protected
+        # host ZIP uses the static legacy audit reader without crypto deps.
+        from boca_socios.storage.database import Database
+
         if not isinstance(database, Database):
             raise ValueError("Boca Database required")
         self._database = database
