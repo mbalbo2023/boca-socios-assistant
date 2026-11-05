@@ -692,10 +692,7 @@ def test_precommit_exact_old_image_proof_allows_only_known_boca_image(
         lambda _target: pytest.fail("precommit cleanup must be read-only"),
     )
     assert (
-        adapter._precommit_legacy_image_cleanup(
-            plan, {"Image": OLD_IMAGE_ID}, NEW, WORKER
-        )
-        == proof
+        adapter._precommit_legacy_image_cleanup(plan, {"Image": OLD_IMAGE_ID}, NEW, WORKER) == proof
     )
     assert calls == [("attest", OLD_IMAGE_ID), ("inventory", OLD_IMAGE_ID)]
 
