@@ -26,8 +26,8 @@ def test_reviewed_overlay_optin_is_only_on_ipc_controller() -> None:
     assert STAGE_KEY not in base
     assert 'BOCA_TELEGRAM_PAIRING_STAGE_MODE: "encrypted-only"' in controller
     assert STAGE_KEY not in worker
-    assert 'BOCA_BROWSER_BACKEND: ipc' in controller
-    assert "BOCA_ENGINE_MODE: \"off\"" in base
+    assert "BOCA_BROWSER_BACKEND: ipc" in controller
+    assert 'BOCA_ENGINE_MODE: "off"' in base
     assert "telegram-sender:" not in overlay
 
 
