@@ -2137,9 +2137,20 @@ jobs:
           BOCA_TELEGRAM_EXPECTED_BOT_ID: ${{ secrets.BOCA_TELEGRAM_EXPECTED_BOT_ID }}
           BOCA_TELEGRAM_EXPECTED_CHAT_HMAC: ${{ secrets.BOCA_TELEGRAM_EXPECTED_CHAT_HMAC }}
         run: |
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id existing --telegram-attempt-id "$GITHUB_RUN_ID" -- browser-telegram-preflight "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' "$BOCA_TELEGRAM_EXPECTED_BOT_ID" "$BOCA_TELEGRAM_EXPECTED_CHAT_HMAC")"
+          remote_command="$(PYTHONPATH=src python3 -m boca_socios.telegram_ssh_transport command)" || exit 1
+          umask 077
+          set -o pipefail
           set +e
-          timeout --signal=TERM --kill-after=5s 120s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-browser-telegram-preflight.receipt" 2>/dev/null
+          BOCA_TELEGRAM_TRANSPORT_MODE=preflight \
+          BOCA_TELEGRAM_COMPOSE_SHA="$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" \
+          BOCA_BROWSER_OVERLAY_SHA="$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" \
+          BOCA_BROWSER_SECCOMP_SHA="$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" \
+            PYTHONPATH=src python3 -m boca_socios.telegram_ssh_transport emit < src/boca_socios/host_first_deploy.py \
+              | env -u BOCA_TELEGRAM_ENVELOPE -u BOCA_TELEGRAM_EXPECTED_CHAT_HMAC \
+                    -u BOCA_TELEGRAM_EXPECTED_BOT_ID -u BOCA_BETA_OWNER_SUBJECT \
+                    timeout --signal=TERM --kill-after=5s 120s \
+                      ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+                        boca-target "$remote_command" > "$RUNNER_TEMP/boca-browser-telegram-preflight.receipt" 2>/dev/null
           preflight_rc=$?
           set -e
           receipt=''
@@ -2171,19 +2182,20 @@ jobs:
           BOCA_TELEGRAM_OWNER_READY: ${{ vars.BOCA_TELEGRAM_OWNER_READY }}
         run: |
           phase="${BOCA_OPERATION#beta-}"
-          expected_bot=''
-          expected_chat=''
-          sender_args=()
-          if [[ "$BOCA_OPERATION" = beta-browser-telegram-start ]]; then
-            sender_args=(--telegram-attempt-id "$GITHUB_RUN_ID")
-          fi
-          if [[ "$BOCA_TELEGRAM_OWNER_READY" = ready ]]; then
-            expected_bot="$BOCA_TELEGRAM_EXPECTED_BOT_ID"
-            expected_chat="$BOCA_TELEGRAM_EXPECTED_CHAT_HMAC"
-          fi
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id existing "${sender_args[@]}" -- "$phase" "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' "$expected_bot" "$expected_chat")"
+          remote_command="$(PYTHONPATH=src python3 -m boca_socios.telegram_ssh_transport command)" || exit 1
+          umask 077
+          set -o pipefail
           set +e
-          timeout --signal=TERM --kill-after=5s 600s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-browser-lifecycle.receipt" 2>/dev/null
+          BOCA_TELEGRAM_TRANSPORT_MODE=lifecycle \
+          BOCA_TELEGRAM_COMPOSE_SHA="$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" \
+          BOCA_BROWSER_OVERLAY_SHA="$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" \
+          BOCA_BROWSER_SECCOMP_SHA="$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" \
+            PYTHONPATH=src python3 -m boca_socios.telegram_ssh_transport emit < src/boca_socios/host_first_deploy.py \
+              | env -u BOCA_TELEGRAM_ENVELOPE -u BOCA_TELEGRAM_EXPECTED_CHAT_HMAC \
+                    -u BOCA_TELEGRAM_EXPECTED_BOT_ID -u BOCA_BETA_OWNER_SUBJECT \
+                    timeout --signal=TERM --kill-after=5s 600s \
+                      ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+                        boca-target "$remote_command" > "$RUNNER_TEMP/boca-browser-lifecycle.receipt" 2>/dev/null
           lifecycle_rc=$?
           set -e
           receipt=''
@@ -2213,9 +2225,20 @@ jobs:
         run: |
           runtime_attempt="$GITHUB_RUN_ID"
           if [[ "$BOCA_OPERATION" = beta-browser-telegram-recover ]]; then runtime_attempt="$BOCA_FAILED_TELEGRAM_RUN_ID"; fi
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - --browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id existing --telegram-attempt-id "$runtime_attempt" -- browser-telegram-cleanup "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' "$BOCA_TELEGRAM_EXPECTED_BOT_ID" "$BOCA_TELEGRAM_EXPECTED_CHAT_HMAC")"
+          remote_command="$(PYTHONPATH=src python3 -m boca_socios.telegram_ssh_transport command)" || exit 1
+          umask 077
+          set -o pipefail
           set +e
-          timeout --signal=TERM --kill-after=5s 180s ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-browser-telegram-cleanup.receipt" 2>/dev/null
+          BOCA_TELEGRAM_TRANSPORT_MODE=cleanup \
+          BOCA_TELEGRAM_COMPOSE_SHA="$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" \
+          BOCA_BROWSER_OVERLAY_SHA="$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" \
+          BOCA_BROWSER_SECCOMP_SHA="$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" \
+            PYTHONPATH=src python3 -m boca_socios.telegram_ssh_transport emit < src/boca_socios/host_first_deploy.py \
+              | env -u BOCA_TELEGRAM_ENVELOPE -u BOCA_TELEGRAM_EXPECTED_CHAT_HMAC \
+                    -u BOCA_TELEGRAM_EXPECTED_BOT_ID -u BOCA_BETA_OWNER_SUBJECT \
+                    timeout --signal=TERM --kill-after=5s 180s \
+                      ssh -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+                        boca-target "$remote_command" > "$RUNNER_TEMP/boca-browser-telegram-cleanup.receipt" 2>/dev/null
           cleanup_rc=$?
           set -e
           receipt=''
@@ -2345,19 +2368,19 @@ jobs:
           BOCA_TELEGRAM_EXPECTED_BOT_ID: ${{ secrets.BOCA_TELEGRAM_EXPECTED_BOT_ID }}
           BOCA_TELEGRAM_EXPECTED_CHAT_HMAC: ${{ secrets.BOCA_TELEGRAM_EXPECTED_CHAT_HMAC }}
         run: |
+          # P0 #315: one SSH and anonymous stdin FD, no private payload in argv.
+          umask 077
+          set -o pipefail
           set +e
-          expected_bot=''
-          expected_chat=''
-          if [[ "$BOCA_OPERATION" = telegram-test ]]; then
-            expected_bot="$BOCA_TELEGRAM_EXPECTED_BOT_ID"
-            expected_chat="$BOCA_TELEGRAM_EXPECTED_CHAT_HMAC"
-          fi
-          browser_args=()
-          if [[ -n "$BOCA_BROWSER_IMAGE_REF" ]]; then
-            browser_args=(--browser-image "$BOCA_BROWSER_IMAGE_REF" --browser-overlay-sha "$(cat "$RUNNER_TEMP/boca-browser-overlay.sha")" --browser-seccomp-sha "$(cat "$RUNNER_TEMP/boca-browser-seccomp.sha")" --browser-attempt-id existing)
-          fi
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - "${browser_args[@]}" -- "$BOCA_OPERATION" "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" "$BOCA_TELEGRAM_ENVELOPE" "$expected_bot" "$expected_chat")"
-          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-telegram-phase.receipt" 2>/dev/null
+          remote_command="$(PYTHONPATH=src python3 -m boca_socios.telegram_ssh_transport command)" || exit 1
+          BOCA_TELEGRAM_COMPOSE_SHA="$(cat "$RUNNER_TEMP/boca-beta-compose.sha")" \
+          BOCA_BROWSER_OVERLAY_SHA="$(if [[ -n "$BOCA_BROWSER_IMAGE_REF" ]]; then cat "$RUNNER_TEMP/boca-browser-overlay.sha"; fi)" \
+          BOCA_BROWSER_SECCOMP_SHA="$(if [[ -n "$BOCA_BROWSER_IMAGE_REF" ]]; then cat "$RUNNER_TEMP/boca-browser-seccomp.sha"; fi)" \
+            PYTHONPATH=src python3 -m boca_socios.telegram_ssh_transport emit < src/boca_socios/host_first_deploy.py \
+              | env -u BOCA_TELEGRAM_ENVELOPE -u BOCA_TELEGRAM_EXPECTED_CHAT_HMAC \
+                    -u BOCA_TELEGRAM_EXPECTED_BOT_ID -u BOCA_BETA_OWNER_SUBJECT \
+                    ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" \
+                      > "$RUNNER_TEMP/boca-telegram-phase.receipt" 2>/dev/null
           phase_rc=$?
           set -e
           receipt=''
