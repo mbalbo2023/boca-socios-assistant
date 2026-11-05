@@ -74,3 +74,9 @@ builder/bootstrap y tests de ZIP. YAML owner #371, cleanup/backend #372.
 Tests fakes para identidad/deriva/foreign/roles y smoke Python -S. Ninguna
 accion en servidor, BLACKBOX, Porota, otras apps, backups, compras, reservas,
 puertos nuevos o HTTPS. Rama satelite DRAFT no despliega nada.
+
+## A45-R32 — incompatibilidad del adaptador real (05/11/2026 ART)
+
+El PREPARE protegido [run #42073058087](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42073058087) termino **NO_GO** (exit 3) en el paso de lectura rootless, sin receipt fisico; la salida de error fue suprimida, asi que no es posible certificar el primer error host. La inspeccion del codigo si descubrio una incompatibilidad determinista: el adaptador de produccion delegaba a un lector exclusivo de limpieza Docker, cuya allowlist no acepta `Config.Image`, `HostConfig.*`, `State.Health.Status` ni `Mountpoint`, requeridos por los observadores.
+
+El fix-forward DRAFT [PR #378](https://github.com/mbalbo2023/boca-socios-assistant/pull/378), RCA-373, agrega una proyeccion independiente de campos exactos para lectura Docker UID10001 rootless, sin tocar el lector ni la allowlist de limpieza. El adaptador valida ID SHA64 de container y volumen Boca exacto, rechaza `Config.Env` y campos fuera del inventario, y el test `tests/test_host_cutover_inventory_observe.py::test_real_adapter_uses_only_explicit_rootless_inspect_fields` ejercita el adaptador real. Solo codigo/QA; no es un PASS fisico, GO, merge ni release. Nuevo PREPARE exige CI GREEN, integracion revisada y release nuevo SHA.
