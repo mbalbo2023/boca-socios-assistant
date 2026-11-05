@@ -185,8 +185,9 @@ def _docker(*args: str, timeout: int = 15) -> str:
             environment.pop(name)
     environment["DOCKER_HOST"] = f"unix://{ROOTLESS_SOCKET}"
     try:
-        out = subprocess.run(  # noqa: S603,S607 - fixed Boca-only Docker read commands
-            ("docker", *args), check=True, text=True, capture_output=True,
+        out = subprocess.run(  # noqa: S603 - Boca-only read commands
+            ("docker", *args),  # noqa: S607 - fixed Docker executable
+            check=True, text=True, capture_output=True,
             timeout=timeout, env=environment,
         ).stdout
     except (OSError, subprocess.SubprocessError) as exc:
