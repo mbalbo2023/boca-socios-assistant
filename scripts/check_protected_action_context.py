@@ -2,15 +2,13 @@
 
 Never contacts GitHub, Docker, Telegram, SSH, public Boca, or any volume.
 A dispatch input carries only canonical PUBLIC coordinates. It cannot approve
-itself: a different protected GitHub Environment variable must match a
-run-specific GO digest before the workflow may even configure SSH.
+itself: the reviewed two-phase GO PREPARE/APPLY gate is in
+check_protected_go_prepare.py, not in this library-only decoder.
 """
 
 from __future__ import annotations
 
 import base64
-import hashlib
-import hmac
 import json
 import os
 import re
@@ -21,11 +19,9 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 VERSION = "boca-protected-action-v1"
-GO_VERSION = "boca-protected-operation-go-v1"
 REPOSITORY = "mbalbo2023/boca-socios-assistant"
 OWNER = "mbalbo2023"
 MAX_CONTEXT_BYTES = 2048
-_MAX_ENCODED = 2732
 
 _TOKEN = re.compile(r"[A-Za-z0-9_-]{1,2732}\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -68,12 +64,6 @@ _LIFECYCLE_SENDER = frozenset(
     {"sender_id", "sender_config_hash", "sender_attempt_id", "sender_state"}
 )
 _TELEGRAM_SENDER = frozenset({"sender_id", "sender_image", "sender_config_hash", "sender_attempt"})
-_GO_NAMES = {
-    "lifecycle-apply": "BOCA_LIFECYCLE_GO_BINDING_SHA256",
-    "telegram-activate": "BOCA_TELEGRAM_ACTIVATE_GO_BINDING_SHA256",
-}
-
-
 class ProtectedActionError(ValueError):
     """NO_GO before SSH; never include private or untrusted source values."""
 
@@ -238,43 +228,6 @@ def decode_context(encoded: str, *, operation: str, environ: Mapping[str, str]) 
     return _validate_payload(payload, operation=operation, environ=environ)
 
 
-def expected_go_binding(
-    context: dict[str, str], *, operation: str, environ: Mapping[str, str]
-) -> str:
-    """Hash an independent, run/actor/source/release-bound authorization record."""
-    _validate_payload(context, operation=operation, environ=environ)
-    record = {
-        "version": GO_VERSION,
-        "repository": environ["GITHUB_REPOSITORY"],
-        "actor": environ["GITHUB_ACTOR"],
-        "ref": environ["GITHUB_REF"],
-        "source_sha": environ["BOCA_SOURCE_SHA"],
-        "run_id": environ["GITHUB_RUN_ID"],
-        "run_attempt": environ["GITHUB_RUN_ATTEMPT"],
-        "release_run_id": environ["BOCA_RELEASE_RUN_ID"],
-        "operation": operation,
-        "context_sha256": hashlib.sha256(_canonical(context)).hexdigest(),
-    }
-    return hashlib.sha256(b"boca-protected-operation-go-v1:\x00" + _canonical(record)).hexdigest()
-
-
-def require_go_binding(
-    context: dict[str, str],
-    *,
-    operation: str,
-    environ: Mapping[str, str],
-    approved: str,
-) -> None:
-    """A variable in the protected Environment, never dispatch input, is GO."""
-    expected = expected_go_binding(context, operation=operation, environ=environ)
-    if (
-        type(approved) is not str
-        or _HASH.fullmatch(approved) is None
-        or not hmac.compare_digest(expected, approved)
-    ):
-        raise ProtectedActionError("independent protected operation GO absent/mismatched")
-
-
 def _write_private(path: Path, text: str) -> None:
     """Create one output token with O_EXCL; never overwrite a stale job receipt."""
     descriptor = os.open(
@@ -297,30 +250,12 @@ def _write_private(path: Path, text: str) -> None:
 
 
 def main() -> int:
-    """Runner-only: validate exact source/GO, then stage nonsecret host pins."""
-    environ = os.environ
-    operation = environ.get("BOCA_OPERATION", "")
-    go_name = _GO_NAMES.get(operation)
-    try:
-        if len(sys.argv) != 2 or sys.argv[1] != "--from-actions" or go_name is None:
-            raise ProtectedActionError("unreviewed protected action invocation")
-        encoded = environ.get("BOCA_PROTECTED_ACTION_CONTEXT", "")
-        payload = decode_context(encoded, operation=operation, environ=environ)
-        approved = environ.get(go_name, "")
-        require_go_binding(payload, operation=operation, environ=environ, approved=approved)
-        runner = Path(environ.get("RUNNER_TEMP", ""))
-        if not runner.is_absolute() or not runner.is_dir():
-            raise ProtectedActionError("protected runner temp directory unavailable")
-        _write_private(runner / "boca-protected-action.token", encoded + "\n")
-        _write_private(runner / "boca-protected-action.approved", approved + "\n")
-        print("BOCA_PROTECTED_ACTION state=REVIEWED host=untouched approved_context=exact")
-        return 0
-    except (ProtectedActionError, OSError, UnicodeError):
-        print(
-            "BOCA_PROTECTED_ACTION state=NO_GO host=untouched reason=invalid_go_or_context",
-            file=sys.stderr,
-        )
-        return 2
+    """Legacy single-dispatch GO is deliberately retired: always NO_GO."""
+    print(
+        "BOCA_PROTECTED_ACTION state=NO_GO host=untouched reason=two_phase_go_required",
+        file=sys.stderr,
+    )
+    return 2
 
 
 if __name__ == "__main__":

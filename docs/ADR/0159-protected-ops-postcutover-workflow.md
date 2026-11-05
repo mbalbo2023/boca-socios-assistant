@@ -215,3 +215,16 @@ quedan NO_GO en la práctica** hasta que el backend físico de cada operación
 consuma `prepare_run_id` de modo atómico y exista migración revisada de
 sus gates; estas operaciones no se han incorporado a PREPARE #359 ni se
 ha alterado su implementación.
+
+
+### Retiro de la ruta GO v1 inejecutable del helper público
+
+`scripts/check_protected_action_context.py` conserva exclusivamente codec
+canónico, shape guard y escritura O_EXCL del runner. Se eliminaron
+`expected_go_binding()`, `require_go_binding()` y su CLI `--from-actions`
+que aprobaban por un SHA ligado a un `GITHUB_RUN_ID` todavía desconocido en
+el primer dispatch; ejecutar directamente el módulo siempre responde NO_GO.
+El único gate operativo nuevo lo implementa
+`scripts/check_protected_go_prepare.py --prepare/--apply`, con dos runs
+humanos, digest del PREPARE conocido y permiso Environment independiente.
+No existe fallback GO booleano ni input autoautorizante.

@@ -74,9 +74,6 @@ def test_exact_context_binds_to_current_protected_actions(kind: str, operation: 
     obj = _context(kind)
     decoded = gate.decode_context(_encode(obj), operation=operation, environ=_env())
     assert decoded == obj
-    digest = gate.expected_go_binding(decoded, operation=operation, environ=_env())
-    assert len(digest) == 64 and digest.isascii()
-    gate.require_go_binding(decoded, operation=operation, environ=_env(), approved=digest)
 
 
 @pytest.mark.parametrize(
@@ -143,19 +140,20 @@ def test_telegram_context_cannot_be_forged_with_human_start_time_or_secrets() ->
             gate.decode_context(_encode(changed), operation="telegram-activate", environ=_env())
 
 
-def test_context_go_is_independent_of_dispatch_payload_and_exact_run() -> None:
+def test_obsolete_single_dispatch_go_entrypoint_is_permanently_no_go(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     obj = _context()
     env = _env()
     decoded = gate.decode_context(_encode(obj), operation="lifecycle-apply", environ=env)
-    expected = gate.expected_go_binding(decoded, operation="lifecycle-apply", environ=env)
-    with pytest.raises(gate.ProtectedActionError):
-        gate.require_go_binding(
-            decoded, operation="lifecycle-apply", environ=env, approved="0" * 64
-        )
+    assert decoded == obj
+    assert not hasattr(gate, "expected_go_binding")
+    assert not hasattr(gate, "require_go_binding")
     changed = env | {"GITHUB_RUN_ID": "42000000001"}
     with pytest.raises(gate.ProtectedActionError):
         gate.decode_context(_encode(obj), operation="lifecycle-apply", environ=changed)
-    gate.require_go_binding(decoded, operation="lifecycle-apply", environ=env, approved=expected)
+    assert gate.main() == 2
+    assert "state=NO_GO host=untouched" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
