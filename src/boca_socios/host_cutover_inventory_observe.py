@@ -68,6 +68,69 @@ class CutoverInventoryNoGo(ValueError):
     """Legacy singleton could not be uniquely observed under the Boca lease."""
 
 
+# Public diagnostics are intentionally *not* raw exception messages. Only
+# exact hard-coded reasons may cross the SSH/GitHub runner boundary; paths,
+# labels, credentials, Docker stderr and arbitrary Python exceptions cannot.
+_CUTOVER_PUBLIC_REASONS = {
+    "Boca bounded Docker field unavailable": "DOCKER_FIELD",
+    "Boca dedicated network boundary missing": "NETWORK_BOUNDARY",
+    "Boca historical Compose labels unavailable": "COMPOSE_LABELS",
+    "Boca historical GHCR image not uniquely attested": "IMAGE_DIGEST",
+    "Boca historical image provenance unavailable": "IMAGE_PROVENANCE",
+    "Boca host UTC observation clock unverified": "HOST_CLOCK",
+    "Boca legacy mounts changed": "MOUNTS",
+    "Boca legacy secret/data mounts changed": "MOUNTS",
+    "Boca legacy service isolation or health drifted": "SERVICE_HEALTH",
+    "Boca legacy singleton absent or ambiguous": "LEGACY_SINGLETON",
+    "Boca legacy singleton changed during observation": "SINGLETON_DRIFT",
+    "Boca legacy volume mount unverified": "MOUNTS",
+    "Boca named legacy data volume mount unavailable": "DATA_VOLUME",
+    "Boca observer not running under dedicated rootless UID": "ROOTLESS_UID",
+    "Boca original rootless network/volumes changed": "NETWORK_VOLUMES",
+    "Boca owner volume identity unverified": "VOLUME_PROVENANCE",
+    "Boca protected inventory context invalid": "INPUT_CONTEXT",
+    "Boca rootless inventory observation unverified": "ROOTLESS_INVENTORY",
+    "Boca running legacy controller identity unverified": "LEGACY_IDENTITY",
+    "Boca legacy gained privileges": "PRIVILEGES",
+    "Boca inventory Docker field unapproved": "DOCKER_FIELD_DENIED",
+    "Boca public inventory receipt too large": "RECEIPT_BOUNDS",
+    "reviewed Boca target release pins unavailable": "INPUT_RELEASE",
+}
+_CUTOVER_NO_GO_OTHER = "OBSERVER_UNVERIFIED"
+_CUTOVER_NO_GO_TRANSPORT = "TRANSPORT_OR_BOOTSTRAP"
+_CUTOVER_NO_GO_ALLOWED = frozenset(_CUTOVER_PUBLIC_REASONS.values()) | {
+    _CUTOVER_NO_GO_OTHER,
+}
+_PUBLIC_NO_GO_LINE = re.compile(
+    r"BOCA_CUTOVER_INVENTORY_OBSERVE state=NO_GO reason=([A-Z][A-Z0-9_]{2,63})\Z"
+)
+
+
+def _cutover_public_reason(error: Exception) -> str:
+    """Map a genuine known source error to one enum; never expose error text."""
+    if type(error) is CutoverInventoryNoGo:
+        return _CUTOVER_PUBLIC_REASONS.get(str(error), _CUTOVER_NO_GO_OTHER)
+    return _CUTOVER_NO_GO_OTHER
+
+
+def parse_cutover_no_go_stderr(stderr: bytes) -> str:
+    """Runner parser for a single bounded Boca-generated reason, not raw stderr."""
+    if type(stderr) is not bytes or len(stderr) > 4096:
+        return _CUTOVER_NO_GO_TRANSPORT
+    try:
+        lines = stderr.decode("ascii").splitlines()
+    except UnicodeError:
+        return _CUTOVER_NO_GO_TRANSPORT
+    matches = [
+        found.group(1)
+        for line in lines
+        if (found := _PUBLIC_NO_GO_LINE.fullmatch(line)) is not None
+    ]
+    if len(matches) != 1 or matches[0] not in _CUTOVER_NO_GO_ALLOWED:
+        return _CUTOVER_NO_GO_TRANSPORT
+    return matches[0]
+
+
 @dataclass(frozen=True, slots=True)
 class ReviewedTargetRelease:
     """Target pins authenticated by Actions, never supplied by Chrome."""
@@ -294,15 +357,33 @@ def _observation(io: CutoverInventoryIO, release: ReviewedTargetRelease) -> dict
     ):
         raise CutoverInventoryNoGo("Boca historical Compose labels unavailable")
     images = [image for image in inventory.images if image.ident == controller.image_id]
-    if len(images) != 1 or images[0].source != _SOURCE:
+    # Historical #41893887078 builds had the OCI revision label but not the
+    # OCI *source* label. The generic cleanup inventory correctly marks those
+    # images as unverified, and its trust/deletion policy MUST NOT be changed.
+    # Cutover may instead observe the exact already-running container's image
+    # ID and pinned GHCR Config.Image; the runner independently authenticates
+    # its original source and immutable release manifest BEFORE PREPARE/GO/APPLY.
+    if len(images) > 1 or (images and images[0].source not in (_SOURCE, None)):
+        raise CutoverInventoryNoGo("Boca historical image provenance unavailable")
+    if (
+        not images or images[0].source is None
+    ) and controller.image_id not in inventory.global_image_ids:
+        raise CutoverInventoryNoGo("Boca historical image provenance unavailable")
+    if (
+        images
+        and images[0].source is None
+        and images[0].references != ("ghcr.io/mbalbo2023/boca-socios-assistant:unverified",)
+    ):
         raise CutoverInventoryNoGo("Boca historical image provenance unavailable")
     ident = controller.ident
     image_ref = io.field("container", ident, "Config.Image")
     if (
         type(image_ref) is not str
         or not _CONTROLLER.fullmatch(image_ref)
-        or image_ref not in images[0].references
         or image_ref == release.target_controller_image
+        or images
+        and images[0].source == _SOURCE
+        and image_ref not in images[0].references
     ):
         raise CutoverInventoryNoGo("Boca historical GHCR image not uniquely attested")
     if (
@@ -431,8 +512,11 @@ def main(argv: list[str] | None = None) -> int:
             public = observe_cutover_inventory(release, lease=lease)
         print(_canonical(public).decode("ascii"))
         return 0
-    except Exception:
-        print("BOCA_CUTOVER_INVENTORY_OBSERVE state=NO_GO", file=sys.stderr)
+    except Exception as exc:
+        print(
+            f"BOCA_CUTOVER_INVENTORY_OBSERVE state=NO_GO reason={_cutover_public_reason(exc)}",
+            file=sys.stderr,
+        )
         return 3
 
 

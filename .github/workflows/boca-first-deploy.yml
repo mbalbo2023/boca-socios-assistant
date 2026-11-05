@@ -1275,12 +1275,28 @@ jobs:
           # Sole host read: exactly named Boca original/installed controller.
           # The reviewed helper owns rootless lease; lock metadata under /run
           # is allowed, application/Docker mutations are ZERO.
+          # Keep NO_GO authoritative. On failure only a fixed, reviewed code is
+          # printed; never forward raw SSH/Docker stderr, host paths or env.
+          observer_rc=0
           timeout --signal=TERM --kill-after=5s 150s ssh \
             -F "$RUNNER_TEMP/boca-legacy-readonly-ssh/config" \
             -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
             boca-legacy-readonly "$remote_command" \
             < "$RUNNER_TEMP/boca-legacy-inventory-review.pyz" \
-            > "$RUNNER_TEMP/boca-legacy-inventory-host.receipt" 2>/dev/null
+            > "$RUNNER_TEMP/boca-legacy-inventory-host.receipt" \
+            2> "$RUNNER_TEMP/boca-legacy-inventory-host.stderr" || observer_rc=$?
+          if [[ "$observer_rc" -ne 0 ]]; then
+            python3 - "$RUNNER_TEMP/boca-legacy-inventory-host.stderr" <<'PY'
+          import sys
+          from pathlib import Path
+          from boca_socios.host_cutover_inventory_observe import parse_cutover_no_go_stderr
+
+          with Path(sys.argv[1]).open("rb") as stream:
+              redacted = parse_cutover_no_go_stderr(stream.read(4097))
+          print(f"BOCA_LEGACY_PREPARE state=NO_GO reason={redacted}")
+          PY
+            exit "$observer_rc"
+          fi
           python scripts/check_legacy_go_dispatch.py accept-observer \
             "$RUNNER_TEMP/boca-legacy-inventory-host.receipt" \
             "$RUNNER_TEMP/boca-legacy-inventory.observed.json"
