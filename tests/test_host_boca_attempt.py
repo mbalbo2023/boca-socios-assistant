@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -165,3 +167,79 @@ def test_forged_intent_coordinates_cannot_create_marker(
         with pytest.raises(attempt.AttemptError, match="coordinates invalid"):
             attempt.begin(invalid, lease=lease)
     assert not (tmp_path / f"boca-postdeploy-{RUN}-intent.json").exists()
+
+
+def test_canonical_lease_proves_exact_locked_inode_not_boolean(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _setup(monkeypatch, tmp_path)
+    intent, _ = attempt.intended("first-install", RUN, SOURCE, BASE_SHA, None)
+    wrong = tmp_path / "other-lock"
+    wrong.write_bytes(b"")
+    wrong.chmod(0o600)
+    with cleanup.protected_boca_job_lease(RUN) as lease:
+        cleanup.verify_protected_boca_job_lease(lease, RUN)
+        with wrong.open("r+b") as stream:
+            forged = replace(lease, fd=stream.fileno())
+            with pytest.raises(attempt.AttemptError, match="canonical protected job lease"):
+                attempt.begin(intent, lease=forged)
+        # Marking the flag TRUE does not authenticate a released lock.
+        fcntl.flock(lease.fd, fcntl.LOCK_UN)
+        with pytest.raises(attempt.AttemptError, match="canonical protected job lease"):
+            attempt.begin(intent, lease=lease)
+    assert not (tmp_path / f"boca-postdeploy-{RUN}-intent.json").exists()
+
+
+@pytest.mark.parametrize("forged_source", [False, True])
+def test_unwired_postflight_requires_exact_host_labels_before_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, forged_source: bool
+) -> None:
+    _setup(monkeypatch, tmp_path)
+    intent, _ = attempt.intended("beta-install", RUN, SOURCE, BASE_SHA, None)
+    image = "d" * 64
+    snapshot = cleanup.Inventory(
+        containers=(
+            cleanup.Container(
+                CONTROLLER,
+                "/boca-socios-controller-1",
+                image,
+                True,
+                (
+                    ("com.docker.compose.project", "boca-socios"),
+                    ("com.docker.compose.service", "controller"),
+                    ("boca.socios.beta-install-attempt", RUN),
+                    ("boca.socios.source-sha", "e" * 40 if forged_source else SOURCE),
+                ),
+            ),
+        ),
+        images=(
+            cleanup.Image(
+                image,
+                ("ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + image,),
+                cleanup.BOCA_SOURCE,
+            ),
+        ),
+        networks=(),
+        volumes=(),
+        disk=cleanup.DiskInodes(100000, 1000),
+        global_image_ids=frozenset({image}),
+    )
+    monkeypatch.setattr(cleanup, "capture_inventory", lambda: snapshot)
+    monkeypatch.setattr(
+        cleanup,
+        "delete_exact",
+        lambda _: pytest.fail("no Docker deletion is needed for installed controller"),
+    )
+    with cleanup.protected_boca_job_lease(RUN) as lease:
+        digest = attempt.begin(intent, lease=lease)
+        result = attempt.Result(RUN, digest, "SUCCESS", CONTROLLER, CONTROLLER)
+        attempt.finish(result, lease=lease)
+        if forged_source:
+            with pytest.raises(attempt.AttemptError, match="identity/labels unproven"):
+                attempt.finalize_attempt(result, lease=lease, preserve_images=frozenset({image}))
+        else:
+            receipt = attempt.finalize_attempt(
+                result, lease=lease, preserve_images=frozenset({image})
+            )
+            assert receipt.status == "ACCEPT"
+            assert receipt.removed == ()

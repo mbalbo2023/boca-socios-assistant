@@ -25,6 +25,13 @@ transition and mismatched ID are NO_GO; `update` original-ID retirement is
 explicitly unimplemented/NO_GO. These receipts do not themselves prove that
 Docker effects occurred; a future protected workflow must inspect exact
 runtime labels and health before writing them.
+The isolated `finalize_attempt()` facade now reopens both immutable markers,
+validates the canonical **actually held** flock, probes exact Docker labels
+(project/service/operation attempt/source SHA), and only then calls the
+Boca-only postflight engine. A forged `BocaJobLease(active=True)` with a
+different or unlocked FD cannot authorize it: a separately opened contender
+must be blocked while a duplicate of the owner's original OFD retains the
+canonical lock. This source facade remains unreachable from the live CLI.
 
 1. The protected job must retain a single non-reentrant Boca UID10001 flock
    across its install and finalizer. The cleanup module provides a Boca-only
@@ -89,8 +96,8 @@ runtime labels and health before writing them.
   Ten additional producer tests cover first/beta/update label overlays,
   O_EXCL intent/result, exact-ID preserve/retire, forged/missing receipts,
   unsafe symlinks and update hard-stop.
-- Local QA for the code-only producer: **31 focused tests PASS**;
-  full suite **2530 passed + 31 subtests passed**; Ruff lint/format
+- Local QA for the code-only producer: **34 focused tests PASS**;
+  full suite **2533 passed + 31 subtests passed**; Ruff lint/format
   (395 files), Mypy (87 source files), repository policy and whitespace PASS.
 - `synthetic.py` and `ipc_worker.py` remain BLACKBOX; no Boca login,
   reservation or purchase and no Docker host operation has been dispatched.
@@ -105,6 +112,17 @@ runtime labels and health before writing them.
   genuine Docker exact-ID receipts, hold the canonical lease throughout,
   and invoke the finalizer with `if: always()`. There is no such YAML wiring
   today; source-only success is not host evidence.
+- **Transaction architecture blocker:** existing `first-install` and
+  `beta-install` YAML call independent SSH Python processes for preflight,
+  staging, Compose config, effectful apply and failure-only cleanup. A flock
+  FD cannot survive between those processes as an authenticated, continuously
+  held same-open-file-description lock. To meet #323 the job must invoke one
+  protected host transaction (pre-effect intent, reviewed Compose label
+  overlay, apply/inspect, result, `try/finally` cleanup/postflight, release
+  lease) and end with an `if: always()` Actions receipt assertion. If SSH or
+  host process dies before a trusted result, no guessed cleanup is allowed:
+  the assertion fails NO_GO and requires exact Boca-only read-only recovery.
+  No ZIP/host runner or lifecycle workflow has yet passed this gate.
 - No `docker system prune`, `docker image prune`, `docker container prune`,
   cross-project deletion, guessed image identity, host-side backup, or broad
   filesystem purge.

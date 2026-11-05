@@ -16,11 +16,14 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from boca_socios import host_boca_cleanup as cleanup
 from boca_socios.host_boca_cleanup import (
     ATTEMPT_ID,
     EXPECTED_UID,
     HEX_ID,
     BocaJobLease,
+    CleanupError,
+    verify_protected_boca_job_lease,
 )
 
 SOURCE_SHA = re.compile(r"[0-9a-f]{40}\Z")
@@ -141,23 +144,10 @@ def intended(
 
 
 def _lease(lease: BocaJobLease, attempt_id: str) -> None:
-    if (
-        not isinstance(lease, BocaJobLease)
-        or not lease.active
-        or lease.attempt_id != attempt_id
-        or lease.owner_pid != os.getpid()
-    ):
-        raise AttemptError("Boca attempt requires same held protected job lease")
     try:
-        item = os.fstat(lease.fd)
-    except OSError as exc:
-        raise AttemptError("Boca attempt lease FD unavailable") from exc
-    if (
-        not stat.S_ISREG(item.st_mode)
-        or item.st_uid != EXPECTED_UID
-        or stat.S_IMODE(item.st_mode) != 0o600
-    ):
-        raise AttemptError("Boca attempt lease inode unsafe")
+        verify_protected_boca_job_lease(lease, attempt_id)
+    except CleanupError as exc:
+        raise AttemptError("Boca attempt requires same held canonical protected job lease") from exc
 
 
 def _open_dir() -> int:
@@ -347,3 +337,47 @@ def cleanup_ids(result: Result, *, lease: BocaJobLease) -> tuple[frozenset[str],
     if result.created_controller_id is not None:
         return frozenset(), frozenset({result.created_controller_id})
     return frozenset(), frozenset()
+
+
+def finalize_attempt(
+    result: Result,
+    *,
+    lease: BocaJobLease,
+    preserve_images: frozenset[str],
+) -> cleanup.CleanupReceipt:
+    """Unwired host finalizer: verify exact Docker labels before any cleanup.
+
+    No CLI/workflow exposes this function. Protected job must call it from the
+    *same host process* and original lease as the installer, on both outcomes.
+    A missing result means NO_GO and makes NO deletion attempt.
+    """
+    _lease(lease, result.attempt_id)
+    intent, _ = read_intent(result.attempt_id, lease=lease)
+    preserve, retire = cleanup_ids(result, lease=lease)
+    snapshot = cleanup.capture_inventory()
+    for ident in preserve | retire:
+        matches = [container for container in snapshot.containers if container.ident == ident]
+        if len(matches) != 1:
+            raise AttemptError("Boca finalizer exact controller missing from host inventory")
+        container = matches[0]
+        labels = dict(container.labels)
+        if (
+            len(labels) != len(container.labels)
+            or labels.get("com.docker.compose.project") != cleanup.BOCA_PROJECT
+            or labels.get("com.docker.compose.service") != "controller"
+            or labels.get(OPERATIONS[intent.operation]) != result.attempt_id
+            or labels.get("boca.socios.source-sha") != intent.source_sha
+            or not container.name.removeprefix("/").startswith("boca-socios-")
+        ):
+            raise AttemptError("Boca finalizer exact controller identity/labels unproven")
+    if result.outcome not in ("SUCCESS", "FAILURE"):
+        raise AttemptError("Boca finalizer outcome untrusted")
+    verified_outcome: cleanup.OUTCOME = "SUCCESS" if result.outcome == "SUCCESS" else "FAILURE"
+    return cleanup.execute_protected(
+        verified_outcome,
+        result.attempt_id,
+        preserve_images=preserve_images,
+        preserve_containers=preserve,
+        retire_containers=retire,
+        lease=lease,
+    )

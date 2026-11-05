@@ -150,6 +150,71 @@ class BocaJobLease:
     active: bool
 
 
+def verify_protected_boca_job_lease(lease: BocaJobLease, attempt_id: str) -> None:
+    """Prove a *held canonical flock*, not just a plausible fd or boolean.
+
+    The independent open must be blocked while a duplicate of the caller's
+    original open-file description remains able to retain the same lock.
+    Never release the caller's fd: it protects install through finalizer.
+    """
+    if (
+        not isinstance(lease, BocaJobLease)
+        or not lease.active
+        or lease.owner_pid != os.getpid()
+        or lease.attempt_id != attempt_id
+        or not ATTEMPT_ID.fullmatch(attempt_id)
+        or os.geteuid() != EXPECTED_UID
+        or os.getegid() != EXPECTED_UID
+    ):
+        raise CleanupError("postdeploy cleanup requires one protected Boca job lease")
+    folder: int | None = None
+    contender: int | None = None
+    borrowed: int | None = None
+    try:
+        fd_meta = os.fstat(lease.fd)
+        folder = os.open(LEASE_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        root = os.fstat(folder)
+        if (
+            not stat.S_ISDIR(root.st_mode)
+            or root.st_uid != EXPECTED_UID
+            or root.st_gid != EXPECTED_UID
+            or stat.S_IMODE(root.st_mode) != 0o700
+        ):
+            raise CleanupError("Boca protected job lease parent unsafe")
+        contender = os.open(LEASE_FILE, os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=folder)
+        path_meta = os.fstat(contender)
+        if (
+            (fd_meta.st_dev, fd_meta.st_ino) != (path_meta.st_dev, path_meta.st_ino)
+            or not stat.S_ISREG(fd_meta.st_mode)
+            or fd_meta.st_uid != EXPECTED_UID
+            or fd_meta.st_gid != EXPECTED_UID
+            or fd_meta.st_nlink != 1
+            or stat.S_IMODE(fd_meta.st_mode) != 0o600
+            or fd_meta.st_size != 0
+        ):
+            raise CleanupError("Boca protected job lease file identity changed")
+        try:
+            fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            pass  # At least one *other* OFD holds the canonical lock.
+        else:
+            raise CleanupError("Boca job lease appears unlocked")
+        borrowed = os.dup(lease.fd)
+        try:
+            fcntl.flock(borrowed, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise CleanupError("Boca job lease is held by a different file description") from exc
+    except OSError as exc:
+        raise CleanupError("Boca job lease cannot be verified") from exc
+    finally:
+        if borrowed is not None:
+            os.close(borrowed)
+        if contender is not None:
+            os.close(contender)
+        if folder is not None:
+            os.close(folder)
+
+
 @contextmanager
 def protected_boca_job_lease(attempt_id: str) -> Iterator[BocaJobLease]:
     """Exclusive job-scoped flock, including first-install before ROOT exists.
@@ -821,24 +886,7 @@ def execute_protected(
     without the active exclusive Boca-only flock from the protected job.
     Today physical use is hard NO_GO until all installers honor this lease.
     """
-    if (
-        not isinstance(lease, BocaJobLease)
-        or not lease.active
-        or lease.attempt_id != attempt_id
-        or lease.owner_pid != os.getpid()
-        or not ATTEMPT_ID.fullmatch(attempt_id)
-    ):
-        raise CleanupError("postdeploy cleanup requires one protected Boca job lease")
-    try:
-        item = os.fstat(lease.fd)
-    except OSError as exc:
-        raise CleanupError("postdeploy Boca job lease no longer open") from exc
-    if (
-        not stat.S_ISREG(item.st_mode)
-        or item.st_uid != EXPECTED_UID
-        or stat.S_IMODE(item.st_mode) != 0o600
-    ):
-        raise CleanupError("postdeploy Boca job lease inode changed")
+    verify_protected_boca_job_lease(lease, attempt_id)
     return execute(
         outcome,
         attempt_id,
