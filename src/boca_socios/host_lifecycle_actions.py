@@ -23,6 +23,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
 from boca_socios import host_boca_lifecycle as lifecycle
 from boca_socios import host_lifecycle_rootless_adapter as adapter
@@ -40,6 +41,17 @@ from boca_socios.panel.lifecycle_intents import (
 
 class PhysicalAckUnavailable(ValueError):
     """No reliable protected action/ACK exists; fail closed without a retry."""
+
+
+def _canonical_request_id(value: object) -> bool:
+    """Only the exact UUID observed by PREPARE can authorize a physical ACK."""
+    if type(value) is not str:
+        return False
+    try:
+        parsed = UUID(value)
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return parsed.int != 0 and str(parsed) == value
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,11 +75,13 @@ class ReviewedLifecycleInstallation:
     pair: adapter.ReviewedInstalledPair
     expected_component: Literal["bot", "chromium"] | None = None
     expected_target: Literal["start", "stop"] | None = None
+    expected_request_id: str = ""
 
     def coordinates_for(self, request: LifecycleIntent) -> lifecycle.LifecycleHostCoordinates:
         if (
             not isinstance(request, LifecycleIntent)
             or not isinstance(self.pair, adapter.ReviewedInstalledPair)
+            or not _canonical_request_id(self.expected_request_id)
             or (self.expected_component is None) != (self.expected_target is None)
             or self.expected_component is not None
             and (
@@ -278,6 +292,10 @@ def apply_latest_owner_request(
     pending = _read_current(installed.database_path)
     if pending is None or pending.status != "REQUESTED":
         raise PhysicalAckUnavailable("no pending owner lifecycle REQUESTED intent")
+    if pending.operation_id != installed.expected_request_id:
+        # A new REQUESTED of the SAME scope is not the reviewed owner intent.
+        # Check under the Boca lease before GO O_EXCL/CLAIM/physical effect.
+        raise PhysicalAckUnavailable("Boca current REQUESTED differs from reviewed request ID")
     try:
         coordinates = installed.coordinates_for(pending)
     except (lifecycle.LifecycleHostUnavailable, adapter.LifecycleAdapterNoGo):
@@ -339,6 +357,7 @@ _CONTEXT_KEYS = frozenset(
         "data_mountpoint",
         "expected_component",
         "expected_target",
+        "expected_request_id",
     }
 )
 _SENDER_KEYS = frozenset({"sender_id", "sender_config_hash", "sender_attempt_id", "sender_state"})
@@ -408,6 +427,7 @@ def decode_lifecycle_context(encoded: str) -> ReviewedLifecycleInstallation:
             pair=pair,
             expected_component=obj["expected_component"],
             expected_target=obj["expected_target"],
+            expected_request_id=obj["expected_request_id"],
         )
         synthetic = LifecycleIntent(
             operation_id="00000000-0000-4000-8000-000000000001",

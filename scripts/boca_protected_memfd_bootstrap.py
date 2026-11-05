@@ -33,6 +33,7 @@ EXPECTED_ENTRIES = frozenset(
         "boca_socios/host_boca_cutover_receipt.py",
         "boca_socios/host_cutover_stage.py",
         "boca_socios/host_lifecycle_actions.py",
+        "boca_socios/host_lifecycle_observe.py",
         "boca_socios/host_lifecycle_rootless_adapter.py",
         "boca_socios/host_boca_lifecycle.py",
         "boca_socios/panel/lifecycle_intents.py",

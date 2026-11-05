@@ -32,6 +32,7 @@ SOURCES = (
     "src/boca_socios/host_cutover_stage.py",
     # Host-only lifecycle bridge and bounded stdlib dependency closure.
     "src/boca_socios/host_lifecycle_actions.py",
+    "src/boca_socios/host_lifecycle_observe.py",
     "src/boca_socios/host_lifecycle_rootless_adapter.py",
     "src/boca_socios/host_boca_lifecycle.py",
     "src/boca_socios/panel/lifecycle_intents.py",
@@ -68,6 +69,11 @@ MAIN = (
     "    if sys.argv[1] == 'lifecycle-bridge-selftest':\n"
     "        raise SystemExit(bridge.selftest_main())\n"
     "    raise SystemExit(bridge.main(sys.argv[2:]))\n"
+    "if len(sys.argv) > 1 and sys.argv[1] in ('lifecycle-observe', 'lifecycle-observe-selftest'):\n"
+    "    from boca_socios import host_lifecycle_observe as observe\n"
+    "    if sys.argv[1] == 'lifecycle-observe-selftest':\n"
+    "        raise SystemExit(observe.selftest_main())\n"
+    "    raise SystemExit(observe.main(sys.argv[2:]))\n"
     "from boca_socios.host_boca_transaction import main\n"
     "raise SystemExit(main())\n"
 ).encode("ascii")
