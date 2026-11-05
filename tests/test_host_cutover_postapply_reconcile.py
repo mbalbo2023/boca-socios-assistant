@@ -6,7 +6,6 @@ import hashlib
 from pathlib import Path
 
 import pytest
-
 from scripts import host_cutover_postapply_reconcile as reconcile
 
 RUN = "42096941815"
