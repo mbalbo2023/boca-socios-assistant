@@ -79,6 +79,80 @@ def test_cutover_stages_private_child_without_changing_original_inode(staging: P
     assert all((path.stat().st_mode & 0o777) == 0o600 for path in verified.iterdir())
 
 
+def test_stage_allows_same_byte_compose_when_source_and_images_are_distinct(
+    staging: Path,
+) -> None:
+    """A code/image upgrade need not rewrite the unchanged production Compose file."""
+    live = staging / "compose.beta.yaml"
+    original_inode = (live.stat().st_dev, live.stat().st_ino)
+    stage.initialize(
+        ATTEMPT,
+        LEGACY_ID,
+        LEGACY_SHA,
+        _sha(LEGACY),
+        TARGET_SHA,
+        TARGET_IMAGE,
+        WORKER_IMAGE,
+        _sha(LEGACY),
+        _sha(OVERLAY),
+        _sha(SECCOMP),
+    )
+    for slot, blob in (("base", LEGACY), ("overlay", OVERLAY), ("seccomp", SECCOMP)):
+        stage.upload(slot, _sha(blob), ATTEMPT, _sha(LEGACY), io.BytesIO(blob))
+    verified = stage.verify(ATTEMPT, _sha(LEGACY))
+    assert stage.read_verified(ATTEMPT, _sha(LEGACY), "base") == LEGACY
+    assert verified.name == f"cutover-a-{ATTEMPT}"
+    assert live.read_bytes() == LEGACY
+    assert (live.stat().st_dev, live.stat().st_ino) == original_inode
+
+
+@pytest.mark.parametrize("invalid_role", ["legacy_equals_overlay", "overlay_equals_seccomp"])
+def test_stage_rejects_noncompose_digest_collisions_before_mkdir(
+    staging: Path, invalid_role: str
+) -> None:
+    """Retain genuinely independent overlay/seccomp slots and immutable original."""
+    overlay = _sha(LEGACY) if invalid_role == "legacy_equals_overlay" else _sha(OVERLAY)
+    seccomp = overlay if invalid_role == "overlay_equals_seccomp" else _sha(SECCOMP)
+    with pytest.raises(stage.StageError, match="independent"):
+        stage.initialize(
+            ATTEMPT,
+            LEGACY_ID,
+            LEGACY_SHA,
+            _sha(LEGACY),
+            TARGET_SHA,
+            TARGET_IMAGE,
+            WORKER_IMAGE,
+            _sha(LEGACY),
+            overlay,
+            seccomp,
+        )
+    assert not (staging / f"cutover-a-{ATTEMPT}").exists()
+    assert (staging / "compose.beta.yaml").read_bytes() == LEGACY
+
+
+def test_stage_rejects_mutated_base_bytes_even_with_compose_reuse(
+    staging: Path,
+) -> None:
+    """Distinct source/image provenance does not bypass exact uploaded digest."""
+    stage.initialize(
+        ATTEMPT,
+        LEGACY_ID,
+        LEGACY_SHA,
+        _sha(LEGACY),
+        TARGET_SHA,
+        TARGET_IMAGE,
+        WORKER_IMAGE,
+        _sha(LEGACY),
+        _sha(OVERLAY),
+        _sha(SECCOMP),
+    )
+    with pytest.raises(stage.StageError, match="altered"):
+        stage.upload("base", _sha(LEGACY), ATTEMPT, _sha(LEGACY), io.BytesIO(BASE))
+    child = staging / f"cutover-a-{ATTEMPT}"
+    assert {item.name for item in child.iterdir()} == {stage.MARKER}
+    assert (staging / "compose.beta.yaml").read_bytes() == LEGACY
+
+
 def test_stage_duplicate_run_stops_without_overwriting_attempt(staging: Path) -> None:
     _init()
     before = (staging / "compose.beta.yaml").read_bytes()
