@@ -26,22 +26,34 @@ jobs:
         env:
           SOURCE_SHA: ${{ github.sha }}
           IMAGE: boca-release-validation:${{ github.sha }}
-        run: docker build --label "org.opencontainers.image.revision=$SOURCE_SHA" --tag "$IMAGE" .
+        run: |
+          docker build \
+            --label "org.opencontainers.image.source=https://github.com/mbalbo2023/boca-socios-assistant" \
+            --label "org.opencontainers.image.revision=$SOURCE_SHA" \
+            --tag "$IMAGE" .
       - name: Verify source revision label
         env:
           SOURCE_SHA: ${{ github.sha }}
           IMAGE: boca-release-validation:${{ github.sha }}
-        run: test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
+        run: |
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' "$IMAGE")" = "https://github.com/mbalbo2023/boca-socios-assistant"
       - name: Build one local browser worker image
         env:
           SOURCE_SHA: ${{ github.sha }}
           IMAGE: boca-browser-release-validation:${{ github.sha }}
-        run: docker build --file Dockerfile.browser --label "org.opencontainers.image.revision=$SOURCE_SHA" --tag "$IMAGE" .
+        run: |
+          docker build --file Dockerfile.browser \
+            --label "org.opencontainers.image.source=https://github.com/mbalbo2023/boca-socios-assistant" \
+            --label "org.opencontainers.image.revision=$SOURCE_SHA" \
+            --tag "$IMAGE" .
       - name: Verify browser source revision label
         env:
           SOURCE_SHA: ${{ github.sha }}
           IMAGE: boca-browser-release-validation:${{ github.sha }}
-        run: test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
+        run: |
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' "$IMAGE")" = "https://github.com/mbalbo2023/boca-socios-assistant"
       - name: Require the reviewed browser IPC worker command
         env:
           IMAGE: boca-browser-release-validation:${{ github.sha }}
@@ -111,22 +123,34 @@ jobs:
         env:
           IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
           SOURCE_SHA: ${{ github.sha }}
-        run: docker build --label "org.opencontainers.image.revision=$SOURCE_SHA" --tag "$IMAGE" .
+        run: |
+          docker build \
+            --label "org.opencontainers.image.source=https://github.com/mbalbo2023/boca-socios-assistant" \
+            --label "org.opencontainers.image.revision=$SOURCE_SHA" \
+            --tag "$IMAGE" .
       - name: Verify source revision label
         env:
           IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
           SOURCE_SHA: ${{ github.sha }}
-        run: test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
+        run: |
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' "$IMAGE")" = "https://github.com/mbalbo2023/boca-socios-assistant"
       - name: Build one local browser worker image
         env:
           IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}
           SOURCE_SHA: ${{ github.sha }}
-        run: docker build --file Dockerfile.browser --label "org.opencontainers.image.revision=$SOURCE_SHA" --tag "$IMAGE" .
+        run: |
+          docker build --file Dockerfile.browser \
+            --label "org.opencontainers.image.source=https://github.com/mbalbo2023/boca-socios-assistant" \
+            --label "org.opencontainers.image.revision=$SOURCE_SHA" \
+            --tag "$IMAGE" .
       - name: Verify browser source revision label
         env:
           IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}
           SOURCE_SHA: ${{ github.sha }}
-        run: test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
+        run: |
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' "$IMAGE")" = "https://github.com/mbalbo2023/boca-socios-assistant"
       - name: Require the reviewed browser IPC worker command
         env:
           IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}
