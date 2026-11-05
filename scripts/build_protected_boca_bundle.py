@@ -88,7 +88,10 @@ MAIN = (
     "from boca_socios.host_boca_transaction import main\n"
     "raise SystemExit(main())\n"
 ).encode("ascii")
-MAX_SOURCE_BYTES = 768_000
+# R28 read-only rootless cache + exact-ID fail-closed proof adds ~19kB to the
+# already enumerated, digest-authenticated host cleanup source. Source allowlist
+# and independent compressed transport bound remain unchanged.
+MAX_SOURCE_BYTES = 800_000
 MAX_ARCHIVE_BYTES = 512_000
 
 

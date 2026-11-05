@@ -251,3 +251,25 @@ de rootless y metadata de dueño/modo de directorios del volumen `boca_owner`
 antes de declarar viable un stage Telegram. Los campos v3 siguen
 `READ_ONLY_NO_GO`, `cleanup_executed=false`, `observer_writes=0`; ningún
 cambio en Porota, BLACKBOX, otros servicios, puertos o ruta deploy.
+
+### RCA QA del presupuesto del bundle protegido
+
+La primera suite integral R28 (3817 PASS/34 subtests; 14 FAIL y 8 ERROR)
+detectó que el agregado de diagnóstico/código exacto aumentó los bytes
+descomprimidos de la allowlist fija del memfd protegido a **782,425 bytes**
+(fuentes, antes de pequeños wrappers). El builder tenía
+`MAX_SOURCE_BYTES=768,000`: rechazaba el bundle antes de generar el ZIP.
+Tras elevar **sólo** ese límite a `800,000`, apareció un segundo gate
+independiente legítimo: `boca_protected_memfd_bootstrap.MAX_UNCOMPRESSED`
+todavía estaba en 768,000 y rechazaba el ZIP previamente firmado.
+
+Los dos guardias de **fuentes descomprimidas** quedan sincronizados en
+`800,000` bytes; el límite **comprimido** del builder `MAX_ARCHIVE_BYTES` y
+del verificador `MAX_ZIP` permanece en **512,000** bytes, sin cambios de la
+allowlist, sin BLACKBOX, sin alterar firmas SHA256 por bytes exactos, modos,
+symlinks o memfd `execv`. La nueva prueba negativa reduce un byte el límite
+descomprimido y demuestra rechazo con el mismo hash correcto; también prueba
+SHA deliberadamente incorrecto y builder que falla sin crear output. La suite
+focal de bundle, Cutover CLI, contrato R22 y cleanup pasó **106/106**.
+Sin este RCA, el despliegue protegido sería NO_GO antes del primer SSH,
+independiente de si Docker tuviera caché recuperable.
