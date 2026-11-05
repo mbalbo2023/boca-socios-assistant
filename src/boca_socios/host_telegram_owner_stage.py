@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Literal
 
 from boca_socios.host_boca_cleanup import BocaJobLease, verify_protected_boca_job_lease
-from boca_socios.host_telegram_production_reader import TelegramProductionDockerIO
 from boca_socios.host_lifecycle_rootless_adapter import (
     LifecycleDockerIO,
 )
@@ -25,6 +24,7 @@ from boca_socios.host_telegram_postcutover import (
     TelegramHostPins,
     observe_telegram_host,
 )
+from boca_socios.host_telegram_production_reader import TelegramProductionDockerIO
 from boca_socios.panel.passkey import PasskeyOwnerAuthentication
 from boca_socios.telegram_owner_webauthn import verify_stage_owner_witness
 from boca_socios.telegram_pairing_cutover import CutoverCoordinates, _coordinates_valid
