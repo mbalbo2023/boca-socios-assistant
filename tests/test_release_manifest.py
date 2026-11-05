@@ -93,9 +93,9 @@ def test_workflow_checks_artifact_before_host_credentials() -> None:
             "gh run download"
         )
         assert "BOCA_SOURCE_SHA" in section or "GITHUB_SHA" in section
-    normal = deploy.split("      - name: Validate immutable inputs and successful matching release", 1)[1].split(
-        "      - name:", 1
-    )[0]
+    normal = deploy.split(
+        "      - name: Validate immutable inputs and successful matching release", 1
+    )[1].split("      - name:", 1)[0]
     assert normal.index("gh run download") < normal.index(
         "python -m boca_socios.release_manifest verify"
     )
