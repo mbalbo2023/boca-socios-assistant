@@ -172,7 +172,9 @@ def test_post_rejects_wrong_origin_csrf_plaintext_and_disabled_gateway(tmp_path:
     )[0] in (400, 422)
     assert not stage_path.exists()
 
-    app_without_stage, key2, credential2, _clock2 = _app_with_stage(tmp_path / "other.sqlite3", None)
+    app_without_stage, key2, credential2, _clock2 = _app_with_stage(
+        tmp_path / "other.sqlite3", None
+    )
     cookie2 = _login(app_without_stage, key2, credential2)
     assert (
         _request(
