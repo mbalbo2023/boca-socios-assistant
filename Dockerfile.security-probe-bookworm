@@ -1,27 +1,33 @@
-# EXPERIMENT ONLY (#326): independent, non-deployable Debian Bookworm
+# EXPERIMENT ONLY (#326): independent, non-deployable Debian Bookworm/Trixie
 # vulnerability-feed probe. Production Browser stays on immutable Noble.
-# Upstream Playwright Python docs allow a custom python:3.12-bookworm image.
-# This tag is intentionally NOT a release base; any accepted replacement
+# Upstream Playwright Python docs allow a custom python:3.12-bookworm image;
+# Trixie is a compatibility EXPERIMENT, not officially established support.
+# These tag-only inputs are intentionally NOT release bases; any replacement
 # requires a reviewed immutable digest, migration of all hardening pins,
 # full QA and separate GO.
-FROM python:3.12-bookworm AS patched-apt
+ARG PROBE_BASE=python:3.12-bookworm
+FROM ${PROBE_BASE} AS patched-apt
 
 ARG DEBIAN_FRONTEND=noninteractive
+ARG DEBIAN_APT_VERSION=2.6.2
+ARG DEBIAN_LIBAPT_PACKAGE=libapt-pkg6.0
 RUN apt-get -o Acquire::Retries=0 update && \
     apt-get -o Acquire::Retries=0 install --yes --no-install-recommends \
-      apt=2.6.2 libapt-pkg6.0=2.6.2 && \
-    for pkg in apt libapt-pkg6.0; do \
-      test "$(dpkg-query -W -f='${Version}' "$pkg")" = "2.6.2" || exit 1; \
+      "apt=${DEBIAN_APT_VERSION}" "${DEBIAN_LIBAPT_PACKAGE}=${DEBIAN_APT_VERSION}" && \
+    for pkg in apt "$DEBIAN_LIBAPT_PACKAGE"; do \
+      test "$(dpkg-query -W -f='${Version}' "$pkg")" = "$DEBIAN_APT_VERSION" || exit 1; \
     done && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 FROM patched-apt AS chromium
+ARG DEBIAN_APT_VERSION
+ARG DEBIAN_LIBAPT_PACKAGE
 RUN python -m pip install --disable-pip-version-check --no-cache-dir \
       --only-binary=:all: playwright==1.64.1 && \
     python -m playwright install --with-deps chromium && \
-    for pkg in apt libapt-pkg6.0; do \
-      test "$(dpkg-query -W -f='${Version}' "$pkg")" = "2.6.2" || exit 1; \
+    for pkg in apt "$DEBIAN_LIBAPT_PACKAGE"; do \
+      test "$(dpkg-query -W -f='${Version}' "$pkg")" = "$DEBIAN_APT_VERSION" || exit 1; \
     done && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
