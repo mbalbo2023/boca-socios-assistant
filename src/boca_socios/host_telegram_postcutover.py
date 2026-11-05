@@ -343,8 +343,8 @@ def observe_telegram_host(
         probe._service_boundary(pins.worker_id, "browser-worker", pins.worker_image)
         if pins.sender_expected_state == "stopped":
             probe._service_boundary(pins.sender_id, "telegram", pins.sender_image)
-        for volume in (_DATA, _TELEGRAM):
-            mountpoint = reader.field("volume", volume, "Mountpoint")
+        for volume_name in (_DATA, _TELEGRAM):
+            mountpoint = reader.field("volume", volume_name, "Mountpoint")
             if not isinstance(mountpoint, str) or not mountpoint.startswith("/"):
                 raise TelegramHostNoGo("boca_telegram_volume_mount_unverified")
         verify_protected_boca_job_lease(lease, pins.attempt_id)
