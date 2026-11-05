@@ -279,6 +279,70 @@ def test_lost_compose_promotion_receipt_blocks_rollback_and_leaves_intent(
     assert (root / f"cutover-a-{_plan().attempt_id}" / stage.COMMIT_INTENT).exists()
 
 
+def test_unknown_retirement_never_deletes_candidate_worker_or_restarts_legacy(
+    fake_host: tuple[list[str], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events, root = fake_host
+
+    def lost_retirement(*_args: object) -> None:
+        # Assume Docker DID remove the old exact ID before its return was lost.
+        events.append("legacy-rm-effect-unknown")
+        raise cutover.CutoverError("lost Docker rm receipt after effect")
+
+    def must_not_delete(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("uncertain cutover may not invoke deletion planner")
+
+    def read_only() -> SimpleNamespace:
+        events.append("readonly-census")
+        return SimpleNamespace()
+
+    monkeypatch.setattr(adapter.host, "_cutover_retire_accepted_original", lost_retirement)
+    monkeypatch.setattr(adapter.cleanup, "execute_protected", must_not_delete)
+    monkeypatch.setattr(adapter.cleanup, "capture_inventory", read_only)
+    receipt = cutover.run_cutover_a(_plan(), backend=_backend(events))
+    assert receipt.state == "NO_GO" and receipt.irreversible_commit_started
+    assert not receipt.original_restored and not receipt.accepted
+    assert "readonly-census" in events
+    assert "recover-original" not in events
+    assert "recover-worker" not in events
+    assert (root / "compose.beta.yaml").read_bytes() == BASE
+    assert (root / f"cutover-a-{_plan().attempt_id}" / stage.COMMIT_INTENT).exists()
+
+
+def test_failed_precommit_recovery_never_cleans_parked_or_live_worker(
+    fake_host: tuple[list[str], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events, root = fake_host
+
+    def failed_bootstrap(*_args: object, **_kwargs: object) -> str:
+        events.append("bootstrap-failed")
+        raise cutover.CutoverError("host session unavailable")
+
+    def failed_recovery(*_args: object) -> None:
+        events.append("recover-unknown")
+        raise cutover.CutoverError("original ID remains parked; restart receipt lost")
+
+    def must_not_delete(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("unrestored original must not allow worker deletion")
+
+    def read_only() -> SimpleNamespace:
+        events.append("readonly-census")
+        return SimpleNamespace()
+
+    backend = _backend(events)
+    backend.session_bootstrap = failed_bootstrap
+    monkeypatch.setattr(adapter.host, "_cutover_compensate_candidate", failed_recovery)
+    monkeypatch.setattr(adapter.cleanup, "execute_protected", must_not_delete)
+    monkeypatch.setattr(adapter.cleanup, "capture_inventory", read_only)
+    receipt = cutover.run_cutover_a(_plan(), backend=backend)
+    assert receipt.state == "NO_GO" and not receipt.original_restored
+    assert not receipt.irreversible_commit_started
+    assert "recover-unknown" in events and "readonly-census" in events
+    assert "recover-worker" not in events and "cleanup" not in events
+    assert (root / "compose.beta.yaml").read_bytes() == LEGACY
+    assert (root / f"cutover-a-{_plan().attempt_id}").exists()
+
+
 @pytest.mark.parametrize("output", ["hash-only", "service-prefix", "foreign", "multiple"])
 def test_host_compose_service_hash_is_derived_from_verified_staged_model(
     fake_host: tuple[list[str], Path], monkeypatch: pytest.MonkeyPatch, output: str

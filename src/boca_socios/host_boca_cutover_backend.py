@@ -469,21 +469,32 @@ class RootlessCutoverBackend:
         cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
         if self.plan != plan:
             return "NO_GO"
-        # Even a failed transition attempts one independent Boca-only Docker
-        # inventory/finalizer under the same canonical lock. A parked unlabelled
-        # historical ID is never eligible for automated removal.
-        preserve = frozenset(
-            {plan.legacy_id}
-            if self.state == "RECOVERED"
-            else (
-                {candidate_id, worker_id}
-                if self.state == "COMMITTED" and candidate_id and worker_id
-                else {plan.legacy_id}
-            )
+        safely_recovered = self.state == "RECOVERED" and not commit_started
+        safely_committed = (
+            self.state == "COMMITTED"
+            and commit_started
+            and candidate_id is not None
+            and worker_id is not None
         )
-        outcome: Literal["SUCCESS", "FAILURE"] = (
-            "SUCCESS" if self.state == "COMMITTED" and commit_started else "FAILURE"
-        )
+        if not (safely_recovered or safely_committed):
+            # Symmetric uncertainty barrier. A failed precommit compensation
+            # may leave legacy PARKED and worker/candidate alive; a lost
+            # irreversible retirement receipt may mean legacy already GONE.
+            # In either case deleting *anything* with the generic planner
+            # risks the only living service or exact-ID recovery evidence.
+            # Read-only inventory under held lease, NO retries or prune.
+            cleanup.capture_inventory()
+            return "NO_GO"
+        # Destructive finalizer only after POSITIVE old-ID recovery or POSITIVE
+        # candidate acceptance plus old-ID retirement. Missing IDs never fall
+        # back to protecting a guessed/missing legacy identity.
+        if safely_recovered:
+            preserve: frozenset[str] = frozenset({plan.legacy_id})
+        else:
+            if candidate_id is None or worker_id is None:
+                return "NO_GO"
+            preserve = frozenset({candidate_id, worker_id})
+        outcome: Literal["SUCCESS", "FAILURE"] = "FAILURE" if safely_recovered else "SUCCESS"
         receipt = cleanup.execute_protected(
             outcome,
             plan.attempt_id,

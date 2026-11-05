@@ -291,6 +291,33 @@ foreign root object rejection, lost `os.replace` receipt, Option B failure
 compensation, service `config --hash` receipt and single-owner rootless volume
 checks. PR-only Actions evidence must still be reconciled to published HEAD.
 
+### Critical correction: lost exact-ID retirement result
+
+Architecture review exposed a **P0** in the initial R11-3 finalizer:
+`commit_started=True` with adapter state still `ACCEPTED` can mean Docker
+already removed legacy, but the `rm` acknowledgement was lost. Passing only
+the now-absent historical ID as the protected set into an *effectful* generic
+cleanup would risk targeting the living candidate and worker—the **only**
+service occupying loopback 8443. Fixed: whenever irreversible commit has
+started and a positive `COMMITTED` receipt has *not* been obtained, finalizer
+performs **only a read-only Boca inventory**, never calls a deletion planner,
+never restarts legacy and always reports NO_GO. The stage commit-intent stays
+quarantined for an independently governed fix-forward operation. A new
+fault-injection test explicitly simulates successful old-ID Docker deletion
+followed by lost acknowledgement and asserts zero destructive cleanup calls.
+The same fail-closed barrier applies **before** commit if exact original-ID
+recovery cannot be proven: state PARKED/BOOTSTRAPPED/CANDIDATE without a
+positive RECOVERED receipt can leave the old controller stopped while worker
+or candidate is live. In this case the finalizer performs read-only inventory
+only, not Docker deletion. Effective selective cleanup occurs **only** for
+verified state RECOVERED (precommit) or COMMITTED (postretirement), both under
+one held lease. Added fake failed-recovery regression to prove this boundary.
+
+Post-P0 freeze: **2605 pytest PASS +31 subtests**; Ruff lint/format 404,
+MyPy 90, repository policy and diff whitespace PASS. The initial published
+R11-3 SHA must **not** be promoted alone: this correction is a mandatory
+follow-on commit; hosted checks apply to the final combined HEAD only.
+
 1. Exact legacy ID/image/commit/Compose, independent new target and two image
    digests, target/overlay/seccomp SHA256, owner and fixed localhost origin are
    rejected before any host call if malformed.
