@@ -274,6 +274,8 @@ def verify_apply_go(
     """Only independently protected exact receipt digest approves host attempt."""
     if now.tzinfo is None:
         raise PreparedGoError("review clock unavailable")
+    if hosted != _host_context(public, prepare_id=hosted.get("prepare_run_id", ""), environ=environ):
+        raise PreparedGoError("runtime injected host context changed")
     expected = expected_go_for_receipt(receipt)
     if not isinstance(approved, str) or _SHA.fullmatch(approved) is None:
         raise PreparedGoError("independent reviewed GO absent")
