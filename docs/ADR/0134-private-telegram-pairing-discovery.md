@@ -342,3 +342,30 @@ same-lease host inspection, dedicated provider egress, real private Telegram
 confirmation and separately recorded human notification receipt are still
 NO_GO requirements of the sole governed #227 cutover. The installed controller
 remains unchanged; no second workflow, deployment or cleanup target is added.
+
+## Compatibilidad de almacenamiento con Opción B — corrección #315/#321
+
+**Decisión del propietario 04/11/2026 ART:** usar un SQLite de sesión Chrome
+**independiente** (`/data/boca_owner_session.sqlite3`) dentro del volumen de
+datos Boca ya existente, sin agregar el ledger 0008 al SQLite legacy
+`/data/boca.sqlite3`. Véase el [GO arquitectónico #321](https://github.com/mbalbo2023/boca-socios-assistant/issues/321#issuecomment-6647073475) y el RCA del
+controlador físico `cabce9f1`, que reconoce sólo migraciones 0001–0007. La
+alternativa A previa permitía 0008 con checksum conocido en el archivo
+principal; **queda reemplazada**, no debe usarse como base para un cutover.
+
+El verificador de Telegram `telegram_storage_gate.verify()` opera únicamente
+sobre `/data/boca.sqlite3`. Su lista permitida ahora incluye versiones
+0001/0002/0003/0005/0006, 0007 cuando Telegram está habilitado, y 0004 sólo
+como política de claves opcional con checksum válido; **rechaza 0008 aun si
+posee el antiguo checksum esperado y la tabla `owner_browser_session`**.
+`telegram_storage_gate.migrate()` sigue agregando únicamente 0007 a esa base
+y no abre, crea ni altera el SQLite vecino para Chrome. La autorización de
+Opción B es sólo para código/QA/PR DRAFT: no implica migración física, GO de
+release, limpieza real, uso del token, envío Telegram o habilitación del bot.
+
+Regresión prevista: los tests de `test_telegram_storage_gate.py` reproducen
+la versión 0008 de la alternativa A y comprueban rechazo sin DDL, incluso
+antes o después de 0007 y con 0004 opcional. Otro test instala un SQLite
+vecino sintético para confirmar que la migración de Telegram no lo modifica.
+Registrar QA y SHA exactos en #315 al publicar el PR, nunca reutilizar el
+GREEN histórico del HEAD anterior.

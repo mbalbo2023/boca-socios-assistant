@@ -107,8 +107,8 @@ def _optional_key_policy(path: Path, key: Path) -> None:
     ).migrate()
 
 
-def _optional_owner_session(path: Path) -> None:
-    """Simulate reviewed opt-in 0008 without owning the panel's migration file."""
+def _legacy_owner_session_0008(path: Path) -> None:
+    """Reproduce the abandoned Option A ledger, including its valid old checksum."""
     with sqlite3.connect(path) as connection:
         connection.execute(
             """CREATE TABLE owner_browser_session (
@@ -121,13 +121,13 @@ def _optional_owner_session(path: Path) -> None:
         )
         connection.execute(
             "INSERT INTO schema_migrations(version, checksum) VALUES (?, ?)",
-            (8, gate._OWNER_SESSION_CHECKSUM),
+            (8, "bfb3b4a0c5082e812affadbfe9441f134c9b64603b487c69564e40e5541d63a1"),
         )
 
 
 @pytest.mark.parametrize("key_policy", [False, True])
 @pytest.mark.parametrize("telegram_first", [False, True])
-def test_opt_in_owner_session_schema_is_compatible_without_telegram_creating_it(
+def test_legacy_0008_is_rejected_before_telegram_ddl_under_option_b(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     key_policy: bool,
@@ -138,38 +138,33 @@ def test_opt_in_owner_session_schema_is_compatible_without_telegram_creating_it(
         _optional_key_policy(path, key)
     if telegram_first:
         gate.migrate(path)
-    _optional_owner_session(path)
+    _legacy_owner_session_0008(path)
     before = _dump(path)
-    gate.migrate(path)
-    gate.verify(path)
-    expected = sorted([1, 2, 3, 5, 6, 7, 8, *([4] if key_policy else [])])
-    assert _versions(path) == expected
-    after = _dump(path)
-    assert any('INSERT INTO "schema_migrations" VALUES(8,' in row for row in after)
-    assert any("CREATE TABLE owner_browser_session" in row for row in after)
-    gate.migrate(path)
-    assert _dump(path) == after
-    if telegram_first:
-        assert before == after
+    monkeypatch.setattr(
+        gate.TelegramDeliveryCoordinator,
+        "prepare_storage",
+        lambda _: pytest.fail("legacy owner-session ledger reached Telegram DDL"),
+    )
+    with pytest.raises(gate.StorageGateError, match="schema_ledger"):
+        gate.migrate(path)
+    with pytest.raises(gate.StorageGateError, match="schema_ledger"):
+        gate.verify(path)
+    assert _dump(path) == before
+    assert 8 in _versions(path)
 
 
 @pytest.mark.parametrize(
-    ("invalid", "error"),
-    [
-        ("checksum", "schema_checksum"),
-        ("table_missing", "schema_tables"),
-        ("future_9", "schema_ledger"),
-    ],
+    "invalid",
+    ["checksum", "table_missing", "future_9"],
 )
-def test_opt_in_owner_session_rejects_tampering_and_future_ledgers_before_any_ddl(
+def test_legacy_owner_session_rejected_even_with_other_ledger_damage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     invalid: str,
-    error: str,
 ) -> None:
     path, key = _real_beta(tmp_path, monkeypatch)
     _optional_key_policy(path, key)
-    _optional_owner_session(path)
+    _legacy_owner_session_0008(path)
     if invalid == "checksum":
         with sqlite3.connect(path) as connection:
             connection.execute("UPDATE schema_migrations SET checksum='bad' WHERE version=8")
@@ -177,7 +172,6 @@ def test_opt_in_owner_session_rejects_tampering_and_future_ledgers_before_any_dd
         with sqlite3.connect(path) as connection:
             connection.execute("DROP TABLE owner_browser_session")
     elif invalid == "future_9":
-        gate.migrate(path)
         with sqlite3.connect(path) as connection:
             connection.execute("INSERT INTO schema_migrations(version,checksum) VALUES(9,'future')")
     before = _dump(path)
@@ -186,9 +180,26 @@ def test_opt_in_owner_session_rejects_tampering_and_future_ledgers_before_any_dd
         "prepare_storage",
         lambda _: pytest.fail("unreviewed migration reached Telegram DDL"),
     )
-    with pytest.raises(gate.StorageGateError, match=error):
+    with pytest.raises(gate.StorageGateError, match="schema_ledger"):
         gate.migrate(path)
     assert _dump(path) == before
+
+
+def test_option_b_independent_session_file_does_not_change_telegram_legacy_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The distinct SQLite session file must not enter the controller ledger."""
+    path, _ = _real_beta(tmp_path, monkeypatch)
+    owner_session_path = tmp_path / "boca_owner_session.sqlite3"
+    with sqlite3.connect(owner_session_path) as connection:
+        connection.execute("CREATE TABLE owner_session_sentinel (value TEXT NOT NULL)")
+        connection.execute("INSERT INTO owner_session_sentinel VALUES ('synthetic')")
+    owner_session_path.chmod(0o600)
+    owner_bytes = owner_session_path.read_bytes()
+    gate.migrate(path)
+    gate.verify(path)
+    assert _versions(path) == [1, 2, 3, 5, 6, 7]
+    assert owner_session_path.read_bytes() == owner_bytes
 
 
 @pytest.mark.parametrize("key_policy", [False, True])
