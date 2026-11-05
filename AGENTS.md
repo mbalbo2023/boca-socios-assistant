@@ -92,6 +92,20 @@ no browser-worker/CDP activation is implied by this instruction.
    runner loss, SSH or rootless failure prevents cleanup, record/retain NO_GO
    and require fresh Boca-only inventory; no blind retry. Fix code defects in
    a new PR; do not redeploy merely because an external source failed.
+   **Permanent owner extension (2026-11-04): every Boca install/deploy/update,
+   successful OR failed, must execute a final bounded, Boca-only cleanup in
+   that same protected Actions run.** Record before/after disk and inode counts,
+   exact attempted resource identities and a redacted cleanup receipt. After
+   SUCCESS, positively identify and remove obsolete Boca images unused by ANY
+   container, disposable staging, abandoned attempt containers and unused
+   dedicated networks; retain the active image/container and all owner, key,
+   database and uncertain resources. After FAILURE, preserve the original red
+   result and apply existing compensation first. Verify removal by exact ID,
+   never by broad name/glob, and never use host-wide Docker prune, force image
+   removal or unscoped Compose down. Unverifiable residue, runner loss or
+   cleanup failure is NO_GO/INDETERMINATE with fresh Boca-only inventory and
+   no blind retry. A green deployment without this final receipt is NOT fully
+   accepted; this code-only instruction does not authorize a host operation.
 10. Use YYYY-MM-DD in America/Argentina/Buenos_Aires for user-facing times.
 
 ## Approved BETA preparation scope
