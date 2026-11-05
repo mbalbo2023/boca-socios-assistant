@@ -201,13 +201,47 @@ def test_readonly_code_scope_and_no_blackbox_import() -> None:
     assert "DOCKER_HOST" in source
 
 
-def test_stage_preflight_rejects_identical_immutable_hashes_before_any_host_call() -> None:
+def test_stage_preflight_accepts_compose_reuse_and_inspects_host_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Canonical plan permits identical historical/target bytes, without writes."""
     payload = reconcile._record(_intent(), RUN, kind="intent")
     assert payload is not None
-    payload["overlay_sha"] = payload["target_compose_sha"]
+    attempted: list[str] = []
+
+    def unavailable_root(path: str, *_args: object, **_kwargs: object) -> int:
+        attempted.append(path)
+        raise PermissionError("simulated read-only host root unavailable")
+
+    monkeypatch.setattr(reconcile.os, "open", unavailable_root)
+    observed = reconcile._stage_preflight(payload)
+    assert observed["legacy_target_compose_equal"] is True
+    assert observed["plan_hashes_unique"] is True
+    assert observed["reason"] == "STAGE_ROOT_UNREADABLE"
+    assert attempted == ["/srv/boca-socios"]
+
+
+@pytest.mark.parametrize("bad_role", ["target_equals_overlay", "legacy_equals_seccomp"])
+def test_stage_preflight_detects_invalid_digest_roles_and_still_observes_root(
+    monkeypatch: pytest.MonkeyPatch, bad_role: str
+) -> None:
+    payload = reconcile._record(_intent(), RUN, kind="intent")
+    assert payload is not None
+    if bad_role == "target_equals_overlay":
+        payload["overlay_sha"] = payload["target_compose_sha"]
+    else:
+        payload["seccomp_sha"] = payload["legacy_compose_sha"]
+    attempted: list[str] = []
+
+    def unavailable_root(path: str, *_args: object, **_kwargs: object) -> int:
+        attempted.append(path)
+        raise PermissionError("simulated read-only host root unavailable")
+
+    monkeypatch.setattr(reconcile.os, "open", unavailable_root)
     observed = reconcile._stage_preflight(payload)
     assert observed["plan_hashes_unique"] is False
-    assert observed["reason"] == "PLAN_SHA_COLLISION_OR_INVALID"
+    assert observed["reason"] == "STAGE_ROOT_UNREADABLE"
+    assert attempted == ["/srv/boca-socios"]
 
 
 def test_marker_unknown_volume_is_readonly_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
