@@ -56,6 +56,9 @@ malformado, UID/socket incorrecto o inventario cambiante causa NO_GO.
 El resultado es un JSON acotado y canónico, y el verificador del runner
 comprueba ID exacto y los campos fijos `go_for_retry=false`,
 `runtime_attested=false` y `foreign_resources_touched=false`.
+El último campo describe **únicamente el proceso lector nuevo**; no prueba
+que el APPLY anterior no haya tocado nada (ni dentro ni fuera de Boca),
+cuyo efecto físico permanece **desconocido** hasta la reconciliación.
 Una observación correctamente ejecutada puede quedar verde **como
 diagnóstico**, pero su clasificación operativa sigue siendo `READ_ONLY_NO_GO`.
 
