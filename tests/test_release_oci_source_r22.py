@@ -63,7 +63,4 @@ def test_both_roles_verify_exact_published_oci_source_label() -> None:
             assert '= "$SOURCE_SHA"' in body
     # No weaker alternative, foreign repository or unverified image source in
     # any release build or verification branch.
-    assert (
-        WORKFLOW.read_text().count('index .Config.Labels "org.opencontainers.image.source"')
-        == 4
-    )
+    assert WORKFLOW.read_text().count('index .Config.Labels "org.opencontainers.image.source"') == 4
