@@ -5,13 +5,12 @@ Tests never execute Docker, SSH, ZIP/bootstrap or a host action.
 
 from __future__ import annotations
 
-from dataclasses import replace
-from pathlib import Path
-
 import base64
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
