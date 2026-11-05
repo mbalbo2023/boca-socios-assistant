@@ -86,7 +86,9 @@ const context = {
 };
 vm.runInNewContext(input.script, context, {timeout: 1000});
 (async () => {
-  const deadline = Date.now() + 5000;
+  // Native WebCrypto initializes asynchronously. Under a parallel CI suite,
+  // scheduler pressure may delay this test subprocess without changing the UI.
+  const deadline = Date.now() + 15000;
   while (elements['pairing-generate'].disabled
          && !elements['pairing-result'].textContent.startsWith('Recibo público inválido')) {
     if (Date.now() > deadline) throw Error('UI did not initialize');
@@ -165,7 +167,9 @@ def _run(
         capture_output=True,
         text=True,
         check=True,
-        timeout=10,
+        # Bound a real stall, but allow CPU-starved CI runners enough time for
+        # Node WebCrypto startup and the synthetic browser initialization.
+        timeout=30,
     )
     result = json.loads(completed.stdout)
     assert isinstance(result, dict)
