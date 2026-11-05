@@ -352,3 +352,54 @@ con HTTP 200 y todos los marcadores presentes, no se crea ni publica un
 snapshot real ni se fusiona automáticamente un candidato. La cadena de
 procedencia general de múltiples eventos permanece pendiente de una fuente
 confiable o un proceso de observación individual gobernado.
+
+## Extensión R21.3 — extracción de ventanas de una noticia pública, offline
+
+La auditoría del candidato integral #319 comprobó que
+`runtime.build_beta_server` **ya conecta** el snapshot opcional al panel
+`/avisos-oficiales` y `/avisos-oficiales.json`: no faltan rutas de presentación.
+El faltante funcional es un **productor verificable** del archivo JSONL.
+El workflow público R17 demuestra sólo un GET/TLS/HTTP y 11 marcadores; descarta
+el HTML después de producir un digest. No puede construir por sí solo las
+franjas horarias del evento ni publicar automáticamente su lectura en el
+volumen Boca. Continuar mostrando `NO_EVENTOS_VERIFICADOS` cuando no hay
+snapshot es correcto: **no implica que no exista un partido**.
+
+`events.official_article_observation.build_boca_defensa_offline_jsonl`
+introduce un eslabón **puro**, para la **única** noticia pública del
+03/11/2026 sobre Boca–Defensa: toma bytes HTML *previamente capturados* y un
+reloj de observación con zona horaria, sin red ni filesystem, y extrae las
+cinco ventanas de activos/interior, adherentes, abonados, abono solidario y
+vitalicios. Los cierres por apertura del estadio continúan sin hora exacta.
+Reutiliza el vínculo `OfflineCapture` y el importador v2 existente para
+verificar el hash de los **bytes suministrados**, cada fragmento textual,
+el canal declarado y el contrato no accionable. Exige coincidencia de título,
+fecha de publicación, encuentro, hora, títulos de secciones, orden y fechas
+coherentes. Cambio de plantilla, texto duplicado, fecha contradictoria,
+fuente oculta, dato faltante o documento demasiado grande causan rechazo;
+no hay fallback, horario por defecto ni inferencia desde otra noticia.
+
+La fuente web indexada del club muestra el partido de 07/11 a las 17:30, con
+cinco ventanas distintas y canal **declarado** Boca Socios, pero la noticia
+no certifica expresamente huso para cada franja. El extractor asume ART
+(`-03:00`) para representarlas de acuerdo con el contrato del catálogo;
+esa interpretación requiere **revisión semántica humana** contra la captura
+exacta antes de avisos confirmados. La prueba sintética y el SHA calculado
+no atestiguan origen TLS, disponibilidad, elegibilidad, cupos ni entrega
+real del JSONL. El método se limita deliberadamente a la noticia fija, no
+pretende descubrir todas las noticias ni una API no documentada.
+
+**Continuidad operativa:** todavía no hay productor Action que entregue
+simultáneamente bytes autenticados y el extractor en memoria, ni artefacto
+JSONL real revisado, ni escritura/replace atómico en el volumen existente,
+ni validación física Samsung. No ampliar el diagnóstico de un GET ni instalar
+ese archivo en producción por inferencia. El próximo paso de #314 es
+proponer esa unión READ_ONLY específica y una distribución protegida tras
+revisión de fuente, separada de los comandos sintéticos y de reservas.
+
+**Regla 84:** R21.3 parte del candidato #319 `129f789a62f80ea350e55f700a7d6f64ee238ce1`
+con sus siete workflows GREEN en runner y host operativo sin cambios; el PR
+de extracción debe registrar su propio HEAD/árbol, suite completa y Actions
+exact-SHA antes de integrar. Seguridad externa queda en seguimiento P2 por
+decisión de Tincho 05/11; no se modifican `synthetic.py` ni `ipc_worker.py`,
+bot, Telegram, datos de socios, puertos, GitHub host workflows u otras apps.
