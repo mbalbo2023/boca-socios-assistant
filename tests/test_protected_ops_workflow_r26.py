@@ -85,7 +85,7 @@ def test_draft_documents_two_phase_prepare_and_all_four_go_route_blockers() -> N
     ):
         assert marker in text
     assert "NO autorizada" in text or "NO autorizad" in text
-    assert "un solo archivo de workflow" in text
+    assert "único\narchivo de workflow" in text
 
 
 def test_legacy_telegram_is_unchanged_not_silently_reused_for_new_route() -> None:
