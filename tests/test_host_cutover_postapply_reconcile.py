@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
 import pytest
@@ -93,7 +92,7 @@ def test_postapply_runtime_only_read_from_boca_fixtures(monkeypatch: pytest.Monk
     }
     monkeypatch.setattr(reconcile.os, "geteuid", lambda: 10001)
     monkeypatch.setattr(reconcile.os, "getegid", lambda: 10001)
-    monkeypatch.setattr(reconcile, "_private_home", lambda: Path("/tmp/fake-boca-owner"))
+    monkeypatch.setattr(reconcile, "_private_home", lambda: Path("/home/fixture-boca-owner"))
     monkeypatch.setattr(reconcile.Path, "is_dir", lambda self: self.name == reconcile.RECEIPT_DIR)
     monkeypatch.setattr(reconcile.Path, "is_symlink", lambda self: False)
     monkeypatch.setattr(reconcile, "_read_private", lambda name, *, directory: files.get(name))
