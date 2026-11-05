@@ -1765,6 +1765,22 @@ jobs:
             "$BOCA_PROTECTED_ACTION_CONTEXT" "$BOCA_INCIDENT_PREPARE_RUN_ID" \
             < "$RUNNER_TEMP/boca-cutover-postapply-reconcile.json" \
             >> "$GITHUB_STEP_SUMMARY"
+          # Keep the entire verified, bounded, secret-free physical inventory
+          # in the durable Actions summary for exact-ID fix-forward decisions.
+          python3 - "$RUNNER_TEMP/boca-cutover-postapply-reconcile.json" <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          raw = Path(sys.argv[1]).read_bytes()
+          assert 0 < len(raw) <= 4096 and raw.endswith(b"\n")
+          assert raw.count(b"\n") == 1 and all(byte < 128 for byte in raw)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n<details><summary>Exact Boca-only post-APPLY inventory (READ_ONLY)</summary>\n\n")
+              summary.write("```json\n")
+              summary.write(raw.decode("ascii"))
+              summary.write("```\n</details>\n")
+          PY
       - name: Apply one exact-ID Boca owner lifecycle request through fresh host lease
         id: lifecycle_host_apply
         if: inputs.operation == 'lifecycle-apply'
