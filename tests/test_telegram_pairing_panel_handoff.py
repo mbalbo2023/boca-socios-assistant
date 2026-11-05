@@ -22,15 +22,22 @@ from boca_socios.panel.telegram_pairing_staging import (
     PairingStageRequest,
     stage_private_telegram_pairing,
 )
+from boca_socios.telegram_owner_webauthn import (
+    parse_witness_document,
+    verify_stage_owner_witness,
+)
 from test_private_beta_panel import ORIGIN, _app, _assertion, _login, _passkey, _request
 from test_telegram_pairing_ui import TOKEN, _recipient, _run
 
 
 def _app_with_stage(
-    path: Path, stage: Callable[[PairingStageRequest], PairingStageReceipt] | None
-) -> tuple[PrivatePanelApplication, Any, bytes, list[float]]:
-    clock = [0.0]
-    provider, key, credential = _passkey(clock)
+    path: Path,
+    stage: Callable[[PairingStageRequest], PairingStageReceipt] | None,
+    *,
+    clock: list[float] | None = None,
+) -> tuple[PrivatePanelApplication, Any, bytes]:
+    selected_clock = clock if clock is not None else [0.0]
+    provider, key, credential = _passkey(selected_clock)
     original, _ = _app(path, provider)
     app = PrivatePanelApplication(
         origin=ORIGIN,
@@ -42,7 +49,7 @@ def _app_with_stage(
         events={},
         telegram_pairing_stager=stage,
     )
-    return app, key, credential, clock
+    return app, key, credential
 
 
 def _stage_form(
@@ -95,9 +102,11 @@ def _envelope() -> bytes:
 
 def test_get_is_authenticated_and_post_stages_ciphertext_once(tmp_path: Path) -> None:
     stage_path = tmp_path / STAGING_FILENAME
-    app, key, credential, clock = _app_with_stage(
+    clock = [0.0]
+    app, key, credential = _app_with_stage(
         tmp_path / "boca.sqlite3",
         lambda envelope: stage_private_telegram_pairing(stage_path, envelope),
+        clock=clock,
     )
     assert _request(app, "/telegram/emparejar")[0] == 401
     assert _request(app, "/telegram/emparejar", method="POST")[0] == 401
@@ -112,6 +121,13 @@ def test_get_is_authenticated_and_post_stages_ciphertext_once(tmp_path: Path) ->
 
     envelope = _envelope()
     fields = _stage_form(app, cookie, page, envelope, key, credential, clock)
+    # A restored owner cookie + CSRF is never sufficient to stage this token.
+    legacy = {key: fields[key] for key in ("csrf", "operation_id", "envelope")}
+    assert (
+        _request(app, "/telegram/emparejar", method="POST", cookie=cookie, payload=legacy)[0]
+        == 400
+    )
+    assert not stage_path.exists()
     posted, headers, response = _request(
         app, "/telegram/emparejar", method="POST", cookie=cookie, payload=fields
     )
@@ -125,6 +141,11 @@ def test_get_is_authenticated_and_post_stages_ciphertext_once(tmp_path: Path) ->
         "owner_passkey": "UV_VERIFIED_ONLY",
     }
     assert stage_path.is_file()
+    saved = json.loads(stage_path.read_bytes())
+    proof = parse_witness_document(saved["owner_witness"])
+    assert verify_stage_owner_witness(
+        proof, envelope, app._passkey, staged_at=saved["staged_at"]
+    )
     assert TOKEN.encode() not in response
     assert b"pairing_code" not in response
     replay, _, replay_body = _request(
@@ -135,9 +156,11 @@ def test_get_is_authenticated_and_post_stages_ciphertext_once(tmp_path: Path) ->
 
 def test_post_rejects_wrong_origin_csrf_plaintext_and_disabled_gateway(tmp_path: Path) -> None:
     stage_path = tmp_path / STAGING_FILENAME
-    app, key, credential, clock = _app_with_stage(
+    clock = [0.0]
+    app, key, credential = _app_with_stage(
         tmp_path / "boca.sqlite3",
         lambda envelope: stage_private_telegram_pairing(stage_path, envelope),
+        clock=clock,
     )
     cookie = _login(app, key, credential)
     _, _, page = _request(app, "/telegram/emparejar", cookie=cookie)
@@ -172,7 +195,7 @@ def test_post_rejects_wrong_origin_csrf_plaintext_and_disabled_gateway(tmp_path:
     )[0] in (400, 422)
     assert not stage_path.exists()
 
-    app_without_stage, key2, credential2, _clock2 = _app_with_stage(
+    app_without_stage, key2, credential2 = _app_with_stage(
         tmp_path / "other.sqlite3", None
     )
     cookie2 = _login(app_without_stage, key2, credential2)
@@ -195,7 +218,10 @@ def test_post_does_not_reflect_or_log_ciphertext_on_failure(tmp_path: Path) -> N
         calls.append(request.sealed_envelope)
         raise RuntimeError("sensitive: " + TOKEN)
 
-    app, key, credential, clock = _app_with_stage(tmp_path / "boca.sqlite3", rejected_stage)
+    clock = [0.0]
+    app, key, credential = _app_with_stage(
+        tmp_path / "boca.sqlite3", rejected_stage, clock=clock
+    )
     cookie = _login(app, key, credential)
     _, _, page = _request(app, "/telegram/emparejar", cookie=cookie)
     envelope = _envelope()
@@ -210,7 +236,10 @@ def test_post_does_not_reflect_or_log_ciphertext_on_failure(tmp_path: Path) -> N
 
 def test_post_rejects_duplicate_form_fields_before_stage(tmp_path: Path) -> None:
     staged: list[PairingStageRequest] = []
-    app, key, credential, clock = _app_with_stage(tmp_path / "boca.sqlite3", staged.append)
+    clock = [0.0]
+    app, key, credential = _app_with_stage(
+        tmp_path / "boca.sqlite3", staged.append, clock=clock
+    )
     cookie = _login(app, key, credential)
     _, _, page = _request(app, "/telegram/emparejar", cookie=cookie)
     fields = _stage_form(app, cookie, page, _envelope(), key, credential, clock)
