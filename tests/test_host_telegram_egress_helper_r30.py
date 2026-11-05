@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from boca_socios import host_telegram_egress_helper as helper
-from boca_socios.host_boca_cleanup import Container, Image, Network
+from boca_socios.host_boca_cleanup import Container, Image
 from boca_socios.telegram_pairing_cutover import CutoverCoordinates
 from test_host_lifecycle_rootless_adapter import CONTROLLER_REF
 from test_host_telegram_postcutover import _fake, _lease, _pins
