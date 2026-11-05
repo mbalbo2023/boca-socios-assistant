@@ -22,6 +22,7 @@ from boca_socios.browser.contracts import SimulationOutcome, SyntheticBrowserPor
 from boca_socios.config import Settings
 from boca_socios.events.official_snapshot import OFFICIAL_SNAPSHOT_NAME, load_official_snapshot
 from boca_socios.integration.bridge_client import SiteBridgeTransport, SiteBridgeWorker
+from boca_socios.integration.engine_socket import LocalEngineSocket
 from boca_socios.integration.operational import (
     LocalBetaRuntime,
     LocalRuntimeUnavailable,
@@ -150,14 +151,24 @@ class ServedBeta:
         server: _TLSWSGIServer | _LoopbackHTTPWSGIServer,
         runtime: LocalBetaRuntime,
         bridge: SiteBridgeWorker | None = None,
+        engine_socket: LocalEngineSocket | None = None,
+        enable_engine_socket: bool = False,
     ) -> None:
         self.server = server
         self.runtime = runtime
         self.bridge = bridge
+        self.engine_socket = engine_socket
+        self._enable_engine_socket = enable_engine_socket
         self._closed = False
 
     def serve_until(self, stopping: Event) -> None:
         try:
+            # The control socket is strictly in-container and available only
+            # for the opt-in IPC BETA. It cannot launch Docker or expose TCP.
+            if self._enable_engine_socket and self.engine_socket is None:
+                self.engine_socket = LocalEngineSocket(self.runtime.commands)
+            if self.engine_socket is not None:
+                self.engine_socket.start()
             while not stopping.is_set():
                 self.server.handle_request()
         finally:
@@ -169,10 +180,14 @@ class ServedBeta:
         self._closed = True
         self.server.server_close()
         try:
-            if self.bridge is not None:
-                self.bridge.close()
+            if self.engine_socket is not None:
+                self.engine_socket.close()
         finally:
-            self.runtime.close()
+            try:
+                if self.bridge is not None:
+                    self.bridge.close()
+            finally:
+                self.runtime.close()
 
 
 def _browser_for_beta(
@@ -327,7 +342,12 @@ def build_beta_server(
         server.set_app(app)
         if bridge is not None:
             bridge.start()
-        return ServedBeta(server, runtime, bridge)
+        # Keep the existing controller-only deployment and its tests unchanged.
+        # The new UDS is installed solely with the separately reviewed IPC
+        # cutover candidate, using its private container /tmp namespace.
+        return ServedBeta(
+            server, runtime, bridge, enable_engine_socket=settings.browser_backend == "ipc"
+        )
     except Exception:
         if server is not None:
             server.server_close()

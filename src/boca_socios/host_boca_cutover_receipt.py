@@ -464,6 +464,22 @@ def reconcile_persisted(plan: CutoverPlan) -> Reconciliation:
         os.close(folder)
 
 
+def verify_persisted_exact(plan: CutoverPlan, receipt: CutoverReceipt) -> None:
+    """Require the *exact* terminal result, not merely a present result file.
+
+    A previous NO_GO marker for the same run must never authorize a fabricated
+    ACCEPTED CLI response. Reconcile the immutable source intent and every
+    serialized field against the current in-process CutoverReceipt.
+    """
+    expected = TerminalRecord.from_receipt(plan, receipt).serialized()
+    folder = _directory()
+    try:
+        _read_exact(folder, _name(plan.attempt_id, "intent"), _intent_bytes(plan))
+        _read_exact(folder, _name(plan.attempt_id), expected)
+    finally:
+        os.close(folder)
+
+
 def _unique_fields(fields: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in fields:

@@ -130,12 +130,19 @@ class LocalBetaRuntime:
             validate_existing_beta_storage(database_path)
         database = Database(database_path)
         outbox = SqliteNotificationOutbox(database)
-        coordinator = BetaCoordinator(
-            database=database,
-            outbox=outbox,
-            browser=browser,
-            timeout_seconds=command_timeout_seconds,
-        )
+
+        def new_coordinator() -> BetaCoordinator:
+            # The same synthetic browser, ledger and outbox are rebound to a
+            # new coordinator after a *real* command-loop stop/start. Never
+            # migrate storage, recreate keys or restart the HTTP listener.
+            return BetaCoordinator(
+                database=database,
+                outbox=outbox,
+                browser=browser,
+                timeout_seconds=command_timeout_seconds,
+            )
+
+        coordinator = new_coordinator()
         if initialize_new:
             try:
                 coordinator.prepare_storage()
@@ -143,12 +150,14 @@ class LocalBetaRuntime:
                 # Never remove the new file: a partial first install needs
                 # explicit Boca-only diagnosis, not a silent retry.
                 raise LocalRuntimeUnavailable("local BETA initialization failed") from None
-        commands = BetaCommandHost.start(coordinator)
+        commands = BetaCommandHost.start(coordinator, coordinator_factory=new_coordinator)
         return cls(database=database, vault=vault, outbox=outbox, commands=commands)
 
     @property
     def ready(self) -> bool:
-        return not self._closed and not self.commands.failed
+        # Intentionally stopped synthetic command processing is a healthy
+        # owner panel, not a reason to take localhost:8443 offline.
+        return not self._closed and (self.commands.engine_stopped or not self.commands.failed)
 
     def close(self) -> None:
         if self._closed:

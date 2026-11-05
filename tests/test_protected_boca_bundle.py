@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
+import json
 import subprocess
 import sys
 import zipfile
@@ -23,10 +25,16 @@ def _build(tmp_path: Path) -> tuple[Path, str]:
 
 
 def _run(
-    raw: bytes, digest: str, mode: str = "bundle-selftest"
+    raw: bytes, digest: str, mode: str = "bundle-selftest", *arguments: str
 ) -> subprocess.CompletedProcess[bytes]:
     return subprocess.run(  # noqa: S603 - fixed local Python and tested bootstrap path
-        [sys.executable, str(ROOT / "scripts" / "boca_protected_memfd_bootstrap.py"), digest, mode],
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "boca_protected_memfd_bootstrap.py"),
+            digest,
+            mode,
+            *arguments,
+        ],
         input=raw,
         capture_output=True,
         timeout=15,
@@ -66,6 +74,53 @@ def test_effectful_dispatch_deliberately_no_go_and_no_host(tmp_path: Path) -> No
     result = _run(output.read_bytes(), digest, "protected-beta-install")
     assert result.returncode == 3
     assert result.stdout == b"BOCA_PROTECTED_INSTALL state=NO_GO reason=transaction_not_wired\n"
+
+
+def test_cutover_memfd_end_to_end_selftest_and_unapproved_apply_are_inert(tmp_path: Path) -> None:
+    output, digest = _build(tmp_path)
+    raw = output.read_bytes()
+    tested = _run(raw, digest, "bundle-cutover-selftest")
+    assert tested.returncode == 0, (tested.stdout, tested.stderr)
+    assert tested.stdout == b"BOCA_CUTOVER_MEMFD state=PASS host=untouched option_b=present\n"
+
+    invocation = {
+        "version": "boca-cutover-a-host-invocation-v1",
+        "plan": {
+            "attempt_id": "42025021984",
+            "legacy_id": "1" * 64,
+            "legacy_sha": "a" * 40,
+            "legacy_image": "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "2" * 64,
+            "legacy_compose_sha": "3" * 64,
+            "target_sha": "b" * 40,
+            "target_image": "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "4" * 64,
+            "browser_image": "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "5" * 64,
+            "target_compose_sha": hashlib.sha256(
+                (ROOT / "compose.beta.yaml").read_bytes()
+            ).hexdigest(),
+            "overlay_sha": hashlib.sha256(
+                (ROOT / "compose.beta.browser.yaml").read_bytes()
+            ).hexdigest(),
+            "seccomp_sha": hashlib.sha256(
+                (ROOT / "docker/seccomp_profile.json").read_bytes()
+            ).hexdigest(),
+            "owner_subject": "synthetic_owner",
+            "origin": "http://localhost:8443",
+        },
+        "bundle_sha256": digest,
+        "go_binding_sha256": "6" * 64,
+    }
+    encoded = (
+        base64.urlsafe_b64encode(
+            json.dumps(invocation, sort_keys=True, separators=(",", ":")).encode("ascii")
+        )
+        .rstrip(b"=")
+        .decode("ascii")
+    )
+    refused = _run(raw, digest, "cutover-a-apply", encoded)
+    assert refused.returncode == 3, (refused.stdout, refused.stderr)
+    assert refused.stdout == (
+        b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=UNVERIFIED runtime=UNVERIFIED\n"
+    )
 
 
 def test_tampered_transport_fails_before_import_or_dispatch(tmp_path: Path) -> None:

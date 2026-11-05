@@ -28,15 +28,21 @@ const events = [];
 const elements = {};
 for (const id of ['pairing-token', 'pairing-command', 'pairing-generate',
                   'pairing-copy-command', 'pairing-seal', 'pairing-sealed',
-                  'pairing-copy-envelope', 'pairing-result', 'pairing-fingerprint']) {
+                  'pairing-copy-envelope', 'pairing-result', 'pairing-fingerprint',
+                  'pairing-stage', 'pairing-csrf', 'pairing-operation']) {
   elements[id] = {value: '', disabled: true, hidden: true, textContent: '',
     addEventListener(name, fn) { this[name] = fn; },
     focus() { events.push('focus:' + id); },
     select() { events.push('select:' + id); }};
 }
+if (input.stage) {
+  elements['pairing-csrf'].value = 'x'.repeat(43);
+  elements['pairing-operation'].value = '123e4567-e89b-42d3-a456-426614174000';
+}
 const location = {hash: input.fragment, origin: input.origin || 'http://localhost:8443'};
 const handlers = {};
 const copies = [];
+let stagedPayload = null;
 function forbidden() { events.push('FORBIDDEN'); throw Error('forbidden side effect'); }
 const subtle = new Proxy(webcrypto.subtle, {get(target, property) {
   if (input.mode === 'unsupported' && property === 'importKey')
@@ -56,12 +62,24 @@ const context = {
   crypto: {subtle, getRandomValues: array => webcrypto.getRandomValues(array)},
   isSecureContext: input.secure !== false,
   TextEncoder, TextDecoder, Uint8Array, atob, btoa,
+  URLSearchParams,
   addEventListener(name, fn) { handlers[name] = fn; },
   navigator: {clipboard: {async writeText(value) {
     if (input.mode === 'clipboard-denied') throw Error('clipboard denied');
     copies.push(value);
   }}},
-  fetch: forbidden, XMLHttpRequest: forbidden, WebSocket: forbidden,
+  fetch: async (path, options) => {
+    if (!input.stage || path !== '/telegram/emparejar' || options.method !== 'POST'
+        || options.credentials !== 'same-origin' || options.cache !== 'no-store'
+        || options.redirect !== 'error'
+        || options.headers['Content-Type'] !== 'application/x-www-form-urlencoded') forbidden();
+    stagedPayload = Object.fromEntries(new URLSearchParams(options.body));
+    if (!stagedPayload.envelope || Object.keys(stagedPayload).sort().join(',')
+        !== 'csrf,envelope,operation_id' || JSON.stringify(stagedPayload).includes(input.token))
+      forbidden();
+    events.push('private-stage');
+    return {status: input.stageStatus || 202};
+  }, XMLHttpRequest: forbidden, WebSocket: forbidden,
   localStorage: new Proxy({}, {get: forbidden, set: forbidden}),
   sessionStorage: new Proxy({}, {get: forbidden, set: forbidden}),
   console: new Proxy({}, {get: forbidden})
@@ -76,6 +94,7 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
   }
   const enabled = !elements['pairing-generate'].disabled;
   let generatedCommand = '';
+  let sealedBeforeStage = '';
   if (enabled && input.token !== null) {
     elements['pairing-generate'].click();
     generatedCommand = elements['pairing-command'].value;
@@ -91,6 +110,9 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
     }
     if (!elements['pairing-copy-envelope'].disabled)
       await elements['pairing-copy-envelope'].click();
+    sealedBeforeStage = elements['pairing-sealed'].value;
+    if (input.stage && !elements['pairing-stage'].disabled)
+      await elements['pairing-stage'].click();
     if (input.mode === 'pagehide-after-seal') handlers.pagehide();
   }
   process.stdout.write(JSON.stringify({enabled, hash: location.hash, events, copies,
@@ -101,6 +123,7 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
     generateDisabled: elements['pairing-generate'].disabled,
     sealDisabled: elements['pairing-seal'].disabled,
     copyDisabled: elements['pairing-copy-envelope'].disabled,
+    stageDisabled: elements['pairing-stage'].disabled, stagedPayload, sealedBeforeStage,
     fingerprint: elements['pairing-fingerprint'].textContent}));
 })().catch(() => { process.exitCode = 1; });
 """
@@ -120,6 +143,8 @@ def _run(
     mode: str = "",
     origin: str = "http://localhost:8443",
     secure: bool = True,
+    stage: bool = False,
+    stage_status: int = 202,
 ) -> dict[str, Any]:
     node = shutil.which("node")
     assert node is not None, "Node with native X25519 WebCrypto is required"
@@ -133,6 +158,8 @@ def _run(
                 "mode": mode,
                 "origin": origin,
                 "secure": secure,
+                "stage": stage,
+                "stageStatus": stage_status,
             }
         ),
         capture_output=True,
@@ -145,6 +172,41 @@ def _run(
     assert "FORBIDDEN" not in result["events"]
     assert result["events"][0] == "replace"
     return result
+
+
+def test_actual_browser_stages_only_encrypted_v2_to_same_origin_without_sender_ack() -> None:
+    private, receipt, fragment = _recipient()
+    result = _run(fragment, stage=True)
+    staged = result["stagedPayload"]
+    assert staged is not None and "private-stage" in result["events"]
+    assert staged["csrf"] == "x" * 43
+    assert staged["operation_id"] == "123e4567-e89b-42d3-a456-426614174000"
+    assert staged["envelope"] == result["sealedBeforeStage"]
+    assert TOKEN not in json.dumps(staged)
+    sealed = bootstrap._unb64(staged["envelope"], maximum=4096)
+    code = result["command"].removeprefix("/start ")
+    assert pairing.unseal_pairing(sealed, private, receipt) == (TOKEN.encode(), code)
+    assert result["output"] == result["token"] == result["currentCommand"] == ""
+    assert result["stageDisabled"] and result["copyDisabled"]
+    assert "NO está conectado" in result["status"]
+
+
+def test_browser_private_staging_failure_keeps_ciphertext_without_claiming_install() -> None:
+    _, _, fragment = _recipient()
+    result = _run(fragment, stage=True, stage_status=503)
+    assert result["stagedPayload"] is not None
+    assert result["output"] == result["sealedBeforeStage"]
+    assert "No se confirmó" in result["status"]
+    assert "sigue detenido" in result["status"]
+    assert TOKEN not in json.dumps(result["stagedPayload"])
+
+
+def test_inert_v2_browser_has_no_submission_network_or_authority() -> None:
+    _, _, fragment = _recipient()
+    result = _run(fragment)
+    assert result["stagedPayload"] is None
+    assert "private-stage" not in result["events"]
+    assert result["stageDisabled"]
 
 
 def test_actual_owner_webcrypto_emits_v2_envelope_decryptable_only_by_v2() -> None:

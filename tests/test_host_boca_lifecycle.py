@@ -42,7 +42,7 @@ class FakeBocaAttestor:
 
 
 def _snapshot(
-    *, engine: bool | None = False, worker: bool = False, database_parent: Path | None = None
+    *, engine: bool | None = False, worker: bool = True, database_parent: Path | None = None
 ) -> host.LifecycleHostSnapshot:
     return host.LifecycleHostSnapshot(
         controller_id=CONTROLLER,
@@ -127,7 +127,7 @@ def test_protected_claim_then_ack_applied_is_durable_and_panel_visible(
     tmp_path: Path, component: host.Component
 ) -> None:
     coordinates, panel, lease = _setup(tmp_path / "boca.sqlite3", component, "start")
-    fake = FakeBocaAttestor(_snapshot())
+    fake = FakeBocaAttestor(_snapshot(worker=component == "bot"))
     claim = host.claim_requested(coordinates, lease=lease, probe=fake)
     assert claim.was_running is False
     assert panel.current().status == "CLAIMED"
@@ -161,9 +161,30 @@ def test_stop_bot_requires_motor_evidence_not_merely_pause_admission(tmp_path: P
     assert panel.current().status == "REQUESTED"
 
 
+@pytest.mark.parametrize("worker,healthy", [(False, False), (True, False)])
+def test_bot_start_refuses_unavailable_chromium_worker_without_claim(
+    tmp_path: Path, worker: bool, healthy: bool
+) -> None:
+    coords, panel, lease = _setup(tmp_path / "boca.sqlite3", "bot", "start")
+    fake = FakeBocaAttestor(_snapshot(engine=False, worker=worker))
+    fake.snapshot = replace(fake.snapshot, worker_healthy=healthy)
+    with pytest.raises(host.LifecycleHostUnavailable, match="requires healthy Chromium"):
+        host.claim_requested(coords, lease=lease, probe=fake)
+    assert panel.current().status == "REQUESTED"
+
+
+def test_bot_stop_must_work_even_when_chromium_worker_is_stopped(tmp_path: Path) -> None:
+    coords, panel, lease = _setup(tmp_path / "boca.sqlite3", "bot", "stop")
+    fake = FakeBocaAttestor(_snapshot(engine=True, worker=False))
+    claim = host.claim_requested(coords, lease=lease, probe=fake)
+    fake.snapshot = _snapshot(engine=False, worker=False)
+    host.acknowledge(claim, lease=lease, probe=fake, result="APPLIED", effect_attempted=True)
+    assert panel.current().status == "APPLIED"
+
+
 def test_refused_requires_proof_no_physical_effect(tmp_path: Path) -> None:
     coords, panel, lease = _setup(tmp_path / "boca.sqlite3", "chromium", "start")
-    fake = FakeBocaAttestor(_snapshot())
+    fake = FakeBocaAttestor(_snapshot(worker=False))
     claim = host.claim_requested(coords, lease=lease, probe=fake)
     with pytest.raises(host.LifecycleHostUnavailable, match="no-effect"):
         host.acknowledge(claim, lease=lease, probe=fake, result="REFUSED", effect_attempted=True)
@@ -212,7 +233,7 @@ def test_mismatched_or_unisolated_boca_host_is_never_claimed(
     tmp_path: Path, unsafe: dict[str, object]
 ) -> None:
     coords, panel, lease = _setup(tmp_path / "boca.sqlite3", "chromium", "start")
-    fake = FakeBocaAttestor(replace(_snapshot(), **unsafe))
+    fake = FakeBocaAttestor(replace(_snapshot(worker=False), **unsafe))
     with pytest.raises(host.LifecycleHostUnavailable, match="witness invalid"):
         host.claim_requested(coords, lease=lease, probe=fake)
     assert panel.current().status == "REQUESTED"

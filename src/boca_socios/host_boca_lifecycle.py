@@ -195,6 +195,12 @@ class LifecycleHostSnapshot:
         if coordinates.component == "bot":
             if self.bot_engine_running is None:
                 raise LifecycleHostUnavailable("bot motor has no independent state witness")
+            # The synthetic IPC command engine is backed by the isolated
+            # Chromium worker. START without that worker's *real* healthy
+            # state would report a running motor unable to perform commands.
+            # STOP must still work if Chromium is absent or unhealthy.
+            if coordinates.target == "start" and not (self.worker_running and self.worker_healthy):
+                raise LifecycleHostUnavailable("bot requires healthy Chromium IPC worker")
             return self.bot_engine_running
         return self.worker_running and self.worker_healthy
 
