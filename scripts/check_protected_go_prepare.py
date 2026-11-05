@@ -331,10 +331,18 @@ def main() -> int:
     """No path can access host. Workflow chooses later post-GO host call."""
     env = os.environ
     try:
-        if len(sys.argv) != 2 or sys.argv[1] not in ("--prepare", "--apply"):
+        if len(sys.argv) != 2 or sys.argv[1] not in ("--prepare", "--prepare-ref", "--apply"):
             raise PreparedGoError("unreviewed protected GO phase")
         operation = env.get("BOCA_OPERATION", "")
         phase = sys.argv[1]
+        if phase == "--prepare-ref":
+            if operation != "lifecycle-apply":
+                raise PreparedGoError("prepared-ref operation invalid")
+            _, hosted = decode_apply_input(
+                env.get("BOCA_PROTECTED_ACTION_CONTEXT", ""), environ=env
+            )
+            print(hosted["prepare_run_id"])
+            return 0
         if phase == "--prepare":
             if operation != "protected-go-prepare":
                 raise PreparedGoError("PREPARE operation invalid")
