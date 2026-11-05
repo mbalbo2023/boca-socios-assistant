@@ -427,3 +427,58 @@ def test_prepared_cutover_review_rejects_any_reviewed_bytes_drift(tmp_path: Path
     with pytest.raises(go.CutoverGoError, match="manifests conflict"):
         go.cutover_prepared_context_sha256(request, prepare_run_id="50000000001")
     assert len(prepared) == 64
+
+
+
+def test_prepared_actions_go_b_creates_v2_token_after_reviewed_pins(
+    tmp_path: Path,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    request, env = _actions_fixture(tmp_path)
+    runner = Path(env["RUNNER_TEMP"])
+    prepare_id = "42053482614"
+    instant = datetime.now(UTC).replace(microsecond=0)
+    receipt = {
+        "version": "boca-protected-prepared-go-v1",
+        "operation": "cutover-a-apply",
+        "repository": env["GITHUB_REPOSITORY"],
+        "actor": env["GITHUB_ACTOR"],
+        "ref": env["GITHUB_REF"],
+        "source_sha": env["GITHUB_SHA"],
+        "release_run_id": env["BOCA_RELEASE_RUN_ID"],
+        "prepare_run_id": prepare_id,
+        "prepare_attempt": "1",
+        "prepared_at_utc": instant.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "valid_until_utc": (instant + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "public_context_sha256": go.cutover_prepared_context_sha256(
+            request, prepare_run_id=prepare_id
+        ),
+        "release_manifest_sha256": _sha(request.target_manifest_path.read_bytes()),
+        "browser_manifest_sha256": _sha(request.browser_manifest_path.read_bytes()),
+        "bundle_sha256": _sha(request.bundle_path.read_bytes()),
+        "owner_subject_sha256": _sha(request.plan.owner_subject.encode("ascii")),
+    }
+    raw = json.dumps(
+        receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
+    approved = hashlib.sha256(b"boca-cutover-a-prepared-go-v1:\x00" + raw).hexdigest()
+    env["BOCA_CUTOVER_A_GO_BINDING_SHA256"] = approved
+    _file(runner / "boca-protected-legacy-go.approved", (approved + "\n").encode("ascii"))
+    _file(runner / "boca-protected-legacy-go.prepare-id", (prepare_id + "\n").encode("ascii"))
+    _file(runner / "boca-protected-legacy-go.receipt.json", raw)
+    assert go.write_actions_invocation_prepared(request, environ=env) == approved
+    token = (runner / go.HOST_INVOCATION_NAME).read_text(encoding="ascii").strip()
+    invocation = CutoverInvocation.decode(token)
+    assert invocation.prepare_run_id == prepare_id
+    assert invocation.plan.attempt_id == env["GITHUB_RUN_ID"]
+    assert invocation.go_binding_sha256 == approved
+
+
+def test_prepared_actions_missing_go_b_prevents_runner_token(
+    tmp_path: Path,
+) -> None:
+    request, env = _actions_fixture(tmp_path)
+    with pytest.raises(go.CutoverGoError):
+        go.write_actions_invocation_prepared(request, environ=env)
+    assert not (Path(env["RUNNER_TEMP"]) / go.HOST_INVOCATION_NAME).exists()

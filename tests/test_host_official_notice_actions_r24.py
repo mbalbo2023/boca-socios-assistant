@@ -358,3 +358,105 @@ def test_prepared_import_go_o_excl_survives_crash_and_refuses_replay(
             prepare_run_id="50000000001",
         )
     assert writes == [1]
+
+
+
+def test_prepared_official_runner_preflight_and_host_command_are_opt_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import hashlib
+    from datetime import UTC, datetime, timedelta
+
+    coords = _coords()
+    runner = tmp_path / "runner"
+    runner.mkdir()
+    archive = b"synthetic reviewed ZIP; import never executed"
+    zip_path = runner / "boca-official-source.zip"
+    zip_path.write_bytes(archive)
+    release_path = runner / "boca-release-manifest/boca-release-manifest.json"
+    browser_path = runner / "boca-browser-release-manifest/boca-browser-release-manifest.json"
+    release_path.parent.mkdir()
+    browser_path.parent.mkdir()
+    release_path.write_bytes(b"reviewed controller manifest")
+    browser_path.write_bytes(b"reviewed browser manifest")
+    approved_run = runner / "source-run.json"
+    approved_artifact = runner / "source-artifact.json"
+    approved_run.write_text(json.dumps(_source_run()), encoding="ascii")
+    approved_artifact.write_text(json.dumps(_artifact()), encoding="ascii")
+    token_path = runner / "reviewed-import.token"
+    monkeypatch.setattr(actions, "_coords_from_env", lambda: coords)
+    monkeypatch.setattr(actions, "_verified_jsonl", lambda *_args: b"synthetic")
+    prepare_id = "42053482614"
+    now = datetime.now(UTC).replace(microsecond=0)
+    env = {
+        "GITHUB_REPOSITORY": "mbalbo2023/boca-socios-assistant",
+        "GITHUB_ACTOR": "mbalbo2023",
+        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_SHA": coords.main_sha,
+        "BOCA_SOURCE_SHA": coords.main_sha,
+        "GITHUB_RUN_ID": "42055559999",
+        "GITHUB_RUN_ATTEMPT": "1",
+        "GITHUB_EVENT_NAME": "workflow_dispatch",
+        "BOCA_OPERATION": "official-notice-import",
+        "BOCA_BETA_OWNER_SUBJECT": "owner",
+        "BOCA_RELEASE_RUN_ID": coords.controller_release_run_id,
+        "RUNNER_TEMP": str(runner),
+    }
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    record = {
+        "version": "boca-protected-prepared-go-v1",
+        "operation": "official-notice-import",
+        "repository": env["GITHUB_REPOSITORY"],
+        "actor": env["GITHUB_ACTOR"],
+        "ref": env["GITHUB_REF"],
+        "source_sha": coords.main_sha,
+        "release_run_id": coords.controller_release_run_id,
+        "prepare_run_id": prepare_id,
+        "prepare_attempt": "1",
+        "prepared_at_utc": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "valid_until_utc": (now + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "public_context_sha256": actions.official_prepared_context_sha256(
+            coords, prepare_run_id=prepare_id, actor="mbalbo2023"
+        ),
+        "release_manifest_sha256": hashlib.sha256(release_path.read_bytes()).hexdigest(),
+        "browser_manifest_sha256": hashlib.sha256(browser_path.read_bytes()).hexdigest(),
+        "bundle_sha256": hashlib.sha256(archive).hexdigest(),
+        "owner_subject_sha256": hashlib.sha256(b"owner").hexdigest(),
+    }
+    raw = actions._canonical(record)
+    approval = hashlib.sha256(
+        b"boca-official-notice-import-prepared-go-v1:\x00" + raw
+    ).hexdigest()
+    monkeypatch.setenv("BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256", approval)
+    for name, value in {
+        "boca-protected-legacy-go.approved": (approval + "\n").encode("ascii"),
+        "boca-protected-legacy-go.prepare-id": (prepare_id + "\n").encode("ascii"),
+        "boca-protected-legacy-go.receipt.json": raw,
+    }.items():
+        path = runner / name
+        path.write_bytes(value)
+        path.chmod(0o600)
+    assert actions._runner_preflight_prepared(
+        ["official", "runner-preflight-prepared", str(approved_run), str(approved_artifact), str(zip_path), str(token_path)]
+    ) == 0
+    assert actions.decode_coordinates(token_path.read_text(encoding="ascii").strip()) == coords
+    assert actions._runner_host_command_prepared(
+        ["official", "runner-host-command-prepared", str(token_path), str(zip_path)]
+    ) == 0
+    assert "container-import-prepared" in capsys.readouterr().out
+
+
+def test_prepared_official_runner_rejects_missing_go_before_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(actions, "_coords_from_env", lambda: _coords())
+    monkeypatch.setattr(
+        actions, "_verified_jsonl", lambda *_args: pytest.fail("source must remain untouched")
+    )
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+    with pytest.raises(actions.OfficialImportActionError):
+        actions._runner_preflight_prepared(
+            ["official", "runner-preflight-prepared", "/abs/run.json", "/abs/artifact.json", "/abs/archive.zip", str(tmp_path / "token")]
+        )
+    assert not (tmp_path / "token").exists()
