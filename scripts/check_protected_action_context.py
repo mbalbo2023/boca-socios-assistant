@@ -44,6 +44,7 @@ _COMMON = frozenset(
         "version",
         "kind",
         "attempt_id",
+        "prepare_run_id",
         "source_sha",
         "controller_id",
         "controller_image",
@@ -171,6 +172,8 @@ def _validate_payload(
     if (
         _ATTEMPT.fullmatch(payload["attempt_id"]) is None
         or payload["attempt_id"] != environ["GITHUB_RUN_ID"]
+        or _ATTEMPT.fullmatch(payload["prepare_run_id"]) is None
+        or payload["prepare_run_id"] == payload["attempt_id"]
         or _SHA.fullmatch(payload["source_sha"]) is None
         or payload["source_sha"] != environ["BOCA_SOURCE_SHA"]
         or _HASH.fullmatch(payload["controller_id"]) is None
