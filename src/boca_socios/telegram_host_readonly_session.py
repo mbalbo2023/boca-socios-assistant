@@ -16,9 +16,9 @@ from typing import Literal
 from boca_socios import telegram_pairing_cutover as cutover
 from boca_socios import telegram_pairing_resolver as resolver
 from boca_socios.host_boca_cleanup import BocaJobLease
+from boca_socios.host_telegram_production_reader import TelegramProductionDockerIO
 from boca_socios.host_lifecycle_rootless_adapter import (
     LifecycleDockerIO,
-    ProductionRootlessDockerIO,
 )
 from boca_socios.host_telegram_owner_stage import (
     _verified_host_volumes,
@@ -84,7 +84,7 @@ def four_gets_under_existing_lease(
         or len(private_key) != 32
     ):
         raise TelegramReadOnlyNoGo("telegram_readonly_inputs_unverified")
-    reader = ProductionRootlessDockerIO() if io is None else io
+    reader = TelegramProductionDockerIO() if io is None else io
     try:
         proof = observe_owner_stage_under_same_lease(pins, coordinates, lease=lease, io=reader)
         data, _owner = _verified_host_volumes(reader)
