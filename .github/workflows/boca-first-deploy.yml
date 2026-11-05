@@ -54,7 +54,7 @@ on:
         required: false
         type: string
       legacy_release_run_id:
-        description: Cutover A observation/apply; actual historical successful release run ID
+        description: Cutover A historical release run ID; for cutover-a-reconcile only, exact PREPARE run ID
         required: false
         type: string
       legacy_controller_id:
@@ -95,10 +95,6 @@ on:
         type: string
       protected_action_context:
         description: Leave blank for Boca READ_ONLY PREPARE; APPLY uses only prior PREPARE run ID (digits), never JSON/PIN/secret. Lifecycle/Cutover/import.
-        required: false
-        type: string
-      incident_prepare_run_id:
-        description: Post-APPLY READ_ONLY only; exact successful PREPARE run ID paired with failed Cutover
         required: false
         type: string
       service:
@@ -784,7 +780,7 @@ jobs:
     env:
       BOCA_OPERATION: ${{ inputs.operation }}
       BOCA_PROTECTED_ACTION_CONTEXT: ${{ inputs.protected_action_context }}
-      BOCA_INCIDENT_PREPARE_RUN_ID: ${{ inputs.incident_prepare_run_id }}
+      BOCA_INCIDENT_PREPARE_RUN_ID: ${{ inputs.legacy_release_run_id }}
       BOCA_IMAGE_REF: ${{ inputs.image_ref }}
       BOCA_BROWSER_IMAGE_REF: ${{ inputs.browser_image_ref }}
       BOCA_SOURCE_SHA: ${{ (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'cutover-a-reconcile') && github.sha || inputs.source_sha }}
@@ -905,7 +901,7 @@ jobs:
           if [[ "$BOCA_OPERATION" != cutover-a-observe && "$BOCA_OPERATION" != cutover-a-apply ]]; then
             test -z "$BOCA_LEGACY_SOURCE_SHA"
             test -z "$BOCA_LEGACY_IMAGE_REF"
-            test -z "$BOCA_LEGACY_RELEASE_RUN_ID"
+            if [[ "$BOCA_OPERATION" != cutover-a-reconcile ]]; then test -z "$BOCA_LEGACY_RELEASE_RUN_ID"; fi
             test -z "$BOCA_LEGACY_CONTROLLER_ID"
           fi
           if [[ "$BOCA_OPERATION" = cutover-a-reconcile ]]; then
@@ -929,7 +925,7 @@ jobs:
               test -z "$BOCA_RELEASE_RUN_ID"
               test -z "$BOCA_LEGACY_SOURCE_SHA"
               test -z "$BOCA_LEGACY_IMAGE_REF"
-              test -z "$BOCA_LEGACY_RELEASE_RUN_ID"
+              test "$BOCA_LEGACY_RELEASE_RUN_ID" = "$BOCA_INCIDENT_PREPARE_RUN_ID"
               test -z "$BOCA_LEGACY_CONTROLLER_ID"
               test -z "$BOCA_SITE_ENVELOPE"
               ;;
