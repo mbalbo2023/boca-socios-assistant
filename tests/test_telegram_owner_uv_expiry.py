@@ -29,8 +29,10 @@ def test_expired_web_authenticator_challenge_never_writes_telegram_stage(tmp_pat
         _request(app, "/telegram/emparejar", method="POST", cookie=cookie, payload=fields)[0] == 403
     )
     assert not path.exists()
+    # Same immutable rejected fingerprint replays its 403; a changed fingerprint
+    # would be denied as 409 by OwnerSessions.reserve.
     assert (
-        _request(app, "/telegram/emparejar", method="POST", cookie=cookie, payload=fields)[0] == 409
+        _request(app, "/telegram/emparejar", method="POST", cookie=cookie, payload=fields)[0] == 403
     )
     assert not path.exists()
 
