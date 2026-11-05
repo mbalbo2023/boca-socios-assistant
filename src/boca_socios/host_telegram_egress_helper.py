@@ -15,9 +15,12 @@ import re
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Literal
 
 from boca_socios import host_boca_cleanup as cleanup
 from boca_socios.host_boca_cleanup import BocaJobLease, verify_protected_boca_job_lease
+from boca_socios.host_lifecycle_rootless_adapter import LifecycleDockerIO
 from boca_socios.host_telegram_postcutover import TelegramHostPins
 from boca_socios.host_telegram_production_reader import TelegramProductionDockerIO
 from boca_socios.telegram_pairing_cutover import CutoverCoordinates, _coordinates_valid
@@ -31,6 +34,18 @@ _LABEL_REVISION = "org.opencontainers.image.revision"
 _CMD = ["-m", "boca_socios.telegram_readonly_exec", "idle"]
 _MEMORY = 96 * 1024 * 1024
 _METHODS = frozenset({"getMe", "getWebhookInfo", "getUpdates", "getChat"})
+_PHASES = frozenset(
+    {
+        "BEFORE_API",
+        "BEFORE_getMe",
+        "BEFORE_getWebhookInfo",
+        "BEFORE_getUpdates",
+        "BEFORE_getChat",
+        "AFTER_READS",
+        "BEFORE_COMMIT",
+        "AFTER_COMMIT",
+    }
+)
 
 
 class TelegramPhysicalNoGo(ValueError):
@@ -95,7 +110,7 @@ def _private_exec(container_id: str, payload: bytes) -> bytes:
 
 
 def _helper_attested(
-    reader: TelegramProductionDockerIO,
+    reader: LifecycleDockerIO,
     helper_id: str,
     name: str,
     pins: TelegramHostPins,
@@ -217,14 +232,87 @@ def _remove_helper(helper_id: str) -> None:
         raise TelegramPhysicalNoGo("telegram_helper_cleanup_unverified") from None
 
 
+@dataclass(frozen=True, slots=True)
+class TelegramHelperPhaseProof:
+    """Bounded helper identity observation, never a host/owner GO or custody ACK."""
+
+    attempt_id: str
+    source_sha: str
+    phase: str
+    state: Literal["HELPER_ATTESTED_READONLY_NO_GO"] = "HELPER_ATTESTED_READONLY_NO_GO"
+    sender_state: Literal["OFF"] = "OFF"
+    host_go: Literal[False] = False
+
+
+class ProtectedEphemeralGet:
+    """Private GET callback with a revocable, exact-ID helper phase witness.
+
+    Each phase witness rechecks the caller-held Boca lease and the container
+    created by THIS session. It never claims that owner, Cutover A, custody,
+    sender or the independent GitHub GO are themselves verified.
+    """
+
+    __slots__ = (
+        "_callback",
+        "_reader",
+        "_helper_id",
+        "_name",
+        "_pins",
+        "_coords",
+        "_lease",
+        "_active",
+    )
+
+    def __init__(
+        self,
+        callback: TelegramApiFetch,
+        reader: LifecycleDockerIO,
+        helper_id: str,
+        name: str,
+        pins: TelegramHostPins,
+        coords: CutoverCoordinates,
+        lease: BocaJobLease,
+    ) -> None:
+        self._callback = callback
+        self._reader = reader
+        self._helper_id = helper_id
+        self._name = name
+        self._pins = pins
+        self._coords = coords
+        self._lease = lease
+        self._active = True
+
+    def __call__(self, token: str, method: str, chat_id: int | None) -> bytes:
+        if not self._active:
+            raise TelegramPhysicalNoGo("telegram_helper_session_closed")
+        return self._callback(token, method, chat_id)
+
+    def attest_phase(self, phase: str) -> TelegramHelperPhaseProof:
+        if not self._active or type(phase) is not str or phase not in _PHASES:
+            raise TelegramPhysicalNoGo("telegram_helper_phase_unreviewed")
+        try:
+            verify_protected_boca_job_lease(self._lease, self._pins.attempt_id)
+            _helper_attested(self._reader, self._helper_id, self._name, self._pins, self._coords)
+        except Exception:
+            raise TelegramPhysicalNoGo("telegram_helper_phase_attestation_unverified") from None
+        return TelegramHelperPhaseProof(
+            attempt_id=self._pins.attempt_id,
+            source_sha=self._pins.source_sha,
+            phase=phase,
+        )
+
+    def _mark_closed(self) -> None:
+        self._active = False
+
+
 @contextmanager
 def protected_ephemeral_get_session(
     pins: TelegramHostPins,
     coordinates: CutoverCoordinates,
     *,
     lease: BocaJobLease,
-    reader: TelegramProductionDockerIO | None = None,
-) -> Iterator[TelegramApiFetch]:
+    reader: LifecycleDockerIO | None = None,
+) -> Iterator[ProtectedEphemeralGet]:
     """Yield four-method GET callback under the SAME caller-owned flock.
 
     No autonomous lease acquisition or host entry point. The caller remains
@@ -249,6 +337,7 @@ def protected_ephemeral_get_session(
         raise TelegramPhysicalNoGo("telegram_helper_preflight_unverified") from None
     helper_id = _run_helper(pins, coordinates)
     name = "boca-socios-telegram-readonly-" + pins.attempt_id
+    session: ProtectedEphemeralGet | None = None
     try:
         _helper_attested(probe, helper_id, name, pins, coordinates)
 
@@ -282,8 +371,13 @@ def protected_ephemeral_get_session(
             except Exception:
                 raise TelegramPhysicalNoGo("telegram_helper_get_unverified") from None
 
-        yield private_get
+        session = ProtectedEphemeralGet(
+            private_get, probe, helper_id, name, pins, coordinates, lease
+        )
+        yield session
     finally:
+        if session is not None:
+            session._mark_closed()
         # Removal is positive-ID-scoped to the helper this context created.
         # Never prune or touch existing Boca/Porota/other Docker objects.
         verify_protected_boca_job_lease(lease, pins.attempt_id)
