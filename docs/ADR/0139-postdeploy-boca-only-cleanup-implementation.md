@@ -404,3 +404,63 @@ tests; deleting the test from CI would mask a real unsafe cleanup condition.
 An extra adversarial test now requires that such a labelled unknown controller
 forces `AttemptError` with **zero calls to effectful cleanup**. No host
 effects, backups, BLACKBOX changes or service/port mutations were performed.
+
+### R11-5 future GO preflight (runner-only, deliberately inactive)
+
+`scripts/check_cutover_a_go.py` adds a **pure runner-side prerequisite**, not
+an authorization token or host invocation. It is tested by the existing
+`boca-first-deploy.yml` PR-only job. The current workflow still exposes only
+`cutover-a-observe`: there is no dispatch input or `case` for effectful apply,
+and the bundled host entrypoint continues to hard-stop every effectful mode.
+
+If the owner later issues a separate physical GO, a *new code review* must
+wire this prerequisite into the **same** workflow (never a second privileged
+workflow). The protected GitHub Environment would then need to provide
+`BOCA_CUTOVER_A_GO_BINDING_SHA256` as a distinct approval variable—not as a
+`workflow_dispatch` input. It defaults to absent, therefore NO_GO. The value
+must be the SHA256 of a canonical, versioned record containing:
+
+- repository, original owner actor, `refs/heads/main`, exact main/source SHA,
+  unique immutable GitHub run ID and `run_attempt=1`;
+- original legacy controller ID, historical SHA/image/release run, old
+  release-manifest bytes digest and historical `compose.beta.yaml` SHA;
+- target SHA/controller image/release run, reviewed controller manifest and
+  **same release** browser companion manifest bytes digests;
+- browser image digest, reviewed base/overlay/seccomp SHA256, authenticated
+  Option B-inclusive memfd ZIP SHA256, owner subject hash and fixed
+  `http://localhost:8443` origin.
+
+All three manifests are parsed as bounded files with duplicate-key rejection,
+validated against distinct historical and target releases, and SHA-bound.
+Historical and target Compose/overlay/seccomp files require stable read-only
+inode and exact digest. Each artifact path must be absolute; the runner walks
+**every parent directory using O_DIRECTORY|O_NOFOLLOW file descriptors** and
+opens the final file with O_NOFOLLOW, so an intermediate symlink cannot swap
+the artifact being authenticated. The ZIP must pass the strict source allowlist and
+contain **both** independent Option B SQLite bootstrap artifacts. An absent
+variable, fork/PR/non-main context, rerun, wrong release/manifest, missing B
+profile, symlink, changed file or wrong digest yields NO_GO **before any SSH**.
+The additional 16 regression cases explicitly cover those failures and
+demonstrate the preflight itself touches no Docker, SQLite or network.
+
+This preflight deliberately **does not** independently query GitHub to prove
+that an Actions run succeeded, authenticate the historical Compose API
+response, certify live Docker or attest real Chrome/Telegram usability. These
+must be separate positive steps in the eventual protected Action, with
+single SSH+verified memfd+flock, exact controller+worker IDs, mandatory
+postflight and O_EXCL terminal receipt. Physical **NO_GO** until that final
+review, an independently recorded owner GO and a successful actual host run.
+
+After Cutover A, lifecycle issue #328 registers idempotent `bot` and
+`chromium` START/STOP intents in the legacy audit ledger and shows only
+PENDING until a privileged host worker claims and writes verified ACK. It
+must stop the **synthetic bot engine**, not the HTTP controller that serves
+the Samsung panel; no panel-side Docker socket. Telegram issue #315 requires
+owner-only token custody and its own protected activation/negative synthetic
+tests, never token entry into chat or logs. Both belong to governed phases of
+the same **existing** deployment authority (or its later protected operations),
+not extra ports, HTTPS, a second privileged workflow or real ticket purchases.
+Thus even a future positive Cutover A receipt **cannot** by itself certify an
+integral BETA GREEN: authenticated Chrome persistence, Telegram private
+delivery, lifecycle ACKs, no-reservation simulation, Samsung Chrome+Termius
+acceptance and selective Docker cleanup still need actual receipts.
