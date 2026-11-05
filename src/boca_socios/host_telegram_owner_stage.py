@@ -117,10 +117,8 @@ def _read_owner_public_file(folder: Path, name: str, maximum: int) -> bytes:
         identity = (before.st_dev, before.st_ino, before.st_mtime_ns, before.st_ctime_ns)
         if (
             len(content) != before.st_size
-            or (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_ctime_ns)
-            != identity
-            or (named.st_dev, named.st_ino, named.st_mtime_ns, named.st_ctime_ns)
-            != identity
+            or (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_ctime_ns) != identity
+            or (named.st_dev, named.st_ino, named.st_mtime_ns, named.st_ctime_ns) != identity
         ):
             raise ValueError("owner file changed")
         return content
