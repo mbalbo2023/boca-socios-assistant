@@ -34,7 +34,11 @@ def _context(kind: str = "lifecycle") -> dict[str, str]:
         "data_mountpoint": "/srv/boca-rootless/data",
     }
     if kind == "lifecycle":
-        return common | {"expected_component": "bot", "expected_target": "stop"}
+        return common | {
+            "expected_component": "bot",
+            "expected_target": "stop",
+            "expected_request_id": "12345678-1234-4123-8123-123456789abc",
+        }
     common["data_mountpoint"] = "/data"
     return common | {
         "cutover_attempt": "41999999999",
@@ -87,6 +91,7 @@ def test_exact_context_binds_to_current_protected_actions(kind: str, operation: 
         {"controller_id": "d" * 63},
         {"expected_target": "restart"},
         {"expected_component": "porota"},
+        {"expected_request_id": "12345678-1234-4123-8123-123456789abC"},
         {"additional_shell_command": "docker system prune"},
         {"telegram_token": "123:synthetic"},
         {"data_mountpoint": "../tmp"},
@@ -217,3 +222,28 @@ def test_telegram_absent_vs_stopped_sender_state_requires_exact_pins() -> None:
     for changed in malformed:
         with pytest.raises(gate.ProtectedActionError):
             gate.decode_context(_encode(changed), operation="telegram-activate", environ=_env())
+
+
+@pytest.mark.parametrize(
+    "bad_request_id",
+    (
+        "",
+        "12345678-1234-4123-8123-123456789abC",
+        "12345678-1234-5123-8123-123456789abc",
+        "12345678-1234-4123-7123-123456789abc",
+        "12345678123441238123123456789abc",
+        "00000000-0000-0000-0000-000000000000",
+    ),
+)
+def test_lifecycle_go_requires_one_canonical_v4_request_uuid(bad_request_id: str) -> None:
+    obj = _context()
+    obj["expected_request_id"] = bad_request_id
+    with pytest.raises(gate.ProtectedActionError):
+        gate.decode_context(_encode(obj), operation="lifecycle-apply", environ=_env())
+
+
+def test_missing_expected_request_id_does_not_fall_back_to_component_and_target() -> None:
+    obj = _context()
+    del obj["expected_request_id"]
+    with pytest.raises(gate.ProtectedActionError):
+        gate.decode_context(_encode(obj), operation="lifecycle-apply", environ=_env())

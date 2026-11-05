@@ -33,6 +33,7 @@ def _static() -> dict[str, str]:
         "controller_config_hash": "1" * 64,
         "worker_config_hash": "2" * 64,
         "data_mountpoint": "/srv/boca-rootless/data",
+        "expected_request_id": "12345678-1234-4123-8123-123456789abc",
         "expected_component": "bot",
         "expected_target": "stop",
     }
@@ -268,7 +269,7 @@ def test_physical_lifecycle_receipt_must_be_single_exact_applied_json(
         "scope": "boca-lifecycle",
         "attempt": hosted["attempt_id"],
         "prepare_run_id": hosted["prepare_run_id"],
-        "request_id": "aaaaaaa1-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "request_id": hosted["expected_request_id"],
         "source_sha": hosted["source_sha"],
         "component": hosted["expected_component"],
         "target": hosted["expected_target"],
@@ -283,6 +284,7 @@ def test_physical_lifecycle_receipt_must_be_single_exact_applied_json(
         {"prepare_run_id": "111"},
         {"attempt": "111"},
         {"request_id": "123"},
+        {"request_id": "87654321-4321-4321-8123-abcdefabcdef"},
         {"extra": "unexpected"},
     ):
         path.write_text(
