@@ -6,6 +6,9 @@ import io
 import json
 import os
 import re
+import sqlite3
+from collections.abc import Callable
+from contextlib import closing
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,7 +21,11 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from boca_socios.domain.policy import TicketIntent
-from boca_socios.events.official_catalog import OfficialNotice, load_observed_notice
+from boca_socios.events.official_catalog import (
+    OfficialCatalogError,
+    OfficialNotice,
+    load_observed_notice,
+)
 from boca_socios.integration.command_store import CommandStore
 from boca_socios.notify.outbox import NoticeKind, NotificationRequest
 from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
@@ -138,6 +145,7 @@ def _app(
     host: FakeHost | None = None,
     *,
     official_notices: tuple[OfficialNotice, ...] = (),
+    official_loader: Callable[[], tuple[OfficialNotice, ...]] | None = None,
 ) -> tuple[PrivatePanelApplication, Database]:
     db = Database(path)
     db.migrate()
@@ -154,6 +162,7 @@ def _app(
         commands=host,
         events={EVENT_ID: "Partido sintético"},
         observed_official_notices=official_notices,
+        official_notices_loader=official_loader,
     )
     return app, db
 
@@ -265,6 +274,63 @@ def test_private_official_events_renders_only_preobserved_synthetic_notice() -> 
         assert host.calls == []
 
 
+def test_official_snapshot_refresh_is_private_and_failure_stays_isolated_to_notices() -> None:
+    provider, key, credential_id = _passkey([0.0])
+    notice = load_observed_notice(
+        json.dumps(
+            {
+                "version": "official-notice-observation-v1",
+                "source_url": "https://www.bocajuniors.com.ar/noticias/observacion-sintetica",
+                "published_on": "2026-11-03",
+                "observed_at": "2026-11-03T13:00:00-03:00",
+                "source_sha256": "b" * 64,
+                "event_key": "boca-test-offline-2026-11-09",
+                "title": "Aviso offline sintético",
+                "kickoff_at": "2026-11-09T17:30:00-03:00",
+                "windows": [],
+            }
+        )
+    )
+    source: list[tuple[OfficialNotice, ...] | None] = [(notice,)]
+    reads = 0
+
+    def loader() -> tuple[OfficialNotice, ...]:
+        nonlocal reads
+        reads += 1
+        if source[0] is None:
+            raise OfficialCatalogError("private detail must not escape")
+        return source[0]
+
+    with TemporaryDirectory() as directory:
+        host = FakeHost()
+        app, _db = _app(Path(directory) / "boca.sqlite3", provider, host, official_loader=loader)
+        assert _request(app, "/avisos-oficiales")[0] == 401
+        assert reads == 0  # never read the local snapshot for an unauthenticated caller
+        cookie = _login(app, key, credential_id)
+        status, _, page = _request(app, "/avisos-oficiales", cookie=cookie)
+        assert status == 200 and b"Aviso offline sint" in page and reads == 1
+        source[0] = ()
+        status, _, page = _request(app, "/avisos-oficiales", cookie=cookie)
+        assert status == 200 and b"No hay avisos oficiales observados cargados" in page
+        source[0] = None
+        status, _, page = _request(app, "/avisos-oficiales", cookie=cookie)
+        assert status == 503 and b"La simulaci" in page
+        assert b"private detail" not in page
+        status, headers, payload = _request(app, "/avisos-oficiales.json", cookie=cookie)
+        assert status == 503 and headers["Content-Type"] == "application/json"
+        assert json.loads(payload) == {
+            "source_mode": "OFFLINE_PREOBSERVED_ONLY",
+            "source_health": "UNAVAILABLE",
+            "events": [],
+            "actionable": False,
+            "availability_verified": False,
+            "live_feed": False,
+        }
+        assert _request(app, "/control", cookie=cookie)[0] == 200
+        assert _request(app, "/", cookie=cookie)[0] == 200
+        assert host.calls == []
+
+
 def test_owner_cookie_survives_controller_restart_and_logout_revokes_server_side() -> None:
     clock = [0.0]
     provider, key, credential_id = _passkey(clock)
@@ -283,7 +349,7 @@ def test_owner_cookie_survives_controller_restart_and_logout_revokes_server_side
         old_operation = (
             re.search(rb'name="operation_id" value="([^\"]+)"', old_form).group(1).decode()
         )
-        with db.connection() as connection:
+        with closing(sqlite3.connect(path.with_name("boca_owner_session.sqlite3"))) as connection:
             persisted = connection.execute(
                 "SELECT singleton,token_sha256,verifier_sha256,owner_sha256"
                 " FROM owner_browser_session"
@@ -291,6 +357,13 @@ def test_owner_cookie_survives_controller_restart_and_logout_revokes_server_side
         assert persisted is not None and persisted[0] == 1
         assert all(isinstance(value, bytes) and len(value) == 32 for value in persisted[1:])
         assert cookie.encode() not in persisted[1:]
+        with db.connection() as connection:
+            assert connection.execute(
+                "SELECT count(*) FROM schema_migrations WHERE version=8"
+            ).fetchone() == (0,)
+            assert connection.execute(
+                "SELECT count(*) FROM sqlite_master WHERE name='owner_browser_session'"
+            ).fetchone() == (0,)
 
         # Same trusted verifier, same browser cookie, NEW controller lifetime:
         # no passkey prompt. But old form's CSRF and operation never persist.
@@ -329,7 +402,7 @@ def test_owner_cookie_survives_controller_restart_and_logout_revokes_server_side
         assert "Max-Age=34560000" not in headers["Set-Cookie"]
         assert _request(app, "/", cookie=cookie)[0] == 401
         assert _request(restarted, "/", cookie=cookie)[0] == 401
-        with db.connection() as connection:
+        with closing(sqlite3.connect(path.with_name("boca_owner_session.sqlite3"))) as connection:
             assert connection.execute("SELECT count(*) FROM owner_browser_session").fetchone() == (
                 0,
             )

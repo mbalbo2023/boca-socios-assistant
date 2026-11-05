@@ -1,228 +1,160 @@
-# ADR0137 — Una sesión persistente del dueño en Chrome, sin vencimiento rutinario (04/11/2026)
+# ADR 0137 — Sesión Chrome persistente y SQLite independiente (opción B)
 
-Estado: **DRAFT** del issue #321. Sólo código y pruebas, sin merge, Actions dispatch,
-upgrade físico ni deploy. No constituye evidencia de la BETA instalada con esta política.
+**Fecha:** 2026-11-04 ART. **Estado:** DRAFT / código y tests; **sin merge,
+release, migración física ni deploy**. Decisión y RCA: issue #321 comentarios
+[6646898884](https://github.com/mbalbo2023/boca-socios-assistant/issues/321#issuecomment-6646898884)
+y [6647073475](https://github.com/mbalbo2023/boca-socios-assistant/issues/321#issuecomment-6647073475).
+Checkpoint principal: issue #45 A45-R11.
 
-## Decisión explícita del propietario
+## Decisión vigente: opción B autorizada
 
-Tincho ya autenticó el panel privado `http://localhost:8443` mediante passkey
-desde Samsung Chrome/Termius. Solicita conservar la autenticación en **el mismo
-perfil Chrome** entre cierres, días sin uso y reinicios del controller, sin
-caducidad por 15 minutos inactivo ni por 8 horas absolutas.
+Tincho autenticó su panel privado mediante Samsung Chrome + Termius, con
+passkey, en `http://localhost:8443`. Autorizó desarrollar una **única
+autorización durable del dueño** sin los antiguos vencimientos rutinarios
+de 15 minutos de inactividad u 8 horas absolutos. El primer login y cualquier
+reautenticación siguen requiriendo WebAuthn real, presencia/verificación de
+usuario, origen y RP exactos; no se pide volver a registrar PIN/clave.
 
-- Sólo **una sesión activa del dueño globalmente**. Las pestañas del mismo
-  perfil comparten cookie; **un nuevo ingreso con passkey revoca la anterior**.
-  No se implementan múltiples sesiones durables ni navegación paralela: opción
-  #4 expresamente descartada.
-- El primer ingreso y toda reautenticación siguen exigiendo la verificación
-  WebAuthn ES256, presencia/verificación de usuario, RP, challenge y origen
-  exactos. No hay PIN, credenciales o tokens en chat, fuente, logs ni Actions.
-- Se emite un token aleatorio de 256 bits exclusivamente como cookie
-  `__Host-boca_session` con `Secure; HttpOnly; SameSite=Strict; Path=/`. La cookie
-  **no** es session-only: usa `Max-Age=34560000` (400 días), y cada petición
-  autenticada renueva ese período con `Set-Cookie`. El servidor **no impone**
-  los antiguos TTL 15m/8h a esta modalidad.
-- Chrome limita a **400 días** el vencimiento de cookies con Max-Age/Expires
-  largo; no es una cookie literalmente infinita. La renovación permite uso sin
-  reingreso **mientras el usuario conserve y utilice periódicamente el mismo
-  perfil**. Borrar cookies/datos, incógnito, otro perfil/equipo o inactividad
-  superior al límite del navegador requieren passkey nuevamente. Referencia
-  primaria: https://developer.chrome.com/blog/cookie-max-age-expires
+Un `OwnerBrowserSessionStore(Database("/data/boca.sqlite3"), ...)` almacena
+exclusivamente en **`/data/boca_owner_session.sqlite3`**, archivo vecino
+dentro del volumen existente `boca-socios_boca_data`. El nombre es fijo,
+derivado del directorio del controller DB. **No hay volumen, puerto, servicio,
+HTTPS ni recurso host adicional**. El DB del controller
+`/data/boca.sqlite3`, miembros, credenciales, esquema, ledger, claves,
+owner y Telegram permanecen sin cambios por la función de bootstrap de
+sesión. En el almacenamiento propio, el esquema se identifica con
+`owner_session_schema(version=1,checksum)`, `PRAGMA user_version=1` y DDL
+exactamente validado. El SQL ahora vive exclusivamente bajo
+`panel/owner_session_sql/0001_owner_browser_session.sql`, **fuera** de
+`storage/migrations`.
 
-## Persistencia y revocación
+### RCA P0 que invalida opción A
 
-1. El esquema `0008_owner_browser_session.sql` agrega únicamente la tabla
-   `owner_browser_session`, con `singleton=1` obligatorio. SQLite guarda
-   **SHA-256 del bearer aleatorio**, SHA-256 de la configuración pública del
-   verificador WebAuthn y SHA-256 del sujeto propietario, más timestamp.
-   No guarda cookie/token plaintext, CSRF, contraseñas, credenciales de socios,
-   passkey privada, operation IDs, formularios, replay cache o permisos
-   convertidos en autoridad persistente.
-2. El binding de verificador abarca credential ID, clave pública DER, RP,
-   origen, owner y permisos efectivos. En un reinicio, sólo el servidor con la
-   misma configuración confiable puede reconstruir los permisos concedidos;
-   una modificación o revocación de la passkey invalida la cookie previa.
-3. Una segunda autenticación sustituye el único hash de sesión en una
-   transacción `BEGIN IMMEDIATE`. El logout elimina el hash **si coincide**
-   con el token actual y entrega `Max-Age=0`; un logout antiguo no puede
-   revocar un login posterior. La fila ausente equivale a acceso denegado.
-4. Cada petición consulta la autorización durable; las escrituras verifican
-   vigencia nuevamente. Tras reiniciar, la primera petición con cookie válida
-   crea **CSRF, fingerprint de operaciones, límites y formularios nuevos sólo
-   en RAM**: un POST/formulario viejo no puede reproducirse. No se persiste
-   exact-once de operaciones de negocio más allá de los mecanismos existentes.
-5. Falta de tabla, checksum/esquema incorrecto, symlink o SQLite inaccesible
-   se rechazan; no se fabrica una sesión válida en memoria. El panel no debe
-   iniciar en versión nueva si no se realizó antes la migración 0008.
+El controller legacy instalado `cabce9f1e452e63ded115f447559a358dc0f4d1b`
+empaqueta y valida sólo migraciones 0001–0007.
+`integration.operational.validate_existing_beta_storage` y el lector de
+estado rechazaban 0008 desconocido. Aplicar `0008_owner_browser_session.sql`
+a la **base legacy** antes del cambio impide recuperarlo si el cutover falla.
+La alternativa A (puente legacy + otra release) se examinó pero **NO fue
+elegida**. En la opción B ya no hay SQL 0008 en el paquete del controller;
+`upgrade_existing_owner_schema_0008()` y
+`pre_cutover_upgrade_0008()` **rechazan siempre**, incluso con una prueba
+legacy aparentemente positiva. No es lícito restaurar ese DDL por simplificar
+un corte.
 
-## Instalación/upgrade gobernado: 0006/0007 → 0008
+## Semántica de la sesión
 
-La BETA controller-only en el droplet **no se presume migrada**. Telegram usa
-su propio volumen y su versión 0007 es independiente; el DB controller puede
-tener {1,2,3,5,6} y quizá 0004, sin 0007. `0008` es compatible tanto con un
-ledger 0006 como con un ledger 0007 válido, y no exige migrar Telegram.
+- Una sola cookie activa globalmente. Otra autenticación WebAuthn sustituye
+  atómicamente el hash anterior; logout de cookie vieja no revoca la nueva.
+  Igual perfil Chrome/pestañas comparte autorización; no habilita sesiones
+  múltiples, categoría rechazada por el dueño.
+- Bearer aleatorio de 256 bits, cookie
+  `__Host-boca_session; Secure; HttpOnly; SameSite=Strict; Path=/`;
+  `Max-Age=34560000` (400 días) renovado en peticiones autenticadas.
+  Chrome limita duración de una cookie a 400 días desde la última emisión:
+  conservar el perfil y entrar periódicamente evita pedir passkey de rutina;
+  borrado de cookies/incógnito/cambio de perfil o dispositivo sí la requiere.
+  Referencia primaria: https://developer.chrome.com/blog/cookie-max-age-expires .
+- SQLite guarda sólo SHA-256 del token, SHA-256 del binding público del
+  verificador WebAuthn (credential ID, clave pública, owner, RP, origin,
+  permisos) y SHA-256 del sujeto, con timestamp. Jamás se guarda bearer
+  plaintext, clave privada, contraseñas, CSRF, operación ni permiso libremente
+  reutilizable.
+- Tras restart, se vuelve a comprobar el hash durable y se reconstruye en RAM
+  una sesión con **nuevo CSRF/fingerprint/operation cache**. Formularios,
+  operaciones y POST antiguos no sobreviven reinicio. Un verificador/permiso
+  modificado invalida la autorización. Error SQLite/ledger/identidad niega
+  acceso; nunca se autentica por un flag o header elegido por el cliente.
+- La cookie es bearer y no está ligada criptográficamente al hardware.
+  Priorizar persistencia aumenta el período de exposición si se roba el
+  token, mitigado por túnel SSH-local y atributos anteriores; no se promete
+  persistencia infinita ni protección ante copia de cookie.
 
-**RCA P0 de recuperación legacy (05/11/2026, código fuente exacto):** el
-controller instalado `main=cabce9f1e452e63ded115f447559a358dc0f4d1b`
-contiene migraciones empaquetadas **sólo 0001–0007**. Su
-`integration.operational.validate_existing_beta_storage()` construye un mapa
-de checksums exclusivamente desde esos archivos y **rechaza un registro 0008
-desconocido**; `panel.local_status._MIGRATIONS` tampoco admite 0008. Esto se
-verificó leyendo ambos archivos y el árbol `storage/migrations` del SHA exacto
-en GitHub, no por inferencia del código candidato. Aplicar 0008 a la DB física
-**antes del candidato haría fallar el reinicio del controller legacy** ante
-cualquier fracaso de cutover. Por tanto **NO-GO físico de la migración
-pre-cutover con ese legacy**, incluso si Docker stop/lock/0008 son perfectos.
+## Inicialización y cutover — contratos separados
 
-1. Integrar únicamente después de revisar PR DRAFT, CI y preflight por SHA;
-   no desplegar este código contra la DB vieja por inferencia.
-2. El adaptador sólo-código `panel.owner_session_upgrade` define
-   `upgrade_existing_owner_schema_0008(ControllerStoppedEvidence)`. El nuevo
-   `panel.owner_session_host_attestor.DockerStoppedControllerEvidence` aporta
-   inspección **host-side** rootless, exact-ID y lease físico, pero todavía
-   **no está conectado a un workflow protegido**. Un booleano `stopped=True`,
-   JSON, recibo histórico, clase de prueba o callback no autenticado **no
-   son evidencia física**. Ni esta implementación fuente ni tests con
-   Docker fingido habilitan por sí mismos ejecución real.
-3. El futuro paso GitHub Actions **protegido, explícito y Boca-only** deberá
-   entregar el capability de parada anterior a un proceso sin red, con mount
-   exacto `/data/boca.sqlite3`; exigir real/effective UID/GID **10001/10001**,
-   archivo regular no symlink, `0600`, hardlink-count 1 y `(dev,inode)`
-   invariable. `validate_existing_beta_storage` comprueba el ledger previo:
-   0006 obligatorio, 0007 opcional con checksum real, 0004 opcional. El
-   adaptador vuelve a validar dentro de `BEGIN IMMEDIATE`, usa SQLite
-   `mode=rw` (jamás crea una DB ausente) y agrega **sólo tabla y ledger 0008**
-   de forma atómica e idempotente. Comprueba postcondición/integridad e inode,
-   sin recrear owner, clave, credenciales, datos ni volumen. El mismo host
-   debe retener el controller detenido y el acceso exclusivo al volumen.
-   No escribir tokens ni secretos en recibos.
-4. **No invocar** `OwnerBrowserSessionStore.migrate()` contra controller ya
-   instalado: ese initializer pertenece al primer alta explícita. La
-   construcción del panel, login, healthcheck, consulta y startup **nunca
-   migran** por su cuenta. La primera instalación nueva con owner configurado
-   sí prepara 0008 mediante `initialize_beta` explícito; un fixture offline
-   sin dueño no crea por inferencia una autorización.
-5. Si falla, NO_GO sin iniciar la nueva imagen; limpieza Docker selectiva
-   exclusivamente Boca. No borrar volúmenes, no tocar Porota ni otros servicios,
-   no reinicializar passkey, no realizar backup/restauración como parte de BETA.
-6. Con migración y código físicos verificados, el owner hace **una vez** el
-   login WebAuthn para poblar el nuevo hash (la cookie vieja estaba sólo en
-   RAM y no puede migrarse). Comprobar Chrome cerrar/abrir, mismo token
-   renovado, reapertura tras reinicio controlado, logout y segundo login que
-   invalida el anterior. Guardar únicamente recibos redactados en #321/#45.
+**Primera instalación nueva:** `runtime.initialize_beta` ya crea el
+almacenamiento controller en su fase explícita `initialize_new`. Sólo
+si hay owner configurado llama
+`OwnerBrowserSessionStore.migrate_schema(runtime.database)`, que crea el
+**SQLite lateral**, sin llamar `Database.migrate`, DDL ni INSERT de ledger
+sobre el controller. Un initializer sin owner no crea autorización por sí.
 
-### Gate preventivo de compatibilidad y alternativas sin decisión de deploy
+**Controller existente:** la nueva interfaz de solo código
+`owner_session_upgrade.bootstrap_existing_owner_session(evidence, path)`
+exige una instancia de `ControllerStoppedEvidence` vinculada al
+`DockerStoppedControllerEvidence` físico (UID/GID10001, rootless socket,
+legacy ID 64hex, etiquetas, digest, volumen, controller parado, no otro
+writer y `borrowed_lease_fd` del **mismo lock canónico**
+`/run/user/10001/boca-socios-protected-job.lock`). Dentro de una única
+ventana de exclusividad:
 
-- El nuevo módulo inerte `panel.owner_session_cutover_gate` define
-  `pre_cutover_upgrade_0008(DockerStoppedControllerEvidence,
-  LegacyResumeVerifier)`. **Rechaza siempre** el SHA legacy `cabce9f1…` antes
-  de abrir volumen o modificar DB, aun si un test doble declara éxito. Para
-  otro SHA no basta un manifest o JSON `resumable=true`: requiere un
-  `LegacyResumeVerifier` abstracto, **sin implementación host en este PR**,
-  vinculado exactamente a ID legacy, attempt ID, SHA, imagen digest y checksum
-  empaquetado 0008. El contrato del futuro host protegido exige probar el
-  **binario legacy original** ejecutando validación de esquema y arranque
-  read-only sobre una SQLite enteramente sintética con ledger 0008, sin montar
-  DB/owner/key reales; mantener imagen y lease canónico durante la migración.
-  Si falta, caduca o difiere cualquier evidencia, NO-GO sin DDL. La prueba
-  sintética es necesaria para desarrollar el gate, **nunca evidencia física**.
-- **Alternativa A (bridge legacy forward-compatible):** integrar, revisar y
-  desplegar primero un pequeño cambio en la versión controller-only para que
-  el binario que quedará como legacy conozca/verifique 0008 sin aplicarlo ni
-  cambiar sesiones. Comprobar su instalación y capacidad real de reinicio
-  contra un DB con 0008 antes de otra transición. Ventaja: mantiene una DB;
-  costo/riesgo: requiere otra release y operación física, parada/reanudación
-  gobernada y prueba de que no se altera la versión previa ni la custodia.
-- **Alternativa B (almacén exclusivo de sesión):** guardar el hash de
-  autenticación owner en un SQLite Boca independiente, sin modificar el
-  ledger de la DB controller legacy. Ventaja: legacy seguiría leyendo su
-  schema anterior; costo/riesgo: rediseño de transacciones, volumen/ruta,
-  bootstrap, key/owner binding, recuperación y nuevas pruebas. No se implementa
-  como cambio tácito al diseño aprobado de #321.
-- Ambas alternativas están **pendientes de elección/autorización de arquitectura
-  y evidencia posterior**. No hay rollback destructivo, eliminación de 0008,
-  backup ni orden real como camino de recuperación. La simple compatibilidad
-  del candidato nuevo con 0008 **no** prueba la recuperabilidad del legacy.
+1. Revalida identidad `(dev,inode,uid,gid,0600,nlink=1)` del controller.
+   Comprueba su ledger conocido 0001–0007, sin tabla owner ni ledger 0008,
+   con integridad SQLite y consistencia opcional 0004/0007.
+2. Calcula el archivo vecino dentro del mismo volumen exacto. Si no existe,
+   crea sólo ese archivo con `O_EXCL|O_NOFOLLOW`, modo `0600` y el UID/GID
+   del proceso rootless; si existe, exige archivo regular, dueño único,
+   `nlink=1`, esquema/checksum idénticos. Una creación interrumpida deja
+   evidencia parcial y **NO_GO**, sin reparación, reemplazo ni purga.
+3. Usa transacción SQLite `BEGIN IMMEDIATE` para el DDL propio,
+   verificando `owner_session_schema` y `user_version`. Si la sesión ya
+   existía y es válida, retorna `ALREADY_APPLIED` sin borrar el hash.
+   Revalida controller y volumen después; no modifica el DB legacy.
+4. En el único host transaction #227 deberá retenerse la misma lease
+   durante parqueo, bootstrap, candidate apply, observación y limpieza
+   Boca-only postdeploy en éxito o fallo. Código de host y workflow final
+   **todavía no están completamente conectados**, y no se ha ejecutado esta
+   operación sobre el droplet.
 
-## Límites y exclusiones
+**Contrato de transporte sin dependencias del paquete:** el módulo nuevo
+`panel/owner_session_disk_bootstrap.py` importa únicamente bibliotecas
+estándar. El bundle ZIP/memfd del único proceso host debe transportar sus
+bytes exactos y los bytes SQL de `panel/owner_session_sql/0001_*.sql`;
+su invocación es
+`bootstrap_attested_session_file(legacy_path, held_lease_fd,
+expected_db_identity, session_schema_bytes)`. Exige que el descriptor de
+lock canónico realmente esté retenido (contendiente independiente bloqueado
+y misma open-file-description), UID/GID 10001, SHA empaquetado del SQL y
+checksums conocidos del ledger 0001–0007, owner/session DB privados y
+postflight. Retorna únicamente `APPLIED` o `ALREADY_APPLIED`.
+No inspecciona Docker, no posee API CLI, no cambia host ni ejecuta
+despliegue; la atestación de contenedor/volumen/digest y el arranque final
+siguen siendo responsabilidad de #227. Esta separación evita copiar
+dependencias transitivas de `storage`/`integration` al ZIP privilegiado.
 
-Esta cookie es un **bearer**: cualquiera con su valor íntegro podría reutilizar
-la autorización dentro del túnel privado. El diseño no permite atribuir el
-token criptográficamente a un dispositivo físico ni promete recuperarlo tras
-borrado de datos Chrome. El usuario prioriza persistencia sobre reautenticación
-periódica; la exposición queda circunscrita al panel privado SSH-local con
-origen exacto, CSRF, SameSite, Secure y HttpOnly. Una sesión única limita
-superficie, pero no vuelve imposible la copia de cookies.
+La construcción del panel, login, consulta, healthcheck y startup **no
+ejecutan bootstrap**. Sin archivo lateral preexistente válido, el nuevo
+panel falla cerrado. El controller antiguo puede conservar su SQLite
+original, pero su recuperación física sigue requiriendo la prueba real
+del host y de la transición #227, no sólo la prueba de esquema offline.
+No usar backup, rollback destructivo, recreación de owner ni limpieza
+Docker global como estrategia de recuperación.
 
-No habilita sesiones múltiples, rotación/eliminación total de clave maestra,
-login real/fila/reserva/compra Boca, backups, HTTPS adicional, Site ni operación
-del worker/Telegram. `synthetic.py` e `ipc_worker.py` permanecen BLACKBOX
-intocables.
+## Pruebas, gates pendientes y exclusiones
 
-## Evidencia necesaria para salir de DRAFT
+Las pruebas sintéticas del frente #321 cubren ledger legacy inalterado con
+y sin 0007, fila de socio/credencial y clave conservadas, base lateral
+idempotente, bearer y verificador, restart/CSRF nuevo, relogin/logout,
+base/archivo ausente, symlink, hardlink, modo inseguro, schema incompleto,
+checksum alterado, origen/UID/inode drift, fake stop, lease prestada
+y host Docker simulado sin invocar daemon real. Otros tests del panel
+comprueban atributos 400d y permisos. Todos los casos son **offline**;
+la suite focal incluye diez casos del adaptador stdlib-only bajo lock real
+de prueba, SQL manipulado, UID/inode/ledger incorrecto, FD sin lock y archivo
+parcial; y la construcción del wheel verifica que el SQL lateral esté
+empaquetado (package-data explícito en `pyproject.toml`), mientras el
+antiguo 0008 queda fuera.
+la aceptación real Samsung Chrome, reinicio de controller, bot/Telegram y
+recibo Docker requiere cutover posterior protegido y autorización específica.
+PR #322 debe publicar HEAD exacto, suite completa, Ruff, MyPy, política
+y GitHub Actions; un test verde en branch no equivale a deploy.
 
-- Migración explícita verificada, checksum exacto, DB anterior intacta,
-  inicialización sin tabla, idempotencia y fallos cerrados.
-- Verificación criptográfica WebAuthn con claves sintéticas en tests; cookie
-  con atributos y rolling 400d, mismo
-  Chrome tras restart sin WebAuthn, expiraciones 15m/8h anuladas, segunda
-  autenticación revoca la primera, logout durable, CSRF/POST viejo rechazado,
-  permiso/verificador cambiado invalida y cookies malformadas/duplicadas niegan.
-- Ruff, MyPy, pytest integral y policy por SHA, PR DRAFT; sólo recibo físico
-  posterior (Actions protegidas) puede cerrar el NO_GO de despliegue. Regla 84.
+Las BLACKBOX `synthetic.py` e `ipc_worker.py` no se leen, importan,
+ejecutan, editan ni prueban. No se activa Boca real/Queue-it, compras,
+reservas, login/fila, backups, multisesiones, rotación/eliminación total de
+clave, Site, HTTPS adicional, Porota ni otro servicio. La única ruta de
+operación host sigue siendo GitHub Actions Boca protegido, en fase aparte.
 
-### Corte de QA del adaptador offline (04/11/2026)
-
-- Sólo fuente/tests: DB sintética creada por el `initialize_beta` real **sin
-  owner** para reproducir ledger 0006, con y sin 0007; prueba de idempotencia
-  después de poblar el hash de owner, conservación de filas y clave sintéticas,
-  mismo `(dev,inode,mode)` y rechazo de ledger/esquema parcial o alterado.
-- `ControllerStoppedEvidence` es interfaz abstracta de *lease host*; el
-  `DockerStoppedControllerEvidence` concreto aporta sólo el código de
-  observación host: consulta el **socket rootless 10001** y metadatos
-  `docker info/ps/inspect/volume inspect` por ID original 64hex + attempt ID,
-  exige nombre `boca-socios-controller-legacy-<attempt>`, Compose project/
-  service/number, source SHA e imagen immutable, estado `exited`, política
-  de restart `no`, montajes data RW/key RO/owner RO exactos, ningún controller
-  competidor y **ningún otro proceso Docker RUNNING que monte data RW**.
-  Telegram comparte `/data` RW: si está corriendo, el attestor devuelve
-  NO_GO hasta que otro flujo autorizado resuelva la parada/reanudación con
-  identidad positiva. No detiene ni altera ningún container.
-- Para ejecutar contra el host físico, `evidence.host_database_path()`
-  resuelve la ruta SQLite exacta del volumen rootless Docker (en vez del alias
-  `/data` interno); sólo este tipo concreto autoriza al adaptador a usar esa
-  ruta. `exclusive_stop()` adquiere flock nonblocking sobre **el mismo lease
-  canónico de todos los trabajos protegidos Boca**:
-  `/run/user/10001/boca-socios-protected-job.lock`; verifica UID/GID,
-  archivo e inode y repite el inventario antes de soltar. Si cutover #227
-  ya posee ese lease, el constructor acepta `borrowed_lease_fd` **en el mismo
-  proceso**, exclusivamente como descriptor abierto, nunca serializado en
-  JSON/recibo. `os.dup()` comparte la misma open-file-description y permite
-  la comprobación reentrante; antes se prueba con un descriptor independiente
-  que el lock **ya estaba retenido** y luego que el FD prestado es su titular.
-  Al salir del contexto el attestor sólo cierra la copia, nunca el FD original. Los
-  tests rechazan FD sin flock, inode ajeno o segundo holder; el lock externo
-  sobrevive al scope interno. **Cutover #227 tiene que mantener ese mismo
-  descriptor abierto en park/upgrade/restart/cleanup** para evitar carreras;
-  si hay terceros que lo ignoren, no puede declararse exclusividad física. La
-  comprobación post-commit no garantiza rollback de una carrera: ante duda
-  queda NO_GO y no se reinicia imagen nueva.
-- Tests de host attestor usan JSON Docker sintético sin daemon ni red; prueban
-  original parado, restart incorrecto, imagen/labels/nombre drift, competing
-  controller, worker RW activo, cambio de volumen, mount omitido, lock
-  contendida, FD prestado inválido, scope de DB y `stopped=True` rechazado.
-  Ninguna prueba
-  certifica una migración ni parada real en el droplet.
-- **NO_GO físico** hasta integrar y evidenciar el host-stop gate propietario,
-  inventario exacto del volumen, source SHA, preflight, CI y ejecución gobernada
-  en GitHub Actions. El adaptador no hace `docker stop/start/rename`, limpieza
-  Docker, backup ni modificación de volúmenes. Cualquier limpieza posterior
-  (éxito o fallo) pertenece al frente #323, selectiva sólo Boca, preservando
-  siempre owner/key/data. No se realizó migración ni deploy real en este PR.
-- QA de branch aislada con host-attestor añadido: `pytest -q` **2615 passed +
-  34 subtests**, Ruff check PASS, Ruff format PASS (407 archivos), MyPy PASS
-  (91 archivos), repo policy `POLICY_PASS`; regresión focalizada del attestor
-  con comprobación de lease prestado, opciones bind y origen de montaje
-  **29 passed**. Son
-  evidencias locales, no
-  sustituyen los checks Actions del nuevo SHA remoto ni el recibo host físico.
+**Evidencia histórica:** el diseño A, pruebas preliminares y sus recibos
+anteriores al GO de B permanecen en los commits anteriores de PR #322 y
+en comentarios #321. No son evidencia vigente de compatibilidad o deploy.

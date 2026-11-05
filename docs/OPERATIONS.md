@@ -27,6 +27,24 @@ acreditado. Para estado y bloqueos futuros, usar el
 [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6640165355).
 Sólo Actions Boca para operaciones de host; limpieza exclusivamente selectiva.
 
+### Regla permanente de higiene Docker posterior a deploy (decisión del dueño, 04/11/2026)
+
+**Toda** instalación, actualización o despliegue Boca —tanto PASS como FAIL—
+termina con una limpieza selectiva **obligatoria dentro del mismo workflow
+protegido**, con inventario previo/posterior de espacio e inodos y recibo
+redactado. Después de PASS se eliminan contenedores temporarios, redes/staging
+de intento ya sin uso e **imágenes Boca anteriores** solamente cuando el
+inventario por ID/digest/labels demuestra que no están referenciadas por ningún
+contenedor. El controlador activo, su imagen y los volúmenes owner/clave/DB
+persisten. Después de FAIL se ejecuta primero la compensación acotada vigente,
+sin convertir el fallo original en éxito. Los recursos de identidad incierta
+se retienen con motivo explícito; una limpieza incompleta o no verificada
+deja `NO_GO/INDETERMINATE`, sin reintento ciego ni proclamación de instalación
+integral GREEN. **Prohibidos** `docker system prune`, `docker image prune -a`,
+`docker volume prune`, eliminación forzada, globs y tocar otros proyectos.
+Esta decisión está aprobada para **desarrollo en código y pruebas**; los
+PR DRAFT correspondientes aún no implementan ni ejecutan la limpieza física.
+
 ## Historial previo — RCA del beta-install rechazado antes del fix #307
 
 El último `beta-install` protegido [#41890280818](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41890280818)
@@ -958,11 +976,15 @@ cannot establish that image storage has headroom.
 6. Serialize deployment with a Boca-only lock, never parallel retry.
 7. Record Boca-only pre/post health and disk/inode capacity; never touch or
    stop an existing workload or enumerate unrelated services destructively.
-8. On failure: inventory the Boca attempt through the same Actions workflow,
-   stop Boca only, then remove positively identified unused disposable Boca
-   image/staging remnants with before/after measurements.
+8. After every success **and** failure: inventory the Boca attempt through the
+   same protected Actions workflow, run bounded selective cleanup and verify
+   before/after disk/inodes and resource IDs. On failure, first compensate/stop
+   only the exact Boca attempt, preserving the original failed result. On
+   success, remove positively identified obsolete Boca images only if no
+   container references them, plus disposable Boca staging/network remnants.
    Retain key/data volumes and uncertain resources. No destructive Docker
-   prune, blanket compose down, or volume deletion.
+   prune, blanket compose down, or volume deletion. An unverified postflight
+   cleanup leaves NO_GO/INDETERMINATE even when the app started successfully.
 9. Diagnose any external-source failure via bounded read-only Actions before
    proposing a new deploy. Report green/yellow/red/unknown with timestamp;
    source failure is an alert, not a NO_GO for the simulation-only controller.

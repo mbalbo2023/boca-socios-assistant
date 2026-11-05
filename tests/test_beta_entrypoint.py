@@ -151,6 +151,7 @@ def test_served_beta_accepts_only_an_explicit_synthetic_browser_injection(
             pass
 
     received: list[object] = []
+    panel_arguments: dict[str, object] = {}
 
     def start_runtime(**kwargs: object) -> Runtime:
         received.append(kwargs["browser"])
@@ -159,7 +160,12 @@ def test_served_beta_accepts_only_an_explicit_synthetic_browser_injection(
     monkeypatch.setattr(runtime_module, "_configured_event", lambda _path: {})
     monkeypatch.setattr(runtime_module.LocalBetaRuntime, "start", start_runtime)
     monkeypatch.setattr(runtime_module, "_TLSWSGIServer", Server)
-    monkeypatch.setattr(runtime_module, "PrivatePanelApplication", lambda **_kwargs: object())
+
+    def capture_panel(**kwargs: object) -> object:
+        panel_arguments.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(runtime_module, "PrivatePanelApplication", capture_panel)
 
     worker = Browser()
     served = build_beta_server(settings, browser=worker)
@@ -167,6 +173,8 @@ def test_served_beta_accepts_only_an_explicit_synthetic_browser_injection(
         assert received == [worker]
         assert isinstance(served.server, Server)
         assert served.server.application is not None
+        loader = panel_arguments["official_notices_loader"]
+        assert callable(loader) and loader() == ()  # no snapshot, no external fetch
     finally:
         served.close()
 

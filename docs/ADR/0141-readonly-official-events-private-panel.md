@@ -45,3 +45,31 @@ sesión privada, sin datos de socios, tokens ni WebAuthn en el documento JSON.
 
 Quedan fuera los módulos BLACKBOX `synthetic.py` e `ipc_worker.py`, el
 login/fila/reserva/compra de Boca, backups, Site y otros servicios del droplet.
+
+## Incremento R11 — lectura de snapshot local sin vincular comandos
+
+La candidata de integración agrega un callback de observaciones oficiales
+**sólo en las dos rutas GET autenticadas**. La vista original con catálogo
+inyectado en pruebas conserva su comportamiento; en el servidor de BETA el
+callback podrá leer un snapshot JSONL acotado en el **volumen Boca existente**,
+con el contrato de validación del issue #314. La lectura se repite al solicitar
+la vista, sin reiniciar el controlador, sin red, sin base SQLite, sin crear
+archivos ni alterar la sesión del dueño. No existe un feed automático ni una
+herramienta aprobada para poblar el archivo físico todavía.
+
+- Archivo ausente: vista vacía con aviso explícito de que no hay observaciones.
+- Archivo presente válido: sólo información `SOURCE_OBSERVED_UNVERIFIED`,
+  `actionable=false`, sin generar `TicketIntent` ni activar el bot.
+- Snapshot inválido/inseguro: **503 únicamente** en `/avisos-oficiales` y
+  `/avisos-oficiales.json`, con respuesta redactada y sin datos privados. La
+  portada, socios, control y simulación siguen disponibles; una fuente externa
+  degradada no se convierte en stopper de la BETA de simulación.
+- Sin credenciales, token Telegram, navegación Boca/Queue-it, URLs arbitrarias,
+  puertos o cambios en otros servicios/volúmenes.
+
+El loader independiente y su QA exact-SHA pertenecen a PR DRAFT #316; la
+inyección HTTP/runtime y las regresiones de aislamiento son alcance de PR
+DRAFT #319. Ambos deben pasar sus propias Actions y la integración completa
+antes de cualquier promoción. En particular, el código no acredita que exista
+el snapshot ni que el dueño esté viendo avisos reales; documentar esa evidencia
+por separado tras una carga protegida y verificada.

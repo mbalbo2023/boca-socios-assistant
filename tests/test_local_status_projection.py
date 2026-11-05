@@ -122,6 +122,18 @@ def test_unknown_or_modified_schema_fails_closed(tmp_path: Path, tamper: str) ->
         read_local_status(db.path, observed_at=NOW)
 
 
+def test_owner_session_legacy_0008_ledger_is_not_valid_controller_storage(tmp_path: Path) -> None:
+    """Option B keeps the owner's session in a sibling SQLite, never legacy 0008."""
+    db = _database(tmp_path)
+    with db.connection() as connection, connection:
+        connection.execute(
+            "INSERT INTO schema_migrations(version, checksum) VALUES (8, ?)",
+            ("bfb3b4a0c5082e812affadbfe9441f134c9b64603b487c69564e40e5541d63a1",),
+        )
+    with pytest.raises(LocalStatusUnavailable, match="^local status unavailable$"):
+        read_local_status(db.path, observed_at=NOW)
+
+
 @pytest.mark.parametrize("tamper", [None, "telegram_checksum", "future_version"])
 def test_telegram_migration_is_known_but_corruption_and_future_versions_fail_closed(
     tmp_path: Path, tamper: str | None

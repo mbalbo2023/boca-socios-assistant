@@ -20,7 +20,11 @@ from typing import Protocol
 from urllib.parse import parse_qsl, urlsplit
 from uuid import UUID, uuid4
 
-from boca_socios.events.official_catalog import OfficialNotice, build_observed_catalog
+from boca_socios.events.official_catalog import (
+    OfficialCatalogError,
+    OfficialNotice,
+    build_observed_catalog,
+)
 from boca_socios.events.official_presentation import export_observed_catalog_json
 from boca_socios.notify.projection import list_local_notices
 from boca_socios.owner_origin import owner_rp_host
@@ -124,6 +128,7 @@ class PrivatePanelApplication:
         commands: LocalCommandHost | None,
         events: Mapping[str, str],
         observed_official_notices: Iterable[OfficialNotice] = (),
+        official_notices_loader: Callable[[], Iterable[OfficialNotice]] | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         parsed = urlsplit(origin)
@@ -159,6 +164,9 @@ class PrivatePanelApplication:
         # Informational-only observations supplied by a trusted caller. Never
         # perform live fetches or turn them into synthetic admission choices.
         self._official_notices = build_observed_catalog(observed_official_notices)
+        if official_notices_loader is not None and self._official_notices:
+            raise ValueError("only one official-observation source is allowed")
+        self._official_notices_loader = official_notices_loader
         self._passkey = passkey
         self._owner_browser_store = OwnerBrowserSessionStore(
             self._database, owner_subject=owner_subject
@@ -263,13 +271,32 @@ class PrivatePanelApplication:
                     start, 200, private_ui.notices(list_local_notices(self._database, limit=20))
                 )
             if path == "/avisos-oficiales":
+                try:
+                    notices = self._current_official_notices()
+                except OfficialCatalogError:
+                    return _error(
+                        start,
+                        503,
+                        "Avisos oficiales no disponibles. La simulación local sigue operativa.",
+                    )
                 return _response(
                     start,
                     200,
-                    private_ui.official_events(self._official_notices, at=self._now()),
+                    private_ui.official_events(notices, at=self._now()),
                 )
             if path == "/avisos-oficiales.json":
-                document = export_observed_catalog_json(self._official_notices, at=self._now())
+                try:
+                    notices = self._current_official_notices()
+                except OfficialCatalogError:
+                    return _response(
+                        start,
+                        503,
+                        b'{"source_mode":"OFFLINE_PREOBSERVED_ONLY","source_health":"UNAVAILABLE",'
+                        b'"events":[],"actionable":false,"availability_verified":false,'
+                        b'"live_feed":false}',
+                        html=False,
+                    )
+                document = export_observed_catalog_json(notices, at=self._now())
                 return _response(start, 200, document.encode("utf-8"), html=False)
             if isinstance(path, str) and path.startswith("/socios/"):
                 return self._member_detail(path.removeprefix("/socios/"), session, start)
@@ -306,6 +333,13 @@ class PrivatePanelApplication:
                 return _error(start, 403, "Permiso insuficiente.")
             return self._credential_action(environ, path, session, start)
         return _error(start, 404, "Ruta no disponible.")
+
+    def _current_official_notices(self) -> tuple[OfficialNotice, ...]:
+        if self._official_notices_loader is None:
+            return self._official_notices
+        # Refresh on each authenticated GET so an offline Boca-only snapshot
+        # can be replaced without restarting the owner session or controller.
+        return build_observed_catalog(self._official_notices_loader())
 
     def _empty_get(self, environ: Mapping[str, object]) -> bool:
         return environ.get("CONTENT_LENGTH", "") in ("", "0") and environ.get(

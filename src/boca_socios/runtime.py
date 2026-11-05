@@ -20,6 +20,7 @@ from wsgiref.simple_server import WSGIRequestHandler, WSGIServer
 
 from boca_socios.browser.contracts import SimulationOutcome, SyntheticBrowserPort
 from boca_socios.config import Settings
+from boca_socios.events.official_snapshot import OFFICIAL_SNAPSHOT_NAME, load_official_snapshot
 from boca_socios.integration.bridge_client import SiteBridgeTransport, SiteBridgeWorker
 from boca_socios.integration.operational import (
     LocalBetaRuntime,
@@ -277,6 +278,12 @@ def build_beta_server(
             members=runtime.members,
             commands=runtime.commands,
             events=events,
+            # The volume-local observation file is optional. On each private
+            # GET, only the notices routes read and validate it; a broken
+            # external-source snapshot cannot stop the simulation controller.
+            official_notices_loader=lambda: load_official_snapshot(
+                settings.db_path.with_name(OFFICIAL_SNAPSHOT_NAME)
+            ),
         )
 
         def app(environ: dict[str, object], start: Callable[..., object]) -> list[bytes]:

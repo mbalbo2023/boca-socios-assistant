@@ -29,6 +29,15 @@ mantener una sola sesión del dueño en el mismo Chrome al cerrar/reabrir pesta�
 y reiniciar controller, sin reingreso rutinario de passkey. Código de custodia
 y migración en desarrollo; el servidor físico aún usa sesión temporal.
 
+**Regla permanente de limpieza Docker del dueño (04/11):** después de
+**cualquier** instalación/despliegue/actualización Boca, exitosa o fallida,
+el mismo workflow protegido deberá inventariar y limpiar selectivamente
+artefactos de intento e imágenes Boca antiguas **que ningún contenedor use**.
+Debe verificar espacio/inodos y ausencia exacta de residuos, mantener la
+imagen activa y todos los volúmenes owner/clave/DB, y declarar NO_GO si la
+limpieza es incierta. **Sin Docker prune global ni otras aplicaciones.**
+El contrato está en desarrollo DRAFT; no equivale a limpieza física realizada.
+
 **Descartadas por el propietario:** varias sesiones del navegador, rotación de
 clave maestra y eliminación completa, login/fila/elegibilidad/reserva/compra
 reales en Boca y backup/restauración. No reactivar ni presentar estas funciones

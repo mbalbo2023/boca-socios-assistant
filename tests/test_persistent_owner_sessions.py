@@ -41,9 +41,9 @@ def _sessions(store: OwnerBrowserSessionStore, clock: list[float]) -> OwnerSessi
 
 def test_browser_cookie_outlives_old_idle_absolute_windows_and_renews_rolling_max_age() -> None:
     with TemporaryDirectory() as temporary:
-        store = OwnerBrowserSessionStore(
-            Database(Path(temporary) / "boca.sqlite3"), owner_subject="owner"
-        )
+        database = Database(Path(temporary) / "boca.sqlite3")
+        database.migrate()
+        store = OwnerBrowserSessionStore(database, owner_subject="owner")
         store.migrate()
         clock = [1.0]
         sessions = _sessions(store, clock)
@@ -67,7 +67,9 @@ def test_browser_cookie_outlives_old_idle_absolute_windows_and_renews_rolling_ma
 def test_restart_rebuilds_fresh_csrf_operations_and_singleton_replaces_prior_cookie() -> None:
     with TemporaryDirectory() as temporary:
         path = Path(temporary) / "boca.sqlite3"
-        store = OwnerBrowserSessionStore(Database(path), owner_subject="owner")
+        database = Database(path)
+        database.migrate()
+        store = OwnerBrowserSessionStore(database, owner_subject="owner")
         store.migrate()
         clock = [1.0]
         original = _sessions(store, clock)
@@ -110,6 +112,7 @@ def test_restart_rebuilds_fresh_csrf_operations_and_singleton_replaces_prior_coo
 def test_reconstructed_cookie_needs_same_verifier_and_permission_scope() -> None:
     with TemporaryDirectory() as temporary:
         db = Database(Path(temporary) / "boca.sqlite3")
+        db.migrate()
         store = OwnerBrowserSessionStore(db, owner_subject="owner")
         store.migrate()
         clock = [1.0]

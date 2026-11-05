@@ -162,3 +162,61 @@ Hasta integrar, registrar SHA de candidato, Ruff, Mypy, suite completa y
 resultado remoto del PR DRAFT. El estado del controller instalado sigue el
 [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
 Sin merge, workflow protegido ni deploy autorizado por este ADR.
+
+## Extensión R6 — lectura segura de snapshot offline (código DRAFT, no host)
+
+La auditoría de [#314](https://github.com/mbalbo2023/boca-socios-assistant/issues/314#issuecomment-6648149945)
+detectó un faltante funcional concreto: la única construcción del servidor en
+`runtime.build_beta_server` no suministra `observed_official_notices`, de modo
+que las rutas de eventos del candidato #319 muestran el catálogo vacío. Los
+checks de PR certifican la ruta y sus restricciones, no la presencia de avisos
+en un panel físico. Por decisión de integración se agrega en este PR **sólo un
+lector**, sin cablear el servidor ni modificar la fuente oficial.
+
+`events.official_snapshot.load_official_snapshot(path)` devuelve una tupla de
+`OfficialNotice` no accionables. El nombre fijo del archivo es
+`boca_official_notices.jsonl`, propuesto como archivo **dentro del volumen Boca
+existente** junto a `/data/boca.sqlite3` (ruta lógica
+`/data/boca_official_notices.jsonl`). **No crea volumen, archivo, subdirectorio,
+tabla, migración ni puerto.** El futuro servidor debe construir esta ruta
+solamente a partir de su directorio de datos Boca confiable: el lector no
+autentica por sí mismo un montaje Docker, una captura del club ni una fuente
+de escritura. No lee URLs ni otras bases de datos.
+
+Contrato fail-closed:
+
+1. Sólo el archivo opcional ausente, con el directorio de datos existente y
+   válido, se interpreta como catálogo vacío; un directorio ausente, enlace
+   simbólico, ruta relativa u otro nombre son errores explícitos. Nunca se
+   interpreta una lectura fallida como «no hay eventos».
+2. Recorre los componentes del directorio con `openat`/`O_NOFOLLOW`, exige
+   directorio final dueño UID del proceso, no escribible por grupo/otros, y
+   archivo regular dueño UID del proceso, con modo exactamente `0400` o `0600`
+   y un único enlace físico. Se rechazan enlaces simbólicos/duros, FIFO,
+   identidad mutable, tamaño alterado entre lectura y postflight, o escritura
+   concurrente detectada. No usa un `read()` ilimitado: máximo **327.700 bytes**
+   y 20 líneas de hasta **16.384 bytes** cada una.
+3. Cada línea UTF-8 es exactamente una observación JSON v1/v2 del importador
+   preexistente, con URL pública oficial declarada, horarios ART y
+   `source_sha256` **declarado, no cotejado contra HTML real**. Rechaza líneas
+   vacías, CRLF ambiguo, bytes NUL, JSON inválido, duplicados y exceso.
+4. Un archivo presente corrupto o inseguro levanta `OfficialSnapshotError`
+   (subclase de `OfficialCatalogError`) con texto redactado y sin contenido ni
+   rutas privadas. No realiza fallback silencioso, uso de datos anteriores ni
+   promoción de confianza. En la futura integración, los errores deberán
+   degradar **sólo** las rutas informativas de eventos con un estado 503, sin
+   impedir los controles/simulaciones locales seguros.
+5. La eventual escritura del snapshot **no** está implementada ni autorizada
+   aquí. Un escritor futuro debe generar fuera de este lector observaciones
+   revisadas por el dueño, publicar por reemplazo atómico con permisos exactos
+   y conservar recibo de fuente. Nunca editar el archivo in-place ni crear un
+   cron/Actions que navegue Boca Socios o Queue-it. La primera versión no
+   tiene feed automático ni TTL de código; la antigüedad de observación es
+   un dato mostrado, no disponibilidad.
+
+La implementación no abre los módulos BLACKBOX ni llama Telegram, el sitio
+de socios, SQLite, Docker o el host. Sus pruebas crean sólo archivos
+**sintéticos** en directorios temporales del runner. Falta el wiring separado
+de `runtime`/panel (propiedad del integrador #319), QA combinada, validación
+real de fuente/procedencia, y recepción física del owner. Esta extensión no
+autoriza merge, release o cutover y no convierte noticias en `TicketIntent`.

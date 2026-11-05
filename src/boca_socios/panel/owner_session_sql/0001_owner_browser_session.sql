@@ -5,3 +5,7 @@ CREATE TABLE owner_browser_session (
   owner_sha256 BLOB NOT NULL CHECK (length(owner_sha256) = 32),
   authenticated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE owner_session_schema (
+  version INTEGER PRIMARY KEY CHECK (version = 1),
+  checksum TEXT NOT NULL CHECK (length(checksum) = 64)
+);

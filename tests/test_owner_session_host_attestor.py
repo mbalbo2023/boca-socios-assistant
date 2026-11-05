@@ -133,21 +133,30 @@ def _versions(path: Path) -> list[int]:
         ]
 
 
-def test_trusted_host_attestor_applies_only_0008_under_exclusive_lease(
+def test_trusted_host_attestor_bootstraps_separate_session_under_exclusive_lease(
     docker_fixture: tuple[Path, dict[str, Any], list[tuple[str, ...]]],
 ) -> None:
     db, _, calls = docker_fixture
-    attestor = _evidence()
+    outer_fd = os.open(host._LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    fcntl.flock(outer_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    attestor = replace(_evidence(), borrowed_lease_fd=outer_fd)
     assert attestor.host_database_path() == db
-    assert (
-        upgrade.upgrade_existing_owner_schema_0008(attestor, path=db)
-        is upgrade.UpgradeResult.APPLIED
-    )
-    assert _versions(db) == [1, 2, 3, 5, 6, 8]
-    assert (
-        upgrade.upgrade_existing_owner_schema_0008(attestor, path=db)
-        is upgrade.UpgradeResult.ALREADY_APPLIED
-    )
+    try:
+        assert (
+            upgrade.bootstrap_existing_owner_session(attestor, path=db)
+            is upgrade.SessionBootstrapResult.APPLIED
+        )
+        assert _versions(db) == [1, 2, 3, 5, 6]
+        with sqlite3.connect(db.with_name("boca_owner_session.sqlite3")) as connection:
+            assert connection.execute("SELECT version FROM owner_session_schema").fetchall() == [
+                (1,)
+            ]
+        assert (
+            upgrade.bootstrap_existing_owner_session(attestor, path=db)
+            is upgrade.SessionBootstrapResult.ALREADY_APPLIED
+        )
+    finally:
+        os.close(outer_fd)
     assert len([call for call in calls if call[0] == "info"]) == 4
     assert all(call[0] in {"info", "ps", "inspect", "volume"} for call in calls)
 
@@ -168,7 +177,7 @@ def test_trusted_host_attestor_applies_only_0008_under_exclusive_lease(
         "missing_owner_mount",
     ],
 )
-def test_fails_closed_without_writing_0008_for_host_identity_drift(
+def test_fails_closed_without_bootstrapping_session_for_host_identity_drift(
     docker_fixture: tuple[Path, dict[str, Any], list[tuple[str, ...]]],
     tamper: str,
 ) -> None:
@@ -198,8 +207,9 @@ def test_fails_closed_without_writing_0008_for_host_identity_drift(
     elif tamper == "missing_owner_mount":
         original["Mounts"].pop()
     with pytest.raises(upgrade.OwnerSessionUpgradeUnavailable):
-        upgrade.upgrade_existing_owner_schema_0008(_evidence(), path=db)
+        upgrade.bootstrap_existing_owner_session(_evidence(), path=db)
     assert _versions(db) == [1, 2, 3, 5, 6]
+    assert not db.with_name("boca_owner_session.sqlite3").exists()
 
 
 def test_leased_stop_is_mutually_exclusive(
@@ -269,12 +279,19 @@ def test_borrowed_fd_must_itself_hold_canonical_boca_lease(
     assert _versions(db) == [1, 2, 3, 5, 6]
 
 
-def test_foreign_path_and_public_stopped_flag_cannot_trigger_upgrade(
+def test_foreign_path_and_public_stopped_flag_cannot_trigger_session_bootstrap(
     docker_fixture: tuple[Path, dict[str, Any], list[tuple[str, ...]]], tmp_path: Path
 ) -> None:
     db, _, _ = docker_fixture
-    with pytest.raises(upgrade.OwnerSessionUpgradeUnavailable, match="scope"):
-        upgrade.upgrade_existing_owner_schema_0008(_evidence(), path=tmp_path / "other.db")
+    outer_fd = os.open(host._LOCK, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    fcntl.flock(outer_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        with pytest.raises(upgrade.OwnerSessionUpgradeUnavailable, match="scope"):
+            upgrade.bootstrap_existing_owner_session(
+                replace(_evidence(), borrowed_lease_fd=outer_fd), path=tmp_path / "other.db"
+            )
+    finally:
+        os.close(outer_fd)
     with pytest.raises(upgrade.OwnerSessionUpgradeUnavailable, match="evidence"):
-        upgrade.upgrade_existing_owner_schema_0008(True, path=db)  # type: ignore[arg-type]
+        upgrade.bootstrap_existing_owner_session(True, path=db)  # type: ignore[arg-type]
     assert _versions(db) == [1, 2, 3, 5, 6]
