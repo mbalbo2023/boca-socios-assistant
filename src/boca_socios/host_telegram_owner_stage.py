@@ -17,7 +17,10 @@ from pathlib import Path
 from typing import Literal
 
 from boca_socios.host_boca_cleanup import BocaJobLease, verify_protected_boca_job_lease
-from boca_socios.host_lifecycle_rootless_adapter import LifecycleDockerIO, ProductionRootlessDockerIO
+from boca_socios.host_lifecycle_rootless_adapter import (
+    LifecycleDockerIO,
+    ProductionRootlessDockerIO,
+)
 from boca_socios.host_telegram_postcutover import (
     TelegramHostPins,
     observe_telegram_host,
