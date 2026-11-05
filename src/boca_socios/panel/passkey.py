@@ -216,9 +216,7 @@ class PasskeyOwnerAuthentication:
         with self._lock:
             now = self._clock()
             self._telegram_challenges = {
-                item: expiry
-                for item, expiry in self._telegram_challenges.items()
-                if expiry > now
+                item: expiry for item, expiry in self._telegram_challenges.items() if expiry > now
             }
             if now < self._next_challenge or len(self._telegram_challenges) >= 8:
                 return False
