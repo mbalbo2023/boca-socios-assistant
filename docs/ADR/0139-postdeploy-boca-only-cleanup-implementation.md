@@ -443,6 +443,17 @@ profile, symlink, changed file or wrong digest yields NO_GO **before any SSH**.
 The additional 16 regression cases explicitly cover those failures and
 demonstrate the preflight itself touches no Docker, SQLite or network.
 
+**R11-5 FIFO anti-hang correction (architecture review):** The original
+`_read_bounded()` called `os.open(O_RDONLY|O_NOFOLLOW)` before it could apply
+`fstat(S_ISREG)`. A local FIFO with mode 0600 and no writer could therefore
+block the GitHub runner indefinitely **before its own fail-closed file check**;
+this was reproduced with an adversarial subprocess timeout. The final-file
+open now includes **O_NONBLOCK** (no behavior change for regular files), then
+retains the same exact regular-inode/owner/link/mode/readback verification.
+A subprocess regression creates a genuine 0600 FIFO and requires prompt
+`NO_GO host=untouched` within a bounded timeout. This resolves the local
+availability flaw without claiming a physical GO or modifying the controller.
+
 This preflight deliberately **does not** independently query GitHub to prove
 that an Actions run succeeded, authenticate the historical Compose API
 response, certify live Docker or attest real Chrome/Telegram usability. These

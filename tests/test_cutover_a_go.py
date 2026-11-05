@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -211,6 +212,26 @@ def test_cli_missing_protected_go_and_untrusted_request_is_inert(
     assert go.main([str(request_file)]) == 1
     assert "NO_GO host=untouched" in capsys.readouterr().err
     assert os.path.exists(request.historical_compose_path)
+
+
+def test_fifo_0600_cannot_block_go_preflight_before_regular_file_attestation(
+    tmp_path: Path,
+) -> None:
+    """Adversarial real FIFO: a protected runner must fail instead of hanging."""
+    fifo = tmp_path / "malicious-go-request.json"
+    os.mkfifo(fifo, 0o600)
+    result = subprocess.run(  # noqa: S603 - fixed Python script, no shell or untrusted executable
+        [sys.executable, str(ROOT / "scripts/check_cutover_a_go.py"), str(fifo)],
+        cwd=ROOT,
+        env={**os.environ, "PYTHONPATH": str(ROOT / "src")},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=2.5,
+    )
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "BOCA_CUTOVER_A_GO state=NO_GO host=untouched" in result.stderr
 
 
 def test_no_effectful_dispatch_is_exposed_even_if_go_source_exists() -> None:
