@@ -12,7 +12,6 @@ from boca_socios import host_telegram_postcutover as host
 from boca_socios.host_boca_cleanup import (
     BocaJobLease,
     Container,
-    Inventory,
     Network,
     Volume,
 )
@@ -23,7 +22,6 @@ from test_host_lifecycle_rootless_adapter import (
     CONFIG_WORKER,
     CONTROLLER,
     CONTROLLER_REF,
-    FakeIO,
     INSTALLED,
     IPC_ATTEMPT,
     SENDER,
@@ -32,6 +30,7 @@ from test_host_lifecycle_rootless_adapter import (
     WI,
     WORKER,
     WORKER_REF,
+    FakeIO,
 )
 
 _ATTEMPT = "3456789012"
@@ -155,7 +154,7 @@ def _lease() -> BocaJobLease:
         ("controller_config_hash", "bad"),
         ("worker_config_hash", CONFIG_CONTROLLER),
         ("browser_attempt", "1;echo bad"),
-        ("data_mountpoint", "/tmp"),
+        ("data_mountpoint", "/var/boca-untrusted"),
         ("cutover_attempt", "abc"),
         ("cutover_receipt_sha256", "bad"),
         ("owner_digest", "bad"),
@@ -280,7 +279,7 @@ def test_volume_label_drift_denied(tmp_path: Path) -> None:
 def test_mount_and_port_drift_denied(tmp_path: Path) -> None:
     io = _fake(tmp_path)
     io.fields[("container", CONTROLLER, "HostConfig.PortBindings")] = {
-        "8443/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8443"}]
+        "8443/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8443"}]  # noqa: S104 - negative fixture
     }
     with pytest.raises(host.TelegramHostNoGo):
         host.observe_telegram_host(_pins(), lease=_lease(), io=io)
