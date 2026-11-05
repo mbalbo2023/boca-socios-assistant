@@ -574,3 +574,48 @@ comprobación Samsung Chrome+Termius y limpieza host selectiva con recibos de
 éxito o fallo. Los caminos ambiguos no reintentan ni borran recursos; Porota
 y las otras aplicaciones permanecen fuera del alcance. Los resultados de
 QA y GH Actions se documentan por SHA exacto en #320/#336.
+
+### A45-R22: GO protegido y operación Cutover A conectada al workflow (PR DRAFT; sin ejecución)
+
+La nueva operación manual `cutover-a-apply` tiene un **NO_GO real por defecto**.
+El disparador no autoriza nada por sí solo: antes de crear la configuración SSH,
+el runner requiere el valor independiente
+`vars.BOCA_CUTOVER_A_GO_BINDING_SHA256` en el *GitHub Environment* protegido
+`boca-first-deploy`. El contenido debe coincidir byte por byte con el SHA256
+del objeto de autorización que construye `scripts/check_cutover_a_go.py` a
+partir del **run ID exacto, intento 1, actor y HEAD de main, IDs originales,
+dos releases distintos, tres manifests de release (controller viejo y ambos
+actuales), Compose histórico recuperado desde su SHA, Compose/overlay/seccomp
+revisados, ZIP completo Option B y destino localhost:8443**. El SHA de GO no
+es un input de `workflow_dispatch`; vacío, incorrecto, anterior o de otro
+run resulta `NO_GO` **antes de SSH**. No se recicla la autorización de la
+observación read-only ni se infiere el ID original del nombre Docker.
+Se verifica nuevamente el HEAD de main **inmediatamente antes del único SSH**
+para evitar una ventana TOCTOU entre el primer preflight y el efecto remoto.
+
+Tras validación, el runner escribe con O_EXCL dos archivos privados (token
+canónico de coordenadas + digest de GO) y ejecuta **un solo SSH** cuyo stdin
+contiene exactamente el ZIP autenticado. El bootstrap verifica el SHA y la
+allowlist antes de ejecutar el mismo memfd. El entrypoint host comprueba
+otra vez el digest ZIP y el GO provisto por canal separado del token; recién
+entonces usa `execute_reviewed_cutover(plan)` con lease única, intento/result
+O_EXCL y finalizador selectivo. No hay `docker image/system prune`, respaldos,
+segundo puerto, HTTPS, rollback o acceso a Porota/otros contenedores.
+
+El host puede imprimir aceptación únicamente tras verificar un recibo
+terminal persistido, con `attempt`, `target_sha`, `cleanup=ACCEPT` y
+`receipt=RECORDED`. Un paso del workflow `if: always()` exige tanto GO como
+SSH con outcome positivo y **la línea exacta**, o declara `NO_GO` sin
+reintentar ni limpiar a ciegas. Una caída dura del host/runner no demuestra
+que el finally haya corrido; el estado queda **indeterminado, preservar e
+inspeccionar sólo Boca**. Incluso con recibo positivo, `runtime=UNVERIFIED`
+hasta las pruebas físicas de Chrome Samsung/Termius, bot, Telegram y sesiones.
+
+La rama DRAFT sólo habilita el *camino revisable*; ningún workflow effectful
+fue ejecutado, no hay GO independiente cargado por este cambio ni deploy al
+droplet. El suite sintético comprueba GO ausente/distinto, manipulación de
+actor/branch/SHA/release/ID, token canonical, reutilización O_EXCL, memfd,
+líneas de recibo fallidas, pérdida de GO/SSH, límites de la operación y
+regresión de las funcionalidades de navegador. El candidato #319 y el resto
+de los frentes se integran sólo con QA/Actions de SHA exacto y la decisión
+explícita del propietario para el **único** deploy.

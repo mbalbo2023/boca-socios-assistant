@@ -56,6 +56,13 @@ def _encode(plan: CutoverPlan, bundle_sha: str, go_sha: str = GO) -> str:
     )
 
 
+def test_runner_encode_matches_canonical_request() -> None:
+    plan = _plan()
+    token = cli.encode_invocation(plan, bundle_sha256="a" * 64, go_binding_sha256=GO)
+    assert token == _encode(plan, "a" * 64)
+    assert cli.CutoverInvocation.decode(token).plan == plan
+
+
 @pytest.fixture
 def reviewed_context(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -113,7 +120,9 @@ def test_cli_exact_go_fake_effect_requires_persisted_terminal_result(
     )
     assert events == ["cutover-fake", "durable-result-observed"]
     assert capsys.readouterr().out == (
-        "BOCA_CUTOVER_A_HOST state=ACCEPTED receipt=RECORDED runtime=UNVERIFIED\n"
+        f"BOCA_CUTOVER_A_HOST state=ACCEPTED attempt={plan.attempt_id} "
+        f"target_sha={plan.target_sha} cleanup=ACCEPT "
+        "receipt=RECORDED runtime=UNVERIFIED\n"
     )
 
 

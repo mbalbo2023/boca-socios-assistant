@@ -13,15 +13,19 @@ import re
 import ssl
 import sys
 import unicodedata
-from datetime import UTC, datetime
+from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from urllib import error, request
+
+from .official_catalog import OfficialCatalogError, load_observed_notice
 
 OFFICIAL_NEWS_URL = "https://www.bocajuniors.com.ar/noticias/boca-defensa-informacion-al-socio"
 _MAX_HTML_BYTES = 1_000_000
 _TIMEOUT_SECONDS = 8.0
 _IGNORED_TAGS = frozenset({"head", "script", "style", "noscript", "svg", "template"})
+_ART = timezone(timedelta(hours=-3))
 _REQUIRED_MARKERS = {
     "article_title": "Boca-Defensa",
     "published_date": "November 3, 2026",
@@ -127,8 +131,15 @@ def _parse_server_date(raw: str | None) -> str | None:
         return None
 
 
-def observe_public_news(*, now: datetime | None = None) -> dict[str, object]:
-    """Single GET with TLS verification; external failure is an advisory receipt."""
+def observe_public_news(
+    *, now: datetime | None = None, with_offline_snapshot: bool = False
+) -> dict[str, object]:
+    """Single GET; optionally bind same ephemeral HTML bytes to offline JSONL.
+
+    The optional JSONL is transport data for an isolated PR-only runner. It is
+    NOT an official availability/feed assertion and must be split from the
+    redacted receipt before uploading artifacts or writing job summaries.
+    """
     if now is None:
         now = datetime.now(UTC)
     if now.tzinfo is None or now.utcoffset() is None:
@@ -152,6 +163,12 @@ def observe_public_news(*, now: datetime | None = None) -> dict[str, object]:
         "availability_verified": False,
         "actionable": False,
     }
+    if with_offline_snapshot:
+        receipt.update(
+            offline_snapshot_state="NO_EVENTOS_VERIFICADOS",
+            offline_snapshot_reason="public_source_unavailable",
+            offline_snapshot_jsonl=None,
+        )
     opener = request.build_opener(
         request.ProxyHandler({}),
         _NoRedirect(),
@@ -195,9 +212,25 @@ def observe_public_news(*, now: datetime | None = None) -> dict[str, object]:
             if all(markers.values()):
                 receipt["state"] = "PUBLIC_PAGE_OBSERVED_UNVERIFIED"
                 receipt["reason"] = "public_content_markers_present_only"
+                if with_offline_snapshot:
+                    # Import lazily: the pure article extractor uses the URL
+                    # constant defined by this module; no secondary GET.
+                    from .official_article_observation import build_boca_defensa_offline_jsonl
+                    from .official_capture_binding import OfflineCaptureError
+
+                    try:
+                        receipt["offline_snapshot_jsonl"] = build_boca_defensa_offline_jsonl(
+                            payload, observed_at=now
+                        )
+                        receipt["offline_snapshot_state"] = "EXTRACTED_UNVERIFIED"
+                        receipt["offline_snapshot_reason"] = "public_article_fields_bound"
+                    except OfflineCaptureError:
+                        receipt["offline_snapshot_reason"] = "article_semantics_unverified"
             else:
                 receipt["state"] = "CONTENT_UNVERIFIED"
                 receipt["reason"] = "public_content_markers_missing"
+                if with_offline_snapshot:
+                    receipt["offline_snapshot_reason"] = "public_content_unverified"
     except error.HTTPError as exc:
         receipt["http_status"] = exc.code
         receipt["reason"] = "http_non_200"
@@ -207,10 +240,83 @@ def observe_public_news(*, now: datetime | None = None) -> dict[str, object]:
     return receipt
 
 
+def split_public_observation_envelope(
+    envelope: Mapping[str, object],
+) -> tuple[dict[str, object], str | None]:
+    """Validate same-GET URL/SHA/time binding; redact JSONL from receipt.
+
+    This is a pure artifact finalizer for an ephemeral Actions runner. It has
+    no storage or network I/O and never upgrades an observation to eligibility.
+    Invalid cross-file provenance fails rather than uploading a mismatched
+    source receipt and event schedule.
+    """
+    if not isinstance(envelope, dict) or "offline_snapshot_jsonl" not in envelope:
+        raise ValueError("public observation envelope absent")
+    receipt = dict(envelope)
+    jsonl = receipt.pop("offline_snapshot_jsonl")
+    if (
+        receipt.get("schema") != "boca-public-news-receipt-v1"
+        or receipt.get("source_url") != OFFICIAL_NEWS_URL
+        or receipt.get("request_count") != 1
+        or receipt.get("redirects_followed") != 0
+        or receipt.get("credentials_sent") is not False
+        or receipt.get("actionable") is not False
+        or receipt.get("availability_verified") is not False
+        or receipt.get("feed_verified") is not False
+        or receipt.get("state")
+        not in ("PUBLIC_PAGE_OBSERVED_UNVERIFIED", "CONTENT_UNVERIFIED", "SOURCE_DEGRADED")
+        or receipt.get("offline_snapshot_state")
+        not in ("EXTRACTED_UNVERIFIED", "NO_EVENTOS_VERIFICADOS")
+        or receipt.get("tls_policy") != "PYTHON_DEFAULT_CA_HOSTNAME_VERIFIED"
+    ):
+        raise ValueError("public observation receipt contract invalid")
+    if jsonl is None:
+        if receipt["offline_snapshot_state"] != "NO_EVENTOS_VERIFICADOS":
+            raise ValueError("public observation source status contradictory")
+        return receipt, None
+    if (
+        type(jsonl) is not str
+        or not 0 < len(jsonl.encode("utf-8")) <= 16_384
+        or jsonl.count("\n") != 1
+        or not jsonl.endswith("\n")
+        or "\r" in jsonl
+        or receipt["offline_snapshot_state"] != "EXTRACTED_UNVERIFIED"
+        or receipt["state"] != "PUBLIC_PAGE_OBSERVED_UNVERIFIED"
+        or receipt.get("http_status") != 200
+        or type(receipt.get("content_length")) is not int
+        or not 0 < receipt["content_length"] <= _MAX_HTML_BYTES
+    ):
+        raise ValueError("public observation JSONL structure invalid")
+    try:
+        notice = load_observed_notice(jsonl[:-1])
+        observed_utc = datetime.fromisoformat(str(receipt["observed_at_utc"]))
+        if observed_utc.tzinfo is None or observed_utc.utcoffset() is None:
+            raise ValueError("public observation timezone missing")
+        article_observed = observed_utc.astimezone(_ART).replace(second=0, microsecond=0)
+    except (OfficialCatalogError, TypeError, ValueError, OverflowError):
+        raise ValueError("public observation data invalid") from None
+    if (
+        notice.source_url != receipt["source_url"]
+        or notice.source_sha256 != receipt.get("source_sha256")
+        or notice.observed_at != article_observed
+        or len(notice.windows) != 5
+        or notice.admission_channel_claim != "BOCA_SOCIOS"
+        or notice.actionable is not False
+    ):
+        raise ValueError("public article SHA, URL or window provenance mismatch")
+    return receipt, jsonl
+
+
 def main() -> None:
-    if len(sys.argv) != 1:
+    if sys.argv[1:] not in ([], ["--emit-offline-observation"]):
         raise SystemExit("no source URLs or request parameters accepted")
-    print(json.dumps(observe_public_news(), sort_keys=True, separators=(",", ":")))
+    print(
+        json.dumps(
+            observe_public_news(with_offline_snapshot=len(sys.argv) == 2),
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
 
 
 if __name__ == "__main__":

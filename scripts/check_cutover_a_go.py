@@ -1,9 +1,8 @@
-"""Future protected Cutover A GO binding; offline/runner-only, no host effects.
+"""Protected Cutover A GO binding; runner-only, no direct host effects.
 
-This verifier is intentionally NOT reachable from the live GitHub Actions
-operation choices. A future exact-SHA GO must set a protected environment
-variable independently of workflow_dispatch inputs. Source review, PR checks
-and presence of the helper do not imply authorization to touch the droplet.
+The protected workflow exposes an inert-by-default operation: an independent
+exact-run GitHub Environment variable must match this full reviewed digest.
+Neither source review, PR checks nor dispatch input constitutes host GO.
 """
 
 from __future__ import annotations
@@ -17,6 +16,7 @@ import re
 import stat
 import sys
 import zipfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +25,7 @@ import boca_protected_memfd_bootstrap as memfd
 
 from boca_socios.browser_release_manifest import validate_browser_manifest
 from boca_socios.host_boca_cutover import CutoverPlan
+from boca_socios.host_boca_cutover_cli import CutoverCliError, encode_invocation
 from boca_socios.release_manifest import validate_manifest
 
 VERSION = "boca-cutover-a-go-v1"
@@ -34,6 +35,9 @@ MAIN = "refs/heads/main"
 RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
 HEX = re.compile(r"[0-9a-f]{64}\Z")
 MAX_REQUEST = 8192
+HOST_INVOCATION_NAME = "boca-cutover-a-invocation.token"
+HOST_APPROVAL_NAME = "boca-cutover-a-approved.digest"
+HOST_RECEIPT_NAME = "boca-cutover-a-host.receipt"
 
 
 class CutoverGoError(ValueError):
@@ -302,20 +306,163 @@ def require_protected_go(request: GoRequest, *, protected_go_digest: str) -> str
     return expected
 
 
+def actions_request(environment: Mapping[str, str]) -> GoRequest:
+    """Derive exact host coordinates from protected Actions context, not input JSON."""
+    if (
+        environment.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+        or environment.get("BOCA_OPERATION") != "cutover-a-apply"
+        or environment.get("BOCA_SERVICE") != "controller"
+        or environment.get("BOCA_BUDGET") != "1.5cpu-1024m-192pids"
+        or environment.get("GITHUB_SHA") != environment.get("BOCA_SOURCE_SHA")
+    ):
+        raise CutoverGoError("Cutover A protected Actions operation context invalid")
+    try:
+        workspace = Path(environment["GITHUB_WORKSPACE"])
+        runner = Path(environment["RUNNER_TEMP"])
+        if (
+            not workspace.is_absolute()
+            or not runner.is_absolute()
+            or workspace == runner
+            or ".." in workspace.parts
+            or ".." in runner.parts
+        ):
+            raise CutoverGoError("Cutover A runner directory roots invalid")
+        historical = runner / "boca-cutover-legacy-compose.yaml"
+        target = workspace / "compose.beta.yaml"
+        overlay = workspace / "compose.beta.browser.yaml"
+        seccomp = workspace / "docker/seccomp_profile.json"
+        plan = CutoverPlan(
+            attempt_id=environment["GITHUB_RUN_ID"],
+            legacy_id=environment["BOCA_LEGACY_CONTROLLER_ID"],
+            legacy_sha=environment["BOCA_LEGACY_SOURCE_SHA"],
+            legacy_image=environment["BOCA_LEGACY_IMAGE_REF"],
+            legacy_compose_sha=hashlib.sha256(_read_bounded(historical, 32768)).hexdigest(),
+            target_sha=environment["BOCA_SOURCE_SHA"],
+            target_image=environment["BOCA_IMAGE_REF"],
+            browser_image=environment["BOCA_BROWSER_IMAGE_REF"],
+            target_compose_sha=hashlib.sha256(_read_bounded(target, 32768)).hexdigest(),
+            overlay_sha=hashlib.sha256(_read_bounded(overlay, 32768)).hexdigest(),
+            seccomp_sha=hashlib.sha256(_read_bounded(seccomp, 32768)).hexdigest(),
+            owner_subject=environment["BOCA_BETA_OWNER_SUBJECT"],
+        )
+        plan.validate()
+        return GoRequest(
+            plan=plan,
+            github_repository=environment["GITHUB_REPOSITORY"],
+            github_actor=environment["GITHUB_ACTOR"],
+            github_ref=environment["GITHUB_REF"],
+            github_sha=environment["GITHUB_SHA"],
+            github_run_id=environment["GITHUB_RUN_ID"],
+            github_run_attempt=environment["GITHUB_RUN_ATTEMPT"],
+            target_release_run_id=environment["BOCA_RELEASE_RUN_ID"],
+            legacy_release_run_id=environment["BOCA_LEGACY_RELEASE_RUN_ID"],
+            target_manifest_path=runner / "boca-release-manifest/boca-release-manifest.json",
+            browser_manifest_path=runner
+            / "boca-browser-release-manifest/boca-browser-release-manifest.json",
+            legacy_manifest_path=runner / "boca-cutover-legacy-manifest/boca-release-manifest.json",
+            historical_compose_path=historical,
+            target_compose_path=target,
+            overlay_path=overlay,
+            seccomp_path=seccomp,
+            bundle_path=runner / "boca-cutover-a-review.pyz",
+        )
+    except (KeyError, ValueError) as exc:
+        raise CutoverGoError("Cutover A required Actions coordinates unavailable") from exc
+
+
+def _write_once(path: Path, payload: bytes) -> None:
+    """Runner-only receipt: no replacement after a failed approved preflight."""
+    if not 0 < len(payload) <= MAX_REQUEST:
+        raise CutoverGoError("Cutover A approved runner artifact unbounded")
+    try:
+        fd = os.open(
+            path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600
+        )
+        with os.fdopen(fd, "wb") as output:
+            os.fchmod(output.fileno(), 0o600)
+            output.write(payload)
+            output.flush()
+            os.fsync(output.fileno())
+        if _read_bounded(path, MAX_REQUEST) != payload:
+            raise CutoverGoError("Cutover A runner artifact readback differs")
+    except OSError as exc:
+        raise CutoverGoError("Cutover A approved runner artifact unavailable") from exc
+
+
+def write_actions_invocation(request: GoRequest, *, protected_go_digest: str) -> str:
+    """Write host token+GO only after runner proves the independent protected GO.
+
+    Neither output contains a credential. No SSH or host operation is made.
+    The token's source ZIP digest is verified twice around the full GO check.
+    """
+    bundle_before = hashlib.sha256(_read_bounded(request.bundle_path, memfd.MAX_ZIP)).hexdigest()
+    approved = require_protected_go(request, protected_go_digest=protected_go_digest)
+    bundle_after = hashlib.sha256(_read_bounded(request.bundle_path, memfd.MAX_ZIP)).hexdigest()
+    if bundle_after != bundle_before:
+        raise CutoverGoError("Cutover A ZIP changed during protected GO validation")
+    token = encode_invocation(request.plan, bundle_sha256=bundle_after, go_binding_sha256=approved)
+    root = request.bundle_path.parent
+    _write_once(root / HOST_INVOCATION_NAME, (token + "\n").encode("ascii"))
+    _write_once(root / HOST_APPROVAL_NAME, (approved + "\n").encode("ascii"))
+    return approved
+
+
+def assert_actions_host_receipt(environment: Mapping[str, str]) -> None:
+    """Fail closed on missing SSH, failed preflight, or non-exact terminal result."""
+    if (
+        environment.get("BOCA_OPERATION") != "cutover-a-apply"
+        or environment.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+        or environment.get("BOCA_CUTOVER_A_GO_PREFLIGHT") != "success"
+        or environment.get("BOCA_CUTOVER_A_HOST_APPLY") != "success"
+        or not RUN.fullmatch(environment.get("GITHUB_RUN_ID", ""))
+        or re.fullmatch(r"[0-9a-f]{40}", environment.get("GITHUB_SHA", "")) is None
+        or environment.get("GITHUB_SHA") != environment.get("BOCA_SOURCE_SHA")
+    ):
+        raise CutoverGoError("Cutover A GO/SSH step lacks positive evidence")
+    runner = Path(environment.get("RUNNER_TEMP", ""))
+    expected = (
+        f"BOCA_CUTOVER_A_HOST state=ACCEPTED "
+        f"attempt={environment['GITHUB_RUN_ID']} "
+        f"target_sha={environment['GITHUB_SHA']} "
+        "cleanup=ACCEPT receipt=RECORDED runtime=UNVERIFIED\n"
+    ).encode("ascii")
+    if _read_bounded(runner / HOST_RECEIPT_NAME, 300) != expected:
+        raise CutoverGoError("Cutover A terminal receipt missing or ambiguous")
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Future GO verifier; does not access SSH/Docker")
-    parser.add_argument("request_path", type=Path)
+    parser = argparse.ArgumentParser(description="Protected GO verifier; no SSH/Docker")
+    parser.add_argument("request_path", type=Path, nargs="?")
+    parser.add_argument("--from-actions", action="store_true")
+    parser.add_argument("--assert-host-receipt", action="store_true")
     args = parser.parse_args(argv)
     try:
-        raw = _read_bounded(args.request_path, MAX_REQUEST)
-        request = GoRequest.from_json(
-            json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_fields)
-        )
-        approved = require_protected_go(
-            request,
-            protected_go_digest=os.environ.get("BOCA_CUTOVER_A_GO_BINDING_SHA256", ""),
-        )
-    except (CutoverGoError, UnicodeError, json.JSONDecodeError, TypeError):
+        if args.assert_host_receipt:
+            if args.request_path is not None or args.from_actions:
+                raise CutoverGoError("Cutover A receipt assertion arguments unexpected")
+            assert_actions_host_receipt(os.environ)
+            print("BOCA_CUTOVER_A_HOST_VERIFY state=PASS receipt=EXACT runtime=UNVERIFIED")
+            return 0
+        if args.from_actions:
+            if args.request_path is not None:
+                raise CutoverGoError("Actions Cutover A cannot load caller request")
+            request = actions_request(os.environ)
+            approved = write_actions_invocation(
+                request,
+                protected_go_digest=os.environ.get("BOCA_CUTOVER_A_GO_BINDING_SHA256", ""),
+            )
+        else:
+            if args.request_path is None:
+                raise CutoverGoError("Cutover A request is absent")
+            raw = _read_bounded(args.request_path, MAX_REQUEST)
+            request = GoRequest.from_json(
+                json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_fields)
+            )
+            approved = require_protected_go(
+                request,
+                protected_go_digest=os.environ.get("BOCA_CUTOVER_A_GO_BINDING_SHA256", ""),
+            )
+    except (CutoverGoError, CutoverCliError, UnicodeError, json.JSONDecodeError, TypeError):
         print("BOCA_CUTOVER_A_GO state=NO_GO host=untouched", file=sys.stderr)
         return 1
     print(f"BOCA_CUTOVER_A_GO state=PASS sha256={approved} host=untouched")

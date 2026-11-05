@@ -403,3 +403,84 @@ de extracción debe registrar su propio HEAD/árbol, suite completa y Actions
 exact-SHA antes de integrar. Seguridad externa queda en seguimiento P2 por
 decisión de Tincho 05/11; no se modifican `synthetic.py` ni `ipc_worker.py`,
 bot, Telegram, datos de socios, puertos, GitHub host workflows u otras apps.
+
+## Extensión R22 — una GET pública, recibo + JSONL acotado en el mismo runner
+
+El R21.3 comprobó con 19 fixtures que cinco franjas pueden expresarse como
+observación no accionable, pero el artículo sólo existía como entrada de
+bytes sintéticos y la fuente R17 producía exclusivamente un recibo con
+digest. En esta extensión, sin ampliar URLs ni métodos, el **mismo GET**
+anónimo ya autorizado sobre la noticia pública fija puede pasar sus bytes
+recibidos en memoria al extractor puro *antes* de descartarlos.
+
+### Cadena nueva de código, sin despliegue
+
+1. `official_news_receipt.observe_public_news(with_offline_snapshot=True)`
+   conserva el único GET HTTPS/TLS verificado, con cero cookies, redirecciones,
+   proxies, credenciales, reintentos y segundo fetch. Después de HTTP 200,
+   digest del cuerpo y marcadores públicos, llama **una sola vez** al extractor
+   R21.3 sobre el **mismo buffer** y mismo reloj de observación.
+2. El modo fijo CLI `--emit-offline-observation` produce sólo un sobre JSON
+   temporal dentro del runner efímero. Si el texto semántico cambió,
+   desapareció un sector, la fecha/ventana es ambigua o el cuerpo no coincide,
+   devuelve recibo de la noticia con
+   `offline_snapshot_state=NO_EVENTOS_VERIFICADOS` y **sin JSONL**. Esto es una
+   degradación de datos externos, no un permiso para inventar horarios.
+3. `split_public_observation_envelope` verifica en la misma tarea URL final
+   exacta, SHA-256 de observación vs JSONL, hora UTC vs ART redondeada a
+   minuto, 5 ventanas, canal **declarado** y `actionable=false`; exige un
+   JSONL único de hasta 16.384 bytes. Rechaza recibos corruptos o campos
+   contradictorios, y separa el JSONL de la salida redactada.
+4. El workflow PR-only `.github/workflows/boca-official-news-receipt.yml`
+   sube por **7 días** sólo un recibo JSON redactado y, si fue extraído, un
+   `boca-official-news-catalog.jsonl` delimitado, cada uno con permisos 0600
+   dentro del runner. No sube HTML, sobre intermedio, cookies ni secretos.
+   No tiene dispatch manual, schedule, otro puerto, SSH, Docker, credencial,
+   escritura de volumen Boca ni navegación por Boca Socios/Queue-it.
+
+**Interpretación:** este JSONL es un artefacto de *noticia pública observada*,
+no una API o feed universal, una confirmación de eventos del sistema de socios,
+un inventario de cupos ni una autorización para operar tickets. Incluso con
+HTTP 200 y cinco ventanas, `verification_state=SOURCE_OBSERVED_UNVERIFIED` y
+`actionable=false` se mantienen. La noticia no certifica zona horaria de
+cada tramo; la aplicación de ART requiere revisión semántica adicional.
+Se desconoce si el HTML real del nuevo run cumplirá exactamente la gramática
+R21.3; si falla, sólo se conserva el recibo y el diagnóstico de incompatibilidad.
+El módulo no genera snapshots de otros partidos ni hace descubrimiento de API.
+
+**Falta para la BETA física:** inspeccionar el recibo real de esta Action,
+revisar las cinco franjas/canal contra el artículo auténtico y, sólo con un
+GO de Cutover posterior y custodia de volumen, publicar ese JSONL mediante
+reemplazo atómico en `/data/boca_official_notices.jsonl`. Hasta entonces las
+rutas del panel pueden legítimamente estar vacías sin que ello diga que no
+existen partidos. Esta extensión es **CODE-ONLY / PR-DRAFT / SIN HOST**;
+las pruebas locales son sintéticas y cada HEAD requiere Actions nuevas.
+
+### RCA R22.1 — separador invisible del artículo real (fix-forward acotado)
+
+La primera Action exact-SHA de la unión GET→extractor
+[42028314553](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42028314553)
+observó HTTP 200/TLS, **76.355 bytes**, SHA-256
+`db3b4cb424d5b6282dd7a562960be834705b8274637710b477d4154c26f14889`,
+11/11 marcadores públicos y un único GET, pero **no generó JSONL**:
+`offline_snapshot_state=NO_EVENTOS_VERIFICADOS`,
+`offline_snapshot_reason=article_semantics_unverified`. El job y la subida
+del recibo fueron verdes; ello no convierte la fuente en catálogo de eventos.
+
+Una inspección posterior de la página pública identificó literalmente un
+separador de formato invisible **U+200D (ZERO WIDTH JOINER)** entre la frase
+del cronograma y el encabezado GENERALES. El extractor R21.3 exigía que la
+sección intermedia fuese exactamente `generales` tras quitar sólo puntos y
+espacios; `_VisiblePublicText` conservaba el U+200D. Se reprodujo con una
+fixture sintética basada exclusivamente en esa diferencia: el nuevo test
+falló por `official category heading absent or ambiguous` antes del fix.
+
+Corrección mínima: **sólo en la proyección semántica**
+`official_article_observation._visible`, eliminar U+200D, sin eliminar otras
+letras, palabras, símbolos visibles o encabezados. El SHA se sigue calculando
+sobre los **bytes originales intactos** y `OfflineCapture` valida todos los
+fragmentos sobre la captura original. La posición/orden de las cinco
+categorías, horas, cierres y canal no se relajan. El test de U+200D y las
+pruebas anteriores deben pasar antes de una nueva Action: **aún no afirmar
+que el próximo recibo tendrá JSONL**. Si persiste otra diferencia, conservar
+NO_EVENTOS_VERIFICADOS y diagnosticar con recibos sin exportar HTML.

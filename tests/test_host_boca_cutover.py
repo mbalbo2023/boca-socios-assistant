@@ -222,12 +222,17 @@ def test_invalid_coordinates_cause_zero_host_calls(bad: str) -> None:
     assert host.events == []
 
 
-def test_cutover_contract_cannot_be_dispatched_by_current_protected_workflow() -> None:
+def test_cutover_contract_cannot_be_dispatched_without_independent_protected_go() -> None:
     workflow = (
         Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
     ).read_text(encoding="utf-8")
     assert "cutover-a-observe" in workflow
-    assert "cutover-a-apply" not in workflow
+    assert "cutover-a-apply" in workflow
+    assert (
+        "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}" in workflow
+    )
+    assert "python scripts/check_cutover_a_go.py --from-actions" in workflow
+    assert "Fail closed on absent or ambiguous Cutover A host terminal receipt" in workflow
     # PR-only pytest/build/if:always cannot become a live apply switch.
     assert "BOCA_CUTOVER_A_PR_VERIFY state=SOURCE_ONLY" in workflow
     assert "boca-cutover-a-host.receipt" in workflow

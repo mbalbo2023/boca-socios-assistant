@@ -14,7 +14,7 @@ import json
 import re
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
 from boca_socios import host_boca_cutover_backend as backend
@@ -85,6 +85,30 @@ class CutoverInvocation:
         return cls(plan, payload["bundle_sha256"], payload["go_binding_sha256"])
 
 
+def encode_invocation(plan: CutoverPlan, *, bundle_sha256: str, go_binding_sha256: str) -> str:
+    """Make the one bounded, canonical, public-coordinate host argument."""
+    plan.validate()
+    if _DIGEST.fullmatch(bundle_sha256) is None or _DIGEST.fullmatch(go_binding_sha256) is None:
+        raise CutoverCliError("Cutover host invocation digest malformed")
+    raw = json.dumps(
+        {
+            "version": VERSION,
+            "plan": asdict(plan),
+            "bundle_sha256": bundle_sha256,
+            "go_binding_sha256": go_binding_sha256,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("ascii")
+    if not 0 < len(raw) <= MAX_INVOCATION_BYTES:
+        raise CutoverCliError("Cutover host invocation payload unbounded")
+    encoded = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+    if CutoverInvocation.decode(encoded).plan != plan:
+        raise CutoverCliError("Cutover host invocation roundtrip mismatch")
+    return encoded
+
+
 def _bundle_digest() -> str:
     """Bound the authenticated memfd ZIP bytes to the reviewed invocation."""
     location = sys.argv[0]
@@ -133,5 +157,9 @@ def run_cli(
         # Hard cancellation is not turned into a synthetic terminal receipt.
         print("BOCA_CUTOVER_A_HOST state=NO_GO receipt=UNVERIFIED runtime=UNVERIFIED")
         return 3
-    print("BOCA_CUTOVER_A_HOST state=ACCEPTED receipt=RECORDED runtime=UNVERIFIED")
+    print(
+        f"BOCA_CUTOVER_A_HOST state=ACCEPTED attempt={invocation.plan.attempt_id} "
+        f"target_sha={invocation.plan.target_sha} cleanup=ACCEPT "
+        "receipt=RECORDED runtime=UNVERIFIED"
+    )
     return 0
