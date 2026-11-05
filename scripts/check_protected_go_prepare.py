@@ -17,6 +17,7 @@ import os
 import re
 import stat
 import sys
+from uuid import UUID
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -327,14 +328,69 @@ def _decode_private_run(path: Path) -> dict[str, Any]:
     return _strict_json(path)
 
 
+def assert_physical_host_receipt(environ: Mapping[str, str]) -> None:
+    """Strict one-line APPLIED+ACK; runner never invents an effect from step success."""
+    if (
+        environ.get("BOCA_LIFECYCLE_GO_PREFLIGHT") != "success"
+        or environ.get("BOCA_LIFECYCLE_HOST_APPLY") != "success"
+    ):
+        raise PreparedGoError("GO or physical effectful step not successful")
+    runner = Path(environ.get("RUNNER_TEMP", ""))
+    host_token = (runner / RUNNER_HOST_CONTEXT).read_text(encoding="ascii").strip()
+    hosted = context.decode_context(
+        host_token, operation="lifecycle-apply", environ=environ
+    )
+    payload_path = runner / "boca-lifecycle-host.receipt"
+    if not payload_path.is_absolute() or payload_path.is_symlink():
+        raise PreparedGoError("physical receipt not an exact runner file")
+    blob = payload_path.read_bytes()
+    if not 2 < len(blob) <= 1024 or blob.count(b"\\n") != 1 or not blob.endswith(b"\\n"):
+        raise PreparedGoError("physical receipt missing or ambiguous")
+    receipt = json.loads(blob[:-1].decode("ascii"), object_pairs_hook=context._unique_fields)  # noqa: SLF001
+    expected_keys = {
+        "version", "scope", "attempt", "prepare_run_id", "request_id",
+        "source_sha", "component", "target", "status", "physical_ack",
+    }
+    if type(receipt) is not dict or set(receipt) != expected_keys:
+        raise PreparedGoError("physical receipt shape invalid")
+    if _canonical(receipt) != blob[:-1]:
+        raise PreparedGoError("physical receipt not canonical")
+    try:
+        uuid = UUID(receipt["request_id"])
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise PreparedGoError("physical ACK lacks ledger UUID") from exc
+    if (
+        type(receipt["version"]) is not int
+        or receipt["version"] != 1
+        or receipt["scope"] != "boca-lifecycle"
+        or receipt["attempt"] != hosted["attempt_id"]
+        or receipt["prepare_run_id"] != hosted["prepare_run_id"]
+        or receipt["source_sha"] != hosted["source_sha"]
+        or receipt["component"] != hosted["expected_component"]
+        or receipt["target"] != hosted["expected_target"]
+        or receipt["request_id"] != str(uuid)
+        or receipt["status"] != "APPLIED"
+        or receipt["physical_ack"] is not True
+    ):
+        raise PreparedGoError("physical host ACK not exact APPLIED result")
+
+
 def main() -> int:
-    """No path can access host. Workflow chooses later post-GO host call."""
+    """Runner-only PREPARE/APPLY gates; host call belongs to YAML after GO."""
     env = os.environ
     try:
-        if len(sys.argv) != 2 or sys.argv[1] not in ("--prepare", "--prepare-ref", "--apply"):
+        if len(sys.argv) != 2 or sys.argv[1] not in (
+            "--prepare", "--prepare-ref", "--apply", "--assert-host-receipt"
+        ):
             raise PreparedGoError("unreviewed protected GO phase")
         operation = env.get("BOCA_OPERATION", "")
         phase = sys.argv[1]
+        if phase == "--assert-host-receipt":
+            if operation != "lifecycle-apply":
+                raise PreparedGoError("lifecycle receipt operation invalid")
+            assert_physical_host_receipt(env)
+            print("BOCA_LIFECYCLE state=APPLIED physical_ack=TRUE receipt=EXACT")
+            return 0
         if phase == "--prepare-ref":
             if operation != "lifecycle-apply":
                 raise PreparedGoError("prepared-ref operation invalid")
@@ -393,7 +449,10 @@ def main() -> int:
             + " attempt=" + hosted["attempt_id"]
         )
         return 0
-    except (PreparedGoError, context.ProtectedActionError, OSError, KeyError, ValueError):
+    except (
+        PreparedGoError, context.ProtectedActionError, OSError,
+        KeyError, ValueError, TypeError, UnicodeError,
+    ):
         print(
             "BOCA_PROTECTED_GO state=NO_GO host=untouched reason=unreviewed_phase_or_receipt",
             file=sys.stderr,
