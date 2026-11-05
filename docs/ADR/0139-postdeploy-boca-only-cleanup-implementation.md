@@ -12,6 +12,20 @@ every first-install, beta-install, update and future cutover, not merely an
 error handler. This PR introduces `host_boca_cleanup.py` as an independently
 testable implementation; it remains **unwired to all live workflows**.
 
+`host_boca_attempt.py` now supplies the code-only **producer** missing from
+historical first/beta installers: a reviewed controller-only Compose overlay
+with an exact first/beta/update attempt label and source SHA, plus pre-effect
+`intent` and post-effect `result` as separate canonical, durable O_EXCL
+receipts under the **same job flock**. A result is read back and bound by the
+SHA256 of the immutable intent before any preserve/retire ID can be derived.
+SUCCESS preserves only the exact accepted controller ID; FAILURE can name
+only the exact created ID as a cleanup candidate (and it still must be
+positively labelled, stopped and unused). Missing result, symlink, unknown
+transition and mismatched ID are NO_GO; `update` original-ID retirement is
+explicitly unimplemented/NO_GO. These receipts do not themselves prove that
+Docker effects occurred; a future protected workflow must inspect exact
+runtime labels and health before writing them.
+
 1. The protected job must retain a single non-reentrant Boca UID10001 flock
    across its install and finalizer. The cleanup module provides a Boca-only
    cooperative lock at the same canonical
@@ -72,9 +86,12 @@ testable implementation; it remains **unwired to all live workflows**.
   exact-ID preservation of stopped installed controller/parked worker;
   unlabelled historical beta NO_GO; foreign secret never inspected; malicious
   DOCKER_CONTEXT and inherited token isolation; image untag-only still NO_GO.
-- Local QA for this code-only correction: **21 focused tests PASS**;
-  full suite **2520 passed + 31 subtests passed**; Ruff lint/format
-  (393 files), Mypy (86 source files), repository policy and whitespace PASS.
+  Ten additional producer tests cover first/beta/update label overlays,
+  O_EXCL intent/result, exact-ID preserve/retire, forged/missing receipts,
+  unsafe symlinks and update hard-stop.
+- Local QA for the code-only producer: **31 focused tests PASS**;
+  full suite **2530 passed + 31 subtests passed**; Ruff lint/format
+  (395 files), Mypy (87 source files), repository policy and whitespace PASS.
 - `synthetic.py` and `ipc_worker.py` remain BLACKBOX; no Boca login,
   reservation or purchase and no Docker host operation has been dispatched.
 - **Physical NO_GO** until a reviewed, single protected finalizer actually
@@ -82,7 +99,12 @@ testable implementation; it remains **unwired to all live workflows**.
   phases), authenticates its release/attempt and lease, streams the exact
   reviewed helper into the dedicated rootless SSH identity, records the
   receipt and fails acceptance on `NO_GO`/`INDETERMINATE`. Merely publishing
-  this module does not satisfy the operational requirement.
+  this module does not satisfy the operational requirement. First/beta
+  workflows must run the approved Compose overlay from the same protected
+  job *before* any effects, construct the O_EXCL intent and result from
+  genuine Docker exact-ID receipts, hold the canonical lease throughout,
+  and invoke the finalizer with `if: always()`. There is no such YAML wiring
+  today; source-only success is not host evidence.
 - No `docker system prune`, `docker image prune`, `docker container prune`,
   cross-project deletion, guessed image identity, host-side backup, or broad
   filesystem purge.
