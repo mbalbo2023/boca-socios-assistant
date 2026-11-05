@@ -341,13 +341,18 @@ def _stage_preflight(intent: dict[str, Any] | None) -> dict[str, Any]:
         intent.get("overlay_sha"),
         intent.get("seccomp_sha"),
     )
-    result["plan_hashes_unique"] = (
-        all(isinstance(value, str) and IDENT.fullmatch(value) for value in fields)
-        and len(set(fields)) == 4
+    valid_digests = all(isinstance(value, str) and IDENT.fullmatch(value) for value in fields)
+    # Existing CutoverPlan.validate permits byte-identical legacy/target Compose.
+    # The stage's independently reviewed target/overlay/seccomp slots remain distinct;
+    # legacy Compose must not alias either non-Compose slot.
+    result["plan_hashes_unique"] = bool(
+        valid_digests
+        and len(set(fields[1:])) == 3
+        and fields[0] not in fields[2:]
     )
-    if not result["plan_hashes_unique"]:
-        result["reason"] = "PLAN_SHA_COLLISION_OR_INVALID"
-        return result
+    result["legacy_target_compose_equal"] = bool(valid_digests and fields[0] == fields[1])
+    # Report host root state even if plan policy fails: a second independent blocker
+    # must not be hidden behind a digest check in this READ_ONLY investigation.
     try:
         root = os.open(
             "/srv/boca-socios", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -415,7 +420,11 @@ def _stage_preflight(intent: dict[str, Any] | None) -> dict[str, Any]:
                 return result
             result["compose_digest_match"] = hashlib.sha256(data).hexdigest() == fields[0]
             result["reason"] = (
-                "STAGE_PREFLIGHT_MATCH" if result["compose_digest_match"] else "STAGE_COMPOSE_SHA"
+                "PLAN_ROLE_DIGEST_INVALID"
+                if not result["plan_hashes_unique"]
+                else "STAGE_PREFLIGHT_MATCH"
+                if result["compose_digest_match"]
+                else "STAGE_COMPOSE_SHA"
             )
             return result
         except OSError:
