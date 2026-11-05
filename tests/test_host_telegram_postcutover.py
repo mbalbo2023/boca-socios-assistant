@@ -118,6 +118,15 @@ def _fake(tmp_path: Path, *, stopped_sender: bool = False) -> FakeIO:
         ),
     )
     io.fields[("volume", _TG, "Mountpoint")] = str(tmp_path)
+    io.fields[("container", CONTROLLER, "Config.Cmd")] = [
+        "python",
+        "-m",
+        "boca_socios.runtime",
+        "serve-beta",
+    ]
+    io.fields[("container", CONTROLLER, "HostConfig.PortBindings")] = {
+        "8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]
+    }
     return io
 
 
@@ -246,7 +255,7 @@ def test_config_label_drift_denied(tmp_path: Path) -> None:
 
 def test_mount_and_port_drift_denied(tmp_path: Path) -> None:
     io = _fake(tmp_path)
-    io.fields[("container", CONTROLLER, "NetworkSettings.Ports")] = {
+    io.fields[("container", CONTROLLER, "HostConfig.PortBindings")] = {
         "8443/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8443"}]
     }
     with pytest.raises(host.TelegramHostNoGo):
