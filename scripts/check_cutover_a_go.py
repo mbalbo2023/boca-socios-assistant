@@ -455,9 +455,7 @@ def write_actions_invocation(request: GoRequest, *, protected_go_digest: str) ->
     return approved
 
 
-def write_actions_invocation_prepared(
-    request: GoRequest, *, environ: Mapping[str, str]
-) -> str:
+def write_actions_invocation_prepared(request: GoRequest, *, environ: Mapping[str, str]) -> str:
     """Runner-only v2 token after #352 PREPARE GH review and independent GO_B.
 
     The three O_EXCL proofs must already have been staged by the privileged
@@ -490,9 +488,7 @@ def write_actions_invocation_prepared(
         )
         root = request.bundle_path.parent
         _write_once(root / HOST_INVOCATION_NAME, (token + "\n").encode("ascii"))
-        _write_once(
-            root / HOST_APPROVAL_NAME, (proof.approved_sha256 + "\n").encode("ascii")
-        )
+        _write_once(root / HOST_APPROVAL_NAME, (proof.approved_sha256 + "\n").encode("ascii"))
     except (PreparedGoError, CutoverCliError) as exc:
         raise CutoverGoError("Cutover A protected PREPARE GO_B not independently proven") from exc
     return proof.approved_sha256

@@ -360,7 +360,6 @@ def test_prepared_import_go_o_excl_survives_crash_and_refuses_replay(
     assert writes == [1]
 
 
-
 def test_prepared_official_runner_preflight_and_host_command_are_opt_in(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -425,9 +424,7 @@ def test_prepared_official_runner_preflight_and_host_command_are_opt_in(
         "owner_subject_sha256": hashlib.sha256(b"owner").hexdigest(),
     }
     raw = actions._canonical(record)
-    approval = hashlib.sha256(
-        b"boca-official-notice-import-prepared-go-v1:\x00" + raw
-    ).hexdigest()
+    approval = hashlib.sha256(b"boca-official-notice-import-prepared-go-v1:\x00" + raw).hexdigest()
     monkeypatch.setenv("BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256", approval)
     for name, value in {
         "boca-protected-legacy-go.approved": (approval + "\n").encode("ascii"),
@@ -437,13 +434,26 @@ def test_prepared_official_runner_preflight_and_host_command_are_opt_in(
         path = runner / name
         path.write_bytes(value)
         path.chmod(0o600)
-    assert actions._runner_preflight_prepared(
-        ["official", "runner-preflight-prepared", str(approved_run), str(approved_artifact), str(zip_path), str(token_path)]
-    ) == 0
+    assert (
+        actions._runner_preflight_prepared(
+            [
+                "official",
+                "runner-preflight-prepared",
+                str(approved_run),
+                str(approved_artifact),
+                str(zip_path),
+                str(token_path),
+            ]
+        )
+        == 0
+    )
     assert actions.decode_coordinates(token_path.read_text(encoding="ascii").strip()) == coords
-    assert actions._runner_host_command_prepared(
-        ["official", "runner-host-command-prepared", str(token_path), str(zip_path)]
-    ) == 0
+    assert (
+        actions._runner_host_command_prepared(
+            ["official", "runner-host-command-prepared", str(token_path), str(zip_path)]
+        )
+        == 0
+    )
     assert "container-import-prepared" in capsys.readouterr().out
 
 
@@ -457,6 +467,13 @@ def test_prepared_official_runner_rejects_missing_go_before_source(
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     with pytest.raises(actions.OfficialImportActionError):
         actions._runner_preflight_prepared(
-            ["official", "runner-preflight-prepared", "/abs/run.json", "/abs/artifact.json", "/abs/archive.zip", str(tmp_path / "token")]
+            [
+                "official",
+                "runner-preflight-prepared",
+                "/abs/run.json",
+                "/abs/artifact.json",
+                "/abs/archive.zip",
+                str(tmp_path / "token"),
+            ]
         )
     assert not (tmp_path / "token").exists()

@@ -649,9 +649,7 @@ def _runner_preflight_prepared(argv: list[str]) -> int:
         raise OfficialImportActionError("official prepared preflight arguments incomplete")
     coords = _coords_from_env()
     archive = _prepared_reviewed_source_zip(Path(argv[4]))
-    _prepared_official_runner_proof(
-        coords, archive_sha256=hashlib.sha256(archive).hexdigest()
-    )
+    _prepared_official_runner_proof(coords, archive_sha256=hashlib.sha256(archive).hexdigest())
     token = _verify_github_reviewed_source(
         coords,
         source_run=_load_json(Path(argv[2])),

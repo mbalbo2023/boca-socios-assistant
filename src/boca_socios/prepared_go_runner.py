@@ -156,10 +156,10 @@ def hash_reviewed_file(path: Path, *, max_bytes: int = 2_500_000) -> str:
         after = path.stat(follow_symlinks=False)
     except OSError:
         raise PreparedGoError("PREPARE reviewed artifact unavailable") from None
-    if (
-        len(raw) != before.st_size
-        or (before.st_dev, before.st_ino, before.st_mtime_ns)
-        != (after.st_dev, after.st_ino, after.st_mtime_ns)
+    if len(raw) != before.st_size or (before.st_dev, before.st_ino, before.st_mtime_ns) != (
+        after.st_dev,
+        after.st_ino,
+        after.st_mtime_ns,
     ):
         raise PreparedGoError("PREPARE reviewed artifact changed during hashing")
     return hashlib.sha256(raw).hexdigest()

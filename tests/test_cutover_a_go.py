@@ -429,7 +429,6 @@ def test_prepared_cutover_review_rejects_any_reviewed_bytes_drift(tmp_path: Path
     assert len(prepared) == 64
 
 
-
 def test_prepared_actions_go_b_creates_v2_token_after_reviewed_pins(
     tmp_path: Path,
 ) -> None:
@@ -459,9 +458,9 @@ def test_prepared_actions_go_b_creates_v2_token_after_reviewed_pins(
         "bundle_sha256": _sha(request.bundle_path.read_bytes()),
         "owner_subject_sha256": _sha(request.plan.owner_subject.encode("ascii")),
     }
-    raw = json.dumps(
-        receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("ascii")
+    raw = json.dumps(receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
+        "ascii"
+    )
     approved = hashlib.sha256(b"boca-cutover-a-prepared-go-v1:\x00" + raw).hexdigest()
     env["BOCA_CUTOVER_A_GO_BINDING_SHA256"] = approved
     _file(runner / "boca-protected-legacy-go.approved", (approved + "\n").encode("ascii"))

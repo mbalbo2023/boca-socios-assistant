@@ -13,10 +13,14 @@ from boca_socios import prepared_go_runner as prepared
 
 
 def _canonical(value: object) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
+        "ascii"
+    )
 
 
-def _record(tmp_path: Path, operation: str = "cutover-a-apply") -> tuple[dict[str, str], dict[str, str]]:
+def _record(
+    tmp_path: Path, operation: str = "cutover-a-apply"
+) -> tuple[dict[str, str], dict[str, str]]:
     prep_id = "42053482614"
     now = datetime.now(UTC).replace(microsecond=0)
     env = {
@@ -91,15 +95,20 @@ def test_canonical_go_b_from_independent_environment_receipt(
     env, receipt = _record(tmp_path, operation)
     proof = _verify(env, operation)
     assert proof.prepare_run_id == receipt["prepare_run_id"]
-    assert proof.approved_sha256 == env[
-        "BOCA_CUTOVER_A_GO_BINDING_SHA256"
-        if operation == "cutover-a-apply"
-        else "BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256"
-    ]
+    assert (
+        proof.approved_sha256
+        == env[
+            "BOCA_CUTOVER_A_GO_BINDING_SHA256"
+            if operation == "cutover-a-apply"
+            else "BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256"
+        ]
+    )
     assert len(proof.receipt_sha256) == 64
 
 
-@pytest.mark.parametrize("change", ("missing_go", "wrong_context", "replay", "wrong_owner", "tamper"))
+@pytest.mark.parametrize(
+    "change", ("missing_go", "wrong_context", "replay", "wrong_owner", "tamper")
+)
 def test_prepared_fail_closed_without_affecting_host(tmp_path: Path, change: str) -> None:
     env, receipt = _record(tmp_path)
     if change == "missing_go":
