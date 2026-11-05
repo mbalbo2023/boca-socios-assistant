@@ -147,6 +147,25 @@ canonical lock. This source facade remains unreachable from the live CLI.
   cross-project deletion, guessed image identity, host-side backup, or broad
   filesystem purge.
 
+## Handoff: transaction core remains INCOMPLETE and physical NO_GO
+
+`run_transaction()` code-only now holds one `protected_boca_job_lease`
+through pre-effect O_EXCL intent, offline injected install/observe, exact
+controller stop on FAILURE, immutable result and unconditional `try/finally`
+call to `finalize_attempt()` whenever a verifiable result exists. Missing or
+ambiguous host result is NO_GO without guessed deletion. Its **concrete
+trusted host backend**, actual protected stage/apply, hosted receipt assertion
+`if:always()` and effectful ZIP entrypoint **DO NOT EXIST**. Bundle execution
+outside selftest still returns `NO_GO transaction_not_wired`. Offline fake
+backend tests are not proof of any physical install/cleanup.
+
+Owner-approved cutover **Option B** (04-Nov ART): Chrome owner session uses
+separate `boca_owner_session.sqlite3` under existing Boca data volume with
+UID10001, exact attempt identity and canonical Boca lease. DO NOT migrate
+legacy `boca.sqlite3` to schema0008: legacy cabce9f1 rejects that ledger and
+cannot restart after failed cutover. Auth agent #321 owns separate-DB proof;
+orchestration here must not assume this contract until the evidence lands.
+
 See ADR0138 and [issue #323](https://github.com/mbalbo2023/boca-socios-assistant/issues/323)
 for the global owner decision. This ADR describes only the isolated code
 contract and open gates.

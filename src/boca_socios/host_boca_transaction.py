@@ -9,8 +9,169 @@ complete success/failure cleanup in try/finally, and fail closed on lost SSH.
 from __future__ import annotations
 
 import hashlib
+import re
 import sys
 import zipfile
+from dataclasses import dataclass
+from typing import Literal, Protocol
+
+from boca_socios.host_boca_attempt import (
+    Result,
+    begin,
+    finalize_attempt,
+    finish,
+    intended,
+)
+from boca_socios.host_boca_cleanup import (
+    ATTEMPT_ID,
+    BocaJobLease,
+    protected_boca_job_lease,
+)
+
+OPERATION = Literal["first-install", "beta-install"]
+IMAGE = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z")
+
+
+@dataclass(frozen=True)
+class Coordinates:
+    """New-only install coordinates; never a legacy cutover or existing DB."""
+
+    operation: OPERATION
+    attempt_id: str
+    image: str
+    source_sha: str
+    compose_sha: str
+    origin: str = ""
+    owner: str = ""
+
+
+@dataclass(frozen=True)
+class TransactionReceipt:
+    attempt_id: str
+    operation: OPERATION
+    outcome: Literal["SUCCESS", "FAILURE"]
+    cleanup: Literal["ACCEPT", "INDETERMINATE", "NO_GO"]
+    stage_clean: bool
+    controller_id: str | None
+
+    @property
+    def accepted(self) -> bool:
+        return self.outcome == "SUCCESS" and self.cleanup == "ACCEPT" and self.stage_clean
+
+
+class InstallBackend(Protocol):
+    """Host-only effect boundary; CLI will construct only reviewed concrete backend."""
+
+    def install(
+        self, coordinates: Coordinates, base: bytes, overlay: bytes, lease: BocaJobLease
+    ) -> None: ...
+
+    def observe(self, coordinates: Coordinates, lease: BocaJobLease) -> tuple[str, bool] | None: ...
+
+    def stop_exact(self, coordinates: Coordinates, ident: str, lease: BocaJobLease) -> None: ...
+
+    def finish_stage(
+        self,
+        coordinates: Coordinates,
+        *,
+        installed: bool,
+        cleanup_status: Literal["ACCEPT", "INDETERMINATE", "NO_GO"],
+        lease: BocaJobLease,
+    ) -> None: ...
+
+
+def run_transaction(
+    coordinates: Coordinates,
+    base: bytes,
+    *,
+    backend: InstallBackend,
+) -> TransactionReceipt:
+    """One lease across install and unconditional cleanup, no false success.
+
+    Every failure path is attempted once, without guessed IDs or broad delete.
+    A hard host/SSH crash before an O_EXCL result produces no trustworthy
+    final receipt: Actions must alert NO_GO rather than attempting cleanup.
+    """
+    if (
+        coordinates.operation not in ("first-install", "beta-install")
+        or not ATTEMPT_ID.fullmatch(coordinates.attempt_id)
+        or not IMAGE.fullmatch(coordinates.image)
+        or (coordinates.operation == "first-install" and (coordinates.origin or coordinates.owner))
+        or (
+            coordinates.operation == "beta-install"
+            and (not coordinates.origin or not coordinates.owner)
+        )
+        or hashlib.sha256(base).hexdigest() != coordinates.compose_sha
+    ):
+        raise TransactionError("Boca install coordinates or bundled Compose untrusted")
+    intent, overlay = intended(
+        coordinates.operation,
+        coordinates.attempt_id,
+        coordinates.source_sha,
+        coordinates.compose_sha,
+        None,
+    )
+    with protected_boca_job_lease(coordinates.attempt_id) as lease:
+        digest = begin(intent, lease=lease)  # Always BEFORE any Docker/staging effect.
+        result: Result | None = None
+        attempted_success = False
+        final_status: Literal["ACCEPT", "INDETERMINATE", "NO_GO"] = "NO_GO"
+        stage_clean = False
+        controller_id: str | None = None
+        try:
+            try:
+                backend.install(coordinates, base, overlay, lease)
+                observed = backend.observe(coordinates, lease)
+                if observed is None or not observed[1]:
+                    raise TransactionError("Boca installed controller health not proven")
+                controller_id = observed[0]
+                result = Result(
+                    coordinates.attempt_id, digest, "SUCCESS", controller_id, controller_id
+                )
+                finish(result, lease=lease)
+                attempted_success = True
+            except Exception:
+                # The original phase failed. One exact observation and stop;
+                # if identity is uncertain, preserve all resources and NO_GO.
+                try:
+                    observed = backend.observe(coordinates, lease)
+                    if observed is not None:
+                        controller_id, running = observed
+                        if running:
+                            backend.stop_exact(coordinates, controller_id, lease)
+                    result = Result(coordinates.attempt_id, digest, "FAILURE", controller_id, None)
+                    finish(result, lease=lease)
+                except Exception:
+                    # No immutable result -> no deletion authority whatsoever.
+                    result = None
+        finally:
+            if result is not None:
+                try:
+                    final_status = finalize_attempt(
+                        result,
+                        lease=lease,
+                        preserve_images=frozenset(),
+                    ).status
+                except Exception:
+                    final_status = "NO_GO"
+            try:
+                backend.finish_stage(
+                    coordinates,
+                    installed=attempted_success,
+                    cleanup_status=final_status,
+                    lease=lease,
+                )
+                stage_clean = True
+            except Exception:
+                stage_clean = False
+        return TransactionReceipt(
+            coordinates.attempt_id,
+            coordinates.operation,
+            "SUCCESS" if attempted_success else "FAILURE",
+            final_status,
+            stage_clean,
+            controller_id,
+        )
 
 
 class TransactionError(ValueError):
