@@ -103,6 +103,7 @@ def test_observe_four_owner_scopes_without_mutation_or_manual_pins(
         "data_mountpoint": str(tmp_path),
         "expected_component": component,
         "expected_target": target,
+        "expected_request_id": coords.request_id,
     }
     assert io.effects == []
     assert hashlib.sha256(database.read_bytes()).hexdigest() == before_hash
@@ -172,7 +173,7 @@ def test_wrong_rootless_host_or_release_fails_without_effect(tmp_path: Path, uns
                 replace(
                     first,
                     labels=tuple(
-                        (key, "0" * 64 if key == "com.docker.compose.config-hash" else value)
+                        (key, "bad-config" if key == "com.docker.compose.config-hash" else value)
                         for key, value in first.labels
                     ),
                 ),

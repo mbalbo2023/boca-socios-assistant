@@ -39,7 +39,7 @@ La acción se deriva de la única REQUESTED del ledger legacy.
 6. Emite **una sola línea JSON pública canónica** de schema PREPARE v1
    (version, kind=lifecycle, source_sha, controller_id/image, worker_id/image,
    browser_attempt, controller/worker_config_hash, data_mountpoint,
-   expected_component/target y quartet sender opcional). No incluye
+   expected_component/target, expected_request_id UUID y quartet sender opcional). No incluye
    attempt_id, prepare_run_id, token, PIN ni credenciales.
 7. Workflow owner #352 revalida la salida contra manifests y actor,
    genera automáticamente token largo y artifact de APPLY y muestra
@@ -67,6 +67,13 @@ La acción se deriva de la única REQUESTED del ledger legacy.
 - Un PREPARE observado NO prueba ACK físico ni sesión Chrome/Telegram.
   Sólo APPLY posterior bajo GO, release, lease y marker PREPARE O_EXCL
   puede certificarlo, con recibo terminal del host.
+- Race P0 corregida: la acción del token por sí sola no identifica la
+  intención. PREPARE observa y publica expected_request_id (UUID canónico
+  exacto). APPLY exige su inclusión y valida igualdad con el REQUESTED actual
+  bajo lease *antes* de consumir el GO O_EXCL o alterar host/ledger. Si el
+  panel registra otra intención posterior del mismo componente+acción,
+  rechaza la autorización original con cero efecto. El workflow #352 valida
+  la misma clave y la incorpora al hash GO, sin permitir que Tincho la tipeé.
 
 ## Ownership y QA
 
@@ -76,12 +83,15 @@ scripts/build_protected_boca_bundle.py,
 scripts/boca_protected_memfd_bootstrap.py y
 tests/test_protected_boca_bundle.py para permitir ZIP/memfd stdlib-only.
 
-YAML y scripts/check_protected_go_prepare.py son de #352: **no se editan**.
+Ownership temporal adicional P0 para host_lifecycle_actions.py y
+test_host_lifecycle_actions.py: UUID obligatorio observado versus aplicado.
+YAML y scripts/check_protected_action_context.py y
+scripts/check_protected_go_prepare.py son de #352: **no se editan**.
 Test-first offline: cuatro acciones, sender OFF/ON, Chromium STOP degradado,
 START NO_GO, source/digest/config drift, container ajeno, doble REQUESTED,
 schema legacy0008, mount inexistente, formato/duplicados, sin write DB,
 ZIP python -S, BLACKBOX excluida. QA exact SHA/Actions obligatorio
-antes de trasladar los seis paths al candidato único #319.
+antes de trasladar los ocho paths al candidato único #319.
 
 No host real, compra/reserva, Telegram externo, backup, deploy ni GO.
 Seguridad adicional P2 según orden de Tincho; aislamiento Boca sigue P0.

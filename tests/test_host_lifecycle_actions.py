@@ -20,6 +20,7 @@ CONTROLLER = "b" * 64
 WORKER = "c" * 64
 CONTROLLER_IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "d" * 64
 WORKER_IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "e" * 64
+REQUEST_ID = "00000000-0000-4000-8000-000000000002"
 
 
 def _reviewed(path: Path) -> actions.ReviewedLifecycleInstallation:
@@ -33,6 +34,7 @@ def _reviewed(path: Path) -> actions.ReviewedLifecycleInstallation:
         worker_image=WORKER_IMAGE,
         database_path=path / "boca.sqlite3",
         pair=ReviewedInstalledPair("12345", "f" * 64, "1" * 64),
+        expected_request_id=REQUEST_ID,
     )
 
 
@@ -46,9 +48,11 @@ class FakeLedger:
         return self.state
 
 
-def _requested(component: str = "bot", target: str = "start") -> LifecycleIntent:
+def _requested(
+    component: str = "bot", target: str = "start", operation_id: str = REQUEST_ID
+) -> LifecycleIntent:
     return LifecycleIntent(
-        operation_id=str(uuid4()),
+        operation_id=operation_id,
         component=component,  # type: ignore[arg-type]
         target=target,  # type: ignore[arg-type]
         status="REQUESTED",
@@ -360,10 +364,58 @@ def _context(**overrides: str) -> str:
         "data_mountpoint": "/run/user/10001/docker/volumes/boca-socios_boca_data/_data",
         "expected_component": "bot",
         "expected_target": "stop",
+        "expected_request_id": REQUEST_ID,
     }
     obj.update(overrides)
     raw = json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("ascii")
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def test_rotated_same_action_new_uuid_is_no_go_before_prepare_marker_or_effect(
+    tmp_path: Path, verified_io: tuple[FakeLedger, list[object]]
+) -> None:
+    """The GO reviewed request A cannot authorize a newer request B of same scope."""
+    ledger, effects = verified_io
+    initial = ledger.current()
+    assert initial is not None and initial.operation_id == REQUEST_ID
+    successor_id = str(uuid4())
+    assert successor_id != initial.operation_id
+    ledger.state = _requested("bot", "start", operation_id=successor_id)
+    marker = tmp_path / ".boca-lifecycle-go" / "prepare-41999999999.used"
+    with pytest.raises(actions.PhysicalAckUnavailable, match="request ID"):
+        actions.apply_latest_owner_request(
+            _reviewed(tmp_path), lease=BocaJobLease("3456789012", 12, 1, True)
+        )
+    assert effects == []
+    assert ledger.current() == ledger.state and ledger.current().status == "REQUESTED"
+    assert not marker.exists()
+    assert not marker.parent.exists()
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        "",
+        "not-a-uuid",
+        "00000000-0000-0000-0000-000000000000",
+        "00000000-0000-4000-8000-00000000000A",
+    ],
+)
+def test_expected_request_id_requires_exact_nonzero_canonical_uuid(invalid: str) -> None:
+    with pytest.raises(actions.PhysicalAckUnavailable):
+        actions.decode_lifecycle_context(_context(expected_request_id=invalid))
+
+
+def test_unpinned_direct_installation_refuses_before_creating_marker(
+    tmp_path: Path, verified_io: tuple[FakeLedger, list[object]]
+) -> None:
+    _, effects = verified_io
+    installed = replace(_reviewed(tmp_path), expected_request_id="")
+    with pytest.raises(actions.PhysicalAckUnavailable, match="scope"):
+        actions.apply_latest_owner_request(
+            installed, lease=BocaJobLease("3456789012", 12, 1, True)
+        )
+    assert effects == [] and not list(tmp_path.iterdir())
 
 
 def test_public_context_decodes_canonical_exact_pins() -> None:
@@ -371,6 +423,7 @@ def test_public_context_decodes_canonical_exact_pins() -> None:
     assert decoded.attempt_id == "3456789012"
     assert decoded.expected_component == "bot"
     assert decoded.expected_target == "stop"
+    assert decoded.expected_request_id == REQUEST_ID
     assert decoded.database_path.name == "boca.sqlite3"
 
 

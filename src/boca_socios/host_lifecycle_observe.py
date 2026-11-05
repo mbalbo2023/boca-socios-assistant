@@ -359,6 +359,7 @@ def observe_pending_lifecycle(
             "data_mountpoint": mount,
             "expected_component": pending.component,
             "expected_target": pending.target,
+            "expected_request_id": pending.operation_id,
         }
         if sender is not None:
             public |= {
