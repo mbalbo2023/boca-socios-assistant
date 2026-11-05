@@ -13,6 +13,7 @@ import stat
 import sys
 from collections.abc import Callable
 from contextlib import closing
+from functools import partial
 from pathlib import Path
 from threading import Event
 from urllib.parse import quote, urlsplit
@@ -32,6 +33,11 @@ from boca_socios.owner_origin import SSH_LOOPBACK_ORIGIN
 from boca_socios.panel.owner_session_store import OwnerBrowserSessionStore
 from boca_socios.panel.passkey import PasskeyOwnerAuthentication
 from boca_socios.panel.private_http import PrivatePanelApplication
+from boca_socios.panel.telegram_pairing_staging import (
+    STAGING_FILENAME,
+    PairingStageReceipt,
+    stage_private_telegram_pairing,
+)
 from boca_socios.security.credential_vault import CredentialVault
 from boca_socios.storage.database import Database
 
@@ -86,6 +92,46 @@ def _configured_event(path: Path) -> dict[str, str]:
     if row is None or not isinstance(row[0], str) or row[0] != SIMULATION_EVENT_LABEL:
         raise ValueError("synthetic event is unavailable")
     return {SIMULATION_EVENT_ID: SIMULATION_EVENT_LABEL}
+
+
+def _configured_telegram_pairing_stager(
+    settings: Settings, *, boca_volume_root: Path = Path("/data")
+) -> Callable[[bytes], PairingStageReceipt] | None:
+    """Opt in encrypted-only owner handoff inside an *existing* Boca volume.
+
+    The passkey session, origin, CSRF and one-use operation are checked by the
+    private panel before calling this pure, single-slot staging callback.
+    It cannot authorize a protected host cutover, start a bot or call Telegram.
+    """
+    settings.validate_beta()
+    if settings.telegram_pairing_stage_mode == "off":
+        return None
+    if (
+        settings.telegram_pairing_stage_mode != "encrypted-only"
+        or settings.db_path.parent != boca_volume_root
+        or not boca_volume_root.is_absolute()
+    ):
+        raise ValueError("private Telegram staging unavailable")
+    directory_fd: int | None = None
+    try:
+        directory_fd = os.open(
+            boca_volume_root,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        metadata = os.fstat(directory_fd)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_mode & 0o022
+            or not os.access(boca_volume_root, os.W_OK | os.X_OK, effective_ids=True)
+        ):
+            raise ValueError("private Telegram staging unavailable")
+    except OSError:
+        raise ValueError("private Telegram staging unavailable") from None
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)
+    return partial(stage_private_telegram_pairing, boca_volume_root / STAGING_FILENAME)
 
 
 class _TLSWSGIServer(WSGIServer):
@@ -239,6 +285,7 @@ def build_beta_server(
     parameter or an implicit host-side Chromium activation.
     """
     settings.validate_beta()
+    telegram_pairing_stager = _configured_telegram_pairing_stager(settings)
     selected_browser, command_timeout = _browser_for_beta(settings, browser)
     bridge_enabled = settings.validate_bridge()
     transport = None
@@ -299,6 +346,7 @@ def build_beta_server(
             official_notices_loader=lambda: load_official_snapshot(
                 settings.db_path.with_name(OFFICIAL_SNAPSHOT_NAME)
             ),
+            telegram_pairing_stager=telegram_pairing_stager,
         )
 
         def app(environ: dict[str, object], start: Callable[..., object]) -> list[bytes]:
