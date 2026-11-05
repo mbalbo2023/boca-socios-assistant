@@ -346,9 +346,7 @@ def _stage_preflight(intent: dict[str, Any] | None) -> dict[str, Any]:
     # The stage's independently reviewed target/overlay/seccomp slots remain distinct;
     # legacy Compose must not alias either non-Compose slot.
     result["plan_hashes_unique"] = bool(
-        valid_digests
-        and len(set(fields[1:])) == 3
-        and fields[0] not in fields[2:]
+        valid_digests and len(set(fields[1:])) == 3 and fields[0] not in fields[2:]
     )
     result["legacy_target_compose_equal"] = bool(valid_digests and fields[0] == fields[1])
     # Report host root state even if plan policy fails: a second independent blocker
