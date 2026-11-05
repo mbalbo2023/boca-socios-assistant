@@ -73,7 +73,7 @@ efímero y ejecuta el validador exacto.
 Los tests son **code-only**; incluso todos GREEN no acreditan que el
 nuevo overlay haya sido instalado, que la ruta POST funcione en el
 Samsung, que exista un stage real, ni que Telegram haya recibido o enviado
-un mensaje. El integrador debe incorporar los cuatro paths verificados al
+un mensaje. El integrador debe incorporar los cinco paths verificados al
 único PR #319, ejecutar QA y predeploy exact nuevo SHA, obtener GO específico
 para merge/release/Cutover A y luego validar físicamente mediante el
 workflow protegido existente.
