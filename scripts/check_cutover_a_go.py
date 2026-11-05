@@ -1,0 +1,319 @@
+"""Future protected Cutover A GO binding; offline/runner-only, no host effects.
+
+This verifier is intentionally NOT reachable from the live GitHub Actions
+operation choices. A future exact-SHA GO must set a protected environment
+variable independently of workflow_dispatch inputs. Source review, PR checks
+and presence of the helper do not imply authorization to touch the droplet.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import io
+import json
+import os
+import re
+import stat
+import sys
+import zipfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import boca_protected_memfd_bootstrap as memfd
+
+from boca_socios.browser_release_manifest import validate_browser_manifest
+from boca_socios.host_boca_cutover import CutoverPlan
+from boca_socios.release_manifest import validate_manifest
+
+VERSION = "boca-cutover-a-go-v1"
+REPOSITORY = "mbalbo2023/boca-socios-assistant"
+OWNER = "mbalbo2023"
+MAIN = "refs/heads/main"
+RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
+HEX = re.compile(r"[0-9a-f]{64}\Z")
+MAX_REQUEST = 8192
+
+
+class CutoverGoError(ValueError):
+    """No independently controlled exact-run authorization was verified."""
+
+
+@dataclass(frozen=True)
+class GoRequest:
+    plan: CutoverPlan
+    github_repository: str
+    github_actor: str
+    github_ref: str
+    github_sha: str
+    github_run_id: str
+    github_run_attempt: str
+    target_release_run_id: str
+    legacy_release_run_id: str
+    target_manifest_path: Path
+    browser_manifest_path: Path
+    legacy_manifest_path: Path
+    historical_compose_path: Path
+    target_compose_path: Path
+    overlay_path: Path
+    seccomp_path: Path
+    bundle_path: Path
+
+    @classmethod
+    def from_json(cls, request: object) -> GoRequest:
+        if not isinstance(request, dict) or set(request) != {
+            "plan",
+            "github_repository",
+            "github_actor",
+            "github_ref",
+            "github_sha",
+            "github_run_id",
+            "github_run_attempt",
+            "target_release_run_id",
+            "legacy_release_run_id",
+            "target_manifest_path",
+            "browser_manifest_path",
+            "legacy_manifest_path",
+            "historical_compose_path",
+            "target_compose_path",
+            "overlay_path",
+            "seccomp_path",
+            "bundle_path",
+        }:
+            raise CutoverGoError("exact Cutover A GO request fields invalid")
+        plan = request["plan"]
+        if not isinstance(plan, dict) or set(plan) != set(CutoverPlan.__dataclass_fields__):
+            raise CutoverGoError("cutover approved plan fields invalid")
+        if any(type(value) is not str for value in plan.values()):
+            raise CutoverGoError("cutover approved plan coordinates invalid")
+        other = {key: value for key, value in request.items() if key != "plan"}
+        if any(type(value) is not str for value in other.values()):
+            raise CutoverGoError("cutover GO request coordinate types invalid")
+        return cls(
+            plan=CutoverPlan(**plan),
+            **{
+                key: Path(value) if key.endswith("_path") else value for key, value in other.items()
+            },
+        )
+
+
+def _unique_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in fields:
+            raise CutoverGoError("duplicate GO artifact field")
+        fields[key] = value
+    return fields
+
+
+def _open_no_parent_symlink(path: Path) -> int:
+    """Walk each absolute directory FD; no ancestor may redirect an artifact."""
+    if not path.is_absolute() or not path.name or ".." in path.parts:
+        raise CutoverGoError("Cutover A GO artifact path must be absolute and unambiguous")
+    directory = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+    try:
+        for part in path.parts[1:-1]:
+            next_directory = os.open(
+                part,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=directory,
+            )
+            try:
+                metadata = os.fstat(next_directory)
+                if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid not in (
+                    0,
+                    os.geteuid(),
+                ):
+                    raise CutoverGoError("Cutover A GO ancestor directory untrusted")
+            except BaseException:
+                os.close(next_directory)
+                raise
+            os.close(directory)
+            directory = next_directory
+        return os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
+    except OSError as exc:
+        raise CutoverGoError("Cutover A GO artifact path or parent symlink untrusted") from exc
+    finally:
+        os.close(directory)
+
+
+def _read_bounded(path: Path, maximum: int) -> bytes:
+    """One bounded ancestor-safe read, stable inode and no group/world writes."""
+    try:
+        with os.fdopen(_open_no_parent_symlink(path), "rb") as stream:
+            before = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != os.geteuid()
+                or before.st_nlink != 1
+                or bool(stat.S_IMODE(before.st_mode) & 0o022)
+                or not 0 < before.st_size <= maximum
+            ):
+                raise CutoverGoError("Cutover A GO artifact inode untrusted")
+            raw = stream.read(maximum + 1)
+            after = os.fstat(stream.fileno())
+            identity_before = (
+                before.st_dev,
+                before.st_ino,
+                before.st_uid,
+                before.st_gid,
+                before.st_nlink,
+                before.st_mode,
+                before.st_size,
+                before.st_mtime_ns,
+                before.st_ctime_ns,
+            )
+            identity_after = (
+                after.st_dev,
+                after.st_ino,
+                after.st_uid,
+                after.st_gid,
+                after.st_nlink,
+                after.st_mode,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
+            )
+            if len(raw) != before.st_size or identity_before != identity_after:
+                raise CutoverGoError("Cutover A GO artifact changed while reading")
+            return raw
+    except OSError as exc:
+        raise CutoverGoError("Cutover A GO artifact cannot be read safely") from exc
+
+
+def _manifest(path: Path) -> tuple[object, str]:
+    raw = _read_bounded(path, 2048)
+    try:
+        parsed = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_fields)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise CutoverGoError("Cutover A GO release manifest malformed") from exc
+    return parsed, hashlib.sha256(raw).hexdigest()
+
+
+def _digest(path: Path, *, expected: str, maximum: int) -> str:
+    data = _read_bounded(path, maximum)
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != expected:
+        raise CutoverGoError("Cutover A reviewed artifact digest mismatch")
+    return digest
+
+
+def authorization_digest(request: GoRequest) -> str:
+    """Authenticate three manifests and every reviewed byte before GO compare."""
+    plan = request.plan
+    try:
+        plan.validate()
+    except ValueError as exc:
+        raise CutoverGoError("Cutover A plan validation failed") from exc
+    if (
+        request.github_repository != REPOSITORY
+        or request.github_actor != OWNER
+        or request.github_ref != MAIN
+        or request.github_run_attempt != "1"
+        or request.github_sha != plan.target_sha
+        or request.github_run_id != plan.attempt_id
+        or not RUN.fullmatch(request.github_run_id)
+        or not RUN.fullmatch(request.target_release_run_id)
+        or not RUN.fullmatch(request.legacy_release_run_id)
+        or request.target_release_run_id == request.legacy_release_run_id
+        or request.target_manifest_path == request.legacy_manifest_path
+        or request.target_manifest_path == request.browser_manifest_path
+        or request.legacy_manifest_path == request.browser_manifest_path
+    ):
+        raise CutoverGoError("Cutover A GO main/owner/one-shot/releases invalid")
+    target, target_sha = _manifest(request.target_manifest_path)
+    browser, browser_sha = _manifest(request.browser_manifest_path)
+    legacy, legacy_sha = _manifest(request.legacy_manifest_path)
+    try:
+        validate_manifest(target, plan.target_image, plan.target_sha, request.target_release_run_id)
+        validate_browser_manifest(
+            browser,
+            plan.target_image,
+            plan.browser_image,
+            plan.target_sha,
+            request.target_release_run_id,
+        )
+        validate_manifest(legacy, plan.legacy_image, plan.legacy_sha, request.legacy_release_run_id)
+    except ValueError as exc:
+        raise CutoverGoError("Cutover A GO release manifests conflict") from exc
+    _digest(request.historical_compose_path, expected=plan.legacy_compose_sha, maximum=32768)
+    _digest(request.target_compose_path, expected=plan.target_compose_sha, maximum=32768)
+    _digest(request.overlay_path, expected=plan.overlay_sha, maximum=32768)
+    _digest(request.seccomp_path, expected=plan.seccomp_sha, maximum=32768)
+    bundle = _read_bounded(request.bundle_path, memfd.MAX_ZIP)
+    bundle_sha = hashlib.sha256(bundle).hexdigest()
+    try:
+        memfd.verify(bundle, bundle_sha)
+        with zipfile.ZipFile(io.BytesIO(bundle), "r") as package:
+            if set(package.namelist()) != memfd.EXPECTED_ENTRIES | memfd.OPTION_B_ENTRIES:
+                raise CutoverGoError("Cutover A GO requires complete Option B source ZIP")
+    except CutoverGoError:
+        raise
+    except (ValueError, OSError, zipfile.BadZipFile) as exc:
+        raise CutoverGoError("Cutover A GO bundle not fully authenticated") from exc
+    approved = {
+        "version": VERSION,
+        "github_repository": request.github_repository,
+        "github_actor": request.github_actor,
+        "github_ref": request.github_ref,
+        "github_sha": request.github_sha,
+        "github_run_id": request.github_run_id,
+        "github_run_attempt": request.github_run_attempt,
+        "legacy_controller_id": plan.legacy_id,
+        "legacy_source_sha": plan.legacy_sha,
+        "legacy_image_ref": plan.legacy_image,
+        "legacy_release_run_id": request.legacy_release_run_id,
+        "legacy_release_manifest_sha256": legacy_sha,
+        "legacy_compose_sha256": plan.legacy_compose_sha,
+        "target_source_sha": plan.target_sha,
+        "target_image_ref": plan.target_image,
+        "target_release_run_id": request.target_release_run_id,
+        "target_release_manifest_sha256": target_sha,
+        "browser_image_ref": plan.browser_image,
+        "browser_release_manifest_sha256": browser_sha,
+        "target_compose_sha256": plan.target_compose_sha,
+        "browser_overlay_sha256": plan.overlay_sha,
+        "browser_seccomp_sha256": plan.seccomp_sha,
+        "bundle_sha256": bundle_sha,
+        "owner_subject_sha256": hashlib.sha256(plan.owner_subject.encode("utf-8")).hexdigest(),
+        "panel_origin": plan.origin,
+        "no_backup": True,
+        "no_real_reservations": True,
+    }
+    raw = json.dumps(approved, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(raw.encode("ascii")).hexdigest()
+
+
+def require_protected_go(request: GoRequest, *, protected_go_digest: str) -> str:
+    """A missing protected GitHub Environment variable always remains NO_GO."""
+    if not HEX.fullmatch(protected_go_digest):
+        raise CutoverGoError("protected cutover GO absent or malformed")
+    expected = authorization_digest(request)
+    if protected_go_digest != expected:
+        raise CutoverGoError("protected cutover GO not bound to this exact run")
+    return expected
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Future GO verifier; does not access SSH/Docker")
+    parser.add_argument("request_path", type=Path)
+    args = parser.parse_args(argv)
+    try:
+        raw = _read_bounded(args.request_path, MAX_REQUEST)
+        request = GoRequest.from_json(
+            json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_fields)
+        )
+        approved = require_protected_go(
+            request,
+            protected_go_digest=os.environ.get("BOCA_CUTOVER_A_GO_BINDING_SHA256", ""),
+        )
+    except (CutoverGoError, UnicodeError, json.JSONDecodeError, TypeError):
+        print("BOCA_CUTOVER_A_GO state=NO_GO host=untouched", file=sys.stderr)
+        return 1
+    print(f"BOCA_CUTOVER_A_GO state=PASS sha256={approved} host=untouched")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

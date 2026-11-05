@@ -1,15 +1,21 @@
 # Estado de integración BETA
 
-## Último corte canónico A45-R14 — 04/11/2026 ART
+## Último corte canónico A45-R16 — 04/11/2026 ART
 
 El [PR integral DRAFT #319](https://github.com/mbalbo2023/boca-socios-assistant/pull/319)
-está publicado en HEAD `931f2b5be5845848513dea713d6cd4ee0aaa4cdc`,
-tree `f70817061b2e018c6725c425d6cce3736592ad41`. QA exacto local:
-**2974 tests +34 subtests PASS**, Ruff/MyPy/política PASS; Actions del SHA:
-CI, panel, Telegram y first-deploy PR-only **SUCCESS**; seguridad y release
-**FAIL** por la discrepancia Canonical vs Trivy del CVE-2026-109518 en los
-paquetes APT ya corregidos. Job físico host **SKIPPED**. Ver
-[R14.1 #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6648856551).
+está publicado en HEAD `810ad2db35dbc55b97b1d295105ebda2020aaf02`,
+tree `7ff5e839bdcb14588766366c6ea3eef027c212f2`. QA exacto local:
+**3046 tests +34 subtests PASS**, Ruff/MyPy/política PASS; Actions exactas
+R16: CI, panel, Telegram y First Deploy PR-only **SUCCESS**; seguridad y
+release **FAIL** por #326; host manual **SKIPPED**. Ver
+[R16.1 #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6649283278).
+El ciclo R15 inmediatamente anterior tuvo CI, panel y
+Telegram **SUCCESS**, First Deploy PR **FAIL** por tests heredados de #320
+omitidos al integrar, y seguridad/release **FAIL** por inconsistencia
+Canonical USN vs OSV/OpenVEX/Trivy del CVE-2026-109518. R16 restauró los
+contratos completos de transacción/guard y sus tests, con 124 regresiones
+del paso fallido aprobadas localmente. El job físico host siempre **SKIPPED**.
+Ver [R16 #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6649247736).
 
 La **Opción B aprobada** ahora está implementada en el código de #319/#322:
 `boca_owner_session.sqlite3` independiente dentro del volumen Boca, esquema
@@ -17,9 +23,11 @@ propio v1, persistencia de un único Chrome entre reinicios, cookie renovable
 400 días, logout/reemplazo revocables. **No** hay migración 0008 de
 `boca.sqlite3`. `GET /healthz` revalida esa SQLite sin escritura ni bootstrap.
 El Cutover A/limpieza selectiva tiene contratos de ID exacto probados, pero el
-backend effectful + promoción persistente Compose + workflow protegido y ACK
-host siguen pendientes; los controles accesibles de arranque/parada siguen
-en PR DRAFT #329 como **solicitudes, no efectos físicos confirmados**.
+backend con entrada effectful + workflow protegido con GO exacto y ACK
+host siguen pendientes. La promoción persistente Compose está modelada en
+R11-3; ante estado incierto se preservan todos los contenedores y sólo se
+permite inventario READ_ONLY/NO_GO. Los cuatro controles accesibles de #329
+**ya están en #319** como solicitudes duraderas, no arranques/paradas físicos.
 
 **Físicamente permanece controller-only en main** `cabce9f1...` con acceso
 Samsung Chrome + Termius + passkey confirmado previamente por Tincho. No se

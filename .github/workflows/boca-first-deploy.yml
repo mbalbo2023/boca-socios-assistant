@@ -125,7 +125,7 @@ jobs:
           uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
       - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
         run: |
-          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py
+          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_a_go.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
       - name: Assert PR cannot produce host cutover or cleanup receipt
         if: ${{ always() }}
