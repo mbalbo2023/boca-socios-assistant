@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import os
+import stat
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -140,6 +143,16 @@ def test_postapply_runtime_only_read_from_boca_fixtures(monkeypatch: pytest.Monk
             "root_entries_count": 1,
             "root_entries_expected": True,
             "compose_digest_match": True,
+            "compose_digest_evaluated": True,
+            "compose_inode_checks": {
+                "regular": True,
+                "uid_ok": True,
+                "gid_ok": True,
+                "nlink_one": True,
+                "mode_0600": True,
+                "size_ok": True,
+            },
+            "compose_inode_mode_octal": "0600",
             "plan_hashes_unique": True,
         },
     )
@@ -160,8 +173,10 @@ def test_postapply_runtime_only_read_from_boca_fixtures(monkeypatch: pytest.Monk
     assert output["result"] == "PRESENT"
     assert output["prepared_go_marker_reason"] == "MARKER_SCHEMA_VALID"
     assert output["stage_preflight"]["reason"] == "STAGE_PREFLIGHT_MATCH"
+    assert output["stage_preflight"]["compose_digest_evaluated"] is True
     assert output["go_for_retry"] is False
     assert output["foreign_resources_touched"] is False
+    assert len(reconcile._canonical(output) + b"\n") <= reconcile.MAX_JSON
     assert reconcile.verify_runner(reconcile._canonical(output) + b"\n", RUN, PREPARE) == output
 
 
@@ -242,6 +257,118 @@ def test_stage_preflight_detects_invalid_digest_roles_and_still_observes_root(
     assert observed["plan_hashes_unique"] is False
     assert observed["reason"] == "STAGE_ROOT_UNREADABLE"
     assert attempted == ["/srv/boca-socios"]
+
+
+@pytest.mark.parametrize(
+    "failed_check",
+    [None, "sha_mismatch", "regular", "uid_ok", "gid_ok", "nlink_one", "mode_0600", "size_ok"],
+)
+def test_stage_compose_inode_evidence_reads_only_after_all_six_checks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failed_check: str | None
+) -> None:
+    """Observe the actual open FD's metadata; a bad field must prevent data reads."""
+    host_root = tmp_path / "boca-stage-fixture"
+    host_root.mkdir(mode=0o700)
+    data = b"services:\n  controller: {}\n"
+    compose = host_root / "compose.beta.yaml"
+    compose.write_bytes(data)
+    compose.chmod(0o600)
+    payload = reconcile._record(_intent(), RUN, kind="intent")
+    assert payload is not None
+    if failed_check != "sha_mismatch":
+        payload["legacy_compose_sha"] = hashlib.sha256(data).hexdigest()
+    payload["target_compose_sha"] = payload["legacy_compose_sha"]
+
+    real_open = os.open
+    real_fstat = os.fstat
+    real_read = os.read
+    reads: list[int] = []
+
+    def open_fixture(path: str, flags: int, *args: object, **kwargs: object) -> int:
+        return real_open(
+            str(host_root) if path == "/srv/boca-socios" else path, flags, *args, **kwargs
+        )
+
+    def fstat_fixture(fd: int) -> SimpleNamespace:
+        observed = real_fstat(fd)
+        base = {
+            "st_dev": observed.st_dev,
+            "st_ino": observed.st_ino,
+            "st_size": observed.st_size,
+            "st_mtime_ns": observed.st_mtime_ns,
+            "st_ctime_ns": observed.st_ctime_ns,
+            "st_mode": (stat.S_IFDIR | 0o700)
+            if stat.S_ISDIR(observed.st_mode)
+            else (stat.S_IFREG | 0o600),
+            "st_uid": reconcile.UID,
+            "st_gid": reconcile.UID,
+            "st_nlink": 1,
+        }
+        if stat.S_ISREG(observed.st_mode):
+            if failed_check == "regular":
+                base["st_mode"] = stat.S_IFDIR | 0o600
+            elif failed_check == "uid_ok":
+                base["st_uid"] += 1
+            elif failed_check == "gid_ok":
+                base["st_gid"] += 1
+            elif failed_check == "nlink_one":
+                base["st_nlink"] = 2
+            elif failed_check == "mode_0600":
+                base["st_mode"] = stat.S_IFREG | 0o640
+            elif failed_check == "size_ok":
+                base["st_size"] = 0
+        return SimpleNamespace(**base)
+
+    def bounded_read(fd: int, size: int) -> bytes:
+        reads.append(size)
+        if failed_check not in (None, "sha_mismatch"):
+            pytest.fail("invalid Compose inode metadata must prevent reading bytes")
+        return real_read(fd, size)
+
+    monkeypatch.setattr(reconcile.os, "open", open_fixture)
+    monkeypatch.setattr(reconcile.os, "fstat", fstat_fixture)
+    monkeypatch.setattr(reconcile.os, "read", bounded_read)
+
+    result = reconcile._stage_preflight(payload)
+    expected = {
+        "regular": True,
+        "uid_ok": True,
+        "gid_ok": True,
+        "nlink_one": True,
+        "mode_0600": True,
+        "size_ok": True,
+    }
+    if failed_check not in (None, "sha_mismatch"):
+        expected[failed_check] = False
+    assert result["compose_inode_checks"] == expected
+    assert result["compose_inode_mode_octal"] == ("0640" if failed_check == "mode_0600" else "0600")
+    assert result["compose_digest_evaluated"] is (failed_check in (None, "sha_mismatch"))
+    assert result["compose_digest_match"] is (failed_check is None)
+    assert result["reason"] == (
+        "STAGE_PREFLIGHT_MATCH"
+        if failed_check is None
+        else "STAGE_COMPOSE_SHA"
+        if failed_check == "sha_mismatch"
+        else "STAGE_COMPOSE_INODE_MODE"
+    )
+    assert reads == ([32769] if failed_check in (None, "sha_mismatch") else [])
+
+
+def test_stage_preflight_without_compose_fd_has_no_invented_inode_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = reconcile._record(_intent(), RUN, kind="intent")
+    assert payload is not None
+    monkeypatch.setattr(
+        reconcile.os,
+        "open",
+        lambda *_a, **_k: (_ for _ in ()).throw(PermissionError("unavailable")),
+    )
+    result = reconcile._stage_preflight(payload)
+    assert result["compose_inode_checks"] is None
+    assert result["compose_inode_mode_octal"] is None
+    assert result["compose_digest_evaluated"] is False
+    assert result["reason"] == "STAGE_ROOT_UNREADABLE"
 
 
 def test_marker_unknown_volume_is_readonly_bounded(monkeypatch: pytest.MonkeyPatch) -> None:

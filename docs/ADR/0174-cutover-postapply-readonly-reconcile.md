@@ -165,3 +165,46 @@ adulterados y roles colisionados. Nada de esto habilita reintentar el APPLY
 histórico ni limpiar Docker con `prune`. El `cleanup=INDETERMINATE` exige
 reconciliar los recursos exclusivamente Boca y el estado de raíz antes de
 cualquier transacción **nueva** con RELEASE/PREPARE/GO_B renovados.
+
+## R24.2 — observación desagregada de metadatos Compose (P0, CODE_ONLY)
+
+El diagnóstico físico READ_ONLY
+[#42104978077](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42104978077),
+desde `main=3d0e4ff288ab41e10a5cd1eef930f6d12e18cca5`, encontró
+`root_entries_expected=true`, `legacy_target_compose_equal=true`,
+`plan_hashes_unique=true` pero `STAGE_COMPOSE_INODE_MODE`. Ese resultado
+solamente afirma que falló **al menos una** de seis condiciones del archivo;
+`compose_digest_match=false` es el valor inicial de un hash **no evaluado**
+porque `_stage_preflight` retorna antes de leer bytes. No declarar
+hash corrupto ni permiso concreto hasta obtener metadata física.
+
+La corrección diagnóstica incremental mantiene el `open` existente
+`O_NOFOLLOW` bajo el directorio Boca ya comprobado y reutiliza **el mismo
+descriptor abierto** en `fstat`: `compose_inode_checks` informa seis
+booleanos acotados (`regular`, `uid_ok`, `gid_ok`, `nlink_one`, `mode_0600`,
+`size_ok`); `compose_inode_mode_octal` contiene sólo el modo POSIX de ese
+inode, sin nombre adicional, contenido ni dato privado;
+`compose_digest_evaluated` separa explícitamente **no leído** de un digest
+calculado y diferente. Si no llegó a abrir el Compose, los checks/modo
+permanecen `null`. Cada condición falsa sigue generando
+`STAGE_COMPOSE_INODE_MODE` y bloquea toda lectura de bytes. No existe
+`chmod`, `chown`, borrado ni cambio de política de admisión en esta etapa.
+
+El contrato histórico de instalación (`host_first_deploy._verify_beta_compose`)
+aceptaba UID10001, archivo regular, tamaño hasta 32768 y ausencia de escritura
+grupo/otros (por ejemplo `0640`, `0644`); no exigía GID10001, `nlink=1`,
+`0600` exacto ni tamaño positivo. El stage de Cutover A
+(`host_cutover_stage._read_file`) sí exige esos cuatro atributos, además de
+los compartidos. **Esto prueba una discrepancia de contratos de código, no
+cuál atributo real la activó**. Una vez observado el conjunto de booleans,
+un RCA con evidencia cruzada determinará si es apropiada una adaptación
+estrictamente Boca del contrato o una normalización protegida del archivo;
+no se modificará el inode live ni se relajará el stage anticipadamente.
+
+Los tests offline simulan cada una de las seis diferencias en un FD abierto,
+comprueban que ninguna provoca lectura de bytes y ejercitan el caso sano
+SHA-comprobado y la ausencia de evidencia ante raíz inaccesible. Resultado
+de pruebas locales no prueba metadata del droplet; falta PR/CI exact-SHA,
+merge revisado y nueva Action `cutover-a-reconcile` **READ_ONLY**. También
+continúa el stopper independiente `cleanup=INDETERMINATE`, con ownership
+Docker separado; ninguna observación es GO de retry ni de deploy.
