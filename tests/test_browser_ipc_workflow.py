@@ -37,7 +37,7 @@ def test_browser_option_is_separately_gated_without_weakening_legacy_operations(
         'if [[ "$BOCA_OPERATION" = beta-browser-install ]]; then',
         'test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids',
         'test "$BOCA_BUDGET" = 0.5cpu-256m-64pids',
-        'if [[ "$BOCA_OPERATION" != beta-browser-* && "$BOCA_OPERATION" != telegram-* && "$BOCA_OPERATION" != cutover-a-observe && "$BOCA_OPERATION" != cutover-a-apply ]]; then test -z "$BOCA_BROWSER_IMAGE_REF"; fi',
+        'if [[ "$BOCA_OPERATION" != beta-browser-* && "$BOCA_OPERATION" != telegram-* && "$BOCA_OPERATION" != cutover-a-observe && "$BOCA_OPERATION" != cutover-a-apply && "$BOCA_OPERATION" != protected-go-prepare && "$BOCA_OPERATION" != lifecycle-apply ]]; then test -z "$BOCA_BROWSER_IMAGE_REF"; fi',
         "beta-browser-install)",
         'test "$BOCA_DEPLOY_ENV_READY" = ready',
         'test "$BOCA_BETA_ENV_READY" = ready',
@@ -47,6 +47,11 @@ def test_browser_option_is_separately_gated_without_weakening_legacy_operations(
         'test -z "$BOCA_SITE_ENVELOPE"',
     ):
         assert proof in gate
+    # Only the two reviewed lifecycle GO operations may carry a browser
+    # digest after Cutover; new Telegram phase2 is still NO_GO by design.
+    assert "protected-go-prepare|lifecycle-apply)" in gate
+    assert "telegram-activate)" in gate
+    assert "state=NO_GO reason=host_same_lease_backend_unverified" in gate
     for legacy in (
         "owner-enroll)",
         "beta-install|beta-start|beta-acceptance)",
