@@ -426,6 +426,14 @@ into `telegram_envelope`; the two pins into environment Secrets
 Never request token/chat plaintext in chat, Actions inputs or a terminal.
 The form's success is not installation, identity verification or delivery.
 
+**Corrección candidata P0 #315 — no desplegada:** el transporte previo
+exponía el sobre cifrado/HMAC de Telegram en los argumentos SSH. El DRAFT
+propone un único SSH por fase con helper+operandos en frame de stdin,
+bootstrap remoto estático y secretos retirados del entorno del proceso SSH.
+Sus regresiones son sintéticas y no prueban instalación, identidad real ni
+recepción humana. Hasta exact-SHA CI/merge/cutover protegido, Telegram sigue
+OFF. Véase [ADR0134](ADR/0134-private-telegram-pairing-discovery.md).
+
 Stop Boca with `stop-test` before `telegram-install`; perform protected
 install/verify/test with the reviewed coordinates. `telegram-test` must run
 before the first persistent simulation, while the outbox is empty. Its API

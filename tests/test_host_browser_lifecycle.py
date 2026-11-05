@@ -538,12 +538,15 @@ def test_sender_cleanup_only_after_absent_proof_and_on_failure_or_cancellation()
     ]
     assert "always() &&" in cleanup and "(failure() || cancelled())" in cleanup
     assert "steps.boca_browser_telegram_attempt.outputs.started == 'true'" in cleanup
-    assert '--telegram-attempt-id "$runtime_attempt"' in cleanup
+    assert "BOCA_TELEGRAM_TRANSPORT_MODE=cleanup" in cleanup
+    assert "BOCA_FAILED_TELEGRAM_RUN_ID" in cleanup
+    assert "telegram_ssh_transport emit < src/boca_socios/host_first_deploy.py" in cleanup
     assert 'runtime_attempt="$GITHUB_RUN_ID"' in cleanup
     assert 'runtime_attempt="$BOCA_FAILED_TELEGRAM_RUN_ID"' in cleanup
     assert "browser-telegram-cleanup" in cleanup
     assert "NO_GO INDETERMINADO" in cleanup
-    assert "180s ssh" in cleanup
+    assert "timeout --signal=TERM --kill-after=5s 180s" in cleanup
+    assert 'ssh -F "$RUNNER_TEMP/boca-ssh/config"' in cleanup
     assert "prune" not in cleanup and "volume rm" not in cleanup
 
 

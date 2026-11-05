@@ -156,13 +156,13 @@ def _owner_remote_commands() -> list[str]:
     ]
 
 
-@pytest.mark.parametrize("index", range(19))
+@pytest.mark.parametrize("index", range(15))
 @pytest.mark.parametrize("optional_flags", [False, True])
 def test_each_protected_owner_transport_reaches_host_cli_without_changing_options(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, index: int, optional_flags: bool
 ) -> None:
     lines = _owner_remote_commands()
-    assert len(lines) == 19
+    assert len(lines) == 15
     for name in (
         "boca-compose.sha",
         "boca-beta-compose.sha",
