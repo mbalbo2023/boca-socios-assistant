@@ -26,7 +26,12 @@ from typing import Literal, cast
 from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_cutover_stage as stage
 from boca_socios import host_first_deploy as host
-from boca_socios.host_boca_cutover import CutoverError, CutoverPlan
+from boca_socios.host_boca_cutover import (
+    CutoverError,
+    CutoverPlan,
+    CutoverReceipt,
+    run_cutover_a,
+)
 
 _SQL_SHA = "38c4c97594143340089395c5230a464372acdd058dbe31169ba4206a1fd83d23"
 _BUNDLE_FILES = (
@@ -66,10 +71,15 @@ class ReviewedCutoverSources:
             raise CutoverError("cutover source ZIP has no memfd provenance")
         try:
             with zipfile.ZipFile(sys.argv[0], "r") as package:
-                values = tuple(package.read(name) for name in _BUNDLE_FILES)
+                base, overlay, seccomp, _bootstrap_source, session_sql = (
+                    package.read(name) for name in _BUNDLE_FILES
+                )
         except (OSError, KeyError, zipfile.BadZipFile) as exc:
             raise CutoverError("Option B authenticated ZIP source absent") from exc
-        return cls(*values)
+        # The memfd includes BOTH Option B bootstrap artifacts, but the
+        # imported stdlib helper is loaded directly from the verified ZIP;
+        # only the SQL bytes belong in this four-field data record.
+        return cls(base, overlay, seccomp, session_sql)
 
     def validate(self, plan: CutoverPlan) -> None:
         if any(not 0 < len(data) <= 32768 for data in self.__dict__.values()) or (
@@ -518,3 +528,35 @@ class RootlessCutoverBackend:
         else:
             return "NO_GO"
         return "ACCEPT"
+
+
+def execute_reviewed_cutover(plan: CutoverPlan) -> CutoverReceipt:
+    """Host-only single-lease Cutover A orchestration for a future approved CLI.
+
+    This function is deliberately not invoked by an existing workflow or the
+    protected ZIP's public main(). Only a later exact-SHA/GO-reviewed host
+    dispatcher may call it from an authenticated memfd process. Its own source
+    read, durable pre-effect intent and terminal result share the same lease.
+    """
+    from boca_socios import host_boca_cutover_receipt as terminal
+
+    plan.validate()
+    sources = ReviewedCutoverSources.from_verified_zip()
+    sources.validate(plan)
+    backend = RootlessCutoverBackend(sources)
+
+    def terminal_preflight(prepared_plan: CutoverPlan, lease: cleanup.BocaJobLease) -> None:
+        terminal.prepare_destination(prepared_plan, lease)
+
+    def terminal_sink(
+        completed_plan: CutoverPlan, result: CutoverReceipt, lease: cleanup.BocaJobLease
+    ) -> None:
+        record = terminal.TerminalRecord.from_receipt(completed_plan, result)
+        terminal.write_once(record, plan=completed_plan, lease=lease)
+
+    return run_cutover_a(
+        plan,
+        backend=backend,
+        terminal_preflight=terminal_preflight,
+        terminal_sink=terminal_sink,
+    )

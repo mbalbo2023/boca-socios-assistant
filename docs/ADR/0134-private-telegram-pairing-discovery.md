@@ -420,3 +420,36 @@ check, Ruff format (397 archivos), MyPy (89 fuentes), policy de aislamiento
 y `git diff --check` completaron sin defectos. Estos números corresponden
 a la candidata local; no equivalen a CI exact-SHA, seguridad de imágenes,
 GO del titular ni aceptación en el droplet.
+
+## Emisor HMAC V2 reutilizable — avance funcional #315, DRAFT
+
+La inspección de `telegram_pairing_cutover.py` confirmó un bloqueo concreto:
+`OwnerPairingReceipt` tenía verificación real de HMAC, pero los tests lo
+fabricaban manualmente y **no existía una función emisora** de la misma
+estructura para conectar el Chrome V2 con el cutover. El nuevo módulo puro
+`telegram_pairing_issuer.py` implementa
+`issue_owner_pairing_receipt(coordinates, sealed_v2_envelope,
+owner_receipt_key, issued_at)`. Comprueba las coordenadas exactas de fuente,
+dueño, lease, controller y recipiente; exige clave privada de 32 bytes,
+timestamp de origen confiable y un sobre V2 JSON canónico, con dominio,
+versión, UID, estructura X25519/HKDF/AES-GCM y huella del destinatario
+correctos. **No descifra ni accede al token**: valida sólo el encabezado
+cifrado y firma el SHA-256 del sobre. Genera un nonce aleatorio de 256 bits,
+TTL de 600 segundos y HMAC-SHA256 exactamente compatible con el verificador
+de cutover. Las fallas sólo exponen `owner_pairing_issuance_no_go`, sin
+reflejar código, token ni identidad. Las pruebas offline usan Chrome V2
+ficticio y el **verificador real** de `telegram_pairing_cutover`: demuestran
+recibo válido, vinculación a ciphertext/dueño/recipient, expiración, entropía
+independiente, ausencia de credenciales en `repr` y rechazo previo a firmar.
+
+**Frontera crítica:** el emisor no autentica una sesión por sí mismo.
+Únicamente la futura ruta privada gobernada por passkey, fuente/lease
+verificados y custodia de clave fuera de SQLite puede llamarlo; no hay
+route/endpoint nuevo, workflow de deploy ni secreto en GitHub. El callback
+atómico `consume_owner_nonce` y la re-inspección host antes de cualquier
+Bot API siguen siendo indispensables. Para conectar la función faltan:
+servir el prototipo `pairing_page()` sólo al dueño autenticado, transportar
+exclusivamente el sobre V2 cifrado por el canal privado ya definido,
+emitir el receipt con clave protegida bajo el mismo lease y consumirlo
+una vez antes de `getUpdates`. Nada de eso queda autorizado por los tests
+del emisor aislado; sender y recepción humana siguen OFF/UNVERIFIED.
