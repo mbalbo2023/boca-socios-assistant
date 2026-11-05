@@ -12,6 +12,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import pwd
 import re
 import stat
 import subprocess
@@ -54,6 +55,7 @@ MAX_OBJECTS = 256
 MAX_DELETIONS = 32
 RUN_LIMIT = 2_000_000
 EXPECTED_UID = 10001
+EXPECTED_GID = 10001
 DOCKER_SOCKET = f"unix:///run/user/{EXPECTED_UID}/docker.sock"
 LEASE_DIR = Path(f"/run/user/{EXPECTED_UID}")
 LEASE_FILE = "boca-socios-protected-job.lock"
@@ -68,10 +70,38 @@ class CleanupError(ValueError):
 class DiskInodes:
     bytes_free: int
     inodes_free: int
+    # Optional fields preserve old synthetic fixture/facade construction.
+    # A real host inventory MUST fill all six to attest both filesystems.
+    docker_bytes_free: int | None = None
+    docker_inodes_free: int | None = None
+    stage_device: int | None = None
+    stage_inode: int | None = None
+    docker_device: int | None = None
+    docker_inode: int | None = None
 
     def __post_init__(self) -> None:
-        if self.bytes_free < 0 or self.inodes_free < 0:
+        extra = (
+            self.docker_bytes_free,
+            self.docker_inodes_free,
+            self.stage_device,
+            self.stage_inode,
+            self.docker_device,
+            self.docker_inode,
+        )
+        if (
+            self.bytes_free < 0
+            or self.inodes_free < 0
+            or (any(value is None for value in extra) and any(value is not None for value in extra))
+            or any(value is not None and value < 0 for value in extra)
+        ):
             raise CleanupError("disk/inode inventory invalid")
+
+
+def _storage_topology_changed(before: DiskInodes, after: DiskInodes) -> bool:
+    """Reject storage swaps across the same lease; capacity may legitimately change."""
+    old = (before.stage_device, before.stage_inode, before.docker_device, before.docker_inode)
+    new = (after.stage_device, after.stage_inode, after.docker_device, after.docker_inode)
+    return old != new or (before.docker_bytes_free is None) != (after.docker_bytes_free is None)
 
 
 @dataclass(frozen=True)
@@ -457,6 +487,8 @@ def execute(
         # remains; never assume the initial graph is the final graph.
         for _ in range(MAX_DELETIONS):
             fresh = probe()
+            if _storage_topology_changed(before.disk, fresh.disk):
+                raise CleanupError("Boca postdeploy storage topology changed")
             candidates = plan(
                 fresh,
                 attempt_id,
@@ -471,6 +503,8 @@ def execute(
                 raise CleanupError("target reappeared after verified selective removal")
             delete_exact(target)
             after_delete = probe()
+            if _storage_topology_changed(before.disk, after_delete.disk):
+                raise CleanupError("Boca postdeploy storage topology changed")
             # An object that merely became ineligible is NOT proof it was
             # deleted: its labels, live attachments or running status could
             # have drifted while Docker returned a misleading receipt. Prove
@@ -526,7 +560,14 @@ def execute(
                 before.disk,
                 after.disk,
                 tuple(removed),
-                ("postdelete-inventory-reconciliation-untrusted",),
+                (
+                    "postdelete-inventory-reconciliation-untrusted",
+                    *(
+                        ("Boca-storage-topology-changed",)
+                        if _storage_topology_changed(before.disk, after.disk)
+                        else ()
+                    ),
+                ),
                 (),
             )
         return CleanupReceipt(
@@ -536,10 +577,22 @@ def execute(
             before.disk,
             after.disk,
             tuple(removed),
-            final.uncertain,
+            (
+                *final.uncertain,
+                *(
+                    ("Boca-storage-topology-changed",)
+                    if _storage_topology_changed(before.disk, after.disk)
+                    else ()
+                ),
+            ),
             final.targets,
         )
     after = probe()
+    storage_drift = (
+        ("Boca-storage-topology-changed",)
+        if _storage_topology_changed(before.disk, after.disk)
+        else ()
+    )
     final = plan(
         after,
         attempt_id,
@@ -568,7 +621,12 @@ def execute(
             + [f"unexpected-creation:{kind}:{ident}" for kind, ident in unexpected_creations]
         )
     )
-    if final.targets or drift_reasons or any("NO_GO" in reason for reason in final.uncertain):
+    if (
+        final.targets
+        or drift_reasons
+        or storage_drift
+        or any("NO_GO" in reason for reason in final.uncertain)
+    ):
         status: Literal["ACCEPT", "INDETERMINATE", "NO_GO"] = "NO_GO"
     elif final.uncertain:
         status = "INDETERMINATE"
@@ -581,7 +639,7 @@ def execute(
         before.disk,
         after.disk,
         tuple(removed),
-        (*final.uncertain, *drift_reasons),
+        (*final.uncertain, *drift_reasons, *storage_drift),
         final.targets,
     )
 
@@ -705,8 +763,104 @@ def _inspect_field(kind: KIND, ident: str, field: str) -> object:
         raise CleanupError("Docker narrow inspected field JSON malformed") from exc
 
 
+def _rootless_docker_disk_inodes() -> tuple[int, int, int, int]:
+    """Measure only the verified data root of Boca's dedicated Docker daemon.
+
+    Never assume /srv and Docker share a filesystem.  The socket and child
+    environment are already pinned by `_docker`; Docker's own rootless/info
+    identity must agree with the private UID home before following its path.
+    """
+    directory_fd: int | None = None
+    try:
+        info = _json(_docker("info", "--format", "{{json .}}"))
+        status = info.get("DriverStatus")
+        options = info.get("SecurityOptions")
+        if (
+            not isinstance(options, list)
+            or "name=rootless" not in options
+            or str(info.get("CgroupVersion")) != "2"
+            or info.get("CgroupDriver") != "systemd"
+            or info.get("Driver") not in {"overlay2", "fuse-overlayfs", "vfs"}
+            or not isinstance(status, list)
+            or any(
+                not isinstance(item, list)
+                or len(item) != 2
+                or not all(isinstance(value, str) for value in item)
+                or item[0] == "driver-type"
+                for item in status
+            )
+        ):
+            raise CleanupError("rootless Docker storage backend untrusted")
+        reported = info.get("DockerRootDir")
+        if not isinstance(reported, str) or not 0 < len(reported) <= 4096:
+            raise CleanupError("rootless Docker storage root path untrusted")
+        home = Path(pwd.getpwuid(EXPECTED_UID).pw_dir)
+        storage = Path(reported)
+        if (
+            not home.is_absolute()
+            or home == Path("/")
+            or home.resolve(strict=True) != home
+            or not storage.is_absolute()
+            or str(storage) != reported
+            or ".." in storage.parts
+        ):
+            raise CleanupError("rootless Docker storage root path untrusted")
+        try:
+            relative = storage.relative_to(home)
+        except ValueError:
+            raise CleanupError("rootless Docker storage outside Boca owner home") from None
+        if not relative.parts:
+            raise CleanupError("rootless Docker storage root equals Boca owner home")
+
+        directory_fd = os.open(
+            home,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        root = os.fstat(directory_fd)
+        if (
+            not stat.S_ISDIR(root.st_mode)
+            or root.st_uid != EXPECTED_UID
+            or root.st_gid != EXPECTED_GID
+            or stat.S_IMODE(root.st_mode) != 0o700
+        ):
+            raise CleanupError("rootless Docker storage owner home untrusted")
+
+        for part in relative.parts:
+            child = os.open(
+                part,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=directory_fd,
+            )
+            os.close(directory_fd)
+            directory_fd = child
+            detail = os.fstat(child)
+            if (
+                not stat.S_ISDIR(detail.st_mode)
+                or detail.st_uid != EXPECTED_UID
+                or detail.st_gid != EXPECTED_GID
+                or stat.S_IMODE(detail.st_mode) & 0o022
+            ):
+                raise CleanupError("rootless Docker storage child path untrusted")
+        assert directory_fd is not None
+        actual = os.fstat(directory_fd)
+        path = os.lstat(storage)
+        if (path.st_dev, path.st_ino) != (actual.st_dev, actual.st_ino) or not stat.S_ISDIR(
+            path.st_mode
+        ):
+            raise CleanupError("rootless Docker storage inode changed during inventory")
+        stats = os.fstatvfs(directory_fd)
+        return stats.f_bavail * stats.f_frsize, stats.f_favail, actual.st_dev, actual.st_ino
+    except CleanupError:
+        raise
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+        raise CleanupError("rootless Docker storage identity or capacity unavailable") from exc
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)
+
+
 def _disk_inodes() -> DiskInodes:
-    """No symlink follows: Boca root must be exact rootless owner if present."""
+    """Record both Boca staging and authenticated rootless Docker filesystems."""
     root_fd: int | None = None
     child_fd: int | None = None
     try:
@@ -730,8 +884,21 @@ def _disk_inodes() -> DiskInodes:
                 or stat.S_IMODE(details.st_mode) != 0o700
             ):
                 raise CleanupError("Boca root owner/mode/inode unsafe")
-        stats = os.fstatvfs(child_fd if child_fd is not None else root_fd)
-        return DiskInodes(stats.f_bavail * stats.f_frsize, stats.f_favail)
+        measured_fd = child_fd if child_fd is not None else root_fd
+        assert measured_fd is not None
+        stats = os.fstatvfs(measured_fd)
+        identity = os.fstat(measured_fd)
+        docker_bytes, docker_inodes, docker_device, docker_inode = _rootless_docker_disk_inodes()
+        return DiskInodes(
+            stats.f_bavail * stats.f_frsize,
+            stats.f_favail,
+            docker_bytes_free=docker_bytes,
+            docker_inodes_free=docker_inodes,
+            stage_device=identity.st_dev,
+            stage_inode=identity.st_ino,
+            docker_device=docker_device,
+            docker_inode=docker_inode,
+        )
     except OSError as exc:
         raise CleanupError("Boca disk/inode measurement unsafe") from exc
     finally:

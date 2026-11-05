@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
 from dataclasses import replace
@@ -664,3 +665,162 @@ def test_disk_probe_rejects_symlinked_boca_root(
     (tmp_path / "boca-socios").symlink_to(tmp_path / "external", target_is_directory=True)
     with pytest.raises(gc.CleanupError, match="measurement unsafe"):
         gc._disk_inodes()
+
+
+def test_postdeploy_measures_stage_and_verified_rootless_docker_storage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The approved always-finalizer contract requires *both* filesystems."""
+    owner = tmp_path / "boca-owner"
+    owner.mkdir(mode=0o700)
+    docker_root = owner / ".local" / "share" / "docker"
+    docker_root.mkdir(parents=True)
+    for path in (owner, docker_root, *docker_root.parents[:2]):
+        if path != tmp_path:
+            path.chmod(0o700)
+    stage_root = tmp_path / "srv"
+    stage_root.mkdir(mode=0o700)
+    (stage_root / "boca-socios").mkdir(mode=0o700)
+    monkeypatch.setattr(gc, "DISK_ROOT", stage_root)
+    monkeypatch.setattr(gc, "EXPECTED_UID", os.geteuid())
+    monkeypatch.setattr(gc, "EXPECTED_GID", os.getegid())
+    monkeypatch.setattr(
+        gc.pwd,
+        "getpwuid",
+        lambda uid: SimpleNamespace(pw_dir=str(owner)),
+    )
+    rootless_info = {
+        "SecurityOptions": ["name=rootless"],
+        "CgroupVersion": "2",
+        "CgroupDriver": "systemd",
+        "Driver": "overlay2",
+        "DriverStatus": [],
+        "DockerRootDir": str(docker_root),
+    }
+    calls: list[tuple[str, ...]] = []
+
+    def safe_info(*args: str) -> str:
+        calls.append(args)
+        assert args == ("info", "--format", "{{json .}}")
+        return json.dumps(rootless_info)
+
+    monkeypatch.setattr(gc, "_docker", safe_info)
+    observed = gc._disk_inodes()
+    assert calls == [("info", "--format", "{{json .}}")]
+    assert observed.bytes_free > 0 and observed.inodes_free > 0
+    assert observed.docker_bytes_free > 0 and observed.docker_inodes_free > 0
+    assert observed.stage_device == (stage_root / "boca-socios").stat().st_dev
+    assert observed.stage_inode == (stage_root / "boca-socios").stat().st_ino
+    assert observed.docker_device == docker_root.stat().st_dev
+    assert observed.docker_inode == docker_root.stat().st_ino
+
+
+def test_postdeploy_refuses_rootless_data_dir_outside_private_owner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    stage = tmp_path / "srv"
+    stage.mkdir(mode=0o700)
+    monkeypatch.setattr(gc, "DISK_ROOT", stage)
+    owner = tmp_path / "owner"
+    owner.mkdir(mode=0o700)
+    forbidden = tmp_path / "unrelated-docker"
+    forbidden.mkdir(mode=0o700)
+    monkeypatch.setattr(gc, "EXPECTED_UID", os.geteuid())
+    monkeypatch.setattr(gc, "EXPECTED_GID", os.getegid())
+    monkeypatch.setattr(
+        gc.pwd,
+        "getpwuid",
+        lambda uid: SimpleNamespace(pw_dir=str(owner)),
+    )
+    monkeypatch.setattr(
+        gc,
+        "_docker",
+        lambda *args: json.dumps(
+            {
+                "SecurityOptions": ["name=rootless"],
+                "CgroupVersion": "2",
+                "CgroupDriver": "systemd",
+                "Driver": "overlay2",
+                "DriverStatus": [],
+                "DockerRootDir": str(forbidden),
+            }
+        ),
+    )
+    with pytest.raises(gc.CleanupError, match="rootless Docker storage"):
+        gc._disk_inodes()
+
+
+def test_cleanup_refuses_changed_docker_storage_before_first_deletion() -> None:
+    before = replace(
+        _inventory(),
+        disk=gc.DiskInodes(
+            100_000,
+            100,
+            docker_bytes_free=200_000,
+            docker_inodes_free=200,
+            stage_device=1,
+            stage_inode=2,
+            docker_device=3,
+            docker_inode=4,
+        ),
+    )
+    after = replace(before, disk=replace(before.disk, docker_inode=9))
+    observations = 0
+    removed: list[gc.Target] = []
+
+    def probe() -> gc.Inventory:
+        nonlocal observations
+        observations += 1
+        return before if observations == 1 else after
+
+    receipt = gc.execute(
+        "FAILURE",
+        ATTEMPT,
+        preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset({OLD_ID}),
+        probe=probe,
+        delete_exact=removed.append,
+    )
+    assert receipt.status == "NO_GO"
+    assert removed == []
+    assert any("storage-topology" in reason for reason in receipt.retained_uncertain)
+
+
+@pytest.mark.parametrize("same_filesystem", [True, False])
+def test_successful_cleanup_accepts_both_same_and_distinct_rootless_filesystems(
+    same_filesystem: bool,
+) -> None:
+    """No hidden assumption that Docker's data root lives on the stage mount."""
+    original_probe, remove, deleted = _probe_and_delete(_inventory())
+
+    def dual_probe() -> gc.Inventory:
+        snapshot = original_probe()
+        return replace(
+            snapshot,
+            disk=gc.DiskInodes(
+                snapshot.disk.bytes_free,
+                snapshot.disk.inodes_free,
+                docker_bytes_free=700_000 + len(deleted) * 40_000,
+                docker_inodes_free=800 + len(deleted),
+                stage_device=17,
+                stage_inode=171,
+                docker_device=17 if same_filesystem else 23,
+                docker_inode=232,
+            ),
+        )
+
+    receipt = gc.execute(
+        "SUCCESS",
+        ATTEMPT,
+        preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset({OLD_ID}),
+        probe=dual_probe,
+        delete_exact=remove,
+    )
+    assert receipt.status == "ACCEPT"
+    assert receipt.before.docker_device == (17 if same_filesystem else 23)
+    assert receipt.after.docker_bytes_free > receipt.before.docker_bytes_free
+    assert receipt.after.docker_inodes_free > receipt.before.docker_inodes_free
+    assert receipt.known_residue == ()
