@@ -29,6 +29,11 @@ from boca_socios.panel.telegram_pairing_staging import (
     STAGING_FILENAME,
     _validate_public_v2_header,
 )
+from boca_socios.telegram_owner_webauthn import (
+    TelegramOwnerWitnessError,
+    TelegramStageOwnerWitness,
+    parse_witness_document,
+)
 from boca_socios.telegram_pairing_cutover import (
     CutoverCoordinates,
     HostRecheckReceipt,
@@ -38,11 +43,6 @@ from boca_socios.telegram_pairing_cutover import (
     execute_protected_pairing,
 )
 from boca_socios.telegram_pairing_resolver import TelegramApiFetch
-from boca_socios.telegram_owner_webauthn import (
-    TelegramOwnerWitnessError,
-    TelegramStageOwnerWitness,
-    parse_witness_document,
-)
 
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _STAGE_PURPOSE = "boca-telegram-private-encrypted-stage-v2"
