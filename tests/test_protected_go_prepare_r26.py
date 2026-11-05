@@ -226,3 +226,46 @@ def test_public_approved_digest_not_equivalent_to_host_authorization(tmp_path: P
         now=datetime(2026, 11, 5, 15, tzinfo=UTC),
         source_run=_source_run(receipt["prepare_run_id"])
     ) == approved
+
+
+def test_physical_lifecycle_receipt_must_be_single_exact_applied_json(
+    tmp_path: Path,
+) -> None:
+    _, hosted, _, env, _ = _prepared(tmp_path)
+    env.update({
+        "BOCA_LIFECYCLE_GO_PREFLIGHT": "success",
+        "BOCA_LIFECYCLE_HOST_APPLY": "success",
+    })
+    (tmp_path / go.RUNNER_HOST_CONTEXT).write_text(_token(hosted) + "\\n")
+    path = tmp_path / "boca-lifecycle-host.receipt"
+    accepted = {
+        "version": 1,
+        "scope": "boca-lifecycle",
+        "attempt": hosted["attempt_id"],
+        "prepare_run_id": hosted["prepare_run_id"],
+        "request_id": "aaaaaaa1-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+        "source_sha": hosted["source_sha"],
+        "component": hosted["expected_component"],
+        "target": hosted["expected_target"],
+        "status": "APPLIED",
+        "physical_ack": True,
+    }
+    path.write_text(json.dumps(accepted, sort_keys=True, separators=(",", ":")) + "\\n")
+    go.assert_physical_host_receipt(env)
+    for changed in (
+        {"status": "REFUSED"},
+        {"physical_ack": False},
+        {"prepare_run_id": "111"},
+        {"attempt": "111"},
+        {"request_id": "123"},
+        {"extra": "unexpected"},
+    ):
+        path.write_text(json.dumps(accepted | changed, sort_keys=True, separators=(",", ":")) + "\\n")
+        with pytest.raises(go.PreparedGoError):
+            go.assert_physical_host_receipt(env)
+    path.write_text(json.dumps(accepted, sort_keys=True, separators=(",", ":")) + "\\n\\n")
+    with pytest.raises(go.PreparedGoError):
+        go.assert_physical_host_receipt(env)
+    env["BOCA_LIFECYCLE_HOST_APPLY"] = "failure"
+    with pytest.raises(go.PreparedGoError):
+        go.assert_physical_host_receipt(env)
