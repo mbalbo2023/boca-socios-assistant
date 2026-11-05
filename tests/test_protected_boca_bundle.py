@@ -212,3 +212,23 @@ def test_lifecycle_memfd_stdlib_only_import_and_no_go_without_context(tmp_path: 
     missing_go = _run(raw, digest, "lifecycle-apply", stdlib_only=True)
     assert missing_go.returncode == 3
     assert json.loads(missing_go.stdout)["status"] == "NO_GO"
+
+
+
+def test_lifecycle_observer_memfd_stdlib_and_readonly_no_context(tmp_path: Path) -> None:
+    output, digest = _build(tmp_path)
+    raw = output.read_bytes()
+    with zipfile.ZipFile(io.BytesIO(raw)) as package:
+        names = set(package.namelist())
+        assert "boca_socios/host_lifecycle_observe.py" in names
+        assert "boca_socios/browser/synthetic.py" not in names
+        assert "boca_socios/browser/ipc_worker.py" not in names
+    selftest = _run(raw, digest, "lifecycle-observe-selftest", stdlib_only=True)
+    assert selftest.returncode == 0, (selftest.stdout, selftest.stderr)
+    assert selftest.stdout == (
+        b"BOCA_LIFECYCLE_OBSERVE_MEMFD state=PASS host=untouched blackbox=excluded\n"
+    )
+    missing = _run(raw, digest, "lifecycle-observe", stdlib_only=True)
+    assert missing.returncode == 3
+    assert missing.stdout == b""
+    assert missing.stderr == b"BOCA_LIFECYCLE_OBSERVE state=NO_GO\n"
