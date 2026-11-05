@@ -341,9 +341,10 @@ def _stage_preflight(intent: dict[str, Any] | None) -> dict[str, Any]:
         intent.get("overlay_sha"),
         intent.get("seccomp_sha"),
     )
-    result["plan_hashes_unique"] = all(
-        isinstance(value, str) and IDENT.fullmatch(value) for value in fields
-    ) and len(set(fields)) == 4
+    result["plan_hashes_unique"] = (
+        all(isinstance(value, str) and IDENT.fullmatch(value) for value in fields)
+        and len(set(fields)) == 4
+    )
     if not result["plan_hashes_unique"]:
         result["reason"] = "PLAN_SHA_COLLISION_OR_INVALID"
         return result
@@ -397,22 +398,18 @@ def _stage_preflight(intent: dict[str, Any] | None) -> dict[str, Any]:
                 return result
             data = os.read(descriptor, 32769)
             after = os.fstat(descriptor)
-            if (
-                len(data) != before.st_size
-                or (
-                    before.st_dev,
-                    before.st_ino,
-                    before.st_size,
-                    before.st_mtime_ns,
-                    before.st_ctime_ns,
-                )
-                != (
-                    after.st_dev,
-                    after.st_ino,
-                    after.st_size,
-                    after.st_mtime_ns,
-                    after.st_ctime_ns,
-                )
+            if len(data) != before.st_size or (
+                before.st_dev,
+                before.st_ino,
+                before.st_size,
+                before.st_mtime_ns,
+                before.st_ctime_ns,
+            ) != (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+                after.st_mtime_ns,
+                after.st_ctime_ns,
             ):
                 result["reason"] = "STAGE_COMPOSE_CHANGED"
                 return result
