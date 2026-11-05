@@ -11,6 +11,7 @@ import pytest
 
 from boca_socios import host_lifecycle_actions as actions
 from boca_socios.host_boca_cleanup import BocaJobLease
+from boca_socios.host_boca_lifecycle import LifecycleHostCoordinates
 from boca_socios.host_lifecycle_rootless_adapter import ReviewedInstalledPair
 from boca_socios.panel.lifecycle_intents import LifecycleIntent
 
@@ -68,10 +69,12 @@ def verified_io(monkeypatch: pytest.MonkeyPatch) -> tuple[FakeLedger, list[objec
 
     def execute(coordinates: object, *, binding: object, lease: object, io: object) -> str:
         effects.append(coordinates)
-        assert getattr(coordinates, "request_id") == ledger.state.operation_id
+        assert isinstance(coordinates, LifecycleHostCoordinates)
+        assert ledger.state is not None
+        assert coordinates.request_id == ledger.state.operation_id
         assert isinstance(binding, ReviewedInstalledPair)
         assert isinstance(lease, BocaJobLease)
-        assert io is None
+        assert isinstance(io, actions.adapter.ProductionRootlessDockerIO)
         ledger.state = replace(ledger.state, status="APPLIED")
         return "APPLIED"
 
