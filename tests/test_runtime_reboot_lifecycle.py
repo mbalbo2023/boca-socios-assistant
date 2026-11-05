@@ -238,9 +238,7 @@ def test_ipc_reboot_check_is_deferred_until_after_storage_preflight(
         checked.append("before-preflight")
         pytest.fail("owner receipt read before existing storage was validated")
 
-    with pytest.raises(
-        LocalRuntimeUnavailable, match="local BETA storage is unavailable"
-    ):
+    with pytest.raises(LocalRuntimeUnavailable, match="local BETA storage is unavailable"):
         LocalBetaRuntime.start(
             database_path=tmp_path / "missing.sqlite3",
             key_file=key,

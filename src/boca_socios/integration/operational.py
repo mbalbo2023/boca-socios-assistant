@@ -160,9 +160,7 @@ class LocalBetaRuntime:
         # Evaluate only after key/storage preflight, strictly before any
         # command thread/recovery. A synthetic builder may defer this callback.
         stopped = (
-            initial_engine_stopped()
-            if callable(initial_engine_stopped)
-            else initial_engine_stopped
+            initial_engine_stopped() if callable(initial_engine_stopped) else initial_engine_stopped
         )
         if type(stopped) is not bool:
             raise LocalRuntimeUnavailable("owner lifecycle reconciliation invalid")
