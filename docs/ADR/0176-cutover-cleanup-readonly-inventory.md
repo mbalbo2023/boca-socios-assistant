@@ -190,3 +190,86 @@ se exige el gate físico de 4 GiB y 50k inodos antes/después de cualquier pull
 protegido, sin eliminar otra imagen para crear espacio por intuición. Si la
 capacidad no alcanza, STOP seguro y tratar almacenamiento/capacidad como
 dependencia específica, sin purgas ni efecto sobre Porota.
+
+## R28: procedencia histórica, retiro exacto pendiente y diagnóstico de caché
+
+El recibo físico READ_ONLY #42116760086 certificó un controller legacy
+activo, **dos imágenes** en el daemon rootless Boca, una red y tres volúmenes.
+La imagen no referenciada
+`sha256:a44453ab30cb17fa42f71723cf64b1097dabdf0e56369186077c47bc8224f90b`
+de tamaño lógico `66,021,451` bytes declara digest GHCR
+`sha256:7afe5429e34bd39b289e9d1da700fd5cd436cd2bdd413a2c4f8039829f1d034e`
+y revisión `0e830e3eed941de1da70cef8b42bda9f20258b65`, sin tag,
+`container_ref_count=0` y sin OCI source. Su procedencia Boca se acredita por
+**tres fuentes positivas**: ese recibo físico, Image Release GitHub
+#41559973013 job #125667997607 con exactos ID/digest/revisión en logs de
+publicación y artifact release-manifest #13196392925. Ninguna prueba por sí
+sola permite borrar una imagen por intuición.
+
+`retire_single_attested_historical_image` es **CODE_ONLY, no conectado a CLI
+ni Actions ni ejecutado en host**. Para una eventual integración protegida,
+exige lease original Boca, identidades y topología física exactas, dos
+inventarios estables y un último preflight fresco. Sólo autorizaría
+`docker image rm --no-prune <ID a444...>` **una vez, sin `--force`**.
+El postflight exige idéntico contenedor original, imagen protegida, red,
+volúmenes y dispositivos, además de al menos 4 GiB/50.000 inodos libres.
+Si Docker rechaza el retiro o se pierde ACK, `INDETERMINATE` sin reintento
+ciego. Tests offline con flock real verifican GO acotado y negativas por
+digest, referencia de contenedor, disco bajo, carreras y falla de ACK.
+**R28 no borra absolutamente nada.**
+
+El propietario ordenó **Playwright completo con Chromium, Firefox y WebKit**;
+no se simplifica a Chromium. La medición runner descartable Image Release
+#42117458795 registró `.Size` controller `66,805,534` bytes y navegador
+full `2,695,268,890` bytes, TAR dual sin comprimir `2,788,375,552` bytes.
+El margen sobre reserva física 4 GiB fue `811,995,136` bytes; usando TAR
+como proxy el déficit aritmético sería `1,976,380,416` bytes (~1.84 GiB),
+pero **TAR no equivale a host delta**, afectado por capas/caché compartidas.
+Recuperar sólo la imagen histórica de ~63 MiB lógicos no probaría capacidad
+para instalar full. No existe GO de pull o deploy por este cálculo.
+
+El observador READ_ONLY v3 agrega `storage_accounting` de sólo el daemon
+rootless Boca UID10001, previamente probado sin contenedores/redes/volúmenes
+ajenos: `docker system df` agregado de Images, Containers, Local Volumes y
+Build Cache, sin nombres, paths ni descripciones. `docker buildx du --builder
+default` se ejecuta únicamente cuando `buildx ls` acredita el builder
+**local** `default:docker` con endpoint `default:default`; ante builder
+remoto, error o formato imprevisto informa `UNAVAILABLE`, nunca explora otros
+contexts. Se publican conteos y sumas lógicas/reclamables/compartidas sin
+IDs, sin ningún comando `rm/prune`, y `deletion_authorized=false`. Bytes
+de caché lógicos potencialmente compartidos **no** son espacio físico
+reclamable probado. Hasta ver este recibo, el conteo de dos imágenes no
+descarta capas ni cachés de builds fallidos.
+
+El campo adicional `host_python_crypto` ejecuta bajo UID10001 el mismo
+Python host con `-I -B`, timeout 5 s, entorno aislado, sin acceso a tokens,
+contenido de credenciales ni escritura de bytecode; informa solamente
+`AVAILABLE/version` o fallo de importación de `cryptography`. **No** hace
+`docker exec` ni demuestra disponibilidad de cryptography dentro del
+controller. Un análisis separado debe verificar mapeo subordinate UID/GID
+de rootless y metadata de dueño/modo de directorios del volumen `boca_owner`
+antes de declarar viable un stage Telegram. Los campos v3 siguen
+`READ_ONLY_NO_GO`, `cleanup_executed=false`, `observer_writes=0`; ningún
+cambio en Porota, BLACKBOX, otros servicios, puertos o ruta deploy.
+
+### RCA QA del presupuesto del bundle protegido
+
+La primera suite integral R28 (3817 PASS/34 subtests; 14 FAIL y 8 ERROR)
+detectó que el agregado de diagnóstico/código exacto aumentó los bytes
+descomprimidos de la allowlist fija del memfd protegido a **782,425 bytes**
+(fuentes, antes de pequeños wrappers). El builder tenía
+`MAX_SOURCE_BYTES=768,000`: rechazaba el bundle antes de generar el ZIP.
+Tras elevar **sólo** ese límite a `800,000`, apareció un segundo gate
+independiente legítimo: `boca_protected_memfd_bootstrap.MAX_UNCOMPRESSED`
+todavía estaba en 768,000 y rechazaba el ZIP previamente firmado.
+
+Los dos guardias de **fuentes descomprimidas** quedan sincronizados en
+`800,000` bytes; el límite **comprimido** del builder `MAX_ARCHIVE_BYTES` y
+del verificador `MAX_ZIP` permanece en **512,000** bytes, sin cambios de la
+allowlist, sin BLACKBOX, sin alterar firmas SHA256 por bytes exactos, modos,
+symlinks o memfd `execv`. La nueva prueba negativa reduce un byte el límite
+descomprimido y demuestra rechazo con el mismo hash correcto; también prueba
+SHA deliberadamente incorrecto y builder que falla sin crear output. La suite
+focal de bundle, Cutover CLI, contrato R22 y cleanup pasó **106/106**.
+Sin este RCA, el despliegue protegido sería NO_GO antes del primer SSH,
+independiente de si Docker tuviera caché recuperable.

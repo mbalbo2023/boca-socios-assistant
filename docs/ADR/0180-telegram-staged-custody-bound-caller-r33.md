@@ -1,8 +1,10 @@
-# ADR0179 — Telegram R33: un único helper y un único commit V2 bajo lease
+# ADR0180 — Telegram R33: un único helper y un único commit V2 bajo lease
 
-**Fecha:** 2026-11-05 ART · Issue #315 / #45 · candidato consolidado local
-sobre R32, **sin PR ni host** hasta estabilizar `main` tras Cutover/cleanup.
-**Estado:** CODE_ONLY / NO WORKFLOW / NO GO_B / SENDER OFF.
+**Fecha:** 2026-11-05 ART · Issue #315 / #45 · R33 integrado como fuente
+CODE_ONLY en [DRAFT #398](https://github.com/mbalbo2023/boca-socios-assistant/pull/398).
+**Estado:** NO HOST / NO GO_B / SENDER OFF. El preflight de fuente dual
+posterior R34 [ADR0181](0181-telegram-protected-host-bundle-boundary-r34.md)
+sigue rechazando antes de SSH; no conecta este caller a producción.
 
 ## RCA
 
@@ -41,10 +43,10 @@ al helper efímero exact-ID y al observador de topología activa R32.
 
 | Bloqueo | Requisito para GO_B real |
 |---|---|
-| Workflow | Gate independiente `telegram-activate` con Environment protegido, PREPARE/ACK exact SHA y rootless host action; hoy NO_GO pre-SSH. No editar mientras owner de cleanup trabaja. |
+| Workflow | Gate independiente `telegram-activate` con Environment protegido, PREPARE/ACK exact SHA y rootless host action; hoy NO_GO pre-SSH. R34 agregó sólo revisión lineage en runner. |
 | Host y owner | Cutover A ACK físico, WebAuthn UV fresco y HMAC privada, credenciales sólo en UI Chrome privada, no Secrets/argv/logs. |
 | Volúmenes/UID | Atar `stage_directory` y `custody_directory` a volúmenes Boca inmutables y demostrar mapeo UID/subuid 10001. |
-| Dependencias | Verificar `cryptography` y lectura/escritura de custodia en el entorno donde corra el caller **mientras el controller permanece STOPPED**. |
+| Dependencias | Observador host READ_ONLY [#42125071037](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42125071037) comprobó `cryptography` Python UID10001 `AVAILABLE 41.0.7`, **pero** acceso/mapeo UID a volúmenes y lectura/escritura de custodia siguen sin verificar mientras controller STOPPED. |
 | Envíos | El commit **no** activa sender ni prueba entrega. Sender real y ACK humano requieren GO separado; sin un mensaje autorizado, siguen OFF/UNVERIFIED. |
 
 ## Integración y riesgo de release
@@ -66,7 +68,7 @@ cuatro GET una sola vez, nonce que sobrevive a replay, drift de helper,
 topología o host, owner HMAC inválido, stage ausente y callback faltante
 antes de abrir helper. Nunca se contactó al proveedor ni al host.
 
-No se modifica workflow, BLACKBOX, Porota, servicios ajenos, puertos,
-HTTPS, backups, reservas ni compras. Este desarrollo local no se publicará
-como PR ni se integrará hasta conocer el `main` definitivo y las reglas de
-ownership de Cutover/cleanup.
+Este R33 no cambió workflow, BLACKBOX, Porota, servicios ajenos, puertos,
+HTTPS, backups, reservas ni compras. Su consolidación en #398 es DRAFT;
+R34 agrega un preflight separado de fuentes sin host, detallado en ADR0181.
+Ningún test sintético o resultado de import demuestra activación ni ACK físico.

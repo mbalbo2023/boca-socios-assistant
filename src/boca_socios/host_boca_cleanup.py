@@ -1324,9 +1324,437 @@ def execute_protected(
 # mutation/lease entrypoint above. Its sole dependency is the already reviewed
 # read-only inventory and pure positive-identity plan; the protected GitHub
 # workflow streams this module by stdin to the Boca-only rootless account.
-READONLY_CLEANUP_VERSION = "boca-cutover-cleanup-readonly-v2"
+READONLY_CLEANUP_VERSION = "boca-cutover-cleanup-readonly-v3"
 READONLY_CLEANUP_MAX_JSON = 8192
 READONLY_PROVENANCE_LIMIT = 8
+SYSTEM_DF_KINDS = frozenset({"Images", "Containers", "Local Volumes", "Build Cache"})
+SAFE_SIZE_DISPLAY = re.compile(r"[0-9]+(?:\.[0-9]+)?\s*(?:B|kB|MB|GB|TB|PB)\Z")
+
+# R28: fixed third-party-verifiable coordinates from physical #42116760086
+# and successful GitHub release #41559973013. This can NEVER accept another
+# image via CLI args, a name prefix, a moving tag, or a runtime environment.
+HISTORICAL_RETIRE_INCIDENT = "42096941815"
+HISTORICAL_RETIRE_CONTAINER = "27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793"
+HISTORICAL_RETIRE_KEEP_IMAGE = (
+    "sha256:12d492da545566a13ba4faec6afd99a3d6fe1990657d2e0981420c429c36d5c1"
+)
+HISTORICAL_RETIRE_TARGET = "sha256:a44453ab30cb17fa42f71723cf64b1097dabdf0e56369186077c47bc8224f90b"
+HISTORICAL_RETIRE_DIGEST = (
+    "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:"
+    "7afe5429e34bd39b289e9d1da700fd5cd436cd2bdd413a2c4f8039829f1d034e"
+)
+HISTORICAL_RETIRE_REVISION = "0e830e3eed941de1da70cef8b42bda9f20258b65"
+HISTORICAL_RETIRE_SIZE = 66_021_451
+
+
+def _check_exact_historical_retire_snapshot(
+    snapshot: Inventory,
+    provenance: dict[str, object],
+) -> Container:
+    """Single candidate and exact original, never Boca-prefix as delete authority."""
+    _validate_inventory(snapshot)
+    original = _readonly_original(snapshot, HISTORICAL_RETIRE_CONTAINER)
+    candidates = plan(
+        snapshot,
+        HISTORICAL_RETIRE_INCIDENT,
+        preserve_images=frozenset({HISTORICAL_RETIRE_KEEP_IMAGE}),
+        preserve_containers=frozenset({HISTORICAL_RETIRE_CONTAINER}),
+        retire_containers=frozenset(),
+    )
+    expected_unknown = (
+        f"image:{HISTORICAL_RETIRE_TARGET}:unverified-provenance-or-shared-reference",
+    )
+    expected_volumes = {"boca-socios_boca_data", "boca-socios_boca_key", "boca-socios_boca_owner"}
+    if (
+        original.image_id != HISTORICAL_RETIRE_KEEP_IMAGE
+        or len(snapshot.containers) != 1
+        or len(snapshot.networks) != 1
+        or snapshot.networks[0].name != "boca-socios_boca_private"
+        or snapshot.networks[0].attached_ids != (HISTORICAL_RETIRE_CONTAINER,)
+        or original.networks != ("boca-socios_boca_private",)
+        or set(original.volumes) != expected_volumes
+        or {vol.name for vol in snapshot.volumes} != expected_volumes
+        or {img.ident for img in snapshot.images}
+        != {HISTORICAL_RETIRE_KEEP_IMAGE, HISTORICAL_RETIRE_TARGET}
+        or snapshot.global_image_ids != {HISTORICAL_RETIRE_KEEP_IMAGE, HISTORICAL_RETIRE_TARGET}
+        or candidates.targets
+        or candidates.uncertain != expected_unknown
+        or provenance
+        != {
+            "id": HISTORICAL_RETIRE_TARGET,
+            "repo_tags": [],
+            "repo_digests": [HISTORICAL_RETIRE_DIGEST],
+            "untrusted_alias_count": 0,
+            "oci_source_status": "ABSENT",
+            "oci_revision": HISTORICAL_RETIRE_REVISION,
+            "logical_size_bytes": HISTORICAL_RETIRE_SIZE,
+            "container_ref_count": 0,
+            "deletion_authorized": False,
+        }
+    ):
+        raise CleanupError("historical Boca image retirement exact proof does not match")
+    metrics = _readonly_disk(snapshot.disk)
+    if (
+        min(metrics["stage_bytes_free"], metrics["docker_bytes_free"]) < 4 * 1024**3
+        or min(metrics["stage_inodes_free"], metrics["docker_inodes_free"]) < 50_000
+    ):
+        raise CleanupError("historical retirement storage reserve unavailable")
+    return original
+
+
+def retire_single_attested_historical_image(
+    lease: BocaJobLease,
+    *,
+    probe: Callable[[], Inventory] = capture_inventory,
+    provenance_probe: Callable[[str, Inventory], dict[str, object]] | None = None,
+    remove: Callable[[str], None] | None = None,
+) -> CleanupReceipt:
+    """CODE_ONLY, UNWIRED exact one-image retire under Boca lease.
+
+    This callable is NOT a CLI route or a GitHub Action. Before a future
+    protected caller may use it, that caller must pin main/release/actor and
+    acquire the single UID10001 Boca-only lease. No built-in retry or purge.
+    """
+    verify_protected_boca_job_lease(lease, HISTORICAL_RETIRE_INCIDENT)
+    inspect_provenance = provenance_probe or _observe_boca_reference_image
+
+    def snapshot_and_proof() -> tuple[Inventory, dict[str, object]]:
+        snapshot = probe()
+        proof = inspect_provenance(HISTORICAL_RETIRE_TARGET, snapshot)
+        _check_exact_historical_retire_snapshot(snapshot, proof)
+        return snapshot, proof
+
+    before, proof = snapshot_and_proof()
+    stable, repeated = snapshot_and_proof()
+    if (
+        (before.containers, before.images, before.networks, before.volumes, before.global_image_ids)
+        != (
+            stable.containers,
+            stable.images,
+            stable.networks,
+            stable.volumes,
+            stable.global_image_ids,
+        )
+        or _storage_topology_changed(before.disk, stable.disk)
+        or proof != repeated
+    ):
+        raise CleanupError("historical image retirement preflight drifted before deletion")
+    # Revalidate the exact immutable release proof immediately before the one
+    # possible write; never remove by tag/digest or user-selected coordinate.
+    last, proof_last = snapshot_and_proof()
+    if (
+        (stable.containers, stable.images, stable.networks, stable.volumes, stable.global_image_ids)
+        != (last.containers, last.images, last.networks, last.volumes, last.global_image_ids)
+        or _storage_topology_changed(stable.disk, last.disk)
+        or repeated != proof_last
+    ):
+        raise CleanupError("historical image retirement proof changed before deletion")
+
+    try:
+        if remove is None:
+            _docker("image", "rm", "--no-prune", HISTORICAL_RETIRE_TARGET)
+        else:
+            remove(HISTORICAL_RETIRE_TARGET)
+        after = probe()
+        original = _readonly_original(after, HISTORICAL_RETIRE_CONTAINER)
+        if (
+            original.image_id != HISTORICAL_RETIRE_KEEP_IMAGE
+            or after.containers != before.containers
+            or after.networks != before.networks
+            or after.volumes != before.volumes
+            or after.images
+            != tuple(img for img in before.images if img.ident != HISTORICAL_RETIRE_TARGET)
+            or after.global_image_ids != {HISTORICAL_RETIRE_KEEP_IMAGE}
+            or _storage_topology_changed(before.disk, after.disk)
+            or min(after.disk.bytes_free, after.disk.docker_bytes_free or 0) < 4 * 1024**3
+            or min(after.disk.inodes_free, after.disk.docker_inodes_free or 0) < 50_000
+        ):
+            raise CleanupError("historical image retirement postflight identity unverified")
+        return CleanupReceipt(
+            "SUCCESS",
+            HISTORICAL_RETIRE_INCIDENT,
+            "ACCEPT",
+            before.disk,
+            after.disk,
+            (Target("image", HISTORICAL_RETIRE_TARGET),),
+            (),
+            (),
+        )
+    except (CleanupError, OSError, ValueError):
+        # Docker may have removed it even if the ACK was lost: never retry.
+        # Keep the attempted identity in an uncertain receipt, not `removed`.
+        return CleanupReceipt(
+            "FAILURE",
+            HISTORICAL_RETIRE_INCIDENT,
+            "INDETERMINATE",
+            before.disk,
+            before.disk,
+            (),
+            ("historical-exact-image-removal-ack-unverified",),
+            (),
+        )
+
+
+def _empty_rootless_disk_accounting() -> dict[str, object]:
+    return {
+        "scope": "BOCA_ROOTLESS_DAEMON_ONLY",
+        "system_df_status": "NOT_OBSERVED",
+        "system_df": [],
+        "buildx_status": "NOT_OBSERVED",
+        "buildx": {
+            "records": 0,
+            "total_record_bytes": 0,
+            "reclaimable_record_bytes": 0,
+            "shared_record_bytes": 0,
+            "mutable_records": 0,
+        },
+        "deletion_authorized": False,
+    }
+
+
+def _empty_host_python_crypto() -> dict[str, object]:
+    return {
+        "scope": "HOST_PYTHON_UID10001",
+        "status": "NOT_OBSERVED",
+        "version": None,
+        "probe_writes": 0,
+    }
+
+
+def _probe_host_python_crypto() -> dict[str, object]:
+    """Prove an isolated host-Python import as Boca UID; never inspect secrets.
+
+    This is NOT a test of the controller image or a request to execute inside
+    its container. Python's -I/-B makes this bounded subprocess independent
+    of PYTHONPATH, user site and .pyc writes, with no inherited credentials.
+    """
+    if os.geteuid() != EXPECTED_UID or os.getegid() != EXPECTED_GID:
+        raise CleanupError("host crypto proof requires Boca rootless identity")
+    result = _empty_host_python_crypto()
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed read-only Python probe
+            [
+                sys.executable,
+                "-I",
+                "-B",
+                "-c",
+                "import cryptography; print(cryptography.__version__)",
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C", "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+        if completed.returncode:
+            result["status"] = "IMPORT_FAILED"
+        elif (
+            len(completed.stdout) <= 64
+            and re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,4}(?:[a-z0-9.]{0,15})\n?", completed.stdout)
+            is not None
+        ):
+            result["status"] = "AVAILABLE"
+            result["version"] = completed.stdout.strip()
+        else:
+            result["status"] = "UNAVAILABLE"
+    except (OSError, subprocess.TimeoutExpired):
+        result["status"] = "UNAVAILABLE"
+    return result
+
+
+def _validate_host_python_crypto(value: object) -> None:
+    if (
+        type(value) is not dict
+        or set(value) != {"scope", "status", "version", "probe_writes"}
+        or value["scope"] != "HOST_PYTHON_UID10001"
+        or value["status"] not in ("NOT_OBSERVED", "AVAILABLE", "IMPORT_FAILED", "UNAVAILABLE")
+        or value["probe_writes"] != 0
+        or type(value["probe_writes"]) is not int
+        or (
+            value["status"] == "AVAILABLE"
+            and (
+                type(value["version"]) is not str
+                or re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,4}(?:[a-z0-9.]{0,15})", value["version"])
+                is None
+            )
+        )
+        or (value["status"] != "AVAILABLE" and value["version"] is not None)
+    ):
+        raise CleanupError("host Python read-only crypto proof invalid")
+
+
+def _read_rootless_storage_usage() -> dict[str, object]:
+    """Read aggregate daemon cache/volume pressure; never reveal cache descriptions.
+
+    The caller first established that this UID10001 rootless daemon contains
+    exclusively Boca containers/networks/volumes. Buildx probes ONLY its local
+    `default` driver=docker builder, not a selected/remote builder. This is an
+    accounting hint, never proof a `prune` would safely reclaim these bytes.
+    """
+    report = _empty_rootless_disk_accounting()
+    try:
+        raw = _docker("system", "df", "--format", "{{json .}}")
+        lines = [line for line in raw.splitlines() if line.strip()]
+        rows: list[dict[str, object]] = []
+        seen: set[str] = set()
+        if not 1 <= len(lines) <= 4:
+            raise CleanupError("rootless Docker disk summary incomplete")
+        for line in lines:
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise CleanupError("Docker disk summary row malformed")
+            kind = value.get("Type")
+            if kind not in SYSTEM_DF_KINDS or kind in seen:
+                raise CleanupError("Docker disk summary type unsupported")
+            seen.add(kind)
+            total, active = value.get("TotalCount"), value.get("Active")
+            if type(total) is str and total.isdecimal():
+                total = int(total)
+            if type(active) is str and active.isdecimal():
+                active = int(active)
+            size, reclaimable = value.get("Size"), value.get("Reclaimable")
+            if (
+                type(total) is not int
+                or type(active) is not int
+                or not 0 <= active <= total <= 1_000_000
+                or type(size) is not str
+                or SAFE_SIZE_DISPLAY.fullmatch(size.strip()) is None
+                or type(reclaimable) is not str
+                or re.fullmatch(
+                    r"[0-9]+(?:\.[0-9]+)?\s*(?:B|kB|MB|GB|TB|PB)\s*\([0-9]{1,3}%\)",
+                    reclaimable.strip(),
+                )
+                is None
+            ):
+                raise CleanupError("Docker disk accounting numbers malformed")
+            rows.append(
+                {
+                    "kind": kind,
+                    "total": total,
+                    "active": active,
+                    "size_display": size.strip(),
+                    "reclaimable_display": reclaimable.strip(),
+                }
+            )
+        report["system_df_status"] = "OBSERVED"
+        report["system_df"] = sorted(rows, key=lambda row: str(row["kind"]))
+    except (CleanupError, ValueError, TypeError):
+        report["system_df_status"] = "UNAVAILABLE"
+        report["system_df"] = []
+
+    try:
+        builders = _docker("buildx", "ls", "--format", "{{.Builder.Name}}:{{.DriverEndpoint}}")
+        normalized = {line.strip().replace(": ", ":") for line in builders.splitlines()}
+        if not {"default:docker", "default:default"} <= normalized:
+            raise CleanupError("buildx local default driver cannot be proved")
+        raw = _docker("buildx", "du", "--builder", "default", "--format=json")
+        lines = [line for line in raw.splitlines() if line.strip()]
+        if len(lines) > 1024:
+            raise CleanupError("Buildx read-only cache record limit exceeded")
+        total_bytes = reclaimable_bytes = shared_bytes = mutable_records = 0
+        for line in lines:
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise CleanupError("Buildx cache row malformed")
+            size = value.get("Size")
+            if (
+                type(size) is not str
+                or re.fullmatch(r"[0-9]{1,16}", size) is None
+                or type(value.get("Reclaimable")) is not bool
+                or type(value.get("Shared")) is not bool
+                or type(value.get("Mutable")) is not bool
+            ):
+                raise CleanupError("Buildx cache numeric evidence malformed")
+            size_bytes = int(size)
+            total_bytes += size_bytes
+            reclaimable_bytes += size_bytes if value["Reclaimable"] else 0
+            shared_bytes += size_bytes if value["Shared"] else 0
+            mutable_records += int(value["Mutable"])
+        report["buildx_status"] = "OBSERVED"
+        report["buildx"] = {
+            "records": len(lines),
+            "total_record_bytes": total_bytes,
+            "reclaimable_record_bytes": reclaimable_bytes,
+            "shared_record_bytes": shared_bytes,
+            "mutable_records": mutable_records,
+        }
+    except (CleanupError, ValueError, TypeError):
+        report["buildx_status"] = "UNAVAILABLE"
+    return report
+
+
+def _validate_rootless_disk_accounting(value: object) -> None:
+    if (
+        type(value) is not dict
+        or set(value)
+        != {
+            "scope",
+            "system_df_status",
+            "system_df",
+            "buildx_status",
+            "buildx",
+            "deletion_authorized",
+        }
+        or value["scope"] != "BOCA_ROOTLESS_DAEMON_ONLY"
+        or value["deletion_authorized"] is not False
+        or value["system_df_status"] not in ("OBSERVED", "UNAVAILABLE", "NOT_OBSERVED")
+        or value["buildx_status"] not in ("OBSERVED", "UNAVAILABLE", "NOT_OBSERVED")
+    ):
+        raise CleanupError("rootless read-only disk accounting envelope invalid")
+    rows = value["system_df"]
+    if type(rows) is not list or len(rows) > 4:
+        raise CleanupError("rootless disk accounting rows invalid")
+    seen: set[str] = set()
+    for row in rows:
+        if type(row) is not dict or set(row) != {
+            "kind",
+            "total",
+            "active",
+            "size_display",
+            "reclaimable_display",
+        }:
+            raise CleanupError("rootless disk accounting row fields invalid")
+        kind = row["kind"]
+        if (
+            type(kind) is not str
+            or kind not in SYSTEM_DF_KINDS
+            or kind in seen
+            or type(row["total"]) is not int
+            or type(row["active"]) is not int
+            or not 0 <= row["active"] <= row["total"] <= 1_000_000
+            or type(row["size_display"]) is not str
+            or SAFE_SIZE_DISPLAY.fullmatch(row["size_display"]) is None
+            or type(row["reclaimable_display"]) is not str
+            or re.fullmatch(
+                r"[0-9]+(?:\.[0-9]+)?\s*(?:B|kB|MB|GB|TB|PB)\s*\([0-9]{1,3}%\)",
+                row["reclaimable_display"],
+            )
+            is None
+        ):
+            raise CleanupError("rootless disk accounting row evidence invalid")
+        seen.add(kind)
+    if (value["system_df_status"] == "OBSERVED") != bool(rows):
+        raise CleanupError("rootless disk accounting status contradictory")
+    if rows != sorted(rows, key=lambda row: row["kind"]):
+        raise CleanupError("rootless disk accounting rows unsorted")
+    buildx = value["buildx"]
+    if (
+        type(buildx) is not dict
+        or set(buildx)
+        != {
+            "records",
+            "total_record_bytes",
+            "reclaimable_record_bytes",
+            "shared_record_bytes",
+            "mutable_records",
+        }
+        or any(type(entry) is not int or not 0 <= entry <= 2**54 for entry in buildx.values())
+        or not 0 <= buildx["mutable_records"] <= buildx["records"] <= 1024
+        or not 0 <= buildx["reclaimable_record_bytes"] <= buildx["total_record_bytes"]
+        or not 0 <= buildx["shared_record_bytes"] <= buildx["total_record_bytes"]
+        or (value["buildx_status"] != "OBSERVED" and any(buildx.values()))
+    ):
+        raise CleanupError("rootless Buildx aggregate accounting invalid")
 
 
 def _observe_boca_reference_image(ident: str, snapshot: Inventory) -> dict[str, object]:
@@ -1451,6 +1879,8 @@ def observe_postapply_cleanup(
     *,
     probe: Callable[[], Inventory] = capture_inventory,
     probe_provenance: Callable[[str, Inventory], dict[str, object]] | None = None,
+    probe_storage: Callable[[], dict[str, object]] | None = None,
+    probe_host_crypto: Callable[[], dict[str, object]] | None = None,
 ) -> dict[str, object]:
     """Two stable, Boca-only READ_ONLY snapshots and a *nonexecuted* cleanup plan.
 
@@ -1540,6 +1970,12 @@ def observe_postapply_cleanup(
         ],
         "retained_uncertain": list(unknown_reasons),
         "image_provenance": provenance,
+        "storage_accounting": probe_storage()
+        if probe_storage is not None
+        else _empty_rootless_disk_accounting(),
+        "host_python_crypto": probe_host_crypto()
+        if probe_host_crypto is not None
+        else _empty_host_python_crypto(),
         "before": _readonly_disk(first.disk),
         "after": _readonly_disk(second.disk),
         "original_preserved": True,
@@ -1611,6 +2047,8 @@ def verify_readonly_cleanup_receipt(
         "known_remnants",
         "retained_uncertain",
         "image_provenance",
+        "storage_accounting",
+        "host_python_crypto",
         "before",
         "after",
         "original_preserved",
@@ -1753,6 +2191,8 @@ def verify_readonly_cleanup_receipt(
         or provenance != sorted(provenance, key=lambda row: row["id"])
     ):
         raise CleanupError("Boca public image provenance receipt untrusted")
+    _validate_rootless_disk_accounting(obj["storage_accounting"])
+    _validate_host_python_crypto(obj["host_python_crypto"])
     expected_classification = (
         "INDETERMINATE"
         if unknown
@@ -1778,7 +2218,11 @@ def _readonly_main(args: list[str]) -> int:
             if os.geteuid() != EXPECTED_UID or os.getegid() != EXPECTED_GID:
                 raise CleanupError("read-only cleanup requires exact Boca rootless identity")
             receipt = observe_postapply_cleanup(
-                incident_run_id, legacy_id, probe_provenance=_observe_boca_reference_image
+                incident_run_id,
+                legacy_id,
+                probe_provenance=_observe_boca_reference_image,
+                probe_storage=_read_rootless_storage_usage,
+                probe_host_crypto=_probe_host_python_crypto,
             )
             sys.stdout.buffer.write(canonical_readonly_cleanup_receipt(receipt))
         else:

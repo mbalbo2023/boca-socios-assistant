@@ -52,7 +52,14 @@ def test_browser_option_is_separately_gated_without_weakening_legacy_operations(
     # Telegram phase2 remains explicitly NO_GO.
     assert "protected-go-prepare|lifecycle-apply)" in gate
     assert "telegram-activate)" in gate
-    assert "state=NO_GO reason=host_same_lease_backend_unverified" in gate
+    telegram_review = _step(
+        "Prove Telegram dual-source release ancestry CODE_ONLY then reject physical activation"
+    )
+    assert "state=NO_GO reason=host_same_lease_backend_unverified" in telegram_review
+    assert "exit 1" in telegram_review
+    assert _workflow().index("      - name: Prove Telegram dual-source") < _workflow().index(
+        "      - name: Configure pinned SSH host key and dedicated identity"
+    )
     for legacy in (
         "owner-enroll)",
         "beta-install|beta-start|beta-acceptance)",

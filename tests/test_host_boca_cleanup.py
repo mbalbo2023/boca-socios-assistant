@@ -254,6 +254,358 @@ def test_boca_reference_only_image_provenance_changed_second_read_no_go() -> Non
         )
 
 
+def test_rootless_disk_cache_audit_only_outputs_aggregate_not_foreign_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_docker(*args: str) -> str:
+        calls.append(args)
+        if args == ("system", "df", "--format", "{{json .}}"):
+            return "\n".join(
+                json.dumps(row)
+                for row in (
+                    {
+                        "Type": "Images",
+                        "TotalCount": "2",
+                        "Active": "1",
+                        "Size": "130.7MB",
+                        "Reclaimable": "63MB (48%)",
+                    },
+                    {
+                        "Type": "Containers",
+                        "TotalCount": "1",
+                        "Active": "1",
+                        "Size": "2MB",
+                        "Reclaimable": "0B (0%)",
+                    },
+                    {
+                        "Type": "Local Volumes",
+                        "TotalCount": "3",
+                        "Active": "3",
+                        "Size": "5GB",
+                        "Reclaimable": "0B (0%)",
+                    },
+                    {
+                        "Type": "Build Cache",
+                        "TotalCount": "2",
+                        "Active": "0",
+                        "Size": "1.8GB",
+                        "Reclaimable": "1.6GB (89%)",
+                    },
+                )
+            )
+        if args == ("buildx", "ls", "--format", "{{.Builder.Name}}:{{.DriverEndpoint}}"):
+            return "default: docker\ndefault: default\nforeign-porota: ssh://private.example\n"
+        if args == ("buildx", "du", "--builder", "default", "--format=json"):
+            return "\n".join(
+                json.dumps(row)
+                for row in (
+                    {
+                        "ID": "aa",
+                        "Description": "PRIVATE_POROTA_SECRET",
+                        "Size": "1800000000",
+                        "Reclaimable": True,
+                        "Shared": False,
+                        "Mutable": False,
+                    },
+                    {
+                        "ID": "bb",
+                        "Description": "COPY PRIVATE_ENV",
+                        "Size": "2000000",
+                        "Reclaimable": False,
+                        "Shared": True,
+                        "Mutable": True,
+                    },
+                )
+            )
+        pytest.fail(f"unexpected Docker query: {args}")
+
+    monkeypatch.setattr(gc, "_docker", fake_docker)
+    accounting = gc._read_rootless_storage_usage()
+    gc._validate_rootless_disk_accounting(accounting)
+    assert accounting["system_df_status"] == "OBSERVED"
+    assert accounting["buildx_status"] == "OBSERVED"
+    assert accounting["buildx"] == {
+        "records": 2,
+        "total_record_bytes": 1_802_000_000,
+        "reclaimable_record_bytes": 1_800_000_000,
+        "shared_record_bytes": 2_000_000,
+        "mutable_records": 1,
+    }
+    assert all("prune" not in args and "rm" not in args for args in calls)
+    assert "PRIVATE_POROTA_SECRET" not in str(accounting)
+    assert "PRIVATE_ENV" not in str(accounting)
+    assert "ssh://private.example" not in str(accounting)
+    assert calls[-1] == ("buildx", "du", "--builder", "default", "--format=json")
+
+
+def test_rootless_cache_audit_rejects_remote_buildx_and_receipt_forgery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_docker(*args: str) -> str:
+        calls.append(args)
+        if args[0:2] == ("system", "df"):
+            return json.dumps(
+                {
+                    "Type": "Build Cache",
+                    "TotalCount": "4",
+                    "Active": "0",
+                    "Size": "2GB",
+                    "Reclaimable": "1.9GB (95%)",
+                }
+            )
+        if args[0:2] == ("buildx", "ls"):
+            return "default: docker-container\ndefault: ssh://other.host\n"
+        pytest.fail("remote Buildx query forbidden")
+
+    monkeypatch.setattr(gc, "_docker", fake_docker)
+    accounting = gc._read_rootless_storage_usage()
+    assert accounting["system_df_status"] == "OBSERVED"
+    assert accounting["buildx_status"] == "UNAVAILABLE"
+    assert all("du" not in call for call in calls)
+    receipt = gc.observe_postapply_cleanup(
+        ATTEMPT,
+        ACTIVE_ID,
+        probe=lambda: _physical_observer_fixture(stale="unknown"),
+        probe_storage=lambda: accounting,
+    )
+    assert (
+        gc.verify_readonly_cleanup_receipt(
+            gc.canonical_readonly_cleanup_receipt(receipt), ATTEMPT, ACTIVE_ID
+        )
+        == receipt
+    )
+    for changed in (
+        {**accounting, "system_df": [{"kind": "foreign-Porota"}]},
+        {**accounting, "deletion_authorized": True},
+        {**accounting, "buildx": {**accounting["buildx"], "records": 9999}},
+    ):
+        with pytest.raises(gc.CleanupError):
+            gc.verify_readonly_cleanup_receipt(
+                gc.canonical_readonly_cleanup_receipt({**receipt, "storage_accounting": changed}),
+                ATTEMPT,
+                ACTIVE_ID,
+            )
+
+
+def test_host_crypto_probe_imports_isolated_as_boca_owner_without_secret_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[object] = []
+    monkeypatch.setattr(gc.os, "geteuid", lambda: gc.EXPECTED_UID)
+    monkeypatch.setattr(gc.os, "getegid", lambda: gc.EXPECTED_GID)
+
+    def fake_run(args: list[str], **kwargs: object) -> SimpleNamespace:
+        seen.extend((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout="45.0.1\n", stderr="PRIVATE_SECRET")
+
+    monkeypatch.setattr(gc.subprocess, "run", fake_run)
+    receipt = gc._probe_host_python_crypto()
+    gc._validate_host_python_crypto(receipt)
+    assert receipt == {
+        "scope": "HOST_PYTHON_UID10001",
+        "status": "AVAILABLE",
+        "version": "45.0.1",
+        "probe_writes": 0,
+    }
+    args, kwargs = seen
+    assert args == [
+        gc.sys.executable,
+        "-I",
+        "-B",
+        "-c",
+        "import cryptography; print(cryptography.__version__)",
+    ]
+    assert kwargs["env"] == {
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    assert kwargs["timeout"] == 5
+    assert "PRIVATE_SECRET" not in str(receipt)
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "stdout", "expected"),
+    [(1, "secret", "IMPORT_FAILED"), (0, "bad\nsecret", "UNAVAILABLE")],
+)
+def test_host_crypto_probe_has_fail_closed_status_and_receipt_contract(
+    monkeypatch: pytest.MonkeyPatch, exit_code: int, stdout: str, expected: str
+) -> None:
+    monkeypatch.setattr(gc.os, "geteuid", lambda: gc.EXPECTED_UID)
+    monkeypatch.setattr(gc.os, "getegid", lambda: gc.EXPECTED_GID)
+    monkeypatch.setattr(
+        gc.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=exit_code, stdout=stdout),
+    )
+    receipt = gc._probe_host_python_crypto()
+    assert receipt["status"] == expected
+    assert receipt["version"] is None
+    gc._validate_host_python_crypto(receipt)
+    base = gc.observe_postapply_cleanup(
+        ATTEMPT,
+        ACTIVE_ID,
+        probe=lambda: _physical_observer_fixture(stale="unknown"),
+        probe_host_crypto=lambda: receipt,
+    )
+    gc.verify_readonly_cleanup_receipt(
+        gc.canonical_readonly_cleanup_receipt(base), ATTEMPT, ACTIVE_ID
+    )
+    forged = {**base, "host_python_crypto": {**receipt, "status": "AVAILABLE"}}
+    with pytest.raises(gc.CleanupError):
+        gc.verify_readonly_cleanup_receipt(
+            gc.canonical_readonly_cleanup_receipt(forged), ATTEMPT, ACTIVE_ID
+        )
+
+
+def test_host_crypto_probe_refuses_non_boca_uid(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gc.os, "geteuid", lambda: 0)
+    with pytest.raises(gc.CleanupError, match="rootless identity"):
+        gc._probe_host_python_crypto()
+
+
+def _pinned_historical_retire_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[gc.Inventory, dict[str, object]]:
+    monkeypatch.setattr(gc, "HISTORICAL_RETIRE_INCIDENT", ATTEMPT)
+    monkeypatch.setattr(gc, "HISTORICAL_RETIRE_CONTAINER", ACTIVE_ID)
+    monkeypatch.setattr(gc, "HISTORICAL_RETIRE_KEEP_IMAGE", ACTIVE_IMAGE)
+    monkeypatch.setattr(gc, "HISTORICAL_RETIRE_TARGET", OLD_IMAGE)
+    digest = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "e" * 64
+    monkeypatch.setattr(gc, "HISTORICAL_RETIRE_DIGEST", digest)
+    monkeypatch.setattr(gc, "HISTORICAL_RETIRE_REVISION", "d" * 40)
+    monkeypatch.setattr(gc, "HISTORICAL_RETIRE_SIZE", 66_021_451)
+    fixture = _physical_observer_fixture(stale="unknown")
+    fixture = replace(
+        fixture,
+        disk=gc.DiskInodes(6 * 1024**3, 100_000, 6 * 1024**3, 100_000, 100, 101, 200, 201),
+    )
+    proof = {
+        "id": OLD_IMAGE,
+        "repo_tags": [],
+        "repo_digests": [digest],
+        "untrusted_alias_count": 0,
+        "oci_source_status": "ABSENT",
+        "oci_revision": "d" * 40,
+        "logical_size_bytes": 66_021_451,
+        "container_ref_count": 0,
+        "deletion_authorized": False,
+    }
+    return fixture, proof
+
+
+def test_exact_historical_single_image_retire_under_real_flock_and_no_prune(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    snapshot, proof = _pinned_historical_retire_fixture(monkeypatch)
+    monkeypatch.setattr(gc, "LEASE_DIR", tmp_path)
+    monkeypatch.setattr(gc, "EXPECTED_UID", os.geteuid())
+    monkeypatch.setattr(gc, "EXPECTED_GID", os.getegid())
+    tmp_path.chmod(0o700)
+    current = snapshot
+    calls: list[tuple[str, ...]] = []
+
+    def fake_docker(*args: str) -> str:
+        nonlocal current
+        calls.append(args)
+        assert args == ("image", "rm", "--no-prune", OLD_IMAGE)
+        current = replace(
+            current,
+            images=(current.images[0],),
+            global_image_ids=frozenset({ACTIVE_IMAGE}),
+            disk=replace(current.disk, docker_bytes_free=current.disk.docker_bytes_free + 2_000),
+        )
+        return ""
+
+    monkeypatch.setattr(gc, "_docker", fake_docker)
+    with gc.protected_boca_job_lease(ATTEMPT) as lease:
+        result = gc.retire_single_attested_historical_image(
+            lease,
+            probe=lambda: current,
+            provenance_probe=lambda _ident, _inventory: proof,
+        )
+    assert result.status == "ACCEPT"
+    assert result.removed == (gc.Target("image", OLD_IMAGE),)
+    assert result.after.docker_bytes_free > result.before.docker_bytes_free
+    assert calls == [("image", "rm", "--no-prune", OLD_IMAGE)]
+    assert "prune" not in " ".join(str(c) for c in calls if c != calls[0])
+    assert "porota" not in result.redacted_json().lower()
+
+
+@pytest.mark.parametrize(
+    "failure", ["different_digest", "image_referenced", "storage_shortage", "drift"]
+)
+def test_exact_historical_retire_preflight_refuses_unproved_before_any_write(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    baseline, proof = _pinned_historical_retire_fixture(monkeypatch)
+    seen = 0
+    removed: list[str] = []
+    monkeypatch.setattr(gc, "verify_protected_boca_job_lease", lambda _lease, _id: None)
+    lease = gc.BocaJobLease(ATTEMPT, -1, os.getpid(), True)
+    if failure == "different_digest":
+        proof = {
+            **proof,
+            "repo_digests": ["ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "f" * 64],
+        }
+    if failure == "image_referenced":
+        baseline = replace(
+            baseline,
+            containers=(
+                baseline.containers[0],
+                gc.Container(OLD_ID, "/boca-socios-browser-1", OLD_IMAGE, False, BOCA),
+            ),
+        )
+    if failure == "storage_shortage":
+        baseline = replace(baseline, disk=replace(baseline.disk, docker_bytes_free=3 * 1024**3))
+
+    def probe() -> gc.Inventory:
+        nonlocal seen
+        seen += 1
+        if failure == "drift" and seen >= 2:
+            return replace(baseline, disk=replace(baseline.disk, docker_inode=9999))
+        return baseline
+
+    with pytest.raises(gc.CleanupError):
+        gc.retire_single_attested_historical_image(
+            lease,
+            probe=probe,
+            provenance_probe=lambda _ident, _inventory: proof,
+            remove=removed.append,
+        )
+    assert removed == []
+
+
+@pytest.mark.parametrize("failure", ["docker_refused", "lost_ack"])
+def test_historical_retire_after_attempt_is_indeterminate_no_retry(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    snapshot, proof = _pinned_historical_retire_fixture(monkeypatch)
+    monkeypatch.setattr(gc, "verify_protected_boca_job_lease", lambda _lease, _id: None)
+    calls: list[str] = []
+
+    def remove(ident: str) -> None:
+        calls.append(ident)
+        if failure == "docker_refused":
+            raise gc.CleanupError("synthetic Docker refused")
+        # Lost ACK fixture deliberately keeps the ID in postflight.
+
+    result = gc.retire_single_attested_historical_image(
+        gc.BocaJobLease(ATTEMPT, -1, os.getpid(), True),
+        probe=lambda: snapshot,
+        provenance_probe=lambda _ident, _inventory: proof,
+        remove=remove,
+    )
+    assert calls == [OLD_IMAGE]
+    assert result.status == "INDETERMINATE"
+    assert result.removed == ()
+    assert result.retained_uncertain == ("historical-exact-image-removal-ack-unverified",)
+
+
 def test_postapply_cleanup_readonly_receipt_rejects_tampering() -> None:
     receipt = gc.observe_postapply_cleanup(
         ATTEMPT, ACTIVE_ID, probe=lambda: _physical_observer_fixture()

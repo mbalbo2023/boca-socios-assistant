@@ -59,7 +59,9 @@ OPTION_B_ENTRIES = frozenset(
     }
 )
 MAX_ZIP = 512_000
-MAX_UNCOMPRESSED = 768_000
+# Must match the reviewed SOURCES growth guard in build_protected_boca_bundle;
+# independent 512k compressed transport and exact digest checks remain intact.
+MAX_UNCOMPRESSED = 800_000
 
 
 def verify(raw: bytes, expected_sha: str) -> None:
