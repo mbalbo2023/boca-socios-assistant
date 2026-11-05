@@ -187,3 +187,46 @@ def test_helper_allowlist_never_accepts_sender_action(
     ) as get:
         with pytest.raises(helper.TelegramPhysicalNoGo):
             get("test-token", "sendMessage", 42)
+
+
+def test_active_session_phase_recheck_is_attested_and_never_authorizes_sender(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reader = _attested_reader(tmp_path)
+    monkeypatch.setattr(helper, "verify_protected_boca_job_lease", lambda *_args: None)
+    monkeypatch.setattr(helper, "_run_helper", lambda *_args: _HELPER)
+    monkeypatch.setattr(helper, "_remove_helper", lambda _id: None)
+    with helper.protected_ephemeral_get_session(
+        _pins(), _coordinates(), lease=_lease(), reader=reader
+    ) as session:
+        proof = session.attest_phase("BEFORE_API")
+        assert proof.phase == "BEFORE_API"
+        assert proof.attempt_id == _pins().attempt_id
+        assert proof.source_sha == _pins().source_sha
+        assert proof.state == "HELPER_ATTESTED_READONLY_NO_GO"
+        assert proof.sender_state == "OFF"
+        assert proof.host_go is False
+        assert repr(proof).find(_HELPER) == -1
+        assert repr(proof).find("test-token") == -1
+        with pytest.raises(helper.TelegramPhysicalNoGo):
+            session.attest_phase("UNREVIEWED_PHASE")
+    with pytest.raises(helper.TelegramPhysicalNoGo):
+        session.attest_phase("BEFORE_API")
+
+
+def test_phase_recheck_rejects_helper_identity_drift_before_any_get(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reader = _attested_reader(tmp_path)
+    executed: list[str] = []
+    monkeypatch.setattr(helper, "verify_protected_boca_job_lease", lambda *_args: None)
+    monkeypatch.setattr(helper, "_run_helper", lambda *_args: _HELPER)
+    monkeypatch.setattr(helper, "_remove_helper", lambda _id: None)
+    monkeypatch.setattr(helper, "_private_exec", lambda *_args: executed.append("GET"))
+    with helper.protected_ephemeral_get_session(
+        _pins(), _coordinates(), lease=_lease(), reader=reader
+    ) as session:
+        reader.fields[("container", _HELPER, "State.Restarting")] = True
+        with pytest.raises(helper.TelegramPhysicalNoGo, match="attestation"):
+            session.attest_phase("BEFORE_getMe")
+    assert executed == []
