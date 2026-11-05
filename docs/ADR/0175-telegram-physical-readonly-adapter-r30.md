@@ -28,16 +28,27 @@ un lector dedicado. NO expandir la inspección genérica de cleanup.
   Devuelve la respuesta del proveedor codificada por STDOUT **privado del
   proceso Docker exec**, nunca como receipt público de Actions. El futuro
   consumidor debe redirigirla, limitarla y no registrarla.
+- `host_telegram_egress_helper.py` agrega una factoría **sin CLI**, para un
+  futuro único caller ya autorizado bajo el *mismo* lease físico. Cuando ese
+  caller la invoque, crea el helper rootless efímero por imagen de digest
+  exacto, solo en la red Boca Telegram existente, UID10001, memoria/PIDs
+  acotados, `read-only`, cero mounts/puertos, sin emisor; exige inventario
+  y atributos de Docker reales al abrir y **antes de cada GET**, intercambia
+  los mensajes por STDIN/STDOUT privados y remueve exclusivamente el ID
+  positivo creado en `finally`. Si `run` pierde su ACK, falla cerrado sin
+  borrar recursos por nombre o tocar aplicaciones externas. El cleanup
+  final falla cerrado ante ACK dudoso.
 
 ## Límite central: todavía NO es una activación física
 
-Este PR **no crea el contenedor helper, no ejecuta Docker, no llama Telegram,
-no modifica workflows/Compose y no habilita GO**. El modo `get` no es
-autorización por sí solo: la siguiente tranche debe construir el único
-runner protegido con lease PID/FD/flock persistente, comprobar el Cutover A
-físico, atestar la identidad exacta del helper/imagen/labels/volúmenes/red
-dedicada/UID **antes de cada GET**, transportar secretos solo por FD/STDIN y
-limpiar el helper por ID positivo tanto en éxito como falla.
+Este PR **no ejecuta la factoría ni crea el contenedor helper ahora, no llama
+Telegram, no modifica workflows/Compose y no habilita GO**. El modo `get`
+no es autorización por sí solo. La siguiente tranche debe conectar el único
+runner protegido con el lease PID/FD/flock persistente, demostrar Cutover A
+físico y asegurar que las pruebas físicas de receptor y owner estén unidas a
+`recheck_host` **para cada fase**. La factoría por sí misma no puede suplir
+esas pruebas ni otorgar autorización; si un ACK Docker fue incierto se debe
+investigar bajo el owner antes de reintentar.
 
 El caller futuro usará `four_gets_under_existing_lease` de #382, que termina
 en `READ_ONLY_FOUR_GETS_COMPLETE_NOT_AUTHORIZED`; el emisor sigue OFF,
@@ -56,6 +67,7 @@ Cutover. NO disparar helper ni activar Telegram mientras eso no se aclare.
 Tests nuevos de lector físico con Docker simulado verifican allowlist exacto,
 rechazo de campo ajeno, identidad rootless y respuesta acotada. Tests de
 helper prueban cuatro GET ficticios y rechazo de acciones mutadoras y
-frames ambiguos. No alcanzan la API real, no se abren sockets ni se escriben
-recibos. SHA/TREE y resultados Actions pertenecen al PR apilado final,
+frames ambiguos; tests nuevos de factoría prueban lectura tras revalidación
+por GET, mismo lease, cierre positivo del ID y rechazo de desvíos. No alcanzan
+la API real, no se abren sockets ni se escriben recibos. SHA/TREE y resultados Actions pertenecen al PR apilado final,
 no se heredan de #380/#382. Mantener DRAFT y separar code-only de deploy.
