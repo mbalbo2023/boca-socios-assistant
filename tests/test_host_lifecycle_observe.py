@@ -61,9 +61,13 @@ def _encoded(**overrides: str) -> str:
         "observe_run_id": RELEASE.observe_run_id,
     }
     body.update(overrides)
-    return base64.urlsafe_b64encode(
-        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("ascii")
-    ).decode("ascii").rstrip("=")
+    return (
+        base64.urlsafe_b64encode(
+            json.dumps(body, sort_keys=True, separators=(",", ":")).encode("ascii")
+        )
+        .decode("ascii")
+        .rstrip("=")
+    )
 
 
 @pytest.mark.parametrize(
@@ -78,9 +82,7 @@ def _encoded(**overrides: str) -> str:
 def test_observe_four_owner_scopes_without_mutation_or_manual_pins(
     tmp_path: Path, component: str, target: str, engine: bool, worker_running: bool
 ) -> None:
-    coords, ledger = _request_with_real_ledger(
-        tmp_path / "boca.sqlite3", component, target
-    )
+    coords, ledger = _request_with_real_ledger(tmp_path / "boca.sqlite3", component, target)
     assert ledger.current().operation_id == coords.request_id
     database = tmp_path / "boca.sqlite3"
     before_hash = hashlib.sha256(database.read_bytes()).hexdigest()
@@ -146,9 +148,7 @@ def test_unhealthy_chromium_start_does_not_receive_prepared_context(tmp_path: Pa
 
 
 @pytest.mark.parametrize("unsafe", ["source", "image", "foreign", "config", "controller_health"])
-def test_wrong_rootless_host_or_release_fails_without_effect(
-    tmp_path: Path, unsafe: str
-) -> None:
+def test_wrong_rootless_host_or_release_fails_without_effect(tmp_path: Path, unsafe: str) -> None:
     _request_with_real_ledger(tmp_path / "boca.sqlite3")
     io = FakeIO(tmp_path)
     release = RELEASE
@@ -248,14 +248,14 @@ def test_observer_rejects_unknown_keys_padding_and_duplication() -> None:
         observer.decode_observe_input(_encoded(token="forbidden"))
     with pytest.raises(observer.LifecycleObservationNoGo):
         observer.decode_observe_input(_encoded() + "=")
-    payload = json.loads(
-        base64.urlsafe_b64decode(_encoded() + "=" * (-len(_encoded()) % 4))
-    )
+    payload = json.loads(base64.urlsafe_b64decode(_encoded() + "=" * (-len(_encoded()) % 4)))
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).replace(
         '"version":', '"version":"duplicate", "version":'
     )
     with pytest.raises(observer.LifecycleObservationNoGo):
-        observer.decode_observe_input(base64.urlsafe_b64encode(raw.encode("ascii")).decode().rstrip("="))
+        observer.decode_observe_input(
+            base64.urlsafe_b64encode(raw.encode("ascii")).decode().rstrip("=")
+        )
 
 
 def test_observer_cli_no_context_is_inert(

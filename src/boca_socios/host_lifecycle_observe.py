@@ -37,9 +37,7 @@ _RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
 _B64URL = re.compile(r"[A-Za-z0-9_-]{1,2750}\Z")
 _CONTROLLER = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z")
-_BROWSER = re.compile(
-    r"ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}\Z"
-)
+_BROWSER = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}\Z")
 _VERSION = "boca-lifecycle-observe-v1"
 _PUBLIC_VERSION = "boca-protected-action-v1"
 _INPUT_KEYS = frozenset(
@@ -147,7 +145,9 @@ def decode_observe_input(encoded: str) -> ReviewedObserveRelease:
 
 def _selected_services(
     inventory: cleanup.Inventory, release: ReviewedObserveRelease
-) -> tuple[cleanup.Container, cleanup.Container, cleanup.Container | None, adapter.ReviewedInstalledPair]:
+) -> tuple[
+    cleanup.Container, cleanup.Container, cleanup.Container | None, adapter.ReviewedInstalledPair
+]:
     """Read only the Boca daemon's positively enumerated 2/3 service objects."""
     if not isinstance(inventory, cleanup.Inventory) or len(inventory.containers) not in (2, 3):
         raise LifecycleObservationNoGo("Boca installed controller/worker topology absent")
@@ -170,7 +170,10 @@ def _selected_services(
             raise LifecycleObservationNoGo("Boca installed Compose provenance unavailable")
         services[service] = item
         labels_by_service[service] = labels
-    if set(services) not in ({"controller", "browser-worker"}, {"controller", "browser-worker", "telegram"}):
+    if set(services) not in (
+        {"controller", "browser-worker"},
+        {"controller", "browser-worker", "telegram"},
+    ):
         raise LifecycleObservationNoGo("Boca installed service set changed")
     controller = services["controller"]
     worker = services["browser-worker"]
@@ -263,9 +266,14 @@ def _pending_readonly(path: Path) -> panel.LifecycleIntent:
                 ).fetchone()
                 if ack is None:
                     unresolved.append(operation_id)
-                elif type(ack[0]) is not int or ack[0] <= rowid or ack[1] not in (
-                    ack_applied,
-                    ack_refused,
+                elif (
+                    type(ack[0]) is not int
+                    or ack[0] <= rowid
+                    or ack[1]
+                    not in (
+                        ack_applied,
+                        ack_refused,
+                    )
                 ):
                     raise LifecycleObservationNoGo("Boca historical ACK state malformed")
             if unresolved != [pending.operation_id]:
@@ -276,7 +284,9 @@ def _pending_readonly(path: Path) -> panel.LifecycleIntent:
     except LifecycleObservationNoGo:
         raise
     except (OSError, sqlite3.Error, ValueError, TypeError, panel.LifecycleStorageUnavailable):
-        raise LifecycleObservationNoGo("Boca legacy read-only lifecycle ledger unavailable") from None
+        raise LifecycleObservationNoGo(
+            "Boca legacy read-only lifecycle ledger unavailable"
+        ) from None
 
 
 def observe_pending_lifecycle(

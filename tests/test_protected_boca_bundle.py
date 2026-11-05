@@ -214,7 +214,6 @@ def test_lifecycle_memfd_stdlib_only_import_and_no_go_without_context(tmp_path: 
     assert json.loads(missing_go.stdout)["status"] == "NO_GO"
 
 
-
 def test_lifecycle_observer_memfd_stdlib_and_readonly_no_context(tmp_path: Path) -> None:
     output, digest = _build(tmp_path)
     raw = output.read_bytes()
