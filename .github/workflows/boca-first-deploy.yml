@@ -8,7 +8,7 @@ on:
         description: Boca-only host operation; browser IPC is a separate, opt-in, protected BETA gate
         required: true
         type: choice
-        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, cutover-a-observe, cutover-a-apply, official-notice-import, protected-go-prepare, lifecycle-apply, telegram-activate, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
+        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, cutover-a-reconcile, cutover-a-observe, cutover-a-apply, official-notice-import, protected-go-prepare, lifecycle-apply, telegram-activate, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
         description: Exact main SHA (blank allowed only for reviewed Cutover/import GO_B; derived from github.sha)
         required: false
@@ -54,7 +54,7 @@ on:
         required: false
         type: string
       legacy_release_run_id:
-        description: Cutover A observation/apply; actual historical successful release run ID
+        description: Cutover A historical release run ID; for cutover-a-reconcile only, exact PREPARE run ID
         required: false
         type: string
       legacy_controller_id:
@@ -161,7 +161,7 @@ jobs:
           uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
       - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
         run: |
-          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py
+          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
       - name: Validate protected official notice artifact import offline only
         run: |
@@ -780,9 +780,10 @@ jobs:
     env:
       BOCA_OPERATION: ${{ inputs.operation }}
       BOCA_PROTECTED_ACTION_CONTEXT: ${{ inputs.protected_action_context }}
+      BOCA_INCIDENT_PREPARE_RUN_ID: ${{ inputs.legacy_release_run_id }}
       BOCA_IMAGE_REF: ${{ inputs.image_ref }}
       BOCA_BROWSER_IMAGE_REF: ${{ inputs.browser_image_ref }}
-      BOCA_SOURCE_SHA: ${{ (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import') && github.sha || inputs.source_sha }}
+      BOCA_SOURCE_SHA: ${{ (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'cutover-a-reconcile') && github.sha || inputs.source_sha }}
       BOCA_SOURCE_SHA_SUBMITTED: ${{ inputs.source_sha }}
       BOCA_SERVICE: ${{ inputs.service }}
       BOCA_BUDGET: ${{ inputs.resource_budget }}
@@ -871,7 +872,7 @@ jobs:
         run: |
           test "$GITHUB_RUN_ATTEMPT" = 1
           test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"
-          if [[ "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import ]]; then
+          if [[ "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = cutover-a-reconcile ]]; then
             [[ -z "$BOCA_SOURCE_SHA_SUBMITTED" || "$BOCA_SOURCE_SHA_SUBMITTED" = "$GITHUB_SHA" ]]
             [[ -z "$BOCA_PROTECTED_ACTION_CONTEXT" || "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^[1-9][0-9]{0,19}$ ]]
             [[ "$BOCA_PROTECTED_ACTION_CONTEXT" != "$GITHUB_RUN_ID" ]]
@@ -900,13 +901,34 @@ jobs:
           if [[ "$BOCA_OPERATION" != cutover-a-observe && "$BOCA_OPERATION" != cutover-a-apply ]]; then
             test -z "$BOCA_LEGACY_SOURCE_SHA"
             test -z "$BOCA_LEGACY_IMAGE_REF"
-            test -z "$BOCA_LEGACY_RELEASE_RUN_ID"
+            if [[ "$BOCA_OPERATION" != cutover-a-reconcile ]]; then test -z "$BOCA_LEGACY_RELEASE_RUN_ID"; fi
             test -z "$BOCA_LEGACY_CONTROLLER_ID"
+          fi
+          if [[ "$BOCA_OPERATION" = cutover-a-reconcile ]]; then
+            [[ "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^[1-9][0-9]{0,19}$ ]]
+            [[ "$BOCA_INCIDENT_PREPARE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+            test "$BOCA_PROTECTED_ACTION_CONTEXT" != "$BOCA_INCIDENT_PREPARE_RUN_ID"
+            test "$BOCA_PROTECTED_ACTION_CONTEXT" != "$GITHUB_RUN_ID"
+          else
+            test -z "$BOCA_INCIDENT_PREPARE_RUN_ID"
           fi
           if [[ "$BOCA_OPERATION" != telegram-install ]]; then test -z "$BOCA_TELEGRAM_ENVELOPE"; fi
           if [[ "$BOCA_OPERATION" != owner-install ]]; then test -z "$BOCA_OWNER_ENVELOPE"; fi
           if [[ "$BOCA_OPERATION" != owner-enroll ]]; then test -z "$BOCA_OWNER_CAPABILITY_SHA256"; fi
           case "$BOCA_OPERATION" in
+            cutover-a-reconcile)
+              # Post-failure READ_ONLY inventory: no image pull, release, browser or secrets in the SSH payload.
+              test "$BOCA_HOST_READONLY_ENV_READY" = ready
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test -z "$BOCA_IMAGE_REF"
+              test -z "$BOCA_BROWSER_IMAGE_REF"
+              test -z "$BOCA_RELEASE_RUN_ID"
+              test -z "$BOCA_LEGACY_SOURCE_SHA"
+              test -z "$BOCA_LEGACY_IMAGE_REF"
+              test "$BOCA_LEGACY_RELEASE_RUN_ID" = "$BOCA_INCIDENT_PREPARE_RUN_ID"
+              test -z "$BOCA_LEGACY_CONTROLLER_ID"
+              test -z "$BOCA_SITE_ENVELOPE"
+              ;;
             infrastructure-preflight)
               test "$BOCA_HOST_READONLY_ENV_READY" = ready
               test "$BOCA_DEPLOY_ENV_READY" = ready
@@ -1714,6 +1736,47 @@ jobs:
             printf '  ForwardAgent no\n'
           } > "$RUNNER_TEMP/boca-ssh/config"
           chmod 600 "$RUNNER_TEMP/boca-ssh/config"
+      - name: Reconcile exact failed Cutover A attempt on Boca host READ_ONLY
+        if: inputs.operation == 'cutover-a-reconcile'
+        run: |
+          set -euo pipefail
+          # The only host input is two public GitHub Actions run IDs. No creds,
+          # Docker writes, container exec, network request or mutable action.
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' \
+            python3 - host "$BOCA_PROTECTED_ACTION_CONTEXT" "$BOCA_INCIDENT_PREPARE_RUN_ID")"
+          set +e
+          timeout --signal=TERM --kill-after=5s 120s ssh \
+            -F "$RUNNER_TEMP/boca-ssh/config" \
+            -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+            boca-target "$remote_command" \
+            < scripts/host_cutover_postapply_reconcile.py \
+            > "$RUNNER_TEMP/boca-cutover-postapply-reconcile.json" 2>/dev/null
+          observer_rc=$?
+          set -e
+          if [[ "$observer_rc" -ne 0 ]]; then
+            printf 'BOCA_POSTAPPLY_RECONCILE state=INDETERMINATE reason=host_observation_failed scope=OBSERVER_ONLY observer_writes=0 prior_apply_effects=UNKNOWN retry=NO_GO; do not prune or reapply.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          python3 scripts/host_cutover_postapply_reconcile.py verify \
+            "$BOCA_PROTECTED_ACTION_CONTEXT" "$BOCA_INCIDENT_PREPARE_RUN_ID" \
+            < "$RUNNER_TEMP/boca-cutover-postapply-reconcile.json" \
+            >> "$GITHUB_STEP_SUMMARY"
+          # Keep the entire verified, bounded, secret-free physical inventory
+          # in the durable Actions summary for exact-ID fix-forward decisions.
+          python3 - "$RUNNER_TEMP/boca-cutover-postapply-reconcile.json" <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          raw = Path(sys.argv[1]).read_bytes()
+          assert 0 < len(raw) <= 4096 and raw.endswith(b"\n")
+          assert raw.count(b"\n") == 1 and all(byte < 128 for byte in raw)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n<details><summary>Exact Boca-only post-APPLY inventory (READ_ONLY)</summary>\n\n")
+              summary.write("```json\n")
+              summary.write(raw.decode("ascii"))
+              summary.write("```\n</details>\n")
+          PY
       - name: Apply one exact-ID Boca owner lifecycle request through fresh host lease
         id: lifecycle_host_apply
         if: inputs.operation == 'lifecycle-apply'
