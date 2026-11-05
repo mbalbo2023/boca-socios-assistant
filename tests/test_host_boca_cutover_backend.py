@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import sys
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ import pytest
 from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_cutover as cutover
 from boca_socios import host_boca_cutover_backend as adapter
+from boca_socios import host_boca_cutover_receipt as terminal
 from boca_socios import host_cutover_stage as stage
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +34,37 @@ OLD = "1" * 64
 WORKER = "2" * 64
 NEW = "3" * 64
 SHA = lambda value: hashlib.sha256(value).hexdigest()  # noqa: E731 - fixture shorthand
+
+
+def test_authenticated_option_b_memfd_zip_extracts_four_reviewed_sources(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The source ZIP has five entries, but the adapter is a four-field record.
+
+    Exercise the real memfd path: synthetic adapter fixtures had hidden a
+    positional-constructor crash before Cutover A could attest the host.
+    """
+    monkeypatch.syspath_prepend(str(ROOT / "scripts"))
+    import build_protected_boca_bundle as builder
+
+    package = tmp_path / "reviewed.pyz"
+    builder.build(ROOT, package)
+    fd = os.memfd_create("boca-cutover-zip-test", flags=0)
+    try:
+        os.write(fd, package.read_bytes())
+        monkeypatch.setattr(sys, "argv", [f"/proc/self/fd/{fd}"])
+        source = adapter.ReviewedCutoverSources.from_verified_zip()
+    finally:
+        os.close(fd)
+    assert source.base == BASE
+    assert source.overlay == OVERLAY
+    assert source.seccomp == SECCOMP
+    assert (
+        source.session_sql
+        == (
+            ROOT / "src/boca_socios/panel/owner_session_sql/0001_owner_browser_session.sql"
+        ).read_bytes()
+    )
 
 
 def _plan() -> cutover.CutoverPlan:
@@ -246,6 +279,61 @@ def test_full_host_adapter_uses_real_stage_promotion_and_cleanup(
         "seccomp_profile.json",
     }
     assert (root / "compose.beta.yaml").read_bytes() == BASE
+
+
+def test_future_host_hook_sequences_durable_intent_and_result_under_one_lease(
+    fake_host: tuple[list[str], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events, _ = fake_host
+    source = adapter.ReviewedCutoverSources(BASE, OVERLAY, SECCOMP, SQL)
+    bootstrap = _backend(events).session_bootstrap
+    assert bootstrap is not None
+    monkeypatch.setattr(
+        adapter.ReviewedCutoverSources,
+        "from_verified_zip",
+        classmethod(lambda _cls: source),
+    )
+    monkeypatch.setattr(adapter, "_stdlib_session_bootstrap", lambda: bootstrap)
+
+    def preflight(plan: cutover.CutoverPlan, lease: cleanup.BocaJobLease) -> str:
+        cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+        assert events == []
+        events.append("persistent-intent")
+        return "1" * 64
+
+    def write(
+        record: terminal.TerminalRecord,
+        *,
+        plan: cutover.CutoverPlan,
+        lease: cleanup.BocaJobLease,
+    ) -> str:
+        cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+        assert record.state == "ACCEPTED" and record.cleanup == "ACCEPT"
+        assert events[-1] == "cleanup"
+        events.append("persistent-result")
+        return "2" * 64
+
+    monkeypatch.setattr(terminal, "prepare_destination", preflight)
+    monkeypatch.setattr(terminal, "write_once", write)
+    receipt = adapter.execute_reviewed_cutover(_plan())
+    assert receipt.accepted
+    assert events[0] == "persistent-intent"
+    assert events[-2:] == ["cleanup", "persistent-result"]
+
+
+def test_future_host_hook_refuses_untrusted_sql_before_intent_or_docker(
+    fake_host: tuple[list[str], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events, _ = fake_host
+    source = adapter.ReviewedCutoverSources(BASE, OVERLAY, SECCOMP, b"not approved SQL")
+    monkeypatch.setattr(
+        adapter.ReviewedCutoverSources,
+        "from_verified_zip",
+        classmethod(lambda _cls: source),
+    )
+    with pytest.raises(cutover.CutoverError, match="reviewed Compose/seccomp/Option B"):
+        adapter.execute_reviewed_cutover(_plan())
+    assert events == []
 
 
 def test_no_go_on_option_b_missing_sql_before_any_host_call(

@@ -1262,9 +1262,16 @@ jobs:
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
           BOCA_OWNER_ENVELOPE: ${{ inputs.owner_envelope }}
         run: |
+          umask 077
+          set -o pipefail
           set +e
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - -- "$BOCA_OPERATION" "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' "$BOCA_OWNER_ENVELOPE")"
-          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-owner.receipt" 2>/dev/null
+          remote_command="$(PYTHONPATH=src python3 -m boca_socios.owner_site_ssh_transport command)" || exit 1
+          BOCA_OWNER_SITE_COMPOSE_SHA="$(cat "$RUNNER_TEMP/boca-compose.sha")" \
+            PYTHONPATH=src python3 -m boca_socios.owner_site_ssh_transport emit < src/boca_socios/host_first_deploy.py \
+              | env -u BOCA_OWNER_ENVELOPE -u BOCA_SITE_ENVELOPE \
+                    -u BOCA_BETA_OWNER_SUBJECT -u BOCA_BETA_PANEL_ORIGIN -u BOCA_TELEGRAM_ENVELOPE -u BOCA_OWNER_CAPABILITY_SHA256 \
+                    ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" \
+                      > "$RUNNER_TEMP/boca-owner.receipt" 2>/dev/null
           owner_rc=$?
           set -e
           receipt=''
@@ -1290,9 +1297,17 @@ jobs:
           BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
         run: |
+          umask 077
+          set -o pipefail
           set +e
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - -- owner-enroll-start "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' '' "$BOCA_OWNER_CAPABILITY_SHA256")"
-          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-owner-enroll-start.receipt" 2> "$RUNNER_TEMP/boca-owner-enroll-start.stderr"
+          remote_command="$(PYTHONPATH=src python3 -m boca_socios.owner_site_ssh_transport command)" || exit 1
+          BOCA_OWNER_SITE_TRANSPORT_PHASE=owner-enroll-start \
+          BOCA_OWNER_SITE_COMPOSE_SHA="$(cat "$RUNNER_TEMP/boca-compose.sha")" \
+            PYTHONPATH=src python3 -m boca_socios.owner_site_ssh_transport emit < src/boca_socios/host_first_deploy.py \
+              | env -u BOCA_OWNER_ENVELOPE -u BOCA_SITE_ENVELOPE \
+                    -u BOCA_BETA_OWNER_SUBJECT -u BOCA_BETA_PANEL_ORIGIN -u BOCA_TELEGRAM_ENVELOPE -u BOCA_OWNER_CAPABILITY_SHA256 \
+                    ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" \
+                      > "$RUNNER_TEMP/boca-owner-enroll-start.receipt" 2> "$RUNNER_TEMP/boca-owner-enroll-start.stderr"
           enroll_rc=$?
           set -e
           receipt=''
@@ -1312,9 +1327,17 @@ jobs:
           BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
         run: |
+          umask 077
+          set -o pipefail
           set +e
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - -- owner-enroll-wait "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' '' "$BOCA_OWNER_CAPABILITY_SHA256")"
-          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-owner-enroll-wait.receipt" 2>/dev/null
+          remote_command="$(PYTHONPATH=src python3 -m boca_socios.owner_site_ssh_transport command)" || exit 1
+          BOCA_OWNER_SITE_TRANSPORT_PHASE=owner-enroll-wait \
+          BOCA_OWNER_SITE_COMPOSE_SHA="$(cat "$RUNNER_TEMP/boca-compose.sha")" \
+            PYTHONPATH=src python3 -m boca_socios.owner_site_ssh_transport emit < src/boca_socios/host_first_deploy.py \
+              | env -u BOCA_OWNER_ENVELOPE -u BOCA_SITE_ENVELOPE \
+                    -u BOCA_BETA_OWNER_SUBJECT -u BOCA_BETA_PANEL_ORIGIN -u BOCA_TELEGRAM_ENVELOPE -u BOCA_OWNER_CAPABILITY_SHA256 \
+                    ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" \
+                      > "$RUNNER_TEMP/boca-owner-enroll-wait.receipt" 2>/dev/null
           wait_rc=$?
           set -e
           receipt=''
@@ -1339,9 +1362,17 @@ jobs:
           BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
         run: |
+          umask 077
+          set -o pipefail
           set +e
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - -- owner-enroll-finish "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$BOCA_BETA_PANEL_ORIGIN" "$BOCA_BETA_OWNER_SUBJECT" '' '' '' '' "$BOCA_OWNER_CAPABILITY_SHA256")"
-          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py > "$RUNNER_TEMP/boca-owner-enroll-finish.receipt" 2>/dev/null
+          remote_command="$(PYTHONPATH=src python3 -m boca_socios.owner_site_ssh_transport command)" || exit 1
+          BOCA_OWNER_SITE_TRANSPORT_PHASE=owner-enroll-finish \
+          BOCA_OWNER_SITE_COMPOSE_SHA="$(cat "$RUNNER_TEMP/boca-compose.sha")" \
+            PYTHONPATH=src python3 -m boca_socios.owner_site_ssh_transport emit < src/boca_socios/host_first_deploy.py \
+              | env -u BOCA_OWNER_ENVELOPE -u BOCA_SITE_ENVELOPE \
+                    -u BOCA_BETA_OWNER_SUBJECT -u BOCA_BETA_PANEL_ORIGIN -u BOCA_TELEGRAM_ENVELOPE -u BOCA_OWNER_CAPABILITY_SHA256 \
+                    ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" \
+                      > "$RUNNER_TEMP/boca-owner-enroll-finish.receipt" 2>/dev/null
           finish_rc=$?
           set -e
           receipt=''
@@ -1389,12 +1420,32 @@ jobs:
         env:
           BOCA_SITE_ENVELOPE: ${{ inputs.site_envelope }}
         run: |
-          phase="$BOCA_OPERATION"
-          envelope="$BOCA_SITE_ENVELOPE"
-          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - "$phase" "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")" "$envelope")"
-          ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py
+          umask 077
+          set -o pipefail
+          set +e
+          remote_command="$(PYTHONPATH=src python3 -m boca_socios.owner_site_ssh_transport command)" || exit 1
+          BOCA_OWNER_SITE_COMPOSE_SHA="$(cat "$RUNNER_TEMP/boca-compose.sha")" \
+            PYTHONPATH=src python3 -m boca_socios.owner_site_ssh_transport emit < src/boca_socios/host_first_deploy.py \
+              | env -u BOCA_OWNER_ENVELOPE -u BOCA_SITE_ENVELOPE \
+                    -u BOCA_BETA_OWNER_SUBJECT -u BOCA_BETA_PANEL_ORIGIN -u BOCA_TELEGRAM_ENVELOPE -u BOCA_OWNER_CAPABILITY_SHA256 \
+                    ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" \
+                      > "$RUNNER_TEMP/boca-site.receipt" 2>/dev/null
+          site_rc=$?
+          set -e
+          receipt=''
+          if [[ "$site_rc" -eq 0 ]]; then receipt="$(cat "$RUNNER_TEMP/boca-site.receipt")"; fi
+          case "$BOCA_OPERATION" in
+            site-prepare) pattern='^BOCA_SITE_BOOTSTRAP state=(PREPARED|ALREADY_PREPARED) public_key=[A-Za-z0-9_-]{43} fingerprint=[0-9a-f]{64}$' ;;
+            site-install) pattern='^BOCA_SITE_BOOTSTRAP state=CONFIGURED fingerprint=[0-9a-f]{64}$' ;;
+            site-verify) pattern='^BOCA_SITE_BOOTSTRAP state=VERIFIED fingerprint=[0-9a-f]{64}$' ;;
+            *) exit 1 ;;
+          esac
+          if [[ "$site_rc" -ne 0 || ${#receipt} -gt 256 || ! "$receipt" =~ $pattern ]]; then
+            printf 'Boca Site custody: NO_GO; host receipt withheld. Preserve owner volume; no retry.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
           {
-            printf 'Boca Site credential custody operation: `%s` completed; receipt above. No BETA service started.\n\n' "$phase"
+            printf 'Boca Site credential custody operation: `%s` completed; validated receipt withheld. No BETA service started.\n\n' "$BOCA_OPERATION"
             printf 'Commit: `%s`\n\nImage: `%s`\n\nRelease run: `%s`\n' "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" "$BOCA_RELEASE_RUN_ID"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Verify inactive prepared daemon before image-free infrastructure preflight
