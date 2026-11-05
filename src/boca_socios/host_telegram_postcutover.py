@@ -19,9 +19,9 @@ from boca_socios.host_boca_cleanup import (
     Inventory,
     verify_protected_boca_job_lease,
 )
+from boca_socios.host_telegram_production_reader import TelegramProductionDockerIO
 from boca_socios.host_lifecycle_rootless_adapter import (
     LifecycleDockerIO,
-    ProductionRootlessDockerIO,
     ReviewedInstalledPair,
     RootlessLifecycleProbe,
     _mounts,
@@ -242,7 +242,7 @@ def observe_telegram_host(
     """
     pins.require()
     verify_protected_boca_job_lease(lease, pins.attempt_id)
-    reader = ProductionRootlessDockerIO() if io is None else io
+    reader = TelegramProductionDockerIO() if io is None else io
     if reader.uid != 10001 or reader.gid != 10001:
         raise TelegramHostNoGo("boca_telegram_rootless_owner_unverified")
     try:
