@@ -41,7 +41,9 @@ with **25 dispatch inputs unchanged**, on `refs/heads/main` and dedicated
    has observed public JSON, receipt, and internally generated
    `boca-lifecycle-apply-context.txt`. Summary shows the short PREPARE
    run ID and `GO_SHA256=SHA256(domain||canonical receipt)`.
-   **host_reads=1; host_mutations=0**. Never call it `host=untouched`.
+   **host_reads=1; appdata_mutations=0, lease_lock=allowed**. The observer
+   may create/release job lock metadata under /run/user/10001; no application,
+   SQLite, Docker/container or named Boca data-volume writes occur. Never call it `host=untouched`.
 
 2. **Separate human approval**. Exact
    `BOCA_LIFECYCLE_GO_BINDING_SHA256` protected Environment variable

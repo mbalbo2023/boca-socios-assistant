@@ -168,9 +168,7 @@ def test_apply_uses_only_artifact_token_matching_short_reviewed_prepare_id(tmp_p
     ref = "41999999999"
     path = tmp_path / go.RUNNER_APPLY_CONTEXT
     path.write_text(_token(_public() | {"prepare_run_id": ref}) + "\n", encoding="ascii")
-    public, hosted = go.public_from_prepared_artifact(
-        path, prepare_run_id=ref, environ=env
-    )
+    public, hosted = go.public_from_prepared_artifact(path, prepare_run_id=ref, environ=env)
     assert public == _public()
     assert hosted["prepare_run_id"] == ref
     assert hosted["attempt_id"] == env["GITHUB_RUN_ID"]
@@ -186,9 +184,7 @@ def test_apply_uses_only_artifact_token_matching_short_reviewed_prepare_id(tmp_p
             go.public_from_prepared_artifact(path, prepare_run_id=ref, environ=env)
     path.write_text(_token(_public() | {"prepare_run_id": ref}) + "\n", encoding="ascii")
     with pytest.raises(go.PreparedGoError):
-        go.public_from_prepared_artifact(
-            path, prepare_run_id=env["GITHUB_RUN_ID"], environ=env
-        )
+        go.public_from_prepared_artifact(path, prepare_run_id=env["GITHUB_RUN_ID"], environ=env)
 
 
 def test_observation_artifact_is_public_context_and_go_receipt_hash_only(tmp_path: Path) -> None:
@@ -225,6 +221,4 @@ def test_go_receipt_is_specific_to_actual_observed_request_uuid(tmp_path: Path) 
         now=go.datetime(2026, 11, 5, 14, 0, tzinfo=go.UTC),
     )
     assert first_receipt["public_context_sha256"] != second_receipt["public_context_sha256"]
-    assert go.expected_go_for_receipt(first_receipt) != go.expected_go_for_receipt(
-        second_receipt
-    )
+    assert go.expected_go_for_receipt(first_receipt) != go.expected_go_for_receipt(second_receipt)

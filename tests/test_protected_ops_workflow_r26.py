@@ -76,7 +76,7 @@ def test_prepare_reads_only_boca_host_once_and_publishes_immutable_artifact() ->
     assert "lifecycle-apply" not in observe
     assert "if: inputs.operation == 'protected-go-prepare'" in prepare
     assert "check_protected_go_prepare.py --prepare" in prepare
-    assert "host_reads=1 host_mutations=0" in prepare
+    assert "host_reads=1 appdata_mutations=0 lease_lock=allowed" in prepare
     assert "ssh " not in prepare and "docker " not in prepare
     assert "if: inputs.operation == 'protected-go-prepare'" in artifact
     assert "upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in artifact

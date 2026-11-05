@@ -8,12 +8,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-WORKFLOW = (
-    Path(__file__).resolve().parents[1]
-    / ".github"
-    / "workflows"
-    / "boca-first-deploy.yml"
-)
+WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "boca-first-deploy.yml"
 
 
 def _text() -> str:
@@ -68,7 +63,7 @@ def test_one_host_read_precedes_prepare_receipt_and_is_not_host_lifecycle_apply(
     ):
         assert forbidden not in observe
     assert "check_protected_go_prepare.py --prepare" in prepare
-    assert "host_reads=1 host_mutations=0" in prepare
+    assert "host_reads=1 appdata_mutations=0 lease_lock=allowed" in prepare
     assert "ssh " not in prepare
     ids = [
         "Configure pinned READ_ONLY SSH for lifecycle PREPARE",
@@ -94,13 +89,15 @@ def test_apply_short_id_downloads_reviewed_context_then_go_before_effect() -> No
     assert "ssh " not in gate
     effect = _step("Apply one exact-ID Boca owner lifecycle request through fresh host lease")
     assert "if: inputs.operation == 'lifecycle-apply'" in effect
-    assert 'timeout --signal=TERM --kill-after=5s 900s ssh' in effect
+    assert "timeout --signal=TERM --kill-after=5s 900s ssh" in effect
     assert "check_main_ref.py" in effect
     assert "boca-lifecycle-host.receipt" in effect
     assert "lifecycle-apply" in effect
-    assert w.index("      - name: Require distinct independent lifecycle GO") < w.index(
-        "      - name: Configure pinned SSH host key and dedicated identity"
-    ) < w.index("      - name: Apply one exact-ID")
+    assert (
+        w.index("      - name: Require distinct independent lifecycle GO")
+        < w.index("      - name: Configure pinned SSH host key and dedicated identity")
+        < w.index("      - name: Apply one exact-ID")
+    )
 
 
 def test_mobile_prepare_artifact_is_not_itself_approval_or_telegram_access() -> None:
