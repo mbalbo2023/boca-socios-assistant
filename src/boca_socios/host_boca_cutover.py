@@ -142,6 +142,7 @@ class CutoverBackend(Protocol):
 
 TerminalSink = Callable[[CutoverPlan, CutoverReceipt, BocaJobLease], None]
 TerminalPreflight = Callable[[CutoverPlan, BocaJobLease], None]
+PreparedGoConsumer = Callable[[CutoverPlan, str, BocaJobLease], None]
 
 
 def run_cutover_a(
@@ -150,6 +151,8 @@ def run_cutover_a(
     backend: CutoverBackend,
     terminal_sink: TerminalSink | None = None,
     terminal_preflight: TerminalPreflight | None = None,
+    prepare_run_id: str | None = None,
+    prepared_go_consumer: PreparedGoConsumer | None = None,
 ) -> CutoverReceipt:
     """Unit-testable sequencing only; no concrete backend or host CLI exists.
 
@@ -160,6 +163,16 @@ def run_cutover_a(
     assertion must make that NO_GO.  Synthetic tests cannot confer host GO.
     """
     plan.validate()  # No host operation for malformed coordinates.
+    if prepare_run_id is not None:
+        if (
+            type(prepare_run_id) is not str
+            or _ATTEMPT.fullmatch(prepare_run_id) is None
+            or prepare_run_id == plan.attempt_id
+            or prepared_go_consumer is None
+        ):
+            raise CutoverError("prepared cutover GO consumer or identity unavailable")
+    elif prepared_go_consumer is not None:
+        raise CutoverError("prepared GO consumer without approved PREPARE identity")
     if getattr(type(backend), "requires_persistent_receipt", False) is True and (
         terminal_sink is None or terminal_preflight is None
     ):
@@ -184,6 +197,12 @@ def run_cutover_a(
         final_status: CleanupStatus = "NO_GO"
         try:
             backend.attest_original(plan, lease)
+            # PREPARE consumption is durable under the SAME flock, strictly
+            # after exact rootless/container attestation and BEFORE stage/pull/
+            # stop/SQLite. A failed/ambiguous O_EXCL marker aborts all effects.
+            if prepare_run_id is not None:
+                assert prepared_go_consumer is not None
+                prepared_go_consumer(plan, prepare_run_id, lease)
             effect_started = True
             backend.stage(plan, lease)
             worker = backend.prepare_worker(plan, lease)

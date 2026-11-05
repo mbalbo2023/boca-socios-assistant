@@ -17,6 +17,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -29,6 +30,11 @@ from boca_socios.events.host_official_notice_import import (
     import_reviewed_official_artifact,
 )
 from boca_socios.events.official_news_receipt import OFFICIAL_NEWS_URL
+from boca_socios.prepared_go_runner import (
+    PreparedGoError,
+    hash_reviewed_file,
+    verify_legacy_prepared_go,
+)
 
 _REPOSITORY = "mbalbo2023/boca-socios-assistant"
 _REPOSITORY_ID = 1_437_453_367
@@ -41,6 +47,7 @@ _POSITIVE = re.compile(r"[1-9][0-9]{0,19}\Z")
 _GO_SCHEMA = "boca-official-notice-import-go-v1"
 _PREPARED_REVIEW_SCHEMA = "boca-official-import-prepared-review-v1"
 _COORDINATES_VERSION = "boca-official-notice-import-v1"
+_PREPARED_COORDINATES_VERSION = "boca-official-notice-import-prepared-v2"
 _MAX_TOKEN = 2048
 _MAX_ZIP = 128 * 1024
 _DATA = Path("/data")
@@ -191,6 +198,50 @@ def decode_coordinates(token: str) -> OfficialImportCoordinates:
     return OfficialImportCoordinates(**obj)
 
 
+def encode_prepared_coordinates(coords: OfficialImportCoordinates, *, prepare_run_id: str) -> str:
+    """Public v2 coordinates; PREPARE identity is not an independent GO."""
+    if type(prepare_run_id) is not str or _POSITIVE.fullmatch(prepare_run_id) is None:
+        raise OfficialImportActionError("official PREPARE run identity invalid")
+    raw = _canonical(
+        {
+            "schema": _PREPARED_COORDINATES_VERSION,
+            "prepare_run_id": prepare_run_id,
+            "coordinates": asdict(coords),
+        }
+    )
+    if not 0 < len(raw) <= _MAX_TOKEN:
+        raise OfficialImportActionError("prepared import token exceeds budget")
+    return encode_raw(raw)
+
+
+def decode_prepared_coordinates(token: str) -> tuple[OfficialImportCoordinates, str]:
+    if (
+        type(token) is not str
+        or len(token) > 2 * _MAX_TOKEN
+        or re.fullmatch(r"[A-Za-z0-9_-]+", token) is None
+    ):
+        raise OfficialImportActionError("prepared import token malformed")
+    try:
+        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+    except (ValueError, binascii.Error):
+        raise OfficialImportActionError("prepared import base64 invalid") from None
+    if not 0 < len(raw) <= _MAX_TOKEN or encode_raw(raw) != token:
+        raise OfficialImportActionError("prepared import token not canonical")
+    record = _decode_object(raw, expected={"schema", "prepare_run_id", "coordinates"})
+    prepare = record["prepare_run_id"]
+    coordinates = record["coordinates"]
+    if (
+        record["schema"] != _PREPARED_COORDINATES_VERSION
+        or type(prepare) is not str
+        or _POSITIVE.fullmatch(prepare) is None
+        or type(coordinates) is not dict
+        or set(coordinates) != set(OfficialImportCoordinates.__dataclass_fields__)
+        or any(type(value) is not str for value in coordinates.values())
+    ):
+        raise OfficialImportActionError("prepared import coordinates invalid")
+    return OfficialImportCoordinates(**coordinates), prepare
+
+
 def encode_raw(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
@@ -250,14 +301,23 @@ def verify_artifact_from_github(
     operation_run_id: str,
     actor: str,
 ) -> str:
-    """Authenticate GitHub run/artifact metadata, exact ZIP and separate GO.
-
-    The caller obtains metadata and ZIP from GitHub using the protected runner
-    read-only token. Claims in the ZIP alone can never satisfy these checks.
-    """
+    """Legacy current-run GO path unchanged, then authenticate exact source."""
     approved = expected_go_sha256(coords, operation_run_id=operation_run_id, actor=actor)
     if independent_go_sha256 != approved:
         raise OfficialImportActionError("independent official import GO absent or mismatched")
+    return _verify_github_reviewed_source(
+        coords, source_run=source_run, artifact=artifact, archive=archive
+    )
+
+
+def _verify_github_reviewed_source(
+    coords: OfficialImportCoordinates,
+    *,
+    source_run: dict[str, Any],
+    artifact: dict[str, Any],
+    archive: bytes,
+) -> str:
+    """Shared immutable GitHub source validation after the correct GO gate."""
     if (
         type(source_run) is not dict
         or source_run.get("id") != int(coords.source_run_id)
@@ -287,16 +347,159 @@ def verify_artifact_from_github(
     return encode_coordinates(coords)
 
 
-def import_from_container_stdin(
-    coords: OfficialImportCoordinates, archive: bytes, *, data_dir: Path = _DATA
-) -> str:
-    """Perform exactly one create/replay inside the attested Boca UID container.
+def _prepared_marker_bytes(coords: OfficialImportCoordinates, prepare_run_id: str) -> bytes:
+    context = official_prepared_context_sha256(
+        coords, prepare_run_id=prepare_run_id, actor="mbalbo2023"
+    )
+    return _canonical(
+        {
+            "schema": "boca-official-import-prepared-use-v1",
+            "prepare_run_id": prepare_run_id,
+            "reviewed_context_sha256": context,
+            "main_sha": coords.main_sha,
+            "artifact_sha256": coords.artifact_sha256,
+            "destination": "/data/boca_official_notices.jsonl",
+        }
+    )
 
-    The workflow owns Docker, image, flock, exact CID and rootless attestation.
-    No replace option is exposed in this first public-data import route.
+
+def _prepared_marker_name(prepare_run_id: str) -> str:
+    if type(prepare_run_id) is not str or _POSITIVE.fullmatch(prepare_run_id) is None:
+        raise OfficialImportActionError("official PREPARE identity untrusted")
+    return f".boca-official-import-go-{prepare_run_id}.json"
+
+
+def _prepared_marker_readback(
+    directory: int, marker: str, expected: bytes, expected_uid: int
+) -> None:
+    try:
+        fd = os.open(
+            marker,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            dir_fd=directory,
+        )
+        try:
+            before = os.fstat(fd)
+            received = os.read(fd, 2049)
+            after = os.fstat(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        raise OfficialImportActionError("official PREPARE marker readback unavailable") from None
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_uid != expected_uid
+        or before.st_nlink != 1
+        or stat.S_IMODE(before.st_mode) != 0o600
+        or before.st_size != len(expected)
+        or received != expected
+        or (before.st_dev, before.st_ino, before.st_mtime_ns)
+        != (after.st_dev, after.st_ino, after.st_mtime_ns)
+    ):
+        raise OfficialImportActionError("official PREPARE durable marker readback differs")
+
+
+def _consume_prepared_import_once(
+    coords: OfficialImportCoordinates, prepare_run_id: str, *, data_dir: Path
+) -> bytes:
+    """Write one O_EXCL+fsync receipt inside the already attested Boca /data.
+
+    Caller is the UID10001 image with the host's exact-CID rootless volume
+    identity + canonical BocaJobLease already verified by the fixed SSH script.
+    The marker is NEVER removed after an ambiguous import/crash.
+    """
+    marker = _prepared_marker_name(prepare_run_id)
+    record = _prepared_marker_bytes(coords, prepare_run_id)
+    if not 0 < len(record) <= 2048:
+        raise OfficialImportActionError("official PREPARE marker payload unbounded")
+    try:
+        directory = os.open(data_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    except OSError:
+        raise OfficialImportActionError("official PREPARE volume unavailable") from None
+    try:
+        boundary = os.fstat(directory)
+        capacity = os.statvfs(directory)
+        if (
+            not stat.S_ISDIR(boundary.st_mode)
+            or stat.S_IMODE(boundary.st_mode) & 0o022
+            or capacity.f_bavail * capacity.f_frsize < 8192
+            or capacity.f_favail < 2
+        ):
+            raise OfficialImportActionError("official PREPARE volume identity/capacity unproven")
+        try:
+            handle = os.open(
+                marker,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                0o600,
+                dir_fd=directory,
+            )
+        except FileExistsError:
+            raise OfficialImportActionError("official PREPARE GO already consumed") from None
+        except OSError:
+            raise OfficialImportActionError("official PREPARE marker creation uncertain") from None
+        try:
+            with os.fdopen(handle, "wb", closefd=False) as output:
+                os.fchmod(output.fileno(), 0o600)
+                output.write(record)
+                output.flush()
+                os.fsync(output.fileno())
+        except OSError:
+            raise OfficialImportActionError("official PREPARE marker outcome uncertain") from None
+        finally:
+            os.close(handle)
+        try:
+            os.fsync(directory)
+        except OSError:
+            raise OfficialImportActionError(
+                "official PREPARE directory durability unproven"
+            ) from None
+        _prepared_marker_readback(directory, marker, record, boundary.st_uid)
+    finally:
+        os.close(directory)
+    return record
+
+
+def _verify_prepared_import_marker(
+    coords: OfficialImportCoordinates, prepare_run_id: str, *, data_dir: Path
+) -> None:
+    marker = _prepared_marker_name(prepare_run_id)
+    try:
+        directory = os.open(data_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            boundary = os.fstat(directory)
+            _prepared_marker_readback(
+                directory, marker, _prepared_marker_bytes(coords, prepare_run_id), boundary.st_uid
+            )
+        finally:
+            os.close(directory)
+    except OSError:
+        raise OfficialImportActionError(
+            "official PREPARE post-import readback unavailable"
+        ) from None
+
+
+def import_from_container_stdin(
+    coords: OfficialImportCoordinates,
+    archive: bytes,
+    *,
+    data_dir: Path = _DATA,
+    prepare_run_id: str | None = None,
+) -> str:
+    """Create/replay one non-actionable snapshot with optional single-use GO.
+
+    PREPARE mode requires the fixed host shell to attest Boca rootless/volume,
+    controller exact-ID, held canonical flock and image BEFORE this UID10001
+    container call. ZIP bytes are preverified BEFORE durable GO consumption.
+    Any later crash leaves the marker quarantined; no automatic retry.
     """
     if os.geteuid() != 10_001 or data_dir != _DATA:
         raise OfficialImportActionError("official import requires Boca container UID and /data")
+    if prepare_run_id is not None:
+        try:
+            _verified_jsonl(archive, coords.pin)
+        except OfficialImportError:
+            raise OfficialImportActionError("official PREPARE source invalid before use") from None
+        _consume_prepared_import_once(coords, prepare_run_id, data_dir=data_dir)
     try:
         result = import_reviewed_official_artifact(
             data_dir, artifact_zip=archive, reviewed_pin=coords.pin
@@ -305,6 +508,8 @@ def import_from_container_stdin(
         raise OfficialImportActionError("Boca data import or readback failed") from None
     if result.outcome not in ("CREATED", "UNCHANGED") or result.actionable is not False:
         raise OfficialImportActionError("official notice import not non-actionable")
+    if prepare_run_id is not None:
+        _verify_prepared_import_marker(coords, prepare_run_id, data_dir=data_dir)
     return (
         "BOCA_OFFICIAL_IMPORT state="
         f"{result.outcome} main_sha={coords.main_sha} "
@@ -314,17 +519,26 @@ def import_from_container_stdin(
     )
 
 
-def build_single_ssh_host_command(coords: OfficialImportCoordinates, token: str) -> str:
-    """Build a fixed single-host Bash command from reviewed public coordinates.
+def build_single_ssh_host_command(
+    coords: OfficialImportCoordinates, token: str, *, prepare_run_id: str | None = None
+) -> str:
+    """Fixed host Bash: only the reviewed Boca CID, rootless lease and volume.
 
-    The workflow sends the artifact bytes on SSH stdin. The helper itself is
-    NOT streamed or copied to host disk: it executes only from the digest-
-    checked Boca container image, after rootless CID and flock validation.
+    The default v1 operation is unchanged; PREPARE v2 is separate and opt-in
+    after the runner's independent receipt/environment GO review. No token,
+    credential or site operation enters the shell.
     """
     if decode_coordinates(token) != coords:
         raise OfficialImportActionError("official import token/CID source mismatch")
+    host_script = _HOST_SH
+    if prepare_run_id is not None:
+        token = encode_prepared_coordinates(coords, prepare_run_id=prepare_run_id)
+        previous = 'container-import "$token"'
+        if host_script.count(previous) != 1:
+            raise OfficialImportActionError("official PREPARE fixed host route unavailable")
+        host_script = host_script.replace(previous, 'container-import-prepared "$token"')
     return shlex.join(
-        ("bash", "-c", _HOST_SH, "--", coords.controller_id, coords.controller_image, token)
+        ("bash", "-c", host_script, "--", coords.controller_id, coords.controller_image, token)
     )
 
 
@@ -382,6 +596,83 @@ def _private_write_once(path: Path, data: bytes) -> None:
     finally:
         if fd >= 0:
             os.close(fd)
+
+
+def _prepared_official_runner_proof(
+    coords: OfficialImportCoordinates, *, archive_sha256: str
+) -> str:
+    """Verify independent GO_B and rehash exact official release artifacts."""
+    env = os.environ
+    runner = Path(env.get("RUNNER_TEMP", ""))
+    try:
+        proof = verify_legacy_prepared_go(
+            operation="official-notice-import",
+            expected_public_context_sha256=lambda prepare_id: official_prepared_context_sha256(
+                coords, prepare_run_id=prepare_id, actor=env.get("GITHUB_ACTOR", "")
+            ),
+            source_sha=coords.main_sha,
+            release_run_id=coords.controller_release_run_id,
+            release_manifest_sha256=hash_reviewed_file(
+                runner / "boca-release-manifest/boca-release-manifest.json"
+            ),
+            browser_manifest_sha256=hash_reviewed_file(
+                runner / "boca-browser-release-manifest/boca-browser-release-manifest.json"
+            ),
+            bundle_sha256=archive_sha256,
+            owner_subject=env.get("BOCA_BETA_OWNER_SUBJECT", ""),
+            environ=env,
+        )
+    except (PreparedGoError, OfficialImportActionError) as exc:
+        raise OfficialImportActionError(
+            "official prepared runner source, release or GO_B unavailable"
+        ) from exc
+    return proof.prepare_run_id
+
+
+def _prepared_reviewed_source_zip(path: Path) -> bytes:
+    if not path.is_absolute() or path.is_symlink() or not path.is_file():
+        raise OfficialImportActionError("prepared official ZIP path unavailable")
+    try:
+        if not 0 < path.stat().st_size <= _MAX_ZIP:
+            raise OfficialImportActionError("prepared official ZIP size unsafe")
+        raw = path.read_bytes()
+    except OSError:
+        raise OfficialImportActionError("prepared official ZIP unreadable") from None
+    if not 0 < len(raw) <= _MAX_ZIP:
+        raise OfficialImportActionError("prepared official ZIP length differs")
+    return raw
+
+
+def _runner_preflight_prepared(argv: list[str]) -> int:
+    """No host action; v2 PREPARE proof precedes GitHub artifact parsing."""
+    if len(argv) != 6:
+        raise OfficialImportActionError("official prepared preflight arguments incomplete")
+    coords = _coords_from_env()
+    archive = _prepared_reviewed_source_zip(Path(argv[4]))
+    _prepared_official_runner_proof(coords, archive_sha256=hashlib.sha256(archive).hexdigest())
+    token = _verify_github_reviewed_source(
+        coords,
+        source_run=_load_json(Path(argv[2])),
+        artifact=_load_json(Path(argv[3])),
+        archive=archive,
+    )
+    _private_write_once(Path(argv[5]), (token + "\n").encode("ascii"))
+    print("BOCA_OFFICIAL_IMPORT_PREPARED_PREFLIGHT state=READY host=untouched")
+    return 0
+
+
+def _runner_host_command_prepared(argv: list[str]) -> int:
+    """Reverify GO_B source pins before printing fixed Boca-only SSH command."""
+    if len(argv) != 4:
+        raise OfficialImportActionError("official prepared host command arguments invalid")
+    coords = _coords_from_env()
+    token = _load_token(Path(argv[2]))
+    archive = _prepared_reviewed_source_zip(Path(argv[3]))
+    prepare_run_id = _prepared_official_runner_proof(
+        coords, archive_sha256=hashlib.sha256(archive).hexdigest()
+    )
+    print(build_single_ssh_host_command(coords, token, prepare_run_id=prepare_run_id))
+    return 0
 
 
 def _runner_preflight(argv: list[str]) -> int:
@@ -455,13 +746,22 @@ def _assert_runner_host_receipt(argv: list[str]) -> int:
 
 
 def _run_cli(argv: list[str]) -> int:
-    if len(argv) == 3 and argv[1] == "container-import":
-        coords = decode_coordinates(argv[2])
+    if len(argv) == 3 and argv[1] in ("container-import", "container-import-prepared"):
+        prepared = argv[1] == "container-import-prepared"
+        if prepared:
+            coords, prepare_run_id = decode_prepared_coordinates(argv[2])
+        else:
+            coords = decode_coordinates(argv[2])
+            prepare_run_id = None
         archive = sys.stdin.buffer.read(_MAX_ZIP + 1)
         if not 0 < len(archive) <= _MAX_ZIP:
             raise OfficialImportActionError("official import archive size invalid")
-        print(import_from_container_stdin(coords, archive))
+        print(import_from_container_stdin(coords, archive, prepare_run_id=prepare_run_id))
         return 0
+    if len(argv) >= 2 and argv[1] == "runner-preflight-prepared":
+        return _runner_preflight_prepared(argv)
+    if len(argv) >= 2 and argv[1] == "runner-host-command-prepared":
+        return _runner_host_command_prepared(argv)
     if len(argv) >= 2 and argv[1] == "runner-preflight":
         return _runner_preflight(argv)
     if len(argv) >= 2 and argv[1] == "runner-host-command":

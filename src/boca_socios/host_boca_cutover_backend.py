@@ -530,17 +530,30 @@ class RootlessCutoverBackend:
         return "ACCEPT"
 
 
-def execute_reviewed_cutover(plan: CutoverPlan) -> CutoverReceipt:
-    """Host-only single-lease Cutover A orchestration for a future approved CLI.
+def execute_reviewed_cutover(
+    plan: CutoverPlan, *, prepare_run_id: str | None = None
+) -> CutoverReceipt:
+    """One Boca-only host transaction with optional exact PREPARE consumption.
 
-    This function is deliberately not invoked by an existing workflow or the
-    protected ZIP's public main(). Only a later exact-SHA/GO-reviewed host
-    dispatcher may call it from an authenticated memfd process. Its own source
-    read, durable pre-effect intent and terminal result share the same lease.
+    The old run-bound path is unchanged. PREPARE is consumed only after exact
+    legacy/controller/rootless/data-volume attestation under the *same* lease,
+    but before any stage, image pull, stop, SQLite or cleanup. The marker is
+    created inside the EXISTING /data volume by the attested legacy controller
+    UID10001, avoiding unsafe host/subuid assumptions. A crash after O_EXCL
+    quarantines the PREPARE forever; no blind delete or retry.
     """
+    import json
+    from dataclasses import asdict
+
     from boca_socios import host_boca_cutover_receipt as terminal
 
     plan.validate()
+    if prepare_run_id is not None and (
+        type(prepare_run_id) is not str
+        or re.fullmatch(r"[1-9][0-9]{0,19}\Z", prepare_run_id) is None
+        or prepare_run_id == plan.attempt_id
+    ):
+        raise CutoverError("cutover prepared GO identity invalid")
     sources = ReviewedCutoverSources.from_verified_zip()
     sources.validate(plan)
     backend = RootlessCutoverBackend(sources)
@@ -554,9 +567,173 @@ def execute_reviewed_cutover(plan: CutoverPlan) -> CutoverReceipt:
         record = terminal.TerminalRecord.from_receipt(completed_plan, result)
         terminal.write_once(record, plan=completed_plan, lease=lease)
 
+    # The legacy controller is a Python image. The constant stdlib-only code
+    # runs under docker exec in its exact authenticated CID, with network and
+    # Docker daemon unchanged. It opens only /data and creates one marker.
+    marker_program = r"""
+import hashlib
+import json
+import os
+import re
+import stat
+import sys
+
+raw = sys.stdin.buffer.read(2049)
+if not 0 < len(raw) <= 2048:
+    raise SystemExit(3)
+def unique(pairs):
+    out = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError("duplicate prepared GO field")
+        out[key] = value
+    return out
+try:
+    record = json.loads(raw.decode("ascii"), object_pairs_hook=unique)
+except (ValueError, UnicodeError):
+    raise SystemExit(3) from None
+if (
+    type(record) is not dict
+    or set(record) != {"version", "operation", "prepare_run_id", "plan"}
+    or record.get("version") != "boca-cutover-prepared-use-v1"
+    or record.get("operation") != "cutover-a-apply"
+    or type(record.get("plan")) is not dict
+    or any(type(v) is not str or len(v) > 256 for v in record["plan"].values())
+    or type(record.get("prepare_run_id")) is not str
+    or re.fullmatch(r"[1-9][0-9]{0,19}\Z", record["prepare_run_id"]) is None
+    or record["prepare_run_id"] != sys.argv[1]
+    or json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii") != raw
+    or os.getuid() != 10001
+    or os.geteuid() != 10001
+):
+    raise SystemExit(3)
+name = ".boca-cutover-prepared-go-" + record["prepare_run_id"] + ".json"
+directory = os.open("/data", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+try:
+    info = os.fstat(directory)
+    free = os.statvfs(directory)
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != 10001
+        or info.st_gid != 10001
+        or stat.S_IMODE(info.st_mode) & 0o022
+        or free.f_bavail * free.f_frsize < 8192
+        or free.f_favail < 2
+    ):
+        raise SystemExit(3)
+    output = os.open(
+        name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+        0o600, dir_fd=directory,
+    )
+    try:
+        os.fchmod(output, 0o600)
+        with os.fdopen(output, "wb", closefd=False) as target:
+            target.write(raw)
+            target.flush()
+            os.fsync(target.fileno())
+    finally:
+        os.close(output)
+    os.fsync(directory)
+    marker = os.open(
+        name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+        dir_fd=directory,
+    )
+    try:
+        identity = os.fstat(marker)
+        readback = os.read(marker, 2049)
+        after = os.fstat(marker)
+        if (
+            not stat.S_ISREG(identity.st_mode)
+            or identity.st_uid != 10001
+            or identity.st_gid != 10001
+            or identity.st_nlink != 1
+            or stat.S_IMODE(identity.st_mode) != 0o600
+            or identity.st_size != len(raw)
+            or readback != raw
+            or (identity.st_dev, identity.st_ino, identity.st_mtime_ns)
+               != (after.st_dev, after.st_ino, after.st_mtime_ns)
+        ):
+            raise SystemExit(3)
+    finally:
+        os.close(marker)
+finally:
+    os.close(directory)
+print(
+    "BOCA_CUTOVER_PREPARED_GO state=CONSUMED prepare_run_id="
+    + record["prepare_run_id"] + " sha256=" + hashlib.sha256(raw).hexdigest()
+)
+"""
+
+    def consume_prepared(
+        prepared_plan: CutoverPlan, approved_prepare_id: str, lease: cleanup.BocaJobLease
+    ) -> None:
+        cleanup.verify_protected_boca_job_lease(lease, prepared_plan.attempt_id)
+        # attest_original() already proved exact running/healthy controller,
+        # fixed loopback8443, project, no browser worker and three named mounts.
+        # Recheck the immutable rootless Docker endpoint and named /data volume.
+        host._validate_docker_boundary()
+        host._validate_data_volume()
+        public_plan = asdict(prepared_plan)
+        public_plan.pop("owner_subject")
+        public_plan["owner_subject_sha256"] = hashlib.sha256(
+            prepared_plan.owner_subject.encode("ascii")
+        ).hexdigest()
+        raw = json.dumps(
+            {
+                "version": "boca-cutover-prepared-use-v1",
+                "operation": "cutover-a-apply",
+                "prepare_run_id": approved_prepare_id,
+                "plan": public_plan,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+        if not 0 < len(raw) <= 2048:
+            raise CutoverError("cutover prepared marker payload unbounded")
+        expected = (
+            "BOCA_CUTOVER_PREPARED_GO state=CONSUMED prepare_run_id="
+            + approved_prepare_id
+            + " sha256="
+            + hashlib.sha256(raw.encode("ascii")).hexdigest()
+        )
+        try:
+            observed = host._run(
+                "docker",
+                "exec",
+                "-i",
+                "--user",
+                "10001:10001",
+                prepared_plan.legacy_id,
+                "python",
+                "-c",
+                marker_program,
+                approved_prepare_id,
+                input_data=raw,
+                timeout=20,
+            )
+            if observed != expected:
+                raise CutoverError("cutover durable PREPARE marker receipt differs")
+            host._cutover_observe(
+                prepared_plan.legacy_image,
+                prepared_plan.legacy_sha,
+                prepared_plan.legacy_compose_sha,
+                prepared_plan.origin,
+                prepared_plan.owner_subject,
+                prepared_plan.target_image,
+                prepared_plan.target_sha,
+                prepared_plan.browser_image,
+                prepared_plan.legacy_id,
+            )
+        except (OSError, ValueError) as exc:
+            raise CutoverError("cutover PREPARE consumption or reattestation unproven") from exc
+        cleanup.verify_protected_boca_job_lease(lease, prepared_plan.attempt_id)
+
     return run_cutover_a(
         plan,
         backend=backend,
         terminal_preflight=terminal_preflight,
         terminal_sink=terminal_sink,
+        prepare_run_id=prepare_run_id,
+        prepared_go_consumer=consume_prepared if prepare_run_id is not None else None,
     )

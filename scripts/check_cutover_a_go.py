@@ -26,6 +26,11 @@ import boca_protected_memfd_bootstrap as memfd
 from boca_socios.browser_release_manifest import validate_browser_manifest
 from boca_socios.host_boca_cutover import CutoverPlan
 from boca_socios.host_boca_cutover_cli import CutoverCliError, encode_invocation
+from boca_socios.prepared_go_runner import (
+    PreparedGoError,
+    hash_reviewed_file,
+    verify_legacy_prepared_go,
+)
 from boca_socios.release_manifest import validate_manifest
 
 VERSION = "boca-cutover-a-go-v1"
@@ -450,6 +455,45 @@ def write_actions_invocation(request: GoRequest, *, protected_go_digest: str) ->
     return approved
 
 
+def write_actions_invocation_prepared(request: GoRequest, *, environ: Mapping[str, str]) -> str:
+    """Runner-only v2 token after #352 PREPARE GH review and independent GO_B.
+
+    The three O_EXCL proofs must already have been staged by the privileged
+    protected workflow from an authenticated SUCCESS PREPARE artifact; neither
+    user dispatch input nor local receipt bytes alone grants authorization.
+    """
+    try:
+        bundle_before = hash_reviewed_file(request.bundle_path, max_bytes=memfd.MAX_ZIP)
+        proof = verify_legacy_prepared_go(
+            operation="cutover-a-apply",
+            expected_public_context_sha256=lambda prepare_id: cutover_prepared_context_sha256(
+                request, prepare_run_id=prepare_id
+            ),
+            source_sha=request.plan.target_sha,
+            release_run_id=request.target_release_run_id,
+            release_manifest_sha256=hash_reviewed_file(request.target_manifest_path),
+            browser_manifest_sha256=hash_reviewed_file(request.browser_manifest_path),
+            bundle_sha256=bundle_before,
+            owner_subject=request.plan.owner_subject,
+            environ=environ,
+        )
+        bundle_after = hash_reviewed_file(request.bundle_path, max_bytes=memfd.MAX_ZIP)
+        if bundle_after != bundle_before:
+            raise CutoverGoError("reviewed PREPARE host ZIP changed after GO")
+        token = encode_invocation(
+            request.plan,
+            bundle_sha256=bundle_after,
+            go_binding_sha256=proof.approved_sha256,
+            prepare_run_id=proof.prepare_run_id,
+        )
+        root = request.bundle_path.parent
+        _write_once(root / HOST_INVOCATION_NAME, (token + "\n").encode("ascii"))
+        _write_once(root / HOST_APPROVAL_NAME, (proof.approved_sha256 + "\n").encode("ascii"))
+    except (PreparedGoError, CutoverCliError) as exc:
+        raise CutoverGoError("Cutover A protected PREPARE GO_B not independently proven") from exc
+    return proof.approved_sha256
+
+
 def assert_actions_host_receipt(environment: Mapping[str, str]) -> None:
     """Fail closed on missing SSH, failed preflight, or non-exact terminal result."""
     if (
@@ -477,16 +521,24 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Protected GO verifier; no SSH/Docker")
     parser.add_argument("request_path", type=Path, nargs="?")
     parser.add_argument("--from-actions", action="store_true")
+    parser.add_argument("--prepared-from-actions", action="store_true")
     parser.add_argument("--assert-host-receipt", action="store_true")
     args = parser.parse_args(argv)
     try:
         if args.assert_host_receipt:
-            if args.request_path is not None or args.from_actions:
+            if args.request_path is not None or args.from_actions or args.prepared_from_actions:
                 raise CutoverGoError("Cutover A receipt assertion arguments unexpected")
             assert_actions_host_receipt(os.environ)
             print("BOCA_CUTOVER_A_HOST_VERIFY state=PASS receipt=EXACT runtime=UNVERIFIED")
             return 0
-        if args.from_actions:
+        if args.from_actions and args.prepared_from_actions:
+            raise CutoverGoError("Cutover A cannot combine legacy and prepared GO")
+        if args.prepared_from_actions:
+            if args.request_path is not None:
+                raise CutoverGoError("Cutover A PREPARE cannot load caller request")
+            request = actions_request(os.environ)
+            approved = write_actions_invocation_prepared(request, environ=os.environ)
+        elif args.from_actions:
             if args.request_path is not None:
                 raise CutoverGoError("Actions Cutover A cannot load caller request")
             request = actions_request(os.environ)

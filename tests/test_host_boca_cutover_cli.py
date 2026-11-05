@@ -196,3 +196,56 @@ def test_cli_unexpected_host_error_never_leaks_exception_or_claims_success(
 def test_cli_malformed_input_is_bounded_error(encoded: str) -> None:
     with pytest.raises(cli.CutoverCliError):
         cli.CutoverInvocation.decode(encoded)
+
+
+def test_prepared_v2_cutover_invocation_has_exact_nonce_and_keeps_v1() -> None:
+    plan = _plan()
+    v1 = cli.encode_invocation(plan, bundle_sha256="a" * 64, go_binding_sha256=GO)
+    assert cli.CutoverInvocation.decode(v1).prepare_run_id is None
+    v2 = cli.encode_invocation(
+        plan,
+        bundle_sha256="a" * 64,
+        go_binding_sha256=GO,
+        prepare_run_id="50000000001",
+    )
+    parsed = cli.CutoverInvocation.decode(v2)
+    assert parsed.plan == plan
+    assert parsed.prepare_run_id == "50000000001"
+    assert parsed.go_binding_sha256 == GO
+    assert v2 != v1
+    for bad in ("", "0", plan.attempt_id, "not-digits"):
+        with pytest.raises(cli.CutoverCliError):
+            cli.encode_invocation(
+                plan, bundle_sha256="a" * 64, go_binding_sha256=GO, prepare_run_id=bad
+            )
+
+
+def test_prepared_cutover_cli_requires_separate_go_and_receipt(
+    reviewed_context: tuple[str, CutoverPlan, str],
+) -> None:
+    _, plan, digest = reviewed_context
+    encoded = cli.encode_invocation(
+        plan,
+        bundle_sha256=digest,
+        go_binding_sha256=GO,
+        prepare_run_id="50000000001",
+    )
+    seen: list[str] = []
+
+    def effect(actual: CutoverPlan, prepared_id: str) -> CutoverReceipt:
+        assert actual == plan and prepared_id == "50000000001"
+        seen.append("prepared-effect")
+        return CutoverReceipt(plan.attempt_id, "ACCEPTED", "ACCEPT", False, True, NEW, WORKER)
+
+    assert cli.run_cli(encoded, execute_prepared=effect) == 3
+    assert seen == []
+    assert (
+        cli.run_cli(
+            encoded,
+            approved_go_binding_sha256=GO,
+            execute_prepared=effect,
+            reconcile=lambda _plan, _receipt: seen.append("receipt"),
+        )
+        == 0
+    )
+    assert seen == ["prepared-effect", "receipt"]
