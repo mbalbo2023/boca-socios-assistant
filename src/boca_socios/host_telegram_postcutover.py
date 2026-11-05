@@ -24,6 +24,7 @@ from boca_socios.host_lifecycle_rootless_adapter import (
     ProductionRootlessDockerIO,
     ReviewedInstalledPair,
     RootlessLifecycleProbe,
+    _mounts,
 )
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
