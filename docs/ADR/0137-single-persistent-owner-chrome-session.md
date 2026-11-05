@@ -65,13 +65,13 @@ ledger 0006 como con un ledger 0007 válido, y no exige migrar Telegram.
 1. Integrar únicamente después de revisar PR DRAFT, CI y preflight por SHA;
    no desplegar este código contra la DB vieja por inferencia.
 2. El adaptador sólo-código `panel.owner_session_upgrade` define
-   `upgrade_existing_owner_schema_0008(ControllerStoppedEvidence)`. Una
-   **implementación de evidencia host aún no disponible** debe inspeccionar
-   de verdad el container Boca detenido y mantener exclusividad durante toda
-   la transacción. Un booleano `stopped=True`, JSON, recibo histórico, clase
-   de prueba o callback no autenticado **no son evidencia física**. Ni la
-   existencia de este adaptador ni tests con prueba sintética habilitan su
-   ejecución física.
+   `upgrade_existing_owner_schema_0008(ControllerStoppedEvidence)`. El nuevo
+   `panel.owner_session_host_attestor.DockerStoppedControllerEvidence` aporta
+   inspección **host-side** rootless, exact-ID y lease físico, pero todavía
+   **no está conectado a un workflow protegido**. Un booleano `stopped=True`,
+   JSON, recibo histórico, clase de prueba o callback no autenticado **no
+   son evidencia física**. Ni esta implementación fuente ni tests con
+   Docker fingido habilitan por sí mismos ejecución real.
 3. El futuro paso GitHub Actions **protegido, explícito y Boca-only** deberá
    entregar el capability de parada anterior a un proceso sin red, con mount
    exacto `/data/boca.sqlite3`; exigir real/effective UID/GID **10001/10001**,
@@ -132,14 +132,41 @@ intocables.
   owner** para reproducir ledger 0006, con y sin 0007; prueba de idempotencia
   después de poblar el hash de owner, conservación de filas y clave sintéticas,
   mismo `(dev,inode,mode)` y rechazo de ledger/esquema parcial o alterado.
-- `ControllerStoppedEvidence` es interfaz abstracta de *lease host*; no existe
-  en este scope implementación de confianza ni `workflow_dispatch` que la
-  produzca. Los tests usan un doble local para comprobar el contrato, **no
-  simulan ni certifican la parada real de contenedores**.
+- `ControllerStoppedEvidence` es interfaz abstracta de *lease host*; el
+  `DockerStoppedControllerEvidence` concreto aporta sólo el código de
+  observación host: consulta el **socket rootless 10001** y metadatos
+  `docker info/ps/inspect/volume inspect` por ID original 64hex + attempt ID,
+  exige nombre `boca-socios-controller-legacy-<attempt>`, Compose project/
+  service/number, source SHA e imagen immutable, estado `exited`, política
+  de restart `no`, montajes data RW/key RO/owner RO exactos, ningún controller
+  competidor y **ningún otro proceso Docker RUNNING que monte data RW**.
+  Telegram comparte `/data` RW: si está corriendo, el attestor devuelve
+  NO_GO hasta que otro flujo autorizado resuelva la parada/reanudación con
+  identidad positiva. No detiene ni altera ningún container.
+- Para ejecutar contra el host físico, `evidence.host_database_path()`
+  resuelve la ruta SQLite exacta del volumen rootless Docker (en vez del alias
+  `/data` interno); sólo este tipo concreto autoriza al adaptador a usar esa
+  ruta. `exclusive_stop()` adquiere flock nonblocking de Boca
+  `/run/user/10001/boca-socios-0008.lock`, verifica UID/GID y `(dev,inode)`
+  y repite todo el inventario antes de soltar. **El orchestration cutover #227
+  también debe respetar ese lock en park/restart** para evitar carreras; si
+  hay terceros que lo ignoren, no puede declararse exclusividad física. La
+  comprobación post-commit no garantiza rollback de una carrera: ante duda
+  queda NO_GO y no se reinicia imagen nueva.
+- Tests de host attestor usan JSON Docker sintético sin daemon ni red; prueban
+  original parado, restart incorrecto, imagen/labels/nombre drift, competing
+  controller, worker RW activo, cambio de volumen, mount omitido, lock
+  contendida, scope de DB y `stopped=True` rechazado. Ninguna prueba
+  certifica una migración ni parada real en el droplet.
 - **NO_GO físico** hasta integrar y evidenciar el host-stop gate propietario,
   inventario exacto del volumen, source SHA, preflight, CI y ejecución gobernada
-  en GitHub Actions. No se realizó ninguna migración ni deploy real en este PR.
-- QA de branch aislada: `pytest -q` **2597 passed + 34 subtests**, Ruff check
-  PASS, Ruff format PASS (405 archivos), MyPy PASS (90 archivos), repo policy
-  `POLICY_PASS`. Son evidencias locales, no sustituyen los checks Actions del
-  nuevo SHA remoto ni el recibo host físico.
+  en GitHub Actions. El adaptador no hace `docker stop/start/rename`, limpieza
+  Docker, backup ni modificación de volúmenes. Cualquier limpieza posterior
+  (éxito o fallo) pertenece al frente #323, selectiva sólo Boca, preservando
+  siempre owner/key/data. No se realizó migración ni deploy real en este PR.
+- QA de branch aislada con host-attestor añadido: `pytest -q` **2609 passed +
+  34 subtests**, Ruff check PASS, Ruff format PASS (407 archivos), MyPy PASS
+  (91 archivos), repo policy `POLICY_PASS`; regresión focalizada del attestor
+  con comprobación de opciones bind y origen de montaje **25 passed**. Son
+  evidencias locales, no
+  sustituyen los checks Actions del nuevo SHA remoto ni el recibo host físico.
