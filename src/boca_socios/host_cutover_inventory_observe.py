@@ -363,14 +363,16 @@ def _observation(io: CutoverInventoryIO, release: ReviewedTargetRelease) -> dict
     # Cutover may instead observe the exact already-running container's image
     # ID and pinned GHCR Config.Image; the runner independently authenticates
     # its original source and immutable release manifest BEFORE PREPARE/GO/APPLY.
-    if len(images) > 1 or (
-        images and images[0].source not in (_SOURCE, None)
-    ):
+    if len(images) > 1 or (images and images[0].source not in (_SOURCE, None)):
         raise CutoverInventoryNoGo("Boca historical image provenance unavailable")
-    if (not images or images[0].source is None) and controller.image_id not in inventory.global_image_ids:
+    if (
+        not images or images[0].source is None
+    ) and controller.image_id not in inventory.global_image_ids:
         raise CutoverInventoryNoGo("Boca historical image provenance unavailable")
-    if images and images[0].source is None and images[0].references != (
-        "ghcr.io/mbalbo2023/boca-socios-assistant:unverified",
+    if (
+        images
+        and images[0].source is None
+        and images[0].references != ("ghcr.io/mbalbo2023/boca-socios-assistant:unverified",)
     ):
         raise CutoverInventoryNoGo("Boca historical image provenance unavailable")
     ident = controller.ident
@@ -379,7 +381,9 @@ def _observation(io: CutoverInventoryIO, release: ReviewedTargetRelease) -> dict
         type(image_ref) is not str
         or not _CONTROLLER.fullmatch(image_ref)
         or image_ref == release.target_controller_image
-        or images and images[0].source == _SOURCE and image_ref not in images[0].references
+        or images
+        and images[0].source == _SOURCE
+        and image_ref not in images[0].references
     ):
         raise CutoverInventoryNoGo("Boca historical GHCR image not uniquely attested")
     if (
@@ -510,8 +514,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except Exception as exc:
         print(
-            "BOCA_CUTOVER_INVENTORY_OBSERVE state=NO_GO "
-            f"reason={_cutover_public_reason(exc)}",
+            f"BOCA_CUTOVER_INVENTORY_OBSERVE state=NO_GO reason={_cutover_public_reason(exc)}",
             file=sys.stderr,
         )
         return 3
