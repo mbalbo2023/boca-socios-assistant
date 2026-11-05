@@ -30,6 +30,10 @@ from boca_socios.integration.operational import (
     validate_existing_beta_storage,
 )
 from boca_socios.owner_origin import SSH_LOOPBACK_ORIGIN
+from boca_socios.panel.lifecycle_intents import (
+    LifecycleIntentStore,
+    LifecycleStorageUnavailable,
+)
 from boca_socios.panel.owner_session_store import OwnerBrowserSessionStore
 from boca_socios.panel.passkey import PasskeyOwnerAuthentication
 from boca_socios.panel.private_http import PrivatePanelApplication
@@ -92,6 +96,30 @@ def _configured_event(path: Path) -> dict[str, str]:
     if row is None or not isinstance(row[0], str) or row[0] != SIMULATION_EVENT_LABEL:
         raise ValueError("synthetic event is unavailable")
     return {SIMULATION_EVENT_ID: SIMULATION_EVENT_LABEL}
+
+
+def _engine_stopped_after_reboot(database_path: Path, *, browser_backend: str) -> bool:
+    """Reconcile the durable owner host receipt before synthetic recovery.
+
+    This applies only to the future opt-in IPC BETA, not the installed
+    legacy controller-only backend. An unresolved host operation is NO_GO;
+    a confirmed STOP (or non-bot latest receipt whose prior bot state is
+    ambiguous) starts an *inert* engine, never a transient replaying thread.
+    """
+    if browser_backend != "ipc":
+        return False
+    try:
+        state = LifecycleIntentStore(Database(database_path)).current()
+    except LifecycleStorageUnavailable:
+        raise LocalRuntimeUnavailable("owner lifecycle reconciliation unavailable") from None
+    if state is None:
+        return False
+    if state.status in {"REQUESTED", "CLAIMED", "UNCERTAIN"}:
+        raise LocalRuntimeUnavailable("pending owner host operation requires reconciliation")
+    # Only the latest unambiguous BOT START authorizes automatic worker
+    # recovery. Chromium receipts and REFUSED do not prove bot RUNNING;
+    # default to stopped without modifying the SQLite audit log.
+    return not (state.component == "bot" and state.target == "start" and state.status == "APPLIED")
 
 
 def _configured_telegram_pairing_stager(
@@ -285,6 +313,13 @@ def build_beta_server(
     parameter or an implicit host-side Chromium activation.
     """
     settings.validate_beta()
+    # Defer the owner receipt until IPC UID/socket and storage preflight,
+    # but still before any command thread or recovery can start.
+    initial_engine_stopped = partial(
+        _engine_stopped_after_reboot,
+        settings.db_path,
+        browser_backend=settings.browser_backend,
+    )
     telegram_pairing_stager = _configured_telegram_pairing_stager(settings)
     selected_browser, command_timeout = _browser_for_beta(settings, browser)
     bridge_enabled = settings.validate_bridge()
@@ -320,6 +355,7 @@ def build_beta_server(
         database_path=settings.db_path,
         key_file=settings.master_key_file,
         browser=selected_browser,
+        initial_engine_stopped=initial_engine_stopped,
         command_timeout_seconds=command_timeout,
     )
     bridge: SiteBridgeWorker | None = None
