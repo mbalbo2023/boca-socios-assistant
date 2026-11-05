@@ -273,3 +273,51 @@ SHA deliberadamente incorrecto y builder que falla sin crear output. La suite
 focal de bundle, Cutover CLI, contrato R22 y cleanup pasó **106/106**.
 Sin este RCA, el despliegue protegido sería NO_GO antes del primer SSH,
 independiente de si Docker tuviera caché recuperable.
+
+## R29: compatibilidad `docker system df` y metadata UID del volumen owner
+
+La Action física READ_ONLY protegida **#42125071037** sobre main R28
+`5246d61df5da903a72498bb877d029072b6470d5` finalizó `SUCCESS` con
+exactamente 2 imágenes, un controller original preservado, 3 volúmenes, una
+red, `classification=INDETERMINATE`, **cero escrituras** y almacenamiento
+físico `5,106,634,752` bytes antes/después. Buildx local `default` confirmó
+`buildx_status=OBSERVED`, **0 registros y 0 bytes** de caché reportada, pero
+`system_df_status=UNAVAILABLE`, por lo que no se proclamó limpieza total.
+El host `python -I -B -c 'import cryptography'` sí declaró
+`host_python_crypto=AVAILABLE, version=41.0.7` bajo UID10001; eso demuestra
+disponibilidad **en host**, no en contenedor ni acceso a la llave Telegram.
+
+RCA del `system df`: el parser R28 exigía un sufijo `(NN%)` en el campo
+`Reclaimable`. La documentación oficial de Docker CLI muestra salidas
+JSON válidas **sin porcentaje**, por ejemplo `"158B"`, y ejemplos con
+`"0 B"`. Fuente primaria:
+https://github.com/docker/cli/blob/master/docs/reference/commandline/system_df.md
+Por lo tanto el rechazo fue causado por una hipótesis demasiado estricta
+de formato, no por prueba de caché sucia. R29 admite porcentaje opcional
+con B/kB/MB/GB/TB/PB y espacio opcional, preserva límites de filas,
+numeración, tipos, clasificación fail-closed y salida sin nombres. Fixtures
+offline basados en el ejemplo oficial prueban `"158B"`, `"0B"` y `"0 B"`;
+si hubiera otra discrepancia, sigue `UNAVAILABLE` y no borra nada.
+
+R29 agrega `owner_volume_metadata` **READ_ONLY** bajo el mismo observer
+protegido, sólo para el volumen exacto `boca-socios_boca_owner` ya inventariado
+en el único daemon rootless Boca. Compara Docker `Mountpoint` con
+`DockerRootDir/volumes/boca-socios_boca_owner/_data`, reconfirma device/inode
+del rootless storage y accede por descriptores con `O_PATH`, `O_NOFOLLOW` y
+`dir_fd`, **sin abrir contenido de archivos**. Emite únicamente UID/GID/mode
+del directorio y `lstat` de los dos archivos públicos de WebAuthn
+`credential_id`, `public_key.der` (tipo, UID, GID, mode, size y nlink);
+nunca nombres arbitrarios, clave privada, contenido, rutas del host,
+ambiente ni tokens. Si una UID subordinate impide recorrer el volumen,
+mantiene la metadata del directorio y declara `FILES_INACCESSIBLE`; si la
+identidad de mount no coincide, `UNAVAILABLE`. El `host_process_uid_map`
+opcional es **sólo mapa del proceso observador host**, explícitamente no
+mapa de user namespace dentro del contenedor. No demuestra por sí solo
+viabilidad del stage de Telegram, que deberá juzgarse con evidencia más
+específica antes de mutar.
+
+El recibo pasa a v4, `deletion_authorized=false`, `cleanup_executed=false`,
+`observer_writes=0` y `READ_ONLY_NO_GO`. R29 sigue sin habilitar la función
+CODE_ONLY de retiro exacto, `docker exec`, pull, prune, Stage Telegram ni
+operación ajena a Boca. Un nuevo Action físico protegido es indispensable
+para afirmar números de `system_df` y attrs UID/mode reales.
