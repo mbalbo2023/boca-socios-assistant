@@ -527,6 +527,18 @@
       "regression_tests": [
         "tests/test_host_cutover_inventory_observe.py::test_real_adapter_uses_only_explicit_rootless_inspect_fields"
       ]
+    },
+    {
+      "id": "RCA-386",
+      "issue": 386,
+      "fix_pr": 392,
+      "root_cause": "READ_ONLY cutover-a-reconcile was listed in the protected main/identity case but omitted from the 1.5cpu-1024m-192pids budget condition. Protected Action 42110047550 therefore fell through to the unrelated 0.5cpu-256m-64pids branch and failed before SSH, without a Docker observation.",
+      "prevention": "Keep operation membership consistent across budget and identity gates. Test the actual Bash budget and complete pre-SSH gate with a synthetic reconcile request. Prove a valid Stage NO_GO receipt still permits the following read-only Docker inventory step.",
+      "regression_tests": [
+        "tests/test_host_boca_cleanup.py::test_cutover_reconcile_budget_gate_accepts_only_exact_readonly_budget",
+        "tests/test_host_boca_cleanup.py::test_cutover_reconcile_full_preflight_passes_offline_without_host_credentials",
+        "tests/test_host_boca_cleanup.py::test_cleanup_readonly_continues_after_valid_stage_inode_no_go_observation"
+      ]
     }
   ]
 }

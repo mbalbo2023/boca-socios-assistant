@@ -16,11 +16,12 @@ import pwd
 import re
 import stat
 import subprocess
+import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 KIND = Literal["container", "volume", "network", "image"]
 OUTCOME = Literal["SUCCESS", "FAILURE"]
@@ -1293,3 +1294,343 @@ def execute_protected(
         ),
         delete_exact=delete_exact,
     )
+
+
+# The Cutover A post-APPLY diagnostic intentionally has no relationship to the
+# mutation/lease entrypoint above. Its sole dependency is the already reviewed
+# read-only inventory and pure positive-identity plan; the protected GitHub
+# workflow streams this module by stdin to the Boca-only rootless account.
+READONLY_CLEANUP_VERSION = "boca-cutover-cleanup-readonly-v1"
+READONLY_CLEANUP_MAX_JSON = 8192
+
+
+def _readonly_disk(snapshot: DiskInodes) -> dict[str, int]:
+    fields = {
+        "stage_bytes_free": snapshot.bytes_free,
+        "stage_inodes_free": snapshot.inodes_free,
+        "docker_bytes_free": snapshot.docker_bytes_free,
+        "docker_inodes_free": snapshot.docker_inodes_free,
+        "stage_device": snapshot.stage_device,
+        "stage_inode": snapshot.stage_inode,
+        "docker_device": snapshot.docker_device,
+        "docker_inode": snapshot.docker_inode,
+    }
+    if any(type(value) is not int or value < 0 for value in fields.values()):
+        raise CleanupError("Boca physical cleanup inventory metrics absent")
+    return {name: value for name, value in fields.items() if isinstance(value, int)}
+
+
+def _readonly_original(snapshot: Inventory, legacy_id: str) -> Container:
+    if (
+        any(
+            _labels(item.labels).get("com.docker.compose.project") != BOCA_PROJECT
+            for item in snapshot.containers
+        )
+        or any(
+            _labels(item.labels).get("com.docker.compose.project") != BOCA_PROJECT
+            for item in snapshot.networks
+        )
+        or any(
+            _labels(item.labels).get("com.docker.compose.project") != BOCA_PROJECT
+            for item in snapshot.volumes
+        )
+    ):
+        raise CleanupError("foreign resources cannot be part of Boca-only read-only plan")
+    matches = [container for container in snapshot.containers if container.ident == legacy_id]
+    if len(matches) != 1:
+        raise CleanupError("original Boca controller missing from exact inventory")
+    original = matches[0]
+    labels = _labels(original.labels)
+    if (
+        original.name != "/boca-socios-controller-1"
+        or not original.running
+        or labels.get("com.docker.compose.project") != BOCA_PROJECT
+        or labels.get("com.docker.compose.service") != "controller"
+        or not PERSISTENT_VOLUMES.difference({"boca-socios_boca_telegram"}) <= set(original.volumes)
+        or len([item for item in snapshot.containers if item.running]) != 1
+        or not HEX_ID.fullmatch(original.image_id)
+        or original.image_id not in snapshot.global_image_ids
+    ):
+        raise CleanupError("original Boca controller not positively preserved")
+    return original
+
+
+def observe_postapply_cleanup(
+    incident_run_id: str,
+    legacy_id: str,
+    *,
+    probe: Callable[[], Inventory] = capture_inventory,
+) -> dict[str, object]:
+    """Two stable, Boca-only READ_ONLY snapshots and a *nonexecuted* cleanup plan.
+
+    A reported clean inventory does not retroactively certify the failed APPLY;
+    this API NEVER calls delete_exact/execute/execute_protected or returns GO.
+    """
+    if (
+        type(incident_run_id) is not str
+        or ATTEMPT_ID.fullmatch(incident_run_id) is None
+        or type(legacy_id) is not str
+        or HEX_ID.fullmatch(legacy_id) is None
+    ):
+        raise CleanupError("Boca post-APPLY cleanup observation IDs invalid")
+    first = probe()
+    second = probe()
+    _validate_inventory(first)
+    _validate_inventory(second)
+    if (
+        first.containers,
+        first.images,
+        first.networks,
+        first.volumes,
+        first.global_image_ids,
+    ) != (
+        second.containers,
+        second.images,
+        second.networks,
+        second.volumes,
+        second.global_image_ids,
+    ) or _storage_topology_changed(first.disk, second.disk):
+        raise CleanupError("Boca Docker inventory drifted during read-only observation")
+    original = _readonly_original(first, legacy_id)
+    _readonly_original(second, legacy_id)
+    proposed = plan(
+        second,
+        incident_run_id,
+        preserve_images=frozenset({original.image_id}),
+        preserve_containers=frozenset({legacy_id}),
+        retire_containers=frozenset(),
+    )
+    # The image-ID census may contain untagged images with no reviewed Boca
+    # signal. Never inspect or publish those unknown exact IDs; their mere
+    # presence precludes a declaration that the inventory is fully clean.
+    unknown_image_ids = second.global_image_ids - {image.ident for image in second.images}
+    unknown_reasons = (
+        *proposed.uncertain,
+        *(("rootless-unclassified-image-ids-present",) if unknown_image_ids else ()),
+    )
+    classification = (
+        "INDETERMINATE"
+        if unknown_reasons
+        else "BOCA_REMNANTS_IDENTIFIED"
+        if proposed.targets
+        else "NO_CONFIRMED_REMNANTS"
+    )
+    result: dict[str, object] = {
+        "version": READONLY_CLEANUP_VERSION,
+        "incident_run_id": incident_run_id,
+        "legacy_id": legacy_id,
+        "protected_image_id": original.image_id,
+        "scope": "BOCA_ROOTLESS_ONLY",
+        "status": "READ_ONLY_NO_GO",
+        "classification": classification,
+        "container_count": len(second.containers),
+        "image_count": len(second.images),
+        "rootless_image_id_count": len(second.global_image_ids),
+        "unclassified_image_id_count": len(unknown_image_ids),
+        "network_count": len(second.networks),
+        "volume_count": len(second.volumes),
+        "known_remnants": [
+            {"kind": target.kind, "id": target.ident} for target in proposed.targets
+        ],
+        "retained_uncertain": list(unknown_reasons),
+        "before": _readonly_disk(first.disk),
+        "after": _readonly_disk(second.disk),
+        "original_preserved": True,
+        "cleanup_executed": False,
+        "observer_writes": 0,
+        "go_for_retry": False,
+    }
+    canonical_readonly_cleanup_receipt(result)
+    return result
+
+
+def canonical_readonly_cleanup_receipt(receipt: dict[str, object]) -> bytes:
+    """Canonical bounded ASCII, never raw Docker or host environment output."""
+    try:
+        encoded = (
+            json.dumps(
+                receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+            ).encode("ascii")
+            + b"\n"
+        )
+    except (TypeError, ValueError) as exc:
+        raise CleanupError("Boca read-only receipt cannot be encoded") from exc
+    if not 0 < len(encoded) <= READONLY_CLEANUP_MAX_JSON:
+        raise CleanupError("Boca read-only cleanup receipt exceeds bound")
+    return encoded
+
+
+def verify_readonly_cleanup_receipt(
+    raw: bytes, incident_run_id: str, legacy_id: str
+) -> dict[str, object]:
+    """Runner-side exact read-only contract; never converts diagnosis to GO."""
+    if (
+        not 0 < len(raw) <= READONLY_CLEANUP_MAX_JSON
+        or not raw.endswith(b"\n")
+        or raw.count(b"\n") != 1
+        or ATTEMPT_ID.fullmatch(incident_run_id) is None
+        or HEX_ID.fullmatch(legacy_id) is None
+    ):
+        raise CleanupError("Boca read-only cleanup receipt envelope invalid")
+    try:
+
+        def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            value: dict[str, object] = {}
+            for key, item in pairs:
+                if key in value:
+                    raise CleanupError("duplicate Boca cleanup receipt field")
+                value[key] = item
+            return value
+
+        obj = json.loads(raw.decode("ascii"), object_pairs_hook=reject_duplicates)
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise CleanupError("Boca read-only cleanup receipt JSON untrusted") from exc
+    fields = {
+        "version",
+        "incident_run_id",
+        "legacy_id",
+        "protected_image_id",
+        "scope",
+        "status",
+        "classification",
+        "container_count",
+        "image_count",
+        "rootless_image_id_count",
+        "unclassified_image_id_count",
+        "network_count",
+        "volume_count",
+        "known_remnants",
+        "retained_uncertain",
+        "before",
+        "after",
+        "original_preserved",
+        "cleanup_executed",
+        "observer_writes",
+        "go_for_retry",
+    }
+    if (
+        type(obj) is not dict
+        or set(obj) != fields
+        or obj.get("version") != READONLY_CLEANUP_VERSION
+        or obj.get("incident_run_id") != incident_run_id
+        or obj.get("legacy_id") != legacy_id
+        or obj.get("scope") != "BOCA_ROOTLESS_ONLY"
+        or obj.get("status") != "READ_ONLY_NO_GO"
+        or obj.get("original_preserved") is not True
+        or obj.get("cleanup_executed") is not False
+        or obj.get("observer_writes") != 0
+        or type(obj.get("observer_writes")) is not int
+        or obj.get("go_for_retry") is not False
+        or type(obj.get("protected_image_id")) is not str
+        or HEX_ID.fullmatch(obj["protected_image_id"]) is None
+        or any(
+            type(obj.get(name)) is not int or not 0 <= obj[name] <= MAX_OBJECTS
+            for name in (
+                "container_count",
+                "image_count",
+                "rootless_image_id_count",
+                "unclassified_image_id_count",
+                "network_count",
+                "volume_count",
+            )
+        )
+        or obj.get("container_count", 0) < 1
+        or obj["image_count"] + obj["unclassified_image_id_count"] != obj["rootless_image_id_count"]
+    ):
+        raise CleanupError("Boca read-only cleanup status or identity invalid")
+    before, after = obj["before"], obj["after"]
+    expected_disk = {
+        "stage_bytes_free",
+        "stage_inodes_free",
+        "docker_bytes_free",
+        "docker_inodes_free",
+        "stage_device",
+        "stage_inode",
+        "docker_device",
+        "docker_inode",
+    }
+    if any(
+        type(disk) is not dict
+        or set(disk) != expected_disk
+        or any(type(value) is not int or value < 0 for value in disk.values())
+        for disk in (before, after)
+    ) or any(
+        before[field] != after[field]
+        for field in ("stage_device", "stage_inode", "docker_device", "docker_inode")
+    ):
+        raise CleanupError("Boca read-only cleanup disk/inodes unverified")
+    remnants, unknown = obj["known_remnants"], obj["retained_uncertain"]
+    if (
+        type(remnants) is not list
+        or len(remnants) > MAX_DELETIONS
+        or type(unknown) is not list
+        or len(unknown) > MAX_OBJECTS
+        or any(
+            type(row) is not dict
+            or set(row) != {"kind", "id"}
+            or row["kind"] not in ("container", "image", "volume", "network")
+            or type(row["id"]) is not str
+            or not (
+                row["kind"] == "volume"
+                and DOCKER_NAME.fullmatch(row["id"]) is not None
+                and row["id"].startswith("boca-socios_")
+                and row["id"] not in PERSISTENT_VOLUMES
+                or row["kind"] != "volume"
+                and HEX_ID.fullmatch(row["id"]) is not None
+            )
+            for row in remnants
+        )
+        or any(
+            type(reason) is not str or re.fullmatch(r"[A-Za-z0-9:_.-]{1,220}", reason) is None
+            for reason in unknown
+        )
+        or len({(row["kind"], row["id"]) for row in remnants}) != len(remnants)
+        or any(row["id"] in (legacy_id, obj["protected_image_id"]) for row in remnants)
+    ):
+        raise CleanupError("Boca cleanup candidate classifications untrusted")
+    expected_classification = (
+        "INDETERMINATE"
+        if unknown
+        else "BOCA_REMNANTS_IDENTIFIED"
+        if remnants
+        else "NO_CONFIRMED_REMNANTS"
+    )
+    if (
+        obj.get("classification") != expected_classification
+        or canonical_readonly_cleanup_receipt(obj) != raw
+    ):
+        raise CleanupError("Boca read-only cleanup receipt classification or bytes invalid")
+    return obj
+
+
+def _readonly_main(args: list[str]) -> int:
+    if len(args) != 3 or args[0] not in ("host", "verify"):
+        print("BOCA_CLEANUP_RECONCILE state=NO_GO reason=INPUT", file=sys.stderr)
+        return 3
+    mode, incident_run_id, legacy_id = args
+    try:
+        if mode == "host":
+            if os.geteuid() != EXPECTED_UID or os.getegid() != EXPECTED_GID:
+                raise CleanupError("read-only cleanup requires exact Boca rootless identity")
+            receipt = observe_postapply_cleanup(incident_run_id, legacy_id)
+            sys.stdout.buffer.write(canonical_readonly_cleanup_receipt(receipt))
+        else:
+            receipt = verify_readonly_cleanup_receipt(
+                sys.stdin.buffer.read(READONLY_CLEANUP_MAX_JSON + 1), incident_run_id, legacy_id
+            )
+            print(
+                "BOCA_CLEANUP_RECONCILE state=READ_ONLY_NO_GO"
+                f" classification={receipt['classification']}"
+                f" known={len(cast(list[object], receipt['known_remnants']))}"
+                f" uncertain={len(cast(list[object], receipt['retained_uncertain']))}"
+                " original=preserved cleanup_executed=false"
+                " observer_writes=0 retry=NO_GO"
+            )
+        return 0
+    except (CleanupError, OSError, TypeError, ValueError):
+        print("BOCA_CLEANUP_RECONCILE state=NO_GO reason=UNVERIFIED", file=sys.stderr)
+        return 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(_readonly_main(sys.argv[1:]))

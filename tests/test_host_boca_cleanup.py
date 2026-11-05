@@ -28,6 +28,273 @@ DATA = "boca-socios_boca_data"
 IPC = "boca-socios_boca_browser_ipc"
 
 
+def _physical_observer_fixture(*, stale: str = "none") -> gc.Inventory:
+    """Boca-only synthetic snapshot; no production Docker or filesystem."""
+    original = gc.Container(
+        ACTIVE_ID,
+        "/boca-socios-controller-1",
+        ACTIVE_IMAGE,
+        True,
+        (*BOCA, ("com.docker.compose.service", "controller")),
+        (DATA, "boca-socios_boca_key", "boca-socios_boca_owner"),
+        ("boca-socios_boca_private",),
+    )
+    images = [
+        gc.Image(
+            ACTIVE_IMAGE,
+            ("ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "d" * 64,),
+            None,  # The installed 04-Nov controller lacks OCI source.
+        )
+    ]
+    if stale != "none":
+        images.append(
+            gc.Image(
+                OLD_IMAGE,
+                ("ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "e" * 64,),
+                gc.BOCA_SOURCE if stale == "known" else None,
+            )
+        )
+    return gc.Inventory(
+        containers=(original,),
+        images=tuple(images),
+        networks=(gc.Network("boca-socios_boca_private", PRIVATE_NET, (ACTIVE_ID,), BOCA),),
+        volumes=tuple(
+            gc.Volume(name, BOCA)
+            for name in (DATA, "boca-socios_boca_key", "boca-socios_boca_owner")
+        ),
+        disk=gc.DiskInodes(100_000, 700, 500_000, 900, 100, 101, 200, 201),
+        global_image_ids=frozenset({image.ident for image in images}),
+    )
+
+
+@pytest.mark.parametrize(
+    ("stale", "classification", "target_count", "uncertain_count"),
+    [
+        ("none", "NO_CONFIRMED_REMNANTS", 0, 0),
+        ("known", "BOCA_REMNANTS_IDENTIFIED", 1, 0),
+        ("unknown", "INDETERMINATE", 0, 1),
+    ],
+)
+def test_postapply_cleanup_readonly_plan_never_deletes(
+    stale: str, classification: str, target_count: int, uncertain_count: int
+) -> None:
+    inventory = _physical_observer_fixture(stale=stale)
+    calls = 0
+
+    def probe() -> gc.Inventory:
+        nonlocal calls
+        calls += 1
+        return inventory
+
+    receipt = gc.observe_postapply_cleanup(ATTEMPT, ACTIVE_ID, probe=probe)
+    assert calls == 2
+    assert receipt["classification"] == classification
+    assert receipt["status"] == "READ_ONLY_NO_GO"
+    assert receipt["original_preserved"] is True
+    assert receipt["go_for_retry"] is False
+    assert receipt["cleanup_executed"] is False
+    assert receipt["observer_writes"] == 0
+    assert receipt["protected_image_id"] == ACTIVE_IMAGE
+    assert len(receipt["known_remnants"]) == target_count
+    assert len(receipt["retained_uncertain"]) == uncertain_count
+    assert all(x["id"] not in (ACTIVE_ID, ACTIVE_IMAGE) for x in receipt["known_remnants"])
+    raw = gc.canonical_readonly_cleanup_receipt(receipt)
+    assert gc.verify_readonly_cleanup_receipt(raw, ATTEMPT, ACTIVE_ID) == receipt
+
+
+def test_postapply_cleanup_readonly_rejects_legacy_or_storage_drift() -> None:
+    baseline = _physical_observer_fixture()
+    stopped = replace(baseline, containers=(replace(baseline.containers[0], running=False),))
+    with pytest.raises(gc.CleanupError):
+        gc.observe_postapply_cleanup(ATTEMPT, ACTIVE_ID, probe=lambda: stopped)
+    with pytest.raises(gc.CleanupError):
+        gc.observe_postapply_cleanup(ATTEMPT, OLD_ID, probe=lambda: baseline)
+    with pytest.raises(gc.CleanupError):
+        gc.observe_postapply_cleanup(ATTEMPT, ACTIVE_ID, probe=iter([baseline, stopped]).__next__)
+    changed_storage = replace(baseline, disk=replace(baseline.disk, docker_inode=999))
+    with pytest.raises(gc.CleanupError):
+        gc.observe_postapply_cleanup(
+            ATTEMPT, ACTIVE_ID, probe=iter([baseline, changed_storage]).__next__
+        )
+
+
+def test_postapply_cleanup_unknown_global_image_id_is_uncertain_without_inspection() -> None:
+    baseline = _physical_observer_fixture()
+    # A global ID is not proof of Boca provenance, nor is it removable.
+    unknown = replace(baseline, global_image_ids=baseline.global_image_ids | {FOREIGN_IMAGE})
+    result = gc.observe_postapply_cleanup(ATTEMPT, ACTIVE_ID, probe=lambda: unknown)
+    assert result["classification"] == "INDETERMINATE"
+    assert result["unclassified_image_id_count"] == 1
+    assert result["known_remnants"] == []
+    assert FOREIGN_IMAGE not in str(result)
+
+
+def test_postapply_cleanup_readonly_receipt_rejects_tampering() -> None:
+    receipt = gc.observe_postapply_cleanup(
+        ATTEMPT, ACTIVE_ID, probe=lambda: _physical_observer_fixture()
+    )
+    raw = gc.canonical_readonly_cleanup_receipt(receipt)
+    assert raw.endswith(b"\n")
+    with pytest.raises(gc.CleanupError):
+        gc.verify_readonly_cleanup_receipt(raw, ATTEMPT, OLD_ID)
+    with pytest.raises(gc.CleanupError):
+        gc.verify_readonly_cleanup_receipt(
+            raw.replace(b'"go_for_retry":false', b'"go_for_retry":true'), ATTEMPT, ACTIVE_ID
+        )
+    with pytest.raises(gc.CleanupError):
+        gc.verify_readonly_cleanup_receipt(raw + b"{}\n", ATTEMPT, ACTIVE_ID)
+
+
+def test_postapply_cleanup_readonly_rejects_foreign_metadata_and_rootless_mismatch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inventory = _physical_observer_fixture()
+    foreign = replace(
+        inventory,
+        networks=(
+            replace(inventory.networks[0], labels=(("com.docker.compose.project", "other"),)),
+        ),
+    )
+    with pytest.raises(gc.CleanupError):
+        gc.observe_postapply_cleanup(ATTEMPT, ACTIVE_ID, probe=lambda: foreign)
+    monkeypatch.setattr(gc.os, "geteuid", lambda: 0)
+    assert gc._readonly_main(["host", ATTEMPT, ACTIVE_ID]) == 3
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "NO_GO" in output.err and ACTIVE_ID not in output.err
+
+
+def test_postapply_cleanup_workflow_uses_existing_only_readonly_dispatch() -> None:
+    workflow = (Path(__file__).parents[1] / ".github/workflows/boca-first-deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    assert workflow.count("name: Boca first deploy") == 1
+    assert "cutover-cleanup-reconcile" not in workflow  # No new privileged operation.
+    block = workflow.split("- name: Plan Boca-only Docker cleanup READ_ONLY", 1)[1].split(
+        "- name: Apply one exact-ID Boca owner lifecycle request", 1
+    )[0]
+    assert "if: inputs.operation == 'cutover-a-reconcile'" in block
+    assert "< src/boca_socios/host_boca_cleanup.py" in block
+    assert "host_cutover_postapply_reconcile import verify_runner" in block
+    assert "src/boca_socios/host_boca_cleanup.py verify" in block
+    assert "cleanup_executed=false" in block
+    assert not any(
+        command in block
+        for command in (
+            "docker rm",
+            "image rm",
+            "volume rm",
+            "network rm",
+            "docker prune",
+            "compose down",
+        )
+    )
+
+
+def test_cutover_reconcile_budget_gate_accepts_only_exact_readonly_budget() -> None:
+    """Execute the real host preflight's budget branch offline, not a guessed regex."""
+    import subprocess
+
+    workflow = (Path(__file__).parents[1] / ".github/workflows/boca-first-deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    budget_branch = workflow.split(
+        '          if [[ "$BOCA_OPERATION" = infrastructure-preflight', 1
+    )[1].split('          if [[ "$BOCA_OPERATION" != beta-browser-*', 1)[0]
+    script = 'if [[ "$BOCA_OPERATION" = infrastructure-preflight' + budget_branch
+    for budget, expected_code in (("1.5cpu-1024m-192pids", 0), ("0.5cpu-256m-64pids", 1)):
+        result = subprocess.run(  # noqa: S603 - fixed offline bash and checkout YAML only
+            ["/bin/bash", "-euo", "pipefail", "-c", script],
+            env={
+                "PATH": "/usr/bin:/bin",
+                "BOCA_OPERATION": "cutover-a-reconcile",
+                "BOCA_BUDGET": budget,
+                "BOCA_BROWSER_IMAGE_REF": "",
+                "BOCA_TELEGRAM_OWNER_READY": "",
+            },
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        assert result.returncode == expected_code
+
+
+def test_cutover_reconcile_full_preflight_passes_offline_without_host_credentials() -> None:
+    """Exercise the entire manual job's immutable pre-SSH gate with synthetic inputs."""
+    import re
+    import subprocess
+
+    workflow = (Path(__file__).parents[1] / ".github/workflows/boca-first-deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    step = workflow.split(
+        "      - name: Require verified protected environment and matching main commit", 1
+    )[1].split("      - name: Reject legacy install routes", 1)[0]
+    command = step.split("        run: |\n", 1)[1]
+    fake_env = {name[1:]: "" for name in re.findall(r"\$[A-Z][A-Z0-9_]+", command)}
+    fake_env.update(
+        {
+            "PATH": "/usr/bin:/bin",
+            "BOCA_OPERATION": "cutover-a-reconcile",
+            "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_RUN_ID": "42110047551",
+            "GITHUB_SHA": "f" * 40,
+            "BOCA_SOURCE_SHA": "f" * 40,
+            "BOCA_SERVICE": "controller",
+            "BOCA_BUDGET": "1.5cpu-1024m-192pids",
+            "BOCA_PROTECTED_ACTION_CONTEXT": "42096941815",
+            "BOCA_INCIDENT_PREPARE_RUN_ID": "42091200929",
+            "BOCA_LEGACY_RELEASE_RUN_ID": "42091200929",
+            "BOCA_HOST_READONLY_ENV_READY": "ready",
+            "BOCA_DEPLOY_ENV_READY": "ready",
+        }
+    )
+    result = subprocess.run(  # noqa: S603 - fixed offline bash and checkout YAML only
+        ["/bin/bash", "-euo", "pipefail", "-c", command],
+        env=fake_env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_cleanup_readonly_continues_after_valid_stage_inode_no_go_observation() -> None:
+    """Stage mismatch is a data result, not a reason to skip Boca Docker inventory."""
+    import importlib.util
+
+    script = Path(__file__).parents[1] / "scripts/host_cutover_postapply_reconcile.py"
+    spec = importlib.util.spec_from_file_location("boca_stage_readonly_for_test", script)
+    assert spec is not None and spec.loader is not None
+    reconcile = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(reconcile)
+
+    observed = {
+        "version": "boca-postapply-reconcile-v1",
+        "incident_run_id": ATTEMPT,
+        "prepare_run_id": "42091200929",
+        "runtime_attested": False,
+        "go_for_retry": False,
+        "foreign_resources_touched": False,
+        "stage_preflight": {"reason": "STAGE_COMPOSE_INODE_MODE"},
+        "original": {"id": ACTIVE_ID, "running": True, "health": "healthy"},
+        "legacy_id": ACTIVE_ID,
+    }
+    raw = reconcile._canonical(observed) + b"\n"
+    accepted = reconcile.verify_runner(raw, ATTEMPT, "42091200929")
+    assert accepted["stage_preflight"]["reason"] == "STAGE_COMPOSE_INODE_MODE"
+    workflow = (Path(__file__).parents[1] / ".github/workflows/boca-first-deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    step = workflow.split("      - name: Plan Boca-only Docker cleanup READ_ONLY", 1)[1].split(
+        "      - name: Apply one exact-ID Boca owner lifecycle request", 1
+    )[0]
+    assert "if: inputs.operation == 'cutover-a-reconcile'" in step
+    assert "always()" not in step  # Do not bypass failed SSH/identity checks.
+
+
 def _inventory() -> gc.Inventory:
     return gc.Inventory(
         containers=(

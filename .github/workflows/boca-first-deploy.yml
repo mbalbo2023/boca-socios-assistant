@@ -888,7 +888,7 @@ jobs:
             [[ "$BOCA_BUDGET" = 1.5cpu-1024m-192pids || "$BOCA_BUDGET" = 1.75cpu-1152m-224pids ]]
           elif [[ "$BOCA_OPERATION" = beta-browser-install ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
-          elif [[ "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-activate ]]; then
+          elif [[ "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-activate ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
           elif [[ "$BOCA_OPERATION" = beta-browser-telegram-start || ( "$BOCA_TELEGRAM_OWNER_READY" = ready && ( "$BOCA_OPERATION" = beta-browser-* || ( "$BOCA_OPERATION" = telegram-* && -n "$BOCA_BROWSER_IMAGE_REF" ) ) ) ]]; then
             test "$BOCA_BUDGET" = 1.75cpu-1152m-224pids
@@ -1773,6 +1773,68 @@ jobs:
           assert raw.count(b"\n") == 1 and all(byte < 128 for byte in raw)
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
               summary.write("\n<details><summary>Exact Boca-only post-APPLY inventory (READ_ONLY)</summary>\n\n")
+              summary.write("```json\n")
+              summary.write(raw.decode("ascii"))
+              summary.write("```\n</details>\n")
+          PY
+      - name: Plan Boca-only Docker cleanup READ_ONLY without deleting resources
+        if: inputs.operation == 'cutover-a-reconcile'
+        run: |
+          set -euo pipefail
+          # Reuse the existing protected, exact-incident reconciliation. Never
+          # accept an arbitrary caller-supplied container ID or broad scan.
+          legacy_id="$(python3 - "$BOCA_PROTECTED_ACTION_CONTEXT" "$BOCA_INCIDENT_PREPARE_RUN_ID" "$RUNNER_TEMP/boca-cutover-postapply-reconcile.json" <<'PY'
+          import sys
+          from pathlib import Path
+          from scripts.host_cutover_postapply_reconcile import verify_runner
+
+          incident, prepared, path = sys.argv[1:]
+          receipt = verify_runner(Path(path).read_bytes(), incident, prepared)
+          original = receipt.get("original")
+          if (
+              receipt.get("intent") != "PRESENT"
+              or receipt.get("result") != "PRESENT"
+              or receipt.get("original_restored") is not True
+              or receipt.get("commit_started") is not False
+              or type(original) is not dict
+              or original.get("id") != receipt.get("legacy_id")
+              or original.get("running") is not True
+              or original.get("health") != "healthy"
+          ):
+              raise SystemExit("NO_GO: original Boca controller is not positively restored")
+          print(original["id"])
+          PY
+          )"
+          [[ "$legacy_id" =~ ^[0-9a-f]{64}$ ]]
+          remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' \
+            python3 - host "$BOCA_PROTECTED_ACTION_CONTEXT" "$legacy_id")"
+          set +e
+          timeout --signal=TERM --kill-after=5s 120s ssh \
+            -F "$RUNNER_TEMP/boca-ssh/config" \
+            -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+            boca-target "$remote_command" \
+            < src/boca_socios/host_boca_cleanup.py \
+            > "$RUNNER_TEMP/boca-cutover-cleanup-readonly.json" 2>/dev/null
+          observer_rc=$?
+          set -e
+          if [[ "$observer_rc" -ne 0 ]]; then
+            printf 'BOCA_CLEANUP_RECONCILE state=INDETERMINATE reason=readonly_inventory_unavailable original=preserved cleanup_executed=false observer_writes=0 retry=NO_GO.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          python3 src/boca_socios/host_boca_cleanup.py verify \
+            "$BOCA_PROTECTED_ACTION_CONTEXT" "$legacy_id" \
+            < "$RUNNER_TEMP/boca-cutover-cleanup-readonly.json" \
+            >> "$GITHUB_STEP_SUMMARY"
+          python3 - "$RUNNER_TEMP/boca-cutover-cleanup-readonly.json" <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          raw = Path(sys.argv[1]).read_bytes()
+          assert 0 < len(raw) <= 8192 and raw.endswith(b"\n")
+          assert raw.count(b"\n") == 1 and all(byte < 128 for byte in raw)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write("\n<details><summary>Exact Boca-only Docker cleanup inventory and nonexecuted plan (READ_ONLY)</summary>\n\n")
               summary.write("```json\n")
               summary.write(raw.decode("ascii"))
               summary.write("```\n</details>\n")
