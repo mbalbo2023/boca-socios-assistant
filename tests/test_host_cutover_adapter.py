@@ -829,7 +829,11 @@ def test_workflow_cutover_apply_requires_separate_go_and_legacy_release_proof() 
         "cutover-a-apply",
     ]
     assert "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}" in text
-    assert "python scripts/check_cutover_a_go.py --from-actions" in text
+    assert "python scripts/check_cutover_a_go.py --prepared-from-actions" in text
+    assert "python scripts/check_cutover_a_go.py --from-actions" not in text
+    assert "check_legacy_go_dispatch.py apply" in text
+    assert "boca-protected-legacy-go-prepare" in text
+    assert "BOCA_CUTOVER_A_APPROVED_GO_BINDING_SHA256" in text
     assert '"$BOCA_LEGACY_SOURCE_SHA"' in text
     assert '"$BOCA_LEGACY_RELEASE_RUN_ID"' in text
     assert "boca-cutover-legacy-compose.sha" in text
