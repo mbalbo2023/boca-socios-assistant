@@ -208,3 +208,59 @@ de pruebas locales no prueba metadata del droplet; falta PR/CI exact-SHA,
 merge revisado y nueva Action `cutover-a-reconcile` **READ_ONLY**. También
 continúa el stopper independiente `cleanup=INDETERMINATE`, con ownership
 Docker separado; ninguna observación es GO de retry ni de deploy.
+
+## R24.4 — normalización de contrato por compatibilidad histórica 0644 (CODE_ONLY)
+
+**Nueva evidencia física decisiva:** la operación protegida READ_ONLY
+[#42112927157](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42112927157)
+desde `main=b0a731a5b9f9115713bb39e48218653ed4035d76` comprobó
+`root_entries_expected=true`, roles/digests de plan válidos y, sobre el
+**mismo FD legacy**, seis checks `{regular:true,uid_ok:true,gid_ok:true,
+nlink_one:true,mode_0600:false,size_ok:true}` con
+`compose_inode_mode_octal="0644"`. `compose_digest_evaluated=false` porque
+el verificador antiguo no abrió el contenido al fallar el modo estricto;
+no se declara aún PASS SHA físico. Controlador legacy único sano, original
+restaurado y sin comienzo de commit. Esta prueba confirma el desajuste de
+modo sospechado y permite restringir la solución a un atributo.
+
+En el `beta-install` histórico del SHA `cabce9f1...`, GitHub Actions
+copiaba el YAML mediante `scp -p`, conservando el modo de checkout
+`0644`, y `host_first_deploy._verify_beta_compose` ya lo admitía sin
+escritura para grupo/otros. Stage exigía por error `0600` **también al
+archivo existente**, aunque prometía no mutar su inode durante Cutover A.
+
+**Decisión fix-forward más acotada, sin modificar el host:**
+
+- Las **tres** lecturas del Compose histórico en la raíz existente
+  (`initialize`, relectura, autenticación previa) reciben un opt-in interno
+  `historical_compose=True`, válido exclusivamente para
+  `compose.beta.yaml`, `MAX_FILE` y SHA esperado. Sólo acepta modos
+  exactos `0600` o **`0644` observado**. No acepta `0640` como extensión
+  preventiva, `0664`, `0444`, bits especiales ni permisos desconocidos.
+- Se conservan de manera idéntica comprobaciones FD/O_NOFOLLOW, regular,
+  UID10001, GID10001, nlink1, tamaño 1..32768, lectura acotada, SHA y
+  estabilidad dev/ino/tamaño/mtime/ctime. El inode/YAML live no se toca.
+- Marker, target, overlay, seccomp, promoción y archivos nuevos continúan
+  con **`0600` exacto**. Tras promoción autorizada los nuevos inodes del
+  Compose/overlays siguen siendo 0600; no existe `chmod` en legacy.
+- El diagnóstico READ_ONLY conserva su dato fáctico
+  `compose_inode_checks.mode_0600=false`, publica
+  `compose_legacy_mode_accepted=true` separado y ahora, sólo después de
+  aprobar los otros cinco atributos, comprueba digest real antes de informar
+  `STAGE_PREFLIGHT_MATCH` o `STAGE_COMPOSE_SHA`.
+
+La suite offline agregada cubre Cutover completo con Compose histórico
+0644 sin cambiar su inode hasta promoción, permisos estrictos de archivos
+nuevos, rechazo de 0640/0444/0664/0755/bit setuid, mismatch SHA y seis
+flags observacionales. **No hay prueba nueva en el droplet aún**: después
+de PR+CI+revisión+merge se requiere nueva observación protegida READ_ONLY
+desde main exacto, y limpieza Docker independiente concluyente antes de
+release/PREPARE/GO_B/APPLY nuevos. Ningún efecto real ni GO se infiere.
+
+El marcador PREPARE histórico observado como
+`UNREADABLE`/`DIRECTORY` corresponde al intento del observador host de
+abrir directamente un mountpoint rootless; no confirma presencia/ausencia.
+El consumidor GO real usa otro camino, `docker exec` dentro del controller
+histórico UID10001 para crear/verificar el marcador bajo `/data`. Son
+contratos diferentes: no relajar el lector para simular un marker válido,
+ni afirmar que el nuevo PREPARE funcionará sin su propio ACK exacto.

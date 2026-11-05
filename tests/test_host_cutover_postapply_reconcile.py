@@ -153,6 +153,7 @@ def test_postapply_runtime_only_read_from_boca_fixtures(monkeypatch: pytest.Monk
                 "size_ok": True,
             },
             "compose_inode_mode_octal": "0600",
+            "compose_legacy_mode_accepted": True,
             "plan_hashes_unique": True,
         },
     )
@@ -261,7 +262,17 @@ def test_stage_preflight_detects_invalid_digest_roles_and_still_observes_root(
 
 @pytest.mark.parametrize(
     "failed_check",
-    [None, "sha_mismatch", "regular", "uid_ok", "gid_ok", "nlink_one", "mode_0600", "size_ok"],
+    [
+        None,
+        "sha_mismatch",
+        "legacy_0644",
+        "regular",
+        "uid_ok",
+        "gid_ok",
+        "nlink_one",
+        "mode_0600",
+        "size_ok",
+    ],
 )
 def test_stage_compose_inode_evidence_reads_only_after_all_six_checks(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failed_check: str | None
@@ -315,13 +326,15 @@ def test_stage_compose_inode_evidence_reads_only_after_all_six_checks(
                 base["st_nlink"] = 2
             elif failed_check == "mode_0600":
                 base["st_mode"] = stat.S_IFREG | 0o640
+            elif failed_check == "legacy_0644":
+                base["st_mode"] = stat.S_IFREG | 0o644
             elif failed_check == "size_ok":
                 base["st_size"] = 0
         return SimpleNamespace(**base)
 
     def bounded_read(fd: int, size: int) -> bytes:
         reads.append(size)
-        if failed_check not in (None, "sha_mismatch"):
+        if failed_check not in (None, "sha_mismatch", "legacy_0644"):
             pytest.fail("invalid Compose inode metadata must prevent reading bytes")
         return real_read(fd, size)
 
@@ -338,20 +351,31 @@ def test_stage_compose_inode_evidence_reads_only_after_all_six_checks(
         "mode_0600": True,
         "size_ok": True,
     }
-    if failed_check not in (None, "sha_mismatch"):
+    if failed_check not in (None, "sha_mismatch", "legacy_0644"):
         expected[failed_check] = False
+    if failed_check == "legacy_0644":
+        expected["mode_0600"] = False
     assert result["compose_inode_checks"] == expected
-    assert result["compose_inode_mode_octal"] == ("0640" if failed_check == "mode_0600" else "0600")
-    assert result["compose_digest_evaluated"] is (failed_check in (None, "sha_mismatch"))
-    assert result["compose_digest_match"] is (failed_check is None)
+    assert result["compose_inode_mode_octal"] == (
+        "0640"
+        if failed_check == "mode_0600"
+        else "0644"
+        if failed_check == "legacy_0644"
+        else "0600"
+    )
+    assert result["compose_legacy_mode_accepted"] is (failed_check != "mode_0600")
+    assert result["compose_digest_evaluated"] is (
+        failed_check in (None, "sha_mismatch", "legacy_0644")
+    )
+    assert result["compose_digest_match"] is (failed_check in (None, "legacy_0644"))
     assert result["reason"] == (
         "STAGE_PREFLIGHT_MATCH"
-        if failed_check is None
+        if failed_check in (None, "legacy_0644")
         else "STAGE_COMPOSE_SHA"
         if failed_check == "sha_mismatch"
         else "STAGE_COMPOSE_INODE_MODE"
     )
-    assert reads == ([32769] if failed_check in (None, "sha_mismatch") else [])
+    assert reads == ([32769] if failed_check in (None, "sha_mismatch", "legacy_0644") else [])
 
 
 def test_stage_preflight_without_compose_fd_has_no_invented_inode_evidence(
@@ -367,6 +391,7 @@ def test_stage_preflight_without_compose_fd_has_no_invented_inode_evidence(
     result = reconcile._stage_preflight(payload)
     assert result["compose_inode_checks"] is None
     assert result["compose_inode_mode_octal"] is None
+    assert result["compose_legacy_mode_accepted"] is None
     assert result["compose_digest_evaluated"] is False
     assert result["reason"] == "STAGE_ROOT_UNREADABLE"
 
