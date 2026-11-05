@@ -74,12 +74,8 @@ def _signed(
         separators=(",", ":"),
     ).encode()
     authenticator = hashlib.sha256(rp_id.encode()).digest() + bytes([flags]) + bytes(4)
-    signature = key.sign(
-        authenticator + hashlib.sha256(client).digest(), ec.ECDSA(hashes.SHA256())
-    )
-    return PasskeyAssertion(
-        _b64(credential_id), _b64(client), _b64(authenticator), _b64(signature)
-    )
+    signature = key.sign(authenticator + hashlib.sha256(client).digest(), ec.ECDSA(hashes.SHA256()))
+    return PasskeyAssertion(_b64(credential_id), _b64(client), _b64(authenticator), _b64(signature))
 
 
 def _envelope() -> bytes:
