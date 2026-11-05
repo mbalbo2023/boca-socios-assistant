@@ -19,13 +19,13 @@ from boca_socios.host_boca_cleanup import (
     Inventory,
     verify_protected_boca_job_lease,
 )
-from boca_socios.host_telegram_production_reader import TelegramProductionDockerIO
 from boca_socios.host_lifecycle_rootless_adapter import (
     LifecycleDockerIO,
     ReviewedInstalledPair,
     RootlessLifecycleProbe,
     _mounts,
 )
+from boca_socios.host_telegram_production_reader import TelegramProductionDockerIO
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _ID = re.compile(r"[0-9a-f]{64}\Z")
