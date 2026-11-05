@@ -15,6 +15,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from itertools import islice
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -25,6 +26,7 @@ _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _LOCAL_OFFSET = timedelta(hours=-3)
 _MAX_ENVELOPE_BYTES = 16_384
 _MAX_WINDOWS = 16
+_MAX_NOTICES = 20
 _TOP_FIELDS = frozenset(
     {
         "version",
@@ -292,8 +294,10 @@ def build_observed_catalog(notices: Iterable[OfficialNotice]) -> tuple[OfficialN
     This is purely an offline data projection. Callers must not transform its
     entries into provider event IDs, bot commands or eligibility assertions.
     """
-    items = tuple(notices)
-    if len(items) > 20:
+    # Do not materialize an unbounded caller-provided generator before applying
+    # the catalog limit. The 21st item is enough to fail closed.
+    items = tuple(islice(notices, _MAX_NOTICES + 1))
+    if len(items) > _MAX_NOTICES:
         raise OfficialCatalogError("observation catalog exceeds bounded capacity")
     keys = [item.event_key for item in items]
     urls = [item.source_url for item in items]

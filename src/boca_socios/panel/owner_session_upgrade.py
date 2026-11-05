@@ -71,8 +71,8 @@ class ControllerStoppedEvidence(ABC):
         """Revalidate live trusted host state and hold its exclusive stop."""
 
 
-def _identity(path: Path) -> tuple[int, int]:
-    if not path.is_absolute() or path != DATABASE:
+def _identity(path: Path, *, authorized_path: Path = DATABASE) -> tuple[int, int]:
+    if not path.is_absolute() or path != authorized_path:
         raise OwnerSessionUpgradeUnavailable("controller database scope unavailable")
     if (os.getuid(), os.geteuid(), os.getgid(), os.getegid()) != (
         _BOCA_UID,
@@ -165,11 +165,24 @@ def upgrade_existing_owner_schema_0008(
     """
     if not isinstance(evidence, ControllerStoppedEvidence):
         raise OwnerSessionUpgradeUnavailable("trusted controller stop evidence required")
-    first_identity = _identity(path)
+    authorized_path = DATABASE
+    if path != DATABASE:
+        # Host-side SQLite lives inside the inspected rootless Docker volume,
+        # not at its in-container alias /data/boca.sqlite3. Only the concrete
+        # Docker attestor can authorize the host pathname; synthetic proofs
+        # and arbitrary caller-supplied paths may not widen the DB scope.
+        from boca_socios.panel.owner_session_host_attestor import DockerStoppedControllerEvidence
+
+        if not isinstance(evidence, DockerStoppedControllerEvidence):
+            raise OwnerSessionUpgradeUnavailable("controller database scope unavailable")
+        authorized_path = evidence.host_database_path()
+        if path != authorized_path:
+            raise OwnerSessionUpgradeUnavailable("controller database scope unavailable")
+    first_identity = _identity(path, authorized_path=authorized_path)
     with evidence.exclusive_stop(
         database_path=path, device=first_identity[0], inode=first_identity[1]
     ):
-        if _identity(path) != first_identity:
+        if _identity(path, authorized_path=authorized_path) != first_identity:
             raise OwnerSessionUpgradeUnavailable("controller database identity changed")
         try:
             validate_existing_beta_storage(path)
@@ -183,7 +196,7 @@ def upgrade_existing_owner_schema_0008(
                 connection.execute("PRAGMA trusted_schema=OFF")
                 connection.execute("BEGIN IMMEDIATE")
                 with connection:
-                    if _identity(path) != first_identity:
+                    if _identity(path, authorized_path=authorized_path) != first_identity:
                         raise OwnerSessionUpgradeUnavailable("controller database identity changed")
                     already = _schema_state(connection, expected, statement)
                     if not already:
@@ -194,10 +207,10 @@ def upgrade_existing_owner_schema_0008(
                         )
                     if not _schema_state(connection, expected, statement):
                         raise OwnerSessionUpgradeUnavailable("controller owner schema unavailable")
-                    if _identity(path) != first_identity:
+                    if _identity(path, authorized_path=authorized_path) != first_identity:
                         raise OwnerSessionUpgradeUnavailable("controller database identity changed")
             validate_existing_beta_storage(path)
-            if _identity(path) != first_identity:
+            if _identity(path, authorized_path=authorized_path) != first_identity:
                 raise OwnerSessionUpgradeUnavailable("controller database identity changed")
         except (LocalRuntimeUnavailable, OSError, sqlite3.Error, ValueError, TypeError):
             raise OwnerSessionUpgradeUnavailable("controller storage upgrade unavailable") from None

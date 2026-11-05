@@ -7,6 +7,8 @@ import hashlib
 from datetime import UTC, datetime
 from html import escape
 
+from boca_socios.events.official_catalog import OfficialNotice
+from boca_socios.events.official_presentation import render_observed_catalog_html
 from boca_socios.notify.projection import LocalNoticeView
 from boca_socios.panel.enrollment_form import STYLE
 from boca_socios.panel.members import CommandView, MemberView
@@ -69,7 +71,9 @@ def _page(title: str, content: str, *, body_attributes: str = "", script: str = 
 <title>{escape(title)} · Boca Socios Assistant</title><style>{STYLE}</style></head>
 <body{body_attributes}><nav aria-label="Secciones"><a href="/">Inicio</a> ·
 <a href="/socios">Socios</a> · <a href="/comandos">Simulación</a> ·
-<a href="/estado">Estado</a> · <a href="/avisos">Avisos</a></nav>
+<a href="/control">Control</a> ·
+<a href="/estado">Estado</a> · <a href="/avisos">Avisos</a> ·
+<a href="/avisos-oficiales">Eventos oficiales</a></nav>
 <main>{content}</main>{script}</body></html>""".encode()
 
 
@@ -99,10 +103,11 @@ def home(csrf: str) -> bytes:
         '<p><a href="/comandos">Iniciar, detener o consultar simulaciones</a></p>'
         '<p><a href="/estado">Consultar estado local</a></p>'
         '<p><a href="/avisos">Consultar avisos locales y estado Telegram</a></p>'
+        '<p><a href="/avisos-oficiales">Consultar avisos públicos oficiales observados</a></p>'
         '<p><a href="/telegram/configurar">Configurar Telegram con un recibo aprobado</a></p>'
         '<section aria-labelledby="pending"><h2 id="pending">Funciones no habilitadas</h2><ul>'
-        "<li>Fuentes de eventos, categorías y horarios oficiales: integración autorizada; "
-        "todavía sin evidencia de activación.</li>"
+        "<li>Los avisos oficiales son informativos y requieren observaciones cargadas; "
+        "no hay fuente en vivo ni comprobación de disponibilidad.</li>"
         "<li>Varias sesiones de navegador y sus límites: fuera de alcance por decisión "
         "del propietario.</li>"
         "<li>Rotación de clave maestra y eliminación completa: fuera de alcance por "
@@ -114,6 +119,15 @@ def home(csrf: str) -> bytes:
         '<form action="/salir" method="post">'
         f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
         '<button type="submit">Cerrar sesión</button></form>',
+    )
+
+
+def official_events(notices: tuple[OfficialNotice, ...], *, at: datetime) -> bytes:
+    """Private read-only official notice view, separate from simulation commands."""
+    return _page(
+        "Eventos oficiales observados",
+        render_observed_catalog_html(notices, at=at)
+        + '<p><a href="/avisos-oficiales.json">Descargar observaciones JSON</a></p>',
     )
 
 

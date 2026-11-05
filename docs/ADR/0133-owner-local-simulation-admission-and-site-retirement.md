@@ -18,6 +18,10 @@ un cutover físico validado. Por eso una pausa de admisión no debe llamarse
 1. El panel presenta «Pausar/Reanudar nuevas simulaciones» en `/control`, con
    un estado consultable por el dueño autenticado, un mensaje accesible del
    alcance exacto y enlaces para detener individualmente simulaciones existentes.
+   El menú global incluye un enlace directo «Control» en todas las páginas
+   privadas, de modo que Samsung Chrome con Voice Access pueda alcanzar la
+   acción sin regresar primero a la portada. El estado usa `role="status"` y
+   los botones llevan la acción actual en el texto visible.
 2. Los cambios son **sólo de admisión de nuevos comandos sintéticos** del
    controlador local. No detienen el servidor HTTP, la sesión del dueño,
    Telegram, Chromium, Docker ni trabajos ya iniciados. Un `POST` de parada

@@ -10,7 +10,7 @@ from __future__ import annotations
 import hmac
 import json
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict
 from datetime import UTC, datetime
 from http import HTTPStatus
@@ -20,6 +20,8 @@ from typing import Protocol
 from urllib.parse import parse_qsl, urlsplit
 from uuid import UUID, uuid4
 
+from boca_socios.events.official_catalog import OfficialNotice, build_observed_catalog
+from boca_socios.events.official_presentation import export_observed_catalog_json
 from boca_socios.notify.projection import list_local_notices
 from boca_socios.owner_origin import owner_rp_host
 from boca_socios.panel import private_ui, telegram_setup_ui
@@ -121,6 +123,7 @@ class PrivatePanelApplication:
         members: OwnerMemberService,
         commands: LocalCommandHost | None,
         events: Mapping[str, str],
+        observed_official_notices: Iterable[OfficialNotice] = (),
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         parsed = urlsplit(origin)
@@ -153,6 +156,9 @@ class PrivatePanelApplication:
         # A pause never stops HTTP or claims to cancel already admitted work.
         self._intake_lock = Lock()
         self._events = dict(events)
+        # Informational-only observations supplied by a trusted caller. Never
+        # perform live fetches or turn them into synthetic admission choices.
+        self._official_notices = build_observed_catalog(observed_official_notices)
         self._passkey = passkey
         self._owner_browser_store = OwnerBrowserSessionStore(
             self._database, owner_subject=owner_subject
@@ -223,7 +229,9 @@ class PrivatePanelApplication:
         if path == "/control" or (isinstance(path, str) and path.startswith("/control/")):
             if "simulation:write" not in session.permissions:
                 return _error(start, 403, "Permiso insuficiente.")
-        if path in ("/estado", "/avisos") and "local-status:read" not in session.permissions:
+        if path in ("/estado", "/avisos", "/avisos-oficiales", "/avisos-oficiales.json") and (
+            "local-status:read" not in session.permissions
+        ):
             return _error(start, 403, "Permiso insuficiente.")
         if method == "GET":
             if not self._empty_get(environ):
@@ -254,6 +262,15 @@ class PrivatePanelApplication:
                 return _response(
                     start, 200, private_ui.notices(list_local_notices(self._database, limit=20))
                 )
+            if path == "/avisos-oficiales":
+                return _response(
+                    start,
+                    200,
+                    private_ui.official_events(self._official_notices, at=self._now()),
+                )
+            if path == "/avisos-oficiales.json":
+                document = export_observed_catalog_json(self._official_notices, at=self._now())
+                return _response(start, 200, document.encode("utf-8"), html=False)
             if isinstance(path, str) and path.startswith("/socios/"):
                 return self._member_detail(path.removeprefix("/socios/"), session, start)
             if isinstance(path, str) and path.startswith("/comandos/"):

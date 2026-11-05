@@ -218,6 +218,22 @@ def test_catalog_deduplication_and_size_gate_are_fail_closed() -> None:
         build_observed_catalog(notice for _ in range(21))
 
 
+def test_catalog_limit_stops_reading_source_at_first_excess_item() -> None:
+    notice = load_observed_notice(encoded())
+    seen = 0
+
+    def oversized_stream():
+        nonlocal seen
+        for _ in range(21):
+            seen += 1
+            yield notice
+        raise AssertionError("catalog consumed beyond the bounded 21st observation")
+
+    with pytest.raises(OfficialCatalogError, match="bounded capacity"):
+        build_observed_catalog(oversized_stream())
+    assert seen == 21
+
+
 @pytest.mark.parametrize(
     ("channel", "excerpt"),
     [

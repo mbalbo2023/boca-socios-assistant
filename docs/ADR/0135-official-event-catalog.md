@@ -69,7 +69,9 @@ Docker, Telegram, SQLite ni el sitio de Boca.
 La salida es invariablemente `SOURCE_OBSERVED_UNVERIFIED` con
 `actionable=False`, incluso cuando la noticia dice que la ventana ya abrió.
 `build_observed_catalog` ordena hasta 20 observaciones sin duplicados y sin
-activarlas. `assess_official_notice` distingue evento todavía futuro de histórico,
+activarlas. El importador consume **como máximo 21 elementos** de un iterable
+externo: el 21.º provoca rechazo antes de materializar un generador sin fin o
+realizar trabajo no acotado. `assess_official_notice` distingue evento todavía futuro de histórico,
 pero **no** consulta precios, disponibilidad, elegibilidad ni cola. El hash y
 URL del JSON son afirmaciones del observador externo, no pruebas
 criptográficas de autenticidad del sitio; sólo un futuro recibo de fuente
@@ -80,6 +82,11 @@ Las pruebas (`tests/test_official_event_catalog.py`) emplean una noticia
 **enteramente sintética, no publicada**, evitando atribuir calendarios
 inventados a Boca. Probar una importación con esa fixture nunca acredita la
 fecha de un partido real.
+
+Regresión 04/11: la conversión anterior `tuple(notices)` consumía por completo
+el iterable **antes** del límite de 20 y podía agotar tiempo/memoria ante un
+productor no acotado. La versión corregida corta en el elemento 21 y rechaza
+de forma determinista; no cambia los datos ni aumenta la confianza en su origen.
 
 ## Bloqueo de integración consciente
 

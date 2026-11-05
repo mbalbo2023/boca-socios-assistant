@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from boca_socios.domain.policy import TicketIntent
+from boca_socios.events.official_catalog import OfficialNotice, load_observed_notice
 from boca_socios.integration.command_store import CommandStore
 from boca_socios.notify.outbox import NoticeKind, NotificationRequest
 from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
@@ -135,6 +136,8 @@ def _app(
     path: Path,
     provider: PasskeyOwnerAuthentication,
     host: FakeHost | None = None,
+    *,
+    official_notices: tuple[OfficialNotice, ...] = (),
 ) -> tuple[PrivatePanelApplication, Database]:
     db = Database(path)
     db.migrate()
@@ -150,6 +153,7 @@ def _app(
         members=MemberEnrollmentService(db, CredentialVault(os.urandom(32))),
         commands=host,
         events={EVENT_ID: "Partido sintético"},
+        observed_official_notices=official_notices,
     )
     return app, db
 
@@ -193,6 +197,72 @@ def _control_action(
         .decode(),
     }
     return _request(app, f"/control/{action}", cookie=cookie, method="POST", payload=fields)
+
+
+def test_private_official_events_routes_are_read_only_and_empty_without_receipts() -> None:
+    provider, key, credential_id = _passkey([0.0])
+    with TemporaryDirectory() as directory:
+        host = FakeHost()
+        app, _db = _app(Path(directory) / "boca.sqlite3", provider, host)
+        for path in ("/avisos-oficiales", "/avisos-oficiales.json"):
+            assert _request(app, path)[0] == 401
+        cookie = _login(app, key, credential_id)
+        code, headers, home = _request(app, "/", cookie=cookie)
+        assert code == 200 and b'href="/avisos-oficiales"' in home
+        code, headers, page = _request(app, "/avisos-oficiales", cookie=cookie)
+        assert code == 200 and headers["Cache-Control"] == "no-store"
+        assert b"No hay avisos oficiales observados cargados" in page
+        assert b"No confirma disponibilidad" in page
+        assert b"Iniciar simulaci" not in page
+        code, headers, data = _request(app, "/avisos-oficiales.json", cookie=cookie)
+        assert code == 200 and headers["Content-Type"] == "application/json"
+        document = json.loads(data)
+        assert document["events"] == []
+        assert document["source_mode"] == "OFFLINE_PREOBSERVED_ONLY"
+        assert document["actionable"] is False
+        assert document["live_feed"] is False
+        assert document["availability_verified"] is False
+        assert _request(app, "/avisos-oficiales", method="POST", cookie=cookie)[0] == 404
+        assert host.calls == []
+
+
+def test_private_official_events_renders_only_preobserved_synthetic_notice() -> None:
+    provider, key, credential_id = _passkey([0.0])
+    example = load_observed_notice(
+        json.dumps(
+            {
+                "version": "official-notice-observation-v1",
+                "source_url": "https://www.bocajuniors.com.ar/noticias/ejemplo-sintetico-no-publicado",
+                "published_on": "2026-11-03",
+                "observed_at": "2026-11-03T13:00:00-03:00",
+                "source_sha256": "a" * 64,
+                "event_key": "boca-prueba-sintetica-2026-11-09",
+                "title": "Evento sintético <no publicado>",
+                "kickoff_at": "2026-11-09T17:30:00-03:00",
+                "windows": [],
+            }
+        )
+    )
+    with TemporaryDirectory() as directory:
+        host = FakeHost()
+        app, _db = _app(
+            Path(directory) / "boca.sqlite3",
+            provider,
+            host,
+            official_notices=(example,),
+        )
+        cookie = _login(app, key, credential_id)
+        code, _headers, page = _request(app, "/avisos-oficiales", cookie=cookie)
+        assert code == 200
+        assert b"Evento sint\xc3\xa9tico &lt;no publicado&gt;" in page
+        assert b"No hay horarios por categor" in page
+        code, _headers, data = _request(app, "/avisos-oficiales.json", cookie=cookie)
+        assert code == 200
+        notice = json.loads(data)["events"][0]
+        assert notice["title"] == "Evento sintético <no publicado>"
+        assert notice["actionable"] is False
+        assert notice["admission_channel_verified"] is False
+        assert host.calls == []
 
 
 def test_owner_cookie_survives_controller_restart_and_logout_revokes_server_side() -> None:
@@ -281,6 +351,10 @@ def test_global_intake_pause_resume_never_stops_http_or_existing_commands() -> N
         assert _request(app, "/", cookie=cookie)[0] == 200
         initial = _request(app, "/control", cookie=cookie)
         assert initial[0] == 200 and b"Pausada" in initial[2]
+        assert b'<nav aria-label="Secciones">' in initial[2]
+        assert b'<a href="/control">Control</a>' in initial[2]
+        assert b'<button type="submit">Reanudar nuevas simulaciones</button>' in initial[2]
+        assert b'<p role="status">Estado: Pausada.' in initial[2]
         _, _, form = _request(app, "/comandos", cookie=cookie)
         fields = {
             "csrf": re.search(rb'name="csrf" value="([^"]+)"', form).group(1).decode(),
