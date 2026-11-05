@@ -33,6 +33,7 @@ SOURCES = (
     # Host-only lifecycle bridge and bounded stdlib dependency closure.
     "src/boca_socios/host_lifecycle_actions.py",
     "src/boca_socios/host_lifecycle_observe.py",
+    "src/boca_socios/host_cutover_inventory_observe.py",
     "src/boca_socios/host_lifecycle_rootless_adapter.py",
     "src/boca_socios/host_boca_lifecycle.py",
     "src/boca_socios/panel/lifecycle_intents.py",
@@ -74,6 +75,16 @@ MAIN = (
     "    if sys.argv[1] == 'lifecycle-observe-selftest':\n"
     "        raise SystemExit(observe.selftest_main())\n"
     "    raise SystemExit(observe.main(sys.argv[2:]))\n"
+    "if len(sys.argv) > 1 and sys.argv[1] in ('cutover-inventory-observe', 'cutover-inventory-selftest'):\n"
+    "    from boca_socios import host_cutover_inventory_observe as cutover_inventory\n"
+    "    if sys.argv[1] == 'cutover-inventory-selftest':\n"
+    "        raise SystemExit(cutover_inventory.selftest_main())\n"
+    "    raise SystemExit(cutover_inventory.main(sys.argv[2:]))\n"
+    "if len(sys.argv) > 1 and sys.argv[1] in ('official-inventory-observe', 'official-inventory-selftest'):\n"
+    "    from boca_socios import host_cutover_inventory_observe as official_inventory\n"
+    "    if sys.argv[1] == 'official-inventory-selftest':\n"
+    "        raise SystemExit(official_inventory.official_selftest_main())\n"
+    "    raise SystemExit(official_inventory.official_main(sys.argv[2:]))\n"
     "from boca_socios.host_boca_transaction import main\n"
     "raise SystemExit(main())\n"
 ).encode("ascii")
