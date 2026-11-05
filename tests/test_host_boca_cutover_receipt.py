@@ -79,6 +79,9 @@ def test_terminal_result_is_o_excl_fsynced_and_readback_with_same_lease(tmp_path
             terminal.write_once(record, plan=plan, lease=lease)
         assert marker.read_bytes() == raw
     assert terminal.reconcile_persisted(plan) == "RECORD_PRESENT_RUNTIME_UNVERIFIED"
+    terminal.verify_persisted_exact(plan, _accepted())
+    with pytest.raises(terminal.TerminalReceiptError, match="differs from original bytes"):
+        terminal.verify_persisted_exact(plan, replace(_accepted(), candidate_id="8" * 64))
 
 
 def test_cutover_terminal_sink_runs_before_release_of_same_lease(tmp_path: Path) -> None:
