@@ -6,6 +6,7 @@ import os
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -276,6 +277,46 @@ def test_multi_tag_image_uses_exact_id_and_failure_is_no_go() -> None:
     assert gc.Target("image", OLD_IMAGE) in receipt.known_residue
 
 
+def test_image_remove_that_only_untags_does_not_pass_exact_id_postflight() -> None:
+    inventory = _inventory()
+    inventory = replace(
+        inventory,
+        containers=tuple(c for c in inventory.containers if c.ident != OLD_ID),
+        networks=inventory.networks[:1],
+        volumes=tuple(v for v in inventory.volumes if v.name != IPC),
+        global_image_ids=frozenset({ACTIVE_IMAGE, OLD_IMAGE, FOREIGN_IMAGE}),
+    )
+    attempted: list[gc.Target] = []
+    snapshots = [inventory]
+
+    def probe() -> gc.Inventory:
+        return snapshots[0]
+
+    def only_untag(target: gc.Target) -> None:
+        attempted.append(target)
+        assert target == gc.Target("image", OLD_IMAGE)
+        snapshots[0] = replace(
+            inventory,
+            images=tuple(
+                replace(image, references=()) if image.ident == OLD_IMAGE else image
+                for image in inventory.images
+            ),
+        )
+
+    receipt = gc.execute(
+        "SUCCESS",
+        ATTEMPT,
+        preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset(),
+        probe=probe,
+        delete_exact=only_untag,
+    )
+    assert attempted == [gc.Target("image", OLD_IMAGE)]
+    assert receipt.status == "NO_GO"
+    assert gc.Target("image", OLD_IMAGE) in receipt.known_residue
+
+
 def test_dangling_image_with_exact_boca_source_label_is_cleanable() -> None:
     inventory = _inventory()
     inventory = replace(
@@ -456,6 +497,47 @@ def test_narrow_docker_field_rejects_environment_read() -> None:
         gc._inspect_field("container", ACTIVE_ID, "Config.Env")
 
 
+def test_docker_context_override_cannot_select_foreign_daemon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(gc, "EXPECTED_UID", os.geteuid())
+    monkeypatch.setenv("DOCKER_CONTEXT", "foreign-porota")
+    monkeypatch.setattr(
+        gc.subprocess, "run", lambda *_args, **_kwargs: pytest.fail("Docker executed")
+    )
+    with pytest.raises(gc.CleanupError, match="context/TLS overrides"):
+        gc._docker("ps", "-a", "-q", "--no-trunc")
+
+
+def test_docker_uses_explicit_rootless_host_and_scrubbed_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(gc, "EXPECTED_UID", os.geteuid())
+    for key in (
+        "DOCKER_CONTEXT",
+        "DOCKER_TLS_VERIFY",
+        "DOCKER_CERT_PATH",
+        "DOCKER_TLS",
+        "DOCKER_CONFIG",
+        "DOCKER_HOST",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("BOCA_SENSITIVE_TOKEN", "not-for-child-process")
+    calls: list[tuple[list[str], dict[str, str]]] = []
+
+    def synthetic_run(args: list[str], **kwargs: object) -> SimpleNamespace:
+        env = kwargs["env"]
+        assert isinstance(env, dict)
+        calls.append((args, env))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(gc.subprocess, "run", synthetic_run)
+    assert gc._docker("ps", "-a", "-q", "--no-trunc") == ""
+    assert calls[0][0][:3] == ["/usr/bin/docker", "--host", gc.DOCKER_SOCKET]
+    assert calls[0][1]["DOCKER_HOST"] == gc.DOCKER_SOCKET
+    assert "BOCA_SENSITIVE_TOKEN" not in calls[0][1]
+
+
 def test_capture_inventory_reads_only_filtered_boca_subset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -511,6 +593,7 @@ def test_capture_inventory_reads_only_filtered_boca_subset(
     assert len(inventory.networks) == len(inventory.volumes) == 1
     assert all(ident != FOREIGN_ID for _kind, ident, _field in inspections)
     assert inventory.disk.inodes_free == 800
+    assert inventory.global_image_ids == frozenset({ACTIVE_IMAGE})
 
 
 def test_disk_probe_rejects_symlinked_boca_root(

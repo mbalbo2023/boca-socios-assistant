@@ -14,7 +14,9 @@ testable implementation; it remains **unwired to all live workflows**.
 
 1. The protected job must retain a single non-reentrant Boca UID10001 flock
    across its install and finalizer. The cleanup module provides a Boca-only
-   cooperative lock under `/run/user/10001`. Older workflows do not yet
+   cooperative lock at the same canonical
+   `/run/user/10001/boca-socios-protected-job.lock` used by the #321
+   attestor (which borrows that FD). Older workflows do not yet
    acquire it, so this alone does not establish global exclusivity.
 2. First perform an **ID-only global Docker census**, comparing it with the
    precise Boca project-label filter. If **any foreign container**, foreign
@@ -24,6 +26,9 @@ testable implementation; it remains **unwired to all live workflows**.
    (ID, labels, running, mounts, network membership, image references);
    **never read foreign Config.Env, mount metadata or other workload
    configuration**. Image IDs may repeat per tag, but are deduplicated.
+   Docker CLI is pinned to the dedicated rootless socket with an explicit
+   `--host`; inherited Docker context/TLS overrides cause NO_GO and the
+   child process receives no unrelated environment secrets.
 3. A stopped container is **not inherently garbage**. The protected job must
    provide `preserve_containers` exact installed/stopped controller, parked
    legacy and worker IDs, plus `retire_containers` explicit IDs from
@@ -36,7 +41,8 @@ testable implementation; it remains **unwired to all live workflows**.
    repository provenance label is present, with no foreign repository tags.
    Multi-tag image IDs are deduplicated in inventory; `docker image rm <ID>`
    without force must succeed. `docker image rm <tag>` alone is insufficient
-   evidence because it may merely untag one alias.
+   evidence because it may merely untag one alias; a fresh global **ID-only**
+   census must prove that exact image object ID is absent afterward.
 5. Before each `docker rm`, `docker image rm`, `docker network rm` or
    `docker volume rm`, read a **fresh full inventory**, recompute the eligible
    set and reject drift. Every deleted exact resource must disappear in the
@@ -64,9 +70,10 @@ testable implementation; it remains **unwired to all live workflows**.
   stopped foreign container retaining a Boca image; exact attempt mismatch;
   lost deletion receipt; unrelated container drift; flock exclusivity;
   exact-ID preservation of stopped installed controller/parked worker;
-  unlabelled historical beta NO_GO; foreign secret never inspected.
-- Local QA for this P0 correction: **18 focused tests PASS**;
-  full suite **2517 passed + 31 subtests passed**; Ruff lint/format
+  unlabelled historical beta NO_GO; foreign secret never inspected; malicious
+  DOCKER_CONTEXT and inherited token isolation; image untag-only still NO_GO.
+- Local QA for this code-only correction: **21 focused tests PASS**;
+  full suite **2520 passed + 31 subtests passed**; Ruff lint/format
   (393 files), Mypy (86 source files), repository policy and whitespace PASS.
 - `synthetic.py` and `ipc_worker.py` remain BLACKBOX; no Boca login,
   reservation or purchase and no Docker host operation has been dispatched.

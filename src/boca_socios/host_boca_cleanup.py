@@ -113,6 +113,7 @@ class Inventory:
     networks: tuple[Network, ...]
     volumes: tuple[Volume, ...]
     disk: DiskInodes
+    global_image_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -242,6 +243,8 @@ def _validate_inventory(value: Inventory) -> None:
         )
         or any(not HEX_ID.fullmatch(x) for x in all_containers + all_images + all_networks)
         or any(not DOCKER_NAME.fullmatch(x) for x in all_volumes)
+        or any(not HEX_ID.fullmatch(x) for x in value.global_image_ids)
+        or (value.global_image_ids and not set(all_images) <= value.global_image_ids)
     ):
         raise CleanupError("Docker inventory incomplete, duplicate or outside bounded limits")
     for c in value.containers:
@@ -275,8 +278,10 @@ def plan(
 ) -> CleanupPlan:
     """Find only demonstrably Boca, attempt-owned, unused stale resources.
 
-    Other apps may share a rootless daemon: every container is considered when
-    deciding image references and attached volumes, even when it is not Boca.
+    The physical inventory first checks global ID-only census for exclusivity:
+    any foreign container/network/volume aborts before inspect. This pure
+    policy function may also receive synthetic foreign fixtures to verify
+    image references are never misclassified as deletion authorization.
     """
     if (
         not ATTEMPT_ID.fullmatch(attempt_id)
@@ -401,6 +406,14 @@ def execute(
                 raise CleanupError("target reappeared after verified selective removal")
             delete_exact(target)
             after_delete = probe()
+            # Docker image rm on a tag can merely untag; prove the complete
+            # immutable Image ID disappeared from the global ID-only census.
+            if target.kind == "image" and target.ident in (
+                after_delete.global_image_ids
+                if after_delete.global_image_ids
+                else {image.ident for image in after_delete.images}
+            ):
+                raise CleanupError("obsolete Boca image ID still exists after removal")
             if (
                 target
                 in plan(
@@ -487,13 +500,27 @@ def _docker(*args: str) -> str:
     """Dedicated rootless Docker CLI, never a shell or host-wide prune."""
     if os.geteuid() != EXPECTED_UID or os.getegid() != EXPECTED_UID:
         raise CleanupError("Boca cleanup requires its exact rootless owner")
-    env = os.environ.copy()
-    if env.get("DOCKER_HOST", DOCKER_SOCKET) != DOCKER_SOCKET:
-        raise CleanupError("Boca Docker endpoint differs from dedicated rootless socket")
-    env["DOCKER_HOST"] = DOCKER_SOCKET
+    if os.environ.get("DOCKER_HOST", DOCKER_SOCKET) != DOCKER_SOCKET or any(
+        key in os.environ
+        for key in (
+            "DOCKER_CONTEXT",
+            "DOCKER_TLS_VERIFY",
+            "DOCKER_CERT_PATH",
+            "DOCKER_TLS",
+            "DOCKER_CONFIG",
+        )
+    ):
+        raise CleanupError("Boca Docker context/TLS overrides are forbidden")
+    # Never inherit deployment secrets or a different Docker daemon context.
+    env = {
+        "DOCKER_HOST": DOCKER_SOCKET,
+        "XDG_RUNTIME_DIR": f"/run/user/{EXPECTED_UID}",
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C",
+    }
     try:
         response = subprocess.run(  # noqa: S603 - exact Docker args; never shell
-            ["/usr/bin/docker", *args],
+            ["/usr/bin/docker", "--host", DOCKER_SOCKET, *args],
             capture_output=True,
             check=False,
             text=True,
@@ -680,7 +707,7 @@ def capture_inventory() -> Inventory:
             )
         )
     images: list[Image] = []
-    _ids("image", "ls", "-a", "-q", "--no-trunc", dedupe=True)  # bounded ID-only global census
+    all_image_ids = frozenset(_ids("image", "ls", "-a", "-q", "--no-trunc", dedupe=True))
     label_images = set(
         _ids(
             "image",
@@ -758,6 +785,7 @@ def capture_inventory() -> Inventory:
         tuple(networks),
         tuple(volumes),
         _disk_inodes(),
+        all_image_ids,
     )
     _validate_inventory(result)
     return result
