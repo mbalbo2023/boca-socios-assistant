@@ -10,6 +10,7 @@ Actions authorization before making it callable on a real host.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -139,7 +140,12 @@ class CutoverBackend(Protocol):
     ) -> CleanupStatus: ...
 
 
-def run_cutover_a(plan: CutoverPlan, *, backend: CutoverBackend) -> CutoverReceipt:
+TerminalSink = Callable[[CutoverPlan, CutoverReceipt, BocaJobLease], None]
+
+
+def run_cutover_a(
+    plan: CutoverPlan, *, backend: CutoverBackend, terminal_sink: TerminalSink | None = None
+) -> CutoverReceipt:
     """Unit-testable sequencing only; no concrete backend or host CLI exists.
 
     A single lease spans all effects and the unconditional postflight.  The
@@ -205,6 +211,12 @@ def run_cutover_a(plan: CutoverPlan, *, backend: CutoverBackend) -> CutoverRecei
             state = "ACCEPTED"
         elif final_status == "ACCEPT" and restored and not commit_started:
             state = "RECOVERED"
-        return CutoverReceipt(
+        receipt = CutoverReceipt(
             plan.attempt_id, state, final_status, restored, commit_started, candidate, worker
         )
+        # O_EXCL result must be persisted *before releasing the SAME flock*.
+        # Callers cannot safely write it after run_cutover_a returns. Missing
+        # or failed sink never yields a successful physical receipt.
+        if terminal_sink is not None:
+            terminal_sink(plan, receipt, lease)
+        return receipt
