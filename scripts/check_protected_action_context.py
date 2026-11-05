@@ -62,10 +62,11 @@ _TELEGRAM = frozenset(
         "cutover_receipt_sha256",
         "owner_digest",
         "recipient_fingerprint",
-        "sender_state",
+        "sender_expected_state",
     }
 )
-_SENDER = frozenset({"sender_id", "sender_config_hash", "sender_attempt_id"})
+_LIFECYCLE_SENDER = frozenset({"sender_id", "sender_config_hash", "sender_attempt_id", "sender_state"})
+_TELEGRAM_SENDER = frozenset({"sender_id", "sender_image", "sender_config_hash", "sender_attempt"})
 _GO_NAMES = {
     "lifecycle-apply": "BOCA_LIFECYCLE_GO_BINDING_SHA256",
     "telegram-activate": "BOCA_TELEGRAM_ACTIVATE_GO_BINDING_SHA256",
@@ -161,7 +162,11 @@ def _validate_payload(
         raise ProtectedActionError("protected action kind/version mismatched")
     expected = _COMMON | (_LIFECYCLE if kind == "lifecycle" else _TELEGRAM)
     keys = set(payload)
-    if keys not in (expected, expected | _SENDER):
+    if kind == "lifecycle":
+        permitted = (expected, expected | _LIFECYCLE_SENDER)
+    else:
+        permitted = (expected, expected | _TELEGRAM_SENDER)
+    if keys not in permitted:
         raise ProtectedActionError("protected action keys not allowlisted")
     if (
         _ATTEMPT.fullmatch(payload["attempt_id"]) is None
@@ -186,6 +191,15 @@ def _validate_payload(
             "expected_target"
         ] not in ("start", "stop"):
             raise ProtectedActionError("unreviewed lifecycle command requested")
+        if _LIFECYCLE_SENDER.issubset(keys):
+            if (
+                _HASH.fullmatch(payload["sender_id"]) is None
+                or _HASH.fullmatch(payload["sender_config_hash"]) is None
+                or _ATTEMPT.fullmatch(payload["sender_attempt_id"]) is None
+                or payload["sender_state"] not in ("on", "off")
+                or payload["sender_id"] in (payload["controller_id"], payload["worker_id"])
+            ):
+                raise ProtectedActionError("lifecycle sender identity pin invalid")
     else:
         if (
             _ATTEMPT.fullmatch(payload["cutover_attempt"]) is None
@@ -198,17 +212,20 @@ def _validate_payload(
                     "recipient_fingerprint",
                 )
             )
-            or payload["sender_state"] != "off"
+            or payload["sender_expected_state"] not in ("absent", "stopped")
         ):
             raise ProtectedActionError("Telegram not bound to prior Cutover and sender OFF")
-    if _SENDER.issubset(keys):
-        if (
+        sender_pinned = _TELEGRAM_SENDER.issubset(keys)
+        if (payload["sender_expected_state"] == "stopped") != sender_pinned:
+            raise ProtectedActionError("Telegram sender pins contradict expected state")
+        if sender_pinned and (
             _HASH.fullmatch(payload["sender_id"]) is None
-            or _HASH.fullmatch(payload["sender_config_hash"]) is None
-            or _ATTEMPT.fullmatch(payload["sender_attempt_id"]) is None
             or payload["sender_id"] in (payload["controller_id"], payload["worker_id"])
+            or payload["sender_image"] != payload["controller_image"]
+            or _HASH.fullmatch(payload["sender_config_hash"]) is None
+            or _ATTEMPT.fullmatch(payload["sender_attempt"]) is None
         ):
-            raise ProtectedActionError("Telegram sender identity pin invalid")
+            raise ProtectedActionError("Telegram stopped sender pins invalid")
     return payload
 
 
