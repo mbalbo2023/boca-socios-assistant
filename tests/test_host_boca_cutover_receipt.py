@@ -210,7 +210,10 @@ def _reconcile_in_new_process(home: Path, plan: cutover.CutoverPlan) -> str:
         capture_output=True,
         text=True,
         check=False,
-        timeout=3,
+        # CI runners can pause a subprocess for several seconds during parallel
+        # integration suites; the assertion checks durable reconciliation, not
+        # startup latency. Keep a bounded deadline without a scheduling flake.
+        timeout=15,
     )
     assert result.returncode == 0, result.stderr
     return result.stdout.strip()
