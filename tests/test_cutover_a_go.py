@@ -14,6 +14,7 @@ import pytest
 
 from boca_socios.browser_release_manifest import make_browser_manifest
 from boca_socios.host_boca_cutover import CutoverPlan
+from boca_socios.host_boca_cutover_cli import CutoverInvocation
 from boca_socios.release_manifest import make_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -92,6 +93,136 @@ def _fixture(tmp_path: Path, *, complete_b: bool = True) -> go.GoRequest:
         seccomp_path=files["seccomp"],
         bundle_path=zip_path,
     )
+
+
+def _actions_fixture(tmp_path: Path) -> tuple[go.GoRequest, dict[str, str]]:
+    source = _fixture(tmp_path / "source")
+    workspace = tmp_path / "workspace"
+    runner = tmp_path / "runner"
+    reviewed_paths = {
+        workspace / "compose.beta.yaml": source.target_compose_path,
+        workspace / "compose.beta.browser.yaml": source.overlay_path,
+        workspace / "docker/seccomp_profile.json": source.seccomp_path,
+        runner / "boca-cutover-legacy-compose.yaml": source.historical_compose_path,
+        runner / "boca-release-manifest/boca-release-manifest.json": source.target_manifest_path,
+        runner
+        / "boca-browser-release-manifest/boca-browser-release-manifest.json": source.browser_manifest_path,
+        runner
+        / "boca-cutover-legacy-manifest/boca-release-manifest.json": source.legacy_manifest_path,
+        runner / "boca-cutover-a-review.pyz": source.bundle_path,
+    }
+    for destination, original in reviewed_paths.items():
+        _file(destination, original.read_bytes())
+    env = {
+        "GITHUB_EVENT_NAME": "workflow_dispatch",
+        "BOCA_OPERATION": "cutover-a-apply",
+        "BOCA_SERVICE": "controller",
+        "BOCA_BUDGET": "1.5cpu-1024m-192pids",
+        "GITHUB_REPOSITORY": source.github_repository,
+        "GITHUB_ACTOR": source.github_actor,
+        "GITHUB_REF": source.github_ref,
+        "GITHUB_SHA": source.github_sha,
+        "GITHUB_RUN_ID": source.github_run_id,
+        "GITHUB_RUN_ATTEMPT": "1",
+        "GITHUB_WORKSPACE": str(workspace),
+        "RUNNER_TEMP": str(runner),
+        "BOCA_SOURCE_SHA": source.plan.target_sha,
+        "BOCA_LEGACY_CONTROLLER_ID": source.plan.legacy_id,
+        "BOCA_LEGACY_SOURCE_SHA": source.plan.legacy_sha,
+        "BOCA_LEGACY_IMAGE_REF": source.plan.legacy_image,
+        "BOCA_IMAGE_REF": source.plan.target_image,
+        "BOCA_BROWSER_IMAGE_REF": source.plan.browser_image,
+        "BOCA_BETA_OWNER_SUBJECT": source.plan.owner_subject,
+        "BOCA_RELEASE_RUN_ID": source.target_release_run_id,
+        "BOCA_LEGACY_RELEASE_RUN_ID": source.legacy_release_run_id,
+    }
+    request = go.actions_request(env)
+    assert go.authorization_digest(request) == go.authorization_digest(source)
+    return request, env
+
+
+def test_actions_go_binds_exact_run_manifest_and_memfd_zip_without_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    request, env = _actions_fixture(tmp_path)
+    assert not (Path(env["RUNNER_TEMP"]) / go.HOST_INVOCATION_NAME).exists()
+    monkeypatch.setattr(os, "environ", {**env})
+    assert go.main(["--from-actions"]) == 1
+    assert "host=untouched" in capsys.readouterr().err
+    assert not (Path(env["RUNNER_TEMP"]) / go.HOST_INVOCATION_NAME).exists()
+
+    approved = go.authorization_digest(request)
+    monkeypatch.setattr(os, "environ", {**env, "BOCA_CUTOVER_A_GO_BINDING_SHA256": approved})
+    assert go.main(["--from-actions"]) == 0
+    assert "state=PASS" in capsys.readouterr().out
+    token = (Path(env["RUNNER_TEMP"]) / go.HOST_INVOCATION_NAME).read_text().strip()
+    host = CutoverInvocation.decode(token)
+    assert host.plan == request.plan
+    assert host.go_binding_sha256 == approved
+    assert host.bundle_sha256 == _sha(request.bundle_path.read_bytes())
+    assert (Path(env["RUNNER_TEMP"]) / go.HOST_APPROVAL_NAME).read_text() == approved + "\n"
+    assert not (Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME).exists()
+    # A duplicate use of the same GH run may not replace its approved token.
+    assert go.main(["--from-actions"]) == 1
+    assert "NO_GO" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"GITHUB_EVENT_NAME": "pull_request"},
+        {"BOCA_OPERATION": "cutover-a-observe"},
+        {"GITHUB_REF": "refs/heads/feature"},
+        {"GITHUB_ACTOR": "other"},
+        {"GITHUB_SHA": "0" * 40},
+        {"GITHUB_RUN_ATTEMPT": "2"},
+        {"BOCA_RELEASE_RUN_ID": "41573026189"},
+        {"BOCA_LEGACY_CONTROLLER_ID": ""},
+        {"BOCA_BUDGET": "0.5cpu-256m-64pids"},
+    ],
+)
+def test_actions_go_refuses_unapproved_context_before_creating_host_token(
+    tmp_path: Path, mutation: dict[str, str]
+) -> None:
+    request, env = _actions_fixture(tmp_path)
+    env.update(mutation)
+    with pytest.raises((go.CutoverGoError, ValueError)):
+        actual = go.actions_request(env)
+        go.write_actions_invocation(actual, protected_go_digest=go.authorization_digest(request))
+    assert not (Path(env["RUNNER_TEMP"]) / go.HOST_INVOCATION_NAME).exists()
+
+
+def test_assert_host_receipt_requires_matching_attempt_sha_and_green_steps(
+    tmp_path: Path,
+) -> None:
+    request, env = _actions_fixture(tmp_path)
+    env.update({"BOCA_CUTOVER_A_GO_PREFLIGHT": "success", "BOCA_CUTOVER_A_HOST_APPLY": "success"})
+    path = Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME
+    with pytest.raises(go.CutoverGoError):
+        go.assert_actions_host_receipt(env)
+    exact = (
+        f"BOCA_CUTOVER_A_HOST state=ACCEPTED attempt={request.plan.attempt_id} "
+        f"target_sha={request.plan.target_sha} cleanup=ACCEPT "
+        "receipt=RECORDED runtime=UNVERIFIED\n"
+    ).encode()
+    _file(path, exact)
+    go.assert_actions_host_receipt(env)
+    for fake in (
+        exact.replace(b"cleanup=ACCEPT", b"cleanup=NO_GO"),
+        exact.replace(request.plan.target_sha.encode(), b"0" * 40),
+        exact + b"BOCA_CUTOVER_A_HOST state=ACCEPTED\n",
+    ):
+        path.write_bytes(fake)
+        with pytest.raises(go.CutoverGoError, match="terminal receipt"):
+            go.assert_actions_host_receipt(env)
+    path.write_bytes(exact)
+    for field, bad in (
+        ("BOCA_CUTOVER_A_GO_PREFLIGHT", "failure"),
+        ("BOCA_CUTOVER_A_HOST_APPLY", "skipped"),
+        ("GITHUB_SHA", "0" * 40),
+    ):
+        with pytest.raises(go.CutoverGoError):
+            go.assert_actions_host_receipt({**env, field: bad})
 
 
 def test_bound_go_requires_distinct_protected_variable_which_is_absent_by_default(
@@ -234,11 +365,16 @@ def test_fifo_0600_cannot_block_go_preflight_before_regular_file_attestation(
     assert "BOCA_CUTOVER_A_GO state=NO_GO host=untouched" in result.stderr
 
 
-def test_no_effectful_dispatch_is_exposed_even_if_go_source_exists() -> None:
+def test_effectful_dispatch_is_inert_without_independent_exact_run_go() -> None:
     workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
     assert "cutover-a-observe" in workflow
-    assert "cutover-a-apply" not in workflow
-    assert "BOCA_CUTOVER_A_GO_BINDING_SHA256" not in workflow
+    assert "cutover-a-apply" in workflow
     assert (
-        "transaction_not_wired" in (ROOT / "src/boca_socios/host_boca_transaction.py").read_text()
+        "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}" in workflow
     )
+    assert "python scripts/check_cutover_a_go.py --from-actions" in workflow
+    assert "python scripts/check_cutover_a_go.py --assert-host-receipt" in workflow
+    assert "always() && inputs.operation == 'cutover-a-apply'" in workflow
+    assert "timeout --signal=TERM --kill-after=5s 900s ssh" in workflow
+    assert "docker image prune" not in workflow
+    assert "docker system prune" not in workflow

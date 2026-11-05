@@ -9,6 +9,7 @@ complete success/failure cleanup in try/finally, and fail closed on lost SSH.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import sys
 import zipfile
@@ -196,6 +197,31 @@ def _bundled_reviewed_file(path: str) -> bytes:
 
 
 def main() -> int:
+    if len(sys.argv) == 2 and sys.argv[1] == "bundle-cutover-selftest":
+        try:
+            from boca_socios.host_boca_cutover_backend import ReviewedCutoverSources
+
+            reviewed = ReviewedCutoverSources.from_verified_zip()
+            if any(not 0 < len(value) <= 32768 for value in reviewed.__dict__.values()):
+                raise TransactionError("Cutover source payload absent")
+        except (TransactionError, ValueError, TypeError, OSError, KeyError, zipfile.BadZipFile):
+            print("BOCA_CUTOVER_MEMFD state=NO_GO reason=source_unverified")
+            return 1
+        print("BOCA_CUTOVER_MEMFD state=PASS host=untouched option_b=present")
+        return 0
+    if len(sys.argv) == 3 and sys.argv[1] == "cutover-a-apply":
+        from boca_socios.host_boca_cutover_cli import run_cli
+
+        # Runner-side check_cutover_a_go must first authenticate three release
+        # manifests, reviewed bundle bytes and the separate protected GitHub
+        # Environment GO. Only its exact-run result may be sent over the
+        # already authorized SSH transport to this one memfd process.
+        return run_cli(
+            sys.argv[2],
+            approved_go_binding_sha256=os.environ.get(
+                "BOCA_CUTOVER_A_APPROVED_GO_BINDING_SHA256", ""
+            ),
+        )
     if len(sys.argv) == 2 and sys.argv[1] == "bundle-selftest":
         try:
             assert hashlib.sha256(_bundled_reviewed_file("compose.yaml")).digest()

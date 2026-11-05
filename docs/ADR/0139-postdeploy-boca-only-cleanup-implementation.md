@@ -534,3 +534,86 @@ Al reconstruir el candidato integral `#319` en `129f789a62f80ea350e55f700a7d6f64
 `execute_reviewed_cutover(plan)` concentra el futuro enlace **host-only** entre fuentes validadas contra los cuatro digests, `RootlessCutoverBackend`, `run_cutover_a()` con una sola lease, `prepare_destination()` con intención O_EXCL antes de cualquier Docker, `finalize()` selectivo después de éxito/fracaso y `write_once()` con resultado durable antes de soltar la lease. Las pruebas offline usan backend/recibos fake e incluyen rechazo antes del intento ante SQL no revisado. El hook **no está conectado** a `__main__`, al ZIP ejecutable ni al menú de GitHub Actions; no existe `cutover-a-apply`, GO remoto, operación física, modificación de contenedores ni comprobación real de Samsung. El resultado positivo de QA sintético no equivale a disponibilidad operativa.
 
 Para la siguiente revisión de integración se requiere: decisión de invocación memfd en el workflow único y parámetros exactos sin sobres en argv; GO exact-main protegido según `scripts/check_cutover_a_go.py`, atestación física de identidades/Compose/UID/8443/volúmenes, recibo de éxito y fallos accesible aunque se pierda el runner y lectura independiente posterior de ambos marcadores. Ante ambigüedad del estado irreversible, conservar recursos y `NO_GO`; jamás un `prune` general, backup, rollback o modificación de Porota. El autor de la integración central registra el SHA/Actions finales y la prueba física, si alguna ocurre, en issue #45.
+
+### A45-R21.3: CLI memfd host-only preparado, efecto todavía bloqueado
+
+El ZIP reproducible incluye ahora un helper CLI explícito y el validador memfd
+actualiza su allowlist exacta; ambos siguen excluyendo los módulos BLACKBOX.
+El nuevo selftest `bundle-cutover-selftest` ejecuta de extremo a extremo:
+runner arma ZIP → verifica digest y manifest de entradas → exec del **mismo
+memfd** → importa los cinco archivos Option B/Compose y declara
+`host=untouched`. Detecta, antes de cualquier operación real, fallos de
+importación/empaquetado que los fakes in-process no detectaban.
+
+La invocación futura `cutover-a-apply` recibe únicamente coordenadas públicas
+opacas y digests en un JSON canónico acotado, codificado como base64url sin
+padding. Rechaza duplicados, campos extra, SHA/identidades inválidos,
+non-canonical JSON, bundle distinto y GO distinto. **Es deliberadamente
+inerte en el `__main__` publicado**: llama al parser sin inyectarle un GO
+aprobado independientemente; por tanto, aunque alguien intente invocarlo,
+emite `NO_GO receipt=UNVERIFIED runtime=UNVERIFIED` y retorna código 3,
+sin ejecutar el adaptador Docker/SQLite. Sólo una modificación posterior
+revisada de ese entrypoint bajo el GO específico y el workflow único podría
+proveer ese valor desde su preflight protegido; la mera presencia del SHA
+dentro del payload NO es autorización.
+
+El camino interno `run_cli(..., approved_go_binding_sha256=...)` se comprueba
+con un ejecutor fake para demostrar enlace exacto y semántica terminal. Tras
+la ejecución exigiría **igualdad byte a byte** del resultado O_EXCL en disco
+con el recibo devuelto, además del intent original: un marcador antiguo
+`NO_GO` nunca puede convertirse en `ACCEPTED` sólo porque exista un archivo
+de resultado. El recibo de CLI reconoce expresamente `runtime=UNVERIFIED`,
+incluso si el estado guardado es `ACCEPTED`; el futuro workflow necesita
+atarlo a una observación física independiente y a su postflight/cleanup.
+Los tests de camino real del ZIP y dispatch negativo no hacen SSH ni Docker.
+
+**No es un GO para desplegar.** Siguen pendientes wiring del workflow,
+atestación física del controlador histórico, aceptación del candidato,
+volumen SQLite lateral y sesión Chrome, Telegram y lifecycle de bot/Chromium,
+comprobación Samsung Chrome+Termius y limpieza host selectiva con recibos de
+éxito o fallo. Los caminos ambiguos no reintentan ni borran recursos; Porota
+y las otras aplicaciones permanecen fuera del alcance. Los resultados de
+QA y GH Actions se documentan por SHA exacto en #320/#336.
+
+### A45-R22: GO protegido y operación Cutover A conectada al workflow (PR DRAFT; sin ejecución)
+
+La nueva operación manual `cutover-a-apply` tiene un **NO_GO real por defecto**.
+El disparador no autoriza nada por sí solo: antes de crear la configuración SSH,
+el runner requiere el valor independiente
+`vars.BOCA_CUTOVER_A_GO_BINDING_SHA256` en el *GitHub Environment* protegido
+`boca-first-deploy`. El contenido debe coincidir byte por byte con el SHA256
+del objeto de autorización que construye `scripts/check_cutover_a_go.py` a
+partir del **run ID exacto, intento 1, actor y HEAD de main, IDs originales,
+dos releases distintos, tres manifests de release (controller viejo y ambos
+actuales), Compose histórico recuperado desde su SHA, Compose/overlay/seccomp
+revisados, ZIP completo Option B y destino localhost:8443**. El SHA de GO no
+es un input de `workflow_dispatch`; vacío, incorrecto, anterior o de otro
+run resulta `NO_GO` **antes de SSH**. No se recicla la autorización de la
+observación read-only ni se infiere el ID original del nombre Docker.
+
+Tras validación, el runner escribe con O_EXCL dos archivos privados (token
+canónico de coordenadas + digest de GO) y ejecuta **un solo SSH** cuyo stdin
+contiene exactamente el ZIP autenticado. El bootstrap verifica el SHA y la
+allowlist antes de ejecutar el mismo memfd. El entrypoint host comprueba
+otra vez el digest ZIP y el GO provisto por canal separado del token; recién
+entonces usa `execute_reviewed_cutover(plan)` con lease única, intento/result
+O_EXCL y finalizador selectivo. No hay `docker image/system prune`, respaldos,
+segundo puerto, HTTPS, rollback o acceso a Porota/otros contenedores.
+
+El host puede imprimir aceptación únicamente tras verificar un recibo
+terminal persistido, con `attempt`, `target_sha`, `cleanup=ACCEPT` y
+`receipt=RECORDED`. Un paso del workflow `if: always()` exige tanto GO como
+SSH con outcome positivo y **la línea exacta**, o declara `NO_GO` sin
+reintentar ni limpiar a ciegas. Una caída dura del host/runner no demuestra
+que el finally haya corrido; el estado queda **indeterminado, preservar e
+inspeccionar sólo Boca**. Incluso con recibo positivo, `runtime=UNVERIFIED`
+hasta las pruebas físicas de Chrome Samsung/Termius, bot, Telegram y sesiones.
+
+La rama DRAFT sólo habilita el *camino revisable*; ningún workflow effectful
+fue ejecutado, no hay GO independiente cargado por este cambio ni deploy al
+droplet. El suite sintético comprueba GO ausente/distinto, manipulación de
+actor/branch/SHA/release/ID, token canonical, reutilización O_EXCL, memfd,
+líneas de recibo fallidas, pérdida de GO/SSH, límites de la operación y
+regresión de las funcionalidades de navegador. El candidato #319 y el resto
+de los frentes se integran sólo con QA/Actions de SHA exacto y la decisión
+explícita del propietario para el **único** deploy.

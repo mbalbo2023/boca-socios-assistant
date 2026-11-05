@@ -27,6 +27,7 @@ SOURCES = (
     "src/boca_socios/host_boca_transaction.py",
     "src/boca_socios/host_boca_cutover.py",
     "src/boca_socios/host_boca_cutover_backend.py",
+    "src/boca_socios/host_boca_cutover_cli.py",
     "src/boca_socios/host_boca_cutover_receipt.py",
     "src/boca_socios/host_cutover_stage.py",
 )

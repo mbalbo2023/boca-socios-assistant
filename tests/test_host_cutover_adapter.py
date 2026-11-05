@@ -818,15 +818,18 @@ def test_command_builders_reject_unsourced_coordinates() -> None:
         host._cutover_worker_create_argv(WORKER_IMAGE, TARGET_SHA, ATTEMPT, "not-a-hash")
 
 
-def test_workflow_exposes_only_readonly_cutover_and_separate_legacy_release_proof() -> None:
+def test_workflow_cutover_apply_requires_separate_go_and_legacy_release_proof() -> None:
     text = (PROJECT_ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
     match = re.search(r"options: \[([^\n]+)\]", text)
     assert match is not None
     options = [item.strip() for item in match.group(1).split(",")]
     assert "cutover-a-observe" in options
-    assert all(
-        "cutover-a-" not in operation or operation == "cutover-a-observe" for operation in options
-    )
+    assert [operation for operation in options if operation.startswith("cutover-a-")] == [
+        "cutover-a-observe",
+        "cutover-a-apply",
+    ]
+    assert "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}" in text
+    assert "python scripts/check_cutover_a_go.py --from-actions" in text
     assert '"$BOCA_LEGACY_SOURCE_SHA"' in text
     assert '"$BOCA_LEGACY_RELEASE_RUN_ID"' in text
     assert "boca-cutover-legacy-compose.sha" in text
