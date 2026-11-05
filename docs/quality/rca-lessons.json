@@ -508,8 +508,8 @@
       "id": "RCA-373",
       "issue": 373,
       "fix_pr": 378,
-      "root_cause": "Protected Cutover A PREPARE run 42073058087 failed while observing Boca rootless controller (exit 3, diagnostic stderr suppressed). The production observer reused cleanup._inspect_field, whose cleanup-only allowlist rejected observer-required Docker fields including Config.Image, HostConfig.*, State.Health.Status and volume Mountpoint. FakeIO tests did not exercise the production adapter. Because the protected failure suppressed stderr, this mismatch is demonstrated in code but cannot be asserted as the first host error.",
-      "prevention": "Keep cleanup's restrictive allowlist unchanged; the production observer must instead use an exact field-only, read-only Docker inspect projection with pinned rootless UID/GID10001, validated SHA64 container IDs and exact Boca volume. Reject Config.Env, arbitrary IDs, and foreign paths/volumes. Cover the real adapter with deterministic regression tests before a new PREPARE gate.",
+      "root_cause": "PREPARE #42073058087 returned exit 3 without stderr. The real observer reused cleanup._inspect_field, whose cleanup-only allowlist excludes required Config.Image, HostConfig.*, State.Health.Status and volume Mountpoint. FakeIO tests missed the adapter; first host error remains unproven.",
+      "prevention": "Use exact read-only Docker field projection for the production observer (UID/GID10001), separate from cleanup. Validate SHA64 container IDs and exact Boca volume; deny Config.Env and foreign fields. Test the real adapter deterministically before new protected PREPARE.",
       "regression_tests": [
         "tests/test_host_cutover_inventory_observe.py::test_real_adapter_uses_only_explicit_rootless_inspect_fields"
       ]
