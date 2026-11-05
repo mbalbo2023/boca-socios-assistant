@@ -65,6 +65,11 @@ class CommandHostTests(unittest.TestCase):
         self.addCleanup(host.close)
         return host
 
+    def open_restartable_host(self) -> BetaCommandHost:
+        host = BetaCommandHost.start(self.coordinator, coordinator_factory=self.make_coordinator)
+        self.addCleanup(host.close)
+        return host
+
     def wait_state(self, host: BetaCommandHost, key: str, *states: CommandState) -> CommandState:
         deadline = time.monotonic() + 3
         while time.monotonic() < deadline:
@@ -174,6 +179,61 @@ class CommandHostTests(unittest.TestCase):
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='beta_commands'"
                 ).fetchone()
             )
+
+    def test_engine_stop_joins_real_loop_then_restart_recovers_without_replay(self) -> None:
+        host = self.open_restartable_host()
+        self.assertTrue(host.engine_running)
+        self.assertFalse(host.engine_stopped)
+        key = str(uuid4())
+        host.begin(key, member_id="member", event_id="event")
+        self.assertEqual(self.wait_state(host, key, CommandState.COMPLETED), "completed")
+        self.assertEqual(self.browser.calls, 1)
+
+        self.assertTrue(host.stop_engine())
+        self.assertTrue(host.engine_stopped)
+        self.assertFalse(host.engine_running)
+        self.assertFalse(host._thread.is_alive())
+        self.assertFalse(host.stop_engine())  # Idempotent stop, no extra effect.
+        with self.assertRaisesRegex(RuntimeError, "stopped"):
+            host.begin(str(uuid4()), member_id="member", event_id="event")
+
+        self.assertTrue(host.start_engine())
+        self.assertTrue(host.engine_running)
+        self.assertFalse(host.engine_stopped)
+        self.assertFalse(host.start_engine())
+        self.assertEqual(host.status(key, member_id="member").state, CommandState.COMPLETED)
+        self.assertEqual(self.browser.calls, 1)
+        self.assertEqual(
+            host.begin(str(uuid4()), member_id="member", event_id="event").state,
+            CommandState.COMPLETED,
+        )
+        self.assertEqual(self.browser.calls, 1)
+
+    def test_engine_stop_cancels_actual_inflight_work_and_later_restarts(self) -> None:
+        self.browser.release.clear()
+        host = self.open_restartable_host()
+        key = str(uuid4())
+        host.begin(key, member_id="member", event_id="event")
+        self.assertTrue(self.browser.started.wait(2))
+        self.assertTrue(host.stop_engine())
+        self.assertTrue(self.browser.cancelled)
+        self.assertTrue(host.engine_stopped)
+        self.browser.release.set()
+        self.assertTrue(host.start_engine())
+        self.assertIn(
+            host.status(key, member_id="member").state,
+            {CommandState.STOPPED, CommandState.FAILED, CommandState.NEEDS_REVIEW},
+        )
+
+    def test_closed_or_nonrestartable_engine_cannot_be_restarted(self) -> None:
+        nonrestartable = self.open_host()
+        with self.assertRaisesRegex(RuntimeError, "factory"):
+            nonrestartable.stop_engine()
+        self.assertTrue(nonrestartable.engine_running)
+        host = self.open_restartable_host()
+        host.close()
+        with self.assertRaises(RuntimeError):
+            host.start_engine()
 
 
 if __name__ == "__main__":

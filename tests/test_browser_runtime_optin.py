@@ -185,7 +185,7 @@ def test_local_beta_runtime_passes_command_timeout_only_to_existing_coordinator(
         def close(self) -> None:
             pass
 
-    def start_commands(coordinator: object) -> FakeCommands:
+    def start_commands(coordinator: object, **_kwargs: object) -> FakeCommands:
         observed.append(coordinator._timeout)  # type: ignore[attr-defined]
         return FakeCommands()
 
