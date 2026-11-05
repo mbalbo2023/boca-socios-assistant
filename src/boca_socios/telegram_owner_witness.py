@@ -171,11 +171,7 @@ def review_owner_stage_witness(
     ):
         raise OwnerWitnessNoGo("owner_stage_witness_binding_unverified")
     if (
-        not 0
-        < witness.passkey_verified_at
-        <= witness.staged_at
-        <= witness.issued_at
-        <= trusted_now
+        not 0 < witness.passkey_verified_at <= witness.staged_at <= witness.issued_at <= trusted_now
         or witness.staged_at - witness.passkey_verified_at > _MAX_PASSKEY_TO_STAGE
         or witness.issued_at - witness.staged_at > _MAX_STAGE_TO_ISSUE
         or trusted_now - witness.staged_at > _MAX_STAGE_AGE
