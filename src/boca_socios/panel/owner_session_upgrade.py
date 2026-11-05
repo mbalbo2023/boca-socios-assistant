@@ -1,20 +1,19 @@
-"""Explicit, stopped-controller-only upgrade of an EXISTING Boca BETA DB.
+"""Protected bootstrap for a SEPARATE Chrome owner-session SQLite file.
 
-This module has no CLI, host probe, startup hook or Docker side effects. The
-protected host owner must supply a live, exclusive controller-stop capability;
-an input flag, JSON receipt or historic workflow result is not that evidence.
+The controller's /data/boca.sqlite3 schema and migration ledger are never
+written. No CLI, authentication path or startup hook calls this module.
+An actual trusted stopped-controller capability and uninterrupted Boca lease
+must be supplied by the one reviewed host transaction.
 """
 
 from __future__ import annotations
 
-import hashlib
 import os
 import sqlite3
 import stat
 from abc import ABC, abstractmethod
 from contextlib import AbstractContextManager, closing
 from enum import StrEnum
-from importlib.resources import files
 from pathlib import Path
 from urllib.parse import quote
 
@@ -22,53 +21,47 @@ from boca_socios.integration.operational import (
     LocalRuntimeUnavailable,
     validate_existing_beta_storage,
 )
+from boca_socios.panel.owner_session_store import (
+    OwnerBrowserSessionStore,
+    OwnerSessionStorageUnavailable,
+    session_database_path,
+)
+from boca_socios.storage.database import Database
 
 DATABASE = Path("/data/boca.sqlite3")
 _BOCA_UID = 10001
 _BOCA_GID = 10001
-_REQUIRED_VERSIONS = frozenset({1, 2, 3, 5, 6})
-_REQUIRED_TABLES = frozenset(
-    {
-        "members",
-        "credentials",
-        "events",
-        "ticket_requests",
-        "notification_outbox",
-        "reservation_attempts",
-        "beta_commands",
-        "beta_command_keys",
-    }
-)
-_OWNER_TABLE = "owner_browser_session"
-_OWNER_MIGRATION = "0008_owner_browser_session.sql"
 
 
 class OwnerSessionUpgradeUnavailable(RuntimeError):
-    """Host evidence, SQLite custody, schema or postcondition failed closed."""
+    """Host evidence, SQLite identity or independent session bootstrap failed closed."""
+
+
+class SessionBootstrapResult(StrEnum):
+    APPLIED = "applied"
+    ALREADY_APPLIED = "already_applied"
 
 
 class UpgradeResult(StrEnum):
+    """Historical 0008 legacy-migration result; kept only for rejected callers."""
+
     APPLIED = "applied"
     ALREADY_APPLIED = "already_applied"
 
 
 class ControllerStoppedEvidence(ABC):
-    """Host-verified exclusive controller-stop lease, NOT a user assertion.
+    """Concrete host attestation of stopped controller and exclusive Boca job lease.
 
-    The protected Boca-only host implementation must inspect actual container
-    state and mounted volume, and hold controller stopped/exclusive until the
-    context exits. It must verify that the requested device/inode is the Boca
-    controller DB and that no controller writer can restart concurrently.
-
-    No production implementation or factory lives here: an untrusted caller
-    cannot request an upgrade by submitting ``stopped=True`` or a receipt.
+    Neither a boolean nor JSON receipt authorizes a database bootstrap. The
+    protected host implementation must check real container identity, mounts,
+    original source/image and no competing writer while holding its lease.
     """
 
     @abstractmethod
     def exclusive_stop(
         self, *, database_path: Path, device: int, inode: int
     ) -> AbstractContextManager[None]:
-        """Revalidate live trusted host state and hold its exclusive stop."""
+        """Revalidate live host state while the same lease protects this operation."""
 
 
 def _identity(path: Path, *, authorized_path: Path = DATABASE) -> tuple[int, int]:
@@ -96,122 +89,100 @@ def _identity(path: Path, *, authorized_path: Path = DATABASE) -> tuple[int, int
     return metadata.st_dev, metadata.st_ino
 
 
-def _expected_sql() -> tuple[dict[int, str], str]:
-    resources = files("boca_socios.storage.migrations")
-    checksums: dict[int, str] = {}
-    for version in range(1, 9):
-        matches = [
-            resource
-            for resource in resources.iterdir()
-            if resource.name.startswith(f"{version:04d}_") and resource.name.endswith(".sql")
-        ]
-        if len(matches) != 1:
-            raise OwnerSessionUpgradeUnavailable("packaged migration set unavailable")
-        checksums[version] = hashlib.sha256(matches[0].read_bytes()).hexdigest()
-    sql = resources.joinpath(_OWNER_MIGRATION).read_text(encoding="utf-8")
-    statement = sql.strip().removesuffix(";").strip()
-    return checksums, statement
-
-
-def _schema_state(connection: sqlite3.Connection, expected: dict[int, str], statement: str) -> bool:
-    ledger = connection.execute(
-        "SELECT version,checksum FROM schema_migrations ORDER BY version LIMIT 10"
-    ).fetchall()
-    versions = {version for version, _ in ledger}
-    if (
-        len(ledger) != len(versions)
-        or len(ledger) > len(expected)
-        or not _REQUIRED_VERSIONS <= versions
-        or any(
-            type(version) is not int or expected.get(version) != checksum
-            for version, checksum in ledger
-        )
-    ):
-        raise OwnerSessionUpgradeUnavailable("controller migration ledger incompatible")
-    tables = {
-        name
-        for (name,) in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-    if not _REQUIRED_TABLES <= tables:
-        raise OwnerSessionUpgradeUnavailable("controller schema incompatible")
-    if (4 in versions and "credential_key_policy" not in tables) or (
-        7 in versions and "telegram_delivery_attempts" not in tables
-    ):
-        raise OwnerSessionUpgradeUnavailable("controller optional schema incompatible")
-    actual = connection.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (_OWNER_TABLE,)
-    ).fetchone()
-    if (8 in versions) != (actual is not None):
-        raise OwnerSessionUpgradeUnavailable("controller owner schema partially applied")
-    if actual is not None and actual != (statement,):
-        raise OwnerSessionUpgradeUnavailable("controller owner schema incompatible")
-    if connection.execute("PRAGMA quick_check(1)").fetchone() != ("ok",):
-        raise OwnerSessionUpgradeUnavailable("controller database integrity unavailable")
-    if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
-        raise OwnerSessionUpgradeUnavailable("controller database integrity unavailable")
-    return 8 in versions
+def _validate_legacy_session_boundary(path: Path) -> None:
+    """Reject orphan 0008/table and inconsistent optional legacy ledgers."""
+    uri = f"file:{quote(str(path), safe='/')}?mode=ro"
+    with closing(sqlite3.connect(uri, uri=True, timeout=1.0)) as connection:
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("PRAGMA trusted_schema=OFF")
+        versions = {
+            version for (version,) in connection.execute("SELECT version FROM schema_migrations")
+        }
+        tables = {
+            name
+            for (name,) in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        if (
+            8 in versions
+            or "owner_browser_session" in tables
+            or (4 in versions) != ("credential_key_policy" in tables)
+            or (7 in versions) != ("telegram_delivery_attempts" in tables)
+            or connection.execute("PRAGMA quick_check(1)").fetchone() != ("ok",)
+            or connection.execute("PRAGMA foreign_key_check").fetchone() is not None
+        ):
+            raise OwnerSessionUpgradeUnavailable("legacy controller schema incompatible")
 
 
 def upgrade_existing_owner_schema_0008(
     evidence: ControllerStoppedEvidence, *, path: Path = DATABASE
 ) -> UpgradeResult:
-    """Add *only* 0008 to the exact installed Boca controller DB, once.
+    """Permanently deny the obsolete in-place legacy migration (Option A).
 
-    No controller-stop capability is fabricated here. The trusted host owner
-    must supply live evidence and exclusive writer control for the whole block.
-    No login, HTTP handler, constructor or normal startup calls this function.
+    This old API intentionally cannot ever write 0008, including for a future
+    apparently compatible controller SHA. Option B is the only authorized
+    development path. It is not enough to pass a purported stopped flag.
+    """
+    raise OwnerSessionUpgradeUnavailable(
+        "legacy schema 0008 migration prohibited; use separate Boca session store"
+    )
+
+
+def bootstrap_existing_owner_session(
+    evidence: ControllerStoppedEvidence, *, path: Path = DATABASE
+) -> SessionBootstrapResult:
+    """Initialize only boca_owner_session.sqlite3 under a trusted host lease.
+
+    The original controller DB must remain stopped, regular and its schema
+    compatible with the *old installed* binary. The sidecar is new within the
+    SAME existing data volume. Missing/partial/unsafe pre-existing state
+    returns NO_GO; no repair, backup, deletion, WAL purge or other host action.
     """
     if not isinstance(evidence, ControllerStoppedEvidence):
         raise OwnerSessionUpgradeUnavailable("trusted controller stop evidence required")
     authorized_path = DATABASE
     if path != DATABASE:
-        # Host-side SQLite lives inside the inspected rootless Docker volume,
-        # not at its in-container alias /data/boca.sqlite3. Only the concrete
-        # Docker attestor can authorize the host pathname; synthetic proofs
-        # and arbitrary caller-supplied paths may not widen the DB scope.
         from boca_socios.panel.owner_session_host_attestor import DockerStoppedControllerEvidence
 
         if not isinstance(evidence, DockerStoppedControllerEvidence):
             raise OwnerSessionUpgradeUnavailable("controller database scope unavailable")
+        if evidence.borrowed_lease_fd is None:
+            raise OwnerSessionUpgradeUnavailable("outer protected Boca job lease required")
         authorized_path = evidence.host_database_path()
         if path != authorized_path:
             raise OwnerSessionUpgradeUnavailable("controller database scope unavailable")
-    first_identity = _identity(path, authorized_path=authorized_path)
+    initial_identity = _identity(path, authorized_path=authorized_path)
     with evidence.exclusive_stop(
-        database_path=path, device=first_identity[0], inode=first_identity[1]
+        database_path=path, device=initial_identity[0], inode=initial_identity[1]
     ):
-        if _identity(path, authorized_path=authorized_path) != first_identity:
+        if _identity(path, authorized_path=authorized_path) != initial_identity:
             raise OwnerSessionUpgradeUnavailable("controller database identity changed")
         try:
             validate_existing_beta_storage(path)
-            expected, statement = _expected_sql()
-            # SQLite mode=rw never silently creates a missing database. The
-            # entire precondition check is repeated UNDER the writer lock.
-            uri = f"file:{quote(str(path), safe='/')}?mode=rw"
-            with closing(sqlite3.connect(uri, uri=True, timeout=3.0)) as connection:
-                connection.execute("PRAGMA busy_timeout=3000")
-                connection.execute("PRAGMA foreign_keys=ON")
-                connection.execute("PRAGMA trusted_schema=OFF")
-                connection.execute("BEGIN IMMEDIATE")
-                with connection:
-                    if _identity(path, authorized_path=authorized_path) != first_identity:
-                        raise OwnerSessionUpgradeUnavailable("controller database identity changed")
-                    already = _schema_state(connection, expected, statement)
-                    if not already:
-                        connection.execute(statement)
-                        connection.execute(
-                            "INSERT INTO schema_migrations(version, checksum) VALUES (8, ?)",
-                            (expected[8],),
-                        )
-                    if not _schema_state(connection, expected, statement):
-                        raise OwnerSessionUpgradeUnavailable("controller owner schema unavailable")
-                    if _identity(path, authorized_path=authorized_path) != first_identity:
-                        raise OwnerSessionUpgradeUnavailable("controller database identity changed")
+            _validate_legacy_session_boundary(path)
+            session_path = session_database_path(path)
+            try:
+                session_path.lstat()
+                existed = True
+            except FileNotFoundError:
+                existed = False
+            # Explicit bootstrap writes ONLY the separate file. Its own checks
+            # enforce O_EXCL creation, 0600/UID/GID/nlink, exact DDL and ledger.
+            OwnerBrowserSessionStore.migrate_schema(Database(path))
+            OwnerBrowserSessionStore(
+                Database(path), owner_subject="schema-bootstrap-only"
+            ).verify_schema()
             validate_existing_beta_storage(path)
-            if _identity(path, authorized_path=authorized_path) != first_identity:
+            _validate_legacy_session_boundary(path)
+            if _identity(path, authorized_path=authorized_path) != initial_identity:
                 raise OwnerSessionUpgradeUnavailable("controller database identity changed")
-        except (LocalRuntimeUnavailable, OSError, sqlite3.Error, ValueError, TypeError):
-            raise OwnerSessionUpgradeUnavailable("controller storage upgrade unavailable") from None
-    return UpgradeResult.ALREADY_APPLIED if already else UpgradeResult.APPLIED
+        except (
+            LocalRuntimeUnavailable,
+            OwnerSessionStorageUnavailable,
+            OSError,
+            sqlite3.Error,
+            ValueError,
+        ):
+            raise OwnerSessionUpgradeUnavailable(
+                "separate owner session bootstrap unavailable"
+            ) from None
+    return SessionBootstrapResult.ALREADY_APPLIED if existed else SessionBootstrapResult.APPLIED

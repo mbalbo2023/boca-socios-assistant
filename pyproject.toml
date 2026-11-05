@@ -27,6 +27,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "boca_socios.storage.migrations" = ["*.sql"]
+"boca_socios.panel.owner_session_sql" = ["*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

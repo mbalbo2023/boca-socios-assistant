@@ -119,7 +119,9 @@ def test_http_localhost_panel_and_enrollment_require_exact_origin(tmp_path: Path
         owner_subject="owner",
         permissions=frozenset({"members:enroll"}),
     )
-    OwnerBrowserSessionStore(Database(tmp_path / "boca.sqlite3"), owner_subject="owner").migrate()
+    database = Database(tmp_path / "boca.sqlite3")
+    database.migrate()
+    OwnerBrowserSessionStore(database, owner_subject="owner").migrate()
     application = PrivatePanelApplication(
         origin=ORIGIN,
         database_path=tmp_path / "boca.sqlite3",
