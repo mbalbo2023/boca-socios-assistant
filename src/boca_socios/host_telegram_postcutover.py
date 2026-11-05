@@ -248,7 +248,7 @@ def observe_telegram_host(
             images=images,
         )
         if (
-            controller.volumes != tuple(sorted({_DATA, _IPC, "boca-socios_boca_key", "boca-socios_boca_owner"}))
+            controller.volumes\n            != tuple(\n                sorted({_DATA, _IPC, "boca-socios_boca_key", "boca-socios_boca_owner"})\n            )
             or worker.volumes != (_IPC,)
             or controller.networks not in ((), (_PRIVATE,))
             or worker.networks
@@ -279,7 +279,7 @@ def observe_telegram_host(
             labels = _labels(volume.labels)
             if labels.get("com.docker.compose.project") != _PROJECT:
                 raise TelegramHostNoGo("boca_telegram_volume_ownership_unverified")
-            if labels.get("com.docker.compose.volume") != volume.name.removeprefix("boca-socios_"):
+            if labels.get("com.docker.compose.volume") != volume.name.removeprefix(\n                "boca-socios_"\n            ):
                 raise TelegramHostNoGo("boca_telegram_volume_ownership_unverified")
         networks = {item.name: item for item in inventory.networks}
         if set(networks) != {_PRIVATE, _EGRESS} or len(inventory.networks) != 2:
