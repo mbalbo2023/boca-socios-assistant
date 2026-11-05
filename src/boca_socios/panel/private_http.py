@@ -20,6 +20,7 @@ from typing import Protocol
 from urllib.parse import parse_qsl, urlsplit
 from uuid import UUID, uuid4
 
+from boca_socios import telegram_bootstrap
 from boca_socios.events.official_catalog import (
     OfficialCatalogError,
     OfficialNotice,
@@ -43,6 +44,11 @@ from boca_socios.panel.owner_session_store import (
 )
 from boca_socios.panel.owner_sessions import OwnerSession, OwnerSessions
 from boca_socios.panel.passkey import PasskeyAssertion, PasskeyOwnerAuthentication
+from boca_socios.panel.telegram_pairing_staging import (
+    PairingStageConflict,
+    PairingStageReceipt,
+    PairingStageUnavailable,
+)
 from boca_socios.security.enrollment import (
     CredentialUnavailable,
     MemberNotFound,
@@ -137,6 +143,7 @@ class PrivatePanelApplication:
         events: Mapping[str, str],
         observed_official_notices: Iterable[OfficialNotice] = (),
         official_notices_loader: Callable[[], Iterable[OfficialNotice]] | None = None,
+        telegram_pairing_stager: Callable[[bytes], PairingStageReceipt] | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         parsed = urlsplit(origin)
@@ -175,6 +182,9 @@ class PrivatePanelApplication:
         if official_notices_loader is not None and self._official_notices:
             raise ValueError("only one official-observation source is allowed")
         self._official_notices_loader = official_notices_loader
+        if telegram_pairing_stager is not None and not callable(telegram_pairing_stager):
+            raise ValueError("Telegram pairing stager must be an explicit local callback")
+        self._telegram_pairing_stager = telegram_pairing_stager
         self._passkey = passkey
         self._owner_browser_store = OwnerBrowserSessionStore(
             self._database, owner_subject=owner_subject
@@ -273,6 +283,18 @@ class PrivatePanelApplication:
             if path == "/telegram/configurar":
                 return _response(start, 200, telegram_setup_ui.page(), csp=telegram_setup_ui.CSP)
             if path == "/telegram/emparejar":
+                if self._telegram_pairing_stager is not None:
+                    operation_id = self._sessions.new_operation(session)
+                    if operation_id is None:
+                        return _error(start, 429, "Espere antes de abrir otro emparejamiento.")
+                    return _response(
+                        start,
+                        200,
+                        telegram_setup_ui.pairing_page(
+                            csrf=session.csrf, operation_id=operation_id
+                        ),
+                        csp=telegram_setup_ui.PAIRING_STAGING_CSP,
+                    )
                 return _response(
                     start,
                     200,
@@ -345,6 +367,8 @@ class PrivatePanelApplication:
                     "__Host-boca_session=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0",
                 ),
             )
+        if path == "/telegram/emparejar" and self._telegram_pairing_stager is not None:
+            return self._stage_private_telegram_pairing(environ, session, start)
         if path == "/comandos":
             return self._begin(environ, session, start)
         if path in ("/control/reanudar", "/control/pausar"):
@@ -364,6 +388,52 @@ class PrivatePanelApplication:
                 return _error(start, 403, "Permiso insuficiente.")
             return self._credential_action(environ, path, session, start)
         return _error(start, 404, "Ruta no disponible.")
+
+    def _stage_private_telegram_pairing(
+        self, environ: Mapping[str, object], session: OwnerSession, start: StartResponse
+    ) -> list[bytes]:
+        """Only an encrypted owner request, NEVER a Telegram install receipt."""
+        fields = self._form(environ, expected={"csrf", "operation_id", "envelope"})
+        if fields is None or _canonical_uuid(fields["operation_id"]) is None:
+            return _error(start, 400, "Solicitud privada inválida.")
+        try:
+            envelope = telegram_bootstrap._unb64(
+                fields["envelope"], maximum=telegram_bootstrap.MAX_ENVELOPE
+            )
+        except telegram_bootstrap.BootstrapError:
+            return _error(start, 422, "Sobre cifrado V2 inválido.")
+        if not envelope:
+            return _error(start, 422, "Sobre cifrado V2 inválido.")
+        fingerprint = b"telegram-v2-stage:\0" + envelope
+        status, operation = self._sessions.reserve(
+            session, fields["operation_id"], fields["csrf"], fingerprint
+        )
+        if status:
+            return _error(
+                start, 409 if status == 202 else status, "Solicitud ya procesada o inválida."
+            )
+        assert operation is not None and self._telegram_pairing_stager is not None
+        try:
+            receipt = self._telegram_pairing_stager(envelope)
+            if type(receipt) is not PairingStageReceipt or (
+                receipt.state != "STAGED_PENDING_PROTECTED_CUTOVER"
+            ):
+                raise PairingStageUnavailable("pairing_stage_unavailable")
+        except PairingStageConflict:
+            self._sessions.finish(operation, 409)
+            return _error(start, 409, "Ya existe un emparejamiento pendiente de verificar.")
+        except Exception:
+            # Callback errors may embed token, host path or ciphertext.
+            self._sessions.finish(operation, 503)
+            return _error(start, 503, "No se confirmó el resguardo cifrado. Consulte el estado.")
+        self._sessions.finish(operation, 202)
+        return _response(
+            start,
+            202,
+            b'{"state":"STAGED_PENDING_PROTECTED_CUTOVER","telegram_connected":false,'
+            b'"sender":"OFF","notification_receipt":"UNVERIFIED"}',
+            html=False,
+        )
 
     def _current_official_notices(self) -> tuple[OfficialNotice, ...]:
         if self._official_notices_loader is None:

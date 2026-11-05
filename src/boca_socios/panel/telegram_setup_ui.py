@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 
 from boca_socios.panel.enrollment_form import STYLE
 
@@ -317,6 +318,9 @@ PAIRING_SCRIPT = r"""
   const copyEnvelope = document.getElementById('pairing-copy-envelope');
   const result = document.getElementById('pairing-result');
   const fingerprintOutput = document.getElementById('pairing-fingerprint');
+  const stageButton = document.getElementById('pairing-stage');
+  const csrfField = document.getElementById('pairing-csrf');
+  const operationField = document.getElementById('pairing-operation');
   const encoder = new TextEncoder();
   let active = true;
   let recipient = null;
@@ -331,6 +335,7 @@ PAIRING_SCRIPT = r"""
     sealButton.disabled = true;
     copyCode.disabled = true;
     copyEnvelope.disabled = true;
+    if (stageButton) stageButton.disabled = true;
   }
   function canonical(value) {
     return JSON.stringify(value, Object.keys(value).sort());
@@ -386,7 +391,7 @@ PAIRING_SCRIPT = r"""
       tokenInput.disabled = false;
       generateButton.disabled = false;
       result.textContent = 'Recibo válido. Genere un código, cópielo al bot privado y '
-        + 'luego selle el token y el código. Esta función todavía no está desplegada.';
+        + 'luego selle el token y el código. La instalación protegida sigue pendiente.';
     } catch (_) {
       clean();
       disable();
@@ -404,6 +409,7 @@ PAIRING_SCRIPT = r"""
     output.value = '';
     output.hidden = true;
     copyEnvelope.disabled = true;
+    if (stageButton) stageButton.disabled = true;
     result.textContent = 'Abra el chat PRIVADO con su propio bot en Telegram, '
       + 'envíe el comando indicado y recién después cree el texto cifrado. '
       + 'Nunca envíe el token a Telegram, chats de soporte ni GitHub.';
@@ -415,6 +421,7 @@ PAIRING_SCRIPT = r"""
     sealButton.disabled = true;
     generateButton.disabled = true;
     copyEnvelope.disabled = true;
+    if (stageButton) stageButton.disabled = true;
     output.value = '';
     let plaintext = null;
     let shared = null;
@@ -460,8 +467,10 @@ PAIRING_SCRIPT = r"""
       output.value = base64url(envelope);
       output.hidden = false;
       copyEnvelope.disabled = false;
-      result.textContent = 'Texto cifrado V2 listo, pero el workflow de instalación V2 '
-        + 'NO está habilitado. No lo use en el instalador V1 existente.';
+      if (stageButton && csrfField && operationField
+          && csrfField.value && operationField.value) stageButton.disabled = false;
+      result.textContent = 'Texto cifrado V2 listo. Puede guardarlo en el panel privado '
+        + 'si se habilitó el botón. El instalador protegido V2 todavía no está activo.';
       succeeded = true;
     } catch (_) {
       if (active) result.textContent = 'No se generó el texto cifrado. '
@@ -493,6 +502,33 @@ PAIRING_SCRIPT = r"""
   }
   copy(copyCode, codeInput, 'Comando para enviar exclusivamente a su bot privado');
   copy(copyEnvelope, output, 'Sobre cifrado para un futuro instalador V2');
+  if (stageButton) stageButton.addEventListener('click', async () => {
+    if (!active || stageButton.disabled || !csrfField || !operationField || !output.value)
+      return;
+    stageButton.disabled = true;
+    const sealed = output.value;
+    try {
+      const body = new URLSearchParams({
+        csrf: csrfField.value, operation_id: operationField.value, envelope: sealed
+      });
+      const response = await fetch('/telegram/emparejar', {
+        method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        credentials: 'same-origin', cache: 'no-store', redirect: 'error', body
+      });
+      if (!active) return;
+      if (response.status !== 202) throw Error('stage not confirmed');
+      output.value = '';
+      output.hidden = true;
+      copyEnvelope.disabled = true;
+      codeInput.value = '';
+      pairingCode = '';
+      result.textContent = 'Sobre CIFRADO resguardado en Boca. El bot sigue detenido. '
+        + 'Telegram NO está conectado: falta validación y autorización del workflow protegido.';
+    } catch (_) {
+      if (active) result.textContent = 'No se confirmó el resguardo cifrado. '
+        + 'El bot sigue detenido. Reabra un enlace aprobado antes de reintentar.';
+    }
+  });
   addEventListener('pagehide', () => {
     active = false;
     clean();
@@ -518,9 +554,34 @@ PAIRING_CSP = (
     f"script-src 'sha256-{_hash(PAIRING_SCRIPT)}'"
 )
 
+# Only the explicitly wired, authenticated POST page can contact its own
+# localhost controller. V1 and the inert V2 preview keep connect-src none.
+PAIRING_STAGING_CSP = PAIRING_CSP.replace("connect-src 'none'", "connect-src 'self'")
 
-def pairing_page() -> bytes:
-    """Unrouted V2 owner interface; contains no secret or dynamic recipient data."""
+
+def pairing_page(*, csrf: str | None = None, operation_id: str | None = None) -> bytes:
+    """V2 owner UI, optional one-use private encrypted staging (never install)."""
+    if (csrf is None) != (operation_id is None):
+        raise ValueError("private pairing handoff requires both operation bindings")
+    controls = ""
+    if csrf is not None and operation_id is not None:
+        if (
+            re.fullmatch(r"[A-Za-z0-9_-]{43}", csrf) is None
+            or re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                operation_id,
+            )
+            is None
+        ):
+            raise ValueError("invalid private pairing operation")
+        controls = (
+            f'<input id="pairing-csrf" type="hidden" value="{csrf}">'
+            f'<input id="pairing-operation" type="hidden" value="{operation_id}">'
+            '<button id="pairing-stage" type="button" disabled>'
+            "Solicitar emparejamiento en el panel privado</button>"
+            "<p>Se guarda únicamente el sobre cifrado; la instalación requiere "
+            "un paso posterior protegido en GitHub Actions.</p>"
+        )
     return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Emparejar Telegram · Boca Socios Assistant</title><style>{_SETUP_STYLE}</style></head>
@@ -542,6 +603,7 @@ spellcheck="false" maxlength="149" disabled>
 <label for="pairing-sealed">Texto cifrado V2 (no compatible con instalador V1)</label>
 <textarea id="pairing-sealed" readonly autocomplete="off" spellcheck="false" hidden></textarea>
 <button id="pairing-copy-envelope" type="button" disabled>Copiar texto cifrado V2</button>
+{controls}
 <p>Nada se transmite al panel: el token sólo se cifra localmente en esta pestaña.
 El chat ID únicamente podrá descubrirlo un workflow protegido futuro que verifique
 un único mensaje privado reciente y una confirmación de identidad.</p>
