@@ -54,6 +54,26 @@ jobs:
         run: |
           test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
           test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' "$IMAGE")" = "https://github.com/mbalbo2023/boca-socios-assistant"
+      - name: Measure disposable dual-image logical and archive bytes
+        env:
+          CONTROLLER_IMAGE: boca-release-validation:${{ github.sha }}
+          BROWSER_IMAGE: boca-browser-release-validation:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Disposable PR runner only. Size is Docker's logical image size;
+          # the shared tar is uncompressed. Neither is a droplet pull delta.
+          controller_size="$(docker image inspect --format '{{.Size}}' "$CONTROLLER_IMAGE")"
+          browser_size="$(docker image inspect --format '{{.Size}}' "$BROWSER_IMAGE")"
+          [[ "$controller_size" =~ ^[1-9][0-9]{0,18}$ ]]
+          [[ "$browser_size" =~ ^[1-9][0-9]{0,18}$ ]]
+          total_logical_bytes=$((controller_size + browser_size))
+          test "$total_logical_bytes" -gt "$controller_size"
+          pair_tar_bytes="$(docker image save "$CONTROLLER_IMAGE" "$BROWSER_IMAGE" | wc -c)"
+          pair_tar_bytes="${pair_tar_bytes//[[:space:]]/}"
+          [[ "$pair_tar_bytes" =~ ^[1-9][0-9]{0,18}$ ]]
+          printf 'BOCA_PR_DUAL_IMAGE_CAPACITY source_sha=%s controller_logical_bytes=%s browser_logical_bytes=%s total_logical_bytes=%s pair_tar_bytes=%s runner=DISPOSABLE host_delta=UNVERIFIED\n' \
+            "$GITHUB_SHA" "$controller_size" "$browser_size" "$total_logical_bytes" "$pair_tar_bytes" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Require the reviewed browser IPC worker command
         env:
           IMAGE: boca-browser-release-validation:${{ github.sha }}
