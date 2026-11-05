@@ -64,6 +64,7 @@ class TelegramProductionDockerIO(ProductionRootlessDockerIO):
     def field(self, kind: str, ident: str, field: str) -> object:
         if self.uid != 10001 or self.gid != 10001:
             raise LifecycleAdapterNoGo("telegram_rootless_owner_unverified")
+        scope: tuple[str, ...]
         if (
             kind == "container"
             and cleanup.HEX_ID.fullmatch(ident)
