@@ -479,7 +479,7 @@ class RootlessCutoverBackend:
         candidate_id: str | None,
         worker_id: str | None,
         lease: cleanup.BocaJobLease,
-    ) -> Literal["ACCEPT", "NO_GO", "INDETERMINATE"]:
+    ) -> Literal["ACCEPT", "NO_GO", "INDETERMINATE"] | cleanup.CleanupReceipt:
         cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
         if self.plan != plan:
             return "NO_GO"
@@ -518,7 +518,7 @@ class RootlessCutoverBackend:
             lease=lease,
         )
         if receipt.status != "ACCEPT":
-            return receipt.status
+            return receipt
         if self.state == "RECOVERED" and not commit_started:
             stage.discard_recovered(plan.attempt_id, plan.legacy_compose_sha)
         elif self.state == "COMMITTED" and commit_started and candidate_id and worker_id:
@@ -527,7 +527,9 @@ class RootlessCutoverBackend:
             )
         else:
             return "NO_GO"
-        return "ACCEPT"
+        # Preserve the SAME attested before/after metrics and exact removed IDs
+        # through the terminal Cutover receipt; status-only loses P0 evidence.
+        return receipt
 
 
 def execute_reviewed_cutover(

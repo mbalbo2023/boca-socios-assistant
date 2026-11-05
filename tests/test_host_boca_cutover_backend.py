@@ -196,13 +196,14 @@ def fake_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[list[str
         preserve_containers: frozenset[str],
         lease: cleanup.BocaJobLease,
         **_kwargs: object,
-    ) -> SimpleNamespace:
+    ) -> cleanup.CleanupReceipt:
         cleanup.verify_protected_boca_job_lease(lease, attempt_id)
         assert preserve_containers == (
             frozenset({NEW, WORKER}) if outcome == "SUCCESS" else frozenset({OLD})
         )
         events.append("cleanup")
-        return SimpleNamespace(status="ACCEPT")
+        disk = cleanup.DiskInodes(1000, 100, 3000, 300, 8, 10, 16, 18)
+        return cleanup.CleanupReceipt(outcome, attempt_id, "ACCEPT", disk, disk, (), (), ())
 
     monkeypatch.setattr(adapter.cleanup, "execute_protected", clean)
     monkeypatch.setattr(adapter, "_SQL_SHA", SHA(SQL))
@@ -258,7 +259,8 @@ def test_full_host_adapter_uses_real_stage_promotion_and_cleanup(
 ) -> None:
     events, root = fake_host
     receipt = _run_adapter(_backend(events))
-    assert receipt.accepted and receipt.state == "ACCEPTED"
+    assert receipt.accepted and receipt.cleanup_receipt is not None
+    assert receipt.cleanup_receipt.redacted_json() and receipt.state == "ACCEPTED"
     assert events == [
         "attest",
         "model",
