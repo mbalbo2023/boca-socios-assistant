@@ -572,6 +572,7 @@ def test_prepared_cutover_backend_aborts_on_missing_durable_marker(
         adapter.host, "_validate_docker_boundary", lambda: events.append("rootless")
     )
     monkeypatch.setattr(adapter.host, "_validate_data_volume", lambda: events.append("volume"))
+
     def failed_exec(*args: str, **kwargs: object) -> str:
         if args[:2] == ("docker", "exec"):
             events.append("marker-uncertain")

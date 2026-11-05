@@ -216,9 +216,7 @@ def test_prepared_v2_cutover_invocation_has_exact_nonce_and_keeps_v1() -> None:
     for bad in ("", "0", plan.attempt_id, "not-digits"):
         with pytest.raises(cli.CutoverCliError):
             cli.encode_invocation(
-                plan,
-        bundle_sha256="a" * 64,
-        go_binding_sha256=GO, prepare_run_id=bad
+                plan, bundle_sha256="a" * 64, go_binding_sha256=GO, prepare_run_id=bad
             )
 
 
