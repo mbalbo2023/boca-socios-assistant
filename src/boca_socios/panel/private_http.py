@@ -7,9 +7,11 @@ login, queue admission, reservation or purchase path exists here.
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import re
+import secrets
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -47,6 +49,7 @@ from boca_socios.panel.passkey import PasskeyAssertion, PasskeyOwnerAuthenticati
 from boca_socios.panel.telegram_pairing_staging import (
     PairingStageConflict,
     PairingStageReceipt,
+    PairingStageRequest,
     PairingStageUnavailable,
 )
 from boca_socios.security.enrollment import (
@@ -54,6 +57,12 @@ from boca_socios.security.enrollment import (
     MemberNotFound,
 )
 from boca_socios.storage.database import Database
+from boca_socios.telegram_owner_webauthn import (
+    TelegramOwnerWitnessError,
+    TelegramStageOwnerWitness,
+    stage_owner_challenge,
+    verify_stage_owner_witness,
+)
 
 StartResponse = Callable[[str, list[tuple[str, str]]], object]
 _UUID_PATH = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -143,7 +152,7 @@ class PrivatePanelApplication:
         events: Mapping[str, str],
         observed_official_notices: Iterable[OfficialNotice] = (),
         official_notices_loader: Callable[[], Iterable[OfficialNotice]] | None = None,
-        telegram_pairing_stager: Callable[[bytes], PairingStageReceipt] | None = None,
+        telegram_pairing_stager: Callable[[PairingStageRequest], PairingStageReceipt] | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         parsed = urlsplit(origin)
@@ -367,8 +376,11 @@ class PrivatePanelApplication:
                     "__Host-boca_session=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0",
                 ),
             )
-        if path == "/telegram/emparejar" and self._telegram_pairing_stager is not None:
-            return self._stage_private_telegram_pairing(environ, session, start)
+        if self._telegram_pairing_stager is not None:
+            if path == "/telegram/emparejar/desafio":
+                return self._challenge_private_telegram_pairing(environ, session, start)
+            if path == "/telegram/emparejar":
+                return self._stage_private_telegram_pairing(environ, session, start)
         if path == "/comandos":
             return self._begin(environ, session, start)
         if path in ("/control/reanudar", "/control/pausar"):
@@ -389,11 +401,58 @@ class PrivatePanelApplication:
             return self._credential_action(environ, path, session, start)
         return _error(start, 404, "Ruta no disponible.")
 
+    def _challenge_private_telegram_pairing(
+        self, environ: Mapping[str, object], session: OwnerSession, start: StartResponse
+    ) -> list[bytes]:
+        """Server-issued one-use, ciphertext-bound WebAuthn UV challenge."""
+        fields = self._form(
+            environ, expected={"csrf", "operation_id", "envelope_sha256"}
+        )
+        if (
+            fields is None
+            or _canonical_uuid(fields["operation_id"]) is None
+            or not hmac.compare_digest(fields["csrf"], session.csrf)
+            or fields["operation_id"] not in session.operations
+            or session.operations[fields["operation_id"]].fingerprint is not None
+        ):
+            return _error(start, 403, "Emparejamiento privado no autorizado.")
+        request_nonce = secrets.token_hex(32)
+        challenged_at = int(self._now().timestamp())
+        try:
+            challenge = stage_owner_challenge(
+                envelope_sha256=fields["envelope_sha256"],
+                operation_id=fields["operation_id"],
+                request_nonce=request_nonce,
+                challenged_at=challenged_at,
+                verifier_binding=self._passkey.authorization_binding.hex(),
+            )
+        except TelegramOwnerWitnessError:
+            return _error(start, 422, "Sobre cifrado V2 inválido.")
+        if not self._passkey.issue_telegram_stage_challenge(challenge):
+            return _error(start, 429, "Espere antes de solicitar otra firma.")
+        result = {
+            "version": 1,
+            "challenge": telegram_bootstrap._b64(challenge),
+            "request_nonce": request_nonce,
+            "challenged_at": challenged_at,
+            "credential_id": self._passkey.credential_id,
+            "rp_id": owner_rp_host(self._origin),
+        }
+        return _response(
+            start, 200, json.dumps(result, separators=(",", ":")).encode("ascii"), html=False
+        )
+
     def _stage_private_telegram_pairing(
         self, environ: Mapping[str, object], session: OwnerSession, start: StartResponse
     ) -> list[bytes]:
-        """Only an encrypted owner request, NEVER a Telegram install receipt."""
-        fields = self._form(environ, expected={"csrf", "operation_id", "envelope"})
+        """Persist ciphertext + REAL fresh owner UV proof, never activate a bot."""
+        fields = self._form(
+            environ,
+            expected={
+                "csrf", "operation_id", "envelope", "request_nonce", "challenged_at",
+                "credential_id", "client_data_json", "authenticator_data", "signature",
+            },
+        )
         if fields is None or _canonical_uuid(fields["operation_id"]) is None:
             return _error(start, 400, "Solicitud privada inválida.")
         try:
@@ -404,9 +463,11 @@ class PrivatePanelApplication:
             return _error(start, 422, "Sobre cifrado V2 inválido.")
         if not envelope:
             return _error(start, 422, "Sobre cifrado V2 inválido.")
-        fingerprint = b"telegram-v2-stage:\0" + envelope
         status, operation = self._sessions.reserve(
-            session, fields["operation_id"], fields["csrf"], fingerprint
+            session,
+            fields["operation_id"],
+            fields["csrf"],
+            b"telegram-v2-stage-webAuthn:\0" + envelope,
         )
         if status:
             return _error(
@@ -414,7 +475,43 @@ class PrivatePanelApplication:
             )
         assert operation is not None and self._telegram_pairing_stager is not None
         try:
-            receipt = self._telegram_pairing_stager(envelope)
+            witness = TelegramStageOwnerWitness(
+                operation_id=fields["operation_id"],
+                request_nonce=fields["request_nonce"],
+                challenged_at=int(fields["challenged_at"]),
+                verifier_binding=self._passkey.authorization_binding.hex(),
+                assertion=PasskeyAssertion(
+                    fields["credential_id"],
+                    fields["client_data_json"],
+                    fields["authenticator_data"],
+                    fields["signature"],
+                ),
+            )
+            challenge = stage_owner_challenge(
+                envelope_sha256=hashlib.sha256(envelope).hexdigest(),
+                operation_id=witness.operation_id,
+                request_nonce=witness.request_nonce,
+                challenged_at=witness.challenged_at,
+                verifier_binding=witness.verifier_binding,
+            )
+            now = int(self._now().timestamp())
+            if (
+                not 0 <= now - witness.challenged_at <= 120
+                or self._passkey.verify_telegram_stage_assertion(
+                    witness.assertion, challenge
+                ) is None
+                or not verify_stage_owner_witness(
+                    witness, envelope, self._passkey, staged_at=now
+                )
+            ):
+                raise TelegramOwnerWitnessError("telegram_owner_webauthn_unverified")
+        except (TelegramOwnerWitnessError, ValueError, TypeError):
+            self._sessions.finish(operation, 403)
+            return _error(start, 403, "La firma reciente de la llave no se verificó.")
+        try:
+            receipt = self._telegram_pairing_stager(
+                PairingStageRequest(sealed_envelope=envelope, owner_witness=witness)
+            )
             if type(receipt) is not PairingStageReceipt or (
                 receipt.state != "STAGED_PENDING_PROTECTED_CUTOVER"
             ):
@@ -431,7 +528,8 @@ class PrivatePanelApplication:
             start,
             202,
             b'{"state":"STAGED_PENDING_PROTECTED_CUTOVER","telegram_connected":false,'
-            b'"sender":"OFF","notification_receipt":"UNVERIFIED"}',
+            b'"sender":"OFF","notification_receipt":"UNVERIFIED",'
+            b'"owner_passkey":"UV_VERIFIED_ONLY"}',
             html=False,
         )
 
