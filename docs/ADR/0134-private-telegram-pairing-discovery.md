@@ -311,3 +311,34 @@ fake custody adapter to prove ordering, replay and redacted NO_GO. They are
 The cutover writer has agreed to consume this as an **optional code-only
 callback** after candidate acceptance, *inaccessible* from current
 `phase()`/GitHub workflow until all physical receipts and gates exist.
+
+## End-to-end offline synthetic notice acceptance — 05/11/2026
+
+The adapter and the existing one-shot Telegram delivery fence are now
+exercised **together** by `tests/test_telegram_pairing_cutover_notice.py`.
+On a disposable test directory it constructs a real local X25519 recipient,
+encrypts an invented BotFather-format token + pairing code in the unrouted
+Chrome V2 implementation, validates an owner HMAC/nonce and the seven
+same-lease callback phases, resolves a single fake private `/start` through
+all four read-only Bot API method fixtures, and installs the **real** local
+V1 secret pair and V2 visibility marker with UID mapped only for pytest.
+It then creates a temporary exact schema-0007 SQLite ledger and drives the
+preexisting `telegram_one_shot.deliver_once()` through a fake in-memory
+`TelegramSender` that returns `TelegramAck(42)` or raises an ambiguous
+transport error. There is **exactly one** simulated heartbeat attempt; a
+second attempt is blocked by the durable SQLite intent fence in both cases.
+`verify_ready` accepts only the synthetic API-accepted fixture and rejects
+ambiguity. A second owner pairing with the consumed nonce is denied before
+even a Telegram read. Assertions preserve V2 source/recipient marker and
+public receipt with `sender_state=OFF`, `human_notification_receipt=UNVERIFIED`.
+Token and private chat are absent from the redacted receipt and captured
+stdout; test provider and host callbacks are synthetic, with no real API,
+message, tunnel, Docker, protected dispatch, host mutation or Boca navigation.
+
+**This is intentionally not human receipt evidence.** Even a successful
+provider-acceptance simulation and durable marker cannot enable the sender.
+Physical owner authorization, trusted one-use nonce backend, exact-image
+same-lease host inspection, dedicated provider egress, real private Telegram
+confirmation and separately recorded human notification receipt are still
+NO_GO requirements of the sole governed #227 cutover. The installed controller
+remains unchanged; no second workflow, deployment or cleanup target is added.
