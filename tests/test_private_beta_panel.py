@@ -208,6 +208,10 @@ def test_global_intake_pause_resume_never_stops_http_or_existing_commands() -> N
         assert _request(app, "/", cookie=cookie)[0] == 200
         initial = _request(app, "/control", cookie=cookie)
         assert initial[0] == 200 and b"Pausada" in initial[2]
+        assert b'<nav aria-label="Secciones">' in initial[2]
+        assert b'<a href="/control">Control</a>' in initial[2]
+        assert b'<button type="submit">Reanudar nuevas simulaciones</button>' in initial[2]
+        assert b'<p role="status">Estado: Pausada.' in initial[2]
         _, _, form = _request(app, "/comandos", cookie=cookie)
         fields = {
             "csrf": re.search(rb'name="csrf" value="([^"]+)"', form).group(1).decode(),

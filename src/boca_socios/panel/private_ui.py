@@ -69,6 +69,7 @@ def _page(title: str, content: str, *, body_attributes: str = "", script: str = 
 <title>{escape(title)} · Boca Socios Assistant</title><style>{STYLE}</style></head>
 <body{body_attributes}><nav aria-label="Secciones"><a href="/">Inicio</a> ·
 <a href="/socios">Socios</a> · <a href="/comandos">Simulación</a> ·
+<a href="/control">Control</a> ·
 <a href="/estado">Estado</a> · <a href="/avisos">Avisos</a></nav>
 <main>{content}</main>{script}</body></html>""".encode()
 
