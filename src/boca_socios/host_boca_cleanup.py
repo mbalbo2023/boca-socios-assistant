@@ -478,9 +478,7 @@ def _validate_inventory(value: Inventory) -> None:
                     or image.source not in (None, BOCA_SOURCE)
                     or any(
                         not ref.startswith("ghcr.io/mbalbo2023/boca-socios-assistant:")
-                        and not ref.startswith(
-                            "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:"
-                        )
+                        and not ref.startswith("ghcr.io/mbalbo2023/boca-socios-assistant@sha256:")
                         for ref in image.references
                     )
                 )
@@ -924,13 +922,7 @@ def _verify_historical_legacy_image(
     ):
         raise CleanupError("historical Boca image revision/digest/source unproven")
     references = tuple(
-        sorted(
-            {
-                ref
-                for ref in tags + digests
-                if isinstance(ref, str) and ref != "<none>:<none>"
-            }
-        )
+        sorted({ref for ref in tags + digests if isinstance(ref, str) and ref != "<none>:<none>"})
     )
     controller_prefixes = (
         "ghcr.io/mbalbo2023/boca-socios-assistant:",
@@ -940,8 +932,7 @@ def _verify_historical_legacy_image(
         not references
         or len(references) > 32
         or any(
-            not any(ref.startswith(prefix) for prefix in controller_prefixes)
-            or len(ref) > 256
+            not any(ref.startswith(prefix) for prefix in controller_prefixes) or len(ref) > 256
             for ref in references
         )
     ):
@@ -950,9 +941,7 @@ def _verify_historical_legacy_image(
     return references, source if isinstance(source, str) else None
 
 
-def attest_historical_legacy_image(
-    ident: str, reference: str, revision: str
-) -> LegacyImageProof:
+def attest_historical_legacy_image(ident: str, reference: str, revision: str) -> LegacyImageProof:
     """Precommit, exact ID from positively authenticated installed controller."""
     proof = LegacyImageProof(ident, reference, revision)
     _verify_historical_legacy_image(proof)
@@ -1104,9 +1093,7 @@ def _disk_inodes() -> DiskInodes:
             os.close(root_fd)
 
 
-def capture_inventory(
-    *, historical_legacy: LegacyImageProof | None = None
-) -> Inventory:
+def capture_inventory(*, historical_legacy: LegacyImageProof | None = None) -> Inventory:
     """Read-only Docker graph + disk/inodes before and after cleanup.
 
     Never inspect foreign work: ID-only global presence checks must prove this
