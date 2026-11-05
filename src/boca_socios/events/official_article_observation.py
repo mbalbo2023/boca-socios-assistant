@@ -113,7 +113,11 @@ def _visible(source_html: bytes) -> str:
     try:
         parser.feed(source_text)
         parser.close()
-        visible = parser.visible()
+        # The actual public article inserts U+200D before GENERALES. This is
+        # a zero-width *format* codepoint, not a word or category delimiter:
+        # discard only this observed character, retaining all other exact
+        # category/heading checks (and hashing the untouched source bytes).
+        visible = parser.visible().replace("\u200d", "")
     except (ValueError, AssertionError):
         raise OfflineCaptureError("official article HTML invalid") from None
     if _EXPECTED_TITLE.casefold() not in visible:

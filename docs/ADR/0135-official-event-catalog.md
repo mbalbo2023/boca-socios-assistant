@@ -455,3 +455,32 @@ reemplazo atómico en `/data/boca_official_notices.jsonl`. Hasta entonces las
 rutas del panel pueden legítimamente estar vacías sin que ello diga que no
 existen partidos. Esta extensión es **CODE-ONLY / PR-DRAFT / SIN HOST**;
 las pruebas locales son sintéticas y cada HEAD requiere Actions nuevas.
+
+### RCA R22.1 — separador invisible del artículo real (fix-forward acotado)
+
+La primera Action exact-SHA de la unión GET→extractor
+[42028314553](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42028314553)
+observó HTTP 200/TLS, **76.355 bytes**, SHA-256
+`db3b4cb424d5b6282dd7a562960be834705b8274637710b477d4154c26f14889`,
+11/11 marcadores públicos y un único GET, pero **no generó JSONL**:
+`offline_snapshot_state=NO_EVENTOS_VERIFICADOS`,
+`offline_snapshot_reason=article_semantics_unverified`. El job y la subida
+del recibo fueron verdes; ello no convierte la fuente en catálogo de eventos.
+
+Una inspección posterior de la página pública identificó literalmente un
+separador de formato invisible **U+200D (ZERO WIDTH JOINER)** entre la frase
+del cronograma y el encabezado GENERALES. El extractor R21.3 exigía que la
+sección intermedia fuese exactamente `generales` tras quitar sólo puntos y
+espacios; `_VisiblePublicText` conservaba el U+200D. Se reprodujo con una
+fixture sintética basada exclusivamente en esa diferencia: el nuevo test
+falló por `official category heading absent or ambiguous` antes del fix.
+
+Corrección mínima: **sólo en la proyección semántica**
+`official_article_observation._visible`, eliminar U+200D, sin eliminar otras
+letras, palabras, símbolos visibles o encabezados. El SHA se sigue calculando
+sobre los **bytes originales intactos** y `OfflineCapture` valida todos los
+fragmentos sobre la captura original. La posición/orden de las cinco
+categorías, horas, cierres y canal no se relajan. El test de U+200D y las
+pruebas anteriores deben pasar antes de una nueva Action: **aún no afirmar
+que el próximo recibo tendrá JSONL**. Si persiste otra diferencia, conservar
+NO_EVENTOS_VERIFICADOS y diagnosticar con recibos sin exportar HTML.
