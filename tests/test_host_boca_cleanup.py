@@ -824,3 +824,50 @@ def test_successful_cleanup_accepts_both_same_and_distinct_rootless_filesystems(
     assert receipt.after.docker_bytes_free > receipt.before.docker_bytes_free
     assert receipt.after.docker_inodes_free > receipt.before.docker_inodes_free
     assert receipt.known_residue == ()
+
+
+def test_postflight_public_receipt_tracks_exact_boca_removals_and_storage() -> None:
+    """Public ACK must expose verifiable Boca-only IDs, never foreign resources."""
+    before = gc.DiskInodes(1000, 100, 3000, 300, 8, 10, 16, 18)
+    after = gc.DiskInodes(1400, 104, 3400, 304, 8, 10, 16, 18)
+    receipt = gc.CleanupReceipt(
+        "SUCCESS",
+        ATTEMPT,
+        "ACCEPT",
+        before,
+        after,
+        (gc.Target("image", OLD_IMAGE), gc.Target("network", STALE_NET)),
+        (),
+        (),
+    )
+    data = json.loads(receipt.redacted_json())
+    assert data["version"] == 1 and data["scope"] == "boca-postdeploy"
+    assert data["attempt_id"] == ATTEMPT and data["status"] == "ACCEPT"
+    assert data["outcome"] == "SUCCESS"
+    assert data["before"]["stage_bytes_free"] == 1000
+    assert data["after"]["stage_inodes_free"] == 104
+    assert data["before"]["docker_bytes_free"] == 3000
+    assert data["after"]["docker_inodes_free"] == 304
+    assert data["removed"] == [
+        {"kind": "image", "id": OLD_IMAGE},
+        {"kind": "network", "id": STALE_NET},
+    ]
+    assert data["retained_uncertain"] == [] and data["known_residue"] == []
+    assert "porota" not in receipt.redacted_json().lower()
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        gc.Target("volume", DATA),
+        gc.Target("volume", "porota_data"),
+        gc.Target("container", "short"),
+    ],
+)
+def test_postflight_public_receipt_refuses_non_boca_or_persistent_targets(
+    unsafe: gc.Target,
+) -> None:
+    disk = gc.DiskInodes(1000, 100, 3000, 300, 8, 10, 16, 18)
+    receipt = gc.CleanupReceipt("SUCCESS", ATTEMPT, "ACCEPT", disk, disk, (unsafe,), (), ())
+    with pytest.raises(gc.CleanupError):
+        receipt.redacted_json()
