@@ -16,15 +16,21 @@ testable implementation; it remains **unwired to all live workflows**.
    across its install and finalizer. The cleanup module provides a Boca-only
    cooperative lock under `/run/user/10001`. Older workflows do not yet
    acquire it, so this alone does not establish global exclusivity.
-2. Snapshot **all** containers (including stopped foreign/Porota containers),
-   images (including duplicate tag IDs), networks and volumes on that dedicated
-   rootless engine, plus filesystem free bytes/inodes, before and after. This
-   identifies image/volume/network references by **other services** without
-   mutating those services.
-3. A stale container may be removed only when it is stopped and has exact Boca
-   project, Boca name and one immutable attempt label. A temporary volume or
-   network requires Boca project + matching attempt and zero known references.
-   Owner/data/key/Telegram volumes are **never eligible**.
+2. First perform an **ID-only global Docker census**, comparing it with the
+   precise Boca project-label filter. If **any foreign container**, foreign
+   network (excluding built-in Docker networks) or foreign volume appears in
+   the dedicated rootless daemon, **NO_GO before inspect**. Inspect *only*
+   project-filtered Boca resources, using narrowly allowlisted fields
+   (ID, labels, running, mounts, network membership, image references);
+   **never read foreign Config.Env, mount metadata or other workload
+   configuration**. Image IDs may repeat per tag, but are deduplicated.
+3. A stopped container is **not inherently garbage**. The protected job must
+   provide `preserve_containers` exact installed/stopped controller, parked
+   legacy and worker IDs, plus `retire_containers` explicit IDs from
+   authenticated attempt receipts. Removal requires positive Boca project,
+   name, immutable attempt label, exact retired ID and stopped state.
+   A temporary volume/network requires Boca project + matching attempt and
+   zero known references. Owner/data/key/Telegram volumes are **never eligible**.
 4. A stale image may be removed by **full image ID**, only if no container
    (running **or stopped**, from any project) references it and the exact Boca
    repository provenance label is present, with no foreign repository tags.
@@ -41,7 +47,10 @@ testable implementation; it remains **unwired to all live workflows**.
    must enumerate **zero known eligible Boca images and other resources**.
    Unexpected disappearance of unrelated resources is a NO_GO.
 7. An unproven possibly-Boca resource is **retained** and named in an
-   `INDETERMINATE` receipt. Known residue or observed drift is `NO_GO`;
+   `INDETERMINATE` receipt. A legacy first/beta attempt without an immutable
+   attempt label is **NO_GO until the producer/Compose marker contract is
+   migrated**; accepting a stopped legacy by name alone is forbidden.
+   Known residue or observed drift is `NO_GO`;
    only a complete, exact positive postflight is `ACCEPT`. The receipt
    records outcome, attempt, resource ID list, disk/inodes and reasons, without
    environment variables, credentials, filenames containing secrets or
@@ -53,10 +62,12 @@ testable implementation; it remains **unwired to all live workflows**.
   attempt container release; multi-tag and dangling provenance; unknown
   provenance; protected active image and persistent owner/data/key volumes;
   stopped foreign container retaining a Boca image; exact attempt mismatch;
-  lost deletion receipt; unrelated container drift; flock exclusivity.
-- Local QA for this exact source increment: **12 focused tests PASS**;
-  full suite **2511 passed + 31 subtests passed**; Ruff lint/format (393
-  files), Mypy (86 source files), repository policy and whitespace PASS.
+  lost deletion receipt; unrelated container drift; flock exclusivity;
+  exact-ID preservation of stopped installed controller/parked worker;
+  unlabelled historical beta NO_GO; foreign secret never inspected.
+- Local QA for this P0 correction: **18 focused tests PASS**;
+  full suite **2517 passed + 31 subtests passed**; Ruff lint/format
+  (393 files), Mypy (86 source files), repository policy and whitespace PASS.
 - `synthetic.py` and `ipc_worker.py` remain BLACKBOX; no Boca login,
   reservation or purchase and no Docker host operation has been dispatched.
 - **Physical NO_GO** until a reviewed, single protected finalizer actually

@@ -137,6 +137,8 @@ def test_always_cleanup_selectively_and_prove_zero_obsolete_images(outcome: str)
         outcome,
         ATTEMPT,
         preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset({OLD_ID}),
         probe=probe,
         delete_exact=remove,
     )
@@ -160,6 +162,8 @@ def test_known_obsolete_image_survives_delete_failure_and_is_no_go() -> None:
         "FAILURE",
         ATTEMPT,
         preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset({OLD_ID}),
         probe=probe,
         delete_exact=remove,
     )
@@ -188,6 +192,8 @@ def test_unknown_boca_image_retained_with_indeterminate_reason() -> None:
         "SUCCESS",
         ATTEMPT,
         preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset({OLD_ID}),
         probe=probe,
         delete_exact=remove,
     )
@@ -218,6 +224,8 @@ def test_other_app_reference_including_stopped_preserves_boca_image(
         "SUCCESS",
         ATTEMPT,
         preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset({OLD_ID}),
         probe=probe,
         delete_exact=remove,
     )
@@ -246,13 +254,21 @@ def test_multi_tag_image_uses_exact_id_and_failure_is_no_go() -> None:
             for image in inventory.images
         ),
     )
-    plan = gc.plan(inventory, ATTEMPT, preserve_images=frozenset({ACTIVE_IMAGE}))
+    plan = gc.plan(
+        inventory,
+        ATTEMPT,
+        preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset({OLD_ID}),
+    )
     assert gc.Target("image", OLD_IMAGE) in plan.targets
     probe, remove, _deleted = _probe_and_delete(inventory, delete_failure=True)
     receipt = gc.execute(
         "SUCCESS",
         ATTEMPT,
         preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset({OLD_ID}),
         probe=probe,
         delete_exact=remove,
     )
@@ -277,6 +293,8 @@ def test_dangling_image_with_exact_boca_source_label_is_cleanable() -> None:
         "FAILURE",
         ATTEMPT,
         preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset({OLD_ID}),
         probe=probe,
         delete_exact=remove,
     )
@@ -309,6 +327,8 @@ def test_boca_protected_lease_exclusive_and_not_reusable(
                 "SUCCESS",
                 "41897569930",
                 preserve_images=frozenset({ACTIVE_IMAGE}),
+                preserve_containers=frozenset({ACTIVE_ID}),
+                retire_containers=frozenset({OLD_ID}),
                 lease=lease,
             )
     assert not lease.active
@@ -317,6 +337,8 @@ def test_boca_protected_lease_exclusive_and_not_reusable(
             "SUCCESS",
             ATTEMPT,
             preserve_images=frozenset({ACTIVE_IMAGE}),
+            preserve_containers=frozenset({ACTIVE_ID}),
+            retire_containers=frozenset({OLD_ID}),
             lease=lease,
         )
 
@@ -327,6 +349,8 @@ def test_unrelated_container_drift_causes_no_go_not_silent_accept() -> None:
         "SUCCESS",
         ATTEMPT,
         preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset({OLD_ID}),
         probe=probe,
         delete_exact=remove,
     )
@@ -339,10 +363,161 @@ def test_wrong_attempt_does_not_delete_unknown_boca_resources() -> None:
         "FAILURE",
         "41897569930",
         preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset(),
         probe=probe,
         delete_exact=remove,
     )
-    assert receipt.status == "INDETERMINATE"
+    assert receipt.status == "NO_GO"
     assert not deleted
     assert gc.Target("container", OLD_ID) not in deleted
     assert receipt.retained_uncertain
+
+
+def test_stopped_installed_controller_and_parked_worker_are_never_auto_deleted() -> None:
+    inventory = _inventory()
+    protected_controller = replace(
+        inventory.containers[0],
+        running=False,
+        labels=OWNED,
+    )
+    inventory = replace(
+        inventory,
+        containers=(protected_controller, inventory.containers[1], inventory.containers[2]),
+    )
+    probe, remove, deleted = _probe_and_delete(inventory)
+    receipt = gc.execute(
+        "SUCCESS",
+        ATTEMPT,
+        preserve_images=frozenset({ACTIVE_IMAGE, OLD_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID, OLD_ID}),
+        retire_containers=frozenset(),
+        probe=probe,
+        delete_exact=remove,
+    )
+    assert receipt.status == "ACCEPT"
+    assert {c.ident for c in probe().containers} >= {ACTIVE_ID, OLD_ID}
+    assert {i.ident for i in probe().images} >= {ACTIVE_IMAGE, OLD_IMAGE}
+    assert not any(target.kind in ("container", "image") for target in deleted)
+
+
+def test_legacy_beta_stopped_without_attempt_label_requires_no_go() -> None:
+    inventory = _inventory()
+    unlabelled_legacy = replace(inventory.containers[1], labels=BOCA)
+    inventory = replace(
+        inventory,
+        containers=(inventory.containers[0], unlabelled_legacy, inventory.containers[2]),
+    )
+    probe, remove, deleted = _probe_and_delete(inventory)
+    receipt = gc.execute(
+        "FAILURE",
+        ATTEMPT,
+        preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset(),
+        probe=probe,
+        delete_exact=remove,
+    )
+    assert receipt.status == "NO_GO"
+    assert not any(t.ident == OLD_ID for t in deleted)
+    assert any("missing-or-unproven-attempt" in reason for reason in receipt.retained_uncertain)
+
+
+def test_foreign_container_secret_never_inspected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_docker(*args: str) -> str:
+        calls.append(args)
+        if "inspect" in args or "Env" in " ".join(args):
+            pytest.fail("attempted to inspect foreign workload secret")
+        if args == ("ps", "-a", "-q", "--no-trunc"):
+            return ACTIVE_ID + "\n" + FOREIGN_ID + "\n"
+        if args == (
+            "ps",
+            "-a",
+            "-q",
+            "--no-trunc",
+            "--filter",
+            "label=com.docker.compose.project=boca-socios",
+        ):
+            return ACTIVE_ID + "\n"
+        pytest.fail(f"unexpected Docker command {args!r}")
+
+    monkeypatch.setattr(gc, "_docker", fake_docker)
+    with pytest.raises(gc.CleanupError, match="foreign containers"):
+        gc.capture_inventory()
+    assert all("inspect" not in call for call in calls)
+
+
+def test_narrow_docker_field_rejects_environment_read() -> None:
+    with pytest.raises(gc.CleanupError, match="outside narrowly reviewed"):
+        gc._inspect_field("container", ACTIVE_ID, "Config.Env")
+
+
+def test_capture_inventory_reads_only_filtered_boca_subset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inspections: list[tuple[str, str, str]] = []
+
+    def filtered_docker(*args: str) -> str:
+        assert "inspect" not in args
+        if args[:1] == ("ps",):
+            return ACTIVE_ID + "\n"
+        if args[:2] == ("network", "ls"):
+            return "" if "type=builtin" in args else PRIVATE_NET + "\n"
+        if args[:2] == ("volume", "ls"):
+            return DATA + "\n"
+        if args[:2] == ("image", "ls"):
+            return ACTIVE_IMAGE + "\n"
+        pytest.fail(f"unexpected Docker query {args!r}")
+
+    fields: dict[str, object] = {
+        "Id": ACTIVE_ID,
+        "Name": "/boca-socios-controller-1",
+        "Image": ACTIVE_IMAGE,
+        "State.Running": True,
+        "Config.Labels": {"com.docker.compose.project": "boca-socios"},
+        "Mounts": [{"Type": "volume", "Name": DATA}],
+        "NetworkSettings.Networks": {"boca-socios_boca_private": {}},
+        "RepoTags": ["ghcr.io/mbalbo2023/boca-socios-assistant:stable"],
+        "RepoDigests": [],
+        "Containers": {ACTIVE_ID: {}},
+        "Labels": {"com.docker.compose.project": "boca-socios"},
+    }
+
+    def inspected(kind: gc.KIND, ident: str, field: str) -> object:
+        inspections.append((kind, ident, field))
+        assert ident in {ACTIVE_ID, ACTIVE_IMAGE, PRIVATE_NET, DATA}
+        assert field != "Config.Env"
+        if kind == "image" and field == "Config.Labels":
+            return {"org.opencontainers.image.source": gc.BOCA_SOURCE}
+        if kind == "network" and field == "Name":
+            return "boca-socios_boca_private"
+        if kind == "volume" and field == "Name":
+            return DATA
+        if kind == "network" and field == "Id":
+            return PRIVATE_NET
+        if kind == "image" and field == "Id":
+            return ACTIVE_IMAGE
+        return fields[field]
+
+    monkeypatch.setattr(gc, "_docker", filtered_docker)
+    monkeypatch.setattr(gc, "_inspect_field", inspected)
+    monkeypatch.setattr(gc, "_disk_inodes", lambda: gc.DiskInodes(4000, 800))
+    inventory = gc.capture_inventory()
+    assert len(inventory.containers) == len(inventory.images) == 1
+    assert len(inventory.networks) == len(inventory.volumes) == 1
+    assert all(ident != FOREIGN_ID for _kind, ident, _field in inspections)
+    assert inventory.disk.inodes_free == 800
+
+
+def test_disk_probe_rejects_symlinked_boca_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(gc, "DISK_ROOT", tmp_path)
+    (tmp_path / "external").mkdir()
+    (tmp_path / "boca-socios").symlink_to(tmp_path / "external", target_is_directory=True)
+    with pytest.raises(gc.CleanupError, match="measurement unsafe"):
+        gc._disk_inodes()

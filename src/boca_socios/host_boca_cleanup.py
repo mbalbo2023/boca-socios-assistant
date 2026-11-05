@@ -19,7 +19,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
 KIND = Literal["container", "volume", "network", "image"]
 OUTCOME = Literal["SUCCESS", "FAILURE"]
@@ -32,6 +32,9 @@ BOCA_IMAGE_PREFIXES = (
 )
 BOCA_SOURCE = "https://github.com/mbalbo2023/boca-socios-assistant"
 ATTEMPT_LABELS = (
+    "boca.socios.install-attempt",
+    "boca.socios.beta-install-attempt",
+    "boca.socios.update-attempt",
     "boca.socios.browser-ipc-attempt",
     "boca.socios.telegram-runtime-attempt",
     "boca.socios.cutover-a-attempt",
@@ -54,6 +57,7 @@ EXPECTED_UID = 10001
 DOCKER_SOCKET = f"unix:///run/user/{EXPECTED_UID}/docker.sock"
 LEASE_DIR = Path(f"/run/user/{EXPECTED_UID}")
 LEASE_FILE = "boca-socios-protected-job.lock"
+DISK_ROOT = Path("/srv")
 
 
 class CleanupError(ValueError):
@@ -261,17 +265,30 @@ def _validate_inventory(value: Inventory) -> None:
             raise CleanupError("Docker image references malformed")
 
 
-def plan(inventory: Inventory, attempt_id: str, *, preserve_images: frozenset[str]) -> CleanupPlan:
+def plan(
+    inventory: Inventory,
+    attempt_id: str,
+    *,
+    preserve_images: frozenset[str],
+    preserve_containers: frozenset[str],
+    retire_containers: frozenset[str],
+) -> CleanupPlan:
     """Find only demonstrably Boca, attempt-owned, unused stale resources.
 
     Other apps may share a rootless daemon: every container is considered when
     deciding image references and attached volumes, even when it is not Boca.
     """
-    if not ATTEMPT_ID.fullmatch(attempt_id) or any(
-        not HEX_ID.fullmatch(image) for image in preserve_images
+    if (
+        not ATTEMPT_ID.fullmatch(attempt_id)
+        or any(not HEX_ID.fullmatch(image) for image in preserve_images)
+        or any(not HEX_ID.fullmatch(ident) for ident in preserve_containers | retire_containers)
+        or preserve_containers & retire_containers
     ):
         raise CleanupError("postdeploy exact attempt or protected image invalid")
     _validate_inventory(inventory)
+    all_ids = {c.ident for c in inventory.containers}
+    if not preserve_containers <= all_ids:
+        raise CleanupError("protected installed/parked container missing from inventory")
     referenced_images = {c.image_id for c in inventory.containers} | set(preserve_images)
     referenced_volumes = {v for c in inventory.containers for v in c.volumes}
     referenced_networks = {n for c in inventory.containers for n in c.networks}
@@ -284,10 +301,16 @@ def plan(inventory: Inventory, attempt_id: str, *, preserve_images: frozenset[st
             and c.name.removeprefix("/").startswith("boca-socios-")
             and _attempt_owner(labels, attempt_id)
         )
-        if positive and not c.running:
+        if c.ident in preserve_containers:
+            continue
+        if c.ident in retire_containers:
+            if not positive or c.running:
+                raise CleanupError("retirement receipt does not match stopped Boca attempt")
             targets.append(Target("container", c.ident))
         elif c.name.removeprefix("/").startswith("boca-socios-") and not c.running and not positive:
-            uncertain.append(f"container:{c.ident}:unproven-attempt")
+            uncertain.append(f"container:{c.ident}:missing-or-unproven-attempt-NO_GO")
+        elif positive and not c.running:
+            uncertain.append(f"container:{c.ident}:stopped-not-authorized-for-retirement")
     for volume in inventory.volumes:
         labels = _labels(volume.labels)
         if volume.name in PERSISTENT_VOLUMES:
@@ -336,6 +359,8 @@ def execute(
     attempt_id: str,
     *,
     preserve_images: frozenset[str],
+    preserve_containers: frozenset[str],
+    retire_containers: frozenset[str],
     probe: Callable[[], Inventory],
     delete_exact: Callable[[Target], None],
 ) -> CleanupReceipt:
@@ -347,7 +372,13 @@ def execute(
     if outcome not in ("SUCCESS", "FAILURE"):
         raise CleanupError("postdeploy status is not a reviewed outcome")
     before = probe()
-    plan(before, attempt_id, preserve_images=preserve_images)
+    plan(
+        before,
+        attempt_id,
+        preserve_images=preserve_images,
+        preserve_containers=preserve_containers,
+        retire_containers=retire_containers,
+    )
     removed: list[Target] = []
     try:
         # A stopped attempt container can be the sole remaining reference to
@@ -356,7 +387,13 @@ def execute(
         # remains; never assume the initial graph is the final graph.
         for _ in range(MAX_DELETIONS):
             fresh = probe()
-            candidates = plan(fresh, attempt_id, preserve_images=preserve_images).targets
+            candidates = plan(
+                fresh,
+                attempt_id,
+                preserve_images=preserve_images,
+                preserve_containers=preserve_containers,
+                retire_containers=retire_containers,
+            ).targets
             if not candidates:
                 break
             target = candidates[0]
@@ -364,7 +401,16 @@ def execute(
                 raise CleanupError("target reappeared after verified selective removal")
             delete_exact(target)
             after_delete = probe()
-            if target in plan(after_delete, attempt_id, preserve_images=preserve_images).targets:
+            if (
+                target
+                in plan(
+                    after_delete,
+                    attempt_id,
+                    preserve_images=preserve_images,
+                    preserve_containers=preserve_containers,
+                    retire_containers=retire_containers,
+                ).targets
+            ):
                 raise CleanupError("known removable Boca Docker residue survived delete")
             removed.append(target)
         else:
@@ -373,7 +419,13 @@ def execute(
         # No blind retry. A lost Docker receipt may have succeeded or failed.
         # The final inventory exposes any known residue but never runs prune.
         after = probe()
-        final = plan(after, attempt_id, preserve_images=preserve_images)
+        final = plan(
+            after,
+            attempt_id,
+            preserve_images=preserve_images,
+            preserve_containers=preserve_containers,
+            retire_containers=retire_containers,
+        )
         return CleanupReceipt(
             outcome,
             attempt_id,
@@ -385,7 +437,13 @@ def execute(
             final.targets,
         )
     after = probe()
-    final = plan(after, attempt_id, preserve_images=preserve_images)
+    final = plan(
+        after,
+        attempt_id,
+        preserve_images=preserve_images,
+        preserve_containers=preserve_containers,
+        retire_containers=retire_containers,
+    )
     before_ids = (
         {("container", c.ident) for c in before.containers}
         | {("image", i.ident) for i in before.images}
@@ -407,7 +465,7 @@ def execute(
             + [f"unexpected-creation:{kind}:{ident}" for kind, ident in unexpected_creations]
         )
     )
-    if final.targets or drift_reasons:
+    if final.targets or drift_reasons or any("NO_GO" in reason for reason in final.uncertain):
         status: Literal["ACCEPT", "INDETERMINATE", "NO_GO"] = "NO_GO"
     elif final.uncertain:
         status = "INDETERMINATE"
@@ -498,26 +556,105 @@ def _names(command: str, *args: str) -> list[str]:
     return result
 
 
+def _inspect_field(kind: KIND, ident: str, field: str) -> object:
+    """Read only one allowlisted Docker field, never full Config/Env."""
+    fields = {
+        "container": frozenset(
+            {
+                "Id",
+                "Name",
+                "Image",
+                "State.Running",
+                "Config.Labels",
+                "Mounts",
+                "NetworkSettings.Networks",
+            }
+        ),
+        "image": frozenset({"Id", "RepoTags", "RepoDigests", "Config.Labels"}),
+        "network": frozenset({"Id", "Name", "Containers", "Labels"}),
+        "volume": frozenset({"Name", "Labels"}),
+    }
+    if field not in fields[kind]:
+        raise CleanupError("Docker field outside narrowly reviewed allowlist")
+    prefix = {
+        "container": ("inspect",),
+        "image": ("image", "inspect"),
+        "network": ("network", "inspect"),
+        "volume": ("volume", "inspect"),
+    }[kind]
+    try:
+        return json.loads(_docker(*prefix, "--format", "{{json ." + field + "}}", ident))
+    except (ValueError, TypeError) as exc:
+        raise CleanupError("Docker narrow inspected field JSON malformed") from exc
+
+
+def _disk_inodes() -> DiskInodes:
+    """No symlink follows: Boca root must be exact rootless owner if present."""
+    root_fd: int | None = None
+    child_fd: int | None = None
+    try:
+        root_fd = os.open(DISK_ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            child_fd = os.open(
+                "boca-socios",
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=root_fd,
+            )
+        except FileNotFoundError:
+            # Fresh-install FAILURE before root creation; /srv is the same
+            # persistent filesystem and this probe creates no placeholder.
+            pass
+        if child_fd is not None:
+            details = os.fstat(child_fd)
+            if (
+                not stat.S_ISDIR(details.st_mode)
+                or details.st_uid != EXPECTED_UID
+                or details.st_gid != EXPECTED_UID
+                or stat.S_IMODE(details.st_mode) != 0o700
+            ):
+                raise CleanupError("Boca root owner/mode/inode unsafe")
+        stats = os.fstatvfs(child_fd if child_fd is not None else root_fd)
+        return DiskInodes(stats.f_bavail * stats.f_frsize, stats.f_favail)
+    except OSError as exc:
+        raise CleanupError("Boca disk/inode measurement unsafe") from exc
+    finally:
+        if child_fd is not None:
+            os.close(child_fd)
+        if root_fd is not None:
+            os.close(root_fd)
+
+
 def capture_inventory() -> Inventory:
     """Read-only Docker graph + disk/inodes before and after cleanup.
 
-    All Docker containers are enumerated, including foreign projects and
-    stopped containers, because they can reference a Boca image or volume.
+    Never inspect foreign work: ID-only global presence checks must prove this
+    particular rootless daemon has no foreign containers/networks/volumes.
+    Config.Env and every other unallowlisted inspected field are never read.
     """
+    project_filter = f"label=com.docker.compose.project={BOCA_PROJECT}"
+    every_container = set(_ids("ps", "-a", "-q", "--no-trunc"))
+    boca_containers = set(_ids("ps", "-a", "-q", "--no-trunc", "--filter", project_filter))
+    if every_container != boca_containers:
+        raise CleanupError("rootless Docker daemon has foreign containers; NO_GO without inspect")
+    every_network = set(_ids("network", "ls", "-q", "--no-trunc"))
+    builtin_networks = set(_ids("network", "ls", "-q", "--no-trunc", "--filter", "type=builtin"))
+    boca_networks = set(_ids("network", "ls", "-q", "--no-trunc", "--filter", project_filter))
+    if every_network - builtin_networks != boca_networks:
+        raise CleanupError("rootless Docker daemon has unproven networks; NO_GO")
+    every_volume = set(_names("volume", "ls", "-q"))
+    boca_volumes = set(_names("volume", "ls", "-q", "--filter", project_filter))
+    if every_volume != boca_volumes:
+        raise CleanupError("rootless Docker daemon has foreign volumes; NO_GO")
     containers: list[Container] = []
-    for ident in _ids("ps", "-a", "-q", "--no-trunc"):
-        record = _json(_docker("inspect", "--format", "{{json .}}", ident))
-        if record.get("Id") != ident:
+    for ident in sorted(boca_containers):
+        if _inspect_field("container", ident, "Id") != ident:
             raise CleanupError("Docker container ID changed during inventory")
-        config = _dict(record.get("Config"))
-        state = _dict(record.get("State"))
-        connected_networks = _dict(_dict(record.get("NetworkSettings")).get("Networks") or {})
-        mounts = record.get("Mounts")
-        if (
-            type(state.get("Running")) is not bool
-            or not isinstance(mounts, list)
-            or len(mounts) > 32
-        ):
+        running = _inspect_field("container", ident, "State.Running")
+        connected_networks = _dict(
+            _inspect_field("container", ident, "NetworkSettings.Networks") or {}
+        )
+        mounts = _inspect_field("container", ident, "Mounts")
+        if type(running) is not bool or not isinstance(mounts, list) or len(mounts) > 32:
             raise CleanupError("Docker container running/mount state malformed")
         mounted_volumes: list[str] = []
         for mount in mounts:
@@ -527,8 +664,8 @@ def capture_inventory() -> Inventory:
                 if not isinstance(name, str) or not DOCKER_NAME.fullmatch(name):
                     raise CleanupError("Docker volume attachment invalid")
                 mounted_volumes.append(name)
-        name = record.get("Name")
-        image = record.get("Image")
+        name = _inspect_field("container", ident, "Name")
+        image = _inspect_field("container", ident, "Image")
         if not isinstance(name, str) or not isinstance(image, str):
             raise CleanupError("Docker container name/image unavailable")
         containers.append(
@@ -536,21 +673,51 @@ def capture_inventory() -> Inventory:
                 ident,
                 name,
                 image,
-                cast(bool, state["Running"]),
-                _docker_labels(config.get("Labels")),
+                running,
+                _docker_labels(_inspect_field("container", ident, "Config.Labels")),
                 tuple(sorted(mounted_volumes)),
                 tuple(sorted(connected_networks)),
             )
         )
     images: list[Image] = []
-    for ident in _ids("image", "ls", "-a", "-q", "--no-trunc", dedupe=True):
-        record = _json(_docker("image", "inspect", "--format", "{{json .}}", ident))
-        if record.get("Id") != ident:
+    _ids("image", "ls", "-a", "-q", "--no-trunc", dedupe=True)  # bounded ID-only global census
+    label_images = set(
+        _ids(
+            "image",
+            "ls",
+            "-a",
+            "-q",
+            "--no-trunc",
+            "--filter",
+            f"label=org.opencontainers.image.source={BOCA_SOURCE}",
+            dedupe=True,
+        )
+    )
+    reference_images = set(
+        _ids(
+            "image",
+            "ls",
+            "-a",
+            "-q",
+            "--no-trunc",
+            "--filter",
+            "reference=ghcr.io/mbalbo2023/boca-socios-assistant*",
+            dedupe=True,
+        )
+    )
+    for ident in sorted(label_images | reference_images):
+        if ident not in label_images:
+            # Boca-like tag but unproven provenance: retain without inspecting
+            # the potentially foreign image Config/Env.
+            images.append(
+                Image(ident, ("ghcr.io/mbalbo2023/boca-socios-assistant:unverified",), None)
+            )
+            continue
+        if _inspect_field("image", ident, "Id") != ident:
             raise CleanupError("Docker image ID changed during inventory")
-        config = _dict(record.get("Config"))
-        labels = _dict(config.get("Labels")) if config.get("Labels") is not None else {}
-        tags = record.get("RepoTags") or []
-        digests = record.get("RepoDigests") or []
+        labels = _dict(_inspect_field("image", ident, "Config.Labels") or {})
+        tags = _inspect_field("image", ident, "RepoTags") or []
+        digests = _inspect_field("image", ident, "RepoDigests") or []
         if not isinstance(tags, list) or not isinstance(digests, list):
             raise CleanupError("Docker image references malformed")
         refs = tuple(
@@ -565,32 +732,32 @@ def capture_inventory() -> Inventory:
         source = labels.get("org.opencontainers.image.source")
         images.append(Image(ident, refs, source if isinstance(source, str) else None))
     networks: list[Network] = []
-    for ident in _ids("network", "ls", "-q", "--no-trunc"):
-        record = _json(_docker("network", "inspect", "--format", "{{json .}}", ident))
-        if record.get("Id") != ident:
+    for ident in sorted(boca_networks):
+        if _inspect_field("network", ident, "Id") != ident:
             raise CleanupError("Docker network ID changed during inventory")
-        name = record.get("Name")
-        attached = _dict(record.get("Containers") or {})
+        name = _inspect_field("network", ident, "Name")
+        attached = _dict(_inspect_field("network", ident, "Containers") or {})
         if not isinstance(name, str) or any(not HEX_ID.fullmatch(x) for x in attached):
             raise CleanupError("Docker network connection map invalid")
         networks.append(
-            Network(name, ident, tuple(sorted(attached)), _docker_labels(record.get("Labels")))
+            Network(
+                name,
+                ident,
+                tuple(sorted(attached)),
+                _docker_labels(_inspect_field("network", ident, "Labels")),
+            )
         )
     volumes: list[Volume] = []
-    for name in _names("volume", "ls", "-q"):
-        record = _json(_docker("volume", "inspect", "--format", "{{json .}}", name))
-        if record.get("Name") != name:
+    for name in sorted(boca_volumes):
+        if _inspect_field("volume", name, "Name") != name:
             raise CleanupError("Docker volume identity changed during inventory")
-        volumes.append(Volume(name, _docker_labels(record.get("Labels"))))
-    # First-install failure can happen before Boca's target root is created.
-    boca_root = Path("/srv/boca-socios")
-    stats = os.statvfs(boca_root if boca_root.is_dir() else Path("/srv"))
+        volumes.append(Volume(name, _docker_labels(_inspect_field("volume", name, "Labels"))))
     result = Inventory(
         tuple(containers),
         tuple(images),
         tuple(networks),
         tuple(volumes),
-        DiskInodes(stats.f_bavail * stats.f_frsize, stats.f_favail),
+        _disk_inodes(),
     )
     _validate_inventory(result)
     return result
@@ -616,6 +783,8 @@ def execute_protected(
     attempt_id: str,
     *,
     preserve_images: frozenset[str],
+    preserve_containers: frozenset[str],
+    retire_containers: frozenset[str],
     lease: BocaJobLease,
 ) -> CleanupReceipt:
     """Future *unwired* generic finalizer for first/beta/cutover install.
@@ -646,6 +815,8 @@ def execute_protected(
         outcome,
         attempt_id,
         preserve_images=preserve_images,
+        preserve_containers=preserve_containers,
+        retire_containers=retire_containers,
         probe=capture_inventory,
         delete_exact=delete_exact,
     )
