@@ -147,11 +147,13 @@ def test_bot_start_requires_healthy_worker_but_stop_can_drain_unhealthy_worker(
 def test_private_telegram_stage_is_ciphertext_only_and_sender_stays_off(
     tmp_path: Path,
 ) -> None:
-    """Browser owner POST never becomes nonce, Bot API call, or positive ACK."""
+    """Fresh owner ES256 UV + encrypted stage never authorizes Bot API or ACK."""
     staged_path = tmp_path / STAGING_FILENAME
+    clock = [0.0]
     app, key, credential = _app_with_stage(
         tmp_path / "boca.sqlite3",
         lambda encrypted: stage_private_telegram_pairing(staged_path, encrypted),
+        clock=clock,
     )
     cookie = _login(app, key, credential)
     status, _, page = _request(app, "/telegram/emparejar", cookie=cookie)
@@ -162,7 +164,7 @@ def test_private_telegram_stage_is_ciphertext_only_and_sender_stays_off(
         "/telegram/emparejar",
         cookie=cookie,
         method="POST",
-        payload=_stage_form(page, encrypted),
+        payload=_stage_form(app, cookie, page, encrypted, key, credential, clock),
     )
     assert posted == 202
     result = json.loads(body)
@@ -171,6 +173,7 @@ def test_private_telegram_stage_is_ciphertext_only_and_sender_stays_off(
         "telegram_connected": False,
         "sender": "OFF",
         "notification_receipt": "UNVERIFIED",
+        "owner_passkey": "UV_VERIFIED_ONLY",
     }
     persisted = json.loads(staged_path.read_text(encoding="utf-8"))
     assert set(persisted) == {
@@ -181,6 +184,7 @@ def test_private_telegram_stage_is_ciphertext_only_and_sender_stays_off(
         "stage_id",
         "staged_at",
         "version",
+        "owner_witness",
     }
     assert persisted["envelope_sha256"] == hashlib.sha256(encrypted).hexdigest()
     assert "protected_nonce" not in persisted and "token" not in persisted
