@@ -117,9 +117,15 @@ class LocalBetaRuntime:
         key_file: Path,
         browser: SyntheticBrowserPort,
         initialize_new: bool = False,
+        initial_engine_stopped: bool = False,
         command_timeout_seconds: float = 5.0,
     ) -> LocalBetaRuntime:
-        if type(initialize_new) is not bool or not database_path.is_absolute():
+        if (
+            type(initialize_new) is not bool
+            or type(initial_engine_stopped) is not bool
+            or (initialize_new and initial_engine_stopped)
+            or not database_path.is_absolute()
+        ):
             raise ValueError("invalid local BETA storage configuration")
         # Key custody and mode are checked before a first-install write.
         vault = CredentialVault.from_secret_file(key_file)
@@ -150,7 +156,12 @@ class LocalBetaRuntime:
                 # Never remove the new file: a partial first install needs
                 # explicit Boca-only diagnosis, not a silent retry.
                 raise LocalRuntimeUnavailable("local BETA initialization failed") from None
-        commands = BetaCommandHost.start(coordinator, coordinator_factory=new_coordinator)
+        if initial_engine_stopped:
+            commands = BetaCommandHost.start_stopped(
+                coordinator, coordinator_factory=new_coordinator
+            )
+        else:
+            commands = BetaCommandHost.start(coordinator, coordinator_factory=new_coordinator)
         return cls(database=database, vault=vault, outbox=outbox, commands=commands)
 
     @property

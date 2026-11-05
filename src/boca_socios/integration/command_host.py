@@ -96,6 +96,40 @@ class BetaCommandHost:
             host._engine_state = "running"
         return host
 
+    @classmethod
+    def start_stopped(
+        cls,
+        coordinator: BetaCoordinator,
+        *,
+        coordinator_factory: Callable[[], BetaCoordinator],
+        request_timeout_seconds: float = 5.0,
+        startup_timeout_seconds: float = 10.0,
+        shutdown_timeout_seconds: float = 35.0,
+    ) -> BetaCommandHost:
+        """Restore an attested owner STOP without creating a running thread.
+
+        Reboot recovery must not start a loop and then stop it: that would
+        replay durable commands before the trusted host STOP is honored.
+        The future explicit `start_engine()` creates a fresh loop and invokes
+        the normal recovery only after another protected owner instruction.
+        """
+        if not callable(coordinator_factory):
+            raise ValueError("stopped engine requires a restart factory")
+        host = cls(
+            coordinator,
+            coordinator_factory=coordinator_factory,
+            request_timeout_seconds=request_timeout_seconds,
+            startup_timeout_seconds=startup_timeout_seconds,
+            shutdown_timeout_seconds=shutdown_timeout_seconds,
+        )
+        # __init__ allocates only an inert event-loop object and Thread
+        # object. Close the unused loop before a later explicit START replaces
+        # it, so STOP-on-reboot leaks neither threads nor loop descriptors.
+        host._loop.close()
+        with host._lock:
+            host._engine_state = "stopped"
+        return host
+
     def _run(self) -> None:
         asyncio.set_event_loop(self._loop)
         self._ready.set()
