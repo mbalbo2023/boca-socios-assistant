@@ -16,7 +16,8 @@ from boca_socios.telegram_pairing_install import PairingCustodyReceipt
 from boca_socios.telegram_same_lease_stage import execute_staged_pairing_under_lease
 from test_host_telegram_owner_stage import _prepared as host_fixture
 from test_telegram_pairing_cutover import _host as synthetic_host_claim
-from test_telegram_pairing_resolver import NOW, _FakeBotApi, _prepared as sealed_pair
+from test_telegram_pairing_resolver import NOW, _FakeBotApi
+from test_telegram_pairing_resolver import _prepared as sealed_pair
 from test_telegram_pairing_ui import TOKEN
 
 _SIGNING_KEY = bytes(range(32))
