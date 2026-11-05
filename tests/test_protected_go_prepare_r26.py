@@ -236,7 +236,7 @@ def test_physical_lifecycle_receipt_must_be_single_exact_applied_json(
         "BOCA_LIFECYCLE_GO_PREFLIGHT": "success",
         "BOCA_LIFECYCLE_HOST_APPLY": "success",
     })
-    (tmp_path / go.RUNNER_HOST_CONTEXT).write_text(_token(hosted) + "\\n")
+    (tmp_path / go.RUNNER_HOST_CONTEXT).write_text(_token(hosted) + "\n")
     path = tmp_path / "boca-lifecycle-host.receipt"
     accepted = {
         "version": 1,
@@ -250,7 +250,7 @@ def test_physical_lifecycle_receipt_must_be_single_exact_applied_json(
         "status": "APPLIED",
         "physical_ack": True,
     }
-    path.write_text(json.dumps(accepted, sort_keys=True, separators=(",", ":")) + "\\n")
+    path.write_text(json.dumps(accepted, sort_keys=True, separators=(",", ":")) + "\n")
     go.assert_physical_host_receipt(env)
     for changed in (
         {"status": "REFUSED"},
@@ -260,10 +260,10 @@ def test_physical_lifecycle_receipt_must_be_single_exact_applied_json(
         {"request_id": "123"},
         {"extra": "unexpected"},
     ):
-        path.write_text(json.dumps(accepted | changed, sort_keys=True, separators=(",", ":")) + "\\n")
+        path.write_text(json.dumps(accepted | changed, sort_keys=True, separators=(",", ":")) + "\n")
         with pytest.raises(go.PreparedGoError):
             go.assert_physical_host_receipt(env)
-    path.write_text(json.dumps(accepted, sort_keys=True, separators=(",", ":")) + "\\n\\n")
+    path.write_text(json.dumps(accepted, sort_keys=True, separators=(",", ":")) + "\n\n")
     with pytest.raises(go.PreparedGoError):
         go.assert_physical_host_receipt(env)
     env["BOCA_LIFECYCLE_HOST_APPLY"] = "failure"

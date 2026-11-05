@@ -344,7 +344,7 @@ def assert_physical_host_receipt(environ: Mapping[str, str]) -> None:
     if not payload_path.is_absolute() or payload_path.is_symlink():
         raise PreparedGoError("physical receipt not an exact runner file")
     blob = payload_path.read_bytes()
-    if not 2 < len(blob) <= 1024 or blob.count(b"\\n") != 1 or not blob.endswith(b"\\n"):
+    if not 2 < len(blob) <= 1024 or blob.count(b"\n") != 1 or not blob.endswith(b"\n"):
         raise PreparedGoError("physical receipt missing or ambiguous")
     receipt = json.loads(blob[:-1].decode("ascii"), object_pairs_hook=context._unique_fields)  # noqa: SLF001
     expected_keys = {

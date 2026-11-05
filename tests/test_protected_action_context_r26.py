@@ -89,7 +89,7 @@ def test_exact_context_binds_to_current_protected_actions(kind: str, operation: 
         {"attempt_id": "42000000001"},
         {"source_sha": "0" * 40},
         {"worker_id": "c" * 64},
-        {"controller_id": "d" * 64},
+        {"controller_id": "d" * 63},
         {"expected_target": "restart"},
         {"expected_component": "porota"},
         {"additional_shell_command": "docker system prune"},
@@ -204,14 +204,16 @@ def test_telegram_absent_vs_stopped_sender_state_requires_exact_pins() -> None:
     assert gate.decode_context(
         _encode(stopped), operation="telegram-activate", environ=_env()
     ) == stopped
-    for change in (
-        {"sender_expected_state": "stopped", "sender_id": "7" * 64},
-        {"sender_expected_state": "stopped"},
-        {"sender_expected_state": "absent", "sender_id": "7" * 64},
-        {"sender_image": absent["worker_image"]},
-        {"sender_attempt": "0"},
-    ):
+    # Each mutation must actually change or REMOVE a validated field.
+    malformed = (
+        absent | {"sender_expected_state": "stopped"},
+        stopped | {"sender_expected_state": "absent"},
+        {key: value for key, value in stopped.items() if key != "sender_image"},
+        stopped | {"sender_image": absent["worker_image"]},
+        stopped | {"sender_attempt": "0"},
+    )
+    for changed in malformed:
         with pytest.raises(gate.ProtectedActionError):
             gate.decode_context(
-                _encode(stopped | change), operation="telegram-activate", environ=_env()
+                _encode(changed), operation="telegram-activate", environ=_env()
             )
