@@ -1,0 +1,454 @@
+"""Protected import coordinates for ONE reviewed public Boca notice artifact.
+
+Runner verification is pure/read-only; the only writer lives inside the
+already-reviewed Boca controller image and accepts a bounded ZIP on stdin.
+The host workflow must separately attest the exact controller ID, image,
+UID, rootless Docker socket and held Boca job flock before invoking it.
+
+No network, Docker, SSH, owner credentials, ticket I/O or new volume here.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import hashlib
+import json
+import os
+import re
+import shlex
+import sys
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any
+
+from boca_socios.events.host_official_notice_import import (
+    OfficialImportError,
+    ReviewedOfficialArtifactPin,
+    _verified_jsonl,
+    import_reviewed_official_artifact,
+)
+from boca_socios.events.official_news_receipt import OFFICIAL_NEWS_URL
+
+_REPOSITORY = "mbalbo2023/boca-socios-assistant"
+_REPOSITORY_ID = 1_437_453_367
+_SOURCE_WORKFLOW_ID = 407_700_710
+_IMAGE = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_SHA40 = re.compile(r"[0-9a-f]{40}\Z")
+_CONTAINER_ID = _SHA256
+_POSITIVE = re.compile(r"[1-9][0-9]{0,19}\Z")
+_GO_SCHEMA = "boca-official-notice-import-go-v1"
+_COORDINATES_VERSION = "boca-official-notice-import-v1"
+_MAX_TOKEN = 2048
+_MAX_ZIP = 128 * 1024
+_DATA = Path("/data")
+_HOST_SH = r"""
+set -euo pipefail
+cid="$1"
+image="$2"
+token="$3"
+[[ "$cid" =~ ^[0-9a-f]{64}$ ]]
+[[ "$image" =~ ^ghcr[.]io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}$ ]]
+[[ "$token" =~ ^[A-Za-z0-9_-]{1,4096}$ ]]
+[[ "$(id -u)" = 10001 ]]
+socket=/run/user/10001/docker.sock
+lock=/run/user/10001/boca-socios-protected-job.lock
+[[ -S "$socket" && ! -L "$socket" && -f "$lock" && ! -L "$lock" ]]
+[[ "$(stat -c '%u:%a:%h:%F' "$lock")" = '10001:600:1:regular file' ]]
+exec 9<>"$lock"
+flock -n -x 9
+d=(docker --host unix:///run/user/10001/docker.sock)
+options="$(timeout 15s "${d[@]}" info --format '{{json .SecurityOptions}}' 2>/dev/null)"
+[[ "$options" == *'name=rootless'* ]]
+expected_image_id="$(timeout 15s "${d[@]}" image inspect --format '{{.Id}}' "$image" 2>/dev/null)"
+[[ "$expected_image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+probe() { timeout 15s "${d[@]}" container inspect --format "$1" "$cid" 2>/dev/null; }
+[[ "$(probe '{{.Id}}')" = "$cid" ]]
+[[ "$(probe '{{.Name}}')" = /boca-socios-controller-1 ]]
+[[ "$(probe '{{index .Config.Labels "com.docker.compose.project"}}')" = boca-socios ]]
+[[ "$(probe '{{index .Config.Labels "com.docker.compose.service"}}')" = controller ]]
+[[ "$(probe '{{.Config.User}}')" = 10001:10001 ]]
+[[ "$(probe '{{.Image}}')" = "$expected_image_id" ]]
+[[ "$(probe '{{.State.Running}}')" = true ]]
+[[ "$(probe '{{.State.Health.Status}}')" = healthy ]]
+[[ "$(probe '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Type}}|{{.Name}}|{{.RW}}{{end}}{{end}}')" = volume\|boca-socios_boca_data\|true ]]
+# Only the verified Boca container is executed; no host write, no second SSH.
+receipt="$(timeout 30s "${d[@]}" exec -i --user 10001:10001 "$cid" \
+  python -m boca_socios.host_official_notice_actions container-import "$token")"
+[[ "${#receipt}" -le 360 ]]
+[[ "$receipt" =~ ^BOCA_OFFICIAL_IMPORT\ state=(CREATED|UNCHANGED)\ main_sha=[0-9a-f]{40}\ artifact_sha256=[0-9a-f]{64}\ snapshot_sha256=[0-9a-f]{64}\ windows=5\ actionable=false\ data=preserved\ readback=PASS$ ]]
+# Recheck the exact instance after the write; drift makes the job NO_GO.
+[[ "$(probe '{{.Id}}')" = "$cid" ]]
+[[ "$(probe '{{.Image}}')" = "$expected_image_id" ]]
+[[ "$(probe '{{.State.Running}}')" = true ]]
+printf '%s\n' "$receipt"
+""".strip()
+
+
+class OfficialImportActionError(ValueError):
+    """Canonical coordinates, GitHub provenance or authorization is unproven."""
+
+
+@dataclass(frozen=True)
+class OfficialImportCoordinates:
+    main_sha: str
+    controller_image: str
+    controller_release_run_id: str
+    controller_id: str
+    source_run_id: str
+    source_head_sha: str
+    artifact_id: str
+    artifact_sha256: str
+    snapshot_sha256: str
+    source_sha256: str
+    observed_at_utc: str
+
+    def __post_init__(self) -> None:
+        if (
+            not all(type(value) is str for value in asdict(self).values())
+            or not _SHA40.fullmatch(self.main_sha)
+            or not _IMAGE.fullmatch(self.controller_image)
+            or not _POSITIVE.fullmatch(self.controller_release_run_id)
+            or not _CONTAINER_ID.fullmatch(self.controller_id)
+            or not _POSITIVE.fullmatch(self.source_run_id)
+            or not _SHA40.fullmatch(self.source_head_sha)
+            or not _POSITIVE.fullmatch(self.artifact_id)
+            or not all(
+                _SHA256.fullmatch(value)
+                for value in (
+                    self.artifact_sha256,
+                    self.snapshot_sha256,
+                    self.source_sha256,
+                )
+            )
+            or not 20 <= len(self.observed_at_utc) <= 45
+        ):
+            raise OfficialImportActionError("official import coordinates malformed")
+        _ = self.pin  # validates UTC and exact public article URL
+
+    @property
+    def pin(self) -> ReviewedOfficialArtifactPin:
+        pin = ReviewedOfficialArtifactPin(
+            artifact_url=(
+                f"https://github.com/{_REPOSITORY}/actions/runs/"
+                f"{self.source_run_id}/artifacts/{self.artifact_id}"
+            ),
+            artifact_sha256=self.artifact_sha256,
+            snapshot_sha256=self.snapshot_sha256,
+            source_url=OFFICIAL_NEWS_URL,
+            source_sha256=self.source_sha256,
+            observed_at_utc=self.observed_at_utc,
+        )
+        return pin
+
+
+def _canonical(obj: object) -> bytes:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+
+
+def _decode_object(data: bytes, *, expected: set[str]) -> dict[str, Any]:
+    try:
+        payload = json.loads(data)
+    except (UnicodeError, ValueError):
+        raise OfficialImportActionError("official import token malformed") from None
+    if type(payload) is not dict or set(payload) != expected or _canonical(payload) != data:
+        raise OfficialImportActionError("official import token is not canonical")
+    return payload
+
+
+def _nested_dict(obj: dict[str, Any], name: str) -> dict[str, Any]:
+    value = obj.get(name)
+    return value if type(value) is dict else {}
+
+
+def encode_coordinates(coords: OfficialImportCoordinates) -> str:
+    raw = _canonical({"schema": _COORDINATES_VERSION, **asdict(coords)})
+    if len(raw) > _MAX_TOKEN:
+        raise OfficialImportActionError("official import token exceeds budget")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def decode_coordinates(token: str) -> OfficialImportCoordinates:
+    if (
+        type(token) is not str
+        or not token
+        or len(token) > 2 * _MAX_TOKEN
+        or re.fullmatch(r"[A-Za-z0-9_-]+", token) is None
+    ):
+        raise OfficialImportActionError("official import token not bounded")
+    try:
+        raw = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
+    except (ValueError, binascii.Error):
+        raise OfficialImportActionError("official import token base64 invalid") from None
+    if len(raw) > _MAX_TOKEN or encode_raw(raw) != token:
+        raise OfficialImportActionError("official import token encoding not canonical")
+    fields = set(OfficialImportCoordinates.__dataclass_fields__)
+    obj = _decode_object(raw, expected={"schema", *fields})
+    if obj.pop("schema") != _COORDINATES_VERSION or not all(type(v) is str for v in obj.values()):
+        raise OfficialImportActionError("official import token schema invalid")
+    return OfficialImportCoordinates(**obj)
+
+
+def encode_raw(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def expected_go_sha256(
+    coords: OfficialImportCoordinates, *, operation_run_id: str, actor: str
+) -> str:
+    if not _POSITIVE.fullmatch(operation_run_id) or actor != "mbalbo2023":
+        raise OfficialImportActionError("official import GO actor or run invalid")
+    return hashlib.sha256(
+        _canonical(
+            {
+                "schema": _GO_SCHEMA,
+                "repository": _REPOSITORY,
+                "ref": "refs/heads/main",
+                "run_attempt": 1,
+                "operation_run_id": operation_run_id,
+                "actor": actor,
+                "destination": "/data/boca_official_notices.jsonl",
+                **asdict(coords),
+            }
+        )
+    ).hexdigest()
+
+
+def verify_artifact_from_github(
+    coords: OfficialImportCoordinates,
+    *,
+    source_run: dict[str, Any],
+    artifact: dict[str, Any],
+    archive: bytes,
+    independent_go_sha256: str,
+    operation_run_id: str,
+    actor: str,
+) -> str:
+    """Authenticate GitHub run/artifact metadata, exact ZIP and separate GO.
+
+    The caller obtains metadata and ZIP from GitHub using the protected runner
+    read-only token. Claims in the ZIP alone can never satisfy these checks.
+    """
+    approved = expected_go_sha256(coords, operation_run_id=operation_run_id, actor=actor)
+    if independent_go_sha256 != approved:
+        raise OfficialImportActionError("independent official import GO absent or mismatched")
+    if (
+        type(source_run) is not dict
+        or source_run.get("id") != int(coords.source_run_id)
+        or source_run.get("workflow_id") != _SOURCE_WORKFLOW_ID
+        or source_run.get("event") != "pull_request"
+        or source_run.get("conclusion") != "success"
+        or source_run.get("head_sha") != coords.source_head_sha
+        or _nested_dict(source_run, "repository").get("id") != _REPOSITORY_ID
+        or _nested_dict(source_run, "head_repository").get("id") != _REPOSITORY_ID
+        or type(artifact) is not dict
+        or artifact.get("id") != int(coords.artifact_id)
+        or artifact.get("expired") is not False
+        or artifact.get("name") != f"boca-official-news-receipt-{coords.source_run_id}"
+        or artifact.get("digest") != f"sha256:{coords.artifact_sha256}"
+        or artifact.get("size_in_bytes", 0) > _MAX_ZIP
+        or artifact.get("size_in_bytes", 0) <= 0
+        or _nested_dict(artifact, "workflow_run").get("id") != int(coords.source_run_id)
+        or _nested_dict(artifact, "workflow_run").get("repository_id") != _REPOSITORY_ID
+        or _nested_dict(artifact, "workflow_run").get("head_repository_id") != _REPOSITORY_ID
+        or _nested_dict(artifact, "workflow_run").get("head_sha") != coords.source_head_sha
+    ):
+        raise OfficialImportActionError("GitHub source run or artifact identity not reviewed")
+    try:
+        _verified_jsonl(archive, coords.pin)
+    except OfficialImportError:
+        raise OfficialImportActionError("public source ZIP/JSONL receipt proof failed") from None
+    return encode_coordinates(coords)
+
+
+def import_from_container_stdin(
+    coords: OfficialImportCoordinates, archive: bytes, *, data_dir: Path = _DATA
+) -> str:
+    """Perform exactly one create/replay inside the attested Boca UID container.
+
+    The workflow owns Docker, image, flock, exact CID and rootless attestation.
+    No replace option is exposed in this first public-data import route.
+    """
+    if os.geteuid() != 10_001 or data_dir != _DATA:
+        raise OfficialImportActionError("official import requires Boca container UID and /data")
+    try:
+        result = import_reviewed_official_artifact(
+            data_dir, artifact_zip=archive, reviewed_pin=coords.pin
+        )
+    except OfficialImportError:
+        raise OfficialImportActionError("Boca data import or readback failed") from None
+    if result.outcome not in ("CREATED", "UNCHANGED") or result.actionable is not False:
+        raise OfficialImportActionError("official notice import not non-actionable")
+    return (
+        "BOCA_OFFICIAL_IMPORT state="
+        f"{result.outcome} main_sha={coords.main_sha} "
+        f"artifact_sha256={coords.artifact_sha256} "
+        f"snapshot_sha256={coords.snapshot_sha256} "
+        "windows=5 actionable=false data=preserved readback=PASS"
+    )
+
+
+def build_single_ssh_host_command(coords: OfficialImportCoordinates, token: str) -> str:
+    """Build a fixed single-host Bash command from reviewed public coordinates.
+
+    The workflow sends the artifact bytes on SSH stdin. The helper itself is
+    NOT streamed or copied to host disk: it executes only from the digest-
+    checked Boca container image, after rootless CID and flock validation.
+    """
+    if decode_coordinates(token) != coords:
+        raise OfficialImportActionError("official import token/CID source mismatch")
+    return shlex.join(
+        ("bash", "-c", _HOST_SH, "--", coords.controller_id, coords.controller_image, token)
+    )
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    if not path.is_absolute() or not path.is_file() or path.stat().st_size > 100_000:
+        raise OfficialImportActionError("GitHub artifact metadata file unavailable")
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeError, ValueError, OSError):
+        raise OfficialImportActionError("GitHub artifact metadata malformed") from None
+    if type(obj) is not dict:
+        raise OfficialImportActionError("GitHub artifact metadata invalid")
+    return obj
+
+
+def _coords_from_env() -> OfficialImportCoordinates:
+    env = os.environ
+    return OfficialImportCoordinates(
+        main_sha=env.get("BOCA_SOURCE_SHA", ""),
+        controller_image=env.get("BOCA_IMAGE_REF", ""),
+        controller_release_run_id=env.get("BOCA_RELEASE_RUN_ID", ""),
+        controller_id=env.get("BOCA_OFFICIAL_CONTROLLER_ID", ""),
+        source_run_id=env.get("BOCA_OFFICIAL_NEWS_RUN_ID", ""),
+        source_head_sha=env.get("BOCA_OFFICIAL_NEWS_SOURCE_SHA", ""),
+        artifact_id=env.get("BOCA_OFFICIAL_NEWS_ARTIFACT_ID", ""),
+        artifact_sha256=env.get("BOCA_OFFICIAL_NEWS_ZIP_SHA256", ""),
+        snapshot_sha256=env.get("BOCA_OFFICIAL_NEWS_JSONL_SHA256", ""),
+        source_sha256=env.get("BOCA_OFFICIAL_NEWS_HTML_SHA256", ""),
+        observed_at_utc=env.get("BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC", ""),
+    )
+
+
+def _load_token(path: Path) -> str:
+    if not path.is_absolute() or not path.is_file() or path.stat().st_size > 4096:
+        raise OfficialImportActionError("official import runner token file missing")
+    try:
+        return path.read_text(encoding="ascii").strip()
+    except (UnicodeError, OSError):
+        raise OfficialImportActionError("official import runner token unreadable") from None
+
+
+def _private_write_once(path: Path, data: bytes) -> None:
+    if not path.is_absolute() or not path.parent.is_dir() or len(data) > 4096:
+        raise OfficialImportActionError("official import token destination invalid")
+    fd = -1
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            fd = -1
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError:
+        raise OfficialImportActionError("official import token write failed") from None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _runner_preflight(argv: list[str]) -> int:
+    if len(argv) != 6:
+        raise OfficialImportActionError("official import runner arguments incomplete")
+    coords = _coords_from_env()
+    actor = os.environ.get("GITHUB_ACTOR", "")
+    run_id = os.environ.get("GITHUB_RUN_ID", "")
+    approved = os.environ.get("BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256", "")
+    if approved != expected_go_sha256(coords, operation_run_id=run_id, actor=actor):
+        raise OfficialImportActionError("official import independent GO invalid")
+    zip_path = Path(argv[4])
+    if not zip_path.is_absolute() or zip_path.stat().st_size > _MAX_ZIP:
+        raise OfficialImportActionError("official import ZIP path/size invalid")
+    try:
+        archive = zip_path.read_bytes()
+    except OSError:
+        raise OfficialImportActionError("official import ZIP unavailable") from None
+    token = verify_artifact_from_github(
+        coords,
+        source_run=_load_json(Path(argv[2])),
+        artifact=_load_json(Path(argv[3])),
+        archive=archive,
+        independent_go_sha256=approved,
+        operation_run_id=run_id,
+        actor=actor,
+    )
+    _private_write_once(Path(argv[5]), (token + "\n").encode("ascii"))
+    print("BOCA_OFFICIAL_IMPORT_PREFLIGHT state=READY host=untouched")
+    return 0
+
+
+def _runner_host_command(argv: list[str]) -> int:
+    if len(argv) != 3:
+        raise OfficialImportActionError("official import host command args invalid")
+    coords = _coords_from_env()
+    token = _load_token(Path(argv[2]))
+    print(build_single_ssh_host_command(coords, token))
+    return 0
+
+
+def _assert_runner_host_receipt(argv: list[str]) -> int:
+    if len(argv) != 3:
+        raise OfficialImportActionError("official import host receipt args invalid")
+    if (
+        os.environ.get("BOCA_OFFICIAL_IMPORT_PREFLIGHT") != "success"
+        or os.environ.get("BOCA_OFFICIAL_IMPORT_HOST_APPLY") != "success"
+    ):
+        raise OfficialImportActionError("official import go or host outcome not positive")
+    coords = _coords_from_env()
+    path = Path(argv[2])
+    if not path.is_absolute() or not path.is_file() or path.stat().st_size > 360:
+        raise OfficialImportActionError("official import host terminal receipt absent")
+    try:
+        receipt = path.read_text(encoding="ascii")
+    except (UnicodeError, OSError):
+        raise OfficialImportActionError(
+            "official import host terminal receipt unreadable"
+        ) from None
+    for state in ("CREATED", "UNCHANGED"):
+        expected = (
+            f"BOCA_OFFICIAL_IMPORT state={state} main_sha={coords.main_sha} "
+            f"artifact_sha256={coords.artifact_sha256} "
+            f"snapshot_sha256={coords.snapshot_sha256} "
+            "windows=5 actionable=false data=preserved readback=PASS\n"
+        )
+        if receipt == expected:
+            print("BOCA_OFFICIAL_IMPORT_ASSERT state=ACCEPTED receipt=EXACT source=UNVERIFIED")
+            return 0
+    raise OfficialImportActionError("official import terminal receipt identity mismatch")
+
+
+def _run_cli(argv: list[str]) -> int:
+    if len(argv) == 3 and argv[1] == "container-import":
+        coords = decode_coordinates(argv[2])
+        archive = sys.stdin.buffer.read(_MAX_ZIP + 1)
+        if not 0 < len(archive) <= _MAX_ZIP:
+            raise OfficialImportActionError("official import archive size invalid")
+        print(import_from_container_stdin(coords, archive))
+        return 0
+    if len(argv) >= 2 and argv[1] == "runner-preflight":
+        return _runner_preflight(argv)
+    if len(argv) >= 2 and argv[1] == "runner-host-command":
+        return _runner_host_command(argv)
+    if len(argv) >= 2 and argv[1] == "assert-host-receipt":
+        return _assert_runner_host_receipt(argv)
+    raise OfficialImportActionError("official import CLI mode not permitted")
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(_run_cli(sys.argv))
+    except OfficialImportActionError:
+        print("BOCA_OFFICIAL_IMPORT state=NO_GO reason=import_contract_unverified", file=sys.stderr)
+        raise SystemExit(3) from None

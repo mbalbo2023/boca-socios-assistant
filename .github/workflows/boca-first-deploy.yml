@@ -8,7 +8,7 @@ on:
         description: Boca-only host operation; browser IPC is a separate, opt-in, protected BETA gate
         required: true
         type: choice
-        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, cutover-a-observe, cutover-a-apply, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
+        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, cutover-a-observe, cutover-a-apply, official-notice-import, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
         description: Exact current main commit approved for the operation
         required: true
@@ -59,6 +59,38 @@ on:
         type: string
       legacy_controller_id:
         description: Cutover A; mandatory exact original 64-hex ID for apply, optional for observation
+        required: false
+        type: string
+      official_controller_id:
+        description: Official notice only; exact running Boca controller container ID, never name inference
+        required: false
+        type: string
+      official_news_run_id:
+        description: Official notice only; reviewed successful PR-only public news source workflow run ID
+        required: false
+        type: string
+      official_news_source_sha:
+        description: Official notice only; exact public source PR workflow commit SHA
+        required: false
+        type: string
+      official_news_artifact_id:
+        description: Official notice only; exact GitHub artifact ID, no arbitrary URL
+        required: false
+        type: string
+      official_news_zip_sha256:
+        description: Official notice only; reviewed complete ZIP SHA-256
+        required: false
+        type: string
+      official_news_jsonl_sha256:
+        description: Official notice only; reviewed JSONL SHA-256
+        required: false
+        type: string
+      official_news_html_sha256:
+        description: Official notice only; public article body SHA-256 from source receipt
+        required: false
+        type: string
+      official_news_observed_at_utc:
+        description: Official notice only; exact source observation UTC timestamp
         required: false
         type: string
       service:
@@ -127,12 +159,19 @@ jobs:
         run: |
           uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
+      - name: Validate protected official notice artifact import offline only
+        run: |
+          uv run pytest -q tests/test_host_official_notice_actions_r24.py tests/test_official_import_actions_r24.py tests/test_host_official_notice_import.py
       - name: Assert PR cannot produce host cutover or cleanup receipt
         if: ${{ always() }}
         run: |
           set -euo pipefail
           if [[ -e "$RUNNER_TEMP/boca-cutover-a-host.receipt" ]]; then
             printf 'Boca Cutover A PR validation: NO_GO unexpected host receipt; abort.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if [[ -e "$RUNNER_TEMP/boca-official-import-host.receipt" ]]; then
+            printf 'Boca official notice PR validation: NO_GO unexpected host import receipt; abort.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           printf 'BOCA_CUTOVER_A_PR_VERIFY state=SOURCE_ONLY host_calls=0 deploy=NO_GO physical_cleanup=UNVERIFIED; any future protected host failure/lost runner must fail closed without assuming if:always executed.\n' >> "$GITHUB_STEP_SUMMARY"
@@ -744,6 +783,14 @@ jobs:
       BOCA_LEGACY_IMAGE_REF: ${{ inputs.legacy_image_ref }}
       BOCA_LEGACY_RELEASE_RUN_ID: ${{ inputs.legacy_release_run_id }}
       BOCA_LEGACY_CONTROLLER_ID: ${{ inputs.legacy_controller_id }}
+      BOCA_OFFICIAL_CONTROLLER_ID: ${{ inputs.official_controller_id }}
+      BOCA_OFFICIAL_NEWS_RUN_ID: ${{ inputs.official_news_run_id }}
+      BOCA_OFFICIAL_NEWS_SOURCE_SHA: ${{ inputs.official_news_source_sha }}
+      BOCA_OFFICIAL_NEWS_ARTIFACT_ID: ${{ inputs.official_news_artifact_id }}
+      BOCA_OFFICIAL_NEWS_ZIP_SHA256: ${{ inputs.official_news_zip_sha256 }}
+      BOCA_OFFICIAL_NEWS_JSONL_SHA256: ${{ inputs.official_news_jsonl_sha256 }}
+      BOCA_OFFICIAL_NEWS_HTML_SHA256: ${{ inputs.official_news_html_sha256 }}
+      BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC: ${{ inputs.official_news_observed_at_utc }}
     steps:
       - name: Require verified protected environment and matching main commit
         env:
@@ -921,6 +968,24 @@ jobs:
               test -n "$BOCA_RELEASE_RUN_ID"
               test -z "$BOCA_SITE_ENVELOPE"
               ;;
+            official-notice-import)
+              # Information-only data import, never a new application deploy.
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test "$BOCA_BETA_ENV_READY" = ready
+              test "$BOCA_BETA_PANEL_ORIGIN" = http://localhost:8443
+              test -n "$BOCA_BETA_OWNER_SUBJECT"
+              test -n "$BOCA_IMAGE_REF"
+              test -n "$BOCA_RELEASE_RUN_ID"
+              test -z "$BOCA_SITE_ENVELOPE"
+              [[ "$BOCA_OFFICIAL_CONTROLLER_ID" =~ ^[0-9a-f]{64}$ ]]
+              [[ "$BOCA_OFFICIAL_NEWS_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+              [[ "$BOCA_OFFICIAL_NEWS_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+              [[ "$BOCA_OFFICIAL_NEWS_ARTIFACT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+              [[ "$BOCA_OFFICIAL_NEWS_ZIP_SHA256" =~ ^[0-9a-f]{64}$ ]]
+              [[ "$BOCA_OFFICIAL_NEWS_JSONL_SHA256" =~ ^[0-9a-f]{64}$ ]]
+              [[ "$BOCA_OFFICIAL_NEWS_HTML_SHA256" =~ ^[0-9a-f]{64}$ ]]
+              test -n "$BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC"
+              ;;
             telegram-migrate|telegram-prepare|telegram-install|telegram-verify|telegram-test)
               if [[ -n "$BOCA_BROWSER_IMAGE_REF" ]]; then
                 test "$BOCA_BROWSER_ENV_READY" = ready
@@ -984,7 +1049,7 @@ jobs:
           PYTHONPATH: src
         run: python scripts/check_deploy_inputs.py --infrastructure-preflight "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_SERVICE" "$BOCA_BUDGET" "$BOCA_RELEASE_RUN_ID"
       - name: Validate immutable inputs and successful matching release
-        if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic' || inputs.operation == 'site-prepare' || inputs.operation == 'site-install' || inputs.operation == 'site-verify' || startsWith(inputs.operation, 'owner-') || inputs.operation == 'beta-install' || inputs.operation == 'beta-start' || startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'beta-acceptance' || startsWith(inputs.operation, 'telegram-') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply'
+        if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic' || inputs.operation == 'site-prepare' || inputs.operation == 'site-install' || inputs.operation == 'site-verify' || startsWith(inputs.operation, 'owner-') || inputs.operation == 'beta-install' || inputs.operation == 'beta-start' || startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'beta-acceptance' || startsWith(inputs.operation, 'telegram-') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import'
         env:
           PYTHONPATH: src
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1123,6 +1188,37 @@ jobs:
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-cutover.json" "$BOCA_SOURCE_SHA"
           python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
           python scripts/check_cutover_a_go.py --from-actions
+      - name: Require independent GO and exact official source artifact before SSH
+        id: official_import_go_preflight
+        if: inputs.operation == 'official-notice-import'
+        env:
+          BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256: ${{ vars.BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256 }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          # Independent protected Environment approval; dispatch inputs alone
+          # can never turn the reviewed public notice into a host operation.
+          [[ "$BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$BOCA_OFFICIAL_NEWS_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          [[ "$BOCA_OFFICIAL_NEWS_ARTIFACT_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BOCA_OFFICIAL_NEWS_RUN_ID" > "$RUNNER_TEMP/boca-official-source-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$BOCA_OFFICIAL_NEWS_ARTIFACT_ID" > "$RUNNER_TEMP/boca-official-artifact.json"
+          # GitHub's archive endpoint redirects to a short-lived signed ZIP.
+          # The helper verifies independent metadata + entire ZIP SHA256,
+          # then receipt/JSONL/source digests before any host interaction.
+          curl --fail --silent --show-error --location \
+            --connect-timeout 10 --max-time 40 \
+            --proto '=https' --proto-redir '=https' \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$BOCA_OFFICIAL_NEWS_ARTIFACT_ID/zip" \
+            -o "$RUNNER_TEMP/boca-official-artifact.zip"
+          python -m boca_socios.host_official_notice_actions runner-preflight \
+            "$RUNNER_TEMP/boca-official-source-run.json" \
+            "$RUNNER_TEMP/boca-official-artifact.json" \
+            "$RUNNER_TEMP/boca-official-artifact.zip" \
+            "$RUNNER_TEMP/boca-official-import.token"
       - name: Configure pinned SSH host key and dedicated identity
         env:
           BOCA_HOST: ${{ vars.BOCA_DEPLOY_HOST }}
@@ -1157,6 +1253,43 @@ jobs:
             printf '  ForwardAgent no\n'
           } > "$RUNNER_TEMP/boca-ssh/config"
           chmod 600 "$RUNNER_TEMP/boca-ssh/config"
+      - name: Import one reviewed official notice into the existing Boca volume
+        id: official_import_host_apply
+        if: inputs.operation == 'official-notice-import'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          # A second main/GO-context check happens immediately before the
+          # ONE SSH. Other services, ports and volumes are never contacted.
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-official-effect.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-official-effect.json" "$BOCA_SOURCE_SHA"
+          test -s "$RUNNER_TEMP/boca-official-import.token"
+          test -s "$RUNNER_TEMP/boca-official-artifact.zip"
+          remote_command="$(python -m boca_socios.host_official_notice_actions runner-host-command "$RUNNER_TEMP/boca-official-import.token")"
+          # One rootless Boca UID host transaction; host Bash holds the same
+          # cooperative flock across exact CID/image attestation, the write,
+          # readback and final inventory. No Docker pruning or restart occurs.
+          timeout --signal=TERM --kill-after=5s 120s ssh \
+            -F "$RUNNER_TEMP/boca-ssh/config" \
+            -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+            boca-target "$remote_command" \
+            < "$RUNNER_TEMP/boca-official-artifact.zip" \
+            > "$RUNNER_TEMP/boca-official-import-host.receipt" 2>/dev/null
+      - name: Refuse missing or ambiguous official import receipt
+        if: ${{ always() && inputs.operation == 'official-notice-import' }}
+        env:
+          PYTHONPATH: src
+          BOCA_OFFICIAL_IMPORT_PREFLIGHT: ${{ steps.official_import_go_preflight.outcome }}
+          BOCA_OFFICIAL_IMPORT_HOST_APPLY: ${{ steps.official_import_host_apply.outcome }}
+        run: |
+          set -euo pipefail
+          if ! python -m boca_socios.host_official_notice_actions assert-host-receipt "$RUNNER_TEMP/boca-official-import-host.receipt"; then
+            printf 'BOCA_OFFICIAL_IMPORT state=NO_GO host=UNVERIFIED data=preserved; NO retry or blind Docker cleanup, obtain a fresh Boca-only read-only inventory.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf 'BOCA_OFFICIAL_IMPORT state=ACCEPTED source=UNVERIFIED availability=UNVERIFIED actionable=false; physical Samsung Chrome panel observation still required.\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Apply exactly one reviewed Cutover A host transaction through memfd
         id: cutover_host_apply
         if: inputs.operation == 'cutover-a-apply'
