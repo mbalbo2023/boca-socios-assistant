@@ -239,9 +239,7 @@ _CONTEXT_KEYS = frozenset(
         "expected_target",
     }
 )
-_SENDER_KEYS = frozenset(
-    {"sender_id", "sender_config_hash", "sender_attempt_id", "sender_state"}
-)
+_SENDER_KEYS = frozenset({"sender_id", "sender_config_hash", "sender_attempt_id", "sender_state"})
 _B64URL = re.compile(r"[A-Za-z0-9_-]{1,2750}\Z")
 
 
@@ -277,7 +275,8 @@ def decode_lifecycle_context(encoded: str) -> ReviewedLifecycleInstallation:
             or any(type(value) is not str for value in obj.values())
             or json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
                 "ascii"
-            ) != raw
+            )
+            != raw
             or obj["version"] != _CONTEXT_SCHEMA
             or obj["kind"] != "lifecycle"
             or obj["expected_component"] not in ("bot", "chromium")
@@ -315,8 +314,15 @@ def decode_lifecycle_context(encoded: str) -> ReviewedLifecycleInstallation:
         )
         installed.coordinates_for(synthetic)
         return installed
-    except (ValueError, TypeError, KeyError, UnicodeError, binascii.Error,
-            lifecycle.LifecycleHostUnavailable, adapter.LifecycleAdapterNoGo):
+    except (
+        ValueError,
+        TypeError,
+        KeyError,
+        UnicodeError,
+        binascii.Error,
+        lifecycle.LifecycleHostUnavailable,
+        adapter.LifecycleAdapterNoGo,
+    ):
         raise PhysicalAckUnavailable("Boca lifecycle protected context invalid") from None
 
 

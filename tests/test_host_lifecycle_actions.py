@@ -63,9 +63,7 @@ def verified_io(monkeypatch: pytest.MonkeyPatch) -> tuple[FakeLedger, list[objec
     monkeypatch.setattr(
         actions.adapter.RootlessLifecycleProbe, "observe", lambda self, coordinates, lease: None
     )
-    monkeypatch.setattr(
-        actions, "verify_protected_boca_job_lease", lambda lease, attempt: None
-    )
+    monkeypatch.setattr(actions, "verify_protected_boca_job_lease", lambda lease, attempt: None)
 
     def execute(coordinates: object, *, binding: object, lease: object, io: object) -> str:
         effects.append(coordinates)
@@ -119,9 +117,7 @@ def test_wrong_action_pin_refused_before_effect(
     _, effects = verified_io
     reviewed = replace(_reviewed(tmp_path), expected_component="chromium", expected_target="stop")
     with pytest.raises(actions.PhysicalAckUnavailable, match="scope"):
-        actions.apply_latest_owner_request(
-            reviewed, lease=BocaJobLease("3456789012", 12, 1, True)
-        )
+        actions.apply_latest_owner_request(reviewed, lease=BocaJobLease("3456789012", 12, 1, True))
     assert effects == []
 
 
@@ -141,12 +137,8 @@ def test_invalid_reviewed_coordinates_cannot_reach_effect(
         installed = replace(installed, pair=ReviewedInstalledPair("", "f" * 64, "1" * 64))
     else:
         installed = replace(installed, expected_component="bot")
-    with pytest.raises(
-        (actions.PhysicalAckUnavailable, actions.adapter.LifecycleAdapterNoGo)
-    ):
-        actions.apply_latest_owner_request(
-            installed, lease=BocaJobLease("3456789012", 12, 1, True)
-        )
+    with pytest.raises((actions.PhysicalAckUnavailable, actions.adapter.LifecycleAdapterNoGo)):
+        actions.apply_latest_owner_request(installed, lease=BocaJobLease("3456789012", 12, 1, True))
     assert effects == []
 
 
@@ -225,9 +217,7 @@ def test_no_implicit_migration_or_database_creation(
     tmp_path: Path, verified_io: tuple[FakeLedger, list[object]]
 ) -> None:
     reviewed = _reviewed(tmp_path)
-    actions.apply_latest_owner_request(
-        reviewed, lease=BocaJobLease("3456789012", 12, 1, True)
-    )
+    actions.apply_latest_owner_request(reviewed, lease=BocaJobLease("3456789012", 12, 1, True))
     assert not reviewed.database_path.exists()
 
 

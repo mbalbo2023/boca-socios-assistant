@@ -208,9 +208,7 @@ def test_lifecycle_memfd_stdlib_only_import_and_no_go_without_context(tmp_path: 
     raw = output.read_bytes()
     tested = _run(raw, digest, "lifecycle-bridge-selftest", stdlib_only=True)
     assert tested.returncode == 0, (tested.stdout, tested.stderr)
-    assert tested.stdout == (
-        b"BOCA_LIFECYCLE_MEMFD state=PASS host=untouched blackbox=excluded\n"
-    )
+    assert tested.stdout == (b"BOCA_LIFECYCLE_MEMFD state=PASS host=untouched blackbox=excluded\n")
     missing_go = _run(raw, digest, "lifecycle-apply", stdlib_only=True)
     assert missing_go.returncode == 3
     assert json.loads(missing_go.stdout)["status"] == "NO_GO"
