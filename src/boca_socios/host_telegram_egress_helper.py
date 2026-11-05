@@ -16,7 +16,7 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from boca_socios import host_boca_cleanup as cleanup
 from boca_socios.host_boca_cleanup import BocaJobLease, verify_protected_boca_job_lease
@@ -25,6 +25,11 @@ from boca_socios.host_telegram_postcutover import TelegramHostPins
 from boca_socios.host_telegram_production_reader import TelegramProductionDockerIO
 from boca_socios.telegram_pairing_cutover import CutoverCoordinates, _coordinates_valid
 from boca_socios.telegram_pairing_resolver import TelegramApiFetch
+
+if TYPE_CHECKING:
+    from boca_socios.host_telegram_active_helper_topology import (
+        TelegramActiveHelperTopologyWitness,
+    )
 
 _ID = re.compile(r"[0-9a-f]{64}\Z")
 _EGRESS = "boca-socios_boca_telegram_egress"
@@ -300,6 +305,30 @@ class ProtectedEphemeralGet:
             source_sha=self._pins.source_sha,
             phase=phase,
         )
+
+    def attest_topology(self, phase: str) -> TelegramActiveHelperTopologyWitness:
+        """Observe stopped Boca services around this exact active GET helper.
+
+        The independent topology module returns a redacted, non-authorizing
+        witness. It cannot claim owner/WebAuthn, recipient custody, schema,
+        independent GO_B or permission to activate the Telegram sender.
+        """
+        from boca_socios.host_telegram_active_helper_topology import observe_active_helper_topology
+
+        if not self._active or type(phase) is not str or phase not in _PHASES:
+            raise TelegramPhysicalNoGo("telegram_helper_phase_unreviewed")
+        try:
+            verify_protected_boca_job_lease(self._lease, self._pins.attempt_id)
+            return observe_active_helper_topology(
+                self._pins,
+                self._coords,
+                phase=phase,
+                lease=self._lease,
+                reader=self._reader,
+                helper_id=self._helper_id,
+            )
+        except Exception:
+            raise TelegramPhysicalNoGo("telegram_helper_active_topology_unverified") from None
 
     def _mark_closed(self) -> None:
         self._active = False

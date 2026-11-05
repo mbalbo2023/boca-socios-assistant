@@ -17,6 +17,7 @@ from contextlib import contextmanager
 
 from boca_socios.host_boca_cleanup import BocaJobLease
 from boca_socios.host_lifecycle_rootless_adapter import LifecycleDockerIO
+from boca_socios.host_telegram_active_helper_topology import TelegramActiveHelperTopologyWitness
 from boca_socios.host_telegram_egress_helper import (
     ProtectedEphemeralGet,
     TelegramHelperPhaseProof,
@@ -88,6 +89,23 @@ def run_bound_telegram_four_gets(
                 or proof.host_go is not False
             ):
                 raise ValueError("helper proof mismatch")
+            # The legacy stopped-release observer expects Telegram egress
+            # empty. During these GETs the exact approved ephemeral helper
+            # occupies it, so independently observe the stopped release with
+            # that ONE helper excluded only after its live attestation.
+            topology = active[0].attest_topology(phase)
+            if (
+                type(topology) is not TelegramActiveHelperTopologyWitness
+                or topology.attempt_id != pins.attempt_id
+                or topology.source_sha != pins.source_sha
+                or topology.phase != phase
+                or topology.state != "ACTIVE_HELPER_STOPPED_TOPOLOGY_OBSERVED_NO_GO"
+                or topology.sender_state != "OFF"
+                or topology.host_go is not False
+                or topology.custody_state != "UNVERIFIED"
+                or topology.human_receipt != "UNVERIFIED"
+            ):
+                raise ValueError("stopped Boca release with helper unverified")
             actual = phase_host_attestor(phase, proof, checked)
             if type(actual) is not HostRecheckReceipt:
                 raise ValueError("missing physical topology receipt")

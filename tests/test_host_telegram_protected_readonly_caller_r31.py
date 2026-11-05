@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from boca_socios import host_telegram_protected_readonly_caller as caller
+from boca_socios.host_telegram_active_helper_topology import TelegramActiveHelperTopologyWitness
 from boca_socios.host_telegram_egress_helper import TelegramHelperPhaseProof
 from boca_socios.telegram_pairing_cutover import CutoverCoordinates
 from test_telegram_host_readonly_session import _prepare
@@ -30,6 +31,14 @@ def _run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, reject: str = ""):
                 pins.attempt_id,
                 pins.source_sha,
                 "WRONG" if reject == "wrong_phase" else phase,
+            )
+
+        def attest_topology(self, phase: str) -> TelegramActiveHelperTopologyWitness:
+            events.append("TOPOLOGY:" + phase)
+            return TelegramActiveHelperTopologyWitness(
+                pins.attempt_id,
+                pins.source_sha,
+                "WRONG" if reject == "wrong_topology" else phase,
             )
 
     @contextmanager
@@ -86,11 +95,13 @@ def test_readonly_caller_uses_one_helper_and_real_phase_hook_each_get(
     assert events[0] == "OPEN"
     assert events[-1] == "CLOSE"
     assert len([event for event in events if event.startswith("HELPER:")]) == 6
+    assert len([event for event in events if event.startswith("TOPOLOGY:")]) == 6
     assert len([event for event in events if event.startswith("HOST:")]) == 6
+    assert events.index("TOPOLOGY:BEFORE_API") < events.index("HOST:BEFORE_API")
     assert not list(data.glob("boca_telegram_owner_nonce_v2_*.json"))
 
 
-@pytest.mark.parametrize("reject", ["wrong_phase", "BEFORE_getUpdates"])
+@pytest.mark.parametrize("reject", ["wrong_phase", "wrong_topology", "BEFORE_getUpdates"])
 def test_recheck_rejects_drift_and_closes_helper_without_custody(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reject: str
 ) -> None:
