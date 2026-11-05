@@ -1,0 +1,61 @@
+name: Boca disposable Chromium-only size comparison
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/chromium-only-size-benchmark.yml
+      - benchmarks/chromium_only/**
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout isolated PR without credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build comparative Noble Chromium-only image on disposable runner
+        env:
+          IMAGE: boca-chromium-only-benchmark:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker pull ubuntu:24.04
+          base_ref="$(docker image inspect --format '{{ index .RepoDigests 0 }}' ubuntu:24.04)"
+          [[ "$base_ref" =~ ^ubuntu@sha256:[0-9a-f]{64}$ ]]
+          printf '%s\n' "$base_ref" > "$RUNNER_TEMP/boca-benchmark-base-ref"
+          docker build --file benchmarks/chromium_only/Dockerfile \
+            --build-arg "BENCHMARK_BASE=$base_ref" --tag "$IMAGE" .
+      - name: Verify independent offline Chromium with Boca-equivalent isolation
+        env:
+          IMAGE: boca-chromium-only-benchmark:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          timeout 60s docker run --rm --network none \
+            --user 10002:10002 --read-only \
+            --cap-drop ALL --cap-add SYS_CHROOT \
+            --security-opt no-new-privileges:true \
+            --security-opt "seccomp=$GITHUB_WORKSPACE/docker/seccomp_profile.json" \
+            --cgroupns private --ipc private --pids-limit 128 \
+            --memory 768m --cpus 1.0 --shm-size 64m \
+            --tmpfs /tmp:rw,noexec,nosuid,size=32m \
+            --tmpfs /home/boca-browser:rw,noexec,nosuid,size=16m \
+            --entrypoint /app/.venv/bin/python "$IMAGE" /app/verify_chromium_worker.py
+      - name: Report exact Chromium-only logical and TAR bytes without publication
+        env:
+          IMAGE: boca-chromium-only-benchmark:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          image_size="$(docker image inspect --format '{{.Size}}' "$IMAGE")"
+          [[ "$image_size" =~ ^[1-9][0-9]{0,18}$ ]]
+          tar_bytes="$(docker image save "$IMAGE" | wc -c)"
+          tar_bytes="${tar_bytes//[[:space:]]/}"
+          [[ "$tar_bytes" =~ ^[1-9][0-9]{0,18}$ ]]
+          base_ref="$(cat "$RUNNER_TEMP/boca-benchmark-base-ref")"
+          printf 'BOCA_CHROMIUM_ONLY_BENCHMARK source_sha=%s base=%s logical_bytes=%s tar_bytes=%s chromium_offline=PASS runner=DISPOSABLE product_unchanged=true host_delta=UNVERIFIED\n' \
+            "$GITHUB_SHA" "$base_ref" "$image_size" "$tar_bytes" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
