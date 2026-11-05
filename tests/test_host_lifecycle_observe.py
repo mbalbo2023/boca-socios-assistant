@@ -21,10 +21,10 @@ from test_host_lifecycle_rootless_adapter import (
     CONFIG_WORKER,
     CONTROLLER,
     CONTROLLER_REF,
-    FakeIO,
     SOURCE,
     WORKER,
     WORKER_REF,
+    FakeIO,
     _request_with_real_ledger,
 )
 
