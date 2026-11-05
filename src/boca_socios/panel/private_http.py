@@ -26,6 +26,11 @@ from boca_socios.notify.projection import list_local_notices
 from boca_socios.owner_origin import owner_rp_host
 from boca_socios.panel import private_ui, telegram_setup_ui
 from boca_socios.panel.enrollment_http import EnrollmentApplication
+from boca_socios.panel.lifecycle_intents import (
+    LifecycleConflict,
+    LifecycleIntentStore,
+    LifecycleStorageUnavailable,
+)
 from boca_socios.panel.local_status import read_local_status
 from boca_socios.panel.members import MemberDirectory
 from boca_socios.panel.owner_session_store import OwnerBrowserSessionStore
@@ -166,6 +171,9 @@ class PrivatePanelApplication:
         # The controller must not serve a healthy panel whose passkey login
         # cannot persist: migration 0008 is an explicit installation gate.
         self._owner_browser_store.verify_schema()
+        # Requests are passive, append-only events. A protected Boca Actions
+        # host operation must later claim/confirm them with verified receipts.
+        self._lifecycle = LifecycleIntentStore(self._database)
         self._sessions = OwnerSessions(
             owner_subject=owner_subject,
             verify_owner=passkey.verify,
@@ -298,6 +306,13 @@ class PrivatePanelApplication:
             return self._begin(environ, session, start)
         if path in ("/control/reanudar", "/control/pausar"):
             return self._set_intake(environ, path.rsplit("/", 1)[-1], session, start)
+        if isinstance(path, str) and re.fullmatch(
+            r"/control/(bot|chromium)/(iniciar|detener)", path
+        ):
+            _prefix, _control, component, label = path.split("/")
+            return self._request_lifecycle(
+                environ, component, "start" if label == "iniciar" else "stop", session, start
+            )
         if isinstance(path, str) and path.startswith("/comandos/") and path.endswith("/detener"):
             command_id = path.removeprefix("/comandos/").removesuffix("/detener")
             return self._stop(environ, command_id, session, start)
@@ -458,11 +473,53 @@ class PrivatePanelApplication:
             ready = self._commands is not None and not self._commands.failed
         if accepting is None:
             return _error(start, 503, "Estado de admisión no disponible. No inicie simulaciones.")
+        try:
+            lifecycle = self._lifecycle.current()
+        except LifecycleStorageUnavailable:
+            return _error(start, 503, "Estado de solicitudes al host no disponible.")
         return _response(
             start,
             200,
-            private_ui.global_simulation_control(accepting, ready, session.csrf, operation_id),
+            private_ui.global_simulation_control(
+                accepting, ready, session.csrf, operation_id, lifecycle=lifecycle
+            ),
         )
+
+    def _request_lifecycle(
+        self,
+        environ: Mapping[str, object],
+        component: str,
+        target: str,
+        session: OwnerSession,
+        start: StartResponse,
+    ) -> list[bytes]:
+        """Persist only owner intent, without contacting a container or browser."""
+        fields = self._form(environ, expected={"csrf", "operation_id"})
+        if fields is None or _canonical_uuid(fields["operation_id"]) is None:
+            return _error(start, 400, "Solicitud de ciclo inválida.")
+        fingerprint = f"owner-lifecycle-v1:{component}:{target}".encode("ascii")
+        result, operation = self._sessions.reserve(
+            session, fields["operation_id"], fields["csrf"], fingerprint
+        )
+        if result:
+            if result == 303:
+                return self._redirect(start, "/control")
+            return _error(start, result, "Solicitud ya procesada o no autorizada.")
+        assert operation is not None
+        try:
+            self._lifecycle.request(component, target, fields["operation_id"])
+        except LifecycleConflict:
+            self._sessions.finish(operation, 409)
+            return _error(
+                start,
+                409,
+                "Ya existe una solicitud al host sin cierre confirmado. Consulte Control.",
+            )
+        except LifecycleStorageUnavailable:
+            self._sessions.finish(operation, 503)
+            return _error(start, 503, "Resultado incierto. Consulte Control antes de repetir.")
+        self._sessions.finish(operation, 303)
+        return self._redirect(start, "/control")
 
     def _set_intake(
         self,

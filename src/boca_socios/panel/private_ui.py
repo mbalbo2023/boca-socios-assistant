@@ -11,6 +11,7 @@ from boca_socios.events.official_catalog import OfficialNotice
 from boca_socios.events.official_presentation import render_observed_catalog_html
 from boca_socios.notify.projection import LocalNoticeView
 from boca_socios.panel.enrollment_form import STYLE
+from boca_socios.panel.lifecycle_intents import LifecycleIntent
 from boca_socios.panel.members import CommandView, MemberView
 
 _LOGIN_SCRIPT = """
@@ -136,6 +137,8 @@ def global_simulation_control(
     host_ready: bool,
     csrf: str,
     operation_id: str,
+    *,
+    lifecycle: LifecycleIntent | None = None,
 ) -> bytes:
     """Explain that the control governs admission, not process or provider lifecycle."""
     state = "Admitiendo nuevas simulaciones locales" if accepting else "Pausada"
@@ -161,7 +164,59 @@ def global_simulation_control(
         f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
         f'<input type="hidden" name="operation_id" value="{escape(operation_id, quote=True)}">'
         f'<button type="submit">{label}</button></form>'
-        '<p><a href="/comandos">Consultar simulaciones y detener una en curso</a></p>',
+        '<p><a href="/comandos">Consultar simulaciones y detener una en curso</a></p>'
+        + _lifecycle_controls(lifecycle, csrf, operation_id),
+    )
+
+
+def _lifecycle_controls(intent: LifecycleIntent | None, csrf: str, operation_id: str) -> str:
+    """Accessible owner-only host *intents*, never executable Docker controls."""
+    if intent is None:
+        observed = "No hay confirmación de inicio o parada del motor del bot ni Chromium."
+    else:
+        component = "motor del bot" if intent.component == "bot" else "Chromium"
+        requested = "inicio" if intent.target == "start" else "detención"
+        states = {
+            "REQUESTED": "PENDIENTE. Sin confirmación del host.",
+            "CLAIMED": "EN PROCESO. El host tomó la solicitud; aún no confirmó el resultado.",
+            "APPLIED": "CONFIRMADA mediante recibo protegido del host; no es monitoreo continuo.",
+            "REFUSED": "RECHAZADA sin efecto según recibo protegido del host.",
+            "UNCERTAIN": "INDETERMINADA. Prohibido repetir sin reconciliación protegida.",
+        }
+        observed = (
+            f"Última solicitud: {requested} de {component}, "
+            + states[intent.status]
+            + f" Registrada en SQLite: {intent.requested_at} UTC."
+        )
+    # A single outstanding request is global, even across bot and Chromium.
+    # The future protected host workflow must ACK or refuse it first.
+    blocked = intent is not None and intent.status in ("REQUESTED", "CLAIMED", "UNCERTAIN")
+    disabled = " disabled" if blocked else ""
+    entries = (
+        ("bot", "iniciar", "Solicitar inicio del motor del bot"),
+        ("bot", "detener", "Solicitar detención del motor del bot"),
+        ("chromium", "iniciar", "Solicitar inicio de Chromium"),
+        ("chromium", "detener", "Solicitar detención de Chromium"),
+    )
+    forms = "".join(
+        f'<form method="post" action="/control/{component}/{action}">'
+        f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
+        f'<input type="hidden" name="operation_id" value="{escape(operation_id, quote=True)}">'
+        f'<button type="submit"{disabled}>{label}</button></form>'
+        for component, action, label in entries
+    )
+    return (
+        '<section aria-labelledby="host-lifecycle"><h2 id="host-lifecycle">'
+        "Solicitudes de inicio y detención del bot y Chromium</h2>"
+        '<p role="status" aria-live="polite">' + escape(observed) + "</p>"
+        "<p>Estas acciones sólo registran una solicitud durable. No apagan este panel, "
+        "no arrancan ni detienen Docker desde Chrome y no envían órdenes a Boca. "
+        "El único workflow protegido de GitHub Actions deberá confirmar el resultado "
+        "después de verificar la identidad de los servicios Boca. "
+        "Hasta recibir ese recibo no se considera iniciada ni detenida ninguna operación. "
+        "El motor del bot se refiere a las simulaciones, no al servidor del panel.</p>"
+        + forms
+        + '<p><a href="/control">Actualizar solicitudes y recibos</a></p></section>'
     )
 
 
