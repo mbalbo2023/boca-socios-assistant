@@ -369,3 +369,54 @@ antes o después de 0007 y con 0004 opcional. Otro test instala un SQLite
 vecino sintético para confirmar que la migración de Telegram no lo modifica.
 Registrar QA y SHA exactos en #315 al publicar el PR, nunca reutilizar el
 GREEN histórico del HEAD anterior.
+
+## RCA P0 R21: secretos Telegram en SSH argv — corrección candidata #315
+
+**Hallazgo observado el 05/11/2026 ART; no hubo token real ni prueba de fuga.**
+Los cuatro bloques del workflow único `boca-first-deploy.yml` interpolaban
+un HMAC de chat/identidad del dueño y, para `telegram-install`, un sobre
+cifrado de bot en `remote_command` construido con `shlex.join`. Los destinos
+eran `browser-telegram-preflight`, `browser-*` lifecycle cuando Telegram
+estaba listo, `browser-telegram-cleanup` y `telegram-migrate/prepare/install/
+verify/test`. Pese al canal cifrado SSH, el comando quedaba en **argv** del
+proceso SSH/host, visible para observación de procesos. El environment
+protegido de Actions no elimina esa exposición. RCA y estado factual
+previo: [issue #315, comentario R20](https://github.com/mbalbo2023/boca-socios-assistant/issues/315#issuecomment-6649930992).
+
+La rama DRAFT corrige los cuatro *call sites* mediante una sola conexión
+SSH por operación, con datos **exclusivamente por el pipe de stdin**. El
+runner construye un frame binario acotado (magic, longitud de 32 bits y
+JSON estricto) que incluye el helper `host_first_deploy.py` exacto, su
+SHA-256 y la lista de operandos del CLI —con sobre/HMAC/owner únicamente
+como datos del pipe, sin crear archivos temporales de secretos. El comando
+remoto es un bootstrap Python estándar **estático**, independiente de cada
+valor privado. Rechaza antes de ejecutar el helper: frame truncado o
+sobrante, tamaño excesivo, claves JSON repetidas/desconocidas, SHA distinto,
+fases o flags no permitidos. Luego define `sys.argv` sólo en memoria Python
+para conservar `argparse` y todos los controles del helper existente; no
+reescribe `/proc/*/cmdline`. El workflow usa `env -u` para que SSH no herede
+el sobre, bot-ID, HMAC ni owner-subject, y `pipefail` para propagar un emisor
+fallido. Preflight 120 s, lifecycle 600 s y cleanup 180 s conservan sus
+presupuestos; los recibos y validaciones de cada fase también se conservan.
+
+Regresiones offline con valores **ficticios** verifican los cuatro bloques
+con un solo SSH, ausencia de interpolación de secretos, ausencia de secretos
+de `/proc/self/cmdline` en el proceso remoto, compatibilidad exacta del parser
+para fases Telegram y lifecycle, frame byte-exacto y SHA-256, y rechazo de
+framing/JSON/digest inválidos antes de ejecutar código. El conjunto no
+necesita Telegram, token, Docker, SSH real, host ni datos de Boca. Se mantiene
+la Opción B del mismo DRAFT: 0008 en SQLite legacy es NO_GO y la sesión
+Chrome va a SQLite vecino del volumen Boca. La corrección no activa V2 ni
+resuelve los gates de nonce, lease, egress, aviso humano o sender; todos
+siguen **OFF / NO_GO** hasta integración final, exact-SHA Actions, merge
+autorizado y recibos físicos. Otros argumentos privados de owner/Site fuera
+de los cuatro bloques Telegram son scope separado y **no quedan cubiertos**.
+
+**Evidencia local R21 (no hosted):** primero se conservó una regresión RED
+que detectaba el antiguo SSH `remote_command`; tras el cambio, 170 pruebas
+en los scopes Telegram/host/legacy pasaron y el suite completo pasó
+**2617 tests + 31 subtests** en 60,10 s. `uv sync --frozen --offline`, Ruff
+check, Ruff format (397 archivos), MyPy (89 fuentes), policy de aislamiento
+y `git diff --check` completaron sin defectos. Estos números corresponden
+a la candidata local; no equivalen a CI exact-SHA, seguridad de imágenes,
+GO del titular ni aceptación en el droplet.

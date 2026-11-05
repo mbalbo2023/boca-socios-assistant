@@ -141,10 +141,15 @@ class CutoverBackend(Protocol):
 
 
 TerminalSink = Callable[[CutoverPlan, CutoverReceipt, BocaJobLease], None]
+TerminalPreflight = Callable[[CutoverPlan, BocaJobLease], None]
 
 
 def run_cutover_a(
-    plan: CutoverPlan, *, backend: CutoverBackend, terminal_sink: TerminalSink | None = None
+    plan: CutoverPlan,
+    *,
+    backend: CutoverBackend,
+    terminal_sink: TerminalSink | None = None,
+    terminal_preflight: TerminalPreflight | None = None,
 ) -> CutoverReceipt:
     """Unit-testable sequencing only; no concrete backend or host CLI exists.
 
@@ -155,7 +160,21 @@ def run_cutover_a(
     assertion must make that NO_GO.  Synthetic tests cannot confer host GO.
     """
     plan.validate()  # No host operation for malformed coordinates.
+    if getattr(type(backend), "requires_persistent_receipt", False) is True and (
+        terminal_sink is None or terminal_preflight is None
+    ):
+        raise CutoverError("effectful Boca backend requires durable terminal intent and result")
     with protected_boca_job_lease(plan.attempt_id) as lease:
+        if terminal_sink is not None:
+            if terminal_preflight is None:
+                raise CutoverError(
+                    "persistent terminal destination must be prepared before effects"
+                )
+            # The single protected process reserves an O_EXCL persistent
+            # intent and validates storage BEFORE any Docker read/write phase.
+            terminal_preflight(plan, lease)
+        elif terminal_preflight is not None:
+            raise CutoverError("terminal intent without a matching result sink forbidden")
         effect_started = False
         committed = False
         commit_started = False

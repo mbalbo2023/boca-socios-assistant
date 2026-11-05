@@ -197,11 +197,34 @@ def _backend(events: list[str]) -> adapter.RootlessCutoverBackend:
     )
 
 
+def _run_adapter(backend: adapter.RootlessCutoverBackend) -> cutover.CutoverReceipt:
+    """Injected fake receipt callbacks; real persistence tested independently."""
+    phases: list[str] = []
+
+    def fake_preflight(plan: cutover.CutoverPlan, lease: cleanup.BocaJobLease) -> None:
+        cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+        phases.append("preflight-before-docker")
+
+    def fake_sink(
+        plan: cutover.CutoverPlan,
+        _receipt: cutover.CutoverReceipt,
+        lease: cleanup.BocaJobLease,
+    ) -> None:
+        cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+        phases.append("sink-after-finalizer")
+
+    result = cutover.run_cutover_a(
+        _plan(), backend=backend, terminal_preflight=fake_preflight, terminal_sink=fake_sink
+    )
+    assert phases == ["preflight-before-docker", "sink-after-finalizer"]
+    return result
+
+
 def test_full_host_adapter_uses_real_stage_promotion_and_cleanup(
     fake_host: tuple[list[str], Path],
 ) -> None:
     events, root = fake_host
-    receipt = cutover.run_cutover_a(_plan(), backend=_backend(events))
+    receipt = _run_adapter(_backend(events))
     assert receipt.accepted and receipt.state == "ACCEPTED"
     assert events == [
         "attest",
@@ -231,7 +254,7 @@ def test_no_go_on_option_b_missing_sql_before_any_host_call(
     events, root = fake_host
     backend = _backend(events)
     backend.sources = replace(backend.sources, session_sql=b"untrusted")
-    receipt = cutover.run_cutover_a(_plan(), backend=backend)
+    receipt = _run_adapter(backend)
     assert receipt.state == "NO_GO" and not receipt.accepted
     assert not events
     assert (root / "compose.beta.yaml").read_bytes() == LEGACY
@@ -248,7 +271,7 @@ def test_option_b_failure_compensates_exact_old_id_and_removes_stage(
 
     backend = _backend(events)
     backend.session_bootstrap = bad_bootstrap
-    receipt = cutover.run_cutover_a(_plan(), backend=backend)
+    receipt = _run_adapter(backend)
     assert receipt.state == "RECOVERED" and receipt.original_restored
     assert not receipt.accepted
     assert "candidate" not in events
@@ -271,7 +294,7 @@ def test_lost_compose_promotion_receipt_blocks_rollback_and_leaves_intent(
         real_replace(*args, **kwargs)
 
     monkeypatch.setattr(stage.os, "replace", partial)
-    receipt = cutover.run_cutover_a(_plan(), backend=_backend(events))
+    receipt = _run_adapter(_backend(events))
     assert receipt.state == "NO_GO" and receipt.irreversible_commit_started
     assert "recover-original" not in events
     assert "retire" not in events
@@ -299,7 +322,7 @@ def test_unknown_retirement_never_deletes_candidate_worker_or_restarts_legacy(
     monkeypatch.setattr(adapter.host, "_cutover_retire_accepted_original", lost_retirement)
     monkeypatch.setattr(adapter.cleanup, "execute_protected", must_not_delete)
     monkeypatch.setattr(adapter.cleanup, "capture_inventory", read_only)
-    receipt = cutover.run_cutover_a(_plan(), backend=_backend(events))
+    receipt = _run_adapter(_backend(events))
     assert receipt.state == "NO_GO" and receipt.irreversible_commit_started
     assert not receipt.original_restored and not receipt.accepted
     assert "readonly-census" in events
@@ -334,7 +357,7 @@ def test_failed_precommit_recovery_never_cleans_parked_or_live_worker(
     monkeypatch.setattr(adapter.host, "_cutover_compensate_candidate", failed_recovery)
     monkeypatch.setattr(adapter.cleanup, "execute_protected", must_not_delete)
     monkeypatch.setattr(adapter.cleanup, "capture_inventory", read_only)
-    receipt = cutover.run_cutover_a(_plan(), backend=backend)
+    receipt = _run_adapter(backend)
     assert receipt.state == "NO_GO" and not receipt.original_restored
     assert not receipt.irreversible_commit_started
     assert "recover-unknown" in events and "readonly-census" in events

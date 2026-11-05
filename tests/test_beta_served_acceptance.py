@@ -41,6 +41,11 @@ from boca_socios.storage.database import Database
 
 ORIGIN = "https://boca.example.test"
 EVENT_ID = "5387eb20-c962-42f5-933e-d5f681ab0877"
+# The actual command facade is allowed five seconds for a request. The HTTP
+# test client must outlast that bounded server operation, with a small margin
+# for SQLite/WAL and CI scheduling, while remaining finite. It previously
+# timed out in three seconds before the app could return its redacted result.
+_HTTP_CLIENT_TIMEOUT_SECONDS = 8.0
 PERMISSIONS = frozenset(
     {"members:enroll", "members:read", "members:write", "simulation:write", "local-status:read"}
 )
@@ -127,7 +132,7 @@ def _request(
     if method == "POST":
         headers.update({"Origin": origin, "Content-Type": content_type})
     started = time.perf_counter_ns()
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=_HTTP_CLIENT_TIMEOUT_SECONDS)
     try:
         connection.request(method, path, body=payload, headers=headers)
         response = connection.getresponse()
@@ -140,6 +145,25 @@ def _request(
     assert int(result[1]["Content-Length"]) == len(result[2])
     assert len(result[2]) < 65536
     return result
+
+
+def test_loopback_http_fixture_waits_for_bounded_synthetic_backend_latency() -> None:
+    """The test client must not time out before the command-host 5s budget."""
+    timings: list[float] = []
+
+    def synthetic_slow_app(environ: object, start_response: object) -> list[bytes]:
+        # A delayed local request is legal within BetaCommandHost's 5s bound.
+        # No provider traffic, socket other than loopback, or browser is used.
+        time.sleep(3.25)
+        headers = [("Cache-Control", "no-store"), ("Content-Length", "2")]
+        assert callable(start_response)
+        start_response("200 OK", headers)
+        return [b"OK"]
+
+    with _loopback(synthetic_slow_app) as port:
+        status, _headers, body = _request(port, "/synthetic-bounded-delay", timings=timings)
+    assert status == 200 and body == b"OK"
+    assert timings[0] >= 3200
 
 
 def _passkey(

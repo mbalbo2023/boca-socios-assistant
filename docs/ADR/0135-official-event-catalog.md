@@ -298,3 +298,57 @@ duplicados, generador acotado y compatibilidad con el lector R6). Una batería v
 **del transformador**, no certifica que existan datos reales frescos en la
 tablet. Documentar HEAD/tree exactos y resultados de GitHub Actions en #314
 antes de solicitar integración por el owner.
+
+## Extensión R17 — recibo HTTPS para una noticia pública, PR-only READ_ONLY
+
+La investigación nocturna identificó como **índice público del club**
+[Noticias buscador](https://www.bocajuniors.com.ar/noticias-buscador), que
+enlaza artículos ordinarios y de socios, incluido
+[Boca-Defensa del 03/11](https://www.bocajuniors.com.ar/noticias/boca-defensa-informacion-al-socio).
+Este índice no acredita un **feed/API oficial publicado, versionado y estable**
+que entregue por contrato todas las categorías, ventanas, fechas de cambio,
+zonas horarias y canales. Tampoco acredita admisión/eligibilidad/cupos en
+Boca Socios. Un resultado de buscador no es una captura cruda autenticada.
+
+Se incorpora un diagnóstico aislado, de **único GET anónimo por ejecución**,
+específico para un artículo público **fijo**:
+
+- `src/boca_socios/events/official_news_receipt.py` usa biblioteca estándar
+  de Python, contexto TLS predeterminado con verificación de CA/hostname,
+  origen exacto `https://www.bocajuniors.com.ar/noticias/boca-defensa-informacion-al-socio`,
+  método GET sin cookie, token ni autorización, sin proxies de ambiente, sin
+  redirects ni retries. No recibe URLs ni parámetros de usuario. Timeout de
+  8 segundos y máximo 1.000.000 bytes, validando status 200, ubicación final,
+  `Content-Type`, `Content-Length` y UTF-8.
+- La respuesta queda **sólo en memoria efímera del runner**. Se emite un
+  recibo JSON pequeño con URL fija, hora observada UTC, código HTTP,
+  longitud, SHA-256 de los bytes efectivamente recibidos, Date HTTP
+  normalizado si existe y presencia booleana de 11 marcadores textuales del
+  artículo (título, fecha, inicio, canal y categorías). Excluye datos ocultos
+  como scripts de la comprobación de texto. No emite HTML, cookies, cabeceras
+  privadas, contenido integral, sesión ni un JSONL de eventos.
+- El workflow nuevo `.github/workflows/boca-official-news-receipt.yml` es
+  **sólo `pull_request`**, limita origen a la rama del repositorio propio,
+  usa runner GitHub efímero, token con `contents: read`, acciones fijas por
+  SHA, sin credenciales persistidas y con rechazo de rerun. Deja en el run un
+  artifact efímero de **recibo redactado**, no una descarga de la página.
+  Ningún job llega a droplet, Docker, Boca Socios, Queue-it, controlador,
+  volumen, archivos de usuarios, Telegram o puerto.
+- Los errores de sitio/HTTP/TLS/HTML devuelven estado `SOURCE_DEGRADED` o
+  `CONTENT_UNVERIFIED` y un **código de causa**, sin excepción ni datos de
+  red en los logs. Por política, es **alerta externa**, no un gate de
+  simulación ni una excusa para reintentar tráfico; fallos del contrato del
+  script/Actions sí requieren fix-forward propio. Una señal
+  `PUBLIC_PAGE_OBSERVED_UNVERIFIED` verifica **sólo** que esa página pública
+  fue servida al runner en ese momento, con bytes y marcadores; jamás
+  equivale a «venta abierta», fuente universal o canal autentificado.
+
+La prueba local incluye fixtures HTML totalmente sintéticas, red falsa,
+rechazo de redirects, digest real de bytes de fixture, presupuestos, HTML
+oculto, salida redactada y no accionabilidad. No ejecuta GET real. Sólo el
+futuro run exact-SHA del PR puede completar evidencia de ese único artículo;
+antes del recibo real y revisión semántica sigue **NO_VERIFICADO**. Incluso
+con HTTP 200 y todos los marcadores presentes, no se crea ni publica un
+snapshot real ni se fusiona automáticamente un candidato. La cadena de
+procedencia general de múltiples eventos permanece pendiente de una fuente
+confiable o un proceso de observación individual gobernado.
