@@ -15,9 +15,11 @@ from test_telegram_pairing_panel_handoff import _app_with_stage, _envelope, _sta
 
 def test_expired_web_authenticator_challenge_never_writes_telegram_stage(tmp_path: Path) -> None:
     path = tmp_path / STAGING_FILENAME
-    app, key, credential, clock = _app_with_stage(
+    clock = [0.0]
+    app, key, credential = _app_with_stage(
         tmp_path / "boca.sqlite3",
         lambda request: stage_private_telegram_pairing(path, request),
+        clock=clock,
     )
     cookie = _login(app, key, credential)
     _, _, page = _request(app, "/telegram/emparejar", cookie=cookie)
@@ -35,7 +37,7 @@ def test_expired_web_authenticator_challenge_never_writes_telegram_stage(tmp_pat
 
 def test_telegram_signature_challenge_requires_owner_origin_and_valid_sha(tmp_path: Path) -> None:
     path = tmp_path / STAGING_FILENAME
-    app, key, credential, _clock = _app_with_stage(
+    app, key, credential = _app_with_stage(
         tmp_path / "boca.sqlite3",
         lambda request: stage_private_telegram_pairing(path, request),
     )
