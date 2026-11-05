@@ -253,6 +253,30 @@ def test_config_label_drift_denied(tmp_path: Path) -> None:
         host.observe_telegram_host(_pins(), lease=_lease(), io=io)
 
 
+def test_stopped_controller_uses_persistent_port_binding(tmp_path: Path) -> None:
+    io = _fake(tmp_path)
+    # Stopped containers can lose runtime NetworkSettings.Ports.
+    io.fields[("container", CONTROLLER, "NetworkSettings.Ports")] = {}
+    observed = host.observe_telegram_host(_pins(), lease=_lease(), io=io)
+    assert observed.authorized is False
+
+
+def test_rootless_owner_is_observed(tmp_path: Path) -> None:
+    io = _fake(tmp_path)
+    io.uid = 0
+    with pytest.raises(host.TelegramHostNoGo, match="rootless_owner"):
+        host.observe_telegram_host(_pins(), lease=_lease(), io=io)
+
+
+def test_volume_label_drift_denied(tmp_path: Path) -> None:
+    io = _fake(tmp_path)
+    volumes = list(io.inventory_value.volumes)
+    volumes[-1] = replace(volumes[-1], labels=())
+    io.inventory_value = replace(io.inventory_value, volumes=tuple(volumes))
+    with pytest.raises(host.TelegramHostNoGo):
+        host.observe_telegram_host(_pins(), lease=_lease(), io=io)
+
+
 def test_mount_and_port_drift_denied(tmp_path: Path) -> None:
     io = _fake(tmp_path)
     io.fields[("container", CONTROLLER, "HostConfig.PortBindings")] = {
