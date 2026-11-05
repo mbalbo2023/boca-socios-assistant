@@ -36,12 +36,13 @@ def _context(kind: str = "lifecycle") -> dict[str, str]:
     }
     if kind == "lifecycle":
         return common | {"expected_component": "bot", "expected_target": "stop"}
+    common["data_mountpoint"] = "/data"
     return common | {
         "cutover_attempt": "41999999999",
         "cutover_receipt_sha256": "3" * 64,
         "owner_digest": "4" * 64,
         "recipient_fingerprint": "5" * 64,
-        "sender_state": "off",
+        "sender_expected_state": "absent",
     }
 
 
@@ -160,3 +161,56 @@ def test_context_go_is_independent_of_dispatch_payload_and_exact_run() -> None:
     gate.require_go_binding(
         decoded, operation="lifecycle-apply", environ=env, approved=expected
     )
+
+
+@pytest.mark.parametrize(
+    "bad_sender",
+    (
+        {"sender_id": "7" * 64},
+        {"sender_id": "7" * 64, "sender_config_hash": "8" * 64,
+         "sender_attempt_id": "1", "sender_state": "enabled"},
+        {"sender_id": "c" * 64, "sender_config_hash": "8" * 64,
+         "sender_attempt_id": "1", "sender_state": "off"},
+    ),
+)
+def test_lifecycle_sender_pin_quartet_is_exact_or_absent(
+    bad_sender: dict[str, str],
+) -> None:
+    obj = _context() | bad_sender
+    with pytest.raises(gate.ProtectedActionError):
+        gate.decode_context(_encode(obj), operation="lifecycle-apply", environ=_env())
+    valid = _context() | {
+        "sender_id": "7" * 64,
+        "sender_config_hash": "8" * 64,
+        "sender_attempt_id": "123",
+        "sender_state": "off",
+    }
+    assert gate.decode_context(_encode(valid), operation="lifecycle-apply", environ=_env()) == valid
+
+
+def test_telegram_absent_vs_stopped_sender_state_requires_exact_pins() -> None:
+    absent = _context("telegram")
+    assert gate.decode_context(
+        _encode(absent), operation="telegram-activate", environ=_env()
+    ) == absent
+    stopped = absent | {
+        "sender_expected_state": "stopped",
+        "sender_id": "7" * 64,
+        "sender_image": absent["controller_image"],
+        "sender_config_hash": "8" * 64,
+        "sender_attempt": "123456789",
+    }
+    assert gate.decode_context(
+        _encode(stopped), operation="telegram-activate", environ=_env()
+    ) == stopped
+    for change in (
+        {"sender_expected_state": "stopped", "sender_id": "7" * 64},
+        {"sender_expected_state": "stopped"},
+        {"sender_expected_state": "absent", "sender_id": "7" * 64},
+        {"sender_image": absent["worker_image"]},
+        {"sender_attempt": "0"},
+    ):
+        with pytest.raises(gate.ProtectedActionError):
+            gate.decode_context(
+                _encode(stopped | change), operation="telegram-activate", environ=_env()
+            )
