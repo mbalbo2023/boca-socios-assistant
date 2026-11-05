@@ -330,6 +330,9 @@ def _stage_preflight(intent: dict[str, Any] | None) -> dict[str, Any]:
         "root_entries_count": None,
         "root_entries_expected": False,
         "compose_digest_match": False,
+        "compose_digest_evaluated": False,
+        "compose_inode_checks": None,
+        "compose_inode_mode_octal": None,
         "plan_hashes_unique": False,
     }
     if intent is None:
@@ -389,14 +392,20 @@ def _stage_preflight(intent: dict[str, Any] | None) -> dict[str, Any]:
             return result
         try:
             before = os.fstat(descriptor)
-            if (
-                not stat.S_ISREG(before.st_mode)
-                or before.st_uid != UID
-                or before.st_gid != UID
-                or before.st_nlink != 1
-                or stat.S_IMODE(before.st_mode) != 0o600
-                or not 0 < before.st_size <= 32768
-            ):
+            # Preserve the exact Stage admission policy. The six observations
+            # come from this already-open, O_NOFOLLOW Compose FD, never from a
+            # path-based stat (which could race or traverse another inode).
+            checks = {
+                "regular": stat.S_ISREG(before.st_mode),
+                "uid_ok": before.st_uid == UID,
+                "gid_ok": before.st_gid == UID,
+                "nlink_one": before.st_nlink == 1,
+                "mode_0600": stat.S_IMODE(before.st_mode) == 0o600,
+                "size_ok": 0 < before.st_size <= 32768,
+            }
+            result["compose_inode_checks"] = checks
+            result["compose_inode_mode_octal"] = f"{stat.S_IMODE(before.st_mode):04o}"
+            if not all(checks.values()):
                 result["reason"] = "STAGE_COMPOSE_INODE_MODE"
                 return result
             data = os.read(descriptor, 32769)
@@ -416,6 +425,7 @@ def _stage_preflight(intent: dict[str, Any] | None) -> dict[str, Any]:
             ):
                 result["reason"] = "STAGE_COMPOSE_CHANGED"
                 return result
+            result["compose_digest_evaluated"] = True
             result["compose_digest_match"] = hashlib.sha256(data).hexdigest() == fields[0]
             result["reason"] = (
                 "PLAN_ROLE_DIGEST_INVALID"
