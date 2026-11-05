@@ -360,11 +360,12 @@ def observe_cutover_inventory(
             raise CutoverInventoryNoGo("Boca legacy singleton changed during observation")
         verify_protected_boca_job_lease(lease, release.observe_run_id)
         timestamp = datetime.now(UTC) if observed_at is None else observed_at
+        offset = timestamp.utcoffset() if isinstance(timestamp, datetime) else None
         if (
             not isinstance(timestamp, datetime)
             or timestamp.tzinfo is None
-            or timestamp.utcoffset() is None
-            or timestamp.utcoffset().total_seconds() != 0
+            or offset is None
+            or offset.total_seconds() != 0
         ):
             raise CutoverInventoryNoGo("Boca host UTC observation clock unverified")
         first["observed_at_utc"] = (
@@ -551,11 +552,12 @@ def observe_official_inventory(
             raise CutoverInventoryNoGo("Boca official controller changed during observation")
         verify_protected_boca_job_lease(lease, release.observe_run_id)
         timestamp = datetime.now(UTC) if observed_at is None else observed_at
+        offset = timestamp.utcoffset() if isinstance(timestamp, datetime) else None
         if (
             not isinstance(timestamp, datetime)
             or timestamp.tzinfo is None
-            or timestamp.utcoffset() is None
-            or timestamp.utcoffset().total_seconds() != 0
+            or offset is None
+            or offset.total_seconds() != 0
         ):
             raise CutoverInventoryNoGo("Boca official UTC host clock invalid")
         first["observed_at_utc"] = (
