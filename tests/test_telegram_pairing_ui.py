@@ -64,19 +64,47 @@ const context = {
   TextEncoder, TextDecoder, Uint8Array, atob, btoa,
   URLSearchParams,
   addEventListener(name, fn) { handlers[name] = fn; },
-  navigator: {clipboard: {async writeText(value) {
-    if (input.mode === 'clipboard-denied') throw Error('clipboard denied');
-    copies.push(value);
-  }}},
+  navigator: {
+    clipboard: {async writeText(value) {
+      if (input.mode === 'clipboard-denied') throw Error('clipboard denied');
+      copies.push(value);
+    }},
+    credentials: {async get(options) {
+      if (!input.stage || !options.publicKey
+          || options.publicKey.rpId !== 'localhost'
+          || options.publicKey.userVerification !== 'required'
+          || options.publicKey.timeout !== 120000) forbidden();
+      events.push('owner-webauthn-uv');
+      const rawId = new Uint8Array(32).fill(7);
+      return {type: 'public-key', rawId, response: {
+        clientDataJSON: new TextEncoder().encode('{"type":"webauthn.get"}'),
+        authenticatorData: new Uint8Array(37).fill(9),
+        signature: new Uint8Array(70).fill(10)
+      }};
+    }}
+  },
   fetch: async (path, options) => {
-    if (!input.stage || path !== '/telegram/emparejar' || options.method !== 'POST'
+    if (!input.stage || options.method !== 'POST'
         || options.credentials !== 'same-origin' || options.cache !== 'no-store'
         || options.redirect !== 'error'
         || options.headers['Content-Type'] !== 'application/x-www-form-urlencoded') forbidden();
+    if (path === '/telegram/emparejar/desafio') {
+      const request = Object.fromEntries(new URLSearchParams(options.body));
+      if (Object.keys(request).sort().join(',') !== 'csrf,envelope_sha256,operation_id'
+          || !/^[0-9a-f]{64}$/.test(request.envelope_sha256)) forbidden();
+      events.push('private-challenge');
+      const b64 = data => Buffer.from(data).toString('base64url');
+      return {status: 200, async json() {
+        return {version: 1, challenge: b64(new Uint8Array(32).fill(3)),
+          request_nonce: 'c'.repeat(64), challenged_at: 1772700000,
+          credential_id: b64(new Uint8Array(32).fill(7)), rp_id: 'localhost'};
+      }};
+    }
+    if (path !== '/telegram/emparejar') forbidden();
     stagedPayload = Object.fromEntries(new URLSearchParams(options.body));
     if (!stagedPayload.envelope || Object.keys(stagedPayload).sort().join(',')
-        !== 'csrf,envelope,operation_id' || JSON.stringify(stagedPayload).includes(input.token))
-      forbidden();
+        !== 'authenticator_data,challenged_at,client_data_json,credential_id,csrf,envelope,operation_id,request_nonce,signature'
+        || JSON.stringify(stagedPayload).includes(input.token)) forbidden();
     events.push('private-stage');
     return {status: input.stageStatus || 202};
   }, XMLHttpRequest: forbidden, WebSocket: forbidden,
@@ -186,6 +214,9 @@ def test_actual_browser_stages_only_encrypted_v2_to_same_origin_without_sender_a
     assert staged["csrf"] == "x" * 43
     assert staged["operation_id"] == "123e4567-e89b-42d3-a456-426614174000"
     assert staged["envelope"] == result["sealedBeforeStage"]
+    assert "private-challenge" in result["events"]
+    assert "owner-webauthn-uv" in result["events"]
+    assert staged["request_nonce"] == "c" * 64
     assert TOKEN not in json.dumps(staged)
     sealed = bootstrap._unb64(staged["envelope"], maximum=4096)
     code = result["command"].removeprefix("/start ")
