@@ -546,6 +546,7 @@ def _candidate_handoff_fake(
     after_effect: bool = False,
     create_after_effect: bool = True,
     invalid_label: bool = False,
+    worker_cleanup_failure: bool = False,
 ) -> tuple[list[tuple[str, ...]], dict[str, object], dict[str, object]]:
     calls, legacy = _cutover_calls(monkeypatch)
     host._cutover_park_original(ORIGINAL_ID, LEGACY_IMAGE, LEGACY_SHA, ATTEMPT)
@@ -615,6 +616,23 @@ def _candidate_handoff_fake(
     monkeypatch.setattr(host, "_run", runner)
     monkeypatch.setattr(host, "_browser_controller_postflight", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(host, "_browser_worker_postflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(host, "_cutover_worker_name_id", lambda: WORKER_ID)
+
+    def cleanup_worker(
+        image: str, source_sha: str, attempt: str, seccomp_sha: str, seccomp: bytes
+    ) -> None:
+        assert (image, source_sha, attempt, seccomp_sha, seccomp) == (
+            WORKER_IMAGE,
+            TARGET_SHA,
+            ATTEMPT,
+            LEGACY_COMPOSE_SHA,
+            b"isolated-reviewed-seccomp",
+        )
+        calls.append(("compensate-worker", WORKER_ID))
+        if worker_cleanup_failure:
+            raise host.PreflightError("synthetic worker selective removal receipt lost")
+
+    monkeypatch.setattr(host, "_cutover_compensate_worker", cleanup_worker)
 
     def loopback(*_args: object) -> None:
         if fail_at == "health":
@@ -682,6 +700,7 @@ def test_candidate_create_start_or_health_failure_compensates_exact_id(
     assert ("docker", "rm", CANDIDATE_ID) in calls
     assert ("docker", "start", ORIGINAL_ID) in calls
     assert ("docker", "rm", ORIGINAL_ID) not in calls
+    assert ("compensate-worker", WORKER_ID) in calls
 
 
 def test_create_timeout_without_side_effect_restores_old_without_candidate_deletion(
@@ -695,6 +714,7 @@ def test_create_timeout_without_side_effect_restores_old_without_candidate_delet
     assert candidate["exists"] is False
     assert legacy["State"]["Running"] is True
     assert ("docker", "rm", CANDIDATE_ID) not in calls
+    assert ("compensate-worker", WORKER_ID) in calls
 
 
 def test_untrusted_candidate_identity_never_removed_and_restore_is_indeterminate(
@@ -707,6 +727,22 @@ def test_untrusted_candidate_identity_never_removed_and_restore_is_indeterminate
     assert legacy["State"]["Running"] is False
     assert ("docker", "rm", CANDIDATE_ID) not in calls
     assert ("docker", "start", ORIGINAL_ID) not in calls
+    assert ("compensate-worker", WORKER_ID) not in calls
+
+
+def test_worker_cleanup_uncertain_after_exact_id_restore_marks_indeterminate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls, legacy, candidate = _candidate_handoff_fake(
+        monkeypatch, fail_at="health", worker_cleanup_failure=True
+    )
+    with pytest.raises(host.PreflightError, match="INDETERMINATE"):
+        _activate()
+    assert candidate == {"exists": False, "running": False}
+    assert legacy["Name"] == "/boca-socios-controller-1"
+    assert legacy["State"]["Running"] is True
+    assert ("compensate-worker", WORKER_ID) in calls
+    assert ("docker", "rm", ORIGINAL_ID) not in calls
 
 
 def _retire() -> None:

@@ -5510,12 +5510,21 @@ def _cutover_activate_candidate(
                 owner,
                 config_hash,
             )
+            # A failed candidate must not strand the attempt-only worker/IPC
+            # after the original exact ID has been restored. Reuse the
+            # independently authenticated, selective worker compensator.
+            # Never remove a worker if its exact expected ID has drifted.
+            if _cutover_worker_name_id() != worker_id:
+                raise PreflightError("cutover A worker identity changed during compensation")
+            _cutover_compensate_worker(
+                browser_image, target_sha, attempt_id, seccomp_sha, staged_seccomp
+            )
         except (PreflightError, OSError, ValueError, KeyError, TypeError) as exc:
             raise PreflightError(
-                "cutover A candidate failed; exact-ID original recovery INDETERMINATE, no retry"
+                "cutover A candidate failed; original/worker recovery INDETERMINATE, no retry"
             ) from exc
         raise PreflightError(
-            "cutover A candidate failed; original exact ID restored RUNNING"
+            "cutover A candidate failed; original exact ID restored RUNNING and worker removed"
         ) from None
 
 

@@ -77,7 +77,10 @@ volume init, `docker create` receipt loss, start failure and worker health
 failure, with exact worker ID and attempt-labeled IPC volume checks. Candidate
 activation independently tests the create/start/health/loopback path and
 removes **only** a positively identified attempt candidate before restoring
-the old ID; unexpected labels produce INDETERMINATE, never blind deletion.
+the old ID; then it verifies and selectively removes the exact attempt worker
+and IPC volume. Unexpected candidate labels, worker-ID drift or uncertain
+worker cleanup produce INDETERMINATE, never blind deletion. The recovered old
+ID is never removed while compensating the attempt.
 Retirement of the parked original is a distinct irreversible commit point
 guarded by positive candidate and worker health and localhost acceptance, and
 it then checks Compose singleton discovery from attempt-scoped files. If the
@@ -171,7 +174,7 @@ over the candidate's bound port or retry a destructive command.
   branch guards, now accounting for the separately authenticated read-only
   cutover option. `pr-validation` includes the new tests.
 - Local 2026-11-04 ART, source-only cutover candidate: `uv sync --frozen
-  --offline` checked 15 packages; 55 focused tests PASS; full suite **2498
+  --offline` checked 15 packages; 56 focused tests PASS; full suite **2499
   passed +31 subtests passed**; Ruff lint/format (390 files), Mypy (85
   sources), repository policy and `git diff --check` PASS. These results are
   local source/runner mocks, **not** a Docker host transition. Hosted PR checks
