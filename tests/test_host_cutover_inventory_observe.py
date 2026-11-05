@@ -101,7 +101,6 @@ def _encoded(version: str = "boca-cutover-inventory-observe-v1", **changes: str)
     )
 
 
-
 def test_real_adapter_uses_only_explicit_rootless_inspect_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -147,11 +146,8 @@ def test_real_adapter_uses_only_explicit_rootless_inspect_fields(
     assert io.field("volume", DATA, "Mountpoint") == "read-only-fixture"
 
     assert observed == [
-        ("inspect", "--format", "{{json ." + field + "}}", CONTROLLER)
-        for field in container_fields
-    ] + [
-        ("volume", "inspect", "--format", "{{json .Mountpoint}}", DATA)
-    ]
+        ("inspect", "--format", "{{json ." + field + "}}", CONTROLLER) for field in container_fields
+    ] + [("volume", "inspect", "--format", "{{json .Mountpoint}}", DATA)]
     for kind, ident, field in (
         ("container", CONTROLLER, "Config.Env"),
         ("container", CONTROLLER, "HostConfig.Binds"),
