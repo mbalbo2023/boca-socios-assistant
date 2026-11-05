@@ -415,9 +415,7 @@ def test_staged_discovery_window_must_be_signed_exact_and_fresh(
     private, recipient, v2, _, coords, _ = _setup(data, monkeypatch)
     if case == "future_time":
         with pytest.raises(issuer.PairingIssuerError):
-            issuer.issue_owner_pairing_receipt(
-                coords, v2, KEY, NOW - 30, discovery_not_before=NOW
-            )
+            issuer.issue_owner_pairing_receipt(coords, v2, KEY, NOW - 30, discovery_not_before=NOW)
         return
     if case == "stale":
         with pytest.raises(issuer.PairingIssuerError):
