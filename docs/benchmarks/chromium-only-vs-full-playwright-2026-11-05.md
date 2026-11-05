@@ -1,6 +1,7 @@
 # R28 — Comparación aislada de tamaño Chromium-only (NO PRODUCTIVO)
 
-**Fecha:** 2026-11-05 ART. **Estado:** candidato de benchmark, sin medición todavía.
+**Fecha:** 2026-11-05 ART. **Estado:** benchmark comparativo medido en runner;
+NO PRODUCTIVO, sin merge ni instalación.
 **Issue de procedencia:** [#386](https://github.com/mbalbo2023/boca-socios-assistant/issues/386).
 
 ## Requerimiento conservado
@@ -44,3 +45,28 @@ La comparación solo será válida si el nuevo Chromium-only pasa **el mismo
 smoke offline**, y si se documenta su SHA/digest base y bytes reales. Un
 FAIL debe mantenerse como FAIL sin emitir tamaños presumiblemente útiles.
 No se integra este Dockerfile a la BETA final, cualquiera sea el resultado.
+
+## Evidencia medida R28
+
+El job de comparación descartable en
+[Actions #42121468183](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42121468183)
+registró `BOCA_CHROMIUM_ONLY_BENCHMARK` tras smoke **offline PASS**:
+
+| Imagen | `.Size` bytes runner | TAR individual o par, sin comprimir |
+|---|---:|---:|
+| Browser full Playwright (Chromium/Firefox/WebKit) | 2,695,268,890 | — |
+| Browser Chromium-only (benchmark NO PRODUCTIVO) | 1,352,733,959 | 1,360,442,368 |
+| Controller de producto | 66,805,534 | — |
+| Controller + browser full | 2,762,074,424 suma lógica | 2,788,375,552 |
+
+En este runner Chromium-only fue **1,342,534,931 bytes menor** en tamaño
+lógico que browser full (~49.8% de reducción), pero **1,352,733,959 bytes
+supera en 540,738,823 bytes** los `811,995,136 bytes` de holgura sobre el
+piso de 4 GiB del droplet. Ni esta cifra ni el TAR prueban un delta físico
+de pull; además el benchmark usa otro base OCI, por lo que comparación
+de capas/deltas no es intercambiable. Requisito de tres navegadores permanece.
+
+La medición no habilita GO de deploy, no justifica bajar el piso de 4 GiB
+ni autoriza tocar imágenes/volúmenes ajenos. Para desplegar la BETA full
+es imprescindible evidencia actualizada de capas OCI compartidas/compresión
+y de capacidad real, o ampliación específicamente aprobada de almacenamiento.
