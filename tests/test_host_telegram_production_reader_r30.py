@@ -33,7 +33,7 @@ def test_dedicated_reader_supports_existing_telegram_stopped_boundary(
         calls.append(args)
         return json.dumps(
             ["BOCA_RUNTIME_MODE=simulation", "BOCA_ENGINE_MODE=off"]
-            if "Config.Env" in args
+            if "{{json .Config.Env}}" in args
             else {"Name": "no", "MaximumRetryCount": 0}
         )
 
