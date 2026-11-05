@@ -29,8 +29,15 @@ IDENT = re.compile(r"[0-9a-f]{64}\Z")
 SOURCE = re.compile(r"[0-9a-f]{40}\Z")
 MAX_JSON = 4096
 FIELDS = (
-    "id", "name", "running", "health", "image_id", "revision", "service",
-    "attempt", "port_binding",
+    "id",
+    "name",
+    "running",
+    "health",
+    "image_id",
+    "revision",
+    "service",
+    "attempt",
+    "port_binding",
 )
 INSPECT_FORMAT = (
     '{"id":{{json .Id}},"name":{{json .Name}},'
@@ -139,10 +146,20 @@ def _record(raw: bytes | None, run_id: str, *, kind: str) -> dict[str, Any] | No
         if (
             set(obj)
             != {
-                "version", "attempt_id", "legacy_id", "legacy_source_sha",
-                "legacy_image_ref", "legacy_compose_sha", "target_source_sha",
-                "target_image_ref", "browser_image_ref", "target_compose_sha",
-                "overlay_sha", "seccomp_sha", "owner_subject_sha256", "origin",
+                "version",
+                "attempt_id",
+                "legacy_id",
+                "legacy_source_sha",
+                "legacy_image_ref",
+                "legacy_compose_sha",
+                "target_source_sha",
+                "target_image_ref",
+                "browser_image_ref",
+                "target_compose_sha",
+                "overlay_sha",
+                "seccomp_sha",
+                "owner_subject_sha256",
+                "origin",
             }
             or not isinstance(obj["legacy_id"], str)
             or not IDENT.fullmatch(obj["legacy_id"])
@@ -154,16 +171,27 @@ def _record(raw: bytes | None, run_id: str, *, kind: str) -> dict[str, Any] | No
         if (
             set(obj)
             != {
-                "version", "attempt_id", "legacy_source_sha", "target_source_sha",
-                "legacy_id", "intent_sha256", "state", "cleanup", "original_restored",
-                "irreversible_commit_started", "candidate_id", "worker_id",
+                "version",
+                "attempt_id",
+                "legacy_source_sha",
+                "target_source_sha",
+                "legacy_id",
+                "intent_sha256",
+                "state",
+                "cleanup",
+                "original_restored",
+                "irreversible_commit_started",
+                "candidate_id",
+                "worker_id",
             }
             or obj.get("state") not in ("ACCEPTED", "RECOVERED", "NO_GO")
             or obj.get("cleanup") not in ("ACCEPT", "NO_GO", "INDETERMINATE")
             or type(obj.get("original_restored")) is not bool
             or type(obj.get("irreversible_commit_started")) is not bool
-            or any(value is not None and (type(value) is not str or not IDENT.fullmatch(value))
-                   for value in (obj.get("candidate_id"), obj.get("worker_id")))
+            or any(
+                value is not None and (type(value) is not str or not IDENT.fullmatch(value))
+                for value in (obj.get("candidate_id"), obj.get("worker_id"))
+            )
         ):
             raise ReconcileError("RESULT_SCHEMA")
     return obj
@@ -187,8 +215,11 @@ def _docker(*args: str, timeout: int = 15) -> str:
     try:
         out = subprocess.run(  # noqa: S603 - Boca-only read commands
             ("docker", *args),  # noqa: S607 - fixed Docker executable
-            check=True, text=True, capture_output=True,
-            timeout=timeout, env=environment,
+            check=True,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            env=environment,
         ).stdout
     except (OSError, subprocess.SubprocessError) as exc:
         raise ReconcileError("DOCKER_READ") from exc
@@ -199,7 +230,11 @@ def _docker(*args: str, timeout: int = 15) -> str:
 
 def _docker_snapshot() -> list[dict[str, Any]]:
     ids = _docker(
-        "ps", "-a", "-q", "--no-trunc", "--filter",
+        "ps",
+        "-a",
+        "-q",
+        "--no-trunc",
+        "--filter",
         f"label=com.docker.compose.project={PROJECT}",
     ).splitlines()
     if len(ids) > 8 or len(ids) != len(set(ids)) or any(not IDENT.fullmatch(x) for x in ids):
@@ -229,9 +264,11 @@ def _docker_snapshot() -> list[dict[str, Any]]:
 
 def _ports(containers: list[dict[str, Any]]) -> str:
     bound = [
-        item for item in containers
-        if item["running"] and item["service"] == "controller" and item["port_binding"]
-        == {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
+        item
+        for item in containers
+        if item["running"]
+        and item["service"] == "controller"
+        and item["port_binding"] == {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
     ]
     if len(bound) > 1:
         return "AMBIGUOUS"
@@ -251,8 +288,10 @@ def _marker(prepared_id: str) -> str:
         )
         path = Path(raw)
         if (
-            type(raw) is not str or not path.is_absolute()
-            or path.name != "_data" or path.parent.name != DATA_VOLUME
+            type(raw) is not str
+            or not path.is_absolute()
+            or path.name != "_data"
+            or path.parent.name != DATA_VOLUME
             or path.is_symlink()
         ):
             return "VOLUME_UNVERIFIED"
@@ -287,7 +326,11 @@ def _staged_attempt(run_id: str) -> dict[str, str]:
     try:
         descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     except OSError:
-        return {"stage": "UNVERIFIED", "promotion_intent": "UNVERIFIED", "promotion_result": "UNVERIFIED"}
+        return {
+            "stage": "UNVERIFIED",
+            "promotion_intent": "UNVERIFIED",
+            "promotion_result": "UNVERIFIED",
+        }
     try:
         try:
             child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
@@ -308,7 +351,8 @@ def _staged_attempt(run_id: str) -> dict[str, str]:
                     result[kind] = "ABSENT"
                 else:
                     result[kind] = (
-                        "PRESENT" if stat.S_ISREG(entry.st_mode) and entry.st_uid == UID
+                        "PRESENT"
+                        if stat.S_ISREG(entry.st_mode) and entry.st_uid == UID
                         else "UNVERIFIED"
                     )
             return result
@@ -348,7 +392,8 @@ def _host(run_id: str, prepared_id: str) -> dict[str, Any]:
     legacy = intent["legacy_id"] if intent is not None else ""
     originals = [item for item in first if item["id"] == legacy] if legacy else []
     candidates = [
-        item for item in first
+        item
+        for item in first
         if item["service"] == "controller"
         and intent is not None
         and item["revision"] == intent["target_source_sha"]
