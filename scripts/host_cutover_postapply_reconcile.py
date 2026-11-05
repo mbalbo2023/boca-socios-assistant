@@ -275,13 +275,13 @@ def _ports(containers: list[dict[str, Any]]) -> str:
     return "BOCA_CONTROLLER_DOCKER_BOUND" if len(bound) == 1 else "UNVERIFIED"
 
 
-def _marker(prepared_id: str) -> str:
+def _marker(prepared_id: str) -> tuple[str, str]:
     # Direct rootless volume mountpoint read only. Some rootless UID mappings
     # forbid opening this marker: report UNREADABLE, never create a helper
     # container or change the stored inode to work around permission.
     names = _docker("volume", "ls", "-q", "--filter", f"name=^{DATA_VOLUME}$").splitlines()
     if names != [DATA_VOLUME]:
-        return "VOLUME_UNVERIFIED"
+        return "VOLUME_UNVERIFIED", "VOLUME_NAME_UNVERIFIED"
     try:
         raw = json.loads(
             _docker("volume", "inspect", "--format", "{{json .Mountpoint}}", DATA_VOLUME)
@@ -294,20 +294,24 @@ def _marker(prepared_id: str) -> str:
             or path.parent.name != DATA_VOLUME
             or path.is_symlink()
         ):
-            return "VOLUME_UNVERIFIED"
+            return "VOLUME_UNVERIFIED", "MOUNTPOINT_IDENTITY_UNVERIFIED"
         blob = _read_private(
             f".boca-cutover-prepared-go-{prepared_id}.json",
             directory=path,
             private_directory=False,
         )
-    except (OSError, ReconcileError, TypeError, ValueError):
-        return "UNREADABLE"
+    except ReconcileError as exc:
+        return "UNREADABLE", str(exc)
+    except OSError as exc:
+        return "UNREADABLE", "READ_PERMISSION" if exc.errno in (1, 13) else "READ_OS_ERROR"
+    except (TypeError, ValueError):
+        return "UNREADABLE", "MOUNTPOINT_PARSE"
     if blob is None:
-        return "ABSENT"
+        return "ABSENT", "MARKER_NOT_FOUND"
     try:
         marker = json.loads(blob.decode("ascii"))
     except (ValueError, UnicodeError):
-        return "INVALID"
+        return "INVALID", "MARKER_PARSE"
     if (
         not isinstance(marker, dict)
         or marker.get("version") != "boca-cutover-prepared-use-v1"
@@ -315,8 +319,115 @@ def _marker(prepared_id: str) -> str:
         or marker.get("prepare_run_id") != prepared_id
         or _canonical(marker) != blob
     ):
-        return "INVALID"
-    return "PRESENT_VERIFIED"
+        return "INVALID", "MARKER_SCHEMA"
+    return "PRESENT_VERIFIED", "MARKER_SCHEMA_VALID"
+
+
+def _stage_preflight(intent: dict[str, Any] | None) -> dict[str, Any]:
+    """Repeat only strict stage preconditions; no mkdir, uploaded bytes or ZIP import."""
+    result: dict[str, Any] = {
+        "reason": "UNVERIFIED",
+        "root_entries_count": None,
+        "root_entries_expected": False,
+        "compose_digest_match": False,
+        "plan_hashes_unique": False,
+    }
+    if intent is None:
+        result["reason"] = "INTENT_ABSENT"
+        return result
+    fields = (
+        intent.get("legacy_compose_sha"),
+        intent.get("target_compose_sha"),
+        intent.get("overlay_sha"),
+        intent.get("seccomp_sha"),
+    )
+    result["plan_hashes_unique"] = all(
+        isinstance(value, str) and IDENT.fullmatch(value) for value in fields
+    ) and len(set(fields)) == 4
+    if not result["plan_hashes_unique"]:
+        result["reason"] = "PLAN_SHA_COLLISION_OR_INVALID"
+        return result
+    try:
+        root = os.open(
+            "/srv/boca-socios", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        )
+    except OSError:
+        result["reason"] = "STAGE_ROOT_UNREADABLE"
+        return result
+    try:
+        metadata = os.fstat(root)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != UID
+            or metadata.st_gid != UID
+            or stat.S_IMODE(metadata.st_mode) != 0o700
+        ):
+            result["reason"] = "STAGE_ROOT_OWNER_MODE"
+            return result
+        try:
+            names = os.listdir(root)
+        except OSError:
+            result["reason"] = "STAGE_ROOT_LIST"
+            return result
+        result["root_entries_count"] = len(names) if len(names) <= 2048 else None
+        result["root_entries_expected"] = set(names) == {"compose.beta.yaml"}
+        if not result["root_entries_expected"]:
+            result["reason"] = "STAGE_ROOT_ENTRIES"
+            return result
+        try:
+            descriptor = os.open(
+                "compose.beta.yaml",
+                os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=root,
+            )
+        except OSError:
+            result["reason"] = "STAGE_COMPOSE_UNREADABLE"
+            return result
+        try:
+            before = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(before.st_mode)
+                or before.st_uid != UID
+                or before.st_gid != UID
+                or before.st_nlink != 1
+                or stat.S_IMODE(before.st_mode) != 0o600
+                or not 0 < before.st_size <= 32768
+            ):
+                result["reason"] = "STAGE_COMPOSE_INODE_MODE"
+                return result
+            data = os.read(descriptor, 32769)
+            after = os.fstat(descriptor)
+            if (
+                len(data) != before.st_size
+                or (
+                    before.st_dev,
+                    before.st_ino,
+                    before.st_size,
+                    before.st_mtime_ns,
+                    before.st_ctime_ns,
+                )
+                != (
+                    after.st_dev,
+                    after.st_ino,
+                    after.st_size,
+                    after.st_mtime_ns,
+                    after.st_ctime_ns,
+                )
+            ):
+                result["reason"] = "STAGE_COMPOSE_CHANGED"
+                return result
+            result["compose_digest_match"] = hashlib.sha256(data).hexdigest() == fields[0]
+            result["reason"] = (
+                "STAGE_PREFLIGHT_MATCH" if result["compose_digest_match"] else "STAGE_COMPOSE_SHA"
+            )
+            return result
+        except OSError:
+            result["reason"] = "STAGE_COMPOSE_IO"
+            return result
+        finally:
+            os.close(descriptor)
+    finally:
+        os.close(root)
 
 
 def _staged_attempt(run_id: str) -> dict[str, str]:
@@ -400,6 +511,7 @@ def _host(run_id: str, prepared_id: str) -> dict[str, Any]:
         and item["id"] != legacy
     ]
     workers = [item for item in first if item["service"] == "browser-worker"]
+    marker_status, marker_reason = _marker(prepared_id)
     return {
         "version": "boca-postapply-reconcile-v1",
         "incident_run_id": run_id,
@@ -417,7 +529,9 @@ def _host(run_id: str, prepared_id: str) -> dict[str, Any]:
         "boca_inventory": first,
         "boca_containers": len(first),
         "port_8443": _ports(first),
-        "prepared_go_marker": _marker(prepared_id),
+        "prepared_go_marker": marker_status,
+        "prepared_go_marker_reason": marker_reason,
+        "stage_preflight": _stage_preflight(intent),
         **_staged_attempt(run_id),
         "runtime_attested": False,
         "go_for_retry": False,
