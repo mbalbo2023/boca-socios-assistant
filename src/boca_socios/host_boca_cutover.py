@@ -14,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from boca_socios.host_boca_cleanup import BocaJobLease, protected_boca_job_lease
+from boca_socios.host_boca_cleanup import BocaJobLease, CleanupReceipt, protected_boca_job_lease
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
@@ -91,6 +91,7 @@ class CutoverReceipt:
     irreversible_commit_started: bool
     candidate_id: str | None
     worker_id: str | None
+    cleanup_receipt: CleanupReceipt | None = None
 
     @property
     def accepted(self) -> bool:
@@ -137,7 +138,7 @@ class CutoverBackend(Protocol):
         candidate_id: str | None,
         worker_id: str | None,
         lease: BocaJobLease,
-    ) -> CleanupStatus: ...
+    ) -> CleanupStatus | CleanupReceipt: ...
 
 
 TerminalSink = Callable[[CutoverPlan, CutoverReceipt, BocaJobLease], None]
@@ -195,6 +196,7 @@ def run_cutover_a(
         candidate: str | None = None
         worker: str | None = None
         final_status: CleanupStatus = "NO_GO"
+        final_evidence: CleanupReceipt | None = None
         try:
             backend.attest_original(plan, lease)
             # PREPARE consumption is durable under the SAME flock, strictly
@@ -233,16 +235,30 @@ def run_cutover_a(
         finally:
             if effect_started:
                 try:
-                    final_status = backend.finalize(
+                    result = backend.finalize(
                         plan,
                         commit_started=commit_started,
                         candidate_id=candidate,
                         worker_id=worker,
                         lease=lease,
                     )
+                    if isinstance(result, CleanupReceipt):
+                        if result.attempt_id != plan.attempt_id:
+                            final_status = "NO_GO"
+                        else:
+                            final_status = result.status
+                            final_evidence = result
+                    else:
+                        final_status = result
                 except Exception:
                     final_status = "NO_GO"
                 if final_status not in ("ACCEPT", "NO_GO", "INDETERMINATE"):
+                    final_status = "NO_GO"
+                if (
+                    getattr(type(backend), "requires_persistent_receipt", False) is True
+                    and final_status == "ACCEPT"
+                    and final_evidence is None
+                ):
                     final_status = "NO_GO"
         state: Literal["ACCEPTED", "RECOVERED", "NO_GO"] = "NO_GO"
         if final_status == "ACCEPT" and committed:
@@ -250,7 +266,14 @@ def run_cutover_a(
         elif final_status == "ACCEPT" and restored and not commit_started:
             state = "RECOVERED"
         receipt = CutoverReceipt(
-            plan.attempt_id, state, final_status, restored, commit_started, candidate, worker
+            plan.attempt_id,
+            state,
+            final_status,
+            restored,
+            commit_started,
+            candidate,
+            worker,
+            final_evidence,
         )
         # O_EXCL result must be persisted *before releasing the SAME flock*.
         # Callers cannot safely write it after run_cutover_a returns. Missing

@@ -169,6 +169,101 @@ class CleanupReceipt:
     retained_uncertain: tuple[str, ...]
     known_residue: tuple[Target, ...]
 
+    def redacted_json(self) -> str:
+        """Bounded exact-ID host receipt, free of labels, env, secrets or foreign paths.
+
+        The trusted Boca-only inventorier established resource provenance before
+        each removal. This projection does NOT infer ownership from an ID alone.
+        Missing rootless disk/inode metrics cannot be represented as an ACCEPT.
+        """
+        if (
+            self.outcome not in ("SUCCESS", "FAILURE")
+            or type(self.attempt_id) is not str
+            or not ATTEMPT_ID.fullmatch(self.attempt_id)
+            or self.status not in ("ACCEPT", "NO_GO", "INDETERMINATE")
+            or not isinstance(self.before, DiskInodes)
+            or not isinstance(self.after, DiskInodes)
+            or len(self.removed) > MAX_DELETIONS
+            or len(self.known_residue) > MAX_DELETIONS
+            or len(self.retained_uncertain) > MAX_OBJECTS
+            or (
+                self.status == "ACCEPT"
+                and (self.retained_uncertain or self.known_residue)
+            )
+        ):
+            raise CleanupError("Boca cleanup exact receipt evidence invalid")
+
+        def disk(snapshot: DiskInodes) -> dict[str, int]:
+            values = {
+                "stage_bytes_free": snapshot.bytes_free,
+                "stage_inodes_free": snapshot.inodes_free,
+                "docker_bytes_free": snapshot.docker_bytes_free,
+                "docker_inodes_free": snapshot.docker_inodes_free,
+                "stage_device": snapshot.stage_device,
+                "stage_inode": snapshot.stage_inode,
+                "docker_device": snapshot.docker_device,
+                "docker_inode": snapshot.docker_inode,
+            }
+            if any(type(value) is not int or value < 0 for value in values.values()):
+                raise CleanupError("Boca cleanup physical disk/inodes unproven")
+            return {key: value for key, value in values.items() if isinstance(value, int)}
+
+        before = disk(self.before)
+        after = disk(self.after)
+        if any(
+            before[key] != after[key]
+            for key in ("stage_device", "stage_inode", "docker_device", "docker_inode")
+        ):
+            raise CleanupError("Boca cleanup storage identity changed")
+
+        def resources(items: tuple[Target, ...]) -> list[dict[str, str]]:
+            seen: set[tuple[str, str]] = set()
+            result: list[dict[str, str]] = []
+            for item in items:
+                if not isinstance(item, Target) or item.kind not in (
+                    "container", "image", "network", "volume"
+                ):
+                    raise CleanupError("Boca cleanup receipt target kind invalid")
+                valid = (
+                    item.kind != "volume" and type(item.ident) is str
+                    and HEX_ID.fullmatch(item.ident) is not None
+                    or item.kind == "volume" and type(item.ident) is str
+                    and DOCKER_NAME.fullmatch(item.ident) is not None
+                    and item.ident.startswith("boca-socios_")
+                    and item.ident not in PERSISTENT_VOLUMES
+                )
+                key = (item.kind, item.ident)
+                if not valid or key in seen:
+                    raise CleanupError("Boca cleanup receipt resource identity unproven")
+                seen.add(key)
+                result.append({"kind": item.kind, "id": item.ident})
+            return result
+
+        if any(
+            type(reason) is not str
+            or re.fullmatch(r"[A-Za-z0-9:_.-]{1,220}", reason) is None
+            for reason in self.retained_uncertain
+        ):
+            raise CleanupError("Boca cleanup receipt uncertainty contains unsafe text")
+        body = {
+            "version": 1,
+            "scope": "boca-postdeploy",
+            "outcome": self.outcome,
+            "attempt_id": self.attempt_id,
+            "status": self.status,
+            "before": before,
+            "after": after,
+            "removed": resources(self.removed),
+            "retained_uncertain": list(self.retained_uncertain),
+            "known_residue": resources(self.known_residue),
+        }
+        encoded = json.dumps(
+            body, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+        )
+        if not 0 < len(encoded.encode("ascii")) <= 8192:
+            raise CleanupError("Boca cleanup public receipt unbounded")
+        return encoded
+
 
 @dataclass
 class BocaJobLease:

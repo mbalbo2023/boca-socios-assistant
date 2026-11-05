@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from boca_socios import host_boca_cleanup as cleanup
 from boca_socios.browser_release_manifest import make_browser_manifest
 from boca_socios.host_boca_cutover import CutoverPlan
 from boca_socios.host_boca_cutover_cli import CutoverInvocation
@@ -192,11 +193,26 @@ def test_actions_go_refuses_unapproved_context_before_creating_host_token(
     assert not (Path(env["RUNNER_TEMP"]) / go.HOST_INVOCATION_NAME).exists()
 
 
+def _host_approval_files(
+    request: go.GoRequest, env: dict[str, str], *, prepare_id: str | None = None
+) -> None:
+    runner = Path(env["RUNNER_TEMP"])
+    token = go.encode_invocation(
+        request.plan,
+        bundle_sha256="a" * 64,
+        go_binding_sha256="b" * 64,
+        prepare_run_id=prepare_id,
+    )
+    _file(runner / go.HOST_INVOCATION_NAME, (token + "\n").encode("ascii"))
+    _file(runner / go.HOST_APPROVAL_NAME, ("b" * 64 + "\n").encode("ascii"))
+
+
 def test_assert_host_receipt_requires_matching_attempt_sha_and_green_steps(
     tmp_path: Path,
 ) -> None:
     request, env = _actions_fixture(tmp_path)
     env.update({"BOCA_CUTOVER_A_GO_PREFLIGHT": "success", "BOCA_CUTOVER_A_HOST_APPLY": "success"})
+    _host_approval_files(request, env)
     path = Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME
     with pytest.raises(go.CutoverGoError):
         go.assert_actions_host_receipt(env)
@@ -223,6 +239,55 @@ def test_assert_host_receipt_requires_matching_attempt_sha_and_green_steps(
     ):
         with pytest.raises(go.CutoverGoError):
             go.assert_actions_host_receipt({**env, field: bad})
+
+
+def test_go_b_host_receipt_requires_canonical_redacted_postflight_with_exact_ids(
+    tmp_path: Path,
+) -> None:
+    request, env = _actions_fixture(tmp_path)
+    env.update({"BOCA_CUTOVER_A_GO_PREFLIGHT": "success", "BOCA_CUTOVER_A_HOST_APPLY": "success"})
+    _host_approval_files(request, env, prepare_id="50000000001")
+    path = Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME
+    exact_ack = (
+        f"BOCA_CUTOVER_A_HOST state=ACCEPTED attempt={request.plan.attempt_id} "
+        f"target_sha={request.plan.target_sha} cleanup=ACCEPT "
+        "receipt=RECORDED runtime=UNVERIFIED\n"
+    ).encode("ascii")
+    disk_before = cleanup.DiskInodes(2000, 200, 4000, 400, 8, 10, 16, 18)
+    disk_after = cleanup.DiskInodes(3000, 208, 5000, 406, 8, 10, 16, 18)
+    report = cleanup.CleanupReceipt(
+        "SUCCESS", request.plan.attempt_id, "ACCEPT",
+        disk_before, disk_after,
+        (cleanup.Target("image", "sha256:" + "f" * 64),),
+        (), (),
+    ).redacted_json()
+    _file(path, exact_ack + b"BOCA_CUTOVER_A_POSTFLIGHT " + report.encode("ascii") + b"\n")
+    assert go.assert_actions_host_receipt(env) == report
+    for malformed in (
+        exact_ack,
+        exact_ack + b"BOCA_CUTOVER_A_POSTFLIGHT {}\n",
+        exact_ack + b"BOCA_CUTOVER_A_POSTFLIGHT " + report.encode("ascii") + b"\nEXTRA\n",
+        exact_ack.replace(b"cleanup=ACCEPT", b"cleanup=NO_GO")
+        + b"BOCA_CUTOVER_A_POSTFLIGHT " + report.encode("ascii") + b"\n",
+    ):
+        _file(path, malformed)
+        with pytest.raises(go.CutoverGoError):
+            go.assert_actions_host_receipt(env)
+    bad = json.loads(report)
+    for changed in (
+        {"status": "NO_GO"},
+        {"outcome": "FAILURE"},
+        {"attempt_id": "50000000002"},
+        {"retained_uncertain": ["unknown-external"]},
+        {"removed": [{"kind": "volume", "id": "porota_data"}]},
+        {"removed": [{"kind": "volume", "id": "boca-socios_boca_data"}]},
+        {"removed": [{"kind": "container", "id": "short"}]},
+    ):
+        payload = dict(bad, **changed)
+        serialized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
+        _file(path, exact_ack + b"BOCA_CUTOVER_A_POSTFLIGHT " + serialized + b"\n")
+        with pytest.raises(go.CutoverGoError):
+            go.assert_actions_host_receipt(env)
 
 
 def test_bound_go_requires_distinct_protected_variable_which_is_absent_by_default(

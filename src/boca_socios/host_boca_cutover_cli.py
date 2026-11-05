@@ -198,7 +198,25 @@ def run_cli(
             else:
                 receipt = execute_prepared(invocation.plan, invocation.prepare_run_id)
         (reconcile or terminal.verify_persisted_exact)(invocation.plan, receipt)
+        postflight = ""
+        if invocation.prepare_run_id is not None:
+            detail = receipt.cleanup_receipt
+            if detail is None:
+                if receipt.accepted:
+                    raise CutoverCliError("Cutover A prepared host cleanup evidence incomplete")
+            elif detail.attempt_id != invocation.plan.attempt_id:
+                raise CutoverCliError("Cutover A postflight belongs to another attempt")
+            else:
+                # Failures with positively observed cleanup still expose the
+                # bounded receipt for RCA. Ambiguous effects remain NO_GO.
+                postflight = detail.redacted_json()
+                if receipt.accepted and (
+                    detail.outcome != "SUCCESS" or detail.status != "ACCEPT"
+                ):
+                    raise CutoverCliError("Cutover A accepted cleanup result mismatched")
         if not receipt.accepted:
+            if postflight:
+                print("BOCA_CUTOVER_A_POSTFLIGHT " + postflight)
             print("BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED")
             return 3
     except Exception:
@@ -212,4 +230,8 @@ def run_cli(
         f"target_sha={invocation.plan.target_sha} cleanup=ACCEPT "
         "receipt=RECORDED runtime=UNVERIFIED"
     )
+    if postflight:
+        # V2-only strict companion line; the original v1 ACK stays byte-identical.
+        # The runner verifies both in one bounded, approved SSH host receipt.
+        print("BOCA_CUTOVER_A_POSTFLIGHT " + postflight)
     return 0

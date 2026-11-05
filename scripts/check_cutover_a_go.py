@@ -25,7 +25,7 @@ import boca_protected_memfd_bootstrap as memfd
 
 from boca_socios.browser_release_manifest import validate_browser_manifest
 from boca_socios.host_boca_cutover import CutoverPlan
-from boca_socios.host_boca_cutover_cli import CutoverCliError, encode_invocation
+from boca_socios.host_boca_cutover_cli import CutoverCliError, CutoverInvocation, encode_invocation
 from boca_socios.prepared_go_runner import (
     PreparedGoError,
     hash_reviewed_file,
@@ -494,8 +494,96 @@ def write_actions_invocation_prepared(request: GoRequest, *, environ: Mapping[st
     return proof.approved_sha256
 
 
-def assert_actions_host_receipt(environment: Mapping[str, str]) -> None:
-    """Fail closed on missing SSH, failed preflight, or non-exact terminal result."""
+_POSTFLIGHT_PREFIX = b"BOCA_CUTOVER_A_POSTFLIGHT "
+_POSTFLIGHT_KEYS = frozenset(
+    {
+        "version", "scope", "attempt_id", "outcome", "status", "before", "after",
+        "removed", "retained_uncertain", "known_residue",
+    }
+)
+_POSTFLIGHT_DISK_KEYS = frozenset(
+    {
+        "stage_bytes_free", "stage_inodes_free", "docker_bytes_free",
+        "docker_inodes_free", "stage_device", "stage_inode",
+        "docker_device", "docker_inode",
+    }
+)
+_POSTFLIGHT_ID = re.compile(r"(?:sha256:)?[0-9a-f]{64}\Z")
+_POSTFLIGHT_VOLUME = re.compile(r"boca-socios_[A-Za-z0-9_.-]{1,110}\Z")
+_POSTFLIGHT_PRESERVE = frozenset(
+    {
+        "boca-socios_boca_data", "boca-socios_boca_key",
+        "boca-socios_boca_owner", "boca-socios_boca_telegram",
+    }
+)
+
+
+def verify_postflight_json(raw: bytes, expected_attempt_id: str) -> str:
+    """Independently validate the bounded public Boca-only host cleanup receipt.
+
+    This parser does not substitute for Docker provenance checks: those must
+    be attested under the same Boca rootless lease by the host planner.
+    """
+    if not 0 < len(raw) <= 8192:
+        raise CutoverGoError("Boca postdeploy receipt length unverified")
+    try:
+        body = json.loads(raw.decode("ascii"), object_pairs_hook=_unique_fields)
+        canonical = json.dumps(
+            body, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
+        ).encode("ascii")
+        if canonical != raw or type(body) is not dict or set(body) != _POSTFLIGHT_KEYS:
+            raise CutoverGoError("Boca postdeploy receipt not canonical")
+        if (
+            type(body["version"]) is not int
+            or body["version"] != 1
+            or body["scope"] != "boca-postdeploy"
+            or body["attempt_id"] != expected_attempt_id
+            or body["outcome"] != "SUCCESS"
+            or body["status"] != "ACCEPT"
+            or body["retained_uncertain"] != []
+            or body["known_residue"] != []
+        ):
+            raise CutoverGoError("Boca postdeploy receipt is not full SUCCESS/ACCEPT")
+        for key in ("before", "after"):
+            values = body[key]
+            if (
+                type(values) is not dict
+                or set(values) != _POSTFLIGHT_DISK_KEYS
+                or any(type(value) is not int or value < 0 for value in values.values())
+            ):
+                raise CutoverGoError("Boca postdeploy disk and inode census absent")
+        for key in ("stage_device", "stage_inode", "docker_device", "docker_inode"):
+            if body["before"][key] != body["after"][key]:
+                raise CutoverGoError("Boca postdeploy filesystem identity drifted")
+        removed = body["removed"]
+        if type(removed) is not list or len(removed) > 32:
+            raise CutoverGoError("Boca postdeploy removed resource list unbounded")
+        observed: set[tuple[str, str]] = set()
+        for entry in removed:
+            if type(entry) is not dict or set(entry) != {"kind", "id"}:
+                raise CutoverGoError("Boca postdeploy removed resource tuple invalid")
+            kind, ident = entry["kind"], entry["id"]
+            if type(kind) is not str or type(ident) is not str:
+                raise CutoverGoError("Boca postdeploy resource field types invalid")
+            if kind in ("image", "container", "network"):
+                allowed = _POSTFLIGHT_ID.fullmatch(ident) is not None
+            elif kind == "volume":
+                allowed = (
+                    _POSTFLIGHT_VOLUME.fullmatch(ident) is not None
+                    and ident not in _POSTFLIGHT_PRESERVE
+                )
+            else:
+                allowed = False
+            if not allowed or (kind, ident) in observed:
+                raise CutoverGoError("Boca postdeploy foreign or duplicate removal")
+            observed.add((kind, ident))
+        return raw.decode("ascii")
+    except (UnicodeError, ValueError, TypeError, KeyError, OverflowError) as exc:
+        raise CutoverGoError("Boca postdeploy exact receipt missing or malformed") from exc
+
+
+def assert_actions_host_receipt(environment: Mapping[str, str]) -> str | None:
+    """Fail closed on wrong SSH/GO or incomplete v2 cleanup; preserve v1 ABI."""
     if (
         environment.get("BOCA_OPERATION") != "cutover-a-apply"
         or environment.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
@@ -513,8 +601,47 @@ def assert_actions_host_receipt(environment: Mapping[str, str]) -> None:
         f"target_sha={environment['GITHUB_SHA']} "
         "cleanup=ACCEPT receipt=RECORDED runtime=UNVERIFIED\n"
     ).encode("ascii")
-    if _read_bounded(runner / HOST_RECEIPT_NAME, 300) != expected:
-        raise CutoverGoError("Cutover A terminal receipt missing or ambiguous")
+    # The exact invocation/digest were already produced by the independent
+    # reviewed GO preflight. Recheck their identity rather than trusting an
+    # injected host receipt to choose legacy v1 or prepared GO_B v2.
+    token_raw = _read_bounded(runner / HOST_INVOCATION_NAME, MAX_REQUEST)
+    digest_raw = _read_bounded(runner / HOST_APPROVAL_NAME, 80)
+    if (
+        not token_raw.endswith(b"\n")
+        or token_raw.count(b"\n") != 1
+        or not digest_raw.endswith(b"\n")
+        or digest_raw.count(b"\n") != 1
+    ):
+        raise CutoverGoError("Cutover A host invocation/GO artifacts malformed")
+    try:
+        invocation = CutoverInvocation.decode(token_raw[:-1].decode("ascii"))
+        approved = digest_raw[:-1].decode("ascii")
+    except (UnicodeError, CutoverCliError) as exc:
+        raise CutoverGoError("Cutover A reviewed invocation unparseable") from exc
+    if (
+        invocation.plan.attempt_id != environment["GITHUB_RUN_ID"]
+        or invocation.plan.target_sha != environment["GITHUB_SHA"]
+        or not HEX.fullmatch(approved)
+        or invocation.go_binding_sha256 != approved
+    ):
+        raise CutoverGoError("Cutover A host receipt differs from reviewed GO and release")
+    raw = _read_bounded(runner / HOST_RECEIPT_NAME, 9000)
+    if invocation.prepare_run_id is None:
+        if raw != expected:
+            raise CutoverGoError("Cutover A terminal receipt missing or ambiguous")
+        return None
+    if not raw.startswith(expected):
+        raise CutoverGoError("Cutover A GO_B terminal ACK absent")
+    postflight = raw[len(expected):]
+    if (
+        not postflight.startswith(_POSTFLIGHT_PREFIX)
+        or not postflight.endswith(b"\n")
+        or postflight.count(b"\n") != 1
+    ):
+        raise CutoverGoError("Cutover A GO_B postflight receipt absent or ambiguous")
+    return verify_postflight_json(
+        postflight[len(_POSTFLIGHT_PREFIX):-1], environment["GITHUB_RUN_ID"]
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -528,7 +655,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.assert_host_receipt:
             if args.request_path is not None or args.from_actions or args.prepared_from_actions:
                 raise CutoverGoError("Cutover A receipt assertion arguments unexpected")
-            assert_actions_host_receipt(os.environ)
+            postflight = assert_actions_host_receipt(os.environ)
+            if postflight is not None:
+                # This public JSON contains only Boca exact IDs and storage
+                # counters, not owner credentials or arbitrary Docker fields.
+                print("BOCA_CUTOVER_A_POSTFLIGHT_VERIFIED " + postflight)
             print("BOCA_CUTOVER_A_HOST_VERIFY state=PASS receipt=EXACT runtime=UNVERIFIED")
             return 0
         if args.from_actions and args.prepared_from_actions:
