@@ -412,9 +412,7 @@ def test_unpinned_direct_installation_refuses_before_creating_marker(
     _, effects = verified_io
     installed = replace(_reviewed(tmp_path), expected_request_id="")
     with pytest.raises(actions.PhysicalAckUnavailable, match="scope"):
-        actions.apply_latest_owner_request(
-            installed, lease=BocaJobLease("3456789012", 12, 1, True)
-        )
+        actions.apply_latest_owner_request(installed, lease=BocaJobLease("3456789012", 12, 1, True))
     assert effects == [] and not list(tmp_path.iterdir())
 
 
