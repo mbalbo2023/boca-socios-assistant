@@ -47,6 +47,36 @@ def _run(
     )
 
 
+def test_bounded_source_growth_keeps_archive_digest_and_archive_limit_independent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sources = (*builder.SOURCES, *builder.OPTION_B_SOURCES)
+    total = sum((ROOT / item).stat().st_size for item in sources)
+    assert 768_000 < total < builder.MAX_SOURCE_BYTES == 800_000
+    assert builder.MAX_ARCHIVE_BYTES == 512_000
+    output, digest = _build(tmp_path)
+    raw = output.read_bytes()
+    assert len(raw) <= builder.MAX_ARCHIVE_BYTES
+    assert hashlib.sha256(raw).hexdigest() == digest
+    bootstrap.verify(raw, digest)
+    assert bootstrap.MAX_ZIP == 512_000
+    assert bootstrap.MAX_UNCOMPRESSED == builder.MAX_SOURCE_BYTES
+    with zipfile.ZipFile(io.BytesIO(raw)) as package:
+        total_uncompressed = sum(item.file_size for item in package.infolist())
+    monkeypatch.setattr(bootstrap, "MAX_UNCOMPRESSED", total_uncompressed - 1)
+    with pytest.raises(ValueError, match="entry allowlist mismatch"):
+        bootstrap.verify(raw, digest)
+    monkeypatch.setattr(bootstrap, "MAX_UNCOMPRESSED", builder.MAX_SOURCE_BYTES)
+    with pytest.raises(ValueError, match="SHA/size mismatch"):
+        bootstrap.verify(raw, "0" * 64)
+    # A one-byte-shorter hard cap must still fail before writing any output.
+    monkeypatch.setattr(builder, "MAX_SOURCE_BYTES", total - 1)
+    rejected = tmp_path / "rejected.pyz"
+    with pytest.raises(ValueError, match="total exceeds bounded contract"):
+        builder.build(ROOT, rejected)
+    assert not rejected.exists()
+
+
 def test_verified_memfd_zip_selftest_never_touches_host(tmp_path: Path) -> None:
     output, digest = _build(tmp_path)
     raw = output.read_bytes()
