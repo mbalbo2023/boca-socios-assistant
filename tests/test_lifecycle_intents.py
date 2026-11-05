@@ -1,5 +1,6 @@
 """Durable owner intent contract; these tests never run a host operation."""
 
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from uuid import uuid4
@@ -73,6 +74,23 @@ def test_host_ack_requires_claim_and_matching_operation_order(tmp_path: Path) ->
         store.current()
     with pytest.raises(LifecycleStorageUnavailable):
         store.request("bot", "start", str(uuid4()))
+
+
+def test_refused_and_applied_are_mutually_exclusive_terminal_ack(tmp_path: Path) -> None:
+    store, db = _store(tmp_path / "boca.sqlite3")
+    request_id = str(uuid4())
+    store.request("chromium", "start", request_id)
+    _insert_marker(db, host_marker(request_id, "chromium", "start", "CLAIMED"))
+    refused = host_marker(request_id, "chromium", "start", "REFUSED")
+    applied = host_marker(request_id, "chromium", "start", "APPLIED")
+    assert refused[0] == applied[0]  # Same deterministic ACK UUID, different evidence.
+    assert refused[1] != applied[1]
+    _insert_marker(db, refused)
+    assert store.current().status == "REFUSED"
+    with pytest.raises(sqlite3.IntegrityError):
+        _insert_marker(db, applied)
+    assert store.current().status == "REFUSED"
+    assert store.request("bot", "stop", str(uuid4())).status == "REQUESTED"
 
 
 def test_uncertain_host_receipt_blocks_all_new_operations(tmp_path: Path) -> None:
