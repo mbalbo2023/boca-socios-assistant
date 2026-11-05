@@ -31,13 +31,18 @@ def _request() -> str:
         "version": "boca-cutover-inventory-observe-v1",
         "target_source_sha": "a" * 40,
         "target_controller_image": "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64,
-        "target_browser_image": "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "c" * 64,
+        "target_browser_image": "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
+        + "c" * 64,
         "target_release_run_id": "42076459492",
         "observe_run_id": "42077145948",
     }
-    return base64.urlsafe_b64encode(
-        json.dumps(body, sort_keys=True, separators=(",", ":")).encode("ascii")
-    ).rstrip(b"=").decode("ascii")
+    return (
+        base64.urlsafe_b64encode(
+            json.dumps(body, sort_keys=True, separators=(",", ":")).encode("ascii")
+        )
+        .rstrip(b"=")
+        .decode("ascii")
+    )
 
 
 @pytest.mark.parametrize(
@@ -106,9 +111,7 @@ def test_unknown_error_text_cannot_escape(
     assert "SHOULD_NOT_ESCAPE" not in log.err
     assert "/srv/private" not in log.err
     assert "Docker socket path" not in log.err
-    assert log.err == (
-        "BOCA_CUTOVER_INVENTORY_OBSERVE state=NO_GO reason=OBSERVER_UNVERIFIED\n"
-    )
+    assert log.err == ("BOCA_CUTOVER_INVENTORY_OBSERVE state=NO_GO reason=OBSERVER_UNVERIFIED\n")
 
 
 @pytest.mark.parametrize(
@@ -130,8 +133,7 @@ def test_runner_refuses_unknown_unbounded_or_multiple_codes(raw: bytes) -> None:
 def test_runner_does_not_consume_unbounded_host_stderr() -> None:
     assert (
         inventory.parse_cutover_no_go_stderr(
-            b"BOCA_CUTOVER_INVENTORY_OBSERVE state=NO_GO reason=IMAGE_PROVENANCE\n"
-            + b"x" * 4096
+            b"BOCA_CUTOVER_INVENTORY_OBSERVE state=NO_GO reason=IMAGE_PROVENANCE\n" + b"x" * 4096
         )
         == "TRANSPORT_OR_BOOTSTRAP"
     )
@@ -145,7 +147,8 @@ def test_historical_unlabeled_legacy_is_read_only_and_deferred_to_runner(
     io = LegacyFakeIO(tmp_path)
     images = (
         (Image(IMAGE_ID, ("ghcr.io/mbalbo2023/boca-socios-assistant:unverified",), None),)
-        if image_visible else ()
+        if image_visible
+        else ()
     )
     io.inventory_value = replace(
         io.inventory_value,
@@ -188,9 +191,7 @@ def test_unlabeled_historical_cannot_forge_unknown_image(
             "ghcr.io/unrelated/image@sha256:" + "a" * 64
         )
     elif spoof == "two_images":
-        io.inventory_value = replace(
-            io.inventory_value, images=(unverified, unverified)
-        )
+        io.inventory_value = replace(io.inventory_value, images=(unverified, unverified))
     monkeypatch.setattr(inventory, "verify_protected_boca_job_lease", lambda *_args: None)
     with pytest.raises(inventory.CutoverInventoryNoGo):
         inventory.observe_cutover_inventory(CUTOVER_RELEASE, lease=_lease(), io=io)
