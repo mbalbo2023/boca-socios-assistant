@@ -386,6 +386,7 @@ def test_effectful_dispatch_is_inert_without_independent_exact_run_go() -> None:
     assert "docker image prune" not in workflow
     assert "docker system prune" not in workflow
 
+
 def test_prepared_cutover_review_remains_exact_across_distinct_apply_runs(
     tmp_path: Path,
 ) -> None:
@@ -401,14 +402,8 @@ def test_prepared_cutover_review_remains_exact_across_distinct_apply_runs(
         github_run_id=second_run,
         plan=replace(request.plan, attempt_id=second_run),
     )
-    assert (
-        go.cutover_prepared_context_sha256(replay, prepare_run_id=prepare_id)
-        == prepared
-    )
-    assert (
-        go.cutover_prepared_context_sha256(request, prepare_run_id="50000000003")
-        != prepared
-    )
+    assert go.cutover_prepared_context_sha256(replay, prepare_run_id=prepare_id) == prepared
+    assert go.cutover_prepared_context_sha256(request, prepare_run_id="50000000003") != prepared
     # New digest cannot satisfy the legacy GO gate.
     with pytest.raises(go.CutoverGoError, match="not bound"):
         go.require_protected_go(request, protected_go_digest=prepared)
@@ -432,4 +427,3 @@ def test_prepared_cutover_review_rejects_any_reviewed_bytes_drift(tmp_path: Path
     with pytest.raises(go.CutoverGoError, match="manifests conflict"):
         go.cutover_prepared_context_sha256(request, prepare_run_id="50000000001")
     assert len(prepared) == 64
-
