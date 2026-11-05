@@ -1,5 +1,33 @@
 # Estado de integración BETA
 
+## Último corte canónico A45-R14 — 04/11/2026 ART
+
+El [PR integral DRAFT #319](https://github.com/mbalbo2023/boca-socios-assistant/pull/319)
+está publicado en HEAD `931f2b5be5845848513dea713d6cd4ee0aaa4cdc`,
+tree `f70817061b2e018c6725c425d6cce3736592ad41`. QA exacto local:
+**2974 tests +34 subtests PASS**, Ruff/MyPy/política PASS; Actions del SHA:
+CI, panel, Telegram y first-deploy PR-only **SUCCESS**; seguridad y release
+**FAIL** por la discrepancia Canonical vs Trivy del CVE-2026-109518 en los
+paquetes APT ya corregidos. Job físico host **SKIPPED**. Ver
+[R14.1 #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6648856551).
+
+La **Opción B aprobada** ahora está implementada en el código de #319/#322:
+`boca_owner_session.sqlite3` independiente dentro del volumen Boca, esquema
+propio v1, persistencia de un único Chrome entre reinicios, cookie renovable
+400 días, logout/reemplazo revocables. **No** hay migración 0008 de
+`boca.sqlite3`. `GET /healthz` revalida esa SQLite sin escritura ni bootstrap.
+El Cutover A/limpieza selectiva tiene contratos de ID exacto probados, pero el
+backend effectful + promoción persistente Compose + workflow protegido y ACK
+host siguen pendientes; los controles accesibles de arranque/parada siguen
+en PR DRAFT #329 como **solicitudes, no efectos físicos confirmados**.
+
+**Físicamente permanece controller-only en main** `cabce9f1...` con acceso
+Samsung Chrome + Termius + passkey confirmado previamente por Tincho. No se
+demostró persistencia después de reinicio Samsung/servicio, Telegram real,
+Chromium real, nuevas funciones en el droplet ni limpieza postdeploy física.
+Sin GO específico no hay merge, release ni deploy. Los checkpoints fechados
+debajo son históricos y no sustituyen este corte.
+
 ## Decisión owner y QA de frentes DRAFT — 04/11/2026, después de 19:20 ART
 
 El owner confirmó **acceso autenticado** desde Samsung Chrome al controller

@@ -28,6 +28,7 @@ EXPECTED_ENTRIES = frozenset(
         "boca_socios/host_boca_attempt.py",
         "boca_socios/host_boca_transaction.py",
         "boca_socios/host_boca_cutover.py",
+        "boca_socios/host_boca_cutover_backend.py",
         "boca_socios/host_cutover_stage.py",
     }
 )

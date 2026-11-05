@@ -347,8 +347,10 @@ on `main=3ec1096fb5dce8a01af5c8060f0be056bf44fb9d` reported
 to the local panel on 8443. **Merged PR #224/ADR0091 supersedes
 the HTTPS-localhost route:** the only proposed BETA Compose origin is
 `http://localhost:8443` (WebAuthn RP `localhost`) through Termius SSH, with
-**no device certificate/CA installation**. The actual
-forward and physical passkey remain untested;
+**no device certificate/CA installation**. At that historical checkpoint, the
+forward and physical passkey remained untested; **on 04/11/2026 Tincho
+subsequently confirmed Samsung Chrome + Termius + passkey access to the
+controller-only deployment**, not to the integral BETA or a persistent session.
 the single stored credential also needs cross-device proof for Android/iOS.
 The former tablet-local TLS WebAuthn emitter (#215, ADR0089) remains only as
 historical code and is **not** the owner's enrollment procedure. The requested
@@ -366,10 +368,14 @@ nor has physical Chrome passkey creation, private handoff, iOS use or owner
 install been verified.
 The #217 correction requires a discoverable passkey during local enrollment.
 The chosen Android credential manager holds its private key, not a Chrome
-cookie. The panel session cookie is temporary (15-minute idle, 8-hour absolute
-limit, and invalidated by process restart); Android storage/sync and iOS use
-still require physical proof in #209. Chrome localhost cookie acceptance must
-be tested on the actual tablet; Safari support remains unverified. No renewal
+cookie. **The still-installed legacy controller** uses a temporary cookie
+(15-minute idle, 8-hour absolute limit and revocation on process restart).
+**DRAFT #319 / Option B #321/#322**, not yet deployed, instead records one
+owner authorization in a dedicated sibling SQLite and issues a rolling
+400-day Chrome cookie without the old daily/session idle expirations; logout,
+new owner login or verifier change revokes it. Persistence through a physical
+Samsung Chrome/controller restart, Android storage/sync and iOS use remain
+acceptance gates. Safari support remains unverified. No renewal
 or generation of TLS certificates is required for the chosen SSH-only route.
 Site decommission is deferred until the local replacement is validated.
 Merged PR #220 (RCA #219) strengthens the existing Boca-only failed

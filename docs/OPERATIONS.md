@@ -766,11 +766,15 @@ authorization must be consumed atomically before creating a discoverable
 WebAuthn passkey, and the physical create→get ceremony must verify the user.
 Only the public credential ID/ES256 key may persist in Boca owner custody.
 The private passkey stays in the chosen Android credential manager; it is not
-a permanent browser cookie. The panel session cookie remains HttpOnly/Secure/
-SameSite=Strict, with 15-minute idle and 8-hour absolute expiration and
-revocation on process restart. Real Chrome localhost Secure-cookie acceptance,
-Google Password Manager persistence and iOS compatibility remain physical
-gates. SSH encrypts the remote path, **not** an app-to-localhost connection
+a permanent browser cookie. **Este párrafo conserva la ceremonia histórica**:
+Tincho confirmó el 04/11/2026 que Samsung Chrome + Termius + passkey ya permite
+ingresar al controller-only. Su cookie aún tiene expiración legacy de 15
+minutos de inactividad/8 horas y se revoca con restart. En el **candidato DRAFT
+#319 / Opción B #321/#322** la cookie será HttpOnly/Secure/SameSite=Strict,
+renovable hasta el máximo de Chrome de 400 días, con autorización singleton
+persistente en SQLite lateral; esto **no** se ha instalado físicamente.
+Persistencia tras reinicio, Google Password Manager e iOS son gates físicos.
+SSH encrypts the remote path, **not** an app-to-localhost connection
 inside Android; do not claim general HTTPS-equivalent protection.
 
 The activation sequence is: finish RCA #271 review/integration and exact checks;

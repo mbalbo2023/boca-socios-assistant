@@ -204,6 +204,101 @@ Frozen R11-2 QA: **2582 pytest PASS +31 subtests**; Ruff lint/format **402**
 files, MyPy **89** sources, repo policy and whitespace PASS. This remains
 offline-only and is not a valid host cleanup receipt.
 
+## A45-R11-3: concrete rootless host adapter + durable Compose promotion
+
+The standalone, **unwired** `host_boca_cutover_backend.RootlessCutoverBackend`
+now implements the complete `CutoverBackend` protocol against the existing
+reviewed `host_first_deploy._cutover_*` exact-ID primitives. Unlike a fake-only
+state machine, it has concrete host code, but `host_boca_transaction.main()`
+still rejects every effectful dispatch and workflow `cutover-a-apply` **does
+not exist**. No physical host operation occurred in development.
+
+- Source bundle must include all four exact target SHA256 artifacts:
+  `compose.beta.yaml`, `compose.beta.browser.yaml`, seccomp JSON and Option B
+  owner-session SQL. The independently reviewed SQL SHA is bound to #321.
+  The B stdlib bootstrap imports only from the verified memfd ZIP, not from
+  host `/srv` or the ordinary `panel/__init__.py`; absent B profile NO_GO.
+- Host first positively observes the installed original ID/revision/image,
+  owner/key/data custody, loopback 8443 and rootless Docker identity. The
+  isolated stage keeps historical Compose bytes/inode unchanged while it
+  verifies all three reviewed files, strict expanded Compose JSON and actual
+  per-service `docker compose config --hash` labels. Only then can it pull
+  exact two images and create the UID10002 network-none worker. (Docker CLI
+  `--hash` semantics: https://docs.docker.com/reference/cli/docker/compose/config/.)
+- Park/recovery uses the historical **immutable controller ID**. While old
+  controller is positively stopped, the adapter attests that the rootless
+  Boca data volume `/data/boca.sqlite3` is attached **only to that same old
+  controller**, with exact owner/mode/inode, and calls #321's stdlib-only
+  sidecar bootstrap with the *same held canonical lease FD* and reviewed
+  session SQL. No legacy SQLite DDL/0008, no copying/backup. Postflight
+  rereads old DB identity before candidate activation.
+- Acceptance proves candidate exact ID/config hash/health, worker isolation,
+  loopback port, and old ID still parked. The **irreversible promotion** is
+  then marked by an O_EXCL + fsynced intent under stage BEFORE replacing any
+  live Compose file. Base, overlay and seccomp are each installed from exact
+  reviewed bytes with private 0600 temporary file, fsync and per-file SHA
+  readback. A separate O_EXCL result binds candidate/worker/old IDs and
+  artifact hashes. This is **not an atomic multi-file filesystem operation**;
+  interruption after the first replacement is explicit terminal NO_GO and
+  fix-forward only. It must not revive the old ID into occupied port 8443.
+- After a genuine accepted original-ID retirement, the same backend invokes
+  mandatory Boca-only rootless Docker cleanup and then removes only the
+  positively attested stage files and O_EXCL markers. A compensated failure
+  may discard the verified uncommitted stage. Unknown `.part` files, partial
+  promotion, labels/IDs drift, negative SQLite proof, cleanup INDETERMINATE,
+  lost Docker command receipt, and missing stage marker all retain residue
+  quarantined and report NO_GO; no `prune`, cross-project deletion or backup.
+- New PR-only GitHub Action invokes focused offline tests and constructs the
+  deterministic authenticated ZIP, with a final `if: always()` assertion that
+  **no host receipt** appeared. This is not a physical finalizer. A future
+  authorized protected host job must launch exactly one memfd transaction
+  under one SSH/lease and execute a separate `if: always()` receipt assertion;
+  a lost runner/SSH may skip all finalizers and is automatically NO_GO until
+  fresh Boca-only read-only inventory. Avoid suggesting `if:always` itself
+  guarantees cleanup after a killed process.
+
+Important remaining P0: no protected effectful CLI dispatch or one-job host
+workflow exists, no immutable GitHub GO/release manifest verification has been
+wired into this adapter, and no Samsung Chrome/Termius physical acceptance has
+occurred. The new #328 bot/Chromium lifecycle intent/ACK contract is separate;
+the panel must preserve HTTP/Chrome while stopping only simulated bot work,
+and cannot claim execution until protected Actions persists exact ACK. These
+gates remain outside R11-3 authorization. No real reservation or purchase.
+
+Frozen R11-3 source QA: **2603 pytest PASS +31 subtests**; Ruff lint and
+format **404** files, MyPy **90** sources, repository policy and whitespace
+PASS. New fault-injection regressions exercise exact stage promotion/cleanup,
+foreign root object rejection, lost `os.replace` receipt, Option B failure
+compensation, service `config --hash` receipt and single-owner rootless volume
+checks. PR-only Actions evidence must still be reconciled to published HEAD.
+
+### Critical correction: lost exact-ID retirement result
+
+Architecture review exposed a **P0** in the initial R11-3 finalizer:
+`commit_started=True` with adapter state still `ACCEPTED` can mean Docker
+already removed legacy, but the `rm` acknowledgement was lost. Passing only
+the now-absent historical ID as the protected set into an *effectful* generic
+cleanup would risk targeting the living candidate and worker—the **only**
+service occupying loopback 8443. Fixed: whenever irreversible commit has
+started and a positive `COMMITTED` receipt has *not* been obtained, finalizer
+performs **only a read-only Boca inventory**, never calls a deletion planner,
+never restarts legacy and always reports NO_GO. The stage commit-intent stays
+quarantined for an independently governed fix-forward operation. A new
+fault-injection test explicitly simulates successful old-ID Docker deletion
+followed by lost acknowledgement and asserts zero destructive cleanup calls.
+The same fail-closed barrier applies **before** commit if exact original-ID
+recovery cannot be proven: state PARKED/BOOTSTRAPPED/CANDIDATE without a
+positive RECOVERED receipt can leave the old controller stopped while worker
+or candidate is live. In this case the finalizer performs read-only inventory
+only, not Docker deletion. Effective selective cleanup occurs **only** for
+verified state RECOVERED (precommit) or COMMITTED (postretirement), both under
+one held lease. Added fake failed-recovery regression to prove this boundary.
+
+Post-P0 freeze: **2605 pytest PASS +31 subtests**; Ruff lint/format 404,
+MyPy 90, repository policy and diff whitespace PASS. The initial published
+R11-3 SHA must **not** be promoted alone: this correction is a mandatory
+follow-on commit; hosted checks apply to the final combined HEAD only.
+
 1. Exact legacy ID/image/commit/Compose, independent new target and two image
    digests, target/overlay/seccomp SHA256, owner and fixed localhost origin are
    rejected before any host call if malformed.
