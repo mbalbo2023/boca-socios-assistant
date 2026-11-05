@@ -25,7 +25,14 @@ from boca_socios.telegram_same_lease_stage import (
     execute_staged_pairing_under_lease,
     read_encrypted_telegram_stage,
 )
-from test_telegram_pairing_resolver import NOT_BEFORE, NOW, SOURCE, _FakeBotApi, _prepared
+from test_telegram_pairing_resolver import (
+    NOT_BEFORE,
+    NOW,
+    SOURCE,
+    _FakeBotApi,
+    _message,
+    _prepared,
+)
 from test_telegram_pairing_ui import TOKEN
 
 KEY = bytes(range(32))
@@ -54,10 +61,12 @@ def _setup(data: Path, monkeypatch: pytest.MonkeyPatch):
         controller_id="d" * 64,
         recipient_fingerprint=recipient.fingerprint,
     )
-    monkeypatch.setattr("boca_socios.panel.telegram_pairing_staging.time.time", lambda: NOW)
+    monkeypatch.setattr("boca_socios.panel.telegram_pairing_staging.time.time", lambda: NOT_BEFORE)
     receipt = stage_private_telegram_pairing(data / "boca_telegram_pairing_stage_v2.json", v2)
     assert receipt.envelope_sha256 == hashlib.sha256(v2).hexdigest()
-    grant = issuer.issue_owner_pairing_receipt(coords, v2, KEY, NOT_BEFORE)
+    grant = issuer.issue_owner_pairing_receipt(
+        coords, v2, KEY, NOT_BEFORE, discovery_not_before=NOT_BEFORE
+    )
     return private, recipient, v2, code, coords, grant
 
 
@@ -350,3 +359,99 @@ def test_inode_survives_failed_fsync_and_blocks_replay(
     marker_files = list(data.glob("boca_telegram_owner_nonce_v2_*.json"))
     assert len(marker_files) == 1
     assert marker_files[0].stat().st_mode & 0o777 == 0o600
+
+
+def test_delayed_protected_activation_respects_pre_receipt_start_message(
+    lease_volume: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Chrome stages first, then /start arrives, then Actions signs a new lease."""
+    _, data = lease_volume
+    private, recipient, v2, code, coords, _ = _setup(data, monkeypatch)
+    # The receipt may only be issued after the protected job obtains its own
+    # lease. Its HMAC now binds the earlier server-authored staging timestamp.
+    delayed = issuer.issue_owner_pairing_receipt(
+        coords, v2, KEY, NOW - 30, discovery_not_before=NOT_BEFORE
+    )
+    chat_at = NOW - 120
+    assert NOT_BEFORE < chat_at < delayed.issued_at < NOW
+    api = _FakeBotApi(code, matching=[_message(code, date=chat_at)])
+    fake_commit = PairingCustodyReceipt(SOURCE, recipient.fingerprint, 123456)
+    monkeypatch.setattr(cutover, "install_v2_plan", lambda *_a, **_k: fake_commit)
+    monkeypatch.setattr(cutover, "verify_v2_custody", lambda *_a, **_k: fake_commit)
+
+    with cleanup.protected_boca_job_lease(coords.attempt_id) as lease:
+        result = execute_staged_pairing_under_lease(
+            stage_directory=data,
+            custody_directory=tmp_path / "telegram",
+            coordinates=coords,
+            owner_receipt=delayed,
+            owner_receipt_key=KEY,
+            recipient=recipient,
+            private_key=private,
+            lease=lease,
+            trusted_clock=lambda: NOW,
+            inspect_host=_host,
+            api_fetch=api,
+        )
+    assert result.state == "CUSTODY_COMMITTED_NO_SEND"
+    assert result.sender_state == "OFF"
+    assert result.human_notification_receipt == "UNVERIFIED"
+    assert [method for method, _ in api.calls] == [
+        "getMe",
+        "getWebhookInfo",
+        "getUpdates",
+        "getChat",
+    ]
+
+
+@pytest.mark.parametrize("case", ["unsigned", "changed_time", "future_time", "stale"])
+def test_staged_discovery_window_must_be_signed_exact_and_fresh(
+    lease_volume: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    case: str,
+) -> None:
+    _, data = lease_volume
+    private, recipient, v2, _, coords, _ = _setup(data, monkeypatch)
+    if case == "future_time":
+        with pytest.raises(issuer.PairingIssuerError):
+            issuer.issue_owner_pairing_receipt(
+                coords, v2, KEY, NOW - 30, discovery_not_before=NOW
+            )
+        return
+    if case == "stale":
+        with pytest.raises(issuer.PairingIssuerError):
+            issuer.issue_owner_pairing_receipt(
+                coords, v2, KEY, NOT_BEFORE + 3601, discovery_not_before=NOT_BEFORE
+            )
+        return
+    grant = issuer.issue_owner_pairing_receipt(
+        coords, v2, KEY, NOW - 30, discovery_not_before=NOT_BEFORE
+    )
+    if case == "unsigned":
+        grant = issuer.issue_owner_pairing_receipt(coords, v2, KEY, NOW - 30)
+    elif case == "changed_time":
+        grant = replace(grant, discovery_not_before=NOT_BEFORE + 1)
+    provider_calls: list[str] = []
+
+    def unexpected_provider(_token: str, method: str, _chat: int | None) -> bytes:
+        provider_calls.append(method)
+        return b"{}"
+
+    with cleanup.protected_boca_job_lease(coords.attempt_id) as lease:
+        with pytest.raises(SameLeasePairingError, match="owner_stage_binding"):
+            execute_staged_pairing_under_lease(
+                stage_directory=data,
+                custody_directory=tmp_path / "telegram",
+                coordinates=coords,
+                owner_receipt=grant,
+                owner_receipt_key=KEY,
+                recipient=recipient,
+                private_key=private,
+                lease=lease,
+                trusted_clock=lambda: NOW,
+                inspect_host=_host,
+                api_fetch=unexpected_provider,
+            )
+    assert not provider_calls
+    assert not list(data.glob("boca_telegram_owner_nonce_v2_*.json"))
