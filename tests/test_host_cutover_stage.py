@@ -79,6 +79,69 @@ def test_cutover_stages_private_child_without_changing_original_inode(staging: P
     assert all((path.stat().st_mode & 0o777) == 0o600 for path in verified.iterdir())
 
 
+def test_historical_0644_compose_is_authenticated_without_mutating_live_inode(
+    staging: Path,
+) -> None:
+    """The historical scp -p installation may leave its reviewed legacy file 0644."""
+    live = staging / "compose.beta.yaml"
+    live.chmod(0o644)
+    before = live.stat()
+    _init()
+    _upload_all()
+    stage.verify(ATTEMPT, _sha(LEGACY))
+    after = live.stat()
+    assert live.read_bytes() == LEGACY
+    assert (after.st_dev, after.st_ino, after.st_mode, after.st_ctime_ns) == (
+        before.st_dev,
+        before.st_ino,
+        before.st_mode,
+        before.st_ctime_ns,
+    )
+    child = staging / f"cutover-a-{ATTEMPT}"
+    assert all((entry.stat().st_mode & 0o777) == 0o600 for entry in child.iterdir())
+    stage.promote_accepted(ATTEMPT, _sha(LEGACY), CANDIDATE_ID, WORKER_ID)
+    stage.finalize_promoted(ATTEMPT, _sha(LEGACY), CANDIDATE_ID, WORKER_ID)
+    assert live.read_bytes() == BASE
+    assert all((entry.stat().st_mode & 0o777) == 0o600 for entry in staging.iterdir())
+
+
+@pytest.mark.parametrize("unsafe_mode", [0o640, 0o444, 0o664, 0o755, 0o4644])
+def test_legacy_0644_exception_rejects_all_other_unreviewed_modes(
+    staging: Path, unsafe_mode: int
+) -> None:
+    """Accept the observed historical 0644 only, never group writes or special bits."""
+    live = staging / "compose.beta.yaml"
+    live.chmod(unsafe_mode)
+    before = live.read_bytes()
+    with pytest.raises(stage.StageError, match="inode/owner/mode unsafe"):
+        _init()
+    assert live.read_bytes() == before
+    assert not (staging / f"cutover-a-{ATTEMPT}").exists()
+
+
+@pytest.mark.parametrize("slot", ["marker", "base", "overlay", "seccomp"])
+def test_historical_0644_exception_never_applies_to_new_staged_files(
+    staging: Path, slot: str
+) -> None:
+    (staging / "compose.beta.yaml").chmod(0o644)
+    _init()
+    _upload_all()
+    child = staging / f"cutover-a-{ATTEMPT}"
+    filename = stage.MARKER if slot == "marker" else stage.FILES[slot][0]
+    (child / filename).chmod(0o644)
+    with pytest.raises(stage.StageError, match="inode/owner/mode unsafe"):
+        stage.verify(ATTEMPT, _sha(LEGACY))
+
+
+def test_historical_0644_compose_still_requires_exact_reviewed_digest(staging: Path) -> None:
+    live = staging / "compose.beta.yaml"
+    live.chmod(0o644)
+    live.write_bytes(LEGACY + b"\n# mutated\n")
+    with pytest.raises(stage.StageError, match="SHA differs"):
+        _init()
+    assert not (staging / f"cutover-a-{ATTEMPT}").exists()
+
+
 def test_stage_allows_same_byte_compose_when_source_and_images_are_distinct(
     staging: Path,
 ) -> None:

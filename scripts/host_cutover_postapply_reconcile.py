@@ -333,6 +333,7 @@ def _stage_preflight(intent: dict[str, Any] | None) -> dict[str, Any]:
         "compose_digest_evaluated": False,
         "compose_inode_checks": None,
         "compose_inode_mode_octal": None,
+        "compose_legacy_mode_accepted": None,
         "plan_hashes_unique": False,
     }
     if intent is None:
@@ -405,7 +406,14 @@ def _stage_preflight(intent: dict[str, Any] | None) -> dict[str, Any]:
             }
             result["compose_inode_checks"] = checks
             result["compose_inode_mode_octal"] = f"{stat.S_IMODE(before.st_mode):04o}"
-            if not all(checks.values()):
+            # Historical beta-install used scp -p and admitted 0644. Stage now
+            # accepts that exact observed legacy mode only; the original six
+            # factual booleans (including mode_0600=false) remain unchanged.
+            legacy_mode_allowed = stat.S_IMODE(before.st_mode) in (0o600, 0o644)
+            result["compose_legacy_mode_accepted"] = legacy_mode_allowed
+            if not legacy_mode_allowed or not all(
+                value for name, value in checks.items() if name != "mode_0600"
+            ):
                 result["reason"] = "STAGE_COMPOSE_INODE_MODE"
                 return result
             data = os.read(descriptor, 32769)

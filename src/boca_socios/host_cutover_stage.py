@@ -100,8 +100,17 @@ def _root_fd() -> int:
 
 
 def _read_file(
-    handle: int, name: str, expected_sha: str | None, *, limit: int
+    handle: int,
+    name: str,
+    expected_sha: str | None,
+    *,
+    limit: int,
+    historical_compose: bool = False,
 ) -> tuple[bytes, os.stat_result]:
+    if historical_compose and (
+        name != "compose.beta.yaml" or expected_sha is None or limit != MAX_FILE
+    ):
+        raise StageError("historical Compose mode is not authorized for staged files")
     try:
         fd = os.open(
             name,
@@ -110,12 +119,19 @@ def _read_file(
         )
         try:
             before = os.fstat(fd)
+            # The physically installed 04/11 Compose is 0644 (scp -p from the
+            # reviewed 100644 source). Admit that *specific* pre-existing
+            # mode only for authenticated historical Compose root reads.
+            # Marker, new target, overlay and seccomp all remain exact 0600.
+            allowed_mode = stat.S_IMODE(before.st_mode) == 0o600 or (
+                historical_compose and stat.S_IMODE(before.st_mode) == 0o644
+            )
             if (
                 not stat.S_ISREG(before.st_mode)
                 or before.st_uid != UID
                 or before.st_gid != GID
                 or before.st_nlink != 1
-                or stat.S_IMODE(before.st_mode) != 0o600
+                or not allowed_mode
                 or not 0 < before.st_size <= limit
             ):
                 raise StageError("Boca cutover file inode/owner/mode unsafe")
@@ -233,7 +249,9 @@ def initialize(
     try:
         if set(os.listdir(root)) != {"compose.beta.yaml"}:
             raise StageError("cutover root is not exactly the known live singleton")
-        _, original = _read_file(root, "compose.beta.yaml", legacy_compose_sha, limit=MAX_FILE)
+        _, original = _read_file(
+            root, "compose.beta.yaml", legacy_compose_sha, limit=MAX_FILE, historical_compose=True
+        )
         marker = _marker_payload(
             attempt_id,
             legacy_id,
@@ -263,7 +281,9 @@ def initialize(
         finally:
             os.close(child)
         os.fsync(root)
-        _, after = _read_file(root, "compose.beta.yaml", legacy_compose_sha, limit=MAX_FILE)
+        _, after = _read_file(
+            root, "compose.beta.yaml", legacy_compose_sha, limit=MAX_FILE, historical_compose=True
+        )
         if not _same_inode(original, after):
             raise StageError("live original Compose inode changed during staging")
     finally:
@@ -337,7 +357,13 @@ def _authenticated_stage(
             for filename, sha_field in FILES.values():
                 _read_file(root, filename, str(marker[sha_field]), limit=MAX_FILE)
         else:
-            _, original = _read_file(root, "compose.beta.yaml", legacy_compose_sha, limit=MAX_FILE)
+            _, original = _read_file(
+                root,
+                "compose.beta.yaml",
+                legacy_compose_sha,
+                limit=MAX_FILE,
+                historical_compose=True,
+            )
             if (original.st_dev, original.st_ino) != (
                 marker["legacy_compose_dev"],
                 marker["legacy_compose_ino"],
