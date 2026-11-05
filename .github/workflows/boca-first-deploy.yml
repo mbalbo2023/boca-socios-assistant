@@ -161,7 +161,7 @@ jobs:
           uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
       - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
         run: |
-          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py
+          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
       - name: Validate protected official notice artifact import offline only
         run: |
@@ -174,7 +174,7 @@ jobs:
             printf 'Boca Cutover A PR validation: NO_GO unexpected host receipt; abort.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          if [[ -e "$RUNNER_TEMP/boca-lifecycle-host.receipt" || -e "$RUNNER_TEMP/boca-lifecycle-prepare.receipt.json" ]]; then
+          if [[ -e "$RUNNER_TEMP/boca-lifecycle-host.receipt" || -e "$RUNNER_TEMP/boca-lifecycle-prepare.receipt.json" || -e "$RUNNER_TEMP/boca-lifecycle-observed-public.json" ]]; then
             printf 'Boca lifecycle PR validation: NO_GO unexpected host/PREPARE receipt; abort.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi

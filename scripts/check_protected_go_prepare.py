@@ -497,13 +497,17 @@ def main() -> int:
             context._write_private(  # noqa: SLF001
                 _runner() / RUNNER_OBSERVE_REQUEST, observer_request(env) + "\n"
             )
-            print("BOCA_LIFECYCLE_OBSERVE state=REQUEST_READY host_reads=0 appdata_mutations=0 lease_lock=allowed")
+            print(
+                "BOCA_LIFECYCLE_OBSERVE state=REQUEST_READY host_reads=0 appdata_mutations=0 lease_lock=allowed"
+            )
             return 0
         if phase == "--assert-observed":
             if operation != "protected-go-prepare":
                 raise PreparedGoError("lifecycle-observe operation invalid")
             observed_prepare_context(_runner() / RUNNER_OBSERVE_CONTEXT, environ=env)
-            print("BOCA_LIFECYCLE_OBSERVE state=PASS host_reads=1 appdata_mutations=0 lease_lock=allowed")
+            print(
+                "BOCA_LIFECYCLE_OBSERVE state=PASS host_reads=1 appdata_mutations=0 lease_lock=allowed"
+            )
             return 0
         if phase == "--prepare":
             if operation != "protected-go-prepare":
