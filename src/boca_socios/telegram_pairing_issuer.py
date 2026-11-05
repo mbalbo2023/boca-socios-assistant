@@ -83,6 +83,8 @@ def issue_owner_pairing_receipt(
     sealed_v2_envelope: bytes,
     owner_receipt_key: bytes,
     issued_at: int,
+    *,
+    discovery_not_before: int | None = None,
 ) -> cutover.OwnerPairingReceipt:
     """Sign one V2 envelope after a separate trusted owner/session authorization.
 
@@ -98,6 +100,14 @@ def issue_owner_pairing_receipt(
         or len(owner_receipt_key) != 32
         or type(issued_at) is not int
         or not 0 <= issued_at <= 2**63 - 601
+        or (
+            discovery_not_before is not None
+            and (
+                type(discovery_not_before) is not int
+                or not 0 <= discovery_not_before <= issued_at
+                or issued_at - discovery_not_before > 3600
+            )
+        )
     ):
         raise PairingIssuerError("owner_pairing_issuance_no_go")
     _validate_ciphertext_header(sealed_v2_envelope, coordinates)
@@ -111,6 +121,7 @@ def issue_owner_pairing_receipt(
         expires_at=issued_at + 600,
         nonce=nonce,
         auth_tag=b"",
+        discovery_not_before=discovery_not_before,
     )
     tag = hmac.new(
         owner_receipt_key,

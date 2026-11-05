@@ -10,6 +10,8 @@ services:
     restart: "no"
     environment:
       BOCA_BROWSER_BACKEND: ipc
+      # Only after protected Cutover A installs the IPC controller; sender stays OFF.
+      BOCA_TELEGRAM_PAIRING_STAGE_MODE: "encrypted-only"
     labels:
       boca.socios.browser-ipc-attempt: ${BOCA_BROWSER_ATTEMPT_ID:?single_reviewed_GitHub_run_required}
     volumes:

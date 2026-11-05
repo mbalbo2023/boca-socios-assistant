@@ -72,6 +72,8 @@ class OwnerPairingReceipt:
     expires_at: int
     nonce: str = field(repr=False)
     auth_tag: bytes = field(repr=False)
+    # A signed, server-recorded Chrome stage time may predate this receipt.
+    discovery_not_before: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,26 +139,27 @@ def _coordinates_valid(value: CutoverCoordinates) -> bool:
 
 
 def _owner_payload(receipt: OwnerPairingReceipt) -> bytes:
-    """Fixed HMAC domain and canonical fields; issuer lives in owner auth gate."""
+    """HMAC-bind an optional staged discovery window without changing V1 fixtures."""
     c = receipt.coordinates
-    return bootstrap._canonical(
-        {
-            "version": 2,
-            "repository": bootstrap.REPOSITORY,
-            "purpose": "private-telegram-pairing-cutover",
-            "attempt_id": c.attempt_id,
-            "target_sha": c.target_sha,
-            "image_digest": c.image_digest,
-            "owner_digest": c.owner_digest,
-            "lease_digest": c.lease_digest,
-            "controller_id": c.controller_id,
-            "recipient_fingerprint": c.recipient_fingerprint,
-            "envelope_sha256": receipt.envelope_sha256,
-            "issued_at": receipt.issued_at,
-            "expires_at": receipt.expires_at,
-            "nonce": receipt.nonce,
-        }
-    )
+    fields: dict[str, object] = {
+        "version": 2,
+        "repository": bootstrap.REPOSITORY,
+        "purpose": "private-telegram-pairing-cutover",
+        "attempt_id": c.attempt_id,
+        "target_sha": c.target_sha,
+        "image_digest": c.image_digest,
+        "owner_digest": c.owner_digest,
+        "lease_digest": c.lease_digest,
+        "controller_id": c.controller_id,
+        "recipient_fingerprint": c.recipient_fingerprint,
+        "envelope_sha256": receipt.envelope_sha256,
+        "issued_at": receipt.issued_at,
+        "expires_at": receipt.expires_at,
+        "nonce": receipt.nonce,
+    }
+    if receipt.discovery_not_before is not None:
+        fields["discovery_not_before"] = receipt.discovery_not_before
+    return bootstrap._canonical(fields)
 
 
 def _verify_owner_receipt(
@@ -179,6 +182,14 @@ def _verify_owner_receipt(
         or type(owner_receipt.expires_at) is not int
         or not 0 <= owner_receipt.issued_at <= trusted_now <= owner_receipt.expires_at
         or owner_receipt.expires_at - owner_receipt.issued_at > _MAX_OWNER_WINDOW
+        or (
+            owner_receipt.discovery_not_before is not None
+            and (
+                type(owner_receipt.discovery_not_before) is not int
+                or not 0 <= owner_receipt.discovery_not_before <= owner_receipt.issued_at
+                or trusted_now - owner_receipt.discovery_not_before > 3600
+            )
+        )
         or type(owner_receipt.nonce) is not str
         or _DIGEST.fullmatch(owner_receipt.nonce) is None
         or type(owner_receipt.envelope_sha256) is not str
@@ -311,7 +322,11 @@ def execute_protected_pairing(
             private_key,
             recipient,
             coordinates.target_sha,
-            not_before=owner_receipt.issued_at,
+            not_before=(
+                owner_receipt.discovery_not_before
+                if owner_receipt.discovery_not_before is not None
+                else owner_receipt.issued_at
+            ),
             now=trusted_clock(),
             api_fetch=checked_fetch,
         )
