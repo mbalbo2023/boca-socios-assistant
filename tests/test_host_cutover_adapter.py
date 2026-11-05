@@ -825,9 +825,13 @@ def test_workflow_cutover_apply_requires_separate_go_and_legacy_release_proof() 
     options = [item.strip() for item in match.group(1).split(",")]
     assert "cutover-a-observe" in options
     assert [operation for operation in options if operation.startswith("cutover-a-")] == [
+        "cutover-a-reconcile",
         "cutover-a-observe",
         "cutover-a-apply",
     ]
+    # The new incident reconciliation reads host state but never consumes GO_B.
+    assert "if: inputs.operation == 'cutover-a-reconcile'" in text
+    assert "host_cutover_postapply_reconcile.py verify" in text
     assert "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}" in text
     assert "python scripts/check_cutover_a_go.py --prepared-from-actions" in text
     assert "python scripts/check_cutover_a_go.py --from-actions" not in text
