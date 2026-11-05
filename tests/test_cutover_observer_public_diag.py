@@ -5,6 +5,9 @@ Tests never execute Docker, SSH, ZIP/bootstrap or a host action.
 
 from __future__ import annotations
 
+from dataclasses import replace
+from pathlib import Path
+
 import base64
 import json
 from collections.abc import Iterator
@@ -13,7 +16,15 @@ from contextlib import contextmanager
 import pytest
 
 from boca_socios import host_cutover_inventory_observe as inventory
-from boca_socios.host_boca_cleanup import BocaJobLease, CleanupError
+from boca_socios.host_boca_cleanup import BocaJobLease, CleanupError, Image
+from test_host_cutover_inventory_observe import (
+    CONTROLLER,
+    CUTOVER_RELEASE,
+    IMAGE_ID,
+    LEGACY_REF,
+    LegacyFakeIO,
+    _lease,
+)
 
 
 def _request() -> str:
@@ -125,3 +136,63 @@ def test_runner_does_not_consume_unbounded_host_stderr() -> None:
         )
         == "TRANSPORT_OR_BOOTSTRAP"
     )
+
+
+@pytest.mark.parametrize("image_visible", [True, False])
+def test_historical_unlabeled_legacy_is_read_only_and_deferred_to_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, image_visible: bool
+) -> None:
+    """Old image label is absent; GH immutable historical release authenticates later."""
+    io = LegacyFakeIO(tmp_path)
+    images = (
+        (Image(IMAGE_ID, ("ghcr.io/mbalbo2023/boca-socios-assistant:unverified",), None),)
+        if image_visible else ()
+    )
+    io.inventory_value = replace(
+        io.inventory_value,
+        images=images,
+        global_image_ids=frozenset({IMAGE_ID}),
+    )
+    monkeypatch.setattr(inventory, "verify_protected_boca_job_lease", lambda *_args: None)
+    observed = inventory.observe_cutover_inventory(CUTOVER_RELEASE, lease=_lease(), io=io)
+    assert observed["legacy_image_ref"] == LEGACY_REF
+    assert observed["legacy_image_id"] == IMAGE_ID
+    assert observed["legacy_controller_id"] == CONTROLLER
+    assert io.inventory_calls == 2
+    assert all(field != "Config.Env" for _kind, _ident, field in io.reads)
+
+
+@pytest.mark.parametrize("spoof", ["no_global_image", "other_label", "different_ref", "two_images"])
+def test_unlabeled_historical_cannot_forge_unknown_image(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, spoof: str
+) -> None:
+    io = LegacyFakeIO(tmp_path)
+    unverified = Image(
+        IMAGE_ID,
+        ("ghcr.io/mbalbo2023/boca-socios-assistant:unverified",),
+        None,
+    )
+    io.inventory_value = replace(
+        io.inventory_value,
+        images=(unverified,),
+        global_image_ids=frozenset({IMAGE_ID}),
+    )
+    if spoof == "no_global_image":
+        io.inventory_value = replace(io.inventory_value, global_image_ids=frozenset())
+    elif spoof == "other_label":
+        io.inventory_value = replace(
+            io.inventory_value,
+            images=(replace(unverified, source="https://foreign.invalid"),),
+        )
+    elif spoof == "different_ref":
+        io.fields[("container", CONTROLLER, "Config.Image")] = (
+            "ghcr.io/unrelated/image@sha256:" + "a" * 64
+        )
+    elif spoof == "two_images":
+        io.inventory_value = replace(
+            io.inventory_value, images=(unverified, unverified)
+        )
+    monkeypatch.setattr(inventory, "verify_protected_boca_job_lease", lambda *_args: None)
+    with pytest.raises(inventory.CutoverInventoryNoGo):
+        inventory.observe_cutover_inventory(CUTOVER_RELEASE, lease=_lease(), io=io)
+    assert all(field != "Config.Env" for _kind, _ident, field in io.reads)
