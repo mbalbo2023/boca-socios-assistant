@@ -32,6 +32,22 @@ EXPECTED_ENTRIES = frozenset(
         "boca_socios/host_boca_cutover_cli.py",
         "boca_socios/host_boca_cutover_receipt.py",
         "boca_socios/host_cutover_stage.py",
+        "boca_socios/host_lifecycle_actions.py",
+        "boca_socios/host_lifecycle_rootless_adapter.py",
+        "boca_socios/host_boca_lifecycle.py",
+        "boca_socios/panel/lifecycle_intents.py",
+        "boca_socios/integration/engine_socket.py",
+        "boca_socios/storage/__init__.py",
+        "boca_socios/panel/__init__.py",
+        "boca_socios/integration/__init__.py",
+        "boca_socios/storage/migrations/__init__.py",
+        "boca_socios/storage/migrations/0001_initial.sql",
+        "boca_socios/storage/migrations/0002_notification_outbox.sql",
+        "boca_socios/storage/migrations/0003_reservation_guard.sql",
+        "boca_socios/storage/migrations/0004_credential_key_policy.sql",
+        "boca_socios/storage/migrations/0005_simulation_outcomes.sql",
+        "boca_socios/storage/migrations/0006_beta_commands.sql",
+        "boca_socios/storage/migrations/0007_telegram_delivery.sql",
     }
 )
 OPTION_B_ENTRIES = frozenset(
