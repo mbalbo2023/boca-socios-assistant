@@ -50,7 +50,10 @@ No se integra este Dockerfile a la BETA final, cualquiera sea el resultado.
 
 El job de comparación descartable en
 [Actions #42121468183](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42121468183)
-registró `BOCA_CHROMIUM_ONLY_BENCHMARK` tras smoke **offline PASS**:
+registró `BOCA_CHROMIUM_ONLY_BENCHMARK` tras smoke **offline PASS**.
+SHA de merge de PR observado:
+`01f4e252c6d57f74ab65fc8f80d63b26f8ccf0a0`; base Ubuntu resuelta
+en ese run: `ubuntu@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852`.
 
 | Imagen | `.Size` bytes runner | TAR individual o par, sin comprimir |
 |---|---:|---:|
