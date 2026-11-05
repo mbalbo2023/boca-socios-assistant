@@ -127,6 +127,11 @@ ejecutan bootstrap**. Sin archivo lateral preexistente válido, el nuevo
 panel falla cerrado. El controller antiguo puede conservar su SQLite
 original, pero su recuperación física sigue requiriendo la prueba real
 del host y de la transición #227, no sólo la prueba de esquema offline.
+Además del gate inicial, cada GET privado `/healthz` vuelve a verificar
+**en modo lectura** la identidad, checksum, DDL e integridad de la SQLite
+lateral; una corrupción posterior al arranque debe producir 503 y recuperar
+200 únicamente al restablecerse el contrato. La regresión asociada simula
+la alteración del checksum sin tocar la base legacy ni migrar nada.
 No usar backup, rollback destructivo, recreación de owner ni limpieza
 Docker global como estrategia de recuperación.
 

@@ -150,3 +150,97 @@ canonical lock. This source facade remains unreachable from the live CLI.
 See ADR0138 and [issue #323](https://github.com/mbalbo2023/boca-socios-assistant/issues/323)
 for the global owner decision. This ADR describes only the isolated code
 contract and open gates.
+
+## A45-R11: existing-controller Cutover A sequencing (code-only)
+
+The earlier `host_boca_transaction.run_transaction` handles only **new-only**
+`first-install` and `beta-install`. It cannot be repurposed for the currently
+RUNNING controller: doing so would violate its empty-namespace assumptions,
+confuse the old controller with the attempt and risk losing the known-good
+Samsung Chrome endpoint. The separate existing-controller identity, park,
+worker and compensation primitives in `host_first_deploy.py` remain code-only.
+
+`host_boca_cutover.run_cutover_a()` now formalizes an **inert injectable**
+single-process ordering contract for existing-controller cutover:
+
+### R11 reviewed-transport and stage-only Compose increment
+
+The authenticated memfd ZIP now includes the reviewed browser Compose overlay,
+seccomp profile, isolated cutover stage helper and sequencing module. It
+accepts **exactly two** source profiles: standalone `core` before #321 merges,
+or `core + owner_session_disk_bootstrap.py + 0001_owner_browser_session.sql`
+after Option B integration. Partial Option B, third-party ZIP entries, BLACKBOX
+and unreviewed code are rejected. The auth-owned stdlib-only helper is packaged
+under the private import name `boca_socios.owner_session_disk_bootstrap` to
+avoid executing the real `panel/__init__.py` and its transitive UI imports.
+The `core` profile can **never** authorize physical cutover because the Option
+B ledger dependency is absent. The legacy controller SQLite file remains
+schema 0001–0007 and is neither opened nor migrated by ZIP selftest.
+
+The existing strict `_browser_compose_model` validator can now receive three
+*optional, all-or-nothing* paths, and only when they are exactly
+`/srv/boca-socios/cutover-a-<run>/compose.beta.yaml`,
+`compose.beta.browser.yaml` and `seccomp_profile.json`; it refuses partial,
+outside or traversal variants **before** Docker. The legacy default path and
+environment remain byte-for-byte unchanged to all existing callers. An offline
+fake Docker regression asserts the reviewed staged model and exact arguments,
+including seccomp path; no host transition has been dispatched. The caller
+must independently prove stage-marker/files/inode SHA before using this model.
+
+This increment **does not** claim a complete HostCutoverBackend, atomic
+promotion of reviewed files or a protected effectful workflow. All remain
+physical NO_GO pending exact-ID positive receipts and selective postflight.
+
+Independent #323 architectural review also found a concrete *false ACCEPT*
+path in generic cleanup: a Docker target could remain in inventory under the
+same immutable ID but cease to match the eligibility predicate (new attachment,
+different name/labels). Merely checking that it disappeared from the proposed
+deletion set did **not** prove deletion. Cleanup now requires positive *absence*
+of every removed container/network/image **ID** or volume **name**, in addition
+to image global ID-only census; an unknown post-delete classification returns
+an explicit NO_GO receipt and never retries. Three adversarial fake-host tests
+cover no-op removal plus eligibility drift for container, network and volume.
+Frozen R11-2 QA: **2582 pytest PASS +31 subtests**; Ruff lint/format **402**
+files, MyPy **89** sources, repo policy and whitespace PASS. This remains
+offline-only and is not a valid host cleanup receipt.
+
+1. Exact legacy ID/image/commit/Compose, independent new target and two image
+   digests, target/overlay/seccomp SHA256, owner and fixed localhost origin are
+   rejected before any host call if malformed.
+2. One canonical Boca `flock` encloses original attestation, attempt-specific
+   staging, worker preparation, exact old-ID park, **Option B session bootstrap
+   only after legacy stop**, candidate activation/acceptance and the final
+   irreversible retirement of the exact legacy ID.
+3. The injected Option B callback must use the existing Boca data volume and
+   a new sibling `boca_owner_session.sqlite3`, with independent schema and
+   verified stopped-controller evidence borrowing the same lease descriptor.
+   **Never run 0008 on the legacy `boca.sqlite3`.** No database/volume is
+   opened by this contract or by its deterministic fake-host tests.
+4. Pre-commit failures require positive **exact-ID recovery** plus Boca-only
+   postflight before a `RECOVERED` receipt. A lost retirement receipt is past
+   the irreversible boundary and **must not restart** the old controller into
+   occupied `127.0.0.1:8443`; it is terminal `NO_GO`, pending a fresh read-only
+   inventory. Postflight runs in `finally` on both paths; only its positive
+   `ACCEPT` yields a successful classification. Unknown cleanup remains NO_GO.
+
+This addition is an **orchestration protocol with an offline fake backend**,
+not the concrete `HostInstallBackend`, Docker operations, exact durable
+intent/result markers, authenticated release/host proof, or a new Actions
+dispatch. The actual `boca-first-deploy.yml` is **unchanged** and allows only
+`cutover-a-observe` as the new read-only operation; therefore physical Cutover A
+remains NO_GO. Before any future wiring, the backend must prove the stage
+inode/lease, Compose hash and configuration, exact service labels, rootless
+daemon/cgroups/loopback, crash/transport ambiguity, owner-session file
+bootstrap, worker/IPC compensation and protected volumes using disposable
+runner Docker plus exact-SHA hosted checks. The protected Actions job must
+require an **`if: always()` read-only receipt assertion** for both success and
+failure. This assertion detects a *missing receipt* as NO_GO; it cannot
+guarantee execution of cleanup after SSH/runner/process loss, nor justify a
+guessed deletion or automatic retry.
+
+For historical PR #320 SHA `35f6e29942064b0656a879d94215638d58d55ebe`,
+four separate PR-only workflows completed successfully: CI `41949228821`,
+image release validation `41949228846`, image security `41949228937` and
+first-deploy validation `41949228860`. Their success predates this incremental
+code and proves **no physical host action**. Regla84 must record new exact-SHA
+checks separately after publication of this change.

@@ -32,7 +32,10 @@ from boca_socios.panel import private_ui, telegram_setup_ui
 from boca_socios.panel.enrollment_http import EnrollmentApplication
 from boca_socios.panel.local_status import read_local_status
 from boca_socios.panel.members import MemberDirectory
-from boca_socios.panel.owner_session_store import OwnerBrowserSessionStore
+from boca_socios.panel.owner_session_store import (
+    OwnerBrowserSessionStore,
+    OwnerSessionStorageUnavailable,
+)
 from boca_socios.panel.owner_sessions import OwnerSession, OwnerSessions
 from boca_socios.panel.passkey import PasskeyAssertion, PasskeyOwnerAuthentication
 from boca_socios.security.enrollment import (
@@ -183,6 +186,19 @@ class PrivatePanelApplication:
         )
         self._enroll = EnrollmentApplication(members, self._sessions, origin=origin, now=now)
         self._now = now
+
+    def owner_session_ready(self) -> bool:
+        """Read-only liveness of the installed independent owner-session ledger.
+
+        This deliberately rechecks on health probes: readiness at controller
+        startup alone would miss subsequent filesystem or SQLite corruption.
+        It cannot migrate or repair either SQLite file.
+        """
+        try:
+            self._owner_browser_store.verify_schema()
+        except OwnerSessionStorageUnavailable:
+            return False
+        return True
 
     def __call__(self, environ: Mapping[str, object], start: StartResponse) -> list[bytes]:
         try:

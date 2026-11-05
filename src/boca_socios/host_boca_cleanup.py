@@ -471,14 +471,24 @@ def execute(
                 raise CleanupError("target reappeared after verified selective removal")
             delete_exact(target)
             after_delete = probe()
-            # Docker image rm on a tag can merely untag; prove the complete
-            # immutable Image ID disappeared from the global ID-only census.
-            if target.kind == "image" and target.ident in (
-                after_delete.global_image_ids
-                if after_delete.global_image_ids
-                else {image.ident for image in after_delete.images}
-            ):
-                raise CleanupError("obsolete Boca image ID still exists after removal")
+            # An object that merely became ineligible is NOT proof it was
+            # deleted: its labels, live attachments or running status could
+            # have drifted while Docker returned a misleading receipt. Prove
+            # exact absence for *all four kinds* before accepting a deletion.
+            surviving = {
+                "container": {item.ident for item in after_delete.containers},
+                "network": {item.ident for item in after_delete.networks},
+                "volume": {item.name for item in after_delete.volumes},
+                "image": (
+                    after_delete.global_image_ids
+                    if after_delete.global_image_ids
+                    else {item.ident for item in after_delete.images}
+                ),
+            }[target.kind]
+            if target.ident in surviving:
+                raise CleanupError(
+                    "Boca exact deletion target remains present by immutable identity"
+                )
             if (
                 target
                 in plan(
@@ -497,13 +507,28 @@ def execute(
         # No blind retry. A lost Docker receipt may have succeeded or failed.
         # The final inventory exposes any known residue but never runs prune.
         after = probe()
-        final = plan(
-            after,
-            attempt_id,
-            preserve_images=preserve_images,
-            preserve_containers=preserve_containers,
-            retire_containers=retire_containers,
-        )
+        try:
+            final = plan(
+                after,
+                attempt_id,
+                preserve_images=preserve_images,
+                preserve_containers=preserve_containers,
+                retire_containers=retire_containers,
+            )
+        except (CleanupError, ValueError):
+            # A drifted retired ID may no longer pass positive-label policy.
+            # That is itself NO_GO; do not let a second classification error
+            # suppress the stable failure receipt or authorize a new delete.
+            return CleanupReceipt(
+                outcome,
+                attempt_id,
+                "NO_GO",
+                before.disk,
+                after.disk,
+                tuple(removed),
+                ("postdelete-inventory-reconciliation-untrusted",),
+                (),
+            )
         return CleanupReceipt(
             outcome,
             attempt_id,

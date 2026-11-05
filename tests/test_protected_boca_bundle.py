@@ -41,10 +41,21 @@ def test_verified_memfd_zip_selftest_never_touches_host(tmp_path: Path) -> None:
     assert len(raw) <= builder.MAX_ARCHIVE_BYTES
     with zipfile.ZipFile(io.BytesIO(raw)) as package:
         names = set(package.namelist())
-        assert names == bootstrap.EXPECTED_ENTRIES
+        assert names in (
+            bootstrap.EXPECTED_ENTRIES,
+            bootstrap.EXPECTED_ENTRIES | bootstrap.OPTION_B_ENTRIES,
+        )
         assert all("synthetic.py" not in name and "ipc_worker.py" not in name for name in names)
         assert package.read("compose.yaml") == (ROOT / "compose.yaml").read_bytes()
         assert package.read("compose.beta.yaml") == (ROOT / "compose.beta.yaml").read_bytes()
+        assert (
+            package.read("compose.beta.browser.yaml")
+            == (ROOT / "compose.beta.browser.yaml").read_bytes()
+        )
+        assert (
+            package.read("docker/seccomp_profile.json")
+            == (ROOT / "docker/seccomp_profile.json").read_bytes()
+        )
     result = _run(raw, digest)
     assert result.returncode == 0, (result.stdout, result.stderr)
     assert result.stdout == b"BOCA_BUNDLE_SELFTEST state=PASS host=untouched blackbox=excluded\n"
@@ -64,6 +75,29 @@ def test_tampered_transport_fails_before_import_or_dispatch(tmp_path: Path) -> N
     result = _run(bytes(raw), digest)
     assert result.returncode == 1
     assert b"state=PASS" not in result.stdout
+
+
+def test_option_b_sql_and_stdlib_helper_must_be_both_present(tmp_path: Path) -> None:
+    copied = tmp_path / "repository"
+    copied.mkdir()
+    for rel in builder.SOURCES:
+        to = copied / rel
+        to.parent.mkdir(parents=True, exist_ok=True)
+        to.write_bytes((ROOT / rel).read_bytes())
+    stdlib = copied / builder.OPTION_B_SOURCES[0]
+    stdlib.parent.mkdir(parents=True, exist_ok=True)
+    stdlib.write_bytes(b"# unreviewed partial B\n")
+    with pytest.raises(ValueError, match="both reviewed"):
+        builder.build(copied, tmp_path / "incomplete.pyz")
+    sql = copied / builder.OPTION_B_SOURCES[1]
+    sql.parent.mkdir(parents=True, exist_ok=True)
+    sql.write_bytes(b"CREATE TABLE example (id TEXT);\n")
+    output = tmp_path / "complete.pyz"
+    digest = builder.build(copied, output)
+    with zipfile.ZipFile(output) as package:
+        assert set(package.namelist()) == (bootstrap.EXPECTED_ENTRIES | bootstrap.OPTION_B_ENTRIES)
+    result = _run(output.read_bytes(), digest)
+    assert result.returncode == 0
 
 
 def test_unreviewed_zip_entry_rejected_even_with_matching_digest(tmp_path: Path) -> None:

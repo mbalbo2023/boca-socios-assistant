@@ -214,6 +214,28 @@ def test_served_tls_health_requires_ready_loop_and_owner_session(
     try:
         assert _request(settings.bind_port, "/healthz") == (200, b"BOCA_BETA_READY")
         assert healthcheck.main() == 0
+        # A later integrity failure in the dedicated owner-session SQLite must
+        # invalidate readiness even when the legacy controller remains alive.
+        session_file = settings.db_path.with_name("boca_owner_session.sqlite3")
+        with sqlite3.connect(session_file) as session_connection:
+            original_digest = session_connection.execute(
+                "SELECT checksum FROM owner_session_schema WHERE version = 1"
+            ).fetchone()[0]
+            session_connection.execute(
+                "UPDATE owner_session_schema SET checksum = ? WHERE version = 1",
+                ("0" * 64,),
+            )
+            session_connection.commit()
+        assert _request(settings.bind_port, "/healthz") == (503, b"BOCA_BETA_UNAVAILABLE")
+        assert healthcheck.main() == 1
+        with sqlite3.connect(session_file) as session_connection:
+            session_connection.execute(
+                "UPDATE owner_session_schema SET checksum = ? WHERE version = 1",
+                (original_digest,),
+            )
+            session_connection.commit()
+        assert _request(settings.bind_port, "/healthz") == (200, b"BOCA_BETA_READY")
+        assert healthcheck.main() == 0
         assert _request(settings.bind_port, "/ingresar")[0] == 200
         assert _request(settings.bind_port, "/socios")[0] == 401
         assert _request(settings.bind_port, "/healthz", host="evil.example")[0] == 503

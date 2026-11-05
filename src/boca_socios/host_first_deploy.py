@@ -4034,38 +4034,73 @@ def _browser_stage(
     )
 
 
-def _browser_compose_args(*arguments: str) -> tuple[str, ...]:
+def _browser_compose_args(
+    *arguments: str,
+    base_file: Path | None = None,
+    overlay_file: Path | None = None,
+) -> tuple[str, ...]:
+    """Resolve only explicit reviewed cutover files, or unchanged legacy defaults."""
     return (
         "docker",
         "compose",
         "-p",
         PROJECT,
         "-f",
-        str(BETA_COMPOSE),
+        str(BETA_COMPOSE if base_file is None else base_file),
         "-f",
-        str(BROWSER_COMPOSE),
+        str(BROWSER_COMPOSE if overlay_file is None else overlay_file),
         *arguments,
     )
 
 
 def _browser_compose_env(
-    image: str, origin: str, owner: str, browser_image: str, attempt_id: str
+    image: str,
+    origin: str,
+    owner: str,
+    browser_image: str,
+    attempt_id: str,
+    *,
+    seccomp_file: Path | None = None,
 ) -> dict[str, str]:
     return {
         **_beta_compose_env(image, origin, owner),
         "BOCA_BROWSER_IMAGE": browser_image,
         "BOCA_BROWSER_ATTEMPT_ID": attempt_id,
-        "BOCA_BROWSER_SECCOMP_PATH": str(BROWSER_SECCOMP),
+        "BOCA_BROWSER_SECCOMP_PATH": str(BROWSER_SECCOMP if seccomp_file is None else seccomp_file),
     }
 
 
 def _browser_compose_model(
-    image: str, origin: str, owner: str, browser_image: str, attempt_id: str
+    image: str,
+    origin: str,
+    owner: str,
+    browser_image: str,
+    attempt_id: str,
+    *,
+    base_file: Path | None = None,
+    overlay_file: Path | None = None,
+    seccomp_file: Path | None = None,
 ) -> str:
     """Host-side essential boundary, in addition to runner's full C1 validator."""
+    if any(path is not None for path in (base_file, overlay_file, seccomp_file)):
+        stage = ROOT / f"cutover-a-{attempt_id}"
+        if not BROWSER_ATTEMPT_PATTERN.fullmatch(attempt_id) or (
+            base_file,
+            overlay_file,
+            seccomp_file,
+        ) != (
+            stage / BETA_COMPOSE.name,
+            stage / BROWSER_COMPOSE.name,
+            stage / BROWSER_SECCOMP.name,
+        ):
+            raise PreflightError("cutover Compose only accepts exact verified Boca stage paths")
     raw = _run(
-        *_browser_compose_args("config", "--format", "json"),
-        env=_browser_compose_env(image, origin, owner, browser_image, attempt_id),
+        *_browser_compose_args(
+            "config", "--format", "json", base_file=base_file, overlay_file=overlay_file
+        ),
+        env=_browser_compose_env(
+            image, origin, owner, browser_image, attempt_id, seccomp_file=seccomp_file
+        ),
     )
     if not 0 < len(raw) <= 65_536:
         raise PreflightError("resolved browser IPC Compose model is unbounded")
@@ -4129,7 +4164,10 @@ def _browser_compose_model(
         "pids_limit": 128,
         "mem_limit": "805306368",
         "cpus": 1,
-        "security_opt": ["no-new-privileges:true", f"seccomp={BROWSER_SECCOMP}"],
+        "security_opt": [
+            "no-new-privileges:true",
+            f"seccomp={BROWSER_SECCOMP if seccomp_file is None else seccomp_file}",
+        ],
         "labels": expected_labels,
         "environment": {
             "BOCA_ENVIRONMENT": "staging",

@@ -17,13 +17,25 @@ from pathlib import Path
 SOURCES = (
     "compose.yaml",
     "compose.beta.yaml",
+    "compose.beta.browser.yaml",
+    "docker/seccomp_profile.json",
     "src/boca_socios/__init__.py",
     "src/boca_socios/host_first_deploy.py",
     "src/boca_socios/host_rootless_setup.py",
     "src/boca_socios/host_boca_cleanup.py",
     "src/boca_socios/host_boca_attempt.py",
     "src/boca_socios/host_boca_transaction.py",
+    "src/boca_socios/host_boca_cutover.py",
+    "src/boca_socios/host_cutover_stage.py",
 )
+# Source-owned by #321, merged only after that PR passes its own QA.  The
+# standalone #320 bundle has the core profile; after integration it gains
+# BOTH exact Option B files. One present without the other is always NO_GO.
+OPTION_B_SOURCES = (
+    "src/boca_socios/panel/owner_session_disk_bootstrap.py",
+    "src/boca_socios/panel/owner_session_sql/0001_owner_browser_session.sql",
+)
+OPTION_B_STDLIB_BUNDLE_NAME = "boca_socios/owner_session_disk_bootstrap.py"
 MAIN = ("from boca_socios.host_boca_transaction import main\nraise SystemExit(main())\n").encode(
     "ascii"
 )
@@ -34,7 +46,14 @@ MAX_ARCHIVE_BYTES = 512_000
 def build(root: Path, target: Path) -> str:
     """Write a reproducible archive to a trusted runner-only target."""
     files: dict[str, bytes] = {"__main__.py": MAIN}
-    for rel in SOURCES:
+    b_sources = tuple(root / rel for rel in OPTION_B_SOURCES)
+    if any(source.exists() or source.is_symlink() for source in b_sources):
+        if not all(source.is_file() and not source.is_symlink() for source in b_sources):
+            raise ValueError("Boca Option B requires both reviewed session source and SQL")
+        sources = (*SOURCES, *OPTION_B_SOURCES)
+    else:
+        sources = SOURCES
+    for rel in sources:
         source = root / rel
         if source.is_symlink():
             raise ValueError("Boca protected package source may not be a symlink")
@@ -44,7 +63,13 @@ def build(root: Path, target: Path) -> str:
         data = source.read_bytes()
         if len(data) != item.st_size:
             raise ValueError("Boca protected package source changed while reading")
-        files[rel.removeprefix("src/")] = data
+        # The full Boca `panel/__init__.py` has UI imports. The standalone
+        # stdlib-only disk attestor is shipped under a private ZIP import name
+        # instead of importing any unreviewed panel or BLACKBOX dependency.
+        name = (
+            OPTION_B_STDLIB_BUNDLE_NAME if rel == OPTION_B_SOURCES[0] else rel.removeprefix("src/")
+        )
+        files[name] = data
     if not 0 < sum(len(item) for item in files.values()) <= MAX_SOURCE_BYTES:
         raise ValueError("Boca protected package total exceeds bounded contract")
     if target.is_symlink() or target.exists():

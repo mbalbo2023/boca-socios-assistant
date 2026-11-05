@@ -298,7 +298,10 @@ def build_beta_server(
                 )
                 if healthy:
                     try:
-                        healthy = _configured_event(settings.db_path) == events
+                        healthy = (
+                            _configured_event(settings.db_path) == events
+                            and panel.owner_session_ready()
+                        )
                     except (LocalRuntimeUnavailable, ValueError):
                         healthy = False
                 body = b"BOCA_BETA_READY" if healthy else b"BOCA_BETA_UNAVAILABLE"
