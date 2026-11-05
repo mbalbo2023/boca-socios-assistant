@@ -1,4 +1,5 @@
 """R30 GO_B Cutover/official PREPARE proof tests; never connect to host."""
+
 from __future__ import annotations
 
 import hashlib
@@ -122,8 +123,7 @@ def test_same_run_release_requires_controller_worker_and_source_exact() -> None:
         "source_sha": "a" * 40,
         "run_id": "42040000000",
         "controller_digest": controller["image_ref"],
-        "browser_digest": "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
-        + "c" * 64,
+        "browser_digest": "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "c" * 64,
     }
     pins = go.validate_release_manifest(
         controller, browser, source_sha="a" * 40, release_id="42040000000"
@@ -185,9 +185,10 @@ def test_official_artifact_source_is_one_reviewed_short_run_id() -> None:
         "digest": "sha256:" + "a" * 64,
         "workflow_run": {"id": int(source)},
     }
-    assert go.select_official_artifact(
-        {"total_count": 1, "artifacts": [entry]}, source_run_id=source
-    ) == "13430007313"
+    assert (
+        go.select_official_artifact({"total_count": 1, "artifacts": [entry]}, source_run_id=source)
+        == "13430007313"
+    )
     with pytest.raises(go.LegacyGoDispatchError):
         go.select_official_artifact(
             {"total_count": 2, "artifacts": [entry, entry]}, source_run_id=source
@@ -208,9 +209,7 @@ def test_completed_main_prepare_cannot_be_current_run_or_wrong_actor() -> None:
             environ=env,
         )
     with pytest.raises(go.LegacyGoDispatchError):
-        go.restore_prepared_coordinates(
-            {}, prepare_id=env["GITHUB_RUN_ID"], environ=env
-        )
+        go.restore_prepared_coordinates({}, prepare_id=env["GITHUB_RUN_ID"], environ=env)
 
 
 def test_public_coordinates_forbid_new_source_with_same_action() -> None:
@@ -230,34 +229,39 @@ def test_public_coordinates_forbid_new_source_with_same_action() -> None:
     }
     assert go._validate_coords(coords) == coords  # noqa: SLF001
     env["BOCA_PROTECTED_ACTION_CONTEXT"] = "42050000000"
-    assert go.restore_prepared_coordinates(
-        coords, prepare_id="42050000000", environ=env
-    )["BOCA_LEGACY_CONTROLLER_ID"] == "d" * 64
+    assert (
+        go.restore_prepared_coordinates(coords, prepare_id="42050000000", environ=env)[
+            "BOCA_LEGACY_CONTROLLER_ID"
+        ]
+        == "d" * 64
+    )
     for modified in (
         {**coords, "legacy_source_sha": env["GITHUB_SHA"]},
         {**coords, "legacy_controller_id": "e" * 64, "unexpected": "other"},
         {**coords, "source_sha": "f" * 40},
     ):
         with pytest.raises(go.LegacyGoDispatchError):
-            go.restore_prepared_coordinates(
-                modified, prepare_id="42050000000", environ=env
-            )
+            go.restore_prepared_coordinates(modified, prepare_id="42050000000", environ=env)
 
 
 def test_go_b_is_not_a_boolean_and_pins_receipt_bytes() -> None:
-    receipt = {
-        key: "foo" for key in go.RECEIPT_KEYS
-    }
+    receipt = {key: "foo" for key in go.RECEIPT_KEYS}
     receipt["operation"] = "cutover-a-apply"
     domain = go.GO_DOMAINS["cutover-a-apply"]
     digest = hashlib.sha256(domain + go._canonical(receipt)).hexdigest()  # noqa: SLF001
     assert len(digest) == 64
-    assert digest != hashlib.sha256(
-        go.GO_DOMAINS["official-notice-import"] + go._canonical(receipt)  # noqa: SLF001
-    ).hexdigest()
-    assert digest != hashlib.sha256(
-        domain + go._canonical({**receipt, "bundle_sha256": "1" * 64})  # noqa: SLF001
-    ).hexdigest()
+    assert (
+        digest
+        != hashlib.sha256(
+            go.GO_DOMAINS["official-notice-import"] + go._canonical(receipt)  # noqa: SLF001
+        ).hexdigest()
+    )
+    assert (
+        digest
+        != hashlib.sha256(
+            domain + go._canonical({**receipt, "bundle_sha256": "1" * 64})  # noqa: SLF001
+        ).hexdigest()
+    )
 
 
 def test_readable_audit_ttl_exactly_24_hours_and_replay_requires_fresh_run() -> None:

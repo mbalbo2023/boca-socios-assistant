@@ -1,11 +1,12 @@
 """Workflow-level P0 GO_B PREPARE/APPLY regression matrix (no SSH executes)."""
+
 from __future__ import annotations
 
 from pathlib import Path
 
-_YAML = (
-    Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
-).read_text(encoding="utf-8")
+_YAML = (Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml").read_text(
+    encoding="utf-8"
+)
 
 
 def _step(label: str, *, next_name: str = "      - name: ") -> str:
@@ -17,10 +18,12 @@ def _step(label: str, *, next_name: str = "      - name: ") -> str:
 def test_protected_dispatch_25_input_max_and_no_new_ports() -> None:
     head = _YAML.split("permissions:\n", 1)[0]
     inputs = head.split("    inputs:\n", 1)[1]
-    assert sum(
-        line.startswith("      ") and line.strip().endswith(":")
-        for line in inputs.splitlines()
-    ) == 25
+    assert (
+        sum(
+            line.startswith("      ") and line.strip().endswith(":") for line in inputs.splitlines()
+        )
+        == 25
+    )
     assert "port: 9000" not in _YAML
     assert "https://localhost:8443" not in _YAML
     assert "127.0.0.1:8443" in _YAML
@@ -28,7 +31,10 @@ def test_protected_dispatch_25_input_max_and_no_new_ports() -> None:
 
 def test_both_legacy_operations_prepare_with_blank_and_apply_with_run_id_only() -> None:
     early = _step("Require verified protected environment and matching main commit")
-    assert '[[ -z "$BOCA_PROTECTED_ACTION_CONTEXT" || "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^[1-9][0-9]{0,19}$ ]]' in early
+    assert (
+        '[[ -z "$BOCA_PROTECTED_ACTION_CONTEXT" || "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^[1-9][0-9]{0,19}$ ]]'
+        in early
+    )
     assert '"$BOCA_PROTECTED_ACTION_CONTEXT" != "$GITHUB_RUN_ID"' in early
     assert 'test -z "$BOCA_OFFICIAL_CONTROLLER_ID"' in early
     assert 'test -z "$BOCA_LEGACY_CONTROLLER_ID"' in early
@@ -71,14 +77,21 @@ def test_apply_requires_actual_completed_prepare_and_protected_go_env() -> None:
     assert "gh api" in restore
     assert "gh run download" in restore
     assert "restore-early" in restore
-    cutover = _step("Require independently approved Cutover A GO_B bound to PREPARE and reviewed bytes")
+    cutover = _step(
+        "Require independently approved Cutover A GO_B bound to PREPARE and reviewed bytes"
+    )
     assert "inputs.protected_action_context != ''" in cutover
-    assert "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}" in cutover
+    assert (
+        "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}" in cutover
+    )
     assert "check_legacy_go_dispatch.py apply" in cutover
     assert "check_cutover_a_go.py --prepared-from-actions" in cutover
     assert "check_cutover_a_go.py --from-actions" not in cutover
     official = _step("Require independent official import GO_B and exact source ZIP")
-    assert "BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256: ${{ vars.BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256 }}" in official
+    assert (
+        "BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256: ${{ vars.BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256 }}"
+        in official
+    )
     assert "check_legacy_go_dispatch.py apply" in official
     assert "runner-preflight-prepared" in official
     assert "runner-preflight \\" not in official

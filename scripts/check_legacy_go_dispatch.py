@@ -4,6 +4,7 @@ GitHub Actions alone downloads reviewed immutable artifacts. This module never
 connects to the host, alters Docker/SQLite, or reads credentials. All host
 commands remain in the existing protected workflow after independent GO_B.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -41,21 +42,50 @@ _WORKER = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:
 _OPS = frozenset({"cutover-a-apply", "official-notice-import"})
 _ARTIFACT = "boca-protected-legacy-go-prepare"
 _COORDS_VERSION = "boca-legacy-prepared-coordinates-v1"
-_COORDS_FIELDS = frozenset({
-    "version", "operation", "source_sha", "image_ref", "browser_image_ref", "release_run_id",
-    "legacy_source_sha", "legacy_image_ref", "legacy_release_run_id",
-    "legacy_controller_id", "official_controller_id", "official_news_run_id",
-    "official_news_source_sha", "official_news_artifact_id", "official_news_zip_sha256",
-    "official_news_jsonl_sha256", "official_news_html_sha256",
-    "official_news_observed_at_utc",
-})
-_INVENTORY_BASE = frozenset({
-    "version", "kind", "observe_run_id", "target_source_sha", "target_release_run_id",
-    "legacy_controller_id", "legacy_source_sha", "legacy_image_ref",
-    "legacy_image_id", "legacy_compose_config_hash", "compose_project",
-    "compose_service", "port", "data_volume", "key_volume", "owner_volume",
-    "controller_health", "observed_at_utc",
-})
+_COORDS_FIELDS = frozenset(
+    {
+        "version",
+        "operation",
+        "source_sha",
+        "image_ref",
+        "browser_image_ref",
+        "release_run_id",
+        "legacy_source_sha",
+        "legacy_image_ref",
+        "legacy_release_run_id",
+        "legacy_controller_id",
+        "official_controller_id",
+        "official_news_run_id",
+        "official_news_source_sha",
+        "official_news_artifact_id",
+        "official_news_zip_sha256",
+        "official_news_jsonl_sha256",
+        "official_news_html_sha256",
+        "official_news_observed_at_utc",
+    }
+)
+_INVENTORY_BASE = frozenset(
+    {
+        "version",
+        "kind",
+        "observe_run_id",
+        "target_source_sha",
+        "target_release_run_id",
+        "legacy_controller_id",
+        "legacy_source_sha",
+        "legacy_image_ref",
+        "legacy_image_id",
+        "legacy_compose_config_hash",
+        "compose_project",
+        "compose_service",
+        "port",
+        "data_volume",
+        "key_volume",
+        "owner_volume",
+        "controller_health",
+        "observed_at_utc",
+    }
+)
 
 
 class LegacyGoDispatchError(ValueError):
@@ -96,8 +126,7 @@ def _file(path: Path, *, maximum: int = 100_000, canonical: bool = False) -> byt
     try:
         before = path.stat(follow_symlinks=False)
         _require(
-            stat.S_ISREG(before.st_mode) and before.st_nlink == 1
-            and 0 < before.st_size <= maximum,
+            stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and 0 < before.st_size <= maximum,
             "reviewed file type or bounds untrusted",
         )
         raw = path.read_bytes()
@@ -117,7 +146,9 @@ def _file(path: Path, *, maximum: int = 100_000, canonical: bool = False) -> byt
 
 def _write_once(path: Path, body: bytes, *, mode: int = 0o600) -> None:
     _require(
-        path.is_absolute() and not path.is_symlink() and path.parent.is_dir()
+        path.is_absolute()
+        and not path.is_symlink()
+        and path.parent.is_dir()
         and 0 < len(body) <= 12_000,
         "private stage path invalid",
     )
@@ -135,12 +166,21 @@ def _env_file(environ: Mapping[str, str], pins: dict[str, str]) -> None:
     path = Path(environ.get("GITHUB_ENV", ""))
     _require(path.is_absolute() and path.parent.is_dir(), "GitHub env missing")
     valid = {
-        "BOCA_SOURCE_SHA", "BOCA_IMAGE_REF", "BOCA_BROWSER_IMAGE_REF", "BOCA_RELEASE_RUN_ID",
-        "BOCA_LEGACY_SOURCE_SHA", "BOCA_LEGACY_IMAGE_REF", "BOCA_LEGACY_RELEASE_RUN_ID",
-        "BOCA_LEGACY_CONTROLLER_ID", "BOCA_OFFICIAL_CONTROLLER_ID",
-        "BOCA_OFFICIAL_NEWS_RUN_ID", "BOCA_OFFICIAL_NEWS_SOURCE_SHA",
-        "BOCA_OFFICIAL_NEWS_ARTIFACT_ID", "BOCA_OFFICIAL_NEWS_ZIP_SHA256",
-        "BOCA_OFFICIAL_NEWS_JSONL_SHA256", "BOCA_OFFICIAL_NEWS_HTML_SHA256",
+        "BOCA_SOURCE_SHA",
+        "BOCA_IMAGE_REF",
+        "BOCA_BROWSER_IMAGE_REF",
+        "BOCA_RELEASE_RUN_ID",
+        "BOCA_LEGACY_SOURCE_SHA",
+        "BOCA_LEGACY_IMAGE_REF",
+        "BOCA_LEGACY_RELEASE_RUN_ID",
+        "BOCA_LEGACY_CONTROLLER_ID",
+        "BOCA_OFFICIAL_CONTROLLER_ID",
+        "BOCA_OFFICIAL_NEWS_RUN_ID",
+        "BOCA_OFFICIAL_NEWS_SOURCE_SHA",
+        "BOCA_OFFICIAL_NEWS_ARTIFACT_ID",
+        "BOCA_OFFICIAL_NEWS_ZIP_SHA256",
+        "BOCA_OFFICIAL_NEWS_JSONL_SHA256",
+        "BOCA_OFFICIAL_NEWS_HTML_SHA256",
         "BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC",
     }
     _require(set(pins) <= valid, "unapproved environment key")
@@ -197,7 +237,8 @@ def _env_coords(environ: Mapping[str, str]) -> dict[str, str]:
 
 def _validate_coords(coords: dict[str, Any]) -> dict[str, str]:
     _require(
-        type(coords) is dict and set(coords) == _COORDS_FIELDS
+        type(coords) is dict
+        and set(coords) == _COORDS_FIELDS
         and all(type(value) is str for value in coords.values())
         and coords["version"] == _COORDS_VERSION
         and coords["operation"] in _OPS
@@ -209,8 +250,10 @@ def _validate_coords(coords: dict[str, Any]) -> dict[str, str]:
     )
     if coords["operation"] == "cutover-a-apply":
         for key, pattern in (
-            ("legacy_source_sha", _SHA), ("legacy_image_ref", _CONTROLLER),
-            ("legacy_release_run_id", _RUN), ("legacy_controller_id", _HEX)
+            ("legacy_source_sha", _SHA),
+            ("legacy_image_ref", _CONTROLLER),
+            ("legacy_release_run_id", _RUN),
+            ("legacy_controller_id", _HEX),
         ):
             _require(pattern.fullmatch(coords[key]) is not None, f"cutover {key} untrusted")
         _require(
@@ -224,10 +267,13 @@ def _validate_coords(coords: dict[str, Any]) -> dict[str, str]:
         )
     else:
         for key, pattern in (
-            ("official_controller_id", _HEX), ("official_news_run_id", _RUN),
+            ("official_controller_id", _HEX),
+            ("official_news_run_id", _RUN),
             ("official_news_source_sha", _SHA),
-            ("official_news_artifact_id", _RUN), ("official_news_zip_sha256", _HEX),
-            ("official_news_jsonl_sha256", _HEX), ("official_news_html_sha256", _HEX),
+            ("official_news_artifact_id", _RUN),
+            ("official_news_zip_sha256", _HEX),
+            ("official_news_jsonl_sha256", _HEX),
+            ("official_news_html_sha256", _HEX),
         ):
             _require(pattern.fullmatch(coords[key]) is not None, f"official {key} untrusted")
         _require(
@@ -241,7 +287,8 @@ def _validate_coords(coords: dict[str, Any]) -> dict[str, str]:
 
 def _official_coords(coords: dict[str, str]) -> OfficialImportCoordinates:
     return OfficialImportCoordinates(
-        main_sha=coords["source_sha"], controller_image=coords["image_ref"],
+        main_sha=coords["source_sha"],
+        controller_image=coords["image_ref"],
         controller_release_run_id=coords["release_run_id"],
         controller_id=coords["official_controller_id"],
         source_run_id=coords["official_news_run_id"],
@@ -265,7 +312,8 @@ def select_release_run(
         "GitHub release list requires explicit complete pagination",
     )
     matches = [
-        run for run in listing["workflow_runs"]
+        run
+        for run in listing["workflow_runs"]
         if type(run) is dict
         and run.get("workflow_id") == _IMAGE_WORKFLOW
         and run.get("event") == "workflow_dispatch"
@@ -274,7 +322,8 @@ def select_release_run(
         and run.get("run_attempt") == 1
         and run.get("head_branch") == "main"
         and run.get("head_sha") == source_sha
-        and type(run.get("actor")) is dict and run["actor"].get("login") == _OWNER
+        and type(run.get("actor")) is dict
+        and run["actor"].get("login") == _OWNER
     ]
     _require(
         len(matches) == 1,
@@ -283,7 +332,9 @@ def select_release_run(
     run = matches[0]
     _require(type(run.get("id")) is int, "release run identifier malformed")
     # The artifact digest is independently verified in the following command.
-    _require(not expected_image or _CONTROLLER.fullmatch(expected_image) is not None, "image invalid")
+    _require(
+        not expected_image or _CONTROLLER.fullmatch(expected_image) is not None, "image invalid"
+    )
     return _positive(str(run["id"]))
 
 
@@ -326,8 +377,7 @@ def observer_request(environ: Mapping[str, str], *, operation: str) -> str:
     browser = environ.get("BOCA_BROWSER_IMAGE_REF", "")
     release = _positive(environ.get("BOCA_RELEASE_RUN_ID", ""))
     _require(
-        _CONTROLLER.fullmatch(controller) is not None
-        and _WORKER.fullmatch(browser) is not None,
+        _CONTROLLER.fullmatch(controller) is not None and _WORKER.fullmatch(browser) is not None,
         "observer target image refs unreviewed",
     )
     kind = "cutover" if operation == "cutover-a-apply" else "official"
@@ -344,20 +394,16 @@ def observer_request(environ: Mapping[str, str], *, operation: str) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def validate_host_inventory(
-    raw: bytes, *, environ: Mapping[str, str]
-) -> dict[str, str]:
+def validate_host_inventory(raw: bytes, *, environ: Mapping[str, str]) -> dict[str, str]:
     """Consume actual single-line host stdout; no guessed SHA/CID or releases."""
     _main(environ)
     _require(
-        raw.endswith(b"\n") and raw.count(b"\n") == 1
-        and len(raw) <= 4096,
+        raw.endswith(b"\n") and raw.count(b"\n") == 1 and len(raw) <= 4096,
         "host inventory must be exactly one bounded line",
     )
     doc = _strict_json(raw[:-1], maximum=4096)
     _require(
-        _canonical(doc) == raw[:-1]
-        and all(type(value) is str for value in doc.values()),
+        _canonical(doc) == raw[:-1] and all(type(value) is str for value in doc.values()),
         "host inventory must be canonical public strings",
     )
     expected_kind = "cutover" if environ["BOCA_OPERATION"] == "cutover-a-apply" else "official"
@@ -390,10 +436,21 @@ def validate_host_inventory(
         )
     else:
         required = {
-            "version", "kind", "observe_run_id", "source_sha", "release_run_id",
-            "controller_id", "controller_image", "worker_id", "worker_image",
-            "browser_attempt", "controller_config_hash", "worker_config_hash",
-            "port", "data_volume", "observed_at_utc",
+            "version",
+            "kind",
+            "observe_run_id",
+            "source_sha",
+            "release_run_id",
+            "controller_id",
+            "controller_image",
+            "worker_id",
+            "worker_image",
+            "browser_attempt",
+            "controller_config_hash",
+            "worker_config_hash",
+            "port",
+            "data_volume",
+            "observed_at_utc",
         }
         sender = {"sender_id", "sender_config_hash", "sender_attempt_id", "sender_state"}
         _require(
@@ -423,7 +480,8 @@ def validate_host_inventory(
         re.fullmatch(
             r"20[0-9]{2}-[01][0-9]-[0-3][0-9]T[0-2][0-9]:[0-5][0-9]:[0-5][0-9]Z",
             doc.get("observed_at_utc", ""),
-        ) is not None,
+        )
+        is not None,
         "observation UTC clock malformed",
     )
     return doc
@@ -443,7 +501,8 @@ def parse_official_source(
     _sha(controller_id)
     source_id = _positive(environ.get("BOCA_OFFICIAL_NEWS_RUN_ID", ""))
     _require(
-        type(run.get("id")) is int and str(run["id"]) == source_id
+        type(run.get("id")) is int
+        and str(run["id"]) == source_id
         and run.get("workflow_id") == _OFFICIAL_WORKFLOW
         and run.get("event") == "pull_request"
         and run.get("conclusion") == "success"
@@ -559,7 +618,10 @@ def create_prepare_receipt(
             environ["BOCA_BETA_OWNER_SUBJECT"].encode("utf-8")
         ).hexdigest(),
     }
-    _require(set(result) == RECEIPT_KEYS and all(type(v) is str for v in result.values()), "prepare receipt incomplete")
+    _require(
+        set(result) == RECEIPT_KEYS and all(type(v) is str for v in result.values()),
+        "prepare receipt incomplete",
+    )
     approval = hashlib.sha256(GO_DOMAINS[coords["operation"]] + _canonical(result)).hexdigest()
     return result, approval
 
@@ -569,12 +631,15 @@ def validate_prepared_metadata(
 ) -> None:
     _positive(prepare_id)
     _require(
-        type(run.get("id")) is int and run["id"] == int(prepare_id)
+        type(run.get("id")) is int
+        and run["id"] == int(prepare_id)
         and run.get("event") == "workflow_dispatch"
         and run.get("run_attempt") == 1
-        and run.get("status") == "completed" and run.get("conclusion") == "success"
+        and run.get("status") == "completed"
+        and run.get("conclusion") == "success"
         and run.get("workflow_id") is not None
-        and run.get("path") in (
+        and run.get("path")
+        in (
             ".github/workflows/boca-first-deploy.yml",
             f"{_REPO}/.github/workflows/boca-first-deploy.yml",
         )
@@ -621,7 +686,8 @@ def validate_prepared_receipt(
 ) -> str:
     _main(environ)
     _require(
-        type(receipt) is dict and set(receipt) == RECEIPT_KEYS
+        type(receipt) is dict
+        and set(receipt) == RECEIPT_KEYS
         and all(type(x) is str for x in receipt.values()),
         "prepared receipt schema untrusted",
     )
@@ -635,7 +701,9 @@ def validate_prepared_receipt(
     except ValueError as exc:
         raise LegacyGoDispatchError("prepared timestamp invalid") from exc
     _require(
-        start.tzinfo is not None and until.tzinfo is not None and now.tzinfo is not None
+        start.tzinfo is not None
+        and until.tzinfo is not None
+        and now.tzinfo is not None
         and start.strftime("%Y-%m-%dT%H:%M:%SZ") == issued
         and until.strftime("%Y-%m-%dT%H:%M:%SZ") == expires
         and until - start == timedelta(days=1)
@@ -644,12 +712,17 @@ def validate_prepared_receipt(
     )
     release, browser, bundle = _review_file_paths(environ)
     expected = {
-        "version": VERSION, "operation": coords["operation"],
-        "repository": _REPO, "actor": _OWNER,
-        "ref": "refs/heads/main", "source_sha": coords["source_sha"],
+        "version": VERSION,
+        "operation": coords["operation"],
+        "repository": _REPO,
+        "actor": _OWNER,
+        "ref": "refs/heads/main",
+        "source_sha": coords["source_sha"],
         "release_run_id": coords["release_run_id"],
-        "prepare_run_id": prepare_id, "prepare_attempt": "1",
-        "prepared_at_utc": issued, "valid_until_utc": expires,
+        "prepare_run_id": prepare_id,
+        "prepare_attempt": "1",
+        "prepared_at_utc": issued,
+        "valid_until_utc": expires,
         "public_context_sha256": _review_receipt_context(coords, prepare_id),
         "release_manifest_sha256": _reviewed_sha(release),
         "browser_manifest_sha256": _reviewed_sha(browser),
@@ -672,7 +745,8 @@ def select_official_artifact(listing: dict[str, Any], *, source_run_id: str) -> 
         "official source artifact list incomplete",
     )
     chosen = [
-        artifact for artifact in listing["artifacts"]
+        artifact
+        for artifact in listing["artifacts"]
         if type(artifact) is dict
         and artifact.get("name") == f"boca-official-news-receipt-{source_run_id}"
         and artifact.get("expired") is False
@@ -736,9 +810,7 @@ def _stage_approved(
         "restored PREPARE coordinates mutated after review",
     )
     receipt = _strict_json(_file(receipt_path, canonical=True))
-    go = validate_prepared_receipt(
-        receipt, coords, prepare_id=prepare_id, environ=environ, now=now
-    )
+    go = validate_prepared_receipt(receipt, coords, prepare_id=prepare_id, environ=environ, now=now)
     approved_var = (
         "BOCA_CUTOVER_A_GO_BINDING_SHA256"
         if environ["BOCA_OPERATION"] == "cutover-a-apply"
@@ -746,7 +818,8 @@ def _stage_approved(
     )
     approved = environ.get(approved_var, "")
     _require(
-        type(approved) is str and _HEX.fullmatch(approved) is not None
+        type(approved) is str
+        and _HEX.fullmatch(approved) is not None
         and hmac.compare_digest(go, approved),
         "independent protected Environment GO_B not proven",
     )
@@ -759,9 +832,7 @@ def _stage_approved(
         runner / "boca-protected-legacy-go.prepare-id",
         (prepare_id + "\n").encode("ascii"),
     )
-    _write_once(
-        runner / "boca-protected-legacy-go.receipt.json", _canonical(receipt)
-    )
+    _write_once(runner / "boca-protected-legacy-go.receipt.json", _canonical(receipt))
     return go
 
 
@@ -769,10 +840,17 @@ def cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Boca read-only GO_B legacy coordinate review")
     modes = parser.add_subparsers(dest="mode", required=True)
     for name in (
-        "select-current-release", "verify-current-release", "observer-request",
-        "accept-observer", "select-legacy-release", "verify-legacy-release",
-        "select-official-artifact", "resolve-official-source",
-        "prepare", "restore-early", "apply",
+        "select-current-release",
+        "verify-current-release",
+        "observer-request",
+        "accept-observer",
+        "select-legacy-release",
+        "verify-legacy-release",
+        "select-official-artifact",
+        "resolve-official-source",
+        "prepare",
+        "restore-early",
+        "apply",
     ):
         sub = modes.add_parser(name)
         sub.add_argument("paths", nargs="*")
@@ -802,7 +880,11 @@ def cli(argv: list[str] | None = None) -> int:
         print("BOCA_LEGACY_RELEASE_PINS state=PASS image_source=Actions host=untouched")
     elif args.mode == "observer-request":
         _require(len(paths) == 1, "observer request target missing")
-        _observer_tokens(env, kind="cutover" if operation == "cutover-a-apply" else "official", token_path=paths[0])
+        _observer_tokens(
+            env,
+            kind="cutover" if operation == "cutover-a-apply" else "official",
+            token_path=paths[0],
+        )
         print("BOCA_LEGACY_OBSERVER_REQUEST state=READY request=runner-generated")
     elif args.mode == "accept-observer":
         _require(len(paths) == 2, "host inventory evidence paths missing")
@@ -819,12 +901,16 @@ def cli(argv: list[str] | None = None) -> int:
         _env_file(env, pins)
         print("BOCA_LEGACY_OBSERVER state=PASS host_reads=1 app_mutations=0")
     elif args.mode == "select-legacy-release":
-        _require(len(paths) == 3 and operation == "cutover-a-apply", "legacy release discovery invalid")
+        _require(
+            len(paths) == 3 and operation == "cutover-a-apply", "legacy release discovery invalid"
+        )
         observed = _strict_json(_file(paths[1], canonical=True))
         source = observed.get("legacy_source_sha", "")
         _require(_SHA.fullmatch(source) is not None, "observed historical source absent")
         listing = _strict_json(_file(paths[0], maximum=3_000_000), maximum=3_000_000)
-        legacy_id = select_release_run(listing, source_sha=source, expected_image=observed["legacy_image_ref"])
+        legacy_id = select_release_run(
+            listing, source_sha=source, expected_image=observed["legacy_image_ref"]
+        )
         _write_once(paths[2], (legacy_id + "\n").encode("ascii"))
         _env_file(env, {"BOCA_LEGACY_RELEASE_RUN_ID": legacy_id})
         print(f"BOCA_LEGACY_SOURCE_RELEASE state=PASS historical_run={legacy_id}")
@@ -842,7 +928,10 @@ def cli(argv: list[str] | None = None) -> int:
         )
         print("BOCA_LEGACY_HISTORICAL_MANIFEST state=PASS")
     elif args.mode == "select-official-artifact":
-        _require(len(paths) == 2 and operation == "official-notice-import", "official artifact discovery invalid")
+        _require(
+            len(paths) == 2 and operation == "official-notice-import",
+            "official artifact discovery invalid",
+        )
         selection = select_official_artifact(
             _strict_json(_file(paths[0], maximum=3_000_000), maximum=3_000_000),
             source_run_id=_validate_official_sha_run(env),
@@ -850,7 +939,10 @@ def cli(argv: list[str] | None = None) -> int:
         _write_once(paths[1], (selection + "\n").encode("ascii"))
         print(f"BOCA_LEGACY_OFFICIAL_ARTIFACT state=PASS artifact_id={selection}")
     elif args.mode == "resolve-official-source":
-        _require(len(paths) == 4 and operation == "official-notice-import", "official source evidence incomplete")
+        _require(
+            len(paths) == 4 and operation == "official-notice-import",
+            "official source evidence incomplete",
+        )
         observed = _strict_json(_file(paths[3], canonical=True))
         _require(observed.get("kind") == "official-inventory", "official host CID unobserved")
         pins = parse_official_source(
@@ -863,7 +955,10 @@ def cli(argv: list[str] | None = None) -> int:
         _env_file(env, pins)
         print("BOCA_LEGACY_OFFICIAL_SOURCE state=PASS reviewed_public_source=TRUE")
     elif args.mode == "prepare":
-        _require(len(paths) == 0 and not env.get("BOCA_PROTECTED_ACTION_CONTEXT"), "PREPARE must not authorize host")
+        _require(
+            len(paths) == 0 and not env.get("BOCA_PROTECTED_ACTION_CONTEXT"),
+            "PREPARE must not authorize host",
+        )
         coords = _env_coords(env)
         receipt, approved = create_prepare_receipt(coords, environ=env, now=datetime.now(UTC))
         _write_once(runner / "boca-legacy-prepare.coordinates.json", _canonical(coords))
@@ -883,18 +978,28 @@ def cli(argv: list[str] | None = None) -> int:
                     "PREPARE performed no application/Docker writes.\n"
                 )
     elif args.mode == "restore-early":
-        _require(len(paths) == 3 and env.get("BOCA_PROTECTED_ACTION_CONTEXT"), "APPLY PREPARE artifact missing")
+        _require(
+            len(paths) == 3 and env.get("BOCA_PROTECTED_ACTION_CONTEXT"),
+            "APPLY PREPARE artifact missing",
+        )
         _restore_early(
             _strict_json(_file(paths[0], maximum=80_000)),
-            coords_path=paths[1], receipt_path=paths[2], environ=env,
+            coords_path=paths[1],
+            receipt_path=paths[2],
+            environ=env,
         )
         print("BOCA_LEGACY_APPLY_SOURCE state=PASS reviewed_prepare=TRUE")
     elif args.mode == "apply":
-        _require(len(paths) == 3 and env.get("BOCA_PROTECTED_ACTION_CONTEXT"), "APPLY immutable proof missing")
+        _require(
+            len(paths) == 3 and env.get("BOCA_PROTECTED_ACTION_CONTEXT"),
+            "APPLY immutable proof missing",
+        )
         digest = _stage_approved(
             _strict_json(_file(paths[0], maximum=80_000)),
-            coords_path=paths[1], receipt_path=paths[2],
-            environ=env, now=datetime.now(UTC),
+            coords_path=paths[1],
+            receipt_path=paths[2],
+            environ=env,
+            now=datetime.now(UTC),
         )
         print(f"BOCA_LEGACY_GO_APPLY state=PASS go_sha256={digest} host_effect=not_started")
     else:
