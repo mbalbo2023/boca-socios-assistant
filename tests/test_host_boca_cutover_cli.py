@@ -203,7 +203,9 @@ def test_prepared_v2_cutover_invocation_has_exact_nonce_and_keeps_v1() -> None:
     v1 = cli.encode_invocation(plan, bundle_sha256="a" * 64, go_binding_sha256=GO)
     assert cli.CutoverInvocation.decode(v1).prepare_run_id is None
     v2 = cli.encode_invocation(
-        plan, bundle_sha256="a" * 64, go_binding_sha256=GO,
+        plan,
+        bundle_sha256="a" * 64,
+        go_binding_sha256=GO,
         prepare_run_id="50000000001",
     )
     parsed = cli.CutoverInvocation.decode(v2)
@@ -214,7 +216,9 @@ def test_prepared_v2_cutover_invocation_has_exact_nonce_and_keeps_v1() -> None:
     for bad in ("", "0", plan.attempt_id, "not-digits"):
         with pytest.raises(cli.CutoverCliError):
             cli.encode_invocation(
-                plan, bundle_sha256="a" * 64, go_binding_sha256=GO, prepare_run_id=bad
+                plan,
+        bundle_sha256="a" * 64,
+        go_binding_sha256=GO, prepare_run_id=bad
             )
 
 
@@ -223,7 +227,9 @@ def test_prepared_cutover_cli_requires_separate_go_and_receipt(
 ) -> None:
     _, plan, digest = reviewed_context
     encoded = cli.encode_invocation(
-        plan, bundle_sha256=digest, go_binding_sha256=GO,
+        plan,
+        bundle_sha256=digest,
+        go_binding_sha256=GO,
         prepare_run_id="50000000001",
     )
     seen: list[str] = []
@@ -235,10 +241,13 @@ def test_prepared_cutover_cli_requires_separate_go_and_receipt(
 
     assert cli.run_cli(encoded, execute_prepared=effect) == 3
     assert seen == []
-    assert cli.run_cli(
-        encoded,
-        approved_go_binding_sha256=GO,
-        execute_prepared=effect,
-        reconcile=lambda _plan, _receipt: seen.append("receipt"),
-    ) == 0
+    assert (
+        cli.run_cli(
+            encoded,
+            approved_go_binding_sha256=GO,
+            execute_prepared=effect,
+            reconcile=lambda _plan, _receipt: seen.append("receipt"),
+        )
+        == 0
+    )
     assert seen == ["prepared-effect", "receipt"]

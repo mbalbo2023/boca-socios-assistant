@@ -193,9 +193,7 @@ def decode_coordinates(token: str) -> OfficialImportCoordinates:
     return OfficialImportCoordinates(**obj)
 
 
-def encode_prepared_coordinates(
-    coords: OfficialImportCoordinates, *, prepare_run_id: str
-) -> str:
+def encode_prepared_coordinates(coords: OfficialImportCoordinates, *, prepare_run_id: str) -> str:
     """Public v2 coordinates; PREPARE identity is not an independent GO."""
     if type(prepare_run_id) is not str or _POSITIVE.fullmatch(prepare_run_id) is None:
         raise OfficialImportActionError("official PREPARE run identity invalid")
@@ -224,9 +222,7 @@ def decode_prepared_coordinates(token: str) -> tuple[OfficialImportCoordinates, 
         raise OfficialImportActionError("prepared import base64 invalid") from None
     if not 0 < len(raw) <= _MAX_TOKEN or encode_raw(raw) != token:
         raise OfficialImportActionError("prepared import token not canonical")
-    record = _decode_object(
-        raw, expected={"schema", "prepare_run_id", "coordinates"}
-    )
+    record = _decode_object(raw, expected={"schema", "prepare_run_id", "coordinates"})
     prepare = record["prepare_run_id"]
     coordinates = record["coordinates"]
     if (
@@ -337,9 +333,7 @@ def verify_artifact_from_github(
     return encode_coordinates(coords)
 
 
-def _prepared_marker_bytes(
-    coords: OfficialImportCoordinates, prepare_run_id: str
-) -> bytes:
+def _prepared_marker_bytes(coords: OfficialImportCoordinates, prepare_run_id: str) -> bytes:
     context = official_prepared_context_sha256(
         coords, prepare_run_id=prepare_run_id, actor="mbalbo2023"
     )
@@ -366,7 +360,8 @@ def _prepared_marker_readback(
 ) -> None:
     try:
         fd = os.open(
-            marker, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+            marker,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
             dir_fd=directory,
         )
         try:
@@ -404,9 +399,7 @@ def _consume_prepared_import_once(
     if not 0 < len(record) <= 2048:
         raise OfficialImportActionError("official PREPARE marker payload unbounded")
     try:
-        directory = os.open(
-            data_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-        )
+        directory = os.open(data_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except OSError:
         raise OfficialImportActionError("official PREPARE volume unavailable") from None
     try:
@@ -443,7 +436,9 @@ def _consume_prepared_import_once(
         try:
             os.fsync(directory)
         except OSError:
-            raise OfficialImportActionError("official PREPARE directory durability unproven") from None
+            raise OfficialImportActionError(
+                "official PREPARE directory durability unproven"
+            ) from None
         _prepared_marker_readback(directory, marker, record, boundary.st_uid)
     finally:
         os.close(directory)
@@ -455,9 +450,7 @@ def _verify_prepared_import_marker(
 ) -> None:
     marker = _prepared_marker_name(prepare_run_id)
     try:
-        directory = os.open(
-            data_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-        )
+        directory = os.open(data_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
             boundary = os.fstat(directory)
             _prepared_marker_readback(
@@ -466,7 +459,9 @@ def _verify_prepared_import_marker(
         finally:
             os.close(directory)
     except OSError:
-        raise OfficialImportActionError("official PREPARE post-import readback unavailable") from None
+        raise OfficialImportActionError(
+            "official PREPARE post-import readback unavailable"
+        ) from None
 
 
 def import_from_container_stdin(

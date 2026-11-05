@@ -568,7 +568,9 @@ def test_prepared_cutover_backend_aborts_on_missing_durable_marker(
     monkeypatch.setattr(adapter, "_stdlib_session_bootstrap", lambda: bootstrap)
     monkeypatch.setattr(terminal, "prepare_destination", lambda *_a: events.append("intent"))
     monkeypatch.setattr(terminal, "write_once", lambda *_a, **_k: events.append("terminal"))
-    monkeypatch.setattr(adapter.host, "_validate_docker_boundary", lambda: events.append("rootless"))
+    monkeypatch.setattr(
+        adapter.host, "_validate_docker_boundary", lambda: events.append("rootless")
+    )
     monkeypatch.setattr(adapter.host, "_validate_data_volume", lambda: events.append("volume"))
     def failed_exec(*args: str, **kwargs: object) -> str:
         if args[:2] == ("docker", "exec"):

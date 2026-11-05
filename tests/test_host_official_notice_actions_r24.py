@@ -341,7 +341,8 @@ def test_prepared_import_go_o_excl_survives_crash_and_refuses_replay(
     monkeypatch.setattr(actions, "import_reviewed_official_artifact", broken_import)
     with pytest.raises(actions.OfficialImportActionError):
         actions.import_from_container_stdin(
-            _coords(), b"fake-reviewed-zip",
+            _coords(),
+            b"fake-reviewed-zip",
             data_dir=tmp_path,
             prepare_run_id="50000000001",
         )
@@ -351,7 +352,8 @@ def test_prepared_import_go_o_excl_survives_crash_and_refuses_replay(
     assert writes == [1]
     with pytest.raises(actions.OfficialImportActionError, match="consumed"):
         actions.import_from_container_stdin(
-            _coords(), b"fake-reviewed-zip",
+            _coords(),
+            b"fake-reviewed-zip",
             data_dir=tmp_path,
             prepare_run_id="50000000001",
         )
