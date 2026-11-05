@@ -130,11 +130,50 @@ class ProductionCutoverInventoryIO:
         return cleanup.capture_inventory()
 
     def field(self, kind: str, ident: str, field: str) -> object:
-        if kind not in ("container", "volume"):
-            raise CutoverInventoryNoGo("Boca inventory Docker field kind unapproved")
-        return cleanup._inspect_field(  # noqa: SLF001 - approved Boca field-only reader
-            cast(cleanup.KIND, kind), ident, field
+        # The cleanup-only reader intentionally has a narrower allowlist:
+        # Config.Image, HostConfig.*, State.Health and Mountpoint are NOT
+        # permitted there. Cutover/official need a separate fixed read-only
+        # projection, never a full inspect or Config.Env.
+        container_fields = frozenset(
+            {
+                "Config.Image",
+                "Config.User",
+                "Config.Cmd",
+                "HostConfig.NetworkMode",
+                "HostConfig.RestartPolicy",
+                "HostConfig.ReadonlyRootfs",
+                "HostConfig.Privileged",
+                "HostConfig.PublishAllPorts",
+                "HostConfig.Init",
+                "HostConfig.CapDrop",
+                "HostConfig.CapAdd",
+                "HostConfig.NanoCpus",
+                "HostConfig.Memory",
+                "HostConfig.PidsLimit",
+                "HostConfig.PortBindings",
+                "NetworkSettings.Ports",
+                "NetworkSettings.Networks",
+                "State.Running",
+                "State.Restarting",
+                "State.Health.Status",
+                "RestartCount",
+                "Mounts",
+            }
         )
+        if kind == "container" and _HASH.fullmatch(ident) and field in container_fields:
+            argv: tuple[str, ...] = ("inspect",)
+        elif kind == "volume" and ident == _DATA and field == "Mountpoint":
+            argv = ("volume", "inspect")
+        else:
+            raise CutoverInventoryNoGo("Boca inventory Docker field unapproved")
+        try:
+            return json.loads(
+                cleanup._docker(  # noqa: SLF001 - guarded dedicated Boca rootless CLI
+                    *argv, "--format", "{{json ." + field + "}}", ident
+                )
+            )
+        except (cleanup.CleanupError, ValueError, TypeError):
+            raise CutoverInventoryNoGo("Boca bounded Docker field unavailable") from None
 
 
 def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:

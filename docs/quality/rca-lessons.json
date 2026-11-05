@@ -503,6 +503,16 @@
         "tests/test_host_first_deploy.py::test_unsafe_host_snapshot_is_no_go",
         "tests/test_host_beta_acceptance.py::test_installed_headroom_is_advisory_but_invalid_metadata_and_network_are_rejected"
       ]
+    },
+    {
+      "id": "RCA-373",
+      "issue": 373,
+      "fix_pr": 378,
+      "root_cause": "PREPARE #42073058087 returned exit 3 without stderr. The real observer reused cleanup._inspect_field, whose cleanup-only allowlist excludes required Config.Image, HostConfig.*, State.Health.Status and volume Mountpoint. FakeIO tests missed the adapter; first host error remains unproven.",
+      "prevention": "Use exact read-only Docker field projection for the production observer (UID/GID10001), separate from cleanup. Validate SHA64 container IDs and exact Boca volume; deny Config.Env and foreign fields. Test the real adapter deterministically before new protected PREPARE.",
+      "regression_tests": [
+        "tests/test_host_cutover_inventory_observe.py::test_real_adapter_uses_only_explicit_rootless_inspect_fields"
+      ]
     }
   ]
 }

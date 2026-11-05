@@ -101,6 +101,66 @@ def _encoded(version: str = "boca-cutover-inventory-observe-v1", **changes: str)
     )
 
 
+def test_real_adapter_uses_only_explicit_rootless_inspect_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the cleanup reader excludes Config.Image and Mountpoint.
+
+    The protected Cutover observer must never silently depend on that more
+    restrictive cleanup-only allowlist; no Docker command runs in this test.
+    """
+    observed: list[tuple[str, ...]] = []
+
+    def fake_docker(*args: str) -> str:
+        observed.append(args)
+        return json.dumps("read-only-fixture")
+
+    monkeypatch.setattr(observe.cleanup, "_docker", fake_docker)
+    io = observe.ProductionCutoverInventoryIO()
+    container_fields = (
+        "Config.Image",
+        "Config.User",
+        "Config.Cmd",
+        "HostConfig.NetworkMode",
+        "HostConfig.RestartPolicy",
+        "HostConfig.ReadonlyRootfs",
+        "HostConfig.Privileged",
+        "HostConfig.PublishAllPorts",
+        "HostConfig.Init",
+        "HostConfig.CapDrop",
+        "HostConfig.CapAdd",
+        "HostConfig.NanoCpus",
+        "HostConfig.Memory",
+        "HostConfig.PidsLimit",
+        "HostConfig.PortBindings",
+        "NetworkSettings.Ports",
+        "NetworkSettings.Networks",
+        "State.Running",
+        "State.Restarting",
+        "State.Health.Status",
+        "RestartCount",
+        "Mounts",
+    )
+    for field in container_fields:
+        assert io.field("container", CONTROLLER, field) == "read-only-fixture"
+    assert io.field("volume", DATA, "Mountpoint") == "read-only-fixture"
+
+    assert observed == [
+        ("inspect", "--format", "{{json ." + field + "}}", CONTROLLER) for field in container_fields
+    ] + [("volume", "inspect", "--format", "{{json .Mountpoint}}", DATA)]
+    for kind, ident, field in (
+        ("container", CONTROLLER, "Config.Env"),
+        ("container", CONTROLLER, "HostConfig.Binds"),
+        ("container", "../../foreign", "State.Running"),
+        ("volume", "foreign_volume", "Mountpoint"),
+        ("volume", DATA, "Name"),
+        ("network", CONTROLLER, "Name"),
+    ):
+        with pytest.raises(observe.CutoverInventoryNoGo):
+            io.field(kind, ident, field)
+    assert len(observed) == len(container_fields) + 1
+
+
 class LegacyFakeIO:
     """Only field lookups, no Docker command, subprocess, network or write."""
 
