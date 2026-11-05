@@ -639,8 +639,11 @@ The limited fix forward in DRAFT #384:
    already-authenticated `_cutover_legacy_record` returns its immutable
    Docker `Image` ID. A narrowly scoped proof checks only that ID's
    `Id`, `RepoTags`, `RepoDigests`, `Config.Labels`: GH historical
-   digest and revision must match exactly, and every alias must belong to
-   the **controller** repository. No untrusted image's `Config.Env` is read.
+   digest and revision must match exactly, with one exact RepoDigest and at
+   most one tag belonging to the **controller** repository; multiple tags or
+   digests are refused **before** COMMITTED because `docker image rm <ID>`
+   without force may reject a multiply referenced image. No untrusted image's
+   `Config.Env` is read.
 2. A same-lease rootless inventory proves that controller ID still points
    to that exact image, target candidate and browser worker IDs are preserved,
    and **no other uncertain Boca residue** exists. A missing digest/label,
