@@ -69,15 +69,11 @@ class CutoverPlan:
                     self.seccomp_sha,
                 )
             )
-            or len(
-                {
-                    self.legacy_compose_sha,
-                    self.target_compose_sha,
-                    self.overlay_sha,
-                    self.seccomp_sha,
-                }
-            )
-            != 4
+            # The old and new controller may legitimately use identical
+            # Compose bytes across distinct source/image releases.  Keep
+            # unrelated overlay/seccomp evidence independently identifiable.
+            or len({self.target_compose_sha, self.overlay_sha, self.seccomp_sha}) != 3
+            or self.legacy_compose_sha in (self.overlay_sha, self.seccomp_sha)
         ):
             raise CutoverError("cutover A exact historical/target coordinates untrusted")
 
