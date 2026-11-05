@@ -18,6 +18,8 @@ Verifica bajo la **misma** `BocaJobLease` (intento/PID/UID/GID10001/FD con flock
 
 El resultado único positivo es `OWNER_STAGE_VERIFIED_EGRESS_NO_GO` con `authorized=false`, `host_effects=false`, `sender_state=OFF`, `nonce_consumed=false`, `bot_api_reads=0`, `human_receipt=UNVERIFIED`. Ante cualquier fallo de identidad o tiempo se obtiene un código de error fijo sin trazas privadas.
 
+**Integración física no disponible aún:** `scripts/build_protected_boca_bundle.py` enumera un `OPTION_B_SOURCES` cerrado que **NO incluye** este módulo nuevo. No existe CLI ni wiring de `telegram-activate`/Actions para invocarlo en el host. Por decisión arquitectónica permanece **DRAFT AISLADO, sin overlay al candidato #319**, aun con CI GREEN, hasta tener caller real autorizado y probado. Ni compilar el módulo ni una simulación CI demuestran su ejecución en el droplet.
+
 ## RCA: por qué esto aún NO permite activar Telegram físicamente
 
 - `host_telegram_postcutover.observe_telegram_host` tiene de forma intencional `authorized=False` y exige que la red de Telegram tenga **cero** peers. Durante cualquiera de los cuatro GET reales la red de egress tendría un helper activo; la función actual no puede atestar esa fase sin contrato nuevo de egress.
