@@ -107,6 +107,90 @@ def _optional_key_policy(path: Path, key: Path) -> None:
     ).migrate()
 
 
+def _optional_owner_session(path: Path) -> None:
+    """Simulate reviewed opt-in 0008 without owning the panel's migration file."""
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            """CREATE TABLE owner_browser_session (
+              singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+              token_sha256 BLOB NOT NULL CHECK (length(token_sha256) = 32),
+              verifier_sha256 BLOB NOT NULL CHECK (length(verifier_sha256) = 32),
+              owner_sha256 BLOB NOT NULL CHECK (length(owner_sha256) = 32),
+              authenticated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        connection.execute(
+            "INSERT INTO schema_migrations(version, checksum) VALUES (?, ?)",
+            (8, gate._OWNER_SESSION_CHECKSUM),
+        )
+
+
+@pytest.mark.parametrize("key_policy", [False, True])
+@pytest.mark.parametrize("telegram_first", [False, True])
+def test_opt_in_owner_session_schema_is_compatible_without_telegram_creating_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key_policy: bool,
+    telegram_first: bool,
+) -> None:
+    path, key = _real_beta(tmp_path, monkeypatch)
+    if key_policy:
+        _optional_key_policy(path, key)
+    if telegram_first:
+        gate.migrate(path)
+    _optional_owner_session(path)
+    before = _dump(path)
+    gate.migrate(path)
+    gate.verify(path)
+    expected = sorted([1, 2, 3, 5, 6, 7, 8, *([4] if key_policy else [])])
+    assert _versions(path) == expected
+    after = _dump(path)
+    assert any('INSERT INTO "schema_migrations" VALUES(8,' in row for row in after)
+    assert any("CREATE TABLE owner_browser_session" in row for row in after)
+    gate.migrate(path)
+    assert _dump(path) == after
+    if telegram_first:
+        assert before == after
+
+
+@pytest.mark.parametrize(
+    ("invalid", "error"),
+    [
+        ("checksum", "schema_checksum"),
+        ("table_missing", "schema_tables"),
+        ("future_9", "schema_ledger"),
+    ],
+)
+def test_opt_in_owner_session_rejects_tampering_and_future_ledgers_before_any_ddl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid: str,
+    error: str,
+) -> None:
+    path, key = _real_beta(tmp_path, monkeypatch)
+    _optional_key_policy(path, key)
+    _optional_owner_session(path)
+    if invalid == "checksum":
+        with sqlite3.connect(path) as connection:
+            connection.execute("UPDATE schema_migrations SET checksum='bad' WHERE version=8")
+    elif invalid == "table_missing":
+        with sqlite3.connect(path) as connection:
+            connection.execute("DROP TABLE owner_browser_session")
+    elif invalid == "future_9":
+        gate.migrate(path)
+        with sqlite3.connect(path) as connection:
+            connection.execute("INSERT INTO schema_migrations(version,checksum) VALUES(9,'future')")
+    before = _dump(path)
+    monkeypatch.setattr(
+        gate.TelegramDeliveryCoordinator,
+        "prepare_storage",
+        lambda _: pytest.fail("unreviewed migration reached Telegram DDL"),
+    )
+    with pytest.raises(gate.StorageGateError, match=error):
+        gate.migrate(path)
+    assert _dump(path) == before
+
+
 @pytest.mark.parametrize("key_policy", [False, True])
 def test_real_beta_initializer_can_enable_telegram_without_activating_key_policy(
     tmp_path: Path,
@@ -206,7 +290,7 @@ def test_real_beta_gate_rejects_unknown_duplicate_or_malformed_ledger_before_ddl
     with sqlite3.connect(path) as connection:
         if change == "unknown":
             connection.execute(
-                "INSERT INTO schema_migrations(version,checksum) VALUES(8,'unknown')"
+                "INSERT INTO schema_migrations(version,checksum) VALUES(9,'unknown')"
             )
         else:
             connection.execute("ALTER TABLE schema_migrations RENAME TO old_ledger")

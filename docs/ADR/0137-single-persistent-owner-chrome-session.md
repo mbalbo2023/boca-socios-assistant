@@ -64,19 +64,36 @@ ledger 0006 como con un ledger 0007 válido, y no exige migrar Telegram.
 
 1. Integrar únicamente después de revisar PR DRAFT, CI y preflight por SHA;
    no desplegar este código contra la DB vieja por inferencia.
-2. Crear en GitHub Actions un paso **protegido y explícito** Boca-only para
-   validar identidad rootless, archivo SQLite regular (no symlink), versiones
-   previas, permisos y scope exacto, detener sólo controller Boca si corresponde.
-3. Ejecutar `OwnerBrowserSessionStore.migrate()` una sola vez bajo el volumen
-   Boca verificado, preservar todos los datos y comprobar lectura/checksum
-   exacto de 0008. La construcción de panel, login, healthcheck o consulta
-   **nunca migran** por su cuenta. La primera instalación nueva con owner
-   configurado sí prepara 0008 como parte de `initialize_beta` explícito; un
-   fixture offline sin dueño no crea por inferencia una autorización.
-4. Si falla, NO_GO sin iniciar la nueva imagen; limpieza Docker selectiva
+2. El adaptador sólo-código `panel.owner_session_upgrade` define
+   `upgrade_existing_owner_schema_0008(ControllerStoppedEvidence)`. Una
+   **implementación de evidencia host aún no disponible** debe inspeccionar
+   de verdad el container Boca detenido y mantener exclusividad durante toda
+   la transacción. Un booleano `stopped=True`, JSON, recibo histórico, clase
+   de prueba o callback no autenticado **no son evidencia física**. Ni la
+   existencia de este adaptador ni tests con prueba sintética habilitan su
+   ejecución física.
+3. El futuro paso GitHub Actions **protegido, explícito y Boca-only** deberá
+   entregar el capability de parada anterior a un proceso sin red, con mount
+   exacto `/data/boca.sqlite3`; exigir real/effective UID/GID **10001/10001**,
+   archivo regular no symlink, `0600`, hardlink-count 1 y `(dev,inode)`
+   invariable. `validate_existing_beta_storage` comprueba el ledger previo:
+   0006 obligatorio, 0007 opcional con checksum real, 0004 opcional. El
+   adaptador vuelve a validar dentro de `BEGIN IMMEDIATE`, usa SQLite
+   `mode=rw` (jamás crea una DB ausente) y agrega **sólo tabla y ledger 0008**
+   de forma atómica e idempotente. Comprueba postcondición/integridad e inode,
+   sin recrear owner, clave, credenciales, datos ni volumen. El mismo host
+   debe retener el controller detenido y el acceso exclusivo al volumen.
+   No escribir tokens ni secretos en recibos.
+4. **No invocar** `OwnerBrowserSessionStore.migrate()` contra controller ya
+   instalado: ese initializer pertenece al primer alta explícita. La
+   construcción del panel, login, healthcheck, consulta y startup **nunca
+   migran** por su cuenta. La primera instalación nueva con owner configurado
+   sí prepara 0008 mediante `initialize_beta` explícito; un fixture offline
+   sin dueño no crea por inferencia una autorización.
+5. Si falla, NO_GO sin iniciar la nueva imagen; limpieza Docker selectiva
    exclusivamente Boca. No borrar volúmenes, no tocar Porota ni otros servicios,
    no reinicializar passkey, no realizar backup/restauración como parte de BETA.
-5. Con migración y código físicos verificados, el owner hace **una vez** el
+6. Con migración y código físicos verificados, el owner hace **una vez** el
    login WebAuthn para poblar el nuevo hash (la cookie vieja estaba sólo en
    RAM y no puede migrarse). Comprobar Chrome cerrar/abrir, mismo token
    renovado, reapertura tras reinicio controlado, logout y segundo login que
@@ -108,3 +125,21 @@ intocables.
   permiso/verificador cambiado invalida y cookies malformadas/duplicadas niegan.
 - Ruff, MyPy, pytest integral y policy por SHA, PR DRAFT; sólo recibo físico
   posterior (Actions protegidas) puede cerrar el NO_GO de despliegue. Regla 84.
+
+### Corte de QA del adaptador offline (04/11/2026)
+
+- Sólo fuente/tests: DB sintética creada por el `initialize_beta` real **sin
+  owner** para reproducir ledger 0006, con y sin 0007; prueba de idempotencia
+  después de poblar el hash de owner, conservación de filas y clave sintéticas,
+  mismo `(dev,inode,mode)` y rechazo de ledger/esquema parcial o alterado.
+- `ControllerStoppedEvidence` es interfaz abstracta de *lease host*; no existe
+  en este scope implementación de confianza ni `workflow_dispatch` que la
+  produzca. Los tests usan un doble local para comprobar el contrato, **no
+  simulan ni certifican la parada real de contenedores**.
+- **NO_GO físico** hasta integrar y evidenciar el host-stop gate propietario,
+  inventario exacto del volumen, source SHA, preflight, CI y ejecución gobernada
+  en GitHub Actions. No se realizó ninguna migración ni deploy real en este PR.
+- QA de branch aislada: `pytest -q` **2597 passed + 34 subtests**, Ruff check
+  PASS, Ruff format PASS (405 archivos), MyPy PASS (90 archivos), repo policy
+  `POLICY_PASS`. Son evidencias locales, no sustituyen los checks Actions del
+  nuevo SHA remoto ni el recibo host físico.

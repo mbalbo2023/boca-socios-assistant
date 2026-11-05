@@ -7,6 +7,7 @@ The stop/rename primitives intentionally are not workflow-dispatchable.
 from __future__ import annotations
 
 import copy
+import hashlib
 import re
 from pathlib import Path
 
@@ -21,8 +22,12 @@ TARGET_IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "d" * 64
 WORKER_IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "e" * 64
 LEGACY_COMPOSE_SHA = "f" * 64
 ORIGINAL_ID = "1" * 64
+CANDIDATE_ID = "2" * 64
+WORKER_ID = "3" * 64
 ATTEMPT = "41897569929"
 CONFIG_HASH = "a" * 64
+SECCOMP = b"reviewed-private-seccomp-profile"
+SECCOMP_SHA = hashlib.sha256(SECCOMP).hexdigest()
 ORIGIN = "http://localhost:8443"
 OWNER = "test-owner"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +99,11 @@ def _cutover_calls(monkeypatch: pytest.MonkeyPatch) -> tuple[list[tuple[str, ...
 
     def run(*args: str, **_kwargs: object) -> str:
         calls.append(args)
+        if args[:2] == ("docker", "update"):
+            assert args[3] == ORIGINAL_ID
+            assert args[2] in ("--restart=no", "--restart=unless-stopped")
+            state["HostConfig"]["RestartPolicy"]["Name"] = args[2].split("=", 1)[1]
+            return ORIGINAL_ID
         if args[:2] == ("docker", "stop"):
             assert args == ("docker", "stop", "--time", "8", ORIGINAL_ID)
             state["State"]["Running"] = False
@@ -231,10 +241,12 @@ def test_park_stops_then_renames_exact_original_only(monkeypatch: pytest.MonkeyP
     calls, state = _cutover_calls(monkeypatch)
     host._cutover_park_original(ORIGINAL_ID, LEGACY_IMAGE, LEGACY_SHA, ATTEMPT)
     assert calls == [
+        ("docker", "update", "--restart=no", ORIGINAL_ID),
         ("docker", "stop", "--time", "8", ORIGINAL_ID),
         ("docker", "rename", ORIGINAL_ID, f"boca-socios-controller-legacy-{ATTEMPT}"),
     ]
     assert state["State"]["Running"] is False
+    assert state["HostConfig"]["RestartPolicy"]["Name"] == "no"
     assert state["Name"] == f"/boca-socios-controller-legacy-{ATTEMPT}"
 
 
@@ -256,10 +268,40 @@ def test_stop_transport_failure_distinguishes_live_from_stopped_original(
     monkeypatch.setattr(host, "_run", interrupted_stop)
     with pytest.raises(host.PreflightError, match="RUNNING again"):
         host._cutover_park_original(ORIGINAL_ID, LEGACY_IMAGE, LEGACY_SHA, ATTEMPT)
-    expected = ["stop", "start"] if stop_may_have_effect else ["stop"]
+    expected = (
+        ["update", "stop", "start", "update"]
+        if stop_may_have_effect
+        else ["update", "stop", "update"]
+    )
     assert [call[1] for call in calls] == expected
     assert state["Name"] == "/boca-socios-controller-1"
     assert state["State"]["Running"] is True
+    assert state["HostConfig"]["RestartPolicy"]["Name"] == "unless-stopped"
+
+
+@pytest.mark.parametrize("update_may_have_effect", [False, True])
+def test_restart_policy_update_timeout_recovers_running_original_without_stop(
+    monkeypatch: pytest.MonkeyPatch, update_may_have_effect: bool
+) -> None:
+    calls, state = _cutover_calls(monkeypatch)
+    original_run = host._run
+
+    def interrupted_update(*args: str, **kwargs: object) -> str:
+        if args[:3] == ("docker", "update", "--restart=no"):
+            calls.append(args)
+            if update_may_have_effect:
+                state["HostConfig"]["RestartPolicy"]["Name"] = "no"
+            raise host.PreflightError("synthetic Docker update transport timeout")
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(host, "_run", interrupted_update)
+    with pytest.raises(host.PreflightError, match="RUNNING again"):
+        host._cutover_park_original(ORIGINAL_ID, LEGACY_IMAGE, LEGACY_SHA, ATTEMPT)
+    assert [call[1] for call in calls] == (
+        ["update", "update"] if update_may_have_effect else ["update"]
+    )
+    assert state["State"]["Running"] is True
+    assert state["HostConfig"]["RestartPolicy"]["Name"] == "unless-stopped"
 
 
 def test_failed_rename_compensates_by_starting_original_id(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -275,9 +317,10 @@ def test_failed_rename_compensates_by_starting_original_id(monkeypatch: pytest.M
     monkeypatch.setattr(host, "_run", fail_rename)
     with pytest.raises(host.PreflightError, match="RUNNING again"):
         host._cutover_park_original(ORIGINAL_ID, LEGACY_IMAGE, LEGACY_SHA, ATTEMPT)
-    assert [call[1] for call in calls] == ["stop", "rename", "start"]
+    assert [call[1] for call in calls] == ["update", "stop", "rename", "start", "update"]
     assert state["Name"] == "/boca-socios-controller-1"
     assert state["State"]["Running"] is True
+    assert state["HostConfig"]["RestartPolicy"]["Name"] == "unless-stopped"
 
 
 def test_failed_post_rename_check_compensates_rename_back_then_start(
@@ -295,9 +338,10 @@ def test_failed_post_rename_check_compensates_rename_back_then_start(
     monkeypatch.setattr(host, "_browser_port_free", fail_first_port_check)
     with pytest.raises(host.PreflightError, match="RUNNING again"):
         host._cutover_park_original(ORIGINAL_ID, LEGACY_IMAGE, LEGACY_SHA, ATTEMPT)
-    assert [call[1] for call in calls] == ["stop", "rename", "rename", "start"]
+    assert [call[1] for call in calls] == ["update", "stop", "rename", "rename", "start", "update"]
     assert state["Name"] == "/boca-socios-controller-1"
     assert state["State"]["Running"] is True
+    assert state["HostConfig"]["RestartPolicy"]["Name"] == "unless-stopped"
 
 
 def test_compensation_failure_is_explicitly_indeterminate(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -313,8 +357,32 @@ def test_compensation_failure_is_explicitly_indeterminate(monkeypatch: pytest.Mo
     monkeypatch.setattr(host, "_run", fail_rename_and_start)
     with pytest.raises(host.PreflightError, match="INDETERMINATE"):
         host._cutover_park_original(ORIGINAL_ID, LEGACY_IMAGE, LEGACY_SHA, ATTEMPT)
-    assert [call[1] for call in calls] == ["stop", "rename", "start"]
+    assert [call[1] for call in calls] == ["update", "stop", "rename", "start"]
     assert state["State"]["Running"] is False
+
+
+def test_compensation_restart_policy_restore_failure_is_indeterminate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls, state = _cutover_calls(monkeypatch)
+    original_run = host._run
+
+    def fail_rename_then_update(*args: str, **kwargs: object) -> str:
+        if args[:2] == ("docker", "rename") or args[:3] == (
+            "docker",
+            "update",
+            "--restart=unless-stopped",
+        ):
+            calls.append(args)
+            raise host.PreflightError("synthetic intermittent daemon failure")
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(host, "_run", fail_rename_then_update)
+    with pytest.raises(host.PreflightError, match="INDETERMINATE"):
+        host._cutover_park_original(ORIGINAL_ID, LEGACY_IMAGE, LEGACY_SHA, ATTEMPT)
+    assert [call[1] for call in calls] == ["update", "stop", "rename", "start", "update"]
+    assert state["State"]["Running"] is True
+    assert state["HostConfig"]["RestartPolicy"]["Name"] == "no"
 
 
 def test_worker_create_argv_is_single_service_no_egress_and_no_restart() -> None:
@@ -325,13 +393,14 @@ def test_worker_create_argv_is_single_service_no_egress_and_no_restart() -> None
     assert argv[argv.index("--restart") + 1] == "no"
     assert argv[argv.index("--user") + 1] == "10002:10002"
     assert argv[argv.index("--security-opt") + 1] == "no-new-privileges:true"
-    assert f"seccomp={host.BROWSER_SECCOMP}" in argv
+    assert f"seccomp={host.ROOT / f'cutover-a-{ATTEMPT}' / host.BROWSER_SECCOMP.name}" in argv
     assert "127.0.0.1:8443" not in " ".join(argv)
     assert all(
         volume not in " ".join(argv)
         for volume in (host.DATA_VOLUME, host.KEY_VOLUME, host.OWNER_VOLUME)
     )
     assert WORKER_IMAGE in argv and "--publish" not in argv
+    assert "BOCA_OBSERVER_STOP=1" in argv
     assert f"com.docker.compose.config-hash={CONFIG_HASH}" in argv
     assert "--rm" not in argv and "--privileged" not in argv
     assert "docker compose" not in " ".join(argv)
@@ -355,6 +424,383 @@ def test_candidate_argv_reuses_exact_volume_names_no_invisible_restart() -> None
     assert "BOCA_TELEGRAM_TOKEN" not in " ".join(argv)
     assert "--privileged" not in argv and "--cap-add" not in argv
     assert "docker compose" not in " ".join(argv)
+
+
+def _worker_preparation_fake(
+    monkeypatch: pytest.MonkeyPatch, *, fail_at: str | None = None
+) -> tuple[list[tuple[str, ...]], dict[str, object], dict[str, object]]:
+    calls, legacy = _cutover_calls(monkeypatch)
+    worker: dict[str, object] = {"exists": False, "running": False, "volume": False}
+    original_run = host._run
+
+    def inspect(identifier: str) -> dict[str, object]:
+        if identifier == ORIGINAL_ID:
+            return copy.deepcopy(legacy)
+        assert identifier == WORKER_ID
+        return {"Id": WORKER_ID, "State": {"Running": worker["running"]}}
+
+    def runner(*args: str, **kwargs: object) -> str:
+        if args[:2] == ("docker", "ps"):
+            calls.append(args)
+            assert args[-1] == "name=^/boca-socios-browser-worker-1$"
+            return WORKER_ID if worker["exists"] else ""
+        if args[:2] == ("docker", "create"):
+            calls.append(args)
+            worker["exists"] = True
+            if fail_at == "create":
+                raise host.PreflightError("synthetic create timed out after success")
+            return WORKER_ID
+        if args[:2] == ("docker", "start") and args[-1] == WORKER_ID:
+            calls.append(args)
+            worker["running"] = True
+            if fail_at == "start":
+                raise host.PreflightError("synthetic worker start timed out")
+            return WORKER_ID
+        if args[:2] == ("docker", "stop") and args[-1] == WORKER_ID:
+            calls.append(args)
+            worker["running"] = False
+            return WORKER_ID
+        if args[:2] == ("docker", "rm") and args[-1] == WORKER_ID:
+            calls.append(args)
+            worker["exists"] = False
+            return WORKER_ID
+        if args[:3] == ("docker", "volume", "rm"):
+            calls.append(args)
+            assert args[-1] == host.BROWSER_IPC_VOLUME
+            worker["volume"] = False
+            return host.BROWSER_IPC_VOLUME
+        return original_run(*args, **kwargs)
+
+    def create_volume(*_args: object) -> None:
+        worker["volume"] = True
+        if fail_at == "volume":
+            raise host.PreflightError("synthetic volume init timeout")
+
+    def worker_postflight(
+        _id: str, _image: str, _sha: str, _attempt: str, _seccomp: str, **kwargs: object
+    ) -> None:
+        assert _id == WORKER_ID
+        assert kwargs["running"] is worker["running"] if "running" in kwargs else True
+        if kwargs.get("verify_runtime", True) and fail_at == "health":
+            raise host.PreflightError("synthetic worker health failed")
+
+    monkeypatch.setattr(host, "_run", runner)
+    monkeypatch.setattr(host, "_browser_inspect_record", inspect)
+    monkeypatch.setattr(host, "_browser_create_ipc_volume", create_volume)
+    monkeypatch.setattr(host, "_browser_validate_ipc_volume", lambda _id: None)
+    monkeypatch.setattr(host, "_browser_worker_postflight", worker_postflight)
+    monkeypatch.setattr(
+        host,
+        "_names",
+        lambda _kind, _pattern: {host.BROWSER_IPC_VOLUME} if worker["volume"] else set(),
+    )
+    return calls, legacy, worker
+
+
+def _prepare_worker() -> str:
+    return host._cutover_prepare_worker(
+        ORIGINAL_ID,
+        LEGACY_IMAGE,
+        LEGACY_SHA,
+        WORKER_IMAGE,
+        TARGET_SHA,
+        ATTEMPT,
+        CONFIG_HASH,
+        SECCOMP_SHA,
+        SECCOMP,
+    )
+
+
+def test_worker_prepare_is_one_identity_stays_no_egress_and_preserves_live_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls, legacy, worker = _worker_preparation_fake(monkeypatch)
+    assert _prepare_worker() == WORKER_ID
+    assert worker == {"exists": True, "running": True, "volume": True}
+    assert legacy["State"]["Running"] is True
+    assert all(command[:2] not in (("docker", "stop"), ("docker", "compose")) for command in calls)
+    create = next(command for command in calls if command[:2] == ("docker", "create"))
+    assert create[create.index("--network") + 1] == "none"
+    assert "--publish" not in create
+    assert "BOCA_OBSERVER_STOP=1" in create
+
+
+@pytest.mark.parametrize("failure", ["volume", "create", "start", "health"])
+def test_worker_failure_compensates_only_worker_and_attempt_volume(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    calls, legacy, worker = _worker_preparation_fake(monkeypatch, fail_at=failure)
+    with pytest.raises(host.PreflightError, match="original controller RUNNING"):
+        _prepare_worker()
+    assert worker == {"exists": False, "running": False, "volume": False}
+    assert legacy["State"]["Running"] is True
+    assert all(command[:2] != ("docker", "stop") or command[-1] == WORKER_ID for command in calls)
+    assert all(command[:2] != ("docker", "rm") or command[-1] == WORKER_ID for command in calls)
+    assert any(command[:3] == ("docker", "volume", "rm") for command in calls)
+
+
+def _candidate_handoff_fake(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fail_at: str | None = None,
+    after_effect: bool = False,
+    create_after_effect: bool = True,
+    invalid_label: bool = False,
+    worker_cleanup_failure: bool = False,
+) -> tuple[list[tuple[str, ...]], dict[str, object], dict[str, object]]:
+    calls, legacy = _cutover_calls(monkeypatch)
+    host._cutover_park_original(ORIGINAL_ID, LEGACY_IMAGE, LEGACY_SHA, ATTEMPT)
+    candidate: dict[str, object] = {"exists": False, "running": False}
+    original_run = host._run
+
+    def inspected(identifier: str) -> dict[str, object]:
+        if identifier == ORIGINAL_ID:
+            return copy.deepcopy(legacy)
+        if identifier == CANDIDATE_ID:
+            return {
+                "Id": CANDIDATE_ID,
+                "Name": "/boca-socios-controller-1",
+                "Config": {
+                    "Labels": {
+                        "com.docker.compose.config-hash": (
+                            "f" * 64 if invalid_label else CONFIG_HASH
+                        )
+                    }
+                },
+                "State": {"Running": candidate["running"]},
+            }
+        pytest.fail(f"unexpected Docker inspect target {identifier}")
+
+    def runner(*args: str, **kwargs: object) -> str:
+        if args[:2] == ("docker", "compose"):
+            calls.append(args)
+            assert args[-2] == "-q"
+            assert args[-1] in ("controller", "browser-worker")
+            if fail_at == "compose":
+                return "4" * 64
+            return CANDIDATE_ID if args[-1] == "controller" else WORKER_ID
+        if args[:2] == ("docker", "ps"):
+            calls.append(args)
+            assert args[-1] == "name=^/boca-socios-controller-1$"
+            return CANDIDATE_ID if candidate["exists"] else ""
+        if args[:2] == ("docker", "create"):
+            calls.append(args)
+            if fail_at != "create" or create_after_effect:
+                candidate["exists"] = True
+            if fail_at == "create":
+                raise host.PreflightError("synthetic created then SSH timeout")
+            return CANDIDATE_ID
+        if args[:2] == ("docker", "start") and args[2] == CANDIDATE_ID:
+            calls.append(args)
+            if after_effect:
+                candidate["running"] = True
+            if fail_at == "start":
+                raise host.PreflightError("synthetic start timeout")
+            candidate["running"] = True
+            return CANDIDATE_ID
+        if args[:2] == ("docker", "stop") and args[-1] == CANDIDATE_ID:
+            calls.append(args)
+            candidate["running"] = False
+            return CANDIDATE_ID
+        if args[:2] == ("docker", "rm"):
+            calls.append(args)
+            if args == ("docker", "rm", ORIGINAL_ID):
+                legacy["retired"] = True
+                return ORIGINAL_ID
+            assert args == ("docker", "rm", CANDIDATE_ID)
+            candidate["exists"] = False
+            return CANDIDATE_ID
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(host, "_browser_inspect_record", inspected)
+    monkeypatch.setattr(host, "_run", runner)
+    monkeypatch.setattr(host, "_browser_controller_postflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(host, "_browser_worker_postflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(host, "_cutover_worker_name_id", lambda: WORKER_ID)
+
+    def cleanup_worker(
+        image: str, source_sha: str, attempt: str, seccomp_sha: str, seccomp: bytes
+    ) -> None:
+        assert (image, source_sha, attempt, seccomp_sha, seccomp) == (
+            WORKER_IMAGE,
+            TARGET_SHA,
+            ATTEMPT,
+            LEGACY_COMPOSE_SHA,
+            b"isolated-reviewed-seccomp",
+        )
+        calls.append(("compensate-worker", WORKER_ID))
+        if worker_cleanup_failure:
+            raise host.PreflightError("synthetic worker selective removal receipt lost")
+
+    monkeypatch.setattr(host, "_cutover_compensate_worker", cleanup_worker)
+
+    def loopback(*_args: object) -> None:
+        if fail_at == "health":
+            raise host.PreflightError("synthetic candidate unhealthy")
+
+    monkeypatch.setattr(host, "_beta_loopback_health", loopback)
+    monkeypatch.setattr(
+        host,
+        "_browser_docker_ids",
+        lambda: (
+            {CANDIDATE_ID, WORKER_ID}
+            if legacy.get("retired")
+            else {ORIGINAL_ID, CANDIDATE_ID, WORKER_ID}
+        ),
+    )
+    return calls, legacy, candidate
+
+
+def _activate() -> str:
+    return host._cutover_activate_candidate(
+        ORIGINAL_ID,
+        LEGACY_IMAGE,
+        LEGACY_SHA,
+        TARGET_IMAGE,
+        TARGET_SHA,
+        WORKER_IMAGE,
+        WORKER_ID,
+        ATTEMPT,
+        ORIGIN,
+        OWNER,
+        CONFIG_HASH,
+        LEGACY_COMPOSE_SHA,
+        b"isolated-reviewed-seccomp",
+    )
+
+
+def test_candidate_starts_only_after_original_parked_and_retains_old_id_for_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls, legacy, candidate = _candidate_handoff_fake(monkeypatch)
+    assert _activate() == CANDIDATE_ID
+    assert candidate == {"exists": True, "running": True}
+    assert legacy["State"]["Running"] is False
+    assert legacy["HostConfig"]["RestartPolicy"]["Name"] == "no"
+    assert all(command[:2] != ("docker", "rm") for command in calls)
+    assert all(command[:2] != ("docker", "compose") for command in calls)
+
+
+@pytest.mark.parametrize(
+    ("failure", "after_effect"),
+    [("create", False), ("start", False), ("start", True), ("health", False)],
+)
+def test_candidate_create_start_or_health_failure_compensates_exact_id(
+    monkeypatch: pytest.MonkeyPatch, failure: str, after_effect: bool
+) -> None:
+    calls, legacy, candidate = _candidate_handoff_fake(
+        monkeypatch, fail_at=failure, after_effect=after_effect
+    )
+    with pytest.raises(host.PreflightError, match="restored RUNNING"):
+        _activate()
+    assert candidate == {"exists": False, "running": False}
+    assert legacy["Name"] == "/boca-socios-controller-1"
+    assert legacy["State"]["Running"] is True
+    assert legacy["HostConfig"]["RestartPolicy"]["Name"] == "unless-stopped"
+    assert ("docker", "rm", CANDIDATE_ID) in calls
+    assert ("docker", "start", ORIGINAL_ID) in calls
+    assert ("docker", "rm", ORIGINAL_ID) not in calls
+    assert ("compensate-worker", WORKER_ID) in calls
+
+
+def test_create_timeout_without_side_effect_restores_old_without_candidate_deletion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls, legacy, candidate = _candidate_handoff_fake(
+        monkeypatch, fail_at="create", create_after_effect=False
+    )
+    with pytest.raises(host.PreflightError, match="restored RUNNING"):
+        _activate()
+    assert candidate["exists"] is False
+    assert legacy["State"]["Running"] is True
+    assert ("docker", "rm", CANDIDATE_ID) not in calls
+    assert ("compensate-worker", WORKER_ID) in calls
+
+
+def test_untrusted_candidate_identity_never_removed_and_restore_is_indeterminate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls, legacy, candidate = _candidate_handoff_fake(monkeypatch, invalid_label=True)
+    with pytest.raises(host.PreflightError, match="INDETERMINATE"):
+        _activate()
+    assert candidate["exists"] is True
+    assert legacy["State"]["Running"] is False
+    assert ("docker", "rm", CANDIDATE_ID) not in calls
+    assert ("docker", "start", ORIGINAL_ID) not in calls
+    assert ("compensate-worker", WORKER_ID) not in calls
+
+
+def test_worker_cleanup_uncertain_after_exact_id_restore_marks_indeterminate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls, legacy, candidate = _candidate_handoff_fake(
+        monkeypatch, fail_at="health", worker_cleanup_failure=True
+    )
+    with pytest.raises(host.PreflightError, match="INDETERMINATE"):
+        _activate()
+    assert candidate == {"exists": False, "running": False}
+    assert legacy["Name"] == "/boca-socios-controller-1"
+    assert legacy["State"]["Running"] is True
+    assert ("compensate-worker", WORKER_ID) in calls
+    assert ("docker", "rm", ORIGINAL_ID) not in calls
+
+
+def _retire() -> None:
+    host._cutover_retire_accepted_original(
+        ORIGINAL_ID,
+        LEGACY_IMAGE,
+        LEGACY_SHA,
+        CANDIDATE_ID,
+        TARGET_IMAGE,
+        TARGET_SHA,
+        WORKER_ID,
+        WORKER_IMAGE,
+        ATTEMPT,
+        ORIGIN,
+        OWNER,
+        CONFIG_HASH,
+        LEGACY_COMPOSE_SHA,
+        b"isolated-reviewed-seccomp",
+        host.ROOT / f"cutover-a-{ATTEMPT}",
+    )
+
+
+def test_retirement_only_after_candidate_healthy_and_compose_discovers_singleton(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls, legacy, candidate = _candidate_handoff_fake(monkeypatch)
+    assert _activate() == CANDIDATE_ID
+    _retire()
+    assert legacy["retired"] is True
+    assert candidate["running"] is True
+    assert [call[2] for call in calls if call[:2] == ("docker", "rm")] == [ORIGINAL_ID]
+    compose_calls = [call for call in calls if call[:2] == ("docker", "compose")]
+    assert [call[-1] for call in compose_calls] == ["controller", "browser-worker"]
+    assert all(f"cutover-a-{ATTEMPT}" in " ".join(call) for call in compose_calls)
+
+
+def test_retirement_refuses_unhealthy_candidate_without_deleting_original(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls, legacy, candidate = _candidate_handoff_fake(monkeypatch)
+    assert _activate() == CANDIDATE_ID
+    candidate["running"] = False
+    with pytest.raises(host.PreflightError, match="health"):
+        _retire()
+    assert legacy.get("retired") is not True
+    assert ("docker", "rm", ORIGINAL_ID) not in calls
+
+
+def test_retirement_compose_mismatch_is_indeterminate_after_irreversible_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls, legacy, candidate = _candidate_handoff_fake(monkeypatch, fail_at="compose")
+    assert _activate() == CANDIDATE_ID
+    with pytest.raises(host.PreflightError, match="INDETERMINATE; do not retry"):
+        _retire()
+    assert legacy["retired"] is True
+    assert candidate["running"] is True
+    assert ("docker", "start", ORIGINAL_ID) not in calls
 
 
 def test_command_builders_reject_unsourced_coordinates() -> None:

@@ -31,6 +31,10 @@ MIGRATIONS = (
     "0007_telegram_delivery.sql",
 )
 _BETA_MIGRATIONS = frozenset({1, 2, 3, 5, 6})
+# Owner browser session 0008 is installed by a separate, explicit panel migration.
+# Pin its reviewed checksum without importing panel code or applying its DDL here.
+_OWNER_SESSION_VERSION = 8
+_OWNER_SESSION_CHECKSUM = "bfb3b4a0c5082e812affadbfe9441f134c9b64603b487c69564e40e5541d63a1"
 
 
 class StorageGateError(ValueError):
@@ -53,10 +57,12 @@ def _identity(path: Path) -> tuple[int, int]:
 
 
 def verify(path: Path = DATABASE, *, require_telegram: bool = True) -> None:
-    """Require the exact BETA ledger, optional key policy and explicit Telegram.
+    """Require exact BETA ledger, optional key policy/owner session and Telegram.
 
     Migration 4 belongs to opt-in credential-key rewrap, not BETA init. Its
     absence cannot disable Telegram, and its presence must retain its checksum.
+    Migration 8 belongs to opt-in persistent owner session and is never applied
+    by this Telegram gate; its presence also requires its pinned checksum.
     """
     identity = _identity(path)
     uri = f"file:{quote(str(path), safe='/')}?mode=ro"
@@ -64,23 +70,27 @@ def verify(path: Path = DATABASE, *, require_telegram: bool = True) -> None:
         connection.execute("PRAGMA query_only=ON")
         connection.execute("PRAGMA trusted_schema=OFF")
         rows = connection.execute(
-            "SELECT version, checksum FROM schema_migrations ORDER BY version LIMIT 8"
+            "SELECT version, checksum FROM schema_migrations ORDER BY version LIMIT 9"
         ).fetchall()
         required_versions = _BETA_MIGRATIONS | ({7} if require_telegram else set())
         versions = {version for version, _ in rows}
         if (
             len(versions) != len(rows)
             or any(type(version) is not int for version, _ in rows)
-            or versions not in (required_versions, required_versions | {4})
+            or not required_versions.issubset(versions)
+            or not versions.issubset(required_versions | {4, _OWNER_SESSION_VERSION})
         ):
             raise StorageGateError("schema_ledger")
         for version, checksum in rows:
-            sql = (
-                files("boca_socios.storage.migrations")
-                .joinpath(MIGRATIONS[version - 1])
-                .read_bytes()
-            )
-            if checksum != hashlib.sha256(sql).hexdigest():
+            expected = _OWNER_SESSION_CHECKSUM if version == _OWNER_SESSION_VERSION else None
+            if expected is None:
+                sql = (
+                    files("boca_socios.storage.migrations")
+                    .joinpath(MIGRATIONS[version - 1])
+                    .read_bytes()
+                )
+                expected = hashlib.sha256(sql).hexdigest()
+            if checksum != expected:
                 raise StorageGateError("schema_checksum")
         required = {"ticket_requests", "notification_outbox", "beta_commands"}
         if require_telegram:
@@ -93,6 +103,10 @@ def verify(path: Path = DATABASE, *, require_telegram: bool = True) -> None:
             )
         }
         if actual != required:
+            raise StorageGateError("schema_tables")
+        if _OWNER_SESSION_VERSION in versions and connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='owner_browser_session'"
+        ).fetchone() != ("owner_browser_session",):
             raise StorageGateError("schema_tables")
         if connection.execute("PRAGMA quick_check(1)").fetchone() != ("ok",):
             raise StorageGateError("database_integrity")

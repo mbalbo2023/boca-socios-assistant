@@ -184,3 +184,63 @@ physically dispatched with actual receipts, Telegram remains **OFF / NO_GO**.
 No third-party ID bot, provider call, real-token handling, owner input or host
 action was executed by this source-only PR. Keep all pending state visible
 in #45 per Rule 84.
+
+## Standalone protected dispatch rejected — final source-only cut (04/11/2026)
+
+An initial design considered `.github/workflows/boca-telegram-pairing.yml` as
+another manually dispatched protected installer. **It was rejected before
+implementation**. The installed controller-only release and exclusive Boca
+daemon are already governed by the exact-SHA stop/start, resource, Docker
+identity and source-authorization gates in
+`.github/workflows/boca-first-deploy.yml` / `host_first_deploy.py`. Its host
+logic is streamed to the rootless SSH session for each step; it is not a
+stable, independently callable installed service. A second `workflow_dispatch`
+could check the daemon, release the lease, then observe or modify a *different*
+runtime at install time (TOCTOU), while duplicating gates susceptible to
+drift. Two independent host control planes would also contravene the sole
+manual deploy workflow rule. The approved route is **one exact-SHA governed
+cutover**, coordinated with the host-first-deploy writer for issue #227,
+without exposing a second host-dispatch option.
+
+The new `.github/workflows/boca-telegram-pairing.yml` is therefore deliberately
+**PR-only**. It runs deterministic fake-data Telegram contracts, static
+format/lint/type/isolation checks on a disposable GitHub runner and logs only
+`TELEGRAM_V2_HOST_AUTHORIZED=false`, `TELEGRAM_V2_CUSTODY=UNVERIFIED`,
+`TELEGRAM_V2_SENDER=OFF`, `TELEGRAM_V2_NOTIFICATION_RECEIPT=UNVERIFIED`.
+It has no `workflow_dispatch` or `workflow_call`, repository write permission,
+secret, environment, self-hosted runner, Docker/SSH operation, actual token,
+Telegram API call, output artifact or deployment action. A GREEN PR-only job
+is **not** an acceptance receipt for any production operation.
+
+`src/boca_socios/telegram_pairing_host_contract.py` defines a typed *untrusted
+claim shape* and a non-operational review result for the eventual host adapter.
+It enumerates the required logical order: pinned main/release → positive
+owner/stopped-singleton inventory → isolated schema 0007 migration →
+X25519 recipient preparation → temporary controller resume for authenticated
+Chrome pairing → stop/recheck **same digest and SHA under exclusive Boca
+lease** → bounded allowlisted Bot API discovery → V1 ciphertext handoff plus
+V2 visibility marker → `verify_v2_custody` → controller resume with engine and
+sender OFF → synthetic acceptance → independent human notification receipt.
+Sender activation, if ever approved, is a *separately governed* step. The
+review function checks the consistency of **caller-supplied claims** but
+always returns `authorized=False`, `executable=False` and
+`human_receipt=UNVERIFIED` even when every claim is positive. It cannot prove
+real host observations, protect against races or be used as an operational
+gate. Negative tests reject fake `True` values, wrong daemon/source/digest,
+unexpected port, clock skew, UID mismatch, missing lease and incomplete
+custody. No actual host I/O is available in this module.
+
+**Outstanding host integration (NO_GO):** implement these checks inside the
+single existing Boca-first-deploy host transaction under issue #227, with
+positive identity reinspection immediately before each side effect, state
+handoff across the owner Chrome interaction, a dedicated egress/secret custody
+boundary, a robust failure/resume state machine and bona fide redacted
+protected receipts. The old installed SHA is **not** a V2 sender/installer.
+Do not run its old V1 `telegram-install` against a V2 envelope; do not stop or
+restart the running 8443 controller for this candidate. The precise moment
+and mechanism of Telegram's physical one-shot notice and human confirmation
+remain unverified; keep delivery OFF until received and recorded. Preserve
+the owner passkey and real database/volumes, touch no other service, and do
+not convert cleanup into broad Docker pruning. The cutover writer owns
+`.github/workflows/boca-first-deploy.yml` and
+`src/boca_socios/host_first_deploy.py`; neither was edited here.
