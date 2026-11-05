@@ -100,7 +100,11 @@ def test_guard_is_before_ssh_and_cutover_go_is_still_independent() -> None:
     assert (
         "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}" in workflow
     )
-    assert "if: ${{ always() && inputs.operation == 'cutover-a-apply' }}" in workflow
+    assert (
+        "if: ${{ always() && inputs.operation == 'cutover-a-apply' && inputs.protected_action_context != '' }}"
+        in workflow
+    )
+    assert "check_legacy_go_dispatch.py apply" in workflow
     assert "python scripts/check_cutover_a_go.py --assert-host-receipt" in workflow
 
 

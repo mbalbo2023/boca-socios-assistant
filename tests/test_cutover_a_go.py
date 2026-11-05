@@ -443,9 +443,14 @@ def test_effectful_dispatch_is_inert_without_independent_exact_run_go() -> None:
     assert (
         "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}" in workflow
     )
-    assert "python scripts/check_cutover_a_go.py --from-actions" in workflow
+    assert "python scripts/check_cutover_a_go.py --prepared-from-actions" in workflow
+    assert "python scripts/check_cutover_a_go.py --from-actions" not in workflow
+    assert "check_legacy_go_dispatch.py apply" in workflow
     assert "python scripts/check_cutover_a_go.py --assert-host-receipt" in workflow
-    assert "always() && inputs.operation == 'cutover-a-apply'" in workflow
+    assert (
+        "always() && inputs.operation == 'cutover-a-apply' && inputs.protected_action_context != ''"
+        in workflow
+    )
     assert "timeout --signal=TERM --kill-after=5s 900s ssh" in workflow
     effect = workflow.split("      - name: Apply exactly one reviewed Cutover A", 1)[1].split(
         "      - name:", 1

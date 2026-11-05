@@ -231,7 +231,10 @@ def test_cutover_contract_cannot_be_dispatched_without_independent_protected_go(
     assert (
         "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}" in workflow
     )
-    assert "python scripts/check_cutover_a_go.py --from-actions" in workflow
+    assert "python scripts/check_cutover_a_go.py --prepared-from-actions" in workflow
+    assert "python scripts/check_cutover_a_go.py --from-actions" not in workflow
+    assert "check_legacy_go_dispatch.py apply" in workflow
+    assert "BOCA_CUTOVER_A_APPROVED_GO_BINDING_SHA256" in workflow
     assert "Fail closed on absent or ambiguous Cutover A host terminal receipt" in workflow
     # PR-only pytest/build/if:always cannot become a live apply switch.
     assert "BOCA_CUTOVER_A_PR_VERIFY state=SOURCE_ONLY" in workflow

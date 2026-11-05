@@ -84,9 +84,23 @@ def test_workflow_checks_artifact_before_host_credentials() -> None:
     )
     assert "if-no-files-found: error" in release
     assert "overwrite: false" in release
-    assert deploy.index("python scripts/check_release_run.py") < deploy.index("gh run download")
-    assert (
-        deploy.index("gh run download")
-        < deploy.index("python -m boca_socios.release_manifest verify")
-        < deploy.index("Configure pinned SSH host key")
+    for step in (
+        "Derive current main image and browser release from genuine Actions receipts",
+        "Validate immutable inputs and successful matching release",
+    ):
+        section = deploy.split(f"      - name: {step}", 1)[1].split("      - name:", 1)[0]
+        assert section.index("python scripts/check_release_run.py") < section.index(
+            "gh run download"
+        )
+        assert "BOCA_SOURCE_SHA" in section or "GITHUB_SHA" in section
+    normal = deploy.split(
+        "      - name: Validate immutable inputs and successful matching release", 1
+    )[1].split("      - name:", 1)[0]
+    assert normal.index("gh run download") < normal.index(
+        "python -m boca_socios.release_manifest verify"
     )
+    assert deploy.index("Require verified protected environment") < deploy.index(
+        "Configure pinned SSH host key"
+    )
+    assert "check_legacy_go_dispatch.py apply" in deploy
+    assert "BOCA_CUTOVER_A_GO_BINDING_SHA256" in deploy
