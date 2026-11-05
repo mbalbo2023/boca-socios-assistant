@@ -76,5 +76,11 @@ def test_browser_install_without_required_ref_is_not_silently_upgraded() -> None
 
 def test_runner_still_validates_reviewed_compose_model_before_ssh() -> None:
     stage = _YAML.split(_STEP, 1)[1].split("      - name: ", 1)[0]
-    assert "docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml config" in stage
-    assert 'check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-runner-model.json" "$BOCA_IMAGE_REF" --topology=browser-ipc-v2' in stage
+    assert (
+        "docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml config"
+        in stage
+    )
+    assert (
+        'check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-runner-model.json" "$BOCA_IMAGE_REF" --topology=browser-ipc-v2'
+        in stage
+    )
