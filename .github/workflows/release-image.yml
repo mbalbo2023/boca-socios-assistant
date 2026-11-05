@@ -48,6 +48,25 @@ jobs:
         run: >-
           test "$(docker image inspect --format '{{json .Config.Cmd}}' "$IMAGE")"
           = '["python","-m","boca_socios.browser.ipc_worker"]'
+      - name: Verify isolated Chromium launch offline without owner modules
+        env:
+          IMAGE: boca-browser-release-validation:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # This executes ONLY the independent about:blank preflight, never the
+          # owner-controlled synthetic.py/ipc_worker.py BLACKBOX or Boca site.
+          timeout 60s docker run --rm \
+            --network none \
+            --user 10002:10002 \
+            --read-only \
+            --cap-drop ALL --cap-add SYS_CHROOT \
+            --security-opt no-new-privileges:true \
+            --security-opt "seccomp=$GITHUB_WORKSPACE/docker/seccomp_profile.json" \
+            --cgroupns private --ipc private \
+            --pids-limit 128 --memory 768m --cpus 1.0 --shm-size 64m \
+            --tmpfs /tmp:rw,noexec,nosuid,size=32m \
+            --tmpfs /home/boca-browser:rw,noexec,nosuid,size=16m \
+            --entrypoint python "$IMAGE" scripts/verify_chromium_worker.py
       - name: Scan before any image publication
         run: bash scripts/trivy_scan_image.sh "boca-release-validation:$GITHUB_SHA"
       - name: Scan browser image before any publication

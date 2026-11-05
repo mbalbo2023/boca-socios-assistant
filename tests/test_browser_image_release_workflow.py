@@ -38,6 +38,57 @@ def test_browser_pr_validation_builds_scans_but_never_publishes() -> None:
     assert "packages: write" not in preview
 
 
+def test_browser_pr_validates_real_offline_chromium_under_worker_isolation() -> None:
+    """An image build is not proof Chromium launches under the reviewed worker cgroups."""
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    preview = workflow.split("  pr-validation:\n", 1)[1].split("  publish:\n", 1)[0]
+    marker = "      - name: Verify isolated Chromium launch offline without owner modules\n"
+    assert preview.count(marker) == 1
+    offline = preview.split(marker, 1)[1].split("      - name:", 1)[0]
+    assert "run: |" in offline
+    assert "set -euo pipefail" in offline
+    assert "timeout 60s docker run --rm" in offline
+    for boundary in (
+        "--network none",
+        "--user 10002:10002",
+        "--read-only",
+        "--cap-drop ALL --cap-add SYS_CHROOT",
+        "--security-opt no-new-privileges:true",
+        "seccomp=$GITHUB_WORKSPACE/docker/seccomp_profile.json",
+        "--cgroupns private --ipc private",
+        "--pids-limit 128 --memory 768m --cpus 1.0 --shm-size 64m",
+        "--tmpfs /tmp:rw,noexec,nosuid,size=32m",
+        "--tmpfs /home/boca-browser:rw,noexec,nosuid,size=16m",
+        '--entrypoint python "$IMAGE" scripts/verify_chromium_worker.py',
+    ):
+        assert boundary in offline
+    # The preflight is the only executed module; no owner-controlled navigation.
+    assert "python -m boca_socios.browser.ipc_worker" not in offline
+    assert "synthetic.py" in offline  # Only a prohibition in the explanatory comment.
+    assert "--privileged" not in offline
+    assert "--network host" not in offline
+    assert (
+        preview.index("Require the reviewed browser IPC worker command")
+        < preview.index(marker)
+        < preview.index("Scan browser image before any publication")
+    )
+    publish = workflow.split("  publish:\n", 1)[1]
+    assert marker not in publish  # No new behavior in protected production release.
+
+
+def test_offline_chromium_preflight_never_imports_owner_modules_or_public_sites() -> None:
+    script = (ROOT / "scripts/verify_chromium_worker.py").read_text(encoding="utf-8")
+    assert 'page.goto("about:blank", timeout=5_000)' in script
+    for forbidden in (
+        "http://",
+        "https://",
+        "boca_socios.browser.ipc_worker",
+        "boca_socios.browser.synthetic",
+        "run_synthetic_ticket_flow",
+    ):
+        assert forbidden not in script
+
+
 def test_protected_main_release_scans_both_before_any_ghcr_auth_or_push() -> None:
     publish = WORKFLOW.read_text(encoding="utf-8").split("  publish:\n", 1)[1]
     assert "github.event_name == 'workflow_dispatch'" in publish
