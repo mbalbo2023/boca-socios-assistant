@@ -33,6 +33,12 @@ BOCA_IMAGE_PREFIXES = (
     "ghcr.io/mbalbo2023/boca-socios-assistant-browser:",
 )
 BOCA_SOURCE = "https://github.com/mbalbo2023/boca-socios-assistant"
+BOCA_PUBLIC_SHA_TAG = re.compile(
+    r"ghcr\.io/mbalbo2023/boca-socios-assistant(?:-browser)?:sha-[0-9a-f]{40}\Z"
+)
+BOCA_PUBLIC_DIGEST = re.compile(
+    r"ghcr\.io/mbalbo2023/boca-socios-assistant(?:-browser)?@sha256:[0-9a-f]{64}\Z"
+)
 ATTEMPT_LABELS = (
     "boca.socios.install-attempt",
     "boca.socios.beta-install-attempt",
@@ -870,7 +876,7 @@ def _inspect_field(kind: KIND, ident: str, field: str) -> object:
                 "NetworkSettings.Networks",
             }
         ),
-        "image": frozenset({"Id", "RepoTags", "RepoDigests", "Config.Labels"}),
+        "image": frozenset({"Id", "RepoTags", "RepoDigests", "Config.Labels", "Size"}),
         "network": frozenset({"Id", "Name", "Containers", "Labels"}),
         "volume": frozenset({"Name", "Labels"}),
     }
@@ -886,6 +892,24 @@ def _inspect_field(kind: KIND, ident: str, field: str) -> object:
         return json.loads(_docker(*prefix, "--format", "{{json ." + field + "}}", ident))
     except (ValueError, TypeError) as exc:
         raise CleanupError("Docker narrow inspected field JSON malformed") from exc
+
+
+def _inspect_image_public_oci_label(ident: str, field: str) -> str | None:
+    """Only two exact OCI labels; never expose Config.Env or the full labels map."""
+    if field not in ("org.opencontainers.image.source", "org.opencontainers.image.revision"):
+        raise CleanupError("image provenance label outside minimal allowlist")
+    if HEX_ID.fullmatch(ident) is None:
+        raise CleanupError("image provenance exact ID invalid")
+    template = (
+        '{{if .Config.Labels}}{{json (index .Config.Labels "' + field + '")}}{{else}}null{{end}}'
+    )
+    try:
+        value = json.loads(_docker("image", "inspect", "--format", template, ident))
+    except (ValueError, TypeError) as exc:
+        raise CleanupError("minimal OCI provenance field malformed") from exc
+    if value is not None and not isinstance(value, str):
+        raise CleanupError("minimal OCI provenance value malformed")
+    return value
 
 
 def _verify_historical_legacy_image(
@@ -1300,8 +1324,74 @@ def execute_protected(
 # mutation/lease entrypoint above. Its sole dependency is the already reviewed
 # read-only inventory and pure positive-identity plan; the protected GitHub
 # workflow streams this module by stdin to the Boca-only rootless account.
-READONLY_CLEANUP_VERSION = "boca-cutover-cleanup-readonly-v1"
+READONLY_CLEANUP_VERSION = "boca-cutover-cleanup-readonly-v2"
 READONLY_CLEANUP_MAX_JSON = 8192
+READONLY_PROVENANCE_LIMIT = 8
+
+
+def _observe_boca_reference_image(ident: str, snapshot: Inventory) -> dict[str, object]:
+    """Bounded public provenance of one Boca-*referenced* rootless image, no writes.
+
+    A repository-prefix match is only permission to read a tiny fixed metadata
+    subset, never proof that the image is Boca-owned or safe to delete. Images
+    appearing only in the global ID census and arbitrary foreign references
+    are not probed; non-Boca aliases are counted, never echoed.
+    """
+    if (
+        HEX_ID.fullmatch(ident) is None
+        or ident not in {item.ident for item in snapshot.images}
+        or ident not in snapshot.global_image_ids
+        or ident in {item.image_id for item in snapshot.containers}
+    ):
+        raise CleanupError("reference-only image provenance identity unproven")
+    reference_filter = "reference=ghcr.io/mbalbo2023/boca-socios-assistant*"
+    if ident not in _ids(
+        "image", "ls", "-a", "-q", "--no-trunc", "--filter", reference_filter, dedupe=True
+    ):
+        raise CleanupError("reference-only image no longer has Boca repository signal")
+    if _inspect_field("image", ident, "Id") != ident:
+        raise CleanupError("reference-only image changed ID during provenance read")
+    raw_tags = _inspect_field("image", ident, "RepoTags") or []
+    raw_digests = _inspect_field("image", ident, "RepoDigests") or []
+    image_size = _inspect_field("image", ident, "Size")
+    if (
+        not isinstance(raw_tags, list)
+        or not isinstance(raw_digests, list)
+        or len(raw_tags) + len(raw_digests) > 32
+        or any(type(ref) is not str or not 0 < len(ref) <= 256 for ref in raw_tags + raw_digests)
+        or type(image_size) is not int
+        or not 0 <= image_size <= 16 * 1024**3
+    ):
+        raise CleanupError("reference-only image metadata malformed")
+    public_tags = sorted({tag for tag in raw_tags if BOCA_PUBLIC_SHA_TAG.fullmatch(tag)})
+    public_digests = sorted(
+        {digest for digest in raw_digests if BOCA_PUBLIC_DIGEST.fullmatch(digest)}
+    )
+    untrusted_alias_count = (
+        len(raw_tags) + len(raw_digests) - len(public_tags) - len(public_digests)
+    )
+    source = _inspect_image_public_oci_label(ident, "org.opencontainers.image.source")
+    revision = _inspect_image_public_oci_label(ident, "org.opencontainers.image.revision")
+    source_status = "BOCA" if source == BOCA_SOURCE else "ABSENT" if not source else "UNVERIFIED"
+    valid_revision = (
+        revision if isinstance(revision, str) and re.fullmatch(r"[0-9a-f]{40}", revision) else None
+    )
+    # Reconfirm the positive Boca reference filter after the individual reads.
+    if ident not in _ids(
+        "image", "ls", "-a", "-q", "--no-trunc", "--filter", reference_filter, dedupe=True
+    ):
+        raise CleanupError("reference-only image provenance raced with Docker tag change")
+    return {
+        "id": ident,
+        "repo_tags": public_tags,
+        "repo_digests": public_digests,
+        "untrusted_alias_count": untrusted_alias_count,
+        "oci_source_status": source_status,
+        "oci_revision": valid_revision,
+        "logical_size_bytes": image_size,
+        "container_ref_count": sum(c.image_id == ident for c in snapshot.containers),
+        "deletion_authorized": False,
+    }
 
 
 def _readonly_disk(snapshot: DiskInodes) -> dict[str, int]:
@@ -1360,6 +1450,7 @@ def observe_postapply_cleanup(
     legacy_id: str,
     *,
     probe: Callable[[], Inventory] = capture_inventory,
+    probe_provenance: Callable[[str, Inventory], dict[str, object]] | None = None,
 ) -> dict[str, object]:
     """Two stable, Boca-only READ_ONLY snapshots and a *nonexecuted* cleanup plan.
 
@@ -1408,6 +1499,21 @@ def observe_postapply_cleanup(
         *proposed.uncertain,
         *(("rootless-unclassified-image-ids-present",) if unknown_image_ids else ()),
     )
+    provenance_ids = sorted(
+        image.ident
+        for image in second.images
+        if any(reason.startswith(f"image:{image.ident}:") for reason in proposed.uncertain)
+    )
+    if len(provenance_ids) > READONLY_PROVENANCE_LIMIT:
+        raise CleanupError("reference-only image provenance exceeds protected bound")
+    provenance: list[dict[str, object]] = []
+    if probe_provenance is not None:
+        for ident in provenance_ids:
+            earlier = probe_provenance(ident, first)
+            later = probe_provenance(ident, second)
+            if earlier != later:
+                raise CleanupError("reference-only image provenance drifted")
+            provenance.append(later)
     classification = (
         "INDETERMINATE"
         if unknown_reasons
@@ -1433,6 +1539,7 @@ def observe_postapply_cleanup(
             {"kind": target.kind, "id": target.ident} for target in proposed.targets
         ],
         "retained_uncertain": list(unknown_reasons),
+        "image_provenance": provenance,
         "before": _readonly_disk(first.disk),
         "after": _readonly_disk(second.disk),
         "original_preserved": True,
@@ -1440,7 +1547,9 @@ def observe_postapply_cleanup(
         "observer_writes": 0,
         "go_for_retry": False,
     }
-    canonical_readonly_cleanup_receipt(result)
+    verify_readonly_cleanup_receipt(
+        canonical_readonly_cleanup_receipt(result), incident_run_id, legacy_id
+    )
     return result
 
 
@@ -1501,6 +1610,7 @@ def verify_readonly_cleanup_receipt(
         "volume_count",
         "known_remnants",
         "retained_uncertain",
+        "image_provenance",
         "before",
         "after",
         "original_preserved",
@@ -1588,6 +1698,61 @@ def verify_readonly_cleanup_receipt(
         or any(row["id"] in (legacy_id, obj["protected_image_id"]) for row in remnants)
     ):
         raise CleanupError("Boca cleanup candidate classifications untrusted")
+    provenance = obj["image_provenance"]
+    if (
+        type(provenance) is not list
+        or len(provenance) > READONLY_PROVENANCE_LIMIT
+        or any(
+            type(row) is not dict
+            or set(row)
+            != {
+                "id",
+                "repo_tags",
+                "repo_digests",
+                "untrusted_alias_count",
+                "oci_source_status",
+                "oci_revision",
+                "logical_size_bytes",
+                "container_ref_count",
+                "deletion_authorized",
+            }
+            or type(row["id"]) is not str
+            or HEX_ID.fullmatch(row["id"]) is None
+            or row["id"] == obj["protected_image_id"]
+            or f"image:{row['id']}:unverified-provenance-or-shared-reference" not in unknown
+            or type(row["repo_tags"]) is not list
+            or any(
+                type(ref) is not str or BOCA_PUBLIC_SHA_TAG.fullmatch(ref) is None
+                for ref in row["repo_tags"]
+            )
+            or row["repo_tags"] != sorted(set(row["repo_tags"]))
+            or type(row["repo_digests"]) is not list
+            or any(
+                type(ref) is not str or BOCA_PUBLIC_DIGEST.fullmatch(ref) is None
+                for ref in row["repo_digests"]
+            )
+            or row["repo_digests"] != sorted(set(row["repo_digests"]))
+            or type(row["untrusted_alias_count"]) is not int
+            or not 0 <= row["untrusted_alias_count"] <= 32
+            or row["oci_source_status"] not in ("BOCA", "ABSENT", "UNVERIFIED")
+            or (
+                row["oci_revision"] is not None
+                and (
+                    type(row["oci_revision"]) is not str
+                    or re.fullmatch(r"[0-9a-f]{40}", row["oci_revision"]) is None
+                )
+            )
+            or type(row["logical_size_bytes"]) is not int
+            or not 0 <= row["logical_size_bytes"] <= 16 * 1024**3
+            or type(row["container_ref_count"]) is not int
+            or row["container_ref_count"] != 0
+            or row["deletion_authorized"] is not False
+            for row in provenance
+        )
+        or len({row["id"] for row in provenance}) != len(provenance)
+        or provenance != sorted(provenance, key=lambda row: row["id"])
+    ):
+        raise CleanupError("Boca public image provenance receipt untrusted")
     expected_classification = (
         "INDETERMINATE"
         if unknown
@@ -1612,7 +1777,9 @@ def _readonly_main(args: list[str]) -> int:
         if mode == "host":
             if os.geteuid() != EXPECTED_UID or os.getegid() != EXPECTED_GID:
                 raise CleanupError("read-only cleanup requires exact Boca rootless identity")
-            receipt = observe_postapply_cleanup(incident_run_id, legacy_id)
+            receipt = observe_postapply_cleanup(
+                incident_run_id, legacy_id, probe_provenance=_observe_boca_reference_image
+            )
             sys.stdout.buffer.write(canonical_readonly_cleanup_receipt(receipt))
         else:
             receipt = verify_readonly_cleanup_receipt(

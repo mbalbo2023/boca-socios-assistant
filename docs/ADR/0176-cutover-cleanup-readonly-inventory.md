@@ -1,6 +1,6 @@
 # ADR 0176 — Plan de limpieza Docker post-APPLY exclusivamente READ_ONLY
 
-**Fecha:** 2026-11-05 ART. **Estado:** candidato CODE_ONLY / host NO_GO.
+**Fecha:** 2026-11-05 ART. **Estado:** R25 integrado #392; R26 CODE_ONLY.
 **Ownership:** issue [#386](https://github.com/mbalbo2023/boca-socios-assistant/issues/386)
 y contrato de limpieza [#323](https://github.com/mbalbo2023/boca-socios-assistant/issues/323).
 
@@ -115,3 +115,78 @@ pero Stage reporta NO_GO, el primer paso verifica y retorna éxito *como
 lectura*, por lo que se puede inspeccionar Docker sin autorizar retry ni
 limpieza. La evidencia física final requiere un despacho nuevo sobre main
 con este parche revisado, CI exacta, merge protegido y mismos límites Boca.
+
+## R26 — Dos imágenes físicas: procedencia y espacio insuficientemente probados
+
+El run protegido READ_ONLY
+[#42112927157](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42112927157)
+**SUCCESS como observación**, desde `main=b0a731a5b9f9115713bb39e48218653ed4035d76`,
+acreditó: un controller original y su imagen
+`sha256:12d492da545566a13ba4faec6afd99a3d6fe1990657d2e0981420c429c36d5c1`
+preservados; dos imágenes rootless, una red, tres volúmenes, cero remanentes
+con propiedad positiva y una imagen incierta
+`sha256:a44453ab30cb17fa42f71723cf64b1097dabdf0e56369186077c47bc8224f90b`.
+`classification=INDETERMINATE`, `cleanup_executed=false`, métricas antes/después
+estables. El run NO prueba que `a444...` sea basura de Boca ni autoriza borrarla.
+
+### RCA del observador anterior
+
+`capture_inventory()` selecciona imágenes por la etiqueta OCI source exacta
+**o** por `docker image ls --filter reference=ghcr.io/mbalbo2023/boca-socios-assistant*`.
+La segunda imagen ingresó por la referencia, pero no por `org.opencontainers.image.source`;
+el contrato R25 intencionalmente fabricaba un placeholder
+`boca-socios-assistant:unverified` sin consultar sus etiquetas/referencias exactas.
+Por tanto `plan()` la retiene como `unverified-provenance-or-shared-reference`.
+Ese resultado es seguro pero no permite discernir una imagen legítima anterior,
+un alias ambiguo ni el costo lógico de almacenamiento.
+
+### Extensión únicamente READ_ONLY, sin promoción de confianza
+
+R26 no cambia `plan()`, `delete_exact`, `execute()` ni la clasificación. Para
+**sólo** un ID que ya apareció como referencia Boca en el daemon rootless
+UID10001, fue inventariado sin recursos ajenos y está sin referencias de
+contenedor, lee con `docker image inspect --format` exclusivamente:
+
+- Identidad `Id`, `RepoTags`, `RepoDigests` y `Size` (bytes lógicos);
+- **sólo** `org.opencontainers.image.source` y `.revision` con plantillas
+  `index` exactas, nunca `Config.Labels` completo, `Config.Env`, host paths
+  ni secretos;
+- cantidad de contenedores del inventario Boca que referencian el ID.
+
+Se redactan todos los aliases no públicos: solamente se publican tags
+`sha-` de 40 hex y digests SHA256 del repositorio oficial Boca; los demás
+se cuentan como `untrusted_alias_count`, sin mostrar nombres o valores.
+Source sólo se expresa `BOCA` / `ABSENT` / `UNVERIFIED`; revisiones no
+hexadecimales quedan nulas. El ID debe pasar el filtro Boca antes **y
+después** de leer; se consulta dos veces y se comparan los valores, con
+fallo cerrado ante drift, formatos ambiguos o recibo alterado. Los IDs globales
+sin referencia Boca siguen sin ser inspeccionados ni publicados.
+
+El nuevo campo canónico `image_provenance[]` siempre lleva
+`deletion_authorized=false`; no hace que desaparezca `retained_uncertain`, no
+autoriza un `docker image rm`, ni convierte `INDETERMINATE` en GO. Los recibos
+físicos permitirán buscar la tupla exacta digest/revisión/ID en una release
+de GitHub verificable o decidir **retención expresa** si sigue faltando prueba.
+
+### Capacidad: cálculo reproducible y próximo gate
+
+`docker_bytes_free=5,106,962,432` bytes, por encima del mínimo contractual
+pre/post-pull `4*1024^3=4,294,967,296` sólo en **811,995,136 bytes
+(774.38 MiB)**. Los `2,873,314` inodos libres superan 50,000; no sustituyen
+al margen de bytes. Los siete release runs publicados contrastados
+`41873165726`, `41893887078`, `42072022371`, `42076459492`,
+`42080305773`, `42083597885`, `42090471891` contienen image IDs de build
+distintos a `a444...`; una búsqueda negativa no prueba procedencia externa.
+
+Los artefactos duales de release #42090471891 registran digest, SHA y tipo
+de imagen, pero **no** bytes lógicos verificados de controller/browser ni
+peak de capas. No se declara espacio suficiente para descargar ambas nuevas
+imágenes: la combinación de bytes de extracción, capas compartidas y reserva
+física no está medida. Medición propuesta **en runner descartable**, sin
+pull al droplet: resolver dos digests release exactos, registrar `image inspect
+.Size` de cada imagen y su delta real de bytes después del pull en el
+runner, y comparar contra margen de 774 MiB con reserva. Incluso entonces
+se exige el gate físico de 4 GiB y 50k inodos antes/después de cualquier pull
+protegido, sin eliminar otra imagen para crear espacio por intuición. Si la
+capacidad no alcanza, STOP seguro y tratar almacenamiento/capacidad como
+dependencia específica, sin purgas ni efecto sobre Porota.
