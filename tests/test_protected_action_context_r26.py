@@ -22,6 +22,7 @@ def _context(kind: str = "lifecycle") -> dict[str, str]:
         "version": "boca-protected-action-v1",
         "kind": kind,
         "attempt_id": "42000000000",
+        "prepare_run_id": "41999999990",
         "source_sha": "a" * 40,
         "controller_id": "c" * 64,
         "controller_image": "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "d" * 64,
