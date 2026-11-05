@@ -590,6 +590,8 @@ revisados, ZIP completo Option B y destino localhost:8443**. El SHA de GO no
 es un input de `workflow_dispatch`; vacío, incorrecto, anterior o de otro
 run resulta `NO_GO` **antes de SSH**. No se recicla la autorización de la
 observación read-only ni se infiere el ID original del nombre Docker.
+Se verifica nuevamente el HEAD de main **inmediatamente antes del único SSH**
+para evitar una ventana TOCTOU entre el primer preflight y el efecto remoto.
 
 Tras validación, el runner escribe con O_EXCL dos archivos privados (token
 canónico de coordenadas + digest de GO) y ejecuta **un solo SSH** cuyo stdin

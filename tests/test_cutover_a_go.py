@@ -376,5 +376,12 @@ def test_effectful_dispatch_is_inert_without_independent_exact_run_go() -> None:
     assert "python scripts/check_cutover_a_go.py --assert-host-receipt" in workflow
     assert "always() && inputs.operation == 'cutover-a-apply'" in workflow
     assert "timeout --signal=TERM --kill-after=5s 900s ssh" in workflow
+    effect = workflow.split("      - name: Apply exactly one reviewed Cutover A", 1)[1].split(
+        "      - name:", 1
+    )[0]
+    assert effect.index("boca-main-ref-cutover-effect.json") < effect.index(
+        'boca-target "$remote_command"'
+    )
+    assert "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in effect
     assert "docker image prune" not in workflow
     assert "docker system prune" not in workflow

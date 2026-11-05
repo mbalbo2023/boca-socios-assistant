@@ -1137,9 +1137,13 @@ jobs:
         id: cutover_host_apply
         if: inputs.operation == 'cutover-a-apply'
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONPATH: src:scripts
         run: |
           set -euo pipefail
+          # Recheck immediately before SSH: main may have moved since GO.
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-cutover-effect.json"
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-cutover-effect.json" "$BOCA_SOURCE_SHA"
           test -s "$RUNNER_TEMP/boca-cutover-a-review.pyz"
           test -s "$RUNNER_TEMP/boca-cutover-a-invocation.token"
           test -s "$RUNNER_TEMP/boca-cutover-a-approved.digest"
