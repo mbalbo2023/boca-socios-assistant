@@ -94,9 +94,12 @@ referencia GHCR aprobada y cuya procedencia es Boca. Así se evita un falso
    sender Telegram OFF u ON. Un tercero sin binding de ID, runtime, config
    hash, red y mounts es `NO_GO`. El sender nunca recibe Start/Stop del
    panel bot/Chromium y su presencia no certifica Telegram operativo. Un
-   worker RUNNING pero UNHEALTHY bloquea `bot/start` y las operaciones
-   Chromium, **pero no `bot/stop`**. Un worker ya STOPPED tampoco bloquea
-   detener el bot; no se baja Chromium con el bot todavía RUNNING.
+   worker RUNNING pero UNHEALTHY bloquea `bot/start` y `chromium/start`,
+   pero **no** `bot/stop` ni `chromium/stop`: el STOP del worker usa el
+   estado físico RUNNING aunque su healthcheck esté degradado, siempre que
+   el bot ya esté STOPPED, controller HEALTHY y toda identidad/mount/lease
+   coincida. Un worker ya STOPPED tampoco bloquea detener el bot; no se baja
+   Chromium con el bot todavía RUNNING.
 3. **Persistencia STOP del bot tras reinicio completo del controller:**
    sigue P0. Hoy el hilo sintético puede recrearse por el boot legacy; el
    workflow físico no debe usar el adaptador hasta resolver una política
@@ -124,3 +127,26 @@ Antes del merge se documentarán en el PR y en los issues #328/#45:
 SHA/tree exactos, número total de pruebas, Ruff/format/MyPy/política,
 GitHub Actions con sus runs y límites físicos. **Ningún GREEN de una rama
 anterior certifica esta propuesta ni equivale a GO para el droplet.**
+
+## RCA P0, 05/11 — Chromium STOP frente a healthcheck degradado (#351)
+
+La regresión funcional original era doble: el `RootlessLifecycleProbe`
+rechazaba a todo Chromium RUNNING+UNHEALTHY incluso para detenerlo, y
+`LifecycleHostSnapshot.require()` confundía `RUNNING=true, HEALTHY=false`
+con worker parado, por usar `running and healthy` indiscriminadamente.
+Así un STOP pedido para recuperar Chromium quedaba en `NO_GO` o
+`REFUSED` sin efecto. **No se falsifica HEALTHY**: para Chromium
+`stop` la observación física confiable es `State.Running` del ID exacto
+atestiguado, mientras `start` mantiene la exigencia de salud y no
+admite un worker ya RUNNING+UNHEALTHY. El motor del bot debe estar STOPPED
+antes de detener al worker y el controller permanece HEALTHY.
+
+Se amplió temporalmente el ownership de #351 sólo a estas dos funciones
+y regresiones de `tests/test_host_boca_lifecycle.py` más
+`tests/test_host_lifecycle_rootless_adapter.py`; #348 sigue DRAFT
+documental y #356 recoge la corrección en el candidato de integración.
+La matriz usa SQLite legacy real temporal + fake Docker Boca exacto:
+`RUNNING/UNHEALTHY -> STOPPED/APPLIED` una vez; con bot RUNNING o
+controller UNHEALTHY se rechaza, y Chromium START RUNNING/UNHEALTHY sigue
+rechazado. ACK sólo tras postflight y relectura ledger. Sin tocar droplet,
+BLACKBOX, otros servicios ni workflows.

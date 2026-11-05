@@ -447,6 +447,56 @@ def test_separate_chromium_stop_keeps_controller_and_http_healthy(tmp_path: Path
     assert snap.bot_engine_running is False
 
 
+def test_unhealthy_running_chromium_stop_physically_applies_and_acks_legacy(tmp_path: Path) -> None:
+    coords, ledger = _request_with_real_ledger(tmp_path / "boca.sqlite3", "chromium", "stop")
+    io = FakeIO(tmp_path, engine=False, worker_running=True)
+    io.fields[("container", WORKER, "State.Health.Status")] = "unhealthy"
+    assert (
+        adapter.execute_requested_lifecycle(
+            coords,
+            binding=_binding(),
+            lease=BocaJobLease(RUN, 12, 123, True),
+            io=io,
+        )
+        == "APPLIED"
+    )
+    assert ledger.current().status == "APPLIED"
+    assert io.effects == [("worker", WORKER, "stop")]
+    assert io.fields[("container", WORKER, "State.Running")] is False
+    assert io.fields[("container", CONTROLLER, "State.Health.Status")] == "healthy"
+
+
+def test_unhealthy_running_chromium_cannot_restart_or_claim(tmp_path: Path) -> None:
+    coords, ledger = _request_with_real_ledger(tmp_path / "boca.sqlite3", "chromium", "start")
+    io = FakeIO(tmp_path, engine=False, worker_running=True)
+    io.fields[("container", WORKER, "State.Health.Status")] = "unhealthy"
+    with pytest.raises(adapter.LifecycleAdapterNoGo):
+        adapter.execute_requested_lifecycle(
+            coords,
+            binding=_binding(),
+            lease=BocaJobLease(RUN, 12, 123, True),
+            io=io,
+        )
+    assert ledger.current().status == "REQUESTED"
+    assert io.effects == []
+
+
+def test_unhealthy_running_chromium_stop_cannot_bypass_controller_health(tmp_path: Path) -> None:
+    coords, ledger = _request_with_real_ledger(tmp_path / "boca.sqlite3", "chromium", "stop")
+    io = FakeIO(tmp_path, engine=False, worker_running=True)
+    io.fields[("container", WORKER, "State.Health.Status")] = "unhealthy"
+    io.fields[("container", CONTROLLER, "State.Health.Status")] = "unhealthy"
+    with pytest.raises(adapter.LifecycleAdapterNoGo):
+        adapter.execute_requested_lifecycle(
+            coords,
+            binding=_binding(),
+            lease=BocaJobLease(RUN, 12, 123, True),
+            io=io,
+        )
+    assert ledger.current().status == "REQUESTED"
+    assert io.effects == []
+
+
 def test_running_bot_blocks_chromium_stop_before_docker_effect(tmp_path: Path) -> None:
     coords = _coordinates(tmp_path / "boca.sqlite3", "chromium", "stop")
     io = FakeIO(tmp_path, engine=True)

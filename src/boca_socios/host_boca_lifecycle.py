@@ -202,6 +202,10 @@ class LifecycleHostSnapshot:
             if coordinates.target == "start" and not (self.worker_running and self.worker_healthy):
                 raise LifecycleHostUnavailable("bot requires healthy Chromium IPC worker")
             return self.bot_engine_running
+        # A running worker can be stopped even after its healthcheck fails.
+        # START still requires a separately attested HEALTHY worker state.
+        if coordinates.target == "stop":
+            return self.worker_running
         return self.worker_running and self.worker_healthy
 
 

@@ -113,9 +113,7 @@ def test_exact_action_pins_permit_each_of_four_requested_actions(
 ) -> None:
     ledger, effects = verified_io
     ledger.state = _requested(component, target)
-    reviewed = replace(
-        _reviewed(tmp_path), expected_component=component, expected_target=target
-    )
+    reviewed = replace(_reviewed(tmp_path), expected_component=component, expected_target=target)
     receipt = actions.apply_latest_owner_request(
         reviewed, lease=BocaJobLease("3456789012", 12, 1, True)
     )
