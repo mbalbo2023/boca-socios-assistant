@@ -39,6 +39,7 @@ _SHA40 = re.compile(r"[0-9a-f]{40}\Z")
 _CONTAINER_ID = _SHA256
 _POSITIVE = re.compile(r"[1-9][0-9]{0,19}\Z")
 _GO_SCHEMA = "boca-official-notice-import-go-v1"
+_PREPARED_REVIEW_SCHEMA = "boca-official-import-prepared-review-v1"
 _COORDINATES_VERSION = "boca-official-notice-import-v1"
 _MAX_TOKEN = 2048
 _MAX_ZIP = 128 * 1024
@@ -210,6 +211,30 @@ def expected_go_sha256(
                 "actor": actor,
                 "destination": "/data/boca_official_notices.jsonl",
                 **asdict(coords),
+            }
+        )
+    ).hexdigest()
+
+
+def official_prepared_context_sha256(
+    coords: OfficialImportCoordinates, *, prepare_run_id: str, actor: str
+) -> str:
+    """Bind the official source/destination to a completed PREPARE identity.
+
+    This is a public, inert, domain-separated hash for the future reviewed
+    PREPARE artifact. It is NOT an independent GO: the separate GitHub runner
+    must authenticate PREPARE success, artifact bytes, actor/main, exact source,
+    Environment GO, replay and freshness before any host call. The existing
+    exact-current-run GO check and ZIP import path are deliberately unchanged.
+    """
+    reviewed = expected_go_sha256(coords, operation_run_id=prepare_run_id, actor=actor)
+    return hashlib.sha256(
+        _canonical(
+            {
+                "schema": _PREPARED_REVIEW_SCHEMA,
+                "operation": "official-notice-import",
+                "prepare_run_id": prepare_run_id,
+                "reviewed_authorization_sha256": reviewed,
             }
         )
     ).hexdigest()

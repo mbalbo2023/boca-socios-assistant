@@ -17,7 +17,7 @@ import stat
 import sys
 import zipfile
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -294,6 +294,49 @@ def authorization_digest(request: GoRequest) -> str:
     }
     raw = json.dumps(approved, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(raw.encode("ascii")).hexdigest()
+
+
+PREPARED_REVIEW_VERSION = "boca-cutover-a-prepared-review-v1"
+
+
+def cutover_prepared_context_sha256(request: GoRequest, *, prepare_run_id: str) -> str:
+    """Return an inert PREPARE review digest without a future APPLY run ID.
+
+    PREPARE and APPLY each have their own (then-known) GITHUB_RUN_ID. The
+    PREPARE identifier substitutes for the ephemeral current-run ID *only in
+    this context digest*. The actual GoRequest/host plan, exact run attestation,
+    old authorization_digest and --from-actions gate remain unchanged.
+    A privileged caller must independently authenticate the PREPARE artifact,
+    owner, expiry, source, context and Environment GO before any host invocation.
+    This helper never accepts a digest as a GO or writes a host token.
+    """
+    if (
+        not isinstance(request, GoRequest)
+        or type(prepare_run_id) is not str
+        or RUN.fullmatch(prepare_run_id) is None
+        or request.github_run_id != request.plan.attempt_id
+        or request.github_run_attempt != "1"
+        or RUN.fullmatch(request.github_run_id) is None
+    ):
+        raise CutoverGoError("Cutover A prepared review run/attempt invalid")
+    projected = replace(
+        request,
+        github_run_id=prepare_run_id,
+        plan=replace(request.plan, attempt_id=prepare_run_id),
+    )
+    # All three manifests, every Compose/seccomp byte, Option B ZIP and owner
+    # subject are still attested by the original strict v1 implementation.
+    exact_reviewed = authorization_digest(projected)
+    public_context = {
+        "version": PREPARED_REVIEW_VERSION,
+        "operation": "cutover-a-apply",
+        "prepare_run_id": prepare_run_id,
+        "reviewed_authorization_sha256": exact_reviewed,
+    }
+    encoded = json.dumps(
+        public_context, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def require_protected_go(request: GoRequest, *, protected_go_digest: str) -> str:

@@ -282,3 +282,42 @@ def test_runner_receipt_assertion_is_exact_and_fails_on_lost_ssh(
     receipt.write_text(receipt.read_text(encoding="ascii").replace("CREATED", "REPLACED"))
     with pytest.raises(actions.OfficialImportActionError, match="identity"):
         actions._run_cli(argv)
+
+
+def test_official_prepared_context_binds_known_prepare_not_unknown_apply_run() -> None:
+    coords = _coords()
+    prepared = actions.official_prepared_context_sha256(
+        coords, prepare_run_id="50000000001", actor="mbalbo2023"
+    )
+    assert len(prepared) == 64
+    assert prepared != actions.expected_go_sha256(
+        coords, operation_run_id="50000000001", actor="mbalbo2023"
+    )
+    assert (
+        actions.official_prepared_context_sha256(
+            coords, prepare_run_id="50000000001", actor="mbalbo2023"
+        )
+        == prepared
+    )
+    assert (
+        actions.official_prepared_context_sha256(
+            coords, prepare_run_id="50000000002", actor="mbalbo2023"
+        )
+        != prepared
+    )
+    assert (
+        actions.official_prepared_context_sha256(
+            replace(coords, artifact_sha256="9" * 64),
+            prepare_run_id="50000000001",
+            actor="mbalbo2023",
+        )
+        != prepared
+    )
+    with pytest.raises(actions.OfficialImportActionError):
+        actions.official_prepared_context_sha256(coords, prepare_run_id="0", actor="mbalbo2023")
+    with pytest.raises(actions.OfficialImportActionError):
+        actions.official_prepared_context_sha256(
+            coords, prepare_run_id="50000000001", actor="outsider"
+        )
+    # A PREPARE context is never a legacy single-run GO approval.
+    assert prepared != _approved(coords)
