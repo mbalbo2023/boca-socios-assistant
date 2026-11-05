@@ -31,9 +31,7 @@ def _run(
     failed_exit: bool = False,
     changed_postflight: bool = False,
 ):
-    private, recipient, code, pins, coords, lease, reader, data = _prepare(
-        tmp_path, monkeypatch
-    )
+    private, recipient, code, pins, coords, lease, reader, data = _prepare(tmp_path, monkeypatch)
     api = _FakeBotApi(code, webhook={"url": webhook})
     events: list[str] = []
     phases: list[str] = []
@@ -80,9 +78,7 @@ def _run(
 def test_exact_four_gets_one_ephemeral_context_no_sender_or_custody(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    execute, api, events, phases, data, reader, coords = _run(
-        tmp_path, monkeypatch
-    )
+    execute, api, events, phases, data, reader, coords = _run(tmp_path, monkeypatch)
     proof = execute()
     assert proof.state == "READ_ONLY_FOUR_GETS_COMPLETE_NOT_AUTHORIZED"
     assert proof.sender_state == "OFF"

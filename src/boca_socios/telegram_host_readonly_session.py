@@ -86,9 +86,7 @@ def four_gets_under_existing_lease(
         raise TelegramReadOnlyNoGo("telegram_readonly_inputs_unverified")
     reader = ProductionRootlessDockerIO() if io is None else io
     try:
-        proof = observe_owner_stage_under_same_lease(
-            pins, coordinates, lease=lease, io=reader
-        )
+        proof = observe_owner_stage_under_same_lease(pins, coordinates, lease=lease, io=reader)
         data, _owner = _verified_host_volumes(reader)
         stage = read_encrypted_telegram_stage(
             data, coordinates=coordinates, lease=lease, trusted_now=trusted_clock()
@@ -124,9 +122,7 @@ def four_gets_under_existing_lease(
                 )
                 if current != stage:
                     raise TelegramReadOnlyNoGo("telegram_readonly_stage_changed")
-                cutover._recheck(
-                    recheck_host, f"BEFORE_{method}", coordinates, trusted_clock
-                )
+                cutover._recheck(recheck_host, f"BEFORE_{method}", coordinates, trusted_clock)
                 methods_seen.append(method)
                 return api_fetch(token, method, chat_id)
 
@@ -148,9 +144,7 @@ def four_gets_under_existing_lease(
         failed = True
     try:
         # The session must be CLOSED before this no-helper topology observer.
-        after = observe_owner_stage_under_same_lease(
-            pins, coordinates, lease=lease, io=reader
-        )
+        after = observe_owner_stage_under_same_lease(pins, coordinates, lease=lease, io=reader)
         latest = read_encrypted_telegram_stage(
             data, coordinates=coordinates, lease=lease, trusted_now=trusted_clock()
         )
