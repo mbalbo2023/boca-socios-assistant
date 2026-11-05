@@ -38,7 +38,7 @@ def _offline_probe(operation: str, image: str, browser: str) -> subprocess.Compl
         "BOCA_IMAGE": image,
         "BOCA_BROWSER_IMAGE": browser,
     }
-    return subprocess.run(
+    return subprocess.run(  # noqa: S603 - fixed Bash, only reviewed pre-Compose fixture
         ["/usr/bin/bash", "-c", _runner_prefix()],
         check=False,
         capture_output=True,
