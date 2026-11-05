@@ -58,16 +58,30 @@ def test_three_new_operations_exist_only_in_reviewed_single_workflow(operation: 
     assert 'test "$GITHUB_RUN_ATTEMPT" = 1' in workflow
 
 
-def test_prepare_has_no_host_effect_and_publishes_reviewable_artifact() -> None:
-    prepare = _step("Prepare one reviewed lifecycle GO without accessing Boca host")
-    artifact = _step("Publish exact no-host lifecycle PREPARE receipt for independent review")
+def test_prepare_reads_only_boca_host_once_and_publishes_immutable_artifact() -> None:
+    readonly_ssh = _step("Configure pinned READ_ONLY SSH for lifecycle PREPARE")
+    observe = _step("Observe one existing Boca owner intent and installed pins READ_ONLY")
+    prepare = _step("Prepare one reviewed lifecycle GO from Boca READ_ONLY observation")
+    artifact = _step(
+        "Publish exact Boca READ_ONLY lifecycle PREPARE receipt for independent review"
+    )
+    assert "if: inputs.operation == 'protected-go-prepare'" in readonly_ssh
+    assert "if: inputs.operation == 'protected-go-prepare'" in observe
+    assert "boca_protected_memfd_bootstrap.py" in observe
+    assert '"lifecycle-observe", observe_token' in observe
+    assert observe.count(" 95s ssh") == 1
+    assert "check_main_ref.py" in observe
+    assert "check_protected_go_prepare.py --observe-request" in observe
+    assert "check_protected_go_prepare.py --assert-observed" in observe
+    assert "lifecycle-apply" not in observe
     assert "if: inputs.operation == 'protected-go-prepare'" in prepare
     assert "check_protected_go_prepare.py --prepare" in prepare
-    assert "build_protected_boca_bundle.py" in prepare
+    assert "host_reads=1 appdata_mutations=0 lease_lock=allowed" in prepare
     assert "ssh " not in prepare and "docker " not in prepare
     assert "if: inputs.operation == 'protected-go-prepare'" in artifact
     assert "upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in artifact
     assert "boca-protected-go-prepare" in artifact
+    assert "boca-lifecycle-observed-public.json" in artifact
     assert "boca-lifecycle-prepare.receipt.json" in artifact
     assert "boca-lifecycle-apply-context.txt" in artifact
     assert "if: inputs.operation != 'protected-go-prepare'" in _step(

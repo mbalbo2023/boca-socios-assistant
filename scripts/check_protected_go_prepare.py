@@ -30,6 +30,9 @@ GO_DOMAIN = b"boca-protected-prepared-go-v1:\x00"
 GO_TTL_SECONDS = 24 * 60 * 60
 RUNNER_RECEIPT = "boca-lifecycle-prepare.receipt.json"
 RUNNER_APPLY_CONTEXT = "boca-lifecycle-apply-context.txt"
+RUNNER_OBSERVE_REQUEST = "boca-lifecycle-observe.request"
+RUNNER_OBSERVE_CONTEXT = "boca-lifecycle-observed-public.json"
+OBSERVER_VERSION = "boca-lifecycle-observe-v1"
 RUNNER_HOST_CONTEXT = "boca-protected-action.token"
 RUNNER_HOST_APPROVAL = "boca-protected-action.approved"
 _ARTIFACT_MANIFEST = "boca-release-manifest/boca-release-manifest.json"
@@ -145,6 +148,87 @@ def _untrusted_public(encoded: str) -> dict[str, str]:
     if payload.get("kind") != "lifecycle" or payload.get("version") != context.VERSION:
         raise PreparedGoError("only reviewed lifecycle PREPARE implemented")
     return payload
+
+
+def observer_request(environ: Mapping[str, str]) -> str:
+    """Generate immutable Boca-only READ_ONLY host request from runner pins."""
+    context._environment(environ)  # noqa: SLF001
+    if (
+        environ.get("BOCA_OPERATION") != "protected-go-prepare"
+        or environ.get("BOCA_PROTECTED_ACTION_CONTEXT", "") != ""
+        or environ["GITHUB_RUN_ID"] == environ["BOCA_RELEASE_RUN_ID"]
+    ):
+        raise PreparedGoError("lifecycle observation phase invalid")
+    _reviewed_evidence(environ)
+    body = {
+        "version": OBSERVER_VERSION,
+        "source_sha": environ["BOCA_SOURCE_SHA"],
+        "controller_image": environ["BOCA_IMAGE_REF"],
+        "worker_image": environ["BOCA_BROWSER_IMAGE_REF"],
+        "release_run_id": environ["BOCA_RELEASE_RUN_ID"],
+        "observe_run_id": environ["GITHUB_RUN_ID"],
+    }
+    return base64.urlsafe_b64encode(_canonical(body)).rstrip(b"=").decode("ascii")
+
+
+def observed_prepare_context(path: Path, *, environ: Mapping[str, str]) -> dict[str, str]:
+    """Accept exactly one canonical public JSON line from the Boca SSH observer."""
+    if environ.get("BOCA_PROTECTED_ACTION_CONTEXT", "") != "":
+        raise PreparedGoError("PREPARE must not accept manually constructed host pins")
+    if not path.is_absolute() or path.is_symlink():
+        raise PreparedGoError("observed Boca receipt path invalid")
+    try:
+        meta = path.stat(follow_symlinks=False)
+        if not stat.S_ISREG(meta.st_mode) or not 2 <= meta.st_size <= 2049:
+            raise PreparedGoError("observed Boca receipt size/type invalid")
+        raw = path.read_bytes()
+        if len(raw) != meta.st_size or not raw.endswith(b"\n"):
+            raise PreparedGoError("observed Boca receipt framing invalid")
+        canonical = raw[:-1]
+        payload = json.loads(
+            canonical.decode("ascii"),
+            object_pairs_hook=context._unique_fields,  # noqa: SLF001
+        )
+        if type(payload) is not dict or _canonical(payload) != canonical:
+            raise PreparedGoError("observed Boca receipt noncanonical")
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise PreparedGoError("observed Boca receipt corrupt") from exc
+    token = base64.urlsafe_b64encode(canonical).rstrip(b"=").decode("ascii")
+    return decode_prepare_input(token, environ=environ)
+
+
+def parse_prepared_run_id(raw: str, *, environ: Mapping[str, str]) -> str:
+    """Owner copies only a short PREPARE ID, never untrusted Docker host pins."""
+    context._environment(environ)  # noqa: SLF001
+    if (
+        type(raw) is not str
+        or _PREPARE_ID.fullmatch(raw) is None
+        or raw == environ["GITHUB_RUN_ID"]
+    ):
+        raise PreparedGoError("exact separate PREPARE run ID required")
+    return raw
+
+
+def public_from_prepared_artifact(
+    path: Path, *, prepare_run_id: str, environ: Mapping[str, str]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Context comes solely from verified immutable GitHub PREPARE artifact."""
+    if not path.is_absolute() or path.is_symlink():
+        raise PreparedGoError("prepared public artifact path invalid")
+    try:
+        meta = path.stat(follow_symlinks=False)
+        if not stat.S_ISREG(meta.st_mode) or not 2 <= meta.st_size <= 2733:
+            raise PreparedGoError("prepared public artifact size/type invalid")
+        raw = path.read_bytes()
+        if len(raw) != meta.st_size or not raw.endswith(b"\n"):
+            raise PreparedGoError("prepared public artifact framing invalid")
+        token = raw[:-1].decode("ascii")
+    except (OSError, UnicodeError) as exc:
+        raise PreparedGoError("prepared public artifact unavailable") from exc
+    public, hosted = decode_apply_input(token, environ=environ)
+    if hosted["prepare_run_id"] != parse_prepared_run_id(prepare_run_id, environ=environ):
+        raise PreparedGoError("prepared public artifact run ID drifted")
+    return public, hosted
 
 
 def decode_prepare_input(encoded: str, *, environ: Mapping[str, str]) -> dict[str, str]:
@@ -374,6 +458,7 @@ def assert_physical_host_receipt(environ: Mapping[str, str]) -> None:
         or receipt["component"] != hosted["expected_component"]
         or receipt["target"] != hosted["expected_target"]
         or receipt["request_id"] != str(uuid)
+        or receipt["request_id"] != hosted["expected_request_id"]
         or receipt["status"] != "APPLIED"
         or receipt["physical_ack"] is not True
     ):
@@ -386,6 +471,8 @@ def main() -> int:
     try:
         if len(sys.argv) != 2 or sys.argv[1] not in (
             "--prepare",
+            "--observe-request",
+            "--assert-observed",
             "--prepare-ref",
             "--apply",
             "--assert-host-receipt",
@@ -402,15 +489,30 @@ def main() -> int:
         if phase == "--prepare-ref":
             if operation != "lifecycle-apply":
                 raise PreparedGoError("prepared-ref operation invalid")
-            _, hosted = decode_apply_input(
-                env.get("BOCA_PROTECTED_ACTION_CONTEXT", ""), environ=env
+            print(parse_prepared_run_id(env.get("BOCA_PROTECTED_ACTION_CONTEXT", ""), environ=env))
+            return 0
+        if phase == "--observe-request":
+            if operation != "protected-go-prepare":
+                raise PreparedGoError("lifecycle-observe operation invalid")
+            context._write_private(  # noqa: SLF001
+                _runner() / RUNNER_OBSERVE_REQUEST, observer_request(env) + "\n"
             )
-            print(hosted["prepare_run_id"])
+            print(
+                "BOCA_LIFECYCLE_OBSERVE state=REQUEST_READY host_reads=0 appdata_mutations=0 lease_lock=allowed"
+            )
+            return 0
+        if phase == "--assert-observed":
+            if operation != "protected-go-prepare":
+                raise PreparedGoError("lifecycle-observe operation invalid")
+            observed_prepare_context(_runner() / RUNNER_OBSERVE_CONTEXT, environ=env)
+            print(
+                "BOCA_LIFECYCLE_OBSERVE state=PASS host_reads=1 appdata_mutations=0 lease_lock=allowed"
+            )
             return 0
         if phase == "--prepare":
             if operation != "protected-go-prepare":
                 raise PreparedGoError("PREPARE operation invalid")
-            public = decode_prepare_input(env.get("BOCA_PROTECTED_ACTION_CONTEXT", ""), environ=env)
+            public = observed_prepare_context(_runner() / RUNNER_OBSERVE_CONTEXT, environ=env)
             receipt = build_prepare_receipt(public, environ=env, now=datetime.now(UTC))
             apply_token = (
                 base64.urlsafe_b64encode(
@@ -427,7 +529,7 @@ def main() -> int:
                 runner / RUNNER_APPLY_CONTEXT, apply_token + "\n"
             )
             print(
-                "BOCA_GO_PREPARE state=REVIEWABLE host_calls=0 "
+                "BOCA_GO_PREPARE state=REVIEWABLE host_reads=1 appdata_mutations=0 lease_lock=allowed "
                 + "prepare_run_id="
                 + env["GITHUB_RUN_ID"]
                 + " operation=lifecycle-apply "
@@ -437,10 +539,12 @@ def main() -> int:
             return 0
         if operation != "lifecycle-apply":
             raise PreparedGoError("APPLY operation invalid")
-        public, hosted = decode_apply_input(
-            env.get("BOCA_PROTECTED_ACTION_CONTEXT", ""), environ=env
-        )
         runner = _runner()
+        public, hosted = public_from_prepared_artifact(
+            runner / RUNNER_APPLY_CONTEXT,
+            prepare_run_id=env.get("BOCA_PROTECTED_ACTION_CONTEXT", ""),
+            environ=env,
+        )
         receipt = _strict_json(runner / RUNNER_RECEIPT)
         metadata = _decode_private_run(runner / "boca-lifecycle-prepare-run.json")
         approved = verify_apply_go(

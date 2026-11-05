@@ -27,6 +27,9 @@ _TOKEN = re.compile(r"[A-Za-z0-9_-]{1,2732}\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
 _ATTEMPT = re.compile(r"[1-9][0-9]{0,19}\Z")
+_REQUEST_UUID4 = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z"
+)
 _CONTROLLER_IMAGE = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z")
 _WORKER_IMAGE = re.compile(
     r"ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}\Z"
@@ -50,7 +53,7 @@ _COMMON = frozenset(
         "data_mountpoint",
     }
 )
-_LIFECYCLE = frozenset({"expected_component", "expected_target"})
+_LIFECYCLE = frozenset({"expected_component", "expected_target", "expected_request_id"})
 _TELEGRAM = frozenset(
     {
         "cutover_attempt",
@@ -182,10 +185,12 @@ def _validate_payload(
         raise ProtectedActionError("reviewed controller/worker coordinates invalid")
     _checked_absolute_path(payload["data_mountpoint"], telegram=(kind == "telegram"))
     if kind == "lifecycle":
-        if payload["expected_component"] not in ("bot", "chromium") or payload[
-            "expected_target"
-        ] not in ("start", "stop"):
-            raise ProtectedActionError("unreviewed lifecycle command requested")
+        if (
+            payload["expected_component"] not in ("bot", "chromium")
+            or payload["expected_target"] not in ("start", "stop")
+            or _REQUEST_UUID4.fullmatch(payload["expected_request_id"]) is None
+        ):
+            raise ProtectedActionError("unreviewed lifecycle command/request requested")
         if _LIFECYCLE_SENDER.issubset(keys):
             if (
                 _HASH.fullmatch(payload["sender_id"]) is None

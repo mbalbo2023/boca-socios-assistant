@@ -94,7 +94,7 @@ on:
         required: false
         type: string
       protected_action_context:
-        description: Public Boca reviewed coordinates for PREPARE or copied APPLY token; never token/PIN/secret or future run ID
+        description: Leave blank for Boca READ_ONLY PREPARE; APPLY uses only prior PREPARE run ID (digits), never JSON/PIN/secret
         required: false
         type: string
       service:
@@ -161,7 +161,7 @@ jobs:
           uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
       - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
         run: |
-          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py
+          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
       - name: Validate protected official notice artifact import offline only
         run: |
@@ -174,7 +174,7 @@ jobs:
             printf 'Boca Cutover A PR validation: NO_GO unexpected host receipt; abort.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          if [[ -e "$RUNNER_TEMP/boca-lifecycle-host.receipt" || -e "$RUNNER_TEMP/boca-lifecycle-prepare.receipt.json" ]]; then
+          if [[ -e "$RUNNER_TEMP/boca-lifecycle-host.receipt" || -e "$RUNNER_TEMP/boca-lifecycle-prepare.receipt.json" || -e "$RUNNER_TEMP/boca-lifecycle-observed-public.json" ]]; then
             printf 'Boca lifecycle PR validation: NO_GO unexpected host/PREPARE receipt; abort.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
@@ -997,9 +997,9 @@ jobs:
               ;;
             protected-go-prepare|lifecycle-apply)
               # New Boca actions are only reviewed after independent GO B.
-              # PREPARE never opens SSH; lifecycle applies only after a
-              # separately completed PREPARE, exact protected GO, same-lease
-              # host replay marker and physical ACK, no automatic retries.
+              # PREPARE performs one Boca-only attested host READ_ONLY
+              # inspection, without effect. APPLY needs separate independently
+              # approved GO, same-lease replay marker and exact physical ACK.
               test "$BOCA_DEPLOY_ENV_READY" = ready
               test "$BOCA_BETA_ENV_READY" = ready
               test "$BOCA_BROWSER_ENV_READY" = ready
@@ -1008,7 +1008,14 @@ jobs:
               [[ "$BOCA_IMAGE_REF" =~ ^ghcr[.]io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}$ ]]
               [[ "$BOCA_BROWSER_IMAGE_REF" =~ ^ghcr[.]io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}$ ]]
               [[ "$BOCA_RELEASE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
-              [[ "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^[A-Za-z0-9_-]{1,2732}$ ]]
+              if [[ "$BOCA_OPERATION" = protected-go-prepare ]]; then
+                # Zero manual Docker pins: host observer issues the exact context.
+                test -z "$BOCA_PROTECTED_ACTION_CONTEXT"
+              else
+                # Android Voice Access: a SHORT existing PREPARE run ID only.
+                [[ "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^[1-9][0-9]{0,19}$ ]]
+                test "$BOCA_PROTECTED_ACTION_CONTEXT" != "$GITHUB_RUN_ID"
+              fi
               test -z "$BOCA_SITE_ENVELOPE"
               test -z "$BOCA_TELEGRAM_ENVELOPE"
               test -z "$BOCA_OWNER_ENVELOPE"
@@ -1252,7 +1259,80 @@ jobs:
             "$RUNNER_TEMP/boca-official-artifact.json" \
             "$RUNNER_TEMP/boca-official-artifact.zip" \
             "$RUNNER_TEMP/boca-official-import.token"
-      - name: Prepare one reviewed lifecycle GO without accessing Boca host
+      - name: Configure pinned READ_ONLY SSH for lifecycle PREPARE
+        if: inputs.operation == 'protected-go-prepare'
+        env:
+          BOCA_HOST: ${{ vars.BOCA_DEPLOY_HOST }}
+          BOCA_SSH_KEY: ${{ secrets.BOCA_DEPLOY_SSH_KEY }}
+          BOCA_KNOWN_HOSTS: ${{ secrets.BOCA_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          [[ "$BOCA_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]{0,252}$ ]]
+          test -n "$BOCA_SSH_KEY"
+          test -n "$BOCA_KNOWN_HOSTS"
+          mkdir -m 700 "$RUNNER_TEMP/boca-ssh"
+          printf '%s\n' "$BOCA_SSH_KEY" > "$RUNNER_TEMP/boca-ssh/key"
+          printf '%s\n' "$BOCA_KNOWN_HOSTS" > "$RUNNER_TEMP/boca-ssh/known_hosts"
+          chmod 600 "$RUNNER_TEMP/boca-ssh/key" "$RUNNER_TEMP/boca-ssh/known_hosts"
+          {
+            printf 'Host boca-target\n'
+            printf '  HostName %s\n' "$BOCA_HOST"
+            printf '  User boca-deploy\n'
+            printf '  IdentityFile %s/boca-ssh/key\n' "$RUNNER_TEMP"
+            printf '  UserKnownHostsFile %s/boca-ssh/known_hosts\n' "$RUNNER_TEMP"
+            printf '  GlobalKnownHostsFile /dev/null\n'
+            printf '  StrictHostKeyChecking yes\n'
+            printf '  BatchMode yes\n'
+            printf '  IdentitiesOnly yes\n'
+            printf '  IdentityAgent none\n'
+            printf '  PasswordAuthentication no\n'
+            printf '  KbdInteractiveAuthentication no\n'
+            printf '  ClearAllForwardings yes\n'
+            printf '  RequestTTY no\n'
+            printf '  UpdateHostKeys no\n'
+            printf '  ConnectTimeout 10\n'
+            printf '  NumberOfPasswordPrompts 0\n'
+            printf '  ForwardAgent no\n'
+          } > "$RUNNER_TEMP/boca-ssh/config"
+          chmod 600 "$RUNNER_TEMP/boca-ssh/config"
+      - name: Observe one existing Boca owner intent and installed pins READ_ONLY
+        id: lifecycle_host_observe
+        if: inputs.operation == 'protected-go-prepare'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src:scripts
+        run: |
+          set -euo pipefail
+          # No permissions to start/stop anything; one Boca-only read via the
+          # same reviewed ZIP/memfd bootstrap, pinned SSH and existing lease.
+          # Host derives component/target from the ONE current REQUESTED.
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
+            > "$RUNNER_TEMP/boca-main-ref-lifecycle-observe.json"
+          python scripts/check_main_ref.py \
+            "$RUNNER_TEMP/boca-main-ref-lifecycle-observe.json" "$BOCA_SOURCE_SHA"
+          python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-protected-lifecycle-review.pyz"
+          python scripts/check_protected_go_prepare.py --observe-request
+          IFS= read -r observe_token < "$RUNNER_TEMP/boca-lifecycle-observe.request"
+          bundle_digest="$(sha256sum "$RUNNER_TEMP/boca-protected-lifecycle-review.pyz" | cut -d' ' -f1)"
+          remote_command="$(python3 - "$observe_token" "$bundle_digest" <<'PY'
+          import shlex
+          import sys
+
+          observe_token, bundle_sha256 = sys.argv[1:]
+          with open("scripts/boca_protected_memfd_bootstrap.py", encoding="utf-8") as source:
+              reviewed_bootstrap = source.read()
+          args = ["python3", "-c", reviewed_bootstrap, bundle_sha256, "lifecycle-observe", observe_token]
+          print(shlex.join(args))
+          PY
+          )"
+          timeout --signal=TERM --kill-after=5s 95s ssh \
+            -F "$RUNNER_TEMP/boca-ssh/config" \
+            -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+            boca-target "$remote_command" \
+            < "$RUNNER_TEMP/boca-protected-lifecycle-review.pyz" \
+            > "$RUNNER_TEMP/boca-lifecycle-observed-public.json" 2>/dev/null
+          python scripts/check_protected_go_prepare.py --assert-observed \
+            >> "$GITHUB_STEP_SUMMARY"
+      - name: Prepare one reviewed lifecycle GO from Boca READ_ONLY observation
         id: lifecycle_go_prepare
         if: inputs.operation == 'protected-go-prepare'
         env:
@@ -1260,20 +1340,23 @@ jobs:
           PYTHONPATH: scripts:src
         run: |
           set -euo pipefail
-          # Source, release, browser companion and main were checked above.
-          # No SSH, Docker login, host-read, Bot API or browser effects in PREPARE.
-          python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-protected-lifecycle-review.pyz"
+          # Browser release/ZIP, installed Docker pins and the one Boca
+          # REQUESTED are now verified. The host read made ZERO mutations.
+          # No second SSH, no Docker effect, Bot API or browser mutation.
+          test -s "$RUNNER_TEMP/boca-lifecycle-observed-public.json"
+          test -s "$RUNNER_TEMP/boca-protected-lifecycle-review.pyz"
           python scripts/check_protected_go_prepare.py --prepare \
             > "$RUNNER_TEMP/boca-lifecycle-prepare-summary.txt"
-          grep -E '^BOCA_GO_PREPARE state=REVIEWABLE host_calls=0 ' \
+          grep -E '^BOCA_GO_PREPARE state=REVIEWABLE host_reads=1 appdata_mutations=0 lease_lock=allowed ' \
             "$RUNNER_TEMP/boca-lifecycle-prepare-summary.txt" >> "$GITHUB_STEP_SUMMARY"
-          printf 'BOCA_GO_PREPARE state=READ_ONLY next=independent_environment_GO_then_separate_lifecycle_dispatch host=untouched\n' >> "$GITHUB_STEP_SUMMARY"
-      - name: Publish exact no-host lifecycle PREPARE receipt for independent review
+          printf 'BOCA_GO_PREPARE state=READ_ONLY next=independent_environment_GO_then_separate_lifecycle_dispatch host_reads=1 appdata_mutations=0 lease_lock=allowed\n' >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish exact Boca READ_ONLY lifecycle PREPARE receipt for independent review
         if: inputs.operation == 'protected-go-prepare'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: boca-protected-go-prepare
           path: |
+            ${{ runner.temp }}/boca-lifecycle-observed-public.json
             ${{ runner.temp }}/boca-lifecycle-prepare.receipt.json
             ${{ runner.temp }}/boca-lifecycle-apply-context.txt
           if-no-files-found: error
