@@ -508,8 +508,8 @@
       "id": "RCA-323",
       "issue": 323,
       "fix_pr": 384,
-      "root_cause": "The genuine historical controller image from release 41893887078 lacks org.opencontainers.image.source. Cutover A retires its final container before generic cleanup; after COMMITTED, the unreferenced GHCR image becomes unverified/INDETERMINATE (or may be missed by digest-only reference filters) and prevents terminal ACCEPT despite an accepted candidate.",
-      "prevention": "Before irreversible retirement, bind exact legacy container Image ID to the independently verified historical GHCR RepoDigest and revision SHA with field-only inspection, reject foreign or multiple aliases and existing uncertain Boca residue before COMMITTED, then reattest only this exact image on every cleanup probe and delete by immutable ID with global ID-only absence proof. Preserve all other unknowns, active references and foreign workloads; never prune or force-remove.",
+      "root_cause": "The original controller image (release #41893887078) lacks an OCI source label. Cutover A retired its final container first; cleanup then classified the now-unused old image INDETERMINATE or missed its digest-only ref, blocking terminal ACK after COMMITTED.",
+      "prevention": "Before irreversible retirement, attest exact legacy image ID to GHCR RepoDigest and revision; refuse foreign/multiple aliases and other uncertain Boca residue. Recheck only that ID on each cleanup probe, delete only if unused, and prove global ID absence without force/prune.",
       "regression_tests": [
         "tests/test_host_boca_cutover_backend.py::test_precommit_exact_old_image_proof_allows_only_known_boca_image",
         "tests/test_host_boca_cutover_backend.py::test_precommit_cleanup_blocks_irreversible_retirement_if_proof_unknown",
