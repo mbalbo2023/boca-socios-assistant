@@ -19,12 +19,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from boca_socios import telegram_bootstrap as bootstrap
-from boca_socios.telegram_pairing_bootstrap import PURPOSE, VERSION
 from boca_socios.telegram_owner_webauthn import (
     TelegramStageOwnerWitness,
     parse_witness_document,
     witness_document,
 )
+from boca_socios.telegram_pairing_bootstrap import PURPOSE, VERSION
 
 STAGING_FILENAME = "boca_telegram_pairing_stage_v2.json"
 _STAGING_PURPOSE = "boca-telegram-private-encrypted-stage-v2"
