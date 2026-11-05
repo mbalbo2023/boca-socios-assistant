@@ -1,6 +1,9 @@
 """Code-only Boca lifecycle host claim/ACK; no Docker, SSH or real browser."""
 
+import hashlib
+import sqlite3
 from dataclasses import replace
+from importlib.resources import files
 from pathlib import Path
 from uuid import uuid4
 
@@ -73,6 +76,23 @@ def _setup(
 ) -> tuple[host.LifecycleHostCoordinates, LifecycleIntentStore, BocaJobLease]:
     db = Database(path)
     db.migrate()
+    # Package-defined BETA migrations, not a fabricated ledger. 0004 is an
+    # optional rewrap migration; 0007 may be absent before Telegram cutover.
+    package = files("boca_socios.storage.migrations")
+    for version, name in (
+        (2, "0002_notification_outbox.sql"),
+        (3, "0003_reservation_guard.sql"),
+        (5, "0005_simulation_outcomes.sql"),
+        (6, "0006_beta_commands.sql"),
+    ):
+        script = package.joinpath(name).read_bytes()
+        with db.connection() as connection:
+            connection.executescript(script.decode("utf-8"))
+            connection.execute(
+                "INSERT INTO schema_migrations(version,checksum) VALUES (?,?)",
+                (version, hashlib.sha256(script).hexdigest()),
+            )
+            connection.commit()
     panel = LifecycleIntentStore(db)
     request_id = str(uuid4())
     panel.request(component, target, request_id)
@@ -243,6 +263,106 @@ def test_unknown_legacy_owner_schema_0008_is_not_adopted(tmp_path: Path) -> None
         )
     with pytest.raises(host.LifecycleHostUnavailable, match="legacy lifecycle schema"):
         host.claim_requested(coords, lease=lease, probe=FakeBocaAttestor(_snapshot()))
+    assert panel.current().status == "REQUESTED"
+
+
+@pytest.mark.parametrize("version", [1, 2, 3, 5, 6])
+def test_forged_required_migration_checksum_fails_closed(tmp_path: Path, version: int) -> None:
+    coords, panel, lease = _setup(tmp_path / "boca.sqlite3", "bot", "start")
+    with Database(coords.database_path).connection() as connection, connection:
+        connection.execute(
+            "UPDATE schema_migrations SET checksum=? WHERE version=?",
+            ("0" * 64, version),
+        )
+    with pytest.raises(host.LifecycleHostUnavailable, match="legacy lifecycle schema"):
+        host.claim_requested(coords, lease=lease, probe=FakeBocaAttestor(_snapshot()))
+    assert panel.current().status == "REQUESTED"
+
+
+@pytest.mark.parametrize("version", [1, 2, 3, 5, 6])
+def test_missing_required_migration_fails_closed(tmp_path: Path, version: int) -> None:
+    coords, panel, lease = _setup(tmp_path / "boca.sqlite3", "bot", "start")
+    with Database(coords.database_path).connection() as connection, connection:
+        connection.execute("DELETE FROM schema_migrations WHERE version=?", (version,))
+    with pytest.raises(host.LifecycleHostUnavailable, match="legacy lifecycle schema"):
+        host.claim_requested(coords, lease=lease, probe=FakeBocaAttestor(_snapshot()))
+    assert panel.current().status == "REQUESTED"
+
+
+@pytest.mark.parametrize(
+    "version,name",
+    [
+        (4, "0004_credential_key_policy.sql"),
+        (7, "0007_telegram_delivery.sql"),
+    ],
+)
+def test_forged_optional_migration_checksum_fails_closed(
+    tmp_path: Path, version: int, name: str
+) -> None:
+    coords, panel, lease = _setup(tmp_path / "boca.sqlite3", "bot", "start")
+    script = files("boca_socios.storage.migrations").joinpath(name).read_bytes()
+    with Database(coords.database_path).connection() as connection:
+        connection.executescript(script.decode("utf-8"))
+        connection.execute(
+            "INSERT INTO schema_migrations(version,checksum) VALUES (?,?)",
+            (version, "0" * 64),
+        )
+        connection.commit()
+    with pytest.raises(host.LifecycleHostUnavailable, match="legacy lifecycle schema"):
+        host.claim_requested(coords, lease=lease, probe=FakeBocaAttestor(_snapshot()))
+    assert panel.current().status == "REQUESTED"
+
+
+def test_schema_attestation_holds_writer_lock_before_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    coords, panel, lease = _setup(tmp_path / "boca.sqlite3", "bot", "start")
+    canonical = host._reviewed_legacy_migrations
+    blocked = False
+
+    def try_forged_concurrent_0008() -> dict[int, str]:
+        nonlocal blocked
+        # This executes *during* schema attestation. A second writer must
+        # never be able to migrate 0008 before the protected CLAIM commits.
+        with sqlite3.connect(coords.database_path, timeout=0.01) as concurrent:
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                concurrent.execute(
+                    "INSERT INTO schema_migrations(version,checksum) VALUES (8,?)",
+                    ("0" * 64,),
+                )
+        blocked = True
+        return canonical()
+
+    monkeypatch.setattr(host, "_reviewed_legacy_migrations", try_forged_concurrent_0008)
+    host.claim_requested(coords, lease=lease, probe=FakeBocaAttestor(_snapshot()))
+    assert blocked
+    assert panel.current().status == "CLAIMED"
+    with Database(coords.database_path).connection() as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM schema_migrations WHERE version=8"
+        ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "attempt_id",
+        "request_id",
+        "component",
+        "target",
+        "source_sha",
+        "controller_id",
+        "controller_image",
+        "worker_id",
+        "worker_image",
+    ],
+)
+def test_forged_coordinate_types_are_rejected_before_probe(tmp_path: Path, field: str) -> None:
+    coords, panel, lease = _setup(tmp_path / "boca.sqlite3", "bot", "start")
+    fake = FakeBocaAttestor(_snapshot())
+    with pytest.raises(host.LifecycleHostUnavailable, match="exact coordinates invalid"):
+        host.claim_requested(replace(coords, **{field: 23}), lease=lease, probe=fake)
+    assert fake.observations == 0
     assert panel.current().status == "REQUESTED"
 
 

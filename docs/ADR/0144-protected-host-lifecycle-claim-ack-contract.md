@@ -41,9 +41,14 @@ alcanza con inyectar un test fake, un flag o una afirmación del runner.
    es desconocido, falla cerrado.
 3. Reabre únicamente la SQLite legacy ya existente por URI `mode=rw`;
    exige UID/GID del proceso, archivo privado 0600, `nlink=1`, inode estable,
-   integridad básica y ausencia de versión/tabla owner 0008. **No crea la
-   base, no ejecuta DDL, no toca la SQLite lateral de sesión Chrome**. Bajo
-   `BEGIN IMMEDIATE`, comprueba que la última solicitud global sea el UUID,
+   integridad básica y ausencia de versión/tabla owner 0008. **Comprueba
+   SHA256 exacto del SQL canónico empaquetado de cada migración presente
+   0001–0007**, requiere las BETA 0001/0002/0003/0005/0006 y acepta 0004
+   (key rewrap) y 0007 (Telegram) sólo si existen con su checksum correcto.
+   **No crea la base, no ejecuta DDL, no toca la SQLite lateral de sesión
+   Chrome**. El `BEGIN IMMEDIATE` se obtiene **antes** de consultar el ledger
+   de migraciones para cerrar la carrera con un posible cambio a 0008;
+   bajo esa misma transacción comprueba que la última solicitud sea el UUID,
    componente y destino exactos con estado REQUESTED, y añade el `CLAIMED`
    calculado por el contrato de PR #329.
 4. Sólo después de eso un **futuro** ejecutor de host podrá intentar el

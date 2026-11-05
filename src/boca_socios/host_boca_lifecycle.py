@@ -14,6 +14,7 @@ No such executable host adapter or workflow is installed by this change.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import sqlite3
@@ -21,6 +22,8 @@ import stat
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
+from functools import lru_cache
+from importlib.resources import files
 from pathlib import Path
 from typing import Literal, Protocol
 from urllib.parse import quote
@@ -39,6 +42,19 @@ _CONTROLLER_IMAGE = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha25
 _WORKER_IMAGE = re.compile(
     r"ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}\Z"
 )
+_MIGRATION_FILES = (
+    "0001_initial.sql",
+    "0002_notification_outbox.sql",
+    "0003_reservation_guard.sql",
+    "0004_credential_key_policy.sql",
+    "0005_simulation_outcomes.sql",
+    "0006_beta_commands.sql",
+    "0007_telegram_delivery.sql",
+)
+# Existing BETA installations may legitimately omit opt-in credential key
+# migration 0004 and Telegram delivery migration 0007. Neither is installed
+# here; any observed optional version still needs its exact packaged checksum.
+_REQUIRED_LEGACY = frozenset({1, 2, 3, 5, 6})
 
 Component = Literal["bot", "chromium"]
 Target = Literal["start", "stop"]
@@ -66,7 +82,21 @@ class LifecycleHostCoordinates:
 
     def validate(self) -> None:
         if (
-            not _ATTEMPT.fullmatch(self.attempt_id)
+            any(
+                type(value) is not str
+                for value in (
+                    self.attempt_id,
+                    self.request_id,
+                    self.component,
+                    self.target,
+                    self.source_sha,
+                    self.controller_id,
+                    self.controller_image,
+                    self.worker_id,
+                    self.worker_image,
+                )
+            )
+            or not _ATTEMPT.fullmatch(self.attempt_id)
             or not _SHA.fullmatch(self.source_sha)
             or not _ID.fullmatch(self.controller_id)
             or not _ID.fullmatch(self.worker_id)
@@ -199,6 +229,16 @@ def _identity(path: Path) -> tuple[int, int]:
         raise LifecycleHostUnavailable("Boca lifecycle database identity unavailable") from None
 
 
+@lru_cache(maxsize=1)
+def _reviewed_legacy_migrations() -> dict[int, str]:
+    """Hash the *packaged, reviewed* migration SQL; never adopt host-supplied hashes."""
+    package = files("boca_socios.storage.migrations")
+    return {
+        version: hashlib.sha256(package.joinpath(filename).read_bytes()).hexdigest()
+        for version, filename in enumerate(_MIGRATION_FILES, start=1)
+    }
+
+
 @contextmanager
 def _controller_ledger(path: Path) -> Iterator[sqlite3.Connection]:
     """Existing SQLite RW-only; no implicit create, recovery or migration."""
@@ -211,19 +251,31 @@ def _controller_ledger(path: Path) -> Iterator[sqlite3.Connection]:
             connection.execute("PRAGMA foreign_keys=ON")
             if _identity(path) != before:
                 raise LifecycleHostUnavailable("Boca lifecycle database inode changed")
+            # Schema attestation and protected CLAIM/ACK must share the same
+            # SQLite writer transaction. Otherwise a concurrent owner 0008
+            # migration could commit after this check but before CLAIMED.
+            connection.execute("BEGIN IMMEDIATE")
             # Legacy controller 0008 is forbidden even if another process
             # previously added a checksum/table that appears valid.
-            versions = {
-                row[0] for row in connection.execute("SELECT version FROM schema_migrations")
-            }
+            rows = connection.execute(
+                "SELECT version,checksum FROM schema_migrations ORDER BY version LIMIT 9"
+            ).fetchall()
+            expected = _reviewed_legacy_migrations()
+            versions = {version for version, _ in rows}
             tables = {
                 row[0]
                 for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
             }
             if (
-                1 not in versions
+                len(rows) > len(expected)
+                or len(versions) != len(rows)
+                or not _REQUIRED_LEGACY.issubset(versions)
                 or any(
-                    type(version) is not int or version < 1 or version > 7 for version in versions
+                    type(version) is not int
+                    or version not in expected
+                    or type(checksum) is not str
+                    or checksum != expected[version]
+                    for version, checksum in rows
                 )
                 or "audit_events" not in tables
                 or "owner_browser_session" in tables
@@ -267,7 +319,6 @@ def _append(
     verify_protected_boca_job_lease(lease, coordinates.attempt_id)
     marker = host_marker(coordinates.request_id, coordinates.component, coordinates.target, phase)
     with _controller_ledger(coordinates.database_path) as connection, connection:
-        connection.execute("BEGIN IMMEDIATE")
         # UNCERTAIN may be resolved by a later positive poststate (same
         # reviewed coordinates), but cannot be silently skipped or reset.
         if not any(_current_matches(connection, coordinates, candidate) for candidate in expected):
