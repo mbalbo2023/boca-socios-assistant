@@ -17,9 +17,9 @@ from pathlib import Path
 from typing import Literal
 
 from boca_socios.host_boca_cleanup import BocaJobLease, verify_protected_boca_job_lease
+from boca_socios.host_telegram_production_reader import TelegramProductionDockerIO
 from boca_socios.host_lifecycle_rootless_adapter import (
     LifecycleDockerIO,
-    ProductionRootlessDockerIO,
 )
 from boca_socios.host_telegram_postcutover import (
     TelegramHostPins,
@@ -189,7 +189,7 @@ def observe_owner_stage_under_same_lease(
         ):
             raise TelegramOwnerStageNoGo("boca_telegram_cutover_coordinate_mismatch")
         verify_protected_boca_job_lease(lease, pins.attempt_id)
-        reader = ProductionRootlessDockerIO() if io is None else io
+        reader = TelegramProductionDockerIO() if io is None else io
         observe_telegram_host(pins, lease=lease, io=reader)
         data, owner = _verified_host_volumes(reader)
         subject = _controller_owner_subject(reader, pins.controller_id)
