@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -14,7 +15,7 @@ from boca_socios.events.official_capture_binding import (
     build_official_snapshot_jsonl,
 )
 from boca_socios.events.official_catalog import load_observed_notice
-
+from boca_socios.events.official_snapshot import OFFICIAL_SNAPSHOT_NAME, load_official_snapshot
 
 FAKE_PUBLIC_HTML = b"""<!doctype html><html lang="es"><body><main><article>
 <h1>Boca ante rival completamente ficticio</h1>
@@ -88,6 +89,16 @@ def test_empty_capture_selection_yields_empty_jsonl_without_fake_event() -> None
     assert build_official_snapshot_jsonl(()) == ""
 
 
+def test_generated_synthetic_jsonl_is_accepted_by_strict_offline_reader(tmp_path: Path) -> None:
+    snapshot = tmp_path / OFFICIAL_SNAPSHOT_NAME
+    snapshot.write_text(build_official_snapshot_jsonl((_capture(),)), encoding="utf-8")
+    snapshot.chmod(0o600)
+    notices = load_official_snapshot(snapshot)
+    assert len(notices) == 1
+    assert notices[0].verification_state == "SOURCE_OBSERVED_UNVERIFIED"
+    assert notices[0].actionable is False
+
+
 def test_unbound_or_tampered_capture_digest_is_rejected() -> None:
     capture = _capture()
     altered = replace(capture, source_html=FAKE_PUBLIC_HTML + b" ")
@@ -121,6 +132,30 @@ def test_script_only_html_text_does_not_count_as_source_evidence() -> None:
     capture = _capture(html=only_script)
     with pytest.raises(OfflineCaptureError, match="excerpt"):
         build_official_snapshot_jsonl((capture,))
+
+
+@pytest.mark.parametrize(
+    "hidden_fragment",
+    [
+        "<section hidden>Boca ante rival completamente ficticio</section>",
+        '<section aria-hidden="true">Boca ante rival completamente ficticio</section>',
+        '<section style="display: none">Boca ante rival completamente ficticio</section>',
+    ],
+)
+def test_hidden_html_text_does_not_count_as_reviewable_evidence(hidden_fragment: str) -> None:
+    html = FAKE_PUBLIC_HTML.replace(
+        b"<h1>Boca ante rival completamente ficticio</h1>",
+        hidden_fragment.encode("utf-8"),
+    )
+    with pytest.raises(OfflineCaptureError, match="excerpt"):
+        build_official_snapshot_jsonl((_capture(html=html),))
+
+
+def test_claim_title_must_be_supported_by_visible_title_excerpt() -> None:
+    changed = json.loads(_capture().notice_json)
+    changed["title"] = "Otra noticia ficticia que no figura en el titulo"
+    with pytest.raises(OfflineCaptureError, match="title claim"):
+        build_official_snapshot_jsonl((replace(_capture(), notice_json=json.dumps(changed)),))
 
 
 def test_claimed_channel_must_also_appear_in_readable_source_text() -> None:

@@ -220,3 +220,81 @@ de socios, SQLite, Docker o el host. Sus pruebas crean sólo archivos
 de `runtime`/panel (propiedad del integrador #319), QA combinada, validación
 real de fuente/procedencia, y recepción física del owner. Esta extensión no
 autoriza merge, release o cutover y no convierte noticias en `TicketIntent`.
+
+## Extensión R7 — vínculo criptográfico de captura pública preexistente
+
+La búsqueda de fuente oficial 04/11 constató artículos públicos del club:
+
+- [Boca-Defensa del 03/11](https://www.bocajuniors.com.ar/noticias/boca-defensa-informacion-al-socio):
+  fecha del encuentro, horas diferenciadas por categoría, abreviaturas
+  «hs.» y condición de cierre «apertura del estadio». Esta última **no**
+  constituye un horario de cierre fijo.
+- [Final a la vista del 02/11](https://www.bocajuniors.com.ar/noticias/final-a-la-vista):
+  confirma que una noticia oficial puede informar venta en plataforma de
+  CONMEBOL, no en Boca Socios. Su condición externa **no** habilita ningún
+  integrador de ese proveedor.
+
+Los enlaces y extractos públicos son evidencia **de contenido indexado**, no
+un recibo propio de adquisición HTTPS/TLS ni los bytes HTML que se usarán en
+una transcripción. Tampoco se verificó API/feed estable autorizado ni un
+esquema de avisos versionado. Por eso el estado de producción de eventos
+permanece **NO_VERIFICADO**: no se entregan observaciones reales, no se
+inventa un `source_sha256`, no se encola captura del sitio de socios, no se
+activa ninguna escritura en host y el lector opcional devuelve catálogo vacío
+cuando el snapshot no existe.
+
+Para cerrar parcialmente la brecha probatoria sin declarar origen auténtico,
+`events.official_capture_binding` implementa exclusivamente una función pura:
+
+`build_official_snapshot_jsonl(captures: Iterable[OfflineCapture]) -> str`
+
+Cada `OfflineCapture` debe recibirse **ya preparado**, con los bytes de una
+página pública, el aviso JSON v1/v2 revisado y fragmentos **literales** para
+título, fecha de publicación, inicio del partido y **cada** ventana, más el
+extracto de canal v2. La función:
+
+1. Limita a 20 capturas, hasta 1 MiB de HTML UTF-8 por captura y 16.384 bytes
+   por aviso; consume como máximo el elemento 21 de cualquier generador.
+2. Recalcula SHA-256 de los bytes efectivamente proporcionados y rechaza si
+   difiere del `source_sha256` de la observación; comprueba que los extractos
+   aparezcan en texto del cuerpo HTML, excluyendo scripts, estilos y algunos
+   elementos ocultos, y que el título declarado esté cubierto por el extracto.
+3. Reutiliza `load_observed_notice` y `build_observed_catalog` para el
+   contrato estricto de URL pública, categorías, horarios ART, canales,
+   duplicados y estado invariablemente **`SOURCE_OBSERVED_UNVERIFIED`**.
+4. Devuelve sólo JSONL canónico acotado, adecuado para el lector R6 **sin
+   guardar ni publicar ningún archivo**. `actionable=False` permanece
+   inalterable. La función nunca abre URL, socket, navegador, ruta de host,
+   sesión de socios, base SQLite, token o fichero local.
+
+Esta prueba vincula **bytes entregados por un tercero** con texto y hash, no
+autentica que los bytes hayan venido de la URL indicada; tampoco demuestra
+que una fecha se haya interpretado correctamente, que el horario ART figure
+explícitamente en la noticia, ni que se pueda comprar una entrada. La
+verificación semántica y la cadena de custodia son tareas separadas.
+
+### Cadena de procedencia pendiente (NO_GO de datos reales)
+
+1. **Origen:** un futuro productor read-only específico y autorizado para
+   páginas **públicas** deberá adjuntar evidencia verificable de URL final,
+   respuesta HTTP, TLS, fecha/hora de captura, bytes íntegros, SHA-256,
+   run/SHA de Action y ausencia de credenciales o redirecciones a login.
+   No se implementa tal productor en este PR.
+2. **Revisión:** un responsable deberá revisar contra el artículo exacto
+   fecha/hora local, sector, categorías, vigencia y canal; marcar toda
+   ambigüedad como no verificada. Las ventanas no publicadas no se deducen
+   del fixture. No puede transformar un aviso informativo en orden.
+3. **Generación:** con la captura íntegra y la revisión, el helper offline
+   vinculará hash/extractos y generará un candidato JSONL. QA repetirá
+   mismas pruebas contra ese artefacto **antes** de considerarlo publicable.
+4. **Distribución:** sólo el dueño del cutover posterior, con GO independiente,
+   podrá definir cómo entregar de forma atómica y con permisos exactos ese
+   snapshot **al volumen Boca ya existente**; esta rama no modifica host,
+   archivo real, `runtime`, UI, Docker ni workflows de despliegue.
+
+Las 22 pruebas nuevas son deliberadamente sintéticas (incluyen digest
+alterado, supuesta fuente privada, extractos ausentes, scripts/HTML oculto,
+duplicados, generador acotado y compatibilidad con el lector R6). Una batería verde prueba la seguridad
+**del transformador**, no certifica que existan datos reales frescos en la
+tablet. Documentar HEAD/tree exactos y resultados de GitHub Actions en #314
+antes de solicitar integración por el owner.
