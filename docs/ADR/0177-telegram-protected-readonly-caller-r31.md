@@ -1,4 +1,4 @@
-# ADR0176 — Telegram R31: enlace de lectura protegido con atestación de helper por fase
+# ADR0177 — Telegram R31: enlace de lectura protegido con atestación de helper por fase
 
 **Fecha:** 2026-11-05 ART · Issues #315/#357/#45 · Rama apilada sobre
 PR #388, HEAD base `3e35bedcdec1d170d724ca8c8336e1a5fa9e5b1d`.
