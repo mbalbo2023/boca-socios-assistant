@@ -871,3 +871,133 @@ def test_postflight_public_receipt_refuses_non_boca_or_persistent_targets(
     receipt = gc.CleanupReceipt("SUCCESS", ATTEMPT, "ACCEPT", disk, disk, (unsafe,), (), ())
     with pytest.raises(gc.CleanupError):
         receipt.redacted_json()
+
+
+def test_unlabelled_retired_legacy_image_requires_exact_precommit_attestation() -> None:
+    """RCA #323: old revision-only release is not silently accepted after COMMITTED."""
+    original = _inventory()
+    retained = replace(
+        original,
+        containers=(original.containers[0],),
+        networks=original.networks[:1],
+        volumes=original.volumes[:3],
+        images=tuple(
+            replace(
+                image,
+                source=None,
+                references=(
+                    "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "7" * 64,
+                ),
+            )
+            if image.ident == OLD_IMAGE
+            else image
+            for image in original.images
+        ),
+    )
+    no_proof, no_remove, no_deleted = _probe_and_delete(retained)
+    unverified = gc.execute(
+        "SUCCESS",
+        ATTEMPT,
+        preserve_images=frozenset(),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset(),
+        probe=no_proof,
+        delete_exact=no_remove,
+    )
+    assert unverified.status == "INDETERMINATE"
+    assert no_deleted == []
+
+    attested = replace(
+        retained,
+        images=tuple(
+            replace(image, historical_legacy_attested=True)
+            if image.ident == OLD_IMAGE
+            else image
+            for image in retained.images
+        ),
+    )
+    probe, remove, deleted = _probe_and_delete(attested)
+    receipt = gc.execute(
+        "SUCCESS",
+        ATTEMPT,
+        preserve_images=frozenset(),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset(),
+        probe=probe,
+        delete_exact=remove,
+    )
+    assert receipt.status == "ACCEPT"
+    assert deleted == [gc.Target("image", OLD_IMAGE)]
+    assert receipt.removed == tuple(deleted)
+    assert OLD_IMAGE not in {image.ident for image in probe().images}
+    assert ACTIVE_IMAGE in {image.ident for image in probe().images}
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["foreign-tag", "wrong-revision", "missing-digest", "foreign-source", "wrong-id"],
+)
+def test_legacy_image_attestation_rejects_foreign_alias_or_identity_drift(
+    monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    reference = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "1" * 64
+    revision = "a" * 40
+    fields: dict[str, object] = {
+        "Id": OLD_IMAGE,
+        "RepoTags": [],
+        "RepoDigests": [reference],
+        "Config.Labels": {"org.opencontainers.image.revision": revision},
+    }
+    if change == "foreign-tag":
+        fields["RepoTags"] = ["ghcr.io/third-party/foreign:shared"]
+    elif change == "wrong-revision":
+        fields["Config.Labels"] = {"org.opencontainers.image.revision": "b" * 40}
+    elif change == "missing-digest":
+        fields["RepoDigests"] = []
+    elif change == "foreign-source":
+        fields["Config.Labels"] = {
+            "org.opencontainers.image.revision": revision,
+            "org.opencontainers.image.source": "https://github.com/elsewhere/project",
+        }
+    else:
+        fields["Id"] = ACTIVE_IMAGE
+    inspected: list[str] = []
+
+    def narrow(kind: gc.KIND, ident: str, field: str) -> object:
+        assert kind == "image" and ident == OLD_IMAGE
+        inspected.append(field)
+        assert field != "Config.Env"
+        return fields[field]
+
+    monkeypatch.setattr(gc, "_inspect_field", narrow)
+    with pytest.raises(gc.CleanupError):
+        gc.attest_historical_legacy_image(OLD_IMAGE, reference, revision)
+    assert inspected
+
+
+def test_legacy_image_attestation_reads_only_old_boca_image_allowlisted_fields(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reference = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "1" * 64
+    revision = "a" * 40
+    fields: dict[str, object] = {
+        "Id": OLD_IMAGE,
+        "RepoTags": ["ghcr.io/mbalbo2023/boca-socios-assistant:legacy"],
+        "RepoDigests": [reference],
+        "Config.Labels": {"org.opencontainers.image.revision": revision},
+    }
+    calls: list[str] = []
+
+    def narrow(kind: gc.KIND, ident: str, field: str) -> object:
+        assert kind == "image" and ident == OLD_IMAGE
+        assert field in {"Id", "RepoTags", "RepoDigests", "Config.Labels"}
+        calls.append(field)
+        return fields[field]
+
+    monkeypatch.setattr(gc, "_inspect_field", narrow)
+    proof = gc.attest_historical_legacy_image(OLD_IMAGE, reference, revision)
+    assert proof == gc.LegacyImageProof(OLD_IMAGE, reference, revision)
+    references, source = gc._verify_historical_legacy_image(proof)
+    assert references == tuple(sorted((reference, fields["RepoTags"][0])))
+    assert source is None
+    assert "Config.Env" not in calls
