@@ -139,7 +139,7 @@ def _lease() -> BocaJobLease:
         ("version", "1"),
         ("kind", "lifecycle"),
         ("attempt_id", "0"),
-        ("source_sha", "0" * 40),
+        ("source_sha", "z" * 40),
         ("controller_id", "abc"),
         ("controller_image", "ghcr.io/evil@sha256:" + "a" * 64),
         ("worker_image", "ghcr.io/evil@sha256:" + "a" * 64),
@@ -178,7 +178,7 @@ def test_observes_boca_topology_but_never_authorizes(
     tmp_path: Path, stopped_sender: bool
 ) -> None:
     io = _fake(tmp_path, stopped_sender=stopped_sender)
-    result = host.observe_telegram_host(_pins(stopped_sender=stopped_sender), lease=_lease(), io=io)
+    result = host.observe_telegram_host(\n        _pins(stopped_sender=stopped_sender), lease=_lease(), io=io\n    )
     assert result.phase == "TOPOLOGY_OBSERVED_NOT_AUTHORIZED"
     assert result.authorized is False
     assert result.host_effects is False
