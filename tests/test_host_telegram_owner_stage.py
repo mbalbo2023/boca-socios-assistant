@@ -7,6 +7,7 @@ Injected IO and simulated lease MUST NEVER produce activation authority.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import secrets
 import time
@@ -30,6 +31,7 @@ from boca_socios.panel.telegram_pairing_staging import (
 )
 from boca_socios.telegram_owner_webauthn import TelegramStageOwnerWitness, stage_owner_challenge
 from boca_socios.telegram_pairing_cutover import CutoverCoordinates
+from test_host_lifecycle_rootless_adapter import FakeIO
 from test_host_telegram_postcutover import _fake, _lease, _pins
 from test_telegram_owner_webauthn import _envelope, _signed
 
@@ -41,7 +43,7 @@ def _prepared(
     monkeypatch: pytest.MonkeyPatch,
     *,
     with_witness: bool = True,
-) -> tuple[topology.TelegramHostPins, CutoverCoordinates, BocaJobLease, object, Path]:
+) -> tuple[topology.TelegramHostPins, CutoverCoordinates, BocaJobLease, FakeIO, Path]:
     root = tmp_path / "volumes"
     data = root / "boca-socios_boca_data" / "_data"
     owner = root / "boca-socios_boca_owner" / "_data"
@@ -79,7 +81,7 @@ def _prepared(
         clock=lambda: 100.0,
     )
     envelope = _envelope()
-    recipient_fingerprint = __import__("json").loads(envelope)["recipient_fingerprint"]
+    recipient_fingerprint = json.loads(envelope)["recipient_fingerprint"]
     pins = replace(_pins(), recipient_fingerprint=recipient_fingerprint)
     coords = CutoverCoordinates(
         pins.attempt_id,
