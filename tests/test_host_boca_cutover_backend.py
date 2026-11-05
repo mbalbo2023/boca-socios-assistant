@@ -550,3 +550,34 @@ def test_host_data_volume_attestor_requires_stopped_single_owner_only(
     else:
         with pytest.raises((cutover.CutoverError, OSError)):
             adapter._legacy_disk_identity(plan)
+
+
+def test_prepared_cutover_backend_aborts_on_missing_durable_marker(
+    fake_host: tuple[list[str], Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events, _ = fake_host
+    source = adapter.ReviewedCutoverSources(BASE, OVERLAY, SECCOMP, SQL)
+    bootstrap = _backend(events).session_bootstrap
+    assert bootstrap is not None
+    monkeypatch.setattr(
+        adapter.ReviewedCutoverSources,
+        "from_verified_zip",
+        classmethod(lambda _cls: source),
+    )
+    monkeypatch.setattr(adapter, "_stdlib_session_bootstrap", lambda: bootstrap)
+    monkeypatch.setattr(terminal, "prepare_destination", lambda *_a: events.append("intent"))
+    monkeypatch.setattr(terminal, "write_once", lambda *_a, **_k: events.append("terminal"))
+    monkeypatch.setattr(adapter.host, "_validate_docker_boundary", lambda: events.append("rootless"))
+    monkeypatch.setattr(adapter.host, "_validate_data_volume", lambda: events.append("volume"))
+    def failed_exec(*args: str, **kwargs: object) -> str:
+        if args[:2] == ("docker", "exec"):
+            events.append("marker-uncertain")
+            raise adapter.CutoverError("marker not durably recorded")
+        raise AssertionError("unexpected host call")
+
+    monkeypatch.setattr(adapter.host, "_run", failed_exec)
+    result = adapter.execute_reviewed_cutover(_plan(), prepare_run_id="50000000001")
+    assert not result.accepted
+    assert events[:5] == ["intent", "attest", "rootless", "volume", "marker-uncertain"]
+    assert "pull" not in events and "park" not in events

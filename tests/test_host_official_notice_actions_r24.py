@@ -321,3 +321,38 @@ def test_official_prepared_context_binds_known_prepare_not_unknown_apply_run() -
         )
     # A PREPARE context is never a legacy single-run GO approval.
     assert prepared != _approved(coords)
+
+
+def test_prepared_import_go_o_excl_survives_crash_and_refuses_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from boca_socios.events.host_official_notice_import import OfficialImportError
+
+    tmp_path.chmod(0o700)
+    monkeypatch.setattr(actions, "_DATA", tmp_path)
+    monkeypatch.setattr(actions.os, "geteuid", lambda: 10_001)
+    monkeypatch.setattr(actions, "_verified_jsonl", lambda *_args: b"synthetic")
+    writes: list[int] = []
+
+    def broken_import(*_args: object, **_kwargs: object) -> object:
+        writes.append(1)
+        raise OfficialImportError("synthetic crash after prepared marker")
+
+    monkeypatch.setattr(actions, "import_reviewed_official_artifact", broken_import)
+    with pytest.raises(actions.OfficialImportActionError):
+        actions.import_from_container_stdin(
+            _coords(), b"fake-reviewed-zip",
+            data_dir=tmp_path,
+            prepare_run_id="50000000001",
+        )
+    marker = tmp_path / ".boca-official-import-go-50000000001.json"
+    assert marker.is_file()
+    assert marker.stat().st_mode & 0o777 == 0o600
+    assert writes == [1]
+    with pytest.raises(actions.OfficialImportActionError, match="consumed"):
+        actions.import_from_container_stdin(
+            _coords(), b"fake-reviewed-zip",
+            data_dir=tmp_path,
+            prepare_run_id="50000000001",
+        )
+    assert writes == [1]

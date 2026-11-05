@@ -237,3 +237,43 @@ def test_cutover_contract_cannot_be_dispatched_without_independent_protected_go(
     assert "BOCA_CUTOVER_A_PR_VERIFY state=SOURCE_ONLY" in workflow
     assert "boca-cutover-a-host.receipt" in workflow
     assert "run_cutover_a" not in workflow
+
+
+def test_prepared_go_consumes_under_same_lease_after_attestation_before_stage() -> None:
+    host = FakeHost()
+    consume_events: list[str] = []
+
+    def consume(
+        plan: cutover.CutoverPlan, prepare_run_id: str, lease: cleanup.BocaJobLease
+    ) -> None:
+        cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+        assert prepare_run_id == "50000000001"
+        assert host.events == ["attest"]
+        consume_events.append("prepared-once")
+
+    accepted = cutover.run_cutover_a(
+        _plan(),
+        backend=host,
+        prepare_run_id="50000000001",
+        prepared_go_consumer=consume,
+    )
+    assert accepted.accepted
+    assert consume_events == ["prepared-once"]
+    assert host.events[:2] == ["attest", "stage"]
+
+
+def test_prepared_go_missing_or_failing_consumer_never_stages() -> None:
+    host = FakeHost()
+    with pytest.raises(cutover.CutoverError, match="consumer"):
+        cutover.run_cutover_a(_plan(), backend=host, prepare_run_id="50000000001")
+    assert host.events == []
+    failed = cutover.run_cutover_a(
+        _plan(),
+        backend=host,
+        prepare_run_id="50000000001",
+        prepared_go_consumer=lambda *_args: (_ for _ in ()).throw(
+            cutover.CutoverError("prepared GO marker ambiguous")
+        ),
+    )
+    assert not failed.accepted
+    assert host.events == ["attest"]
