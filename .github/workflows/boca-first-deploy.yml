@@ -1754,7 +1754,7 @@ jobs:
           observer_rc=$?
           set -e
           if [[ "$observer_rc" -ne 0 ]]; then
-            printf 'BOCA_POSTAPPLY_RECONCILE state=INDETERMINATE reason=host_observation_failed host_writes=0 retry=NO_GO; do not prune or reapply.\n' >> "$GITHUB_STEP_SUMMARY"
+            printf 'BOCA_POSTAPPLY_RECONCILE state=INDETERMINATE reason=host_observation_failed scope=OBSERVER_ONLY observer_writes=0 prior_apply_effects=UNKNOWN retry=NO_GO; do not prune or reapply.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           python3 scripts/host_cutover_postapply_reconcile.py verify \
