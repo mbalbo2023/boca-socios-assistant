@@ -376,7 +376,7 @@ def observe_cutover_inventory(
         return first
     except CutoverInventoryNoGo:
         raise
-    except (cleanup.CleanupError, OSError, TypeError, ValueError, RuntimeError):
+    except (cleanup.CleanupError, OSError, KeyError, TypeError, ValueError, RuntimeError):
         raise CutoverInventoryNoGo("Boca rootless inventory observation unverified") from None
 
 
@@ -572,6 +572,7 @@ def observe_official_inventory(
         cleanup.CleanupError,
         RuntimeError,
         OSError,
+        KeyError,
         TypeError,
         ValueError,
     ):
