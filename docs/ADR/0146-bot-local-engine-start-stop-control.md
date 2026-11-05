@@ -1,7 +1,8 @@
 # ADR0146 — Motor sintético local Start/Stop real sin apagar panel
 
-Fecha: 2026-11-05 ART  
-Estado: **DRAFT / código y regresiones solamente / NO_GO físico**  
+Fecha: 2026-11-05 ART
+
+Estado: **DRAFT / código y regresiones solamente / NO_GO físico**
 Ownership: issue #328, candidato posterior a A45-R21 / PR #319.
 
 ## RCA verificado
