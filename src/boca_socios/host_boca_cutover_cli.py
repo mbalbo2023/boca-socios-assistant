@@ -27,6 +27,7 @@ MAX_INVOCATION_BYTES = 4096
 MAX_BUNDLE_BYTES = 512_000
 _TOKEN = re.compile(r"[A-Za-z0-9_-]{1,5462}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
+_PREPARE_ID = re.compile(r"[1-9][0-9]{0,19}\Z")
 
 
 class CutoverCliError(ValueError):
