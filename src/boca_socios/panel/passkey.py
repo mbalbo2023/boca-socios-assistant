@@ -129,6 +129,7 @@ class PasskeyOwnerAuthentication:
         self._clock = clock
         self._lock = Lock()
         self._challenges: dict[bytes, float] = {}
+        self._telegram_challenges: dict[bytes, float] = {}
         self._next_challenge = 0.0
         self._last_counter = 0
 
@@ -207,3 +208,81 @@ class PasskeyOwnerAuthentication:
             return OwnerIdentity(self._owner, self._permissions)
         except (ValueError, TypeError, KeyError, InvalidSignature, UnicodeError):
             return None
+
+    def issue_telegram_stage_challenge(self, signed_transcript: bytes) -> bool:
+        """Issue one fresh, purpose-bound challenge without changing login flow."""
+        if type(signed_transcript) is not bytes or len(signed_transcript) != 32:
+            return False
+        with self._lock:
+            now = self._clock()
+            self._telegram_challenges = {
+                item: expiry
+                for item, expiry in self._telegram_challenges.items()
+                if expiry > now
+            }
+            if now < self._next_challenge or len(self._telegram_challenges) >= 8:
+                return False
+            self._next_challenge = now + 1.0
+            self._telegram_challenges[signed_transcript] = now + 120.0
+            return True
+
+    def verify_telegram_stage_assertion(
+        self, proof: PasskeyAssertion, signed_transcript: bytes
+    ) -> OwnerIdentity | None:
+        """Consume a one-use controller-issued challenge; verify true owner UV."""
+        if type(signed_transcript) is not bytes or len(signed_transcript) != 32:
+            return None
+        with self._lock:
+            expiry = self._telegram_challenges.pop(signed_transcript, 0)
+            if expiry <= self._clock():
+                return None
+        if not self.verify_public_telegram_stage_signature(proof, signed_transcript):
+            return None
+        # Host restarts cannot use an in-memory hardware counter as a durable
+        # anti-replay ledger; the challenge map and O_EXCL stage are the gates.
+        return OwnerIdentity(self._owner, self._permissions)
+
+    def verify_public_telegram_stage_signature(
+        self, proof: PasskeyAssertion, signed_transcript: bytes
+    ) -> bool:
+        """Pure public-key validation for a HOST recheck after controller exit.
+
+        This does NOT check the controller's one-shot challenge registry and
+        does NOT assert lease, owner/session cookie, or Telegram authorization.
+        """
+        if (
+            not isinstance(proof, PasskeyAssertion)
+            or type(signed_transcript) is not bytes
+            or len(signed_transcript) != 32
+        ):
+            return False
+        try:
+            credential_id = _decode(proof.credential_id, limit=1024)
+            client_data = _decode(proof.client_data_json, limit=4096)
+            authenticator = _decode(proof.authenticator_data, limit=1024)
+            signature = _decode(proof.signature, limit=256)
+            if not hmac.compare_digest(credential_id, self._credential_id):
+                return False
+            data = json.loads(client_data, object_pairs_hook=_unique_pairs)
+            if (
+                not isinstance(data, dict)
+                or data.get("type") != "webauthn.get"
+                or data.get("origin") != self._origin
+                or data.get("crossOrigin", False) is not False
+                or "topOrigin" in data
+                or not hmac.compare_digest(
+                    _decode(data.get("challenge"), limit=32), signed_transcript
+                )
+                or not 37 <= len(authenticator) <= 1024
+                or not hmac.compare_digest(authenticator[:32], self._rp_id_hash)
+                or authenticator[32] & 0x05 != 0x05
+            ):
+                return False
+            self._key.verify(
+                signature,
+                authenticator + hashlib.sha256(client_data).digest(),
+                ec.ECDSA(hashes.SHA256()),
+            )
+            return True
+        except (ValueError, TypeError, KeyError, InvalidSignature, UnicodeError):
+            return False
