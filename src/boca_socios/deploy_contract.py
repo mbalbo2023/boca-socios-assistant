@@ -328,6 +328,11 @@ def validate_beta_browser_contract(
     )
     environment = _mapping(controller["environment"], "browser-ipc-v2 controller environment")
     _equal(environment.get("BOCA_BROWSER_BACKEND"), "ipc", "explicit IPC backend")
+    _equal(
+        environment.get("BOCA_TELEGRAM_PAIRING_STAGE_MODE"),
+        "encrypted-only",
+        "encrypted-only Telegram V2 staging on reviewed IPC controller",
+    )
     mounts = _list(controller["volumes"], "browser-ipc-v2 controller mounts")
     if len(mounts) != 4:
         raise ContractError("browser-ipc-v2 controller must have exactly one extra RO mount")
@@ -435,6 +440,7 @@ def validate_beta_browser_contract(
     del legacy_controller["labels"]
     legacy_environment = cast(dict[str, object], legacy_controller["environment"])
     del legacy_environment["BOCA_BROWSER_BACKEND"]
+    del legacy_environment["BOCA_TELEGRAM_PAIRING_STAGE_MODE"]
     legacy_mounts = cast(list[object], legacy_controller["volumes"])
     legacy_controller["volumes"] = legacy_mounts[:3]
     del legacy_services["browser-worker"]
