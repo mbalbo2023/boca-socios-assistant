@@ -231,3 +231,36 @@ def test_lifecycle_observer_memfd_stdlib_and_readonly_no_context(tmp_path: Path)
     assert missing.returncode == 3
     assert missing.stdout == b""
     assert missing.stderr == b"BOCA_LIFECYCLE_OBSERVE state=NO_GO\n"
+
+
+def test_cutover_inventory_observer_in_protected_memfd_without_host(tmp_path: Path) -> None:
+    output, digest = _build(tmp_path)
+    raw = output.read_bytes()
+    with zipfile.ZipFile(io.BytesIO(raw)) as package:
+        names = set(package.namelist())
+        assert "boca_socios/host_cutover_inventory_observe.py" in names
+        assert "boca_socios/browser/synthetic.py" not in names
+        assert "boca_socios/browser/ipc_worker.py" not in names
+    smoke = _run(raw, digest, "cutover-inventory-selftest", stdlib_only=True)
+    assert smoke.returncode == 0, (smoke.stdout, smoke.stderr)
+    assert smoke.stdout == (
+        b"BOCA_CUTOVER_INVENTORY_MEMFD state=PASS host=untouched blackbox=excluded\n"
+    )
+    missing = _run(raw, digest, "cutover-inventory-observe", stdlib_only=True)
+    assert missing.returncode == 3
+    assert missing.stdout == b""
+    assert missing.stderr == b"BOCA_CUTOVER_INVENTORY_OBSERVE state=NO_GO\n"
+
+
+def test_official_inventory_observer_in_memfd_without_mutation(tmp_path: Path) -> None:
+    output, digest = _build(tmp_path)
+    raw = output.read_bytes()
+    smoke = _run(raw, digest, "official-inventory-selftest", stdlib_only=True)
+    assert smoke.returncode == 0, (smoke.stdout, smoke.stderr)
+    assert smoke.stdout == (
+        b"BOCA_OFFICIAL_INVENTORY_MEMFD state=PASS host=untouched blackbox=excluded\n"
+    )
+    missing = _run(raw, digest, "official-inventory-observe", stdlib_only=True)
+    assert missing.returncode == 3
+    assert missing.stdout == b""
+    assert missing.stderr == b"BOCA_OFFICIAL_INVENTORY_OBSERVE state=NO_GO\n"
