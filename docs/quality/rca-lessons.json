@@ -503,6 +503,16 @@
         "tests/test_host_first_deploy.py::test_unsafe_host_snapshot_is_no_go",
         "tests/test_host_beta_acceptance.py::test_installed_headroom_is_advisory_but_invalid_metadata_and_network_are_rejected"
       ]
+    },
+    {
+      "id": "RCA-373",
+      "issue": 373,
+      "fix_pr": 378,
+      "root_cause": "Protected Cutover A PREPARE run 42073058087 failed while observing Boca rootless controller (exit 3, diagnostic stderr suppressed). The production observer reused cleanup._inspect_field, whose cleanup-only allowlist rejected observer-required Docker fields including Config.Image, HostConfig.*, State.Health.Status and volume Mountpoint. FakeIO tests did not exercise the production adapter. Because the protected failure suppressed stderr, this mismatch is demonstrated in code but cannot be asserted as the first host error.",
+      "prevention": "Keep cleanup's restrictive allowlist unchanged; the production observer must instead use an exact field-only, read-only Docker inspect projection with pinned rootless UID/GID10001, validated SHA64 container IDs and exact Boca volume. Reject Config.Env, arbitrary IDs, and foreign paths/volumes. Cover the real adapter with deterministic regression tests before a new PREPARE gate.",
+      "regression_tests": [
+        "tests/test_host_cutover_inventory_observe.py::test_real_adapter_uses_only_explicit_rootless_inspect_fields"
+      ]
     }
   ]
 }
