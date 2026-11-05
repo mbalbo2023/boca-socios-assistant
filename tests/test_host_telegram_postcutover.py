@@ -182,13 +182,9 @@ def test_sender_stopped_requires_all_four_exact_pins() -> None:
 
 
 @pytest.mark.parametrize("stopped_sender", [False, True])
-def test_observes_boca_topology_but_never_authorizes(
-    tmp_path: Path, stopped_sender: bool
-) -> None:
+def test_observes_boca_topology_but_never_authorizes(tmp_path: Path, stopped_sender: bool) -> None:
     io = _fake(tmp_path, stopped_sender=stopped_sender)
-    result = host.observe_telegram_host(
-        _pins(stopped_sender=stopped_sender), lease=_lease(), io=io
-    )
+    result = host.observe_telegram_host(_pins(stopped_sender=stopped_sender), lease=_lease(), io=io)
     assert result.phase == "TOPOLOGY_OBSERVED_NOT_AUTHORIZED"
     assert result.authorized is False
     assert result.host_effects is False
@@ -288,9 +284,7 @@ def test_mount_and_port_drift_denied(tmp_path: Path) -> None:
 def test_lease_identity_enforced_before_docker(tmp_path: Path) -> None:
     io = _fake(tmp_path)
     with pytest.raises(AssertionError):
-        host.observe_telegram_host(
-            _pins(), lease=BocaJobLease("999", 9, os.getpid(), True), io=io
-        )
+        host.observe_telegram_host(_pins(), lease=BocaJobLease("999", 9, os.getpid(), True), io=io)
 
 
 def test_unrelated_credentials_never_enter_a_receipt(tmp_path: Path) -> None:
