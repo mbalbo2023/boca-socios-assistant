@@ -12,11 +12,13 @@ from urllib import request
 
 import pytest
 
+from boca_socios.events.official_catalog import load_observed_notice
 from boca_socios.events.official_news_receipt import (
     OFFICIAL_NEWS_URL,
     _NoRedirect,
     analyze_public_html,
     observe_public_news,
+    split_public_observation_envelope,
 )
 
 SYNTHETIC_ARTICLE = b"""<!doctype html><html><head>
@@ -31,6 +33,26 @@ SYNTHETIC_ARTICLE = b"""<!doctype html><html><head>
 <h2>SOCIOS VITALICIOS</h2><p>Desde 04/11 14 hs.</p>
 </main></body></html>"""
 SYNTHETIC_MAIN = SYNTHETIC_ARTICLE.split(b"<main>", 1)[1].split(b"</main>", 1)[0]
+
+SYNTHETIC_REVIEWED_ARTICLE = (
+    "<html><body><h1>Boca-Defensa: Información al socio</h1>"
+    "<p>November 3, 2026</p>"
+    "<p>Boca vuelve a jugar en casa este sábado 7 de noviembre a las 17.30 hs "
+    "ante Defensa y Justicia por la fecha 16 del Torneo Clausura.</p>"
+    "<p>Para alentar al equipo desde la tribuna, las socias y los socios deberán "
+    "adquirir su adicional a través de Boca Socios, de acuerdo con el siguiente "
+    "cronograma.</p>"
+    "<h2>GENERALES</h2>"
+    "<p>Socios activos e interior: desde el 03/11 a las 13 hs.</p>"
+    "<p>Socios adherentes: desde el 04/11 a las 17 hs.</p>"
+    "<h2>PLATEAS</h2>"
+    "<p>Confirmación de abonados: desde el 03/11 a las 14 hs "
+    "hasta el 06/11 a las 23:59 hs.</p>"
+    "<p>Abono solidario: desde el 03/11 a las 14 hs hasta la apertura del estadio.</p>"
+    "<h2>SOCIOS VITALICIOS</h2>"
+    "<p>Reserva de plateas y generales: desde el 04/11 a las 14 hs.</p>"
+    "</body></html>"
+).encode()
 
 
 class _FakeResponse:
@@ -171,6 +193,95 @@ def test_failed_network_does_not_expose_exception_or_fake_hash(
     assert receipt["reason"] == "transport_unavailable"
     assert receipt["source_sha256"] is None
     assert "ABC123" not in json.dumps(receipt)
+
+
+def test_one_public_get_mints_matching_redacted_receipt_and_nonactionable_jsonl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    response = _FakeResponse(SYNTHETIC_REVIEWED_ARTICLE)
+    calls = 0
+
+    class FakeOpener:
+        def open(self, requested: request.Request, *, timeout: float) -> _FakeResponse:
+            nonlocal calls
+            calls += 1
+            assert requested.full_url == OFFICIAL_NEWS_URL and 0 < timeout <= 8
+            return response
+
+    monkeypatch.setattr(request, "build_opener", lambda *_handlers: FakeOpener())
+    envelope = observe_public_news(
+        now=datetime(2026, 11, 5, 4, 22, 37, tzinfo=UTC), with_offline_snapshot=True
+    )
+    redacted, jsonl = split_public_observation_envelope(envelope)
+    assert calls == 1 and response.read_count == 1
+    assert redacted["state"] == "PUBLIC_PAGE_OBSERVED_UNVERIFIED"
+    assert redacted["offline_snapshot_state"] == "EXTRACTED_UNVERIFIED"
+    assert "offline_snapshot_jsonl" not in redacted
+    assert jsonl is not None and jsonl.endswith("\n") and jsonl.count("\n") == 1
+    assert len(jsonl.encode()) < 16_384
+    notice = json.loads(jsonl)
+    assert notice["source_url"] == redacted["source_url"] == OFFICIAL_NEWS_URL
+    assert notice["source_sha256"] == redacted["source_sha256"]
+    assert notice["observed_at"] == "2026-11-05T01:22-03:00"
+    assert load_observed_notice(jsonl.strip()).actionable is False
+    assert notice["admission_channel_claim"] == "BOCA_SOCIOS"
+    assert len(notice["windows"]) == 5
+    assert redacted["availability_verified"] is False
+    assert redacted["feed_verified"] is False
+
+
+def test_non_matching_official_public_page_yields_receipt_but_no_jsonl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeOpener:
+        def open(self, _requested: request.Request, *, timeout: float) -> _FakeResponse:
+            return _FakeResponse(SYNTHETIC_ARTICLE)
+
+    monkeypatch.setattr(request, "build_opener", lambda *_handlers: FakeOpener())
+    report = observe_public_news(
+        now=datetime(2026, 11, 5, 4, 22, tzinfo=UTC), with_offline_snapshot=True
+    )
+    receipt, jsonl = split_public_observation_envelope(report)
+    assert receipt["state"] == "PUBLIC_PAGE_OBSERVED_UNVERIFIED"
+    assert receipt["offline_snapshot_state"] == "NO_EVENTOS_VERIFICADOS"
+    assert receipt["offline_snapshot_reason"] == "article_semantics_unverified"
+    assert jsonl is None
+
+
+def test_invalid_artifact_binding_is_rejected_not_published(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeOpener:
+        def open(self, _requested: request.Request, *, timeout: float) -> _FakeResponse:
+            return _FakeResponse(SYNTHETIC_REVIEWED_ARTICLE)
+
+    monkeypatch.setattr(request, "build_opener", lambda *_handlers: FakeOpener())
+    report = observe_public_news(
+        now=datetime(2026, 11, 5, 4, 22, tzinfo=UTC), with_offline_snapshot=True
+    )
+    for change in (
+        {"source_sha256": "0" * 64},
+        {"source_url": "https://evil.invalid/news"},
+        {"observed_at_utc": "2026-11-04T04:22:00+00:00"},
+        {"availability_verified": True},
+        {"state": "SOURCE_DEGRADED"},
+    ):
+        with pytest.raises(ValueError):
+            split_public_observation_envelope({**report, **change})
+    malformed = {**report, "offline_snapshot_jsonl": "{garbage}\n"}
+    with pytest.raises(ValueError):
+        split_public_observation_envelope(malformed)
+
+
+def test_public_artifact_workflow_one_get_two_bounded_files_never_host() -> None:
+    workflow = Path(".github/workflows/boca-official-news-receipt.yml").read_text(encoding="utf-8")
+    assert "--emit-offline-observation" in workflow
+    assert "boca-official-news-catalog.jsonl" in workflow
+    assert "split_public_observation_envelope" in workflow
+    assert "src/boca_socios/events/official_article_observation.py" in workflow
+    assert "tests/test_official_news_receipt.py" in workflow
+    assert "  workflow_dispatch:" not in workflow and "  schedule:" not in workflow
+    assert "boca-first-deploy" not in workflow and "ssh " not in workflow
 
 
 def test_diagnostic_workflow_has_only_pr_runner_scope_and_no_host_dispatch() -> None:
