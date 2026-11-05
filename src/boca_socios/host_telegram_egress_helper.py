@@ -49,8 +49,11 @@ def _private_exec(container_id: str, payload: bytes) -> bytes:
         or any(
             name in os.environ
             for name in (
-                "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH",
-                "DOCKER_TLS", "DOCKER_CONFIG",
+                "DOCKER_CONTEXT",
+                "DOCKER_TLS_VERIFY",
+                "DOCKER_CERT_PATH",
+                "DOCKER_TLS",
+                "DOCKER_CONFIG",
             )
         )
     ):
@@ -62,13 +65,27 @@ def _private_exec(container_id: str, payload: bytes) -> bytes:
         "LANG": "C",
     }
     argv = [
-        "/usr/bin/docker", "--host", cleanup.DOCKER_SOCKET,
-        "exec", "--interactive", "--user", "10001:10001", container_id,
-        "python", "-m", "boca_socios.telegram_readonly_exec", "get",
+        "/usr/bin/docker",
+        "--host",
+        cleanup.DOCKER_SOCKET,
+        "exec",
+        "--interactive",
+        "--user",
+        "10001:10001",
+        container_id,
+        "python",
+        "-m",
+        "boca_socios.telegram_readonly_exec",
+        "get",
     ]
     try:
         result = subprocess.run(  # noqa: S603 - immutable argv, no shell
-            argv, input=payload, capture_output=True, timeout=9, check=False, env=env,
+            argv,
+            input=payload,
+            capture_output=True,
+            timeout=9,
+            check=False,
+            env=env,
         )
         if result.returncode or not 0 < len(result.stdout) <= 22_000 or result.stderr:
             raise TelegramPhysicalNoGo("telegram_private_exec_no_ack")
@@ -146,18 +163,40 @@ def _helper_attested(
 def _run_helper(pins: TelegramHostPins, coordinates: CutoverCoordinates) -> str:
     name = "boca-socios-telegram-readonly-" + pins.attempt_id
     args = (
-        "run", "--detach", "--pull=never", "--name", name,
-        "--label", "com.docker.compose.project=boca-socios",
-        "--label", _LABEL_ATTEMPT + "=" + pins.attempt_id,
-        "--label", _LABEL_REVISION + "=" + pins.source_sha,
-        "--network", _EGRESS, "--read-only", "--cap-drop=ALL",
-        "--security-opt=no-new-privileges", "--pids-limit=32", "--memory=96m",
-        "--cpus=0.5", "--user", "10001:10001", "--restart=no",
-        "--env", "BOCA_RUNTIME_MODE=simulation",
-        "--env", "BOCA_ENGINE_MODE=off",
-        "--env", "BOCA_TELEGRAM_READONLY_MODE=explicit",
-        "--env", "PYTHONDONTWRITEBYTECODE=1",
-        "--entrypoint", "python", coordinates.image_digest, *_CMD,
+        "run",
+        "--detach",
+        "--pull=never",
+        "--name",
+        name,
+        "--label",
+        "com.docker.compose.project=boca-socios",
+        "--label",
+        _LABEL_ATTEMPT + "=" + pins.attempt_id,
+        "--label",
+        _LABEL_REVISION + "=" + pins.source_sha,
+        "--network",
+        _EGRESS,
+        "--read-only",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "--pids-limit=32",
+        "--memory=96m",
+        "--cpus=0.5",
+        "--user",
+        "10001:10001",
+        "--restart=no",
+        "--env",
+        "BOCA_RUNTIME_MODE=simulation",
+        "--env",
+        "BOCA_ENGINE_MODE=off",
+        "--env",
+        "BOCA_TELEGRAM_READONLY_MODE=explicit",
+        "--env",
+        "PYTHONDONTWRITEBYTECODE=1",
+        "--entrypoint",
+        "python",
+        coordinates.image_digest,
+        *_CMD,
     )
     try:
         output = cleanup._docker(*args).strip()
@@ -221,7 +260,8 @@ def protected_ephemeral_get_session(
                 _helper_attested(probe, helper_id, name, pins, coordinates)
                 frame = json.dumps(
                     {"version": 1, "method": method, "token": token, "chat_id": chat_id},
-                    separators=(",", ":"), sort_keys=True,
+                    separators=(",", ":"),
+                    sort_keys=True,
                 ).encode("ascii")
                 raw = _private_exec(helper_id, frame)
                 response = json.loads(raw)

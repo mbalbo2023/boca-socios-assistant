@@ -65,24 +65,14 @@ class TelegramProductionDockerIO(ProductionRootlessDockerIO):
         if self.uid != 10001 or self.gid != 10001:
             raise LifecycleAdapterNoGo("telegram_rootless_owner_unverified")
         scope: tuple[str, ...]
-        if (
-            kind == "container"
-            and cleanup.HEX_ID.fullmatch(ident)
-            and field in _CONTAINER_FIELDS
-        ):
+        if kind == "container" and cleanup.HEX_ID.fullmatch(ident) and field in _CONTAINER_FIELDS:
             scope = ("inspect",)
-        elif (
-            kind == "volume"
-            and ident in cleanup.PERSISTENT_VOLUMES
-            and field in _VOLUME_FIELDS
-        ):
+        elif kind == "volume" and ident in cleanup.PERSISTENT_VOLUMES and field in _VOLUME_FIELDS:
             scope = ("volume", "inspect")
         else:
             raise LifecycleAdapterNoGo("telegram_docker_readout_not_allowlisted")
         try:
-            raw = cleanup._docker(
-                *scope, "--format", "{{json ." + field + "}}", ident
-            )
+            raw = cleanup._docker(*scope, "--format", "{{json ." + field + "}}", ident)
             if len(raw) > 16_384:
                 raise ValueError("bounded")
             return json.loads(raw)

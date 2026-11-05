@@ -106,7 +106,9 @@ def test_ephemeral_one_lease_four_private_gets_and_positive_cleanup(
         return json.dumps(
             {
                 "version": 1,
-                "response_base64url": base64.urlsafe_b64encode(b'{"ok":true}').rstrip(b"=").decode(),
+                "response_base64url": base64.urlsafe_b64encode(b'{"ok":true}')
+                .rstrip(b"=")
+                .decode(),
             }
         ).encode()
 
@@ -115,7 +117,9 @@ def test_ephemeral_one_lease_four_private_gets_and_positive_cleanup(
     monkeypatch.setattr(helper, "_private_exec", private_exec)
     monkeypatch.setattr(helper, "_remove_helper", lambda ident: phases.append("REMOVE:" + ident))
 
-    with helper.protected_ephemeral_get_session(_pins(), coords, lease=_lease(), reader=reader) as get:
+    with helper.protected_ephemeral_get_session(
+        _pins(), coords, lease=_lease(), reader=reader
+    ) as get:
         for method, chat_id in (
             ("getMe", None),
             ("getWebhookInfo", None),
@@ -128,7 +132,10 @@ def test_ephemeral_one_lease_four_private_gets_and_positive_cleanup(
     assert phases.count("RUN") == 1
     assert phases[-1] == "REMOVE:" + _HELPER
     assert [phase for phase in phases if phase in helper._METHODS] == [
-        "getMe", "getWebhookInfo", "getUpdates", "getChat"
+        "getMe",
+        "getWebhookInfo",
+        "getUpdates",
+        "getChat",
     ]
 
 
