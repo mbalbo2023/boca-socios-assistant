@@ -161,7 +161,7 @@ class ProductionCutoverInventoryIO:
             }
         )
         if kind == "container" and _HASH.fullmatch(ident) and field in container_fields:
-            argv = ("inspect",)
+            argv: tuple[str, ...] = ("inspect",)
         elif kind == "volume" and ident == _DATA and field == "Mountpoint":
             argv = ("volume", "inspect")
         else:
