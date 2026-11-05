@@ -110,10 +110,11 @@ Se amplía el mismo lector `cutover-a-reconcile` con dos pruebas independientes:
 
 - `stage_preflight`: comprueba sólo el directorio `/srv/boca-socios` y el
   `compose.beta.yaml` existente mediante O_NOFOLLOW, UID/GID/modo, lista
-  exacta de entradas, hash contra la intención persistente y unicidad de
-  las cuatro SHA de Compose/overlay/seccomp. Devuelve únicamente códigos
-  acotados (`STAGE_ROOT_ENTRIES`, `STAGE_COMPOSE_SHA`,
-  `PLAN_SHA_COLLISION_OR_INVALID`, `STAGE_PREFLIGHT_MATCH`, etc.), sin
+  exacta de entradas, hash contra la intención persistente y separación
+  de los digest por rol: destino/overlay/seccomp distintos, histórico distinto
+  de overlay y seccomp, pero Compose histórico==destino permitido. Devuelve
+  únicamente códigos acotados (`STAGE_ROOT_ENTRIES`, `STAGE_COMPOSE_SHA`,
+  `PLAN_ROLE_DIGEST_INVALID`, `STAGE_PREFLIGHT_MATCH`, etc.), sin
   publicar bytes ni rutas privadas adicionales.
 - `prepared_go_marker_reason`: desambigua `UNREADABLE` con códigos como
   `DIRECTORY`, `MARKER_METADATA`, `READ_PERMISSION`, `DOCKER_READ`; no hace
@@ -123,3 +124,44 @@ El recibo sigue imponiendo `runtime_attested=false`, `go_for_retry=false`
 y `scope=OBSERVER_ONLY`. No se reejecuta el APPLY original. Incluso una
 precondición de staging hoy positiva sólo acredita el estado actual, **no**
 demuestra cuál era la condición temporal durante el APPLY anterior.
+
+## R24 — RCA determinística de contrato Stage y corrección DRAFT #390
+
+[READ_ONLY #42102926149](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42102926149)
+confirmó `stage=ABSENT`, `commit_started=false`, `original_restored=true`,
+`cleanup=INDETERMINATE`, `prepared_go_marker_reason=DIRECTORY` y
+`stage_preflight.reason=PLAN_SHA_COLLISION_OR_INVALID`. La última etiqueta
+procedía de una política **incorrecta** del lector y era consistente con un
+bloqueo previo a crear el stage. No equivale a un fallo de integridad del artefacto.
+
+Contraste inmutable de GitHub en los dos SHAs revisados:
+
+- Compose histórico `cabce9f1e452e63ded115f447559a358dc0f4d1b` y destino
+  `8a1a09805c17dad777105ece6fe5324bd4737474`: 1747 bytes **idénticos**,
+  SHA256 `b9e9465d6ec8e484b615d7bd65aab5a3c150d34a9893ad181167d2099893d811`.
+- Overlay SHA256 `a9a9490f92936bcd58c78ea0ec0ad6e7465ab89cf17f90937a906d498b8a7f8b`.
+- Seccomp SHA256 `cc3e61cabda6bbc1e53e54d27ba4d55a9d3be829b6dd1a596f4a7b31b1cc7849`.
+
+La validación canónica `host_boca_cutover.CutoverPlan.validate` **ya** permite
+reutilizar Compose para upgrades de código/imagen, siempre que las
+referencias/source y los otros hashes independientes estén verificados.
+Pero `host_cutover_stage._marker_payload` exigía **cuatro hashes diferentes**,
+y `initialize` invoca esa validación *antes del `mkdir`*. Ésta es una
+causa raíz precisa y reproducible del rechazo de Stage para el plan registrado;
+no se afirma que sea la única condición física fallida, pues la raíz/owner de
+Stage no pudieron inspeccionarse por el retorno prematuro del lector anterior.
+
+El DRAFT [#390](https://github.com/mbalbo2023/boca-socios-assistant/pull/390)
+alinea estrictamente Stage y lector con el contrato existente: Compose
+histórico==destino permitido, overlay/seccomp siempre separados, byte-digest
+por rol intacto, revisiones/imágenes/etiquetas independientes y ninguna edición
+artificial de YAML. El lector observa las condiciones reales de raíz incluso
+si el digest del plan fuese inválido; su campo de compatibilidad
+`plan_hashes_unique` significa ahora **independencia entre roles que deben
+ser distintos**, no "cuatro hashes siempre distintos".
+
+Se agregan pruebas offline para aceptación legítima y rechazo de SHA/bytes
+adulterados y roles colisionados. Nada de esto habilita reintentar el APPLY
+histórico ni limpiar Docker con `prune`. El `cleanup=INDETERMINATE` exige
+reconciliar los recursos exclusivamente Boca y el estado de raíz antes de
+cualquier transacción **nueva** con RELEASE/PREPARE/GO_B renovados.
