@@ -132,28 +132,21 @@ def _precommit_legacy_image_cleanup(
     if not isinstance(image_id, str) or not cleanup.HEX_ID.fullmatch(image_id):
         raise CutoverError("cutover historical controller image ID unavailable")
     try:
-        proof = cleanup.attest_historical_legacy_image(
-            image_id, plan.legacy_image, plan.legacy_sha
-        )
+        proof = cleanup.attest_historical_legacy_image(image_id, plan.legacy_image, plan.legacy_sha)
         inventory = cleanup.capture_inventory(historical_legacy=proof)
-        if (
-            not any(
-                container.ident == plan.legacy_id and container.image_id == proof.ident
-                for container in inventory.containers
-            )
-            or not any(
-                image.ident == proof.ident and image.historical_legacy_attested
-                for image in inventory.images
-            )
+        if not any(
+            container.ident == plan.legacy_id and container.image_id == proof.ident
+            for container in inventory.containers
+        ) or not any(
+            image.ident == proof.ident and image.historical_legacy_attested
+            for image in inventory.images
         ):
             raise cleanup.CleanupError("historical Boca image/container binding drifted")
         planned = cleanup.plan(
             inventory,
             plan.attempt_id,
             preserve_images=frozenset({proof.ident}),
-            preserve_containers=frozenset(
-                {plan.legacy_id, candidate_id, worker_id}
-            ),
+            preserve_containers=frozenset({plan.legacy_id, candidate_id, worker_id}),
             retire_containers=frozenset(),
         )
         if planned.uncertain:
@@ -163,9 +156,7 @@ def _precommit_legacy_image_cleanup(
             raise cleanup.CleanupError("Boca cleanup has precommit unknown residue")
         return proof
     except (cleanup.CleanupError, OSError, ValueError) as exc:
-        raise CutoverError(
-            "cutover precommit exact legacy image cleanup unproven"
-        ) from exc
+        raise CutoverError("cutover precommit exact legacy image cleanup unproven") from exc
 
 
 def _reviewed_compose_hash(plan: CutoverPlan, service: str) -> str:
@@ -564,11 +555,7 @@ class RootlessCutoverBackend:
         if safely_recovered:
             preserve: frozenset[str] = frozenset({plan.legacy_id})
         else:
-            if (
-                candidate_id is None
-                or worker_id is None
-                or self.legacy_image_proof is None
-            ):
+            if candidate_id is None or worker_id is None or self.legacy_image_proof is None:
                 return "NO_GO"
             preserve = frozenset({candidate_id, worker_id})
         outcome: Literal["SUCCESS", "FAILURE"] = "FAILURE" if safely_recovered else "SUCCESS"
