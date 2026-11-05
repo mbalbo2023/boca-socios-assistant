@@ -25,6 +25,8 @@ import ssl
 import stat
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
@@ -35,6 +37,9 @@ from urllib.parse import urlsplit
 ROOT = Path("/srv/boca-socios")
 COMPOSE = ROOT / "compose.yaml"
 BETA_COMPOSE = ROOT / "compose.beta.yaml"
+# #323 opt-in **in-process only** overlay for a future single SSH transaction.
+# Legacy per-phase CLI stays unchanged and cannot set this context from argv.
+_PROTECTED_COMPOSE_OVERLAY: tuple[str, Path] | None = None
 PROJECT = "boca-socios"
 DATA_VOLUME = "boca-socios_boca_data"
 KEY_VOLUME = "boca-socios_boca_key"
@@ -1051,7 +1056,10 @@ def _compose_env(image: str) -> dict[str, str]:
 
 
 def _compose_args(*args: str) -> tuple[str, ...]:
-    return ("docker", "compose", "-p", PROJECT, "-f", str(COMPOSE), *args)
+    base: tuple[str, ...] = ("docker", "compose", "-p", PROJECT, "-f", str(COMPOSE))
+    if _PROTECTED_COMPOSE_OVERLAY is not None and _PROTECTED_COMPOSE_OVERLAY[0] == "first-install":
+        base += ("-f", str(_PROTECTED_COMPOSE_OVERLAY[1]))
+    return (*base, *args)
 
 
 def _beta_compose_env(image: str, origin: str, owner: str) -> dict[str, str]:
@@ -1063,7 +1071,31 @@ def _beta_compose_env(image: str, origin: str, owner: str) -> dict[str, str]:
 
 
 def _beta_compose_args(*args: str) -> tuple[str, ...]:
-    return ("docker", "compose", "-p", PROJECT, "-f", str(BETA_COMPOSE), *args)
+    base: tuple[str, ...] = ("docker", "compose", "-p", PROJECT, "-f", str(BETA_COMPOSE))
+    if _PROTECTED_COMPOSE_OVERLAY is not None and _PROTECTED_COMPOSE_OVERLAY[0] == "beta-install":
+        base += ("-f", str(_PROTECTED_COMPOSE_OVERLAY[1]))
+    return (*base, *args)
+
+
+@contextmanager
+def _use_protected_compose_overlay(operation: str, path: Path) -> Iterator[None]:
+    """Attach reviewed overlay only inside one host process/lease lifetime.
+
+    This is deliberately NOT exposed by phase() / existing public CLI. The
+    transaction owns safe staging, SHA verification and removal of the file.
+    """
+    global _PROTECTED_COMPOSE_OVERLAY
+    if (
+        operation not in ("first-install", "beta-install")
+        or path.parent != Path("/run/user/10001")
+        or _PROTECTED_COMPOSE_OVERLAY is not None
+    ):
+        raise PreflightError("Boca protected Compose overlay context invalid")
+    _PROTECTED_COMPOSE_OVERLAY = (operation, path)
+    try:
+        yield
+    finally:
+        _PROTECTED_COMPOSE_OVERLAY = None
 
 
 def _validate_key_volume() -> None:

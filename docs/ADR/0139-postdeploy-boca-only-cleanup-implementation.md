@@ -123,6 +123,26 @@ canonical lock. This source facade remains unreachable from the live CLI.
   host process dies before a trusted result, no guessed cleanup is allowed:
   the assertion fails NO_GO and requires exact Boca-only read-only recovery.
   No ZIP/host runner or lifecycle workflow has yet passed this gate.
+- **Transport code-only checkpoint:** a deterministic allowlisted
+  `build_protected_boca_bundle.py` now packages only first-deploy/rootless,
+  #323 attempt+cleanup+transaction modules and reviewed base Compose YAML
+  into a bounded ZIP. It explicitly excludes `synthetic.py`/`ipc_worker.py`.
+  `boca_protected_memfd_bootstrap.py` verifies ZIP SHA256, exact entry names,
+  regular-file modes and sizes before `execv` of that digest-checked payload
+  through Linux memfd (no host disk write). Six offline tests exercise real
+  memfd selftest, byte-for-byte reproducibility, tampered SHA, injected
+  BLACKBOX name and overwrite/symlink attempts. The packaged transaction
+  deliberately returns `NO_GO transaction_not_wired` on any effectful mode.
+  Existing CLI/workflow remains unchanged; `host_first_deploy` opts into a
+  reviewed second Compose `-f` only within an in-process protected context,
+  never via a legacy CLI argument. Positive install/rollback wiring and the
+  YAML `if: always()` assertion are STILL PENDING and no deployment is safe.
+  Bundle checkpoint QA: **6 transport focal tests PASS**, full frozen suite
+  **2539 pytest + 31 subtests PASS**, Ruff lint/format **399 files**, Mypy
+  **88 source files** and repository policy PASS. A prior overlapping full
+  run hit one 5-second shell-fixture timeout and an inspect.getsource line
+  race while this module was actively edited; after freezing sources both
+  previously failing tests and the full 2539-test run passed unchanged.
 - No `docker system prune`, `docker image prune`, `docker container prune`,
   cross-project deletion, guessed image identity, host-side backup, or broad
   filesystem purge.
