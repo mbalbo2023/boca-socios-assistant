@@ -1,4 +1,4 @@
-# ADR 0156 — puente protegido para ACK físico START/STOP (#351)
+# ADR 0158 — puente protegido para ACK físico START/STOP (#351)
 
 Fecha: 2026-11-05 ART. Estado: **DRAFT / CODE_ONLY / host NO_GO**.
 Ownership exclusivo: `src/boca_socios/host_lifecycle_actions.py`,
