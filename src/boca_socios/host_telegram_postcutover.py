@@ -30,9 +30,7 @@ from boca_socios.host_lifecycle_rootless_adapter import (
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _ID = re.compile(r"[0-9a-f]{64}\Z")
 _DECIMAL = re.compile(r"[1-9][0-9]{0,19}\Z")
-_IMAGE = re.compile(
-    r"ghcr[.]io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z"
-)
+_IMAGE = re.compile(r"ghcr[.]io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z")
 _WORKER_IMAGE = re.compile(
     r"ghcr[.]io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}\Z"
 )
@@ -139,8 +137,7 @@ class TelegramHostPins:
             or self.sender_id in (self.controller_id, self.worker_id)
             or self.sender_image != self.controller_image
             or not _ID.fullmatch(self.sender_config_hash)
-            or self.sender_config_hash
-            in (self.controller_config_hash, self.worker_config_hash)
+            or self.sender_config_hash in (self.controller_config_hash, self.worker_config_hash)
             or not _DECIMAL.fullmatch(self.sender_attempt)
         ):
             raise TelegramHostNoGo("boca_telegram_sender_identity_unverified")
@@ -193,7 +190,6 @@ def _service(
         or item.running
     ):
         raise TelegramHostNoGo("boca_telegram_installed_release_unverified")
-
 
 
 def _stopped_controller_boundary(reader: LifecycleDockerIO, pins: TelegramHostPins) -> None:
@@ -288,9 +284,7 @@ def observe_telegram_host(
         )
         if (
             controller.volumes
-            != tuple(
-                sorted({_DATA, _IPC, "boca-socios_boca_key", "boca-socios_boca_owner"})
-            )
+            != tuple(sorted({_DATA, _IPC, "boca-socios_boca_key", "boca-socios_boca_owner"}))
             or worker.volumes != (_IPC,)
             or controller.networks not in ((), (_PRIVATE,))
             or worker.networks
@@ -321,9 +315,7 @@ def observe_telegram_host(
             labels = _labels(volume.labels)
             if labels.get("com.docker.compose.project") != _PROJECT:
                 raise TelegramHostNoGo("boca_telegram_volume_ownership_unverified")
-            if labels.get("com.docker.compose.volume") != volume.name.removeprefix(
-                "boca-socios_"
-            ):
+            if labels.get("com.docker.compose.volume") != volume.name.removeprefix("boca-socios_"):
                 raise TelegramHostNoGo("boca_telegram_volume_ownership_unverified")
         networks = {item.name: item for item in inventory.networks}
         if set(networks) != {_PRIVATE, _EGRESS} or len(inventory.networks) != 2:
