@@ -123,6 +123,19 @@ jobs:
         run: |
           docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml config --format json > "$RUNNER_TEMP/boca-browser-model.json"
           uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
+      - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
+        run: |
+          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py
+          uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
+      - name: Assert PR cannot produce host cutover or cleanup receipt
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          if [[ -e "$RUNNER_TEMP/boca-cutover-a-host.receipt" ]]; then
+            printf 'Boca Cutover A PR validation: NO_GO unexpected host receipt; abort.\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf 'BOCA_CUTOVER_A_PR_VERIFY state=SOURCE_ONLY host_calls=0 deploy=NO_GO physical_cleanup=UNVERIFIED; any future protected host failure/lost runner must fail closed without assuming if:always executed.\n' >> "$GITHUB_STEP_SUMMARY"
 
   pr-runtime-smoke:
     if: github.event_name == 'pull_request'

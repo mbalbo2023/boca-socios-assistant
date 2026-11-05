@@ -228,5 +228,7 @@ def test_cutover_contract_cannot_be_dispatched_by_current_protected_workflow() -
     ).read_text(encoding="utf-8")
     assert "cutover-a-observe" in workflow
     assert "cutover-a-apply" not in workflow
-    assert "host_boca_cutover" not in workflow
+    # PR-only pytest/build/if:always cannot become a live apply switch.
+    assert "BOCA_CUTOVER_A_PR_VERIFY state=SOURCE_ONLY" in workflow
+    assert "boca-cutover-a-host.receipt" in workflow
     assert "run_cutover_a" not in workflow

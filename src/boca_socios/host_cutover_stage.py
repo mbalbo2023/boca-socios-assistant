@@ -36,6 +36,9 @@ FILES = {
 }
 MARKER = "cutover-a-marker.json"
 VERSION = "cutover-a-stage-v1"
+COMMIT_INTENT = "cutover-a-commit-intent.json"
+COMMIT_RESULT = "cutover-a-commit-result.json"
+COMMIT_VERSION = "cutover-a-compose-promotion-v1"
 MAX_FILE = 32_768
 MAX_MARKER = 1024
 
@@ -265,7 +268,7 @@ def initialize(
 
 
 def _authenticated_stage(
-    attempt_id: str, legacy_compose_sha: str
+    attempt_id: str, legacy_compose_sha: str, *, promoted: bool = False
 ) -> tuple[int, int, dict[str, str | int]]:
     stage = _stage_name(attempt_id)
     if not SHA.fullmatch(legacy_compose_sha):
@@ -273,7 +276,12 @@ def _authenticated_stage(
     root = _root_fd()
     child: int | None = None
     try:
-        if set(os.listdir(root)) != {"compose.beta.yaml", stage}:
+        expected_root = (
+            {"compose.beta.yaml", "compose.beta.browser.yaml", "seccomp_profile.json", stage}
+            if promoted
+            else {"compose.beta.yaml", stage}
+        )
+        if set(os.listdir(root)) != expected_root:
             raise StageError("Boca root contains unexpected cutover state")
         child = os.open(
             stage, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=root
@@ -322,12 +330,16 @@ def _authenticated_stage(
             or _canonical(marker) != raw
         ):
             raise StageError("cutover marker immutable schema invalid")
-        _, original = _read_file(root, "compose.beta.yaml", legacy_compose_sha, limit=MAX_FILE)
-        if (original.st_dev, original.st_ino) != (
-            marker["legacy_compose_dev"],
-            marker["legacy_compose_ino"],
-        ):
-            raise StageError("live original Compose inode replaced during cutover staging")
+        if promoted:
+            for filename, sha_field in FILES.values():
+                _read_file(root, filename, str(marker[sha_field]), limit=MAX_FILE)
+        else:
+            _, original = _read_file(root, "compose.beta.yaml", legacy_compose_sha, limit=MAX_FILE)
+            if (original.st_dev, original.st_ino) != (
+                marker["legacy_compose_dev"],
+                marker["legacy_compose_ino"],
+            ):
+                raise StageError("live original Compose inode replaced during cutover staging")
         return root, child, marker
     except BaseException:
         if child is not None:
@@ -400,4 +412,153 @@ def read_verified(attempt_id: str, legacy_compose_sha: str, slot: str) -> bytes:
         return result
     finally:
         os.close(child)
+        os.close(root)
+
+
+def _promotion_payload(marker: dict[str, str | int], candidate_id: str, worker_id: str) -> bytes:
+    original_id = marker["legacy_controller_id"]
+    if (
+        not CONTAINER.fullmatch(candidate_id)
+        or not CONTAINER.fullmatch(worker_id)
+        or len({original_id, candidate_id, worker_id}) != 3
+    ):
+        raise StageError("cutover promotion exact controller and worker IDs invalid")
+    return _canonical(
+        {
+            "version": COMMIT_VERSION,
+            "attempt_id": marker["attempt_id"],
+            "legacy_id": original_id,
+            "candidate_id": candidate_id,
+            "worker_id": worker_id,
+            "base_sha": marker["target_compose_sha"],
+            "overlay_sha": marker["overlay_compose_sha"],
+            "seccomp_sha": marker["seccomp_sha"],
+        }
+    )
+
+
+def _read_exact_promotion(child: int, name: str, expected: bytes) -> None:
+    raw, _ = _read_file(child, name, hashlib.sha256(expected).hexdigest(), limit=MAX_MARKER)
+    if raw != expected:
+        raise StageError("cutover durable promotion record does not match accepted IDs")
+
+
+def promote_accepted(
+    attempt_id: str, legacy_compose_sha: str, candidate_id: str, worker_id: str
+) -> None:
+    """After accepted candidate only: fix-forward three files with durable intent.
+
+    This is *not* an atomic multi-file rename. Intent is O_EXCL + fsynced
+    before any original file is replaced; a crash before the result leaves
+    visible partial state that forbids silent recovery/retry/legacy restart.
+    No backup or deletion of persistent Boca data/key/owner is performed.
+    """
+    verify(attempt_id, legacy_compose_sha)
+    root, child, marker = _authenticated_stage(attempt_id, legacy_compose_sha)
+    try:
+        expected_files = {MARKER, *(filename for filename, _ in FILES.values())}
+        if set(os.listdir(child)) != expected_files:
+            raise StageError("cutover stage changed before irreversible promotion")
+        intent = _promotion_payload(marker, candidate_id, worker_id)
+        payloads = {
+            filename: _read_file(child, filename, str(marker[sha_field]), limit=MAX_FILE)[0]
+            for filename, sha_field in FILES.values()
+        }
+        # The first durable intent marks the irreversible fix-forward boundary.
+        _create_exclusive(child, COMMIT_INTENT, intent)
+        promoted = {"compose.beta.yaml", _stage_name(attempt_id)}
+        for slot, (filename, sha_field) in FILES.items():
+            # The old base is replaced first. Overlay/seccomp MUST be absent
+            # until their exact individual write; a foreign root object is
+            # never overwritten by a guessed continuation.
+            if set(os.listdir(root)) != promoted:
+                raise StageError("cutover promotion root gained unexpected object")
+            name = f".cutover-promote-{slot}-{attempt_id}.part"
+            _create_exclusive(root, name, payloads[filename])
+            try:
+                os.replace(name, filename, src_dir_fd=root, dst_dir_fd=root)
+                os.fsync(root)
+            except OSError as exc:
+                raise StageError("cutover promotion outcome uncertain; fix-forward only") from exc
+            _read_file(root, filename, str(marker[sha_field]), limit=MAX_FILE)
+            promoted.add(filename)
+        _create_exclusive(child, COMMIT_RESULT, intent)
+        _read_exact_promotion(child, COMMIT_RESULT, intent)
+        os.fsync(child)
+    finally:
+        os.close(child)
+        os.close(root)
+
+
+def discard_recovered(attempt_id: str, legacy_compose_sha: str) -> None:
+    """Remove only a positively verified *uncommitted* stage after old-ID recovery.
+
+    A .part, unknown file or promotion-intent marker is quarantined/NO_GO; no
+    broad recursive delete is ever attempted. Each unlink is one exact name.
+    """
+    root, child, marker = _authenticated_stage(attempt_id, legacy_compose_sha)
+    try:
+        entries = set(os.listdir(child))
+        reviewed = {MARKER, *(filename for filename, _ in FILES.values())}
+        if not {MARKER} <= entries <= reviewed:
+            raise StageError("cutover uncommitted stage has unknown/partial residue")
+        for filename, sha_field in FILES.values():
+            if filename in entries:
+                _read_file(child, filename, str(marker[sha_field]), limit=MAX_FILE)
+        for filename in sorted(entries - {MARKER}):
+            os.unlink(filename, dir_fd=child)
+        os.unlink(MARKER, dir_fd=child)
+        os.fsync(child)
+        os.close(child)
+        child = -1
+        os.rmdir(_stage_name(attempt_id), dir_fd=root)
+        os.fsync(root)
+        if set(os.listdir(root)) != {"compose.beta.yaml"}:
+            raise StageError("cutover failed-stage cleanup left unreviewed root residue")
+    except OSError as exc:
+        raise StageError("cutover recovered stage cleanup uncertain") from exc
+    finally:
+        if child >= 0:
+            os.close(child)
+        os.close(root)
+
+
+def finalize_promoted(
+    attempt_id: str, legacy_compose_sha: str, candidate_id: str, worker_id: str
+) -> None:
+    """Delete exact staging residue after *independent* accepted-ID retirement.
+
+    Caller must first positively attest old ID absent and candidate+worker
+    healthy. Root now holds the reviewed target files (no legacy replacement
+    unless the O_EXCL promotion intent and positive result both exist).
+    """
+    root, child, marker = _authenticated_stage(attempt_id, legacy_compose_sha, promoted=True)
+    try:
+        expected = {MARKER, COMMIT_INTENT, COMMIT_RESULT, *(name for name, _ in FILES.values())}
+        if set(os.listdir(child)) != expected:
+            raise StageError("cutover promotion stage residue/receipt incomplete")
+        intent = _promotion_payload(marker, candidate_id, worker_id)
+        _read_exact_promotion(child, COMMIT_INTENT, intent)
+        _read_exact_promotion(child, COMMIT_RESULT, intent)
+        for filename, sha_field in FILES.values():
+            _read_file(child, filename, str(marker[sha_field]), limit=MAX_FILE)
+        for filename in sorted(expected - {MARKER}):
+            os.unlink(filename, dir_fd=child)
+        os.unlink(MARKER, dir_fd=child)
+        os.fsync(child)
+        os.close(child)
+        child = -1
+        os.rmdir(_stage_name(attempt_id), dir_fd=root)
+        os.fsync(root)
+        if set(os.listdir(root)) != {
+            "compose.beta.yaml",
+            "compose.beta.browser.yaml",
+            "seccomp_profile.json",
+        }:
+            raise StageError("cutover promoted root includes unexpected staging residue")
+    except OSError as exc:
+        raise StageError("cutover promoted stage cleanup uncertain") from exc
+    finally:
+        if child >= 0:
+            os.close(child)
         os.close(root)
