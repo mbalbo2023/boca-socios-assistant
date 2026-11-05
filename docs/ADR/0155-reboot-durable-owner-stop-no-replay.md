@@ -31,12 +31,18 @@ un recibo real del último comando protegido.
    del motor anterior no se puede probar desde `current()`, que sólo expone la
    última solicitud global: se restaura `STOPPED` por defecto. Un responsable
    podrá iniciar el motor después mediante nueva acción protegida.
-3. Un `REQUESTED`, `CLAIMED` o `UNCERTAIN`, incluso de Chromium, impide
+3. La verificación se entrega como callback **sin ejecutarlo** desde `build_beta_server`:
+   primero se validan el UID/socket IPC y el almacenamiento/evento existente;
+   `LocalBetaRuntime.start()` evalúa el recibo después del preflight SQLite
+   y **antes** de `Thread.start()` / `BetaCoordinator.recover()`. Esto conserva
+   el contrato `browser worker` pre-storage y evita los 4 FAIL de CI #42038431479
+   en harnesses de wiring que inyectan runtimes sintéticos sin SQLite real.
+4. Un `REQUESTED`, `CLAIMED` o `UNCERTAIN`, incluso de Chromium, impide
    arrancar el controller IPC: `LocalRuntimeUnavailable` **antes de ejecutar
    cualquier hilo, recuperación, sidecar o listener HTTP**. También falla
    cerrado si la identidad/estructura del ledger es inválida o inaccesible.
    Requiere nueva observación y reconciliación protegida; no hay retry.
-4. `BetaCommandHost.start_stopped()` construye solo objetos inertes, cierra
+5. `BetaCommandHost.start_stopped()` construye solo objetos inertes, cierra
    el loop aún no iniciado y marca el motor como `stopped`. No llama
    `Thread.start` ni `BetaCoordinator.recover`. El panel servido sigue
    disponible y saludable; `start_engine()` en una operación posterior crea
@@ -50,6 +56,9 @@ un recibo real del último comando protegido.
   REFUSED conservador, pendientes REQUESTED/CLAIMED/UNCERTAIN antes de crear
   runtime, STOP seguido de Chromium STOP, backend legacy `off`, restart
   explícito desde STOP y rechazo de primera instalación suspendida.
+- Nuevo test verifica que el callback no lee el ledger antes de validar
+  almacenamiento; el escenario pending ejercita el `LocalBetaRuntime.start()`
+  real y prohíbe arrancar un hilo sin recibo.
 - Los tests usan SQLite temporal real y un navegador de simulación; verifican
   que `schema_migrations` no cambia ni incorpora 0008 durante el reboot.
 - No se modifican `synthetic.py`, `ipc_worker.py`, protocolo AF_UNIX, schema,

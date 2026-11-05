@@ -313,8 +313,12 @@ def build_beta_server(
     parameter or an implicit host-side Chromium activation.
     """
     settings.validate_beta()
-    initial_engine_stopped = _engine_stopped_after_reboot(
-        settings.db_path, browser_backend=settings.browser_backend
+    # Defer the owner receipt until IPC UID/socket and storage preflight,
+    # but still before any command thread or recovery can start.
+    initial_engine_stopped = partial(
+        _engine_stopped_after_reboot,
+        settings.db_path,
+        browser_backend=settings.browser_backend,
     )
     telegram_pairing_stager = _configured_telegram_pairing_stager(settings)
     selected_browser, command_timeout = _browser_for_beta(settings, browser)

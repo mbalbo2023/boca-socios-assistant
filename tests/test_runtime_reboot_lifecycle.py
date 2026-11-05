@@ -86,7 +86,9 @@ def test_applied_bot_stop_is_recovered_as_stopped_before_any_thread_or_replay(
             database_path=db_path,
             key_file=key,
             browser=browser,
-            initial_engine_stopped=True,
+            initial_engine_stopped=lambda: runtime._engine_stopped_after_reboot(
+                db_path, browser_backend="ipc"
+            ),
         )
         assert service.ready
         assert service.commands.engine_stopped
@@ -112,7 +114,9 @@ def test_stopped_boot_can_explicitly_start_after_owner_ack(
         database_path=db_path,
         key_file=key,
         browser=browser,
-        initial_engine_stopped=runtime._engine_stopped_after_reboot(db_path, browser_backend="ipc"),
+        initial_engine_stopped=lambda: runtime._engine_stopped_after_reboot(
+            db_path, browser_backend="ipc"
+        ),
     )
     try:
         assert service.commands.engine_stopped
@@ -171,22 +175,21 @@ def test_unresolved_host_request_cannot_boot_engine_or_service(
     with pytest.raises(LocalRuntimeUnavailable):
         runtime._engine_stopped_after_reboot(db_path, browser_backend="ipc")
 
-    class FakeSettings:
-        browser_backend = "ipc"
+    def forbidden_start(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("pending owner request started a command thread")
 
-        def __init__(self, path: Path) -> None:
-            self.db_path = path
-
-        def validate_beta(self) -> None:
-            return None
-
-    monkeypatch.setattr(
-        runtime.LocalBetaRuntime,
-        "start",
-        lambda **_kwargs: pytest.fail("engine started before pending host request reconciled"),
-    )
-    with pytest.raises(LocalRuntimeUnavailable):
-        runtime.build_beta_server(FakeSettings(db_path))  # type: ignore[arg-type]
+    monkeypatch.setattr(BetaCommandHost, "start", classmethod(forbidden_start))
+    # Real startup must reject pending host requests after SQLite preflight,
+    # before synthetic thread/recovery initialization.
+    with pytest.raises(LocalRuntimeUnavailable, match="pending owner host operation"):
+        LocalBetaRuntime.start(
+            database_path=db_path,
+            key_file=_key,
+            browser=_browser,
+            initial_engine_stopped=lambda: runtime._engine_stopped_after_reboot(
+                db_path, browser_backend="ipc"
+            ),
+        )
 
 
 def test_chromium_last_receipt_does_not_silently_reactivate_old_bot_stop(
@@ -221,3 +224,27 @@ def test_new_storage_may_not_boot_pre_stopped_without_existing_ledger(
             initial_engine_stopped=True,
         )
     assert not (tmp_path / "new.sqlite3").exists()
+
+
+def test_ipc_reboot_check_is_deferred_until_after_storage_preflight(
+    tmp_path: Path,
+) -> None:
+    key = tmp_path / "key"
+    key.write_bytes(base64.b64encode(b"k" * 32) + b"\n")
+    key.chmod(0o400)
+    checked: list[str] = []
+
+    def forbidden_early_check() -> bool:
+        checked.append("before-preflight")
+        pytest.fail("owner receipt read before existing storage was validated")
+
+    with pytest.raises(
+        LocalRuntimeUnavailable, match="local BETA storage is unavailable"
+    ):
+        LocalBetaRuntime.start(
+            database_path=tmp_path / "missing.sqlite3",
+            key_file=key,
+            browser=NoSiteBrowser(),
+            initial_engine_stopped=forbidden_early_check,
+        )
+    assert checked == []

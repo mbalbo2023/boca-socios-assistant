@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+from collections.abc import Callable
 from contextlib import closing
 from importlib.resources import files
 from pathlib import Path
@@ -117,13 +118,13 @@ class LocalBetaRuntime:
         key_file: Path,
         browser: SyntheticBrowserPort,
         initialize_new: bool = False,
-        initial_engine_stopped: bool = False,
+        initial_engine_stopped: bool | Callable[[], bool] = False,
         command_timeout_seconds: float = 5.0,
     ) -> LocalBetaRuntime:
         if (
             type(initialize_new) is not bool
-            or type(initial_engine_stopped) is not bool
-            or (initialize_new and initial_engine_stopped)
+            or (type(initial_engine_stopped) is not bool and not callable(initial_engine_stopped))
+            or (initialize_new and initial_engine_stopped is not False)
             or not database_path.is_absolute()
         ):
             raise ValueError("invalid local BETA storage configuration")
@@ -156,7 +157,16 @@ class LocalBetaRuntime:
                 # Never remove the new file: a partial first install needs
                 # explicit Boca-only diagnosis, not a silent retry.
                 raise LocalRuntimeUnavailable("local BETA initialization failed") from None
-        if initial_engine_stopped:
+        # Evaluate only after key/storage preflight, strictly before any
+        # command thread/recovery. A synthetic builder may defer this callback.
+        stopped = (
+            initial_engine_stopped()
+            if callable(initial_engine_stopped)
+            else initial_engine_stopped
+        )
+        if type(stopped) is not bool:
+            raise LocalRuntimeUnavailable("owner lifecycle reconciliation invalid")
+        if stopped:
             commands = BetaCommandHost.start_stopped(
                 coordinator, coordinator_factory=new_coordinator
             )
