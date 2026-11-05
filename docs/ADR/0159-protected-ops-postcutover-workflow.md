@@ -1,6 +1,6 @@
 # ADR 0159 — Único Actions protegido para ACK bot/Chromium y Telegram post-Cutover (#352)
 
-**Fecha:** 2026-11-05 ART. **Estado:** DRAFT / CODE_ONLY / HOST NO_GO.
+**Fecha:** 2026-11-05 ART. **Estado:** PR DRAFT / QA SOURCE_ONLY; LIVE HOST NO_GO sin GO independiente.
 **Ownership:** solo workflow boca-first-deploy.yml, runner gate check_protected_action_context.py,
 pruebas test_protected_*_r26.py y este ADR. Interfaces host son propiedad
 de #351 (bot/Chromium) y #315 (Telegram). Integración canónica solo por #319.
@@ -19,9 +19,9 @@ de #351 (bot/Chromium) y #315 (Telegram). Integración canónica solo por #319.
   La interacción humana no debe ocurrir con la antigua lease/SSH abierta.
   La segunda operación telegram-activate requiere **nueva lease** en el
   mismo workflow y excluye los pasos telegram-* legacy de start/stop daemon.
-- El workflow R24 ya utiliza **24 de 25** inputs workflow_dispatch, máximo
+- El workflow R24 utilizaba **24 de 25** inputs workflow_dispatch, máximo
   confirmado en documentación oficial de GitHub. Ambas operaciones
-  comparten un solo campo adicional, protected_action_context, apto para
+  comparten un solo campo adicional, protected_action_context (ahora 25/25), apto para
   copiar/pegar como bloque único sin docenas de coordenadas en Android.
 
 ## Contrato de autorización
@@ -32,7 +32,7 @@ de 1–2048 bytes, tipos string y lista de claves exacta por
 kind=lifecycle|telegram. Claves/valores secretos, comando shell, token,
 nonce o tiempo humano inventado son NO_GO antes SSH.
 
-Campos comunes públicos: version, kind, attempt_id de Actions, source main,
+Campos comunes públicos: version, kind, source main,
 digest GHCR controller/browser, IDs exactos, browser attempt, hashes
 Compose y data_mountpoint. El host no confía en input: reatesta Docker
 rootless Boca UID10001, manifests release, configuración, IDs y almacenamiento.
@@ -51,8 +51,9 @@ del volumen boca-socios_boca_data. Telegram monta /data exclusivamente.
 - Cada operación tiene variable distinta en Environment protegido:
   BOCA_LIFECYCLE_GO_BINDING_SHA256 o
   BOCA_TELEGRAM_ACTIVATE_GO_BINDING_SHA256. El SHA esperado liga repo,
-  actor, ref main, source SHA, release, run/attempt, operación y SHA
-  del contexto canónico. Ausente o diferente: NO_GO pre-SSH.
+  actor, ref main, source SHA, release, PREPARE-run/attempt, operación y SHA
+  del contexto canónico. El APPLY-run ID es generado por el runner después del
+  dispatch y no participa del GO humano configurable. Ausente o diferente: NO_GO pre-SSH.
   Los GO cutover/import no autorizan lifecycle/Telegram.
 
 ## Secuencia
@@ -80,9 +81,11 @@ login/fila/reserva/compra reales ni nueva navegación externa por agentes;
 origen privado exclusivo 127.0.0.1:8443 por Termius. Seguridad adicional P2,
 sin relajar identidad, source, autorización ni limpieza.
 
-Baseline del PR #319: SHA 3c4880df6453a766fb8869f44913fdc1dccf539f,
-TREE df560555c3b1949e2bd4e730344676fc024ea6b9, 7/7 Actions SUCCESS
-sobre el mismo SHA (antes de este R26), ningún host. Referencias: issue #45
+Baseline inicial de este satélite #359 fue #319 SHA 3c4880df (R21.9.2).
+Base canónica actual de PR #359 al abrirlo: #319 R21.11 SHA
+5903ded0790ab7254bf68572af47fe75c6e08889, 7/7 Actions SUCCESS
+exactos según checkpoint #45; los checks de #359 R26 son independientes
+por SHA. Ningún host real. Referencias: issue #45
 A45-R12/R12.1, #315, #328, #351, #352; ADR0151/0152/0154.
 Los resultados de QA R26 y cualquier recibo real son PENDIENTES y deben
 documentarse por SHA/run exactos (Regla84).
@@ -102,8 +105,12 @@ Sin pausa/handoff tras conocerlo, ambos GO exactos son imposibles de
 preconfigurar, incluso si todo el CI está GREEN. Los dos GO propuestos
 para lifecycle/Telegram presentan el mismo obstáculo; además, el contexto
 manual inicial pide `attempt_id=GITHUB_RUN_ID`, dato no conocible al
-construir ese input. En consecuencia **este branch CODE_ONLY no añade aún
-nuevas opciones de dispatch ni llama al host**.
+construir ese input. El PR DRAFT #359 ahora **sí añade** las opciones de dispatch a un único
+workflow, con PREPARE inerte y lifecycle APPLY efectivamente condicionado al
+GO B independiente, revalidaciones exactas y ACK físico. Ningún job PR puede
+acceder al host, no se ha despachado operación física y Telegram activate se
+rechaza siempre en el case inicial, antes de SSH. La identidad host solo se
+confía después de backend rootless #356 con marcador O_EXCL por PREPARE.
 
 | Operación | Dependencia GO del run actual | Disponibilidad del actor | Bloqueo para despacho hoy |
 | --- | --- | --- | --- |
@@ -158,3 +165,53 @@ de modificar semántica del gate o instalar/desplegar. Referencias oficiales:
 [GitHub environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments),
 [review deployments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments)
 y [workflow dispatch REST](https://docs.github.com/en/rest/actions/workflows).
+
+
+## Implementación R26 en PR DRAFT #359 (sin ejecución host)
+
+- Nuevo input opcional único `protected_action_context` (25/25) y tres
+  operaciones explícitas en `boca-first-deploy.yml`: `protected-go-prepare`,
+  `lifecycle-apply`, `telegram-activate`. La última se rechaza
+  deliberadamente PRE-SSH; además se excluye de los cinco pasos
+  `startsWith(inputs.operation,'telegram-')` que podrían iniciar/apagar
+  el daemon legacy. No se crea otro workflow, puerto, broker, host service ni
+  credencial en UI.
+- PREPARE acepta b64url JSON canónico estático **sin** `attempt_id` (futuro)
+  ni `prepare_run_id` (aún desconocido), lee manifests release controller+
+  browser ya verificados, revisa Option B ZIP desde fuente exacta, owner SHA
+  sin revelar owner y crea `boca-lifecycle-prepare.receipt.json` canónico
+  + `boca-lifecycle-apply-context.txt` con `prepare_run_id` REAL ya conocido.
+  Artifact GitHub `boca-protected-go-prepare` retención 2 días y recibo
+  TTL 24h. El GO_SHA256 visible en Summary representa SHA domain-separated
+  del recibo entero; no es un secreto ni una autorización por sí solo.
+- Tincho revisa PREPARE en Actions, configura únicamente el GO digest exacto
+  en `boca-first-deploy` Environment como variable
+  `BOCA_LIFECYCLE_GO_BINDING_SHA256`, y luego dispara APPLY con el texto
+  canónico de `boca-lifecycle-apply-context.txt`. Ni PIN, token Telegram,
+  passkey ni clave de SSH se solicitan en un input. El connector GitHub
+  actual permite leer PR/Actions pero **no expone** aquí escribir variables
+  del Environment ni despachar manualmente workflows; esos dos pasos de
+  interfaz protegida siguen siendo interacción de propietario, no terminal.
+- Runner APPLY vuelve a descargar PREPARE por `prepare_run_id`, valida
+  `workflow_dispatch` exitoso `attempt=1`, owner/main/SHA, `path`, ZIP,
+  releases, hashes, reloj 24h y GO. Solamente entonces injerta su propio
+  `GITHUB_RUN_ID` como `attempt_id` en contexto host. Backend #356 reatesta
+  rootless Docker UID10001, volumen y IDs exactos, consume marcador durable
+  O_EXCL de `prepare_run_id` bajo lease, procesa una REQUESTED actual y
+  devuelve un JSON terminal de diez campos `APPLIED/REFUSED` +
+  `physical_ack`. El runner rechaza cualquier falta, duplicado, señal
+  incierta o ACK no exacto, sin reintentos/cleanup adivinado.
+- PREPARE no tiene SSH (ni lee credencial host); `pr-validation` solo tests
+  offline y declara NO_GO ante cualquier archivo de recibo físico inyectado.
+  `Cutover A` e importación #349 mantienen gates originales sin cambios.
+
+**Dependencias P0 para GO B total (owner #360):** helpers puros
+`cutover_prepared_context_sha256` y
+`official_prepared_context_sha256` de PR #361 validan evidencia legacy
+pero **no** implementan consumo de PREPARE host. Cutover A conserva solo
+O_EXCL sobre `plan.attempt_id` de APPLY, y la importación #349 es
+idempotente en datos pero no agota un GO PREPARE global. Por tanto **ambas
+quedan NO_GO en la práctica** hasta que el backend físico de cada operación
+consuma `prepare_run_id` de modo atómico y exista migración revisada de
+sus gates; estas operaciones no se han incorporado a PREPARE #359 ni se
+ha alterado su implementación.
