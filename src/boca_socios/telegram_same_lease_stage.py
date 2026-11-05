@@ -301,6 +301,12 @@ def execute_staged_pairing_under_lease(
         type(owner_receipt) is not OwnerPairingReceipt
         or owner_receipt.coordinates != coordinates
         or not hmac.compare_digest(owner_receipt.envelope_sha256, stage.envelope_sha256)
+        # The server-staged time is part of the signed owner receipt, so a
+        # pre-receipt /start can still be discovered by a later Actions run.
+        or type(owner_receipt.discovery_not_before) is not int
+        or owner_receipt.discovery_not_before != stage.staged_at
+        or stage.staged_at > owner_receipt.issued_at
+        or now - stage.staged_at > 3600
     ):
         raise SameLeasePairingError("telegram_owner_stage_binding_unverified")
 
