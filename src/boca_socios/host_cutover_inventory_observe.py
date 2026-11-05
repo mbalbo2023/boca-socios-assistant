@@ -102,7 +102,7 @@ _CUTOVER_NO_GO_ALLOWED = frozenset(_CUTOVER_PUBLIC_REASONS.values()) | {
     _CUTOVER_NO_GO_OTHER,
 }
 _PUBLIC_NO_GO_LINE = re.compile(
-    r"BOCA_CUTOVER_INVENTORY_OBSERVE state=NO_GO reason=([A-Z][A-Z0-9_]{2,63})\\Z"
+    r"BOCA_CUTOVER_INVENTORY_OBSERVE state=NO_GO reason=([A-Z][A-Z0-9_]{2,63})\Z"
 )
 
 
