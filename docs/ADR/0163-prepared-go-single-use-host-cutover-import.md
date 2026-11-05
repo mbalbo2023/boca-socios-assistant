@@ -113,3 +113,39 @@ host/SSH/Docker real; registrar SHA, TREE y CI exacta al cierre del PR.
 **Estado de autorización:** CODE_ONLY aprobado, GO físico NO OTORGADO.
 La seguridad adicional es P2, pero el aislamiento Boca y estas
 invariantes funcionales del deploy son obligatorios.
+
+## R25 — runner GO_B compartido, sólo CODE_ONLY
+
+Owner #364 agregó `src/boca_socios/prepared_go_runner.py` como verificador común
+de las pruebas generadas por **Actions protegido**. Los tres archivos privados,
+O_EXCL y no derivados del input de usuario, son
+`$RUNNER_TEMP/boca-protected-legacy-go.{approved,prepare-id,receipt.json}`.
+Se acepta exclusivamente recibo v1 de quince campos, representación JSON
+canónica exacta, 24 h de vigencia, actor `mbalbo2023`, `main`, intentos
+1, SHA de fuente, release, ambos manifiestos, ZIP revisado y owner sujeto
+hasheado. La derivación del GO_B tiene dominios distintos, byte NUL final:
+
+- Cutover A: `boca-cutover-a-prepared-go-v1:\x00`, `BOCA_CUTOVER_A_GO_BINDING_SHA256`.
+- Import: `boca-official-notice-import-prepared-go-v1:\x00`, `BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256`.
+
+`check_cutover_a_go.py --prepared-from-actions` genera token Cutover v2
+sólo tras recalcular `cutover_prepared_context_sha256`, ambas evidencias
+de release y ZIP, y cotejar Env GO_B independiente contra recibo canónico.
+El import agrega `runner-preflight-prepared` y
+`runner-host-command-prepared`; revalida artefacto oficial, SHA ZIP,
+dos manifiestos y GO_B en ambos pasos, sin importar por defecto.
+
+**Dependencias NO_GO de integración:** #352 debe autenticar con GitHub
+GET read-only el PREPARE previo SUCCESS/actor/source/attempt/artifact y
+recién luego producir los tres archivos privados; debe cablear los modos
+runner con GO_B real de Environment y validar recibo físico exacto.
+El ZIP Cutover `__main__`/builder necesita una vía independiente para
+inyectar al host el GO ya verificado (sigue vacío en entrypoint heredado).
+Estos módulos no cruzan por sí solos la frontera SSH/host ni se autorizan
+por un `prepare_run_id` del usuario. Workflow y ZIP fuera de ownership #364.
+
+**Prohibiciones intactas:** no deploy ni solicitudes/reservas reales, no
+backups, no migrar legacy a 0008, no BLACKBOX, Porota, servicios ajenos,
+puertos nuevos ni HTTPS; `127.0.0.1:8443` único panel. Regla 84:
+esta ADR/issue/PR contienen los estados reproducibles; evidencias exactas
+de CI se agregan sólo tras finalizar Actions sobre el SHA único.

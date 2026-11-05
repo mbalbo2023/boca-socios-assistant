@@ -30,6 +30,11 @@ from boca_socios.events.host_official_notice_import import (
     import_reviewed_official_artifact,
 )
 from boca_socios.events.official_news_receipt import OFFICIAL_NEWS_URL
+from boca_socios.prepared_go_runner import (
+    PreparedGoError,
+    hash_reviewed_file,
+    verify_legacy_prepared_go,
+)
 
 _REPOSITORY = "mbalbo2023/boca-socios-assistant"
 _REPOSITORY_ID = 1_437_453_367
@@ -296,14 +301,23 @@ def verify_artifact_from_github(
     operation_run_id: str,
     actor: str,
 ) -> str:
-    """Authenticate GitHub run/artifact metadata, exact ZIP and separate GO.
-
-    The caller obtains metadata and ZIP from GitHub using the protected runner
-    read-only token. Claims in the ZIP alone can never satisfy these checks.
-    """
+    """Legacy current-run GO path unchanged, then authenticate exact source."""
     approved = expected_go_sha256(coords, operation_run_id=operation_run_id, actor=actor)
     if independent_go_sha256 != approved:
         raise OfficialImportActionError("independent official import GO absent or mismatched")
+    return _verify_github_reviewed_source(
+        coords, source_run=source_run, artifact=artifact, archive=archive
+    )
+
+
+def _verify_github_reviewed_source(
+    coords: OfficialImportCoordinates,
+    *,
+    source_run: dict[str, Any],
+    artifact: dict[str, Any],
+    archive: bytes,
+) -> str:
+    """Shared immutable GitHub source validation after the correct GO gate."""
     if (
         type(source_run) is not dict
         or source_run.get("id") != int(coords.source_run_id)
@@ -584,6 +598,85 @@ def _private_write_once(path: Path, data: bytes) -> None:
             os.close(fd)
 
 
+def _prepared_official_runner_proof(
+    coords: OfficialImportCoordinates, *, archive_sha256: str
+) -> str:
+    """Verify independent GO_B and rehash exact official release artifacts."""
+    env = os.environ
+    runner = Path(env.get("RUNNER_TEMP", ""))
+    try:
+        proof = verify_legacy_prepared_go(
+            operation="official-notice-import",
+            expected_public_context_sha256=lambda prepare_id: official_prepared_context_sha256(
+                coords, prepare_run_id=prepare_id, actor=env.get("GITHUB_ACTOR", "")
+            ),
+            source_sha=coords.main_sha,
+            release_run_id=coords.controller_release_run_id,
+            release_manifest_sha256=hash_reviewed_file(
+                runner / "boca-release-manifest/boca-release-manifest.json"
+            ),
+            browser_manifest_sha256=hash_reviewed_file(
+                runner / "boca-browser-release-manifest/boca-browser-release-manifest.json"
+            ),
+            bundle_sha256=archive_sha256,
+            owner_subject=env.get("BOCA_BETA_OWNER_SUBJECT", ""),
+            environ=env,
+        )
+    except (PreparedGoError, OfficialImportActionError) as exc:
+        raise OfficialImportActionError(
+            "official prepared runner source, release or GO_B unavailable"
+        ) from exc
+    return proof.prepare_run_id
+
+
+def _prepared_reviewed_source_zip(path: Path) -> bytes:
+    if not path.is_absolute() or path.is_symlink() or not path.is_file():
+        raise OfficialImportActionError("prepared official ZIP path unavailable")
+    try:
+        if not 0 < path.stat().st_size <= _MAX_ZIP:
+            raise OfficialImportActionError("prepared official ZIP size unsafe")
+        raw = path.read_bytes()
+    except OSError:
+        raise OfficialImportActionError("prepared official ZIP unreadable") from None
+    if not 0 < len(raw) <= _MAX_ZIP:
+        raise OfficialImportActionError("prepared official ZIP length differs")
+    return raw
+
+
+def _runner_preflight_prepared(argv: list[str]) -> int:
+    """No host action; v2 PREPARE proof precedes GitHub artifact parsing."""
+    if len(argv) != 6:
+        raise OfficialImportActionError("official prepared preflight arguments incomplete")
+    coords = _coords_from_env()
+    archive = _prepared_reviewed_source_zip(Path(argv[4]))
+    _prepared_official_runner_proof(
+        coords, archive_sha256=hashlib.sha256(archive).hexdigest()
+    )
+    token = _verify_github_reviewed_source(
+        coords,
+        source_run=_load_json(Path(argv[2])),
+        artifact=_load_json(Path(argv[3])),
+        archive=archive,
+    )
+    _private_write_once(Path(argv[5]), (token + "\n").encode("ascii"))
+    print("BOCA_OFFICIAL_IMPORT_PREPARED_PREFLIGHT state=READY host=untouched")
+    return 0
+
+
+def _runner_host_command_prepared(argv: list[str]) -> int:
+    """Reverify GO_B source pins before printing fixed Boca-only SSH command."""
+    if len(argv) != 4:
+        raise OfficialImportActionError("official prepared host command arguments invalid")
+    coords = _coords_from_env()
+    token = _load_token(Path(argv[2]))
+    archive = _prepared_reviewed_source_zip(Path(argv[3]))
+    prepare_run_id = _prepared_official_runner_proof(
+        coords, archive_sha256=hashlib.sha256(archive).hexdigest()
+    )
+    print(build_single_ssh_host_command(coords, token, prepare_run_id=prepare_run_id))
+    return 0
+
+
 def _runner_preflight(argv: list[str]) -> int:
     if len(argv) != 6:
         raise OfficialImportActionError("official import runner arguments incomplete")
@@ -667,6 +760,10 @@ def _run_cli(argv: list[str]) -> int:
             raise OfficialImportActionError("official import archive size invalid")
         print(import_from_container_stdin(coords, archive, prepare_run_id=prepare_run_id))
         return 0
+    if len(argv) >= 2 and argv[1] == "runner-preflight-prepared":
+        return _runner_preflight_prepared(argv)
+    if len(argv) >= 2 and argv[1] == "runner-host-command-prepared":
+        return _runner_host_command_prepared(argv)
     if len(argv) >= 2 and argv[1] == "runner-preflight":
         return _runner_preflight(argv)
     if len(argv) >= 2 and argv[1] == "runner-host-command":
