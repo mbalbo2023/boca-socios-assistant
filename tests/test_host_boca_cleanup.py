@@ -129,6 +129,131 @@ def test_postapply_cleanup_unknown_global_image_id_is_uncertain_without_inspecti
     assert FOREIGN_IMAGE not in str(result)
 
 
+def test_boca_reference_only_image_provenance_reads_only_public_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The uncertain image is not a deletion target or an invitation to read Env."""
+    snapshot = _physical_observer_fixture(stale="unknown")
+    source_sha = "e" * 40
+    tag = "ghcr.io/mbalbo2023/boca-socios-assistant:sha-" + source_sha
+    digest = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "f" * 64
+    calls: list[tuple[str, ...]] = []
+
+    def fake_docker(*args: str) -> str:
+        calls.append(args)
+        if args == (
+            "image",
+            "ls",
+            "-a",
+            "-q",
+            "--no-trunc",
+            "--filter",
+            "reference=ghcr.io/mbalbo2023/boca-socios-assistant*",
+        ):
+            return OLD_IMAGE + "\n"
+        assert args[:4] == ("image", "inspect", "--format", args[3])
+        assert args[-1] == OLD_IMAGE and len(args) == 5
+        template = args[3]
+        if template == "{{json .Id}}":
+            return json.dumps(OLD_IMAGE)
+        if template == "{{json .RepoTags}}":
+            return json.dumps([tag, "docker.io/private/foreign-alias:SECRET_SHOULD_NOT_LEAK"])
+        if template == "{{json .RepoDigests}}":
+            return json.dumps([digest])
+        if template == "{{json .Size}}":
+            return "734003200"
+        if "org.opencontainers.image.source" in template:
+            return "null"
+        if "org.opencontainers.image.revision" in template:
+            return json.dumps(source_sha)
+        pytest.fail(f"unreviewed Docker field: {template}")
+
+    monkeypatch.setattr(gc, "_docker", fake_docker)
+    proof = gc._observe_boca_reference_image(OLD_IMAGE, snapshot)
+    assert proof == {
+        "id": OLD_IMAGE,
+        "repo_tags": [tag],
+        "repo_digests": [digest],
+        "untrusted_alias_count": 1,
+        "oci_source_status": "ABSENT",
+        "oci_revision": source_sha,
+        "logical_size_bytes": 734003200,
+        "container_ref_count": 0,
+        "deletion_authorized": False,
+    }
+    assert len(calls) == 8
+    assert "SECRET_SHOULD_NOT_LEAK" not in str(proof)
+    assert all("Config.Env" not in " ".join(call) for call in calls)
+    assert all("{{json .Config.Labels}}" not in " ".join(call) for call in calls)
+    assert all("rm" not in call and "prune" not in call for call in calls)
+
+
+def test_boca_reference_only_provenance_stays_uncertain_and_rejects_tampering() -> None:
+    snapshot = _physical_observer_fixture(stale="unknown")
+    read_ids: list[str] = []
+    evidence = {
+        "id": OLD_IMAGE,
+        "repo_tags": ["ghcr.io/mbalbo2023/boca-socios-assistant:sha-" + "d" * 40],
+        "repo_digests": ["ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "e" * 64],
+        "untrusted_alias_count": 0,
+        "oci_source_status": "ABSENT",
+        "oci_revision": "d" * 40,
+        "logical_size_bytes": 400_000_000,
+        "container_ref_count": 0,
+        "deletion_authorized": False,
+    }
+
+    def observe_provenance(ident: str, _: gc.Inventory) -> dict[str, object]:
+        read_ids.append(ident)
+        return evidence.copy()
+
+    with_foreign_unknown = replace(
+        snapshot, global_image_ids=snapshot.global_image_ids | {FOREIGN_IMAGE}
+    )
+    receipt = gc.observe_postapply_cleanup(
+        ATTEMPT,
+        ACTIVE_ID,
+        probe=lambda: with_foreign_unknown,
+        probe_provenance=observe_provenance,
+    )
+    assert read_ids == [OLD_IMAGE, OLD_IMAGE]
+    assert receipt["classification"] == "INDETERMINATE"
+    assert receipt["known_remnants"] == []
+    assert receipt["retained_uncertain"]
+    assert receipt["image_provenance"] == [evidence]
+    assert FOREIGN_IMAGE not in str(receipt)
+    raw = gc.canonical_readonly_cleanup_receipt(receipt)
+    assert gc.verify_readonly_cleanup_receipt(raw, ATTEMPT, ACTIVE_ID) == receipt
+    for tampering in (
+        {**evidence, "deletion_authorized": True},
+        {**evidence, "repo_tags": ["docker.io/foreign:secret"]},
+        {**evidence, "repo_tags": [{"non_string": "payload"}]},
+        {**evidence, "oci_revision": "secret"},
+        {**evidence, "container_ref_count": 1},
+        {**evidence, "id": ACTIVE_IMAGE},
+    ):
+        forged = {**receipt, "image_provenance": [tampering]}
+        with pytest.raises(gc.CleanupError):
+            gc.verify_readonly_cleanup_receipt(
+                gc.canonical_readonly_cleanup_receipt(forged), ATTEMPT, ACTIVE_ID
+            )
+
+
+def test_boca_reference_only_image_provenance_changed_second_read_no_go() -> None:
+    snapshot = _physical_observer_fixture(stale="unknown")
+    calls = 0
+
+    def drift(_ident: str, _snapshot: gc.Inventory) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {"logical_size_bytes": calls}
+
+    with pytest.raises(gc.CleanupError, match="provenance drifted"):
+        gc.observe_postapply_cleanup(
+            ATTEMPT, ACTIVE_ID, probe=lambda: snapshot, probe_provenance=drift
+        )
+
+
 def test_postapply_cleanup_readonly_receipt_rejects_tampering() -> None:
     receipt = gc.observe_postapply_cleanup(
         ATTEMPT, ACTIVE_ID, probe=lambda: _physical_observer_fixture()
