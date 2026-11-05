@@ -2,6 +2,16 @@
   "version": 1,
   "lessons": [
     {
+      "id": "RCA-27",
+      "issue": 27,
+      "fix_pr": 254,
+      "root_cause": "Two observer regression modules imported checkout-only scripts as installed packages. Local python -m pytest added the checkout root, masking collection errors in the hosted pytest console entrypoint.",
+      "prevention": "Load reviewed script modules by exact checkout path and execute a clean subprocess regression using the actual pytest console entrypoint with PYTHONPATH removed.",
+      "regression_tests": [
+        "tests/test_public_observer_isolation.py::test_pytest_entrypoint_collects_observer_tests_without_pythonpath"
+      ]
+    },
+    {
       "id": "RCA-80",
       "issue": 80,
       "fix_pr": 81,
@@ -263,23 +273,6 @@
       ]
     },
     {
-      "id": "RCA-251",
-      "issue": 251,
-      "fix_pr": 253,
-      "root_cause": "The durable Telegram worker lacked an identity-bound prior API acceptance gate and a protected start path compatible with the installed browser topology; attempted sender cleanup also depended on unrelated base-service health.",
-      "prevention": "Require the exact private configuration and acceptance fence before claims; validate the installed pair and new sender attempt separately, then clean only positively identified new residues without depending on base-service health.",
-      "regression_tests": [
-        "tests/test_telegram_worker.py::test_worker_requires_identity_bound_acceptance_before_build_or_claim",
-        "tests/test_telegram_one_shot.py::test_readiness_requires_the_same_pinned_identity_and_prior_api_acceptance",
-        "tests/test_telegram_one_shot.py::test_old_acceptance_cannot_authorize_a_new_private_pair",
-        "tests/test_telegram_one_shot.py::test_generic_acceptance_and_ambiguous_identity_proof_do_not_enable_worker",
-        "tests/test_telegram_one_shot.py::test_readiness_rejects_incomplete_or_inconsistent_api_receipt",
-        "tests/test_host_browser_runtime_lifecycle.py::test_sender_failure_cleanup_removes_only_new_sender_and_network_and_reports_capacity",
-        "tests/test_host_browser_runtime_lifecycle.py::test_sender_cleanup_refuses_other_run_before_first_destructive_action",
-        "tests/test_host_browser_runtime_lifecycle.py::test_cleanup_identifies_unhealthy_or_stopped_pair_without_requiring_health_or_mutating_it"
-      ]
-    },
-    {
       "id": "RCA-250",
       "issue": 250,
       "fix_pr": 253,
@@ -296,13 +289,20 @@
       ]
     },
     {
-      "id": "RCA-27",
-      "issue": 27,
-      "fix_pr": 254,
-      "root_cause": "Two observer regression modules imported checkout-only scripts as installed packages. Local python -m pytest added the checkout root, masking collection errors in the hosted pytest console entrypoint.",
-      "prevention": "Load reviewed script modules by exact checkout path and execute a clean subprocess regression using the actual pytest console entrypoint with PYTHONPATH removed.",
+      "id": "RCA-251",
+      "issue": 251,
+      "fix_pr": 253,
+      "root_cause": "The durable Telegram worker lacked an identity-bound prior API acceptance gate and a protected start path compatible with the installed browser topology; attempted sender cleanup also depended on unrelated base-service health.",
+      "prevention": "Require the exact private configuration and acceptance fence before claims; validate the installed pair and new sender attempt separately, then clean only positively identified new residues without depending on base-service health.",
       "regression_tests": [
-        "tests/test_public_observer_isolation.py::test_pytest_entrypoint_collects_observer_tests_without_pythonpath"
+        "tests/test_telegram_worker.py::test_worker_requires_identity_bound_acceptance_before_build_or_claim",
+        "tests/test_telegram_one_shot.py::test_readiness_requires_the_same_pinned_identity_and_prior_api_acceptance",
+        "tests/test_telegram_one_shot.py::test_old_acceptance_cannot_authorize_a_new_private_pair",
+        "tests/test_telegram_one_shot.py::test_generic_acceptance_and_ambiguous_identity_proof_do_not_enable_worker",
+        "tests/test_telegram_one_shot.py::test_readiness_rejects_incomplete_or_inconsistent_api_receipt",
+        "tests/test_host_browser_runtime_lifecycle.py::test_sender_failure_cleanup_removes_only_new_sender_and_network_and_reports_capacity",
+        "tests/test_host_browser_runtime_lifecycle.py::test_sender_cleanup_refuses_other_run_before_first_destructive_action",
+        "tests/test_host_browser_runtime_lifecycle.py::test_cleanup_identifies_unhealthy_or_stopped_pair_without_requiring_health_or_mutating_it"
       ]
     },
     {
@@ -348,6 +348,19 @@
       ]
     },
     {
+      "id": "RCA-259",
+      "issue": 259,
+      "fix_pr": 261,
+      "root_cause": "The browser host gate subtracted one-minute load average from the SSH process CPU affinity, treating runnable and I/O-wait task counts as idle CPU. A two-CPU full topology was falsely rejected for any positive load, while ancestor quotas and container-branch cpusets were ignored.",
+      "prevention": "Resolve the dedicated rootless systemd container branch and applicable ancestor quotas/cpusets, use the verified configured CPU ceiling with unchanged numerical thresholds, and report load only as advisory; unknown identity or controls remain NO_GO.",
+      "regression_tests": [
+        "tests/test_host_cpu_capacity.py::test_io_load_does_not_reject_two_cpu_browser_and_telegram",
+        "tests/test_host_cpu_capacity.py::test_every_container_ancestor_quota_limits_ceiling",
+        "tests/test_host_cpu_capacity.py::test_expected_kernel_control_missing_is_unknown_not_unlimited",
+        "tests/test_host_cpu_capacity.py::test_advisory_load_survives_exact_real_receipt_workflow_parser"
+      ]
+    },
+    {
       "id": "RCA-260",
       "issue": 260,
       "fix_pr": 261,
@@ -369,16 +382,17 @@
       ]
     },
     {
-      "id": "RCA-259",
-      "issue": 259,
-      "fix_pr": 261,
-      "root_cause": "The browser host gate subtracted one-minute load average from the SSH process CPU affinity, treating runnable and I/O-wait task counts as idle CPU. A two-CPU full topology was falsely rejected for any positive load, while ancestor quotas and container-branch cpusets were ignored.",
-      "prevention": "Resolve the dedicated rootless systemd container branch and applicable ancestor quotas/cpusets, use the verified configured CPU ceiling with unchanged numerical thresholds, and report load only as advisory; unknown identity or controls remain NO_GO.",
+      "id": "RCA-264",
+      "issue": 264,
+      "fix_pr": 266,
+      "root_cause": "The offline renderer stopped safely on a resource outside its capture map but omitted the rejected identity. Later STOP cancellations could also overflow the supervisor decision-count bound and discard the causal diagnostic.",
+      "prevention": "Emit strictly sanitized and revalidated causal metadata within eight items/4096 bytes. Separate bounded post-STOP cancellations from evaluated requests, preserve the first cause through abort/close failures, and retain all network and request limits.",
       "regression_tests": [
-        "tests/test_host_cpu_capacity.py::test_io_load_does_not_reject_two_cpu_browser_and_telegram",
-        "tests/test_host_cpu_capacity.py::test_every_container_ancestor_quota_limits_ceiling",
-        "tests/test_host_cpu_capacity.py::test_expected_kernel_control_missing_is_unknown_not_unlimited",
-        "tests/test_host_cpu_capacity.py::test_advisory_load_survives_exact_real_receipt_workflow_parser"
+        "tests/test_public_observer_capture.py::test_denied_navigation_identifies_only_sanitized_cause_and_separates_prior_stop",
+        "tests/test_public_observer_capture.py::test_denied_metadata_never_exports_arbitrary_paths_userinfo_or_values",
+        "tests/test_public_observer_capture.py::test_safe_static_diagnostic_identity_never_expands_the_render_map",
+        "tests/test_public_observer_capture.py::test_supervisor_rejects_diagnostic_schema_privacy_and_size_violations",
+        "tests/test_public_observer_capture.py::test_many_post_stop_cancellations_preserve_causal_diagnostic_through_supervisor"
       ]
     },
     {
@@ -393,20 +407,6 @@
         "tests/test_owner_enrollment_argv.py::test_each_protected_owner_transport_reaches_host_cli_without_changing_options",
         "tests/test_owner_enrollment_argv.py::test_cleanup_recognizes_exact_legacy_and_terminated_enrollment_commands",
         "tests/test_owner_enrollment_argv.py::test_uncertain_enrollment_argv_preserves_every_resource_before_cleanup"
-      ]
-    },
-    {
-      "id": "RCA-264",
-      "issue": 264,
-      "fix_pr": 266,
-      "root_cause": "The offline renderer stopped safely on a resource outside its capture map but omitted the rejected identity. Later STOP cancellations could also overflow the supervisor decision-count bound and discard the causal diagnostic.",
-      "prevention": "Emit strictly sanitized and revalidated causal metadata within eight items/4096 bytes. Separate bounded post-STOP cancellations from evaluated requests, preserve the first cause through abort/close failures, and retain all network and request limits.",
-      "regression_tests": [
-        "tests/test_public_observer_capture.py::test_denied_navigation_identifies_only_sanitized_cause_and_separates_prior_stop",
-        "tests/test_public_observer_capture.py::test_denied_metadata_never_exports_arbitrary_paths_userinfo_or_values",
-        "tests/test_public_observer_capture.py::test_safe_static_diagnostic_identity_never_expands_the_render_map",
-        "tests/test_public_observer_capture.py::test_supervisor_rejects_diagnostic_schema_privacy_and_size_violations",
-        "tests/test_public_observer_capture.py::test_many_post_stop_cancellations_preserve_causal_diagnostic_through_supervisor"
       ]
     },
     {
@@ -502,6 +502,20 @@
         "tests/test_host_first_deploy.py::test_valid_low_host_headroom_is_advisory_before_install",
         "tests/test_host_first_deploy.py::test_unsafe_host_snapshot_is_no_go",
         "tests/test_host_beta_acceptance.py::test_installed_headroom_is_advisory_but_invalid_metadata_and_network_are_rejected"
+      ]
+    },
+    {
+      "id": "RCA-323",
+      "issue": 323,
+      "fix_pr": 384,
+      "root_cause": "The original controller image (release #41893887078) lacks an OCI source label. Cutover A retired its final container first; cleanup then classified the now-unused old image INDETERMINATE or missed its digest-only ref, blocking terminal ACK after COMMITTED.",
+      "prevention": "Before irreversible retirement, attest exact legacy image ID to GHCR RepoDigest and revision; refuse foreign/multiple aliases and other uncertain Boca residue. Recheck only that ID on each cleanup probe, delete only if unused, and prove global ID absence without force/prune.",
+      "regression_tests": [
+        "tests/test_host_boca_cutover_backend.py::test_precommit_exact_old_image_proof_allows_only_known_boca_image",
+        "tests/test_host_boca_cutover_backend.py::test_precommit_cleanup_blocks_irreversible_retirement_if_proof_unknown",
+        "tests/test_host_boca_cleanup.py::test_unlabelled_retired_legacy_image_requires_exact_precommit_attestation",
+        "tests/test_host_boca_cleanup.py::test_legacy_image_attestation_rejects_foreign_alias_or_identity_drift",
+        "tests/test_host_boca_cleanup.py::test_legacy_image_attestation_reads_only_old_boca_image_allowlisted_fields"
       ]
     },
     {

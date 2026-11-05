@@ -120,6 +120,18 @@ class Image:
     ident: str
     references: tuple[str, ...]
     source: str | None
+    # A singular historical controller image may lack OCI source (release #41893887078).
+    # True is set only by the narrow, exact-digest/revision host attestor below.
+    historical_legacy_attested: bool = False
+
+
+@dataclass(frozen=True)
+class LegacyImageProof:
+    """Exact, previously running Boca controller image; never an arbitrary tag."""
+
+    ident: str
+    reference: str
+    revision: str
 
 
 @dataclass(frozen=True)
@@ -410,7 +422,7 @@ def _attempt_owner(labels: dict[str, str], attempt_id: str) -> bool:
 
 
 def _known_boca_image(image: Image) -> bool:
-    return image.source == BOCA_SOURCE and all(
+    return (image.source == BOCA_SOURCE or image.historical_legacy_attested) and all(
         any(ref.startswith(prefix) for prefix in BOCA_IMAGE_PREFIXES) for ref in image.references
     )
 
@@ -455,8 +467,24 @@ def _validate_inventory(value: Inventory) -> None:
     for volume in value.volumes:
         _labels(volume.labels)
     for image in value.images:
-        if len(image.references) > 32 or any(not ref or len(ref) > 256 for ref in image.references):
-            raise CleanupError("Docker image references malformed")
+        if (
+            len(image.references) > 32
+            or any(not ref or len(ref) > 256 for ref in image.references)
+            or type(image.historical_legacy_attested) is not bool
+            or (
+                image.historical_legacy_attested
+                and (
+                    not image.references
+                    or image.source not in (None, BOCA_SOURCE)
+                    or any(
+                        not ref.startswith("ghcr.io/mbalbo2023/boca-socios-assistant:")
+                        and not ref.startswith("ghcr.io/mbalbo2023/boca-socios-assistant@sha256:")
+                        for ref in image.references
+                    )
+                )
+            )
+        ):
+            raise CleanupError("Docker image references or historical attestation malformed")
 
 
 def plan(
@@ -859,6 +887,68 @@ def _inspect_field(kind: KIND, ident: str, field: str) -> object:
         raise CleanupError("Docker narrow inspected field JSON malformed") from exc
 
 
+def _verify_historical_legacy_image(
+    proof: LegacyImageProof,
+) -> tuple[tuple[str, ...], str | None]:
+    """Exact previously attested Boca image only; never inspect unknown image data.
+
+    The only admitted OCI-source exception is the old controller whose Docker
+    container was authenticated against the historical GH release SHA/digest.
+    Re-verify narrowly on every cleanup probe, including all aliases. Docker
+    Config.Env and foreign containers/images are never read.
+    """
+    if (
+        type(proof) is not LegacyImageProof
+        or not HEX_ID.fullmatch(proof.ident)
+        or not re.fullmatch(
+            r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z",
+            proof.reference,
+        )
+        or re.fullmatch(r"[0-9a-f]{40}\Z", proof.revision) is None
+    ):
+        raise CleanupError("historical Boca image proof coordinates untrusted")
+    if _inspect_field("image", proof.ident, "Id") != proof.ident:
+        raise CleanupError("historical Boca image exact ID drifted")
+    labels = _dict(_inspect_field("image", proof.ident, "Config.Labels") or {})
+    tags = _inspect_field("image", proof.ident, "RepoTags") or []
+    digests = _inspect_field("image", proof.ident, "RepoDigests") or []
+    if (
+        not isinstance(tags, list)
+        or not isinstance(digests, list)
+        or not all(isinstance(value, str) for value in tags + digests)
+        or digests != [proof.reference]
+        or len(tags) > 1
+        or labels.get("org.opencontainers.image.revision") != proof.revision
+        or labels.get("org.opencontainers.image.source") not in (None, BOCA_SOURCE)
+    ):
+        raise CleanupError("historical Boca image revision/digest/source unproven")
+    references = tuple(
+        sorted({ref for ref in tags + digests if isinstance(ref, str) and ref != "<none>:<none>"})
+    )
+    controller_prefixes = (
+        "ghcr.io/mbalbo2023/boca-socios-assistant:",
+        "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:",
+    )
+    if (
+        not references
+        or len(references) > 32
+        or any(
+            not any(ref.startswith(prefix) for prefix in controller_prefixes) or len(ref) > 256
+            for ref in references
+        )
+    ):
+        raise CleanupError("historical Boca image has foreign/ambiguous alias")
+    source = labels.get("org.opencontainers.image.source")
+    return references, source if isinstance(source, str) else None
+
+
+def attest_historical_legacy_image(ident: str, reference: str, revision: str) -> LegacyImageProof:
+    """Precommit, exact ID from positively authenticated installed controller."""
+    proof = LegacyImageProof(ident, reference, revision)
+    _verify_historical_legacy_image(proof)
+    return proof
+
+
 def _rootless_docker_disk_inodes() -> tuple[int, int, int, int]:
     """Measure only the verified data root of Boca's dedicated Docker daemon.
 
@@ -1004,7 +1094,7 @@ def _disk_inodes() -> DiskInodes:
             os.close(root_fd)
 
 
-def capture_inventory() -> Inventory:
+def capture_inventory(*, historical_legacy: LegacyImageProof | None = None) -> Inventory:
     """Read-only Docker graph + disk/inodes before and after cleanup.
 
     Never inspect foreign work: ID-only global presence checks must prove this
@@ -1085,10 +1175,20 @@ def capture_inventory() -> Inventory:
             dedupe=True,
         )
     )
-    for ident in sorted(label_images | reference_images):
+    known = label_images | reference_images
+    if historical_legacy is not None and historical_legacy.ident in all_image_ids:
+        # Only this precommitted old container's exact image ID may be inspected
+        # without an OCI source label; its immutable digest and revision are
+        # checked before exposing it as a cleanup target.
+        known.add(historical_legacy.ident)
+    for ident in sorted(known):
+        if historical_legacy is not None and ident == historical_legacy.ident:
+            refs, source = _verify_historical_legacy_image(historical_legacy)
+            images.append(Image(ident, refs, source, historical_legacy_attested=True))
+            continue
         if ident not in label_images:
-            # Boca-like tag but unproven provenance: retain without inspecting
-            # the potentially foreign image Config/Env.
+            # Other Boca-like tags remain uncertain: no foreign Config/Env read
+            # and no delete authorization from a name or tag alone.
             images.append(
                 Image(ident, ("ghcr.io/mbalbo2023/boca-socios-assistant:unverified",), None)
             )
@@ -1109,8 +1209,8 @@ def capture_inventory() -> Inventory:
                 }
             )
         )
-        source = labels.get("org.opencontainers.image.source")
-        images.append(Image(ident, refs, source if isinstance(source, str) else None))
+        raw_source = labels.get("org.opencontainers.image.source")
+        images.append(Image(ident, refs, raw_source if isinstance(raw_source, str) else None))
     networks: list[Network] = []
     for ident in sorted(boca_networks):
         if _inspect_field("network", ident, "Id") != ident:
@@ -1167,6 +1267,7 @@ def execute_protected(
     preserve_containers: frozenset[str],
     retire_containers: frozenset[str],
     lease: BocaJobLease,
+    historical_legacy: LegacyImageProof | None = None,
 ) -> CleanupReceipt:
     """Future *unwired* generic finalizer for first/beta/cutover install.
 
@@ -1175,12 +1276,20 @@ def execute_protected(
     Today physical use is hard NO_GO until all installers honor this lease.
     """
     verify_protected_boca_job_lease(lease, attempt_id)
+    if historical_legacy is not None:
+        # An image that vanished or changed since the precommit attestation is
+        # not proof of a successful cleanup. Abort before any other removal.
+        _verify_historical_legacy_image(historical_legacy)
     return execute(
         outcome,
         attempt_id,
         preserve_images=preserve_images,
         preserve_containers=preserve_containers,
         retire_containers=retire_containers,
-        probe=capture_inventory,
+        probe=(
+            capture_inventory
+            if historical_legacy is None
+            else lambda: capture_inventory(historical_legacy=historical_legacy)
+        ),
         delete_exact=delete_exact,
     )

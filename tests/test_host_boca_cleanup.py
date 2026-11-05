@@ -871,3 +871,232 @@ def test_postflight_public_receipt_refuses_non_boca_or_persistent_targets(
     receipt = gc.CleanupReceipt("SUCCESS", ATTEMPT, "ACCEPT", disk, disk, (unsafe,), (), ())
     with pytest.raises(gc.CleanupError):
         receipt.redacted_json()
+
+
+def test_unlabelled_retired_legacy_image_requires_exact_precommit_attestation() -> None:
+    """RCA #323: old revision-only release is not silently accepted after COMMITTED."""
+    original = _inventory()
+    retained = replace(
+        original,
+        containers=(original.containers[0],),
+        networks=original.networks[:1],
+        volumes=original.volumes[:3],
+        images=tuple(
+            replace(
+                image,
+                source=None,
+                references=("ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "7" * 64,),
+            )
+            if image.ident == OLD_IMAGE
+            else image
+            for image in original.images
+        ),
+    )
+    no_proof, no_remove, no_deleted = _probe_and_delete(retained)
+    unverified = gc.execute(
+        "SUCCESS",
+        ATTEMPT,
+        preserve_images=frozenset(),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset(),
+        probe=no_proof,
+        delete_exact=no_remove,
+    )
+    assert unverified.status == "INDETERMINATE"
+    assert no_deleted == []
+
+    attested = replace(
+        retained,
+        images=tuple(
+            replace(image, historical_legacy_attested=True) if image.ident == OLD_IMAGE else image
+            for image in retained.images
+        ),
+    )
+    probe, remove, deleted = _probe_and_delete(attested)
+    receipt = gc.execute(
+        "SUCCESS",
+        ATTEMPT,
+        preserve_images=frozenset(),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset(),
+        probe=probe,
+        delete_exact=remove,
+    )
+    assert receipt.status == "ACCEPT"
+    assert deleted == [gc.Target("image", OLD_IMAGE)]
+    assert receipt.removed == tuple(deleted)
+    assert OLD_IMAGE not in {image.ident for image in probe().images}
+    assert ACTIVE_IMAGE in {image.ident for image in probe().images}
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "foreign-tag",
+        "multiple-boca-tags",
+        "multiple-digests",
+        "wrong-revision",
+        "missing-digest",
+        "foreign-source",
+        "wrong-id",
+    ],
+)
+def test_legacy_image_attestation_rejects_foreign_alias_or_identity_drift(
+    monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    reference = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "1" * 64
+    revision = "a" * 40
+    fields: dict[str, object] = {
+        "Id": OLD_IMAGE,
+        "RepoTags": [],
+        "RepoDigests": [reference],
+        "Config.Labels": {"org.opencontainers.image.revision": revision},
+    }
+    if change == "foreign-tag":
+        fields["RepoTags"] = ["ghcr.io/third-party/foreign:shared"]
+    elif change == "multiple-boca-tags":
+        fields["RepoTags"] = [
+            "ghcr.io/mbalbo2023/boca-socios-assistant:old",
+            "ghcr.io/mbalbo2023/boca-socios-assistant:older",
+        ]
+    elif change == "multiple-digests":
+        fields["RepoDigests"] = [
+            reference,
+            "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "2" * 64,
+        ]
+    elif change == "wrong-revision":
+        fields["Config.Labels"] = {"org.opencontainers.image.revision": "b" * 40}
+    elif change == "missing-digest":
+        fields["RepoDigests"] = []
+    elif change == "foreign-source":
+        fields["Config.Labels"] = {
+            "org.opencontainers.image.revision": revision,
+            "org.opencontainers.image.source": "https://github.com/elsewhere/project",
+        }
+    else:
+        fields["Id"] = ACTIVE_IMAGE
+    inspected: list[str] = []
+
+    def narrow(kind: gc.KIND, ident: str, field: str) -> object:
+        assert kind == "image" and ident == OLD_IMAGE
+        inspected.append(field)
+        assert field != "Config.Env"
+        return fields[field]
+
+    monkeypatch.setattr(gc, "_inspect_field", narrow)
+    with pytest.raises(gc.CleanupError):
+        gc.attest_historical_legacy_image(OLD_IMAGE, reference, revision)
+    assert inspected
+
+
+def test_legacy_image_attestation_reads_only_old_boca_image_allowlisted_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reference = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "1" * 64
+    revision = "a" * 40
+    fields: dict[str, object] = {
+        "Id": OLD_IMAGE,
+        "RepoTags": ["ghcr.io/mbalbo2023/boca-socios-assistant:legacy"],
+        "RepoDigests": [reference],
+        "Config.Labels": {"org.opencontainers.image.revision": revision},
+    }
+    calls: list[str] = []
+
+    def narrow(kind: gc.KIND, ident: str, field: str) -> object:
+        assert kind == "image" and ident == OLD_IMAGE
+        assert field in {"Id", "RepoTags", "RepoDigests", "Config.Labels"}
+        calls.append(field)
+        return fields[field]
+
+    monkeypatch.setattr(gc, "_inspect_field", narrow)
+    proof = gc.attest_historical_legacy_image(OLD_IMAGE, reference, revision)
+    assert proof == gc.LegacyImageProof(OLD_IMAGE, reference, revision)
+    references, source = gc._verify_historical_legacy_image(proof)
+    assert references == tuple(sorted((reference, fields["RepoTags"][0])))
+    assert source is None
+    assert "Config.Env" not in calls
+
+
+def test_digest_only_legacy_image_is_inventoried_by_attested_id_not_reference_filter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The historical digest-only image may be omitted by Docker reference= filter."""
+    reference = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "1" * 64
+    revision = "a" * 40
+    proof = gc.LegacyImageProof(OLD_IMAGE, reference, revision)
+    inspected: list[tuple[str, str, str]] = []
+
+    def docker(*args: str) -> str:
+        if args[:1] == ("ps",):
+            return ACTIVE_ID + "\n"
+        if args[:2] == ("network", "ls"):
+            return "" if "type=builtin" in args else PRIVATE_NET + "\n"
+        if args[:2] == ("volume", "ls"):
+            return DATA + "\n"
+        if args[:2] == ("image", "ls"):
+            if "label=org.opencontainers.image.source=" + gc.BOCA_SOURCE in args:
+                return ACTIVE_IMAGE + "\n"
+            if "reference=ghcr.io/mbalbo2023/boca-socios-assistant*" in args:
+                return ACTIVE_IMAGE + "\n"
+            return ACTIVE_IMAGE + "\n" + OLD_IMAGE + "\n" + FOREIGN_IMAGE + "\n"
+        pytest.fail(f"unexpected Docker command {args!r}")
+
+    def inspect(kind: gc.KIND, ident: str, field: str) -> object:
+        inspected.append((kind, ident, field))
+        assert ident != FOREIGN_IMAGE and field != "Config.Env"
+        if kind == "container":
+            return {
+                "Id": ACTIVE_ID,
+                "Name": "/boca-socios-controller-1",
+                "Image": ACTIVE_IMAGE,
+                "State.Running": True,
+                "Config.Labels": {"com.docker.compose.project": "boca-socios"},
+                "Mounts": [{"Type": "volume", "Name": DATA}],
+                "NetworkSettings.Networks": {"boca-socios_boca_private": {}},
+            }[field]
+        if kind == "image" and ident == OLD_IMAGE:
+            return {
+                "Id": OLD_IMAGE,
+                "RepoTags": [],
+                "RepoDigests": [reference],
+                "Config.Labels": {"org.opencontainers.image.revision": revision},
+            }[field]
+        if kind == "image":
+            return {
+                "Id": ACTIVE_IMAGE,
+                "RepoTags": ["ghcr.io/mbalbo2023/boca-socios-assistant:stable"],
+                "RepoDigests": [],
+                "Config.Labels": {"org.opencontainers.image.source": gc.BOCA_SOURCE},
+            }[field]
+        if kind == "network":
+            return {
+                "Id": PRIVATE_NET,
+                "Name": "boca-socios_boca_private",
+                "Containers": {ACTIVE_ID: {}},
+                "Labels": {"com.docker.compose.project": "boca-socios"},
+            }[field]
+        return {
+            "Name": DATA,
+            "Labels": {"com.docker.compose.project": "boca-socios"},
+        }[field]
+
+    monkeypatch.setattr(gc, "_docker", docker)
+    monkeypatch.setattr(gc, "_inspect_field", inspect)
+    monkeypatch.setattr(gc, "_disk_inodes", lambda: gc.DiskInodes(6000, 600))
+    plain = gc.capture_inventory()
+    assert OLD_IMAGE not in {image.ident for image in plain.images}
+    verified = gc.capture_inventory(historical_legacy=proof)
+    old = next(image for image in verified.images if image.ident == OLD_IMAGE)
+    assert old.historical_legacy_attested and old.source is None
+    assert old.references == (reference,)
+    assert (
+        gc.Target("image", OLD_IMAGE)
+        in gc.plan(
+            verified,
+            ATTEMPT,
+            preserve_images=frozenset(),
+            preserve_containers=frozenset({ACTIVE_ID}),
+            retire_containers=frozenset(),
+        ).targets
+    )
+    assert not any(ident == FOREIGN_IMAGE for _kind, ident, _field in inspected)

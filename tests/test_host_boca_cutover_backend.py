@@ -33,6 +33,7 @@ REAL_LEGACY_DISK_ID = adapter._legacy_disk_identity
 OLD = "1" * 64
 WORKER = "2" * 64
 NEW = "3" * 64
+OLD_IMAGE_ID = "sha256:" + "f" * 64
 SHA = lambda value: hashlib.sha256(value).hexdigest()  # noqa: E731 - fixture shorthand
 
 
@@ -146,7 +147,18 @@ def fake_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[list[str
     monkeypatch.setattr(
         adapter.host, "_beta_loopback_health", lambda *_a: events.append("loopback")
     )
-    monkeypatch.setattr(adapter.host, "_cutover_legacy_record", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        adapter.host,
+        "_cutover_legacy_record",
+        lambda *_a, **_k: {"Image": OLD_IMAGE_ID},
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_precommit_legacy_image_cleanup",
+        lambda _plan, _legacy, _candidate, _worker: cleanup.LegacyImageProof(
+            OLD_IMAGE_ID, _plan.legacy_image, _plan.legacy_sha
+        ),
+    )
 
     def retire(*_args: object) -> None:
         assert original_state[0] == "PARKED"
@@ -201,6 +213,12 @@ def fake_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[list[str
         assert preserve_containers == (
             frozenset({NEW, WORKER}) if outcome == "SUCCESS" else frozenset({OLD})
         )
+        if outcome == "SUCCESS":
+            proof = _kwargs.get("historical_legacy")
+            assert isinstance(proof, cleanup.LegacyImageProof)
+            assert proof.ident == OLD_IMAGE_ID
+        else:
+            assert _kwargs.get("historical_legacy") is None
         events.append("cleanup")
         disk = cleanup.DiskInodes(1000, 100, 3000, 300, 8, 10, 16, 18)
         return cleanup.CleanupReceipt(outcome, attempt_id, "ACCEPT", disk, disk, (), (), ())
@@ -586,3 +604,125 @@ def test_prepared_cutover_backend_aborts_on_missing_durable_marker(
     assert not result.accepted
     assert events[:5] == ["intent", "attest", "rootless", "volume", "marker-uncertain"]
     assert "pull" not in events and "park" not in events
+
+
+def _precommit_inventory(
+    *,
+    extra_unknown: bool = False,
+) -> cleanup.Inventory:
+    """Three exact Boca CIDs; only the old image has authenticated exception."""
+    plan = _plan()
+    new_image = "sha256:" + "7" * 64
+    worker_image = "sha256:" + "8" * 64
+    images = (
+        cleanup.Image(
+            OLD_IMAGE_ID,
+            (plan.legacy_image,),
+            None,
+            historical_legacy_attested=True,
+        ),
+        cleanup.Image(new_image, (plan.target_image,), None),
+        cleanup.Image(worker_image, (plan.browser_image,), None),
+    )
+    if extra_unknown:
+        images += (
+            cleanup.Image(
+                "sha256:" + "9" * 64,
+                ("ghcr.io/mbalbo2023/boca-socios-assistant:unverified",),
+                None,
+            ),
+        )
+    return cleanup.Inventory(
+        containers=(
+            cleanup.Container(
+                OLD,
+                f"/boca-socios-controller-legacy-{plan.attempt_id}",
+                OLD_IMAGE_ID,
+                False,
+                (("com.docker.compose.project", "boca-socios"),),
+            ),
+            cleanup.Container(
+                NEW,
+                "/boca-socios-controller-1",
+                new_image,
+                True,
+                (("com.docker.compose.project", "boca-socios"),),
+            ),
+            cleanup.Container(
+                WORKER,
+                "/boca-socios-browser-worker-1",
+                worker_image,
+                True,
+                (("com.docker.compose.project", "boca-socios"),),
+            ),
+        ),
+        images=images,
+        networks=(),
+        volumes=(),
+        disk=cleanup.DiskInodes(12_000, 120),
+    )
+
+
+def test_precommit_exact_old_image_proof_allows_only_known_boca_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _plan()
+    proof = cleanup.LegacyImageProof(OLD_IMAGE_ID, plan.legacy_image, plan.legacy_sha)
+    calls: list[tuple[str, object]] = []
+
+    def attest(ident: str, reference: str, revision: str) -> cleanup.LegacyImageProof:
+        calls.append(("attest", ident))
+        assert (ident, reference, revision) == (
+            OLD_IMAGE_ID,
+            plan.legacy_image,
+            plan.legacy_sha,
+        )
+        return proof
+
+    def probe(*, historical_legacy: cleanup.LegacyImageProof) -> cleanup.Inventory:
+        calls.append(("inventory", historical_legacy.ident))
+        assert historical_legacy == proof
+        return _precommit_inventory()
+
+    monkeypatch.setattr(adapter.cleanup, "attest_historical_legacy_image", attest)
+    monkeypatch.setattr(adapter.cleanup, "capture_inventory", probe)
+    monkeypatch.setattr(
+        adapter.cleanup,
+        "delete_exact",
+        lambda _target: pytest.fail("precommit cleanup must be read-only"),
+    )
+    assert (
+        adapter._precommit_legacy_image_cleanup(plan, {"Image": OLD_IMAGE_ID}, NEW, WORKER) == proof
+    )
+    assert calls == [("attest", OLD_IMAGE_ID), ("inventory", OLD_IMAGE_ID)]
+
+
+@pytest.mark.parametrize("failure", ["other-unverified", "unknown-legacy-id", "missing-image"])
+def test_precommit_cleanup_blocks_irreversible_retirement_if_proof_unknown(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    plan = _plan()
+    proof = cleanup.LegacyImageProof(OLD_IMAGE_ID, plan.legacy_image, plan.legacy_sha)
+    monkeypatch.setattr(
+        adapter.cleanup,
+        "attest_historical_legacy_image",
+        lambda *_a: proof,
+    )
+    inventory = _precommit_inventory(extra_unknown=failure == "other-unverified")
+    if failure == "missing-image":
+        inventory = replace(
+            inventory,
+            images=tuple(image for image in inventory.images if image.ident != OLD_IMAGE_ID),
+        )
+    monkeypatch.setattr(
+        adapter.cleanup,
+        "capture_inventory",
+        lambda *, historical_legacy: inventory,
+    )
+    with pytest.raises(cutover.CutoverError, match="precommit|historical"):
+        adapter._precommit_legacy_image_cleanup(
+            plan,
+            {"Image": "invalid"} if failure == "unknown-legacy-id" else {"Image": OLD_IMAGE_ID},
+            NEW,
+            WORKER,
+        )

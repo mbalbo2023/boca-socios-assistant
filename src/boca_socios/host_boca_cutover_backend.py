@@ -115,6 +115,50 @@ def _stage_path(plan: CutoverPlan) -> Path:
     return stage.ROOT / f"cutover-a-{plan.attempt_id}"
 
 
+def _precommit_legacy_image_cleanup(
+    plan: CutoverPlan,
+    legacy_record: dict[str, object],
+    candidate_id: str,
+    worker_id: str,
+) -> cleanup.LegacyImageProof:
+    """Block irreversible commit if old image cleanup would be uncertain.
+
+    The old controller was already checked for exact historical GHCR digest,
+    revision, rootless UID, project and persistent mounts. Its immutable
+    Docker image ID is independently cross-checked with narrowly inspected
+    image fields, before a successful cutover can retire the original CID.
+    """
+    image_id = legacy_record.get("Image")
+    if not isinstance(image_id, str) or not cleanup.HEX_ID.fullmatch(image_id):
+        raise CutoverError("cutover historical controller image ID unavailable")
+    try:
+        proof = cleanup.attest_historical_legacy_image(image_id, plan.legacy_image, plan.legacy_sha)
+        inventory = cleanup.capture_inventory(historical_legacy=proof)
+        if not any(
+            container.ident == plan.legacy_id and container.image_id == proof.ident
+            for container in inventory.containers
+        ) or not any(
+            image.ident == proof.ident and image.historical_legacy_attested
+            for image in inventory.images
+        ):
+            raise cleanup.CleanupError("historical Boca image/container binding drifted")
+        planned = cleanup.plan(
+            inventory,
+            plan.attempt_id,
+            preserve_images=frozenset({proof.ident}),
+            preserve_containers=frozenset({plan.legacy_id, candidate_id, worker_id}),
+            retire_containers=frozenset(),
+        )
+        if planned.uncertain:
+            # A new legacy/foreign orphan discovered after COMMITTED cannot
+            # be safely deleted or declared cleaned. Stop while old CID is
+            # still recoverable; never weaken generic cleanup classification.
+            raise cleanup.CleanupError("Boca cleanup has precommit unknown residue")
+        return proof
+    except (cleanup.CleanupError, OSError, ValueError) as exc:
+        raise CutoverError("cutover precommit exact legacy image cleanup unproven") from exc
+
+
 def _reviewed_compose_hash(plan: CutoverPlan, service: str) -> str:
     """Use Docker Compose's actual canonical per-service hash; no invented label."""
     if service not in ("controller", "browser-worker"):
@@ -213,6 +257,7 @@ class RootlessCutoverBackend:
         self.plan: CutoverPlan | None = None
         self.worker_hash: str | None = None
         self.controller_hash: str | None = None
+        self.legacy_image_proof: cleanup.LegacyImageProof | None = None
 
     def _guard(self, plan: CutoverPlan, lease: cleanup.BocaJobLease, state: State) -> None:
         cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
@@ -378,13 +423,16 @@ class RootlessCutoverBackend:
             staged_seccomp=seccomp,
         )
         host._beta_loopback_health(candidate_id, plan.origin)
-        host._cutover_legacy_record(
+        legacy_record = host._cutover_legacy_record(
             plan.legacy_id,
             plan.legacy_image,
             plan.legacy_sha,
             name=f"boca-socios-controller-legacy-{plan.attempt_id}",
             running=False,
             restart_policy="no",
+        )
+        self.legacy_image_proof = _precommit_legacy_image_cleanup(
+            plan, legacy_record, candidate_id, worker_id
         )
         self.state = "ACCEPTED"
 
@@ -398,6 +446,8 @@ class RootlessCutoverBackend:
         self._guard(plan, lease, "ACCEPTED")
         if not self.controller_hash:
             raise CutoverError("cutover retirement Compose hash absent")
+        if self.legacy_image_proof is None:
+            raise CutoverError("cutover old image identity not attested before commit")
         # Durable, irreversible O_EXCL intent BEFORE replacing legacy Compose;
         # a crash here is fix-forward NO_GO and must never revive old ID.
         stage.promote_accepted(plan.attempt_id, plan.legacy_compose_sha, candidate_id, worker_id)
@@ -505,7 +555,7 @@ class RootlessCutoverBackend:
         if safely_recovered:
             preserve: frozenset[str] = frozenset({plan.legacy_id})
         else:
-            if candidate_id is None or worker_id is None:
+            if candidate_id is None or worker_id is None or self.legacy_image_proof is None:
                 return "NO_GO"
             preserve = frozenset({candidate_id, worker_id})
         outcome: Literal["SUCCESS", "FAILURE"] = "FAILURE" if safely_recovered else "SUCCESS"
@@ -516,6 +566,7 @@ class RootlessCutoverBackend:
             preserve_containers=preserve,
             retire_containers=frozenset(),
             lease=lease,
+            historical_legacy=self.legacy_image_proof if safely_committed else None,
         )
         if receipt.status != "ACCEPT":
             return receipt
