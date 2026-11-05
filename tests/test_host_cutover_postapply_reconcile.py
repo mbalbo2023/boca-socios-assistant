@@ -129,7 +129,20 @@ def test_postapply_runtime_only_read_from_boca_fixtures(monkeypatch: pytest.Monk
         running=True,
     )
     monkeypatch.setattr(reconcile, "_docker_snapshot", lambda: [original, candidate, worker])
-    monkeypatch.setattr(reconcile, "_marker", lambda marker: "PRESENT_VERIFIED")
+    monkeypatch.setattr(
+        reconcile, "_marker", lambda marker: ("PRESENT_VERIFIED", "MARKER_SCHEMA_VALID")
+    )
+    monkeypatch.setattr(
+        reconcile,
+        "_stage_preflight",
+        lambda intent: {
+            "reason": "STAGE_PREFLIGHT_MATCH",
+            "root_entries_count": 1,
+            "root_entries_expected": True,
+            "compose_digest_match": True,
+            "plan_hashes_unique": True,
+        },
+    )
     monkeypatch.setattr(
         reconcile,
         "_staged_attempt",
@@ -145,6 +158,8 @@ def test_postapply_runtime_only_read_from_boca_fixtures(monkeypatch: pytest.Monk
     assert output["browser_workers"][0]["running"] is True
     assert output["port_8443"] == "BOCA_CONTROLLER_DOCKER_BOUND"
     assert output["result"] == "PRESENT"
+    assert output["prepared_go_marker_reason"] == "MARKER_SCHEMA_VALID"
+    assert output["stage_preflight"]["reason"] == "STAGE_PREFLIGHT_MATCH"
     assert output["go_for_retry"] is False
     assert output["foreign_resources_touched"] is False
     assert reconcile.verify_runner(reconcile._canonical(output) + b"\n", RUN, PREPARE) == output
@@ -184,3 +199,17 @@ def test_readonly_code_scope_and_no_blackbox_import() -> None:
     assert "src/boca_socios/browser" not in source
     assert "subprocess.run" in source
     assert "DOCKER_HOST" in source
+
+
+def test_stage_preflight_rejects_identical_immutable_hashes_before_any_host_call() -> None:
+    payload = reconcile._record(_intent(), RUN, kind="intent")
+    assert payload is not None
+    payload["overlay_sha"] = payload["target_compose_sha"]
+    observed = reconcile._stage_preflight(payload)
+    assert observed["plan_hashes_unique"] is False
+    assert observed["reason"] == "PLAN_SHA_COLLISION_OR_INVALID"
+
+
+def test_marker_unknown_volume_is_readonly_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(reconcile, "_docker", lambda *args: "")
+    assert reconcile._marker(PREPARE) == ("VOLUME_UNVERIFIED", "VOLUME_NAME_UNVERIFIED")
