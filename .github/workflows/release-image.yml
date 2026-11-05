@@ -43,8 +43,7 @@ jobs:
           SOURCE_SHA: ${{ github.sha }}
           IMAGE: boca-browser-release-validation:${{ github.sha }}
         run: |
-          docker build \
-            --file Dockerfile.browser \
+          docker build --file Dockerfile.browser \
             --label "org.opencontainers.image.source=https://github.com/mbalbo2023/boca-socios-assistant" \
             --label "org.opencontainers.image.revision=$SOURCE_SHA" \
             --tag "$IMAGE" .
@@ -141,8 +140,7 @@ jobs:
           IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
-          docker build \
-            --file Dockerfile.browser \
+          docker build --file Dockerfile.browser \
             --label "org.opencontainers.image.source=https://github.com/mbalbo2023/boca-socios-assistant" \
             --label "org.opencontainers.image.revision=$SOURCE_SHA" \
             --tag "$IMAGE" .
