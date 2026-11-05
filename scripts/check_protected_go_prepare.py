@@ -147,9 +147,7 @@ def _untrusted_public(encoded: str) -> dict[str, str]:
     return payload
 
 
-def decode_prepare_input(
-    encoded: str, *, environ: Mapping[str, str]
-) -> dict[str, str]:
+def decode_prepare_input(encoded: str, *, environ: Mapping[str, str]) -> dict[str, str]:
     """Dispatch PREPARE has no unknowable current-run attempt or PREPARE ID."""
     context._environment(environ)  # noqa: SLF001 - exact Actions identity
     payload = _untrusted_public(encoded)
@@ -250,7 +248,8 @@ def verify_prepared_github_run(
         or metadata.get("conclusion") != "success"
         or metadata.get("head_sha") != environ["BOCA_SOURCE_SHA"]
         or metadata.get("head_branch") != "main"
-        or metadata.get("path") not in (
+        or metadata.get("path")
+        not in (
             ".github/workflows/boca-first-deploy.yml",
             "mbalbo2023/boca-socios-assistant/.github/workflows/boca-first-deploy.yml",
         )
@@ -275,7 +274,9 @@ def verify_apply_go(
     """Only independently protected exact receipt digest approves host attempt."""
     if now.tzinfo is None:
         raise PreparedGoError("review clock unavailable")
-    if hosted != _host_context(public, prepare_id=hosted.get("prepare_run_id", ""), environ=environ):
+    if hosted != _host_context(
+        public, prepare_id=hosted.get("prepare_run_id", ""), environ=environ
+    ):
         raise PreparedGoError("runtime injected host context changed")
     expected = expected_go_for_receipt(receipt)
     if not isinstance(approved, str) or _SHA.fullmatch(approved) is None:
@@ -311,9 +312,7 @@ def verify_apply_go(
         raise PreparedGoError("prepared reviewed source/owner/artifacts drifted")
     if hosted["attempt_id"] == hosted["prepare_run_id"]:
         raise PreparedGoError("PREPARE cannot authorize its own host effects")
-    verify_prepared_github_run(
-        source_run, prepare_run_id=hosted["prepare_run_id"], environ=environ
-    )
+    verify_prepared_github_run(source_run, prepare_run_id=hosted["prepare_run_id"], environ=environ)
     return approved
 
 
@@ -337,9 +336,7 @@ def assert_physical_host_receipt(environ: Mapping[str, str]) -> None:
         raise PreparedGoError("GO or physical effectful step not successful")
     runner = Path(environ.get("RUNNER_TEMP", ""))
     host_token = (runner / RUNNER_HOST_CONTEXT).read_text(encoding="ascii").strip()
-    hosted = context.decode_context(
-        host_token, operation="lifecycle-apply", environ=environ
-    )
+    hosted = context.decode_context(host_token, operation="lifecycle-apply", environ=environ)
     payload_path = runner / "boca-lifecycle-host.receipt"
     if not payload_path.is_absolute() or payload_path.is_symlink():
         raise PreparedGoError("physical receipt not an exact runner file")
@@ -348,8 +345,16 @@ def assert_physical_host_receipt(environ: Mapping[str, str]) -> None:
         raise PreparedGoError("physical receipt missing or ambiguous")
     receipt = json.loads(blob[:-1].decode("ascii"), object_pairs_hook=context._unique_fields)  # noqa: SLF001
     expected_keys = {
-        "version", "scope", "attempt", "prepare_run_id", "request_id",
-        "source_sha", "component", "target", "status", "physical_ack",
+        "version",
+        "scope",
+        "attempt",
+        "prepare_run_id",
+        "request_id",
+        "source_sha",
+        "component",
+        "target",
+        "status",
+        "physical_ack",
     }
     if type(receipt) is not dict or set(receipt) != expected_keys:
         raise PreparedGoError("physical receipt shape invalid")
@@ -380,7 +385,10 @@ def main() -> int:
     env = os.environ
     try:
         if len(sys.argv) != 2 or sys.argv[1] not in (
-            "--prepare", "--prepare-ref", "--apply", "--assert-host-receipt"
+            "--prepare",
+            "--prepare-ref",
+            "--apply",
+            "--assert-host-receipt",
         ):
             raise PreparedGoError("unreviewed protected GO phase")
         operation = env.get("BOCA_OPERATION", "")
@@ -402,13 +410,15 @@ def main() -> int:
         if phase == "--prepare":
             if operation != "protected-go-prepare":
                 raise PreparedGoError("PREPARE operation invalid")
-            public = decode_prepare_input(
-                env.get("BOCA_PROTECTED_ACTION_CONTEXT", ""), environ=env
-            )
+            public = decode_prepare_input(env.get("BOCA_PROTECTED_ACTION_CONTEXT", ""), environ=env)
             receipt = build_prepare_receipt(public, environ=env, now=datetime.now(UTC))
-            apply_token = base64.urlsafe_b64encode(
-                _canonical(public | {"prepare_run_id": env["GITHUB_RUN_ID"]})
-            ).rstrip(b"=").decode("ascii")
+            apply_token = (
+                base64.urlsafe_b64encode(
+                    _canonical(public | {"prepare_run_id": env["GITHUB_RUN_ID"]})
+                )
+                .rstrip(b"=")
+                .decode("ascii")
+            )
             runner = _runner()
             context._write_private(  # noqa: SLF001
                 runner / RUNNER_RECEIPT, _canonical(receipt).decode("ascii")
@@ -418,9 +428,11 @@ def main() -> int:
             )
             print(
                 "BOCA_GO_PREPARE state=REVIEWABLE host_calls=0 "
-                + "prepare_run_id=" + env["GITHUB_RUN_ID"]
+                + "prepare_run_id="
+                + env["GITHUB_RUN_ID"]
                 + " operation=lifecycle-apply "
-                + "go_sha256=" + expected_go_for_receipt(receipt)
+                + "go_sha256="
+                + expected_go_for_receipt(receipt)
             )
             return 0
         if operation != "lifecycle-apply":
@@ -445,13 +457,20 @@ def main() -> int:
         context._write_private(runner / RUNNER_HOST_APPROVAL, approved + "\n")  # noqa: SLF001
         print(
             "BOCA_GO_APPLY state=APPROVED host=untouched "
-            + "prepare_run_id=" + hosted["prepare_run_id"]
-            + " attempt=" + hosted["attempt_id"]
+            + "prepare_run_id="
+            + hosted["prepare_run_id"]
+            + " attempt="
+            + hosted["attempt_id"]
         )
         return 0
     except (
-        PreparedGoError, context.ProtectedActionError, OSError,
-        KeyError, ValueError, TypeError, UnicodeError,
+        PreparedGoError,
+        context.ProtectedActionError,
+        OSError,
+        KeyError,
+        ValueError,
+        TypeError,
+        UnicodeError,
     ):
         print(
             "BOCA_PROTECTED_GO state=NO_GO host=untouched reason=unreviewed_phase_or_receipt",

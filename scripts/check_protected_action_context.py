@@ -31,9 +31,7 @@ _TOKEN = re.compile(r"[A-Za-z0-9_-]{1,2732}\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _HASH = re.compile(r"[0-9a-f]{64}\Z")
 _ATTEMPT = re.compile(r"[1-9][0-9]{0,19}\Z")
-_CONTROLLER_IMAGE = re.compile(
-    r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z"
-)
+_CONTROLLER_IMAGE = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}\Z")
 _WORKER_IMAGE = re.compile(
     r"ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}\Z"
 )
@@ -66,7 +64,9 @@ _TELEGRAM = frozenset(
         "sender_expected_state",
     }
 )
-_LIFECYCLE_SENDER = frozenset({"sender_id", "sender_config_hash", "sender_attempt_id", "sender_state"})
+_LIFECYCLE_SENDER = frozenset(
+    {"sender_id", "sender_config_hash", "sender_attempt_id", "sender_state"}
+)
 _TELEGRAM_SENDER = frozenset({"sender_id", "sender_image", "sender_config_hash", "sender_attempt"})
 _GO_NAMES = {
     "lifecycle-apply": "BOCA_LIFECYCLE_GO_BINDING_SHA256",
@@ -232,9 +232,7 @@ def _validate_payload(
     return payload
 
 
-def decode_context(
-    encoded: str, *, operation: str, environ: Mapping[str, str]
-) -> dict[str, str]:
+def decode_context(encoded: str, *, operation: str, environ: Mapping[str, str]) -> dict[str, str]:
     """Only canonical, nonsecret exact coordinates are permitted by Actions."""
     payload = _decode_bytes(encoded)
     return _validate_payload(payload, operation=operation, environ=environ)

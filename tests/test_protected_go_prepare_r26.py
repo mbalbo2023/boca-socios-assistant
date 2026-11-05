@@ -28,9 +28,7 @@ def _static() -> dict[str, str]:
         "controller_id": "c" * 64,
         "controller_image": "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "d" * 64,
         "worker_id": "e" * 64,
-        "worker_image": (
-            "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "f" * 64
-        ),
+        "worker_image": ("ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "f" * 64),
         "browser_attempt": "41990000000",
         "controller_config_hash": "1" * 64,
         "worker_config_hash": "2" * 64,
@@ -115,23 +113,24 @@ def test_prepare_and_apply_use_distinct_known_and_runtime_generated_ids(tmp_path
     assert receipt["operation"] == "lifecycle-apply"
     assert len(approved) == 64 and approved.isascii()
     assert env["BOCA_BETA_OWNER_SUBJECT"] not in json.dumps(receipt)
-    assert go.verify_apply_go(
-        public,
-        hosted,
-        receipt,
-        environ=env,
-        approved=approved,
-        now=datetime(2026, 11, 5, 15, 30, tzinfo=UTC),
-        source_run=_source_run(receipt["prepare_run_id"]),
-    ) == approved
+    assert (
+        go.verify_apply_go(
+            public,
+            hosted,
+            receipt,
+            environ=env,
+            approved=approved,
+            now=datetime(2026, 11, 5, 15, 30, tzinfo=UTC),
+            source_run=_source_run(receipt["prepare_run_id"]),
+        )
+        == approved
+    )
 
 
 def test_future_run_id_cannot_be_in_prepare_dispatch_token(tmp_path: Path) -> None:
     env = _env(tmp_path, "41999999999")
     with pytest.raises(go.PreparedGoError):
-        go.decode_prepare_input(
-            _token(_static() | {"attempt_id": "42000000000"}), environ=env
-        )
+        go.decode_prepare_input(_token(_static() | {"attempt_id": "42000000000"}), environ=env)
     with pytest.raises(go.PreparedGoError):
         go.decode_apply_input(_token(_static()), environ=_env(tmp_path, "42000000000"))
 
@@ -142,19 +141,16 @@ def test_second_phase_requires_exact_external_go_and_same_artifacts(tmp_path: Pa
     run = _source_run(receipt["prepare_run_id"])
     with pytest.raises(go.PreparedGoError, match="GO"):
         go.verify_apply_go(
-            public, hosted, receipt, environ=env, approved="0" * 64,
-            now=now, source_run=run
+            public, hosted, receipt, environ=env, approved="0" * 64, now=now, source_run=run
         )
     with pytest.raises(go.PreparedGoError, match="GO"):
         go.verify_apply_go(
-            public, hosted, receipt, environ=env, approved="",
-            now=now, source_run=run
+            public, hosted, receipt, environ=env, approved="", now=now, source_run=run
         )
     (tmp_path / go._ARTIFACT_BROWSER).write_bytes(b"tampered after PREPARE")  # noqa: SLF001
     with pytest.raises(go.PreparedGoError, match="drifted"):
         go.verify_apply_go(
-            public, hosted, receipt, environ=env, approved=approved,
-            now=now, source_run=run
+            public, hosted, receipt, environ=env, approved=approved, now=now, source_run=run
         )
 
 
@@ -170,9 +166,13 @@ def test_prepared_digest_binds_owner_operation_and_prepared_run(tmp_path: Path) 
         assert go.expected_go_for_receipt(altered) != approved
         with pytest.raises(go.PreparedGoError):
             go.verify_apply_go(
-                public, hosted, altered, environ=env, approved=approved,
+                public,
+                hosted,
+                altered,
+                environ=env,
+                approved=approved,
                 now=datetime(2026, 11, 5, 15, tzinfo=UTC),
-                source_run=_source_run(receipt["prepare_run_id"])
+                source_run=_source_run(receipt["prepare_run_id"]),
             )
 
 
@@ -184,8 +184,13 @@ def test_prepared_go_expires_and_requires_real_successful_original_dispatch(tmp_
     ):
         with pytest.raises(go.PreparedGoError, match="expired"):
             go.verify_apply_go(
-                public, hosted, receipt, environ=env, approved=approved,
-                now=now, source_run=_source_run(receipt["prepare_run_id"])
+                public,
+                hosted,
+                receipt,
+                environ=env,
+                approved=approved,
+                now=now,
+                source_run=_source_run(receipt["prepare_run_id"]),
             )
     for mutation in (
         {"event": "pull_request"},
@@ -196,9 +201,13 @@ def test_prepared_go_expires_and_requires_real_successful_original_dispatch(tmp_
     ):
         with pytest.raises(go.PreparedGoError, match="not independently attested"):
             go.verify_apply_go(
-                public, hosted, receipt, environ=env, approved=approved,
+                public,
+                hosted,
+                receipt,
+                environ=env,
+                approved=approved,
                 now=datetime(2026, 11, 5, 15, tzinfo=UTC),
-                source_run=_source_run(receipt["prepare_run_id"]) | mutation
+                source_run=_source_run(receipt["prepare_run_id"]) | mutation,
             )
 
 
@@ -206,36 +215,52 @@ def test_public_approved_digest_not_equivalent_to_host_authorization(tmp_path: P
     public, hosted, receipt, env, approved = _prepared(tmp_path)
     other_attempt = dict(hosted)
     other_attempt["attempt_id"] = "42000000001"
-    assert hashlib.sha256(go._canonical(other_attempt)).hexdigest() != hashlib.sha256(  # noqa: SLF001
-        go._canonical(hosted)  # noqa: SLF001
-    ).hexdigest()
+    assert (
+        hashlib.sha256(go._canonical(other_attempt)).hexdigest()
+        != hashlib.sha256(  # noqa: SLF001
+            go._canonical(hosted)  # noqa: SLF001
+        ).hexdigest()
+    )
     # Forged attempt under one runner identity must fail in the runner.
     with pytest.raises(go.PreparedGoError):
         go.verify_apply_go(
-            public, other_attempt, receipt, environ=env, approved=approved,
+            public,
+            other_attempt,
+            receipt,
+            environ=env,
+            approved=approved,
             now=datetime(2026, 11, 5, 15, tzinfo=UTC),
-            source_run=_source_run(receipt["prepare_run_id"])
+            source_run=_source_run(receipt["prepare_run_id"]),
         )
     # A DIFFERENT genuine APPLY run could still pass a 24h prepared GO;
     # the host #351 O_EXCL marker on PREPARE ID must reject reuse.
     second_env = env | {"GITHUB_RUN_ID": "42000000001"}
     encoded = _token(public | {"prepare_run_id": receipt["prepare_run_id"]})
     _, newly_hosted = go.decode_apply_input(encoded, environ=second_env)
-    assert go.verify_apply_go(
-        public, newly_hosted, receipt, environ=second_env, approved=approved,
-        now=datetime(2026, 11, 5, 15, tzinfo=UTC),
-        source_run=_source_run(receipt["prepare_run_id"])
-    ) == approved
+    assert (
+        go.verify_apply_go(
+            public,
+            newly_hosted,
+            receipt,
+            environ=second_env,
+            approved=approved,
+            now=datetime(2026, 11, 5, 15, tzinfo=UTC),
+            source_run=_source_run(receipt["prepare_run_id"]),
+        )
+        == approved
+    )
 
 
 def test_physical_lifecycle_receipt_must_be_single_exact_applied_json(
     tmp_path: Path,
 ) -> None:
     _, hosted, _, env, _ = _prepared(tmp_path)
-    env.update({
-        "BOCA_LIFECYCLE_GO_PREFLIGHT": "success",
-        "BOCA_LIFECYCLE_HOST_APPLY": "success",
-    })
+    env.update(
+        {
+            "BOCA_LIFECYCLE_GO_PREFLIGHT": "success",
+            "BOCA_LIFECYCLE_HOST_APPLY": "success",
+        }
+    )
     (tmp_path / go.RUNNER_HOST_CONTEXT).write_text(_token(hosted) + "\n")
     path = tmp_path / "boca-lifecycle-host.receipt"
     accepted = {
@@ -260,7 +285,9 @@ def test_physical_lifecycle_receipt_must_be_single_exact_applied_json(
         {"request_id": "123"},
         {"extra": "unexpected"},
     ):
-        path.write_text(json.dumps(accepted | changed, sort_keys=True, separators=(",", ":")) + "\n")
+        path.write_text(
+            json.dumps(accepted | changed, sort_keys=True, separators=(",", ":")) + "\n"
+        )
         with pytest.raises(go.PreparedGoError):
             go.assert_physical_host_receipt(env)
     path.write_text(json.dumps(accepted, sort_keys=True, separators=(",", ":")) + "\n\n")

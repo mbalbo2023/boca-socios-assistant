@@ -80,7 +80,10 @@ def test_apply_rechecks_prepared_artifact_and_go_before_any_ssh() -> None:
     gate_name = "Require distinct independent lifecycle GO and immutable PREPARE before SSH"
     preflight = _step(gate_name)
     assert "if: inputs.operation == 'lifecycle-apply'" in preflight
-    assert "BOCA_LIFECYCLE_GO_BINDING_SHA256: ${{ vars.BOCA_LIFECYCLE_GO_BINDING_SHA256 }}" in preflight
+    assert (
+        "BOCA_LIFECYCLE_GO_BINDING_SHA256: ${{ vars.BOCA_LIFECYCLE_GO_BINDING_SHA256 }}"
+        in preflight
+    )
     assert "check_protected_go_prepare.py --prepare-ref" in preflight
     assert "check_protected_go_prepare.py --apply" in preflight
     assert "gh api " in preflight and "gh run download" in preflight
