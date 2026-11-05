@@ -10,7 +10,7 @@ import base64
 import hashlib
 import json
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
