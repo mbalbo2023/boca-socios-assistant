@@ -1,7 +1,8 @@
-"""R26 contract: one protected Boca workflow; physical control is never a PR side effect.
+"""R26 current-state guard: proposed postcutover routes remain CODE_ONLY / NO_GO.
 
-Tests use source text only: no Docker, SSH, Telegram, public Boca navigation or
-BLACKBOX imports. A code-only CI pass never means physical ACK.
+This test explicitly protects the one existing Boca workflow from becoming
+accidentally effectful before the two-human-phase GO architecture is approved.
+No Docker/SSH/Telegram/public Boca/BLACKBOX access.
 """
 
 from __future__ import annotations
@@ -11,130 +12,97 @@ from pathlib import Path
 
 import pytest
 
-WORKFLOW = (
-    Path(__file__).resolve().parents[1] / ".github" / "workflows" / "boca-first-deploy.yml"
-)
-LIFECYCLE = "lifecycle-apply"
-TELEGRAM = "telegram-activate"
+ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / ".github" / "workflows" / "boca-first-deploy.yml"
+ADR = ROOT / "docs" / "ADR" / "0159-protected-ops-postcutover-workflow.md"
 
 
 def _workflow() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
-def _step(name: str) -> str:
-    marker = f"      - name: {name}\n"
-    parts = _workflow().split(marker, 1)
-    assert len(parts) == 2, f"missing protected step: {name}"
-    return parts[1].split("      - name:", 1)[0]
-
-
 def _dispatch() -> str:
     return _workflow().split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
 
 
-def test_only_one_extra_dispatch_input_for_both_new_routes() -> None:
+def _options() -> list[str]:
     dispatch = _dispatch()
-    names = re.findall(r"^      ([a-z_0-9]+):$", dispatch, flags=re.MULTILINE)
-    # The reviewed R24 branch already consumed 24 of GitHub's maximum 25.
-    assert len(names) <= 25
+    choices = dispatch.split("options: [", 1)[1].split("]", 1)[0]
+    return [option.strip() for option in choices.split(",")]
+
+
+def test_github_dispatch_has_24_inputs_and_exactly_one_spare_slot() -> None:
+    names = re.findall(r"^      ([a-z_0-9]+):$", _dispatch(), flags=re.MULTILINE)
+    assert len(names) == 24
     assert len(names) == len(set(names))
-    assert names.count("protected_action_context") == 1
-    assert "      protected_action_context:\n" in dispatch
-    assert "type: string" in dispatch.split("      protected_action_context:\n", 1)[1]
+    assert "protected_action_context" not in names
 
 
-@pytest.mark.parametrize("operation", (LIFECYCLE, TELEGRAM))
-def test_operation_is_registered_only_in_existing_manual_workflow(operation: str) -> None:
-    text = _workflow()
-    options = text.split("options: [", 1)[1].split("]", 1)[0].split(", ")
-    assert options.count(operation) == 1
-    assert "github.event_name == 'workflow_dispatch'" in text
-    assert "github.ref == 'refs/heads/main'" in text
-    assert "github.actor == 'mbalbo2023'" in text
-    assert "test \"$GITHUB_RUN_ATTEMPT\" = 1" in text
+@pytest.mark.parametrize("operation", ("lifecycle-apply", "telegram-activate"))
+def test_unapproved_new_operation_not_exposed_to_host_dispatch(operation: str) -> None:
+    workflow = _workflow()
+    assert operation not in _options()
+    assert not re.search(r"\b" + re.escape(operation) + r"\b", workflow)
+    assert "host_lifecycle_actions" not in workflow
+    assert "host_telegram_postcutover" not in workflow
+    assert "boca-lifecycle-host.receipt" not in workflow
+    assert "boca-telegram-activation-host.receipt" not in workflow
 
 
 @pytest.mark.parametrize(
-    ("operation", "go_name", "preflight"),
+    ("operation", "gate"),
     (
-        (
-            LIFECYCLE,
-            "BOCA_LIFECYCLE_GO_BINDING_SHA256",
-            "Require independent GO and exact Boca lifecycle intent before SSH",
-        ),
-        (
-            TELEGRAM,
-            "BOCA_TELEGRAM_ACTIVATE_GO_BINDING_SHA256",
-            "Require independent post-Cutover Telegram activation GO before SSH",
-        ),
+        ("cutover-a-apply", "BOCA_CUTOVER_A_GO_BINDING_SHA256"),
+        ("official-notice-import", "BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256"),
     ),
 )
-def test_separate_go_binding_is_protected_and_precedes_ssh(
-    operation: str, go_name: str, preflight: str
+def test_existing_effect_routes_keep_existing_exact_independent_go(
+    operation: str, gate: str
 ) -> None:
     workflow = _workflow()
-    section = _step(preflight)
-    assert f"if: inputs.operation == '{operation}'" in section
-    assert f"{go_name}:" in section
-    assert "vars." + go_name in section
-    assert "protected_action_context" in workflow
-    assert "check_main_ref.py" in section
-    assert "NO_GO" in section or "exit 1" in section
-    assert workflow.index(f"      - name: {preflight}") < workflow.index(
-        "      - name: Configure pinned SSH host key"
-    )
+    assert operation in _options()
+    assert gate + ": ${{ vars." + gate + " }}" in workflow
+    assert "github.event_name == 'workflow_dispatch'" in workflow
+    assert "github.ref == 'refs/heads/main'" in workflow
+    assert "github.actor == 'mbalbo2023'" in workflow
+    assert 'test "$GITHUB_RUN_ATTEMPT" = 1' in workflow
 
 
-@pytest.mark.parametrize(
-    ("operation", "effect", "receipt"),
-    (
-        (
-            LIFECYCLE,
-            "Apply one exact-ID owner lifecycle request through Boca-only lease",
-            "Reject absent or ambiguous Boca lifecycle physical ACK",
-        ),
-        (
-            TELEGRAM,
-            "Activate staged Telegram custody after owner Chrome step",
-            "Reject absent or ambiguous post-Cutover Telegram activation receipt",
-        ),
-    ),
-)
-def test_one_host_transaction_and_terminal_receipt_gate(
-    operation: str, effect: str, receipt: str
-) -> None:
+def test_draft_documents_two_phase_prepare_and_all_four_go_route_blockers() -> None:
+    text = ADR.read_text(encoding="utf-8")
+    for marker in (
+        "Cutover A",
+        "official-notice-import",
+        "lifecycle-apply",
+        "telegram-activate",
+        "prepare/apply",
+        "PREPARE",
+        "GITHUB_RUN_ID",
+        "host_calls=0",
+        "Environment",
+        "GO arquitectónico",
+        "dos despachos humanos",
+    ):
+        assert marker in text
+    assert "NO autorizada" in text or "NO autorizad" in text
+    assert "un solo archivo de workflow" in text
+
+
+def test_legacy_telegram_is_unchanged_not_silently_reused_for_new_route() -> None:
     workflow = _workflow()
-    execute = _step(effect)
-    verify = _step(receipt)
-    assert f"if: inputs.operation == '{operation}'" in execute
-    assert f"inputs.operation == '{operation}'" in verify
-    assert "always()" in verify
-    assert "NO_GO" in verify
-    assert "boca-target" in execute
-    assert "timeout" in execute
-    assert "check_main_ref.py" in execute
-    assert workflow.index(f"      - name: {effect}") < workflow.index(
-        f"      - name: {receipt}"
-    )
+    for old_op in (
+        "telegram-migrate",
+        "telegram-prepare",
+        "telegram-install",
+        "telegram-verify",
+        "telegram-test",
+    ):
+        assert old_op in _options()
+    assert "startsWith(inputs.operation, 'telegram-')" in workflow
+    assert "docker system prune" not in workflow
 
 
-@pytest.mark.parametrize(
-    "name",
-    (
-        "Recheck current main before Telegram post-install custody",
-        "Mark Telegram host attempt before starting existing Boca daemon",
-        "Start only stopped existing dedicated Boca daemon",
-        "Execute protected Telegram schema, custody or one-shot test",
-        "Stop positively identified Boca services after Telegram custody",
-    ),
-)
-def test_telegram_postcutover_cannot_enter_legacy_start_stop_route(name: str) -> None:
-    step = _step(name)
-    assert "inputs.operation != 'telegram-activate'" in step
-
-
-def test_existing_cutover_import_and_legacy_install_finalizer_are_preserved() -> None:
+def test_existing_cutover_import_receipt_guards_and_legacy_install_no_go_remain() -> None:
     workflow = _workflow()
     for marker in (
         "cutover-a-apply",
@@ -144,11 +112,3 @@ def test_existing_cutover_import_and_legacy_install_finalizer_are_preserved() ->
         "Fail closed on absent or ambiguous Cutover A host terminal receipt",
     ):
         assert marker in workflow
-    assert "docker system prune" not in workflow
-
-
-def test_pr_smoke_never_produces_lifecycle_or_telegram_host_receipts() -> None:
-    section = _step("Assert PR cannot produce host cutover or cleanup receipt")
-    assert "boca-lifecycle-host.receipt" in section
-    assert "boca-telegram-activation-host.receipt" in section
-    assert "NO_GO" in section
