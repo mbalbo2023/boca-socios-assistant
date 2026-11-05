@@ -23,9 +23,7 @@ def test_session_cookie_and_csrf_do_not_replace_fresh_telegram_webauthn(tmp_path
     _, _, page = _request(app, "/telegram/emparejar", cookie=cookie)
     envelope = _envelope()
     fields = _stage_form(app, cookie, page, envelope, key, credential, clock)
-    old_cookie_only_form = {
-        field: fields[field] for field in ("csrf", "operation_id", "envelope")
-    }
+    old_cookie_only_form = {field: fields[field] for field in ("csrf", "operation_id", "envelope")}
     assert (
         _request(
             app,
@@ -38,8 +36,7 @@ def test_session_cookie_and_csrf_do_not_replace_fresh_telegram_webauthn(tmp_path
     )
     assert not path.exists()
     assert (
-        _request(app, "/telegram/emparejar", method="POST", cookie=cookie, payload=fields)[0]
-        == 202
+        _request(app, "/telegram/emparejar", method="POST", cookie=cookie, payload=fields)[0] == 202
     )
     assert path.exists()
 
@@ -57,15 +54,13 @@ def test_signed_assertion_of_other_ciphertext_is_denied_without_stage(tmp_path: 
     fields["envelope"] = bootstrap._b64(_envelope())
     assert fields["envelope"] != bootstrap._b64(envelope)
     assert (
-        _request(app, "/telegram/emparejar", method="POST", cookie=cookie, payload=fields)[0]
-        == 403
+        _request(app, "/telegram/emparejar", method="POST", cookie=cookie, payload=fields)[0] == 403
     )
     assert not path.exists()
     # A failed operation cannot be resurrected by switching back to the real
     # ciphertext; owner must start another independent passkey ceremony.
     fields["envelope"] = bootstrap._b64(envelope)
     assert (
-        _request(app, "/telegram/emparejar", method="POST", cookie=cookie, payload=fields)[0]
-        == 409
+        _request(app, "/telegram/emparejar", method="POST", cookie=cookie, payload=fields)[0] == 409
     )
     assert not path.exists()
