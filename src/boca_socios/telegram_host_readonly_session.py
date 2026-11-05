@@ -16,7 +16,6 @@ from typing import Literal
 from boca_socios import telegram_pairing_cutover as cutover
 from boca_socios import telegram_pairing_resolver as resolver
 from boca_socios.host_boca_cleanup import BocaJobLease
-from boca_socios.host_telegram_production_reader import TelegramProductionDockerIO
 from boca_socios.host_lifecycle_rootless_adapter import (
     LifecycleDockerIO,
 )
@@ -25,6 +24,7 @@ from boca_socios.host_telegram_owner_stage import (
     observe_owner_stage_under_same_lease,
 )
 from boca_socios.host_telegram_postcutover import TelegramHostPins
+from boca_socios.host_telegram_production_reader import TelegramProductionDockerIO
 from boca_socios.telegram_bootstrap import RecipientReceipt
 from boca_socios.telegram_pairing_cutover import CutoverCoordinates, HostRecheckReceipt
 from boca_socios.telegram_same_lease_stage import read_encrypted_telegram_stage
