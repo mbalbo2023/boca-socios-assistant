@@ -1,8 +1,21 @@
 # ADR 0112 — Medición posdespliegue y separación de márgenes preventivos
 
-**Estado:** integrado por PR #273; corrección residual bajo #307 en revisión (2026-11-04). **Fecha:** 2026-11-02 (ART).
+**Estado:** integrado por PR #273; corrección residual #307 integrada por PR #308 y medida en instalación y aceptación controller-only (2026-11-04). **Fecha:** 2026-11-02 (ART).
 **Issue:** [#259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259).  
 **Decisión del dueño:** [#45, corrección vigente](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6592430471).
+
+## Actualización comprobada — 04/11/2026, después de PR #308
+
+La corrección del veto residual fue fusionada en
+`main=cabce9f1e452e63ded115f447559a358dc0f4d1b`; release
+[#41893887078](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41893887078),
+instalación [#41896871289](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41896871289)
+PASS y aceptación sintética [#41897278258](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897278258)
+PASS. El controller arrancó en [#41897569928](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897569928).
+Se observaron 43.648 KiB de RSS máximo del proceso en la prueba local;
+**no** se midió aún el conjunto controller/browser/Telegram. Issue #259
+permanece abierto. Los párrafos del RCA #307 siguientes describen el
+estado anterior a su corrección, no el estado actual.
 
 ## Hallazgo posterior — 04/11/2026, RCA #307
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 import sqlite3
+from collections.abc import Callable
 from contextlib import closing
 from importlib.resources import files
 from pathlib import Path
@@ -117,9 +118,15 @@ class LocalBetaRuntime:
         key_file: Path,
         browser: SyntheticBrowserPort,
         initialize_new: bool = False,
+        initial_engine_stopped: bool | Callable[[], bool] = False,
         command_timeout_seconds: float = 5.0,
     ) -> LocalBetaRuntime:
-        if type(initialize_new) is not bool or not database_path.is_absolute():
+        if (
+            type(initialize_new) is not bool
+            or (type(initial_engine_stopped) is not bool and not callable(initial_engine_stopped))
+            or (initialize_new and initial_engine_stopped is not False)
+            or not database_path.is_absolute()
+        ):
             raise ValueError("invalid local BETA storage configuration")
         # Key custody and mode are checked before a first-install write.
         vault = CredentialVault.from_secret_file(key_file)
@@ -130,12 +137,19 @@ class LocalBetaRuntime:
             validate_existing_beta_storage(database_path)
         database = Database(database_path)
         outbox = SqliteNotificationOutbox(database)
-        coordinator = BetaCoordinator(
-            database=database,
-            outbox=outbox,
-            browser=browser,
-            timeout_seconds=command_timeout_seconds,
-        )
+
+        def new_coordinator() -> BetaCoordinator:
+            # The same synthetic browser, ledger and outbox are rebound to a
+            # new coordinator after a *real* command-loop stop/start. Never
+            # migrate storage, recreate keys or restart the HTTP listener.
+            return BetaCoordinator(
+                database=database,
+                outbox=outbox,
+                browser=browser,
+                timeout_seconds=command_timeout_seconds,
+            )
+
+        coordinator = new_coordinator()
         if initialize_new:
             try:
                 coordinator.prepare_storage()
@@ -143,12 +157,26 @@ class LocalBetaRuntime:
                 # Never remove the new file: a partial first install needs
                 # explicit Boca-only diagnosis, not a silent retry.
                 raise LocalRuntimeUnavailable("local BETA initialization failed") from None
-        commands = BetaCommandHost.start(coordinator)
+        # Evaluate only after key/storage preflight, strictly before any
+        # command thread/recovery. A synthetic builder may defer this callback.
+        stopped = (
+            initial_engine_stopped() if callable(initial_engine_stopped) else initial_engine_stopped
+        )
+        if type(stopped) is not bool:
+            raise LocalRuntimeUnavailable("owner lifecycle reconciliation invalid")
+        if stopped:
+            commands = BetaCommandHost.start_stopped(
+                coordinator, coordinator_factory=new_coordinator
+            )
+        else:
+            commands = BetaCommandHost.start(coordinator, coordinator_factory=new_coordinator)
         return cls(database=database, vault=vault, outbox=outbox, commands=commands)
 
     @property
     def ready(self) -> bool:
-        return not self._closed and not self.commands.failed
+        # Intentionally stopped synthetic command processing is a healthy
+        # owner panel, not a reason to take localhost:8443 offline.
+        return not self._closed and (self.commands.engine_stopped or not self.commands.failed)
 
     def close(self) -> None:
         if self._closed:

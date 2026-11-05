@@ -13,6 +13,7 @@ import stat
 import sys
 from collections.abc import Callable
 from contextlib import closing
+from functools import partial
 from pathlib import Path
 from threading import Event
 from urllib.parse import quote, urlsplit
@@ -20,15 +21,28 @@ from wsgiref.simple_server import WSGIRequestHandler, WSGIServer
 
 from boca_socios.browser.contracts import SimulationOutcome, SyntheticBrowserPort
 from boca_socios.config import Settings
+from boca_socios.events.official_snapshot import OFFICIAL_SNAPSHOT_NAME, load_official_snapshot
 from boca_socios.integration.bridge_client import SiteBridgeTransport, SiteBridgeWorker
+from boca_socios.integration.engine_socket import LocalEngineSocket
 from boca_socios.integration.operational import (
     LocalBetaRuntime,
     LocalRuntimeUnavailable,
     validate_existing_beta_storage,
 )
 from boca_socios.owner_origin import SSH_LOOPBACK_ORIGIN
+from boca_socios.panel.lifecycle_intents import (
+    LifecycleIntentStore,
+    LifecycleStorageUnavailable,
+)
+from boca_socios.panel.owner_session_store import OwnerBrowserSessionStore
 from boca_socios.panel.passkey import PasskeyOwnerAuthentication
 from boca_socios.panel.private_http import PrivatePanelApplication
+from boca_socios.panel.telegram_pairing_staging import (
+    STAGING_FILENAME,
+    PairingStageReceipt,
+    PairingStageRequest,
+    stage_private_telegram_pairing,
+)
 from boca_socios.security.credential_vault import CredentialVault
 from boca_socios.storage.database import Database
 
@@ -83,6 +97,70 @@ def _configured_event(path: Path) -> dict[str, str]:
     if row is None or not isinstance(row[0], str) or row[0] != SIMULATION_EVENT_LABEL:
         raise ValueError("synthetic event is unavailable")
     return {SIMULATION_EVENT_ID: SIMULATION_EVENT_LABEL}
+
+
+def _engine_stopped_after_reboot(database_path: Path, *, browser_backend: str) -> bool:
+    """Reconcile the durable owner host receipt before synthetic recovery.
+
+    This applies only to the future opt-in IPC BETA, not the installed
+    legacy controller-only backend. An unresolved host operation is NO_GO;
+    a confirmed STOP (or non-bot latest receipt whose prior bot state is
+    ambiguous) starts an *inert* engine, never a transient replaying thread.
+    """
+    if browser_backend != "ipc":
+        return False
+    try:
+        state = LifecycleIntentStore(Database(database_path)).current()
+    except LifecycleStorageUnavailable:
+        raise LocalRuntimeUnavailable("owner lifecycle reconciliation unavailable") from None
+    if state is None:
+        return False
+    if state.status in {"REQUESTED", "CLAIMED", "UNCERTAIN"}:
+        raise LocalRuntimeUnavailable("pending owner host operation requires reconciliation")
+    # Only the latest unambiguous BOT START authorizes automatic worker
+    # recovery. Chromium receipts and REFUSED do not prove bot RUNNING;
+    # default to stopped without modifying the SQLite audit log.
+    return not (state.component == "bot" and state.target == "start" and state.status == "APPLIED")
+
+
+def _configured_telegram_pairing_stager(
+    settings: Settings, *, boca_volume_root: Path = Path("/data")
+) -> Callable[[PairingStageRequest], PairingStageReceipt] | None:
+    """Opt in encrypted-only owner handoff inside an *existing* Boca volume.
+
+    The passkey session, origin, CSRF and one-use operation are checked by the
+    private panel before calling this pure, single-slot staging callback.
+    It cannot authorize a protected host cutover, start a bot or call Telegram.
+    """
+    settings.validate_beta()
+    if settings.telegram_pairing_stage_mode == "off":
+        return None
+    if (
+        settings.telegram_pairing_stage_mode != "encrypted-only"
+        or settings.db_path.parent != boca_volume_root
+        or not boca_volume_root.is_absolute()
+    ):
+        raise ValueError("private Telegram staging unavailable")
+    directory_fd: int | None = None
+    try:
+        directory_fd = os.open(
+            boca_volume_root,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        )
+        metadata = os.fstat(directory_fd)
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_mode & 0o022
+            or not os.access(boca_volume_root, os.W_OK | os.X_OK, effective_ids=True)
+        ):
+            raise ValueError("private Telegram staging unavailable")
+    except OSError:
+        raise ValueError("private Telegram staging unavailable") from None
+    finally:
+        if directory_fd is not None:
+            os.close(directory_fd)
+    return partial(stage_private_telegram_pairing, boca_volume_root / STAGING_FILENAME)
 
 
 class _TLSWSGIServer(WSGIServer):
@@ -148,14 +226,24 @@ class ServedBeta:
         server: _TLSWSGIServer | _LoopbackHTTPWSGIServer,
         runtime: LocalBetaRuntime,
         bridge: SiteBridgeWorker | None = None,
+        engine_socket: LocalEngineSocket | None = None,
+        enable_engine_socket: bool = False,
     ) -> None:
         self.server = server
         self.runtime = runtime
         self.bridge = bridge
+        self.engine_socket = engine_socket
+        self._enable_engine_socket = enable_engine_socket
         self._closed = False
 
     def serve_until(self, stopping: Event) -> None:
         try:
+            # The control socket is strictly in-container and available only
+            # for the opt-in IPC BETA. It cannot launch Docker or expose TCP.
+            if self._enable_engine_socket and self.engine_socket is None:
+                self.engine_socket = LocalEngineSocket(self.runtime.commands)
+            if self.engine_socket is not None:
+                self.engine_socket.start()
             while not stopping.is_set():
                 self.server.handle_request()
         finally:
@@ -167,10 +255,14 @@ class ServedBeta:
         self._closed = True
         self.server.server_close()
         try:
-            if self.bridge is not None:
-                self.bridge.close()
+            if self.engine_socket is not None:
+                self.engine_socket.close()
         finally:
-            self.runtime.close()
+            try:
+                if self.bridge is not None:
+                    self.bridge.close()
+            finally:
+                self.runtime.close()
 
 
 def _browser_for_beta(
@@ -222,6 +314,14 @@ def build_beta_server(
     parameter or an implicit host-side Chromium activation.
     """
     settings.validate_beta()
+    # Defer the owner receipt until IPC UID/socket and storage preflight,
+    # but still before any command thread or recovery can start.
+    initial_engine_stopped = partial(
+        _engine_stopped_after_reboot,
+        settings.db_path,
+        browser_backend=settings.browser_backend,
+    )
+    telegram_pairing_stager = _configured_telegram_pairing_stager(settings)
     selected_browser, command_timeout = _browser_for_beta(settings, browser)
     bridge_enabled = settings.validate_bridge()
     transport = None
@@ -256,6 +356,7 @@ def build_beta_server(
         database_path=settings.db_path,
         key_file=settings.master_key_file,
         browser=selected_browser,
+        initial_engine_stopped=initial_engine_stopped,
         command_timeout_seconds=command_timeout,
     )
     bridge: SiteBridgeWorker | None = None
@@ -276,6 +377,13 @@ def build_beta_server(
             members=runtime.members,
             commands=runtime.commands,
             events=events,
+            # The volume-local observation file is optional. On each private
+            # GET, only the notices routes read and validate it; a broken
+            # external-source snapshot cannot stop the simulation controller.
+            official_notices_loader=lambda: load_official_snapshot(
+                settings.db_path.with_name(OFFICIAL_SNAPSHOT_NAME)
+            ),
+            telegram_pairing_stager=telegram_pairing_stager,
         )
 
         def app(environ: dict[str, object], start: Callable[..., object]) -> list[bytes]:
@@ -290,7 +398,10 @@ def build_beta_server(
                 )
                 if healthy:
                     try:
-                        healthy = _configured_event(settings.db_path) == events
+                        healthy = (
+                            _configured_event(settings.db_path) == events
+                            and panel.owner_session_ready()
+                        )
                     except (LocalRuntimeUnavailable, ValueError):
                         healthy = False
                 body = b"BOCA_BETA_READY" if healthy else b"BOCA_BETA_UNAVAILABLE"
@@ -316,7 +427,12 @@ def build_beta_server(
         server.set_app(app)
         if bridge is not None:
             bridge.start()
-        return ServedBeta(server, runtime, bridge)
+        # Keep the existing controller-only deployment and its tests unchanged.
+        # The new UDS is installed solely with the separately reviewed IPC
+        # cutover candidate, using its private container /tmp namespace.
+        return ServedBeta(
+            server, runtime, bridge, enable_engine_socket=settings.browser_backend == "ipc"
+        )
     except Exception:
         if server is not None:
             server.server_close()
@@ -339,6 +455,14 @@ def initialize_beta(settings: Settings) -> None:
         initialize_new=True,
     )
     try:
+        # Initial install may opt into the owner session schema only here.
+        # Existing controllers require a separate, protected migration before
+        # the new panel version can start; build_beta_server never migrates.
+        if settings.owner_subject:
+            # A configured, private owner panel requires persistent auth. An
+            # ownerless offline storage initializer remains scoped to its
+            # synthetic ledgers and cannot fabricate an owner authorization.
+            OwnerBrowserSessionStore.migrate_schema(runtime.database)
         runtime.database.create_event(SIMULATION_EVENT_ID, SIMULATION_EVENT_LABEL)
     finally:
         runtime.close()

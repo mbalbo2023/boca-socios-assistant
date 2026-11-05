@@ -535,6 +535,100 @@ def test_host_compose_model_accepts_only_resolved_versioned_offline_contract(
     ]
 
 
+def test_host_compose_model_cutover_uses_verified_stage_paths_without_global_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stage = host.ROOT / f"cutover-a-{ATTEMPT}"
+    base, overlay, seccomp = (
+        stage / host.BETA_COMPOSE.name,
+        stage / host.BROWSER_COMPOSE.name,
+        stage / host.BROWSER_SECCOMP.name,
+    )
+    model = browser_model()
+    model["services"]["browser-worker"]["security_opt"][1] = f"seccomp={seccomp}"
+    commands: list[tuple[str, ...]] = []
+
+    def run(*args: str, **kwargs: object) -> str:
+        commands.append(args)
+        assert kwargs["env"]["BOCA_BROWSER_SECCOMP_PATH"] == str(seccomp)  # type: ignore[index]
+        return json.dumps(model)
+
+    monkeypatch.setattr(host, "_run", run)
+    assert host._browser_compose_model(
+        IMAGE,
+        ORIGIN,
+        OWNER,
+        BROWSER_IMAGE,
+        ATTEMPT,
+        base_file=base,
+        overlay_file=overlay,
+        seccomp_file=seccomp,
+    ) == json.dumps(model)
+    assert commands == [
+        (
+            "docker",
+            "compose",
+            "-p",
+            "boca-socios",
+            "-f",
+            str(base),
+            "-f",
+            str(overlay),
+            "config",
+            "--format",
+            "json",
+        )
+    ]
+    # Invocation cannot silently redirect future legacy Compose reads.
+    assert host._browser_compose_args("ps")[:8] == (
+        "docker",
+        "compose",
+        "-p",
+        "boca-socios",
+        "-f",
+        str(host.BETA_COMPOSE),
+        "-f",
+        str(host.BROWSER_COMPOSE),
+    )
+
+
+@pytest.mark.parametrize("unsafe", ["partial", "outside", "wrong-seccomp"])
+def test_host_compose_model_rejects_unauthorized_cutover_stage_paths_before_docker(
+    monkeypatch: pytest.MonkeyPatch, unsafe: str
+) -> None:
+    stage = host.ROOT / f"cutover-a-{ATTEMPT}"
+    base, overlay, seccomp = (
+        stage / host.BETA_COMPOSE.name,
+        stage / host.BROWSER_COMPOSE.name,
+        stage / host.BROWSER_SECCOMP.name,
+    )
+    monkeypatch.setattr(
+        host,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("Docker must not run for unsafe stage paths"),
+    )
+    values: dict[str, Path | None] = {
+        "base_file": base,
+        "overlay_file": overlay,
+        "seccomp_file": seccomp,
+    }
+    if unsafe == "partial":
+        values["overlay_file"] = None
+    elif unsafe == "outside":
+        values["base_file"] = host.BETA_COMPOSE
+    else:
+        values["seccomp_file"] = stage / "../../../foreign-seccomp.json"
+    with pytest.raises(PreflightError, match="exact verified Boca stage"):
+        host._browser_compose_model(
+            IMAGE,
+            ORIGIN,
+            OWNER,
+            BROWSER_IMAGE,
+            ATTEMPT,
+            **values,
+        )
+
+
 def test_kernel_effective_seccomp_json_not_path_or_permissive_variant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

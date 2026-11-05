@@ -1,6 +1,94 @@
 # Safe operations — verified evidence and gated procedures
 
-## Bloqueo actual de instalación BETA — 04/11/2026, RCA #307
+## Guía móvil GO B en Samsung Chrome — 05/11/2026 ART (R21.21; NO EJECUTAR SIN GO)
+
+**Lo que hay:** código DRAFT [#319](https://github.com/mbalbo2023/boca-socios-assistant/pull/319) HEAD `3cbe31703d74413f8de66ac8783ec68b1b7f8a87`, TREE `208a75e0c7310ea25db55ca509563f0b57972f42`, fuentes #372/#375/#374/#376 verificadas; **7/7 GitHub Actions COMPLETED SUCCESS exact SHA R21.21**: [CI 42064964129](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964129) **3718 pytest PASS +34 subtests**, Ruff/format547/MyPy128/image-build PASS; [FirstDeploy 42064964223](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964223) PR-validation + runtime-smoke SUCCESS, **host SKIPPED**; [Release 42064964145](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964145) validación SUCCESS, **publish SKIPPED**; [Panel 42064964232](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964232), [News 42064964239](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964239), [Telegram 42064964156](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964156), [Security 42064964402](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964402) SUCCESS. Artifacts de CI/FirstDeploy/Release consultados: **0**; no recibo físico ni imagen publicada. **Lo instalado es legacy `main=cabce9f1e452e63ded115f447559a358dc0f4d1b`**, comprobado en Samsung Chrome/Termius/passkey el 04/11, NO BETA integral. **GO de merge/release/Cutover/Telegram no consta y no se ha ejecutado SSH de efecto.** Esta guía es para el momento posterior a merge, release con digest y GO específico, sin comandos de terminal ni pedir PIN.
+
+**Dos pasos en GitHub para Cutover A — mismo workflow, misma operación, dos ejecuciones distintas:**
+
+1. Desde **Samsung Chrome** abrir [Actions → Boca first deploy](https://github.com/mbalbo2023/boca-socios-assistant/actions/workflows/boca-first-deploy.yml), seleccionar **Run workflow** en rama `main` **solo cuando** #319 esté fusionado y tenga release controller/browser revisado. El dueño no debe volver a instalar el controller legacy ni reenrolar passkey.
+2. **PREPARE sin efecto:** elegir `operation=cutover-a-apply`, `service=controller`, `resource_budget=1.5cpu-1024m-192pids`, dejar `protected_action_context` **vacío**. Para este GO_B nuevo, `source_sha`, `image_ref`, `browser_image_ref`, `release_run_id`, `legacy_source_sha`, `legacy_image_ref`, `legacy_release_run_id`, `legacy_controller_id` y demás campos de hashes/IDs deben quedar **vacíos**: el runner revisa manifests/release y una observación exacta **READ_ONLY** de Boca para inferirlos. No escribir JSON/base64, CID de 64 caracteres, token, PIN ni contraseña. Pulsar Run workflow **solo con autorización de la etapa PREPARE**. Esto usa **un SSH solo de lectura al host Boca** bajo lease, con 0 mutaciones de aplicación/Docker; no hace Cutover ni limpieza.
+3. Abrir el run PREPARE, comprobar `completed/success`, el Summary y artifact **`boca-protected-legacy-go-prepare`** con coordenadas/recibo inmutable (retención 2 días; vigencia de GO 24 h). Guardar el **número corto real de run PREPARE**. El GO `BOCA_CUTOVER_A_GO_BINDING_SHA256` debe ser un valor exacto derivado del recibo y configurado independientemente en Environment protegido `boca-first-deploy`; **no** se obtiene de un booleano/input del formulario. Sin esa evidencia/GO independiente, detenerse.
+4. **APPLY con GO vigente:** volver a la misma [Action](https://github.com/mbalbo2023/boca-socios-assistant/actions/workflows/boca-first-deploy.yml), rama `main`, misma operación `cutover-a-apply`, servicio/presupuesto iguales, escribir **solo los dígitos del run PREPARE** en `protected_action_context`; los demás campos técnicos GO_B se restauran del artifact que el runner autentica. Verificar actor/main/SHA/attempt1/manifest/ZIP y GO Environment antes de que el único SSH effectful llegue al host. Esperar recibo Cutover A exacto y segunda línea `BOCA_CUTOVER_A_POSTFLIGHT` con bytes/inodos e IDs Boca: si falta, `NO_GO` sin reintento ciego ni cleanup global.
+5. **Import oficial posterior al Cutover:** misma secuencia pero `operation=official-notice-import`. En PREPARE también se requiere **solo** `official_news_run_id` público, tomado de un run auténtico de noticias PR-only revisado; todos los otros SHA/ID/artifact/digests deben quedar vacíos y son verificados automáticamente. En APPLY únicamente `protected_action_context=PREPARE_ID` (más service/budget fijos). Variable GO independiente `BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256`, recibo de import `actionable=false`, sin compras ni reservas. No usar esta ruta hasta que el Cutover haya instalado la imagen con CLI revisado y el source report sea válido.
+6. **START/STOP bot y Chromium:** el botón del panel deja solicitud `REQUESTED`, **no** detiene/inicia físicamente. Luego el flujo distinto `protected-go-prepare` (1 lectura SSH Boca con `protected_action_context` vacío), GO independiente `BOCA_LIFECYCLE_GO_BINDING_SHA256`, `lifecycle-apply` con ID corto PREPARE, y **ACK UUID exacto**. STATUS se observa vía panel/Actions, nunca inferir de la intención. Falta evidencia física: sigue NO_GO hasta validación.
+7. **Aceptación Samsung y limpieza:** confirmar en interfaz de **Termius** el túnel ya existente local 8443 → remoto 127.0.0.1:8443; abrir en **Chrome Android** `http://localhost:8443/ingresar`, verificar persistencia tras cerrar/reabrir/reiniciar controller, alta simulada **Socios > Agregar socio**, ACK físicos y recursos. Verificar recibo de **cleanup selectivo Cutover A** con IDs Boca exactos; conservar imagen activa, datos/owner/clave y todos los otros Docker/Porota. La política tras cualquier deploy PASS/FAIL es general, pero el **código #372 cubre solo Cutover A** y otras seis instalaciones legacy permanecen bloqueadas.
+8. **Telegram:** #374 exige passkey WebAuthn UV nueva en el stage cifrado, pero **sender OFF** y `telegram-activate` sin caller host same-lease/UID/PID+egress/ACK validado; **NO_GO**, sin ingresar token real ni pedir PIN, hasta GO distinto y backend físico genuino. Seguridad adicional P2.
+
+**Regla de parada:** cualquier FAIL, artifact/release/GO ausente, TTL vencido, host CID incierto, ACK no exacto o cleanup incompleto ⇒ **NO_GO**, conservar legacy, sin retry ciego ni tocar otros sistemas. No se ejecuta nada ahora. [Matriz de handoff](BETA_INTEGRATION_STATUS.md) y [plan](BETA_DELIVERY_PLAN.md); sin backups, migración legacy SQLite 0008, BLACKBOX, compra/reserva real, nuevos puertos o HTTPS.
+
+## Histórico — Preparación operativa Samsung Chrome / Termius — 05/11/2026 ART (A45-R21.17, NO EJECUTAR AÚN)
+
+**Estado:** `main=cabce9f1e452e63ded115f447559a358dc0f4d1b` legacy instalado 04/11 y autenticación Samsung Chrome+Termius+passkey comprobada. La BETA integral **no** está instalada. [DRAFT #319](https://github.com/mbalbo2023/boca-socios-assistant/pull/319) HEAD `82c7c3edf75911805218149d4907ecb37b374a66`, TREE `d6ca906f517571c0025cce7780b674cdc3956fc3`, tiene [CI 42056912053](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056912053) 3645 tests+34 y 7/7 Actions SUCCESS; FirstDeploy [42056911736](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056911736) host SKIPPED y Release [42056911857](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056911857) publish SKIPPED. **Ningún GO nuevo de merge/release/host/Cutover/Telegram consta.** No se te pide ejecutar terminal, PIN, token ni credenciales.
+
+**Plan visual/manual de dos despachos, SOLO después de integrar #371 y superar GO/QA/release exactos:**
+
+1. Desde **Samsung Chrome** abrir [GitHub Actions → Boca first deploy](https://github.com/mbalbo2023/boca-socios-assistant/actions/workflows/boca-first-deploy.yml). Pulsar **Run workflow**, elegir rama `main` y operación según el frente **revisado**. No hacerlo mientras `main` siga legacy o #371 no cierre el GO B.
+2. **PREPARE revisado:** para controles bot/Chromium, primero solicitar la acción en panel privado (solo crea estado `REQUESTED`), luego seleccionar `protected-go-prepare`; completar `source_sha`, digests de imágenes y `release_run_id` **que se entreguen ya verificados**, servicio `controller`, presupuesto `1.5cpu-1024m-192pids` y dejar `protected_action_context` **VACÍO**. La implementación [ADR0166](ADR/0166-lifecycle-go-mobile-one-read.md) realiza **un SSH host READ_ONLY** bajo lease, **cero mutaciones de aplicación**, y publica artifact `boca-protected-go-prepare`; **no** ejecuta START/STOP. Para **Cutover A/import oficial**, usar únicamente la secuencia y nombres exactos que publique el futuro PR #371 tras revisión: los gates heredados todavía no sirven para un GO B real.
+3. Abrir el **run PREPARE completado SUCCESS** y comprobar su **Summary**, artifact y **ID numérico corto**. El digest de autorización GO corresponde a ese recibo, operación y SHA; la variable se deposita **independientemente** en Environment protegido `boca-first-deploy` (`BOCA_LIFECYCLE_GO_BINDING_SHA256` para lifecycle; `BOCA_CUTOVER_A_GO_BINDING_SHA256` o `BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256` para Cutover/import cuando #371 lo implemente). El SHA mostrado en Summary **no es autorización automática**. No copiar PIN, token Telegram ni claves.
+4. **APPLY revisado:** volver al mismo Actions → **Run workflow**, rama `main`. Para lifecycle elegir `lifecycle-apply`, conservar coordenadas exactas de release e ingresar **únicamente el número del PREPARE anterior** en `protected_action_context`. Para Cutover A/import seguir los nombres definitivos de #371, sin inferirlos de contratos antiguos. El runner exige mismo actor/main/fuente/artefacto, GO Environment independiente, TTL24h, control de replay y recheck antes del único SSH de efecto.
+5. Antes de continuar, comprobar **run completed/success y recibo físico APPLIED/ACK exacto**; ausencia, ambigüedad o SSH perdido implican `NO_GO`, sin reintento ni limpieza a ciegas. El START/STOP real se acepta solo con el UUID de la solicitud original, identidad del proceso y estado final observados; la acción de botón por sí sola no es ACK.
+6. Después del Cutover autorizado, en **Termius (interfaz del túnel ya configurado)** confirmar forward local `8443` hacia remoto `127.0.0.1:8443`, abrir **Chrome Samsung** `http://localhost:8443/ingresar`; verificar sesión del mismo Chrome al cerrar/reabrir y tras reiniciar controller, alta simulada **Socios > Agregar socio**, controles físicos y posterior import informativo. Telegram queda **OFF/NO_GO** hasta #362 (WebAuthn HMAC/attestor + caller same-lease egress y rearm stage) y nuevo GO independiente. Nada de navegación/compra/reserva real Boca.
+7. Dejar en GitHub los recibos de host, Samsung y rendimiento, más inventario **antes/después** y limpieza **selectiva exclusiva Boca** tras cualquier deploy exitoso o fallido: IDs exactos de imágenes en desuso/temporales, sin tocar imagen activa, volúmenes de datos/owner/clave, Porota u otros proyectos. Recibo ausente o incierto => **NO_GO** y READ_ONLY antes de reconsiderar.
+
+**Bloqueos explícitos al corte:** [#371](https://github.com/mbalbo2023/boca-socios-assistant/issues/371) issue P0 aún sin PR GO B final; [#362](https://github.com/mbalbo2023/boca-socios-assistant/issues/362) Telegram físico; sin GO específico de merge/release/deploy ni artifacts físicos del #319. Seguridad adicional P2. Un solo `127.0.0.1:8443`, sin puertos adicionales/HTTPS, backups, SQLite legacy schema 0008 ni BLACKBOX. Detalles cruzados en [matriz de integración](BETA_INTEGRATION_STATUS.md) y [plan de entrega](BETA_DELIVERY_PLAN.md); **Regla84** [#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6662182710).
+
+## Histórico — Operación real al 05/11/2026 ART (R21.11 provisional; requiere GO)
+
+- **Producción actual observada:** `main cabce9f1e452e63ded115f447559a358dc0f4d1b` **legacy** aceptado 04/11 con Samsung Chrome, Termius y passkey; **no es BETA integral**.
+- **Candidato:** [DRAFT #319](https://github.com/mbalbo2023/boca-socios-assistant/pull/319), HEAD provisional `5903ded0790ab7254bf68572af47fe75c6e08889`, CI [42044959831](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959831) **3.437 PASS +34**, 7/7 Actions GREEN: además [imagen](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959889), [security](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959974), [news](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959895), [panel](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959814), [telegram](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959805), [first-deploy](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044960073). **Verde no es ACK físico.** Publicación de imagen y host manual omitidas.
+- **Código incorporado, no operación comprobada:** #349 importación oficial Actions y #350 STOP persistente; #353 Telegram y #355 Compose requieren fase física/backend/egress/custodia.
+- **Puertas P0 abiertas:** #356 ACK bot/Chromium, #352 workflow protegido, #358, QA/predeploy del HEAD final y GO para merge/release/deploy. No ejecutar SSH, deploy, release ni intervención protegida sin su GO.
+- **Host aislado:** único bind `127.0.0.1:8443`, túnel existente; sin HTTPS nuevo ni otros puertos. No tocar Porota, otros contenedores, BLACKBOX `synthetic.py`/`ipc_worker.py`, ni la SQLite legacy con esquema 0008. Sin reservas/compras reales y sin backups. Seguridad adicional P2.
+- **Regla permanente de limpieza:** tras cualquier despliegue (sea exitoso o fallido) relevar y limpiar **selectivamente solo imágenes, contenedores y artefactos Docker huérfanos identificados de Boca**, conservando recursos en uso/compartidos de Porota y otros sistemas. Registrar evidencia antes/después.
+- **Regla 84:** documentar cada decisión/recibo y la reconciliación posterior al nuevo HEAD en [issue #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6660565397); las instrucciones bajo “Histórico” pueden corresponder a un corte anterior.
+
+## Histórico — Estado operativo vigente — 04/11/2026, 16:33 ART
+
+El controlador **sí está instalado**: `main=cabce9f1e452e63ded115f447559a358dc0f4d1b`,
+release [41893887078](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41893887078),
+install [41896871289](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41896871289)
+`PASS`, aceptación sintética [41897278258](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897278258)
+`PASS` (24 requests), y último start
+[41897569928](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897569928)
+`RUNNING` en `127.0.0.1:8443`, `engine=off`, `site=off`, Telegram `off`.
+Los volúmenes de datos/clave/owner se preservaron. **No reejecutar** el
+primer install, el alta por PIN ni la aceptación ya verde para comprobar
+el panel. La comprobación tablet aún es obligatoria: Termius SSH forwarding
+local `8443` → remoto `127.0.0.1:8443`, Chrome Android
+`http://localhost:8443/ingresar` para sesión nueva (`/` exige cookie). La
+passkey de owner se registró previamente; cookie temporal: inactividad 15 min,
+límite absoluto 8 h, invalidación tras reinicio. No certificar la
+sesión/cookie hasta observarla físicamente.
+
+La imagen browser está publicada pero **no instalada/activada**; no despachar
+`beta-browser-install` sobre este controlador sin validar el contrato
+new-only, ocupación del puerto y transición conservadora de almacenamiento.
+No activar BLACKBOX ni navegar el sitio por agentes. Telegram requiere
+custodia y prueba Bot API, luego comprobación humana; ningún mensaje real
+acreditado. Para estado y bloqueos futuros, usar el
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6640165355).
+Sólo Actions Boca para operaciones de host; limpieza exclusivamente selectiva.
+
+### Regla permanente de higiene Docker posterior a deploy (decisión del dueño, 04/11/2026)
+
+**Toda** instalación, actualización o despliegue Boca —tanto PASS como FAIL—
+termina con una limpieza selectiva **obligatoria dentro del mismo workflow
+protegido**, con inventario previo/posterior de espacio e inodos y recibo
+redactado. Después de PASS se eliminan contenedores temporarios, redes/staging
+de intento ya sin uso e **imágenes Boca anteriores** solamente cuando el
+inventario por ID/digest/labels demuestra que no están referenciadas por ningún
+contenedor. El controlador activo, su imagen y los volúmenes owner/clave/DB
+persisten. Después de FAIL se ejecuta primero la compensación acotada vigente,
+sin convertir el fallo original en éxito. Los recursos de identidad incierta
+se retienen con motivo explícito; una limpieza incompleta o no verificada
+deja `NO_GO/INDETERMINATE`, sin reintento ciego ni proclamación de instalación
+integral GREEN. **Prohibidos** `docker system prune`, `docker image prune -a`,
+`docker volume prune`, eliminación forzada, globs y tocar otros proyectos.
+Esta decisión está aprobada para **desarrollo en código y pruebas**; los
+PR DRAFT correspondientes aún no implementan ni ejecutan la limpieza física.
+
+## Historial previo — RCA del beta-install rechazado antes del fix #307
 
 El último `beta-install` protegido [#41890280818](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41890280818)
 pasó el gate `BOCA_BETA_ENV_READY=ready`, SHA/release, arranque existente del
@@ -426,6 +514,14 @@ into `telegram_envelope`; the two pins into environment Secrets
 Never request token/chat plaintext in chat, Actions inputs or a terminal.
 The form's success is not installation, identity verification or delivery.
 
+**Corrección candidata P0 #315 — no desplegada:** el transporte previo
+exponía el sobre cifrado/HMAC de Telegram en los argumentos SSH. El DRAFT
+propone un único SSH por fase con helper+operandos en frame de stdin,
+bootstrap remoto estático y secretos retirados del entorno del proceso SSH.
+Sus regresiones son sintéticas y no prueban instalación, identidad real ni
+recepción humana. Hasta exact-SHA CI/merge/cutover protegido, Telegram sigue
+OFF. Véase [ADR0134](ADR/0134-private-telegram-pairing-discovery.md).
+
 Stop Boca with `stop-test` before `telegram-install`; perform protected
 install/verify/test with the reviewed coordinates. `telegram-test` must run
 before the first persistent simulation, while the outbox is empty. Its API
@@ -721,11 +817,15 @@ authorization must be consumed atomically before creating a discoverable
 WebAuthn passkey, and the physical create→get ceremony must verify the user.
 Only the public credential ID/ES256 key may persist in Boca owner custody.
 The private passkey stays in the chosen Android credential manager; it is not
-a permanent browser cookie. The panel session cookie remains HttpOnly/Secure/
-SameSite=Strict, with 15-minute idle and 8-hour absolute expiration and
-revocation on process restart. Real Chrome localhost Secure-cookie acceptance,
-Google Password Manager persistence and iOS compatibility remain physical
-gates. SSH encrypts the remote path, **not** an app-to-localhost connection
+a permanent browser cookie. **Este párrafo conserva la ceremonia histórica**:
+Tincho confirmó el 04/11/2026 que Samsung Chrome + Termius + passkey ya permite
+ingresar al controller-only. Su cookie aún tiene expiración legacy de 15
+minutos de inactividad/8 horas y se revoca con restart. En el **candidato DRAFT
+#319 / Opción B #321/#322** la cookie será HttpOnly/Secure/SameSite=Strict,
+renovable hasta el máximo de Chrome de 400 días, con autorización singleton
+persistente en SQLite lateral; esto **no** se ha instalado físicamente.
+Persistencia tras reinicio, Google Password Manager e iOS son gates físicos.
+SSH encrypts the remote path, **not** an app-to-localhost connection
 inside Android; do not claim general HTTPS-equivalent protection.
 
 The activation sequence is: finish RCA #271 review/integration and exact checks;
@@ -931,11 +1031,15 @@ cannot establish that image storage has headroom.
 6. Serialize deployment with a Boca-only lock, never parallel retry.
 7. Record Boca-only pre/post health and disk/inode capacity; never touch or
    stop an existing workload or enumerate unrelated services destructively.
-8. On failure: inventory the Boca attempt through the same Actions workflow,
-   stop Boca only, then remove positively identified unused disposable Boca
-   image/staging remnants with before/after measurements.
+8. After every success **and** failure: inventory the Boca attempt through the
+   same protected Actions workflow, run bounded selective cleanup and verify
+   before/after disk/inodes and resource IDs. On failure, first compensate/stop
+   only the exact Boca attempt, preserving the original failed result. On
+   success, remove positively identified obsolete Boca images only if no
+   container references them, plus disposable Boca staging/network remnants.
    Retain key/data volumes and uncertain resources. No destructive Docker
-   prune, blanket compose down, or volume deletion.
+   prune, blanket compose down, or volume deletion. An unverified postflight
+   cleanup leaves NO_GO/INDETERMINATE even when the app started successfully.
 9. Diagnose any external-source failure via bounded read-only Actions before
    proposing a new deploy. Report green/yellow/red/unknown with timestamp;
    source failure is an alert, not a NO_GO for the simulation-only controller.

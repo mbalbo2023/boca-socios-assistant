@@ -1,6 +1,114 @@
 # Boca Socios Assistant
 
-## RCA del primer beta-install físico — 04/11/2026 (issue #307)
+## Corte de entrega A45-R21.21 — 05/11/2026 ART (CÓDIGO CONSOLIDADO; NO DEPLOY)
+
+- **Candidato único:** [DRAFT #319](https://github.com/mbalbo2023/boca-socios-assistant/pull/319), HEAD `3cbe31703d74413f8de66ac8783ec68b1b7f8a87`, TREE `208a75e0c7310ea25db55ca509563f0b57972f42` verificados; conserva los overlays previos y ahora incorpora #372 (postflight cleanup Boca **solo Cutover A**), #375 (observadores host READ_ONLY Cutover/import), #374 (WebAuthn UV fresco Telegram, **sender OFF**), #376 (GO_B Cutover/import de dos despachos). Las fuentes satélite tienen 4/4, 4/4, 6/6, 4/4 Actions verdes respectivamente, **no heredables al SHA #319**.
+- **QA del corte #319:** **7/7 GitHub Actions COMPLETED SUCCESS exact SHA R21.21**: [CI 42064964129](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964129) **3718 pytest PASS +34 subtests**, Ruff/format547/MyPy128/image-build PASS; [FirstDeploy 42064964223](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964223) PR-validation + runtime-smoke SUCCESS, **host SKIPPED**; [Release 42064964145](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964145) validación SUCCESS, **publish SKIPPED**; [Panel 42064964232](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964232), [News 42064964239](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964239), [Telegram 42064964156](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964156), [Security 42064964402](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964402) SUCCESS. Artifacts de CI/FirstDeploy/Release consultados: **0**; no recibo físico ni imagen publicada. Predeploy del SHA definitivo, revisión de artefactos, merge único, publicación de release inmutable y operación física **NO ejecutados**. `main=cabce9f1e452e63ded115f447559a358dc0f4d1b` sigue controller legacy instalado/aceptado 04/11 y accesible Samsung Chrome+Termius+passkey; la BETA integral **no** está instalada.
+- **Funciones disponibles SOLO EN CÓDIGO:** Cutover/official import GO B por [workflow Boca único](https://github.com/mbalbo2023/boca-socios-assistant/actions/workflows/boca-first-deploy.yml): PREPARE con una observación host READ_ONLY Boca, artifact y GO independiente; APPLY posterior con **únicamente ID corto PREPARE**. Para START/STOP bot/Chromium se exige REQUESTED→PREPARE→GO→APPLY con UUID/ACK físico exacto. Telegram ya exige passkey WebAuthn fresca para stage cifrado, pero activación real/egress y ACK **NO_GO, sender OFF**. Import oficial solo informativo (no actionable).
+- **Limpieza:** #372 transporta bytes/inodos e IDs exactos en ACK postflight de Cutover A PASS/FAIL/RECOVERED; **no** demuestra cleanup del droplet ni habilita las otras seis instalaciones legacy (bloqueadas pre-SSH). La regla del dueño exige limpieza selectiva Boca-only después de cualquier deploy futuro PASS o FAIL, preservando todos los recursos ajenos/compartidos.
+- **Puertas NO_GO:** faltan GO físico específico de merge/release/Cutover/Telegram y variables Environment configuradas/comprobadas sin exponer secretos, PREPARE/ACK reales, release digest, aceptación sesión Chrome persistente/alta simulada, lifecycle y recibos de Docker. **No pedir terminal ni PIN**: [pasos Samsung](docs/OPERATIONS.md), [matriz Rule84](docs/BETA_INTEGRATION_STATUS.md) y [plan de entrega](docs/BETA_DELIVERY_PLAN.md). Seguridad adicional P2.
+- Sin reservas/compras reales, backups, migración legacy SQLite a 0008, BLACKBOX, Porota, otros Docker/puertos ni HTTPS; solo `127.0.0.1:8443`. Este documento es **foto CODE_ONLY exacta R21.21**, no release ni autorización de host; todo commit siguiente exige QA nueva.
+
+## Histórico — Corte verificado A45-R21.17 — 05/11/2026 ART (CÓDIGO, NO DEPLOY)
+
+- **Instalación física actual:** solo controller legacy `main=cabce9f1e452e63ded115f447559a358dc0f4d1b`, aceptado 04/11. Tincho verificó Samsung Chrome + Termius + passkey para ESA versión. No acredita la BETA integral ni la persistencia de sesión del candidato.
+- **Candidato único:** [DRAFT #319](https://github.com/mbalbo2023/boca-socios-assistant/pull/319), HEAD `82c7c3edf75911805218149d4907ecb37b374a66`, TREE `d6ca906f517571c0025cce7780b674cdc3956fc3`. Incluye las mejoras CODE_ONLY #349/#350, #353/#355, #356/#358, GO de ciclo #359/#361, observador #369, flujo móvil #370 y consumidor GO B #368; **ninguno está integrado en main ni desplegado**.
+- **QA exacta R21.17:** **7/7 GitHub Actions COMPLETED/SUCCESS**, [CI 42056912053](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056912053) **3645 pytest PASS +34 subtests**, Ruff/format (530 archivos), MyPy y build offline; [FirstDeploy 42056911736](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056911736) PR-validation/runtime-smoke PASS con host **SKIPPED**; [Release 42056911857](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056911857) validación PASS con publicación **SKIPPED**; [Panel 42056911656](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056911656), [News 42056911678](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056911678), [Telegram 42056911612](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056911612), [Security 42056911673](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056911673) SUCCESS. Ningún artifact de CI/FirstDeploy es recibo de host.
+- **P0 NO_GO físico:** [#371](https://github.com/mbalbo2023/boca-socios-assistant/issues/371) prepara el enlace GO B de Cutover A/import oficial PREPARE→APPLY, aún sin PR al corte; [#362](https://github.com/mbalbo2023/boca-socios-assistant/issues/362) exige prueba real de passkey/attestor + egress Telegram bajo lease; START/STOP bot/Chromium requieren PREPARE, GO independiente y ACK físico exacto. La validación final de SHA, merge/release, Cutover, import, Telegram y aceptación Chrome/Termius/Docker queda pendiente.
+- **Operación:** sin nuevo GO de merge/release/deploy, SSH effectful, compras/reservas, backups, migración legacy SQLite a 0008 ni hardening extra P2. BLACKBOX intocable, ningún servicio/volumen Docker ajeno y únicamente `127.0.0.1:8443`. Limpieza Docker posterior a cualquier deploy PASS o FAIL exclusivamente Boca, con inventario/recibo.
+- **Guía de GO y entrega:** [plan de aceptación](docs/BETA_DELIVERY_PLAN.md), [operaciones Samsung sin terminal](docs/OPERATIONS.md) y [matriz Rule84](docs/BETA_INTEGRATION_STATUS.md). Este es **un corte histórico exacto de código**: si #319 cambia, exigir nuevas Actions terminales y actualizar evidencias antes de overlay/release.
+
+## Histórico — Corte operativo vigente — 05/11/2026 ART (A45-R12 / R21.11 provisional)
+
+- **Estado real del host:** la versión **legacy** de `main` (`cabce9f1e452e63ded115f447559a358dc0f4d1b`) fue instalada y aceptada el **04/11**, con validación de **Samsung Chrome, Termius y passkey**. Esto **no equivale** a la BETA integral desplegada.
+- **Candidato único:** [DRAFT PR #319](https://github.com/mbalbo2023/boca-socios-assistant/pull/319), corte de desarrollo **R21.11 provisional**, HEAD `5903ded0790ab7254bf68572af47fe75c6e08889`. **No fijar este SHA como release**: quedan integraciones posteriores.
+- **Evidencia verificable del corte:** **3.437 pruebas PASS +34 subtests**; **7/7 Actions GREEN**: [CI 42044959831](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959831), [Imagen 42044959889](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959889) (publicación omitida), [Seguridad 42044959974](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959974), [Noticias 42044959895](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959895), [Panel 42044959814](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959814), [Telegram 42044959805](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959805) y [FirstDeploy 42044960073](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044960073) (etapa host manual omitida). Verde de CI **no es ACK físico del host**.
+- **Integrado en código, aún no validado en host:** [#349](https://github.com/mbalbo2023/boca-socios-assistant/pull/349) importación oficial por Actions y [#350](https://github.com/mbalbo2023/boca-socios-assistant/pull/350) STOP persistente; correcciones P0 asociadas a [#353](https://github.com/mbalbo2023/boca-socios-assistant/issues/353) Telegram y [#355](https://github.com/mbalbo2023/boca-socios-assistant/issues/355) Compose. Verificar los overlays siguientes de #356/#358/#352 en el HEAD definitivo.
+- **Pendiente de aceptación:** ACK físico de controles bot/Chromium [#356](https://github.com/mbalbo2023/boca-socios-assistant/issues/356), workflow protegido [#352](https://github.com/mbalbo2023/boca-socios-assistant/issues/352), y activación de Telegram tras despliegue, incluyendo backend, egress y custodia; QA/predeploy del candidato consolidado y GO específico para merge, release y deploy.
+- **Gobierno:** sin GO nuevo, sin SSH ni release/deploy nuevos. Seguridad adicional **P2**. BLACKBOX `synthetic.py` y `ipc_worker.py` intocables; sin migración legacy a esquema 0008, compras/reservas reales, backups, nuevos puertos o HTTPS. Solo `127.0.0.1:8443`; no interferir Porota ni otros servicios. Limpieza Docker **selectiva** tras cualquier deploy exitoso o fallido.
+- **Regla 84:** priorizar el [checkpoint canónico de #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6660565397) y reconciliar esta fotografía documental cuando las integraciones siguientes cambien el HEAD. Las secciones anteriores, rotuladas **Histórico**, no describen necesariamente el estado vigente.
+
+## Histórico — Nuevo corte de desarrollo — 04/11/2026, después de las 19:20 ART
+
+El propietario **confirmó acceso exitoso en Samsung Chrome** al panel privado
+`http://localhost:8443` mediante Termius y passkey. Es una observación humana
+puntual: **no** demuestra persistencia de sesión al reiniciar Chrome ni la
+salud de un worker navegador. El controller-only instalado permanece anclado
+al `main=cabce9f1e452e63ded115f447559a358dc0f4d1b`; los avances siguientes
+son **candidatos de código, no desplegados**.
+
+Autorizadas: **Telegram privado** (#315, [PR DRAFT #317](https://github.com/mbalbo2023/boca-socios-assistant/pull/317)),
+**pausa/reanudación general de simulaciones** y retiro de Site del panel
+(#313, [PR DRAFT #318](https://github.com/mbalbo2023/boca-socios-assistant/pull/318)), y **fuentes oficiales de eventos/categorías/horarios**
+(#314, [PR DRAFT #316](https://github.com/mbalbo2023/boca-socios-assistant/pull/316)).
+La transición del controller hacia el worker navegador sigue en #227
+([PR DRAFT #310](https://github.com/mbalbo2023/boca-socios-assistant/pull/310));
+el [PR DRAFT #320](https://github.com/mbalbo2023/boca-socios-assistant/pull/320)
+agrega observación de identidad histórica y compensación modelada, pero **no**
+existe cutover físico aprobado ni instalado. La candidata integral conecta
+`/telegram/emparejar` a la sesión autenticada y añade resolución privada de
+chat por Bot API, pero exige recibo público de custodia y un workflow protegido
+de instalación V2; **no** recibió token real ni envió aviso. Esta ruta tampoco
+está desplegada en el panel actual. El catálogo oficial dispone de vistas
+informativas offline, sin conectar categorías a reservas ni admisión.
+
+**Nuevo requisito [#321](https://github.com/mbalbo2023/boca-socios-assistant/issues/321):**
+mantener una sola sesión del dueño en el mismo Chrome al cerrar/reabrir pestaña
+y reiniciar controller, sin reingreso rutinario de passkey. Código de custodia
+y migración en desarrollo; el servidor físico aún usa sesión temporal.
+
+**Regla permanente de limpieza Docker del dueño (04/11):** después de
+**cualquier** instalación/despliegue/actualización Boca, exitosa o fallida,
+el mismo workflow protegido deberá inventariar y limpiar selectivamente
+artefactos de intento e imágenes Boca antiguas **que ningún contenedor use**.
+Debe verificar espacio/inodos y ausencia exacta de residuos, mantener la
+imagen activa y todos los volúmenes owner/clave/DB, y declarar NO_GO si la
+limpieza es incierta. **Sin Docker prune global ni otras aplicaciones.**
+El contrato está en desarrollo DRAFT; no equivale a limpieza física realizada.
+
+**Descartadas por el propietario:** varias sesiones del navegador, rotación de
+clave maestra y eliminación completa, login/fila/elegibilidad/reserva/compra
+reales en Boca y backup/restauración. No reactivar ni presentar estas funciones
+como pendientes para BETA. El Site complementario se retira **de la interfaz**,
+sin modificar infraestructura ajena. Ningún PR de esta ola fue fusionado ni
+desplegado; [checkpoint canónico #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6644301519).
+
+## Estado operativo comprobado — 04/11/2026, 16:33 ART
+
+**Controlador BETA instalado, aceptado y arrancado; BETA integral pendiente.**
+GitHub `main=cabce9f1e452e63ded115f447559a358dc0f4d1b` (PR #308,
+RCA #307 resuelto) publicó el par de imágenes en
+[release #41893887078](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41893887078).
+El [install #41896871289](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41896871289)
+registró `BOCA_BETA_INSTALL state=PASS`, controlador únicamente y HTTP
+loopback verificado. La
+[aceptación #41897278258](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897278258)
+pasó 24 peticiones sintéticas en el contenedor, con 1 socio, 1 intención,
+1 aviso local, p95 de 24,17 ms y pico de proceso de 43.648 KiB; sin contacto
+con Boca ni envío Telegram. El
+[start #41897569928](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897569928)
+observó `BOCA_BETA_START state=RUNNING` en `127.0.0.1:8443`, datos/clave/owner
+preservados y motor `off`. Este es un recibo puntual, **no** una prueba de
+disponibilidad continua ni de acceso desde la Samsung.
+
+Próximos cierres: Chrome Samsung por túnel SSH a
+`http://localhost:8443/ingresar`, autenticación y cookie, panel/alta/SQLite
+persistentes, navegador opt-in
+(imagen publicada, worker no instalado ni activo), Telegram (off, sin recibo
+de entrega), y aceptación integral/reinicio. [Issue #259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259)
+sigue abierto para capacidad del conjunto; [issue #285](https://github.com/mbalbo2023/boca-socios-assistant/issues/285)
+y [draft #287](https://github.com/mbalbo2023/boca-socios-assistant/pull/287)
+no son un piloto autenticado aprobado. Módulos BLACKBOX y navegación real
+reservados al dueño. Estado con evidencia y operaciones posteriores:
+[checkpoint canónico #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6640165355).
+La passkey de Chrome ya fue registrada en el owner-enroll físico; la sesión
+servida es temporal (15 min de inactividad, 8 h máximo, inválida tras restart).
+Ninguna de esas propiedades acredita por sí sola la persistencia observada
+en la tablet.
+
+## Historial anterior al despliegue exitoso (NO es el estado vigente)
+
+### RCA del primer beta-install físico — 04/11/2026 (issue #307)
 
 `main=3c5a0da3df527cfe58a98442ea471be81f9f06ab` (PR #306) produjo un
 release inmutable [#41873165726](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41873165726).
@@ -267,8 +375,10 @@ on `main=3ec1096fb5dce8a01af5c8060f0be056bf44fb9d` reported
 to the local panel on 8443. **Merged PR #224/ADR0091 supersedes
 the HTTPS-localhost route:** the only proposed BETA Compose origin is
 `http://localhost:8443` (WebAuthn RP `localhost`) through Termius SSH, with
-**no device certificate/CA installation**. The actual
-forward and physical passkey remain untested;
+**no device certificate/CA installation**. At that historical checkpoint, the
+forward and physical passkey remained untested; **on 04/11/2026 Tincho
+subsequently confirmed Samsung Chrome + Termius + passkey access to the
+controller-only deployment**, not to the integral BETA or a persistent session.
 the single stored credential also needs cross-device proof for Android/iOS.
 The former tablet-local TLS WebAuthn emitter (#215, ADR0089) remains only as
 historical code and is **not** the owner's enrollment procedure. The requested
@@ -286,10 +396,14 @@ nor has physical Chrome passkey creation, private handoff, iOS use or owner
 install been verified.
 The #217 correction requires a discoverable passkey during local enrollment.
 The chosen Android credential manager holds its private key, not a Chrome
-cookie. The panel session cookie is temporary (15-minute idle, 8-hour absolute
-limit, and invalidated by process restart); Android storage/sync and iOS use
-still require physical proof in #209. Chrome localhost cookie acceptance must
-be tested on the actual tablet; Safari support remains unverified. No renewal
+cookie. **The still-installed legacy controller** uses a temporary cookie
+(15-minute idle, 8-hour absolute limit and revocation on process restart).
+**DRAFT #319 / Option B #321/#322**, not yet deployed, instead records one
+owner authorization in a dedicated sibling SQLite and issues a rolling
+400-day Chrome cookie without the old daily/session idle expirations; logout,
+new owner login or verifier change revokes it. Persistence through a physical
+Samsung Chrome/controller restart, Android storage/sync and iOS use remain
+acceptance gates. Safari support remains unverified. No renewal
 or generation of TLS certificates is required for the chosen SSH-only route.
 Site decommission is deferred until the local replacement is validated.
 Merged PR #220 (RCA #219) strengthens the existing Boca-only failed

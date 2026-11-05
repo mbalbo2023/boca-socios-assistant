@@ -320,6 +320,27 @@ def test_private_route_requires_owner_and_uses_strict_route_specific_csp(tmp_pat
     assert b'href="/telegram/configurar"' in _request(app, "/", cookie=cookie)[2]
 
 
+def test_versioned_pairing_route_requires_owner_and_keeps_v1_separate(tmp_path: Path) -> None:
+    provider, key, credential = _passkey([0.0])
+    app, _ = _app(tmp_path / "boca.sqlite3", provider)
+    assert _request(app, "/telegram/emparejar")[0] == 401
+    cookie = _login(app, key, credential)
+    status, headers, body = _request(app, "/telegram/emparejar", cookie=cookie)
+    assert status == 200
+    assert body == ui.pairing_page()
+    assert headers["Content-Security-Policy"] == ui.PAIRING_CSP
+    assert "connect-src 'none'" in ui.PAIRING_CSP
+    assert "form-action 'none'" in ui.PAIRING_CSP
+    assert "'unsafe-inline'" not in ui.PAIRING_CSP
+    assert headers["Cache-Control"] == "no-store"
+    assert headers["Referrer-Policy"] == "no-referrer"
+    assert b"todav\xc3\xada sin instalar ni habilitar" in body
+    assert b'<input id="pairing-token" type="password"' in body
+    assert b"enlace" in body and b"recibo" in body
+    assert _request(app, "/telegram/configurar", cookie=cookie)[2] == ui.page()
+    assert _request(app, "/telegram/emparejar", cookie=cookie, method="POST")[0] == 404
+
+
 def test_private_route_does_not_read_or_reflect_posted_secrets(tmp_path: Path) -> None:
     provider, key, credential = _passkey([0.0])
     app, _ = _app(tmp_path / "boca.sqlite3", provider)

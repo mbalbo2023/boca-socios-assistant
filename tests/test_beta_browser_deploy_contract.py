@@ -36,6 +36,7 @@ def browser_model() -> dict[str, object]:
     controller = services["controller"]
     controller["restart"] = "no"
     controller["environment"]["BOCA_BROWSER_BACKEND"] = "ipc"
+    controller["environment"]["BOCA_TELEGRAM_PAIRING_STAGE_MODE"] = "encrypted-only"
     controller["labels"] = {"boca.socios.browser-ipc-attempt": ATTEMPT}
     controller["volumes"].append(
         {

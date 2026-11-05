@@ -151,6 +151,7 @@ def test_served_beta_accepts_only_an_explicit_synthetic_browser_injection(
             pass
 
     received: list[object] = []
+    panel_arguments: dict[str, object] = {}
 
     def start_runtime(**kwargs: object) -> Runtime:
         received.append(kwargs["browser"])
@@ -159,7 +160,12 @@ def test_served_beta_accepts_only_an_explicit_synthetic_browser_injection(
     monkeypatch.setattr(runtime_module, "_configured_event", lambda _path: {})
     monkeypatch.setattr(runtime_module.LocalBetaRuntime, "start", start_runtime)
     monkeypatch.setattr(runtime_module, "_TLSWSGIServer", Server)
-    monkeypatch.setattr(runtime_module, "PrivatePanelApplication", lambda **_kwargs: object())
+
+    def capture_panel(**kwargs: object) -> object:
+        panel_arguments.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(runtime_module, "PrivatePanelApplication", capture_panel)
 
     worker = Browser()
     served = build_beta_server(settings, browser=worker)
@@ -167,6 +173,8 @@ def test_served_beta_accepts_only_an_explicit_synthetic_browser_injection(
         assert received == [worker]
         assert isinstance(served.server, Server)
         assert served.server.application is not None
+        loader = panel_arguments["official_notices_loader"]
+        assert callable(loader) and loader() == ()  # no snapshot, no external fetch
     finally:
         served.close()
 
@@ -204,6 +212,28 @@ def test_served_tls_health_requires_ready_loop_and_owner_session(
     thread = Thread(target=served.serve_until, args=(stopping,), daemon=True)
     thread.start()
     try:
+        assert _request(settings.bind_port, "/healthz") == (200, b"BOCA_BETA_READY")
+        assert healthcheck.main() == 0
+        # A later integrity failure in the dedicated owner-session SQLite must
+        # invalidate readiness even when the legacy controller remains alive.
+        session_file = settings.db_path.with_name("boca_owner_session.sqlite3")
+        with sqlite3.connect(session_file) as session_connection:
+            original_digest = session_connection.execute(
+                "SELECT checksum FROM owner_session_schema WHERE version = 1"
+            ).fetchone()[0]
+            session_connection.execute(
+                "UPDATE owner_session_schema SET checksum = ? WHERE version = 1",
+                ("0" * 64,),
+            )
+            session_connection.commit()
+        assert _request(settings.bind_port, "/healthz") == (503, b"BOCA_BETA_UNAVAILABLE")
+        assert healthcheck.main() == 1
+        with sqlite3.connect(session_file) as session_connection:
+            session_connection.execute(
+                "UPDATE owner_session_schema SET checksum = ? WHERE version = 1",
+                (original_digest,),
+            )
+            session_connection.commit()
         assert _request(settings.bind_port, "/healthz") == (200, b"BOCA_BETA_READY")
         assert healthcheck.main() == 0
         assert _request(settings.bind_port, "/ingresar")[0] == 200

@@ -201,6 +201,23 @@ def _hidden(page: bytes, name: str) -> str:
     return match.group(1).decode("ascii")
 
 
+def _intake_action(material: _Material, timings: list[float], cookie: str, action: str) -> None:
+    """Simulate explicit owner admission; never infer worker start from HTTP availability."""
+    status, _, form = _request(material, "/control", timings, cookie=cookie)
+    _require(status == 200)
+    _require((b"Pausada" if action == "reanudar" else b"Admitiendo") in form)
+    _require(f'action="/control/{action}"'.encode() in form)
+    result = _request(
+        material,
+        f"/control/{action}",
+        timings,
+        method="POST",
+        cookie=cookie,
+        fields={"csrf": _hidden(form, "csrf"), "operation_id": _hidden(form, "operation_id")},
+    )
+    _require(result[0] == 303 and result[1].get("Location") == "/control")
+
+
 def _login(material: _Material, timings: list[float]) -> str:
     status, _, page = _request(material, "/ingresar", timings)
     _require(status == 200)
@@ -290,7 +307,11 @@ def _first_visit(material: _Material, timings: list[float]) -> tuple[str, str, s
         "member_id": member_id,
         "event_id": _EVENT,
     }
+    paused = _request(material, "/comandos", timings, method="POST", cookie=cookie, fields=command)
+    _require(paused[0] == 409)
     # The session bounds writes to one per second; the enrollment is complete.
+    time.sleep(1.05)
+    _intake_action(material, timings, cookie, "reanudar")
     time.sleep(1.05)
     started = _request(material, "/comandos", timings, method="POST", cookie=cookie, fields=command)
     _require(started[0] == 303 and started[1].get("Location") == f"/comandos/{command_id}")
@@ -324,14 +345,17 @@ def _first_visit(material: _Material, timings: list[float]) -> tuple[str, str, s
         fields={"csrf": command["csrf"]},
     )
     _require(stop[0] == 303 and stop[1].get("Location") == f"/comandos/{command_id}")
+    time.sleep(1.05)
+    _intake_action(material, timings, cookie, "pausar")
     return cookie, member_id, command_id
 
 
 def _restart_visit(
     material: _Material, timings: list[float], old_cookie: str, member_id: str, command_id: str
 ) -> None:
-    _require(_request(material, "/avisos", timings, cookie=old_cookie)[0] == 401)
+    _require(_request(material, "/avisos", timings, cookie=old_cookie)[0] == 200)
     cookie = _login(material, timings)
+    _require(_request(material, "/avisos", timings, cookie=old_cookie)[0] == 401)
     detail = _request(material, f"/comandos/{command_id}", timings, cookie=cookie)
     _require(detail[0] == 200 and b"Estado: completed" in detail[2])
     form = _request(material, "/comandos", timings, cookie=cookie)
@@ -344,9 +368,17 @@ def _restart_visit(
         "member_id": member_id,
         "event_id": _EVENT,
     }
+    # A pause survives restart, but cannot prevent owner inspection of history.
+    _require(_request(material, "/control", timings, cookie=cookie)[0] == 200)
+    paused = _request(material, "/comandos", timings, method="POST", cookie=cookie, fields=command)
+    _require(paused[0] == 409)
+    _intake_action(material, timings, cookie, "reanudar")
+    time.sleep(1.05)
     alias = _request(material, "/comandos", timings, method="POST", cookie=cookie, fields=command)
     _require(alias[0] == 303 and alias[1].get("Location") == f"/comandos/{command_id}")
     _require(_request(material, "/avisos", timings, cookie=cookie)[0] == 200)
+    time.sleep(1.05)
+    _intake_action(material, timings, cookie, "pausar")
 
 
 def _run_probe(root: Path) -> ProbeReceipt:

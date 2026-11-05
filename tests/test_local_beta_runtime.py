@@ -164,6 +164,20 @@ class LocalBetaRuntimeTests(unittest.TestCase):
         self.assertTrue(self.browser.cancelled)
         self.assertEqual(self.browser.calls, 1)
 
+    def test_stopped_engine_preserves_healthy_owner_panel_and_can_restart(self) -> None:
+        runtime = self.start(initialize_new=True)
+        self.assertTrue(runtime.commands.engine_running)
+        self.assertTrue(runtime.ready)
+        self.assertTrue(runtime.commands.stop_engine())
+        self.assertTrue(runtime.commands.engine_stopped)
+        self.assertTrue(runtime.ready)  # HTTP must stay healthy at 8443.
+        self.assertTrue(runtime.commands.failed)  # No simulated admissions.
+        with self.assertRaises(RuntimeError):
+            runtime.commands.begin(str(uuid4()), member_id="member", event_id="event")
+        self.assertTrue(runtime.commands.start_engine())
+        self.assertTrue(runtime.commands.engine_running)
+        self.assertTrue(runtime.ready)
+
 
 if __name__ == "__main__":
     unittest.main()

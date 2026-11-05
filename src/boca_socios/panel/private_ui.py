@@ -7,8 +7,11 @@ import hashlib
 from datetime import UTC, datetime
 from html import escape
 
+from boca_socios.events.official_catalog import OfficialNotice
+from boca_socios.events.official_presentation import render_observed_catalog_html
 from boca_socios.notify.projection import LocalNoticeView
 from boca_socios.panel.enrollment_form import STYLE
+from boca_socios.panel.lifecycle_intents import LifecycleIntent
 from boca_socios.panel.members import CommandView, MemberView
 
 _LOGIN_SCRIPT = """
@@ -69,7 +72,9 @@ def _page(title: str, content: str, *, body_attributes: str = "", script: str = 
 <title>{escape(title)} · Boca Socios Assistant</title><style>{STYLE}</style></head>
 <body{body_attributes}><nav aria-label="Secciones"><a href="/">Inicio</a> ·
 <a href="/socios">Socios</a> · <a href="/comandos">Simulación</a> ·
-<a href="/estado">Estado</a> · <a href="/avisos">Avisos</a></nav>
+<a href="/control">Control</a> ·
+<a href="/estado">Estado</a> · <a href="/avisos">Avisos</a> ·
+<a href="/avisos-oficiales">Eventos oficiales</a></nav>
 <main>{content}</main>{script}</body></html>""".encode()
 
 
@@ -95,21 +100,123 @@ def home(csrf: str) -> bytes:
         "<h1>Boca Socios Assistant</h1><p>Modo de simulación. "
         "Ninguna acción reserva ni compra entradas en Boca.</p>"
         '<p><a href="/socios">Consultar o agregar socios</a></p>'
+        '<p><a href="/control">Pausar o reanudar nuevas simulaciones</a></p>'
         '<p><a href="/comandos">Iniciar, detener o consultar simulaciones</a></p>'
         '<p><a href="/estado">Consultar estado local</a></p>'
         '<p><a href="/avisos">Consultar avisos locales y estado Telegram</a></p>'
+        '<p><a href="/avisos-oficiales">Consultar avisos públicos oficiales observados</a></p>'
         '<p><a href="/telegram/configurar">Configurar Telegram con un recibo aprobado</a></p>'
         '<section aria-labelledby="pending"><h2 id="pending">Funciones no habilitadas</h2><ul>'
-        "<li>Fuentes de eventos, categorías y horarios oficiales: pendientes de integración.</li>"
-        "<li>Varias sesiones de navegador y sus límites: pendientes de validación.</li>"
-        "<li>Rotación de clave maestra y eliminación completa: pendientes de custodia.</li>"
-        "<li>Backup y restauración: diferidos hasta una versión productiva fiable.</li>"
-        "<li>Login, fila, elegibilidad, reserva y compra reales en Boca: no habilitados.</li>"
-        "<li>Site complementario: conexión y estado operativo sujetos a su propio recibo.</li>"
+        "<li>Los avisos oficiales son informativos y requieren observaciones cargadas; "
+        "no hay fuente en vivo ni comprobación de disponibilidad.</li>"
+        "<li>Varias sesiones de navegador y sus límites: fuera de alcance por decisión "
+        "del propietario.</li>"
+        "<li>Rotación de clave maestra y eliminación completa: fuera de alcance por "
+        "decisión del propietario.</li>"
+        "<li>Backup y restauración: excluidos de esta BETA.</li>"
+        "<li>Login, fila, elegibilidad, reserva y compra reales en Boca: no habilitados "
+        "y fuera de alcance.</li>"
         "</ul></section>"
         '<form action="/salir" method="post">'
         f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
         '<button type="submit">Cerrar sesión</button></form>',
+    )
+
+
+def official_events(notices: tuple[OfficialNotice, ...], *, at: datetime) -> bytes:
+    """Private read-only official notice view, separate from simulation commands."""
+    return _page(
+        "Eventos oficiales observados",
+        render_observed_catalog_html(notices, at=at)
+        + '<p><a href="/avisos-oficiales.json">Descargar observaciones JSON</a></p>',
+    )
+
+
+def global_simulation_control(
+    accepting: bool,
+    host_ready: bool,
+    csrf: str,
+    operation_id: str,
+    *,
+    lifecycle: LifecycleIntent | None = None,
+) -> bytes:
+    """Explain that the control governs admission, not process or provider lifecycle."""
+    state = "Admitiendo nuevas simulaciones locales" if accepting else "Pausada"
+    availability = (
+        "El servicio de simulación local está disponible."
+        if host_ready
+        else "El servicio de simulación local no está disponible."
+    )
+    action = "pausar" if accepting else "reanudar"
+    label = "Pausar nuevas simulaciones" if accepting else "Reanudar nuevas simulaciones"
+    return _page(
+        "Control de simulaciones",
+        "<h1>Control de simulaciones</h1>"
+        f'<p role="status">Estado: {state}. {availability}</p>'
+        "<p>Este control sólo acepta o bloquea nuevas simulaciones locales. "
+        "No inicia ni apaga el contenedor, el panel, Telegram ni el navegador; "
+        "tampoco detiene simulaciones en curso. Para detener una, abra "
+        "el detalle del comando.</p>"
+        "<p>El acceso al panel permanece disponible durante la pausa. "
+        "La decisión queda registrada localmente y se conserva tras reiniciar el panel; "
+        "si aún no existe una decisión registrada, las nuevas simulaciones empiezan pausadas.</p>"
+        f'<form method="post" action="/control/{action}">'
+        f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
+        f'<input type="hidden" name="operation_id" value="{escape(operation_id, quote=True)}">'
+        f'<button type="submit">{label}</button></form>'
+        '<p><a href="/comandos">Consultar simulaciones y detener una en curso</a></p>'
+        + _lifecycle_controls(lifecycle, csrf, operation_id),
+    )
+
+
+def _lifecycle_controls(intent: LifecycleIntent | None, csrf: str, operation_id: str) -> str:
+    """Accessible owner-only host *intents*, never executable Docker controls."""
+    if intent is None:
+        observed = "No hay confirmación de inicio o parada del motor del bot ni Chromium."
+    else:
+        component = "motor del bot" if intent.component == "bot" else "Chromium"
+        requested = "inicio" if intent.target == "start" else "detención"
+        states = {
+            "REQUESTED": "PENDIENTE. Sin confirmación del host.",
+            "CLAIMED": "EN PROCESO. El host tomó la solicitud; aún no confirmó el resultado.",
+            "APPLIED": "CONFIRMADA mediante recibo protegido del host; no es monitoreo continuo.",
+            "REFUSED": "RECHAZADA sin efecto según recibo protegido del host.",
+            "UNCERTAIN": "INDETERMINADA. Prohibido repetir sin reconciliación protegida.",
+        }
+        observed = (
+            f"Última solicitud: {requested} de {component}, "
+            + states[intent.status]
+            + f" Registrada en SQLite: {intent.requested_at} UTC."
+        )
+    # A single outstanding request is global, even across bot and Chromium.
+    # The future protected host workflow must ACK or refuse it first.
+    blocked = intent is not None and intent.status in ("REQUESTED", "CLAIMED", "UNCERTAIN")
+    disabled = " disabled" if blocked else ""
+    entries = (
+        ("bot", "iniciar", "Solicitar inicio del motor del bot"),
+        ("bot", "detener", "Solicitar detención del motor del bot"),
+        ("chromium", "iniciar", "Solicitar inicio de Chromium"),
+        ("chromium", "detener", "Solicitar detención de Chromium"),
+    )
+    forms = "".join(
+        f'<form method="post" action="/control/{component}/{action}">'
+        f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
+        f'<input type="hidden" name="operation_id" value="{escape(operation_id, quote=True)}">'
+        f'<button type="submit"{disabled}>{label}</button></form>'
+        for component, action, label in entries
+    )
+    return (
+        '<section aria-labelledby="host-lifecycle"><h2 id="host-lifecycle">'
+        "Solicitudes de inicio y detención del bot y Chromium</h2>"
+        '<p role="status" aria-live="polite">' + escape(observed) + "</p>"
+        "<p>Estas acciones sólo registran una solicitud durable. No apagan este panel, "
+        "no arrancan ni detienen Docker desde Chrome y no envían órdenes a Boca. "
+        "El único workflow protegido de GitHub Actions deberá confirmar el resultado "
+        "después de verificar la identidad de los servicios Boca. "
+        "Hasta recibir ese recibo no se considera iniciada ni detenida ninguna operación. "
+        "El motor del bot se refiere a las simulaciones, no al servidor del panel.</p>"
+        + forms
+        + '<p><a href="/control">Actualizar solicitudes y recibos</a></p></section>'
     )
 
 

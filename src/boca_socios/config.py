@@ -32,6 +32,7 @@ class Settings:
     site_hmac_key_file: Path | None = None
     source_sha: str = ""
     browser_backend: str = "off"
+    telegram_pairing_stage_mode: str = "off"
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -57,6 +58,7 @@ class Settings:
             site_hmac_key_file=cls._optional_path("BOCA_SITE_HMAC_KEY_FILE"),
             source_sha=os.environ.get("BOCA_SOURCE_SHA", ""),
             browser_backend=os.environ.get("BOCA_BROWSER_BACKEND", "off"),
+            telegram_pairing_stage_mode=os.environ.get("BOCA_TELEGRAM_PAIRING_STAGE_MODE", "off"),
         )
 
     @staticmethod
@@ -77,11 +79,22 @@ class Settings:
             "ipc",
         }:
             raise ValueError("invalid synthetic browser backend")
+        stage_mode = self.telegram_pairing_stage_mode
+        if type(stage_mode) is not str or stage_mode not in {"off", "encrypted-only"}:
+            raise ValueError("invalid Telegram staging mode")
         if not self.db_path.is_absolute() or not self.master_key_file.is_absolute():
             raise ValueError("database and secret paths must be absolute")
 
     def validate_beta(self) -> None:
         self.validate()
+        if self.telegram_pairing_stage_mode == "encrypted-only" and (
+            self.environment != "staging"
+            or self.browser_backend != "ipc"
+            or self.panel_origin != SSH_LOOPBACK_ORIGIN
+            or self.bind_host != "0.0.0.0"  # noqa: S104 - only inside Boca container
+            or self.bind_port != 8443
+        ):
+            raise ValueError("private Telegram staging requires the isolated SSH-only IPC BETA")
         try:
             owner_rp_host(self.panel_origin)
         except ValueError:

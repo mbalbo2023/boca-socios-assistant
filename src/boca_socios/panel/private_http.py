@@ -7,34 +7,67 @@ login, queue admission, reservation or purchase path exists here.
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import re
-from collections.abc import Callable, Mapping
+import secrets
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict
 from datetime import UTC, datetime
 from http import HTTPStatus
 from pathlib import Path
+from threading import Lock
 from typing import Protocol
 from urllib.parse import parse_qsl, urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
+from boca_socios import telegram_bootstrap
+from boca_socios.events.official_catalog import (
+    OfficialCatalogError,
+    OfficialNotice,
+    build_observed_catalog,
+)
+from boca_socios.events.official_presentation import export_observed_catalog_json
 from boca_socios.notify.projection import list_local_notices
 from boca_socios.owner_origin import owner_rp_host
 from boca_socios.panel import private_ui, telegram_setup_ui
 from boca_socios.panel.enrollment_http import EnrollmentApplication
+from boca_socios.panel.lifecycle_intents import (
+    LifecycleConflict,
+    LifecycleIntentStore,
+    LifecycleStorageUnavailable,
+)
 from boca_socios.panel.local_status import read_local_status
 from boca_socios.panel.members import MemberDirectory
+from boca_socios.panel.owner_session_store import (
+    OwnerBrowserSessionStore,
+    OwnerSessionStorageUnavailable,
+)
 from boca_socios.panel.owner_sessions import OwnerSession, OwnerSessions
 from boca_socios.panel.passkey import PasskeyAssertion, PasskeyOwnerAuthentication
+from boca_socios.panel.telegram_pairing_staging import (
+    PairingStageConflict,
+    PairingStageReceipt,
+    PairingStageRequest,
+    PairingStageUnavailable,
+)
 from boca_socios.security.enrollment import (
     CredentialUnavailable,
     MemberNotFound,
 )
 from boca_socios.storage.database import Database
+from boca_socios.telegram_owner_webauthn import (
+    TelegramOwnerWitnessError,
+    TelegramStageOwnerWitness,
+    stage_owner_challenge,
+    verify_stage_owner_witness,
+)
 
 StartResponse = Callable[[str, list[tuple[str, str]]], object]
 _UUID_PATH = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+_INTAKE_PAUSED = "owner_simulation_intake_paused"
+_INTAKE_RESUMED = "owner_simulation_intake_resumed"
 
 
 class OwnerMemberService(Protocol):
@@ -117,6 +150,9 @@ class PrivatePanelApplication:
         members: OwnerMemberService,
         commands: LocalCommandHost | None,
         events: Mapping[str, str],
+        observed_official_notices: Iterable[OfficialNotice] = (),
+        official_notices_loader: Callable[[], Iterable[OfficialNotice]] | None = None,
+        telegram_pairing_stager: Callable[[PairingStageRequest], PairingStageReceipt] | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         parsed = urlsplit(origin)
@@ -144,11 +180,52 @@ class PrivatePanelApplication:
         self._members = members
         self._directory = MemberDirectory(database_path)
         self._commands = commands
+        # Within one controller process, order admission vs owner pause. SQLite
+        # audit_events is the durable authority: re-read it for each action.
+        # A pause never stops HTTP or claims to cancel already admitted work.
+        self._intake_lock = Lock()
         self._events = dict(events)
+        # Informational-only observations supplied by a trusted caller. Never
+        # perform live fetches or turn them into synthetic admission choices.
+        self._official_notices = build_observed_catalog(observed_official_notices)
+        if official_notices_loader is not None and self._official_notices:
+            raise ValueError("only one official-observation source is allowed")
+        self._official_notices_loader = official_notices_loader
+        if telegram_pairing_stager is not None and not callable(telegram_pairing_stager):
+            raise ValueError("Telegram pairing stager must be an explicit local callback")
+        self._telegram_pairing_stager = telegram_pairing_stager
         self._passkey = passkey
-        self._sessions = OwnerSessions(owner_subject=owner_subject, verify_owner=passkey.verify)
+        self._owner_browser_store = OwnerBrowserSessionStore(
+            self._database, owner_subject=owner_subject
+        )
+        # The controller must not serve a healthy panel whose passkey login
+        # cannot persist: migration 0008 is an explicit installation gate.
+        self._owner_browser_store.verify_schema()
+        # Requests are passive, append-only events. A protected Boca Actions
+        # host operation must later claim/confirm them with verified receipts.
+        self._lifecycle = LifecycleIntentStore(self._database)
+        self._sessions = OwnerSessions(
+            owner_subject=owner_subject,
+            verify_owner=passkey.verify,
+            persistent_store=self._owner_browser_store,
+            authorization_binding=passkey.authorization_binding,
+            restore_permissions=passkey.authorized_permissions,
+        )
         self._enroll = EnrollmentApplication(members, self._sessions, origin=origin, now=now)
         self._now = now
+
+    def owner_session_ready(self) -> bool:
+        """Read-only liveness of the installed independent owner-session ledger.
+
+        This deliberately rechecks on health probes: readiness at controller
+        startup alone would miss subsequent filesystem or SQLite corruption.
+        It cannot migrate or repair either SQLite file.
+        """
+        try:
+            self._owner_browser_store.verify_schema()
+        except OwnerSessionStorageUnavailable:
+            return False
+        return True
 
     def __call__(self, environ: Mapping[str, object], start: StartResponse) -> list[bytes]:
         try:
@@ -180,6 +257,18 @@ class PrivatePanelApplication:
         session = self._sessions.lookup(environ.get("HTTP_COOKIE", ""))
         if session is None:
             return _error(start, 401, "Ingrese con la llave de acceso del dueño.")
+        renewed = self._sessions.renew_cookie(environ.get("HTTP_COOKIE", ""), session)
+        if renewed is None:
+            return _error(start, 401, "La sesión del dueño fue revocada.")
+        original_start = start
+
+        def start_with_renewal(status: str, headers: list[tuple[str, str]]) -> object:
+            # Logout already clears the same cookie; never override it.
+            if not any(name.lower() == "set-cookie" for name, _ in headers):
+                headers.append(("Set-Cookie", renewed))
+            return original_start(status, headers)
+
+        start = start_with_renewal
         if path == "/socios/nuevo" or (path == "/socios" and method == "POST"):
             return self._enroll(environ, start)
         if path == "/socios" or (isinstance(path, str) and path.startswith("/socios/")):
@@ -188,7 +277,12 @@ class PrivatePanelApplication:
         if path == "/comandos" or (isinstance(path, str) and path.startswith("/comandos/")):
             if "simulation:write" not in session.permissions:
                 return _error(start, 403, "Permiso insuficiente.")
-        if path in ("/estado", "/avisos") and "local-status:read" not in session.permissions:
+        if path == "/control" or (isinstance(path, str) and path.startswith("/control/")):
+            if "simulation:write" not in session.permissions:
+                return _error(start, 403, "Permiso insuficiente.")
+        if path in ("/estado", "/avisos", "/avisos-oficiales", "/avisos-oficiales.json") and (
+            "local-status:read" not in session.permissions
+        ):
             return _error(start, 403, "Permiso insuficiente.")
         if method == "GET":
             if not self._empty_get(environ):
@@ -197,10 +291,31 @@ class PrivatePanelApplication:
                 return _response(start, 200, private_ui.home(session.csrf))
             if path == "/telegram/configurar":
                 return _response(start, 200, telegram_setup_ui.page(), csp=telegram_setup_ui.CSP)
+            if path == "/telegram/emparejar":
+                if self._telegram_pairing_stager is not None:
+                    operation_id = self._sessions.new_operation(session)
+                    if operation_id is None:
+                        return _error(start, 429, "Espere antes de abrir otro emparejamiento.")
+                    return _response(
+                        start,
+                        200,
+                        telegram_setup_ui.pairing_page(
+                            csrf=session.csrf, operation_id=operation_id
+                        ),
+                        csp=telegram_setup_ui.PAIRING_STAGING_CSP,
+                    )
+                return _response(
+                    start,
+                    200,
+                    telegram_setup_ui.pairing_page(),
+                    csp=telegram_setup_ui.PAIRING_CSP,
+                )
             if path == "/socios":
                 return _response(start, 200, private_ui.members(self._directory.list_members()))
             if path == "/comandos":
                 return self._command_list(start, session)
+            if path == "/control":
+                return self._control_page(start, session)
             if path == "/estado":
                 snapshot = read_local_status(self._database_path, observed_at=self._now())
                 data = asdict(snapshot)
@@ -210,6 +325,34 @@ class PrivatePanelApplication:
                 return _response(
                     start, 200, private_ui.notices(list_local_notices(self._database, limit=20))
                 )
+            if path == "/avisos-oficiales":
+                try:
+                    notices = self._current_official_notices()
+                except OfficialCatalogError:
+                    return _error(
+                        start,
+                        503,
+                        "Avisos oficiales no disponibles. La simulación local sigue operativa.",
+                    )
+                return _response(
+                    start,
+                    200,
+                    private_ui.official_events(notices, at=self._now()),
+                )
+            if path == "/avisos-oficiales.json":
+                try:
+                    notices = self._current_official_notices()
+                except OfficialCatalogError:
+                    return _response(
+                        start,
+                        503,
+                        b'{"source_mode":"OFFLINE_PREOBSERVED_ONLY","source_health":"UNAVAILABLE",'
+                        b'"events":[],"actionable":false,"availability_verified":false,'
+                        b'"live_feed":false}',
+                        html=False,
+                    )
+                document = export_observed_catalog_json(notices, at=self._now())
+                return _response(start, 200, document.encode("utf-8"), html=False)
             if isinstance(path, str) and path.startswith("/socios/"):
                 return self._member_detail(path.removeprefix("/socios/"), session, start)
             if isinstance(path, str) and path.startswith("/comandos/"):
@@ -233,8 +376,22 @@ class PrivatePanelApplication:
                     "__Host-boca_session=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0",
                 ),
             )
+        if self._telegram_pairing_stager is not None:
+            if path == "/telegram/emparejar/desafio":
+                return self._challenge_private_telegram_pairing(environ, session, start)
+            if path == "/telegram/emparejar":
+                return self._stage_private_telegram_pairing(environ, session, start)
         if path == "/comandos":
             return self._begin(environ, session, start)
+        if path in ("/control/reanudar", "/control/pausar"):
+            return self._set_intake(environ, path.rsplit("/", 1)[-1], session, start)
+        if isinstance(path, str) and re.fullmatch(
+            r"/control/(bot|chromium)/(iniciar|detener)", path
+        ):
+            _prefix, _control, component, label = path.split("/")
+            return self._request_lifecycle(
+                environ, component, "start" if label == "iniciar" else "stop", session, start
+            )
         if isinstance(path, str) and path.startswith("/comandos/") and path.endswith("/detener"):
             command_id = path.removeprefix("/comandos/").removesuffix("/detener")
             return self._stop(environ, command_id, session, start)
@@ -243,6 +400,147 @@ class PrivatePanelApplication:
                 return _error(start, 403, "Permiso insuficiente.")
             return self._credential_action(environ, path, session, start)
         return _error(start, 404, "Ruta no disponible.")
+
+    def _challenge_private_telegram_pairing(
+        self, environ: Mapping[str, object], session: OwnerSession, start: StartResponse
+    ) -> list[bytes]:
+        """Server-issued one-use, ciphertext-bound WebAuthn UV challenge."""
+        fields = self._form(environ, expected={"csrf", "operation_id", "envelope_sha256"})
+        if (
+            fields is None
+            or _canonical_uuid(fields["operation_id"]) is None
+            or not hmac.compare_digest(fields["csrf"], session.csrf)
+            or fields["operation_id"] not in session.operations
+            or session.operations[fields["operation_id"]].fingerprint is not None
+        ):
+            return _error(start, 403, "Emparejamiento privado no autorizado.")
+        request_nonce = secrets.token_hex(32)
+        challenged_at = int(self._now().timestamp())
+        try:
+            challenge = stage_owner_challenge(
+                envelope_sha256=fields["envelope_sha256"],
+                operation_id=fields["operation_id"],
+                request_nonce=request_nonce,
+                challenged_at=challenged_at,
+                verifier_binding=self._passkey.authorization_binding.hex(),
+            )
+        except TelegramOwnerWitnessError:
+            return _error(start, 422, "Sobre cifrado V2 inválido.")
+        if not self._passkey.issue_telegram_stage_challenge(challenge):
+            return _error(start, 429, "Espere antes de solicitar otra firma.")
+        result = {
+            "version": 1,
+            "challenge": telegram_bootstrap._b64(challenge),
+            "request_nonce": request_nonce,
+            "challenged_at": challenged_at,
+            "credential_id": self._passkey.credential_id,
+            "rp_id": owner_rp_host(self._origin),
+        }
+        return _response(
+            start, 200, json.dumps(result, separators=(",", ":")).encode("ascii"), html=False
+        )
+
+    def _stage_private_telegram_pairing(
+        self, environ: Mapping[str, object], session: OwnerSession, start: StartResponse
+    ) -> list[bytes]:
+        """Persist ciphertext + REAL fresh owner UV proof, never activate a bot."""
+        fields = self._form(
+            environ,
+            expected={
+                "csrf",
+                "operation_id",
+                "envelope",
+                "request_nonce",
+                "challenged_at",
+                "credential_id",
+                "client_data_json",
+                "authenticator_data",
+                "signature",
+            },
+        )
+        if fields is None or _canonical_uuid(fields["operation_id"]) is None:
+            return _error(start, 400, "Solicitud privada inválida.")
+        try:
+            envelope = telegram_bootstrap._unb64(
+                fields["envelope"], maximum=telegram_bootstrap.MAX_ENVELOPE
+            )
+        except telegram_bootstrap.BootstrapError:
+            return _error(start, 422, "Sobre cifrado V2 inválido.")
+        if not envelope:
+            return _error(start, 422, "Sobre cifrado V2 inválido.")
+        status, operation = self._sessions.reserve(
+            session,
+            fields["operation_id"],
+            fields["csrf"],
+            b"telegram-v2-stage-webAuthn:\0" + envelope,
+        )
+        if status:
+            return _error(
+                start, 409 if status == 202 else status, "Solicitud ya procesada o inválida."
+            )
+        assert operation is not None and self._telegram_pairing_stager is not None
+        try:
+            witness = TelegramStageOwnerWitness(
+                operation_id=fields["operation_id"],
+                request_nonce=fields["request_nonce"],
+                challenged_at=int(fields["challenged_at"]),
+                verifier_binding=self._passkey.authorization_binding.hex(),
+                assertion=PasskeyAssertion(
+                    fields["credential_id"],
+                    fields["client_data_json"],
+                    fields["authenticator_data"],
+                    fields["signature"],
+                ),
+            )
+            challenge = stage_owner_challenge(
+                envelope_sha256=hashlib.sha256(envelope).hexdigest(),
+                operation_id=witness.operation_id,
+                request_nonce=witness.request_nonce,
+                challenged_at=witness.challenged_at,
+                verifier_binding=witness.verifier_binding,
+            )
+            now = int(self._now().timestamp())
+            if (
+                not 0 <= now - witness.challenged_at <= 120
+                or self._passkey.verify_telegram_stage_assertion(witness.assertion, challenge)
+                is None
+                or not verify_stage_owner_witness(witness, envelope, self._passkey, staged_at=now)
+            ):
+                raise TelegramOwnerWitnessError("telegram_owner_webauthn_unverified")
+        except (TelegramOwnerWitnessError, ValueError, TypeError):
+            self._sessions.finish(operation, 403)
+            return _error(start, 403, "La firma reciente de la llave no se verificó.")
+        try:
+            receipt = self._telegram_pairing_stager(
+                PairingStageRequest(sealed_envelope=envelope, owner_witness=witness)
+            )
+            if type(receipt) is not PairingStageReceipt or (
+                receipt.state != "STAGED_PENDING_PROTECTED_CUTOVER"
+            ):
+                raise PairingStageUnavailable("pairing_stage_unavailable")
+        except PairingStageConflict:
+            self._sessions.finish(operation, 409)
+            return _error(start, 409, "Ya existe un emparejamiento pendiente de verificar.")
+        except Exception:
+            # Callback errors may embed token, host path or ciphertext.
+            self._sessions.finish(operation, 503)
+            return _error(start, 503, "No se confirmó el resguardo cifrado. Consulte el estado.")
+        self._sessions.finish(operation, 202)
+        return _response(
+            start,
+            202,
+            b'{"state":"STAGED_PENDING_PROTECTED_CUTOVER","telegram_connected":false,'
+            b'"sender":"OFF","notification_receipt":"UNVERIFIED",'
+            b'"owner_passkey":"UV_VERIFIED_ONLY"}',
+            html=False,
+        )
+
+    def _current_official_notices(self) -> tuple[OfficialNotice, ...]:
+        if self._official_notices_loader is None:
+            return self._official_notices
+        # Refresh on each authenticated GET so an offline Boca-only snapshot
+        # can be replaced without restarting the owner session or controller.
+        return build_observed_catalog(self._official_notices_loader())
 
     def _empty_get(self, environ: Mapping[str, object]) -> bool:
         return environ.get("CONTENT_LENGTH", "") in ("", "0") and environ.get(
@@ -386,6 +684,125 @@ class PrivatePanelApplication:
             ),
         )
 
+    def _control_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
+        operation_id = self._sessions.new_operation(session)
+        if operation_id is None:
+            return _error(start, 429, "Demasiados formularios abiertos. Vuelva a ingresar.")
+        with self._intake_lock:
+            accepting = self._read_intake()
+            ready = self._commands is not None and not self._commands.failed
+        if accepting is None:
+            return _error(start, 503, "Estado de admisión no disponible. No inicie simulaciones.")
+        try:
+            lifecycle = self._lifecycle.current()
+        except LifecycleStorageUnavailable:
+            return _error(start, 503, "Estado de solicitudes al host no disponible.")
+        return _response(
+            start,
+            200,
+            private_ui.global_simulation_control(
+                accepting, ready, session.csrf, operation_id, lifecycle=lifecycle
+            ),
+        )
+
+    def _request_lifecycle(
+        self,
+        environ: Mapping[str, object],
+        component: str,
+        target: str,
+        session: OwnerSession,
+        start: StartResponse,
+    ) -> list[bytes]:
+        """Persist only owner intent, without contacting a container or browser."""
+        fields = self._form(environ, expected={"csrf", "operation_id"})
+        if fields is None or _canonical_uuid(fields["operation_id"]) is None:
+            return _error(start, 400, "Solicitud de ciclo inválida.")
+        fingerprint = f"owner-lifecycle-v1:{component}:{target}".encode("ascii")
+        result, operation = self._sessions.reserve(
+            session, fields["operation_id"], fields["csrf"], fingerprint
+        )
+        if result:
+            if result == 303:
+                return self._redirect(start, "/control")
+            return _error(start, result, "Solicitud ya procesada o no autorizada.")
+        assert operation is not None
+        try:
+            self._lifecycle.request(component, target, fields["operation_id"])
+        except LifecycleConflict:
+            self._sessions.finish(operation, 409)
+            return _error(
+                start,
+                409,
+                "Ya existe una solicitud al host sin cierre confirmado. Consulte Control.",
+            )
+        except LifecycleStorageUnavailable:
+            self._sessions.finish(operation, 503)
+            return _error(start, 503, "Resultado incierto. Consulte Control antes de repetir.")
+        self._sessions.finish(operation, 303)
+        return self._redirect(start, "/control")
+
+    def _set_intake(
+        self,
+        environ: Mapping[str, object],
+        action: str,
+        session: OwnerSession,
+        start: StartResponse,
+    ) -> list[bytes]:
+        fields = self._form(environ, expected={"csrf", "operation_id"})
+        if fields is None or _canonical_uuid(fields["operation_id"]) is None:
+            return _error(start, 400, "Control inválido.")
+        fingerprint = f"global-simulation-intake:{action}".encode("ascii")
+        result, operation = self._sessions.reserve(
+            session, fields["operation_id"], fields["csrf"], fingerprint
+        )
+        if result:
+            if result == 303:
+                return self._redirect(start, "/control")
+            return _error(start, result, "Control ya procesado o no autorizado. Consulte estado.")
+        assert operation is not None
+        try:
+            with self._intake_lock:
+                if action == "reanudar":
+                    if self._commands is None or self._commands.failed:
+                        raise RuntimeError("local command host unavailable")
+                self._write_intake(accepting=action == "reanudar")
+        except Exception:
+            self._sessions.finish(operation, 503)
+            return _error(start, 503, "Control incierto. Consulte el estado antes de repetir.")
+        self._sessions.finish(operation, 303)
+        return self._redirect(start, "/control")
+
+    def _read_intake(self) -> bool | None:
+        """Read the latest owner admission decision; missing ledger fails closed."""
+        try:
+            with self._database.connection() as connection:
+                row = connection.execute(
+                    "SELECT action FROM audit_events WHERE action IN (?, ?) "
+                    "ORDER BY rowid DESC LIMIT 1",
+                    (_INTAKE_PAUSED, _INTAKE_RESUMED),
+                ).fetchone()
+        except Exception:
+            return None
+        return row is not None and row[0] == _INTAKE_RESUMED
+
+    def _write_intake(self, *, accepting: bool) -> None:
+        """Idempotent durable control, without schema migration or side effects."""
+        desired = _INTAKE_RESUMED if accepting else _INTAKE_PAUSED
+        with self._database.connection() as connection, connection:
+            # A writer transaction orders successive controls in SQLite, even
+            # when their HTTP requests arrive in separate processes.
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT action FROM audit_events WHERE action IN (?, ?) "
+                "ORDER BY rowid DESC LIMIT 1",
+                (_INTAKE_PAUSED, _INTAKE_RESUMED),
+            ).fetchone()
+            if row is None or row[0] != desired:
+                connection.execute(
+                    "INSERT INTO audit_events(audit_id,action) VALUES (?,?)",
+                    (str(uuid4()), desired),
+                )
+
     def _begin(
         self, environ: Mapping[str, object], session: OwnerSession, start: StartResponse
     ) -> list[bytes]:
@@ -397,31 +814,41 @@ class PrivatePanelApplication:
             return _error(start, 422, "Seleccione un socio y evento de simulación válidos.")
         if not self._directory.active_member(member_id):
             return _error(start, 409, "El socio no tiene credencial local activa.")
-        fingerprint = json.dumps(fields, sort_keys=True).encode()
-        result, operation = self._sessions.reserve(
-            session, fields["operation_id"], fields["csrf"], fingerprint
-        )
-        if result:
-            if result == 303 and operation is not None and operation.member_id:
-                return self._redirect(start, f"/comandos/{operation.member_id}")
-            return _error(start, result, "Comando ya procesado o no autorizado. Consulte estado.")
-        assert operation is not None
-        try:
-            if self._commands is None or self._commands.failed:
-                raise RuntimeError("command host unavailable")
-            snapshot = self._commands.begin(
-                fields["operation_id"], member_id=member_id, event_id=fields["event_id"]
+        with self._intake_lock:
+            accepting = self._read_intake()
+            if accepting is None:
+                return _error(
+                    start, 503, "Estado de admisión no disponible. No inicie simulaciones."
+                )
+            if not accepting:
+                return _error(start, 409, "Nuevas simulaciones pausadas. Reanude desde Control.")
+            fingerprint = json.dumps(fields, sort_keys=True).encode()
+            result, operation = self._sessions.reserve(
+                session, fields["operation_id"], fields["csrf"], fingerprint
             )
-            canonical = _canonical_uuid(getattr(snapshot, "command_id", None))
-            if canonical is None:
-                raise RuntimeError("canonical command result is unavailable")
-        except Exception:
-            self._sessions.finish(operation, 503)
-            return _error(
-                start, 503, "Resultado incierto. Consulte el historial; no repita con otro ID."
-            )
-        self._sessions.finish(operation, 303, canonical)
-        return self._redirect(start, f"/comandos/{canonical}")
+            if result:
+                if result == 303 and operation is not None and operation.member_id:
+                    return self._redirect(start, f"/comandos/{operation.member_id}")
+                return _error(
+                    start, result, "Comando ya procesado o no autorizado. Consulte estado."
+                )
+            assert operation is not None
+            try:
+                if self._commands is None or self._commands.failed:
+                    raise RuntimeError("command host unavailable")
+                snapshot = self._commands.begin(
+                    fields["operation_id"], member_id=member_id, event_id=fields["event_id"]
+                )
+                canonical = _canonical_uuid(getattr(snapshot, "command_id", None))
+                if canonical is None:
+                    raise RuntimeError("canonical command result is unavailable")
+            except Exception:
+                self._sessions.finish(operation, 503)
+                return _error(
+                    start, 503, "Resultado incierto. Consulte el historial; no repita con otro ID."
+                )
+            self._sessions.finish(operation, 303, canonical)
+            return self._redirect(start, f"/comandos/{canonical}")
 
     def _command_detail(
         self, command_id: str, session: OwnerSession, start: StartResponse

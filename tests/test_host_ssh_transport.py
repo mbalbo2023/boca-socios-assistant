@@ -37,7 +37,10 @@ def _transport(step: str, image: str) -> list[str]:
             },
             text=True,
             capture_output=True,
-            timeout=3,
+            # Slow, concurrent CI runners may spend >3 s scheduling bash/sh
+            # without invoking any SSH or Docker operation. Keep the transport
+            # injection assertions unchanged, but allow this fixture startup.
+            timeout=10,
             check=True,
         )
         return json.loads(result.stdout)

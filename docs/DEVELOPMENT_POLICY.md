@@ -102,6 +102,17 @@ main is protected before verifying GitHub's **actual ruleset state**. See
    may prevent cleanup: report NO_GO, require new Boca-only inventory and
    never silently retry. Other protected host phases retain their own
    non-destructive failure/stop and preservation contracts.
+   **Permanent owner rule (2026-11-04): run bounded, positively identified
+   Boca-only postflight cleanup after EVERY successful or failed install,
+   deploy and update, not only after failure.** The same protected Actions job
+   must inventory disk/inodes and exact attempt-owned resources before/after,
+   remove only disposable Boca artifacts and obsolete images proven unused by
+   every container (never remove the image currently serving), then verify
+   exact IDs are absent. Keep owner/key/data volumes and anything uncertain.
+   No host-wide prune, force-removal, other Compose project or unrelated
+   workload; if cleanup cannot run or prove the result, record
+   NO_GO/INDETERMINATE and require a new read-only Boca inventory before retry.
+   A successful application start alone does not satisfy final acceptance.
 9. Diagnose source failures through Actions before deciding on code changes.
    Report source health as a timestamped semaphore. A source outage cannot
    turn a safe dormant-controller deploy into NO_GO or justify redeployment;

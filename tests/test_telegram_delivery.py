@@ -264,6 +264,26 @@ class TelegramTransportTests(unittest.TestCase):
             asyncio.run(transport.send(TelegramNotice(uuid4(), NoticeKind.HEARTBEAT)))
         self.assertTrue(conn.closed)
 
+    def test_duplicate_provider_receipt_fields_are_not_verifiable(self):
+        # json.loads normally accepts repeated keys using the final value;
+        # contradictory API evidence must not be interpreted as acceptance.
+        for receipt in (
+            b'{"ok":false,"ok":true,"result":{"message_id":42,"chat":{"id":123}}}',
+            b'{"ok":true,"result":{"message_id":0,"message_id":42,"chat":{"id":123}}}',
+            b'{"ok":true,"result":{"message_id":42,"chat":{"id":999,"id":123}}}',
+        ):
+            with self.subTest(receipt=receipt):
+                conn = FakeConnection("api.telegram.org", 3.0, None)
+                conn.body = receipt
+                transport = TelegramTransport(
+                    self.token,
+                    self.destination,
+                    connection_factory=lambda conn=conn, **_kwargs: conn,
+                )
+                with self.assertRaises(TelegramUnconfirmed):
+                    asyncio.run(transport.send(TelegramNotice(uuid4(), NoticeKind.HEARTBEAT)))
+                self.assertTrue(conn.closed)
+
     def test_bootstrap_maximum_token_length_is_transport_compatible(self):
         self.token.write_text("12345678901234567890:" + "x" * 128, encoding="ascii")
         self.token.chmod(0o600)

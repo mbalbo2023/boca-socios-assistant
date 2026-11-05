@@ -53,10 +53,13 @@ def _identity(path: Path) -> tuple[int, int]:
 
 
 def verify(path: Path = DATABASE, *, require_telegram: bool = True) -> None:
-    """Require the exact BETA ledger, optional key policy and explicit Telegram.
+    """Require exact legacy-controller ledger, optional key policy and Telegram.
 
     Migration 4 belongs to opt-in credential-key rewrap, not BETA init. Its
     absence cannot disable Telegram, and its presence must retain its checksum.
+    Option B stores the owner's persistent Chrome session in a *separate* SQLite
+    file in the existing Boca volume. Migration 0008 in this legacy controller
+    database is forbidden even with the historical, formerly reviewed checksum.
     """
     identity = _identity(path)
     uri = f"file:{quote(str(path), safe='/')}?mode=ro"
@@ -64,14 +67,15 @@ def verify(path: Path = DATABASE, *, require_telegram: bool = True) -> None:
         connection.execute("PRAGMA query_only=ON")
         connection.execute("PRAGMA trusted_schema=OFF")
         rows = connection.execute(
-            "SELECT version, checksum FROM schema_migrations ORDER BY version LIMIT 8"
+            "SELECT version, checksum FROM schema_migrations ORDER BY version LIMIT 9"
         ).fetchall()
         required_versions = _BETA_MIGRATIONS | ({7} if require_telegram else set())
         versions = {version for version, _ in rows}
         if (
             len(versions) != len(rows)
             or any(type(version) is not int for version, _ in rows)
-            or versions not in (required_versions, required_versions | {4})
+            or not required_versions.issubset(versions)
+            or not versions.issubset(required_versions | {4})
         ):
             raise StorageGateError("schema_ledger")
         for version, checksum in rows:
@@ -80,7 +84,8 @@ def verify(path: Path = DATABASE, *, require_telegram: bool = True) -> None:
                 .joinpath(MIGRATIONS[version - 1])
                 .read_bytes()
             )
-            if checksum != hashlib.sha256(sql).hexdigest():
+            expected = hashlib.sha256(sql).hexdigest()
+            if checksum != expected:
                 raise StorageGateError("schema_checksum")
         required = {"ticket_requests", "notification_outbox", "beta_commands"}
         if require_telegram:

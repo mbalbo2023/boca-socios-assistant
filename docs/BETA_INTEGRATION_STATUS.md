@@ -1,6 +1,151 @@
 # Estado de integración BETA
 
-## Estado físico vigente — 04/11/2026, #307 (NO DEPLOY)
+## Corte de integración A45-R21.21 — 05/11/2026 ART (RELEASE/HANDOFF, NO_GO físico)
+
+**PR único [#319](https://github.com/mbalbo2023/boca-socios-assistant/pull/319) DRAFT:** HEAD `3cbe31703d74413f8de66ac8783ec68b1b7f8a87`, TREE `208a75e0c7310ea25db55ca509563f0b57972f42`, main físico legacy `cabce9f1e452e63ded115f447559a358dc0f4d1b` sin cambios. Fuente integra #372, #375, #374 y #376 sin perder overlays anteriores. La validación en Samsung Chrome+Termius+passkey fue para **legacy 04/11**, no para BETA integral.
+
+| Gate P0 / etapa | Evidencia verificable | Estado / próximo recibo |
+| --- | --- | --- |
+| Code-only candidato | R21.21 HEAD/TREE anteriores, DRAFT sin merge a main | **Integrado en código**, no host |
+| Satélite cleanup #372 | 4/4 Actions GREEN, CI **3652 PASS+34**, [PR #372](https://github.com/mbalbo2023/boca-socios-assistant/pull/372); dos líneas ACK/postflight | **PASS fuente**, solo Cutover A; otras seis instalaciones legacy siguen NO_GO antes SSH |
+| Satélite inventario #375 | 4/4 Actions GREEN, CI **3682 PASS+34**, [PR #375](https://github.com/mbalbo2023/boca-socios-assistant/pull/375) | **PASS fuente**, inventario rootless solo Boca, READ_ONLY, sin SSH real |
+| Telegram WebAuthn #374 | 6/6 Actions GREEN, CI **3668 PASS+34**, [PR #374](https://github.com/mbalbo2023/boca-socios-assistant/pull/374) | **PASS stage fuente**, WebAuthn UV reciente; **sender OFF / host-ACK/egress NO_GO** |
+| GO B Cutover/import #376 | 4/4 Actions GREEN, CI **3702 PASS+34**, [PR #376](https://github.com/mbalbo2023/boca-socios-assistant/pull/376); único workflow/25 inputs | **PASS fuente**, PREPARE 1 host READ_ONLY; APPLY solo tras Environment GO independiente + ID PREPARE |
+| QA candidato R21.21 | **7/7 GitHub Actions COMPLETED SUCCESS exact SHA R21.21**: [CI 42064964129](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964129) **3718 pytest PASS +34 subtests**, Ruff/format547/MyPy128/image-build PASS; [FirstDeploy 42064964223](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964223) PR-validation + runtime-smoke SUCCESS, **host SKIPPED**; [Release 42064964145](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964145) validación SUCCESS, **publish SKIPPED**; [Panel 42064964232](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964232), [News 42064964239](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964239), [Telegram 42064964156](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964156), [Security 42064964402](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964402) SUCCESS. Artifacts de CI/FirstDeploy/Release consultados: **0**; no recibo físico ni imagen publicada; [CI 42064964129](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964129), [FirstDeploy 42064964223](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964223) | **PASS exact SHA R21.21** (7/7 terminales); nueva ejecución obligatoria si cambia HEAD |
+| Image release/predeploy | Jobs de validación PR no equivalen a `publish-reviewed-image` físico | **NO_GO** hasta GO merge/release, artifacts reales + digests controller/browser anclados a main |
+| Cutover A / import oficial | Código #372/#375/#376 sin dispatch físico; import solo `actionable=false` | **NO_GO físico**: GO_B Environment, PREPARE firmado/24h, APPLY one-use, ACK y postflight selectivo exactos |
+| Bot + Chromium lifecycle | Observador #369/#370/ACK #356 en código; `REQUESTED` no es `APPLIED` | **NO_GO físico** hasta READ_ONLY PREPARE + GO distinto + UUID/ACK host exactos |
+| Telegram / Samsung / Docker | #374 fresh passkey solo etapa ciphertext; legacy Chrome probado 04/11 | **NO_GO integral** hasta backend Telegram same-lease/UID/egress y aviso, Chrome persistente/alta, cleanup físico Cutover |
+
+**Retención/ownership:** docs DRAFT [#363](https://github.com/mbalbo2023/boca-socios-assistant/pull/363) exclusivamente `README.md`, `docs/BETA_INTEGRATION_STATUS.md`, `docs/BETA_DELIVERY_PLAN.md`, `docs/OPERATIONS.md`; rebasado sobre R21.21 preservando código. No overlay ni GO hasta QA final y revalidación del HEAD exacto, ni source PRs individuales a main. [Issue #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45) es el checkpoint canónico. Seguridad adicional P2; cero órdenes/reservas reales, 0 backups, no BLACKBOX, legacy SQLite0008, Porota ni otros sistemas, nuevo puerto o HTTPS; solo localhost:8443.
+
+## Histórico — Corte verificable A45-R21.17 — 05/11/2026 ART (DRAFT, sin host)
+
+**Fuente única:** [#319](https://github.com/mbalbo2023/boca-socios-assistant/pull/319) HEAD `82c7c3edf75911805218149d4907ecb37b374a66`, TREE `d6ca906f517571c0025cce7780b674cdc3956fc3`; main instalado y no modificado `cabce9f1e452e63ded115f447559a358dc0f4d1b`. El overlay #368 (Cutover/import GO B anti-replay) se sumó a #369/#370 ya incorporados. Aun con GREEN no hay release publicado, SSH de aplicación, Cutover, import, sesión integral ni Telegram físico. El único acceso Samsung Chrome+Termius+passkey observado fue para controller legacy el 04/11.
+
+| Puerta de entrega | Evidencia exacta del corte R21.17 | Estado y próxima dependencia |
+| --- | --- | --- |
+| Código único | #319 SHA/TREE citados; DRAFT contra main legacy | **CÓDIGO LISTO PARA QA**, no merge ni despliegue |
+| QA exacta | [CI 42056912053](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056912053): **3645 PASS +34 subtests**, Ruff, formato530, MyPy, build controller/Chromium offline | **PASS** para ese SHA, no transferible a SHA posterior |
+| 7/7 Actions | [FirstDeploy 42056911736](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056911736), [Release 42056911857](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056911857), [Panel 42056911656](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056911656), [News 42056911678](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056911678), [Telegram 42056911612](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056911612), [Security 42056911673](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42056911673), CI anterior, todos SUCCESS | **PASS PR-ONLY**; host manual y publish image **SKIPPED**; artifacts CI/FirstDeploy/Panel consultados: 0, sin recibo físico |
+| GO B Cutover A/import | [issue #371](https://github.com/mbalbo2023/boca-socios-assistant/issues/371) abierto; PR de workflow aún no publicado al momento de este corte; #368 CODE_ONLY | **NO_GO** hasta revisión de PREPARE Actions real, artifact/owner/SHA/manifests/ZIP, GO Environment independiente, consumo O_EXCL y ACK |
+| START/STOP bot/Chromium | #356/#369/#370: UUID exacto, observador y flujo de dos despachos; [ADR0166](ADR/0166-lifecycle-go-mobile-one-read.md) | **NO_GO físico** sin REQUESTED real, PREPARE de un SSH READ_ONLY, Environment GO independiente, APPLY/ACK exacto |
+| Telegram | #353 y #358 CODE_ONLY; [#365](https://github.com/mbalbo2023/boca-socios-assistant/pull/365) DRAFT aislado NO-AUTHORIZANTE; [#362](https://github.com/mbalbo2023/boca-socios-assistant/issues/362) abierto | **NO_GO** por falta de WebAuthn fresco/attestor HMAC y caller real same-lease/egress; rearm stage #315 después de Cutover |
+| Publicación/deploy | Release PR job `publish-reviewed-image=SKIPPED`; FirstDeploy `approved-boca-manual-operation=SKIPPED` | **NO_GO** hasta SHA final 7/7, GO merge/release/Cutover y digest(s) inmutables |
+| Aceptación física | Legacy accesible desde Samsung; BETA integral no instalada | **PENDIENTE** reinicio/persistencia Chrome, bot/Chromium ACK, Telegram, import, recursos reales y limpieza Docker Boca-only PASS/FAIL |
+
+**Handoff y ownership:** #363 DRAFT posee exclusivamente `README.md`, `docs/BETA_INTEGRATION_STATUS.md`, `docs/BETA_DELIVERY_PLAN.md` y `docs/OPERATIONS.md`. El owner #371 trabaja **solo** workflow + pruebas/ADR nuevos; docs no tocan ese scope. No overlay de docs en #319 hasta el próximo corte exacto y revisión final de checks. Hitos #349/#350 no se vuelven a implementar. Seguridad adicional P2; ninguna compra/reserva, backup, migración legacy SQLite 0008, BLACKBOX, Porota, otros servicios/puertos o HTTPS. Solo `localhost:8443`. **Regla84:** [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6662182710); entradas anteriores debajo quedan como HISTÓRICAS.
+
+## Histórico — Corte vigente — 05/11/2026 ART (A45-R12, R21.11 provisional)
+
+| Elemento | Estado sustentado | Próxima prueba / condición |
+| --- | --- | --- |
+| Host | **Legacy** `main cabce9f1` instalado/aceptado el 04/11; Samsung Chrome, Termius y passkey confirmados | No confundir con aceptación integral BETA |
+| Candidato | [#319 DRAFT](https://github.com/mbalbo2023/boca-socios-assistant/pull/319) R21.11 **provisional** `5903ded0790ab7254bf68572af47fe75c6e08889` | SHA final solo después de overlays #356/#358/#352 y evidencia reconciliada |
+| CI | **3.437 PASS +34 subtests**, **7/7 Actions GREEN** | [CI](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959831), [imagen](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959889), [seguridad](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959974), [noticias](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959895), [panel](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959814), [Telegram](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044959805), [FirstDeploy](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42044960073). Publicación/host omitidos donde corresponda |
+| Import #349 + STOP #350 | **Código integrado**, no aceptación física integral | Validar host/control persistente/flujo de importación |
+| Telegram #353 y Compose #355 | **Código P0 incorporado** | Backend Telegram, egress, custodia y activación **posterior al despliegue** |
+| ACK físico #356 | **Pendiente** | Arranque/parada bot, Chromium y persistencia tras reinicio con recibos |
+| Workflow #352 y overlay #358 | **Pendiente de conciliación** | Validación exacta del workflow protegido y checks del HEAD final |
+| Merge/release/deploy | **NO GO nuevo** | Predeploy consolidado + autorización GO explícita |
+
+Se mantienen el aislamiento exclusivo `127.0.0.1:8443`, sin nuevos puertos/HTTPS, compras o reservas reales, backup, cambio BLACKBOX `synthetic.py`/`ipc_worker.py`, ni migración legacy `0008`. Sin tocar Porota ni servicios externos. Limpieza Docker selectiva siempre tras deploy, exitoso o fallido. Seguridad adicional = **P2**. Evidencia y decisiones en [#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6660565397). Este corte se debe actualizar tras nuevas integraciones.
+
+## Histórico — Último corte canónico A45-R16 — 04/11/2026 ART
+
+El [PR integral DRAFT #319](https://github.com/mbalbo2023/boca-socios-assistant/pull/319)
+está publicado en HEAD `810ad2db35dbc55b97b1d295105ebda2020aaf02`,
+tree `7ff5e839bdcb14588766366c6ea3eef027c212f2`. QA exacto local:
+**3046 tests +34 subtests PASS**, Ruff/MyPy/política PASS; Actions exactas
+R16: CI, panel, Telegram y First Deploy PR-only **SUCCESS**; seguridad y
+release **FAIL** por #326; host manual **SKIPPED**. Ver
+[R16.1 #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6649283278).
+El ciclo R15 inmediatamente anterior tuvo CI, panel y
+Telegram **SUCCESS**, First Deploy PR **FAIL** por tests heredados de #320
+omitidos al integrar, y seguridad/release **FAIL** por inconsistencia
+Canonical USN vs OSV/OpenVEX/Trivy del CVE-2026-109518. R16 restauró los
+contratos completos de transacción/guard y sus tests, con 124 regresiones
+del paso fallido aprobadas localmente. El job físico host siempre **SKIPPED**.
+Ver [R16 #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6649247736).
+
+La **Opción B aprobada** ahora está implementada en el código de #319/#322:
+`boca_owner_session.sqlite3` independiente dentro del volumen Boca, esquema
+propio v1, persistencia de un único Chrome entre reinicios, cookie renovable
+400 días, logout/reemplazo revocables. **No** hay migración 0008 de
+`boca.sqlite3`. `GET /healthz` revalida esa SQLite sin escritura ni bootstrap.
+El Cutover A/limpieza selectiva tiene contratos de ID exacto probados, pero el
+backend con entrada effectful + workflow protegido con GO exacto y ACK
+host siguen pendientes. La promoción persistente Compose está modelada en
+R11-3; ante estado incierto se preservan todos los contenedores y sólo se
+permite inventario READ_ONLY/NO_GO. Los cuatro controles accesibles de #329
+**ya están en #319** como solicitudes duraderas, no arranques/paradas físicos.
+
+**Físicamente permanece controller-only en main** `cabce9f1...` con acceso
+Samsung Chrome + Termius + passkey confirmado previamente por Tincho. No se
+demostró persistencia después de reinicio Samsung/servicio, Telegram real,
+Chromium real, nuevas funciones en el droplet ni limpieza postdeploy física.
+Sin GO específico no hay merge, release ni deploy. Los checkpoints fechados
+debajo son históricos y no sustituyen este corte.
+
+## Decisión owner y QA de frentes DRAFT — 04/11/2026, después de 19:20 ART
+
+El owner confirmó **acceso autenticado** desde Samsung Chrome al controller
+privado `localhost:8443`, con Termius/passkey; la permanencia de sesión después
+de reiniciar navegador aún no se verificó. `main=cabce9f1e452e63ded115f447559a358dc0f4d1b`
+y los recibos físicos abajo siguen siendo el último despliegue: **ninguna
+función de esta ola está instalada**.
+
+Autorizadas **Telegram privado** (issue #315, PR DRAFT #317), **pausa/reanudar
+admisión de simulaciones** sin apagar panel ni fingir stop del worker (issue
+#313, PR DRAFT #318), **catálogo informativo de eventos oficiales** (issue
+#314, PR DRAFT #316; sin feed automático estable comprobado ni admisión real)
+y retiro de opción Site complementario de la interfaz. El cutover-A sobre el
+controller existente requiere adaptador propio y pruebas host/Compose; #227,
+PR DRAFT #310 contiene contratos puros y PR DRAFT #320 agrega observación
+histórica READ_ONLY y compensación inerte, con corrección de etiqueta Compose
+validada en CI. El pairing Telegram V2 está en la propuesta #317 y la
+candidata integral agrega ruta local autenticada `/telegram/emparejar` con CSP
+propio, parser y resolver de chat privado; **aún falta la operación protegida
+de descubrimiento/custodia**, por lo que no debe ingresar el token en la BETA
+física de este corte. #314 incorpora vistas accesibles offline y un claim
+de canal no verificado por evento.
+
+El nuevo requisito owner [#321](https://github.com/mbalbo2023/boca-socios-assistant/issues/321)
+es una única sesión persistente del mismo Chrome, sin vencimiento cotidiano
+de 15 minutos/8 horas ni nuevo PIN. Se prepara almacén persistente y upgrade
+de esquema, todavía no desplegados; la cookie podrá renovarse con cada uso.
+
+**Descartados** por el dueño: múltiples sesiones, rotación de clave maestra
+y eliminación total, login/fila/elegibilidad/reserva/compra reales, y
+backup/restauración. No planificar ni habilitar estas familias. Sólo se
+realizaron tests y PRs DRAFT; el proceso de integración, release y despliegue
+requiere superar los gates pendientes sin afectar Porota ni otros servicios.
+
+[Decisión canónica #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6644077845) ·
+[Integración de PR previos #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6644301519).
+
+## Estado físico actualizado — 04/11/2026, 16:33 ART
+
+`main=cabce9f1e452e63ded115f447559a358dc0f4d1b`. PR #308 y RCA #307
+integrados; issues #305/#307 cerrados. El
+[release dual #41893887078](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41893887078),
+[install #41896871289](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41896871289),
+[aceptación local #41897278258](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897278258)
+y [start #41897569928](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41897569928)
+son `completed/success`, mismo SHA. La instalación es controller-only;
+aceptación sintética con 24 requests, 1 socio/1 intención/1 aviso, `engine=off`,
+`site=not_contacted` y `telegram=not_sent`. El último arranque registró
+`RUNNING` en `127.0.0.1:8443` con datos/clave/owner preservados.
+
+**No es BETA integral GREEN:** faltan prueba de Chrome Samsung vía Termius,
+passkey/cookie persistente, flujo privado de alta/DB en la tablet, instalación
+y aceptación del worker navegador (imagen publicada pero apagada), custodia
+y recepción Telegram, reinicio/recuperación y medición conjunta. #259 abierto,
+#285 y draft #287 no activados. Mantener BLACKBOX protegida y cero navegación
+real por agentes. El start prueba un instante, no liveness prolongado.
+[Handoff de evidencia #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6640165355).
+
+## Corte histórico previo — 04/11/2026, #307 (NO DEPLOY en ese instante)
 
 - `main=3c5a0da3df527cfe58a98442ea471be81f9f06ab`, PR #306 fusionado;
   [release #41873165726](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41873165726)
