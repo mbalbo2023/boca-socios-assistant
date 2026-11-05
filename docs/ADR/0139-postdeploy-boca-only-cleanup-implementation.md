@@ -505,7 +505,10 @@ preflight, under the exact held lease:
    overlap with `/run`, `/tmp` or `/srv/boca-socios`, UID/GID10001 and 0700.
 2. Uses read-only `/proc/self/mountinfo` to require a recognized **disk-backed
    filesystem** for both the home and the actual receipt child directory;
-   a nested tmpfs bind over a disk-backed home is also NO_GO. Storage space
+   a nested tmpfs bind over a disk-backed home or ambiguous stacked mounts
+   at an **identical** path are also NO_GO. Ordinary nested disk-backed bind
+   mounts at **different** parent/child paths remain valid and are tested.
+   Storage space
    and inode headroom are checked before effects, not after port 8443 moves.
 3. Creates the dedicated 0700 receipt directory only if absent, checks the
    complete bounded allowlist of existing immutable files, symlink/hardlink,

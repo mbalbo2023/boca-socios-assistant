@@ -284,6 +284,42 @@ def test_tmpfs_bind_over_receipt_child_is_rejected_even_when_home_is_durable(
     assert not list(child.iterdir())
 
 
+def test_ambiguous_stacked_mount_at_same_path_is_never_assumed_disk_backed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    child = tmp_path / terminal.RECEIPT_DIR_NAME
+    child.mkdir(mode=0o700)
+    fs = tmp_path / "mountinfo"
+    fs.write_text(
+        "20 15 8:1 / / rw - ext4 /dev/vda1 rw\n"
+        + f"21 20 8:1 / {child} rw - ext4 /dev/vda1 rw\n"
+        + f"22 21 0:44 / {child} rw - tmpfs tmpfs rw\n"
+    )
+    monkeypatch.setattr(terminal, "MOUNTINFO", fs)
+    monkeypatch.setattr(terminal, "_persistent_mount", REAL_MOUNT_CHECK)
+    with cleanup.protected_boca_job_lease(ATTEMPT) as lease:
+        with pytest.raises(terminal.TerminalReceiptError, match="mount stack ambiguous"):
+            terminal.prepare_destination(_plan(), lease)
+
+
+def test_normal_nested_disk_backed_bind_at_distinct_mountpoint_is_accepted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    child = tmp_path / terminal.RECEIPT_DIR_NAME
+    child.mkdir(mode=0o700)
+    fs = tmp_path / "mountinfo"
+    fs.write_text(
+        "20 15 8:1 / / rw - ext4 /dev/vda1 rw\n"
+        + f"21 20 8:1 / {tmp_path} rw - ext4 /dev/vda1 rw\n"
+        + f"22 21 8:1 / {child} rw - ext4 /dev/vda1 rw\n"
+    )
+    monkeypatch.setattr(terminal, "MOUNTINFO", fs)
+    monkeypatch.setattr(terminal, "_persistent_mount", REAL_MOUNT_CHECK)
+    with cleanup.protected_boca_job_lease(ATTEMPT) as lease:
+        terminal.prepare_destination(_plan(), lease)
+    assert (child / f"boca-cutover-a-intent-{ATTEMPT}.json").is_file()
+
+
 def test_home_symlink_or_receipt_hardlink_and_foreign_marker_are_no_go(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -228,6 +228,11 @@ def _persistent_mount(home: Path) -> None:
             depth = len(mount.parts)
             if selected is None or depth > selected[0]:
                 selected = (depth, filesystem[0])
+            elif depth == selected[0]:
+                # Stacked mounts at the same path cannot be disambiguated by
+                # a simple longest-prefix match. Never assume the first is
+                # still the active disk-backed filesystem.
+                raise TerminalReceiptError("cutover durable mount stack ambiguous")
     if selected is None or selected[1] not in PERSISTENT_FS:
         raise TerminalReceiptError("cutover terminal home is not proven persistent storage")
 
