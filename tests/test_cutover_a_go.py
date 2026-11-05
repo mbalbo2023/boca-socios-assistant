@@ -412,7 +412,7 @@ def test_prepared_cutover_review_remains_exact_across_distinct_apply_runs(
     # New digest cannot satisfy the legacy GO gate.
     with pytest.raises(go.CutoverGoError, match="not bound"):
         go.require_protected_go(request, protected_go_digest=prepared)
-    for invalid in ("", "0", "5"*21):
+    for invalid in ("", "0", "5" * 21):
         with pytest.raises(go.CutoverGoError):
             go.cutover_prepared_context_sha256(request, prepare_run_id=invalid)
     with pytest.raises(go.CutoverGoError):
