@@ -33,7 +33,8 @@ def test_reviewed_overlay_optin_is_only_on_ipc_controller() -> None:
 
 def test_browser_contract_accepts_only_explicit_ciphertext_stage_on_controller() -> None:
     candidate = browser_model()
-    candidate["services"]["controller"]["environment"][STAGE_KEY] = "encrypted-only"  # type: ignore[index]
+    controller = candidate["services"]["controller"]  # type: ignore[index]
+    controller["environment"][STAGE_KEY] = "encrypted-only"
     valid(candidate)
 
 
@@ -54,8 +55,10 @@ def test_browser_contract_rejects_unapproved_staging_mode(mode: str | None) -> N
 
 def test_browser_contract_rejects_staging_in_worker() -> None:
     candidate = browser_model()
-    candidate["services"]["controller"]["environment"][STAGE_KEY] = "encrypted-only"  # type: ignore[index]
-    candidate["services"]["browser-worker"]["environment"][STAGE_KEY] = "encrypted-only"  # type: ignore[index]
+    controller = candidate["services"]["controller"]  # type: ignore[index]
+    controller["environment"][STAGE_KEY] = "encrypted-only"
+    worker = candidate["services"]["browser-worker"]  # type: ignore[index]
+    worker["environment"][STAGE_KEY] = "encrypted-only"
     with pytest.raises(ContractError):
         valid(candidate)
 
@@ -63,14 +66,16 @@ def test_browser_contract_rejects_staging_in_worker() -> None:
 def test_legacy_controller_cannot_enable_staging() -> None:
     legacy = beta_model()
     validate_beta_contract(legacy, IMAGE, ORIGIN, OWNER)
-    legacy["services"]["controller"]["environment"][STAGE_KEY] = "encrypted-only"  # type: ignore[index]
+    controller = legacy["services"]["controller"]  # type: ignore[index]
+    controller["environment"][STAGE_KEY] = "encrypted-only"
     with pytest.raises(ContractError):
         validate_beta_contract(legacy, IMAGE, ORIGIN, OWNER)
 
 
 def test_browser_controller_requires_ipc_when_staging_enabled() -> None:
     candidate = browser_model()
-    candidate["services"]["controller"]["environment"][STAGE_KEY] = "encrypted-only"  # type: ignore[index]
-    candidate["services"]["controller"]["environment"]["BOCA_BROWSER_BACKEND"] = "off"  # type: ignore[index]
+    controller = candidate["services"]["controller"]  # type: ignore[index]
+    controller["environment"][STAGE_KEY] = "encrypted-only"
+    controller["environment"]["BOCA_BROWSER_BACKEND"] = "off"
     with pytest.raises(ContractError):
         valid(candidate)
