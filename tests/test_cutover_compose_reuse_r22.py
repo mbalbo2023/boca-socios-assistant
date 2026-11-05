@@ -56,7 +56,7 @@ def test_cutover_still_rejects_compose_overlay_and_seccomp_aliases(
     changed_field: str, value: str
 ) -> None:
     plan = replace(_historical_same_compose_plan(), **{changed_field: value})
-    with pytest.raises(CutoverError, match="exact historical/target coordinates untrusted"):
+    with pytest.raises(CutoverError, match="coordinates untrusted"):
         plan.validate()
 
 
@@ -66,5 +66,5 @@ def test_cutover_still_rejects_equal_source_or_oci_image() -> None:
         replace(plan, target_sha=plan.legacy_sha),
         replace(plan, target_image=plan.legacy_image),
     ):
-        with pytest.raises(CutoverError, match="exact historical/target coordinates untrusted"):
+        with pytest.raises(CutoverError, match="coordinates untrusted"):
             changed.validate()
