@@ -16,7 +16,9 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import os
 import re
+import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,6 +53,7 @@ class ReviewedLifecycleInstallation:
     """
 
     attempt_id: str
+    prepare_run_id: str
     source_sha: str
     controller_id: str
     controller_image: str
@@ -95,6 +98,7 @@ class PhysicalLifecycleReceipt:
     """Only terminal legacy ACK fields suitable for redacted Action summaries."""
 
     attempt_id: str
+    prepare_run_id: str
     request_id: str
     source_sha: str
     component: Literal["bot", "chromium"]
@@ -113,6 +117,7 @@ class PhysicalLifecycleReceipt:
                 "version": 1,
                 "scope": "boca-lifecycle",
                 "attempt": self.attempt_id,
+                "prepare_run_id": self.prepare_run_id,
                 "request_id": self.request_id,
                 "source_sha": self.source_sha,
                 "component": self.component,
@@ -139,6 +144,99 @@ def _read_current(path: Path) -> LifecycleIntent | None:
         TypeError,
     ):
         raise PhysicalAckUnavailable("Boca legacy owner lifecycle ledger unavailable") from None
+
+
+
+_PREPARE_RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
+
+
+def _consume_approved_prepare_once(
+    installed: ReviewedLifecycleInstallation,
+    pending: LifecycleIntent,
+) -> None:
+    """Durably burn exactly one PREPARE GO before any claim or physical effect.
+
+    A crash or unknown outcome leaves the marker in the attested Boca data
+    volume. A different APPLY attempt cannot reuse an old PREPARE approval,
+    even if a new REQUESTED row is subsequently created in the audit ledger.
+    No cleanup, TTL, overwrite, or second invocation is permitted.
+    """
+    if (
+        type(installed.prepare_run_id) is not str
+        or not _PREPARE_RUN.fullmatch(installed.prepare_run_id)
+        or not installed.database_path.is_absolute()
+    ):
+        raise PhysicalAckUnavailable("Boca approved PREPARE run ID invalid")
+    directory = installed.database_path.parent
+    private_dir = ".boca-lifecycle-go"
+    name = f"prepare-{installed.prepare_run_id}.used"
+    payload = (
+        json.dumps(
+            {
+                "version": 1,
+                "prepare_run_id": installed.prepare_run_id,
+                "attempt_id": installed.attempt_id,
+                "source_sha": installed.source_sha,
+                "request_id": pending.operation_id,
+                "component": pending.component,
+                "target": pending.target,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+        + "\n"
+    ).encode("ascii")
+    directory_fd = -1
+    private_fd = -1
+    marker_fd = -1
+    try:
+        directory_fd = os.open(
+            directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        )
+        # The controller and Telegram sender can write application data but
+        # must not be able to erase consumed GO markers. A rootless-host-owned
+        # directory 0700 is distinct from their container UID 10001 mapping.
+        try:
+            os.mkdir(private_dir, 0o700, dir_fd=directory_fd)
+        except FileExistsError:
+            pass
+        private_fd = os.open(
+            private_dir,
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=directory_fd,
+        )
+        marker_directory = os.fstat(private_fd)
+        if (
+            not stat.S_ISDIR(marker_directory.st_mode)
+            or marker_directory.st_uid != os.geteuid()
+            or stat.S_IMODE(marker_directory.st_mode) != 0o700
+        ):
+            raise PhysicalAckUnavailable("Boca private PREPARE marker custody unverified")
+        marker_fd = os.open(
+            name,
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=private_fd,
+        )
+        if os.write(marker_fd, payload) != len(payload):
+            raise OSError("partial Boca PREPARE consume marker")
+        os.fsync(marker_fd)
+        os.fsync(private_fd)
+        os.fsync(directory_fd)
+    except FileExistsError:
+        raise PhysicalAckUnavailable("Boca approved PREPARE already consumed") from None
+    except (OSError, TypeError, ValueError):
+        # O_EXCL might already have created a partial marker. Never delete it:
+        # the approval stays burned and the next attempt must obtain fresh GO.
+        raise PhysicalAckUnavailable("Boca approved PREPARE cannot be consumed") from None
+    finally:
+        if marker_fd >= 0:
+            os.close(marker_fd)
+        if private_fd >= 0:
+            os.close(private_fd)
+        if directory_fd >= 0:
+            os.close(directory_fd)
 
 
 def apply_latest_owner_request(
@@ -185,6 +283,9 @@ def apply_latest_owner_request(
         coordinates = installed.coordinates_for(pending)
     except (lifecycle.LifecycleHostUnavailable, adapter.LifecycleAdapterNoGo):
         raise PhysicalAckUnavailable("Boca reviewed lifecycle coordinates invalid") from None
+    # Burn the approved PREPARE once inside the attested Boca volume before
+    # CLAIMED or any physical effect; ambiguous outcomes cannot be retried.
+    _consume_approved_prepare_once(installed, pending)
     # The host adapter attests the exact Boca rootless Docker pair and persists
     # CLAIMED before any physical effect, then a terminal/uncertain receipt.
     try:
@@ -212,6 +313,7 @@ def apply_latest_owner_request(
     verify_protected_boca_job_lease(lease, installed.attempt_id)
     return PhysicalLifecycleReceipt(
         attempt_id=installed.attempt_id,
+        prepare_run_id=installed.prepare_run_id,
         request_id=coordinates.request_id,
         source_sha=installed.source_sha,
         component=coordinates.component,
@@ -226,6 +328,7 @@ _CONTEXT_KEYS = frozenset(
         "version",
         "kind",
         "attempt_id",
+        "prepare_run_id",
         "source_sha",
         "controller_id",
         "controller_image",
@@ -279,6 +382,7 @@ def decode_lifecycle_context(encoded: str) -> ReviewedLifecycleInstallation:
             != raw
             or obj["version"] != _CONTEXT_SCHEMA
             or obj["kind"] != "lifecycle"
+            or not _PREPARE_RUN.fullmatch(obj["prepare_run_id"])
             or obj["expected_component"] not in ("bot", "chromium")
             or obj["expected_target"] not in ("start", "stop")
             or ("sender_state" in obj and obj["sender_state"] not in ("on", "off"))
@@ -295,6 +399,7 @@ def decode_lifecycle_context(encoded: str) -> ReviewedLifecycleInstallation:
         )
         installed = ReviewedLifecycleInstallation(
             attempt_id=obj["attempt_id"],
+            prepare_run_id=obj["prepare_run_id"],
             source_sha=obj["source_sha"],
             controller_id=obj["controller_id"],
             controller_image=obj["controller_image"],

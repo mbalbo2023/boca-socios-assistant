@@ -25,6 +25,7 @@ WORKER_IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "e" 
 def _reviewed(path: Path) -> actions.ReviewedLifecycleInstallation:
     return actions.ReviewedLifecycleInstallation(
         attempt_id="3456789012",
+        prepare_run_id="41999999999",
         source_sha=SOURCE,
         controller_id=CONTROLLER,
         controller_image=CONTROLLER_IMAGE,
@@ -92,6 +93,7 @@ def test_one_pending_request_yields_one_verified_redacted_ack(
     data = json.loads(receipt.redacted_json())
     assert data["physical_ack"] is True
     assert data["scope"] == "boca-lifecycle"
+    assert data["prepare_run_id"] == "41999999999"
     assert data["source_sha"] == SOURCE
     assert "image" not in data and "token" not in data and "password" not in data
 
@@ -229,6 +231,96 @@ def test_effect_uncertain_does_not_retry_or_forge_ack(
     assert effects == ["attempted"]
 
 
+def test_reused_prepare_run_rejected_even_with_later_requested_intent(
+    tmp_path: Path,
+    verified_io: tuple[FakeLedger, list[object]],
+) -> None:
+    ledger, effects = verified_io
+    installed = _reviewed(tmp_path)
+    lease = BocaJobLease("3456789012", 12, 1, True)
+    first = actions.apply_latest_owner_request(installed, lease=lease)
+    assert first.applied and len(effects) == 1
+    marker = tmp_path / ".boca-lifecycle-go" / "prepare-41999999999.used"
+    assert marker.is_file()
+    assert marker.parent.stat().st_mode & 0o777 == 0o700
+    stored = json.loads(marker.read_text(encoding="ascii"))
+    assert stored["prepare_run_id"] == installed.prepare_run_id
+    assert stored["request_id"] == first.request_id
+    assert marker.stat().st_mode & 0o777 == 0o600
+
+    ledger.state = _requested("bot", "stop")
+    with pytest.raises(actions.PhysicalAckUnavailable, match="already consumed"):
+        actions.apply_latest_owner_request(installed, lease=lease)
+    assert len(effects) == 1
+    assert ledger.current().status == "REQUESTED"
+
+
+def test_crash_after_prepare_consumption_never_replays_physical_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    verified_io: tuple[FakeLedger, list[object]],
+) -> None:
+    ledger, effects = verified_io
+    lease = BocaJobLease("3456789012", 12, 1, True)
+
+    def crash(*args: object, **kwargs: object) -> str:
+        effects.append("may-have-executed")
+        raise RuntimeError("crash after durable marker")
+
+    monkeypatch.setattr(actions.adapter, "execute_requested_lifecycle", crash)
+    with pytest.raises(RuntimeError, match="crash after durable marker"):
+        actions.apply_latest_owner_request(_reviewed(tmp_path), lease=lease)
+    marker = tmp_path / ".boca-lifecycle-go" / "prepare-41999999999.used"
+    assert marker.is_file()
+    assert ledger.current().status == "REQUESTED"
+    with pytest.raises(actions.PhysicalAckUnavailable, match="already consumed"):
+        actions.apply_latest_owner_request(_reviewed(tmp_path), lease=lease)
+    assert effects == ["may-have-executed"]
+
+
+def test_no_pending_or_invalid_approved_run_creates_no_marker(
+    tmp_path: Path,
+    verified_io: tuple[FakeLedger, list[object]],
+) -> None:
+    ledger, effects = verified_io
+    ledger.state = None
+    with pytest.raises(actions.PhysicalAckUnavailable, match="REQUESTED"):
+        actions.apply_latest_owner_request(
+            _reviewed(tmp_path), lease=BocaJobLease("3456789012", 12, 1, True)
+        )
+    assert list(tmp_path.iterdir()) == []
+    ledger.state = _requested()
+    with pytest.raises(actions.PhysicalAckUnavailable, match="PREPARE run ID"):
+        actions.apply_latest_owner_request(
+            replace(_reviewed(tmp_path), prepare_run_id="0"),
+            lease=BocaJobLease("3456789012", 12, 1, True),
+        )
+    assert effects == []
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("unsafe_directory", ["world_readable", "symlink"])
+def test_private_prepare_marker_custody_fail_closed_without_foreign_write(
+    tmp_path: Path,
+    verified_io: tuple[FakeLedger, list[object]],
+    unsafe_directory: str,
+) -> None:
+    _, effects = verified_io
+    private_dir = tmp_path / ".boca-lifecycle-go"
+    if unsafe_directory == "world_readable":
+        private_dir.mkdir(mode=0o755)
+    else:
+        foreign = tmp_path / "foreign"
+        foreign.mkdir()
+        private_dir.symlink_to(foreign, target_is_directory=True)
+    with pytest.raises(actions.PhysicalAckUnavailable):
+        actions.apply_latest_owner_request(
+            _reviewed(tmp_path), lease=BocaJobLease("3456789012", 12, 1, True)
+        )
+    assert effects == []
+    assert not (tmp_path / ".boca-lifecycle-go" / "prepare-41999999999.used").exists()
+
+
 def test_component_stop_passes_through_without_worker_requirement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, verified_io: tuple[FakeLedger, list[object]]
 ) -> None:
@@ -256,6 +348,7 @@ def _context(**overrides: str) -> str:
         "version": "boca-protected-action-v1",
         "kind": "lifecycle",
         "attempt_id": "3456789012",
+        "prepare_run_id": "41999999999",
         "source_sha": SOURCE,
         "controller_id": CONTROLLER,
         "controller_image": CONTROLLER_IMAGE,
@@ -285,6 +378,12 @@ def test_public_context_decodes_canonical_exact_pins() -> None:
 def test_unknown_context_keys_rejected(extra: str) -> None:
     with pytest.raises(actions.PhysicalAckUnavailable):
         actions.decode_lifecycle_context(_context(**{extra: "never accepted"}))
+
+
+@pytest.mark.parametrize("invalid", ["", "0", "-1", "000012", "1" * 21, "123abc"])
+def test_prepare_run_id_requires_single_positive_immutable_run(invalid: str) -> None:
+    with pytest.raises(actions.PhysicalAckUnavailable):
+        actions.decode_lifecycle_context(_context(prepare_run_id=invalid))
 
 
 def test_wrong_context_sha_rejected() -> None:

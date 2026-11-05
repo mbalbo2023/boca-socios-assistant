@@ -470,7 +470,7 @@ def test_unhealthy_running_chromium_cannot_restart_or_claim(tmp_path: Path) -> N
     coords, ledger = _request_with_real_ledger(tmp_path / "boca.sqlite3", "chromium", "start")
     io = FakeIO(tmp_path, engine=False, worker_running=True)
     io.fields[("container", WORKER, "State.Health.Status")] = "unhealthy"
-    with pytest.raises(adapter.LifecycleAdapterNoGo):
+    with pytest.raises(adapter.lifecycle.LifecycleHostUnavailable):
         adapter.execute_requested_lifecycle(
             coords,
             binding=_binding(),
@@ -486,7 +486,7 @@ def test_unhealthy_running_chromium_stop_cannot_bypass_controller_health(tmp_pat
     io = FakeIO(tmp_path, engine=False, worker_running=True)
     io.fields[("container", WORKER, "State.Health.Status")] = "unhealthy"
     io.fields[("container", CONTROLLER, "State.Health.Status")] = "unhealthy"
-    with pytest.raises(adapter.LifecycleAdapterNoGo):
+    with pytest.raises(adapter.lifecycle.LifecycleHostUnavailable):
         adapter.execute_requested_lifecycle(
             coords,
             binding=_binding(),
