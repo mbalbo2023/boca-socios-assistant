@@ -15,7 +15,6 @@ import re
 import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import cast
 
 from boca_socios import host_boca_cleanup as cleanup
 from boca_socios.host_boca_cleanup import BocaJobLease, verify_protected_boca_job_lease
@@ -233,7 +232,7 @@ def protected_ephemeral_get_session(
                     or type(response["response_base64url"]) is not str
                 ):
                     raise ValueError("invalid GET response")
-                encoded = cast(str, response["response_base64url"])
+                encoded = response["response_base64url"]
                 data = base64.b64decode(
                     encoded + "=" * (-len(encoded) % 4), altchars=b"-_", validate=True
                 )
