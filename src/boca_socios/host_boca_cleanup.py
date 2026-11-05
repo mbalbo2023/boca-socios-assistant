@@ -916,7 +916,8 @@ def _verify_historical_legacy_image(
         not isinstance(tags, list)
         or not isinstance(digests, list)
         or not all(isinstance(value, str) for value in tags + digests)
-        or proof.reference not in digests
+        or digests != [proof.reference]
+        or len(tags) > 1
         or labels.get("org.opencontainers.image.revision") != proof.revision
         or labels.get("org.opencontainers.image.source") not in (None, BOCA_SOURCE)
     ):
@@ -1208,8 +1209,8 @@ def capture_inventory(*, historical_legacy: LegacyImageProof | None = None) -> I
                 }
             )
         )
-        source = labels.get("org.opencontainers.image.source")
-        images.append(Image(ident, refs, source if isinstance(source, str) else None))
+        raw_source = labels.get("org.opencontainers.image.source")
+        images.append(Image(ident, refs, raw_source if isinstance(raw_source, str) else None))
     networks: list[Network] = []
     for ident in sorted(boca_networks):
         if _inspect_field("network", ident, "Id") != ident:
