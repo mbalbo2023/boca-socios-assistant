@@ -15,9 +15,11 @@ from test_telegram_pairing_panel_handoff import _app_with_stage, _envelope, _sta
 
 def test_session_cookie_and_csrf_do_not_replace_fresh_telegram_webauthn(tmp_path: Path) -> None:
     path = tmp_path / STAGING_FILENAME
-    app, key, credential, clock = _app_with_stage(
+    clock = [0.0]
+    app, key, credential = _app_with_stage(
         tmp_path / "boca.sqlite3",
         lambda request: stage_private_telegram_pairing(path, request),
+        clock=clock,
     )
     cookie = _login(app, key, credential)
     _, _, page = _request(app, "/telegram/emparejar", cookie=cookie)
@@ -43,9 +45,11 @@ def test_session_cookie_and_csrf_do_not_replace_fresh_telegram_webauthn(tmp_path
 
 def test_signed_assertion_of_other_ciphertext_is_denied_without_stage(tmp_path: Path) -> None:
     path = tmp_path / STAGING_FILENAME
-    app, key, credential, clock = _app_with_stage(
+    clock = [0.0]
+    app, key, credential = _app_with_stage(
         tmp_path / "boca.sqlite3",
         lambda request: stage_private_telegram_pairing(path, request),
+        clock=clock,
     )
     cookie = _login(app, key, credential)
     _, _, page = _request(app, "/telegram/emparejar", cookie=cookie)
