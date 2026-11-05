@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 from pathlib import Path
 
 import pytest
-from scripts import host_cutover_postapply_reconcile as reconcile
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location(
+    "host_cutover_postapply_reconcile", ROOT / "scripts" / "host_cutover_postapply_reconcile.py"
+)
+assert SPEC is not None and SPEC.loader is not None
+reconcile = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(reconcile)
 
 RUN = "42096941815"
 PREPARE = "42091200929"
@@ -25,7 +33,8 @@ def _intent() -> bytes:
             "legacy_compose_sha": "e" * 64,
             "target_source_sha": TARGET_SHA,
             "target_image_ref": "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "f" * 64,
-            "browser_image_ref": "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "0" * 64,
+            "browser_image_ref": "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
+            + "0" * 64,
             "target_compose_sha": "e" * 64,
             "overlay_sha": "1" * 64,
             "seccomp_sha": "2" * 64,
@@ -65,7 +74,8 @@ def _container(ident: str, *, service: str, revision: str, name: str, running: b
         "service": service,
         "attempt": RUN,
         "port_binding": {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
-        if service == "controller" else {},
+        if service == "controller"
+        else {},
     }
 
 
@@ -79,7 +89,9 @@ def test_exact_canonical_markers(kind: str, raw: bytes) -> None:
 
 
 def test_duplicate_marker_keys_rejected() -> None:
-    malformed = _intent().replace(b'"attempt_id":"42096941815"', b'"attempt_id":"42096941815","attempt_id":"42096941815"')
+    malformed = _intent().replace(
+        b'"attempt_id":"42096941815"', b'"attempt_id":"42096941815","attempt_id":"42096941815"'
+    )
     with pytest.raises(reconcile.ReconcileError):
         reconcile._record(malformed, RUN, kind="intent")
 
@@ -96,22 +108,36 @@ def test_postapply_runtime_only_read_from_boca_fixtures(monkeypatch: pytest.Monk
     monkeypatch.setattr(reconcile.Path, "is_symlink", lambda self: False)
     monkeypatch.setattr(reconcile, "_read_private", lambda name, *, directory: files.get(name))
     original = _container(
-        LEGACY_ID, service="controller", revision="b" * 40,
-        name="/boca-socios-controller-legacy-" + RUN, running=False,
+        LEGACY_ID,
+        service="controller",
+        revision="b" * 40,
+        name="/boca-socios-controller-legacy-" + RUN,
+        running=False,
     )
     candidate = _container(
-        "f" * 64, service="controller", revision=TARGET_SHA,
-        name="/boca-socios-controller-1", running=True,
+        "f" * 64,
+        service="controller",
+        revision=TARGET_SHA,
+        name="/boca-socios-controller-1",
+        running=True,
     )
     worker = _container(
-        "9" * 64, service="browser-worker", revision=TARGET_SHA,
-        name="/boca-socios-browser-worker-1", running=True,
+        "9" * 64,
+        service="browser-worker",
+        revision=TARGET_SHA,
+        name="/boca-socios-browser-worker-1",
+        running=True,
     )
     monkeypatch.setattr(reconcile, "_docker_snapshot", lambda: [original, candidate, worker])
     monkeypatch.setattr(reconcile, "_marker", lambda marker: "PRESENT_VERIFIED")
     monkeypatch.setattr(
-        reconcile, "_staged_attempt",
-        lambda attempt: {"stage": "PRESENT", "promotion_intent": "ABSENT", "promotion_result": "ABSENT"},
+        reconcile,
+        "_staged_attempt",
+        lambda attempt: {
+            "stage": "PRESENT",
+            "promotion_intent": "ABSENT",
+            "promotion_result": "ABSENT",
+        },
     )
     output = reconcile._host(RUN, PREPARE)
     assert output["original"]["running"] is False
@@ -138,9 +164,14 @@ def test_no_docker_write_or_foreign_inspect_command() -> None:
 
 
 def test_runner_rejects_forged_accept_and_noncanonical_payload() -> None:
-    payload = {"version": "boca-postapply-reconcile-v1", "incident_run_id": RUN,
-               "prepare_run_id": PREPARE, "go_for_retry": True,
-               "runtime_attested": False, "foreign_resources_touched": False}
+    payload = {
+        "version": "boca-postapply-reconcile-v1",
+        "incident_run_id": RUN,
+        "prepare_run_id": PREPARE,
+        "go_for_retry": True,
+        "runtime_attested": False,
+        "foreign_resources_touched": False,
+    }
     with pytest.raises(reconcile.ReconcileError):
         reconcile.verify_runner(reconcile._canonical(payload) + b"\n", RUN, PREPARE)
     payload["go_for_retry"] = False
