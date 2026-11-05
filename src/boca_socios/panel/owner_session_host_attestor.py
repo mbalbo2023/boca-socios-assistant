@@ -25,7 +25,9 @@ from boca_socios.panel.owner_session_upgrade import (
 
 DATA_VOLUME = "boca-socios_boca_data"
 _ROOTLESS_SOCKET = Path("/run/user/10001/docker.sock")
-_LOCK = Path("/run/user/10001/boca-socios-0008.lock")
+# Shared across ALL protected Boca install/cutover/cleanup phases. A separate
+# schema-specific flock would not serialize writers across the outer phases.
+_LOCK = Path("/run/user/10001/boca-socios-protected-job.lock")
 _UID = 10001
 _CONTAINER = re.compile(r"[0-9a-f]{64}\Z")
 _ATTEMPT = re.compile(r"[1-9][0-9]{0,19}\Z")
@@ -106,6 +108,7 @@ class DockerStoppedControllerEvidence(ControllerStoppedEvidence):
     attempt_id: str
     legacy_sha: str
     legacy_image: str
+    borrowed_lease_fd: int | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -113,6 +116,10 @@ class DockerStoppedControllerEvidence(ControllerStoppedEvidence):
             or not _ATTEMPT.fullmatch(self.attempt_id)
             or not _SHA.fullmatch(self.legacy_sha)
             or not _IMAGE.fullmatch(self.legacy_image)
+            or (
+                self.borrowed_lease_fd is not None
+                and (type(self.borrowed_lease_fd) is not int or self.borrowed_lease_fd < 0)
+            )
         ):
             raise OwnerSessionUpgradeUnavailable("Boca cutover coordinates invalid")
 
@@ -239,7 +246,13 @@ class DockerStoppedControllerEvidence(ControllerStoppedEvidence):
 
     @contextmanager
     def exclusive_stop(self, *, database_path: Path, device: int, inode: int) -> Iterator[None]:
-        """Hold owner-only flock and verify stopped Docker state on both sides."""
+        """Hold canonical Boca flock; borrowed FD shares the owner's OFD.
+
+        For an outer cutover holding the global lease, `os.dup()` preserves the
+        same open-file description (OFD). We prove it was *already locked* by
+        testing an independent descriptor before reentrant flock, then keep
+        the original owner's FD open and untouched across this nested scope.
+        """
         if (os.getuid(), os.geteuid(), os.getgid(), os.getegid()) != (_UID,) * 4:
             raise OwnerSessionUpgradeUnavailable("Boca host identity unavailable")
         runtime = _LOCK.parent.lstat()
@@ -250,19 +263,44 @@ class DockerStoppedControllerEvidence(ControllerStoppedEvidence):
         ):
             raise OwnerSessionUpgradeUnavailable("Boca runtime lease directory unavailable")
         try:
-            descriptor = os.open(
-                _LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600
+            borrowed = self.borrowed_lease_fd is not None
+            descriptor = (
+                os.dup(self.borrowed_lease_fd)
+                if self.borrowed_lease_fd is not None
+                else os.open(_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
             )
             try:
                 meta = os.fstat(descriptor)
+                path_meta = _LOCK.lstat()
                 if (
                     not stat.S_ISREG(meta.st_mode)
                     or meta.st_uid != _UID
                     or meta.st_gid != _UID
                     or stat.S_IMODE(meta.st_mode) != 0o600
                     or meta.st_nlink != 1
+                    or (meta.st_dev, meta.st_ino) != (path_meta.st_dev, path_meta.st_ino)
+                    or not stat.S_ISREG(path_meta.st_mode)
                 ):
                     raise OwnerSessionUpgradeUnavailable("Boca stop lease identity invalid")
+                if borrowed:
+                    # An unlocked borrowed FD is NOT proof of an outer lease.
+                    # An independent OFD must already be excluded before the
+                    # dup-of-borrowed can reassert its pre-existing lock.
+                    probe = os.open(_LOCK, os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
+                    try:
+                        if (os.fstat(probe).st_dev, os.fstat(probe).st_ino) != (
+                            meta.st_dev,
+                            meta.st_ino,
+                        ):
+                            raise OwnerSessionUpgradeUnavailable("Boca stop lease changed")
+                        try:
+                            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except BlockingIOError:
+                            pass  # Some holder owns it; next call proves SAME OFD.
+                        else:
+                            raise OwnerSessionUpgradeUnavailable("borrowed Boca lease not held")
+                    finally:
+                        os.close(probe)
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 self._observe(path=database_path, device=device, inode=inode)
                 try:

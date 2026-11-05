@@ -146,17 +146,27 @@ intocables.
 - Para ejecutar contra el host físico, `evidence.host_database_path()`
   resuelve la ruta SQLite exacta del volumen rootless Docker (en vez del alias
   `/data` interno); sólo este tipo concreto autoriza al adaptador a usar esa
-  ruta. `exclusive_stop()` adquiere flock nonblocking de Boca
-  `/run/user/10001/boca-socios-0008.lock`, verifica UID/GID y `(dev,inode)`
-  y repite todo el inventario antes de soltar. **El orchestration cutover #227
-  también debe respetar ese lock en park/restart** para evitar carreras; si
-  hay terceros que lo ignoren, no puede declararse exclusividad física. La
+  ruta. `exclusive_stop()` adquiere flock nonblocking sobre **el mismo lease
+  canónico de todos los trabajos protegidos Boca**:
+  `/run/user/10001/boca-socios-protected-job.lock`; verifica UID/GID,
+  archivo e inode y repite el inventario antes de soltar. Si cutover #227
+  ya posee ese lease, el constructor acepta `borrowed_lease_fd` **en el mismo
+  proceso**, exclusivamente como descriptor abierto, nunca serializado en
+  JSON/recibo. `os.dup()` comparte la misma open-file-description y permite
+  la comprobación reentrante; antes se prueba con un descriptor independiente
+  que el lock **ya estaba retenido** y luego que el FD prestado es su titular.
+  Al salir del contexto el attestor sólo cierra la copia, nunca el FD original. Los
+  tests rechazan FD sin flock, inode ajeno o segundo holder; el lock externo
+  sobrevive al scope interno. **Cutover #227 tiene que mantener ese mismo
+  descriptor abierto en park/upgrade/restart/cleanup** para evitar carreras;
+  si hay terceros que lo ignoren, no puede declararse exclusividad física. La
   comprobación post-commit no garantiza rollback de una carrera: ante duda
   queda NO_GO y no se reinicia imagen nueva.
 - Tests de host attestor usan JSON Docker sintético sin daemon ni red; prueban
   original parado, restart incorrecto, imagen/labels/nombre drift, competing
   controller, worker RW activo, cambio de volumen, mount omitido, lock
-  contendida, scope de DB y `stopped=True` rechazado. Ninguna prueba
+  contendida, FD prestado inválido, scope de DB y `stopped=True` rechazado.
+  Ninguna prueba
   certifica una migración ni parada real en el droplet.
 - **NO_GO físico** hasta integrar y evidenciar el host-stop gate propietario,
   inventario exacto del volumen, source SHA, preflight, CI y ejecución gobernada
@@ -164,9 +174,10 @@ intocables.
   Docker, backup ni modificación de volúmenes. Cualquier limpieza posterior
   (éxito o fallo) pertenece al frente #323, selectiva sólo Boca, preservando
   siempre owner/key/data. No se realizó migración ni deploy real en este PR.
-- QA de branch aislada con host-attestor añadido: `pytest -q` **2609 passed +
+- QA de branch aislada con host-attestor añadido: `pytest -q` **2615 passed +
   34 subtests**, Ruff check PASS, Ruff format PASS (407 archivos), MyPy PASS
   (91 archivos), repo policy `POLICY_PASS`; regresión focalizada del attestor
-  con comprobación de opciones bind y origen de montaje **25 passed**. Son
+  con comprobación de lease prestado, opciones bind y origen de montaje
+  **29 passed**. Son
   evidencias locales, no
   sustituyen los checks Actions del nuevo SHA remoto ni el recibo host físico.

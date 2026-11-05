@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import base64
+import fcntl
 import json
 import os
 import sqlite3
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from typing import Any
 
@@ -213,6 +214,58 @@ def test_leased_stop_is_mutually_exclusive(
         with pytest.raises(upgrade.OwnerSessionUpgradeUnavailable):
             with second.exclusive_stop(database_path=db, device=meta.st_dev, inode=meta.st_ino):
                 raise AssertionError("unreachable")
+    assert _versions(db) == [1, 2, 3, 5, 6]
+
+
+def test_borrowed_canonical_boca_job_lease_is_reentrant_and_remains_owned(
+    docker_fixture: tuple[Path, dict[str, Any], list[tuple[str, ...]]],
+) -> None:
+    db, _, _ = docker_fixture
+    identity = db.stat()
+    fd = os.open(host._LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        guard = replace(_evidence(), borrowed_lease_fd=fd)
+        with guard.exclusive_stop(database_path=db, device=identity.st_dev, inode=identity.st_ino):
+            assert _versions(db) == [1, 2, 3, 5, 6]
+        # Closing the attestor's duplicate cannot release the outer lease.
+        competitor = os.open(host._LOCK, os.O_RDWR | os.O_NOFOLLOW)
+        try:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(competitor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(competitor)
+    finally:
+        os.close(fd)
+    assert _versions(db) == [1, 2, 3, 5, 6]
+
+
+@pytest.mark.parametrize("failure", ["unlocked", "wrong_inode", "other_lease_holder"])
+def test_borrowed_fd_must_itself_hold_canonical_boca_lease(
+    docker_fixture: tuple[Path, dict[str, Any], list[tuple[str, ...]]],
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    db, _, _ = docker_fixture
+    identity = db.stat()
+    canonical = os.open(host._LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    borrowed = canonical
+    try:
+        if failure == "wrong_inode":
+            borrowed = os.open(tmp_path / "foreign-borrowed.lock", os.O_RDWR | os.O_CREAT, 0o600)
+            fcntl.flock(borrowed, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        elif failure == "other_lease_holder":
+            fcntl.flock(canonical, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            borrowed = os.open(host._LOCK, os.O_RDWR | os.O_NOFOLLOW)
+        with pytest.raises(upgrade.OwnerSessionUpgradeUnavailable):
+            with replace(_evidence(), borrowed_lease_fd=borrowed).exclusive_stop(
+                database_path=db, device=identity.st_dev, inode=identity.st_ino
+            ):
+                raise AssertionError("unreachable")
+    finally:
+        if borrowed != canonical:
+            os.close(borrowed)
+        os.close(canonical)
     assert _versions(db) == [1, 2, 3, 5, 6]
 
 
