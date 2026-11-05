@@ -209,10 +209,20 @@ def test_public_approved_digest_not_equivalent_to_host_authorization(tmp_path: P
     assert hashlib.sha256(go._canonical(other_attempt)).hexdigest() != hashlib.sha256(  # noqa: SLF001
         go._canonical(hosted)  # noqa: SLF001
     ).hexdigest()
-    # A replay by a different APPLY run can pass a prepared-receipt GO test;
-    # physical replay prevention is mandatory in the host #351 same lease.
+    # Forged attempt under one runner identity must fail in the runner.
+    with pytest.raises(go.PreparedGoError):
+        go.verify_apply_go(
+            public, other_attempt, receipt, environ=env, approved=approved,
+            now=datetime(2026, 11, 5, 15, tzinfo=UTC),
+            source_run=_source_run(receipt["prepare_run_id"])
+        )
+    # A DIFFERENT genuine APPLY run could still pass a 24h prepared GO;
+    # the host #351 O_EXCL marker on PREPARE ID must reject reuse.
+    second_env = env | {"GITHUB_RUN_ID": "42000000001"}
+    encoded = _token(public | {"prepare_run_id": receipt["prepare_run_id"]})
+    _, newly_hosted = go.decode_apply_input(encoded, environ=second_env)
     assert go.verify_apply_go(
-        public, other_attempt, receipt, environ=env, approved=approved,
+        public, newly_hosted, receipt, environ=second_env, approved=approved,
         now=datetime(2026, 11, 5, 15, tzinfo=UTC),
         source_run=_source_run(receipt["prepare_run_id"])
     ) == approved
