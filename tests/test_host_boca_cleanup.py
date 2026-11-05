@@ -28,6 +28,169 @@ DATA = "boca-socios_boca_data"
 IPC = "boca-socios_boca_browser_ipc"
 
 
+def _physical_observer_fixture(*, stale: str = "none") -> gc.Inventory:
+    """Boca-only synthetic snapshot; no production Docker or filesystem."""
+    original = gc.Container(
+        ACTIVE_ID,
+        "/boca-socios-controller-1",
+        ACTIVE_IMAGE,
+        True,
+        (*BOCA, ("com.docker.compose.service", "controller")),
+        (DATA, "boca-socios_boca_key", "boca-socios_boca_owner"),
+        ("boca-socios_boca_private",),
+    )
+    images = [
+        gc.Image(
+            ACTIVE_IMAGE,
+            ("ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "d" * 64,),
+            None,  # The installed 04-Nov controller lacks OCI source.
+        )
+    ]
+    if stale != "none":
+        images.append(
+            gc.Image(
+                OLD_IMAGE,
+                ("ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "e" * 64,),
+                gc.BOCA_SOURCE if stale == "known" else None,
+            )
+        )
+    return gc.Inventory(
+        containers=(original,),
+        images=tuple(images),
+        networks=(gc.Network("boca-socios_boca_private", PRIVATE_NET, (ACTIVE_ID,), BOCA),),
+        volumes=tuple(
+            gc.Volume(name, BOCA)
+            for name in (DATA, "boca-socios_boca_key", "boca-socios_boca_owner")
+        ),
+        disk=gc.DiskInodes(100_000, 700, 500_000, 900, 100, 101, 200, 201),
+        global_image_ids=frozenset({image.ident for image in images}),
+    )
+
+
+@pytest.mark.parametrize(
+    ("stale", "classification", "target_count", "uncertain_count"),
+    [
+        ("none", "NO_CONFIRMED_REMNANTS", 0, 0),
+        ("known", "BOCA_REMNANTS_IDENTIFIED", 1, 0),
+        ("unknown", "INDETERMINATE", 0, 1),
+    ],
+)
+def test_postapply_cleanup_readonly_plan_never_deletes(
+    stale: str, classification: str, target_count: int, uncertain_count: int
+) -> None:
+    inventory = _physical_observer_fixture(stale=stale)
+    calls = 0
+
+    def probe() -> gc.Inventory:
+        nonlocal calls
+        calls += 1
+        return inventory
+
+    receipt = gc.observe_postapply_cleanup(ATTEMPT, ACTIVE_ID, probe=probe)
+    assert calls == 2
+    assert receipt["classification"] == classification
+    assert receipt["status"] == "READ_ONLY_NO_GO"
+    assert receipt["original_preserved"] is True
+    assert receipt["go_for_retry"] is False
+    assert receipt["cleanup_executed"] is False
+    assert receipt["observer_writes"] == 0
+    assert receipt["protected_image_id"] == ACTIVE_IMAGE
+    assert len(receipt["known_remnants"]) == target_count
+    assert len(receipt["retained_uncertain"]) == uncertain_count
+    assert all(x["id"] not in (ACTIVE_ID, ACTIVE_IMAGE) for x in receipt["known_remnants"])
+    raw = gc.canonical_readonly_cleanup_receipt(receipt)
+    assert gc.verify_readonly_cleanup_receipt(raw, ATTEMPT, ACTIVE_ID) == receipt
+
+
+def test_postapply_cleanup_readonly_rejects_legacy_or_storage_drift() -> None:
+    baseline = _physical_observer_fixture()
+    stopped = replace(baseline, containers=(replace(baseline.containers[0], running=False),))
+    with pytest.raises(gc.CleanupError):
+        gc.observe_postapply_cleanup(ATTEMPT, ACTIVE_ID, probe=lambda: stopped)
+    with pytest.raises(gc.CleanupError):
+        gc.observe_postapply_cleanup(ATTEMPT, OLD_ID, probe=lambda: baseline)
+    with pytest.raises(gc.CleanupError):
+        gc.observe_postapply_cleanup(ATTEMPT, ACTIVE_ID, probe=iter([baseline, stopped]).__next__)
+    changed_storage = replace(baseline, disk=replace(baseline.disk, docker_inode=999))
+    with pytest.raises(gc.CleanupError):
+        gc.observe_postapply_cleanup(
+            ATTEMPT, ACTIVE_ID, probe=iter([baseline, changed_storage]).__next__
+        )
+
+
+def test_postapply_cleanup_unknown_global_image_id_is_uncertain_without_inspection() -> None:
+    baseline = _physical_observer_fixture()
+    # A global ID is not proof of Boca provenance, nor is it removable.
+    unknown = replace(baseline, global_image_ids=baseline.global_image_ids | {FOREIGN_IMAGE})
+    result = gc.observe_postapply_cleanup(ATTEMPT, ACTIVE_ID, probe=lambda: unknown)
+    assert result["classification"] == "INDETERMINATE"
+    assert result["unclassified_image_id_count"] == 1
+    assert result["known_remnants"] == []
+    assert FOREIGN_IMAGE not in str(result)
+
+
+def test_postapply_cleanup_readonly_receipt_rejects_tampering() -> None:
+    receipt = gc.observe_postapply_cleanup(
+        ATTEMPT, ACTIVE_ID, probe=lambda: _physical_observer_fixture()
+    )
+    raw = gc.canonical_readonly_cleanup_receipt(receipt)
+    assert raw.endswith(b"\n")
+    with pytest.raises(gc.CleanupError):
+        gc.verify_readonly_cleanup_receipt(raw, ATTEMPT, OLD_ID)
+    with pytest.raises(gc.CleanupError):
+        gc.verify_readonly_cleanup_receipt(
+            raw.replace(b'"go_for_retry":false', b'"go_for_retry":true'), ATTEMPT, ACTIVE_ID
+        )
+    with pytest.raises(gc.CleanupError):
+        gc.verify_readonly_cleanup_receipt(raw + b"{}\n", ATTEMPT, ACTIVE_ID)
+
+
+def test_postapply_cleanup_readonly_rejects_foreign_metadata_and_rootless_mismatch(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inventory = _physical_observer_fixture()
+    foreign = replace(
+        inventory,
+        networks=(
+            replace(inventory.networks[0], labels=(("com.docker.compose.project", "other"),)),
+        ),
+    )
+    with pytest.raises(gc.CleanupError):
+        gc.observe_postapply_cleanup(ATTEMPT, ACTIVE_ID, probe=lambda: foreign)
+    monkeypatch.setattr(gc.os, "geteuid", lambda: 0)
+    assert gc._readonly_main(["host", ATTEMPT, ACTIVE_ID]) == 3
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "NO_GO" in output.err and ACTIVE_ID not in output.err
+
+
+def test_postapply_cleanup_workflow_uses_existing_only_readonly_dispatch() -> None:
+    workflow = (Path(__file__).parents[1] / ".github/workflows/boca-first-deploy.yml").read_text(
+        encoding="utf-8"
+    )
+    assert workflow.count("name: Boca first deploy") == 1
+    assert "cutover-cleanup-reconcile" not in workflow  # No new privileged operation.
+    block = workflow.split("- name: Plan Boca-only Docker cleanup READ_ONLY", 1)[1].split(
+        "- name: Apply one exact-ID Boca owner lifecycle request", 1
+    )[0]
+    assert "if: inputs.operation == 'cutover-a-reconcile'" in block
+    assert "< src/boca_socios/host_boca_cleanup.py" in block
+    assert "host_cutover_postapply_reconcile import verify_runner" in block
+    assert "src/boca_socios/host_boca_cleanup.py verify" in block
+    assert "cleanup_executed=false" in block
+    assert not any(
+        command in block
+        for command in (
+            "docker rm",
+            "image rm",
+            "volume rm",
+            "network rm",
+            "docker prune",
+            "compose down",
+        )
+    )
+
+
 def _inventory() -> gc.Inventory:
     return gc.Inventory(
         containers=(
