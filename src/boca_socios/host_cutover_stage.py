@@ -166,7 +166,10 @@ def _marker_payload(
             not SHA.fullmatch(value)
             for value in (legacy_compose_sha, target_compose_sha, overlay_compose_sha, seccomp_sha)
         )
-        or len({legacy_compose_sha, target_compose_sha, overlay_compose_sha, seccomp_sha}) != 4
+        # Historical and target Compose may be byte-identical for a code/image-only cutover.
+        # Overlay and seccomp are distinct roles, never aliases of either Compose file.
+        or len({target_compose_sha, overlay_compose_sha, seccomp_sha}) != 3
+        or legacy_compose_sha in (overlay_compose_sha, seccomp_sha)
     ):
         raise StageError("cutover stage lacks independent historical/target coordinates")
     return {
