@@ -470,7 +470,7 @@ PAIRING_SCRIPT = r"""
       if (stageButton && csrfField && operationField
           && csrfField.value && operationField.value) stageButton.disabled = false;
       result.textContent = 'Texto cifrado V2 listo. Puede guardarlo en el panel privado '
-        + 'si se habilitó el botón. El instalador protegido V2 todavía no está activo.';
+        + 'tras confirmar con la llave de acceso del dueño. El instalador V2 sigue pendiente.';
       succeeded = true;
     } catch (_) {
       if (active) result.textContent = 'No se generó el texto cifrado. '
@@ -508,8 +508,44 @@ PAIRING_SCRIPT = r"""
     stageButton.disabled = true;
     const sealed = output.value;
     try {
+      if (!navigator.credentials || typeof navigator.credentials.get !== 'function')
+        throw Error('owner passkey unavailable');
+      const envelope = bytes(sealed, null, 4096);
+      const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', envelope));
+      const envelopeHash = Array.from(digest, x => x.toString(16).padStart(2, '0')).join('');
+      const request = new URLSearchParams({
+        csrf: csrfField.value, operation_id: operationField.value,
+        envelope_sha256: envelopeHash
+      });
+      const challengeResponse = await fetch('/telegram/emparejar/desafio', {
+        method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        credentials: 'same-origin', cache: 'no-store', redirect: 'error', body: request
+      });
+      if (challengeResponse.status !== 200) throw Error('fresh challenge unavailable');
+      const issued = await challengeResponse.json();
+      if (!active || issued.version !== 1 || issued.rp_id !== 'localhost'
+          || !/^[0-9a-f]{64}$/.test(issued.request_nonce)
+          || !Number.isSafeInteger(issued.challenged_at)
+          || issued.challenged_at <= 0) throw Error('invalid owner challenge');
+      const credential = await navigator.credentials.get({publicKey: {
+        challenge: bytes(issued.challenge, 32, 32),
+        rpId: issued.rp_id,
+        allowCredentials: [{
+          type: 'public-key', id: bytes(issued.credential_id, null, 1024)
+        }],
+        userVerification: 'required', timeout: 120000
+      }});
+      if (!active || !credential || credential.type !== 'public-key'
+          || !credential.response || !credential.rawId
+          || base64url(credential.rawId) !== issued.credential_id)
+        throw Error('owner passkey not confirmed');
       const body = new URLSearchParams({
-        csrf: csrfField.value, operation_id: operationField.value, envelope: sealed
+        csrf: csrfField.value, operation_id: operationField.value, envelope: sealed,
+        request_nonce: issued.request_nonce, challenged_at: String(issued.challenged_at),
+        credential_id: issued.credential_id,
+        client_data_json: base64url(credential.response.clientDataJSON),
+        authenticator_data: base64url(credential.response.authenticatorData),
+        signature: base64url(credential.response.signature)
       });
       const response = await fetch('/telegram/emparejar', {
         method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'},
@@ -578,9 +614,10 @@ def pairing_page(*, csrf: str | None = None, operation_id: str | None = None) ->
             f'<input id="pairing-csrf" type="hidden" value="{csrf}">'
             f'<input id="pairing-operation" type="hidden" value="{operation_id}">'
             '<button id="pairing-stage" type="button" disabled>'
-            "Solicitar emparejamiento en el panel privado</button>"
-            "<p>Se guarda únicamente el sobre cifrado; la instalación requiere "
-            "un paso posterior protegido en GitHub Actions.</p>"
+            "Confirmar con passkey y guardar sobre cifrado</button>"
+            "<p>Chrome solicitará una verificación passkey reciente vinculada al "
+            "sobre cifrado. Se guarda solo el sobre y la prueba pública de firma; "
+            "la instalación física requiere otro GO protegido.</p>"
         )
     return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
