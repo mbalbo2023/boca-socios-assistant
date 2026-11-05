@@ -244,3 +244,70 @@ the owner passkey and real database/volumes, touch no other service, and do
 not convert cleanup into broad Docker pruning. The cutover writer owns
 `.github/workflows/boca-first-deploy.yml` and
 `src/boca_socios/host_first_deploy.py`; neither was edited here.
+
+## Incremental sidecar contract to canonical cutover #227 — 05/11/2026
+
+`src/boca_socios/telegram_pairing_cutover.py` now offers a **source-only,
+injected** adapter for the *single* Boca protected host transaction, without
+creating a second workflow or dispatch. The canonical cutover owner owns the
+host lock, exact-ID Docker/volume inspection and owner-authenticated handoff.
+Its proposed Python API is:
+
+`execute_protected_pairing(coordinates, owner_receipt, owner_receipt_key,
+sealed_v2_envelope, recipient, private_key, directory, trusted_clock,
+recheck_host, consume_owner_nonce, api_fetch)` (all keyword-only).
+
+`CutoverCoordinates` pins numeric attempt, source SHA, OCI image digest,
+owner-subject SHA256, lease SHA256, exact controller container ID and recipient
+fingerprint. `OwnerPairingReceipt` binds those fields, V2 envelope SHA256,
+unique 256-bit nonce and a maximum 600-second issuance/expiry window under
+purpose-separated HMAC-SHA256 of a private 32-byte authenticated-owner key.
+**No issuer or key export is implemented here.** Only the future authenticated
+Chrome route in an approved protected transaction may issue that proof; the
+adapter never accepts an unsigned JSON claim, token-containing CLI argument,
+environment boolean or `HostContractReview` as authorization.
+
+The protected host must provide an authoritative `recheck_host(phase,
+coordinates)` and retain the **same exclusive lease**. It is invoked before
+any Bot API request, immediately before each exact ordered `getMe`,
+`getWebhookInfo`, `getUpdates` and `getChat`, before custody writes and after
+marker verification. Every observation must match exact attempt, source,
+image, owner, lease, controller, fingerprint, rootless UID10001, owner-auth,
+stopped singleton, sender OFF, schema0007, recipient custody, dedicated
+Telegram egress, no competing poller and unrelated workload preservation;
+clock age must be at most 30 seconds. These typed observations are only
+**claims unless produced under the genuine host reinspection/lock**. A caller
+that invents `True` values cannot independently establish authority.
+
+The protected host also owns a **durable, atomic, single-consumer nonce
+ledger** (`consume_owner_nonce`). A valid owner HMAC is checked before any
+effects, and its nonce is consumed under the same lease **before** the first
+provider read. Without an authoritative consumer, pairing is NO_GO. Any
+replay, mismatch, expired owner proof, unavailable host recheck, webhook,
+ambiguous private chat or transport error aborts without attempting custody.
+After unique read-only discovery, the adapter rechecks all gates and uses the
+existing `install_v2_plan` visibility-atomic marker, then requires
+`verify_v2_custody` and a final host recheck. Failure after any local write
+preserves files as NO_GO; no retries, rollback, purge or sender activation.
+The only success receipt contains attempt, source, recipient, bot ID and
+`CUSTODY_COMMITTED_NO_SEND`; human receipt remains `UNVERIFIED` and sender
+state remains `OFF`. No actual Telegram notification is sent.
+
+The CLI contract (`python -m boca_socios.telegram_pairing_cutover
+preflight|commit|verify`) deliberately returns `NO_GO` and performs **zero**
+host, network, filesystem or Bot API effects. It cannot be made operational
+with a truthy flag. `CLEANUP_TARGETS=()` because the adapter creates no
+containers, networks, IPC entries or disposable volumes. The existing
+rootless Telegram secret volume, private marker and persistent Boca data
+must **never** be cleanup targets even after a deploy failure; selective
+recovery and eventual postdeploy cleanup belong to the canonical #227 host
+code. No `host_first_deploy.py`, canonical workflow, BLACKBOX or Porota change
+was made in this Telegram DRAFT.
+
+Offline tests provide invented owner HMAC and BotFather-format credentials,
+fake read-only provider, fake same-lease rechecks, in-memory nonce consumer and
+fake custody adapter to prove ordering, replay and redacted NO_GO. They are
+**not** physical owner authentication, provider access or host verification.
+The cutover writer has agreed to consume this as an **optional code-only
+callback** after candidate acceptance, *inaccessible* from current
+`phase()`/GitHub workflow until all physical receipts and gates exist.
