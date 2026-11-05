@@ -40,6 +40,7 @@ from boca_socios.panel.private_http import PrivatePanelApplication
 from boca_socios.panel.telegram_pairing_staging import (
     STAGING_FILENAME,
     PairingStageReceipt,
+    PairingStageRequest,
     stage_private_telegram_pairing,
 )
 from boca_socios.security.credential_vault import CredentialVault
@@ -124,7 +125,7 @@ def _engine_stopped_after_reboot(database_path: Path, *, browser_backend: str) -
 
 def _configured_telegram_pairing_stager(
     settings: Settings, *, boca_volume_root: Path = Path("/data")
-) -> Callable[[bytes], PairingStageReceipt] | None:
+) -> Callable[[PairingStageRequest], PairingStageReceipt] | None:
     """Opt in encrypted-only owner handoff inside an *existing* Boca volume.
 
     The passkey session, origin, CSRF and one-use operation are checked by the

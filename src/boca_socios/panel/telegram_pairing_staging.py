@@ -19,6 +19,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from boca_socios import telegram_bootstrap as bootstrap
+from boca_socios.telegram_owner_webauthn import (
+    TelegramStageOwnerWitness,
+    parse_witness_document,
+    witness_document,
+)
 from boca_socios.telegram_pairing_bootstrap import PURPOSE, VERSION
 
 STAGING_FILENAME = "boca_telegram_pairing_stage_v2.json"
@@ -39,6 +44,14 @@ class PairingStageReceipt:
     envelope_sha256: str
     recipient_fingerprint: str
     state: str = "STAGED_PENDING_PROTECTED_CUTOVER"
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class PairingStageRequest:
+    """Verified owner UI handoff; stage still gives NO host/Telegram authority."""
+
+    sealed_envelope: bytes
+    owner_witness: TelegramStageOwnerWitness
 
 
 def _validate_public_v2_header(envelope: bytes) -> str:
@@ -87,13 +100,21 @@ def _validate_public_v2_header(envelope: bytes) -> str:
         raise PairingStageUnavailable("pairing_stage_unverified") from None
 
 
-def stage_private_telegram_pairing(path: Path, sealed_v2_envelope: bytes) -> PairingStageReceipt:
+def stage_private_telegram_pairing(
+    path: Path, request: PairingStageRequest | bytes
+) -> PairingStageReceipt:
     """Persist one ciphertext using a private preexisting Boca volume directory.
 
     An atomic hard link publishes a complete fsynced file with O_EXCL semantics;
     an existing stage (including a symlink) is never overwritten or removed.
     This stage's random ID is *not* a host-cutover authorization nonce.
     """
+    # Legacy bytes are retained for independent OFFLINE contract tests and
+    # historical fixture compatibility. They never include owner proof.
+    owner_witness = request.owner_witness if isinstance(request, PairingStageRequest) else None
+    sealed_v2_envelope = (
+        request.sealed_envelope if isinstance(request, PairingStageRequest) else request
+    )
     fingerprint = _validate_public_v2_header(sealed_v2_envelope)
     if (
         not isinstance(path, Path)
@@ -103,17 +124,27 @@ def stage_private_telegram_pairing(path: Path, sealed_v2_envelope: bytes) -> Pai
     ):
         raise PairingStageUnavailable("pairing_stage_unavailable")
     digest = hashlib.sha256(sealed_v2_envelope).hexdigest()
-    document = bootstrap._canonical(
-        {
-            "version": 2,
-            "purpose": _STAGING_PURPOSE,
-            "stage_id": secrets.token_hex(32),
-            "staged_at": int(time.time()),
-            "envelope_sha256": digest,
-            "recipient_fingerprint": fingerprint,
-            "envelope_base64url": bootstrap._b64(sealed_v2_envelope),
-        }
-    )
+    staged_at = int(time.time())
+    stage_fields: dict[str, object] = {
+        "version": 2,
+        "purpose": _STAGING_PURPOSE,
+        "stage_id": secrets.token_hex(32),
+        "staged_at": staged_at,
+        "envelope_sha256": digest,
+        "recipient_fingerprint": fingerprint,
+        "envelope_base64url": bootstrap._b64(sealed_v2_envelope),
+    }
+    if owner_witness is not None:
+        try:
+            witness = parse_witness_document(witness_document(owner_witness))
+            if not 0 <= staged_at - witness.challenged_at <= 120:
+                raise ValueError("expired")
+            stage_fields["owner_witness"] = witness_document(witness)
+        except (ValueError, TypeError):
+            raise PairingStageUnavailable("pairing_stage_unverified") from None
+    document = bootstrap._canonical(stage_fields)
+    if len(document) > 8192:
+        raise PairingStageUnavailable("pairing_stage_unverified")
     directory_fd: int | None = None
     temp_fd: int | None = None
     temp_name: str | None = None

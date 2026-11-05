@@ -29,6 +29,11 @@ from boca_socios.panel.telegram_pairing_staging import (
     STAGING_FILENAME,
     _validate_public_v2_header,
 )
+from boca_socios.telegram_owner_webauthn import (
+    TelegramOwnerWitnessError,
+    TelegramStageOwnerWitness,
+    parse_witness_document,
+)
 from boca_socios.telegram_pairing_cutover import (
     CutoverCoordinates,
     HostRecheckReceipt,
@@ -61,6 +66,7 @@ class EncryptedPairingStage:
     recipient_fingerprint: str
     file_identity: tuple[int, int, int, int] = field(repr=False)
     envelope: bytes = field(repr=False)
+    owner_witness: TelegramStageOwnerWitness | None = field(default=None, repr=False)
 
 
 def _require_lease(lease: BocaJobLease, coordinates: CutoverCoordinates) -> None:
@@ -152,15 +158,27 @@ def read_encrypted_telegram_stage(
             if (
                 not isinstance(document, dict)
                 or set(document)
-                != {
-                    "version",
-                    "purpose",
-                    "stage_id",
-                    "staged_at",
-                    "envelope_sha256",
-                    "recipient_fingerprint",
-                    "envelope_base64url",
-                }
+                not in (
+                    {
+                        "version",
+                        "purpose",
+                        "stage_id",
+                        "staged_at",
+                        "envelope_sha256",
+                        "recipient_fingerprint",
+                        "envelope_base64url",
+                    },
+                    {
+                        "version",
+                        "purpose",
+                        "stage_id",
+                        "staged_at",
+                        "envelope_sha256",
+                        "recipient_fingerprint",
+                        "envelope_base64url",
+                        "owner_witness",
+                    },
+                )
                 or bootstrap._canonical(document) != raw
                 or type(document["version"]) is not int
                 or document["version"] != 2
@@ -189,7 +207,24 @@ def read_encrypted_telegram_stage(
                 or _validate_public_v2_header(envelope) != coordinates.recipient_fingerprint
             ):
                 raise ValueError("stage_envelope")
-        except (ValueError, TypeError, KeyError, UnicodeError, bootstrap.BootstrapError):
+            witness = (
+                parse_witness_document(document["owner_witness"])
+                if "owner_witness" in document
+                else None
+            )
+            if (
+                witness is not None
+                and not 0 <= document["staged_at"] - witness.challenged_at <= 120
+            ):
+                raise ValueError("stage_owner_age")
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            UnicodeError,
+            bootstrap.BootstrapError,
+            TelegramOwnerWitnessError,
+        ):
             raise SameLeasePairingError("telegram_encrypted_stage_unverified") from None
         result = EncryptedPairingStage(
             stage_id=document["stage_id"],
@@ -198,6 +233,7 @@ def read_encrypted_telegram_stage(
             recipient_fingerprint=document["recipient_fingerprint"],
             file_identity=identity,
             envelope=envelope,
+            owner_witness=witness,
         )
         _require_lease(lease, coordinates)
         return result
