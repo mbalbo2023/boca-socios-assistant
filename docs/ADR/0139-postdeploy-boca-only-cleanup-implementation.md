@@ -475,3 +475,70 @@ Thus even a future positive Cutover A receipt **cannot** by itself certify an
 integral BETA GREEN: authenticated Chrome persistence, Telegram private
 delivery, lifecycle ACKs, no-reservation simulation, Samsung Chrome+Termius
 acceptance and selective Docker cleanup still need actual receipts.
+
+### R19 P1: reboot-persistent host-only receipt, with pre-effect O_EXCL intent
+
+Architecture audit detected a durable-evidence defect in R11-4: the terminal
+record was written to `/run/user/10001`, a **tmpfs runtime directory**. An
+irreversible accepted cutover followed by host reboot could lose that marker,
+so neither GitHub's `if:always()` nor a later read-only inspection could
+reconcile the original host decision. Calling `fsync` on tmpfs does not fix
+reboot persistence. This is a **code-only correction**; no droplet, SSH or
+existing mounted data has been modified.
+
+The new marker namespace is a dedicated private subdirectory named
+`.boca-socios-cutover-receipts` under the actual `pwd.getpwuid(10001).pw_dir`
+of the **host-only** account `boca-deploy`. It is **not** in the controller's
+RW `/data`, nor the strict `/srv/boca-socios` Compose root (whose byte-exact
+root-entry inventory would be invalidated by an extra marker). It never
+moves/duplicates the canonical cooperative lock: that remains exclusively in
+`/run/user/10001/boca-socios-protected-job.lock` during the same process.
+
+Before any Docker attestation, pull or irreversible action, `run_cutover_a`
+now requires a *paired* terminal-preflight callback whenever it receives a
+terminal sink. **Concrete `RootlessCutoverBackend` additionally refuses any
+invocation without both callbacks**, even if a future caller mistakenly omits
+the sink; fully injected fake backends remain separately testable. The
+preflight, under the exact held lease:
+
+1. Verifies account name/UID, absolute private home, no path redirects or
+   overlap with `/run`, `/tmp` or `/srv/boca-socios`, UID/GID10001 and 0700.
+2. Uses read-only `/proc/self/mountinfo` to require a recognized **disk-backed
+   filesystem** for both the home and the actual receipt child directory;
+   a nested tmpfs bind over a disk-backed home is also NO_GO. Storage space
+   and inode headroom are checked before effects, not after port 8443 moves.
+3. Creates the dedicated 0700 receipt directory only if absent, checks the
+   complete bounded allowlist of existing immutable files, symlink/hardlink,
+   file modes and owners; a foreign object is never read or deleted.
+4. Writes a versioned **O_EXCL intent** containing the exact legacy ID/SHA,
+   old image/Compose, target SHA/two images/three reviewed file hashes, run
+   ID, fixed localhost origin and hashed owner subject. It fsyncs the file
+   and directory and reads back exact bytes. Existing intent/result forbids
+   reuse of the same run ID, even after a crashed process or reboot.
+
+After the mandatory backend postflight (including selective cleanup), the
+terminal sink runs before release of the *same* lease, authenticates the
+original intent and writes the **O_EXCL terminal result** as a second 0600
+file with fsync, directory fsync and exact inode/bytes readback. The result
+binds to the intent's SHA256. The two records are retained as audit evidence,
+not cleared as Docker garbage and not copied as backups. No stage/root
+allowlist, controller database, owner-session SQLite, key/Telegram volume,
+other service or additional port is touched.
+
+`reconcile_persisted(plan)` can run in a **fresh read-only process after a
+reboot**. It returns only `INTENT_ONLY_NO_GO` (missing result, quarantine) or
+`RECORD_PRESENT_RUNTIME_UNVERIFIED` (both records intact). Neither return
+value authorizes a Docker retry/deletion, physical GO or a claim that the
+Chrome endpoint still works after reboot. Missing/unsafe/corrupt files raise
+NO_GO. An independent live inventory and separately authorized fix-forward
+operation would still be required if the original result is absent.
+
+Adversarial fake-host QA covers a fresh second process, intent-only after a
+failed sink, duplicate attempt, bad directory mode, symlinked home, foreign
+file, hardlink, tmpfs home, nested tmpfs receipt mount, real backend without
+paired callbacks, and refusal to call
+backend when preflight is missing/invalid. These tests attest the **code
+contract only**. No actual filesystem type, host home path, reboot behavior
+or 8443 state on the droplet has been observed; physical Cutover A remains
+NO_GO pending protected host read-only checks, separate owner GO and the
+single reviewed Action dispatch.

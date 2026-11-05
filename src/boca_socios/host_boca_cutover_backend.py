@@ -190,6 +190,10 @@ def _legacy_disk_identity(plan: CutoverPlan) -> tuple[Path, tuple[int, int]]:
 class RootlessCutoverBackend:
     """One ephemeral guarded host adapter. Must be passed to run_cutover_a()."""
 
+    # Unlike injected fake backends, effectful rootless Docker can never run
+    # without BOTH the early persistent intent and terminal result writer.
+    requires_persistent_receipt = True
+
     def __init__(
         self, sources: ReviewedCutoverSources, *, session_bootstrap: Bootstrap | None = None
     ) -> None:
