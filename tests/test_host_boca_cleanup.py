@@ -1089,11 +1089,14 @@ def test_digest_only_legacy_image_is_inventoried_by_attested_id_not_reference_fi
     old = next(image for image in verified.images if image.ident == OLD_IMAGE)
     assert old.historical_legacy_attested and old.source is None
     assert old.references == (reference,)
-    assert gc.Target("image", OLD_IMAGE) in gc.plan(
-        verified,
-        ATTEMPT,
-        preserve_images=frozenset(),
-        preserve_containers=frozenset({ACTIVE_ID}),
-        retire_containers=frozenset(),
-    ).targets
+    assert (
+        gc.Target("image", OLD_IMAGE)
+        in gc.plan(
+            verified,
+            ATTEMPT,
+            preserve_images=frozenset(),
+            preserve_containers=frozenset({ACTIVE_ID}),
+            retire_containers=frozenset(),
+        ).targets
+    )
     assert not any(ident == FOREIGN_IMAGE for _kind, ident, _field in inspected)
