@@ -94,7 +94,7 @@ on:
         required: false
         type: string
       protected_action_context:
-        description: Blank for verified READ_ONLY PREPARE; APPLY short prior PREPARE run ID only (lifecycle/Cutover/import). No JSON or PIN.
+        description: Leave blank for Boca READ_ONLY PREPARE; APPLY uses only prior PREPARE run ID (digits), never JSON/PIN/secret. Lifecycle/Cutover/import.
         required: false
         type: string
       service:
@@ -841,6 +841,8 @@ jobs:
             "$RUNNER_TEMP/boca-legacy-image-runs.json" \
             "$RUNNER_TEMP/boca-legacy-current-release.id"
           IFS= read -r reviewed_release_id < "$RUNNER_TEMP/boca-legacy-current-release.id"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$reviewed_release_id" > "$RUNNER_TEMP/boca-legacy-current-run.json"
+          python scripts/check_release_run.py "$RUNNER_TEMP/boca-legacy-current-run.json" "$GITHUB_SHA" "$reviewed_release_id"
           mkdir -m 700 "$RUNNER_TEMP/boca-legacy-current-manifest" \
             "$RUNNER_TEMP/boca-legacy-current-browser"
           gh run download "$reviewed_release_id" --repo "$GITHUB_REPOSITORY" \
@@ -1297,6 +1299,8 @@ jobs:
             "$RUNNER_TEMP/boca-legacy-inventory.observed.json" \
             "$RUNNER_TEMP/boca-cutover-observed-release.id"
           IFS= read -r historical_run < "$RUNNER_TEMP/boca-cutover-observed-release.id"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$historical_run" > "$RUNNER_TEMP/boca-legacy-historical-run.json"
+          python scripts/check_release_run.py "$RUNNER_TEMP/boca-legacy-historical-run.json" "$BOCA_LEGACY_SOURCE_SHA" "$historical_run"
           mkdir -m 700 "$RUNNER_TEMP/boca-cutover-observed-manifest"
           gh run download "$historical_run" --repo "$GITHUB_REPOSITORY" \
             --name boca-release-manifest --dir "$RUNNER_TEMP/boca-cutover-observed-manifest"
@@ -1495,7 +1499,7 @@ jobs:
             "$RUNNER_TEMP/boca-legacy-prepared/boca-legacy-prepare.coordinates.json" \
             "$RUNNER_TEMP/boca-legacy-prepared/boca-legacy-prepare.receipt.json"
           python scripts/check_cutover_a_go.py --prepared-from-actions
-      - name: Require independent official import GO_B and exact source ZIP
+      - name: Require independent GO and exact official source artifact before SSH
         id: official_import_go_preflight
         if: inputs.operation == 'official-notice-import' && inputs.protected_action_context != ''
         env:

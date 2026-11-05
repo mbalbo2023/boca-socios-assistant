@@ -87,7 +87,7 @@ def test_apply_requires_actual_completed_prepare_and_protected_go_env() -> None:
     assert "check_legacy_go_dispatch.py apply" in cutover
     assert "check_cutover_a_go.py --prepared-from-actions" in cutover
     assert "check_cutover_a_go.py --from-actions" not in cutover
-    official = _step("Require independent official import GO_B and exact source ZIP")
+    official = _step("Require independent GO and exact official source artifact before SSH")
     assert (
         "BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256: ${{ vars.BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256 }}"
         in official
