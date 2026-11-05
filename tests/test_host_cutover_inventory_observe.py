@@ -22,10 +22,20 @@ from boca_socios.host_boca_cleanup import (
 )
 from test_host_lifecycle_rootless_adapter import (
     CONTROLLER as OFFICIAL_CONTROLLER,
+)
+from test_host_lifecycle_rootless_adapter import (
     CONTROLLER_REF as OFFICIAL_CONTROLLER_REF,
+)
+from test_host_lifecycle_rootless_adapter import (
     SOURCE as OFFICIAL_SOURCE,
+)
+from test_host_lifecycle_rootless_adapter import (
     WORKER as OFFICIAL_WORKER,
+)
+from test_host_lifecycle_rootless_adapter import (
     WORKER_REF as OFFICIAL_WORKER_REF,
+)
+from test_host_lifecycle_rootless_adapter import (
     FakeIO as OfficialFakeIO,
 )
 
@@ -291,7 +301,7 @@ def test_cutover_refuses_unproven_topology_without_effect(
         )
     elif name == "wrong_port":
         io.fields[("container", CONTROLLER, "HostConfig.PortBindings")] = {
-            "8443/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8443"}]
+            "8443/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8443"}]  # noqa: S104 - deliberately rejected
         }
     elif name == "unhealthy":
         io.fields[("container", CONTROLLER, "State.Health.Status")] = "unhealthy"
@@ -462,7 +472,7 @@ def test_official_refuses_current_topology_drift_without_mutations(
         )
     elif break_kind == "wrong_port":
         io.fields[("container", OFFICIAL_CONTROLLER, "NetworkSettings.Ports")] = {
-            "8443/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8443"}]
+            "8443/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8443"}]  # noqa: S104 - deliberately rejected
         }
     elif break_kind == "owner_volume":
         io.inventory_value = replace(
