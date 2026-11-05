@@ -61,8 +61,12 @@ class OwnerStagePreflight:
 def _verified_host_volumes(reader: LifecycleDockerIO) -> tuple[Path, Path]:
     """Bind paths to two independently inspected named volumes, not caller argv."""
     try:
-        data = Path(reader.field("volume", _DATA, "Mountpoint"))
-        owner = Path(reader.field("volume", _OWNER, "Mountpoint"))
+        data_value = reader.field("volume", _DATA, "Mountpoint")
+        owner_value = reader.field("volume", _OWNER, "Mountpoint")
+        if not isinstance(data_value, str) or not isinstance(owner_value, str):
+            raise ValueError("volume mountpoints")
+        data = Path(data_value)
+        owner = Path(owner_value)
         if (
             not data.is_absolute()
             or ".." in data.parts
