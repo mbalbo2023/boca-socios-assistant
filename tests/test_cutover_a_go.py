@@ -385,3 +385,51 @@ def test_effectful_dispatch_is_inert_without_independent_exact_run_go() -> None:
     assert "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in effect
     assert "docker image prune" not in workflow
     assert "docker system prune" not in workflow
+
+def test_prepared_cutover_review_remains_exact_across_distinct_apply_runs(
+    tmp_path: Path,
+) -> None:
+    """A known PREPARE identity can bind reviewed bytes before APPLY gets its ID."""
+    request = _fixture(tmp_path)
+    prepare_id = "50000000001"
+    prepared = go.cutover_prepared_context_sha256(request, prepare_run_id=prepare_id)
+    assert len(prepared) == 64
+    assert prepared != go.authorization_digest(request)
+    second_run = "50000000002"
+    replay = replace(
+        request,
+        github_run_id=second_run,
+        plan=replace(request.plan, attempt_id=second_run),
+    )
+    assert (
+        go.cutover_prepared_context_sha256(replay, prepare_run_id=prepare_id)
+        == prepared
+    )
+    assert (
+        go.cutover_prepared_context_sha256(request, prepare_run_id="50000000003")
+        != prepared
+    )
+    # New digest cannot satisfy the legacy GO gate.
+    with pytest.raises(go.CutoverGoError, match="not bound"):
+        go.require_protected_go(request, protected_go_digest=prepared)
+    for invalid in ("", "0", "5"*21):
+        with pytest.raises(go.CutoverGoError):
+            go.cutover_prepared_context_sha256(request, prepare_run_id=invalid)
+    with pytest.raises(go.CutoverGoError):
+        go.cutover_prepared_context_sha256(
+            replace(request, github_actor="imposter"), prepare_run_id=prepare_id
+        )
+    with pytest.raises(go.CutoverGoError):
+        go.cutover_prepared_context_sha256(
+            replace(request, github_run_id="50000000004"), prepare_run_id=prepare_id
+        )
+
+
+def test_prepared_cutover_review_rejects_any_reviewed_bytes_drift(tmp_path: Path) -> None:
+    request = _fixture(tmp_path)
+    prepared = go.cutover_prepared_context_sha256(request, prepare_run_id="50000000001")
+    request.browser_manifest_path.write_text('{"source_sha":"tampered"}')
+    with pytest.raises(go.CutoverGoError, match="manifests conflict"):
+        go.cutover_prepared_context_sha256(request, prepare_run_id="50000000001")
+    assert len(prepared) == 64
+
