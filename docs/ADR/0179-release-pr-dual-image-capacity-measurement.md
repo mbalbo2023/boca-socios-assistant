@@ -75,3 +75,16 @@ espacio efectivo del daemon rootless antes de cualquier release real.
 
 La primera CI del PR registró `I001` (import block) solo en el test nuevo;
 se corrige sin cambiar la medición. No extrapolar ese primer check a GO.
+
+## R27.1 — Comprobación de los tres navegadores de la imagen final
+
+Por instrucción explícita del propietario, la BETA **conserva Playwright
+completo**, incluidos Chromium, Firefox y WebKit. No se optimiza reduciendo
+navegadores, ni se cambia `Dockerfile.browser`. El PR valida con `docker run`
+offline (`--network none`, UID10002, filesystem read-only, cap-drop y
+seccomp) únicamente el paquete Playwright instalado, comprueba con `Path.is_file`
+los `executable_path` de los tres browser types y emite
+`BOCA_FULL_PLAYWRIGHT_BUNDLES ...` sin iniciar navegación ni importar los
+módulos BLACKBOX. Este segundo recibo es evidencia de **disponibilidad de
+binarios**, no de ejecución funcional Firefox/WebKit, no acredita instalación
+en el droplet y no reemplaza los gates de capacidad.
