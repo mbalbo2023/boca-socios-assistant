@@ -619,3 +619,50 @@ líneas de recibo fallidas, pérdida de GO/SSH, límites de la operación y
 regresión de las funcionalidades de navegador. El candidato #319 y el resto
 de los frentes se integran sólo con QA/Actions de SHA exacto y la decisión
 explícita del propietario para el **único** deploy.
+
+## A45-R35 / PR DRAFT #384 — historical unlabeled controller image after COMMITTED (CODE_ONLY)
+
+RCA #323 observed by source audit on 05/11/2026 ART, **not a physical
+postcommit failure**: the genuine original controller's release
+[Actions #41893887078](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41893887078)
+was built with OCI `revision` but no `org.opencontainers.image.source`.
+After the Cutover A backend removes its original exact CID, generic cleanup
+either sees a now-unreferenced Boca GHCR image with unverified provenance,
+returns `INDETERMINATE` after `COMMITTED`, and suppresses terminal acceptance,
+or its old reference-only filter can fail to enumerate a digest-only image.
+This is a deterministic **code contract hazard**, conditional on the physical
+image listing; it has not been reproduced on the droplet.
+
+The limited fix forward in DRAFT #384:
+
+1. While the original controller is still parked and recoverable, the
+   already-authenticated `_cutover_legacy_record` returns its immutable
+   Docker `Image` ID. A narrowly scoped proof checks only that ID's
+   `Id`, `RepoTags`, `RepoDigests`, `Config.Labels`: GH historical
+   digest and revision must match exactly, and every alias must belong to
+   the **controller** repository. No untrusted image's `Config.Env` is read.
+2. A same-lease rootless inventory proves that controller ID still points
+   to that exact image, target candidate and browser worker IDs are preserved,
+   and **no other uncertain Boca residue** exists. A missing digest/label,
+   changed ID, foreign alias, foreign container, ambiguous volume/network or
+   unavailable inventory causes `NO_GO` before retirement, while the old
+   container can still be restored.
+3. After successful retirement only, the generic finalizer receives that
+   singular attested old-image proof; every probe re-verifies the exact
+   historical digest, source and aliases, including when the original GHCR
+   reference filter misses digest-only images. Only this old image may be
+   classified removable without OCI `source`. All other missing-source
+   images remain `INDETERMINATE`, and every deletion still needs zero
+   running/stopped container references, `docker image rm` by immutable
+   ID without force, and global image-ID disappearance in the final receipt.
+4. Historical precommit failure/recovery does **not** authorize old-image
+   deletion. Owner/key/data/Telegram volumes, foreign workloads, BLACKBOX,
+   Porota, port/HTTPS configuration, and backup remain untouched.
+
+Offline regression selectors are recorded under `RCA-323` in
+`docs/quality/rca-lessons.json`. PR #384 requires exact-SHA Actions success
+and technical review before integration. No workflow or GO_B schema fields
+change, but any source integration changes the reviewed memfd ZIP SHA:
+**new main SHA, dual release, PREPARE receipt and independently bound GO_B
+are mandatory**. This documentation does not claim any release/host operation,
+Docker cleanup or Samsung runtime proof.
