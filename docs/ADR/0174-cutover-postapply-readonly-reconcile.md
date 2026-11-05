@@ -81,3 +81,45 @@ el observador, únicamente una operación manual READ_ONLY, con recibo remoto
 canónico, podrá precisar el estado del incidente. El PR, aun verde, **no es
 la aceptación del host**. El root owner conserva merge/deploy físico y las
 comprobaciones Android Chrome + Termius, salud Chromium y Telegram.
+
+## R23 — reconciliación física posterior (#42100840815)
+
+El workflow READ_ONLY #42100840815 terminó **SUCCESS** y entregó un recibo
+canónico: `intent=PRESENT`, `result=PRESENT`, `state=NO_GO`,
+`cleanup=INDETERMINATE`, `original_restored=true`, `commit_started=false`,
+`stage=ABSENT`, `original=RUNNING/healthy`, un único contenedor Boca, cero
+worker/candidato y binding Docker exclusivo en `127.0.0.1:8443`.
+El marcador PREPARE aparece `UNREADABLE`, **no** ausente ni inválido.
+
+### Inferencia del código con límites
+
+En `host_boca_cutover.run_cutover_a` se establece `effect_started=True`
+**después** de que regresa el consumidor de PREPARE y justo **antes** de
+`backend.stage()`. Con `original_restored=true` y `cleanup=INDETERMINATE`
+se demuestra que se ejecutó la ruta de recuperación precommit; no demuestra
+qué llamada inicial lanzó la excepción. `backend.finalize()` sólo devuelve
+`INDETERMINATE` como recibo de `cleanup.execute_protected` bajo un estado
+`RECOVERED` o `COMMITTED`; `commit_started=false` excluye el último.
+El staging ausente es compatible con fallo en validaciones previas a `mkdir`
+de `host_cutover_stage.initialize`, pero también podría haber cambiado entre
+el incidente y la observación posterior. No se afirma timeout del marcador.
+
+### Diagnóstico incremental sin efectos
+
+Se amplía el mismo lector `cutover-a-reconcile` con dos pruebas independientes:
+
+- `stage_preflight`: comprueba sólo el directorio `/srv/boca-socios` y el
+  `compose.beta.yaml` existente mediante O_NOFOLLOW, UID/GID/modo, lista
+  exacta de entradas, hash contra la intención persistente y unicidad de
+  las cuatro SHA de Compose/overlay/seccomp. Devuelve únicamente códigos
+  acotados (`STAGE_ROOT_ENTRIES`, `STAGE_COMPOSE_SHA`,
+  `PLAN_SHA_COLLISION_OR_INVALID`, `STAGE_PREFLIGHT_MATCH`, etc.), sin
+  publicar bytes ni rutas privadas adicionales.
+- `prepared_go_marker_reason`: desambigua `UNREADABLE` con códigos como
+  `DIRECTORY`, `MARKER_METADATA`, `READ_PERMISSION`, `DOCKER_READ`; no hace
+  `docker exec` ni modifica permisos, marcadores o volúmenes.
+
+El recibo sigue imponiendo `runtime_attested=false`, `go_for_retry=false`
+y `scope=OBSERVER_ONLY`. No se reejecuta el APPLY original. Incluso una
+precondición de staging hoy positiva sólo acredita el estado actual, **no**
+demuestra cuál era la condición temporal durante el APPLY anterior.
