@@ -428,7 +428,8 @@ def main(argv: list[str] | None = None) -> int:
                 f" workers={len(result['browser_workers'])}"
                 f" port={result['port_8443']}"
                 f" marker={result['prepared_go_marker']}"
-                " host_writes=0 retry=NO_GO"
+                " scope=OBSERVER_ONLY observer_writes=0"
+                " prior_apply_effects=UNKNOWN retry=NO_GO"
             )
         return 0
     except (OSError, ReconcileError, ValueError, TypeError):
