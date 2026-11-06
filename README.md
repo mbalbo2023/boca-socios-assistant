@@ -1,6 +1,44 @@
 # Boca Socios Assistant
 
-## R53 — recuperación exclusiva del Stage de Cutover #757 (06/11/2026 ART, CANDIDATO)
+## R55 — recuperación acotada del Stage del Cutover #763 (06/11/2026 ART, CANDIDATO CODE_ONLY)
+
+La ruta de recuperación R53 [#760](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42273287046)
+dejó `STAGE_CLEARED`/`physical_ACK=ACCEPT` para el incidente #757, con cero
+escrituras Docker y sin afectar Compose ni servicios ajenos. La observación
+[#761](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42273489927)
+comprobó `stage=ABSENT`, controlador legacy original sano y solo el puerto
+`127.0.0.1:8443`.
+
+El release dual [#700](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42273375991)
+publicó ambos digests desde `main=bc2d31669da5f360a659de896041ac3619ce2ce9`.
+GO_B PREPARE [#762](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42274019739)
+produjo `READY`, con SHA256 independiente `f8291f8d9033fc4bf83ef22649f27db1c1b1afd588d4ed55790c00571a1689d7`
+configurado y comprobado en el Environment protegido. El APPLY
+[#763](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42274349061)
+pasó ese preflight pero volvió a terminar con salida SSH 3 y sin ACK físico
+`ACCEPTED`. **No reintentar #763: la BETA integral no está instalada.**
+
+El nuevo observador independiente READ_ONLY
+[#764](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42274552585)
+registró `stage=PRESENT`, `root_entries_count=2`, `commit_started=false`,
+sin promoción, sin candidato ni worker y sin tocar recursos extranjeros. El
+controlador original `27ef39ed49d2…` permanece `healthy/running` en loopback
+8443. La causa precisa del remoto `exit3` **sigue sin probarse** por los
+recibos disponibles; la observación de capacidad no identifica por sí sola
+el punto de fallo. Por indicación del propietario, la limpieza de disco tiene
+otro dueño: este PR **no ejecuta ni amplía** operaciones de limpieza.
+
+R55 cambia solo los pins exactos `cutover-a-stage-recover` a #763/#762/#764
+para efectuar una única recuperación bajo lease, identidad de Stage y
+postverificación física. No modifica los tres pins de image-retire, los gates
+de instalación, imágenes, datos, BLACKBOX o recursos externos. Hasta CI,
+revisión, merge y un nuevo recibo físico `STAGE_CLEARED`, el Stage permanece
+en cuarentena. **La recuperación no autoriza reintentar ese APPLY**; un
+Cutover futuro necesitará release/PREPARE/GO nuevos del `main` definitivo.
+Véase [ADR0184](docs/ADR/0184-exact-incident-uncommitted-stage-recovery.md)
+y [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+
+## Histórico — R53, recuperación exclusiva del Stage de Cutover #757 (06/11/2026 ART)
 
 El Stage de #750 fue recuperado físicamente por [#754](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42269139909):
 `STAGE_CLEARED` y `physical_ACK=ACCEPT`, sin cambios en Docker ni en otros servicios.

@@ -15,11 +15,12 @@ def test_exact_one_incident_one_prepare_and_independent_protected_actions() -> N
     flow = WORKFLOW.read_text()
     assert "cutover-a-stage-recover" in flow
     assert "cutover-a-image-retire" in flow
-    # #757 is independently reconciled; neither recovered #740 / #750 nor
+    # #763 is independently reconciled; neither recovered #740 / #750 / #757 nor
     # the historical #732 image-retire operation may reuse this one-shot pin.
-    assert "stage_incident=42270552485" in flow
-    assert "stage_prepare=42270247581" in flow
-    assert "stage_readonly=42270841732" in flow
+    assert "stage_incident=42274349061" in flow
+    assert "stage_prepare=42274019739" in flow
+    assert "stage_readonly=42274552585" in flow
+    assert "stage_incident=42270552485" not in flow
     assert "stage_incident=42266188095" not in flow
     assert "stage_incident=42249350458" not in flow
     assert "image_incident=42236673419" in flow
@@ -63,8 +64,8 @@ def test_stage_runner_verifier_imports_both_packages_outside_host() -> None:
             "-m",
             "scripts.host_cutover_stage_recovery",
             "verify",
-            "42270552485",
-            "42270247581",
+            "42274349061",
+            "42274019739",
         ],
         cwd=ROOT,
         env=env,

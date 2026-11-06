@@ -283,3 +283,49 @@ Hasta el ACK físico de la recuperación, Stage permanece en cuarentena.
 Después será necesario release/PREPARE/GO_B nuevos del SHA exacto de
 `main` para un intento distinto, sin reutilizar PREPARE #756 ni APPLY #757.
 No tocar blackbox, otros servicios, backups o Docker global.
+
+## Extensión R55 — quinto incidente #763, recuperación unitaria exacta
+
+**Estado de este cambio: candidato CODE_ONLY, no equivale a recuperación
+física.** La recuperación protegida del Stage del incidente #757
+[#760](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42273287046)
+finalizó con `STAGE_CLEARED`, `physical_ACK=ACCEPT`, cero escrituras Docker y
+Compose inalterado. El observador posterior
+[#761](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42273489927)
+verificó `stage=ABSENT` y el original sano en loopback 8443.
+
+La pareja inmutable [Image Release #700](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42273375991)
+corresponde al `main=bc2d31669da5f360a659de896041ac3619ce2ce9`.
+PREPARE [#762](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42274019739)
+pasó sin escrituras Docker y quedó ligado al GO_B independiente SHA256
+`f8291f8d9033fc4bf83ef22649f27db1c1b1afd588d4ed55790c00571a1689d7`,
+actualizado en Environment. El APPLY [#763](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42274349061)
+superó el GO, pero el SSH remoto terminó con código 3 sin ACK final.
+**No se instaló la BETA nueva y no está permitido reintentar #763.**
+
+El observer READ_ONLY independiente
+[#764](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42274552585)
+vio intent/result presentes, terminal `NO_GO`, cleanup `INDETERMINATE`,
+`stage=PRESENT`, dos entradas en la raíz, `commit_started=false`, promoción
+ausente, cero workers/candidatos, un solo legacy CID
+`27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793`
+sano y publicado solo en `127.0.0.1:8443`. Ningún recurso extraño fue
+tocado. El conteo de Stage no basta para autorizar unlink: siguen siendo
+obligatorios marker, digests, root identidad, observaciones estables y lease.
+
+| Vinculación inmutable R55 | Run ID | Resultado verificado |
+| --- | --- | --- |
+| Incidente #763 | `42274349061` | `failure` |
+| PREPARE #762 | `42274019739` | `success` |
+| READ_ONLY posterior #764 | `42274552585` | `success` |
+
+Este PR cambia únicamente los tres pins de la ruta existente de recuperación
+Stage, sus aserciones de regresión y esta evidencia documental. **No** cambia
+los pins ni la ruta de retiro histórico de imágenes, no levanta reservas de
+almacenamiento ni ejecuta ningún cleanup Docker. La limpieza de disco está
+delegada explícitamente a otro frente. La medición de bytes libres describe
+el host, pero **no prueba** la fase exacta que produjo `exit3` por SSH.
+Después del merge, la operación protegida solo podrá ejecutarse una vez
+contra estos IDs; debe exigir ACK `STAGE_CLEARED` físico y observación
+posterior. Una recuperación satisfactoria tampoco reutiliza GO_B/APPLY #763:
+una instalación distinta necesita release/PREPARE/GO por SHA exacto nuevos.
