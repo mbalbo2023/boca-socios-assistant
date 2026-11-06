@@ -1,6 +1,35 @@
 # Boca Socios Assistant
 
-## R55 — recuperación acotada del Stage del Cutover #763 (06/11/2026 ART, CANDIDATO CODE_ONLY)
+## R57 — recuperación de Stage del Cutover #770 (06/11/2026 ART, CANDIDATO CODE_ONLY)
+
+La recuperación R55 del Stage del incidente #763 quedó completada físicamente
+por la ejecución protegida #766; su observer independiente #767 confirmó
+`stage=ABSENT` antes del nuevo intento. El PREPARE
+[#768](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42277201326)
+terminó `success`; el APPLY protegido
+[#770](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42307268117)
+pasó el GO_B pero su único SSH remoto devolvió código 3 sin ACK terminal
+aceptado. **No repetir #770 ni declarar instalada la BETA integral.**
+
+La reconciliación física READ_ONLY independiente
+[#771](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42307426818)
+terminó `success`: Stage presente (`root_entries_count=2`),
+`commit_started=false`, sin promoción, candidatos ni workers, y controlador
+legacy CID `27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793`
+`healthy` en `127.0.0.1:8443`, con servicios externos intactos. Dos entradas
+no autentican el contenido del Stage ni prueban la causa del `exit3`.
+
+R57 solo reasigna los tres IDs protegidos de `cutover-a-stage-recover` a
+#770/#768/#771 y añade pruebas/documentación. Conserva pins de image-retire,
+lease, doble observación, autenticación de hashes/markers y ACK físico. Hasta
+PR, CI, revisión, merge y recibo `STAGE_CLEARED`, **Stage continúa en cuarentena**.
+La limpieza de disco tiene otro dueño; esta rama no crea operaciones Docker,
+no toca el instalador, BLACKBOX ni servicios externos. Un futuro Cutover
+necesita release/PREPARE/GO_B nuevos y evidencia de admisión propia.
+Véase [ADR0184](docs/ADR/0184-exact-incident-uncommitted-stage-recovery.md)
+y [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+
+## Histórico — R55, Stage del Cutover #763 (06/11/2026 ART)
 
 La ruta de recuperación R53 [#760](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42273287046)
 dejó `STAGE_CLEARED`/`physical_ACK=ACCEPT` para el incidente #757, con cero

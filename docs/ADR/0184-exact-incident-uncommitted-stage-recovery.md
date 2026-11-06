@@ -329,3 +329,37 @@ Después del merge, la operación protegida solo podrá ejecutarse una vez
 contra estos IDs; debe exigir ACK `STAGE_CLEARED` físico y observación
 posterior. Una recuperación satisfactoria tampoco reutiliza GO_B/APPLY #763:
 una instalación distinta necesita release/PREPARE/GO por SHA exacto nuevos.
+
+## Extensión R57 — sexto incidente #770, Stage no comprometido
+
+**Estado: CANDIDATO CODE_ONLY; no hay limpieza física atribuible a este cambio.**
+La recuperación Stage de #763 se ejecutó por #766 y fue comprobada por
+#767 con `stage=ABSENT`; no repetirla. El GO_B PREPARE
+[#768](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42277201326)
+terminó `success` para un intento distinto, pero el APPLY protegido
+[#770](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42307268117)
+terminó `failure`, SSH remoto 3 y sin ACK terminal aceptado.
+
+El READ_ONLY independiente
+[#771](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42307426818)
+comprobó `stage=PRESENT`, `root_entries_count=2`,
+`commit_started=false`, sin promoción, cero candidato y worker, original
+legacy `27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793`
+healthy en `127.0.0.1:8443` y recursos ajenos preservados. La causa
+exacta de la salida 3 no se prueba mediante el conteo de Stage.
+
+| Vinculación inmutable R57 | Run ID | Estado exigido |
+| --- | --- | --- |
+| Incidente Cutover #770 | `42307268117` | `failure` |
+| PREPARE #768 | `42277201326` | `success` |
+| READ_ONLY #771 | `42307426818` | `success` |
+
+Únicamente se reasignan los pins de recuperación Stage en
+`.github/workflows/boca-first-deploy.yml`, sin modificar los pins de
+`cutover-a-image-retire` ni su ruta histórica. Se reutilizan el lease,
+las verificaciones independientes de runs/SHA/actor y de Stage por identidad,
+marker y hashes, así como verificación posterior/ACK; ante cualquier drift,
+retener Stage y devolver NO_GO. Un Stage saneado **no habilita** repetir el
+APPLY #770 ni consumir otra vez PREPARE #768: corresponde un futuro
+release/PREPARE/GO_B de `main` exacto. La limpieza de disco la ejecuta otro
+frente; aquí no hay Docker writes, cambios de umbral ni efectos físicos.
