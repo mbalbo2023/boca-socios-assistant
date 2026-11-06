@@ -4295,11 +4295,17 @@ def _browser_validate_image(image: str, source_sha: str) -> None:
 def _browser_pull_both(image: str, browser_image: str, source_sha: str) -> None:
     before = _storage_snapshot()
     current = before
-    for reference in (image, browser_image):
-        # Every pull begins above the original 4 GiB admission floor. A
-        # completed pull may fall below 4 GiB, but must retain 1 GiB/50k
-        # inodes on BOTH Boca staging and Docker root before further effects.
-        _validate_storage_capacity(current)
+    for index, reference in enumerate((image, browser_image)):
+        # Admit the two-image transaction once at 4 GiB. Between images, use
+        # the independently approved 1 GiB residual floor; reimposing the
+        # initial floor after the first pull would reject a valid transaction.
+        # Preserve both Boca staging and Docker-root inode/capacity checks.
+        _validate_storage_capacity(
+            current,
+            min_free_bytes=(
+                PREFLIGHT_STORAGE_MIN_BYTES if index == 0 else POSTINSTALL_STORAGE_MIN_BYTES
+            ),
+        )
         _run("docker", "pull", reference)
         _browser_validate_image(reference, source_sha)
         current = _storage_snapshot()

@@ -7,6 +7,11 @@ de instalar Playwright completo; mantener la puerta previa, las identidades y
 la limpieza selectiva. La autorización para avanzar no acredita que el host
 haya instalado nada, ni cambia la seguridad de Porota u otros servicios.
 
+**Actualización R50 (06/11/2026):** la política R40 de **4 GiB antes de cada
+imagen** descrita abajo queda corregida para la transacción dual por la
+enmienda al final de este ADR. El texto original se conserva como historia
+de la condición que impedía continuar después de descargar el controller.
+
 ## Problema y evidencia física anterior al cambio
 
 La observación protegida [#42132959174](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42132959174)
@@ -76,3 +81,41 @@ de aislamiento sobre un SHA de PR no equivalen a release ni host. El nuevo
 main requerirá **nueva publicación dual por digests exactos**, revisión GO B,
 `PREPARE→APPLY` protegido, inventario/cleanup y ACK físico antes de declarar
 BETA instalada. No ejecutar un pull en host por mera estimación de TAR.
+
+## Enmienda R50 — admisión única para el par controller/browser (06/11/2026 ART)
+
+**Estado: candidato de código, NO implementado en el droplet.** La prueba
+unitaria reproduce una contradicción del *contrato de descarga*, sin demostrar
+que haya provocado la salida 3 del APPLY físico
+[#42249350458](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42249350458).
+Esa ejecución nunca produjo ACK de Cutover y el observer READ_ONLY
+[#42254498237](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42254498237)
+solo acota el fallo a **antes del compromiso irreversible**, con controller
+legacy sano, cero worker y Stage ausente después de su recuperación exacta
+[#42254252830](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42254252830).
+
+El chequeo original `_browser_pull_both` aplicaba 4 GiB antes del primer
+`docker pull`, **otra vez antes del segundo**, y 1 GiB después de ambos.
+Esto no implementaba el alcance operativo de levantar el piso **después de
+consumir espacio por el primer pull** dentro de una descarga dual aprobada:
+rechazaba cualquier residual entre 1 y 4 GiB aunque la primera descarga
+hubiera superado todas sus verificaciones.
+
+Para el par indivisible de dos imágenes **del mismo release**, se decide:
+
+1. Preflight dual inicial: **4 GiB + 50.000 inodos libres** tanto en staging
+   como en Docker root verificado, antes de **la primera descarga**.
+2. Tras el controller, volver a medir ambos paths: **1 GiB + 50.000 inodos**
+   y continuidad de filesystem/inode; misma prueba **antes** del segundo pull.
+3. Tras la imagen browser Chromium/Firefox/WebKit, volver a medir y exigir el
+   mismo residual de **1 GiB + 50.000 inodos**, antes de crear worker o tocar
+   los datos/owner. Cualquier rechazo activa NO_GO/compensación Boca-only.
+4. Fuera de esa transacción dual, los preflights previos conservan 4 GiB;
+   ninguna validación de UID, digest, SHA, Docker rootless, Compose, puerto,
+   límites de contenedor, postflight ni limpieza de exact-ID se relaja.
+
+No hay garantía de que el almacenamiento alcance para la segunda descarga;
+la imagen de runner es una medida lógica y no un máximo físico. El arreglo
+solamente elimina una doble admisión incoherente. La aceptación exige tests
+en runner/Actions, release exact-SHA, nuevos PREPARE/GO/APPLY y recibo físico;
+el NO_GO del incidente anterior no puede reutilizarse como GO.

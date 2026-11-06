@@ -1,6 +1,19 @@
 # Safe operations — verified evidence and gated procedures
 
-## R40 — Política de disco propuesta para Cutover/BETA (06/11/2026 ART; CODE_ONLY)
+## R50 — Cutover A: contrato de dos pulls, candidato NO INSTALADO
+
+Después del [Stage recover #743](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42254252830)
+y [READ_ONLY #744](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42254498237)
+el controller legacy sigue sano en `127.0.0.1:8443` y Stage está ausente.
+El incidente APPLY #740 permanece NO_GO. El código de R50 elimina la doble
+exigencia de 4 GiB entre las dos imágenes: 4 GiB antes de comenzar el par,
+1 GiB/50.000 inodos después de la primera y **antes del segundo pull**, y
+otra vez después del segundo. Se mantienen identidad rootless, digests,
+50.000 inodos, ausencia de cambios de filesystem, aislamiento, GO independiente,
+recibo ACK y limpieza exacta Boca-only. Sin release/PR revisado ni PREPARE
+nuevo, **no disparar APPLY**. Ver [ADR0183](ADR/0183-postpull-boca-beta-emergency-residual.md).
+
+## Histórico — R40, regla de admisión dual sustituida por R50
 
 Sobre `main=d4d2b2a6769d867097d31c08364ac33829354da7` se prepara un PR
 para conservar **4 GiB + 50.000 inodos antes de cada pull** del par
