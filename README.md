@@ -1,5 +1,35 @@
 # Boca Socios Assistant
 
+## R53 — recuperación exclusiva del Stage de Cutover #757 (06/11/2026 ART, CANDIDATO)
+
+El Stage de #750 fue recuperado físicamente por [#754](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42269139909):
+`STAGE_CLEARED` y `physical_ACK=ACCEPT`, sin cambios en Docker ni en otros servicios.
+La reconciliación [#755](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42269530227)
+confirmó `stage=ABSENT` y el controlador original sano. Tras publicar la
+pareja de imágenes [#698](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42269631510)
+para `main=70f374e273093007319b007e7ca22aff7cb75c4f`, el PREPARE
+[#756](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42270247581)
+fue `READY` y el GO_B independiente verificado; el APPLY
+[#757](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42270552485)
+volvió a salir con código 3 sin ACK `ACCEPTED`. **La BETA nueva aún no se instaló.**
+
+La auditoría independiente [#758](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42270841732)
+registró `stage=PRESENT`, sin promoción, sin candidato ni browser worker,
+`commit_started=false`, un único controlador original `healthy/running` en
+`127.0.0.1:8443` y ningún efecto extranjero. La capacidad observada fue
+3.370.475.520 bytes; el piso previo a descargar el par de imágenes sigue
+siendo 4 GiB. La relación temporal es compatible con rechazo de admisión,
+**no prueba por sí sola el RCA del exit 3**. El usuario indicó que la limpieza
+de disco se trabaja por otro frente: Boca no tocará esos recursos.
+
+Este cambio mueve **solo** los pins de recuperación `cutover-a-stage-recover`
+a #757/#756/#758, sin flexibilizar el contrato del instalador, ni modificar
+las rutas de retiro de imágenes o el navegador protegido. Requiere CI,
+revisión, merge y **un único** ACK de recuperación; no reintentar #757 ni
+ejecutar operaciones de Docker globales. Para el próximo Cutover será
+necesario un release/PREPARE/GO nuevos del SHA que quede en `main`.
+Véase [ADR0184](docs/ADR/0184-exact-incident-uncommitted-stage-recovery.md).
+
 ## R51 — recuperación exacta de Stage del Cutover fallido #750 (06/11/2026 ART, CANDIDATO)
 
 El release dual inmutable [#696](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42257733717)
