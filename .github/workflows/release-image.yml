@@ -135,7 +135,7 @@ jobs:
             --cgroupns private --ipc private \
             --pids-limit 128 --memory 768m --cpus 1.0 --shm-size 64m \
             --tmpfs /tmp:rw,noexec,nosuid,size=32m \
-            --tmpfs /home/boca-browser:rw,noexec,nosuid,size=16m \
+            --tmpfs /home/boca-browser:rw,noexec,nosuid,size=16m,uid=10002,gid=10002,mode=0700 \
             --env DEBUG=pw:browser \
             --entrypoint python "$IMAGE" -c '
           import os

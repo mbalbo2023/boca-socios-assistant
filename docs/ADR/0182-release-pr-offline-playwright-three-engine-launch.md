@@ -24,6 +24,19 @@ La primera Action real del candidato, [release PR #42135455270](https://github.c
 
 El siguiente commit mantiene **idéntico** UID10002, imagen, navegador, cgroups, red inexistente, seccomp y tmpfs, y agrega diagnóstico **sólo en el runner descartable**: booleans de ownership/permisos de `HOME` (sin revelar la ruta), fase precisa `launch|new_page|goto`, y las clases/signaturas acotadas del error. Playwright recomienda `DEBUG=pw:browser` para investigar fallas de browser launch: la salida cruda se captura **sólo en archivo temporal dentro del contenedor**, se parsean categorías de permiso/sandbox/librería/memoria/señal y código de salida, y nunca se imprime el log completo ni se sube como artifact. La hipótesis del `HOME` montado sobre directorio existente por `tmpfs` (UID/GID/mode no declarados) queda **a confirmar** mediante esa evidencia, no autoriza `chmod`, cambios en sandbox, usuario, contenedores ajenos ni relajación de guardas. El overlay productivo actual también monta ese tmpfs sin UID/GID/mode; **cualquier corrección futura de configuración productiva excede este PR de diagnóstico y requiere owner/QA específicos**.
 
+### Segundo recibo y diferencial aislado de HOME
+
+La Action [#42136468164](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42136468164), sobre SHA `488bdc069aa1a2a6e12e99585618a447d4321932`, confirmó físicamente en runner descartable:
+
+```
+BOCA_BROWSER_HOME_CHECK uid_ok=false gid_ok=false private_mode=false writable=false
+BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO engine=firefox phase=goto reason=TargetClosedError categories=unclassified exit_code=unknown
+```
+
+Firefox **sí completó `launch` y `new_page`**, pero murió al navegar incluso a la página interna `about:blank`. Es un defecto comprobado en el entorno de prueba: el `tmpfs` superpuesto no es propio ni escribible para el usuario navegador 10002, mientras la ruta base del Dockerfile sí lo es. **Todavía no prueba que el HOME explique por sí solo el cierre Firefox**, porque el error de excepción no trae una firma categórica; no se atribuye a seccomp sin evidencia.
+
+Para contrastar causalidad con **una sola variable**, el siguiente candidato ajusta únicamente la opción del `tmpfs` de HOME **en el smoke PR**, a `uid=10002,gid=10002,mode=0700`, conservando `rw,noexec,nosuid,size=16m` y exactamente los mismos límites y filtros. Regresión estructural TDD RED→GREEN exige la nueva opción; el recibo futuro deberá probar los cuatro booleanos TRUE y el launch de los tres o identificar un segundo fallo independiente. No se modifica el `compose.beta.browser.yaml` productivo ni el stage/deploy en este PR; el owner de browser/cutover deberá llevar la corrección de HOME a ese overlay con tests/GO si se confirma.
+
 La implementación no lee, importa, modifica ni prueba los módulos `browser/synthetic.py` o `browser/ipc_worker.py` protegidos; no instala ni inicia el worker real. No toca el job `publish`, su workflow manual protegido, los checks de SHA único, imágenes GHCR, otro servicio Docker, Porota, puerto 8443 ni recursos del droplet.
 
 ## Regresiones y evidencia requerida

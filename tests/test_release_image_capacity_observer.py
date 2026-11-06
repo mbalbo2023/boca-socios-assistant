@@ -103,6 +103,7 @@ def test_pr_only_three_browser_launch_is_real_offline_and_bounded() -> None:
         '"seccomp=$GITHUB_WORKSPACE/docker/seccomp_profile.json"',
         "--pids-limit 128 --memory 768m --cpus 1.0",
         "--tmpfs /tmp:rw,noexec,nosuid,size=32m",
+        "--tmpfs /home/boca-browser:rw,noexec,nosuid,size=16m,uid=10002,gid=10002,mode=0700",
         "--env DEBUG=pw:browser",
     ):
         assert guard in step
