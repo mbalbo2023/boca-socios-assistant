@@ -1333,10 +1333,13 @@ SAFE_RECLAIMABLE_DISPLAY = re.compile(
     r"[0-9]+(?:\.[0-9]+)?\s*(?:B|kB|MB|GB|TB|PB)(?:\s*\([0-9]{1,3}%\))?\Z"
 )
 
-# R28: fixed third-party-verifiable coordinates from physical #42116760086
-# and successful GitHub release #41559973013. This can NEVER accept another
-# image via CLI args, a name prefix, a moving tag, or a runtime environment.
-HISTORICAL_RETIRE_INCIDENT = "42096941815"
+# R46: the current failed APPLY is #42236673419 (PREPARE #42217108000).
+# The *image* is historical and independently attested by release
+# #41559973013 / manifest #13196392925 and current READ_ONLY #42237830418.
+# The operation must be bound to the current incident, never the old R28
+# incident; neither arbitrary image IDs nor moving tags are CLI inputs.
+HISTORICAL_RETIRE_INCIDENT = "42236673419"
+HISTORICAL_RETIRE_PREPARE = "42217108000"
 HISTORICAL_RETIRE_CONTAINER = "27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793"
 HISTORICAL_RETIRE_KEEP_IMAGE = (
     "sha256:12d492da545566a13ba4faec6afd99a3d6fe1990657d2e0981420c429c36d5c1"
@@ -1348,6 +1351,7 @@ HISTORICAL_RETIRE_DIGEST = (
 )
 HISTORICAL_RETIRE_REVISION = "0e830e3eed941de1da70cef8b42bda9f20258b65"
 HISTORICAL_RETIRE_SIZE = 66_021_451
+HISTORICAL_RETIRE_RECEIPT_LIMIT = 8192
 
 
 def _check_exact_historical_retire_snapshot(
@@ -1496,6 +1500,153 @@ def retire_single_attested_historical_image(
             ("historical-exact-image-removal-ack-unverified",),
             (),
         )
+
+
+def verify_historical_retire_receipt(raw: bytes, incident_run_id: str) -> dict[str, object]:
+    """Accept only the canonical one-image physical ACK or explicit uncertainty.
+
+    The host-side implementation attests the full Docker topology before and
+    after removal. This runner-side validator independently refuses alternate
+    target IDs, extra objects, reordered bytes and forged PASS conditions.
+    An INDETERMINATE receipt is valid evidence, never successful cleanup.
+    """
+    if (
+        incident_run_id != HISTORICAL_RETIRE_INCIDENT
+        or type(raw) is not bytes
+        or not 0 < len(raw) <= HISTORICAL_RETIRE_RECEIPT_LIMIT
+        or raw.count(b"\n") != 1
+        or not raw.endswith(b"\n")
+        or any(item >= 128 for item in raw)
+    ):
+        raise CleanupError("historical image retirement ACK framing invalid")
+
+    def unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise CleanupError("historical image retirement ACK duplicate JSON key")
+            result[key] = value
+        return result
+
+    try:
+        receipt = json.loads(raw, object_pairs_hook=unique_pairs)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CleanupError("historical image retirement ACK malformed") from exc
+    if type(receipt) is not dict or set(receipt) != {
+        "version",
+        "scope",
+        "outcome",
+        "attempt_id",
+        "status",
+        "before",
+        "after",
+        "removed",
+        "retained_uncertain",
+        "known_residue",
+    }:
+        raise CleanupError("historical image retirement ACK schema invalid")
+    if (
+        receipt.get("version") != 1
+        or receipt.get("scope") != "boca-postdeploy"
+        or receipt.get("attempt_id") != HISTORICAL_RETIRE_INCIDENT
+        or receipt.get("known_residue") != []
+    ):
+        raise CleanupError("historical image retirement ACK identity invalid")
+    expected_disk_keys = {
+        "stage_bytes_free",
+        "stage_inodes_free",
+        "docker_bytes_free",
+        "docker_inodes_free",
+        "stage_device",
+        "stage_inode",
+        "docker_device",
+        "docker_inode",
+    }
+    before, after = receipt["before"], receipt["after"]
+    if (
+        type(before) is not dict
+        or type(after) is not dict
+        or set(before) != expected_disk_keys
+        or set(after) != expected_disk_keys
+        or any(type(value) is not int or value < 0 for value in (*before.values(), *after.values()))
+        or any(
+            before[key] != after[key]
+            for key in ("stage_device", "stage_inode", "docker_device", "docker_inode")
+        )
+        or any(
+            metrics[key] < threshold
+            for metrics in (before, after)
+            for key, threshold in (
+                ("stage_bytes_free", 4 * 1024**3),
+                ("docker_bytes_free", 4 * 1024**3),
+                ("stage_inodes_free", 50_000),
+                ("docker_inodes_free", 50_000),
+            )
+        )
+    ):
+        raise CleanupError("historical image retirement ACK physical storage invalid")
+    status = receipt["status"]
+    if status == "ACCEPT":
+        valid = (
+            receipt["outcome"] == "SUCCESS"
+            and receipt["removed"] == [{"kind": "image", "id": HISTORICAL_RETIRE_TARGET}]
+            and receipt["retained_uncertain"] == []
+        )
+    elif status == "INDETERMINATE":
+        valid = (
+            receipt["outcome"] == "FAILURE"
+            and receipt["removed"] == []
+            and receipt["retained_uncertain"] == ["historical-exact-image-removal-ack-unverified"]
+            and before == after
+        )
+    else:
+        valid = False
+    canonical = json.dumps(receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    if not valid or canonical.encode("ascii") + b"\n" != raw:
+        raise CleanupError("historical image retirement ACK rejected")
+    return receipt
+
+
+def _historical_retire_main(args: list[str]) -> int:
+    """Unwired exact historical Boca-only image retire CLI for protected use.
+
+    No arbitrary IDs, releases or Docker flags come from the caller. Runtime
+    execution remains prohibited until a separately reviewed manual Actions
+    gate binds this exact source, SHA and one-use physical operation.
+    """
+    if (
+        len(args) != 3
+        or args[0] not in ("historical-retire-host", "historical-retire-verify")
+        or args[1] != HISTORICAL_RETIRE_INCIDENT
+        or args[2] != HISTORICAL_RETIRE_PREPARE
+    ):
+        print("BOCA_HISTORICAL_RETIRE state=NO_GO reason=INPUT", file=sys.stderr)
+        return 3
+    mode, incident_run_id, _prepare_run_id = args
+    try:
+        if mode == "historical-retire-host":
+            if os.geteuid() != EXPECTED_UID or os.getegid() != EXPECTED_GID:
+                raise CleanupError("historical retirement requires Boca rootless identity")
+            with protected_boca_job_lease(incident_run_id) as lease:
+                result = retire_single_attested_historical_image(lease)
+            raw = (result.redacted_json() + "\n").encode("ascii")
+            receipt = verify_historical_retire_receipt(raw, incident_run_id)
+            sys.stdout.buffer.write(raw)
+        else:
+            receipt = verify_historical_retire_receipt(
+                sys.stdin.buffer.read(HISTORICAL_RETIRE_RECEIPT_LIMIT + 1), incident_run_id
+            )
+            print(
+                "BOCA_HISTORICAL_RETIRE"
+                f" state={'PASS' if receipt['status'] == 'ACCEPT' else 'INDETERMINATE'}"
+                " scope=BOCA_ROOTLESS_ONLY image_count=1 original=preserved"
+                f" cleanup_executed={'true' if receipt['status'] == 'ACCEPT' else 'unverified'}"
+                " retry=NO_GO"
+            )
+        return 0 if receipt["status"] == "ACCEPT" else 3
+    except (CleanupError, OSError, TypeError, ValueError):
+        print("BOCA_HISTORICAL_RETIRE state=NO_GO reason=UNVERIFIED", file=sys.stderr)
+        return 3
 
 
 def _empty_rootless_disk_accounting() -> dict[str, object]:
@@ -2464,4 +2615,6 @@ def _readonly_main(args: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1].startswith("historical-retire-"):
+        raise SystemExit(_historical_retire_main(sys.argv[1:]))
     raise SystemExit(_readonly_main(sys.argv[1:]))

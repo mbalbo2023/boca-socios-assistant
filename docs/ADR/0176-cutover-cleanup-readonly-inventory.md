@@ -321,3 +321,73 @@ El recibo pasa a v4, `deletion_authorized=false`, `cleanup_executed=false`,
 CODE_ONLY de retiro exacto, `docker exec`, pull, prune, Stage Telegram ni
 operación ajena a Boca. Un nuevo Action físico protegido es indispensable
 para afirmar números de `system_df` y attrs UID/mode reales.
+
+## R46 — nueva observación física y CLI de retiro de una imagen (CODE_ONLY)
+
+El APPLY protegido [#42236673419](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42236673419)
+desde `main=cb1f0102f2324802c476051d8c81858c141ec0f6` falló `exit 3`
+sin ACK de Cutover A. La observación READ_ONLY posterior
+[#42237830418](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42237830418)
+terminó verde como diagnóstico, **no** como instalación ni limpieza:
+un único controller legacy `27ef39...` RUNNING/healthy, imagen protegida
+`sha256:12d492...`, 0 candidatos/workers y `commit_started=false`,
+`original_restored=true`; el stage `cutover-a-42236673419` figura `PRESENT`
+con `STAGE_ROOT_ENTRIES`, `root_entries_count=2`, por lo que debe resolverlo
+el scope Stage antes de otro Cutover. Docker sigue
+`classification=INDETERMINATE`, sin ningún retiro físico y con exactamente
+**dos** imágenes rootless; no existe evidencia de múltiples imágenes fallidas.
+`docker system df` reporta `83.16 MB` lógicos en imágenes y `17.11 MB`
+reclamables. Buildx local informa 0 registros/bytes; el espacio observado
+fue `5,054,070,784` bytes libres en ambos puntos, antes/después estable.
+
+La única imagen adicional coincide **por ID, digest y revision** con
+el build/push histórico positivo de Image Release
+[#41559973013](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41559973013)
+(job `125667997607`, manifest `13196392925`):
+`sha256:a44453ab30cb17fa42f71723cf64b1097dabdf0e56369186077c47bc8224f90b`,
+`ghcr.io/mbalbo2023/boca-socios-assistant@sha256:7afe5429e34bd39b289e9d1da700fd5cd436cd2bdd413a2c4f8039829f1d034e`,
+`0e830e3eed941de1da70cef8b42bda9f20258b65`; sin `org.opencontainers.image.source`,
+sin tags, `container_ref_count=0`, tamaño lógico `66,021,451` bytes.
+El observador antiguo no confía en esa procedencia para autorizar borrado:
+mantiene `retained_uncertain` y `deletion_authorized=false`, correctamente.
+
+La extensión R46 **sólo conecta a un CLI no invocado** la función
+`retire_single_attested_historical_image`, que ya poseía el contrato positivo
+de triple prueba. `historical-retire-host 42236673419 42217108000` exige UID/GID10001,
+flock real Boca, exactamente 1 controller legacy healthy preservado, 2
+imágenes exactas, 1 red y 3 volúmenes históricos, 3 inventarios convergentes,
+umbral de 4GiB/50k inodos y postflight exacto; únicamente entonces intentaría
+un `docker image rm --no-prune` por el ID64 histórico sin force. La salida
+ASCII canónica incluye bytes/inodos antes/después y un ID retirado, o
+`INDETERMINATE` sin acreditar retiro ni reintento. El runner puede validarla
+con `historical-retire-verify 42236673419 42217108000`, que rechaza ID distinto, datos
+duplicados/adulterados, unidades de disco alteradas o bytes no canónicos.
+
+**Todavía no hay ruta Action integrada ni host ejecutado.** El root owner
+debe integrar de forma independiente un único `workflow_dispatch` protegido,
+validar allí incidente APPLY #42236673419, PREPARE #42217108000,
+artifact/release #41559973013, SHA/actor/current-main/environment
+y arranque exclusivamente UID10001 antes de permitir usar el CLI. Si se pierde
+ACK, retener NO_GO sin repetir automáticamente. La limpieza de la imagen
+histórica tampoco resuelve por sí sola el stage del incidente R46. Sigue
+prohibido tocar volúmenes de usuario, Blackbox, Porota, otros Docker/puertos,
+backup o navegación real. El PR registra únicamente pruebas offline: no
+certifica el host ni modifica por sí mismo el estado de Docker.
+
+## Integración R47 — retiro exacto en GitHub Actions
+
+La operación protegida `cutover-a-image-retire` tiene identidad fija: APPLY
+fallido `42236673419`, PREPARE `42217108000`, reconciliación positiva
+`42237830418` e Image Release `41559973013` con manifest `13196392925`.
+El runner exige evento y resultado verificados, `main` actual, actor propietario,
+ambiente Boca, primer intento del Action y SHA exacto antes de un único SSH
+como UID `10001`. El host comprueba los tres inventarios, el lease y la
+topología Boca; `docker image rm --no-prune` sólo puede alcanzar la imagen
+histórica `sha256:a44453ab...4f90b`, jamás la imagen del controlador vivo.
+
+Un receipt ASCII canónico verificable en runner demuestra retiro, identidad
+del original y postflight; si falta/varía o se corta SSH, terminal `NO_GO`,
+sin reintentos. Stage, contenedores, redes y volúmenes quedan fuera del efecto.
+Esta anotación documenta **la integración de código y pruebas**, no afirma
+que el droplet haya sido modificado. Los resultados físicos futuros deben
+adjuntarse al issue #386 y checkpoint #45 (Regla 84).

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 from collections.abc import Callable
@@ -768,6 +769,180 @@ def test_historical_retire_after_attempt_is_indeterminate_no_retry(
     assert result.retained_uncertain == ("historical-exact-image-removal-ack-unverified",)
 
 
+def _historical_retire_runner_receipt(
+    monkeypatch: pytest.MonkeyPatch, *, status: str = "ACCEPT"
+) -> bytes:
+    snapshot, _ = _pinned_historical_retire_fixture(monkeypatch)
+    accepted = status == "ACCEPT"
+    receipt = gc.CleanupReceipt(
+        "SUCCESS" if accepted else "FAILURE",
+        ATTEMPT,
+        "ACCEPT" if accepted else "INDETERMINATE",
+        snapshot.disk,
+        replace(snapshot.disk, docker_bytes_free=snapshot.disk.docker_bytes_free + 1024)
+        if accepted
+        else snapshot.disk,
+        (gc.Target("image", OLD_IMAGE),) if accepted else (),
+        () if accepted else ("historical-exact-image-removal-ack-unverified",),
+        (),
+    )
+    return (receipt.redacted_json() + "\n").encode("ascii")
+
+
+def test_historical_retire_runner_verifies_exact_boca_target_and_canonical_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw = _historical_retire_runner_receipt(monkeypatch)
+    proof = gc.verify_historical_retire_receipt(raw, ATTEMPT)
+    assert proof["removed"] == [{"kind": "image", "id": OLD_IMAGE}]
+    assert proof["status"] == "ACCEPT"
+    assert (
+        gc.verify_historical_retire_receipt(
+            _historical_retire_runner_receipt(monkeypatch, status="INDETERMINATE"), ATTEMPT
+        )["status"]
+        == "INDETERMINATE"
+    )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "wrong_target",
+        "wrong_incident",
+        "ambiguous_removed",
+        "extra_field",
+        "status_forged",
+        "storage_identity",
+        "storage_capacity",
+        "json_duplicate",
+        "noncanonical",
+        "multiple_receipts",
+        "oversized",
+    ],
+)
+def test_historical_retire_runner_rejects_unproved_or_forged_ack(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    raw = _historical_retire_runner_receipt(monkeypatch)
+    original = json.loads(raw)
+    if fault == "wrong_target":
+        original["removed"][0]["id"] = ACTIVE_IMAGE
+    elif fault == "wrong_incident":
+        original["attempt_id"] = "42096941815"
+    elif fault == "ambiguous_removed":
+        original["removed"].append({"kind": "volume", "id": DATA})
+    elif fault == "extra_field":
+        original["retry"] = True
+    elif fault == "status_forged":
+        original["status"] = "ACCEPT"
+        original["outcome"] = "FAILURE"
+    elif fault == "storage_identity":
+        original["after"]["docker_inode"] += 1
+    elif fault == "storage_capacity":
+        original["after"]["docker_bytes_free"] = 100
+    elif fault == "json_duplicate":
+        raw = raw.replace(b'"version":1', b'"version":1,"version":1')
+    elif fault == "noncanonical":
+        raw = raw.replace(b'"version":1', b'"version": 1')
+    elif fault == "multiple_receipts":
+        raw += raw
+    elif fault == "oversized":
+        raw += b"X" * gc.HISTORICAL_RETIRE_RECEIPT_LIMIT
+    if fault in {
+        "wrong_target",
+        "wrong_incident",
+        "ambiguous_removed",
+        "extra_field",
+        "status_forged",
+        "storage_identity",
+        "storage_capacity",
+    }:
+        raw = (json.dumps(original, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    with pytest.raises(gc.CleanupError):
+        gc.verify_historical_retire_receipt(raw, ATTEMPT)
+
+
+def test_historical_retire_cli_host_requires_real_lease_and_emits_one_exact_receipt(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    raw = _historical_retire_runner_receipt(monkeypatch)
+    snapshot, _ = _pinned_historical_retire_fixture(monkeypatch)
+    tmp_path.chmod(0o700)
+    monkeypatch.setattr(gc, "LEASE_DIR", tmp_path)
+    monkeypatch.setattr(gc, "EXPECTED_UID", os.geteuid())
+    monkeypatch.setattr(gc, "EXPECTED_GID", os.getegid())
+    calls: list[str] = []
+
+    def fake_retire(lease: gc.BocaJobLease) -> gc.CleanupReceipt:
+        gc.verify_protected_boca_job_lease(lease, ATTEMPT)
+        calls.append(lease.attempt_id)
+        return gc.CleanupReceipt(
+            "SUCCESS",
+            ATTEMPT,
+            "ACCEPT",
+            snapshot.disk,
+            replace(snapshot.disk, docker_bytes_free=snapshot.disk.docker_bytes_free + 1024),
+            (gc.Target("image", OLD_IMAGE),),
+            (),
+            (),
+        )
+
+    monkeypatch.setattr(gc, "retire_single_attested_historical_image", fake_retire)
+    assert (
+        gc._historical_retire_main(
+            ["historical-retire-host", ATTEMPT, gc.HISTORICAL_RETIRE_PREPARE]
+        )
+        == 0
+    )
+    assert capsys.readouterr().out.encode("ascii") == raw
+    assert calls == [ATTEMPT]
+
+
+def test_historical_retire_cli_runner_distinguishes_pass_and_uncertainty(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    raw = _historical_retire_runner_receipt(monkeypatch)
+    monkeypatch.setattr(gc.sys, "stdin", io.TextIOWrapper(io.BytesIO(raw), encoding="ascii"))
+    assert (
+        gc._historical_retire_main(
+            ["historical-retire-verify", ATTEMPT, gc.HISTORICAL_RETIRE_PREPARE]
+        )
+        == 0
+    )
+    assert "state=PASS" in capsys.readouterr().out
+    ambiguous = _historical_retire_runner_receipt(monkeypatch, status="INDETERMINATE")
+    monkeypatch.setattr(gc.sys, "stdin", io.TextIOWrapper(io.BytesIO(ambiguous), encoding="ascii"))
+    assert (
+        gc._historical_retire_main(
+            ["historical-retire-verify", ATTEMPT, gc.HISTORICAL_RETIRE_PREPARE]
+        )
+        == 3
+    )
+    assert "state=INDETERMINATE" in capsys.readouterr().out
+
+
+def test_historical_retire_cli_rejects_all_other_incident_ids_and_wrong_uid(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _pinned_historical_retire_fixture(monkeypatch)
+    monkeypatch.setattr(gc.os, "geteuid", lambda: 10002)
+    monkeypatch.setattr(gc.os, "getegid", lambda: 10002)
+    assert (
+        gc._historical_retire_main(
+            ["historical-retire-host", ATTEMPT, gc.HISTORICAL_RETIRE_PREPARE]
+        )
+        == 3
+    )
+    assert (
+        gc._historical_retire_main(
+            ["historical-retire-host", "42096941815", gc.HISTORICAL_RETIRE_PREPARE]
+        )
+        == 3
+    )
+    assert gc._historical_retire_main(["historical-retire-host", ATTEMPT, "42096941815"]) == 3
+    assert "NO_GO" in capsys.readouterr().err
+
+
 def test_postapply_cleanup_readonly_receipt_rejects_tampering() -> None:
     receipt = gc.observe_postapply_cleanup(
         ATTEMPT, ACTIVE_ID, probe=lambda: _physical_observer_fixture()
@@ -809,8 +984,10 @@ def test_postapply_cleanup_workflow_uses_existing_only_readonly_dispatch() -> No
     )
     assert workflow.count("name: Boca first deploy") == 1
     assert "cutover-cleanup-reconcile" not in workflow  # No new privileged operation.
+    # R47 added separate, explicitly effectful one-shot routes after this
+    # READ_ONLY step. This slice must not include those disjoint routes.
     block = workflow.split("- name: Plan Boca-only Docker cleanup READ_ONLY", 1)[1].split(
-        "- name: Apply one exact-ID Boca owner lifecycle request", 1
+        "- name: Recheck exact historical Cutover incident", 1
     )[0]
     assert "if: inputs.operation == 'cutover-a-reconcile'" in block
     assert "< src/boca_socios/host_boca_cleanup.py" in block
@@ -928,7 +1105,7 @@ def test_cleanup_readonly_continues_after_valid_stage_inode_no_go_observation() 
         encoding="utf-8"
     )
     step = workflow.split("      - name: Plan Boca-only Docker cleanup READ_ONLY", 1)[1].split(
-        "      - name: Apply one exact-ID Boca owner lifecycle request", 1
+        "      - name: Recheck exact historical Cutover incident", 1
     )[0]
     assert "if: inputs.operation == 'cutover-a-reconcile'" in step
     assert "always()" not in step  # Do not bypass failed SSH/identity checks.
