@@ -24,7 +24,7 @@ def test_io_load_does_not_reject_two_cpu_browser_and_telegram(
             storage,
         ),
     )
-    monkeypatch.setattr(host, "_validate_storage_capacity", lambda _: None)
+    monkeypatch.setattr(host, "_validate_storage_capacity", lambda _, **kwargs: None)
     assert host._browser_capacity()[1] == 2.0
 
 

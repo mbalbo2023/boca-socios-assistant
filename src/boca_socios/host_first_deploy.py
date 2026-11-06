@@ -109,6 +109,11 @@ ROOTLESS_SOCKET = Path("/run/user/10001/docker.sock")
 PRIVATE_MANAGER_SOCKET = Path("/run/user/10001/systemd/private")
 USER_BUS_SOCKET = Path("/run/user/10001/bus")
 ROOTFUL_SOCKET = Path("/var/run/docker.sock")
+PREFLIGHT_STORAGE_MIN_BYTES = 4 * 1024**3
+# Owner-approved emergency *residual* for post-pull / installed Boca BETA only.
+# This is not the pre-pull admission policy and not a measured runtime budget.
+POSTINSTALL_STORAGE_MIN_BYTES = 1024**3
+STORAGE_MIN_FREE_INODES = 50_000
 CGROUP_CONTROLLERS = Path(
     "/sys/fs/cgroup/user.slice/user-10001.slice/user@10001.service/cgroup.controllers"
 )
@@ -312,15 +317,27 @@ def _validate_host_resource_observation(snapshot: HostSnapshot) -> None:
         raise PreflightError("invalid host CPU headroom observation")
 
 
-def validate_snapshot(snapshot: HostSnapshot) -> None:
+def _validate_storage_policy_threshold(min_free_bytes: int) -> None:
+    """Only the two reviewed phase-specific floors may reach a host gate."""
+    if type(min_free_bytes) is not int or min_free_bytes not in (
+        PREFLIGHT_STORAGE_MIN_BYTES,
+        POSTINSTALL_STORAGE_MIN_BYTES,
+    ):
+        raise PreflightError("invalid Boca storage capacity policy")
+
+
+def validate_snapshot(
+    snapshot: HostSnapshot, *, min_free_bytes: int = PREFLIGHT_STORAGE_MIN_BYTES
+) -> None:
+    _validate_storage_policy_threshold(min_free_bytes)
     if snapshot.arch != "x86_64":
         raise PreflightError("host architecture must be x86_64")
     if snapshot.uid != 10001:
         raise PreflightError("dedicated deploy identity must have UID 10001")
     _validate_host_resource_observation(snapshot)
     if (
-        min(snapshot.available_disk_bytes, snapshot.docker_disk_bytes) < 4 * 1024**3
-        or min(snapshot.available_inodes, snapshot.docker_inodes) < 50_000
+        min(snapshot.available_disk_bytes, snapshot.docker_disk_bytes) < min_free_bytes
+        or min(snapshot.available_inodes, snapshot.docker_inodes) < STORAGE_MIN_FREE_INODES
     ):
         raise PreflightError("insufficient Boca staging or rootless Docker storage")
     if not snapshot.root_ready:
@@ -341,7 +358,11 @@ def validate_site_snapshot(
 
 
 def validate_beta_snapshot(
-    snapshot: HostSnapshot, volumes: set[str], *, expected: set[str]
+    snapshot: HostSnapshot,
+    volumes: set[str],
+    *,
+    expected: set[str],
+    min_free_bytes: int = PREFLIGHT_STORAGE_MIN_BYTES,
 ) -> None:
     """Allow only the named Boca volumes for the current new-install phase."""
     permitted = {OWNER_VOLUME, KEY_VOLUME, DATA_VOLUME}
@@ -352,7 +373,7 @@ def validate_beta_snapshot(
         or snapshot.boca_volume != bool(volumes)
     ):
         raise PreflightError("unexpected Boca BETA volume inventory")
-    validate_snapshot(replace(snapshot, boca_volume=False))
+    validate_snapshot(replace(snapshot, boca_volume=False), min_free_bytes=min_free_bytes)
 
 
 def _validate_beta_context(origin: str, owner: str) -> None:
@@ -948,17 +969,25 @@ def _storage_snapshot() -> StorageSnapshot:
     )
 
 
-def _validate_storage_capacity(snapshot: StorageSnapshot) -> None:
+def _validate_storage_capacity(
+    snapshot: StorageSnapshot, *, min_free_bytes: int = PREFLIGHT_STORAGE_MIN_BYTES
+) -> None:
+    _validate_storage_policy_threshold(min_free_bytes)
     if (
-        min(snapshot.stage_free_bytes, snapshot.docker_free_bytes) < 4 * 1024**3
-        or min(snapshot.stage_inodes, snapshot.docker_inodes) < 50_000
+        min(snapshot.stage_free_bytes, snapshot.docker_free_bytes) < min_free_bytes
+        or min(snapshot.stage_inodes, snapshot.docker_inodes) < STORAGE_MIN_FREE_INODES
     ):
         raise PreflightError("insufficient Boca staging or rootless Docker storage")
 
 
 def _validate_storage_continuity(
-    before: StorageSnapshot, after: StorageSnapshot, *, require_capacity: bool = True
+    before: StorageSnapshot,
+    after: StorageSnapshot,
+    *,
+    require_capacity: bool = True,
+    min_free_bytes: int = PREFLIGHT_STORAGE_MIN_BYTES,
 ) -> None:
+    _validate_storage_policy_threshold(min_free_bytes)
     if (
         before.docker_root != after.docker_root
         or before.driver != after.driver
@@ -972,7 +1001,7 @@ def _validate_storage_continuity(
     ):
         raise PreflightError("Boca rootless Docker storage topology changed")
     if require_capacity:
-        _validate_storage_capacity(after)
+        _validate_storage_capacity(after, min_free_bytes=min_free_bytes)
 
 
 def collect_snapshot(*, beta_staged: bool = False) -> HostSnapshot:
@@ -2689,12 +2718,17 @@ def _beta_loopback_health(container: str, origin: str) -> None:
         raise PreflightError("BETA host loopback TLS unavailable") from exc
 
 
-def _beta_inventory(*, staged: bool, expected: set[str]) -> HostSnapshot:
+def _beta_inventory(
+    *,
+    staged: bool,
+    expected: set[str],
+    min_free_bytes: int = PREFLIGHT_STORAGE_MIN_BYTES,
+) -> HostSnapshot:
     snapshot = collect_snapshot(beta_staged=staged)
     if _run("docker", "ps", "-a", "-q", "--no-trunc"):
         raise PreflightError("dedicated BETA daemon must have no containers before install")
     volumes = _names("volume", "name=^boca-socios_")
-    validate_beta_snapshot(snapshot, volumes, expected=expected)
+    validate_beta_snapshot(snapshot, volumes, expected=expected, min_free_bytes=min_free_bytes)
     _validate_owner_volume()
     if _run("docker", "ps", "-a", "-q", "--filter", f"volume={OWNER_VOLUME}"):
         raise PreflightError("Boca owner volume is attached to a container")
@@ -2718,7 +2752,9 @@ def _beta_pull(image: str, source_sha: str) -> None:
     )
     if not isinstance(digests, list) or image not in digests or revision != source_sha:
         raise PreflightError("pulled BETA image differs from reviewed release")
-    _validate_storage_continuity(before, _storage_snapshot())
+    _validate_storage_continuity(
+        before, _storage_snapshot(), min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES
+    )
 
 
 def _beta_rollback(image: str, source_sha: str) -> None:
@@ -2851,7 +2887,7 @@ def _beta_acceptance_status(
         raise PreflightError("installed Boca network identity changed")
     _beta_loopback_health(diagnostic.container_id, origin)
     capacity = _storage_snapshot()
-    _validate_storage_capacity(capacity)
+    _validate_storage_capacity(capacity, min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES)
     return diagnostic, capacity
 
 
@@ -3086,7 +3122,9 @@ def _beta_acceptance_phase(
     after, capacity_after = _beta_acceptance_status(image, source_sha, compose_sha, origin, owner)
     if after.container_id != before.container_id:
         raise PreflightError("Boca controller changed during synthetic acceptance")
-    _validate_storage_continuity(capacity_before, capacity_after)
+    _validate_storage_continuity(
+        capacity_before, capacity_after, min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES
+    )
     print(
         f"BOCA_BETA_ACCEPTANCE state=PASS source_sha={source_sha} image={image}"
         + receipt.removeprefix("BOCA_SYNTHETIC_ACCEPTANCE state=PASS")
@@ -3141,19 +3179,31 @@ def _beta_phase(
     _run(*_beta_compose_args("config", "-q"), env=compose_env)
     _beta_pull(image, source_sha)
     _verify_beta_compose(compose_sha)
-    _beta_inventory(staged=True, expected={OWNER_VOLUME})
+    _beta_inventory(
+        staged=True, expected={OWNER_VOLUME}, min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES
+    )
     _beta_check_receipt(
         _run(*_beta_check_container(image, origin, owner, "check-beta-owner")),
         "check-beta-owner",
     )
-    _beta_inventory(staged=True, expected={OWNER_VOLUME})
+    _beta_inventory(
+        staged=True, expected={OWNER_VOLUME}, min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES
+    )
     _create_key(image)
-    _beta_inventory(staged=True, expected={OWNER_VOLUME, KEY_VOLUME})
+    _beta_inventory(
+        staged=True,
+        expected={OWNER_VOLUME, KEY_VOLUME},
+        min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES,
+    )
     _beta_check_receipt(
         _run(*_beta_check_container(image, origin, owner, "check-beta-config")),
         "check-beta-config",
     )
-    _beta_inventory(staged=True, expected={OWNER_VOLUME, KEY_VOLUME})
+    _beta_inventory(
+        staged=True,
+        expected={OWNER_VOLUME, KEY_VOLUME},
+        min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES,
+    )
     created = _run(
         "docker",
         "volume",
@@ -3174,7 +3224,11 @@ def _beta_phase(
     _validate_data_volume()
     _validate_key_volume()
     _validate_owner_volume()
-    _beta_inventory(staged=True, expected={OWNER_VOLUME, KEY_VOLUME, DATA_VOLUME})
+    _beta_inventory(
+        staged=True,
+        expected={OWNER_VOLUME, KEY_VOLUME, DATA_VOLUME},
+        min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES,
+    )
     _run(
         *_beta_compose_args(
             "up", "--no-build", "--no-deps", "--wait", "--wait-timeout", "90", "-d", "controller"
@@ -3188,7 +3242,7 @@ def _beta_phase(
     diagnostic = collect_diagnostic(image, source_sha, beta_origin=origin, beta_owner=owner)
     _beta_loopback_health(diagnostic.container_id, origin)
     capacity = _storage_snapshot()
-    _validate_storage_capacity(capacity)
+    _validate_storage_capacity(capacity, min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES)
     print(
         f"BOCA_BETA_INSTALL state=PASS source_sha={source_sha} image={image}"
         " service=controller host=loopback local_http=verified engine=off site=off telegram=off"
@@ -3856,7 +3910,9 @@ def _cpu_structural_capacity() -> CpuCapacity:
             os.close(descriptor)
 
 
-def _browser_capacity() -> tuple[int, float, int, StorageSnapshot]:
+def _browser_capacity(
+    *, min_free_bytes: int = PREFLIGHT_STORAGE_MIN_BYTES
+) -> tuple[int, float, int, StorageSnapshot]:
     """Observe resources before operations, without an unbenchmarked admission veto.
 
     Container-specific cgroup caps and storage safety checks remain enforced.
@@ -3865,7 +3921,7 @@ def _browser_capacity() -> tuple[int, float, int, StorageSnapshot]:
     Invalid or nonpositive physical resource observations still fail closed.
     """
     memory, observed_cpu, _load, free_pids, storage = _observe_browser_capacity()
-    _validate_storage_capacity(storage)
+    _validate_storage_capacity(storage, min_free_bytes=min_free_bytes)
     cpu = observed_cpu.ceiling
     if memory <= 0 or cpu <= 0 or free_pids <= 0:
         raise PreflightError("host resource counters show no capacity to launch Boca")
@@ -4238,11 +4294,16 @@ def _browser_validate_image(image: str, source_sha: str) -> None:
 
 def _browser_pull_both(image: str, browser_image: str, source_sha: str) -> None:
     before = _storage_snapshot()
-    _validate_storage_capacity(before)
+    current = before
     for reference in (image, browser_image):
+        # Every pull begins above the original 4 GiB admission floor. A
+        # completed pull may fall below 4 GiB, but must retain 1 GiB/50k
+        # inodes on BOTH Boca staging and Docker root before further effects.
+        _validate_storage_capacity(current)
         _run("docker", "pull", reference)
         _browser_validate_image(reference, source_sha)
-    _validate_storage_continuity(before, _storage_snapshot())
+        current = _storage_snapshot()
+        _validate_storage_continuity(before, current, min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES)
 
 
 def _browser_validate_ipc_volume(attempt_id: str) -> None:
@@ -5909,7 +5970,7 @@ def _browser_apply(
     _browser_port_free()
     # Recheck observable host state and storage after both image pulls, before
     # IPC/key/data effects. Actual RAM/CPU/PID demand is measured post-deploy.
-    _, _, _, after_pull = _browser_capacity()
+    _, _, _, after_pull = _browser_capacity(min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES)
     _browser_create_ipc_volume(browser_image, attempt_id)
     _browser_staged_inventory(volumes={OWNER_VOLUME, BROWSER_IPC_VOLUME})
     environment = _browser_compose_env(image, origin, owner, browser_image, attempt_id)
@@ -6032,7 +6093,9 @@ def _browser_apply(
         != marker
     ):
         raise PreflightError("browser IPC pre-attempt inventory marker changed before completion")
-    _validate_storage_continuity(after_pull, _storage_snapshot())
+    _validate_storage_continuity(
+        after_pull, _storage_snapshot(), min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES
+    )
     print(
         f"BOCA_BROWSER_IPC_INSTALL_PASS attempt={attempt_id} source_sha={source_sha}"
         " services=controller,browser-worker host=127.0.0.1:8443"
@@ -6213,7 +6276,7 @@ def _browser_installed(
                 raise PreflightError("Telegram sender and egress attempts differ")
     capacity = _storage_snapshot()
     if require_capacity:
-        _validate_storage_capacity(capacity)
+        _validate_storage_capacity(capacity, min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES)
     if marker != _browser_read_marker(
         image, source_sha, beta_sha, browser_image, overlay_sha, seccomp_sha, attempt_id
     ):
@@ -6276,7 +6339,7 @@ def _browser_lifecycle(
         if stopped != initial:
             raise PreflightError("installed browser identity changed while stopping")
     if operation in {"browser-start", "browser-restart"}:
-        _browser_capacity()
+        _browser_capacity(min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES)
         _browser_port_free()
         # No compose up/recreate: restart:no remains mandatory.
         for container in tuple(filter(None, (initial.worker, initial.controller, initial.sender))):
@@ -6332,7 +6395,9 @@ def _browser_lifecycle(
         )
     if _browser_installed(*coordinates, running=True, telegram_owner=owner_assertion) != initial:
         raise PreflightError("installed browser identity changed before lifecycle completion")
-    _validate_storage_continuity(before_storage, _storage_snapshot())
+    _validate_storage_continuity(
+        before_storage, _storage_snapshot(), min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES
+    )
     if receipt:
         print(receipt)
     print(
@@ -6839,7 +6904,7 @@ def _telegram_installed(
     _validate_owner_volume()
     if TELEGRAM_VOLUME in volumes:
         _telegram_volume()
-    _validate_storage_capacity(_storage_snapshot())
+    _validate_storage_capacity(_storage_snapshot(), min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES)
     return TELEGRAM_VOLUME in volumes
 
 
@@ -7236,7 +7301,7 @@ def _browser_telegram_phase(
         return
     if initial.sender or TELEGRAM_NETWORK in networks:
         raise PreflightError("Telegram startup requires absent sender and egress; no blind retry")
-    _browser_capacity()
+    _browser_capacity(min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES)
     if operation == "browser-telegram-preflight":
         print(
             f"BOCA_BROWSER_TELEGRAM_PREFLIGHT_PASS source_sha={source_sha} attempt={attempt_id} sender=absent network=absent"
@@ -7288,7 +7353,9 @@ def _browser_telegram_phase(
         running=True,
         runtime_attempt=runtime_attempt,
     )
-    _validate_storage_continuity(before_storage, _storage_snapshot())
+    _validate_storage_continuity(
+        before_storage, _storage_snapshot(), min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES
+    )
     print(
         f"BOCA_BROWSER_LIFECYCLE_PASS operation={operation} source_sha={source_sha} attempt={attempt_id} services=controller,browser-worker,telegram host=127.0.0.1:8443 data=preserved key=preserved owner=preserved engine=off"
     )

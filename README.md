@@ -1,5 +1,18 @@
 # Boca Socios Assistant
 
+## Candidato R40 — residuo de emergencia Boca BETA (06/11/2026 ART; CODE_ONLY)
+
+El propietario autorizó levantar **solo el piso de 4 GiB después del pull**
+de Playwright completo. El cambio propuesto desde `main=d4d2b2a6769d867097d31c08364ac33829354da7`
+mantiene **4 GiB antes de cada imagen** y exige **1 GiB restante + 50.000
+inodos** después de cada descarga, al terminar Cutover/BETA y durante el
+ciclo de la BETA instalada. La identidad y topología Docker rootless,
+sha/digests, BLACKBOX, puerto 8443 y limpieza selectiva permanecen. No es
+instalación real: faltan PR/QA final, nuevo release de SHA exacto, PREPARE,
+GO B independiente, APPLY y ACK del droplet. Véase [ADR0183](docs/ADR/0183-postpull-boca-beta-emergency-residual.md)
+y [capacidad #259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259).
+Los cortes R21 siguientes son históricos y no representan el HEAD actual.
+
 ## Corte de entrega A45-R21.21 — 05/11/2026 ART (CÓDIGO CONSOLIDADO; NO DEPLOY)
 
 - **Candidato único:** [DRAFT #319](https://github.com/mbalbo2023/boca-socios-assistant/pull/319), HEAD `3cbe31703d74413f8de66ac8783ec68b1b7f8a87`, TREE `208a75e0c7310ea25db55ca509563f0b57972f42` verificados; conserva los overlays previos y ahora incorpora #372 (postflight cleanup Boca **solo Cutover A**), #375 (observadores host READ_ONLY Cutover/import), #374 (WebAuthn UV fresco Telegram, **sender OFF**), #376 (GO_B Cutover/import de dos despachos). Las fuentes satélite tienen 4/4, 4/4, 6/6, 4/4 Actions verdes respectivamente, **no heredables al SHA #319**.

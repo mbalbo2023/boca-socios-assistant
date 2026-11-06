@@ -99,7 +99,7 @@ def _installed(
     for name in ("_validate_data_volume", "_validate_key_volume", "_validate_owner_volume"):
         monkeypatch.setattr(host, name, lambda: None)
     monkeypatch.setattr(host, "_storage_snapshot", lambda: object())
-    monkeypatch.setattr(host, "_validate_storage_capacity", lambda _snapshot: None)
+    monkeypatch.setattr(host, "_validate_storage_capacity", lambda _snapshot, **kwargs: None)
 
     def fake_run(*args: str, **_kwargs: object) -> str:
         commands.append(args)

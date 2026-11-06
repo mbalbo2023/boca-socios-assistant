@@ -208,7 +208,9 @@ def test_foreign_container_after_db_init_blocks_compose_start(
     monkeypatch.setattr(host, "_validate_key_volume", lambda: None)
     monkeypatch.setattr(host, "_validate_owner_volume", lambda: None)
 
-    def inventory(*, staged: bool, expected: set[str]) -> host.HostSnapshot:
+    def inventory(
+        *, staged: bool, expected: set[str], min_free_bytes: int = host.PREFLIGHT_STORAGE_MIN_BYTES
+    ) -> host.HostSnapshot:
         assert staged
         if expected == {host.OWNER_VOLUME, host.KEY_VOLUME, host.DATA_VOLUME}:
             operations.append("foreign-after-init")
