@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,11 +36,36 @@ def test_stage_effect_is_one_reviewed_zip_and_requires_physical_ack() -> None:
     assert "scripts/boca_protected_memfd_bootstrap.py" in stage
     assert "cutover-stage-recover" in stage
     assert '< "$reviewed"' in stage
-    assert "host_cutover_stage_recovery.py verify" in stage
+    assert "PYTHONPATH: src:." in stage
+    assert "python3 -m scripts.host_cutover_stage_recovery verify" in stage
     assert "physical_ACK_missing_or_invalid retry=NO_GO" in stage
     assert "docker rm" not in stage
     assert "docker image rm" not in stage
     assert "prune" not in stage
+
+
+def test_stage_runner_verifier_imports_both_packages_outside_host() -> None:
+    """Regression #42243714580: source imports must precede physical ACK parsing."""
+    env = {**os.environ, "PYTHONPATH": "src:."}
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.host_cutover_stage_recovery",
+            "verify",
+            "42236673419",
+            "42217108000",
+        ],
+        cwd=ROOT,
+        env=env,
+        input=b"",
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+    assert result.returncode == 3  # Missing test ACK must still be NO_GO.
+    assert b"ModuleNotFoundError" not in result.stderr
+    assert b"ImportError" not in result.stderr
 
 
 def test_docker_effect_is_one_exact_historical_image_and_requires_ack() -> None:

@@ -1973,9 +1973,14 @@ jobs:
             > "$RUNNER_TEMP/boca-stage-recovery.receipt" 2>/dev/null
       - name: Require verified physical ACK for one exact stage directory
         if: ${{ always() && inputs.operation == 'cutover-a-stage-recover' }}
+        env:
+          # This script imports the reviewed src-layout package and scripts package.
+          # Direct `python3 scripts/...` without these roots masked a genuine host
+          # success in #42243714580. Never rerun the same physical recovery.
+          PYTHONPATH: src:.
         run: |
           set -euo pipefail
-          if ! python3 scripts/host_cutover_stage_recovery.py verify \
+          if ! python3 -m scripts.host_cutover_stage_recovery verify \
             "$BOCA_PROTECTED_ACTION_CONTEXT" "$BOCA_INCIDENT_PREPARE_RUN_ID" \
             < "$RUNNER_TEMP/boca-stage-recovery.receipt" >> "$GITHUB_STEP_SUMMARY"; then
             printf 'BOCA_STAGE_RECOVERY state=NO_GO reason=physical_ACK_missing_or_invalid retry=NO_GO original=preserved_or_unverified\n' >> "$GITHUB_STEP_SUMMARY"
