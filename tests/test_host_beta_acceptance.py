@@ -87,7 +87,7 @@ def test_host_probe_runs_only_in_twice_validated_controller(
 
     monkeypatch.setattr(host, "_beta_acceptance_status", status)
     monkeypatch.setattr(host, "_run", run)
-    monkeypatch.setattr(host, "_validate_storage_continuity", lambda *_args: None)
+    monkeypatch.setattr(host, "_validate_storage_continuity", lambda *_args, **kwargs: None)
     host._beta_acceptance_phase(image, source_sha, "d" * 64, "http://localhost:8443", "owner")
     assert status_calls == ["checked", "checked"]
     assert len(commands) == 1
@@ -108,7 +108,7 @@ def test_postflight_container_change_discards_probe_pass(
     )
     monkeypatch.setattr(host, "_beta_acceptance_status", lambda *_args: (next(images), capacity))
     monkeypatch.setattr(host, "_run", lambda *_args: PASS)
-    monkeypatch.setattr(host, "_validate_storage_continuity", lambda *_args: None)
+    monkeypatch.setattr(host, "_validate_storage_continuity", lambda *_args, **kwargs: None)
     with pytest.raises(host.PreflightError):
         host._beta_acceptance_phase(
             "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "b" * 64,
@@ -236,7 +236,7 @@ def test_installed_headroom_is_advisory_but_invalid_metadata_and_network_are_rej
     monkeypatch.setattr(host, "collect_diagnostic", lambda *_args, **_kwargs: diagnostic)
     monkeypatch.setattr(host, "_beta_loopback_health", lambda *_args: None)
     monkeypatch.setattr(host, "_storage_snapshot", lambda: capacity)
-    monkeypatch.setattr(host, "_validate_storage_capacity", lambda *_args: None)
+    monkeypatch.setattr(host, "_validate_storage_capacity", lambda *_args, **kwargs: None)
 
     def operation() -> tuple[object, object]:
         return host._beta_acceptance_status(

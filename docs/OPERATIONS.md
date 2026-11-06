@@ -1,5 +1,18 @@
 # Safe operations — verified evidence and gated procedures
 
+## R40 — Política de disco propuesta para Cutover/BETA (06/11/2026 ART; CODE_ONLY)
+
+Sobre `main=d4d2b2a6769d867097d31c08364ac33829354da7` se prepara un PR
+para conservar **4 GiB + 50.000 inodos antes de cada pull** del par
+controller/browser y permitir **1 GiB residual + 50.000 inodos** solamente
+después de cada pull y en la BETA ya instalada. El umbral residual es una
+red de emergencia, no una medición de consumo ni permiso para omitir identidad
+de UID/socket/DockerRootDir, `st_dev`/`st_ino`, SHA/digests, aislamiento o
+compensación Boca-only en la **misma** Action protegida. Si falta recibo
+físico o cleanup exact-ID, NO_GO/INDETERMINATE sin retry ciego. No hay nuevo
+release, GO B o instalación producto acreditados por este PR. Contrato y
+evidencia: [ADR0183](ADR/0183-postpull-boca-beta-emergency-residual.md) / [#259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259).
+
 ## Guía móvil GO B en Samsung Chrome — 05/11/2026 ART (R21.21; NO EJECUTAR SIN GO)
 
 **Lo que hay:** código DRAFT [#319](https://github.com/mbalbo2023/boca-socios-assistant/pull/319) HEAD `3cbe31703d74413f8de66ac8783ec68b1b7f8a87`, TREE `208a75e0c7310ea25db55ca509563f0b57972f42`, fuentes #372/#375/#374/#376 verificadas; **7/7 GitHub Actions COMPLETED SUCCESS exact SHA R21.21**: [CI 42064964129](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964129) **3718 pytest PASS +34 subtests**, Ruff/format547/MyPy128/image-build PASS; [FirstDeploy 42064964223](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964223) PR-validation + runtime-smoke SUCCESS, **host SKIPPED**; [Release 42064964145](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964145) validación SUCCESS, **publish SKIPPED**; [Panel 42064964232](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964232), [News 42064964239](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964239), [Telegram 42064964156](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964156), [Security 42064964402](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964402) SUCCESS. Artifacts de CI/FirstDeploy/Release consultados: **0**; no recibo físico ni imagen publicada. **Lo instalado es legacy `main=cabce9f1e452e63ded115f447559a358dc0f4d1b`**, comprobado en Samsung Chrome/Termius/passkey el 04/11, NO BETA integral. **GO de merge/release/Cutover/Telegram no consta y no se ha ejecutado SSH de efecto.** Esta guía es para el momento posterior a merge, release con digest y GO específico, sin comandos de terminal ni pedir PIN.

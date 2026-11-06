@@ -795,7 +795,7 @@ def test_post_pull_metadata_is_observed_without_unbenchmarked_reserve(
 ) -> None:
     monkeypatch.setattr(host, "_validate_docker_boundary", lambda: None)
     monkeypatch.setattr(host, "_storage_snapshot", lambda: object())
-    monkeypatch.setattr(host, "_validate_storage_capacity", lambda _: None)
+    monkeypatch.setattr(host, "_validate_storage_capacity", lambda _, **kwargs: None)
     monkeypatch.setattr(
         host,
         "_cpu_structural_capacity",
@@ -1140,8 +1140,13 @@ def test_browser_apply_orders_worker_socket_before_keys_and_controller(
     )
     monkeypatch.setattr(host, "_browser_port_free", lambda: events.append("port"))
 
-    def measured_capacity() -> tuple[int, float, int, object]:
+    capacity_floors: list[int] = []
+
+    def measured_capacity(
+        *, min_free_bytes: int = host.PREFLIGHT_STORAGE_MIN_BYTES
+    ) -> tuple[int, float, int, object]:
         events.append("capacity")
+        capacity_floors.append(min_free_bytes)
         return 1600000, 2.0, 300, capacity
 
     monkeypatch.setattr(host, "_browser_capacity", measured_capacity)
@@ -1186,7 +1191,7 @@ def test_browser_apply_orders_worker_socket_before_keys_and_controller(
         host, "_browser_controller_postflight", lambda *args: events.append("controller-proof")
     )
     monkeypatch.setattr(host, "_beta_loopback_health", lambda *args: events.append("loopback"))
-    monkeypatch.setattr(host, "_validate_storage_continuity", lambda *args: None)
+    monkeypatch.setattr(host, "_validate_storage_continuity", lambda *args, **kwargs: None)
     monkeypatch.setattr(host, "_storage_snapshot", lambda: capacity)
 
     def run(*args: str, **kwargs: object) -> str:
@@ -1231,6 +1236,10 @@ def test_browser_apply_orders_worker_socket_before_keys_and_controller(
     )
     assert read_count == 4
     assert events.count("capacity") == 2
+    assert capacity_floors == [
+        host.PREFLIGHT_STORAGE_MIN_BYTES,
+        host.POSTINSTALL_STORAGE_MIN_BYTES,
+    ]
     before, after = [index for index, item in enumerate(events) if item == "capacity"]
     assert before < events.index("pull-both") < after < events.index("ipc-create")
     assert events.index("ipc-create") < events.index("up-browser-worker")
@@ -1255,7 +1264,7 @@ def test_browser_apply_fails_without_retry_before_key_or_controller_after_worker
     monkeypatch.setattr(host, "_browser_staged_inventory", lambda **kwargs: None)
     monkeypatch.setattr(host, "_browser_port_free", lambda: None)
     capacity = object()
-    monkeypatch.setattr(host, "_browser_capacity", lambda: (1600000, 2.0, 300, capacity))
+    monkeypatch.setattr(host, "_browser_capacity", lambda **kwargs: (1600000, 2.0, 300, capacity))
     monkeypatch.setattr(host, "_browser_image_absent", lambda image, sha: True)
     monkeypatch.setattr(host, "_browser_compose_model", lambda *args: "{}")
     monkeypatch.setattr(host, "_browser_pull_both", lambda *args: called.append("pull-both"))
@@ -1271,7 +1280,7 @@ def test_browser_apply_fails_without_retry_before_key_or_controller_after_worker
         lambda *args: (_ for _ in ()).throw(PreflightError("worker invalid")),
     )
     monkeypatch.setattr(host, "_storage_snapshot", lambda: capacity)
-    monkeypatch.setattr(host, "_validate_storage_continuity", lambda *args: None)
+    monkeypatch.setattr(host, "_validate_storage_continuity", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         host, "_browser_create_key", lambda *args: pytest.fail("key created after worker failure")
     )
@@ -1318,7 +1327,7 @@ def test_postpull_capacity_failure_blocks_ipc_key_data_and_worker(
     monkeypatch.setattr(host, "_run", lambda *args, **kwargs: pytest.fail("Docker side effect"))
     probes = 0
 
-    def capacity() -> tuple[int, float, int, object]:
+    def capacity(**kwargs: int) -> tuple[int, float, int, object]:
         nonlocal probes
         probes += 1
         events.append("capacity")

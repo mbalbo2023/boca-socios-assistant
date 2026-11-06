@@ -40,8 +40,8 @@ def lifecycle(monkeypatch: pytest.MonkeyPatch) -> tuple[list[tuple[str, ...]], l
         lambda *args, running, **kwargs: states.append(running) or identity,
     )
     monkeypatch.setattr(host, "_storage_snapshot", lambda: object())
-    monkeypatch.setattr(host, "_validate_storage_continuity", lambda *args: None)
-    monkeypatch.setattr(host, "_browser_capacity", lambda: None)
+    monkeypatch.setattr(host, "_validate_storage_continuity", lambda *args, **kwargs: None)
+    monkeypatch.setattr(host, "_browser_capacity", lambda **kwargs: None)
     monkeypatch.setattr(host, "_browser_port_free", lambda: None)
     monkeypatch.setattr(host, "_browser_wait_healthy", lambda container: None)
     monkeypatch.setattr(host, "_beta_loopback_health", lambda *args: None)
@@ -492,7 +492,7 @@ def test_sender_preflight_is_readonly_and_observes_resources(
         "browser-telegram-preflight", *COORDS, BOT_ID, CHAT_HMAC, RUNTIME_ATTEMPT
     )
     assert commands == []
-    assert capacity == [{}]
+    assert capacity == [{"min_free_bytes": host.POSTINSTALL_STORAGE_MIN_BYTES}]
 
 
 def test_sender_start_creates_only_current_attempt_network_and_fixed_sender(
@@ -650,7 +650,7 @@ def test_full3_restart_preserves_sender_identity_stops_sender_first_and_starts_l
         SENDER_ID,
     ]
     assert ready == [(SENDER_ID, SOURCE)]
-    assert capacities == [{}]
+    assert capacities == [{"min_free_bytes": host.POSTINSTALL_STORAGE_MIN_BYTES}]
 
 
 @pytest.mark.parametrize(

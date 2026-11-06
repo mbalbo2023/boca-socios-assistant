@@ -1,5 +1,25 @@
 # Estado de integración BETA
 
+## R40 — Capacidad pospull en desarrollo (06/11/2026 ART; NO INSTALADO)
+
+- **Base verificada:** `main=d4d2b2a6769d867097d31c08364ac33829354da7`.
+  Cambio acotado en PR por publicar; aún no existe SHA de release ni ACK
+  físico del Cutover integral.
+- **Antes de cada pull:** 4 GiB libres por path y 50.000 inodos siguen
+  obligatorios. **Después de cada pull y post-Cutover/BETA/lifecycle:**
+  residual propuesto **1 GiB + 50.000 inodos**; todas las identidades,
+  topología, provenance y límites de contenedor conservados.
+- **Física preexistente:** Action READ_ONLY
+  [#42132959174](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42132959174)
+  observó 5.106.397.184 B libres antes de nueva descarga; la `.Size` full
+  browser de runner (~2.695 GB) **no** prueba delta de host. Sin nuevo pull,
+  release ni cleanup aplicado.
+- **Entrega pendiente:** QA exact SHA, merge protegido, release dual nuevo,
+  PREPARE→GO B→APPLY, recibo de bytes/inodos antes/después, limpieza
+  exclusivamente Boca, Chromium/Firefox/WebKit presentes, Chrome Samsung y
+  Telegram. [ADR0183](ADR/0183-postpull-boca-beta-emergency-residual.md)
+  y [#259](https://github.com/mbalbo2023/boca-socios-assistant/issues/259).
+
 ## Corte de integración A45-R21.21 — 05/11/2026 ART (RELEASE/HANDOFF, NO_GO físico)
 
 **PR único [#319](https://github.com/mbalbo2023/boca-socios-assistant/pull/319) DRAFT:** HEAD `3cbe31703d74413f8de66ac8783ec68b1b7f8a87`, TREE `208a75e0c7310ea25db55ca509563f0b57972f42`, main físico legacy `cabce9f1e452e63ded115f447559a358dc0f4d1b` sin cambios. Fuente integra #372, #375, #374 y #376 sin perder overlays anteriores. La validación en Samsung Chrome+Termius+passkey fue para **legacy 04/11**, no para BETA integral.

@@ -49,7 +49,7 @@ def actual_named_runs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
         ("_browser_staged_inventory", lambda **kwargs: None),
         ("_browser_inventory", lambda **kwargs: None),
         ("_browser_port_free", lambda: None),
-        ("_browser_capacity", lambda: (1_600_000, 2.0, 300, measured)),
+        ("_browser_capacity", lambda **kwargs: (1_600_000, 2.0, 300, measured)),
         ("_browser_image_absent", lambda *args: True),
         ("_browser_compose_model", lambda *args: "{}"),
         ("_browser_pull_both", lambda *args: None),
@@ -63,7 +63,7 @@ def actual_named_runs(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
         ("_validate_owner_volume", lambda: None),
         ("_validate_data_volume", lambda: None),
         ("_storage_snapshot", lambda: measured),
-        ("_validate_storage_continuity", lambda *args: None),
+        ("_validate_storage_continuity", lambda *args, **kwargs: None),
     ):
         monkeypatch.setattr(installer, name, fake)
     monkeypatch.setattr(
