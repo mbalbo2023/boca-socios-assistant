@@ -1,6 +1,26 @@
 # Estado de integración BETA
 
-## R49 — Cutover A #740, reconciliación #741 y Stage CODE_ONLY (06/11/2026 ART)
+## R50 — Stage recuperado, regresión de política dual (06/11/2026 ART)
+
+- [Recuperación #743](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42254252830):
+  `STAGE_CLEARED`, ACK físico aceptado, Docker writes 0, Compose intacto.
+  [Reconciliación #744](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42254498237):
+  `stage=ABSENT`, un controller legacy sano en `127.0.0.1:8443`, ningún
+  candidato ni worker, commit no iniciado; operación previa `NO_GO`.
+- **Defecto de contrato reproducible:** `_browser_pull_both` vuelve a exigir
+  4 GiB antes del **segundo** `docker pull` pese a la política aprobada de
+  residual de 1 GiB después de la primera descarga. R50 aplica 4 GiB una
+  vez al iniciar la transacción dual y 1 GiB/50k inodos entre imágenes y
+  al acabar, verificando ambos paths e identidad de almacenamiento.
+  **Causa posible del fallo físico, todavía no RCA demostrada**: el #740 no
+  aportó fase exacta ni bytes después del primer pull.
+- **Estatus:** R50 CODE_ONLY en desarrollo, sin PR verde, release ni nuevo
+  PREPARE/GO/APPLY. La BETA integral/Playwright/Telegram **no está instalada**.
+  La imagen histórica Docker incierta exige revisión separada antes del
+  siguiente Cutover; sin borrados globales ni reintentos del #740.
+  [ADR0183](ADR/0183-postpull-boca-beta-emergency-residual.md) / [#386](https://github.com/mbalbo2023/boca-socios-assistant/issues/386).
+
+## Histórico — R49 antes de recuperar Stage (06/11/2026 ART)
 
 - PREPARE físico [#739](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42246824073)
   SUCCESS (`main=f3a8841817307daa084fe0472720f4444235c9bb`), APPLY protegido
@@ -20,7 +40,7 @@
   las garantías de provenance/no-referencia pasan. No retry automático,
   Docker prune global ni interacción con Porota/otros sistemas.
 
-## R40 — Capacidad pospull en desarrollo (06/11/2026 ART; NO INSTALADO)
+## Histórico — R40, reemplazado en la admisión dual por R50
 
 - **Base verificada:** `main=d4d2b2a6769d867097d31c08364ac33829354da7`.
   Cambio acotado en PR por publicar; aún no existe SHA de release ni ACK

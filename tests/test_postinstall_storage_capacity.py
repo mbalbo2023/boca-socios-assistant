@@ -121,20 +121,23 @@ def test_beta_apply_keeps_pre_pull_floor_and_uses_postpull_floor_before_owner_ef
     assert events[0] == "check" and "pull" in events
 
 
-def test_dual_pull_checks_preflight_before_each_image_and_residual_after_each(
+def test_dual_pull_uses_four_gib_before_first_and_one_gib_between_images(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     before = safe_storage()
     after_controller = replace(before, stage_free_bytes=4 * GIB - 1, docker_free_bytes=4 * GIB - 1)
-    observed = iter((before, after_controller))
+    after_browser = replace(before, stage_free_bytes=GIB, docker_free_bytes=GIB)
+    observed = iter((before, after_controller, after_browser))
     commands: list[tuple[str, ...]] = []
     monkeypatch.setattr(host, "_storage_snapshot", lambda: next(observed))
     monkeypatch.setattr(host, "_browser_validate_image", lambda *_args: None)
     monkeypatch.setattr(host, "_run", lambda *args: commands.append(args) or "")
 
-    with pytest.raises(host.PreflightError, match="insufficient Boca"):
-        host._browser_pull_both("controller-digest", "browser-digest", "a" * 40)
-    assert commands == [("docker", "pull", "controller-digest")]
+    host._browser_pull_both("controller-digest", "browser-digest", "a" * 40)
+    assert commands == [
+        ("docker", "pull", "controller-digest"),
+        ("docker", "pull", "browser-digest"),
+    ]
 
 
 def test_dual_pull_aborts_on_low_residual_before_other_image(

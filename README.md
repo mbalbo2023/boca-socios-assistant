@@ -1,6 +1,30 @@
 # Boca Socios Assistant
 
-## Cutover A #740 — Stage pendiente y recuperación R49 (06/11/2026 ART)
+## R50 — corrección candidata de admisión dual y estado físico (06/11/2026 ART)
+
+El Stage abandonado del APPLY [#740](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42249350458)
+**ya fue recuperado**, con ACK `STAGE_CLEARED` en el run protegido
+[#743](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42254252830).
+El observador posterior [#744](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42254498237)
+confirmó `stage=ABSENT`, Compose original inalterado, **único controller
+legacy sano en 127.0.0.1:8443, sin worker ni candidato**, y cero escrituras
+Docker de la recuperación. La limpieza histórica Docker sigue indeterminada;
+el APPLY viejo permanece NO_GO y **no debe repetirse**.
+
+R50 corrige en código `_browser_pull_both`: el par controller + browser
+requiere **4 GiB antes del primer pull** y **1 GiB + 50.000 inodos entre
+los dos pulls y después del segundo**, siempre en ambos paths validados y
+con verificación de identidad de filesystem. Antes se reimponían 4 GiB
+antes del segundo, aunque ya se hubiera descargado el controller. La
+contradicción está reproducida por test; **no está probado que sea la
+causa física de la salida 3** del run #740. El fix sigue sin PR/CI/release
+ni despliegue en este corte; consultar [ADR0183](docs/ADR/0183-postpull-boca-beta-emergency-residual.md)
+y [RCA #386](https://github.com/mbalbo2023/boca-socios-assistant/issues/386).
+No se modifican módulos BLACKBOX, sesión/DB, imagen instalada, otros Docker
+ni puertos. Solo una nueva secuencia exact-SHA y un ACK físico pueden declarar
+la BETA integral instalada.
+
+## Histórico — Cutover A #740 y preparación R49 antes de recuperar Stage
 
 El `PREPARE` físico [#739](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42246824073)
 pasó con source `f3a8841817307daa084fe0472720f4444235c9bb`. Su `APPLY`
@@ -26,7 +50,7 @@ de un PREPARE/GO/APPLY **nuevos**. Sin borrar datos/volúmenes, BLACKBOX,
 Porota ni otros Docker. Ver [ADR0184](docs/ADR/0184-exact-incident-uncommitted-stage-recovery.md)
 y [RCA #386](https://github.com/mbalbo2023/boca-socios-assistant/issues/386).
 
-## Candidato R40 — residuo de emergencia Boca BETA (06/11/2026 ART; CODE_ONLY)
+## Histórico — Candidato R40, reemplazado en la admisión dual por R50
 
 El propietario autorizó levantar **solo el piso de 4 GiB después del pull**
 de Playwright completo. El cambio propuesto desde `main=d4d2b2a6769d867097d31c08364ac33829354da7`
