@@ -1,5 +1,7 @@
 """Disposable PR image-size evidence; never a host or publishing operation."""
 
+import ast
+import textwrap
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,6 +83,16 @@ def test_pr_only_three_browser_launch_is_real_offline_and_bounded() -> None:
     assert "browser_type.launch(" in step
     assert 'page.goto("about:blank"' in step
     assert "BOCA_FULL_PLAYWRIGHT_LAUNCH" in step
+    source = step.split('--entrypoint python "$IMAGE" -c \'\n', 1)[1].split("\n          '\n", 1)[0]
+    ast.parse(textwrap.dedent(source))
+    assert "BOCA_BROWSER_HOME_CHECK" in step
+    assert "home_stat.st_uid == 10002" in step
+    assert "os.access(home, os.W_OK)" in step
+    assert "tempfile.TemporaryFile()" in step
+    assert "os.dup2(probe.fileno(), 2)" in step
+    assert "categories={categories}" in step
+    assert "exit_code={code}" in step
+    assert "phase={phase}" in step
     for guard in (
         "timeout 120s docker run --rm",
         "--network none",
@@ -91,6 +103,7 @@ def test_pr_only_three_browser_launch_is_real_offline_and_bounded() -> None:
         '"seccomp=$GITHUB_WORKSPACE/docker/seccomp_profile.json"',
         "--pids-limit 128 --memory 768m --cpus 1.0",
         "--tmpfs /tmp:rw,noexec,nosuid,size=32m",
+        "--env DEBUG=pw:browser",
     ):
         assert guard in step
     for forbidden in (
@@ -102,6 +115,8 @@ def test_pr_only_three_browser_launch_is_real_offline_and_bounded() -> None:
         "docker pull",
         "docker login",
         "ssh ",
+        "print(error)",
+        "print(captured)",
     ):
         assert forbidden not in step
     assert marker not in workflow.split("  publish:\n", 1)[1]
