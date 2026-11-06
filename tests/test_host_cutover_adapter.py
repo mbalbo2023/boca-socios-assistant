@@ -826,6 +826,10 @@ def test_workflow_cutover_apply_requires_separate_go_and_legacy_release_proof() 
     assert "cutover-a-observe" in options
     assert [operation for operation in options if operation.startswith("cutover-a-")] == [
         "cutover-a-reconcile",
+        # R47 one-time, exact-incident remedial operations are independently
+        # host/ACK gated; neither promotes nor replays the original APPLY.
+        "cutover-a-stage-recover",
+        "cutover-a-image-retire",
         "cutover-a-observe",
         "cutover-a-apply",
     ]

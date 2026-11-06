@@ -52,7 +52,7 @@ def test_bounded_source_growth_keeps_archive_digest_and_archive_limit_independen
 ) -> None:
     sources = (*builder.SOURCES, *builder.OPTION_B_SOURCES)
     total = sum((ROOT / item).stat().st_size for item in sources)
-    assert 768_000 < total < builder.MAX_SOURCE_BYTES == 800_000
+    assert 830_000 < total < builder.MAX_SOURCE_BYTES == 860_000
     assert builder.MAX_ARCHIVE_BYTES == 512_000
     output, digest = _build(tmp_path)
     raw = output.read_bytes()
@@ -113,6 +113,17 @@ def test_effectful_dispatch_deliberately_no_go_and_no_host(tmp_path: Path) -> No
     result = _run(output.read_bytes(), digest, "protected-beta-install")
     assert result.returncode == 3
     assert result.stdout == b"BOCA_PROTECTED_INSTALL state=NO_GO reason=transaction_not_wired\n"
+
+
+def test_stage_recovery_transport_is_self_contained_and_rejects_invalid_incident(
+    tmp_path: Path,
+) -> None:
+    output, digest = _build(tmp_path)
+    raw = output.read_bytes()
+    result = _run(raw, digest, "cutover-stage-recover", "0", "0", stdlib_only=True)
+    assert result.returncode == 3
+    assert result.stdout == b""
+    assert b"BOCA_STAGE_RECOVERY state=NO_GO" in result.stderr
 
 
 def test_cutover_memfd_end_to_end_selftest_and_unapproved_apply_are_inert(tmp_path: Path) -> None:

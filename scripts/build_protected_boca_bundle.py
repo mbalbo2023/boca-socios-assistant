@@ -30,6 +30,11 @@ SOURCES = (
     "src/boca_socios/host_boca_cutover_cli.py",
     "src/boca_socios/host_boca_cutover_receipt.py",
     "src/boca_socios/host_cutover_stage.py",
+    # One-incident post-failure stage recovery uses the same immutable memfd
+    # transport as Cutover A; never install these scripts onto the droplet.
+    "scripts/__init__.py",
+    "scripts/host_cutover_postapply_reconcile.py",
+    "scripts/host_cutover_stage_recovery.py",
     # Host-only lifecycle bridge and bounded stdlib dependency closure.
     "src/boca_socios/host_lifecycle_actions.py",
     "src/boca_socios/host_lifecycle_observe.py",
@@ -65,6 +70,9 @@ OPTION_B_SOURCES = (
 OPTION_B_STDLIB_BUNDLE_NAME = "boca_socios/owner_session_disk_bootstrap.py"
 MAIN = (
     "import sys\n"
+    "if len(sys.argv) > 1 and sys.argv[1] == 'cutover-stage-recover':\n"
+    "    from scripts import host_cutover_stage_recovery as recovery\n"
+    "    raise SystemExit(recovery.main(['host', *sys.argv[2:]]))\n"
     "if len(sys.argv) > 1 and sys.argv[1] in ('lifecycle-apply', 'lifecycle-bridge-selftest'):\n"
     "    from boca_socios import host_lifecycle_actions as bridge\n"
     "    if sys.argv[1] == 'lifecycle-bridge-selftest':\n"
@@ -88,10 +96,10 @@ MAIN = (
     "from boca_socios.host_boca_transaction import main\n"
     "raise SystemExit(main())\n"
 ).encode("ascii")
-# R28 read-only rootless cache + exact-ID fail-closed proof adds ~19kB to the
-# already enumerated, digest-authenticated host cleanup source. Source allowlist
-# and independent compressed transport bound remain unchanged.
-MAX_SOURCE_BYTES = 800_000
+# R46/R47 adds the reviewed physical cleanup proof and exact-incident recovery
+# observer to this explicit allowlist (approximately 39kB more uncompressed).
+# Keep the hard compressed transport cap independent and unchanged at 512kB.
+MAX_SOURCE_BYTES = 860_000
 MAX_ARCHIVE_BYTES = 512_000
 
 

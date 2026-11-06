@@ -32,6 +32,9 @@ EXPECTED_ENTRIES = frozenset(
         "boca_socios/host_boca_cutover_cli.py",
         "boca_socios/host_boca_cutover_receipt.py",
         "boca_socios/host_cutover_stage.py",
+        "scripts/__init__.py",
+        "scripts/host_cutover_postapply_reconcile.py",
+        "scripts/host_cutover_stage_recovery.py",
         "boca_socios/host_lifecycle_actions.py",
         "boca_socios/host_lifecycle_observe.py",
         "boca_socios/host_cutover_inventory_observe.py",
@@ -59,9 +62,9 @@ OPTION_B_ENTRIES = frozenset(
     }
 )
 MAX_ZIP = 512_000
-# Must match the reviewed SOURCES growth guard in build_protected_boca_bundle;
-# independent 512k compressed transport and exact digest checks remain intact.
-MAX_UNCOMPRESSED = 800_000
+# Must match the bounded explicit allowlist in build_protected_boca_bundle;
+# independently enforce the unchanged 512k compressed ZIP cap.
+MAX_UNCOMPRESSED = 860_000
 
 
 def verify(raw: bytes, expected_sha: str) -> None:
