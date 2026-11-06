@@ -119,6 +119,43 @@ jobs:
             --tmpfs /tmp:rw,noexec,nosuid,size=32m \
             --tmpfs /home/boca-browser:rw,noexec,nosuid,size=16m \
             --entrypoint python "$IMAGE" scripts/verify_chromium_worker.py
+      - name: Launch all three Playwright browsers offline without blackbox
+        env:
+          IMAGE: boca-browser-release-validation:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # The binary-presence check alone does not prove Firefox/WebKit can
+          # launch under the browser worker's isolation and cgroup limits.
+          # Visit only the internal about:blank URL, with no public navigation.
+          timeout 120s docker run --rm --network none \
+            --user 10002:10002 --read-only \
+            --cap-drop ALL --cap-add SYS_CHROOT \
+            --security-opt no-new-privileges:true \
+            --security-opt "seccomp=$GITHUB_WORKSPACE/docker/seccomp_profile.json" \
+            --cgroupns private --ipc private \
+            --pids-limit 128 --memory 768m --cpus 1.0 --shm-size 64m \
+            --tmpfs /tmp:rw,noexec,nosuid,size=32m \
+            --tmpfs /home/boca-browser:rw,noexec,nosuid,size=16m \
+            --entrypoint python "$IMAGE" -c '
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as api:
+              for name in ("chromium", "firefox", "webkit"):
+                  browser_type = getattr(api, name)
+                  options = {"chromium_sandbox": True, "args": ["--disable-background-networking"]} if name == "chromium" else {}
+                  browser = None
+                  try:
+                      browser = browser_type.launch(headless=True, timeout=20000, **options)
+                      page = browser.new_page()
+                      page.goto("about:blank", timeout=10000)
+                      if page.url != "about:blank":
+                          raise RuntimeError("internal_blank_url_mismatch")
+                  except Exception as error:
+                      raise SystemExit(f"BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO engine={name} reason={type(error).__name__}") from None
+                  finally:
+                      if browser is not None:
+                          browser.close()
+          print("BOCA_FULL_PLAYWRIGHT_LAUNCH chromium=PASS firefox=PASS webkit=PASS offline=true blackbox=UNTOUCHED")
+          '
       - name: Scan before any image publication
         run: bash scripts/trivy_scan_image.sh "boca-release-validation:$GITHUB_SHA"
       - name: Scan browser image before any publication

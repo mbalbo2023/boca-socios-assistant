@@ -66,3 +66,42 @@ def test_full_browser_image_proves_chromium_firefox_webkit_without_blackbox() ->
     assert "synthetic.py" not in verify
     assert "ipc_worker.py" not in verify
     assert marker not in workflow.split("  publish:\n", 1)[1]
+
+
+def test_pr_only_three_browser_launch_is_real_offline_and_bounded() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    preview = workflow.split("  pr-validation:\n", 1)[1].split("  publish:\n", 1)[0]
+    marker = "      - name: Launch all three Playwright browsers offline without blackbox\n"
+    assert preview.count(marker) == 1
+    assert preview.index("Verify isolated Chromium launch offline") < preview.index(marker)
+    assert preview.index(marker) < preview.index("Scan before any image publication")
+    step = preview.split(marker, 1)[1].split("      - name:", 1)[0]
+    assert "IMAGE: boca-browser-release-validation:${{ github.sha }}" in step
+    assert 'for name in ("chromium", "firefox", "webkit"):' in step
+    assert "browser_type.launch(" in step
+    assert 'page.goto("about:blank"' in step
+    assert "BOCA_FULL_PLAYWRIGHT_LAUNCH" in step
+    for guard in (
+        "timeout 120s docker run --rm",
+        "--network none",
+        "--user 10002:10002",
+        "--read-only",
+        "--cap-drop ALL --cap-add SYS_CHROOT",
+        "--security-opt no-new-privileges:true",
+        '"seccomp=$GITHUB_WORKSPACE/docker/seccomp_profile.json"',
+        "--pids-limit 128 --memory 768m --cpus 1.0",
+        "--tmpfs /tmp:rw,noexec,nosuid,size=32m",
+    ):
+        assert guard in step
+    for forbidden in (
+        "synthetic.py",
+        "ipc_worker.py",
+        "https://",
+        "http://",
+        "docker push",
+        "docker pull",
+        "docker login",
+        "ssh ",
+    ):
+        assert forbidden not in step
+    assert marker not in workflow.split("  publish:\n", 1)[1]
