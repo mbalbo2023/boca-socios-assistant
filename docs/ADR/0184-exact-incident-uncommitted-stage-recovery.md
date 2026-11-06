@@ -238,3 +238,48 @@ eliminado tampoco autoriza un segundo APPLY: antes debe investigarse la
 causa inicial y producir nuevo release/PREPARE/GO de SHA exacto. Fuera de
 alcance: BLACKBOX, servicios/volúmenes ajenos, backups, órdenes, puertos y
 Docker prune global.
+
+## Extensión R53 — cuarto incidente #757, Stage sin commit
+
+**Contexto físico verificado:** el Stage del incidente #750 fue saneado
+mediante [recuperación #754](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42269139909)
+con `STAGE_CLEARED` y ACK físico; el observador
+[#755](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42269530227)
+corroboró `stage=ABSENT` y una sola entrada raíz. El nuevo release dual
+[#698](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42269631510)
+publicó ambos digests para `main=70f374e273093007319b007e7ca22aff7cb75c4f`.
+PREPARE [#756](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42270247581)
+culminó exitosamente; la variable independiente de Environment se vinculó
+al digest `2390f22bf62bb4f451324ed34487262e9838d3585df8984eff00145b78f38360`.
+El APPLY [#757](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42270552485)
+validó dicho GO, pero SSH retornó 3 y no hubo recibo terminal ACCEPTED.
+**Prohibido reintentar el run #757**.
+
+El observador READ_ONLY independiente
+[#758](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42270841732)
+verificó `stage=PRESENT` (`root_entries_count=2`), `commit_started=false`,
+`promotion_intent=ABSENT`, `promotion_result=ABSENT`, un único controlador
+original en ejecución y sano, cero candidatos, cero workers, puerto
+`127.0.0.1:8443` y cero efectos extranjeros. `go_for_retry=false` aplica
+al intento antiguo, no autoriza reintentar. `prepared_go_marker=UNREADABLE/DIRECTORY`
+refleja el límite de visibilidad host/rootless documentado, no demuestra
+ausencia del marcador.
+
+| Vinculación inmutable R53 | Run ID | Conclusión |
+| --- | --- | --- |
+| Incidente #757 | `42270552485` | `failure` |
+| PREPARE #756 | `42270247581` | `success` |
+| Observación física #758 | `42270841732` | `success` |
+
+Actualizar exclusivamente los tres pins de la recuperación Stage bajo
+lease y los chequeos existentes de actor/SHA/primer intento/ACK. La ruta de
+retiro histórico de imagen mantiene sus pins distintos. El cambio R53
+**no contiene operaciones de limpieza de disco**; el usuario confirmó un
+frente separado. Se observaron 3.370.475.520 bytes frente al piso de
+admisión de 4 GiB, compatible con una negativa de pre-pull, pero la causa
+histórica de `exit3` no está probada por esa coincidencia.
+
+Hasta el ACK físico de la recuperación, Stage permanece en cuarentena.
+Después será necesario release/PREPARE/GO_B nuevos del SHA exacto de
+`main` para un intento distinto, sin reutilizar PREPARE #756 ni APPLY #757.
+No tocar blackbox, otros servicios, backups o Docker global.
