@@ -41,6 +41,7 @@ def _context(kind: str = "lifecycle") -> dict[str, str]:
         }
     common["data_mountpoint"] = "/data"
     return common | {
+        "workflow_sha": "a" * 40,
         "cutover_attempt": "41999999999",
         "cutover_receipt_sha256": "3" * 64,
         "owner_digest": "4" * 64,
@@ -143,6 +144,30 @@ def test_telegram_context_cannot_be_forged_with_human_start_time_or_secrets() ->
         changed = obj | {key: value}
         with pytest.raises(gate.ProtectedActionError):
             gate.decode_context(_encode(changed), operation="telegram-activate", environ=_env())
+
+
+def test_telegram_only_binds_current_workflow_and_previous_image_sha_separately() -> None:
+    # A later workflow-only fix can still use the exact published OCI pair,
+    # but the protected GO_B public context must bind BOTH identities.
+    environment = _env() | {"GITHUB_SHA": "b" * 40}
+    telegram = _context("telegram") | {"workflow_sha": "b" * 40}
+    assert (
+        gate.decode_context(_encode(telegram), operation="telegram-activate", environ=environment)
+        == telegram
+    )
+    for altered in (
+        telegram | {"workflow_sha": "a" * 40},
+        telegram | {"workflow_sha": "c" * 40},
+        {key: value for key, value in telegram.items() if key != "workflow_sha"},
+        telegram | {"source_sha": "b" * 40},
+    ):
+        with pytest.raises(gate.ProtectedActionError):
+            gate.decode_context(
+                _encode(altered), operation="telegram-activate", environ=environment
+            )
+    # No dual-source escape for lifecycle, Cutover A or other operations.
+    with pytest.raises(gate.ProtectedActionError):
+        gate.decode_context(_encode(_context()), operation="lifecycle-apply", environ=environment)
 
 
 def test_obsolete_single_dispatch_go_entrypoint_is_permanently_no_go(

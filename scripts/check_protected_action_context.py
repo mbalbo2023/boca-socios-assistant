@@ -56,6 +56,7 @@ _COMMON = frozenset(
 _LIFECYCLE = frozenset({"expected_component", "expected_target", "expected_request_id"})
 _TELEGRAM = frozenset(
     {
+        "workflow_sha",
         "cutover_attempt",
         "cutover_receipt_sha256",
         "owner_digest",
@@ -88,7 +89,7 @@ def _unique_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _environment(environ: Mapping[str, str]) -> None:
+def _environment(environ: Mapping[str, str], *, operation: str = "") -> None:
     expected = {
         "GITHUB_REPOSITORY": REPOSITORY,
         "GITHUB_ACTOR": OWNER,
@@ -101,7 +102,11 @@ def _environment(environ: Mapping[str, str]) -> None:
         raise ProtectedActionError("protected Boca Actions identity invalid")
     if (
         _SHA.fullmatch(environ.get("GITHUB_SHA", "")) is None
-        or environ.get("BOCA_SOURCE_SHA") != environ.get("GITHUB_SHA")
+        or _SHA.fullmatch(environ.get("BOCA_SOURCE_SHA", "")) is None
+        or (
+            operation != "telegram-activate"
+            and environ.get("BOCA_SOURCE_SHA") != environ.get("GITHUB_SHA")
+        )
         or _ATTEMPT.fullmatch(environ.get("GITHUB_RUN_ID", "")) is None
         or _ATTEMPT.fullmatch(environ.get("BOCA_RELEASE_RUN_ID", "")) is None
         or _CONTROLLER_IMAGE.fullmatch(environ.get("BOCA_IMAGE_REF", "")) is None
@@ -152,7 +157,7 @@ def _checked_absolute_path(raw: str, *, telegram: bool) -> None:
 def _validate_payload(
     payload: dict[str, Any], *, operation: str, environ: Mapping[str, str]
 ) -> dict[str, str]:
-    _environment(environ)
+    _environment(environ, operation=operation)
     kind = _OPERATIONS.get(operation)
     if kind is None or payload.get("kind") != kind or payload.get("version") != VERSION:
         raise ProtectedActionError("protected action kind/version mismatched")
@@ -202,7 +207,9 @@ def _validate_payload(
                 raise ProtectedActionError("lifecycle sender identity pin invalid")
     else:
         if (
-            _ATTEMPT.fullmatch(payload["cutover_attempt"]) is None
+            _SHA.fullmatch(payload["workflow_sha"]) is None
+            or payload["workflow_sha"] != environ["GITHUB_SHA"]
+            or _ATTEMPT.fullmatch(payload["cutover_attempt"]) is None
             or payload["cutover_attempt"] == payload["attempt_id"]
             or any(
                 _HASH.fullmatch(payload[name]) is None

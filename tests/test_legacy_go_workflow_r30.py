@@ -118,7 +118,14 @@ def test_telegram_and_six_legacy_installs_remain_explicit_no_go() -> None:
     preflight = _step("Reject legacy install routes without same-lease Boca-only postflight")
     assert "NO_GO" in preflight
     check = _step("Require verified protected environment and matching main commit")
-    assert "BOCA_TELEGRAM_POSTCUTOVER state=NO_GO" in check
+    telegram_review = _step(
+        "Prove Telegram dual-source release ancestry CODE_ONLY then reject physical activation"
+    )
+    assert "BOCA_TELEGRAM_POSTCUTOVER state=NO_GO" in telegram_review
+    assert "exit 1" in telegram_review
+    assert _YAML.index("      - name: Prove Telegram dual-source") < _YAML.index(
+        "      - name: Configure pinned SSH host key and dedicated identity"
+    )
     assert "cutover-a-apply" in check
     assert "official-notice-import" in check
     assert "telegram-activate" in check
