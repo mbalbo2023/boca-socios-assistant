@@ -15,9 +15,17 @@ def test_exact_one_incident_one_prepare_and_independent_protected_actions() -> N
     flow = WORKFLOW.read_text()
     assert "cutover-a-stage-recover" in flow
     assert "cutover-a-image-retire" in flow
-    assert 'test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42236673419' in flow
-    assert 'test "$BOCA_INCIDENT_PREPARE_RUN_ID" = 42217108000' in flow
-    assert "repos/$GITHUB_REPOSITORY/actions/runs/42237830418" in flow
+    # #740 is a NEW, independently reconciled stage incident. Do not alias it
+    # to the old #732 image-retirement identity or retry its consumed PREPARE.
+    assert "stage_incident=42249350458" in flow
+    assert "stage_prepare=42246824073" in flow
+    assert "stage_readonly=42250420345" in flow
+    assert "image_incident=42236673419" in flow
+    assert "image_prepare=42217108000" in flow
+    assert "image_readonly=42237830418" in flow
+    assert 'test "$BOCA_PROTECTED_ACTION_CONTEXT" = "$incident"' in flow
+    assert 'test "$BOCA_INCIDENT_PREPARE_RUN_ID" = "$prepare"' in flow
+    assert 'gh api "repos/$GITHUB_REPOSITORY/actions/runs/$readonly"' in flow
     assert "python scripts/check_main_ref.py" in flow
     assert 'test "$GITHUB_RUN_ATTEMPT" = 1' in flow
     assert "id: cutover_stage_recovery_host" in flow
@@ -53,8 +61,8 @@ def test_stage_runner_verifier_imports_both_packages_outside_host() -> None:
             "-m",
             "scripts.host_cutover_stage_recovery",
             "verify",
-            "42236673419",
-            "42217108000",
+            "42249350458",
+            "42246824073",
         ],
         cwd=ROOT,
         env=env,

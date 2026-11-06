@@ -146,3 +146,52 @@ de la imagen histórica mantiene su ruta y evidencia independientes.
   inventario histórico Docker; no implica que Stage siga presente. La
   eliminación exacta de la imagen antigua requiere su operación separada,
   un nuevo recibo físico y ninguna limpieza global.
+
+## Extensión R49 — segundo Stage abandonado, solo candidato CODE_ONLY
+
+El `PREPARE` [#42246824073](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42246824073)
+fue aceptado para `main=f3a8841817307daa084fe0472720f4444235c9bb`.
+El APPLY [#42249350458](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42249350458)
+pasó el GO independiente, pero terminó por salida remota 3 sin ACK físico.
+La inspección de un solo SSH READ_ONLY
+[#42250420345](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42250420345)
+mostró `intent=PRESENT`, `result=PRESENT`, `terminal_state=NO_GO`,
+`cleanup=INDETERMINATE`, `commit_started=false`, `original_restored=true`,
+exactamente el controlador legacy sano en `127.0.0.1:8443`, sin candidato
+ni worker, y `stage=PRESENT` con dos entradas en el root. El Stage continúa
+sin identidad de contenido demostrada hasta que `_stage_identity` la verifique
+bajo lease; **el conteo no justifica por sí solo eliminarlo**.
+
+La ruta Python de recuperación ya exige dos observaciones idénticas, hashes,
+identidad del Stage y unlink exacto. R49 solo cambia la habilitación del
+workflow para el nuevo trío inmutable:
+
+| Propósito | Run | Resultado previo exigido |
+| --- | --- | --- |
+| Incidente a reparar | `42249350458` | `failure` |
+| PREPARE ligado | `42246824073` | `success` |
+| READ_ONLY independiente | `42250420345` | `success` |
+
+La ruta de retiro histórico de imagen **no se reasigna** y mantiene
+`42236673419`/`42217108000`/`42237830418`. Ambas verifican que los tres
+runs del grupo pertenezcan al actor/repo/evento previstos y compartan SHA,
+y que el nuevo workflow se ejecute solo en `main` con SHA exacto y primer
+attempt. La salida segura sigue siendo NO_GO ante drift o ACK ausente.
+
+**RCA pendiente:** #741 no identifica si la salida 3 ocurrió durante
+Compose staging, pull GHCR, validación de imagen/capacidad o preparación del
+worker. La presencia del Stage y ausencia de worker acotan el intervalo,
+pero no prueban un fallo de descarga. Además, `UNREADABLE/DIRECTORY` en
+el observador del GO marker significa que el **directorio padre** no pasó
+su comprobación de UID/mode host (`host_cutover_postapply_reconcile.py`),
+no que el marker tenga tipo directorio; el UID 175536 observado en el host
+es compatible con el mapeo rootless de UID 10001 dentro del container.
+No efectuar chmod/chown sobre el volumen ni consumir otra vez ese PREPARE.
+El inventario clasifica una imagen histórica sin referencias como incierta;
+la limpieza separada exige procedencia positiva y no se fusiona con Stage.
+
+Esta extensión es **CODE_ONLY hasta PR/CI/merge/recibo del host**. Un stage
+eliminado tampoco autoriza un segundo APPLY: antes debe investigarse la
+causa inicial y producir nuevo release/PREPARE/GO de SHA exacto. Fuera de
+alcance: BLACKBOX, servicios/volúmenes ajenos, backups, órdenes, puertos y
+Docker prune global.

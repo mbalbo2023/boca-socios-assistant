@@ -941,8 +941,15 @@ jobs:
               # image, container, compose, or shell input is accepted.
               test "$BOCA_HOST_READONLY_ENV_READY" = ready
               test "$BOCA_DEPLOY_ENV_READY" = ready
-              test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42236673419
-              test "$BOCA_INCIDENT_PREPARE_RUN_ID" = 42217108000
+              if [[ "$BOCA_OPERATION" = cutover-a-stage-recover ]]; then
+                # Fresh failed Cutover #740, PREPARE #739, observer #741.
+                test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42249350458
+                test "$BOCA_INCIDENT_PREPARE_RUN_ID" = 42246824073
+              else
+                # Image-retire has its OWN old incident and topology gate.
+                test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42236673419
+                test "$BOCA_INCIDENT_PREPARE_RUN_ID" = 42217108000
+              fi
               test "$BOCA_LEGACY_RELEASE_RUN_ID" = "$BOCA_INCIDENT_PREPARE_RUN_ID"
               test -z "$BOCA_IMAGE_REF"
               test -z "$BOCA_BROWSER_IMAGE_REF"
@@ -1905,37 +1912,55 @@ jobs:
         run: |
           set -euo pipefail
           test "$GITHUB_RUN_ATTEMPT" = 1
-          test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42236673419
-          test "$BOCA_INCIDENT_PREPARE_RUN_ID" = 42217108000
+          if [[ "$BOCA_OPERATION" = cutover-a-stage-recover ]]; then
+            stage_incident=42249350458
+            stage_prepare=42246824073
+            stage_readonly=42250420345
+            incident="$stage_incident"
+            prepare="$stage_prepare"
+            readonly="$stage_readonly"
+          else
+            image_incident=42236673419
+            image_prepare=42217108000
+            image_readonly=42237830418
+            incident="$image_incident"
+            prepare="$image_prepare"
+            readonly="$image_readonly"
+          fi
+          test "$BOCA_PROTECTED_ACTION_CONTEXT" = "$incident"
+          test "$BOCA_INCIDENT_PREPARE_RUN_ID" = "$prepare"
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
             > "$RUNNER_TEMP/boca-remediation-main-ref.json"
           python scripts/check_main_ref.py \
             "$RUNNER_TEMP/boca-remediation-main-ref.json" "$BOCA_SOURCE_SHA"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42237830418" \
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$readonly" \
             > "$RUNNER_TEMP/boca-remediation-readonly-run.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42236673419" \
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$incident" \
             > "$RUNNER_TEMP/boca-remediation-incident-run.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42217108000" \
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$prepare" \
             > "$RUNNER_TEMP/boca-remediation-prepare-run.json"
           python3 - "$RUNNER_TEMP/boca-remediation-readonly-run.json" \
             "$RUNNER_TEMP/boca-remediation-incident-run.json" \
-            "$RUNNER_TEMP/boca-remediation-prepare-run.json" <<'PY'
+            "$RUNNER_TEMP/boca-remediation-prepare-run.json" \
+            "$incident" "$prepare" "$readonly" <<'PY'
           import json
           import sys
           from pathlib import Path
 
-          observed, failed, prepare = (json.loads(Path(p).read_bytes()) for p in sys.argv[1:])
-          expected = ((observed, 42237830418, 'success'),
-                      (failed, 42236673419, 'failure'),
-                      (prepare, 42217108000, 'success'))
+          observed, failed, prepared = (json.loads(Path(p).read_bytes()) for p in sys.argv[1:4])
+          incident_id, prepare_id, readonly_id = (int(x) for x in sys.argv[4:])
+          expected = ((observed, readonly_id, 'success'),
+                      (failed, incident_id, 'failure'),
+                      (prepared, prepare_id, 'success'))
           for run, identifier, conclusion in expected:
               assert run['id'] == identifier
               assert run['status'] == 'completed' and run['conclusion'] == conclusion
               assert run['event'] == 'workflow_dispatch'
               assert run['repository']['full_name'] == 'mbalbo2023/boca-socios-assistant'
               assert run['actor']['login'] == 'mbalbo2023'
-          assert observed['head_sha'] == failed['head_sha'] == prepare['head_sha']
-          print('BOCA_REMEDIATION_GATE state=PASS incident=42236673419 prepare=42217108000 readonly=42237830418')
+          assert observed['head_sha'] == failed['head_sha'] == prepared['head_sha']
+          print(f'BOCA_REMEDIATION_GATE state=PASS incident={incident_id} '
+                f'prepare={prepare_id} readonly={readonly_id}')
           PY
       - name: Build deterministic reviewed Boca stage recovery memfd package
         if: inputs.operation == 'cutover-a-stage-recover'
@@ -1986,7 +2011,8 @@ jobs:
             printf 'BOCA_STAGE_RECOVERY state=NO_GO reason=physical_ACK_missing_or_invalid retry=NO_GO original=preserved_or_unverified\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          printf 'BOCA_STAGE_RECOVERY physical_ACK=ACCEPT exact_incident=42236673419 docker_writes=0 foreign_services=untouched\n' >> "$GITHUB_STEP_SUMMARY"
+          printf 'BOCA_STAGE_RECOVERY physical_ACK=ACCEPT exact_incident=%s docker_writes=0 foreign_services=untouched\n' \
+            "$BOCA_PROTECTED_ACTION_CONTEXT" >> "$GITHUB_STEP_SUMMARY"
       - name: Attest one historical Boca image release before exact-ID removal
         if: inputs.operation == 'cutover-a-image-retire'
         env:

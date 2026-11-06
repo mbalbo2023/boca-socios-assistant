@@ -1,5 +1,25 @@
 # Estado de integración BETA
 
+## R49 — Cutover A #740, reconciliación #741 y Stage CODE_ONLY (06/11/2026 ART)
+
+- PREPARE físico [#739](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42246824073)
+  SUCCESS (`main=f3a8841817307daa084fe0472720f4444235c9bb`), APPLY protegido
+  [#740](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42249350458)
+  FAILURE con SSH exit3; **no hay ACK de instalación BETA integral**.
+- [READ_ONLY #741](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42250420345)
+  SUCCESS comprobó único controller original saludable y 8443 loopback;
+  cero candidatos/workers, `commit_started=false`, stage presente,
+  `cleanup=INDETERMINATE`, disco libre 4.833.996.800 B, dos imágenes Boca.
+  La lectura del marcador devuelve `DIRECTORY` por verificación del directorio
+  padre con UID host distinto del UID interno rootless: **no prueba corrupción
+  del marcador ni autoriza cambiar ownership**.
+- R49 prepara gate Stage **solo #740/#739/#741**; el retiro de imagen histórica
+  conserva la identidad anterior #732/#731/#733. Faltan PR, QA exacta,
+  merge y operación protegida con ACK `STAGE_CLEARED`, nueva lectura física,
+  diagnóstico de descarga/pre-worker y eliminación exacta de imagen SOLO si
+  las garantías de provenance/no-referencia pasan. No retry automático,
+  Docker prune global ni interacción con Porota/otros sistemas.
+
 ## R40 — Capacidad pospull en desarrollo (06/11/2026 ART; NO INSTALADO)
 
 - **Base verificada:** `main=d4d2b2a6769d867097d31c08364ac33829354da7`.

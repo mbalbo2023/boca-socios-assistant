@@ -1,5 +1,31 @@
 # Boca Socios Assistant
 
+## Cutover A #740 — Stage pendiente y recuperación R49 (06/11/2026 ART)
+
+El `PREPARE` físico [#739](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42246824073)
+pasó con source `f3a8841817307daa084fe0472720f4444235c9bb`. Su `APPLY`
+[#740](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42249350458)
+superó el GO protegido, pero el SSH terminó con código 3; **NO hay BETA
+integral instalada ni aceptación Chromium**. El observador READ_ONLY
+[#741](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42250420345)
+encontró el controlador original sano en `127.0.0.1:8443`, sin worker ni
+candidato, `commit_started=false`, Stage del intento presente, resultado
+`NO_GO` y limpieza `INDETERMINATE`. Hay 4.833.996.800 bytes libres, dos
+imágenes en Docker Boca y ninguna autorización para borrar la histórica
+incierta. El valor `prepared_go_marker=UNREADABLE/DIRECTORY` **no acredita
+que el marcador sea un directorio**: la inspección host del volumen exige
+UID 10001, pero el directorio rootless se observó con UID host 175536.
+
+El candidato R49 cambia **solo el gate protegido** de recuperación Stage
+para los tres runs exactos #740/#739/#741, con comprobación independiente
+de identidad, recibos y SSH/ACK; conserva el retiro histórico de imagen
+con sus pins propios. Hasta CI, revisión, merge y ACK físico `STAGE_CLEARED`,
+no recuperar ni reintentar Cutover. Aun después habrá que diagnosticar la
+fase anterior a la creación del worker y resolver la imagen incierta antes
+de un PREPARE/GO/APPLY **nuevos**. Sin borrar datos/volúmenes, BLACKBOX,
+Porota ni otros Docker. Ver [ADR0184](docs/ADR/0184-exact-incident-uncommitted-stage-recovery.md)
+y [RCA #386](https://github.com/mbalbo2023/boca-socios-assistant/issues/386).
+
 ## Candidato R40 — residuo de emergencia Boca BETA (06/11/2026 ART; CODE_ONLY)
 
 El propietario autorizó levantar **solo el piso de 4 GiB después del pull**
