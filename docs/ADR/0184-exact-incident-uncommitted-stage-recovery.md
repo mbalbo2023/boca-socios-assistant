@@ -119,3 +119,30 @@ ejecución aprobada. Un solo recibo host canónico y verificación runner
 adicional son obligatorios. Ante falta de ACK, no se re-dispara la misma
 operación; corresponde una observación física READ_ONLY nueva. La limpieza
 de la imagen histórica mantiene su ruta y evidencia independientes.
+
+## Resultado físico del 06/11/2026 — Stage resuelto; verificador del runner corregido
+
+- El PR #404 se fusionó en `main` (`90a904fccc7b6c5557f98823ef27080344961540`).
+- La ejecución protegida #42243714580 completó su único SSH de recuperación
+  sin error registrado, pero la **verificación posterior del runner** devolvió
+  código 1 por `ModuleNotFoundError: No module named 'boca_socios'`. El paso
+  invocaba `python3 scripts/host_cutover_stage_recovery.py verify` sin los
+  dos roots de import de este repositorio (`src` y `.`). Por eso el resumen
+  `physical_ACK_missing_or_invalid` era ambiguo, no una prueba de fracaso host.
+- La nueva ejecución **READ_ONLY** #42244158822 confirmó la postcondición
+  física exacta: `stage=ABSENT`, `stage_preflight.reason=STAGE_PREFLIGHT_MATCH`,
+  `root_entries_count=1`, SHA de Compose coincidente, modo legado 0644
+  aceptado, mismo único CID original `27ef39ed49d2...`, `running=true`,
+  `health=healthy`, loopback `127.0.0.1:8443`, cero candidatos/workers,
+  `commit_started=false`, `foreign_resources_touched=false`. El stage está
+  **efectivamente eliminado**. **No repetir** #42243714580 ni invocar
+  `cutover-a-stage-recover` una segunda vez.
+- Fix-forward estrictamente de runner: exportar `PYTHONPATH: src:.` en el paso
+  de verificación y ejecutar el entrypoint como módulo
+  `python3 -m scripts.host_cutover_stage_recovery verify ...`. Test de regresión
+  lanza el módulo desde checkout con entrada vacía: se espera NO_GO por ACK
+  ausente, **nunca** `ModuleNotFoundError`.
+- La clasificación global `cleanup=INDETERMINATE` continúa referida al
+  inventario histórico Docker; no implica que Stage siga presente. La
+  eliminación exacta de la imagen antigua requiere su operación separada,
+  un nuevo recibo físico y ninguna limpieza global.
