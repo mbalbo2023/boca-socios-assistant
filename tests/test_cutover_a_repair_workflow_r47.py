@@ -12,11 +12,11 @@ def test_exact_one_incident_one_prepare_and_independent_protected_actions() -> N
     flow = WORKFLOW.read_text()
     assert "cutover-a-stage-recover" in flow
     assert "cutover-a-image-retire" in flow
-    assert "test \"$BOCA_PROTECTED_ACTION_CONTEXT\" = 42236673419" in flow
-    assert "test \"$BOCA_INCIDENT_PREPARE_RUN_ID\" = 42217108000" in flow
+    assert 'test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42236673419' in flow
+    assert 'test "$BOCA_INCIDENT_PREPARE_RUN_ID" = 42217108000' in flow
     assert "repos/$GITHUB_REPOSITORY/actions/runs/42237830418" in flow
     assert "python scripts/check_main_ref.py" in flow
-    assert "test \"$GITHUB_RUN_ATTEMPT\" = 1" in flow
+    assert 'test "$GITHUB_RUN_ATTEMPT" = 1' in flow
     assert "id: cutover_stage_recovery_host" in flow
     assert "id: cutover_image_retire_host" in flow
     # Each effect is gated behind its own mutually exclusive workflow input.
@@ -26,9 +26,9 @@ def test_exact_one_incident_one_prepare_and_independent_protected_actions() -> N
 
 def test_stage_effect_is_one_reviewed_zip_and_requires_physical_ack() -> None:
     flow = WORKFLOW.read_text()
-    stage = flow.split("- name: Build deterministic reviewed Boca stage recovery memfd package", 1)[1].split(
-        "- name: Attest one historical Boca image release", 1
-    )[0]
+    stage = flow.split("- name: Build deterministic reviewed Boca stage recovery memfd package", 1)[
+        1
+    ].split("- name: Attest one historical Boca image release", 1)[0]
     assert "scripts/build_protected_boca_bundle.py" in stage
     assert "scripts/boca_protected_memfd_bootstrap.py" in stage
     assert "cutover-stage-recover" in stage
