@@ -1,5 +1,32 @@
 # Boca Socios Assistant
 
+## R51 — recuperación exacta de Stage del Cutover fallido #750 (06/11/2026 ART, CANDIDATO)
+
+El release dual inmutable [#696](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42257733717)
+quedó publicado para `main=96cd69518488e9dabdec9af15c50915e6b4c136e`.
+El PREPARE [#748](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42262494064)
+y el GO_B independiente pasaron; el APPLY [#750](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42266188095)
+alcanzó el droplet pero devolvió código 3 sin ACK final. **La BETA integral
+NO está instalada.** La reconciliación física READ_ONLY
+[#752](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42267016352)
+confirmó original sano en `127.0.0.1:8443`, ningún candidato/worker,
+`commit_started=false`, y Stage del intento presente con limpieza
+`INDETERMINATE`. Sus dos entradas en el directorio raíz son posteriores al
+fallo; **no identifican su causa**. Hay 3.370.577.920 bytes libres (3,14 GiB),
+menos que el piso de 4 GiB para comenzar un nuevo pull, y el Docker rootless
+solo reporta 17,11 MB recuperables, insuficientes para cubrir la diferencia.
+
+Este candidato cambia **únicamente** los tres pins exactos de la operación
+protegida `cutover-a-stage-recover` a #750/#748/#752. Reutiliza la autenticación
+de Stage por marcador/hashes, el lease exclusivo, el runtime healthy y la
+verificación postoperación; nunca efectúa Docker writes ni afecta otros
+servicios. Hasta PR, CI, revisión, merge y un ACK `STAGE_CLEARED` real,
+**no recuperar ni repetir APPLY**. La ruta de borrado de imagen histórica
+mantiene sus pins propios y `NO_GO`; debe resolverse la capacidad y la fase
+inicial de fallo por evidencia antes de otro release/GO. Véase
+[ADR0184](docs/ADR/0184-exact-incident-uncommitted-stage-recovery.md) y
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6691861925).
+
 ## R50 — corrección candidata de admisión dual y estado físico (06/11/2026 ART)
 
 El Stage abandonado del APPLY [#740](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42249350458)

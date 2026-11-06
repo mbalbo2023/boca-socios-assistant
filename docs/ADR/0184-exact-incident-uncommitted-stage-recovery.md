@@ -178,6 +178,49 @@ runs del grupo pertenezcan al actor/repo/evento previstos y compartan SHA,
 y que el nuevo workflow se ejecute solo en `main` con SHA exacto y primer
 attempt. La salida segura sigue siendo NO_GO ante drift o ACK ausente.
 
+## Extensión R51 — tercer incidente #750, después de recuperar #740
+
+**Estado: CANDIDATO CODE_ONLY, sin limpieza física ni autorización de reintento.**
+El PREPARE [#748](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42262494064)
+(`42262494064`) pasó en `main=96cd69518488e9dabdec9af15c50915e6b4c136e`.
+El APPLY [#750](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42266188095)
+superó el GO_B pero su única transacción SSH terminó con salida 3 y sin
+recibo físico ACCEPTED. La reconciliación READ_ONLY
+[#752](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42267016352)
+comprobó intención y terminal `NO_GO` durables, `original_restored=true`,
+`commit_started=false`, un único controlador original `healthy` y
+publicado solo en `127.0.0.1:8443`, sin candidato ni worker. La Stage raíz
+tiene dos entradas tras el fallo, compatible con el directorio creado por el
+propio intento. **No está demostrado que el Stage haya causado el rechazo.**
+El marcador preparado `UNREADABLE/DIRECTORY` refleja la imposibilidad del
+observador de validar la identidad de un volumen rootless desde el host,
+no la inexistencia del GO. Docker cleanup sigue `INDETERMINATE`, con una
+imagen antigua de procedencia insuficiente; no se borró.
+
+Esta enmienda actualiza exclusivamente los tres IDs de la recuperación
+Stage ya revisada, preservando la ruta separada de retiro histórico:
+
+| Rol | Run nuevo | Estado exigido |
+| --- | --- | --- |
+| Incidente Cutover A a recuperar | `42266188095` | `failure` |
+| PREPARE que autorizó aquel APPLY | `42262494064` | `success` |
+| READ_ONLY posterior independiente | `42267016352` | `success` |
+
+Un solo nuevo PR y su SHA exacto deben validar estos pins con los tests
+`test_cutover_a_repair_workflow_r47.py` y los de recuperación. La ejecución
+protegida de Stage solo puede borrar el directorio exacto si sus marcadores,
+hashes y Compose son autenticados bajo lease, confirma ausencia de transición
+irreversible y verifica el mismo runtime antes/después. Si falla, conserva
+Stage y da NO_GO. Tras ACK `STAGE_CLEARED`, verificar la postcondición con
+nuevo observador; **no repetir APPLY #750**.
+
+La reconciliación #752 también midió 3.370.577.920 bytes libres, frente a
+4.294.967.296 bytes de admisión previa al primer `docker pull` dual. La
+falta de 924.389.376 bytes (aprox. 882 MiB) es un bloqueo para un
+**intento nuevo bajo la política vigente**, pero no prueba el motivo
+histórico del exit3. No hacer `prune` de Docker, tocar otros servicios ni
+reducir la protección de datos, clave, owner o imagen activa.
+
 **RCA pendiente:** #741 no identifica si la salida 3 ocurrió durante
 Compose staging, pull GHCR, validación de imagen/capacidad o preparación del
 worker. La presencia del Stage y ausencia de worker acotan el intervalo,
