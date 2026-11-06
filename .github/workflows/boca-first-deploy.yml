@@ -942,10 +942,10 @@ jobs:
               test "$BOCA_HOST_READONLY_ENV_READY" = ready
               test "$BOCA_DEPLOY_ENV_READY" = ready
               if [[ "$BOCA_OPERATION" = cutover-a-stage-recover ]]; then
-                # Fresh failed Cutover #757, PREPARE #756, observer #758.
-                # Prior stages #740 and #750 were each recovered under their own pins.
-                test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42270552485
-                test "$BOCA_INCIDENT_PREPARE_RUN_ID" = 42270247581
+                # Fresh failed Cutover #763, PREPARE #762, observer #764.
+                # Prior stages #740, #750 and #757 were each recovered under their own pins.
+                test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42274349061
+                test "$BOCA_INCIDENT_PREPARE_RUN_ID" = 42274019739
               else
                 # Image-retire has its OWN old incident and topology gate.
                 test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42236673419
@@ -1914,9 +1914,9 @@ jobs:
           set -euo pipefail
           test "$GITHUB_RUN_ATTEMPT" = 1
           if [[ "$BOCA_OPERATION" = cutover-a-stage-recover ]]; then
-            stage_incident=42270552485
-            stage_prepare=42270247581
-            stage_readonly=42270841732
+            stage_incident=42274349061
+            stage_prepare=42274019739
+            stage_readonly=42274552585
             incident="$stage_incident"
             prepare="$stage_prepare"
             readonly="$stage_readonly"
