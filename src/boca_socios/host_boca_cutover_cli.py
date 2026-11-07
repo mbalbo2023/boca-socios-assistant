@@ -1,9 +1,8 @@
-"""Host-only Cutover A CLI contract for a future protected GitHub Action.
+"""Host-only Cutover protocol: historical v1/v2 and owner-dispatch V3.
 
-The executable ZIP entrypoint deliberately supplies NO approved GO binding.
-Consequently an ordinary ``cutover-a-apply`` invocation remains NO_GO before
-any Docker/SQLite side effect. A future reviewed workflow must first prove its
-independent exact-run GO and explicitly pass that proof into ``run_cli``.
+V3 has a separate explicit entrypoint and byte/run binding, not independent
+GO_B approval. All versions fail closed without their injected binding and
+verified memfd ZIP. V3 always requires detailed terminal cleanup evidence.
 """
 
 from __future__ import annotations
@@ -23,6 +22,7 @@ from boca_socios.host_boca_cutover import CUTOVER_FAILURE_PHASES, CutoverPlan, C
 
 VERSION = "boca-cutover-a-host-invocation-v1"
 VERSION_PREPARED = "boca-cutover-a-host-invocation-v2"
+VERSION_DISPATCH = "boca-cutover-a-host-invocation-v3"
 MAX_INVOCATION_BYTES = 4096
 MAX_BUNDLE_BYTES = 512_000
 _TOKEN = re.compile(r"[A-Za-z0-9_-]{1,5462}\Z")
@@ -49,6 +49,7 @@ class CutoverInvocation:
     bundle_sha256: str
     go_binding_sha256: str
     prepare_run_id: str | None = None
+    dispatch_v3: bool = False
 
     @classmethod
     def decode(cls, encoded: str) -> CutoverInvocation:
@@ -72,7 +73,7 @@ class CutoverInvocation:
             expected.add("prepare_run_id")
         if (
             not isinstance(payload, dict)
-            or version not in (VERSION, VERSION_PREPARED)
+            or version not in (VERSION, VERSION_PREPARED, VERSION_DISPATCH)
             or set(payload) != expected
             or not isinstance(payload["plan"], dict)
             or set(payload["plan"]) != set(CutoverPlan.__dataclass_fields__)
@@ -102,6 +103,7 @@ class CutoverInvocation:
             payload["bundle_sha256"],
             payload["go_binding_sha256"],
             payload.get("prepare_run_id"),
+            version == VERSION_DISPATCH,
         )
 
 
@@ -111,9 +113,12 @@ def encode_invocation(
     bundle_sha256: str,
     go_binding_sha256: str,
     prepare_run_id: str | None = None,
+    dispatch_v3: bool = False,
 ) -> str:
     """Make the one bounded, canonical, public-coordinate host argument."""
     plan.validate()
+    if type(dispatch_v3) is not bool or (dispatch_v3 and prepare_run_id is not None):
+        raise CutoverCliError("V3 dispatch cannot consume a legacy PREPARE")
     if _DIGEST.fullmatch(bundle_sha256) is None or _DIGEST.fullmatch(go_binding_sha256) is None:
         raise CutoverCliError("Cutover host invocation digest malformed")
     if prepare_run_id is not None and (
@@ -123,7 +128,11 @@ def encode_invocation(
     ):
         raise CutoverCliError("Cutover PREPARE identity invalid")
     public = {
-        "version": VERSION_PREPARED if prepare_run_id is not None else VERSION,
+        "version": VERSION_DISPATCH
+        if dispatch_v3
+        else VERSION_PREPARED
+        if prepare_run_id is not None
+        else VERSION,
         "plan": asdict(plan),
         "bundle_sha256": bundle_sha256,
         "go_binding_sha256": go_binding_sha256,
@@ -140,7 +149,7 @@ def encode_invocation(
         raise CutoverCliError("Cutover host invocation payload unbounded")
     encoded = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
     if CutoverInvocation.decode(encoded) != CutoverInvocation(
-        plan, bundle_sha256, go_binding_sha256, prepare_run_id
+        plan, bundle_sha256, go_binding_sha256, prepare_run_id, dispatch_v3
     ):
         raise CutoverCliError("Cutover host invocation roundtrip mismatch")
     return encoded
@@ -165,18 +174,20 @@ def run_cli(
     encoded: str,
     *,
     approved_go_binding_sha256: str = "",
+    dispatch_v3: bool = False,
     execute: Callable[[CutoverPlan], CutoverReceipt] | None = None,
     execute_prepared: Callable[[CutoverPlan, str], CutoverReceipt] | None = None,
     reconcile: Callable[[CutoverPlan, CutoverReceipt], None] | None = None,
 ) -> int:
-    """Fail closed unless a separately attested exact-run GO is injected.
+    """Fail closed unless the authorized entrypoint injects its exact binding.
 
-    This default is deliberately unreachable as a successful host action from
-    the currently published ZIP main(), which never supplies the binding.
-    Fakes are injectable only for offline protocol tests, not host dispatch.
+    Historical GO_B and V3 dispatch are distinct protocol paths. Fakes are
+    injectable only for offline protocol tests, not host dispatch.
     """
     try:
         invocation = CutoverInvocation.decode(encoded)
+        if invocation.dispatch_v3 != dispatch_v3:
+            raise CutoverCliError("Cutover host protocol differs from authorized entrypoint")
         if invocation.bundle_sha256 != _bundle_digest():
             raise CutoverCliError("cutover invocation source ZIP hash differs")
         if (
@@ -199,7 +210,7 @@ def run_cli(
                 receipt = execute_prepared(invocation.plan, invocation.prepare_run_id)
         (reconcile or terminal.verify_persisted_exact)(invocation.plan, receipt)
         postflight = ""
-        if invocation.prepare_run_id is not None:
+        if invocation.prepare_run_id is not None or invocation.dispatch_v3:
             detail = receipt.cleanup_receipt
             if detail is None:
                 if receipt.accepted:

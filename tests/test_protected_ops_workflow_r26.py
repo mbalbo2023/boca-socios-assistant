@@ -144,7 +144,7 @@ def test_existing_import_cutover_and_legacy_six_install_no_go_preserved() -> Non
     for marker in (
         "cutover-a-apply",
         "official-notice-import",
-        "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}",
+        "BOCA_CUTOVER_A_DISPATCH_BINDING_SHA256",
         "BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256: ${{ vars.BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256 }}",
         "Reject legacy install routes without same-lease Boca-only postflight",
         "Fail closed on absent or ambiguous Cutover A host terminal receipt",

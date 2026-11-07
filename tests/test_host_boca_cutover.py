@@ -240,19 +240,23 @@ def test_invalid_coordinates_cause_zero_host_calls(bad: str) -> None:
     assert host.events == []
 
 
-def test_cutover_contract_cannot_be_dispatched_without_independent_protected_go() -> None:
+def test_cutover_dispatch_v3_preserves_exact_binding_and_terminal_guard() -> None:
     workflow = (
         Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
     ).read_text(encoding="utf-8")
     assert "cutover-a-observe" in workflow
     assert "cutover-a-apply" in workflow
     assert (
-        "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}" in workflow
+        "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}"
+        not in workflow
     )
-    assert "python scripts/check_cutover_a_go.py --prepared-from-actions" in workflow
+    assert (
+        'check_boca_deploy_dispatch.py "$RUNNER_TEMP/boca-dispatch-v3" --write-invocation'
+        in workflow
+    )
     assert "python scripts/check_cutover_a_go.py --from-actions" not in workflow
     assert "check_legacy_go_dispatch.py apply" in workflow
-    assert "BOCA_CUTOVER_A_APPROVED_GO_BINDING_SHA256" in workflow
+    assert "BOCA_CUTOVER_A_DISPATCH_BINDING_SHA256" in workflow
     assert "Fail closed on absent or ambiguous Cutover A host terminal receipt" in workflow
     # PR-only pytest/build/if:always cannot become a live apply switch.
     assert "BOCA_CUTOVER_A_PR_VERIFY state=SOURCE_ONLY" in workflow

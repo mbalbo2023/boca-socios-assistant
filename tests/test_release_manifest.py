@@ -103,4 +103,4 @@ def test_workflow_checks_artifact_before_host_credentials() -> None:
         "Configure pinned SSH host key"
     )
     assert "check_legacy_go_dispatch.py apply" in deploy
-    assert "BOCA_CUTOVER_A_GO_BINDING_SHA256" in deploy
+    assert "BOCA_CUTOVER_A_DISPATCH_BINDING_SHA256" in deploy

@@ -1,6 +1,23 @@
 # Boca Socios Assistant
 
-## A45-R97 — fase Cutover todavía no probada (07/11/2026 ART)
+## Cutover V3 — un despacho del propietario (2026-11-07 ART, CODE_ONLY)
+
+Por instrucción del propietario, `cutover-a-apply` sustituye el antiguo
+PREPARE→GO_B manual→APPLY por **un solo despacho** en Boca first deploy desde
+`main`: `service=controller`; todos los SHA, imágenes, runs, legacy y
+`protected_action_context` vacíos. El presupuesto revisado se fija internamente.
+No copiar hashes ni solicitar correos/códigos. El workflow conserva Environment,
+release dual exacta, PR0, lease rootless UID10001, passkey/loopback8443 y exige
+ACK terminal más limpieza detallada del mismo intento. No hay login ni tickets.
+
+**Esto es un cambio de código; no acredita despliegue ni resuelve por sí solo
+un incidente físico anterior.** Un run fallido no se reintenta: inventario Boca
+fresco y fix-forward revisado. Las instrucciones GO_B de Cutover en los
+checkpoints históricos siguientes quedan sustituidas por
+[ADR0206](docs/ADR/0206-single-dispatch-cutover-v3.md) y el procedimiento actual
+de [operaciones](docs/OPERATIONS.md). Official-import/lifecycle no cambian.
+
+## Histórico A45-R97 — fase Cutover todavía no probada (07/11/2026 ART)
 
 La recuperación protegida [#848](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42397473346)
 desde `main=43edb1ae786b58ea832feb9e758fb99edc967d98` informó

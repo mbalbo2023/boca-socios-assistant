@@ -1,6 +1,48 @@
 # Safe operations — verified evidence and gated procedures
 
-## A45-R96 — recuperación del stage #844, no equivale a BETA (07/11/2026 ART)
+## Procedimiento vigente Cutover V3 — un despacho (2026-11-07 ART)
+
+**CODE_ONLY: no ejecutar antes de PR/CI exactos, merge, PR0, nueva release dual
+del SHA de main y resolución/inventario de cualquier incidente previo.**
+En `Boca first deploy`, rama `main`, elegir `operation=cutover-a-apply`,
+`service=controller`. Dejar **todos** los campos técnicos y
+`protected_action_context` vacíos. El presupuesto queda fijado internamente a
+`1.5cpu-1024m-192pids`; se admite el valor predeterminado del formulario o ese
+valor exacto, no otro. Pulsar Run workflow una vez: no se pide GO_B manual,
+correo/código, hash copiado ni segundo despacho APPLY.
+
+El workflow autentica actor y triggering_actor propietarios, intento 1,
+main exacto, checks y PR0; resuelve imágenes/manifests y legacy desde evidencia
+real, repite admisión antes de una única transacción SSH y conserva lease
+rootless, identidad/passkey y loopback8443. El éxito exige observación original
+exacta, ACK terminal y receipt detallado de cleanup del mismo run. Un verde
+sin evidencia física no acredita BETA. Fallo/SSH perdido/cleanup incierto:
+NO_GO, no retry, inventario Boca fresco. Nunca tocar Porota u otros recursos.
+
+**Todo PREPARE/GO_B/APPLY de Cutover descrito en el historial inferior es
+histórico, no una instrucción vigente.** Official-import/lifecycle conservan
+su propio contrato. [ADR0206](ADR/0206-single-dispatch-cutover-v3.md).
+
+### Worker preflight — checklist vigente, `NO_GO` hasta nuevo consenso
+
+Sólo para una futura autorización independiente de
+`operation=cutover-a-worker-preflight`: verificar **antes** del despacho
+un manifest **dual** publicado para el mismo SHA de `main`, PR0, CI/Security,
+capacidad y salud del legacy. El formulario exige las ocho coordenadas
+exactas `source_sha`, `image_ref`, `browser_image_ref`, `release_run_id`,
+`legacy_source_sha`, `legacy_image_ref`, `legacy_release_run_id` y
+`legacy_controller_id`. Todas se obtienen de receipts publicados/observación
+fresca, nunca de un ejemplo o inferencia. `protected_action_context` debe
+quedar **vacío**, `service=controller` y
+`resource_budget=1.5cpu-1024m-192pids`.
+
+Es **one-shot por SHA**, `no_retry=1`: incluso un formulario inválido
+rechazado antes de **SSH** consume el único intento; resultado `NO_GO`
+sin reintento de esa fuente. La antigua opción PREPARE de `cutover-a-apply`
+quedó sustituida por V3; el preflight o recovery no disparan ni autorizan
+automáticamente ese deploy. Véase el procedimiento V3 vigente arriba y ADR0206.
+
+## Histórico A45-R96 — recuperación del stage #844, no equivale a BETA (07/11/2026 ART)
 
 R95 dual release #746 PASS y PREPARE #843 READY. El **único** Cutover A
 [#844](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42388694186)
@@ -55,25 +97,6 @@ gracia de cinco segundos, deadline de 20 segundos, ACK exactamente igual al
 CID64 y cero RM ante cualquier salida indeterminada. Nueva regresión R95
 incluida en el gate protegido First Deploy; ver [ADR0204](ADR/0204-r95-portable-docker-stop-flag.md).
 
-### Worker preflight — checklist vigente, `NO_GO` hasta nuevo consenso
-
-Sólo para una futura autorización independiente de
-`operation=cutover-a-worker-preflight`: verificar **antes** del despacho
-un manifest **dual** publicado para el mismo SHA de `main`, PR0, CI/Security,
-capacidad y salud del legacy. El formulario exige las ocho coordenadas
-exactas `source_sha`, `image_ref`, `browser_image_ref`, `release_run_id`,
-`legacy_source_sha`, `legacy_image_ref`, `legacy_release_run_id` y
-`legacy_controller_id`. Todas se obtienen de receipts publicados/observación
-fresca, nunca de un ejemplo o inferencia. `protected_action_context` debe
-quedar **vacío**, `service=controller` y
-`resource_budget=1.5cpu-1024m-192pids`.
-
-Es **one-shot por SHA**, `no_retry=1`: incluso un formulario inválido
-rechazado antes de **SSH** consume el único intento; resultado `NO_GO`
-sin reintento de esa fuente. La opción `cutover-a-apply` de **PREPARE**
-para GO_B sigue **separada**, con esas ocho coordenadas vacías y su propio
-control, sin autorización por preflight o recovery. No ejecutar sin nuevo
-GO físico explícito; véase guía histórica más detallada y ADR0198.
 
 ---
 
@@ -294,7 +317,7 @@ postmerge, cero otras operaciones host activas, salud del legacy, ausencia
 de residuos y consenso técnico físico nuevo. El preflight **sí** hace
 pull/create/start/stop/rm de un probe Boca-only: no es READ_ONLY.
 
-**No confundir con GO_B:** el PREPARE independiente usa
+**Histórico, sustituido por V3 (ADR0206):** el PREPARE independiente usaba
 `operation=cutover-a-apply` con `protected_action_context` **vacío** y
 **las ocho coordenadas técnicas anteriores vacías**: el observador de
 solo lectura las resuelve bajo sus propios controles. Sólo después de

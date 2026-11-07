@@ -29,7 +29,7 @@ def test_protected_dispatch_25_input_max_and_no_new_ports() -> None:
     assert "127.0.0.1:8443" in _YAML
 
 
-def test_both_legacy_operations_prepare_with_blank_and_apply_with_run_id_only() -> None:
+def test_official_prepare_unchanged_and_cutover_v3_is_gated_before_inventory() -> None:
     early = _step("Require verified protected environment and matching main commit")
     assert (
         '[[ -z "$BOCA_PROTECTED_ACTION_CONTEXT" || "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^[1-9][0-9]{0,19}$ ]]'
@@ -39,6 +39,11 @@ def test_both_legacy_operations_prepare_with_blank_and_apply_with_run_id_only() 
     assert 'test -z "$BOCA_OFFICIAL_CONTROLLER_ID"' in early
     assert 'test -z "$BOCA_LEGACY_CONTROLLER_ID"' in early
     assert "BOCA_SOURCE_SHA_SUBMITTED" in early
+    admission = _step("Authenticate owner single-dispatch V3 before any host access")
+    assert "check_boca_deploy_dispatch.py" in admission
+    assert _YAML.index("      - name: Authenticate owner single-dispatch V3") < _YAML.index(
+        "      - name: Configure pinned READ_ONLY SSH exclusively for legacy PREPARE"
+    )
 
 
 def test_android_voice_prepare_pins_are_derived_not_typed() -> None:
@@ -46,7 +51,9 @@ def test_android_voice_prepare_pins_are_derived_not_typed() -> None:
     assert "gh api" in first
     assert "select-current-release" in first
     assert "verify-current-release" in first
-    observer = _step("Observe ONLY Boca rootless original/installed controller before GO_B review")
+    observer = _step(
+        "Observe ONLY Boca rootless original/installed controller before reviewed transaction"
+    )
     assert "cutover-inventory-observe" in observer
     assert "official-inventory-observe" in observer
     assert "boca-legacy-readonly-ssh/config" in observer
@@ -63,6 +70,8 @@ def test_android_voice_prepare_pins_are_derived_not_typed() -> None:
 def test_prepare_only_publishes_reviewed_artifact_without_effect() -> None:
     stage = _step("Prepare no-effect immutable Cutover or official GO_B review object")
     assert "inputs.protected_action_context == ''" in stage
+    assert "inputs.operation == 'official-notice-import'" in stage
+    assert "inputs.operation == 'cutover-a-apply'" not in stage
     assert "check_legacy_go_dispatch.py prepare" in stage
     assert "GO_BINDING_SHA256" not in stage
     assert "ssh " not in stage
@@ -72,20 +81,20 @@ def test_prepare_only_publishes_reviewed_artifact_without_effect() -> None:
     assert "upload-artifact@" in artifact
 
 
-def test_apply_requires_actual_completed_prepare_and_protected_go_env() -> None:
+def test_official_requires_prepare_but_cutover_uses_owner_dispatch_binding() -> None:
     restore = _step("Restore independently reviewed legacy PREPARE source for APPLY")
     assert "gh api" in restore
     assert "gh run download" in restore
     assert "restore-early" in restore
-    cutover = _step(
-        "Require independently approved Cutover A GO_B bound to PREPARE and reviewed bytes"
-    )
-    assert "inputs.protected_action_context != ''" in cutover
+    cutover = _step("Bind owner dispatch V3 to exact dual release and reviewed bytes")
+    assert "inputs.protected_action_context" not in cutover
     assert (
-        "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}" in cutover
+        "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}"
+        not in cutover
     )
-    assert "check_legacy_go_dispatch.py apply" in cutover
-    assert "check_cutover_a_go.py --prepared-from-actions" in cutover
+    assert "check_legacy_go_dispatch.py apply" not in cutover
+    assert "--write-invocation" in cutover
+    assert "check_boca_deploy_dispatch.py" in cutover
     assert "check_cutover_a_go.py --from-actions" not in cutover
     official = _step("Require independent GO and exact official source artifact before SSH")
     assert (
@@ -101,15 +110,16 @@ def test_effect_and_ack_routes_are_apply_only_and_same_reviewed_host() -> None:
     ssh = _step("Configure pinned SSH host key and dedicated identity")
     assert "inputs.protected_action_context == ''" in ssh
     cutover = _step("Apply exactly one reviewed Cutover A host transaction through memfd")
-    assert "inputs.protected_action_context != ''" in cutover
-    assert "BOCA_CUTOVER_A_APPROVED_GO_BINDING_SHA256" in cutover
+    assert "inputs.protected_action_context" not in cutover
+    assert "BOCA_CUTOVER_A_DISPATCH_BINDING_SHA256" in cutover
+    assert "cutover-a-dispatch-v3" in cutover
     assert "boca-cutover-a-host.receipt" in cutover
     official = _step("Import one reviewed official notice into the existing Boca volume")
     assert "inputs.protected_action_context != ''" in official
     assert "runner-host-command-prepared" in official
     assert "boca-official-import-host.receipt" in official
     cleanup = _step("Fail closed on absent or ambiguous Cutover A host terminal receipt")
-    assert "inputs.protected_action_context != ''" in cleanup
+    assert "inputs.protected_action_context" not in cleanup
     assert "scripts/check_cutover_a_go.py --assert-host-receipt" in cleanup
     assert "docker system prune" not in cleanup
 

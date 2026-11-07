@@ -2,7 +2,9 @@
 
 The protected workflow exposes an inert-by-default operation: an independent
 exact-run GitHub Environment variable must match this full reviewed digest.
-Neither source review, PR checks nor dispatch input constitutes host GO.
+Neither source review, PR checks nor dispatch input constitutes historical GO.
+Owner-authorized V3 uses check_boca_deploy_dispatch instead; this module still
+provides exact artifact verification and strict terminal receipt validation.
 """
 
 from __future__ import annotations
@@ -710,7 +712,23 @@ def assert_actions_host_receipt(environment: Mapping[str, str]) -> str | None:
     ):
         raise CutoverGoError("Cutover A host receipt differs from reviewed GO and release")
     raw = _read_bounded(runner / HOST_RECEIPT_NAME, 9000)
-    if invocation.prepare_run_id is None:
+    if invocation.dispatch_v3:
+        # The real host observer prints before the transaction's terminal ACK.
+        # V3 requires exactly one full, plan-matching observation, not a regex
+        # accepting some other valid-looking source or installed controller.
+        plan = invocation.plan
+        observed = (
+            "BOCA_CUTOVER_A_OBSERVE state=READY"
+            f" legacy_sha={plan.legacy_sha} legacy_id={plan.legacy_id}"
+            f" legacy_image={plan.legacy_image} target_sha={plan.target_sha}"
+            f" target_image={plan.target_image} browser_image={plan.browser_image}"
+            " original=RUNNING port=127.0.0.1:8443 worker=absent"
+            " owner=preserved key=preserved data=preserved effects=none\n"
+        ).encode("ascii")
+        if not raw.startswith(observed):
+            raise CutoverGoError("V3 exact original observation absent or mismatched")
+        raw = raw[len(observed) :]
+    if invocation.prepare_run_id is None and not invocation.dispatch_v3:
         if raw != expected:
             raise CutoverGoError("Cutover A terminal receipt missing or ambiguous")
         return None
