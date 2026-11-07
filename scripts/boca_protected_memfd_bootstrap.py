@@ -154,6 +154,7 @@ def main() -> int:
             "cutover-worker-recover",
             "cutover-worker-807-recover",
             "cutover-worker-819-recover",
+            "cutover-worker-827-recover",
         }
         worker_preflight = sys.argv[2] == "cutover-worker-preflight"
         if recovery and len(sys.argv) != 3:

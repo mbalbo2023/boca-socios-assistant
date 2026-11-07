@@ -1,4 +1,4 @@
-"""One-shot, stopped-only recovery of three separately gated Boca incidents.
+"""One-shot, stopped-only recovery of four separately gated Boca incidents.
 
 No free-form Docker target, mutable input, stop/force/volume/image operation,
 or Cutover authorization exists in this module. The only possible container
@@ -71,10 +71,27 @@ TARGET_819 = RecoveryTarget(
     LEGACY_SOURCE,
     LEGACY_IMAGE,
 )
+TARGET_827 = RecoveryTarget(
+    "42368541950",
+    "0ae6b61d97ccae77e8373a597f617df52b28ed63f6e49cae1df57f368e46e8e5",
+    "8a69d155354362e0712dab1229f7d7e4b3e24dd6",
+    (
+        "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
+        "902276a94bbec0ed0be30432baf97b5bd1298fc15e21eda750ccb785fa76bde0"
+    ),
+    LEGACY_ID,
+    LEGACY_SOURCE,
+    LEGACY_IMAGE,
+)
 
 
 def _known_target(target: RecoveryTarget) -> None:
-    if target is not TARGET_795 and target is not TARGET_807 and target is not TARGET_819:
+    if (
+        target is not TARGET_795
+        and target is not TARGET_807
+        and target is not TARGET_819
+        and target is not TARGET_827
+    ):
         raise RecoveryError("UNREVIEWED_TARGET")
 
 
@@ -199,7 +216,7 @@ def _inspect_full_exact(cid: str, target: RecoveryTarget = TARGET_795) -> dict[s
 def _validate_isolation(
     record: dict[str, Any], profile: bytes, target: RecoveryTarget = TARGET_795
 ) -> None:
-    if (target is TARGET_807 or target is TARGET_819) and hashlib.sha256(
+    if (target is TARGET_807 or target is TARGET_819 or target is TARGET_827) and hashlib.sha256(
         profile
     ).hexdigest() != SECCOMP_SHA256:
         raise RecoveryError("PROFILE_SHA_MISMATCH")
@@ -373,11 +390,17 @@ def verify_runner(raw: bytes, target: RecoveryTarget = TARGET_795) -> dict[str, 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     try:
-        host_targets = {"host": TARGET_795, "host-807": TARGET_807, "host-819": TARGET_819}
+        host_targets = {
+            "host": TARGET_795,
+            "host-807": TARGET_807,
+            "host-819": TARGET_819,
+            "host-827": TARGET_827,
+        }
         verify_targets = {
             "verify": TARGET_795,
             "verify-807": TARGET_807,
             "verify-819": TARGET_819,
+            "verify-827": TARGET_827,
         }
         if len(args) == 1 and args[0] in host_targets:
             result = execute(host_targets[args[0]])

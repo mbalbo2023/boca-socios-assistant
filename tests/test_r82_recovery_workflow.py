@@ -27,7 +27,7 @@ SOURCE = "b" * 40
 RUN_ID = "99999999999"
 GATE_STEP = "Require exact 807/809 evidence and zero open PRs before recovery SSH"
 INPUT_STEP = "Require verified protected environment and matching main commit"
-HOST_STEP = "Recover only the stopped exact 795 807 or 819 worker probe under Boca lease"
+HOST_STEP = "Recover only the stopped exact 795 807 819 or 827 worker probe under Boca lease"
 VERIFY_STEP = "Require exact terminal worker recovery receipt on every outcome"
 REPO = "mbalbo2023/boca-socios-assistant"
 

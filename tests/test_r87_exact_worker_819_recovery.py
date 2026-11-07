@@ -39,48 +39,53 @@ IMAGE = (
 )
 
 
-def _snapshot(*, present: bool) -> dict[str, Any]:
+def _snapshot(
+    *, present: bool, target: recovery.RecoveryTarget = recovery.TARGET_819
+) -> dict[str, Any]:
     record = r82_snapshot(present=present)
-    record["attempt"] = ATTEMPT
+    record["attempt"] = target.attempt
     if present:
-        record["probe_id"] = CID
-        record["probe_candidate_id"] = CID
-    observer.verify(observer.canonical(record) + b"\n", ATTEMPT, recovery.LEGACY_ID)
+        record["probe_id"] = target.cid
+        record["probe_candidate_id"] = target.cid
+    observer.verify(observer.canonical(record) + b"\n", target.attempt, recovery.LEGACY_ID)
     return record
 
 
-def _full_worker() -> dict[str, Any]:
+def _full_worker(target: recovery.RecoveryTarget = recovery.TARGET_819) -> dict[str, Any]:
     record = r82_full()
-    record["Id"] = CID
-    record["Name"] = f"/{observer.PREFIX}{ATTEMPT}"
-    record["Config"]["Image"] = IMAGE
-    record["Config"]["Labels"]["boca.socios.cutover-preflight-attempt"] = ATTEMPT
-    record["Config"]["Labels"]["org.opencontainers.image.revision"] = SOURCE
+    record["Id"] = target.cid
+    record["Name"] = f"/{observer.PREFIX}{target.attempt}"
+    record["Config"]["Image"] = target.browser_image
+    record["Config"]["Labels"]["boca.socios.cutover-preflight-attempt"] = target.attempt
+    record["Config"]["Labels"]["org.opencontainers.image.revision"] = target.source
     return record
 
 
-def _simulate(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def _simulate(
+    monkeypatch: pytest.MonkeyPatch, target: recovery.RecoveryTarget = recovery.TARGET_819
+) -> dict[str, Any]:
     """Exercise the real transaction, with every host effect replaced by a fake."""
+    intended = target
     state: dict[str, Any] = {
         "reads": 0,
         "full_reads": 0,
         "rm": [],
         "removed": False,
-        "before": _snapshot(present=True),
-        "after": _snapshot(present=False),
-        "full": _full_worker(),
+        "before": _snapshot(present=True, target=target),
+        "after": _snapshot(present=False, target=target),
+        "full": _full_worker(target),
         "second": None,
-        "ack": CID,
+        "ack": target.cid,
         "rm_error": None,
     }
 
     @contextmanager
     def lease(attempt: str) -> Iterator[object]:
-        assert attempt == ATTEMPT
+        assert attempt == target.attempt
         yield object()
 
     def verify_lease(_lease: object, attempt: str) -> None:
-        assert attempt == ATTEMPT
+        assert attempt == target.attempt
 
     def observe(*_args: object, **_kwargs: object) -> dict[str, Any]:
         state["reads"] += 1
@@ -91,12 +96,12 @@ def _simulate(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return copy.deepcopy(state["before"])
 
     def inspect_full(_cid: str, *, target: recovery.RecoveryTarget) -> dict[str, Any]:
-        assert _cid == CID and target is recovery.TARGET_819
+        assert _cid == intended.cid and target is intended
         state["full_reads"] += 1
         return copy.deepcopy(state["full"])
 
     def remove(_cid: str, *, target: recovery.RecoveryTarget) -> str:
-        assert _cid == CID and target is recovery.TARGET_819
+        assert _cid == intended.cid and target is intended
         state["rm"].append(_cid)
         if state["rm_error"] is not None:
             raise state["rm_error"]
@@ -104,7 +109,7 @@ def _simulate(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         return state["ack"]
 
     def cid_present(_cid: str, *, target: recovery.RecoveryTarget) -> bool:
-        assert _cid == CID and target is recovery.TARGET_819
+        assert _cid == intended.cid and target is intended
         return not state["removed"]
 
     monkeypatch.setattr(recovery.cleanup, "protected_boca_job_lease", lease)
@@ -257,7 +262,7 @@ def test_r87_protected_zip_bootstrap_and_workflow_use_one_shared_recovery() -> N
     assert workflow.count("cutover-a-worker-recover-819,") == 1
     assert "--worker-recovery" in workflow
     host = workflow.split(
-        "      - name: Recover only the stopped exact 795 807 or 819 worker probe under Boca lease\n",
+        "      - name: Recover only the stopped exact 795 807 819 or 827 worker probe under Boca lease\n",
         1,
     )[1].split("\n      - name:", 1)[0]
     assert not any(line.lstrip().startswith("docker container rm ") for line in host.splitlines())

@@ -48,8 +48,11 @@ def _env() -> dict[str, str]:
     return env
 
 
-def _run_inputs(overrides: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _run_inputs(
+    overrides: dict[str, str] | None = None, *, operation: str = OPERATION
+) -> subprocess.CompletedProcess[str]:
     env = _env()
+    env["BOCA_OPERATION"] = operation
     env.update(overrides or {})
     return subprocess.run(  # noqa: S603 - extracted local admission Bash only
         ("bash", "-c", "set -euo pipefail\n" + _step_bash(INPUT_STEP)),  # noqa: S607
@@ -148,10 +151,12 @@ def _gate(
     *,
     bad_main: bool = False,
     missing: str | None = None,
+    gate_step: str = GATE_STEP,
+    responses: dict[str, Any] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
-    bash = _step_bash(GATE_STEP)
+    bash = _step_bash(gate_step)
     assert not re.search(r"(?m)^\s*(ssh|docker|curl|gh\s+run)\s", bash)
-    replies = _responses(data)
+    replies = _responses(data) if responses is None else responses
     if bad_main:
         replies[f"repos/{REPO}/git/ref/heads/main"]["object"]["sha"] = "a" * 40
     if missing is not None:
@@ -329,8 +334,15 @@ def test_r87_terminal_step_accepts_exact_receipt_without_overwriting_runner_path
 
 
 @pytest.mark.parametrize("transport", ["short", "oversized", "ssh_failure", "ulimit_failure"])
+@pytest.mark.parametrize(
+    ("operation", "expected_mode"),
+    [
+        ("cutover-a-worker-recover-819", "cutover-worker-819-recover"),
+        ("cutover-a-worker-recover-827", "cutover-worker-827-recover"),
+    ],
+)
 def test_r87_actual_host_bash_uses_private_file_limit_and_one_fake_ssh(
-    tmp_path: Path, transport: str
+    tmp_path: Path, transport: str, operation: str, expected_mode: str
 ) -> None:
     """Real packaging/Bash, intercepted SSH: zero Docker/network operations."""
     fake_bin = tmp_path / "bin"
@@ -338,11 +350,12 @@ def test_r87_actual_host_bash_uses_private_file_limit_and_one_fake_ssh(
     fake_ssh = fake_bin / "ssh"
     fake_ssh.write_text(
         "#!/usr/bin/env python3\n"
-        "import os,resource,sys\n"
+        "import os,resource,shlex,sys\n"
         "from pathlib import Path\n"
         "Path(os.environ['FAKE_SSH_MARKER']).write_text('called')\n"
         "Path(os.environ['FAKE_SSH_LIMIT']).write_text(str(resource.getrlimit(resource.RLIMIT_FSIZE)[0]))\n"
         "Path(os.environ['FAKE_SSH_MODE']).write_text(str(os.fstat(1).st_mode & 0o777))\n"
+        "Path(os.environ['FAKE_SSH_SELECTED_MODE']).write_text(shlex.split(sys.argv[-1])[-1])\n"
         "sys.stdout.buffer.write(b'PRIVATE_HOST_PAYLOAD' * int(os.environ['FAKE_SSH_MULTIPLIER']))\n"
         "sys.stderr.write('PRIVATE_SSH_ERROR_NEVER_PRINT')\n"
         "raise SystemExit(int(os.environ['FAKE_SSH_RC']))\n",
@@ -351,6 +364,7 @@ def test_r87_actual_host_bash_uses_private_file_limit_and_one_fake_ssh(
     fake_ssh.chmod(0o700)
     env = _env()
     env.update(
+        BOCA_OPERATION=operation,
         PATH=f"{fake_bin}:{os.environ['PATH']}",
         RUNNER_TEMP=str(tmp_path),
         GITHUB_ENV=str(tmp_path / "env"),
@@ -358,6 +372,7 @@ def test_r87_actual_host_bash_uses_private_file_limit_and_one_fake_ssh(
         FAKE_SSH_MARKER=str(tmp_path / "ssh.called"),
         FAKE_SSH_LIMIT=str(tmp_path / "ssh.limit"),
         FAKE_SSH_MODE=str(tmp_path / "ssh.mode"),
+        FAKE_SSH_SELECTED_MODE=str(tmp_path / "ssh.selected_mode"),
         FAKE_SSH_MULTIPLIER="512" if transport == "oversized" else "1",
         FAKE_SSH_RC="255" if transport == "ssh_failure" else "0",
     )
@@ -390,6 +405,7 @@ def test_r87_actual_host_bash_uses_private_file_limit_and_one_fake_ssh(
         assert (tmp_path / "ssh.called").read_text() == "called"
         assert (tmp_path / "ssh.limit").read_text() == "8192"  # 8 ulimit 1KiB blocks
         assert (tmp_path / "ssh.mode").read_text() == "384"  # 0600
+        assert (tmp_path / "ssh.selected_mode").read_text() == expected_mode
         assert receipt.stat().st_size <= 8192
         assert (result.returncode == 0) is (transport == "short")
 

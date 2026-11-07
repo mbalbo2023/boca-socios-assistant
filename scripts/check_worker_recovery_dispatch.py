@@ -36,6 +36,16 @@ R87_WITNESS_ID = 42355552701
 R87_WITNESS_SHA = "2859b9d31621e3cbec70b1aec649cc281ba130f5"
 R87_WITNESS_JOB = 128352753886
 R87_RELEASE_ID = 42352641660
+R91_TITLE = "BOCA-R91-WORKER-827-RECOVER-ONCE"
+R91_FAILED_TITLE = "BOCA-R84-WORKER-PREFLIGHT-ONCE"
+R91_WITNESS_TITLE = "BOCA-R90-WORKER-827-READONLY"
+R91_FAILED_ID = 42368541950
+R91_FAILED_SHA = "8a69d155354362e0712dab1229f7d7e4b3e24dd6"
+R91_FAILED_JOB = 128391674779
+R91_WITNESS_ID = 42370005970
+R91_WITNESS_SHA = "bd45f2e234a17ba12743ff12cf0c0199497b66f6"
+R91_WITNESS_JOB = 128395981058
+R91_RELEASE_ID = 42361009081
 R80_RECOVERY_ID = 42340750343
 PRIOR_ID = 42339451485
 PRIOR_SHA = "d9100c6c4666c61ba66fbbefa48e61102a20ce5d"
@@ -562,12 +572,142 @@ def verify_r87(paths: list[str], *, run_id: int, source: str) -> None:
     )
 
 
+# #827 and #829 have exactly 157 historic REST steps. Their layout differs
+# from #819/#821; never reinterpret a prior job against the latest workflow.
+R91_STEP_NUMBERS = [*range(1, 156), 310, 311]
+R91_COMMON = {
+    **{number: item for number, item in R87_COMMON.items() if number not in (308, 309)},
+    310: ("Post Checkout exact main commit without persisted credentials", "success"),
+    311: ("Complete job", "success"),
+}
+R91_FAILED_EXECUTED = {
+    **R91_COMMON,
+    **{
+        number: item
+        for number, item in R87_FAILED_EXECUTED.items()
+        if number not in (58, 59, 60, 308, 309)
+    },
+    59: ("Require one unique R84 worker preflight dispatch before SSH", "success"),
+    60: ("Preflight exact dual GHCR image and rootless worker boundary without PREPARE", "failure"),
+    61: ("Require exact Boca rootless worker preflight receipt and bounded cleanup", "failure"),
+}
+R91_WITNESS_EXECUTED = {
+    **R91_COMMON,
+    43: ("Inspect one failed Boca worker probe READ_ONLY by exact identity", "success"),
+}
+
+
+def _r91_history(history: Any, *, run_id: int, source: str) -> None:
+    """Validate exact historic run IDs but a unique *global* R91 operation.
+
+    R84's display title was legitimately reused by #819 and #827. Matching
+    only the title would spuriously block #827 and cannot prove identity.
+    """
+    _expect(isinstance(history, dict))
+    runs = history.get("workflow_runs")
+    total = history.get("total_count")
+    _expect(
+        type(total) is int
+        and 3 <= total <= 100
+        and isinstance(runs, list)
+        and len(runs) == total
+        and all(isinstance(item, dict) for item in runs)
+    )
+    for title, expected_id, expected_sha, expected_status, expected_conclusion in (
+        (R91_FAILED_TITLE, R91_FAILED_ID, R91_FAILED_SHA, "completed", "failure"),
+        (R91_WITNESS_TITLE, R91_WITNESS_ID, R91_WITNESS_SHA, "completed", "success"),
+        (R91_TITLE, run_id, source, None, None),
+    ):
+        by_id = [item for item in runs if item.get("id") == expected_id]
+        _expect(len(by_id) == 1)
+        item = by_id[0]
+        if title == R91_TITLE:
+            # Hard anti-replay across SHA changes and all previous dispatches.
+            _expect(len([entry for entry in runs if entry.get("display_title") == title]) == 1)
+        actor = item.get("actor")
+        _expect(
+            item.get("display_title") == title
+            and item.get("event") == "workflow_dispatch"
+            and item.get("head_branch") == "main"
+            and item.get("head_sha") == expected_sha
+            and type(item.get("run_attempt")) is int
+            and item["run_attempt"] == 1
+            and isinstance(actor, dict)
+            and actor.get("login") == "mbalbo2023"
+        )
+        if title == R91_TITLE:
+            _expect(
+                item.get("status") in {"in_progress", "queued", "waiting", "pending"}
+                and item.get("conclusion") is None
+            )
+        else:
+            _expect(
+                item.get("status") == expected_status
+                and item.get("conclusion") == expected_conclusion
+            )
+
+
+def verify_r91(paths: list[str], *, run_id: int, source: str) -> None:
+    """R91 READ_ONLY witness, failed #827, dual #737 and global PR0 one-shot."""
+    _expect(len(paths) == 7 and type(run_id) is int and run_id > 0)
+    _expect(
+        type(source) is str and len(source) == 40 and all(c in "0123456789abcdef" for c in source)
+    )
+    prs, failed, witness, release, history, failed_jobs, witness_jobs = [
+        _read_json(path, maximum=131072 if index in (5, 6) else 32768)
+        for index, path in enumerate(paths)
+    ]
+    _expect(prs == [])
+    _run(
+        failed,
+        number=R91_FAILED_ID,
+        source=R91_FAILED_SHA,
+        conclusion="failure",
+        workflow=DEPLOY,
+        title=R91_FAILED_TITLE,
+    )
+    _run(
+        witness,
+        number=R91_WITNESS_ID,
+        source=R91_WITNESS_SHA,
+        conclusion="success",
+        workflow=DEPLOY,
+        title=R91_WITNESS_TITLE,
+    )
+    _run(
+        release,
+        number=R91_RELEASE_ID,
+        source=R91_FAILED_SHA,
+        conclusion="success",
+        workflow=RELEASE,
+    )
+    _r91_history(history, run_id=run_id, source=source)
+    _r82_jobs(
+        failed_jobs,
+        run_id=R91_FAILED_ID,
+        job_id=R91_FAILED_JOB,
+        conclusion="failure",
+        executed=R91_FAILED_EXECUTED,
+        step_numbers=R91_STEP_NUMBERS,
+    )
+    _r82_jobs(
+        witness_jobs,
+        run_id=R91_WITNESS_ID,
+        job_id=R91_WITNESS_JOB,
+        conclusion="success",
+        executed=R91_WITNESS_EXECUTED,
+        step_numbers=R91_STEP_NUMBERS,
+    )
+
+
 def main(argv: list[str]) -> int:
     try:
         _expect(os.environ.get("GITHUB_RUN_ID", "").isdigit())
         run_id = int(os.environ["GITHUB_RUN_ID"])
         source = os.environ["GITHUB_SHA"]
-        if len(argv) > 1 and argv[1] == "--r87":
+        if len(argv) > 1 and argv[1] == "--r91":
+            verify_r91(argv[2:], run_id=run_id, source=source)
+        elif len(argv) > 1 and argv[1] == "--r87":
             verify_r87(argv[2:], run_id=run_id, source=source)
         elif len(argv) > 1 and argv[1] == "--r82":
             verify_r82(argv[2:], run_id=run_id, source=source)
@@ -576,7 +716,13 @@ def main(argv: list[str]) -> int:
     except (OSError, UnicodeError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         print("BOCA_WORKER_RECOVERY_GATE state=NO_GO reason=UNVERIFIED")
         return 1
-    if len(argv) > 1 and argv[1] == "--r87":
+    if len(argv) > 1 and argv[1] == "--r91":
+        print(
+            "BOCA_WORKER_RECOVERY_GATE state=PASS incident=42368541950 "
+            "witness=42370005970 release=42361009081 open_prs=0 "
+            "dispatch=UNIQUE_R91 main=VERIFIED prior=READ_ONLY_NO_EFFECT host_writes=0"
+        )
+    elif len(argv) > 1 and argv[1] == "--r87":
         print(
             "BOCA_WORKER_RECOVERY_GATE state=PASS incident=42353468231 "
             "witness=42355552701 release=42352641660 open_prs=0 "

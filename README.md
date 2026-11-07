@@ -1,6 +1,22 @@
 # Boca Socios Assistant
 
-## A45-R90 — #827 falló al detener el probe; inventario exacto CODE_ONLY (07/11/2026 ART)
+## A45-R91 — recuperación exclusiva de probe #827 detenido (07/11/2026 ART; CODE_ONLY)
+
+La [inspección #829](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42370005970)
+probó que el residuo temporal del preflight #827 está detenido y tiene CID
+exacto `0ae6b61d97ccae77e8373a597f617df52b28ed63f6e49cae1df57f368e46e8e5`;
+el controller original sigue sano en loopback 8443, sin seccomp residual ni
+escrituras del observador. R91 **extiende el mismo recuperador R87** con
+identidad fija, QA, gate GitHub #827/#829/#737/PR0/anti-replay y dos
+inspecciones frescas bajo lease antes de un único `docker container rm`
+no-forzado sobre ese CID. No repetir #827 ni tocar otros Docker.
+**BETA integral, Cutover y Telegram siguen NO INSTALADOS/NO_GO.**
+[ADR0200](docs/ADR/0200-r91-worker-827-stopped-only-recovery.md),
+[RCA #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+
+---
+
+## Histórico A45-R90 — #827 falló al detener el probe; inventario exacto CODE_ONLY (07/11/2026 ART; sustituido)
 
 El único preflight R89 protegido [#827](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42368541950)
 falló físicamente con `CLEANUP/STOP/ACK_MISMATCH/INDETERMINATE`, sin

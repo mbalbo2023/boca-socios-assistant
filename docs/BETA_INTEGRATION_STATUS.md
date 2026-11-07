@@ -1,6 +1,17 @@
 # Estado de integración BETA
 
-## A45-R90 — único preflight #827 fallido; observación exacta aún CODE_ONLY (07/11/2026 ART)
+## A45-R91 — residuo #827 detenido; recuperación R91 sólo CODE_ONLY (07/11/2026 ART)
+
+| Frente | Evidencia real | Estado |
+| --- | --- | --- |
+| R90 integrado | [PR #432](https://github.com/mbalbo2023/boca-socios-assistant/pull/432) MERGED; main `bd45f2e234a17ba12743ff12cf0c0199497b66f6`, postmerge CI/Security verdes, PR0 | Código QA GREEN, sin instalación |
+| Read-only #829 | [Run 42370005970](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42370005970): CID #827 detenido exacto, legacy sano 8443, seccomp ausente, writes0 | `READ_ONLY_NO_GO`, no retry |
+| Recovery R91 | [ADR0200](ADR/0200-r91-worker-827-stopped-only-recovery.md): extensión mínima R87, gate #827/#829/#737 y one-shot, 2x full inspect y 1 rm no-force | CODE_ONLY hasta review/PR/CI/merge; sin remoción efectuada |
+| Cutover/BETA integral/Telegram | No hay nuevos PREPARE, GO_B, APPLY ni aceptación en droplet | **NO_GO**; resto de Docker intocable |
+
+---
+
+## Histórico A45-R90 — único preflight #827 fallido; observación exacta CODE_ONLY (07/11/2026 ART; sustituido)
 
 | Frente | Evidencia | Veredicto |
 | --- | --- | --- |

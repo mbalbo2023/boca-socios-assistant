@@ -839,6 +839,8 @@ def test_workflow_cutover_apply_requires_separate_go_and_legacy_release_proof() 
         "cutover-a-worker-recover-807",
         # R87 exact #819 stopped-only recovery, separate owner gate and zero Cutover GO.
         "cutover-a-worker-recover-819",
+        # R91 exact #827 stopped-only recovery, independent one-shot gate.
+        "cutover-a-worker-recover-827",
         # P0 rootless/GHCR image probe is a distinct, non-GO transaction.
         "cutover-a-worker-preflight",
         "cutover-a-apply",

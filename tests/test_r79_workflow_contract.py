@@ -79,8 +79,10 @@ def _shell(script: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]
 def test_dispatch_remains_one_owner_only_manual_workflow() -> None:
     workflow = _workflow()
     dispatch = workflow.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
-    assert len(re.findall(r"\bcutover-a-worker-recover(?!-807|-819)\b", dispatch)) == 1
+    assert len(re.findall(r"\bcutover-a-worker-recover(?!-807|-819|-827)\b", dispatch)) == 1
     assert len(re.findall(r"\bcutover-a-worker-recover-807\b", dispatch)) == 1
+    assert len(re.findall(r"\bcutover-a-worker-recover-819\b", dispatch)) == 1
+    assert len(re.findall(r"\bcutover-a-worker-recover-827\b", dispatch)) == 1
     deploy = workflow.split("  deploy:\n", 1)[1]
     assert (
         "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' "
@@ -94,7 +96,8 @@ def test_dispatch_remains_one_owner_only_manual_workflow() -> None:
     assert (
         "inputs.operation == 'cutover-a-worker-recover' || "
         "inputs.operation == 'cutover-a-worker-recover-807' || "
-        "inputs.operation == 'cutover-a-worker-recover-819') && github.sha"
+        "inputs.operation == 'cutover-a-worker-recover-819' || "
+        "inputs.operation == 'cutover-a-worker-recover-827') && github.sha"
     ) in deploy
 
 
@@ -271,7 +274,7 @@ def test_protected_remote_transport_and_terminal_ack_are_separate_gates() -> Non
     flow = _workflow()
     assert "run-name: ${{" in flow and ONCE_TITLE in flow
     attest = "Require exact 795/802 evidence and zero open PRs before recovery SSH"
-    remote = "Recover only the stopped exact 795 807 or 819 worker probe under Boca lease"
+    remote = "Recover only the stopped exact 795 807 819 or 827 worker probe under Boca lease"
     verify = "Require exact terminal worker recovery receipt on every outcome"
     assert flow.index(f"      - name: {attest}") < flow.index(f"      - name: {remote}")
     assert flow.index(f"      - name: {remote}") < flow.index(f"      - name: {verify}")
@@ -288,7 +291,8 @@ def test_protected_remote_transport_and_terminal_ack_are_separate_gates() -> Non
     terminal_step = _step(verify)
     assert "always() && (inputs.operation == 'cutover-a-worker-recover' || " in terminal_step
     assert "inputs.operation == 'cutover-a-worker-recover-807' || " in terminal_step
-    assert "inputs.operation == 'cutover-a-worker-recover-819')" in terminal_step
+    assert "inputs.operation == 'cutover-a-worker-recover-819' || " in terminal_step
+    assert "inputs.operation == 'cutover-a-worker-recover-827')" in terminal_step
     assert "steps.cutover_worker_recover_host.outcome" in terminal_step
     assert (
         "cutover-a-worker-recover) verifier_mode=verify; recovery_attempt=42329475083 ;;"
