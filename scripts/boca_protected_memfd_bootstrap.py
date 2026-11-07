@@ -150,7 +150,11 @@ def main() -> int:
         print("BOCA_BUNDLE state=NO_GO reason=arguments", file=sys.stderr)
         return 2
     try:
-        recovery = sys.argv[2] in {"cutover-worker-recover", "cutover-worker-807-recover"}
+        recovery = sys.argv[2] in {
+            "cutover-worker-recover",
+            "cutover-worker-807-recover",
+            "cutover-worker-819-recover",
+        }
         worker_preflight = sys.argv[2] == "cutover-worker-preflight"
         if recovery and len(sys.argv) != 3:
             raise ValueError("stopped worker recovery accepts no user coordinates")

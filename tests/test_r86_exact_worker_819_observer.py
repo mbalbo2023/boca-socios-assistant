@@ -203,7 +203,11 @@ def test_r86_workflow_reuses_bounded_readonly_path_and_rejects_other_modes() -> 
     assert "ulimit -f 4 || exit 99" in inspect
     for forbidden in ("docker stop", "docker rm", "docker pull", "docker run", "docker exec"):
         assert forbidden not in inspect
-    assert "42353468231" not in (ROOT / "scripts/host_cutover_worker_recovery.py").read_text()
+    # R87 adds a separately gated stopped-only recovery for the observed CID;
+    # it must never change this R86 inspector's read-only host contract.
+    recovery = (ROOT / "scripts/host_cutover_worker_recovery.py").read_text()
+    assert '"42353468231"' in recovery and '"host-819": TARGET_819' in recovery
+    assert "docker container rm" not in inspect
 
 
 def _inspection_step() -> str:

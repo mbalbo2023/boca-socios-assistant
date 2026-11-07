@@ -1,6 +1,15 @@
 # Estado de integración BETA
 
-## Estado A45-R86 — preflight #819 NO_GO y observador read-only candidato (07/11/2026 ART)
+## Estado A45-R87 — revisión de recuperación #819, ninguna BETA nueva instalada (07/11/2026 ART)
+
+| Frente | Evidencia verificable | Estado |
+| --- | --- | --- |
+| R86 integrado | [PR #428](https://github.com/mbalbo2023/boca-socios-assistant/pull/428) fusionado, `main=2859b9d31621e3cbec70b1aec649cc281ba130f5`, postmerge CI y Security GREEN, PR0 | Código inspector instalado en GitHub, no en droplet |
+| Diagnóstico físico #821 | [Actions 42355552701](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42355552701), `READ_ONLY_NO_GO`: probe #819 `PRESENT_PIN_MATCH`, detenido, seccomp `ABSENT`, legacy sano 8443, `observer_writes=0` | Estado físico puntual verificado; el fallo STOP previo aún carece de RCA concluyente |
+| R87 cleanup candidato | Mismo recovery R80/R82, CID fijo #819, gates REST de #819/#821/#732, no force, recibo bounded y no retry, [ADR0196](ADR/0196-r87-exact-stopped-worker-819-recovery.md) | CODE_ONLY hasta QA, PR/CI, consenso y Acción protegida única |
+| Cutover, browser, Telegram | No existe nuevo PREPARE, GO_B, APPLY ni aceptación física integral | **NO_GO**. No tocar otros servicios, volúmenes, Porota, BLACKBOX o 8443 |
+
+## Histórico A45-R86 — preflight #819 NO_GO y observador read-only candidato (07/11/2026 ART; sustituido)
 
 | Frente | Evidencia verificable | Estado |
 | --- | --- | --- |

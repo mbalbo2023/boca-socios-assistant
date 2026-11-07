@@ -1,6 +1,34 @@
 # Safe operations — verified evidence and gated procedures
 
-**Estado vigente:** [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
+## Vigente R87 — stopped-only #819, sin Cutover automático (07/11/2026 ART)
+
+El PR [#428](https://github.com/mbalbo2023/boca-socios-assistant/pull/428)
+fusionó el inspector R86 en `main=2859b9d31621e3cbec70b1aec649cc281ba130f5`.
+El único [READ_ONLY #821](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42355552701)
+vio worker exacto #819 `PRESENT_PIN_MATCH` **detenido**, seccomp `ABSENT` y
+controller legacy `RUNNING_HEALTHY` en loopback 8443; cero escrituras.
+La falla previa [#819](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42353468231)
+permanece en RCA #417: `CLEANUP/INDETERMINATE`, STOP sin ACK verificado.
+
+R87 introduce sólo una rama del recovery protegido **ya existente**:
+`operation=cutover-a-worker-recover-819`, `service=controller`,
+`resource_budget=1.5cpu-1024m-192pids`, **todos los demás inputs vacíos**.
+Requiere GitHub `main` exacto, PR0, primer intento, CI y revisión independiente;
+el gate valida #819, #821, release histórico dual #732, jobs/steps y unicidad
+del dispatch antes de SSH. Sólo bajo lease, si dos observaciones y `inspect`
+completo prueban que el CID fijo continúa detenido, aislado y con legado sano,
+admite un `docker container rm` sin fuerza por CID exacto, seguido de ausencia
+y postflight. No se reintenta; `INDETERMINATE` es NO_GO. El recibo runner
+queda en ruta privada y acotada, con artefacto verificado independiente.
+
+**Al redactar, R87 es CODE_ONLY; ninguna limpieza #819 se ha ejecutado.**
+El agente está autorizado a operar exclusivamente mediante GitHub Actions
+después de QA/Arquitectura/Infra, PR0 y GO técnico exacto. Esta eventual
+limpieza no implica GO_B/APPLY ni activación de BETA/Telegram. Detalle en
+[ADR0196](ADR/0196-r87-exact-stopped-worker-819-recovery.md); resto de la guía
+R86/R85 se conserva como histórico.
+
+**Archivo histórico R86:** [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
 como fuente única operativa. R85 se fusionó en
 `main=0538b3fb29cc0245a8387b7023c394883d0ea9a8`; su
 [release dual #732](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42352641660)

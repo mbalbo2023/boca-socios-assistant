@@ -1,6 +1,28 @@
 # Boca Socios Assistant
 
-## Estado actual A45-R86 — #819 NO_GO, diagnóstico exclusivo de lectura (07/11/2026 ART)
+## Estado actual A45-R87 — #819 observado detenido; recuperación acotada CODE_ONLY (07/11/2026 ART)
+
+R86 se integró mediante [PR #428](https://github.com/mbalbo2023/boca-socios-assistant/pull/428),
+`main=2859b9d31621e3cbec70b1aec649cc281ba130f5`, con checks de PR,
+CI y seguridad posteriores **GREEN y PR0**. Su única observación física
+[Actions #821](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42355552701)
+terminó **SUCCESS de diagnóstico `READ_ONLY_NO_GO`**, con cero escrituras:
+el worker fallido #819 sigue presente **pero detenido** (CID exacto
+`4c2c40eaa7183e83440792466e844093a29c8b977e72c098c7be6a469f066547`),
+seccomp temporal ausente y controlador Boca original sano en `127.0.0.1:8443`.
+No explica retrospectivamente la falla en STOP de [preflight #819](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42353468231).
+
+**R87 CODE_ONLY** propone recuperar **sólo ese contenedor detenido** por una
+única ruta protegida `cutover-a-worker-recover-819` usando recovery existente,
+dos inspecciones completas y un `docker container rm` sin fuerza condicionado
+a los pins exactos, finalizer y no retry. Requiere PR/CI/certificación,
+consenso independiente y Action único antes de declarar limpieza física.
+No equivale a BETA instalada ni autoriza PREPARE, GO_B, APPLY, navegador real
+o Telegram. Véanse [ADR0196](docs/ADR/0196-r87-exact-stopped-worker-819-recovery.md),
+[RCA #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417) y
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+
+## Histórico A45-R86 — #819 NO_GO, diagnóstico exclusivo de lectura (07/11/2026 ART; sustituido)
 
 El [PR R85 #427](https://github.com/mbalbo2023/boca-socios-assistant/pull/427)
 fue fusionado en `main=0538b3fb29cc0245a8387b7023c394883d0ea9a8`, con
