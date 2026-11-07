@@ -35,8 +35,6 @@ SOURCES = (
     "scripts/__init__.py",
     "scripts/host_cutover_postapply_reconcile.py",
     "scripts/host_cutover_stage_recovery.py",
-    # P0 pre-Cutover GHCR/rootless ephemeral boundary probe. No IPC volume.
-    "scripts/host_cutover_worker_preflight.py",
     # Host-only lifecycle bridge and bounded stdlib dependency closure.
     "src/boca_socios/host_lifecycle_actions.py",
     "src/boca_socios/host_lifecycle_observe.py",
@@ -80,6 +78,23 @@ RECOVERY_SOURCES = (
     "scripts/host_cutover_worker_inspect.py",
     "scripts/host_cutover_worker_recovery.py",
 )
+# R83: preflight must never inherit the broader Cutover/Option B sources.
+# The SHA-checked independent memfd variant retains only its stdlib closure.
+PREFLIGHT_SOURCES = (
+    "docker/seccomp_profile.json",
+    "src/boca_socios/__init__.py",
+    "src/boca_socios/host_first_deploy.py",
+    "src/boca_socios/host_boca_cleanup.py",
+    "scripts/__init__.py",
+    "scripts/host_cutover_worker_preflight.py",
+)
+PREFLIGHT_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 9 or sys.argv[1] != 'cutover-worker-preflight':\n"
+    "    raise SystemExit(3)\n"
+    "from scripts import host_cutover_worker_preflight as preflight\n"
+    "raise SystemExit(preflight.main(['host', *sys.argv[2:]]))\n"
+).encode("ascii")
 RECOVERY_MAIN = (
     "import sys\n"
     "if sys.argv[1:] not in (['cutover-worker-recover'], ['cutover-worker-807-recover']):\n"
@@ -92,9 +107,6 @@ MAIN = (
     "if len(sys.argv) > 1 and sys.argv[1] == 'cutover-stage-recover':\n"
     "    from scripts import host_cutover_stage_recovery as recovery\n"
     "    raise SystemExit(recovery.main(['host', *sys.argv[2:]]))\n"
-    "if len(sys.argv) > 1 and sys.argv[1] == 'cutover-worker-preflight':\n"
-    "    from scripts import host_cutover_worker_preflight as preflight\n"
-    "    raise SystemExit(preflight.main(['host', *sys.argv[2:]]))\n"
     "if len(sys.argv) > 1 and sys.argv[1] in ('lifecycle-apply', 'lifecycle-bridge-selftest'):\n"
     "    from boca_socios import host_lifecycle_actions as bridge\n"
     "    if sys.argv[1] == 'lifecycle-bridge-selftest':\n"
@@ -125,15 +137,26 @@ MAX_SOURCE_BYTES = 860_000
 MAX_ARCHIVE_BYTES = 512_000
 RECOVERY_MAX_SOURCE_BYTES = 256_000
 RECOVERY_MAX_ARCHIVE_BYTES = 128_000
+PREFLIGHT_MAX_SOURCE_BYTES = 480_000
+PREFLIGHT_MAX_ARCHIVE_BYTES = 128_000
 
 
-def build(root: Path, target: Path, *, worker_recovery: bool = False) -> str:
+def build(
+    root: Path, target: Path, *, worker_recovery: bool = False, worker_preflight: bool = False
+) -> str:
     """Write one deterministic, explicitly allowlisted runner-only archive."""
+    if worker_recovery and worker_preflight:
+        raise ValueError("Boca protected bundle modes must be exclusive")
     if worker_recovery:
         files: dict[str, bytes] = {"__main__.py": RECOVERY_MAIN}
         sources: tuple[str, ...] = RECOVERY_SOURCES
         max_source = RECOVERY_MAX_SOURCE_BYTES
         max_archive = RECOVERY_MAX_ARCHIVE_BYTES
+    elif worker_preflight:
+        files = {"__main__.py": PREFLIGHT_MAIN}
+        sources = PREFLIGHT_SOURCES
+        max_source = PREFLIGHT_MAX_SOURCE_BYTES
+        max_archive = PREFLIGHT_MAX_ARCHIVE_BYTES
     else:
         files = {"__main__.py": MAIN, **HOST_ONLY_INIT}
         b_sources = tuple(root / rel for rel in OPTION_B_SOURCES)
@@ -193,15 +216,22 @@ def build_worker_recovery(root: Path, target: Path) -> str:
     return build(root, target, worker_recovery=True)
 
 
+def build_worker_preflight(root: Path, target: Path) -> str:
+    """Build the seven-entry preflight-only transport, never full Cutover."""
+    return build(root, target, worker_preflight=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Boca-only deterministic host code bundle")
-    parser.add_argument("--worker-recovery", action="store_true")
+    variant = parser.add_mutually_exclusive_group()
+    variant.add_argument("--worker-recovery", action="store_true")
+    variant.add_argument("--worker-preflight", action="store_true")
     parser.add_argument("repository_root", type=Path)
     parser.add_argument("runner_target", type=Path)
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight)}"
     )
     return 0
 
