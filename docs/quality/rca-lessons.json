@@ -553,6 +553,19 @@
         "tests/test_host_boca_cutover.py::test_precommit_failure_recovers_before_selective_postflight",
         "tests/test_host_boca_cutover_cli.py::test_cli_nonacceptance_reports_only_allowlisted_failure_phase"
       ]
+    },
+    {
+      "id": "RCA-417",
+      "issue": 417,
+      "fix_pr": 426,
+      "root_cause": "Cutover worker preflight duplicated dual-image pulls with require_capacity=False, omitting storage and inode admission; run_attempt=1 did not prevent a second workflow_dispatch for the same SHA. This does not establish the physical cause of run #807.",
+      "prevention": "Reuse the proven R50 dual-pull capacity check, require one bounded GitHub dispatch per SHA before SSH, and distinguish pre-SSH denial from actual host failure in the terminal receipt.",
+      "regression_tests": [
+        "tests/test_r84_worker_storage_admission.py::test_worker_preflight_rejects_below_initial_floor_before_any_pull",
+        "tests/test_r84_worker_storage_admission.py::test_worker_preflight_blocks_second_pull_on_low_controller_residual",
+        "tests/test_r84_worker_preflight_dispatch.py::test_actual_runner_bash_denies_second_same_sha_before_host_calls",
+        "tests/test_r84_worker_preflight_dispatch.py::test_receipt_verifier_does_not_claim_host_failure_if_ssh_never_started"
+      ]
     }
   ]
 }
