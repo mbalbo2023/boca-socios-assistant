@@ -1,6 +1,18 @@
 # Backlog y dependencias de la BETA
 
-## Prioridad física vigente — 07/11/2026, R90 CODE_ONLY
+## Prioridad física vigente — 07/11/2026, R91 CODE_ONLY
+
+[#827](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42368541950)
+falló `STOP/ACK_MISMATCH`; [#829](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42370005970)
+identificó el probe detenido, seccomp ausente, original sano y 0 escrituras.
+R91 reutiliza el recuperador R87 sólo para ese CID, gate REST, QA/arquitectura,
+PR0, CI, merge y Action protegida one-shot. Tras `CLEANED/VERIFIED`, revisar
+el RCA STOP y diseño fix-forward de nuevo Cutover con GO propio; todavía no
+hay BETA integral, Telegram ni PREPARE/APPLY. Ver [ADR0200](ADR/0200-r91-worker-827-stopped-only-recovery.md).
+
+---
+
+## Histórico — 07/11/2026, R90 CODE_ONLY (sustituido por R91)
 
 El único worker preflight [#827](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42368541950)
 falló `CLEANUP/STOP/ACK_MISMATCH/INDETERMINATE`; su limpieza y salud de

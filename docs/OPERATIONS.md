@@ -1,6 +1,49 @@
 # Safe operations — verified evidence and gated procedures
 
-## Vigente A45-R90 — único inventario READ_ONLY permitido para #827 (07/11/2026 ART)
+## A45-R91 — instrucciones de recuperación exacta, sólo tras QA/merge/PR0
+
+El [observador #829](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42370005970)
+confirmó probe #827 detenido, controller original saludable y cero efectos;
+no instaló BETA. Reglas y evidencia en [ADR0200](ADR/0200-r91-worker-827-stopped-only-recovery.md).
+
+**Únicamente después** de revisión independiente 3/3, PR R91 con checks
+GREEN, merge, CI/Security postmerge y PR0, usar una sola vez el workflow
+[Boca first deploy](https://github.com/mbalbo2023/boca-socios-assistant/actions/workflows/boca-first-deploy.yml):
+
+- `operation`: `cutover-a-worker-recover-827`
+- `service`: `controller`
+- `resource_budget`: `1.5cpu-1024m-192pids`
+- Todos los demás campos opcionales **vacíos**, incluido
+  `protected_action_context`, SHA, release, imágenes, legacy y envelopes.
+
+El propio workflow verifica GitHub por REST, dos snapshots/full inspect,
+lease, un `docker container rm` sin force, ACK exacto y postcheck legacy.
+Sin `CLEANED cleanup=VERIFIED` **no repetir** ni efectuar Cutover, PREPARE,
+GO_B o APPLY; registrar resultado indeterminado y observar sin efectos.
+
+### Worker preflight — checklist vigente, despacho actualmente NO_GO
+
+**No ejecutar `cutover-a-worker-preflight` todavía**: primero recuperación
+R91 con recibo VERIFIED, RCA y nueva revisión QA/Arquitectura/Infra, release
+dual y manifest exactos del nuevo SHA, PR0 y GO específico. El preflight
+es **one-shot por SHA**, no READ_ONLY. Si un input falla la validación
+**antes del SSH**, ese intento consume la oportunidad; `NO_GO`, `no_retry`.
+Jamás repetir #827 ni convertir un PASS de recuperación en permiso de
+`cutover-a-apply` o PREPARE.
+
+Cuando un futuro candidato esté autorizado, el formulario protegido exige
+ocho coordenadas verificadas: `source_sha`, `image_ref`,
+`browser_image_ref`, `release_run_id`, `legacy_source_sha`,
+`legacy_image_ref`, `legacy_release_run_id`, `legacy_controller_id`.
+`protected_action_context` **vacío** y `service=controller`,
+`resource_budget=1.5cpu-1024m-192pids`; toda otra opción/envío no
+relacionado debe quedar vacío. Obtener las imágenes del manifest dual de
+Actions, sin estimarlas ni usar la imagen legacy como nueva. Validar SHA,
+historial de PR, release y GO antes de despachar, porque no hay retry.
+
+---
+
+## Histórico A45-R90 — inventario READ_ONLY #827 completado mediante #829 (07/11/2026 ART)
 
 El único preflight R89 [#827](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42368541950)
 falló `CLEANUP/STOP/ACK_MISMATCH/INDETERMINATE`: ninguna BETA integral
