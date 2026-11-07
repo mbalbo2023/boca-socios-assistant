@@ -38,6 +38,26 @@ artifact autenticado acredita el retiro. Si falta evidencia, `NO_GO` o
 `INDETERMINATE`, sin repetir ese run ni intentar Cutover/GO_B/Telegram.
 Consultar [ADR0203](ADR/0203-r94-worker-834-stopped-only-recovery.md).
 
+### Worker preflight — checklist vigente, `NO_GO` hasta nuevo consenso
+
+Sólo para una futura autorización independiente de
+`operation=cutover-a-worker-preflight`: verificar **antes** del despacho
+un manifest **dual** publicado para el mismo SHA de `main`, PR0, CI/Security,
+capacidad y salud del legacy. El formulario exige las ocho coordenadas
+exactas `source_sha`, `image_ref`, `browser_image_ref`, `release_run_id`,
+`legacy_source_sha`, `legacy_image_ref`, `legacy_release_run_id` y
+`legacy_controller_id`. Todas se obtienen de receipts publicados/observación
+fresca, nunca de un ejemplo o inferencia. `protected_action_context` debe
+quedar **vacío**, `service=controller` y
+`resource_budget=1.5cpu-1024m-192pids`.
+
+Es **one-shot por SHA**, `no_retry=1`: incluso un formulario inválido
+rechazado antes de **SSH** consume el único intento; resultado `NO_GO`
+sin reintento de esa fuente. La opción `cutover-a-apply` de **PREPARE**
+para GO_B sigue **separada**, con esas ocho coordenadas vacías y su propio
+control, sin autorización por preflight o recovery. No ejecutar sin nuevo
+GO físico explícito; véase guía histórica más detallada y ADR0198.
+
 ---
 
 ## Histórico A45-R93 — inspector #834 realizado mediante #836 (no repetir)
@@ -91,27 +111,8 @@ Requiere PR/checks/CI/Security postmerge, nuevo release dual de idéntico SHA,
 PR0, revisión de capacidad/legacy/ausencia de residuos y consenso físico
 explícito. El preflight es one-shot por SHA y físicamente crea un probe;
 PREPARE/GO_B y APPLY son fases independientes, actualmente NO_GO. El
-procedimiento de ocho coordenadas aparece abajo, pero no constituye GO.
-
-### Worker preflight — checklist vigente, `NO_GO` hasta nuevo consenso
-
-Sólo para una futura autorización independiente de
-`operation=cutover-a-worker-preflight`: verificar **antes** del despacho
-un manifest **dual** publicado para el mismo SHA de `main`, PR0, CI/Security,
-capacidad y salud del legacy. El formulario exige las ocho coordenadas
-exactas `source_sha`, `image_ref`, `browser_image_ref`, `release_run_id`,
-`legacy_source_sha`, `legacy_image_ref`, `legacy_release_run_id` y
-`legacy_controller_id`. Todas se obtienen de receipts publicados/observación
-fresca, nunca de un ejemplo o inferencia. `protected_action_context` debe
-quedar **vacío**, `service=controller` y
-`resource_budget=1.5cpu-1024m-192pids`.
-
-Es **one-shot por SHA**, `no_retry=1`: incluso un formulario inválido
-rechazado antes de **SSH** consume el único intento; resultado `NO_GO`
-sin reintento de esa fuente. La opción `cutover-a-apply` de **PREPARE**
-para GO_B sigue **separada**, con esas ocho coordenadas vacías y su propio
-control, sin autorización por preflight o recovery. No ejecutar sin nuevo
-GO físico explícito; véase guía histórica más detallada y ADR0198.
+procedimiento de ocho coordenadas aparece en el checklist vigente al comienzo
+de este documento, pero no constituye GO.
 
 ---
 
