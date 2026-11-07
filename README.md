@@ -1,6 +1,20 @@
 # Boca Socios Assistant
 
-## Estado actual A45-R88 — residuo #819 recuperado; Cutover aún NO_GO (07/11/2026 ART)
+## A45-R89 — guía de inputs para preflight único; host NO_GO (07/11/2026 ART)
+
+R88 quedó fusionado por [PR #430](https://github.com/mbalbo2023/boca-socios-assistant/pull/430)
+(`main=15b25e753528651069323dc499b353359a5bc304`, tree
+`840b6ea15c13cc33286af59c4f3e46a0e689ee24`) con CI/Security
+postmerge SUCCESS. No autoriza una operación física. La guía R89
+explica los **ocho inputs obligatorios** del futuro
+`cutover-a-worker-preflight` y su antirreplay: incluso un despacho inválido
+PRE-SSH consume la única oportunidad del SHA. **No usar el formulario
+hasta verificar release dual, manifests, legado actual, PR0 y GO físico
+independiente.** PREPARE de GO_B es otra operación con esos inputs
+vacíos; Cutover, browser IPC real y Telegram permanecen NO_GO.
+Véanse [OPERATIONS](docs/OPERATIONS.md) y [ADR0198](docs/ADR/0198-r89-one-shot-preflight-ui-guidance.md).
+
+## Histórico A45-R88 — residuo #819 recuperado; Cutover aún NO_GO (07/11/2026 ART; sustituido)
 
 El [PR #429](https://github.com/mbalbo2023/boca-socios-assistant/pull/429)
 de R87 fue fusionado en `main=b4b72526d144f58d7577e49a32591ed304c1414d`;
