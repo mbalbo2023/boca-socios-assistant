@@ -123,6 +123,36 @@ RECEIPT_KEYS = {
     "cutover_authorized",
 }
 
+# R112: historical V3 Cutover #42422235097 ONLY. Docker keeps at most 256
+# daemon events; absence is UNKNOWN, never proof of a clean worker shutdown.
+# All query coordinates are fixed in reviewed source, not a workflow input.
+R112_RUN = "42422235097"
+R112_SHA = "c8bea3eb13695722ae294f454c7811395c159c26"
+R112_SINCE = "2026-11-07T22:47:15Z"
+R112_UNTIL = "2026-11-07T22:48:30Z"
+R112_START_EPOCH = 1794091635
+R112_END_EPOCH = 1794091710
+R112_EVENT_OUTPUT_LIMIT = 8192
+R112_EVENT_FLAGS = (
+    f"--since={R112_SINCE}",
+    f"--until={R112_UNTIL}",
+    "--filter=type=container",
+    "--filter=event=die",
+    "--filter=event=oom",
+    f"--filter=label=boca.socios.browser-ipc-attempt={R112_RUN}",
+    "--format={{json .}}",
+)
+R112_RECEIPT_KEYS = {
+    "version",
+    "attempt",
+    "state",
+    "exit_code",
+    "oom",
+    "observer_writes",
+    "foreign_resources_touched",
+    "retry_authorized",
+}
+
 
 class InspectError(ValueError):
     """Invalid trusted-input contract, not evidence about host state."""
@@ -334,6 +364,164 @@ def _failure(exc: Exception) -> tuple[str, int | None]:
     if isinstance(exc, OSError):
         return "OS_ERROR", None
     return "METADATA_INVALID", None
+
+
+def _r112_empty_receipt() -> dict[str, Any]:
+    return {
+        "version": "boca-worker-events-r112-v1",
+        "attempt": R112_RUN,
+        "state": "UNKNOWN",
+        "exit_code": None,
+        "oom": "UNKNOWN",
+        "observer_writes": 0,
+        "foreign_resources_touched": False,
+        "retry_authorized": False,
+    }
+
+
+def _r112_failed_receipt() -> dict[str, Any]:
+    result = _r112_empty_receipt()
+    result["state"] = "INDETERMINATE"
+    return result
+
+
+def summarize_worker_events(raw: str) -> dict[str, Any]:
+    """Discard all raw Docker fields except positively scoped exit and OOM."""
+    if type(raw) is not str or len(raw.encode("utf-8")) > R112_EVENT_OUTPUT_LIMIT:
+        raise InspectError("EVENT_BOUNDS")
+    dies: list[int] = []
+    ooms = 0
+    container_ids: set[str] = set()
+    lines = raw.splitlines()
+    if len(lines) > 16:
+        raise InspectError("EVENT_BOUNDS")
+    for line in lines:
+        if not line or len(line) > 4096:
+            raise InspectError("EVENT_FORMAT")
+        try:
+            event = json.loads(line, object_pairs_hook=_unique_inspect_fields)
+        except (ValueError, TypeError) as exc:
+            raise InspectError("EVENT_FORMAT") from exc
+        if not isinstance(event, dict) or event.get("Type") != "container":
+            raise InspectError("EVENT_TYPE")
+        action = event.get("Action")
+        if action not in {"die", "oom"}:
+            raise InspectError("EVENT_ACTION")
+        actor = event.get("Actor")
+        attrs = actor.get("Attributes") if isinstance(actor, dict) else None
+        timestamp = event.get("time")
+        if (
+            not isinstance(actor, dict)
+            or not CONTAINER_ID.fullmatch(str(actor.get("ID", "")))
+            or not isinstance(attrs, dict)
+            or attrs.get("name")
+            not in {"boca-socios-browser-worker-1", "/boca-socios-browser-worker-1"}
+            or attrs.get("com.docker.compose.project") != PROJECT
+            or attrs.get("com.docker.compose.service") != "browser-worker"
+            or attrs.get("boca.socios.browser-ipc-attempt") != R112_RUN
+            or type(timestamp) is not int
+            or not R112_START_EPOCH <= timestamp <= R112_END_EPOCH
+        ):
+            raise InspectError("EVENT_IDENTITY")
+        container_ids.add(actor["ID"])
+        if action == "die":
+            code = attrs.get("exitCode")
+            if (
+                not isinstance(code, str)
+                or re.fullmatch(r"(?:0|[1-9][0-9]{0,2})", code) is None
+                or int(code) > 255
+            ):
+                raise InspectError("EVENT_EXIT_CODE")
+            dies.append(int(code))
+        else:
+            ooms += 1
+    receipt = _r112_empty_receipt()
+    if len(container_ids) > 1 or len(dies) > 1 or ooms > 1:
+        receipt["state"] = "AMBIGUOUS"
+    elif dies or ooms:
+        receipt["state"] = "OBSERVED"
+        receipt["exit_code"] = dies[0] if dies else None
+        receipt["oom"] = "YES" if ooms else "UNKNOWN"
+    return receipt
+
+
+def observe_worker_events() -> dict[str, Any]:
+    """Read only the fixed historical attempt on UID10001 rootless Docker."""
+    if os.getuid() != UID or _runtime_stat("docker.sock") != "PRESENT_OWNED":
+        return _r112_failed_receipt()
+    try:
+        raw = _run_bounded(
+            ("docker", "events", *R112_EVENT_FLAGS), stdout_limit=R112_EVENT_OUTPUT_LIMIT
+        )
+        return summarize_worker_events(raw)
+    except (
+        OSError,
+        ValueError,
+        TimeoutError,
+        subprocess.TimeoutExpired,
+        subprocess.CalledProcessError,
+    ):
+        return _r112_failed_receipt()
+
+
+def verify_worker_events(raw: bytes) -> dict[str, Any]:
+    if type(raw) is not bytes or len(raw) > 512 or not raw.endswith(b"\n"):
+        raise InspectError("EVENT_RECEIPT_BOUNDS")
+    try:
+        record = json.loads(raw.decode("ascii"), object_pairs_hook=_unique_inspect_fields)
+    except (ValueError, UnicodeError, TypeError) as exc:
+        raise InspectError("EVENT_RECEIPT_FORMAT") from exc
+    if (
+        type(record) is not dict
+        or set(record) != R112_RECEIPT_KEYS
+        or record["version"] != "boca-worker-events-r112-v1"
+        or record["attempt"] != R112_RUN
+        or record["state"] not in {"UNKNOWN", "OBSERVED", "AMBIGUOUS", "INDETERMINATE"}
+        or record["oom"] not in {"UNKNOWN", "YES"}
+        or (
+            record["exit_code"] is not None
+            and (type(record["exit_code"]) is not int or not 0 <= record["exit_code"] <= 255)
+        )
+        or (
+            record["state"] != "OBSERVED"
+            and (record["exit_code"] is not None or record["oom"] != "UNKNOWN")
+        )
+        or (
+            record["state"] == "OBSERVED" and record["exit_code"] is None and record["oom"] != "YES"
+        )
+        or type(record["observer_writes"]) is not int
+        or record["observer_writes"] != 0
+        or record["foreign_resources_touched"] is not False
+        or record["retry_authorized"] is not False
+        or canonical(record) + b"\n" != raw
+    ):
+        raise InspectError("EVENT_RECEIPT_CONTRACT")
+    return record
+
+
+def authenticate_r112_incident(raw: bytes) -> None:
+    """Authorize only documented failed main Cutover; no caller run selector."""
+    try:
+        run = json.loads(raw.decode("utf-8"))
+    except (UnicodeError, ValueError, TypeError) as exc:
+        raise InspectError("INCIDENT_FORMAT") from exc
+    if not isinstance(run, dict) or any(
+        run.get(key) != expected
+        for key, expected in {
+            "id": int(R112_RUN),
+            "head_sha": R112_SHA,
+            "head_branch": "main",
+            "event": "workflow_dispatch",
+            "run_attempt": 1,
+            "status": "completed",
+            "conclusion": "failure",
+            "display_title": "BOCA-SIMULATION-DEPLOY-V3",
+            "path": ".github/workflows/boca-first-deploy.yml",
+            "run_started_at": "2026-11-07T22:47:19Z",
+            "updated_at": "2026-11-07T22:48:25Z",
+        }.items()
+    ):
+        raise InspectError("INCIDENT_IDENTITY")
 
 
 def observe(
@@ -604,6 +792,27 @@ def verify(raw: bytes, attempt: str, original_id: str) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
+    if args in (["events-auth"], ["events-host"], ["events-verify"]):
+        try:
+            if args == ["events-auth"]:
+                authenticate_r112_incident(sys.stdin.buffer.read(16385))
+                print("BOCA_WORKER_EVENTS_R112 incident=AUTHENTICATED mode=READ_ONLY")
+            elif args == ["events-host"]:
+                sys.stdout.buffer.write(canonical(observe_worker_events()) + b"\n")
+            else:
+                record = verify_worker_events(sys.stdin.buffer.read(513))
+                print(
+                    f"BOCA_WORKER_EVENTS_R112 state={record['state']}"
+                    f" attempt={R112_RUN} exit_code={record['exit_code']}"
+                    f" oom={record['oom']} observer_writes=0"
+                    " foreign_resources_touched=0 retry=NO_GO cutover=NO_GO"
+                )
+                if record["state"] == "INDETERMINATE":
+                    return 3
+            return 0
+        except (OSError, InspectError, ValueError, TypeError, UnicodeError):
+            print("BOCA_WORKER_EVENTS_R112 state=INDETERMINATE reason=UNVERIFIED", file=sys.stderr)
+            return 3
     if len(args) != 5 or args[0] not in {"host", "verify"}:
         print("BOCA_WORKER_INSPECT state=NO_GO reason=INPUT", file=sys.stderr)
         return 3

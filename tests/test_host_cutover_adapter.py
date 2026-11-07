@@ -975,6 +975,8 @@ def test_workflow_cutover_v3_requires_dispatch_and_legacy_release_proof() -> Non
         "cutover-a-observe",
         # R76 one exact failed preflight metadata-only inspection, no GO.
         "cutover-a-worker-inspect",
+        # R112 exact failed-cutover Docker events forensic; READ_ONLY, no retry GO.
+        "cutover-a-worker-events-r112",
         # R79 one exact stopped-only recovery; no automatic worker preflight or Cutover.
         "cutover-a-worker-recover",
         # R82 distinct #807 stopped-only recovery, same guarded executor, no Cutover GO.
