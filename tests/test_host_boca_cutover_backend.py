@@ -110,7 +110,9 @@ def fake_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[list[str
         adapter.host, "_browser_compose_model", lambda *_a, **_k: events.append("model")
     )
     monkeypatch.setattr(adapter, "_reviewed_compose_hash", lambda _p, svc: SHA(svc.encode()))
-    monkeypatch.setattr(adapter.host, "_browser_pull_both", lambda *_a: events.append("pull"))
+    monkeypatch.setattr(
+        adapter.host, "_browser_pull_both", lambda *_a, **_kw: events.append("pull")
+    )
 
     def prepare(*_args: object) -> str:
         assert original.read_bytes() == LEGACY
@@ -366,6 +368,30 @@ def test_no_go_on_option_b_missing_sql_before_any_host_call(
     assert receipt.state == "NO_GO" and not receipt.accepted
     assert not events
     assert (root / "compose.beta.yaml").read_bytes() == LEGACY
+
+
+@pytest.mark.parametrize("primary", ["STORAGE", "PULL"])
+def test_worker_prepare_preserves_dual_pull_subphase_without_private_error(
+    fake_host: tuple[list[str], Path], monkeypatch: pytest.MonkeyPatch, primary: str
+) -> None:
+    events, _root = fake_host
+
+    def interrupted_pull(*_args: object, phase_hook: object = None) -> None:
+        if callable(phase_hook):
+            phase_hook(primary)
+        raise adapter.host.PreflightError("private Docker storage content")
+
+    monkeypatch.setattr(adapter.host, "_browser_pull_both", interrupted_pull)
+    backend = _backend(events)
+    plan = _plan()
+    with cleanup.protected_boca_job_lease(plan.attempt_id) as lease:
+        backend.attest_original(plan, lease)
+        backend.stage(plan, lease)
+        with pytest.raises(adapter.host.CutoverWorkerPhaseError) as captured:
+            backend.prepare_worker(plan, lease)
+    assert captured.value.primary == primary
+    assert captured.value.compensation == "UNVERIFIED"
+    assert "private Docker" not in str(captured.value)
 
 
 def test_option_b_failure_compensates_exact_old_id_and_removes_stage(

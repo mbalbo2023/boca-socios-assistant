@@ -164,6 +164,21 @@ def test_precommit_failure_recovers_before_selective_postflight(failure: str) ->
         assert host.events.index("park") < host.events.index("bootstrap")
 
 
+def test_worker_primary_and_compensation_are_preserved_without_private_exception() -> None:
+    from boca_socios.host_first_deploy import CutoverWorkerPhaseError
+
+    class FailedWorker(FakeHost):
+        def prepare_worker(self, plan: cutover.CutoverPlan, lease: cleanup.BocaJobLease) -> str:
+            self.events.append("worker-failed")
+            raise CutoverWorkerPhaseError("CREATE", "INDETERMINATE")
+
+    receipt = cutover.run_cutover_a(_plan(), backend=FailedWorker(recovered=False))
+    assert receipt.failed_phase == "PREPARE_WORKER"
+    assert receipt.worker_primary_phase == "CREATE"
+    assert receipt.worker_compensation == "INDETERMINATE"
+    assert receipt.state == "NO_GO" and not receipt.accepted
+
+
 def test_ambiguous_recovery_never_claims_legacy_restored() -> None:
     host = FakeHost(failure="activate", recovered=False)
     receipt = cutover.run_cutover_a(_plan(), backend=host)

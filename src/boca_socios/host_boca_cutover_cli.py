@@ -18,7 +18,13 @@ from typing import Any
 
 from boca_socios import host_boca_cutover_backend as backend
 from boca_socios import host_boca_cutover_receipt as terminal
-from boca_socios.host_boca_cutover import CUTOVER_FAILURE_PHASES, CutoverPlan, CutoverReceipt
+from boca_socios.host_boca_cutover import (
+    CUTOVER_FAILURE_PHASES,
+    WORKER_COMPENSATION_STATES,
+    WORKER_PRIMARY_PHASES,
+    CutoverPlan,
+    CutoverReceipt,
+)
 
 VERSION = "boca-cutover-a-host-invocation-v1"
 VERSION_PREPARED = "boca-cutover-a-host-invocation-v2"
@@ -226,6 +232,17 @@ def run_cli(
         if not receipt.accepted:
             if postflight:
                 print("BOCA_CUTOVER_A_POSTFLIGHT " + postflight)
+            if (
+                receipt.failed_phase == "PREPARE_WORKER"
+                and receipt.worker_primary_phase in WORKER_PRIMARY_PHASES
+                and receipt.worker_compensation in WORKER_COMPENSATION_STATES
+            ):
+                print(
+                    "BOCA_CUTOVER_A_WORKER_FAILURE primary="
+                    + receipt.worker_primary_phase
+                    + " compensation="
+                    + receipt.worker_compensation
+                )
             # A bounded phase hint only; never an authenticated result.
             if receipt.failed_phase in CUTOVER_FAILURE_PHASES:
                 print("BOCA_CUTOVER_A_FAILURE_PHASE phase=" + receipt.failed_phase)

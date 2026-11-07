@@ -26,7 +26,12 @@ from typing import Any
 import boca_protected_memfd_bootstrap as memfd
 
 from boca_socios.browser_release_manifest import validate_browser_manifest
-from boca_socios.host_boca_cutover import CUTOVER_FAILURE_PHASES, CutoverPlan
+from boca_socios.host_boca_cutover import (
+    CUTOVER_FAILURE_PHASES,
+    WORKER_COMPENSATION_STATES,
+    WORKER_PRIMARY_PHASES,
+    CutoverPlan,
+)
 from boca_socios.host_boca_cutover_cli import CutoverCliError, CutoverInvocation, encode_invocation
 from boca_socios.prepared_go_runner import (
     PreparedGoError,
@@ -636,6 +641,8 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
     unverified = b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=UNVERIFIED runtime=UNVERIFIED\n"
     host_claim = "NONE"
     phase_claim = "UNVERIFIED"
+    worker_primary_claim = "UNVERIFIED"
+    worker_compensation_claim = "UNVERIFIED"
     if raw.endswith(recorded):
         prefix = raw[: -len(recorded)]
         observe = _CUTOVER_OBSERVE_PREFIX.match(prefix)
@@ -648,6 +655,17 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
             postflight_line, separator, prefix = prefix.partition(b"\n")
             if not separator or len(postflight_line) > 8000:
                 prefix = b"\x00"
+        worker_match = re.match(
+            rb"BOCA_CUTOVER_A_WORKER_FAILURE primary=([A-Z_]{2,32}) "
+            rb"compensation=([A-Z_]{2,32})\n",
+            prefix,
+        )
+        worker_primary_candidate = ""
+        worker_compensation_candidate = ""
+        if worker_match is not None:
+            worker_primary_candidate = worker_match.group(1).decode("ascii")
+            worker_compensation_candidate = worker_match.group(2).decode("ascii")
+            prefix = prefix[worker_match.end() :]
         if prefix == b"":
             host_claim = "NO_GO_RECORDED_UNVERIFIED"
         else:
@@ -655,14 +673,24 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
             if match is not None:
                 candidate = match.group(1).decode("ascii")
                 if candidate in CUTOVER_FAILURE_PHASES:
-                    phase_claim = candidate
-                    host_claim = "NO_GO_RECORDED_UNVERIFIED"
+                    if worker_match is None or (
+                        candidate == "PREPARE_WORKER"
+                        and worker_primary_candidate in WORKER_PRIMARY_PHASES
+                        and worker_compensation_candidate in WORKER_COMPENSATION_STATES
+                    ):
+                        phase_claim = candidate
+                        host_claim = "NO_GO_RECORDED_UNVERIFIED"
+                        if worker_match is not None:
+                            worker_primary_claim = worker_primary_candidate
+                            worker_compensation_claim = worker_compensation_candidate
     elif raw == unverified:
         host_claim = "NO_GO_UNVERIFIED"
     transport = "TIMEOUT" if ssh_rc == 124 else "SSH_255" if ssh_rc == 255 else "EXIT_NONZERO"
     return (
         f"BOCA_CUTOVER_A_SSH_DIAGNOSTIC state=NO_GO ssh_rc={ssh_rc} "
         f"transport={transport} host_claim={host_claim} phase_claim={phase_claim} "
+        f"worker_primary_claim={worker_primary_claim} "
+        f"worker_compensation_claim={worker_compensation_claim} "
         "phase=UNVERIFIED "
         "host=UNVERIFIED terminal=UNVERIFIED no_retry=true"
     )
