@@ -54,6 +54,9 @@ R83_FULL_CUTOVER_SHA = "8b3082dcf6de0f7bfeb8fac784a6d3ea56a655085c33224547f55820
 # R101: the V3 read-only observer is a reviewed member of the full host ZIP.
 # Preserve the prior R83 checksum above as immutable historical evidence.
 R101_FULL_CUTOVER_SHA = "4509410ee64a6108649402a8ef2a0038b6847fd9965917452c49497eab36557e"
+V3_STAGE_RECOVERY_FULL_CUTOVER_SHA = (
+    "8fd17dc5e6fcebabc4fe051c7ef0ed6fb662c734b694f9619b3fe2ebcca4bf73"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -211,7 +214,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R101_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == V3_STAGE_RECOVERY_FULL_CUTOVER_SHA
+    assert digest != R101_FULL_CUTOVER_SHA
     assert digest != R83_FULL_CUTOVER_SHA  # historical pin retained, explicitly superseded
     assert digest != R81_FULL_CUTOVER_SHA
     assert len(raw) <= 512_000

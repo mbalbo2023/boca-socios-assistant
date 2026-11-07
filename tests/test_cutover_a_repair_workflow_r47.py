@@ -15,11 +15,9 @@ def test_exact_one_incident_one_prepare_and_independent_protected_actions() -> N
     flow = WORKFLOW.read_text()
     assert "cutover-a-stage-recover" in flow
     assert "cutover-a-image-retire" in flow
-    # #778 is independently reconciled; none of the recovered earlier stages,
-    # including #763, nor historical image-retire may reuse the one-shot pin.
-    assert "stage_incident=42317092809" in flow
-    assert "stage_prepare=42309967399" in flow
-    assert "stage_readonly=42317342897" in flow
+    # Generic stage recovery is V3-only; historical image retirement remains separate.
+    assert "stage_incident=42317092809" not in flow
+    assert "BOCA-V3-STAGE-RECOVER-{0}" in flow
     assert "stage_incident=42307268117" not in flow
     assert "stage_incident=42274349061" not in flow
     assert "stage_incident=42270552485" not in flow

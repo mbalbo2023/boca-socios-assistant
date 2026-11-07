@@ -1,5 +1,21 @@
 # Boca Socios Assistant
 
+## Recuperación Stage V3 — propuesta CODE_ONLY
+
+La operación existente `cutover-a-stage-recover` propone recuperar un Stage
+no comprometido de un incidente V3 autenticado por GitHub; el ID numérico es
+solo selector, no contraseña ni aprobación. El código propuesto exige PR0,
+antirreplay por incidente, dos snapshots idénticos bajo lease y comprobación
+de recibos, marcador, archivos e inode, seguidos de ACK físico. Conserva la
+ruta histórica `cutover-a-stage-recover-844`. Sin escrituras Docker, navegación
+ni tickets. #858 es evidencia histórica READ_ONLY, no un artifact de autorización.
+
+Esto no acredita recuperación ni despliegue. Un Stage eliminado no autoriza
+reintentar #853 ni otro Cutover; `cleanup=INDETERMINATE` requiere inventario
+Boca-only separado de imágenes, IPC y capacidad. La fase reportada #853 fue
+`PREPARE_WORKER`; la subcausa sigue desconocida, y las dos entradas del Stage
+no la explican. Véase [ADR0184](docs/ADR/0184-exact-incident-uncommitted-stage-recovery.md).
+
 ## Cutover V3 — un despacho del propietario (2026-11-07 ART, CODE_ONLY)
 
 Por instrucción del propietario, `cutover-a-apply` sustituye el antiguo

@@ -79,9 +79,9 @@ def test_r96_protected_stage_route_is_distinct_from_historical_recovery() -> Non
     """An old recovery pin must never be reclassified as authorization for #844."""
     flow = WORKFLOW.read_text(encoding="utf-8")
     assert OPERATION in flow.split("options: [", 1)[1].split("]", 1)[0].split(", ")
-    assert "stage_incident=42317092809" in flow
-    assert "stage_prepare=42309967399" in flow
-    assert "stage_readonly=42317342897" in flow
+    # The generic operation is V3-only; the historical #844 route retains its own pins.
+    assert "stage_incident=42317092809" not in flow
+    assert "BOCA-V3-STAGE-RECOVER-{0}" in flow
     assert "stage_844_incident=42388694186" in flow
     assert "stage_844_prepare=42381545964" in flow
     assert "stage_844_readonly=42388994569" in flow

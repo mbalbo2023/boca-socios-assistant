@@ -1,5 +1,32 @@
 # ADR 0184 — Boca Cutover A: recuperación de Stage abandonado con identidad exacta
 
+## Candidato V3 genérico — 2026-11-07, CODE_ONLY
+
+La operación existente `cutover-a-stage-recover` se adapta para incidentes
+V3 sin PREPARE; `protected_action_context` es únicamente un selector numérico
+no confiable, seleccionado mediante GitHub y no solicitado al usuario. GitHub
+debe acreditar incidente manual V3, propietario/triggering owner, main, primer
+intento y failure, con SHA derivado del run, PR0 y una sola recuperación por
+incidente en historial paginado completo. El lector de historial falla cerrado
+ante truncamiento o el límite de 1000 resultados. `cutover-a-stage-recover-844`
+y sus verificadores históricos permanecen separados.
+
+Bajo el lease Boca, el host compara el SHA de GitHub con intent/result
+encadenados, exige dos observaciones V3 idénticas, controlador original sano
+y único en `127.0.0.1:8443`, ningún candidato/worker/promoción y autenticación
+del Stage exacto, marcador, archivos y Compose original. Solo se llama al
+`discard_recovered` existente; un tercer snapshot y ACK validan el resultado.
+No se modifica Docker ni se eliminan imágenes o volúmenes. Las referencias
+de imágenes y hashes del plan se comparan entre recibo y marcador; no se
+revalida aquí la release dual, que es requisito del Cutover posterior.
+
+El observador #858 es evidencia histórica READ_ONLY, no un artifact de
+autorización ni prueba del estado futuro. #853 reportó `PREPARE_WORKER` con
+subcausa desconocida; `STAGE_ROOT_ENTRIES` no demuestra su causa. La propuesta
+no es recuperación física, mantiene `cleanup=INDETERMINATE` y
+`go_for_retry=false`; exige inventario Boca-only de imágenes, IPC y capacidad
+antes de considerar un nuevo Cutover. No autoriza repetir #853.
+
 Estado: **CODE_ONLY / NO_GO físico**. Incidente canónico issue #386, intento físico
 `42236673419`, PREPARE `42217108000`, base de integración
 `cb1f0102f2324802c476051d8c81858c141ec0f6`.
