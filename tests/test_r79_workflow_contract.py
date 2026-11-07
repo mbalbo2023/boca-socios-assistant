@@ -79,10 +79,13 @@ def _shell(script: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]
 def test_dispatch_remains_one_owner_only_manual_workflow() -> None:
     workflow = _workflow()
     dispatch = workflow.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
-    assert len(re.findall(r"\bcutover-a-worker-recover(?!-807|-819|-827)\b", dispatch)) == 1
+    # Match the bare choice by its delimiter; suffix-specific negative matches
+    # would silently treat each future pinned recovery as the generic operation.
+    assert len(re.findall(r"\bcutover-a-worker-recover(?=,|\])", dispatch)) == 1
     assert len(re.findall(r"\bcutover-a-worker-recover-807\b", dispatch)) == 1
     assert len(re.findall(r"\bcutover-a-worker-recover-819\b", dispatch)) == 1
     assert len(re.findall(r"\bcutover-a-worker-recover-827\b", dispatch)) == 1
+    assert len(re.findall(r"\bcutover-a-worker-recover-834\b", dispatch)) == 1
     deploy = workflow.split("  deploy:\n", 1)[1]
     assert (
         "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' "
@@ -97,7 +100,8 @@ def test_dispatch_remains_one_owner_only_manual_workflow() -> None:
         "inputs.operation == 'cutover-a-worker-recover' || "
         "inputs.operation == 'cutover-a-worker-recover-807' || "
         "inputs.operation == 'cutover-a-worker-recover-819' || "
-        "inputs.operation == 'cutover-a-worker-recover-827') && github.sha"
+        "inputs.operation == 'cutover-a-worker-recover-827' || "
+        "inputs.operation == 'cutover-a-worker-recover-834') && github.sha"
     ) in deploy
 
 
@@ -292,7 +296,8 @@ def test_protected_remote_transport_and_terminal_ack_are_separate_gates() -> Non
     assert "always() && (inputs.operation == 'cutover-a-worker-recover' || " in terminal_step
     assert "inputs.operation == 'cutover-a-worker-recover-807' || " in terminal_step
     assert "inputs.operation == 'cutover-a-worker-recover-819' || " in terminal_step
-    assert "inputs.operation == 'cutover-a-worker-recover-827')" in terminal_step
+    assert "inputs.operation == 'cutover-a-worker-recover-827' || " in terminal_step
+    assert "inputs.operation == 'cutover-a-worker-recover-834')" in terminal_step
     assert "steps.cutover_worker_recover_host.outcome" in terminal_step
     assert (
         "cutover-a-worker-recover) verifier_mode=verify; recovery_attempt=42329475083 ;;"

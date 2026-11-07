@@ -1,6 +1,22 @@
 # Boca Socios Assistant
 
-## A45-R93 — inventario protegido exacto del #834 (07/11/2026 ART; CODE_ONLY)
+## A45-R94 — recovery exacto del #834 detenido, sólo CODE_ONLY (07/11/2026 ART)
+
+El único preflight R92 [#834](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42375050546)
+falló `CLEANUP/STOP/ACK_MULTILINE` y no ejecutó RM. La inspección
+[READ_ONLY #836](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42376876875)
+en `main=6e75c020001c7de00faad2fcecfa171ac22e361f` confirmó CID exacto
+`b2312004b4fc4e789fb58ce0c40eb2dc14ab132150d0da420657c4d29ef326d3`
+detenido, seccomp ausente y legacy saludable. R94 **propone** sólo un RM
+no forzado de ese CID, después de dos atestaciones completas y un gate
+GitHub/PR0/anti-replay; **todavía no hubo recuperación R94 ni instalación**.
+La hipótesis de `--time`/ACK es independiente; la corrección `-t` queda
+para R95. Sin retry del #834 ni GO para Cutover, BETA, Telegram o terceros.
+[ADR0203](docs/ADR/0203-r94-worker-834-stopped-only-recovery.md).
+
+---
+
+## Histórico A45-R93 — inventario protegido exacto del #834 (07/11/2026 ART)
 
 El preflight R92 [#834](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42375050546)
 falló físicamente al validar un ACK **multilínea** de STOP; `docker rm` no se

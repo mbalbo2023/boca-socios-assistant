@@ -1,6 +1,66 @@
 # Safe operations — verified evidence and gated procedures
 
-## A45-R93 — inspector exacto del preflight fallido #834 (07/11/2026 ART)
+## A45-R94 — recuperación selectiva stopped-only del residuo #834 (07/11/2026 ART)
+
+El inspector físico [#836](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42376876875)
+terminó **SUCCESS/READ_ONLY_NO_GO**: el contenedor temporal CID completo
+`b2312004b4fc4e789fb58ce0c40eb2dc14ab132150d0da420657c4d29ef326d3`
+quedó **detenido** y coincide con los pins del intento #834; seccomp
+temporal `ABSENT`, controller original `RUNNING_HEALTHY` en loopback 8443,
+`observer_writes=0` y recursos ajenos intactos. No hubo limpieza ni deploy.
+La release dual histórica R92 [#741](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42374319918)
+fue SUCCESS en `79da7ebe9918d98216ac7eb46ff008d7f6e62429`.
+
+**Estado del procedimiento R94: CODE_ONLY hasta QA/Arquitectura/Infra 3/3,
+PR y Actions GREEN, merge, checks postmerge, PR0 y comprobación del SHA exacto.
+Nunca despachar una operación física desde código no revisado.**
+
+Cuando esas barreras estén acreditadas, la única operación recuperadora
+posible en [Boca first deploy](https://github.com/mbalbo2023/boca-socios-assistant/actions/workflows/boca-first-deploy.yml)
+es la siguiente; el CID no se carga ni se elige desde el formulario:
+
+| Campo | Valor exacto R94 |
+| --- | --- |
+| Rama | `main`, HEAD revisado |
+| `operation` | `cutover-a-worker-recover-834` |
+| `service` | `controller` |
+| `resource_budget` | `1.5cpu-1024m-192pids` |
+| Todos los otros campos, incluido `protected_action_context`, source, releases, imágenes, legacy, envelopes y secretos | **Vacíos** |
+
+El gate pre-SSH verifica fallo #834, observador #836, release #741, los
+158 pasos exactos de ambos jobs, actor/primer intento, main vigente, PR0
+y un único título `BOCA-R94-WORKER-834-RECOVER-ONCE` a través de todos los SHA.
+La ejecución acota el host al rootless Boca UID10001 y al CID fijo; exige
+dos observaciones y dos inspect completos bajo lease, huella seccomp binaria,
+`docker container rm` único **sin `--force`, sin STOP**, ACK exacto, CID
+ausente y controller legacy sano. Sólo `CLEANED cleanup=VERIFIED` con
+artifact autenticado acredita el retiro. Si falta evidencia, `NO_GO` o
+`INDETERMINATE`, sin repetir ese run ni intentar Cutover/GO_B/Telegram.
+Consultar [ADR0203](ADR/0203-r94-worker-834-stopped-only-recovery.md).
+
+### Worker preflight — checklist vigente, `NO_GO` hasta nuevo consenso
+
+Sólo para una futura autorización independiente de
+`operation=cutover-a-worker-preflight`: verificar **antes** del despacho
+un manifest **dual** publicado para el mismo SHA de `main`, PR0, CI/Security,
+capacidad y salud del legacy. El formulario exige las ocho coordenadas
+exactas `source_sha`, `image_ref`, `browser_image_ref`, `release_run_id`,
+`legacy_source_sha`, `legacy_image_ref`, `legacy_release_run_id` y
+`legacy_controller_id`. Todas se obtienen de receipts publicados/observación
+fresca, nunca de un ejemplo o inferencia. `protected_action_context` debe
+quedar **vacío**, `service=controller` y
+`resource_budget=1.5cpu-1024m-192pids`.
+
+Es **one-shot por SHA**, `no_retry=1`: incluso un formulario inválido
+rechazado antes de **SSH** consume el único intento; resultado `NO_GO`
+sin reintento de esa fuente. La opción `cutover-a-apply` de **PREPARE**
+para GO_B sigue **separada**, con esas ocho coordenadas vacías y su propio
+control, sin autorización por preflight o recovery. No ejecutar sin nuevo
+GO físico explícito; véase guía histórica más detallada y ADR0198.
+
+---
+
+## Histórico A45-R93 — inspector #834 realizado mediante #836 (no repetir)
 
 El único R92 worker preflight [#834](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42375050546)
 falló `CLEANUP/STOP/ACK_MULTILINE`, sin ejecución de RM ni aceptación.
@@ -10,7 +70,7 @@ actual. R93 amplía únicamente la whitelist del inspector para el intento
 y digest OCI browser `ed276066...`. Ver
 [ADR0202](ADR/0202-r93-worker-834-exact-readonly-inventory.md).
 
-**Después de merge y review**, formulario `Boca first deploy`:
+**Formulario histórico ya ejecutado en #836; NO despachar nuevamente**:
 
 | Campo | Valor exacto |
 | --- | --- |
@@ -51,27 +111,8 @@ Requiere PR/checks/CI/Security postmerge, nuevo release dual de idéntico SHA,
 PR0, revisión de capacidad/legacy/ausencia de residuos y consenso físico
 explícito. El preflight es one-shot por SHA y físicamente crea un probe;
 PREPARE/GO_B y APPLY son fases independientes, actualmente NO_GO. El
-procedimiento de ocho coordenadas aparece abajo, pero no constituye GO.
-
-### Worker preflight — checklist vigente, `NO_GO` hasta nuevo consenso
-
-Sólo para una futura autorización independiente de
-`operation=cutover-a-worker-preflight`: verificar **antes** del despacho
-un manifest **dual** publicado para el mismo SHA de `main`, PR0, CI/Security,
-capacidad y salud del legacy. El formulario exige las ocho coordenadas
-exactas `source_sha`, `image_ref`, `browser_image_ref`, `release_run_id`,
-`legacy_source_sha`, `legacy_image_ref`, `legacy_release_run_id` y
-`legacy_controller_id`. Todas se obtienen de receipts publicados/observación
-fresca, nunca de un ejemplo o inferencia. `protected_action_context` debe
-quedar **vacío**, `service=controller` y
-`resource_budget=1.5cpu-1024m-192pids`.
-
-Es **one-shot por SHA**, `no_retry=1`: incluso un formulario inválido
-rechazado antes de **SSH** consume el único intento; resultado `NO_GO`
-sin reintento de esa fuente. La opción `cutover-a-apply` de **PREPARE**
-para GO_B sigue **separada**, con esas ocho coordenadas vacías y su propio
-control, sin autorización por preflight o recovery. No ejecutar sin nuevo
-GO físico explícito; véase guía histórica más detallada y ADR0198.
+procedimiento de ocho coordenadas aparece en el checklist vigente al comienzo
+de este documento, pero no constituye GO.
 
 ---
 

@@ -46,6 +46,16 @@ R91_WITNESS_ID = 42370005970
 R91_WITNESS_SHA = "bd45f2e234a17ba12743ff12cf0c0199497b66f6"
 R91_WITNESS_JOB = 128395981058
 R91_RELEASE_ID = 42361009081
+R94_TITLE = "BOCA-R94-WORKER-834-RECOVER-ONCE"
+R94_FAILED_TITLE = "BOCA-R84-WORKER-PREFLIGHT-ONCE"
+R94_WITNESS_TITLE = "BOCA-R93-WORKER-834-READONLY"
+R94_FAILED_ID = 42375050546
+R94_FAILED_SHA = "79da7ebe9918d98216ac7eb46ff008d7f6e62429"
+R94_FAILED_JOB = 128410810023
+R94_WITNESS_ID = 42376876875
+R94_WITNESS_SHA = "6e75c020001c7de00faad2fcecfa171ac22e361f"
+R94_WITNESS_JOB = 128416172147
+R94_RELEASE_ID = 42374319918
 R80_RECOVERY_ID = 42340750343
 PRIOR_ID = 42339451485
 PRIOR_SHA = "d9100c6c4666c61ba66fbbefa48e61102a20ce5d"
@@ -597,11 +607,20 @@ R91_WITNESS_EXECUTED = {
 }
 
 
-def _r91_history(history: Any, *, run_id: int, source: str) -> None:
-    """Validate exact historic run IDs but a unique *global* R91 operation.
+def _one_shot_worker_history(
+    history: Any,
+    *,
+    run_id: int,
+    source: str,
+    failed: tuple[str, int, str],
+    witness: tuple[str, int, str],
+    recovery_title: str,
+) -> None:
+    """Match old incidents by ID and the new recovery marker globally by title.
 
-    R84's display title was legitimately reused by #819 and #827. Matching
-    only the title would spuriously block #827 and cannot prove identity.
+    Historical R84 preflights legitimately share a display title across
+    distinct failed CIDs. Only this new recovery title must be unique across
+    every main SHA and run attempt.
     """
     _expect(isinstance(history, dict))
     runs = history.get("workflow_runs")
@@ -614,14 +633,14 @@ def _r91_history(history: Any, *, run_id: int, source: str) -> None:
         and all(isinstance(item, dict) for item in runs)
     )
     for title, expected_id, expected_sha, expected_status, expected_conclusion in (
-        (R91_FAILED_TITLE, R91_FAILED_ID, R91_FAILED_SHA, "completed", "failure"),
-        (R91_WITNESS_TITLE, R91_WITNESS_ID, R91_WITNESS_SHA, "completed", "success"),
-        (R91_TITLE, run_id, source, None, None),
+        (*failed, "completed", "failure"),
+        (*witness, "completed", "success"),
+        (recovery_title, run_id, source, None, None),
     ):
         by_id = [item for item in runs if item.get("id") == expected_id]
         _expect(len(by_id) == 1)
         item = by_id[0]
-        if title == R91_TITLE:
+        if title == recovery_title:
             # Hard anti-replay across SHA changes and all previous dispatches.
             _expect(len([entry for entry in runs if entry.get("display_title") == title]) == 1)
         actor = item.get("actor")
@@ -635,7 +654,7 @@ def _r91_history(history: Any, *, run_id: int, source: str) -> None:
             and isinstance(actor, dict)
             and actor.get("login") == "mbalbo2023"
         )
-        if title == R91_TITLE:
+        if title == recovery_title:
             _expect(
                 item.get("status") in {"in_progress", "queued", "waiting", "pending"}
                 and item.get("conclusion") is None
@@ -645,6 +664,17 @@ def _r91_history(history: Any, *, run_id: int, source: str) -> None:
                 item.get("status") == expected_status
                 and item.get("conclusion") == expected_conclusion
             )
+
+
+def _r91_history(history: Any, *, run_id: int, source: str) -> None:
+    _one_shot_worker_history(
+        history,
+        run_id=run_id,
+        source=source,
+        failed=(R91_FAILED_TITLE, R91_FAILED_ID, R91_FAILED_SHA),
+        witness=(R91_WITNESS_TITLE, R91_WITNESS_ID, R91_WITNESS_SHA),
+        recovery_title=R91_TITLE,
+    )
 
 
 def verify_r91(paths: list[str], *, run_id: int, source: str) -> None:
@@ -700,12 +730,99 @@ def verify_r91(paths: list[str], *, run_id: int, source: str) -> None:
     )
 
 
+# #834 and #836 have 158 actual REST steps: 1..156 and post-job 312,313.
+# These are frozen historical observations, not inferred from the current YAML.
+R94_STEP_NUMBERS = [*range(1, 157), 312, 313]
+R94_COMMON = {
+    **{number: value for number, value in R91_COMMON.items() if number not in (310, 311)},
+    312: ("Post Checkout exact main commit without persisted credentials", "success"),
+    313: ("Complete job", "success"),
+}
+R94_FAILED_EXECUTED = {
+    **R94_COMMON,
+    **{
+        number: value
+        for number, value in R91_FAILED_EXECUTED.items()
+        if number not in (59, 60, 61, 310, 311)
+    },
+    60: ("Require one unique R84 worker preflight dispatch before SSH", "success"),
+    61: ("Preflight exact dual GHCR image and rootless worker boundary without PREPARE", "failure"),
+    62: ("Require exact Boca rootless worker preflight receipt and bounded cleanup", "failure"),
+}
+R94_WITNESS_EXECUTED = {
+    **R94_COMMON,
+    44: ("Inspect one failed Boca worker probe READ_ONLY by exact identity", "success"),
+}
+
+
+def verify_r94(paths: list[str], *, run_id: int, source: str) -> None:
+    """Attest one #834 stopped residue, #836 witness and #741 paired release."""
+    _expect(len(paths) == 7 and type(run_id) is int and run_id > 0)
+    _expect(
+        type(source) is str and len(source) == 40 and all(c in "0123456789abcdef" for c in source)
+    )
+    prs, failed, witness, release, history, failed_jobs, witness_jobs = [
+        _read_json(path, maximum=131072 if index in (5, 6) else 32768)
+        for index, path in enumerate(paths)
+    ]
+    _expect(prs == [])
+    _run(
+        failed,
+        number=R94_FAILED_ID,
+        source=R94_FAILED_SHA,
+        conclusion="failure",
+        workflow=DEPLOY,
+        title=R94_FAILED_TITLE,
+    )
+    _run(
+        witness,
+        number=R94_WITNESS_ID,
+        source=R94_WITNESS_SHA,
+        conclusion="success",
+        workflow=DEPLOY,
+        title=R94_WITNESS_TITLE,
+    )
+    _run(
+        release,
+        number=R94_RELEASE_ID,
+        source=R94_FAILED_SHA,
+        conclusion="success",
+        workflow=RELEASE,
+    )
+    _one_shot_worker_history(
+        history,
+        run_id=run_id,
+        source=source,
+        failed=(R94_FAILED_TITLE, R94_FAILED_ID, R94_FAILED_SHA),
+        witness=(R94_WITNESS_TITLE, R94_WITNESS_ID, R94_WITNESS_SHA),
+        recovery_title=R94_TITLE,
+    )
+    _r82_jobs(
+        failed_jobs,
+        run_id=R94_FAILED_ID,
+        job_id=R94_FAILED_JOB,
+        conclusion="failure",
+        executed=R94_FAILED_EXECUTED,
+        step_numbers=R94_STEP_NUMBERS,
+    )
+    _r82_jobs(
+        witness_jobs,
+        run_id=R94_WITNESS_ID,
+        job_id=R94_WITNESS_JOB,
+        conclusion="success",
+        executed=R94_WITNESS_EXECUTED,
+        step_numbers=R94_STEP_NUMBERS,
+    )
+
+
 def main(argv: list[str]) -> int:
     try:
         _expect(os.environ.get("GITHUB_RUN_ID", "").isdigit())
         run_id = int(os.environ["GITHUB_RUN_ID"])
         source = os.environ["GITHUB_SHA"]
-        if len(argv) > 1 and argv[1] == "--r91":
+        if len(argv) > 1 and argv[1] == "--r94":
+            verify_r94(argv[2:], run_id=run_id, source=source)
+        elif len(argv) > 1 and argv[1] == "--r91":
             verify_r91(argv[2:], run_id=run_id, source=source)
         elif len(argv) > 1 and argv[1] == "--r87":
             verify_r87(argv[2:], run_id=run_id, source=source)
@@ -716,7 +833,13 @@ def main(argv: list[str]) -> int:
     except (OSError, UnicodeError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         print("BOCA_WORKER_RECOVERY_GATE state=NO_GO reason=UNVERIFIED")
         return 1
-    if len(argv) > 1 and argv[1] == "--r91":
+    if len(argv) > 1 and argv[1] == "--r94":
+        print(
+            "BOCA_WORKER_RECOVERY_GATE state=PASS incident=42375050546 "
+            "witness=42376876875 release=42374319918 open_prs=0 "
+            "dispatch=UNIQUE_R94 main=VERIFIED prior=READ_ONLY_NO_EFFECT host_writes=0"
+        )
+    elif len(argv) > 1 and argv[1] == "--r91":
         print(
             "BOCA_WORKER_RECOVERY_GATE state=PASS incident=42368541950 "
             "witness=42370005970 release=42361009081 open_prs=0 "

@@ -1,6 +1,17 @@
 # Estado de integración BETA
 
-## A45-R93 — preflight R92 #834 falló; nuevo inventario sólo CODE_ONLY (07/11/2026 ART)
+## A45-R94 — #836 observó detenido el probe #834; recuperación sólo CODE_ONLY
+
+| Frente | Evidencia | Estado |
+| --- | --- | --- |
+| #834 | [Preflight 42375050546](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42375050546), SHA `79da7ebe…`, STOP `ACK_MULTILINE`, RM no intentado | FAILURE, sin retry ni PASS |
+| #836 | [Inspector 42376876875](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42376876875), `main=6e75c020…`: CID `b2312004…` pin-match detenido, seccomp ABSENT, legacy saludable 8443, writes0 | **READ_ONLY_NO_GO**, no limpieza |
+| R94 | [ADR0203](ADR/0203-r94-worker-834-stopped-only-recovery.md): target inmutable, dos FULL revalidaciones, un RM exacto sin force y gate GitHub one-shot | **CODE_ONLY** hasta PR/CI/3-owner review/merge/PR0/GO físico; no recuperación efectuada |
+| R95/Cutover/BETA/Telegram | `-t` prospectivo independiente y sin RCA físico concluyente; PREPARE/GO_B/APPLY no ejecutados | **NO_GO**, recursos ajenos intocables |
+
+---
+
+## Histórico A45-R93 — preflight R92 #834 falló; entonces inventario CODE_ONLY (07/11/2026 ART)
 
 | Frente | Evidencia real | Estado |
 | --- | --- | --- |
