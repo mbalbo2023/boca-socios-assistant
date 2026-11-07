@@ -19,7 +19,7 @@ import subprocess
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, cast
 
@@ -142,6 +142,15 @@ class LegacyImageProof:
 
 
 @dataclass(frozen=True)
+class HistoricalRetainedImageProof:
+    """Single release-proven, unreferenced image retained for forensic RCA."""
+
+    ident: str
+    digest: str
+    revision: str
+
+
+@dataclass(frozen=True)
 class Network:
     name: str
     ident: str
@@ -187,6 +196,7 @@ class CleanupReceipt:
     removed: tuple[Target, ...]
     retained_uncertain: tuple[str, ...]
     known_residue: tuple[Target, ...]
+    retained_attested: tuple[HistoricalRetainedImageProof, ...] = ()
 
     def redacted_json(self) -> str:
         """Bounded exact-ID host receipt, free of labels, env, secrets or foreign paths.
@@ -206,6 +216,21 @@ class CleanupReceipt:
             or len(self.known_residue) > MAX_DELETIONS
             or len(self.retained_uncertain) > MAX_OBJECTS
             or (self.status == "ACCEPT" and (self.retained_uncertain or self.known_residue))
+            or (
+                self.retained_attested
+                and (
+                    self.retained_attested
+                    != (
+                        HistoricalRetainedImageProof(
+                            HISTORICAL_RETIRE_TARGET,
+                            HISTORICAL_RETIRE_DIGEST,
+                            HISTORICAL_RETIRE_REVISION,
+                        ),
+                    )
+                    or Target("image", HISTORICAL_RETIRE_TARGET) in self.removed
+                    or Target("image", HISTORICAL_RETIRE_TARGET) in self.known_residue
+                )
+            )
         ):
             raise CleanupError("Boca cleanup exact receipt evidence invalid")
 
@@ -266,7 +291,7 @@ class CleanupReceipt:
         ):
             raise CleanupError("Boca cleanup receipt uncertainty contains unsafe text")
         body = {
-            "version": 1,
+            "version": 2 if self.retained_attested else 1,
             "scope": "boca-postdeploy",
             "outcome": self.outcome,
             "attempt_id": self.attempt_id,
@@ -277,6 +302,18 @@ class CleanupReceipt:
             "retained_uncertain": list(self.retained_uncertain),
             "known_residue": resources(self.known_residue),
         }
+        if self.retained_attested:
+            body["retained_attested"] = [
+                {
+                    "kind": "image",
+                    "id": HISTORICAL_RETIRE_TARGET,
+                    "classification": "KNOWN_HISTORICAL_QUARANTINE",
+                    "release_run": "41559973013",
+                    "manifest_artifact": "13196392925",
+                    "digest": HISTORICAL_RETIRE_DIGEST,
+                    "revision": HISTORICAL_RETIRE_REVISION,
+                }
+            ]
         encoded = json.dumps(
             body, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
         )
@@ -574,6 +611,11 @@ def plan(
             targets.append(Target("image", image.ident))
         elif _boca_image_signal(image):
             uncertain.append(f"image:{image.ident}:unverified-provenance-or-shared-reference")
+    if inventory.global_image_ids - {image.ident for image in inventory.images}:
+        # An image not admitted to the Boca-only inventory cannot become
+        # silently acceptable merely because its repository label is unknown.
+        # Do not inspect or disclose foreign image identities.
+        uncertain.append("image:global-unclassified-NO_GO")
     if len(targets) > MAX_DELETIONS:
         raise CleanupError("Boca cleanup exceeds explicit bounded deletion budget")
     targets.sort(
@@ -746,10 +788,19 @@ def execute(
     removed_ids = {(r.kind, r.ident) for r in removed}
     unexpected_deletions = before_ids - after_ids - removed_ids
     unexpected_creations = after_ids - before_ids
+    # The global image ID census is deliberately wider than the Boca-owned
+    # image list. Never inspect or print foreign identities, but do not allow
+    # an unknown image disappearing/reappearing to turn NO_GO into ACCEPT.
+    removed_image_ids = {r.ident for r in removed if r.kind == "image"}
+    global_census_drift = bool(
+        before.global_image_ids - after.global_image_ids - removed_image_ids
+        or after.global_image_ids - before.global_image_ids
+    )
     drift_reasons = tuple(
         sorted(
             [f"unexpected-deletion:{kind}:{ident}" for kind, ident in unexpected_deletions]
             + [f"unexpected-creation:{kind}:{ident}" for kind, ident in unexpected_creations]
+            + (["image:global-census-drift-NO_GO"] if global_census_drift else [])
         )
     )
     if (
@@ -1293,6 +1344,7 @@ def execute_protected(
     retire_containers: frozenset[str],
     lease: BocaJobLease,
     historical_legacy: LegacyImageProof | None = None,
+    historical_retained: HistoricalRetainedImageProof | None = None,
 ) -> CleanupReceipt:
     """Future *unwired* generic finalizer for first/beta/cutover install.
 
@@ -1305,18 +1357,51 @@ def execute_protected(
         # An image that vanished or changed since the precommit attestation is
         # not proof of a successful cleanup. Abort before any other removal.
         _verify_historical_legacy_image(historical_legacy)
-    return execute(
+    if historical_retained is not None:
+        if (
+            type(historical_retained) is not HistoricalRetainedImageProof
+            or historical_retained
+            != HistoricalRetainedImageProof(
+                HISTORICAL_RETIRE_TARGET, HISTORICAL_RETIRE_DIGEST, HISTORICAL_RETIRE_REVISION
+            )
+            or historical_legacy is not None
+            and historical_legacy.ident == historical_retained.ident
+        ):
+            raise CleanupError("historical quarantine proof outside exact Cutover allowlist")
+
+    def protected_probe() -> Inventory:
+        snapshot = (
+            capture_inventory()
+            if historical_legacy is None
+            else capture_inventory(historical_legacy=historical_legacy)
+        )
+        if (
+            historical_retained is not None
+            and attest_historical_retained_image(snapshot) != historical_retained
+        ):
+            raise CleanupError("historical quarantine changed under protected Boca lease")
+        return snapshot
+
+    if historical_retained is not None:
+        protected_probe()  # Prove physical identity before any possible deletion.
+    receipt = execute(
         outcome,
         attempt_id,
-        preserve_images=preserve_images,
+        preserve_images=preserve_images
+        | (
+            frozenset({historical_retained.ident})
+            if historical_retained is not None
+            else frozenset()
+        ),
         preserve_containers=preserve_containers,
         retire_containers=retire_containers,
-        probe=(
-            capture_inventory
-            if historical_legacy is None
-            else lambda: capture_inventory(historical_legacy=historical_legacy)
-        ),
+        probe=protected_probe,
         delete_exact=delete_exact,
+    )
+    return (
+        replace(receipt, retained_attested=(historical_retained,))
+        if historical_retained is not None
+        else receipt
     )
 
 
@@ -1352,6 +1437,46 @@ HISTORICAL_RETIRE_DIGEST = (
 HISTORICAL_RETIRE_REVISION = "0e830e3eed941de1da70cef8b42bda9f20258b65"
 HISTORICAL_RETIRE_SIZE = 66_021_451
 HISTORICAL_RETIRE_RECEIPT_LIMIT = 8192
+
+
+def attest_historical_retained_image(
+    snapshot: Inventory,
+    *,
+    probe_provenance: Callable[[str, Inventory], dict[str, object]] | None = None,
+) -> HistoricalRetainedImageProof:
+    """Retain only the one proven historical Boca image, never an arbitrary alias.
+
+    Release #41559973013/artifact #13196392925 and issue #386/R26.1 bind
+    these immutable coordinates. Read only the fixed OCI/public image fields,
+    rechecked by the physical observer at every cleanup inventory probe.
+    """
+    _validate_inventory(snapshot)
+    candidate = [i for i in snapshot.images if i.ident == HISTORICAL_RETIRE_TARGET]
+    if (
+        len(candidate) != 1
+        or candidate[0].source is not None
+        or candidate[0].historical_legacy_attested
+        or HISTORICAL_RETIRE_TARGET not in snapshot.global_image_ids
+        or any(c.image_id == HISTORICAL_RETIRE_TARGET for c in snapshot.containers)
+    ):
+        raise CleanupError("historical quarantine image absent, shared or provenance changed")
+    observer = probe_provenance or _observe_boca_reference_image
+    observed = observer(HISTORICAL_RETIRE_TARGET, snapshot)
+    if observed != {
+        "id": HISTORICAL_RETIRE_TARGET,
+        "repo_tags": [],
+        "repo_digests": [HISTORICAL_RETIRE_DIGEST],
+        "untrusted_alias_count": 0,
+        "oci_source_status": "ABSENT",
+        "oci_revision": HISTORICAL_RETIRE_REVISION,
+        "logical_size_bytes": HISTORICAL_RETIRE_SIZE,
+        "container_ref_count": 0,
+        "deletion_authorized": False,
+    }:
+        raise CleanupError("historical quarantine exact release provenance changed")
+    return HistoricalRetainedImageProof(
+        HISTORICAL_RETIRE_TARGET, HISTORICAL_RETIRE_DIGEST, HISTORICAL_RETIRE_REVISION
+    )
 
 
 def _check_exact_historical_retire_snapshot(

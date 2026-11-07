@@ -1,5 +1,23 @@
 # Boca Socios Assistant
 
+## R108 — Cutover V3: imagen histórica en cuarentena probatoria (CODE_ONLY)
+
+El inventario físico READ_ONLY [#862](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42415370909)
+confirmó legacy sano, stage ausente y una imagen Boca histórica sin referencias
+ni etiqueta OCI `source`. El retiro histórico específico
+[#746](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42261978336)
+ya falló sin recibo de borrado, por lo que no se reintenta. El cambio R108
+establece una **excepción exacta y visible**: retener sólo ese artefacto
+histórico, exigir la prueba de identidad en precommit y cleanup bajo lease,
+y emitir `retained_attested` en un recibo V2 verificado por el runner. Todos
+los demás recursos desconocidos siguen NO_GO. Se conservará deliberadamente
+una imagen histórica, no se afirmará limpieza total de imágenes antiguas.
+
+La revisión del código/CI y una nueva release dual todavía no significan
+instalación. La BETA integral requiere el único Cutover V3 por Actions,
+terminal físico y validación en el droplet. [ADR0209](docs/ADR/0209-r108-attested-historical-quarantine.md)
+y [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+
 ## R103 — Inventario Docker post-Cutover V3 (candidato CODE_ONLY)
 
 El observador #858 dejó `cleanup=INDETERMINATE`: ver legacy saludable y

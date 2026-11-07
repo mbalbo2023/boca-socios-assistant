@@ -255,6 +255,183 @@ def test_boca_reference_only_image_provenance_changed_second_read_no_go() -> Non
         )
 
 
+def _historical_quarantine_fixture() -> tuple[gc.Inventory, dict[str, object]]:
+    original = _physical_observer_fixture()
+    historical = gc.Image(
+        gc.HISTORICAL_RETIRE_TARGET,
+        ("ghcr.io/mbalbo2023/boca-socios-assistant:unverified",),
+        None,
+    )
+    snapshot = replace(
+        original,
+        images=(*original.images, historical),
+        global_image_ids=original.global_image_ids | {historical.ident},
+    )
+    provenance: dict[str, object] = {
+        "id": gc.HISTORICAL_RETIRE_TARGET,
+        "repo_tags": [],
+        "repo_digests": [gc.HISTORICAL_RETIRE_DIGEST],
+        "untrusted_alias_count": 0,
+        "oci_source_status": "ABSENT",
+        "oci_revision": gc.HISTORICAL_RETIRE_REVISION,
+        "logical_size_bytes": gc.HISTORICAL_RETIRE_SIZE,
+        "container_ref_count": 0,
+        "deletion_authorized": False,
+    }
+    return snapshot, provenance
+
+
+def test_cutover_historical_quarantine_accepts_only_attested_release_and_reports_retention(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot, provenance = _historical_quarantine_fixture()
+    observed: list[str] = []
+
+    def observe(ident: str, _: gc.Inventory) -> dict[str, object]:
+        observed.append(ident)
+        return dict(provenance)
+
+    monkeypatch.setattr(gc, "_observe_boca_reference_image", observe)
+    monkeypatch.setattr(gc, "capture_inventory", lambda **_kw: snapshot)
+    monkeypatch.setattr(gc, "verify_protected_boca_job_lease", lambda *_a: None)
+    proof = gc.attest_historical_retained_image(snapshot)
+    receipt = gc.execute_protected(
+        "SUCCESS",
+        ATTEMPT,
+        preserve_images=frozenset(),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset(),
+        historical_retained=proof,
+        lease=gc.BocaJobLease(ATTEMPT, 0, os.getpid(), True),
+    )
+    assert receipt.status == "ACCEPT"
+    assert receipt.retained_attested == (proof,)
+    report = json.loads(receipt.redacted_json())
+    assert report["version"] == 2
+    assert report["retained_attested"] == [
+        {
+            "kind": "image",
+            "id": gc.HISTORICAL_RETIRE_TARGET,
+            "classification": "KNOWN_HISTORICAL_QUARANTINE",
+            "release_run": "41559973013",
+            "manifest_artifact": "13196392925",
+            "digest": gc.HISTORICAL_RETIRE_DIGEST,
+            "revision": gc.HISTORICAL_RETIRE_REVISION,
+        }
+    ]
+    assert report["retained_uncertain"] == [] and report["known_residue"] == []
+    assert observed == [gc.HISTORICAL_RETIRE_TARGET] * 5
+
+
+@pytest.mark.parametrize(
+    ("field", "bad"),
+    [
+        ("id", "sha256:" + "0" * 64),
+        ("repo_tags", ["ghcr.io/third-party/alias:latest"]),
+        ("repo_digests", ["ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "0" * 64]),
+        ("untrusted_alias_count", 1),
+        ("oci_source_status", "BOCA"),
+        ("oci_revision", "0" * 40),
+        ("logical_size_bytes", 1),
+        ("container_ref_count", 1),
+        ("deletion_authorized", True),
+    ],
+)
+def test_historical_quarantine_rejects_any_changed_public_provenance(
+    field: str, bad: object
+) -> None:
+    snapshot, provenance = _historical_quarantine_fixture()
+    provenance[field] = bad
+    with pytest.raises(gc.CleanupError, match="historical|quarantine"):
+        gc.attest_historical_retained_image(
+            snapshot, probe_provenance=lambda _ident, _snapshot: provenance
+        )
+
+
+def test_historical_quarantine_refuses_container_reference_or_missing_image() -> None:
+    snapshot, provenance = _historical_quarantine_fixture()
+    shared = replace(
+        snapshot,
+        containers=(replace(snapshot.containers[0], image_id=gc.HISTORICAL_RETIRE_TARGET),),
+    )
+    missing = replace(
+        snapshot,
+        images=snapshot.images[:1],
+        global_image_ids=snapshot.global_image_ids - {gc.HISTORICAL_RETIRE_TARGET},
+    )
+    for changed in (shared, missing):
+        with pytest.raises(gc.CleanupError):
+            gc.attest_historical_retained_image(
+                changed, probe_provenance=lambda _ident, _snapshot: provenance
+            )
+
+
+def test_cleanup_never_accepts_unclassified_global_image_without_inspection() -> None:
+    snapshot = _physical_observer_fixture()
+    another_image = replace(
+        snapshot,
+        global_image_ids=snapshot.global_image_ids | {FOREIGN_IMAGE},
+    )
+    selected = gc.plan(
+        another_image,
+        ATTEMPT,
+        preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset(),
+    )
+    assert selected.uncertain == ("image:global-unclassified-NO_GO",)
+    assert FOREIGN_IMAGE not in repr(selected)
+
+
+def test_cleanup_refuses_disappearing_foreign_global_image_without_disclosing_identity() -> None:
+    baseline = _physical_observer_fixture()
+    first = replace(baseline, global_image_ids=baseline.global_image_ids | {FOREIGN_IMAGE})
+    snapshots = iter((first, baseline, baseline))
+    deleted: list[gc.Target] = []
+    receipt = gc.execute(
+        "SUCCESS",
+        ATTEMPT,
+        preserve_images=frozenset({ACTIVE_IMAGE}),
+        preserve_containers=frozenset({ACTIVE_ID}),
+        retire_containers=frozenset(),
+        probe=snapshots.__next__,
+        delete_exact=deleted.append,
+    )
+    assert deleted == []
+    assert receipt.status == "NO_GO"
+    assert "image:global-census-drift-NO_GO" in receipt.retained_uncertain
+    assert FOREIGN_IMAGE not in receipt.redacted_json()
+
+
+def test_cutover_historical_quarantine_fails_on_second_probe_identity_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot, provenance = _historical_quarantine_fixture()
+    proof = gc.attest_historical_retained_image(
+        snapshot, probe_provenance=lambda _ident, _snapshot: provenance
+    )
+    attempts = 0
+
+    def changing(_ident: str, _snapshot: gc.Inventory) -> dict[str, object]:
+        nonlocal attempts
+        attempts += 1
+        return dict(provenance, oci_revision="0" * 40) if attempts > 1 else dict(provenance)
+
+    monkeypatch.setattr(gc, "_observe_boca_reference_image", changing)
+    monkeypatch.setattr(gc, "capture_inventory", lambda **_kw: snapshot)
+    monkeypatch.setattr(gc, "verify_protected_boca_job_lease", lambda *_a: None)
+    with pytest.raises(gc.CleanupError, match="historical|quarantine"):
+        gc.execute_protected(
+            "SUCCESS",
+            ATTEMPT,
+            preserve_images=frozenset(),
+            preserve_containers=frozenset({ACTIVE_ID}),
+            retire_containers=frozenset(),
+            historical_retained=proof,
+            lease=gc.BocaJobLease(ATTEMPT, 0, os.getpid(), True),
+        )
+
+
 def test_rootless_disk_cache_audit_only_outputs_aggregate_not_foreign_names(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

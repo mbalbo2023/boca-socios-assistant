@@ -141,7 +141,9 @@ MAIN = (
 # R46/R47 adds the reviewed physical cleanup proof and exact-incident recovery
 # observer to this explicit allowlist (approximately 39kB more uncompressed).
 # Keep the hard compressed transport cap independent and unchanged at 512kB.
-MAX_SOURCE_BYTES = 860_000
+# R108: measured full V3 source + exact forensic proof remains bounded. The
+# compressed 512k cap, allowlist and immutable ZIP digest are unchanged.
+MAX_SOURCE_BYTES = 868_000
 MAX_ARCHIVE_BYTES = 512_000
 RECOVERY_MAX_SOURCE_BYTES = 256_000
 RECOVERY_MAX_ARCHIVE_BYTES = 128_000

@@ -26,6 +26,11 @@ from typing import Any
 import boca_protected_memfd_bootstrap as memfd
 
 from boca_socios.browser_release_manifest import validate_browser_manifest
+from boca_socios.host_boca_cleanup import (
+    HISTORICAL_RETIRE_DIGEST,
+    HISTORICAL_RETIRE_REVISION,
+    HISTORICAL_RETIRE_TARGET,
+)
 from boca_socios.host_boca_cutover import (
     CUTOVER_FAILURE_PHASES,
     WORKER_COMPENSATION_STATES,
@@ -530,6 +535,18 @@ _POSTFLIGHT_KEYS = frozenset(
         "known_residue",
     }
 )
+_POSTFLIGHT_KEYS_V2 = _POSTFLIGHT_KEYS | {"retained_attested"}
+_POSTFLIGHT_ATTESTED_EXACT = [
+    {
+        "kind": "image",
+        "id": HISTORICAL_RETIRE_TARGET,
+        "classification": "KNOWN_HISTORICAL_QUARANTINE",
+        "release_run": "41559973013",
+        "manifest_artifact": "13196392925",
+        "digest": HISTORICAL_RETIRE_DIGEST,
+        "revision": HISTORICAL_RETIRE_REVISION,
+    }
+]
 _POSTFLIGHT_DISK_KEYS = frozenset(
     {
         "stage_bytes_free",
@@ -567,11 +584,22 @@ def verify_postflight_json(raw: bytes, expected_attempt_id: str) -> str:
         canonical = json.dumps(
             body, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False
         ).encode("ascii")
-        if canonical != raw or type(body) is not dict or set(body) != _POSTFLIGHT_KEYS:
+        if canonical != raw or type(body) is not dict:
             raise CutoverGoError("Boca postdeploy receipt not canonical")
+        version = body.get("version")
+        if version == 1:
+            if set(body) != _POSTFLIGHT_KEYS:
+                raise CutoverGoError("Boca postdeploy legacy receipt schema drifted")
+        elif version == 2:
+            if (
+                set(body) != _POSTFLIGHT_KEYS_V2
+                or body["retained_attested"] != _POSTFLIGHT_ATTESTED_EXACT
+            ):
+                raise CutoverGoError("Boca historical retained image proof missing or altered")
+        else:
+            raise CutoverGoError("Boca postdeploy receipt version unsupported")
         if (
             type(body["version"]) is not int
-            or body["version"] != 1
             or body["scope"] != "boca-postdeploy"
             or body["attempt_id"] != expected_attempt_id
             or body["outcome"] != "SUCCESS"
