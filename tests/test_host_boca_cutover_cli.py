@@ -184,6 +184,38 @@ def test_cli_terminal_missing_or_recovery_is_never_positive(
     )
 
 
+def test_cli_nonacceptance_reports_only_allowlisted_failure_phase(
+    reviewed_context: tuple[str, CutoverPlan, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    encoded, plan, _ = reviewed_context
+
+    def failed_stage(_plan: CutoverPlan) -> CutoverReceipt:
+        return CutoverReceipt(
+            plan.attempt_id,
+            "RECOVERED",
+            "ACCEPT",
+            True,
+            False,
+            None,
+            None,
+            failed_phase="PREPARE_WORKER",
+        )
+
+    assert (
+        cli.run_cli(
+            encoded,
+            approved_go_binding_sha256=GO,
+            execute=failed_stage,
+            reconcile=lambda _plan, _receipt: None,
+        )
+        == 3
+    )
+    assert capsys.readouterr().out == (
+        "BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n"
+        "BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n"
+    )
+
+
 def test_cli_unexpected_host_error_never_leaks_exception_or_claims_success(
     reviewed_context: tuple[str, CutoverPlan, str], capsys: pytest.CaptureFixture[str]
 ) -> None:

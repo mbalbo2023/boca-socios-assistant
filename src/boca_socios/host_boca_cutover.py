@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal, Protocol, get_args
 
 from boca_socios.host_boca_cleanup import BocaJobLease, CleanupReceipt, protected_boca_job_lease
 
@@ -25,6 +25,20 @@ _WORKER_IMAGE = re.compile(
     r"ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}\Z"
 )
 CleanupStatus = Literal["ACCEPT", "NO_GO", "INDETERMINATE"]
+CutoverPhase = Literal[
+    "NONE",
+    "ATTEST_ORIGINAL",
+    "CONSUME_PREPARE",
+    "STAGE",
+    "PREPARE_WORKER",
+    "PARK_ORIGINAL",
+    "BOOTSTRAP_SESSION",
+    "ACTIVATE_CANDIDATE",
+    "ACCEPT_CANDIDATE",
+    "RETIRE_ORIGINAL",
+    "FINALIZE",
+]
+CUTOVER_FAILURE_PHASES: frozenset[str] = frozenset(get_args(CutoverPhase)) - {"NONE"}
 
 
 class CutoverError(ValueError):
@@ -88,6 +102,8 @@ class CutoverReceipt:
     candidate_id: str | None
     worker_id: str | None
     cleanup_receipt: CleanupReceipt | None = None
+    # A redacted diagnostic only, never evidence of physical acceptance.
+    failed_phase: CutoverPhase = "NONE"
 
     @property
     def accepted(self) -> bool:
@@ -193,6 +209,8 @@ def run_cutover_a(
         worker: str | None = None
         final_status: CleanupStatus = "NO_GO"
         final_evidence: CleanupReceipt | None = None
+        phase: CutoverPhase = "ATTEST_ORIGINAL"
+        failed_phase: CutoverPhase = "NONE"
         try:
             backend.attest_original(plan, lease)
             # PREPARE consumption is durable under the SAME flock, strictly
@@ -200,23 +218,32 @@ def run_cutover_a(
             # stop/SQLite. A failed/ambiguous O_EXCL marker aborts all effects.
             if prepare_run_id is not None:
                 assert prepared_go_consumer is not None
+                phase = "CONSUME_PREPARE"
                 prepared_go_consumer(plan, prepare_run_id, lease)
             effect_started = True
+            phase = "STAGE"
             backend.stage(plan, lease)
+            phase = "PREPARE_WORKER"
             worker = backend.prepare_worker(plan, lease)
             if not _DIGEST.fullmatch(worker) or worker == plan.legacy_id:
                 raise CutoverError("cutover A worker identity untrusted")
+            phase = "PARK_ORIGINAL"
             backend.park_original(plan, lease)
             # Mandatory Option B boundary: legacy DB ledger remains 0001-0007.
+            phase = "BOOTSTRAP_SESSION"
             backend.bootstrap_owner_session(plan, lease)
+            phase = "ACTIVATE_CANDIDATE"
             candidate = backend.activate_candidate(plan, worker, lease)
             if not _DIGEST.fullmatch(candidate) or candidate in (worker, plan.legacy_id):
                 raise CutoverError("cutover A candidate identity untrusted")
+            phase = "ACCEPT_CANDIDATE"
             backend.accept_candidate(plan, candidate, worker, lease)
             commit_started = True
+            phase = "RETIRE_ORIGINAL"
             backend.retire_original(plan, candidate, worker, lease)
             committed = True
         except BaseException as exc:
+            failed_phase = phase
             # Fail closed; only backend's independent exact-ID reinspection may
             # report positive recovery.  Never guess what a lost Docker receipt did.
             if effect_started and not commit_started:
@@ -231,6 +258,7 @@ def run_cutover_a(
         finally:
             if effect_started:
                 try:
+                    phase = "FINALIZE"
                     result = backend.finalize(
                         plan,
                         commit_started=commit_started,
@@ -247,6 +275,8 @@ def run_cutover_a(
                     else:
                         final_status = result
                 except Exception:
+                    if failed_phase == "NONE":
+                        failed_phase = "FINALIZE"
                     final_status = "NO_GO"
                 if final_status not in ("ACCEPT", "NO_GO", "INDETERMINATE"):
                     final_status = "NO_GO"
@@ -256,6 +286,8 @@ def run_cutover_a(
                     and final_evidence is None
                 ):
                     final_status = "NO_GO"
+                if final_status != "ACCEPT" and failed_phase == "NONE":
+                    failed_phase = "FINALIZE"
         state: Literal["ACCEPTED", "RECOVERED", "NO_GO"] = "NO_GO"
         if final_status == "ACCEPT" and committed:
             state = "ACCEPTED"
@@ -270,6 +302,7 @@ def run_cutover_a(
             candidate,
             worker,
             final_evidence,
+            failed_phase if state != "ACCEPTED" else "NONE",
         )
         # O_EXCL result must be persisted *before releasing the SAME flock*.
         # Callers cannot safely write it after run_cutover_a returns. Missing

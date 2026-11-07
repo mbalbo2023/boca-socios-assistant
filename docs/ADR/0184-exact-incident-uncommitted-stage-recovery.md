@@ -461,3 +461,48 @@ preflight reversible rootless de digests y worker. Sólo entonces release
 congelado + nuevo PREPARE/GO_B + un único APPLY. Sin desplegar BLACKBOX ni
 navegar Boca; cero cambios sobre Porota, otras aplicaciones o Docker host.
 Véase #45 R67/R68. Los indicadores R68 son propuestos hasta SHA/Actions verdes.
+
+## R70 — Etapa de fallo informativa, sin levantar las barreras de Cutover
+
+Los #763/#770/#778 devuelven `exit=3` sin identificar por sí mismos si la
+falla fue SSH, GHCR, rootless Docker, staging, worker o salud. Desde el
+PR #413 ya fusionado, el runner distingue exit/no-ACK y evita declarar
+`host=untouched` después de intentar SSH. **El RCA físico sigue abierto.**
+
+R70 agrega `failed_phase` **solo al recibo de transacción en memoria**:
+`ATTEST_ORIGINAL`, `CONSUME_PREPARE`, `STAGE`, `PREPARE_WORKER`,
+`PARK_ORIGINAL`, `BOOTSTRAP_SESSION`, `ACTIVATE_CANDIDATE`,
+`ACCEPT_CANDIDATE`, `RETIRE_ORIGINAL`, `FINALIZE`. En retornos normales
+NO_GO el CLI publica exclusivamente la fase allowlist, sin divulgar la
+excepción, la identidad del owner o los datos. El runner la conserva como
+`phase_claim`, nunca como recibo terminal autenticado. Si falta SSH, el ACK
+o el formato exacto, `phase_claim=UNVERIFIED` y el trabajo permanece rojo.
+La línea positiva ACK permanece **byte a byte idéntica** y el esquema del
+recibo durable v1, la transacción, GO, lease, puerto y cleanup no cambian.
+
+Limitación explícita: ante caída física antes del retorno, la fase todavía
+puede ser desconocida porque no se escribe un checkpoint de fase durable.
+Un backend de recibos por etapas requerirá revisión separada. **No repetir
+APPLY** antes de una comprobación rootless/worker inocua y evidencia física
+actual. Los tests agregados ejercitan falla por etapa, falsificaciones y
+no conversión de NO_GO en ACCEPTED.
+
+Para acelerar CI, la imagen browser full ocupa ~2,7 GB lógicos según
+benchmark del repo; no habilitar sin medición una exportación masiva de cache
+remota en cuatro pipelines. El próximo experimento debe cronometrar frío y
+caliente, probar almacenamiento y separar caches de PR vs main; mantener
+todos los scans y los controles obligatorios.
+
+**Incidente de CI detectado en R70:** el PR #414, SHA inicial
+`591404c42889fc3c0ff260c93d3f5157617022dd`, tuvo tres workflows
+verdes pero falló `CI #42324715791` en
+`test_owner_readonly_snapshot_is_accepted_without_a_write`. La causa
+concreta está en el test: comparaba `os.stat_result` completo, incluyendo
+`st_atime`; una lectura legítima puede actualizar ese timestamp según el
+montaje Linux sin escribir/modificar el archivo. La implementación
+`official_snapshot._identity` ya excluía `atime` correctamente. Se ajustan
+dos aserciones del mismo módulo para comparar identidad, modo, tamaño, inode,
+propietario y nanosegundos de `mtime/ctime`, preservando la detección de
+escrituras reales. Este defecto de test es ajeno al fallo físico de Cutover;
+se clasifica como falsa alarma dependiente del filesystem, no como motivo
+para relajar el gate de calidad.
