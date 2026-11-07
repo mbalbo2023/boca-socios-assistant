@@ -1,6 +1,67 @@
 # Safe operations — verified evidence and gated procedures
 
-## Vigente A45-R88 — R87 CLEANED y próximo preflight aún NO_GO (07/11/2026 ART)
+## Vigente A45-R89 — formulario de preflight de una sola oportunidad (07/11/2026 ART)
+
+R88 se integró por [PR #430](https://github.com/mbalbo2023/boca-socios-assistant/pull/430)
+en `main=15b25e753528651069323dc499b353359a5bc304`, árbol
+`840b6ea15c13cc33286af59c4f3e46a0e689ee24`. Su CI y Security
+postmerge pasaron, pero **GREEN de código no autoriza una operación física**.
+La recuperación única [#823](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42357920597)
+eliminó el residuo detenido #819 y constató el controlador original sano;
+**no** identificó por qué falló el STOP de #819, ni acredita un nuevo
+preflight, PREPARE, GO_B o Cutover. R89 corrige una instrucción engañosa
+del formulario, no introduce autorización ni modifica el host. Véase
+[ADR0198](ADR/0198-r89-one-shot-preflight-ui-guidance.md).
+
+### worker preflight `cutover-a-worker-preflight`: ocho coordenadas obligatorias
+
+**NO pulsar Run workflow hasta que las ocho estén verificadas** con un
+release **dual** GHCR publicado para el mismo `main` del futuro despacho,
+los dos manifests inmutables, la identidad del controlador legacy observada
+y su release histórico. Nunca inventar CID, digest ni número de run.
+
+| Campo de GitHub Actions | Valor y fuente que deben quedar comprobados |
+| --- | --- |
+| `source_sha` | SHA exacto del `main` vigente al despacho; idéntico al SHA del release dual nuevo. |
+| `image_ref` | Referencia controller `ghcr.io/...@sha256:<digest>` íntegra del manifest controller de ese release. |
+| `browser_image_ref` | Referencia browser `ghcr.io/...@sha256:<digest>` íntegra del manifest browser **del mismo run**. |
+| `release_run_id` | ID numérico real del run **SUCCESS que publicó ambos manifests** para ese `source_sha`; nunca la validación de release de un PR. |
+| `legacy_source_sha` | SHA de la instalación original efectivamente observada, distinto del SHA nuevo. |
+| `legacy_image_ref` | Digest controller original contrastado con la observación física y el manifest histórico. |
+| `legacy_release_run_id` | ID numérico del release histórico auténtico del controlador original, verificado contra ese SHA/digest. |
+| `legacy_controller_id` | CID completo de 64 hex del controlador legacy actualmente sano y observado; no inferido de nombre ni de un run antiguo sin revalidación. |
+
+Además: rama `main`, usuario autorizado, `operation=cutover-a-worker-preflight`,
+`service=controller`, `resource_budget=1.5cpu-1024m-192pids` y
+`protected_action_context` **vacío**. Los campos de Site, Telegram, owner,
+noticias, recovery y demás operaciones quedan vacíos. El runner vuelve a
+validar SHA actual, PR0, manifests, release histórico, inputs y entorno
+antes de SSH; un valor no acreditado obliga a **NO_GO sin despacho**.
+
+**Antirreplay one-shot (`no_retry=1`):** el nombre fijo
+`BOCA-R84-WORKER-PREFLIGHT-ONCE` consume la
+única oportunidad del SHA por el solo hecho de despachar la Action, aun si
+un input erróneo causa rechazo **PRE-SSH sin efectos físicos**. El gate
+`check_worker_preflight_dispatch.py` permite exactamente un run de ese
+título, ID actual, actor y rama válidos, intento 1 y cero PR abiertos;
+un segundo despacho del mismo SHA falla. Un SHA distinto exige un
+fix-forward revisado y una nueva autorización, no es un botón de retry.
+Antes de cualquier intento deben constar release dual exacto, checks
+postmerge, cero otras operaciones host activas, salud del legacy, ausencia
+de residuos y consenso técnico físico nuevo. El preflight **sí** hace
+pull/create/start/stop/rm de un probe Boca-only: no es READ_ONLY.
+
+**No confundir con GO_B:** el PREPARE independiente usa
+`operation=cutover-a-apply` con `protected_action_context` **vacío** y
+**las ocho coordenadas técnicas anteriores vacías**: el observador de
+solo lectura las resuelve bajo sus propios controles. Sólo después de
+artifact PREPARE exacto y GO_B independiente y vigente existe la opción
+de un APPLY distinto con **únicamente el ID corto real de PREPARE** en
+`protected_action_context`; ninguna de estas fases se habilita por R89,
+por un preflight PASS ni por la recuperación #823. Ver procedimiento
+histórico detallado más abajo y el workflow protegido actual.
+
+## Histórico A45-R88 — R87 CLEANED y próximo preflight aún NO_GO (07/11/2026 ART; sustituido)
 
 La Action manual protegida [#823](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42357920597)
 fue ejecutada **una sola vez** en `main=b4b72526d144f58d7577e49a32591ed304c1414d`,

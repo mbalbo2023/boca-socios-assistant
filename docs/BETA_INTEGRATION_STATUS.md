@@ -1,6 +1,14 @@
 # Estado de integración BETA
 
-## Estado A45-R88 — residuo #819 recuperado, BETA integral NO instalada (07/11/2026 ART)
+## A45-R89 — guía de formulario, sin nuevo intento físico (07/11/2026 ART)
+
+| Frente | Evidencia | Veredicto |
+| --- | --- | --- |
+| R88 integrado | [PR #430](https://github.com/mbalbo2023/boca-socios-assistant/pull/430) MERGED, `main=15b25e753528651069323dc499b353359a5bc304`, tree exacto `840b6ea15c13cc33286af59c4f3e46a0e689ee24`; CI y Security postmerge SUCCESS | Código/diagnósticos, **no** GO físico |
+| R89 | [ADR0198](ADR/0198-r89-one-shot-preflight-ui-guidance.md) y [guía operativa](OPERATIONS.md): ocho coordenadas obligatorias para worker preflight; un input inválido consume one-shot del SHA aun PRE-SSH | CODE_ONLY; nuevo preflight **NO_GO** hasta release dual, validación independiente y GO específico |
+| #819/#823 | STOP histórico no explicado; CID detenido limpiado exacto y legacy sano en el recibo R87 | No repetir acciones históricas; Cutover/GO_B/APPLY **NO_GO** |
+
+## Histórico A45-R88 — residuo #819 recuperado, BETA integral NO instalada (07/11/2026 ART; sustituido)
 
 | Frente | Evidencia exacta | Veredicto |
 | --- | --- | --- |

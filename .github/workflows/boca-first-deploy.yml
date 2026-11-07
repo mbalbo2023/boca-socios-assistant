@@ -11,19 +11,19 @@ on:
         type: choice
         options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, cutover-a-reconcile, cutover-a-stage-recover, cutover-a-image-retire, cutover-a-observe, cutover-a-worker-inspect, cutover-a-worker-recover, cutover-a-worker-recover-807, cutover-a-worker-recover-819, cutover-a-worker-preflight, cutover-a-apply, official-notice-import, protected-go-prepare, lifecycle-apply, telegram-activate, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
-        description: Exact main SHA (blank allowed only for reviewed Cutover/import GO_B; derived from github.sha)
+        description: REQUIRED cutover-a-worker-preflight - exact current main SHA for the new dual release; Cutover APPLY/PREPARE derives github.sha
         required: false
         type: string
       image_ref:
-        description: Full reviewed GHCR digest for install/diagnostic; blank for inspection/preflight
+        description: REQUIRED cutover-a-worker-preflight - new dual release controller GHCR image @sha256:64-hex digest; not legacy
         required: false
         type: string
       browser_image_ref:
-        description: Reviewed browser-worker GHCR digest for browser IPC install/lifecycle or dual-service Telegram
+        description: REQUIRED cutover-a-worker-preflight - browser GHCR image @sha256:64-hex digest from the same new dual release
         required: false
         type: string
       release_run_id:
-        description: Reviewed image release run ID for install/diagnostic/Site; blank for inspection/preflight
+        description: REQUIRED cutover-a-worker-preflight - successful new dual release run with both controller/browser immutable manifests
         required: false
         type: string
       site_envelope:
@@ -47,19 +47,19 @@ on:
         required: false
         type: string
       legacy_source_sha:
-        description: Cutover A observation/apply; historical installed controller SHA, independent of current main
+        description: REQUIRED cutover-a-worker-preflight - original installed controller historical source SHA (40-hex), verified from immutable receipts
         required: false
         type: string
       legacy_image_ref:
-        description: Cutover A observation/apply; installed controller's pinned original GHCR digest
+        description: REQUIRED cutover-a-worker-preflight - original installed controller historical GHCR @sha256:64-hex digest from verified receipts
         required: false
         type: string
       legacy_release_run_id:
-        description: Cutover A historical release run ID; for cutover-a-reconcile only, exact PREPARE run ID
+        description: REQUIRED cutover-a-worker-preflight - historical original controller release run ID, NOT a Cutover PREPARE run; verify receipt
         required: false
         type: string
       legacy_controller_id:
-        description: Cutover A; mandatory exact original 64-hex ID for apply, optional for observation
+        description: REQUIRED cutover-a-worker-preflight - exact original 64-hex legacy controller CID from verified host receipt, not probe
         required: false
         type: string
       official_controller_id:
@@ -95,7 +95,7 @@ on:
         required: false
         type: string
       protected_action_context:
-        description: Leave blank for Boca READ_ONLY PREPARE; APPLY uses only prior PREPARE run ID (digits), never JSON/PIN/secret. Lifecycle/Cutover/import.
+        description: Leave blank for Boca READ_ONLY PREPARE; cutover-a-worker-preflight is EFFECTFUL (NOT READ_ONLY) yet REQUIRES blank; APPLY uses only prior PREPARE run ID; never JSON/PIN/secret.
         required: false
         type: string
       service:
@@ -104,7 +104,7 @@ on:
         type: choice
         options: [controller]
       resource_budget:
-        description: Exact cap; new-only browser IPC includes a separately capped worker
+        description: REQUIRED cutover-a-worker-preflight - select 1.5cpu-1024m-192pids; other operations obey their separate exact caps
         required: true
         type: choice
         options: [0.5cpu-256m-64pids, 1.5cpu-1024m-192pids, 1.75cpu-1152m-224pids]
@@ -162,7 +162,7 @@ jobs:
           uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
       - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
         run: |
-          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py tests/test_r82_exact_worker_807_recovery.py tests/test_r82_recovery_bundle.py tests/test_r82_recovery_dispatch.py tests/test_r82_recovery_workflow.py tests/test_r83_primary_phase.py tests/test_r83_cleanup_stages.py tests/test_r83_preflight_workflow.py tests/test_r83_bundle_caps.py tests/test_r84_worker_storage_admission.py tests/test_r84_worker_preflight_dispatch.py tests/test_r85_cutover_observe_provenance.py tests/test_r87_exact_worker_819_recovery.py tests/test_r87_recovery_bundle.py tests/test_r87_recovery_dispatch.py tests/test_r87_recovery_workflow.py tests/test_r88_preflight_capture.py tests/test_r88_stop_diagnostics.py
+          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py tests/test_r82_exact_worker_807_recovery.py tests/test_r82_recovery_bundle.py tests/test_r82_recovery_dispatch.py tests/test_r82_recovery_workflow.py tests/test_r83_primary_phase.py tests/test_r83_cleanup_stages.py tests/test_r83_preflight_workflow.py tests/test_r83_bundle_caps.py tests/test_r84_worker_storage_admission.py tests/test_r84_worker_preflight_dispatch.py tests/test_r85_cutover_observe_provenance.py tests/test_r87_exact_worker_819_recovery.py tests/test_r87_recovery_bundle.py tests/test_r87_recovery_dispatch.py tests/test_r87_recovery_workflow.py tests/test_r88_preflight_capture.py tests/test_r88_stop_diagnostics.py tests/test_r89_preflight_input_descriptions.py
           uv run pytest -q tests/test_r86_exact_worker_819_observer.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
       - name: Validate protected official notice artifact import offline only
