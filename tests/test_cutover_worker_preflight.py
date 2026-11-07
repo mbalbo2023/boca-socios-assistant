@@ -215,6 +215,7 @@ def test_workflow_requires_immutable_release_and_is_single_boca_workflow() -> No
     # accidentally reject a valid APPLY before its independent GO check.
     assert (
         '"$BOCA_OPERATION" != cutover-a-observe && '
+        '"$BOCA_OPERATION" != cutover-a-worker-inspect && '
         '"$BOCA_OPERATION" != cutover-a-worker-preflight && '
         '"$BOCA_OPERATION" != cutover-a-apply' in workflow
     )

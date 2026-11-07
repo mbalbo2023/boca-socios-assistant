@@ -1,6 +1,32 @@
 # Boca Socios Assistant
 
-## Estado vigente A45-R70 — RCA Cutover y ciclo de ingeniería (06/11/2026 ART)
+## Estado físico A45-R76 — incidente preflight worker (06/11/2026 ART)
+
+La certificación previa del candidato [PR #415](https://github.com/mbalbo2023/boca-socios-assistant/pull/415)
+incluyó 4036 pytest +34 subtests, cuatro perspectivas técnicas con dictamen
+GO CODE_ONLY y cinco checks PR verdes. Se fusionó como
+`main=92624ed6b7e75c6010f59670c866df00a29766dd` (0 PR abiertos) y
+publicó el par de imágenes en
+[#42329201039](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42329201039).
+Es evidencia del **código y release**, no de instalación física.
+
+El **primer preflight físico de ese par**
+[#42329475083](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42329475083)
+terminó `CLEANUP=INDETERMINATE`; el observador de APPLY histórico
+[#42329673385](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42329673385)
+no pudo producir un inventario físico. No hay aceptación del nuevo Cutover,
+ni prueba de limpieza ni de nuevo Chrome/Telegram. El controlador anterior
+es el último comprobado sano y **no se declara su salud actual sin medición**.
+
+**Candidato de corrección de observabilidad R76:** un único diagnóstico
+`cutover-a-worker-inspect` READ_ONLY para el intento exacto #42329475083,
+con taxonomía separada de Docker rootless, seccomp, probe y controlador viejo,
+sin acciones Docker mutantes. Hasta CI/merge/ejecución no existe resultado de
+esa nueva observación. [ADR0187](docs/ADR/0187-failed-worker-preflight-readonly-diagnosis.md)
+y [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6701097095).
+No repetir preflight/APPLY ni tocar Porota, otras aplicaciones o BLACKBOX.
+
+## Histórico A45-R70 — RCA Cutover y ciclo de ingeniería (06/11/2026 ART)
 
 **Código verificado:** PR [#413](https://github.com/mbalbo2023/boca-socios-assistant/pull/413)
 fusionado en `main=cc7f90d531df36d04b821d6e85cd1e7f56ba8559`.
