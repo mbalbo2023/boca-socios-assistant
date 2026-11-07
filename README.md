@@ -1,5 +1,31 @@
 # Boca Socios Assistant
 
+## A45-R96 — stage exacto #844, CODE_ONLY (07/11/2026 ART)
+
+R95 quedó publicado en `main=e3cbd38856a2aa75e9ec5e276335da0be6ed520b`
+y release dual [#746](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42380223398)
+SUCCESS. El único Cutover A [#844](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42388694186)
+**falló** con `ssh_rc=3`, y la reconciliación READ_ONLY
+[#845](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42388994569)
+comprobó legacy saludable en `127.0.0.1:8443`, cero candidatos/workers,
+promoción ausente, stage #844 presente y `cleanup=INDETERMINATE`.
+**Nueva BETA integral NO instalada.** Nunca reintentar #844 ni reutilizar
+PREPARE #843.
+
+R96 prepara exclusivamente la **recuperación exacta del stage #844**, sin
+operaciones Docker ni efectos sobre Porota/otros servicios. Nuevo alias de
+un solo uso `cutover-a-stage-recover-844` fijado a #843/#844/#845,
+verificador de evidencia R95, histórico REST paginado completo, antirreplay
+entre commits, PR0 y ACK físico obligatorio. En este punto R96 es
+**CODE_ONLY**, sin recuperación física ni nuevo Cutover ejecutados.
+Contrato y siguientes comprobaciones:
+[diseño](docs/superpowers/specs/2026-11-07-r96-stage-844-exact-recovery-design.md),
+[plan](docs/superpowers/plans/2026-11-07-r96-stage-844-exact-recovery.md),
+[operación](docs/OPERATIONS.md),
+[RCA #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+
+---
+
 ## A45-R95 — compatibilidad STOP Docker, sólo CODE_ONLY (07/11/2026 ART)
 
 **R94 ya fue recuperado físicamente y no debe repetirse.** El PR
