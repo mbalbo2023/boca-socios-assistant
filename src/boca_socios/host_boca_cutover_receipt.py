@@ -23,9 +23,15 @@ from pathlib import Path
 from typing import Literal
 
 from boca_socios import host_boca_cleanup as cleanup
-from boca_socios.host_boca_cutover import CutoverPlan, CutoverReceipt
+from boca_socios.host_boca_cutover import (
+    WORKER_COMPENSATION_STATES,
+    WORKER_PRIMARY_PHASES,
+    CutoverPlan,
+    CutoverReceipt,
+)
 
 VERSION = "boca-cutover-a-terminal-v1"
+VERSION_V2 = "boca-cutover-a-terminal-v2"
 INTENT_VERSION = "boca-cutover-a-intent-v1"
 RECEIPT_DIR_NAME = ".boca-socios-cutover-receipts"
 MAX_RECEIPT_BYTES = 2048
@@ -53,6 +59,8 @@ class TerminalRecord:
     irreversible_commit_started: bool
     candidate_id: str | None
     worker_id: str | None
+    worker_primary_phase: str = "NONE"
+    worker_compensation: str = "NONE"
 
     @classmethod
     def from_receipt(cls, plan: CutoverPlan, receipt: CutoverReceipt) -> TerminalRecord:
@@ -86,6 +94,8 @@ class TerminalRecord:
             receipt.irreversible_commit_started,
             receipt.candidate_id,
             receipt.worker_id,
+            receipt.worker_primary_phase if receipt.failed_phase == "PREPARE_WORKER" else "NONE",
+            receipt.worker_compensation if receipt.failed_phase == "PREPARE_WORKER" else "NONE",
         )
 
     def serialized(self) -> bytes:
@@ -124,11 +134,18 @@ class TerminalRecord:
             or self.irreversible_commit_started
         ):
             raise TerminalReceiptError("cutover recovered result untrusted")
+        typed = (self.worker_primary_phase, self.worker_compensation) != ("NONE", "NONE")
+        if typed and (
+            self.state == "ACCEPTED"
+            or self.worker_primary_phase not in WORKER_PRIMARY_PHASES
+            or self.worker_compensation not in WORKER_COMPENSATION_STATES
+        ):
+            raise TerminalReceiptError("cutover typed worker failure invalid")
         # NO_GO is deliberately broad: an old ID may be parked, restored or
         # already gone, with positive/negative/unknown inventory. Preserve the
         # genuine uncertainty rather than rejecting an incident's evidence.
         payload = {
-            "version": VERSION,
+            "version": VERSION_V2 if typed else VERSION,
             "attempt_id": self.attempt_id,
             "legacy_source_sha": self.legacy_source_sha,
             "target_source_sha": self.target_source_sha,
@@ -141,6 +158,9 @@ class TerminalRecord:
             "candidate_id": self.candidate_id,
             "worker_id": self.worker_id,
         }
+        if typed:
+            payload["worker_primary_phase"] = self.worker_primary_phase
+            payload["worker_compensation"] = self.worker_compensation
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
             "ascii"
         )
@@ -443,9 +463,16 @@ def reconcile_persisted(plan: CutoverPlan) -> Reconciliation:
         raw = _read_marker(folder, _name(plan.attempt_id))
         try:
             payload = json.loads(raw.decode("ascii"), object_pairs_hook=_unique_fields)
-            if not isinstance(payload, dict) or payload.pop("version", None) != VERSION:
+            if not isinstance(payload, dict):
                 raise TerminalReceiptError("cutover stored terminal result schema invalid")
-            if set(payload) != set(TerminalRecord.__dataclass_fields__):
+            version = payload.pop("version", None)
+            fields = set(TerminalRecord.__dataclass_fields__)
+            expected = (
+                fields
+                if version == VERSION_V2
+                else fields - {"worker_primary_phase", "worker_compensation"}
+            )
+            if version not in (VERSION, VERSION_V2) or set(payload) != expected:
                 raise TerminalReceiptError("cutover stored terminal result fields untrusted")
             result = TerminalRecord(**payload)
             if (

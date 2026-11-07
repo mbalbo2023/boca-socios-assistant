@@ -325,19 +325,36 @@ class RootlessCutoverBackend:
         self._guard(plan, lease, "STAGED")
         if not self.worker_hash or not self.controller_hash:
             raise CutoverError("cutover Compose service hashes absent")
-        seccomp = stage.read_verified(plan.attempt_id, plan.legacy_compose_sha, "seccomp")
-        host._browser_pull_both(plan.target_image, plan.browser_image, plan.target_sha)
-        worker = host._cutover_prepare_worker(
-            plan.legacy_id,
-            plan.legacy_image,
-            plan.legacy_sha,
-            plan.browser_image,
-            plan.target_sha,
-            plan.attempt_id,
-            self.worker_hash,
-            plan.seccomp_sha,
-            seccomp,
-        )
+        primary = "ATTEST"
+
+        def note_phase(phase: str) -> None:
+            nonlocal primary
+            primary = phase
+
+        try:
+            seccomp = stage.read_verified(plan.attempt_id, plan.legacy_compose_sha, "seccomp")
+            primary = "STORAGE"
+            host._browser_pull_both(
+                plan.target_image, plan.browser_image, plan.target_sha, phase_hook=note_phase
+            )
+            primary = "ATTEST"
+            worker = host._cutover_prepare_worker(
+                plan.legacy_id,
+                plan.legacy_image,
+                plan.legacy_sha,
+                plan.browser_image,
+                plan.target_sha,
+                plan.attempt_id,
+                self.worker_hash,
+                plan.seccomp_sha,
+                seccomp,
+            )
+        except host.CutoverWorkerPhaseError:
+            raise
+        except (host.PreflightError, OSError, ValueError, KeyError, TypeError):
+            # The error's message may contain private Docker details. Only
+            # the known executing operation is allowed to cross this boundary.
+            raise host.CutoverWorkerPhaseError(primary, "UNVERIFIED") from None
         if not _HEX.fullmatch(worker) or worker == plan.legacy_id:
             raise CutoverError("cutover worker exact ID untrusted")
         self.state = "WORKER"

@@ -25,7 +25,7 @@ import ssl
 import stat
 import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from fractions import Fraction
@@ -157,6 +157,25 @@ OWNER_ENVELOPE_FIELDS = frozenset(
 
 class PreflightError(ValueError):
     """First installation cannot proceed without an explicit new review."""
+
+
+class CutoverWorkerPhaseError(PreflightError):
+    """Finite subphase hint for a failed worker; never Docker error contents."""
+
+    _PRIMARY = frozenset(
+        {"ATTEST", "STORAGE", "PULL", "IPC", "CREATE", "START", "HEALTH", "UNVERIFIED"}
+    )
+    _COMPENSATION = frozenset({"NONE", "VERIFIED", "INDETERMINATE", "UNVERIFIED"})
+
+    def __init__(self, primary: str, compensation: str) -> None:
+        self.primary = primary if primary in self._PRIMARY else "UNVERIFIED"
+        self.compensation = compensation if compensation in self._COMPENSATION else "UNVERIFIED"
+        message = (
+            "cutover A worker failed; selective cleanup INDETERMINATE, no retry"
+            if self.compensation == "INDETERMINATE"
+            else "cutover A worker failed; original controller RUNNING"
+        )
+        super().__init__(message)
 
 
 @dataclass(frozen=True)
@@ -4292,7 +4311,15 @@ def _browser_validate_image(image: str, source_sha: str) -> None:
         raise PreflightError("browser IPC pulled image did not become inspectable")
 
 
-def _browser_pull_both(image: str, browser_image: str, source_sha: str) -> None:
+def _browser_pull_both(
+    image: str,
+    browser_image: str,
+    source_sha: str,
+    *,
+    phase_hook: Callable[[str], None] | None = None,
+) -> None:
+    if phase_hook is not None:
+        phase_hook("STORAGE")
     before = _storage_snapshot()
     current = before
     for index, reference in enumerate((image, browser_image)):
@@ -4306,8 +4333,12 @@ def _browser_pull_both(image: str, browser_image: str, source_sha: str) -> None:
                 PREFLIGHT_STORAGE_MIN_BYTES if index == 0 else POSTINSTALL_STORAGE_MIN_BYTES
             ),
         )
+        if phase_hook is not None:
+            phase_hook("PULL")
         _run("docker", "pull", reference)
         _browser_validate_image(reference, source_sha)
+        if phase_hook is not None:
+            phase_hook("STORAGE")
         current = _storage_snapshot()
         _validate_storage_continuity(before, current, min_free_bytes=POSTINSTALL_STORAGE_MIN_BYTES)
 
@@ -5419,8 +5450,10 @@ def _cutover_prepare_worker(
         raise PreflightError("cutover A worker already exists before attempt")
     if _names("volume", f"name=^{BROWSER_IPC_VOLUME}$"):
         raise PreflightError("cutover A IPC volume already exists before attempt")
+    phase = "IPC"
     try:
         _browser_create_ipc_volume(browser_image, attempt_id)
+        phase = "CREATE"
         created = _run(*worker_create, timeout=60)
         if re.fullmatch(r"[0-9a-f]{64}", created) is None or created == original_id:
             raise PreflightError("cutover A worker create returned invalid ID")
@@ -5436,8 +5469,10 @@ def _cutover_prepare_worker(
             verify_runtime=False,
             staged_seccomp=staged_seccomp,
         )
+        phase = "START"
         if _run("docker", "start", created, timeout=30) != created:
             raise PreflightError("cutover A worker start receipt invalid")
+        phase = "HEALTH"
         _browser_wait_healthy(created)
         _browser_worker_postflight(
             created,
@@ -5459,11 +5494,9 @@ def _cutover_prepare_worker(
             _cutover_legacy_record(
                 original_id, legacy_image, legacy_sha, name=CUTOVER_LEGACY_NAME, running=True
             )
-        except (PreflightError, OSError, ValueError, KeyError, TypeError) as exc:
-            raise PreflightError(
-                "cutover A worker failed; selective cleanup INDETERMINATE, no retry"
-            ) from exc
-        raise PreflightError("cutover A worker failed; original controller RUNNING") from None
+        except (PreflightError, OSError, ValueError, KeyError, TypeError):
+            raise CutoverWorkerPhaseError(phase, "INDETERMINATE") from None
+        raise CutoverWorkerPhaseError(phase, "VERIFIED") from None
 
 
 def _cutover_candidate_postflight(

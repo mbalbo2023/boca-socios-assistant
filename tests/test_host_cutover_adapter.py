@@ -539,6 +539,50 @@ def test_worker_failure_compensates_only_worker_and_attempt_volume(
     assert any(command[:3] == ("docker", "volume", "rm") for command in calls)
 
 
+@pytest.mark.parametrize(
+    ("failure", "primary"),
+    [("volume", "IPC"), ("create", "CREATE"), ("start", "START"), ("health", "HEALTH")],
+)
+def test_worker_failed_operation_is_typed_and_compensation_is_independent(
+    monkeypatch: pytest.MonkeyPatch, failure: str, primary: str
+) -> None:
+    _worker_preparation_fake(monkeypatch, fail_at=failure)
+    with pytest.raises(host.CutoverWorkerPhaseError) as captured:
+        _prepare_worker()
+    assert captured.value.primary == primary
+    assert captured.value.compensation == "VERIFIED"
+    assert "synthetic" not in str(captured.value)
+
+
+def test_worker_cleanup_failure_keeps_original_failed_create_phase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _worker_preparation_fake(monkeypatch, fail_at="create")
+
+    def uncertain_cleanup(*_args: object) -> None:
+        raise host.PreflightError("private cleanup error")
+
+    monkeypatch.setattr(host, "_cutover_compensate_worker", uncertain_cleanup)
+    with pytest.raises(host.CutoverWorkerPhaseError) as captured:
+        _prepare_worker()
+    assert captured.value.primary == "CREATE"
+    assert captured.value.compensation == "INDETERMINATE"
+    assert "private cleanup error" not in str(captured.value)
+
+
+def test_dual_image_pull_exposes_storage_and_pull_operation_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    phases: list[str] = []
+    monkeypatch.setattr(host, "_storage_snapshot", lambda: object())
+    monkeypatch.setattr(host, "_validate_storage_capacity", lambda *_a, **_kw: None)
+    monkeypatch.setattr(host, "_validate_storage_continuity", lambda *_a, **_kw: None)
+    monkeypatch.setattr(host, "_browser_validate_image", lambda *_a: None)
+    monkeypatch.setattr(host, "_run", lambda *_a, **_kw: "")
+    host._browser_pull_both(TARGET_IMAGE, WORKER_IMAGE, TARGET_SHA, phase_hook=phases.append)
+    assert phases == ["STORAGE", "PULL", "STORAGE", "PULL", "STORAGE"]
+
+
 def _candidate_handoff_fake(
     monkeypatch: pytest.MonkeyPatch,
     *,

@@ -216,6 +216,38 @@ def test_cli_nonacceptance_reports_only_allowlisted_failure_phase(
     )
 
 
+def test_cli_adds_only_typed_worker_failure_fields(
+    reviewed_context: tuple[str, CutoverPlan, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    encoded, plan, _ = reviewed_context
+
+    def failed(_plan: CutoverPlan) -> CutoverReceipt:
+        return CutoverReceipt(
+            plan.attempt_id,
+            "NO_GO",
+            "INDETERMINATE",
+            False,
+            False,
+            None,
+            None,
+            failed_phase="PREPARE_WORKER",
+            worker_primary_phase="CREATE",
+            worker_compensation="INDETERMINATE",
+        )
+
+    assert (
+        cli.run_cli(
+            encoded, approved_go_binding_sha256=GO, execute=failed, reconcile=lambda _p, _r: None
+        )
+        == 3
+    )
+    assert capsys.readouterr().out == (
+        "BOCA_CUTOVER_A_WORKER_FAILURE primary=CREATE compensation=INDETERMINATE\n"
+        "BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n"
+        "BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n"
+    )
+
+
 def test_cli_unexpected_host_error_never_leaks_exception_or_claims_success(
     reviewed_context: tuple[str, CutoverPlan, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
