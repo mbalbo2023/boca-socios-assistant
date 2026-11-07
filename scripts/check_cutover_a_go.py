@@ -495,6 +495,20 @@ def write_actions_invocation_prepared(request: GoRequest, *, environ: Mapping[st
 
 
 _POSTFLIGHT_PREFIX = b"BOCA_CUTOVER_A_POSTFLIGHT "
+# The host emits this READY observation before attempting any Cutover effect.
+# On SSH failure it is diagnostic input only: never an ACCEPTED host receipt.
+# Preserve the precise host grammar so a legitimate preceding observation does
+# not obscure the following allowlisted NO_GO failure-phase claim.
+_CUTOVER_OBSERVE_PREFIX = re.compile(
+    rb"BOCA_CUTOVER_A_OBSERVE state=READY legacy_sha=[0-9a-f]{40} "
+    rb"legacy_id=[0-9a-f]{64} "
+    rb"legacy_image=ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64} "
+    rb"target_sha=[0-9a-f]{40} "
+    rb"target_image=ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64} "
+    rb"browser_image=ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64} "
+    rb"original=RUNNING port=127\.0\.0\.1:8443 worker=absent "
+    rb"owner=preserved key=preserved data=preserved effects=none\n"
+)
 _POSTFLIGHT_KEYS = frozenset(
     {
         "version",
@@ -622,6 +636,11 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
     phase_claim = "UNVERIFIED"
     if raw.endswith(recorded):
         prefix = raw[: -len(recorded)]
+        observe = _CUTOVER_OBSERVE_PREFIX.match(prefix)
+        if observe is not None:
+            # Exactly one canonical observation is allowed before postflight.
+            # Any duplicate or malformed line remains unverified below.
+            prefix = prefix[observe.end() :]
         # Postflight and phase are only bounded host claims, not physical ACK.
         if prefix.startswith(_POSTFLIGHT_PREFIX):
             postflight_line, separator, prefix = prefix.partition(b"\n")

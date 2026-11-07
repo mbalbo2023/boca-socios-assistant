@@ -565,6 +565,73 @@ def test_failed_ssh_allows_exact_phase_claim_without_promoting_host_acceptance(
     assert "ACCEPTED" not in output and "PRIVATE" not in output
 
 
+def _cutover_observe_ready(plan: CutoverPlan) -> bytes:
+    """The exact bounded line emitted before the host Cutover transaction."""
+    return (
+        f"BOCA_CUTOVER_A_OBSERVE state=READY legacy_sha={plan.legacy_sha} "
+        f"legacy_id={plan.legacy_id} legacy_image={plan.legacy_image} "
+        f"target_sha={plan.target_sha} target_image={plan.target_image} "
+        f"browser_image={plan.browser_image} original=RUNNING "
+        "port=127.0.0.1:8443 worker=absent owner=preserved key=preserved "
+        "data=preserved effects=none\n"
+    ).encode("ascii")
+
+
+@pytest.mark.parametrize("failed_phase", ["STAGE", "PREPARE_WORKER"])
+@pytest.mark.parametrize("postflight", [b"", b'BOCA_CUTOVER_A_POSTFLIGHT {"status":"NO_GO"}\n'])
+def test_failed_ssh_phase_survives_real_prior_observation_without_host_acceptance(
+    tmp_path: Path,
+    failed_phase: str,
+    postflight: bytes,
+) -> None:
+    request, env = _actions_fixture(tmp_path)
+    env["BOCA_CUTOVER_A_SSH_RC"] = "3"
+    stdout = (
+        _cutover_observe_ready(request.plan)
+        + postflight
+        + f"BOCA_CUTOVER_A_FAILURE_PHASE phase={failed_phase}\n".encode("ascii")
+        + b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n"
+    )
+    _file(Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME, stdout)
+    report = go.classify_cutover_ssh_failure(env)
+    assert "host_claim=NO_GO_RECORDED_UNVERIFIED" in report
+    assert f"phase_claim={failed_phase}" in report
+    assert "phase=UNVERIFIED host=UNVERIFIED terminal=UNVERIFIED no_retry=true" in report
+    assert "ACCEPTED" not in report
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda ready: ready + ready,
+        lambda ready: ready.replace(b"effects=none", b"effects=write"),
+        lambda ready: ready.replace(b"legacy_sha=", b"legacy_sha=x"),
+        lambda ready: ready.replace(b"ghcr.io/mbalbo2023/", b"ghcr.io/foreign/"),
+        lambda ready: ready.replace(b"port=127.0.0.1:8443", b"port=0.0.0.0:8443"),
+        lambda ready: ready[:-1] + b"\x00\n",
+        lambda ready: ready + b"PRIVATE=do-not-disclose\n",
+        lambda ready: b"BOCA_CUTOVER_A_OBSERVE state=READY\n",
+    ],
+)
+def test_failed_ssh_observation_prefix_must_be_exact_and_single(
+    tmp_path: Path,
+    mutation: object,
+) -> None:
+    request, env = _actions_fixture(tmp_path)
+    env["BOCA_CUTOVER_A_SSH_RC"] = "3"
+    ready = _cutover_observe_ready(request.plan)
+    stdout = (
+        mutation(ready)
+        + b"BOCA_CUTOVER_A_FAILURE_PHASE phase=STAGE\n"
+        + b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n"
+    )
+    _file(Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME, stdout)
+    report = go.classify_cutover_ssh_failure(env)
+    assert "host_claim=NONE" in report
+    assert "phase_claim=UNVERIFIED" in report
+    assert "PRIVATE" not in report and "ACCEPTED" not in report
+
+
 def test_failed_ssh_diagnostic_rejects_zero_rc_and_no_operation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
