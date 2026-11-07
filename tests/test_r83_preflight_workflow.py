@@ -27,12 +27,16 @@ def _failed_receipt(
     cleanup: str = "INDETERMINATE",
     primary: str = "WORKER_START",
     stage: str = "RM",
+    cause: str | None = None,
 ) -> bytes:
     """Independently specified wire order; no production serializer is reused."""
+    if cause is None:
+        cause = "UNVERIFIED" if stage == "STOP" else "NONE"
     return (
         NO_GO_PREFIX
         + f"failed_phase={phase} cleanup={cleanup} ".encode("ascii")
-        + f"primary_failed_phase={primary} cleanup_failed_stage={stage}\n".encode("ascii")
+        + f"primary_failed_phase={primary} cleanup_failed_stage={stage} ".encode("ascii")
+        + f"stop_failure_cause={cause}\n".encode("ascii")
     )
 
 
@@ -51,8 +55,11 @@ def _verify_receipt(
     *,
     host_outcome: str = "failure",
 ) -> tuple[int, str]:
+    private = tmp_path / "boca-worker-preflight.abcdefgh"
+    private.mkdir(mode=0o700)
+    receipt_path = private / "receipt"
     if receipt is not None:
-        (tmp_path / "boca-worker-preflight.receipt").write_bytes(receipt)
+        receipt_path.write_bytes(receipt)
     env = dict(os.environ)
     env.update(
         RUNNER_TEMP=str(tmp_path),
@@ -61,6 +68,7 @@ def _verify_receipt(
         # R84 now separately rejects a pre-SSH gate denial.
         BOCA_PREFLIGHT_DISPATCH_OUTCOME="success",
         BOCA_PREFLIGHT_HOST_OUTCOME=host_outcome,
+        BOCA_PREFLIGHT_RECEIPT=str(receipt_path),
         BOCA_SOURCE_SHA=SOURCE_SHA,
     )
     result = subprocess.run(  # noqa: S603 - extracted, local verifier; no host I/O
@@ -84,6 +92,7 @@ def test_r83_failure_receipt_preserves_primary_phase_and_cleanup_stage(tmp_path:
     assert "phase_claim=CLEANUP cleanup_claim=INDETERMINATE" in summary
     assert "primary_failed_phase_claim=WORKER_START" in summary
     assert "cleanup_failed_stage_claim=RM" in summary
+    assert "stop_failure_cause_claim=NONE" in summary
     assert "next=read_only_boca_inventory no_retry=1" in summary
 
 
@@ -131,6 +140,11 @@ def test_r83_each_allowed_cleanup_failure_stage_retains_its_claim(
     assert returncode == 1
     assert "primary_failed_phase_claim=WORKER_START" in summary
     assert f"cleanup_failed_stage_claim={stage}" in summary
+    assert (
+        "stop_failure_cause_claim=UNVERIFIED"
+        if stage == "STOP"
+        else "stop_failure_cause_claim=NONE"
+    ) in summary
     assert "cleanup_claim=INDETERMINATE" in summary
 
 
@@ -147,6 +161,42 @@ def test_r83_verified_cleanup_may_have_no_cleanup_failure_stage(tmp_path: Path) 
     assert returncode == 1
     assert "phase_claim=WORKER_CREATE cleanup_claim=VERIFIED" in summary
     assert "primary_failed_phase_claim=WORKER_CREATE cleanup_failed_stage_claim=NONE" in summary
+    assert "stop_failure_cause_claim=NONE" in summary
+
+
+@pytest.mark.parametrize("cause", ["TIMEOUT", "NONZERO", "OSERROR", "ACK_MISMATCH", "UNVERIFIED"])
+def test_r88_stop_diagnostic_preserved_as_untrusted_claim_only(tmp_path: Path, cause: str) -> None:
+    returncode, summary = _verify_receipt(
+        tmp_path,
+        _failed_receipt(
+            phase="CLEANUP", cleanup="INDETERMINATE", primary="NONE", stage="STOP", cause=cause
+        ),
+    )
+    assert returncode == 1
+    assert (
+        "state=NO_GO host=UNVERIFIED phase_claim=CLEANUP "
+        "cleanup_claim=INDETERMINATE primary_failed_phase_claim=NONE "
+        "cleanup_failed_stage_claim=STOP " + f"stop_failure_cause_claim={cause}"
+    ) in summary
+    assert "no_retry=1" in summary
+
+
+@pytest.mark.parametrize(
+    ("stage", "cause"),
+    [
+        ("STOP", "NONE"),
+        ("RM", "TIMEOUT"),
+        ("NONE", "NONZERO"),
+        ("STOP", "RETRY"),
+        ("STOP", "timeout"),
+    ],
+)
+def test_r88_cause_must_match_stage_and_fixed_allowlist(
+    tmp_path: Path, stage: str, cause: str
+) -> None:
+    _, summary = _verify_receipt(tmp_path, _failed_receipt(stage=stage, cause=cause))
+    assert "phase_claim=UNVERIFIED cleanup_claim=UNVERIFIED" in summary
+    assert "stop_failure_cause_claim=UNVERIFIED" in summary
     assert "state=PASS" not in summary
 
 
@@ -165,6 +215,11 @@ def test_r83_verified_cleanup_may_have_no_cleanup_failure_stage(tmp_path: Path) 
             b"primary_failed_phase=WORKER_START", b"primary_failed_phase=STOP"
         ),
         _failed_receipt().replace(b"cleanup_failed_stage=RM", b"cleanup_failed_stage=PRUNE"),
+        _failed_receipt().replace(b"stop_failure_cause=NONE", b"stop_failure_cause=SECRET"),
+        _failed_receipt().replace(b"stop_failure_cause=NONE", b""),
+        _failed_receipt().replace(
+            b"stop_failure_cause=NONE", b"stop_failure_cause=NONE stop_failure_cause=NONE"
+        ),
         _failed_receipt().replace(b"failed_phase=CLEANUP", b"failed_phase=PREPARE"),
         _failed_receipt().replace(b"cleanup=INDETERMINATE", b"cleanup=UNKNOWN"),
         _failed_receipt().replace(
@@ -203,6 +258,9 @@ def test_r83_verified_cleanup_may_have_no_cleanup_failure_stage(tmp_path: Path) 
         "missing-historical-cleanup",
         "unknown-primary",
         "unknown-stage",
+        "unknown-stop-cause",
+        "missing-stop-cause",
+        "duplicate-stop-cause",
         "unknown-historical-phase",
         "unknown-historical-cleanup",
         "lowercase-primary",
@@ -228,6 +286,7 @@ def test_r83_missing_duplicate_malformed_or_unknown_receipt_is_all_unverified(
         "BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO host=UNVERIFIED "
         "phase_claim=UNVERIFIED cleanup_claim=UNVERIFIED "
         "primary_failed_phase_claim=UNVERIFIED cleanup_failed_stage_claim=UNVERIFIED "
+        "stop_failure_cause_claim=UNVERIFIED "
         "next=read_only_boca_inventory no_retry=1"
     ]
 
@@ -256,6 +315,7 @@ def test_r83_inconsistent_cleanup_evidence_must_not_be_credited(
     assert returncode == 1
     assert "phase_claim=UNVERIFIED cleanup_claim=UNVERIFIED" in summary
     assert "primary_failed_phase_claim=UNVERIFIED cleanup_failed_stage_claim=UNVERIFIED" in summary
+    assert "stop_failure_cause_claim=UNVERIFIED" in summary
     assert "no_retry=1" in summary
 
 
@@ -278,7 +338,7 @@ def test_r83_preserves_exact_success_receipt_without_new_claims(tmp_path: Path) 
 def test_r83_success_parser_reads_only_one_byte_past_expected_receipt() -> None:
     """Even a successful SSH process must not make parsing allocate unbounded bytes."""
     bash = _verifier_bash()
-    pass_body = bash.split('python3 - "$RUNNER_TEMP/boca-worker-preflight.receipt"', 1)[1]
+    pass_body = bash.split('python3 - "$receipt"', 1)[1]
     assert ".read_bytes()" not in pass_body
     assert re.search(r"\.open\(\s*['\"]rb['\"]\s*\)", pass_body)
     assert "len(expected.encode('ascii')) + 1" in pass_body

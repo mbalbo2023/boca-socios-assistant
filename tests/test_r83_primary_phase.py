@@ -384,6 +384,7 @@ def test_host_no_go_receipt_has_only_bounded_categorical_primary_and_cleanup(
     assert captured.err == ""
     assert captured.out == (
         "BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO failed_phase=CLEANUP "
-        "cleanup=INDETERMINATE primary_failed_phase=GHCR_PULL cleanup_failed_stage=PS\n"
+        "cleanup=INDETERMINATE primary_failed_phase=GHCR_PULL "
+        "cleanup_failed_stage=PS stop_failure_cause=NONE\n"
     )
     assert "injected" not in captured.out

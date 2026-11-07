@@ -162,7 +162,7 @@ jobs:
           uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
       - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
         run: |
-          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py tests/test_r82_exact_worker_807_recovery.py tests/test_r82_recovery_bundle.py tests/test_r82_recovery_dispatch.py tests/test_r82_recovery_workflow.py tests/test_r83_primary_phase.py tests/test_r83_cleanup_stages.py tests/test_r83_preflight_workflow.py tests/test_r83_bundle_caps.py tests/test_r84_worker_storage_admission.py tests/test_r84_worker_preflight_dispatch.py tests/test_r85_cutover_observe_provenance.py tests/test_r87_exact_worker_819_recovery.py tests/test_r87_recovery_bundle.py tests/test_r87_recovery_dispatch.py tests/test_r87_recovery_workflow.py
+          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py tests/test_r82_exact_worker_807_recovery.py tests/test_r82_recovery_bundle.py tests/test_r82_recovery_dispatch.py tests/test_r82_recovery_workflow.py tests/test_r83_primary_phase.py tests/test_r83_cleanup_stages.py tests/test_r83_preflight_workflow.py tests/test_r83_bundle_caps.py tests/test_r84_worker_storage_admission.py tests/test_r84_worker_preflight_dispatch.py tests/test_r85_cutover_observe_provenance.py tests/test_r87_exact_worker_819_recovery.py tests/test_r87_recovery_bundle.py tests/test_r87_recovery_dispatch.py tests/test_r87_recovery_workflow.py tests/test_r88_preflight_capture.py tests/test_r88_stop_diagnostics.py
           uv run pytest -q tests/test_r86_exact_worker_819_observer.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
       - name: Validate protected official notice artifact import offline only
@@ -2615,12 +2615,25 @@ jobs:
                             'cutover-worker-preflight', *sys.argv[2:]]))
           PY
           )"
-          timeout --signal=TERM --kill-after=5s 420s ssh \
-            -F "$RUNNER_TEMP/boca-ssh/config" \
-            -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
-            boca-target "$remote_command" \
-            < "$RUNNER_TEMP/boca-worker-preflight-review.pyz" \
-            > "$RUNNER_TEMP/boca-worker-preflight.receipt" 2>/dev/null
+          # Reuse R87's runner-only private capture: prevent a preplanted
+          # fixed-path link from receiving raw host stdout. Bound writes while
+          # SSH streams, not after a large receipt has already reached disk.
+          umask 077
+          preflight_dir="$(mktemp -d "$RUNNER_TEMP/boca-worker-preflight.XXXXXXXX")"
+          receipt="$preflight_dir/receipt"
+          : > "$receipt"
+          printf 'BOCA_PREFLIGHT_RECEIPT=%s\n' "$receipt" >> "$GITHUB_ENV"
+          preflight_rc=0
+          (
+            ulimit -f 8 || exit 99
+            timeout --signal=TERM --kill-after=5s 420s ssh \
+              -F "$RUNNER_TEMP/boca-ssh/config" \
+              -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+              boca-target "$remote_command" \
+              < "$RUNNER_TEMP/boca-worker-preflight-review.pyz" \
+              > "$receipt" 2>/dev/null
+          ) || preflight_rc=$?
+          if [[ "$preflight_rc" -ne 0 ]]; then exit 1; fi
       - name: Require exact Boca rootless worker preflight receipt and bounded cleanup
         if: ${{ always() && inputs.operation == 'cutover-a-worker-preflight' }}
         env:
@@ -2628,6 +2641,25 @@ jobs:
           BOCA_PREFLIGHT_HOST_OUTCOME: ${{ steps.cutover_worker_preflight_host.outcome }}
         run: |
           set -euo pipefail
+          # The host step records a path only within a new exclusive private
+          # directory. Always unlink that receipt on both PASS and NO_GO; never
+          # trust a path outside the runner-owned narrow pattern or follow a
+          # symlink even if a previous step reports success.
+          receipt="${BOCA_PREFLIGHT_RECEIPT:-}"
+          # Bash `?` also matches `/` in [[ == pattern ]]; require an exact
+          # ASCII basename, with no slash, dot-dot or extra path component.
+          receipt_suffix="${receipt#"$RUNNER_TEMP"/}"
+          if [[ "$receipt" == "$RUNNER_TEMP"/"$receipt_suffix" &&
+                "$receipt_suffix" =~ ^boca-worker-preflight\.[A-Za-z0-9]{8}/receipt$ ]]; then
+            preflight_dir="${receipt%/receipt}"
+            if [[ -d "$preflight_dir" && ! -L "$preflight_dir" ]]; then
+              trap 'rm -f -- "$receipt"; rmdir -- "$preflight_dir"' EXIT
+            else
+              receipt=''
+            fi
+          else
+            receipt=''
+          fi
           if [[ "$BOCA_PREFLIGHT_HOST_OUTCOME" != success ]]; then
             if [[ "$BOCA_PREFLIGHT_DISPATCH_OUTCOME" != success ]]; then
               # A denied or skipped gate never reached SSH in this run.
@@ -2637,7 +2669,9 @@ jobs:
             fi
             # A CLI failure may still return a bounded diagnostic. Never trust
             # arbitrary stdout or mistake a claimed phase for an accepted ACK.
-            claim="$(python3 - "$RUNNER_TEMP/boca-worker-preflight.receipt" <<'PY'
+            claim='phase_claim=UNVERIFIED cleanup_claim=UNVERIFIED primary_failed_phase_claim=UNVERIFIED cleanup_failed_stage_claim=UNVERIFIED stop_failure_cause_claim=UNVERIFIED'
+            if [[ -n "$receipt" && -f "$receipt" && ! -L "$receipt" ]]; then
+              claim="$(python3 - "$receipt" <<'PY'
           import re
           import sys
           from pathlib import Path
@@ -2645,37 +2679,52 @@ jobs:
           try:
               with Path(sys.argv[1]).open('rb') as stream:
                   raw = stream.read(257)
-              assert 0 < len(raw) <= 256 and raw.endswith(b'\n')
+              if not (0 < len(raw) <= 256 and raw.endswith(b'\n')):
+                  raise ValueError('invalid size or termination')
               line = raw.decode('ascii')
               match = re.fullmatch(
                   r'BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO '
                   r'failed_phase=(ATTEST|GHCR_PULL|SECCOMP_ENTER|WORKER_CREATE|WORKER_START|WORKER_BOUNDARY|CLEANUP|UNVERIFIED) '
                   r'cleanup=(VERIFIED|INDETERMINATE|UNVERIFIED) '
                   r'primary_failed_phase=(NONE|ATTEST|GHCR_PULL|SECCOMP_ENTER|WORKER_CREATE|WORKER_START|WORKER_BOUNDARY|UNVERIFIED) '
-                  r'cleanup_failed_stage=(NONE|TEMP_SECCOMP|PS|INSPECT|OWNERSHIP|STOP|RM|POST_ID|LEGACY|UNVERIFIED)\n',
+                  r'cleanup_failed_stage=(NONE|TEMP_SECCOMP|PS|INSPECT|OWNERSHIP|STOP|RM|POST_ID|LEGACY|UNVERIFIED) '
+                  r'stop_failure_cause=(NONE|TIMEOUT|NONZERO|OSERROR|ACK_MISMATCH|UNVERIFIED)\n',
                   line,
               )
               if match:
-                  phase, cleanup, primary, stage = match.groups()
-                  assert (cleanup != 'VERIFIED' or stage == 'NONE')
-                  assert (cleanup != 'INDETERMINATE' or stage != 'NONE')
-                  assert (cleanup != 'INDETERMINATE' or phase == 'CLEANUP')
-                  assert (phase != 'CLEANUP' or cleanup == 'INDETERMINATE')
+                  phase, cleanup, primary, stage, cause = match.groups()
+                  if not (
+                      (cleanup != 'VERIFIED' or stage == 'NONE')
+                      and (cleanup != 'INDETERMINATE' or stage != 'NONE')
+                      and (cleanup != 'INDETERMINATE' or phase == 'CLEANUP')
+                      and (phase != 'CLEANUP' or cleanup == 'INDETERMINATE')
+                      and (stage == 'STOP') == (cause != 'NONE')
+                  ):
+                      raise ValueError('inconsistent cleanup claim')
                   print(f'phase_claim={phase} cleanup_claim={cleanup} '
-                        f'primary_failed_phase_claim={primary} cleanup_failed_stage_claim={stage}')
+                        f'primary_failed_phase_claim={primary} cleanup_failed_stage_claim={stage} '
+                        f'stop_failure_cause_claim={cause}')
               else:
                   print('phase_claim=UNVERIFIED cleanup_claim=UNVERIFIED '
-                        'primary_failed_phase_claim=UNVERIFIED cleanup_failed_stage_claim=UNVERIFIED')
-          except (OSError, UnicodeError, AssertionError):
+                        'primary_failed_phase_claim=UNVERIFIED cleanup_failed_stage_claim=UNVERIFIED '
+                        'stop_failure_cause_claim=UNVERIFIED')
+          except (OSError, UnicodeError, ValueError):
               print('phase_claim=UNVERIFIED cleanup_claim=UNVERIFIED '
-                    'primary_failed_phase_claim=UNVERIFIED cleanup_failed_stage_claim=UNVERIFIED')
+                    'primary_failed_phase_claim=UNVERIFIED cleanup_failed_stage_claim=UNVERIFIED '
+                    'stop_failure_cause_claim=UNVERIFIED')
           PY
           )"
+            fi
             printf 'BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO host=UNVERIFIED %s next=read_only_boca_inventory no_retry=1\n' "$claim" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          python3 - "$RUNNER_TEMP/boca-worker-preflight.receipt" "$BOCA_SOURCE_SHA" <<'PY'
+          if [[ -z "$receipt" || ! -f "$receipt" || -L "$receipt" ]]; then
+            printf 'BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO host=UNVERIFIED phase_claim=UNVERIFIED cleanup_claim=UNVERIFIED next=read_only_boca_inventory no_retry=1\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          python3 - "$receipt" "$BOCA_SOURCE_SHA" <<'PY'
           from pathlib import Path
+          import os
           import sys
 
           file, source = sys.argv[1:]
@@ -2685,11 +2734,20 @@ jobs:
               'original=RUNNING port=127.0.0.1:8443 ipc_worker=NOT_TESTED '
               'prepared_go=UNCONSUMED foreign=UNTOUCHED\n'
           )
-          with Path(file).open('rb') as stream:
-              raw = stream.read(len(expected.encode('ascii')) + 1)
-          if raw != expected.encode('ascii'):
-              raise SystemExit('Boca preflight failed exact receipt verification')
-          with open(__import__('os').environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as report:
+          try:
+              with Path(file).open('rb') as stream:
+                  raw = stream.read(len(expected.encode('ascii')) + 1)
+              if raw != expected.encode('ascii'):
+                  raise ValueError('invalid exact PASS receipt')
+          except (OSError, ValueError):
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as report:
+                  report.write(
+                      'BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO host=UNVERIFIED '
+                      'phase_claim=UNVERIFIED cleanup_claim=UNVERIFIED '
+                      'next=read_only_boca_inventory no_retry=1\n'
+                  )
+              raise SystemExit(1) from None
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as report:
               report.write(expected)
           PY
       - name: Observe original RUNNING singleton for cutover A without host effects

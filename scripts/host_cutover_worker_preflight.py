@@ -7,6 +7,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import sys
 import zipfile
 from collections.abc import Iterator
@@ -49,20 +50,26 @@ CLEANUP_STAGES = frozenset(
         "UNVERIFIED",
     }
 )
+STOP_FAILURE_CAUSES = frozenset(
+    {"NONE", "TIMEOUT", "NONZERO", "OSERROR", "ACK_MISMATCH", "UNVERIFIED"}
+)
 BOUNDARY_COMMAND = (
-    "import os,pathlib; "
-    "from pathlib import Path; "
-    "assert os.geteuid()==os.getegid()==10002; "
-    "root=Path('/sys/fs/cgroup'); "
-    "memory=int((root/'memory.max').read_text()); "
-    "pids=int((root/'pids.max').read_text()); "
-    "quota,period=map(int,(root/'cpu.max').read_text().split()); "
-    "assert 0<memory<=805306368 and 0<pids<=128 and 0<quota<=period; "
-    "status=dict(line.split(':',1) for line in Path('/proc/self/status').read_text().splitlines() if ':' in line); "
-    "assert int(status['NoNewPrivs'])==1 and int(status['Seccomp'])==2; "
-    "assert int(status['Seccomp_filters'])>=1; "
-    "assert os.listdir('/sys/class/net')==['lo']; "
-    "print('BOCA_CUTOVER_WORKER_BOUNDARY_PASS')"
+    "import os\n"
+    "from pathlib import Path\n"
+    "def require(condition):\n"
+    "    if not condition:\n"
+    "        raise SystemExit(3)\n"
+    "require(os.geteuid()==os.getegid()==10002)\n"
+    "root=Path('/sys/fs/cgroup')\n"
+    "memory=int((root/'memory.max').read_text())\n"
+    "pids=int((root/'pids.max').read_text())\n"
+    "quota,period=map(int,(root/'cpu.max').read_text().split())\n"
+    "require(0<memory<=805306368 and 0<pids<=128 and 0<quota<=period)\n"
+    "status=dict(line.split(':',1) for line in Path('/proc/self/status').read_text().splitlines() if ':' in line)\n"
+    "require(int(status['NoNewPrivs'])==1 and int(status['Seccomp'])==2)\n"
+    "require(int(status['Seccomp_filters'])>=1)\n"
+    "require(os.listdir('/sys/class/net')==['lo'])\n"
+    "print('BOCA_CUTOVER_WORKER_BOUNDARY_PASS')\n"
 )
 
 
@@ -77,8 +84,15 @@ class TempSeccompCleanupError(WorkerPreflightError):
 class CleanupStageError(WorkerPreflightError):
     """Bounded stage classification; no raw Docker output crosses the boundary."""
 
-    def __init__(self, stage: str) -> None:
+    def __init__(self, stage: str, *, stop_failure_cause: str = "UNVERIFIED") -> None:
         self.stage = stage if stage in CLEANUP_STAGES else "UNVERIFIED"
+        self.stop_failure_cause = "NONE"
+        if self.stage == "STOP":
+            self.stop_failure_cause = (
+                stop_failure_cause
+                if stop_failure_cause in STOP_FAILURE_CAUSES - {"NONE"}
+                else "UNVERIFIED"
+            )
         message = (
             "probe cleanup exact ownership unverified"
             if self.stage == "OWNERSHIP"
@@ -95,6 +109,7 @@ class PreflightFailure(WorkerPreflightError):
         *,
         primary_failed_phase: str = "UNVERIFIED",
         cleanup_failed_stage: str = "UNVERIFIED",
+        stop_failure_cause: str = "UNVERIFIED",
     ) -> None:
         super().__init__("bounded pre-Cutover probe failed")
         self.phase = phase if phase in PHASES else "UNVERIFIED"
@@ -105,6 +120,13 @@ class PreflightFailure(WorkerPreflightError):
         self.cleanup_failed_stage = (
             cleanup_failed_stage if cleanup_failed_stage in CLEANUP_STAGES else "UNVERIFIED"
         )
+        self.stop_failure_cause = "NONE"
+        if self.cleanup_failed_stage == "STOP":
+            self.stop_failure_cause = (
+                stop_failure_cause
+                if stop_failure_cause in STOP_FAILURE_CAUSES - {"NONE"}
+                else "UNVERIFIED"
+            )
 
 
 @dataclass(frozen=True)
@@ -310,8 +332,21 @@ def _probe_argv(pins: Coordinates, path: Path) -> tuple[str, ...]:
     )
 
 
+def _classify_stop_failure(exc: Exception) -> str:
+    """Categorize a lost stop receipt without emitting private Docker diagnostics."""
+    cause = exc.__cause__ if isinstance(exc, host.PreflightError) else exc
+    if isinstance(cause, subprocess.TimeoutExpired):
+        return "TIMEOUT"
+    if isinstance(cause, subprocess.CalledProcessError):
+        return "NONZERO"
+    if isinstance(cause, OSError):
+        return "OSERROR"
+    return "UNVERIFIED"
+
+
 def _cleanup_exact(pins: Coordinates, name: str) -> None:
     stage = "PS"
+    stop_failure_cause = "UNVERIFIED"
     try:
         container = _named_id(name)
         if container is None:
@@ -335,7 +370,13 @@ def _cleanup_exact(pins: Coordinates, name: str) -> None:
             raise WorkerPreflightError("probe cleanup exact ownership unverified")
         if state["Running"]:
             stage = "STOP"
-            if host._run("docker", "stop", "--time", "5", container, timeout=20) != container:
+            try:
+                stop_ack = host._run("docker", "stop", "--time", "5", container, timeout=20)
+            except (host.PreflightError, OSError) as exc:
+                stop_failure_cause = _classify_stop_failure(exc)
+                raise
+            if stop_ack != container:
+                stop_failure_cause = "ACK_MISMATCH"
                 raise WorkerPreflightError("probe exact container stop unverified")
         stage = "RM"
         if host._run("docker", "rm", container, timeout=20) != container:
@@ -351,7 +392,7 @@ def _cleanup_exact(pins: Coordinates, name: str) -> None:
         TypeError,
         KeyError,
     ) as exc:
-        raise CleanupStageError(stage) from exc
+        raise CleanupStageError(stage, stop_failure_cause=stop_failure_cause) from exc
 
 
 def execute(pins: Coordinates, profile: bytes) -> tuple[str, str]:
@@ -364,6 +405,7 @@ def execute(pins: Coordinates, profile: bytes) -> tuple[str, str]:
         failure: Exception | None = None
         primary_failed_phase = "NONE"
         cleanup_failed_stage = "NONE"
+        stop_failure_cause = "NONE"
         try:
             host._cutover_legacy_record(
                 pins.legacy_id,
@@ -452,6 +494,9 @@ def execute(pins: Coordinates, profile: bytes) -> tuple[str, str]:
                     cleanup_failed_stage = (
                         exc.stage if isinstance(exc, CleanupStageError) else "UNVERIFIED"
                     )
+                    stop_failure_cause = (
+                        exc.stop_failure_cause if isinstance(exc, CleanupStageError) else "NONE"
+                    )
             try:
                 host._cutover_legacy_record(
                     pins.legacy_id,
@@ -470,6 +515,7 @@ def execute(pins: Coordinates, profile: bytes) -> tuple[str, str]:
                     cleanup,
                     primary_failed_phase=primary_failed_phase,
                     cleanup_failed_stage=cleanup_failed_stage,
+                    stop_failure_cause=stop_failure_cause,
                 ) from None
         if failure is not None:
             raise PreflightFailure(
@@ -477,6 +523,7 @@ def execute(pins: Coordinates, profile: bytes) -> tuple[str, str]:
                 cleanup,
                 primary_failed_phase=primary_failed_phase,
                 cleanup_failed_stage=cleanup_failed_stage,
+                stop_failure_cause=stop_failure_cause,
             ) from None
     return phase, cleanup
 
@@ -486,7 +533,7 @@ def main(argv: list[str] | None = None) -> int:
     if len(arguments) != 8 or arguments[0] != "host":
         print(
             "BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO failed_phase=ATTEST cleanup=UNVERIFIED "
-            "primary_failed_phase=ATTEST cleanup_failed_stage=UNVERIFIED",
+            "primary_failed_phase=ATTEST cleanup_failed_stage=UNVERIFIED stop_failure_cause=NONE",
             flush=True,
         )
         return 3
@@ -497,7 +544,8 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO failed_phase={exc.phase} "
             f"cleanup={exc.cleanup} primary_failed_phase={exc.primary_failed_phase} "
-            f"cleanup_failed_stage={exc.cleanup_failed_stage}",
+            f"cleanup_failed_stage={exc.cleanup_failed_stage} "
+            f"stop_failure_cause={exc.stop_failure_cause}",
             flush=True,
         )
         return 3
@@ -512,7 +560,8 @@ def main(argv: list[str] | None = None) -> int:
     ):
         print(
             "BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO failed_phase=UNVERIFIED "
-            "cleanup=UNVERIFIED primary_failed_phase=UNVERIFIED cleanup_failed_stage=UNVERIFIED",
+            "cleanup=UNVERIFIED primary_failed_phase=UNVERIFIED "
+            "cleanup_failed_stage=UNVERIFIED stop_failure_cause=UNVERIFIED",
             flush=True,
         )
         return 3
