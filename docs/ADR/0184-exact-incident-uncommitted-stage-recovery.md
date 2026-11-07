@@ -363,3 +363,55 @@ retener Stage y devolver NO_GO. Un Stage saneado **no habilita** repetir el
 APPLY #770 ni consumir otra vez PREPARE #768: corresponde un futuro
 release/PREPARE/GO_B de `main` exacto. La limpieza de disco la ejecuta otro
 frente; aquí no hay Docker writes, cambios de umbral ni efectos físicos.
+
+## Extensión R62 — Cutover #778, disco ampliado y fase durable observable
+
+El droplet fue reiniciado/ampliado por un frente independiente. En Boca no
+se repitió limpieza. Release dual #704 (run `42309505084`) y PREPARE
+#776 (run `42309967399`) son `SUCCESS` para el
+`main=a8b577161288fe653fef65d3d5890f3661fb15d4`. El GO_B exacto
+protegido validó el digest
+`27c24d339110241992c23fbbc8d443957cdf146af37e4b300e2341594fe5a89f`
+en APPLY #778 (run `42317092809`), que terminó con salida SSH 3 y
+**sin** ACK `ACCEPTED`. No se repite #778.
+
+El READ_ONLY #779 (run `42317342897`) verificó: `stage=PRESENT`
+con `root_entries_count=2`/`STAGE_ROOT_ENTRIES`, intent/result durables,
+terminal `NO_GO`, cleanup `INDETERMINATE`, original restaurado,
+`commit_started=false`, cero candidato/worker y promoción ausente;
+único controller `27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793`
+`healthy` en `127.0.0.1:8443`; libre 39.770.513.408 B / 7.437.094
+inodos. `UNREADABLE/DIRECTORY` del marker es una verificación fallida
+del directorio **padre** mapeado del volumen, no prueba sobre el marker.
+
+| Rol Stage R62 | Run exacto | Verificación |
+| --- | --- | --- |
+| Cutover fallido #778 | `42317092809` | `failure` |
+| PREPARE #776 | `42309967399` | `success` |
+| READ_ONLY posterior #779 | `42317342897` | `success` |
+
+Cambio exclusivo de pins en `cutover-a-stage-recover`, conservando todos
+los checks preexistentes: actor/main/primer intento, mismo SHA entre
+tres runs, dos observaciones estables, identidad de Stage, marker,
+Compose inode/SHA, lease exclusivo, unlink exacto y ACK bajo una sola SSH.
+No cambiar el retiro histórico de imagen ni ejecutarlo: su intento
+#746 (run `42261978336`) ya falló sin ACK, el objeto permanece
+`retained_uncertain` y no puede ser eliminado por inferencia.
+
+El observer `host_cutover_postapply_reconcile.py` amplía su recibo
+READ_ONLY con `worker_id_recorded` y `candidate_id_recorded`:
+dos booleanos `true/false` (o `null` sin resultado) derivados de los
+IDs ya autenticados del resultado persistente. Distinguen si un worker y
+un candidato fueron **registrados antes de la compensación**; no dicen
+por qué falló una fase ni exponen IDs de contenedores. Regresión
+con resultados de fase 0/1/2, sin comandos Docker de escritura.
+Un resultado `false/false` acota el intervalo a staging/preparación
+de worker; `true/false` a posterior a worker y anterior a candidato;
+`true/true` a posterior a ambos. Ninguna de esas inferencias por sí
+sola demuestra el RCA de `exit 3`.
+
+Hasta SHA exacto CI verde, revisión técnica, merge y único ACK
+`STAGE_CLEARED`, esta modificación es CODE_ONLY. Tras sanear Stage,
+el nuevo Cutover requiere release+PREPARE+GO_B **nuevos** y diagnóstico
+del stopper funcional, no repetir #778. No afectar BLACKBOX,
+otros Docker/Porota, datos ni puerto 8443, ni ejecutar navegación real.

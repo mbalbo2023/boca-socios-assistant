@@ -542,6 +542,10 @@ def _host(run_id: str, prepared_id: str) -> dict[str, Any]:
         "result": "PRESENT" if result is not None else "ABSENT",
         "terminal_state": result["state"] if result is not None else "UNVERIFIED",
         "cleanup": result["cleanup"] if result is not None else "UNVERIFIED",
+        # Durable terminal slots identify the last completed phase without
+        # exposing transient Docker IDs or inferring a reason from final topology.
+        "worker_id_recorded": result["worker_id"] is not None if result is not None else None,
+        "candidate_id_recorded": result["candidate_id"] is not None if result is not None else None,
         "commit_started": result["irreversible_commit_started"] if result is not None else None,
         "original_restored": result["original_restored"] if result is not None else None,
         "legacy_id": legacy or None,
@@ -578,6 +582,21 @@ def verify_runner(raw: bytes, run_id: str, prepared_id: str) -> dict[str, Any]:
         or record.get("go_for_retry") is not False
         or record.get("runtime_attested") is not False
         or record.get("foreign_resources_touched") is not False
+        or (
+            record.get("result") == "PRESENT"
+            and (
+                type(record.get("worker_id_recorded")) is not bool
+                or type(record.get("candidate_id_recorded")) is not bool
+                or (record["candidate_id_recorded"] and not record["worker_id_recorded"])
+            )
+        )
+        or (
+            record.get("result") != "PRESENT"
+            and (
+                record.get("worker_id_recorded") is not None
+                or record.get("candidate_id_recorded") is not None
+            )
+        )
         or _canonical(record) + b"\n" != raw
     ):
         raise ReconcileError("RECEIPT_CONTRACT")
@@ -609,6 +628,8 @@ def main(argv: list[str] | None = None) -> int:
                 f" workers={len(result['browser_workers'])}"
                 f" port={result['port_8443']}"
                 f" marker={result['prepared_go_marker']}"
+                f" worker_phase={result['worker_id_recorded']}"
+                f" candidate_phase={result['candidate_id_recorded']}"
                 " scope=OBSERVER_ONLY observer_writes=0"
                 " prior_apply_effects=UNKNOWN retry=NO_GO"
             )
