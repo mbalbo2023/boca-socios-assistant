@@ -122,6 +122,7 @@ def test_cutover_single_lease_order_and_accepted_only_after_cleanup() -> None:
     host = FakeHost()
     result = cutover.run_cutover_a(_plan(), backend=host)
     assert result.accepted and result.state == "ACCEPTED"
+    assert result.failed_phase == "NONE"
     assert result.irreversible_commit_started and not result.original_restored
     assert host.events == [
         "attest",
@@ -145,6 +146,19 @@ def test_precommit_failure_recovers_before_selective_postflight(failure: str) ->
     receipt = cutover.run_cutover_a(_plan(), backend=host)
     assert receipt.state == "RECOVERED" and not receipt.accepted
     assert not receipt.irreversible_commit_started
+    assert (
+        receipt.failed_phase
+        == {
+            "stage": "STAGE",
+            "worker": "PREPARE_WORKER",
+            "bad_worker": "PREPARE_WORKER",
+            "park": "PARK_ORIGINAL",
+            "bootstrap": "BOOTSTRAP_SESSION",
+            "activate": "ACTIVATE_CANDIDATE",
+            "bad_candidate": "ACTIVATE_CANDIDATE",
+            "accept": "ACCEPT_CANDIDATE",
+        }[failure]
+    )
     assert host.events[-2:] == ["recover", "finalize"]
     if failure == "bootstrap":
         assert host.events.index("park") < host.events.index("bootstrap")
@@ -161,6 +175,7 @@ def test_irreversible_retirement_receipt_loss_never_restarts_original() -> None:
     host = FakeHost(failure="retire")
     receipt = cutover.run_cutover_a(_plan(), backend=host)
     assert receipt.state == "NO_GO" and receipt.irreversible_commit_started
+    assert receipt.failed_phase == "RETIRE_ORIGINAL"
     assert "recover" not in host.events
     assert host.events[-1] == "finalize"
 
@@ -183,12 +198,14 @@ def test_successful_candidate_requires_positive_cleanup(cleanup: str) -> None:
     host = FakeHost(cleanup_result=cleanup)
     receipt = cutover.run_cutover_a(_plan(), backend=host)
     assert not receipt.accepted and receipt.state == "NO_GO"
+    assert receipt.failed_phase == "FINALIZE"
 
 
 def test_postflight_failure_is_no_go_without_restart() -> None:
     host = FakeHost(failure="finalize")
     receipt = cutover.run_cutover_a(_plan(), backend=host)
     assert receipt.state == "NO_GO" and receipt.cleanup == "NO_GO"
+    assert receipt.failed_phase == "FINALIZE"
     assert "recover" not in host.events
 
 
@@ -196,6 +213,7 @@ def test_attestation_failure_has_no_staging_recovery_or_cleanup() -> None:
     host = FakeHost(failure="attest")
     receipt = cutover.run_cutover_a(_plan(), backend=host)
     assert receipt.state == "NO_GO"
+    assert receipt.failed_phase == "ATTEST_ORIGINAL"
     assert host.events == ["attest"]
 
 
@@ -279,4 +297,5 @@ def test_prepared_go_missing_or_failing_consumer_never_stages() -> None:
         ),
     )
     assert not failed.accepted
+    assert failed.failed_phase == "CONSUME_PREPARE"
     assert host.events == ["attest"]

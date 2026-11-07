@@ -525,6 +525,46 @@ def test_failed_ssh_diagnostic_is_redacted_and_never_accepts_host(
     assert "state=ACCEPTED" not in receipt and "SECRET" not in receipt
 
 
+@pytest.mark.parametrize(
+    ("phase_line", "expected_phase", "expected_claim"),
+    [
+        (
+            "BOCA_CUTOVER_A_FAILURE_PHASE phase=STAGE\n",
+            "STAGE",
+            "NO_GO_RECORDED_UNVERIFIED",
+        ),
+        (
+            "BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n",
+            "PREPARE_WORKER",
+            "NO_GO_RECORDED_UNVERIFIED",
+        ),
+        ("BOCA_CUTOVER_A_FAILURE_PHASE phase=STAGE;PRIVATE\n", "UNVERIFIED", "NONE"),
+        ("BOCA_CUTOVER_A_FAILURE_PHASE phase=FAKE\n", "UNVERIFIED", "NONE"),
+    ],
+)
+def test_failed_ssh_allows_exact_phase_claim_without_promoting_host_acceptance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    phase_line: str,
+    expected_phase: str,
+    expected_claim: str,
+) -> None:
+    _request, env = _actions_fixture(tmp_path)
+    env["BOCA_CUTOVER_A_SSH_RC"] = "3"
+    remote = (
+        phase_line + "BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n"
+    ).encode("ascii")
+    _file(Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME, remote)
+    monkeypatch.setattr(os, "environ", env)
+    assert go.main(["--report-host-failure"]) == 0
+    output = capsys.readouterr().out
+    assert f"phase_claim={expected_phase}" in output
+    assert f"host_claim={expected_claim}" in output
+    assert "phase=UNVERIFIED host=UNVERIFIED terminal=UNVERIFIED" in output
+    assert "ACCEPTED" not in output and "PRIVATE" not in output
+
+
 def test_failed_ssh_diagnostic_rejects_zero_rc_and_no_operation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

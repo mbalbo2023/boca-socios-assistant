@@ -19,7 +19,7 @@ from typing import Any
 
 from boca_socios import host_boca_cutover_backend as backend
 from boca_socios import host_boca_cutover_receipt as terminal
-from boca_socios.host_boca_cutover import CutoverPlan, CutoverReceipt
+from boca_socios.host_boca_cutover import CUTOVER_FAILURE_PHASES, CutoverPlan, CutoverReceipt
 
 VERSION = "boca-cutover-a-host-invocation-v1"
 VERSION_PREPARED = "boca-cutover-a-host-invocation-v2"
@@ -215,6 +215,9 @@ def run_cli(
         if not receipt.accepted:
             if postflight:
                 print("BOCA_CUTOVER_A_POSTFLIGHT " + postflight)
+            # A bounded phase hint only; never an authenticated result.
+            if receipt.failed_phase in CUTOVER_FAILURE_PHASES:
+                print("BOCA_CUTOVER_A_FAILURE_PHASE phase=" + receipt.failed_phase)
             print("BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED")
             return 3
     except Exception:

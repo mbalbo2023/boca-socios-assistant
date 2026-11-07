@@ -24,7 +24,7 @@ from typing import Any
 import boca_protected_memfd_bootstrap as memfd
 
 from boca_socios.browser_release_manifest import validate_browser_manifest
-from boca_socios.host_boca_cutover import CutoverPlan
+from boca_socios.host_boca_cutover import CUTOVER_FAILURE_PHASES, CutoverPlan
 from boca_socios.host_boca_cutover_cli import CutoverCliError, CutoverInvocation, encode_invocation
 from boca_socios.prepared_go_runner import (
     PreparedGoError,
@@ -619,19 +619,30 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
     recorded = b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n"
     unverified = b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=UNVERIFIED runtime=UNVERIFIED\n"
     host_claim = "NONE"
-    if raw == recorded or (
-        raw.startswith(_POSTFLIGHT_PREFIX)
-        and raw.count(b"\n") == 2
-        and raw.endswith(recorded)
-        and 0 < len(raw) <= 9000
-    ):
-        host_claim = "NO_GO_RECORDED_UNVERIFIED"
+    phase_claim = "UNVERIFIED"
+    if raw.endswith(recorded):
+        prefix = raw[: -len(recorded)]
+        # Postflight and phase are only bounded host claims, not physical ACK.
+        if prefix.startswith(_POSTFLIGHT_PREFIX):
+            postflight_line, separator, prefix = prefix.partition(b"\n")
+            if not separator or len(postflight_line) > 8000:
+                prefix = b"\x00"
+        if prefix == b"":
+            host_claim = "NO_GO_RECORDED_UNVERIFIED"
+        else:
+            match = re.fullmatch(rb"BOCA_CUTOVER_A_FAILURE_PHASE phase=([A-Z_]{2,32})\n", prefix)
+            if match is not None:
+                candidate = match.group(1).decode("ascii")
+                if candidate in CUTOVER_FAILURE_PHASES:
+                    phase_claim = candidate
+                    host_claim = "NO_GO_RECORDED_UNVERIFIED"
     elif raw == unverified:
         host_claim = "NO_GO_UNVERIFIED"
     transport = "TIMEOUT" if ssh_rc == 124 else "SSH_255" if ssh_rc == 255 else "EXIT_NONZERO"
     return (
         f"BOCA_CUTOVER_A_SSH_DIAGNOSTIC state=NO_GO ssh_rc={ssh_rc} "
-        f"transport={transport} host_claim={host_claim} phase=UNVERIFIED "
+        f"transport={transport} host_claim={host_claim} phase_claim={phase_claim} "
+        "phase=UNVERIFIED "
         "host=UNVERIFIED terminal=UNVERIFIED no_retry=true"
     )
 

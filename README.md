@@ -1,38 +1,39 @@
 # Boca Socios Assistant
 
-## Estado vigente A45-R68 — RCA y mejora de ingeniería de despliegue (06/11/2026 ART)
+## Estado vigente A45-R70 — RCA Cutover y ciclo de ingeniería (06/11/2026 ART)
 
-**main verificado:** `bb621e4474c0d7c75b417c3dd6e051888d9947ed` al abrir
-este trabajo. El Cutover A #778 continúa **NO_GO**: la BETA integral NO
-está instalada. El Stage temporal de #778 **ya fue recuperado físicamente**
-en la ejecución protegida
+**Código verificado:** PR [#413](https://github.com/mbalbo2023/boca-socios-assistant/pull/413)
+fusionado en `main=cc7f90d531df36d04b821d6e85cd1e7f56ba8559`.
+Sus cuatro pipelines PR pasaron y los controles post-merge
+[CI #42323067910](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42323067910)
+y [Security #42323067907](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42323067907)
+son GREEN. **La BETA NO está desplegada**: Cutover #778 terminó NO_GO
+sin recibo final ACCEPT. Stage #778 fue limpiado puntualmente en
 [#788](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42319964660)
-(ACK `STAGE_CLEARED`) y comprobado ausente mediante la observación
-independiente
+y observado ausente por
 [#789](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42320122399).
-El controlador legacy sigue sano en `127.0.0.1:8443`; espacio observado
-39,77 GB libres. Queda una imagen histórica Boca de procedencia aún
-INDETERMINADA; no se ha eliminado ni corresponde limpieza global.
+El controlador anterior sigue sano en `127.0.0.1:8443`; ~39,77 GB
+libres, sin repetir cleanup de otro frente.
 
-**RCA comprobado:** los Cutover #763/#770/#778 fallaron sin fase
-identificada. En #778 el CLI devolvió código 3, pero el runner ocultó la
-salida diagnóstica y el verificador posterior podía afirmar falsamente
-`host=untouched`. La causa **física** anterior al ACK sigue sin demostrar.
-La corrección candidata R68 instrumenta únicamente una clasificación
-sanitizada del fallo y corrige la semántica posterior a SSH; no cambia las
-garantías de GO, imagen exacta, lease, datos, singleton ni recepción ACCEPT.
-Hasta pruebas y merge, **es propuesta CODE_ONLY, no funciona aún en main**.
+**RCA comprobado:** el exit3 de Cutover #763/#770/#778 NO demuestra una
+falla de transporte SSH ni identifica su causa física. #413 informa
+`SSH_255/TIMEOUT/EXIT_NONZERO` y `host=UNVERIFIED` cuando falta el ACK.
+R70 propone tipificar también la **etapa reportada**, con vocabulario fijo
+y sin secretos: es solo diagnóstico, no recibo físico. GO, singleton,
+lease, imagen exacta y aceptación final siguen intactos. Se requiere
+un preflight rootless/worker reversible antes de intentar otro APPLY.
 
-**Eficiencia:** hay 63 PR OPEN, 57 DRAFT, 41 con base distinta de main
-(33 sobre una rama integral divergente). El PR #412 reconstruyó la imagen
-browser en cuatro workflows independientes; las validaciones ya son paralelas,
-pero sus builds son redundantes. Prioridad siguiente: reconciliar el backlog
-por diff vs main y agrupar builds verificados; publicar cambios multiarchivo
-en un solo commit, conservando las operaciones físicas serializadas.
-Evidencia/RCA: [#45 R67](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6699936387)
-y [#45 R68](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6700063353).
-La aprobación general del propietario sigue vigente; no repetir PREPARE ni
-APPLY mientras el diagnóstico P0 siga sin fase verificable.
+**Backlog (foto R69):** 59 PR abiertos, 56 DRAFT y 41 con base distinta
+de `main` (33 sobre rama integral divergente). #4, #302, #309 y #3
+se cerraron con motivos auditables, sin borrar sus ramas. #412 reconstruyó
+`Dockerfile.browser` en cuatro workflows paralelos (~295 s sumados de runner).
+Reducir esa redundancia exige benchmark de cache o artefactos inmutables,
+con aislamiento de confianza PR/main. La autorización general del titular
+sigue vigente. No tocar los dos módulos BLACKBOX, Porota ni otros servicios.
+
+Regla 84: [#45 R68](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6700063353),
+[#45 R69](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6700225904)
+y [ADR0184](docs/ADR/0184-exact-incident-uncommitted-stage-recovery.md).
 
 ## Histórico — R62 antes de recuperar físicamente Stage #778 (06/11/2026 ART; corte sustituido)
 
