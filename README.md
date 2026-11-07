@@ -1,5 +1,31 @@
 # Boca Socios Assistant
 
+## Estado A45-R78 — observación diferencial candidata (07/11/2026 ART)
+
+`main=0f5f0542364777a2926583f2c5dbd3fd25dfa31f` era la referencia al
+iniciar R78; **este párrafo no certifica el SHA actual ni un deploy nuevo**.
+El último diagnóstico físico verificado, [run #800](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42332735732),
+continuó en `READ_ONLY_NO_GO`: CID temporal candidato identificado, pero
+`docker inspect` del probe falló y la limpieza de #795 sigue indeterminada.
+El controlador anterior fue visto en loopback 8443 en ese momento; no se
+presupone que su estado siga igual.
+
+R78 propone **sólo** observar el mismo intento fallido mediante cuatro
+consultas rootless acotadas: nombre exacto, campos compactos del probe sin
+HEALTHCHECK, tamaño —nunca contenido— del inspect JSON completo y lectura
+independiente del controlador anterior. El diagnóstico siempre emite
+`READ_ONLY_NO_GO`, incluso si todas las consultas son exitosas; los límites
+de `stdout` y `stderr` se aplican durante el proceso. Un fixture de Docker
+sin iniciar verifica los formatos únicamente en un runner descartable de
+GitHub Actions. No hay permiso implícito para borrar, reintentar Cutover,
+acceder a otras aplicaciones o declarar la BETA instalada.
+
+Fuentes de trabajo: [issue #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417),
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6701580297)
+y [ADR0187](docs/ADR/0187-failed-worker-preflight-readonly-diagnosis.md).
+Los 85 issues abiertos requieren cierre individual contra evidencias; no
+equivalen a 85 implementaciones faltantes. Cero PR abiertos al comenzar R78.
+
 ## Estado físico A45-R77 — diferencial READ_ONLY posterior al recibo #798
 
 El diagnóstico [#798 / run 42331553991](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42331553991)

@@ -87,3 +87,61 @@ La validación del recibo es fail-closed y coherente por etapa. No toca los
 dos BLACKBOX, otras apps/daemons, puertos, SQLite ni contenedores. Se exige
 CI, revisión y merge antes de volver a observar; tras leer el nuevo recibo,
 ningún estado de este observador concede GO de Cutover físico.
+
+## R78 — Inspección diferencial contra el límite real de cleanup
+
+La evidencia R77 (run #42332735732) identifica el CID temporal por nombre
+exacto y muestra `probe_inspect=COMMAND_FAILED rc=1`, mientras que la lectura
+mínima de ID sí funcionó. La hipótesis de ausencia de HEALTHCHECK en un
+contenedor creado sin iniciar sigue siendo hipótesis, NO RCA. La ruta real de
+cleanup (`host_first_deploy._browser_inspect_record`) consume
+`docker inspect --format '{{json .}}'` y rechaza longitud `>=65536`; es
+distinta del template compacto anterior, por lo que su error no se puede
+inferir del rc=1 del observador.
+
+El diagnóstico R78 mantiene el mismo `cutover-a-worker-inspect` manual,
+siempre READ_ONLY y `cutover_authorized=false`, y limita cada observación a
+**cuatro consultas Docker de 12 segundos o menos**, bajo SSH 75s:
+
+1. Un `docker ps -a -q --no-trunc` filtrado por el nombre completo del único
+   intento #42329475083, sin listar otros contenedores.
+2. Por el CID candidato obtenido, `docker inspect --format` con las mismas
+   etiquetas y campos compactos, pero `health:null` constante. Se exige CID,
+   nombre, proyecto, intento, revisión exacta R72
+   `92624ed6b7e75c6010f59670c866df00a29766dd` y digest browser
+   `sha256:3894cfff995858d7c0ffdb994180a0d28a8a92bb69a0526fb040db2297fd8bf9`.
+3. Por el mismo CID, `docker inspect --format '{{len (json .)}}'`, de donde
+   sólo sale la banda `BELOW_CLEANUP_LIMIT` o `AT_OR_ABOVE_CLEANUP_LIMIT`
+   (o una categoría de error), nunca JSON, Env, Mounts ni stderr.
+4. `docker inspect` compacto por CID exacto del controlador legacy, separado
+   de los errores del temporal y con identidad, health y loopback 8443.
+
+El recibo canónico v3 conserva los campos de seguridad de R77, reemplaza las
+consultas básicas repetidas por el estado de tamaño y permite distinguir:
+template incompatible, metadatos muy grandes, pins/labels distintos o falla
+Docker aún indeterminada. `PRESENT_PIN_MATCH` significa **sólo coincidencia de
+identidad compacta**, NO prueba de aislamiento completo, autorización de
+stop/rm, cleanup ni Cutover. El resultado positivo de una consulta no limpia
+un artefacto; ningún recurso del host se modifica. El controlador legacy se
+inspecciona independientemente y, si no se verifica, permanece UNVERIFIED.
+
+Prueba de integración de formato: `CI / image-build` crea y elimina por CID
+exacto un contenedor descartable, **sin arrancarlo**, en el runner efímero
+de GitHub Actions para comprobar realmente los dos templates de Docker;
+no usa el daemon del droplet. La evidencia exacta de los checks y cualquier
+recibo físico posterior se vincula en #45/#417, sin describirlos como hechos
+antes de que existan.
+
+### R78 — Corrección independiente solicitada por QA
+
+La revisión de QA detectó que el observador anterior comprobaba el tamaño de
+`stdout` después de que `subprocess.run(capture_output=True)` hubiera
+acumulado una cantidad arbitraria de datos. El `stderr` tampoco estaba acotado.
+Se corrigió la causa **antes del PR**: la función `_docker` usa `Popen` con
+lectura no bloqueante de ambos pipes y un máximo de **2048 bytes por stream**,
+durante la ejecución y dentro del límite total de 12 segundos por comando.
+En exceso o timeout mata y espera al subproceso, descarta el contenido y
+conserva sólo un estado categórico. No almacena ni imprime `stderr`. Las
+regresiones usan procesos descartables locales que emiten `stdout` progresivo,
+`stderr` voluminoso y caracteres UTF-8 multibyte. No son pruebas del daemon
+del droplet ni acreditan limpieza física.

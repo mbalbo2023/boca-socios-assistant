@@ -106,6 +106,50 @@ jobs:
         run: docker build --tag boca-socios-ci:${{ github.sha }} .
       - name: Build isolated Chromium worker without deploying
         run: docker build --file Dockerfile.browser --tag boca-browser-ci:${{ github.sha }} .
+      - name: Prove healthless worker inspect formats on disposable runner Docker
+        env:
+          BOCA_BROWSER_TAG: boca-browser-ci:${{ github.sha }}
+          BOCA_DOCKER_FIXTURE_NAME: boca-r78-inspect-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          # GitHub-hosted runner only: the container is NEVER started. Its
+          # exact CID is removed by this same step, including on failures.
+          fixture_id=""
+          cleanup_fixture() {
+            if [[ -n "$fixture_id" ]]; then
+              docker container rm "$fixture_id" > /dev/null
+            fi
+          }
+          trap cleanup_fixture EXIT
+          fixture_id="$(docker create --no-healthcheck --network none \
+            --name "$BOCA_DOCKER_FIXTURE_NAME" \
+            --label com.docker.compose.project=boca-socios \
+            --label boca.socios.cutover-preflight-attempt=42329475083 \
+            --label org.opencontainers.image.revision=92624ed6b7e75c6010f59670c866df00a29766dd \
+            "$BOCA_BROWSER_TAG")"
+          python3 - "$fixture_id" <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          from scripts import host_cutover_worker_inspect as observer
+
+          cid = sys.argv[1]
+          compact = subprocess.run(
+              ("docker", "inspect", "--format", observer.INSPECT_NO_HEALTH, cid),
+              check=True, capture_output=True, text=True, timeout=12,
+          ).stdout.strip()
+          record = json.loads(compact)
+          assert record["id"] == cid and record["health"] is None
+          assert record["project"] == "boca-socios"
+          assert record["attempt"] == "42329475083"
+          size = subprocess.run(
+              ("docker", "inspect", "--format", observer.INSPECT_FULL_JSON_LENGTH, cid),
+              check=True, capture_output=True, text=True, timeout=12,
+          ).stdout.strip()
+          assert size.isdecimal() and 0 < int(size) < 10**9
+          print("BOCA_WORKER_DOCKER_TEMPLATE state=PASS health=ABSENT observer_writes=0 inspect_json=REDACTED")
+          PY
       - name: Measure one offline Chromium startup under resource caps
         run: >-
           docker run --rm --init --network none --cgroupns=private --read-only
