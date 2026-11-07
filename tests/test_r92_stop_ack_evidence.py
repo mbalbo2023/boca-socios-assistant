@@ -45,7 +45,7 @@ def test_r92_ambiguous_stop_stdout_has_typed_evidence_and_no_rm(
     def fake_docker(*args: str, **kwargs: Any) -> str:
         if args[:2] != ("docker", "stop"):
             return real_docker(*args, **kwargs)
-        assert args == ("docker", "stop", "--time", "5", CID)
+        assert args == ("docker", "stop", "-t", "5", CID)
         assert kwargs.get("timeout") == 20
         rig.calls.append(args)
         rig.stop_attempts += 1
@@ -90,7 +90,7 @@ def test_r92_invalid_stdout_encoding_is_unverified_and_does_not_remove(
     def fake_docker(*args: str, **kwargs: Any) -> str:
         if args[:2] != ("docker", "stop"):
             return real_docker(*args, **kwargs)
-        assert args == ("docker", "stop", "--time", "5", CID)
+        assert args == ("docker", "stop", "-t", "5", CID)
         rig.stop_attempts += 1
         raise UnicodeDecodeError("utf-8", b"\xffPRIVATE", 0, 1, "bad encoding")
 

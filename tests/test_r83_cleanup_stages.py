@@ -153,7 +153,7 @@ class CleanupRig:
         if action == "stop":
             self.stop_attempts += 1
             assert self.present and self.running
-            assert args == ("docker", "stop", "--time", "5", CID)
+            assert args == ("docker", "stop", "-t", "5", CID)
             if self.failure == "STOP":
                 raise probe.host.PreflightError(PRIVATE)
             self.running = False
@@ -187,7 +187,7 @@ def test_cleanup_failure_preserves_exact_stage_without_fabricating_primary_failu
     assert PRIVATE not in str(failure)
     assert rig.rm_attempts <= 1 and rig.stop_attempts <= 1
     assert rig.calls.count(("docker", "rm", CID)) <= 1
-    assert rig.calls.count(("docker", "stop", "--time", "5", CID)) <= 1
+    assert rig.calls.count(("docker", "stop", "-t", "5", CID)) <= 1
     if stage in {"PS", "INSPECT", "OWNERSHIP", "STOP"}:
         assert rig.rm_attempts == 0
 

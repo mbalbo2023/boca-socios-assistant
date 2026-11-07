@@ -1,42 +1,21 @@
 # Safe operations — verified evidence and gated procedures
 
-## A45-R94 — recuperación selectiva stopped-only del residuo #834 (07/11/2026 ART)
+## A45-R95 — STOP Docker compatible, nuevo preflight todavía NO_GO (07/11/2026 ART)
 
-El inspector físico [#836](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42376876875)
-terminó **SUCCESS/READ_ONLY_NO_GO**: el contenedor temporal CID completo
-`b2312004b4fc4e789fb58ce0c40eb2dc14ab132150d0da420657c4d29ef326d3`
-quedó **detenido** y coincide con los pins del intento #834; seccomp
-temporal `ABSENT`, controller original `RUNNING_HEALTHY` en loopback 8443,
-`observer_writes=0` y recursos ajenos intactos. No hubo limpieza ni deploy.
-La release dual histórica R92 [#741](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42374319918)
-fue SUCCESS en `79da7ebe9918d98216ac7eb46ff008d7f6e62429`.
+La recuperación física **R94 ya finalizó** en [Action #839](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42379062317)
+(`main=24417e457a93887a1def955aa2a283eff64c170a`, PR0, CI/Security
+postmerge GREEN). Su recibo y artefacto `13576344307` acreditan
+`BOCA_WORKER_RECOVERY state=CLEANED cleanup=VERIFIED`, probe #834 ausente,
+legacy `RUNNING_HEALTHY`, puerto local `127.0.0.1:8443` y `foreign=UNTOUCHED`.
+**No repetir #834, #836 ni #839.** No hubo Cutover, GO_B ni BETA integral.
 
-**Estado del procedimiento R94: CODE_ONLY hasta QA/Arquitectura/Infra 3/3,
-PR y Actions GREEN, merge, checks postmerge, PR0 y comprobación del SHA exacto.
-Nunca despachar una operación física desde código no revisado.**
-
-Cuando esas barreras estén acreditadas, la única operación recuperadora
-posible en [Boca first deploy](https://github.com/mbalbo2023/boca-socios-assistant/actions/workflows/boca-first-deploy.yml)
-es la siguiente; el CID no se carga ni se elige desde el formulario:
-
-| Campo | Valor exacto R94 |
-| --- | --- |
-| Rama | `main`, HEAD revisado |
-| `operation` | `cutover-a-worker-recover-834` |
-| `service` | `controller` |
-| `resource_budget` | `1.5cpu-1024m-192pids` |
-| Todos los otros campos, incluido `protected_action_context`, source, releases, imágenes, legacy, envelopes y secretos | **Vacíos** |
-
-El gate pre-SSH verifica fallo #834, observador #836, release #741, los
-158 pasos exactos de ambos jobs, actor/primer intento, main vigente, PR0
-y un único título `BOCA-R94-WORKER-834-RECOVER-ONCE` a través de todos los SHA.
-La ejecución acota el host al rootless Boca UID10001 y al CID fijo; exige
-dos observaciones y dos inspect completos bajo lease, huella seccomp binaria,
-`docker container rm` único **sin `--force`, sin STOP**, ACK exacto, CID
-ausente y controller legacy sano. Sólo `CLEANED cleanup=VERIFIED` con
-artifact autenticado acredita el retiro. Si falta evidencia, `NO_GO` o
-`INDETERMINATE`, sin repetir ese run ni intentar Cutover/GO_B/Telegram.
-Consultar [ADR0203](ADR/0203-r94-worker-834-stopped-only-recovery.md).
+R95 es una corrección de código **aún sin operación física**: sustituye sólo
+la opción de timeout de Docker STOP `--time 5` por `-t 5`. El stdout exacto
+de #834 y la versión CLI del host no están demostrados; esta hipótesis de
+compatibilidad **no cierra la RCA**. Se mantiene un STOP de un CID completo,
+gracia de cinco segundos, deadline de 20 segundos, ACK exactamente igual al
+CID64 y cero RM ante cualquier salida indeterminada. Nueva regresión R95
+incluida en el gate protegido First Deploy; ver [ADR0204](ADR/0204-r95-portable-docker-stop-flag.md).
 
 ### Worker preflight — checklist vigente, `NO_GO` hasta nuevo consenso
 
@@ -57,6 +36,47 @@ sin reintento de esa fuente. La opción `cutover-a-apply` de **PREPARE**
 para GO_B sigue **separada**, con esas ocho coordenadas vacías y su propio
 control, sin autorización por preflight o recovery. No ejecutar sin nuevo
 GO físico explícito; véase guía histórica más detallada y ADR0198.
+
+---
+
+## Histórico A45-R94 — recuperación selectiva stopped-only #834 ejecutada (07/11/2026 ART)
+
+El inspector físico [#836](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42376876875)
+terminó **SUCCESS/READ_ONLY_NO_GO**: el contenedor temporal CID completo
+`b2312004b4fc4e789fb58ce0c40eb2dc14ab132150d0da420657c4d29ef326d3`
+quedó **detenido** y coincide con los pins del intento #834; seccomp
+temporal `ABSENT`, controller original `RUNNING_HEALTHY` en loopback 8443,
+`observer_writes=0` y recursos ajenos intactos. En #836 no hubo limpieza ni deploy.
+La release dual histórica R92 [#741](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42374319918)
+fue SUCCESS en `79da7ebe9918d98216ac7eb46ff008d7f6e62429`.
+
+**Resultado posterior:** QA/Arquitectura/Infra 3/3 GO, PR #436 fusionado,
+4/4 checks de PR y 2/2 postmerge GREEN, PR0. La única [Action #839](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42379062317)
+retiró únicamente el probe #834 detenido: `CLEANED cleanup=VERIFIED`, legacy
+saludable y recursos ajenos intactos. **Esta operación no se repite.**
+
+El siguiente formulario es histórico de #839 y **NO se debe volver a
+despachar**. El CID no se cargó ni eligió desde el formulario:
+
+| Campo | Valor exacto R94 |
+| --- | --- |
+| Rama | `main`, HEAD revisado |
+| `operation` | `cutover-a-worker-recover-834` |
+| `service` | `controller` |
+| `resource_budget` | `1.5cpu-1024m-192pids` |
+| Todos los otros campos, incluido `protected_action_context`, source, releases, imágenes, legacy, envelopes y secretos | **Vacíos** |
+
+El gate pre-SSH verifica fallo #834, observador #836, release #741, los
+158 pasos exactos de ambos jobs, actor/primer intento, main vigente, PR0
+y un único título `BOCA-R94-WORKER-834-RECOVER-ONCE` a través de todos los SHA.
+La ejecución acota el host al rootless Boca UID10001 y al CID fijo; exige
+dos observaciones y dos inspect completos bajo lease, huella seccomp binaria,
+`docker container rm` único **sin `--force`, sin STOP**, ACK exacto, CID
+ausente y controller legacy sano. Sólo `CLEANED cleanup=VERIFIED` con
+artifact autenticado acredita el retiro, y #839 lo cumplió. Cualquier otro
+resultado habría sido `NO_GO` o `INDETERMINATE`, sin repetir ni intentar
+Cutover/GO_B/Telegram.
+Consultar [ADR0203](ADR/0203-r94-worker-834-stopped-only-recovery.md).
 
 ---
 
@@ -137,7 +157,7 @@ lease, un `docker container rm` sin force, ACK exacto y postcheck legacy.
 Sin `CLEANED cleanup=VERIFIED` **no repetir** ni efectuar Cutover, PREPARE,
 GO_B o APPLY; registrar resultado indeterminado y observar sin efectos.
 
-### Worker preflight — checklist vigente, despacho actualmente NO_GO
+### Worker preflight — checklist histórico R91, no utilizar para nuevos despachos
 
 **No ejecutar `cutover-a-worker-preflight` todavía**: primero recuperación
 R91 con recibo VERIFIED, RCA y nueva revisión QA/Arquitectura/Infra, release

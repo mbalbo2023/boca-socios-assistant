@@ -39,7 +39,7 @@ def _prepare_stop_case(
     def docker(*args: str, **kwargs: Any) -> str:
         if args[:2] != ("docker", "stop"):
             return real_docker(*args, **kwargs)
-        assert args == ("docker", "stop", "--time", "5", CID)
+        assert args == ("docker", "stop", "-t", "5", CID)
         assert kwargs.get("timeout") == 20
         rig.calls.append(args)
         rig.stop_attempts += 1

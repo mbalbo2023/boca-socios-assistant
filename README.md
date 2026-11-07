@@ -1,17 +1,42 @@
 # Boca Socios Assistant
 
-## A45-R94 — recovery exacto del #834 detenido, sólo CODE_ONLY (07/11/2026 ART)
+## A45-R95 — compatibilidad STOP Docker, sólo CODE_ONLY (07/11/2026 ART)
+
+**R94 ya fue recuperado físicamente y no debe repetirse.** El PR
+[#436](https://github.com/mbalbo2023/boca-socios-assistant/pull/436) quedó
+fusionado en `main=24417e457a93887a1def955aa2a283eff64c170a`, con
+PR0, cuatro verificaciones PR GREEN y CI/Security postmerge GREEN. La única
+Action [#839](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42379062317)
+devolvió `BOCA_WORKER_RECOVERY state=CLEANED cleanup=VERIFIED` para el probe
+detenido #834; legacy `RUNNING_HEALTHY`, puerto local 8443 y
+`foreign=UNTOUCHED`. Artefacto `boca-worker-recovery-42375050546`,
+ID `13576344307`, digest ZIP
+`f0ea16f5c901854ef43e47f30c0edc5a8ac607a7ebbaeeb9eb30cd7ab0dfa28a`.
+
+R95 propone cambiar sólo el argumento Docker STOP `--time 5` por `-t 5`,
+manteniendo ACK idéntico al CID completo, cero RM ante respuesta inesperada,
+un STOP y NO_RETRY. La causa física de `ACK_MULTILINE` aún no se demostró.
+La nueva regresión está seleccionada en First Deploy CI. **Ningún nuevo
+preflight/Cutover/GO_B/BETA integral/Telegram está ejecutado o autorizado
+por esa corrección de código:** exige PR/4 checks/merge/2 postmerge/PR0,
+release dual nueva, evidencia fresca y evaluación técnica independiente.
+[ADR0204](docs/ADR/0204-r95-portable-docker-stop-flag.md).
+
+---
+
+## Histórico A45-R94 — recovery exacto del #834 ejecutado (07/11/2026 ART)
 
 El único preflight R92 [#834](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42375050546)
 falló `CLEANUP/STOP/ACK_MULTILINE` y no ejecutó RM. La inspección
 [READ_ONLY #836](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42376876875)
 en `main=6e75c020001c7de00faad2fcecfa171ac22e361f` confirmó CID exacto
 `b2312004b4fc4e789fb58ce0c40eb2dc14ab132150d0da420657c4d29ef326d3`
-detenido, seccomp ausente y legacy saludable. R94 **propone** sólo un RM
+detenido, seccomp ausente y legacy saludable. R94 **diseñó** sólo un RM
 no forzado de ese CID, después de dos atestaciones completas y un gate
-GitHub/PR0/anti-replay; **todavía no hubo recuperación R94 ni instalación**.
-La hipótesis de `--time`/ACK es independiente; la corrección `-t` queda
-para R95. Sin retry del #834 ni GO para Cutover, BETA, Telegram o terceros.
+GitHub/PR0/anti-replay. Esa recuperación se **ejecutó exitosamente en #839**;
+no instaló la BETA integral. La hipótesis de `--time`/ACK es independiente;
+la corrección `-t` queda para R95. Sin retry del #834 ni GO para Cutover,
+BETA, Telegram o terceros.
 [ADR0203](docs/ADR/0203-r94-worker-834-stopped-only-recovery.md).
 
 ---

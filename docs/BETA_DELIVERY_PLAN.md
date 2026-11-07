@@ -1,6 +1,27 @@
 # Plan de entrega y aceptación de la BETA funcional
 
-## Corte A45-R94 — recuperación puntual #834 propuesta, BETA NO_GO (07/11/2026 ART)
+## Corte A45-R95 — cleanup R94 acreditado, preflight nuevo NO_GO (07/11/2026 ART)
+
+El PR [#436](https://github.com/mbalbo2023/boca-socios-assistant/pull/436)
+fue fusionado en `main=24417e457a93887a1def955aa2a283eff64c170a`:
+4/4 checks PR GREEN, 2/2 postmerge GREEN, PR0. La única [Action #839](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42379062317)
+acreditó `CLEANED cleanup=VERIFIED` del probe detenido #834, legado
+`RUNNING_HEALTHY` en loopback 8443 y `foreign=UNTOUCHED`. **No repetir #834,
+#836 ni #839**. La BETA integral, Cutover, PREPARE/GO_B/APPLY, aceptación
+Samsung y Telegram todavía **no están desplegados/NO_GO**.
+
+R95 corrige de manera prospectiva el argumento STOP `--time 5` → `-t 5`
+sin relajar el ACK exacto ni un solo control físico; sus pruebas entran
+obligatoriamente en First Deploy. La hipótesis de advertencia CLI **no es
+una RCA física confirmada**. Antes de un preflight nuevo se exigen revisión
+QA/Arquitectura/Infra 3/3, PR/4 checks, merge, CI/Security postmerge, PR0,
+release dual SHA exacto y nuevos datos de capacidad/legacy/probes; cada
+despacho consume el one-shot del SHA. [ADR0204](ADR/0204-r95-portable-docker-stop-flag.md)
+y [guía de operaciones](OPERATIONS.md).
+
+---
+
+## Histórico Corte A45-R94 — recuperación puntual #834 propuesta, BETA NO_GO (07/11/2026 ART)
 
 El preflight [#834](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42375050546)
 falló en `STOP/ACK_MULTILINE`, sin RM. El inventario protegido de solo
