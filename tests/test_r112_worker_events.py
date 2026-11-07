@@ -64,6 +64,7 @@ def test_event_summary_is_minimal_and_does_not_infer_oom(events, state, exit_cod
         "observer_writes": 0,
         "foreign_resources_touched": False,
         "retry_authorized": False,
+        "reason": None,
     }
     assert "MUST_NOT_LEAK" not in json.dumps(result)
     assert "a" * 64 not in json.dumps(result)
@@ -134,6 +135,7 @@ def test_socket_unverified_returns_unknown_and_does_not_run_docker():
         record = observer.observe_worker_events()
     bounded.assert_not_called()
     assert record["state"] == "INDETERMINATE"
+    assert record["reason"] == "SOCKET_UNVERIFIED"
 
 
 def test_docker_timeout_is_indeterminate_without_raw_errors():
@@ -144,7 +146,80 @@ def test_docker_timeout_is_indeterminate_without_raw_errors():
     ):
         record = observer.observe_worker_events()
     assert record["state"] == "INDETERMINATE"
+    assert record["reason"] == "TIMEOUT"
     assert "private" not in json.dumps(record)
+
+
+@pytest.mark.parametrize(
+    ("host_error", "expected_reason"),
+    [
+        (
+            subprocess.CalledProcessError(1, ["docker", "events"], stderr="PRIVATE"),
+            "DOCKER_COMMAND_FAILED",
+        ),
+        (OSError("PRIVATE"), "DOCKER_COMMAND_FAILED"),
+        (subprocess.TimeoutExpired(["docker", "events"], 12, stderr="PRIVATE"), "TIMEOUT"),
+    ],
+)
+def test_command_failures_have_closed_redacted_reason(host_error, expected_reason):
+    with (
+        patch.object(observer.os, "getuid", return_value=observer.UID),
+        patch.object(observer, "_runtime_stat", return_value="PRESENT_OWNED"),
+        patch.object(observer, "_run_bounded", side_effect=host_error),
+    ):
+        record = observer.observe_worker_events()
+    assert record["state"] == "INDETERMINATE"
+    assert record["reason"] == expected_reason
+    assert "PRIVATE" not in json.dumps(record)
+
+
+def test_malformed_docker_event_is_distinct_from_successful_empty_ring():
+    with (
+        patch.object(observer.os, "getuid", return_value=observer.UID),
+        patch.object(observer, "_runtime_stat", return_value="PRESENT_OWNED"),
+        patch.object(observer, "_run_bounded", return_value="SECRET malformed"),
+    ):
+        invalid = observer.observe_worker_events()
+    assert invalid["state"] == "INDETERMINATE"
+    assert invalid["reason"] == "DOCKER_OUTPUT_INVALID"
+    assert "SECRET" not in json.dumps(invalid)
+    assert observer.summarize_worker_events("")["reason"] is None
+
+
+def test_uid_wrong_prohibits_even_single_docker_query():
+    with (
+        patch.object(observer.os, "getuid", return_value=0),
+        patch.object(observer, "_runtime_stat") as socket,
+        patch.object(observer, "_run_bounded") as bounded,
+    ):
+        record = observer.observe_worker_events()
+    assert record["state"] == "INDETERMINATE"
+    assert record["reason"] == "UID_UNVERIFIED"
+    socket.assert_not_called()
+    bounded.assert_not_called()
+
+
+def test_reason_required_only_for_indeterminate_receipts():
+    assert observer._r112_empty_receipt()["reason"] is None
+    record = observer._r112_failed_receipt("SOCKET_UNVERIFIED")
+    assert observer.verify_worker_events(observer.canonical(record) + b"\n") == record
+    for reason in (None, "UNSAFE", "PRIVATE SECRET", [], {"private": "value"}):
+        with pytest.raises(observer.InspectError):
+            observer.verify_worker_events(observer.canonical({**record, "reason": reason}) + b"\n")
+    with pytest.raises(observer.InspectError):
+        observer.verify_worker_events(
+            observer.canonical({**observer._r112_empty_receipt(), "reason": "TIMEOUT"}) + b"\n"
+        )
+    for state in ("OBSERVED", "UNKNOWN", "AMBIGUOUS"):
+        clean = observer._r112_empty_receipt()
+        clean["state"] = state
+        if state == "OBSERVED":
+            clean["exit_code"] = 1
+        for reason in ("UNSAFE", "PRIVATE", "TIMEOUT"):
+            with pytest.raises(observer.InspectError):
+                observer.verify_worker_events(
+                    observer.canonical({**clean, "reason": reason}) + b"\n"
+                )
 
 
 def test_strict_receipt_canonical_and_no_extra_host_fields():
@@ -162,7 +237,7 @@ def test_strict_receipt_canonical_and_no_extra_host_fields():
 
 
 def test_indeterminate_receipt_fails_workflow_not_a_false_green():
-    wire = observer.canonical(observer._r112_failed_receipt()) + b"\n"
+    wire = observer.canonical(observer._r112_failed_receipt("DOCKER_COMMAND_FAILED")) + b"\n"
     result = subprocess.run(  # noqa: S603 - local, fixed parser only
         [sys.executable, "scripts/host_cutover_worker_inspect.py", "events-verify"],
         input=wire,
@@ -172,6 +247,7 @@ def test_indeterminate_receipt_fails_workflow_not_a_false_green():
     )
     assert result.returncode != 0
     assert b"state=INDETERMINATE" in result.stdout
+    assert b"reason=DOCKER_COMMAND_FAILED" in result.stdout
     assert b"retry=NO_GO cutover=NO_GO" in result.stdout
 
 

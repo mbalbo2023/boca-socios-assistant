@@ -66,3 +66,23 @@ timeout, socket, recibo canónico, identidad GitHub y wiring exacto del
 workflow. No se inspeccionaron ni ejecutaron `synthetic.py` o
 `ipc_worker.py`. El RCA #417 sólo podrá atribuir causa física cuando exista
 un recibo real nuevo de GitHub Actions; este ADR es diseño CODE_ONLY.
+
+## Extensión R113 — clasificación de observador INDETERMINATE
+
+El primer diagnóstico físico READ_ONLY [#42424149186](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42424149186)
+autenticó el incidente y completó el SSH sin error, pero el host emitió un
+recibo canónico `INDETERMINATE` y el verificador devolvió el error intencional
+3. **No fue** un fallo de canon/parseo del recibo en el runner ni un ring vacío
+(`UNKNOWN`); no hay evidencia aún de cuál condición de host falló. Su
+duración acotada hace el timeout menos probable, sin descartarlo como hecho.
+
+Para evitar otra investigación sin datos, el mismo observador añade un campo
+`reason` de enumeración cerrada: `UID_UNVERIFIED`, `SOCKET_UNVERIFIED`,
+`DOCKER_COMMAND_FAILED`, `DOCKER_OUTPUT_INVALID`, `TIMEOUT`. Sólo
+`INDETERMINATE` puede llevar uno; los demás estados exigen `reason=null`.
+El runner verifica esa combinación, publica únicamente el enum sanitizado,
+y mantiene exit 3/no GO en cualquier `INDETERMINATE`. Nunca publica stderr,
+evento Docker crudo, labels, IDs, información de otros proyectos ni cambia
+comandos, socket, ventana, permisos o efectos. Ningún nuevo dispatch se
+ejecutó al desarrollar esta extensión; el uso físico requerirá revisión
+independiente y el flujo GitHub ya aprobado, sin reintento ciego de Cutover.
