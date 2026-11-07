@@ -592,7 +592,10 @@ def verify_runner(raw: bytes, run_id: str, prepared_id: str) -> dict[str, Any]:
         )
         or (
             record.get("result") != "PRESENT"
-            and (record.get("worker_id_recorded") is not None or record.get("candidate_id_recorded") is not None)
+            and (
+                record.get("worker_id_recorded") is not None
+                or record.get("candidate_id_recorded") is not None
+            )
         )
         or _canonical(record) + b"\n" != raw
     ):
