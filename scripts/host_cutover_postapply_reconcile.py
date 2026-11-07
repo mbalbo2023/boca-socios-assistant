@@ -197,6 +197,11 @@ def _record(raw: bytes | None, run_id: str, *, kind: str) -> dict[str, Any] | No
             "CREATE",
             "START",
             "HEALTH",
+            "HEALTH_WAIT",
+            "HEALTH_EXITED",
+            "HEALTH_UNHEALTHY",
+            "HEALTH_TIMEOUT",
+            "HEALTH_POSTFLIGHT",
             "UNVERIFIED",
         }
         allowed_compensation = {"VERIFIED", "INDETERMINATE", "UNVERIFIED"}
