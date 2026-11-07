@@ -58,8 +58,10 @@ TDD: 43 nuevos casos RED antes de implementación, cubriendo 0/1/137,
 OOM YES/NO/UNKNOWN, bool-as-int, compensación VERIFIED/INDETERMINATE,
 recibo v3 persistente, parser estricto y no filtración. Los 185 casos de
 base pasaron antes del cambio; tras implementación 228 del conjunto focal
-pasaron. Pruebas de transporte 48 PASS; Ruff/Mypy/policy y suite completa
-deben verificarse en el SHA final antes de CI exacta, merge y uso físico.
+pasaron. Pruebas de transporte 48 PASS, y 63 PASS en la suite extendida que
+incluye el pin SHA-256 exacto del nuevo ZIP R114; el pin R110 anterior sigue
+guardado como dato histórico. Ruff/Mypy/policy y suite completa deben
+verificarse en el SHA final antes de CI exacta, merge y uso físico.
 Los dos módulos de navegación BLACKBOX permanecen excluidos e intocados.
 
 ## Límites de aceptación

@@ -77,6 +77,12 @@ R108_HISTORICAL_QUARANTINE_FULL_CUTOVER_SHA = (
 R110_HEALTH_DIAGNOSTIC_FULL_CUTOVER_SHA = (
     "4a2e770876434db1e3b6b1f74364da1296f129945220e49e0f9e76dd5525a08e"
 )
+# R114 adds only two typed Docker state fields, before compensating exited
+# worker, and adjusts the verified uncompressed bound; immutable ZIP bytes
+# therefore change. Preserve R110's historical digest above.
+R114_EXIT_EVIDENCE_FULL_CUTOVER_SHA = (
+    "3716ed03c841ec8a8adb7ab7809d32d23853a47c2733403921215edf10c25811"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -234,7 +240,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R110_HEALTH_DIAGNOSTIC_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R114_EXIT_EVIDENCE_FULL_CUTOVER_SHA
+    assert digest != R110_HEALTH_DIAGNOSTIC_FULL_CUTOVER_SHA
     assert digest != R108_HISTORICAL_QUARANTINE_FULL_CUTOVER_SHA
     assert digest != R104_COMBINED_DIAGNOSTIC_FULL_CUTOVER_SHA
     assert digest != R103_CLEANUP_INVENTORY_FULL_CUTOVER_SHA
