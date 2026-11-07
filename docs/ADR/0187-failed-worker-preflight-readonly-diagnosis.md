@@ -1,5 +1,11 @@
 # ADR 0187 — Diagnóstico de un preflight worker fallido sin efectos físicos
 
+**Actualización R86 (07/11/2026):** este ADR documenta el origen histórico
+#795 del inspector. Después de #807 y del nuevo fallo físico #819, el contrato
+exacto y exclusivamente READ_ONLY de este último incidente está en
+[ADR0195](0195-r86-worker-819-exact-readonly-inventory.md). Los intentos viejos
+conservan sus pins y sus recibos, pero no autorizan recuperación de #819.
+
 **Fecha:** 2026-11-06 ART. **Estado:** candidato CODE_ONLY hasta CI/merge y
 ejecución protegida; no equivale a aceptación BETA.
 

@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from scripts import host_cutover_worker_inspect as observer  # noqa: E402
 
 R81_ATTEMPT = "42341290485"
+R86_ATTEMPT = "42353468231"
 R81_SOURCE = "1199c46fee8053e637b220ad9365ce3af15eb8e5"
 R81_BROWSER = (
     "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
@@ -477,8 +478,8 @@ def _gate_env(attempt: str = R81_ATTEMPT, **changes: str) -> dict[str, str]:
     return values
 
 
-@pytest.mark.parametrize("attempt", [R78_ATTEMPT, R81_ATTEMPT])
-def test_workflow_shell_gate_accepts_only_two_protected_readonly_incidents(
+@pytest.mark.parametrize("attempt", [R78_ATTEMPT, R81_ATTEMPT, R86_ATTEMPT])
+def test_workflow_shell_gate_accepts_only_three_protected_readonly_incidents(
     attempt: str,
 ) -> None:
     result = subprocess.run(  # noqa: S603 - local bash evaluates isolated input gate only
@@ -496,6 +497,8 @@ def test_workflow_shell_gate_accepts_only_two_protected_readonly_incidents(
     "changes",
     [
         {"BOCA_PROTECTED_ACTION_CONTEXT": "42341290486"},
+        {"BOCA_PROTECTED_ACTION_CONTEXT": "42353468230"},
+        {"BOCA_PROTECTED_ACTION_CONTEXT": "42353468232"},
         {"BOCA_PROTECTED_ACTION_CONTEXT": "42341290485; echo UNAUTHORIZED"},
         {"BOCA_LEGACY_CONTROLLER_ID": "f" * 64},
         {"BOCA_LEGACY_SOURCE_SHA": "f" * 40},

@@ -1,6 +1,34 @@
 # Boca Socios Assistant
 
-## Corte documental A45-R85 — QA del observador antes del próximo Cutover (07/11/2026 ART)
+## Estado actual A45-R86 — #819 NO_GO, diagnóstico exclusivo de lectura (07/11/2026 ART)
+
+El [PR R85 #427](https://github.com/mbalbo2023/boca-socios-assistant/pull/427)
+fue fusionado en `main=0538b3fb29cc0245a8387b7023c394883d0ea9a8`, con
+CI y seguridad postmerge GREEN, cero PR abiertos y publicación dual protegida
+[#732 / 42352641660](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42352641660)
+SUCCESS. Las imágenes publicadas no equivalen a una instalación.
+
+El observador READ_ONLY [#818](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42353081082)
+terminó `READY`: controlador legacy original `RUNNING`, worker ausente,
+`effects=none` en ese instante. El **único preflight físico posterior**
+[#819](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42353468231)
+**falló** con `CLEANUP/INDETERMINATE`, `primary_failed_phase=NONE` y
+`cleanup_failed_stage=STOP`; el runner registró `host=UNVERIFIED`. El
+`docker rm` del probe temporal **no llegó a ejecutarse** después del STOP
+indeterminado. La salud y los residuos actuales **NO están verificados**:
+no repetir #819, no PREPARE, GO_B, APPLY ni eliminación Docker a ciegas.
+
+El candidato R86 extiende **sólo** el inspector protegido `cutover-a-worker-inspect`
+con los pins inmutables de #819, sin instalar imagen, activar navegador ni
+autorizar limpieza. Conserva el recibo `READ_ONLY_NO_GO` y refuerza la captura
+privada acotada del runner. Hasta PR/CI/revisión/merge y un Action de lectura
+exclusivo, **no existe inventario físico nuevo**. Referencias:
+[ADR0195](docs/ADR/0195-r86-worker-819-exact-readonly-inventory.md),
+[RCA #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417) y
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+La BETA integral y Telegram **no están instalados/aceptados**.
+
+## Histórico A45-R85 — QA del observador antes del próximo Cutover (07/11/2026 ART; sustituido)
 
 En GitHub, [PR #426](https://github.com/mbalbo2023/boca-socios-assistant/pull/426)
 quedó fusionado en `main=03a901d6a4415378ef581032a800bc431586d55b`,

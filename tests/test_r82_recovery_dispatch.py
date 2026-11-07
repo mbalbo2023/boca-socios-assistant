@@ -536,4 +536,8 @@ def test_r81_observer_success_step_still_runs_local_receipt_verifier() -> None:
     assert "if: inputs.operation == 'cutover-a-worker-inspect'" in body
     assert "< scripts/host_cutover_worker_inspect.py" in body
     assert "python3 scripts/host_cutover_worker_inspect.py verify" in body
-    assert '< "$RUNNER_TEMP/boca-worker-readonly-inspect.json"' in body
+    # R86 keeps the same local receipt verifier, now after bounded capture
+    # in a private unpredictable directory rather than a fixed runner file.
+    assert '< "$inspect_dir/receipt"' in body
+    assert "ulimit -f 4 || exit 99" in body
+    assert 'mktemp -d "$RUNNER_TEMP/boca-worker-readonly-inspect.' in body

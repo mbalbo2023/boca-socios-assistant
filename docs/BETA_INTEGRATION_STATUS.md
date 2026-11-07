@@ -1,6 +1,22 @@
 # Estado de integración BETA
 
-## Estado A45-R85 — observación protegida y arreglo prospectivo (07/11/2026 ART)
+## Estado A45-R86 — preflight #819 NO_GO y observador read-only candidato (07/11/2026 ART)
+
+| Frente | Evidencia verificable | Estado |
+| --- | --- | --- |
+| Código R85/main | [PR #427](https://github.com/mbalbo2023/boca-socios-assistant/pull/427) MERGED; `main=0538b3fb29cc0245a8387b7023c394883d0ea9a8`; CI y seguridad postmerge GREEN; PR0 | Código integrado, no equivale a Cutover |
+| Imagen dual | [Release #732](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42352641660) SUCCESS con manifests controller y browser del mismo SHA | Publicación; no instalación |
+| Observer #818 | [Run 42353081082](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42353081082): `READY original=RUNNING worker=absent effects=none` | Solo estado antes de #819 |
+| Preflight #819 | [Run 42353468231](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42353468231) FAILURE: `CLEANUP/INDETERMINATE`, `primary=NONE`, `stage=STOP`, `host=UNVERIFIED` | No retry; probe/seccomp/legacy actuales UNKNOWN |
+| R86 | Extensión exacta del inspector existente, ADR0195, tests y captura privada limitada | **CODE_ONLY, sin PR/merge/Action físico al redactar**; sólo `READ_ONLY_NO_GO` |
+| Cutover/Telegram/aceptación | Sin PREPARE/GO_B/APPLY/ACK nuevo ni aceptación Samsung de la BETA integral | **NO_GO**, preservar otros Docker y 8443 |
+
+Se requieren checks y revisión de R86, luego una sola observación protegida del
+intento #819. El resultado no convalida retrospectivamente su limpieza. No
+debe ejecutarse ninguna recuperación sin CID/estado exacto y aprobación
+independiente de un diseño acotado.
+
+## Histórico A45-R85 — observación protegida y arreglo prospectivo (07/11/2026 ART; sustituido)
 
 | Fase | Evidencia comprobada | Estado y límite |
 | --- | --- | --- |
