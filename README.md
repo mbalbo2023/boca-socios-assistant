@@ -1,6 +1,29 @@
 # Boca Socios Assistant
 
-## Estado A45-R82 — recuperación quirúrgica #807 CODE_ONLY (07/11/2026 ART)
+## Corte documental A45-R84 — corrección preventiva antes del Cutover (07/11/2026 ART)
+
+La recuperación protegida [#811 / 42344899979](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42344899979)
+**retiró solamente el worker detenido #807** y dejó el controller legacy
+sano en `127.0.0.1:8443`, sin tocar otros workloads. R83 fusionó
+[PR #425](https://github.com/mbalbo2023/boca-socios-assistant/pull/425)
+en `main=f709508c64c821a5452224fb4ce7bc23d5c909a7`, con diagnóstico
+dual para no ocultar la falla primaria por cleanup. La publicación protegida
+dual [#727 / 42347255399](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42347255399)
+terminó GREEN con dos manifests, **pero no instaló la BETA integral**.
+
+La revisión de Infra/QA/Arquitectura/CI detectó que ese preflight R83 omitía
+los límites de espacio e inodos aprobados para las dos imágenes. El diseño
+R84, **candidato CODE_ONLY en este corte pre-merge**, reutiliza el helper R50 de 4 GiB
+inicial, 1 GiB residual y 50.000 inodos en ambos filesystems, y exige
+un solo workflow_dispatch por SHA antes de SSH. No modifica GO_B ni el
+Cutover completo. Un nuevo SHA R84 requiere QA/PR/merge y **otra release
+dual propia**; #727 no puede reutilizarse como imagen de ese código.
+Sin observación/preflight físicos aprobados, **Cutover, PREPARE y APPLY
+siguen NO_GO**. Continuidad canónica [#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45),
+RCA [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417)
+y [ADR0193](docs/ADR/0193-r84-worker-storage-admission.md).
+
+## Histórico A45-R82 — recuperación quirúrgica #807 (07/11/2026 ART)
 
 El observador protegido R81 [#809 / 42342822240](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42342822240)
 acreditó por recibo canónico que el probe temporal exacto del preflight #807
@@ -21,7 +44,7 @@ imágenes, volúmenes o BLACKBOX. Véanse [ADR0191](docs/ADR/0191-r82-exact-stop
 [RCA #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417) y
 [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
 
-**R82 permanece CODE_ONLY hasta revisión, Actions y merge del SHA exacto.**
+**Este era el estado CODE_ONLY anterior al merge R82 y al recibo físico #811.**
 La aceptación física de BETA y GO_B siguen **NO_GO**.
 
 ## Histórico A45-R81 — #807 NO_GO físico antes de #809 (07/11/2026 ART)

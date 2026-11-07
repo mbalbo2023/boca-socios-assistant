@@ -97,7 +97,7 @@ class CleanupRig:
         monkeypatch.setattr(probe.host, "_cutover_legacy_record", self.legacy)
         monkeypatch.setattr(probe.host, "_browser_engine_version", lambda: "28.0.1")
         monkeypatch.setattr(probe.host, "_storage_snapshot", lambda: object())
-        monkeypatch.setattr(probe, "_pull_observing_capacity", lambda _pins: None)
+        monkeypatch.setattr(probe.host, "_browser_pull_both", lambda *_pins: None)
         monkeypatch.setattr(probe.host, "_browser_inspect_record", self.inspect)
         monkeypatch.setattr(
             probe.host, "_browser_effective_seccomp_options", lambda *_a, **_k: None
