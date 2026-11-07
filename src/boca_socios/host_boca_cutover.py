@@ -40,7 +40,21 @@ CutoverPhase = Literal[
 ]
 CUTOVER_FAILURE_PHASES: frozenset[str] = frozenset(get_args(CutoverPhase)) - {"NONE"}
 WORKER_PRIMARY_PHASES: frozenset[str] = frozenset(
-    {"ATTEST", "STORAGE", "PULL", "IPC", "CREATE", "START", "HEALTH", "UNVERIFIED"}
+    {
+        "ATTEST",
+        "STORAGE",
+        "PULL",
+        "IPC",
+        "CREATE",
+        "START",
+        "HEALTH",
+        "HEALTH_WAIT",
+        "HEALTH_EXITED",
+        "HEALTH_UNHEALTHY",
+        "HEALTH_TIMEOUT",
+        "HEALTH_POSTFLIGHT",
+        "UNVERIFIED",
+    }
 )
 WORKER_COMPENSATION_STATES: frozenset[str] = frozenset({"VERIFIED", "INDETERMINATE", "UNVERIFIED"})
 

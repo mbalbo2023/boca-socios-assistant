@@ -103,10 +103,11 @@ def _typed_result(**overrides: object) -> bytes:
     return reconcile._canonical(result)
 
 
-def test_typed_v2_terminal_is_accepted_by_shared_readonly_observer() -> None:
-    result = reconcile._record(_typed_result(), RUN, kind="result")
+@pytest.mark.parametrize("primary", ["CREATE", "HEALTH_UNHEALTHY"])
+def test_typed_v2_terminal_is_accepted_by_shared_readonly_observer(primary: str) -> None:
+    result = reconcile._record(_typed_result(worker_primary_phase=primary), RUN, kind="result")
     assert result is not None
-    assert result["worker_primary_phase"] == "CREATE"
+    assert result["worker_primary_phase"] == primary
     assert result["worker_compensation"] == "INDETERMINATE"
     assert reconcile._record(_result(), RUN, kind="result")["version"] == (
         "boca-cutover-a-terminal-v1"

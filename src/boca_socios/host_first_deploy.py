@@ -159,11 +159,35 @@ class PreflightError(ValueError):
     """First installation cannot proceed without an explicit new review."""
 
 
+class WorkerHealthPhaseError(PreflightError):
+    """Allowlisted worker health state; never expose raw Docker output."""
+
+    _PHASES = frozenset({"HEALTH_EXITED", "HEALTH_UNHEALTHY", "HEALTH_TIMEOUT"})
+
+    def __init__(self, phase: str) -> None:
+        self.phase = phase if phase in self._PHASES else "HEALTH_WAIT"
+        super().__init__("browser service health not verified")
+
+
 class CutoverWorkerPhaseError(PreflightError):
     """Finite subphase hint for a failed worker; never Docker error contents."""
 
     _PRIMARY = frozenset(
-        {"ATTEST", "STORAGE", "PULL", "IPC", "CREATE", "START", "HEALTH", "UNVERIFIED"}
+        {
+            "ATTEST",
+            "STORAGE",
+            "PULL",
+            "IPC",
+            "CREATE",
+            "START",
+            "HEALTH",
+            "HEALTH_WAIT",
+            "HEALTH_EXITED",
+            "HEALTH_UNHEALTHY",
+            "HEALTH_TIMEOUT",
+            "HEALTH_POSTFLIGHT",
+            "UNVERIFIED",
+        }
     )
     _COMPENSATION = frozenset({"NONE", "VERIFIED", "INDETERMINATE", "UNVERIFIED"})
 
@@ -5472,8 +5496,13 @@ def _cutover_prepare_worker(
         phase = "START"
         if _run("docker", "start", created, timeout=30) != created:
             raise PreflightError("cutover A worker start receipt invalid")
-        phase = "HEALTH"
-        _browser_wait_healthy(created)
+        phase = "HEALTH_WAIT"
+        try:
+            _browser_wait_healthy(created)
+        except WorkerHealthPhaseError as exc:
+            phase = exc.phase
+            raise
+        phase = "HEALTH_POSTFLIGHT"
         _browser_worker_postflight(
             created,
             browser_image,
@@ -6328,15 +6357,22 @@ def _browser_wait_healthy(container: str) -> None:
     while monotonic() < deadline:
         record = _browser_inspect_record(container)
         state = record.get("State")
-        if not isinstance(state, dict) or state.get("Running") is not True:
-            raise PreflightError("started browser service exited")
+        if not isinstance(state, dict) or type(state.get("Running")) is not bool:
+            raise WorkerHealthPhaseError("HEALTH_WAIT")
+        if state["Running"] is False:
+            raise WorkerHealthPhaseError("HEALTH_EXITED")
         health = state.get("Health")
-        if isinstance(health, dict) and health.get("Status") == "healthy":
+        if not isinstance(health, dict):
+            raise WorkerHealthPhaseError("HEALTH_WAIT")
+        status = health.get("Status")
+        if status == "healthy":
             return
-        if not isinstance(health, dict) or health.get("Status") != "starting":
-            raise PreflightError("started browser service health failed")
+        if status == "unhealthy":
+            raise WorkerHealthPhaseError("HEALTH_UNHEALTHY")
+        if status != "starting":
+            raise WorkerHealthPhaseError("HEALTH_WAIT")
         sleep(0.5)
-    raise PreflightError("started browser service health deadline expired")
+    raise WorkerHealthPhaseError("HEALTH_TIMEOUT")
 
 
 def _browser_lifecycle(

@@ -541,7 +541,12 @@ def test_worker_failure_compensates_only_worker_and_attempt_volume(
 
 @pytest.mark.parametrize(
     ("failure", "primary"),
-    [("volume", "IPC"), ("create", "CREATE"), ("start", "START"), ("health", "HEALTH")],
+    [
+        ("volume", "IPC"),
+        ("create", "CREATE"),
+        ("start", "START"),
+        ("health", "HEALTH_POSTFLIGHT"),
+    ],
 )
 def test_worker_failed_operation_is_typed_and_compensation_is_independent(
     monkeypatch: pytest.MonkeyPatch, failure: str, primary: str
@@ -552,6 +557,97 @@ def test_worker_failed_operation_is_typed_and_compensation_is_independent(
     assert captured.value.primary == primary
     assert captured.value.compensation == "VERIFIED"
     assert "synthetic" not in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    ("running", "status", "expected"),
+    [
+        (False, "starting", "HEALTH_EXITED"),
+        (True, "unhealthy", "HEALTH_UNHEALTHY"),
+        (True, None, "HEALTH_WAIT"),
+        (True, "unknown", "HEALTH_WAIT"),
+    ],
+)
+def test_worker_health_wait_failure_exposes_only_allowlisted_status(
+    monkeypatch: pytest.MonkeyPatch,
+    running: bool,
+    status: str | None,
+    expected: str,
+) -> None:
+    health = {"Status": status} if status is not None else None
+    monkeypatch.setattr(
+        host,
+        "_browser_inspect_record",
+        lambda _id: {"State": {"Running": running, "Health": health}},
+    )
+    with pytest.raises(host.PreflightError) as captured:
+        host._browser_wait_healthy(WORKER_ID)
+    assert getattr(captured.value, "phase", None) == expected
+
+
+def test_worker_health_wait_does_not_claim_exit_when_docker_state_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host, "_browser_inspect_record", lambda _id: {"State": None})
+    with pytest.raises(host.PreflightError) as captured:
+        host._browser_wait_healthy(WORKER_ID)
+    assert getattr(captured.value, "phase", None) == "HEALTH_WAIT"
+
+
+def test_worker_health_wait_timeout_has_no_private_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = iter((0.0, 1.0, 91.0))
+    monkeypatch.setattr(host, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(host, "sleep", lambda _duration: None)
+    monkeypatch.setattr(
+        host,
+        "_browser_inspect_record",
+        lambda _id: {"State": {"Running": True, "Health": {"Status": "starting"}}},
+    )
+    with pytest.raises(host.PreflightError) as captured:
+        host._browser_wait_healthy(WORKER_ID)
+    assert getattr(captured.value, "phase", None) == "HEALTH_TIMEOUT"
+    assert "docker" not in str(captured.value).lower()
+
+
+def test_worker_health_wait_and_postflight_are_separate_failure_categories(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _worker_preparation_fake(monkeypatch)
+
+    def failed_inspection(_container: str) -> None:
+        raise host.PreflightError("private inspect response")
+
+    monkeypatch.setattr(host, "_browser_wait_healthy", failed_inspection)
+    with pytest.raises(host.CutoverWorkerPhaseError) as captured:
+        _prepare_worker()
+    assert captured.value.primary == "HEALTH_WAIT"
+    assert captured.value.compensation == "VERIFIED"
+    assert "private inspect response" not in str(captured.value)
+
+
+def test_worker_typed_health_failure_survives_selective_compensation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_wait = host._browser_wait_healthy
+    _worker_preparation_fake(monkeypatch)
+    original_inspect = host._browser_inspect_record
+
+    def unhealthy_worker(container: str) -> dict[str, object]:
+        record = original_inspect(container)
+        if container == WORKER_ID:
+            state = record["State"]
+            assert isinstance(state, dict)
+            state["Health"] = {"Status": "unhealthy"}
+        return record
+
+    monkeypatch.setattr(host, "_browser_inspect_record", unhealthy_worker)
+    monkeypatch.setattr(host, "_browser_wait_healthy", original_wait)
+    with pytest.raises(host.CutoverWorkerPhaseError) as captured:
+        _prepare_worker()
+    assert captured.value.primary == "HEALTH_UNHEALTHY"
+    assert captured.value.compensation == "VERIFIED"
 
 
 def test_worker_cleanup_failure_keeps_original_failed_create_phase(

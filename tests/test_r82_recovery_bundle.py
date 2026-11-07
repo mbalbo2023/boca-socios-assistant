@@ -72,6 +72,11 @@ R104_COMBINED_DIAGNOSTIC_FULL_CUTOVER_SHA = (
 R108_HISTORICAL_QUARANTINE_FULL_CUTOVER_SHA = (
     "8fca328150a3046960494b3d5e253294ffab80f6463ce9f6ccb67ae85f47b0d4"
 )
+# R110: retain the historical R108 proof and pin the diagnostic-only extension
+# of worker health categories; no new host entrypoint or recovery mode.
+R110_HEALTH_DIAGNOSTIC_FULL_CUTOVER_SHA = (
+    "4a2e770876434db1e3b6b1f74364da1296f129945220e49e0f9e76dd5525a08e"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -229,7 +234,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R108_HISTORICAL_QUARANTINE_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R110_HEALTH_DIAGNOSTIC_FULL_CUTOVER_SHA
+    assert digest != R108_HISTORICAL_QUARANTINE_FULL_CUTOVER_SHA
     assert digest != R104_COMBINED_DIAGNOSTIC_FULL_CUTOVER_SHA
     assert digest != R103_CLEANUP_INVENTORY_FULL_CUTOVER_SHA
     assert digest != V3_STAGE_RECOVERY_FULL_CUTOVER_SHA

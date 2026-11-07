@@ -84,8 +84,10 @@ def test_terminal_result_is_o_excl_fsynced_and_readback_with_same_lease(tmp_path
         terminal.verify_persisted_exact(plan, replace(_accepted(), candidate_id="8" * 64))
 
 
+@pytest.mark.parametrize("primary", ["CREATE", "HEALTH_UNHEALTHY"])
 def test_worker_failure_uses_additive_v2_terminal_schema_without_changing_v1(
     tmp_path: Path,
+    primary: str,
 ) -> None:
     old = terminal.TerminalRecord.from_receipt(_plan(), _accepted()).serialized()
     assert json.loads(old)["version"] == terminal.VERSION
@@ -100,14 +102,14 @@ def test_worker_failure_uses_additive_v2_terminal_schema_without_changing_v1(
         None,
         None,
         failed_phase="PREPARE_WORKER",
-        worker_primary_phase="CREATE",
+        worker_primary_phase=primary,
         worker_compensation="INDETERMINATE",
     )
     record = terminal.TerminalRecord.from_receipt(_plan(), failed)
     raw = record.serialized()
     payload = json.loads(raw)
     assert payload["version"] == terminal.VERSION_V2
-    assert payload["worker_primary_phase"] == "CREATE"
+    assert payload["worker_primary_phase"] == primary
     assert payload["worker_compensation"] == "INDETERMINATE"
     with cleanup.protected_boca_job_lease(ATTEMPT) as lease:
         terminal.prepare_destination(_plan(), lease)

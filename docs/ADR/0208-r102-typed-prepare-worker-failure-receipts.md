@@ -46,3 +46,23 @@ el resultado fallido como el diagnóstico mantienen
 
 **Cierre:** CI exact-SHA y nueva evidencia física del droplet aún son requisitos
 para aceptar BETA. Este cambio no certifica retrospectivamente #853.
+
+## Extensión R110 — falla real #42418718190
+
+La primera transacción física V3 [#42418718190](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42418718190)
+produjo `PREPARE_WORKER/HEALTH` con compensación `VERIFIED` pero sin diferenciar
+si falló la espera o el postflight. La observación READ_ONLY
+[#42420135614](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42420135614)
+confirmó controlador anterior RUNNING, worker ausente y cero efectos; el
+preflight de entorno [#42420515286](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42420515286)
+terminó verde pero **no arrancó `ipc_worker`**. No es RCA del fallo original.
+
+Sin cambiar la fase exterior, el enum ahora admite además:
+`HEALTH_WAIT` (inspección inesperada mientras espera), `HEALTH_EXITED`,
+`HEALTH_UNHEALTHY`, `HEALTH_TIMEOUT` y `HEALTH_POSTFLIGHT` (comprobación del
+worker después del estado healthy). `HEALTH` continúa aceptado para recibos
+históricos. Las categorías provienen de controles propios y no de interpretar
+la caja negra; los datos privados y stderr permanecen ocultos. No cambia
+el plazo de 90 segundos, el aislamiento, la compensación selectiva ni la
+prohibición de retry ciego. Sólo una ejecución física futura puede confirmar
+cuál subcaso ocurrió: esta ampliación es **diagnóstico, no solución causal**.
