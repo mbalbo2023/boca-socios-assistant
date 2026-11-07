@@ -1,5 +1,9 @@
 # Safe operations — verified evidence and gated procedures
 
+**Estado actual (06/11/2026 ART):** leer primero
+[R76 — Investigación previa al Cutover](#r76--investigación-previa-al-cutover-06112026-art).
+Los apartados R50/R40 y las guías antiguas describen cortes históricos.
+
 ## R50 — Cutover A: contrato de dos pulls, candidato NO INSTALADO
 
 Después del [Stage recover #743](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42254252830)
@@ -1080,4 +1084,26 @@ other services' ports or workflows, disabling host timers, publishing new
 ports without approval and production SSH outside the owner-approved
 Actions workflow.
 
+
+## R76 — Investigación previa al Cutover (06/11/2026 ART)
+
+**No despachar Cutover A mientras el estado físico esté indeterminado.**
+El preflight worker [#42329475083](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42329475083)
+falló en limpieza; el observador histórico de APPLY
+[#42329673385](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42329673385)
+no recuperó inventario. El release nuevo existe, pero no fue instalado.
+
+La ruta candidata `cutover-a-worker-inspect` es **solo lectura y acotada
+únicamente al intento #42329475083** (no contiene bloqueo técnico de replay;
+la operación se despacha puntualmente). Tras fusionar el PR y comprobar
+CI, se ejecuta en la misma GitHub Action protegida con `service=controller`,
+`resource_budget=1.5cpu-1024m-192pids`, `protected_action_context=42329475083`,
+`legacy_controller_id=27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793`,
+`legacy_source_sha=cabce9f1e452e63ded115f447559a358dc0f4d1b`,
+`legacy_image_ref=ghcr.io/mbalbo2023/boca-socios-assistant@sha256:cf6e4266cfcfea0c07fa31301d59c7aaa3b9c2fefb9f6843baddd208cacd3b59`.
+Todos los demás campos técnicos, incluso `source_sha`, se dejan vacíos.
+No requiere comandos de terminal, PIN, credenciales, nueva sesión Chrome ni
+autorización de GO de Cutover. Su recibo `READ_ONLY_NO_GO` **no habilita retry**:
+sirve exclusivamente para decidir el fix-forward a partir de identidades
+concretas; ver [ADR0187](ADR/0187-failed-worker-preflight-readonly-diagnosis.md).
 
