@@ -1,4 +1,4 @@
-"""One-shot, stopped-only recovery of the exact failed #795 Boca probe.
+"""One-shot, stopped-only recovery of two separately gated Boca incidents.
 
 No free-form Docker target, mutable input, stop/force/volume/image operation,
 or Cutover authorization exists in this module. The only possible container
@@ -7,9 +7,12 @@ write is a single non-force ``docker container rm`` of the pinned full CID.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 import zipfile
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +31,48 @@ LEGACY_IMAGE = (
 )
 NAME = f"{observer.PREFIX}{ATTEMPT}"
 FULL_FORMAT = "{{json .}}"
+SECCOMP_SHA256 = "cc3e61cabda6bbc1e53e54d27ba4d55a9d3be829b6dd1a596f4a7b31b1cc7849"
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryTarget:
+    """Internal, fixed recovery target; never derived from host or dispatch fields."""
+
+    attempt: str
+    cid: str
+    source: str
+    browser_image: str
+    legacy_id: str
+    legacy_source: str
+    legacy_image: str
+
+
+TARGET_795 = RecoveryTarget(
+    ATTEMPT, CID, SOURCE, BROWSER_IMAGE, LEGACY_ID, LEGACY_SOURCE, LEGACY_IMAGE
+)
+TARGET_807 = RecoveryTarget(
+    "42341290485",
+    "06ac6e6b596c8286957cdfa21d6f4e3f6b7f19a7da4cff8b8c9ba47a1307a70d",
+    observer.FAILED_WORKER_807_SOURCE,
+    observer.FAILED_WORKER_807_IMAGE,
+    LEGACY_ID,
+    LEGACY_SOURCE,
+    LEGACY_IMAGE,
+)
+
+
+def _known_target(target: RecoveryTarget) -> None:
+    if target is not TARGET_795 and target is not TARGET_807:
+        raise RecoveryError("UNREVIEWED_TARGET")
+
+
+def _invoke_target[T](fn: Callable[..., T], *args: Any, target: RecoveryTarget) -> T:
+    """Preserve R80's original no-argument boundary while allowing R82 pins."""
+    if target is TARGET_795:
+        return fn(*args)
+    return fn(*args, target=target)
+
+
 RECEIPT_KEYS = frozenset(
     {
         "version",
@@ -94,21 +139,25 @@ def _compact_json_profile(raw: bytes) -> str:
     return "seccomp=" + compact.decode("utf-8")
 
 
-def _observe() -> dict[str, Any]:
-    return observer.observe(ATTEMPT, LEGACY_ID, LEGACY_SOURCE, LEGACY_IMAGE)
+def _observe(target: RecoveryTarget = TARGET_795) -> dict[str, Any]:
+    return observer.observe(
+        target.attempt, target.legacy_id, target.legacy_source, target.legacy_image
+    )
 
 
-def _validate_snapshot(record: dict[str, Any], *, removed: bool) -> None:
+def _validate_snapshot(
+    record: dict[str, Any], *, removed: bool, target: RecoveryTarget = TARGET_795
+) -> None:
     # The observer's existing parser checks every stage, key, type and flag.
-    observer.verify(observer.canonical(record) + b"\n", ATTEMPT, LEGACY_ID)
+    observer.verify(observer.canonical(record) + b"\n", target.attempt, target.legacy_id)
     if (
         record["socket"] != "PRESENT_OWNED"
         or record["seccomp"] != "ABSENT"
         or record["docker"] != "OBSERVED"
         or record["probe_list_stage"] != ("ABSENT" if removed else "OK")
         or record["probe"] != ("ABSENT" if removed else "PRESENT_PIN_MATCH")
-        or record["probe_candidate_id"] != (None if removed else CID)
-        or record["probe_id"] != (None if removed else CID)
+        or record["probe_candidate_id"] != (None if removed else target.cid)
+        or record["probe_id"] != (None if removed else target.cid)
         or record["probe_running"] is not (None if removed else False)
         or record["probe_full_json_stage"] != ("SKIPPED" if removed else "BELOW_CLEANUP_LIMIT")
         or record["original"] != "RUNNING_HEALTHY"
@@ -121,11 +170,11 @@ def _validate_snapshot(record: dict[str, Any], *, removed: bool) -> None:
         raise RecoveryError("SNAPSHOT_NO_GO")
 
 
-def _inspect_full_exact(cid: str) -> dict[str, Any]:
-    if cid != CID:
+def _inspect_full_exact(cid: str, target: RecoveryTarget = TARGET_795) -> dict[str, Any]:
+    if cid != target.cid:
         raise RecoveryError("EXACT_CID_REQUIRED")
     raw = observer._run_bounded(
-        ("docker", "inspect", "--format", FULL_FORMAT, CID), stdout_limit=65535
+        ("docker", "inspect", "--format", FULL_FORMAT, target.cid), stdout_limit=65535
     )
     if not 0 < len(raw.encode("ascii")) < 65536:
         raise RecoveryError("FULL_INSPECT_BOUNDS")
@@ -135,7 +184,11 @@ def _inspect_full_exact(cid: str) -> dict[str, Any]:
     return record
 
 
-def _validate_isolation(record: dict[str, Any], profile: bytes) -> None:
+def _validate_isolation(
+    record: dict[str, Any], profile: bytes, target: RecoveryTarget = TARGET_795
+) -> None:
+    if target is TARGET_807 and hashlib.sha256(profile).hexdigest() != SECCOMP_SHA256:
+        raise RecoveryError("PROFILE_SHA_MISMATCH")
     config = record.get("Config")
     host = record.get("HostConfig")
     state = record.get("State")
@@ -159,15 +212,15 @@ def _validate_isolation(record: dict[str, Any], profile: bytes) -> None:
     if len(observed_boca) != len(expected_boca) or set(observed_boca) != expected_boca:
         raise RecoveryError("PROBE_ENV_CHANGED")
     if (
-        record.get("Id") != CID
-        or record.get("Name") != f"/{NAME}"
-        or config.get("Image") != BROWSER_IMAGE
+        record.get("Id") != target.cid
+        or record.get("Name") != f"/{observer.PREFIX}{target.attempt}"
+        or config.get("Image") != target.browser_image
         or config.get("User") != "10002:10002"
         or config.get("Cmd") != ["python", "-c", "import time; time.sleep(90)"]
         or not isinstance(labels, dict)
-        or labels.get(observer.PROBE_LABEL) != ATTEMPT
+        or labels.get(observer.PROBE_LABEL) != target.attempt
         or labels.get("com.docker.compose.project") != observer.PROJECT
-        or labels.get("org.opencontainers.image.revision") != SOURCE
+        or labels.get("org.opencontainers.image.revision") != target.source
         or state.get("Running") is not False
         or state.get("Restarting") is not False
         or state.get("Paused") is not False
@@ -211,55 +264,62 @@ def _validate_isolation(record: dict[str, Any], profile: bytes) -> None:
         raise RecoveryError("PROBE_ISOLATION_CHANGED")
 
 
-def _remove_exact(cid: str) -> str:
-    if cid != CID:
+def _remove_exact(cid: str, target: RecoveryTarget = TARGET_795) -> str:
+    if cid != target.cid:
         raise RecoveryError("EXACT_CID_REQUIRED")
-    return observer._run_bounded(("docker", "container", "rm", CID), stdout_limit=128)
+    return observer._run_bounded(("docker", "container", "rm", target.cid), stdout_limit=128)
 
 
-def _cid_present(cid: str) -> bool:
-    if cid != CID:
+def _cid_present(cid: str, target: RecoveryTarget = TARGET_795) -> bool:
+    if cid != target.cid:
         raise RecoveryError("EXACT_CID_REQUIRED")
     rows = observer._run_bounded(
-        ("docker", "ps", "-a", "-q", "--no-trunc", "--filter", f"id={CID}")
+        ("docker", "ps", "-a", "-q", "--no-trunc", "--filter", f"id={target.cid}")
     ).splitlines()
     if len(rows) > 1 or any(not observer.CONTAINER_ID.fullmatch(row) for row in rows):
         raise RecoveryError("POST_CID_SET_INVALID")
-    if rows and rows != [CID]:
+    if rows and rows != [target.cid]:
         raise RecoveryError("POST_CID_MISMATCH")
     return bool(rows)
 
 
-def execute() -> dict[str, Any]:
+def execute(target: RecoveryTarget = TARGET_795) -> dict[str, Any]:
     """Exactly one attempt, full precheck twice under lease, no automatic retry."""
+    _known_target(target)
     phase = "PRECHECK"
     attempts = 0
     verified = False
     try:
-        with cleanup.protected_boca_job_lease(ATTEMPT) as lease:
+        with cleanup.protected_boca_job_lease(target.attempt) as lease:
             for _ in range(2):
-                cleanup.verify_protected_boca_job_lease(lease, ATTEMPT)
-                _validate_snapshot(_observe(), removed=False)
-                _validate_isolation(_inspect_full_exact(CID), _profile())
-            cleanup.verify_protected_boca_job_lease(lease, ATTEMPT)
+                cleanup.verify_protected_boca_job_lease(lease, target.attempt)
+                _validate_snapshot(
+                    _invoke_target(_observe, target=target), removed=False, target=target
+                )
+                _validate_isolation(
+                    _invoke_target(_inspect_full_exact, target.cid, target=target),
+                    _profile(),
+                    target=target,
+                )
+            cleanup.verify_protected_boca_job_lease(lease, target.attempt)
             phase = "REMOVE"
             attempts = 1  # Timeout or lost ACK after this point is indeterminate.
-            if _remove_exact(CID) != CID:
+            if _invoke_target(_remove_exact, target.cid, target=target) != target.cid:
                 raise RecoveryError("DOCKER_REMOVE_ACK_INVALID")
             phase = "POSTCHECK"
-            if _cid_present(CID):
+            if _invoke_target(_cid_present, target.cid, target=target):
                 raise RecoveryError("CID_RETAINED")
-            _validate_snapshot(_observe(), removed=True)
-            cleanup.verify_protected_boca_job_lease(lease, ATTEMPT)
+            _validate_snapshot(_invoke_target(_observe, target=target), removed=True, target=target)
+            cleanup.verify_protected_boca_job_lease(lease, target.attempt)
             verified = True
             phase = "COMPLETE"
     except Exception:  # noqa: BLE001 - fail closed without leaking Docker stderr or ENV
         verified = False
     return {
         "version": "boca-worker-recovery-v1",
-        "attempt": ATTEMPT,
-        "probe_id": CID,
-        "legacy_id": LEGACY_ID,
+        "attempt": target.attempt,
+        "probe_id": target.cid,
+        "legacy_id": target.legacy_id,
         "cleanup": "VERIFIED" if verified else "INDETERMINATE" if attempts else "NO_GO_PRECHECK",
         "phase": phase,
         "docker_writes": attempts,
@@ -270,7 +330,8 @@ def execute() -> dict[str, Any]:
     }
 
 
-def verify_runner(raw: bytes) -> dict[str, Any]:
+def verify_runner(raw: bytes, target: RecoveryTarget = TARGET_795) -> dict[str, Any]:
+    _known_target(target)
     if not 0 < len(raw) <= 1024:
         raise RecoveryError("RECEIPT_BOUNDS")
     record = json.loads(raw.decode("ascii"), object_pairs_hook=_unique_pairs)
@@ -278,9 +339,9 @@ def verify_runner(raw: bytes) -> dict[str, Any]:
         type(record) is not dict
         or set(record) != RECEIPT_KEYS
         or record["version"] != "boca-worker-recovery-v1"
-        or record["attempt"] != ATTEMPT
-        or record["probe_id"] != CID
-        or record["legacy_id"] != LEGACY_ID
+        or record["attempt"] != target.attempt
+        or record["probe_id"] != target.cid
+        or record["legacy_id"] != target.legacy_id
         or record["cleanup"] != "VERIFIED"
         or record["phase"] != "COMPLETE"
         or type(record["docker_writes"]) is not int
@@ -298,13 +359,15 @@ def verify_runner(raw: bytes) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     try:
-        if args == ["host"]:
-            result = execute()
+        if args in (["host"], ["host-807"]):
+            result = execute(TARGET_807 if args == ["host-807"] else TARGET_795)
             sys.stdout.buffer.write(observer.canonical(result) + b"\n")
             return 0 if result["cleanup"] == "VERIFIED" else 3
-        if len(args) == 2 and args[0] == "verify":
+        if len(args) == 2 and args[0] in {"verify", "verify-807"}:
             with Path(args[1]).open("rb") as file:
-                verify_runner(file.read(1025))
+                verify_runner(
+                    file.read(1025), TARGET_807 if args[0] == "verify-807" else TARGET_795
+                )
             print("BOCA_WORKER_RECOVERY_VERIFIED")
             return 0
     except (OSError, ValueError, TypeError, UnicodeError):

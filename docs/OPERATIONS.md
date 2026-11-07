@@ -1085,7 +1085,33 @@ ports without approval and production SSH outside the owner-approved
 Actions workflow.
 
 
-## R81 — Observador exclusivo del nuevo worker fallido #807 (07/11/2026 ART)
+## R82 — recuperación exclusiva del probe detenido #807 (07/11/2026 ART)
+
+El inventario [#809](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42342822240)
+confirmó `probe_running=false` y CID exacto
+`06ac6e6b596c8286957cdfa21d6f4e3f6b7f19a7da4cff8b8c9ba47a1307a70d`,
+seccomp temporal ausente, rootless Boca disponible, original `RUNNING_HEALTHY`
+en loopback 8443. No tuvo escrituras. El código propuesto en R82 agrega
+**una operación manual** dentro de `Boca first deploy`:
+
+- `operation=cutover-a-worker-recover-807`, `service=controller`,
+  `resource_budget=1.5cpu-1024m-192pids` y branch `main`;
+- otros campos vacíos, sin CID/revision/imagen introducidos por formulario;
+- ENV protegido y gate previo con source SHA de main, cero PR abiertos,
+  release #723, fallo #807, testigo #809, run único anti-replay;
+- dentro del lease rootless Boca: doble snapshot, doble Docker full inspect,
+  comprobación seccomp SHA/capabilities/network/mounts, un solo `rm` no-force
+  del CID fijado, ausencia ID/nombre y legacy sano;
+- recibo terminal verificado. Si falta identidad, se bloquea **antes** del rm;
+  si hubo intento ambiguo, **INDETERMINATE sin nuevo dispatch**.
+
+**Esto documenta una operación CODE_ONLY, no una ejecución host confirmada.**
+Antes de cualquier dispatch deben concluir QA/Arquitectura/Infra/CI, merge
+exacto y cero PR OPEN/DRAFT. La recuperación por sí sola nunca concede GO_B,
+PREPARE, APPLY ni BETA GREEN. No limpiar otras apps, Docker global ni Porota;
+no leer/modificar BLACKBOX. [ADR0191](ADR/0191-r82-exact-stopped-worker-807-recovery.md).
+
+## Histórico R81 — Observador exclusivo del nuevo worker fallido #807 (07/11/2026 ART)
 
 **No repetir #807 ni despachar PREPARE/APPLY.** El preflight de
 [run 42341290485](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42341290485)

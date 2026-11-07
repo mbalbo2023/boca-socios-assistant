@@ -1,6 +1,20 @@
 # Estado de integración BETA
 
-## Estado A45-R81 — Gate físico del worker NO_GO (07/11/2026 ART)
+## Estado A45-R82 — inventario R81 confirmado; recovery R82 candidato (07/11/2026 ART)
+
+| Fase | Evidencia verificada | Estado y límite |
+| --- | --- | --- |
+| Preflight #807 | [Run 42341290485](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42341290485) falló `CLEANUP/INDETERMINATE` | No reintentar; nueva BETA no instalada |
+| Observer R81 #809 | [Run 42342822240](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42342822240): probe CID exacto presente y detenido, seccomp ausente, legacy sano en 8443, cero escrituras | `READ_ONLY_NO_GO`, no es permiso de limpieza ni Cutover |
+| Recovery R82 | Operación fija nueva sobre #807, dos `docker inspect` completos/lease, ID e imagen pinneados, un `rm` sin fuerza y postcheck | **CODE_ONLY hasta PR, checks/merge y un único dispatch físico**; jamás un retry automático |
+| Cutover BETA/Telegram | No hay PREPARE, GO_B, APPLY ni aceptación física | **NO_GO**; no reservas reales, ningún recurso ajeno a Boca |
+
+No interpretar SUCCESS del job de observación como éxito de Cutover. ADR
+[0191](ADR/0191-r82-exact-stopped-worker-807-recovery.md) y evidencia canónica
+en [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417) /
+[#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+
+## Histórico A45-R81 — Gate físico antes del observer #809 (07/11/2026 ART)
 
 | Evidencia exacta | Resultado acreditado | Límite |
 | --- | --- | --- |

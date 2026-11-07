@@ -17,6 +17,16 @@ DEPLOY = ".github/workflows/boca-first-deploy.yml"
 RELEASE = ".github/workflows/release-image.yml"
 R79_TITLE = "BOCA-R79-WORKER-RECOVER-ONCE"
 R80_TITLE = "BOCA-R80-WORKER-RECOVER-ONCE"
+R81_TITLE = "BOCA-R81-WORKER-807-READONLY"
+R82_TITLE = "BOCA-R82-WORKER-807-RECOVER-ONCE"
+R82_FAILED_ID = 42341290485
+R82_FAILED_SHA = "1199c46fee8053e637b220ad9365ce3af15eb8e5"
+R82_FAILED_JOB = 128309316427
+R82_WITNESS_ID = 42342822240
+R82_WITNESS_SHA = "8146ab94c1fedf02fbe0ba14e225bbce61339044"
+R82_WITNESS_JOB = 128314064855
+R82_RELEASE_ID = 42340930071
+R80_RECOVERY_ID = 42340750343
 PRIOR_ID = 42339451485
 PRIOR_SHA = "d9100c6c4666c61ba66fbbefa48e61102a20ce5d"
 PRIOR_JOB = 128303677116
@@ -221,20 +231,209 @@ def verify(paths: list[str], *, run_id: int, source: str) -> None:
     _prior_jobs(jobs)
 
 
+R82_FAILED_EXECUTED = {
+    **{
+        number: (name, "success")
+        for number, name in {
+            1: "Set up job",
+            5: "Require verified protected environment and matching main commit",
+            6: "Reject legacy install routes without same-lease Boca-only postflight",
+            7: "Checkout exact main commit without persisted credentials",
+            8: "Confirm current main HEAD before host access",
+            10: "Validate immutable inputs and successful matching release",
+            11: "Require same-run immutable browser companion release manifest",
+            18: "Authenticate separate historical controller release and original Compose file",
+            19: "Hash reviewed Boca Compose file",
+            20: "Hash reviewed served BETA Compose file",
+            21: "Hash reviewed optional browser IPC overlay and seccomp",
+            24: "Validate exact optional dual-service IPC Compose model before SSH",
+            36: "Configure pinned SSH host key and dedicated identity",
+            304: "Post Checkout exact main commit without persisted credentials",
+            305: "Complete job",
+        }.items()
+    },
+    57: ("Preflight exact dual GHCR image and rootless worker boundary without PREPARE", "failure"),
+    58: ("Require exact Boca rootless worker preflight receipt and bounded cleanup", "failure"),
+}
+R82_WITNESS_EXECUTED = {
+    number: R82_FAILED_EXECUTED[number] for number in (1, 5, 6, 7, 8, 19, 36, 304, 305)
+}
+R82_WITNESS_EXECUTED[41] = (
+    "Inspect one failed Boca worker probe READ_ONLY by exact identity",
+    "success",
+)
+
+
+def _r82_history(history: Any, *, run_id: int, source: str) -> None:
+    _expect(isinstance(history, dict))
+    runs = history.get("workflow_runs")
+    total = history.get("total_count")
+    _expect(
+        type(total) is int
+        and 5 <= total <= 100
+        and isinstance(runs, list)
+        and len(runs) == total
+        and all(isinstance(item, dict) for item in runs)
+    )
+    expected = (
+        (R79_TITLE, PRIOR_ID, PRIOR_SHA, "completed", "failure"),
+        (R80_TITLE, R80_RECOVERY_ID, R82_FAILED_SHA, "completed", "success"),
+        (R81_TITLE, R82_WITNESS_ID, R82_WITNESS_SHA, "completed", "success"),
+        (R82_TITLE, run_id, source, None, None),
+    )
+    for title, expected_id, expected_sha, expected_status, expected_conclusion in expected:
+        matches = [item for item in runs if item.get("display_title") == title]
+        _expect(len(matches) == 1)
+        item = matches[0]
+        actor = item.get("actor")
+        _expect(
+            type(item.get("id")) is int
+            and item["id"] == expected_id
+            and item.get("event") == "workflow_dispatch"
+            and item.get("head_branch") == "main"
+            and item.get("head_sha") == expected_sha
+            and type(item.get("run_attempt")) is int
+            and item["run_attempt"] == 1
+            and isinstance(actor, dict)
+            and actor.get("login") == "mbalbo2023"
+        )
+        if title == R82_TITLE:
+            _expect(item.get("status") in {"in_progress", "queued", "waiting", "pending"})
+            _expect(item.get("conclusion") is None)
+        else:
+            _expect(
+                item.get("status") == expected_status
+                and item.get("conclusion") == expected_conclusion
+            )
+
+
+def _r82_jobs(
+    receipt: Any,
+    *,
+    run_id: int,
+    job_id: int,
+    conclusion: str,
+    executed: dict[int, tuple[str, str]],
+) -> None:
+    _expect(isinstance(receipt, dict))
+    jobs = receipt.get("jobs")
+    _expect(
+        type(receipt.get("total_count")) is int
+        and receipt["total_count"] == 3
+        and isinstance(jobs, list)
+        and len(jobs) == 3
+        and all(isinstance(job, dict) for job in jobs)
+    )
+    manual = [job for job in jobs if job.get("id") == job_id]
+    _expect(len(manual) == 1)
+    job = manual[0]
+    _expect(
+        job.get("name") == "approved-boca-manual-operation"
+        and job.get("run_id") == run_id
+        and job.get("status") == "completed"
+        and job.get("conclusion") == conclusion
+    )
+    skipped = [item for item in jobs if item.get("id") != job_id]
+    _expect(
+        {item.get("name") for item in skipped}
+        == {"first-deploy-runtime-smoke", "first-deploy-pr-validation"}
+        and all(
+            item.get("run_id") == run_id
+            and item.get("status") == "completed"
+            and item.get("conclusion") == "skipped"
+            for item in skipped
+        )
+    )
+    steps = job.get("steps")
+    _expect(
+        isinstance(steps, list)
+        and len(steps) == len(PRIOR_STEP_NUMBERS)
+        and all(isinstance(step, dict) for step in steps)
+        and [step.get("number") for step in steps] == PRIOR_STEP_NUMBERS
+    )
+    for step in steps:
+        number = step["number"]
+        _expect(step.get("status") == "completed" and isinstance(step.get("name"), str))
+        if number in executed:
+            _expect((step["name"], step.get("conclusion")) == executed[number])
+        else:
+            _expect(step.get("conclusion") == "skipped")
+
+
+def verify_r82(paths: list[str], *, run_id: int, source: str) -> None:
+    """Attest exact #807/#809 provenance and one unique R82 before SSH."""
+    _expect(len(paths) == 7 and type(run_id) is int and run_id > 0)
+    _expect(
+        type(source) is str and len(source) == 40 and all(c in "0123456789abcdef" for c in source)
+    )
+    prs, failed, witness, release, history, failed_jobs, witness_jobs = [
+        _read_json(path, maximum=131072 if index in (5, 6) else 32768)
+        for index, path in enumerate(paths)
+    ]
+    _expect(prs == [])
+    _run(
+        failed,
+        number=R82_FAILED_ID,
+        source=R82_FAILED_SHA,
+        conclusion="failure",
+        workflow=DEPLOY,
+    )
+    _run(
+        witness,
+        number=R82_WITNESS_ID,
+        source=R82_WITNESS_SHA,
+        conclusion="success",
+        workflow=DEPLOY,
+        title=R81_TITLE,
+    )
+    _run(
+        release,
+        number=R82_RELEASE_ID,
+        source=R82_FAILED_SHA,
+        conclusion="success",
+        workflow=RELEASE,
+    )
+    _r82_history(history, run_id=run_id, source=source)
+    _r82_jobs(
+        failed_jobs,
+        run_id=R82_FAILED_ID,
+        job_id=R82_FAILED_JOB,
+        conclusion="failure",
+        executed=R82_FAILED_EXECUTED,
+    )
+    _r82_jobs(
+        witness_jobs,
+        run_id=R82_WITNESS_ID,
+        job_id=R82_WITNESS_JOB,
+        conclusion="success",
+        executed=R82_WITNESS_EXECUTED,
+    )
+
+
 def main(argv: list[str]) -> int:
     try:
         _expect(os.environ.get("GITHUB_RUN_ID", "").isdigit())
         run_id = int(os.environ["GITHUB_RUN_ID"])
         source = os.environ["GITHUB_SHA"]
-        verify(argv[1:], run_id=run_id, source=source)
+        if len(argv) > 1 and argv[1] == "--r82":
+            verify_r82(argv[2:], run_id=run_id, source=source)
+        else:
+            verify(argv[1:], run_id=run_id, source=source)
     except (OSError, UnicodeError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         print("BOCA_WORKER_RECOVERY_GATE state=NO_GO reason=UNVERIFIED")
         return 1
-    print(
-        "BOCA_WORKER_RECOVERY_GATE state=PASS incident=42329475083 "
-        "witness=42337103473 release=42329201039 open_prs=0 "
-        "dispatch=UNIQUE main=VERIFIED prior=PRE_SSH_NO_EFFECT host_writes=0"
-    )
+    if len(argv) > 1 and argv[1] == "--r82":
+        print(
+            "BOCA_WORKER_RECOVERY_GATE state=PASS incident=42341290485 "
+            "witness=42342822240 release=42340930071 open_prs=0 "
+            "dispatch=UNIQUE_R82 main=VERIFIED prior=READ_ONLY_NO_EFFECT host_writes=0"
+        )
+    else:
+        print(
+            "BOCA_WORKER_RECOVERY_GATE state=PASS incident=42329475083 "
+            "witness=42337103473 release=42329201039 open_prs=0 "
+            "dispatch=UNIQUE main=VERIFIED prior=PRE_SSH_NO_EFFECT host_writes=0"
+        )
     return 0
 
 

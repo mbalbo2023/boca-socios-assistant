@@ -79,7 +79,8 @@ def _shell(script: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]
 def test_dispatch_remains_one_owner_only_manual_workflow() -> None:
     workflow = _workflow()
     dispatch = workflow.split("  workflow_dispatch:\n", 1)[1].split("\npermissions:", 1)[0]
-    assert dispatch.count("cutover-a-worker-recover") == 1
+    assert len(re.findall(r"\bcutover-a-worker-recover(?!-807)\b", dispatch)) == 1
+    assert len(re.findall(r"\bcutover-a-worker-recover-807\b", dispatch)) == 1
     deploy = workflow.split("  deploy:\n", 1)[1]
     assert (
         "github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' "
@@ -90,7 +91,10 @@ def test_dispatch_remains_one_owner_only_manual_workflow() -> None:
     assert "name: approved-boca-manual-operation" in deploy
     assert "group: ${{ github.event_name == 'pull_request'" in workflow
     assert "BOCA_SOURCE_SHA: ${{ (" in deploy
-    assert "inputs.operation == 'cutover-a-worker-recover') && github.sha" in deploy
+    assert (
+        "inputs.operation == 'cutover-a-worker-recover' || "
+        "inputs.operation == 'cutover-a-worker-recover-807') && github.sha"
+    ) in deploy
 
 
 def test_recovery_input_gate_accepts_only_empty_unrelated_fields() -> None:
@@ -266,22 +270,33 @@ def test_protected_remote_transport_and_terminal_ack_are_separate_gates() -> Non
     flow = _workflow()
     assert "run-name: ${{" in flow and ONCE_TITLE in flow
     attest = "Require exact 795/802 evidence and zero open PRs before recovery SSH"
-    remote = "Recover only the stopped exact 795 worker probe under Boca lease"
+    remote = "Recover only the stopped exact 795 or 807 worker probe under Boca lease"
     verify = "Require exact terminal worker recovery receipt on every outcome"
     assert flow.index(f"      - name: {attest}") < flow.index(f"      - name: {remote}")
     assert flow.index(f"      - name: {remote}") < flow.index(f"      - name: {verify}")
     remote_step = _step(remote)
     assert "if: inputs.operation == 'cutover-a-worker-recover'" in remote_step
+    assert "|| inputs.operation == 'cutover-a-worker-recover-807'" in remote_step
     assert "scripts/build_protected_boca_bundle.py --worker-recovery" in remote_step
-    assert "cutover-worker-recover" in remote_step
+    assert "cutover-a-worker-recover) worker_mode=cutover-worker-recover ;;" in remote_step
+    assert "cutover-a-worker-recover-807) worker_mode=cutover-worker-807-recover ;;" in remote_step
     assert "boca_protected_memfd_bootstrap.py" in remote_step
     assert "timeout --signal=TERM --kill-after=5s" in remote_step
     assert "boca-target" in remote_step
     assert "docker rm" not in remote_step
     terminal_step = _step(verify)
-    assert "always() && inputs.operation == 'cutover-a-worker-recover'" in terminal_step
+    assert "always() && (inputs.operation == 'cutover-a-worker-recover' || " in terminal_step
+    assert "inputs.operation == 'cutover-a-worker-recover-807')" in terminal_step
     assert "steps.cutover_worker_recover_host.outcome" in terminal_step
-    assert "scripts.host_cutover_worker_recovery verify" in terminal_step
+    assert (
+        "cutover-a-worker-recover) verifier_mode=verify; recovery_attempt=42329475083 ;;"
+        in terminal_step
+    )
+    assert (
+        "cutover-a-worker-recover-807) verifier_mode=verify-807; recovery_attempt=42341290485 ;;"
+        in terminal_step
+    )
+    assert 'scripts.host_cutover_worker_recovery "$verifier_mode" "$receipt"' in terminal_step
     assert "BOCA_WORKER_RECOVERY_VERIFIED" in terminal_step
     assert "NO_GO" in terminal_step
     for name in (attest, remote, verify):

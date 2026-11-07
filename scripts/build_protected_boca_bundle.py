@@ -70,7 +70,7 @@ OPTION_B_SOURCES = (
     "src/boca_socios/panel/owner_session_sql/0001_owner_browser_session.sql",
 )
 OPTION_B_STDLIB_BUNDLE_NAME = "boca_socios/owner_session_disk_bootstrap.py"
-# Dedicated one-incident recovery payload.  The full Cutover package is at
+# Dedicated fixed-target recovery payload (#795 or #807). Full Cutover is at
 # its 860k source ceiling and must never inherit these extra files.
 RECOVERY_SOURCES = (
     "docker/seccomp_profile.json",
@@ -82,10 +82,10 @@ RECOVERY_SOURCES = (
 )
 RECOVERY_MAIN = (
     "import sys\n"
-    "if sys.argv[1:] != ['cutover-worker-recover']:\n"
+    "if sys.argv[1:] not in (['cutover-worker-recover'], ['cutover-worker-807-recover']):\n"
     "    raise SystemExit(3)\n"
     "from scripts import host_cutover_worker_recovery as recovery\n"
-    "raise SystemExit(recovery.main(['host']))\n"
+    "raise SystemExit(recovery.main(['host-807'] if sys.argv[1] == 'cutover-worker-807-recover' else ['host']))\n"
 ).encode("ascii")
 MAIN = (
     "import sys\n"

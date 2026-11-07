@@ -1,0 +1,213 @@
+"""R82 RED: only two fixed host modes in the same minimal recovery memfd ZIP.
+
+Every execution in this module uses a harmless synthetic recovery entrypoint;
+it never calls Docker, SSH, GitHub Actions, or the production host recovery.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import subprocess
+import sys
+import zipfile
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts import boca_protected_memfd_bootstrap as bootstrap  # noqa: E402
+from scripts import build_protected_boca_bundle as builder  # noqa: E402
+
+R80_MODE = "cutover-worker-recover"
+R82_MODE = "cutover-worker-807-recover"
+EXPECTED_RECOVERY_ENTRIES = {
+    "__main__.py",
+    "boca_socios/__init__.py",
+    "boca_socios/host_boca_cleanup.py",
+    "docker/seccomp_profile.json",
+    "scripts/__init__.py",
+    "scripts/host_cutover_worker_inspect.py",
+    "scripts/host_cutover_worker_recovery.py",
+}
+R80_RECEIPT = b"BOCA_RECOVERY_FIXTURE incident=795 host=UNTOUCHED\n"
+R82_RECEIPT = b"BOCA_RECOVERY_FIXTURE incident=807 host=UNTOUCHED\n"
+FAKE_RECOVERY = (
+    "def main(argv):\n"
+    "    if argv == ['host']:\n"
+    "        print('BOCA_RECOVERY_FIXTURE incident=795 host=UNTOUCHED')\n"
+    "        return 0\n"
+    "    if argv == ['host-807']:\n"
+    "        print('BOCA_RECOVERY_FIXTURE incident=807 host=UNTOUCHED')\n"
+    "        return 0\n"
+    "    return 3\n"
+).encode("ascii")
+# Snapshot of the unchanged complete Cutover ZIP from R81 main 8146ab94.
+# Its composition must not change merely to add a recovery-only entrypoint.
+R81_FULL_CUTOVER_SHA = "a7c43c6f8ea944cd8ec8e7180efa540203c42d5cbde90258f6ae8caad0e387fd"
+
+
+def _fixture_root(tmp_path: Path) -> Path:
+    repository = tmp_path / "repository"
+    for name in (
+        "src/boca_socios/__init__.py",
+        "src/boca_socios/host_boca_cleanup.py",
+        "docker/seccomp_profile.json",
+        "scripts/__init__.py",
+        "scripts/host_cutover_worker_inspect.py",
+    ):
+        target = repository / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((ROOT / name).read_bytes())
+    source = repository / "scripts/host_cutover_worker_recovery.py"
+    source.write_bytes(FAKE_RECOVERY)
+    return repository
+
+
+def _build(tmp_path: Path) -> tuple[bytes, str]:
+    target = tmp_path / "worker-recovery.pyz"
+    command = subprocess.run(  # noqa: S603 - local deterministic builder only
+        (
+            sys.executable,
+            str(ROOT / "scripts/build_protected_boca_bundle.py"),
+            "--worker-recovery",
+            str(_fixture_root(tmp_path)),
+            str(target),
+        ),
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+    assert command.returncode == 0, (command.stdout, command.stderr)
+    digest = command.stdout.decode("ascii").strip().removeprefix("BOCA_PROTECTED_BUNDLE sha256=")
+    assert len(digest) == 64
+    return target.read_bytes(), digest
+
+
+def _boot(raw: bytes, digest: str, mode: str, *args: str) -> subprocess.CompletedProcess[bytes]:
+    return subprocess.run(  # noqa: S603 - local stdlib-only memfd fixture
+        (
+            sys.executable,
+            "-S",
+            str(ROOT / "scripts/boca_protected_memfd_bootstrap.py"),
+            digest,
+            mode,
+            *args,
+        ),
+        input=raw,
+        capture_output=True,
+        check=False,
+        timeout=15,
+    )
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [(R80_MODE, R80_RECEIPT), (R82_MODE, R82_RECEIPT)],
+)
+def test_only_fixed_recovery_modes_reach_their_distinct_host_handlers(
+    tmp_path: Path, mode: str, expected: bytes
+) -> None:
+    """Catch R82 refusal or accidental dispatch through the consumed R80 path."""
+    raw, digest = _build(tmp_path)
+    result = _boot(raw, digest, mode)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert result.stdout == expected
+    assert result.stderr == b""
+
+
+@pytest.mark.parametrize("mode", [R80_MODE, R82_MODE])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ("06ac6e6b596c8286957cdfa21d6f4e3f6b7f19a7da4cff8b8c9ba47a1307a70d",),
+        ("42341290485", "arbitrary-browser-image"),
+        ("--force",),
+    ],
+)
+def test_no_fixed_recovery_mode_accepts_host_coordinates(
+    tmp_path: Path, mode: str, extra: tuple[str, ...]
+) -> None:
+    """A caller cannot add a Docker CID, image, attempt, or mutation flag."""
+    raw, digest = _build(tmp_path)
+    result = _boot(raw, digest, mode, *extra)
+    assert result.returncode != 0
+    assert b"BOCA_RECOVERY_FIXTURE" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "mode", ["cutover-worker-808-recover", "cutover-worker-preflight", "shell"]
+)
+def test_unknown_mode_cannot_enter_minimal_recovery_payload(tmp_path: Path, mode: str) -> None:
+    raw, digest = _build(tmp_path)
+    result = _boot(raw, digest, mode)
+    assert result.returncode != 0
+    assert b"BOCA_RECOVERY_FIXTURE" not in result.stdout
+
+
+def test_r82_stays_within_seven_entry_recovery_only_allowlist(tmp_path: Path) -> None:
+    """A new R82 mode must not pull Compose, BLACKBOX, or other host scripts."""
+    raw, digest = _build(tmp_path)
+    assert hashlib.sha256(raw).hexdigest() == digest
+    assert len(raw) <= 128_000
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        names = archive.namelist()
+        assert len(names) == len(EXPECTED_RECOVERY_ENTRIES)
+        assert set(names) == EXPECTED_RECOVERY_ENTRIES
+        assert archive.read("scripts/host_cutover_worker_recovery.py") == FAKE_RECOVERY
+        assert sum(entry.file_size for entry in archive.infolist()) <= 256_000
+        assert not any(
+            "browser/synthetic.py" in name or "browser/ipc_worker.py" in name for name in names
+        )
+    bootstrap.verify(raw, digest, recovery=True)
+    with pytest.raises(ValueError):
+        bootstrap.verify(raw, digest, recovery=False)
+
+
+@pytest.mark.parametrize("mode", [R80_MODE, R82_MODE])
+def test_both_recovery_modes_reject_modified_bytes_and_injected_entries(
+    tmp_path: Path, mode: str
+) -> None:
+    raw, digest = _build(tmp_path)
+    corrupted = bytearray(raw)
+    corrupted[50] ^= 1
+    changed = _boot(bytes(corrupted), digest, mode)
+    assert changed.returncode != 0
+    assert b"BOCA_RECOVERY_FIXTURE" not in changed.stdout
+
+    # A self-consistent SHA must not make an unreviewed BLACKBOX entry safe.
+    # Only synthetic bytes are injected; no BLACKBOX source is read here.
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        entries = {name: archive.read(name) for name in archive.namelist()}
+    altered = io.BytesIO()
+    with zipfile.ZipFile(altered, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for name, data in {
+            **entries,
+            "boca_socios/browser/ipc_worker.py": b"# forbidden fixture; never execute\n",
+        }.items():
+            member = zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0))
+            member.create_system = 3
+            member.external_attr = 0o100644 << 16
+            member.compress_type = zipfile.ZIP_DEFLATED
+            archive.writestr(member, data)
+    injected = altered.getvalue()
+    injected_sha = hashlib.sha256(injected).hexdigest()
+    result = _boot(injected, injected_sha, mode)
+    assert result.returncode != 0
+    assert b"BOCA_RECOVERY_FIXTURE" not in result.stdout
+
+
+def test_complete_cutover_zip_remains_byte_identical_and_distinct(tmp_path: Path) -> None:
+    """R82 routing must not enlarge or contaminate the full Cutover package."""
+    target = tmp_path / "full-cutover.pyz"
+    digest = builder.build(ROOT, target)
+    raw = target.read_bytes()
+    assert digest == hashlib.sha256(raw).hexdigest() == R81_FULL_CUTOVER_SHA
+    assert len(raw) <= 512_000
+    bootstrap.verify(raw, digest)
+    with pytest.raises(ValueError):
+        bootstrap.verify(raw, digest, recovery=True)
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        assert "scripts/host_cutover_worker_recovery.py" not in archive.namelist()
+        assert "scripts/host_cutover_worker_inspect.py" not in archive.namelist()

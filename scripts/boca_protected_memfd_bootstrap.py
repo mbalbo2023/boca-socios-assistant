@@ -121,7 +121,7 @@ def main() -> int:
         print("BOCA_BUNDLE state=NO_GO reason=arguments", file=sys.stderr)
         return 2
     try:
-        recovery = sys.argv[2] == "cutover-worker-recover"
+        recovery = sys.argv[2] in {"cutover-worker-recover", "cutover-worker-807-recover"}
         if recovery and len(sys.argv) != 3:
             raise ValueError("stopped worker recovery accepts no user coordinates")
         raw = sys.stdin.buffer.read((RECOVERY_MAX_ZIP if recovery else MAX_ZIP) + 1)
