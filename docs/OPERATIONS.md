@@ -1085,7 +1085,34 @@ ports without approval and production SSH outside the owner-approved
 Actions workflow.
 
 
-## R76 — Investigación previa al Cutover (06/11/2026 ART)
+## R81 — Observador exclusivo del nuevo worker fallido #807 (07/11/2026 ART)
+
+**No repetir #807 ni despachar PREPARE/APPLY.** El preflight de
+[run 42341290485](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42341290485)
+terminó `NO_GO/CLEANUP/INDETERMINATE`. La verificación del cleanup no prueba
+si sigue existiendo el probe, el seccomp temporal ni la salud actual del
+controller. El release dual de origen [#723](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42340930071)
+fue GREEN, pero no equivale a instalación.
+
+R81 **propone**, tras PR, QA y merge exacto, usar el **mismo** workflow
+protegido `Boca first deploy` con operación `cutover-a-worker-inspect` y:
+
+- `protected_action_context=42341290485` (run numérico exacto, NO ordinal).
+- `legacy_controller_id=27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793`.
+- `legacy_source_sha=cabce9f1e452e63ded115f447559a358dc0f4d1b`.
+- `legacy_image_ref=ghcr.io/mbalbo2023/boca-socios-assistant@sha256:cf6e4266cfcfea0c07fa31301d59c7aaa3b9c2fefb9f6843baddd208cacd3b59`.
+- `service=controller`, `resource_budget=1.5cpu-1024m-192pids`, `main`.
+- **Todos los demás campos vacíos**: `source_sha`, ambas imágenes nuevas,
+  `release_run_id`, Site, Telegram, owner y noticias.
+
+El script añade pins internos exactos del intento #807 y conserva #795 sin
+repetir su recuperación. Las únicas lecturas son socket/seccomp rootless
+propios, Docker `ps`/`inspect` por identidad exacta y original independiente.
+El recibo siempre será `READ_ONLY_NO_GO`, aun si no queda residuo; no hay
+permisos para `stop`, `rm`, `pull`, `prune`, reintento ni Cutover. Detalles y
+decisiones condicionadas al recibo real en [ADR0190](ADR/0190-r81-exact-worker-807-readonly.md).
+
+## Histórico R76 — Investigación previa al Cutover (06/11/2026 ART)
 
 **No despachar Cutover A mientras el estado físico esté indeterminado.**
 El preflight worker [#42329475083](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42329475083)

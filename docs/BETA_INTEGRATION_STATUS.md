@@ -1,6 +1,21 @@
 # Estado de integración BETA
 
-## R50 — Stage recuperado, regresión de política dual (06/11/2026 ART)
+## Estado A45-R81 — Gate físico del worker NO_GO (07/11/2026 ART)
+
+| Evidencia exacta | Resultado acreditado | Límite |
+| --- | --- | --- |
+| [R80 recovery #806](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42340750343) | `CLEANED cleanup=VERIFIED` del **antiguo** probe #795, legacy sano y foreign intactos | No prueba estado posterior de #807 |
+| [Release dual #723](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42340930071), `main=1199c46fee8053e637b220ad9365ce3af15eb8e5` | Controller/browser GHCR + 2 manifests y scans GREEN | Publicación, no deploy |
+| [Worker preflight #807](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42341290485) | `NO_GO host=UNVERIFIED phase_claim=CLEANUP cleanup_claim=INDETERMINATE`; SSH host exit3 | No se conoce estado actual de probe, seccomp o legacy |
+| R81 candidato CODE_ONLY | Extensión **READ_ONLY** del observador #795 hacia #807, mismo workflow y pins exactos | No existirá resultado físico hasta PR/CI/merge/Action |
+
+**Cutover / BETA integral / Telegram = NO_GO.** No reintentar el preflight,
+PREPARE ni APPLY, ni limpiar residuos sin una observación exacta. Cero reservas
+reales. Solo Boca rootless; otros Docker, Porota, datos, volúmenes y puerto
+8443 intocables. [ADR0190](ADR/0190-r81-exact-worker-807-readonly.md),
+[#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6702631888).
+
+## Histórico R50 — Stage recuperado, regresión de política dual (06/11/2026 ART)
 
 - [Recuperación #743](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42254252830):
   `STAGE_CLEARED`, ACK físico aceptado, Docker writes 0, Compose intacto.

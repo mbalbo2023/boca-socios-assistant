@@ -1,6 +1,38 @@
 # Boca Socios Assistant
 
-## Estado A45-R80 — RCA del gate pre-SSH y única continuación (07/11/2026 ART)
+## Estado A45-R81 — #807 NO_GO físico; inventario exacto y sin reintento (07/11/2026 ART)
+
+La recuperación protegida R80 [#806](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42340750343)
+**sí eliminó y verificó únicamente el antiguo probe detenido #795**, con
+`BOCA_WORKER_RECOVERY state=CLEANED cleanup=VERIFIED`, legacy sano en
+`127.0.0.1:8443`, `foreign=UNTOUCHED`. El nuevo release dual
+[#723 / 42340930071](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42340930071)
+publicó ambos digests y manifiestos inmutables desde
+`main=1199c46fee8053e637b220ad9365ce3af15eb8e5`, tras escaneos GREEN.
+No se repiten ni la recuperación #806 ni el release #723.
+
+El único preflight del nuevo par de imágenes
+[#807 / 42341290485](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42341290485)
+**FALLÓ** (`exit 3`) con
+`state=NO_GO host=UNVERIFIED phase_claim=CLEANUP cleanup_claim=INDETERMINATE`.
+La fase CLEANUP puede ocultar una falla anterior o un error de verificación
+final del legacy; no demuestra que el nuevo contenedor haya quedado ni que
+se haya limpiado. **Estado físico posterior de probe, seccomp y legacy:
+UNVERIFIED**. No hay GO de PREPARE, APPLY ni Cutover.
+
+R81 propone extender el observador protegido `cutover-a-worker-inspect`
+**solo READ_ONLY**, con identidades exactas del nuevo intento #807 y del
+histórico #795 separadas, sin nuevas primitivas Docker. La lectura acotada
+comprobará nombre/CID/labels/digest del probe, tamaño del JSON sin contenido,
+archivo seccomp por `lstat` y salud/loopback del legacy. Incluso un resultado
+limpio permanece `READ_ONLY_NO_GO` y no autoriza reintento ni borrado. El
+observador actual está fijado al #795 y **no sirve para #807 sin este cambio**.
+La implementación candidata exige QA/arquitectura/infra, PR, CI y merge antes
+de una sola lectura física por Actions. [ADR0190](docs/ADR/0190-r81-exact-worker-807-readonly.md),
+[RCA #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6702632026),
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6702631888).
+
+## Histórico A45-R80 — RCA del gate pre-SSH y única continuación (07/11/2026 ART)
 
 R79 fue fusionado como `main=d9100c6c4666c61ba66fbbefa48e61102a20ce5d`,
 con CI y seguridad postmerge GREEN y cero PR abiertos. Su único dispatch

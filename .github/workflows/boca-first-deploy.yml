@@ -1,5 +1,5 @@
 name: Boca first deploy
-run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R80-WORKER-RECOVER-ONCE' || 'Boca first deploy' }}
+run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R80-WORKER-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42341290485' && 'BOCA-R81-WORKER-807-READONLY' || 'Boca first deploy' }}
 
 on:
   pull_request:
@@ -963,19 +963,33 @@ jobs:
               test -z "$BOCA_SITE_ENVELOPE"
               ;;
             cutover-a-worker-inspect)
-              # One read-only postmortem of exact preflight #795. Do not use
-              # the historical APPLY observer for a temporary probe.
+              # Only read-only postmortems of exact failed probes #795/#807.
+              # Never use the APPLY observer for a temporary worker.
               test "$BOCA_HOST_READONLY_ENV_READY" = ready
               test "$BOCA_DEPLOY_ENV_READY" = ready
-              test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42329475083
+              case "$BOCA_PROTECTED_ACTION_CONTEXT" in
+                42329475083) test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42329475083 ;;
+                42341290485) test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42341290485 ;;
+                *) exit 1 ;;
+              esac
               test "$BOCA_LEGACY_CONTROLLER_ID" = 27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793
               test "$BOCA_LEGACY_SOURCE_SHA" = cabce9f1e452e63ded115f447559a358dc0f4d1b
               test "$BOCA_LEGACY_IMAGE_REF" = ghcr.io/mbalbo2023/boca-socios-assistant@sha256:cf6e4266cfcfea0c07fa31301d59c7aaa3b9c2fefb9f6843baddd208cacd3b59
               test -z "$BOCA_LEGACY_RELEASE_RUN_ID"
+              test -z "$BOCA_SOURCE_SHA_SUBMITTED"
               test -z "$BOCA_IMAGE_REF"
               test -z "$BOCA_BROWSER_IMAGE_REF"
               test -z "$BOCA_RELEASE_RUN_ID"
               test -z "$BOCA_SITE_ENVELOPE"
+              for unexpected in \
+                "$BOCA_TELEGRAM_ENVELOPE" "$BOCA_OWNER_ENVELOPE" \
+                "$BOCA_OWNER_CAPABILITY_SHA256" "$BOCA_FAILED_TELEGRAM_RUN_ID" \
+                "$BOCA_OFFICIAL_CONTROLLER_ID" "$BOCA_OFFICIAL_NEWS_RUN_ID" \
+                "$BOCA_OFFICIAL_NEWS_SOURCE_SHA" "$BOCA_OFFICIAL_NEWS_ARTIFACT_ID" \
+                "$BOCA_OFFICIAL_NEWS_ZIP_SHA256" "$BOCA_OFFICIAL_NEWS_JSONL_SHA256" \
+                "$BOCA_OFFICIAL_NEWS_HTML_SHA256" "$BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC"; do
+                test -z "$unexpected"
+              done
               ;;
             cutover-a-stage-recover|cutover-a-image-retire)
               # A separate one-shot exact incident recovery; no free-form
@@ -1956,7 +1970,7 @@ jobs:
         if: inputs.operation == 'cutover-a-worker-inspect'
         run: |
           set -euo pipefail
-          # Fixed numeric attempt and legacy pins were validated before SSH.
+          # Exact #795 or #807 and legacy pins were validated before SSH.
           # No Docker writes, no probe retry, no container exec or secret input.
           remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' \
             python3 - host "$BOCA_PROTECTED_ACTION_CONTEXT" "$BOCA_LEGACY_CONTROLLER_ID" \
