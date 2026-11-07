@@ -1,5 +1,43 @@
 # Boca Socios Assistant
 
+## R62 — Cutover #778 NO_GO y Stage en cuarentena (06/11/2026 ART; candidato CODE_ONLY)
+
+El `main=a8b577161288fe653fef65d3d5890f3661fb15d4` publicó release
+dual [#704](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42309505084)
+y PREPARE [#776](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42309967399)
+ambos GREEN. El Environment protegido fue vinculado al SHA256
+`27c24d339110241992c23fbbc8d443957cdf146af37e4b300e2341594fe5a89f`.
+El único Cutover A [#778](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42317092809)
+pasó GO_B pero el host SSH terminó exit 3, sin aceptación de BETA nueva.
+**No reintentar #778 ni usar PREPARE #776 otra vez.**
+
+La reconciliación Boca-only READ_ONLY
+[#779](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42317342897)
+confirmó `stage=PRESENT`, `STAGE_ROOT_ENTRIES` (dos entradas),
+`intent/result=PRESENT`, `cleanup=INDETERMINATE`,
+`commit_started=false`, `original_restored=true`, sin candidato,
+worker ni promoción. Continúa saludable el único controlador legacy exacto
+`27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793`
+en `127.0.0.1:8443`. Disco 39.770.513.408 B e inodos 7.437.094
+libres; el cuello de botella previo de capacidad está resuelto.
+`prepared_go_marker=UNREADABLE/DIRECTORY` describe la identidad/permisos
+del **directorio padre** de un volumen rootless desde el host, no el tipo
+real del marcador ni la causa comprobada de exit3.
+
+El [PR R62 #412](https://github.com/mbalbo2023/boca-socios-assistant/pull/412)
+propone **solo** reasignar los tres pins del Stage recovery #778/#776/#779
+y añadir al observador READ_ONLY dos booleanos derivados del recibo durable
+(`worker_id_recorded`, `candidate_id_recorded`), para acotar la fase
+anterior a la falla sin exponer IDs ni operar Docker. Hasta CI, revisión,
+merge, observación de fase y ACK físico `STAGE_CLEARED`, Stage sigue
+en cuarentena. No tocar imagen histórica incierta (`sha256:a44453ab...`);
+su intento de retiro exclusivo #746 ya falló y no se repetirá. Prohibidos
+cleanup amplio, BLACKBOX, navegación real, Porota u otros servicios.
+**La BETA integral aún NO está desplegada.** Nuevo APPLY requiere RCA y
+nueva release/PREPARE/GO del SHA definitivo.
+Ver [ADR0184](docs/ADR/0184-exact-incident-uncommitted-stage-recovery.md)
+y [Regla84 #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6699518071).
+
 ## R57 — recuperación de Stage del Cutover #770 (06/11/2026 ART, CANDIDATO CODE_ONLY)
 
 La recuperación R55 del Stage del incidente #763 quedó completada físicamente
