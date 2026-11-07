@@ -87,9 +87,9 @@ PREFLIGHT_ENTRIES = frozenset(
     }
 )
 MAX_ZIP = 512_000
-# Must match the bounded explicit allowlist in build_protected_boca_bundle;
-# independently enforce the unchanged 512k compressed ZIP cap.
-MAX_UNCOMPRESSED = 868_000
+# Same R114 source limit as the builder: measured 869791 bytes, bound 872000.
+# Exact entry allowlist/digest and independent 512k compressed cap unchanged.
+MAX_UNCOMPRESSED = 872_000
 RECOVERY_MAX_ZIP = 128_000
 RECOVERY_MAX_UNCOMPRESSED = 256_000
 PREFLIGHT_MAX_ZIP = 128_000

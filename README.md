@@ -1,5 +1,19 @@
 # Boca Socios Assistant
 
+## R114 — Evidencia de salida del worker previa al cleanup (CODE_ONLY)
+
+El Cutover físico V3 [#42422235097](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42422235097)
+falló `PREPARE_WORKER/HEALTH_EXITED`. R114 agrega al **mismo** inspect ya
+existente `ExitCode` entero 0..255/`UNKNOWN` y `OOMKilled`
+`YES`/`NO`/`UNKNOWN` antes de compensar, los propaga tipados por recibo
+terminal v3/CLI/parser estricto y conserva `NO_GO`, no retry y limpieza
+selectiva, incluso si falla la compensación. No divulga logs, Env, Mounts
+ni errores Docker. Contratos v1/v2 intactos. El ZIP sigue con allowlist
+exacta, digest y techo comprimido 512k; el límite descomprimido pasa de
+868k a 872k sobre 869791 bytes medidos en el candidato. Ningún host fue
+modificado; BETA integral **NO está acreditada como instalada**. [ADR0211](docs/ADR/0211-r114-worker-exit-before-compensation.md),
+[continuidad #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+
 ## R108 — Cutover V3: imagen histórica en cuarentena probatoria (CODE_ONLY)
 
 El inventario físico READ_ONLY [#862](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42415370909)

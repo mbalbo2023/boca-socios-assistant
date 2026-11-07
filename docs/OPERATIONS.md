@@ -23,6 +23,14 @@ NO_GO, no retry, inventario Boca fresco. Nunca tocar Porota u otros recursos.
 histórico, no una instrucción vigente.** Official-import/lifecycle conservan
 su propio contrato. [ADR0206](ADR/0206-single-dispatch-cutover-v3.md).
 
+**R114 CODE_ONLY — diagnóstico del fallo HEALTH_EXITED:** el mismo Docker
+inspect previo al cleanup conservará sólo el exit-code exacto 0..255 o
+`UNKNOWN` y el OOM exacto `YES`/`NO`/`UNKNOWN`, recibo terminal v3 y
+línea de error parseada estrictamente. Su presencia **nunca cambia NO_GO**
+ni autoriza un nuevo dispatch; primero corroborar PR/CI/release y estado
+del incidente anterior. Contratos v1/v2 inalterados, sin nuevos comandos ni
+consultas Docker. [ADR0211](ADR/0211-r114-worker-exit-before-compensation.md).
+
 ### Worker preflight — checklist vigente, `NO_GO` hasta nuevo consenso
 
 Sólo para una futura autorización independiente de

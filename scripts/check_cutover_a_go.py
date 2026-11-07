@@ -671,6 +671,8 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
     phase_claim = "UNVERIFIED"
     worker_primary_claim = "UNVERIFIED"
     worker_compensation_claim = "UNVERIFIED"
+    worker_exit_code_claim = "UNKNOWN"
+    worker_oom_claim = "UNKNOWN"
     if raw.endswith(recorded):
         prefix = raw[: -len(recorded)]
         observe = _CUTOVER_OBSERVE_PREFIX.match(prefix)
@@ -683,10 +685,25 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
             postflight_line, separator, prefix = prefix.partition(b"\n")
             if not separator or len(postflight_line) > 8000:
                 prefix = b"\x00"
-        worker_match = re.match(
+        worker_v3 = re.match(
             rb"BOCA_CUTOVER_A_WORKER_FAILURE primary=([A-Z_]{2,32}) "
-            rb"compensation=([A-Z_]{2,32})\n",
+            rb"compensation=([A-Z_]{2,32}) exit_code=(0|[1-9][0-9]{0,2}|UNKNOWN) "
+            rb"oom=(YES|NO|UNKNOWN)\n",
             prefix,
+        )
+        valid_v3 = (
+            worker_v3 is not None
+            and worker_v3.group(1) == b"HEALTH_EXITED"
+            and (worker_v3.group(3) == b"UNKNOWN" or int(worker_v3.group(3)) <= 255)
+        )
+        worker_match = (
+            worker_v3
+            if valid_v3
+            else re.match(
+                rb"BOCA_CUTOVER_A_WORKER_FAILURE primary=([A-Z_]{2,32}) "
+                rb"compensation=([A-Z_]{2,32})\n",
+                prefix,
+            )
         )
         worker_primary_candidate = ""
         worker_compensation_candidate = ""
@@ -711,6 +728,9 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
                         if worker_match is not None:
                             worker_primary_claim = worker_primary_candidate
                             worker_compensation_claim = worker_compensation_candidate
+                            if valid_v3 and worker_v3 is not None:
+                                worker_exit_code_claim = worker_v3.group(3).decode("ascii")
+                                worker_oom_claim = worker_v3.group(4).decode("ascii")
     elif raw == unverified:
         host_claim = "NO_GO_UNVERIFIED"
     transport = "TIMEOUT" if ssh_rc == 124 else "SSH_255" if ssh_rc == 255 else "EXIT_NONZERO"
@@ -719,6 +739,7 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
         f"transport={transport} host_claim={host_claim} phase_claim={phase_claim} "
         f"worker_primary_claim={worker_primary_claim} "
         f"worker_compensation_claim={worker_compensation_claim} "
+        f"worker_exit_code_claim={worker_exit_code_claim} worker_oom_claim={worker_oom_claim} "
         "phase=UNVERIFIED "
         "host=UNVERIFIED terminal=UNVERIFIED no_retry=true"
     )

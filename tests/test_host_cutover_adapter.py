@@ -594,6 +594,82 @@ def test_worker_health_wait_does_not_claim_exit_when_docker_state_is_missing(
     assert getattr(captured.value, "phase", None) == "HEALTH_WAIT"
 
 
+@pytest.mark.parametrize(
+    ("exit_code", "oom", "expected_exit", "expected_oom"),
+    [
+        (0, False, 0, False),
+        (1, True, 1, True),
+        (137, False, 137, False),
+        (137, True, 137, True),
+        (True, False, "UNKNOWN", False),
+        (-1, "true", "UNKNOWN", "UNKNOWN"),
+        (256, None, "UNKNOWN", "UNKNOWN"),
+        ("137", 1, "UNKNOWN", "UNKNOWN"),
+    ],
+)
+def test_worker_exited_captures_only_exact_docker_state_before_compensation(
+    monkeypatch: pytest.MonkeyPatch,
+    exit_code: object,
+    oom: object,
+    expected_exit: object,
+    expected_oom: object,
+) -> None:
+    inspections: list[str] = []
+
+    def inspect(container: str) -> dict[str, object]:
+        inspections.append(container)
+        return {
+            "State": {
+                "Running": False,
+                "ExitCode": exit_code,
+                "OOMKilled": oom,
+                "Error": "SECRET=never-publish",
+                "Health": {"Log": ["SECRET=never-publish"]},
+            },
+            "Config": {"Env": ["SECRET=never-publish"]},
+            "Mounts": ["PRIVATE"],
+        }
+
+    monkeypatch.setattr(host, "_browser_inspect_record", inspect)
+    with pytest.raises(host.WorkerHealthPhaseError) as captured:
+        host._browser_wait_healthy(WORKER_ID)
+    assert inspections == [WORKER_ID]
+    assert captured.value.phase == "HEALTH_EXITED"
+    assert captured.value.exit_code == expected_exit
+    assert captured.value.oom_killed == expected_oom
+    assert "SECRET" not in str(captured.value)
+    assert "PRIVATE" not in str(captured.value)
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_worker_exited_evidence_survives_both_compensation_outcomes(
+    monkeypatch: pytest.MonkeyPatch, cleanup_fails: bool
+) -> None:
+    calls, legacy, worker = _worker_preparation_fake(monkeypatch)
+
+    def exited(_container: str) -> None:
+        raise host.WorkerHealthPhaseError("HEALTH_EXITED", exit_code=137, oom_killed=True)
+
+    monkeypatch.setattr(host, "_browser_wait_healthy", exited)
+    if cleanup_fails:
+
+        def fail_cleanup(*_args: object) -> None:
+            raise host.PreflightError("PRIVATE compensation failure")
+
+        monkeypatch.setattr(host, "_cutover_compensate_worker", fail_cleanup)
+    with pytest.raises(host.CutoverWorkerPhaseError) as captured:
+        _prepare_worker()
+    assert captured.value.primary == "HEALTH_EXITED"
+    assert captured.value.exit_code == 137
+    assert captured.value.oom_killed is True
+    assert captured.value.compensation == ("INDETERMINATE" if cleanup_fails else "VERIFIED")
+    assert legacy["State"]["Running"] is True
+    assert "PRIVATE" not in str(captured.value)
+    if not cleanup_fails:
+        assert not worker["exists"]
+        assert any(command[:2] == ("docker", "rm") for command in calls)
+
+
 def test_worker_health_wait_timeout_has_no_private_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -31,7 +31,7 @@ from dataclasses import dataclass, replace
 from fractions import Fraction
 from pathlib import Path
 from time import monotonic, sleep
-from typing import cast
+from typing import Literal, cast
 from urllib.parse import urlsplit
 
 ROOT = Path("/srv/boca-socios")
@@ -164,8 +164,21 @@ class WorkerHealthPhaseError(PreflightError):
 
     _PHASES = frozenset({"HEALTH_EXITED", "HEALTH_UNHEALTHY", "HEALTH_TIMEOUT"})
 
-    def __init__(self, phase: str) -> None:
+    def __init__(
+        self,
+        phase: str,
+        *,
+        exit_code: int | Literal["UNKNOWN"] | None = None,
+        oom_killed: bool | Literal["UNKNOWN"] | None = None,
+    ) -> None:
         self.phase = phase if phase in self._PHASES else "HEALTH_WAIT"
+        self.exit_code: int | Literal["UNKNOWN"] | None = None
+        self.oom_killed: bool | Literal["UNKNOWN"] | None = None
+        if self.phase == "HEALTH_EXITED" and exit_code is not None and oom_killed is not None:
+            self.exit_code = (
+                exit_code if type(exit_code) is int and 0 <= exit_code <= 255 else "UNKNOWN"
+            )
+            self.oom_killed = oom_killed if type(oom_killed) is bool else "UNKNOWN"
         super().__init__("browser service health not verified")
 
 
@@ -191,9 +204,23 @@ class CutoverWorkerPhaseError(PreflightError):
     )
     _COMPENSATION = frozenset({"NONE", "VERIFIED", "INDETERMINATE", "UNVERIFIED"})
 
-    def __init__(self, primary: str, compensation: str) -> None:
+    def __init__(
+        self,
+        primary: str,
+        compensation: str,
+        *,
+        exit_code: int | Literal["UNKNOWN"] | None = None,
+        oom_killed: bool | Literal["UNKNOWN"] | None = None,
+    ) -> None:
         self.primary = primary if primary in self._PRIMARY else "UNVERIFIED"
         self.compensation = compensation if compensation in self._COMPENSATION else "UNVERIFIED"
+        self.exit_code: int | Literal["UNKNOWN"] | None = None
+        self.oom_killed: bool | Literal["UNKNOWN"] | None = None
+        if self.primary == "HEALTH_EXITED" and exit_code is not None and oom_killed is not None:
+            self.exit_code = (
+                exit_code if type(exit_code) is int and 0 <= exit_code <= 255 else "UNKNOWN"
+            )
+            self.oom_killed = oom_killed if type(oom_killed) is bool else "UNKNOWN"
         message = (
             "cutover A worker failed; selective cleanup INDETERMINATE, no retry"
             if self.compensation == "INDETERMINATE"
@@ -5475,6 +5502,8 @@ def _cutover_prepare_worker(
     if _names("volume", f"name=^{BROWSER_IPC_VOLUME}$"):
         raise PreflightError("cutover A IPC volume already exists before attempt")
     phase = "IPC"
+    exit_code: int | Literal["UNKNOWN"] | None = None
+    oom_killed: bool | Literal["UNKNOWN"] | None = None
     try:
         _browser_create_ipc_volume(browser_image, attempt_id)
         phase = "CREATE"
@@ -5501,6 +5530,7 @@ def _cutover_prepare_worker(
             _browser_wait_healthy(created)
         except WorkerHealthPhaseError as exc:
             phase = exc.phase
+            exit_code, oom_killed = exc.exit_code, exc.oom_killed
             raise
         phase = "HEALTH_POSTFLIGHT"
         _browser_worker_postflight(
@@ -5524,8 +5554,12 @@ def _cutover_prepare_worker(
                 original_id, legacy_image, legacy_sha, name=CUTOVER_LEGACY_NAME, running=True
             )
         except (PreflightError, OSError, ValueError, KeyError, TypeError):
-            raise CutoverWorkerPhaseError(phase, "INDETERMINATE") from None
-        raise CutoverWorkerPhaseError(phase, "VERIFIED") from None
+            raise CutoverWorkerPhaseError(
+                phase, "INDETERMINATE", exit_code=exit_code, oom_killed=oom_killed
+            ) from None
+        raise CutoverWorkerPhaseError(
+            phase, "VERIFIED", exit_code=exit_code, oom_killed=oom_killed
+        ) from None
 
 
 def _cutover_candidate_postflight(
@@ -6360,7 +6394,20 @@ def _browser_wait_healthy(container: str) -> None:
         if not isinstance(state, dict) or type(state.get("Running")) is not bool:
             raise WorkerHealthPhaseError("HEALTH_WAIT")
         if state["Running"] is False:
-            raise WorkerHealthPhaseError("HEALTH_EXITED")
+            # The *same* inspect snapshot predates selective compensation.
+            # Never carry Docker Error, Env, Mounts or health logs downstream.
+            raw_exit_code, raw_oom_killed = state.get("ExitCode"), state.get("OOMKilled")
+            exit_code: int | Literal["UNKNOWN"] = (
+                raw_exit_code
+                if type(raw_exit_code) is int and 0 <= raw_exit_code <= 255
+                else "UNKNOWN"
+            )
+            oom_killed: bool | Literal["UNKNOWN"] = (
+                raw_oom_killed if type(raw_oom_killed) is bool else "UNKNOWN"
+            )
+            raise WorkerHealthPhaseError(
+                "HEALTH_EXITED", exit_code=exit_code, oom_killed=oom_killed
+            )
         health = state.get("Health")
         if not isinstance(health, dict):
             raise WorkerHealthPhaseError("HEALTH_WAIT")

@@ -248,6 +248,58 @@ def test_cli_adds_only_typed_worker_failure_fields(
     )
 
 
+@pytest.mark.parametrize(
+    ("exit_code", "oom", "expected_code", "expected_oom"),
+    [
+        (0, False, "0", "NO"),
+        (1, True, "1", "YES"),
+        (137, False, "137", "NO"),
+        ("UNKNOWN", "UNKNOWN", "UNKNOWN", "UNKNOWN"),
+    ],
+)
+def test_cli_exited_worker_prints_only_v3_allowlist_with_no_go(
+    reviewed_context: tuple[str, CutoverPlan, str],
+    capsys: pytest.CaptureFixture[str],
+    exit_code: object,
+    oom: object,
+    expected_code: str,
+    expected_oom: str,
+) -> None:
+    encoded, plan, _ = reviewed_context
+
+    def exited(_plan: CutoverPlan) -> CutoverReceipt:
+        return CutoverReceipt(
+            plan.attempt_id,
+            "NO_GO",
+            "INDETERMINATE",
+            False,
+            False,
+            None,
+            None,
+            failed_phase="PREPARE_WORKER",
+            worker_primary_phase="HEALTH_EXITED",
+            worker_compensation="INDETERMINATE",
+            worker_exit_code=exit_code,
+            worker_oom_killed=oom,
+        )
+
+    assert (
+        cli.run_cli(
+            encoded,
+            approved_go_binding_sha256=GO,
+            execute=exited,
+            reconcile=lambda _p, _r: None,
+        )
+        == 3
+    )
+    assert capsys.readouterr().out == (
+        "BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=INDETERMINATE "
+        f"exit_code={expected_code} oom={expected_oom}\n"
+        "BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n"
+        "BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n"
+    )
+
+
 def test_cli_unexpected_host_error_never_leaks_exception_or_claims_success(
     reviewed_context: tuple[str, CutoverPlan, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
