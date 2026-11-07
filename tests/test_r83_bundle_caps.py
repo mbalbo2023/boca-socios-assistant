@@ -272,7 +272,7 @@ def test_actual_worker_memfd_runs_under_stdlib_only_python_and_rejects_bad_pins(
     assert result.stdout == (
         b"BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO failed_phase=UNVERIFIED "
         b"cleanup=UNVERIFIED primary_failed_phase=UNVERIFIED "
-        b"cleanup_failed_stage=UNVERIFIED\n"
+        b"cleanup_failed_stage=UNVERIFIED stop_failure_cause=UNVERIFIED\n"
     )
 
 

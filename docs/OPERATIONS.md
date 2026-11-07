@@ -1,6 +1,28 @@
 # Safe operations — verified evidence and gated procedures
 
-## Vigente R87 — stopped-only #819, sin Cutover automático (07/11/2026 ART)
+## Vigente A45-R88 — R87 CLEANED y próximo preflight aún NO_GO (07/11/2026 ART)
+
+La Action manual protegida [#823](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42357920597)
+fue ejecutada **una sola vez** en `main=b4b72526d144f58d7577e49a32591ed304c1414d`,
+después de CI/Security postmerge GREEN y consenso 3/3 registrado en el
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6704789787).
+Gate R87 PASS, recibo terminal `BOCA_WORKER_RECOVERY state=CLEANED cleanup=VERIFIED`,
+artifact `boca-worker-recovery-42353468231` id `13568895158`,
+controlador original `RUNNING_HEALTHY` en `127.0.0.1:8443` y recursos
+externos `UNTOUCHED`. **Nunca volver a despachar esa recuperación.**
+
+El fallo `STOP` del preflight #819 continúa sin subtipo histórico verificable.
+La corrección R88 es exclusivamente de software/observabilidad y de la
+captura del runner. **No ejecutar de nuevo `cutover-a-worker-preflight`,
+`cutover-a-apply`, PREPARE ni GO_B por este recibo de limpieza.** Requieren
+un nuevo SHA de código, QA/seguridad exactas, release dual inmutable, consenso
+y una autorización técnica separada sobre nuevas condiciones de host.
+No se usan comandos manuales en el droplet: cualquier observación/acción
+eventual va sólo por GitHub Actions protegido, UID rootless Boca, sin tocar
+otros sistemas ni los módulos BLACKBOX. ADR [0197](ADR/0197-r88-worker-preflight-evidence-and-runner-hardening.md)
+y RCA [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+
+## Histórico R87 — stopped-only #819, diseño anterior al run #823 (07/11/2026 ART; sustituido)
 
 El PR [#428](https://github.com/mbalbo2023/boca-socios-assistant/pull/428)
 fusionó el inspector R86 en `main=2859b9d31621e3cbec70b1aec649cc281ba130f5`.

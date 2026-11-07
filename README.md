@@ -1,6 +1,33 @@
 # Boca Socios Assistant
 
-## Estado actual A45-R87 — #819 observado detenido; recuperación acotada CODE_ONLY (07/11/2026 ART)
+## Estado actual A45-R88 — residuo #819 recuperado; Cutover aún NO_GO (07/11/2026 ART)
+
+El [PR #429](https://github.com/mbalbo2023/boca-socios-assistant/pull/429)
+de R87 fue fusionado en `main=b4b72526d144f58d7577e49a32591ed304c1414d`;
+CI [#1014](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42357586447)
+y Security [#895](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42357586607)
+pasaron sobre el SHA exacto, con **cero PR abiertos** al cierre de R87.
+La única recuperación física protegida
+[#823](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42357920597)
+terminó **SUCCESS**: `CLEANED cleanup=VERIFIED` del contenedor temporal
+detenido #819, controlador Boca original `RUNNING_HEALTHY` en
+`127.0.0.1:8443`, aplicaciones externas `UNTOUCHED`. Artefacto
+`boca-worker-recovery-42353468231`, id `13568895158`, SHA-256 ZIP
+`c664842b8b0141961178b4bf513cd724ed950fe7b6123fc126cc133dc2efedb7`.
+Los recibos y el consenso técnico previo 3/3 están en
+[#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6704813361)
+y [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6704813526).
+
+**Esto NO es un despliegue de la BETA integral.** El preflight anterior
+[#819](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42353468231)
+falló durante `STOP` de cleanup, cuyo mecanismo preciso no está demostrado.
+R88 prepara diagnósticos tipados de STOP, pruebas de carrera/ACK y una
+captura privada/acotada del runner, además de eliminar comprobaciones
+de aislamiento anulables con Python optimizado. Es trabajo de código y QA,
+**sin otro preflight ni GO_B/APPLY autorizados por la recuperación**.
+Véase [ADR0197](docs/ADR/0197-r88-worker-preflight-evidence-and-runner-hardening.md).
+
+## Histórico A45-R87 — #819 observado detenido; recuperación acotada CODE_ONLY (07/11/2026 ART; sustituido)
 
 R86 se integró mediante [PR #428](https://github.com/mbalbo2023/boca-socios-assistant/pull/428),
 `main=2859b9d31621e3cbec70b1aec649cc281ba130f5`, con checks de PR,

@@ -1,6 +1,16 @@
 # Estado de integración BETA
 
-## Estado A45-R87 — revisión de recuperación #819, ninguna BETA nueva instalada (07/11/2026 ART)
+## Estado A45-R88 — residuo #819 recuperado, BETA integral NO instalada (07/11/2026 ART)
+
+| Frente | Evidencia exacta | Veredicto |
+| --- | --- | --- |
+| GitHub main y QA R87 | [PR #429](https://github.com/mbalbo2023/boca-socios-assistant/pull/429) MERGED, `main=b4b72526d144f58d7577e49a32591ed304c1414d`, [CI postmerge](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42357586447) + [Security postmerge](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42357586607) SUCCESS, PR0 | Código R87 revisado; no prueba instalación |
+| Recuperación protegida R87 | [Run #823](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42357920597), gate PASS, `CLEANED/VERIFIED`, artifact `13568895158`, legacy `RUNNING_HEALTHY`, `foreign=UNTOUCHED` | **Residuo temporal #819 eliminado y postcheck verificado**. No repetir |
+| Preflight y RCA #819 | [Run #819](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42353468231) `CLEANUP/STOP/INDETERMINATE`; #821 read-only lo encontró detenido después | STOP causa exacta **INDETERMINATE**; no otro preflight antes de revisión R88 |
+| R88 en desarrollo | STOP subtipos sanitizados, verificación boundary sin `assert`, runner SSH privado/acotado y pruebas adversariales, [ADR0197](ADR/0197-r88-worker-preflight-evidence-and-runner-hardening.md) | **CODE_ONLY**, pendiente integración/PR/CI/release y eventual GO físico propio |
+| Cutover, GO_B, Chrome, Telegram | No hay PREPARE/GO_B/APPLY ni ACK de BETA integral en #823 | **NO_GO**; original en loopback 8443, BLACKBOX y servicios ajenos intocables |
+
+## Histórico A45-R87 — revisión de recuperación #819 (07/11/2026 ART; sustituido)
 
 | Frente | Evidencia verificable | Estado |
 | --- | --- | --- |
