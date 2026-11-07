@@ -492,3 +492,17 @@ benchmark del repo; no habilitar sin medición una exportación masiva de cache
 remota en cuatro pipelines. El próximo experimento debe cronometrar frío y
 caliente, probar almacenamiento y separar caches de PR vs main; mantener
 todos los scans y los controles obligatorios.
+
+**Incidente de CI detectado en R70:** el PR #414, SHA inicial
+`591404c42889fc3c0ff260c93d3f5157617022dd`, tuvo tres workflows
+verdes pero falló `CI #42324715791` en
+`test_owner_readonly_snapshot_is_accepted_without_a_write`. La causa
+concreta está en el test: comparaba `os.stat_result` completo, incluyendo
+`st_atime`; una lectura legítima puede actualizar ese timestamp según el
+montaje Linux sin escribir/modificar el archivo. La implementación
+`official_snapshot._identity` ya excluía `atime` correctamente. Se ajustan
+dos aserciones del mismo módulo para comparar identidad, modo, tamaño, inode,
+propietario y nanosegundos de `mtime/ctime`, preservando la detección de
+escrituras reales. Este defecto de test es ajeno al fallo físico de Cutover;
+se clasifica como falsa alarma dependiente del filesystem, no como motivo
+para relajar el gate de calidad.

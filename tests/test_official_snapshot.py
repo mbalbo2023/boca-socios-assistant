@@ -46,6 +46,22 @@ def _snapshot(tmp_path: Path, *documents: dict[str, object]) -> Path:
     return path
 
 
+def _stable_file_metadata(path: Path) -> tuple[int, ...]:
+    """Read-only access may advance atime; file identity/writes must not change."""
+    info = path.stat()
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_uid,
+        info.st_gid,
+        info.st_mode,
+        info.st_nlink,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
 def test_absent_optional_snapshot_is_empty_and_does_not_create_files(tmp_path: Path) -> None:
     path = tmp_path / OFFICIAL_SNAPSHOT_NAME
     assert load_official_snapshot(path) == ()
@@ -54,13 +70,13 @@ def test_absent_optional_snapshot_is_empty_and_does_not_create_files(tmp_path: P
 
 def test_valid_two_line_snapshot_remains_nonactionable_and_sorted(tmp_path: Path) -> None:
     path = _snapshot(tmp_path, _envelope(2), _envelope(1))
-    before = path.stat()
+    before = _stable_file_metadata(path)
     notices = load_official_snapshot(path)
     assert len(notices) == 2
     assert notices[0].event_key == "boca-evento-ficticio-01"
     assert all(notice.actionable is False for notice in notices)
     assert all(notice.verification_state == "SOURCE_OBSERVED_UNVERIFIED" for notice in notices)
-    assert path.stat() == before  # reader does not rewrite, migrate, or cache the file
+    assert _stable_file_metadata(path) == before  # no write, migration or cache file
 
 
 def test_present_empty_snapshot_is_nonactionable(tmp_path: Path) -> None:
@@ -71,9 +87,9 @@ def test_present_empty_snapshot_is_nonactionable(tmp_path: Path) -> None:
 def test_owner_readonly_snapshot_is_accepted_without_a_write(tmp_path: Path) -> None:
     path = _snapshot(tmp_path, _envelope())
     path.chmod(0o400)
-    before = path.stat()
+    before = _stable_file_metadata(path)
     assert len(load_official_snapshot(path)) == 1
-    assert path.stat() == before
+    assert _stable_file_metadata(path) == before
 
 
 @pytest.mark.parametrize(
