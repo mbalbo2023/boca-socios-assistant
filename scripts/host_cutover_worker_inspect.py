@@ -10,9 +10,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import selectors
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +32,12 @@ IMAGE = re.compile(r"ghcr\.io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{6
 BROWSER_IMAGE = re.compile(
     r"ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}\Z"
 )
+# The sole failed #795 probe used these exact immutable release coordinates.
+FAILED_WORKER_SOURCE = "92624ed6b7e75c6010f59670c866df00a29766dd"
+FAILED_WORKER_IMAGE = (
+    "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
+    "3894cfff995858d7c0ffdb994180a0d28a8a92bb69a0526fb040db2297fd8bf9"
+)
 INSPECT = (
     '{"id":{{json .Id}},"name":{{json .Name}},'
     '"image_ref":{{json .Config.Image}},'
@@ -40,7 +48,15 @@ INSPECT = (
     '"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}},'
     '"ports":{{json .HostConfig.PortBindings}}}'
 )
-INSPECT_MINIMAL_ID = "{{.Id}}"
+INSPECT_NO_HEALTH = INSPECT.replace(
+    '"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}',
+    '"health":null',
+)
+# Same full JSON serialization as the failed cleanup's inspect, but print only
+# its length: never release Env, Mounts, labels beyond the fixed compact fields.
+INSPECT_FULL_JSON_LENGTH = "{{len (json .)}}"
+DOCKER_OUTPUT_LIMIT = 2048
+DOCKER_TIMEOUT_SECONDS = 12
 RECEIPT_KEYS = {
     "version",
     "attempt",
@@ -55,13 +71,13 @@ RECEIPT_KEYS = {
     "probe_list_rc",
     "probe_inspect_stage",
     "probe_inspect_rc",
-    "probe_basic_stage",
+    "probe_full_json_stage",
+    "probe_full_json_rc",
     "seccomp",
     "original",
     "original_port",
     "original_inspect_stage",
     "original_inspect_rc",
-    "original_basic_stage",
     "observer_writes",
     "foreign_resources_touched",
     "cutover_authorized",
@@ -120,7 +136,7 @@ def _runtime_stat(name: str) -> str:
 
 
 def _docker(*args: str) -> str:
-    """Permit only exact-name container listing or exact-ID metadata inspection."""
+    """Allow exact metadata queries; bound both streams while the child runs."""
     if not (
         args[:3] == ("ps", "-a", "-q")
         and len(args) == 6
@@ -129,23 +145,66 @@ def _docker(*args: str) -> str:
         is not None
         or args[:2] == ("inspect", "--format")
         and len(args) == 4
-        and args[2] in {INSPECT, INSPECT_MINIMAL_ID}
+        and args[2] in {INSPECT, INSPECT_NO_HEALTH, INSPECT_FULL_JSON_LENGTH}
         and CONTAINER_ID.fullmatch(args[3]) is not None
     ):
         raise InspectError("DOCKER_COMMAND")
     env = {key: value for key, value in os.environ.items() if not key.startswith("DOCKER_")}
     env["DOCKER_HOST"] = f"unix://{SOCKET}"
-    completed = subprocess.run(  # noqa: S603 - narrow READ_ONLY Docker metadata
-        ("docker", *args),  # noqa: S607 - pinned rootless Docker socket, no shell
-        capture_output=True,
-        text=True,
-        timeout=10 if len(args) == 4 and args[2] == INSPECT_MINIMAL_ID else 12,
-        check=True,
+    command = ("docker", *args)
+    started = time.monotonic()
+    process = subprocess.Popen(  # noqa: S603 - narrow READ_ONLY Docker metadata
+        command,  # noqa: S607 - pinned rootless Docker socket, no shell
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         env=env,
     )
-    if len(completed.stdout) > 2048:
-        raise InspectError("DOCKER_BOUNDS")
-    return completed.stdout.strip()
+    output = bytearray()
+    stderr_size = 0
+    try:
+        with selectors.DefaultSelector() as selector:
+            assert process.stdout is not None and process.stderr is not None
+            for stream in (process.stdout, process.stderr):
+                os.set_blocking(stream.fileno(), False)
+                selector.register(stream, selectors.EVENT_READ)
+            while selector.get_map():
+                remaining = DOCKER_TIMEOUT_SECONDS - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, DOCKER_TIMEOUT_SECONDS)
+                ready = selector.select(remaining)
+                if not ready:
+                    raise subprocess.TimeoutExpired(command, DOCKER_TIMEOUT_SECONDS)
+                for key, _event in ready:
+                    chunk = os.read(key.fd, DOCKER_OUTPUT_LIMIT + 1)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                    elif key.fileobj is process.stdout:
+                        if len(output) + len(chunk) > DOCKER_OUTPUT_LIMIT:
+                            raise InspectError("DOCKER_BOUNDS")
+                        output.extend(chunk)
+                    else:
+                        stderr_size += len(chunk)
+                        if stderr_size > DOCKER_OUTPUT_LIMIT:
+                            raise InspectError("DOCKER_BOUNDS")
+        remaining = DOCKER_TIMEOUT_SECONDS - (time.monotonic() - started)
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(command, DOCKER_TIMEOUT_SECONDS)
+        rc = process.wait(timeout=remaining)
+        if rc != 0:
+            raise subprocess.CalledProcessError(rc, command)
+        try:
+            return output.decode("ascii").strip()
+        except UnicodeDecodeError as exc:
+            raise InspectError("DOCKER_ENCODING") from exc
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+        if process.stdout is not None:
+            process.stdout.close()
+        if process.stderr is not None:
+            process.stderr.close()
 
 
 def _named_id(name: str) -> str | None:
@@ -157,8 +216,8 @@ def _named_id(name: str) -> str | None:
     return rows[0] if rows else None
 
 
-def _inspect_id(cid: str) -> dict[str, Any]:
-    value = json.loads(_docker("inspect", "--format", INSPECT, cid))
+def _inspect_record(cid: str, template: str) -> dict[str, Any]:
+    value = json.loads(_docker("inspect", "--format", template, cid))
     if (
         not isinstance(value, dict)
         or set(value)
@@ -180,6 +239,21 @@ def _inspect_id(cid: str) -> dict[str, Any]:
     return value
 
 
+def _inspect_id(cid: str) -> dict[str, Any]:
+    return _inspect_record(cid, INSPECT)
+
+
+def _inspect_no_health(cid: str) -> dict[str, Any]:
+    return _inspect_record(cid, INSPECT_NO_HEALTH)
+
+
+def _full_json_length(cid: str) -> int:
+    value = _docker("inspect", "--format", INSPECT_FULL_JSON_LENGTH, cid)
+    if re.fullmatch(r"[1-9][0-9]{0,8}", value) is None:
+        raise InspectError("INSPECT_LENGTH")
+    return int(value)
+
+
 def _failure(exc: Exception) -> tuple[str, int | None]:
     """Never retain exception text, Docker stderr or unbounded exit status."""
     if isinstance(exc, subprocess.TimeoutExpired):
@@ -192,24 +266,12 @@ def _failure(exc: Exception) -> tuple[str, int | None]:
     return "METADATA_INVALID", None
 
 
-def _basic_probe(cid: str) -> str:
-    """Differential metadata only, no identity attestation and no retry of rich inspect."""
-    try:
-        return (
-            "ID_CONFIRMED"
-            if _docker("inspect", "--format", INSPECT_MINIMAL_ID, cid) == cid
-            else "ID_UNVERIFIED"
-        )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, InspectError):
-        return "ID_UNVERIFIED"
-
-
 def observe(
     attempt: str, original_id: str, original_sha: str, original_image: str
 ) -> dict[str, Any]:
     _validate(attempt, original_id, original_sha, original_image)
     result: dict[str, Any] = {
-        "version": "boca-worker-readonly-inspect-v2",
+        "version": "boca-worker-readonly-inspect-v3",
         "attempt": attempt,
         "legacy_id": original_id,
         "socket": _runtime_stat("docker.sock"),
@@ -223,12 +285,12 @@ def observe(
         "probe_list_rc": None,
         "probe_inspect_stage": "SKIPPED",
         "probe_inspect_rc": None,
-        "probe_basic_stage": "SKIPPED",
+        "probe_full_json_stage": "SKIPPED",
+        "probe_full_json_rc": None,
         "original": "UNVERIFIED",
         "original_port": "UNVERIFIED",
         "original_inspect_stage": "SKIPPED",
         "original_inspect_rc": None,
-        "original_basic_stage": "SKIPPED",
         "observer_writes": 0,
         "foreign_resources_touched": False,
         "cutover_authorized": False,
@@ -241,8 +303,6 @@ def observe(
         return result
     name = f"{PREFIX}{attempt}"
     probe_id: str | None = None
-    probe_rich_failed = False
-    original_rich_failed = False
     try:
         probe_id = _named_id(name)
         result["probe_list_stage"] = "ABSENT" if probe_id is None else "OK"
@@ -253,17 +313,17 @@ def observe(
 
     if probe_id is not None:
         try:
-            probe = _inspect_id(probe_id)
+            probe = _inspect_no_health(probe_id)
             if (
                 probe["name"] == f"/{name}"
                 and probe["project"] == PROJECT
                 and probe["attempt"] == attempt
-                and type(probe["image_ref"]) is str
-                and BROWSER_IMAGE.fullmatch(probe["image_ref"])
+                and probe["image_ref"] == FAILED_WORKER_IMAGE
+                and probe["revision"] == FAILED_WORKER_SOURCE
             ):
-                # Labels and repository match; the exact immutable digest is
-                # NOT attested. Never authorize cleanup from this status.
-                result["probe"] = "PRESENT_LABEL_MATCH"
+                # Matching immutable metadata is NOT sufficient authority to
+                # clean up or launch Cutover: runtime ownership remains gated.
+                result["probe"] = "PRESENT_PIN_MATCH"
                 result["probe_id"] = probe_id
                 result["probe_running"] = probe["running"]
                 result["probe_inspect_stage"] = "OK"
@@ -279,7 +339,21 @@ def observe(
             KeyError,
         ) as exc:
             result["probe_inspect_stage"], result["probe_inspect_rc"] = _failure(exc)
-            probe_rich_failed = isinstance(exc, subprocess.CalledProcessError)
+
+        # Independent differential read, even if compact inspection fails.
+        # Max: one exact-name ps + two probe inspect + one legacy inspect.
+        try:
+            size = _full_json_length(probe_id)
+            result["probe_full_json_stage"] = (
+                "BELOW_CLEANUP_LIMIT" if size < 65536 else "AT_OR_ABOVE_CLEANUP_LIMIT"
+            )
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            OSError,
+            InspectError,
+        ) as exc:
+            result["probe_full_json_stage"], result["probe_full_json_rc"] = _failure(exc)
 
     # Independent of probe lookup/inspection: never hide the legacy singleton
     # when a temporary worker was listed but could not be attested.
@@ -316,18 +390,12 @@ def observe(
         KeyError,
     ) as exc:
         result["original_inspect_stage"], result["original_inspect_rc"] = _failure(exc)
-        original_rich_failed = isinstance(exc, subprocess.CalledProcessError)
-
-    # Run at most two short different-format queries, only after BOTH rich
-    # inspect operations. Success indicates reachability, NOT valid labels.
-    if probe_rich_failed and probe_id is not None:
-        result["probe_basic_stage"] = _basic_probe(probe_id)
-    if original_rich_failed:
-        result["original_basic_stage"] = _basic_probe(original_id)
     result["docker"] = (
         "OBSERVED"
         if result["probe_list_stage"] in {"OK", "ABSENT"}
         and result["probe_inspect_stage"] in {"SKIPPED", "OK", "IDENTITY_MISMATCH"}
+        and result["probe_full_json_stage"]
+        in {"SKIPPED", "BELOW_CLEANUP_LIMIT", "AT_OR_ABOVE_CLEANUP_LIMIT"}
         and result["original_inspect_stage"] in {"OK", "IDENTITY_MISMATCH"}
         else "PARTIAL"
     )
@@ -360,25 +428,32 @@ def verify(raw: bytes, attempt: str, original_id: str) -> dict[str, Any]:
         "OS_ERROR",
         "METADATA_INVALID",
     }
-    basic_states = {"SKIPPED", "ID_CONFIRMED", "ID_UNVERIFIED"}
+    size_states = {
+        "SKIPPED",
+        "BELOW_CLEANUP_LIMIT",
+        "AT_OR_ABOVE_CLEANUP_LIMIT",
+        "TIMEOUT",
+        "COMMAND_FAILED",
+        "OS_ERROR",
+        "METADATA_INVALID",
+    }
     if (
         type(record) is not dict
         or set(record) != RECEIPT_KEYS
-        or record["version"] != "boca-worker-readonly-inspect-v2"
+        or record["version"] != "boca-worker-readonly-inspect-v3"
         or record["attempt"] != attempt
         or record["legacy_id"] != original_id
         or record["socket"] not in {"ABSENT", "PRESENT_OWNED", "PRESENT_UNVERIFIED", "UNVERIFIED"}
         or record["seccomp"] not in {"ABSENT", "PRESENT_OWNED", "PRESENT_UNVERIFIED", "UNVERIFIED"}
         or record["docker"] not in {"OBSERVED", "PARTIAL", "WRONG_UID", "SOCKET_UNVERIFIED"}
         or record["probe"]
-        not in {"ABSENT", "PRESENT_LABEL_MATCH", "PRESENT_UNVERIFIED", "UNVERIFIED"}
+        not in {"ABSENT", "PRESENT_PIN_MATCH", "PRESENT_UNVERIFIED", "UNVERIFIED"}
         or record["original"] not in {"RUNNING_HEALTHY", "RUNNING_OTHER", "STOPPED", "UNVERIFIED"}
         or record["original_port"] not in {"LOOPBACK_8443", "OTHER", "UNVERIFIED"}
         or record["probe_list_stage"] not in list_states
         or record["probe_inspect_stage"] not in inspect_states
         or record["original_inspect_stage"] not in inspect_states
-        or record["probe_basic_stage"] not in basic_states
-        or record["original_basic_stage"] not in basic_states
+        or record["probe_full_json_stage"] not in size_states
         or any(
             (type(record[key]) is not int or not 1 <= record[key] <= 255)
             if record[stage] == "COMMAND_FAILED"
@@ -386,6 +461,7 @@ def verify(raw: bytes, attempt: str, original_id: str) -> dict[str, Any]:
             for key, stage in (
                 ("probe_list_rc", "probe_list_stage"),
                 ("probe_inspect_rc", "probe_inspect_stage"),
+                ("probe_full_json_rc", "probe_full_json_stage"),
                 ("original_inspect_rc", "original_inspect_stage"),
             )
         )
@@ -405,18 +481,15 @@ def verify(raw: bytes, attempt: str, original_id: str) -> dict[str, Any]:
         )
         or (record["probe_list_stage"] == "OK") != (record["probe_candidate_id"] is not None)
         or (record["probe_inspect_stage"] == "SKIPPED") != (record["probe_candidate_id"] is None)
+        or (record["probe_full_json_stage"] == "SKIPPED") != (record["probe_candidate_id"] is None)
         or (record["probe_list_stage"] == "ABSENT") != (record["probe"] == "ABSENT")
         or (record["probe_list_stage"] not in {"ABSENT", "OK"} and record["probe"] != "UNVERIFIED")
         or (record["probe_candidate_id"] is not None and record["probe"] == "UNVERIFIED")
-        or (record["probe_inspect_stage"] == "OK") != (record["probe"] == "PRESENT_LABEL_MATCH")
+        or (record["probe_inspect_stage"] == "OK") != (record["probe"] == "PRESENT_PIN_MATCH")
         or (record["probe_id"] is not None and record["probe_id"] != record["probe_candidate_id"])
-        or (record["probe_basic_stage"] != "SKIPPED")
-        != (record["probe_inspect_stage"] == "COMMAND_FAILED")
-        or (record["original_basic_stage"] != "SKIPPED")
-        != (record["original_inspect_stage"] == "COMMAND_FAILED")
         or (record["original_inspect_stage"] == "OK") != (record["original"] != "UNVERIFIED")
         or (record["probe_running"] is not None and type(record["probe_running"]) is not bool)
-        or (record["probe"] == "PRESENT_LABEL_MATCH") != (record["probe_id"] is not None)
+        or (record["probe"] == "PRESENT_PIN_MATCH") != (record["probe_id"] is not None)
         or (record["probe_running"] is None) != (record["probe_id"] is None)
         or (record["original_port"] == "UNVERIFIED") != (record["original"] == "UNVERIFIED")
         or (
@@ -442,6 +515,8 @@ def verify(raw: bytes, attempt: str, original_id: str) -> dict[str, Any]:
             != (
                 record["probe_list_stage"] in {"OK", "ABSENT"}
                 and record["probe_inspect_stage"] in {"SKIPPED", "OK", "IDENTITY_MISMATCH"}
+                and record["probe_full_json_stage"]
+                in {"SKIPPED", "BELOW_CLEANUP_LIMIT", "AT_OR_ABOVE_CLEANUP_LIMIT"}
                 and record["original_inspect_stage"] in {"OK", "IDENTITY_MISMATCH"}
             )
         )
@@ -472,8 +547,8 @@ def main(argv: list[str] | None = None) -> int:
                 f" socket={record['socket']} docker={record['docker']}"
                 f" probe={record['probe']} original={record['original']}"
                 f" probe_list={record['probe_list_stage']} probe_inspect={record['probe_inspect_stage']}"
+                f" probe_json_size={record['probe_full_json_stage']}"
                 f" original_inspect={record['original_inspect_stage']}"
-                f" probe_basic={record['probe_basic_stage']} original_basic={record['original_basic_stage']}"
                 f" seccomp={record['seccomp']} observer_writes=0 retry=NO_GO"
             )
         return 0
