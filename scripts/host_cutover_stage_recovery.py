@@ -92,16 +92,18 @@ def _verified_records(incident: str) -> tuple[dict[str, Any], dict[str, Any], st
 def _safe_snapshot(
     record: dict[str, Any],
     incident: str,
-    prepared: str,
+    prepared: str | None,
     legacy: str,
     revision: str,
     *,
     stage_present: bool,
+    source_sha: str | None = None,
 ) -> None:
     """Prove exactly one healthy original; no Boca candidate or browser worker."""
     expected_stage = "PRESENT" if stage_present else "ABSENT"
     if (
-        record.get("version") != "boca-postapply-reconcile-v1"
+        record.get("version")
+        != ("boca-postapply-reconcile-v2" if source_sha else "boca-postapply-reconcile-v1")
         or record.get("incident_run_id") != incident
         or record.get("prepare_run_id") != prepared
         or record.get("intent") != "PRESENT"
@@ -121,6 +123,7 @@ def _safe_snapshot(
         or record.get("runtime_attested") is not False
         or record.get("go_for_retry") is not False
         or record.get("foreign_resources_touched") is not False
+        or (source_sha is not None and record.get("incident_source_sha") != source_sha)
     ):
         raise StageRecoveryError("postapply observer cannot prove a safe Boca singleton")
     original = record.get("original")
@@ -197,18 +200,34 @@ def _stage_identity(incident: str, intent: dict[str, Any]) -> None:
         os.close(root)
 
 
-def recover(incident: str, prepared: str) -> dict[str, Any]:
+def _recover(incident: str, prepared: str | None, source_sha: str | None) -> dict[str, Any]:
     """Single deliberate guarded removal; never promote or retry Cutover A."""
     if (
         not observer.RUN.fullmatch(incident)
-        or not observer.RUN.fullmatch(prepared)
-        or incident == prepared
+        or (
+            source_sha is None
+            and (prepared is None or not observer.RUN.fullmatch(prepared) or incident == prepared)
+        )
+        or (
+            source_sha is not None
+            and (prepared is not None or not observer.SOURCE.fullmatch(source_sha))
+        )
     ):
         raise StageRecoveryError("incident or prepare run ID invalid")
     with cleanup.protected_boca_job_lease(incident) as lease:
         cleanup.verify_protected_boca_job_lease(lease, incident)
         intent, _result, intent_digest, result_digest = _verified_records(incident)
-        before = observer._host(incident, prepared)
+        if source_sha is not None and intent["target_source_sha"] != source_sha:
+            raise StageRecoveryError("incident source does not match durable intent")
+
+        def observe() -> dict[str, Any]:
+            return (
+                observer._host(incident, prepared, source_sha=source_sha)
+                if source_sha
+                else observer._host(incident, prepared)
+            )
+
+        before = observe()
         _safe_snapshot(
             before,
             incident,
@@ -216,10 +235,11 @@ def recover(incident: str, prepared: str) -> dict[str, Any]:
             intent["legacy_id"],
             intent["legacy_source_sha"],
             stage_present=True,
+            source_sha=source_sha,
         )
         _stage_identity(incident, intent)
         # Fresh second runtime read immediately before the bounded effect.
-        immediate = observer._host(incident, prepared)
+        immediate = observe()
         _safe_snapshot(
             immediate,
             incident,
@@ -227,12 +247,13 @@ def recover(incident: str, prepared: str) -> dict[str, Any]:
             intent["legacy_id"],
             intent["legacy_source_sha"],
             stage_present=True,
+            source_sha=source_sha,
         )
         if immediate != before:
             raise StageRecoveryError("Boca physical observation changed before cleanup")
         cleanup.verify_protected_boca_job_lease(lease, incident)
         stage.discard_recovered(incident, intent["legacy_compose_sha"])
-        after = observer._host(incident, prepared)
+        after = observe()
         _safe_snapshot(
             after,
             incident,
@@ -240,14 +261,15 @@ def recover(incident: str, prepared: str) -> dict[str, Any]:
             intent["legacy_id"],
             intent["legacy_source_sha"],
             stage_present=False,
+            source_sha=source_sha,
         )
         if after["boca_inventory"] != before["boca_inventory"]:
             raise StageRecoveryError("Boca singleton changed across stage cleanup")
         _, _, intent_digest_after, result_digest_after = _verified_records(incident)
         if (intent_digest_after, result_digest_after) != (intent_digest, result_digest):
             raise StageRecoveryError("durable Cutover receipts changed across stage cleanup")
-        return {
-            "version": VERSION,
+        receipt = {
+            "version": "boca-stage-recovery-v2" if source_sha else VERSION,
             "incident_run_id": incident,
             "prepare_run_id": prepared,
             "state": "STAGE_CLEARED",
@@ -263,14 +285,33 @@ def recover(incident: str, prepared: str) -> dict[str, Any]:
             "foreign_resources_touched": False,
             "go_for_retry": False,
         }
+        if source_sha is not None:
+            receipt["incident_source_sha"] = source_sha
+        return receipt
 
 
-def verify_runner(raw: bytes, incident: str, prepared: str) -> dict[str, Any]:
+def recover(incident: str, prepared: str) -> dict[str, Any]:
+    return _recover(incident, prepared, None)
+
+
+def recover_v3(incident: str, source_sha: str) -> dict[str, Any]:
+    return _recover(incident, None, source_sha)
+
+
+def _verify_runner(
+    raw: bytes, incident: str, prepared: str | None, source_sha: str | None
+) -> dict[str, Any]:
     """Validate only successful, canonical, bounded host receipts."""
     if (
         not observer.RUN.fullmatch(incident)
-        or not observer.RUN.fullmatch(prepared)
-        or incident == prepared
+        or (
+            source_sha is None
+            and (prepared is None or not observer.RUN.fullmatch(prepared) or incident == prepared)
+        )
+        or (
+            source_sha is not None
+            and (prepared is not None or not observer.SOURCE.fullmatch(source_sha))
+        )
         or not 0 < len(raw) <= MAX_RECEIPT
     ):
         raise StageRecoveryError("runner identity or receipt bounds invalid")
@@ -280,8 +321,9 @@ def verify_runner(raw: bytes, incident: str, prepared: str) -> dict[str, Any]:
         raise StageRecoveryError("runner receipt JSON invalid") from exc
     if (
         not isinstance(record, dict)
-        or set(record) != FIELDS
-        or record.get("version") != VERSION
+        or set(record) != (FIELDS | {"incident_source_sha"} if source_sha else FIELDS)
+        or record.get("version") != ("boca-stage-recovery-v2" if source_sha else VERSION)
+        or (source_sha is not None and record.get("incident_source_sha") != source_sha)
         or record.get("incident_run_id") != incident
         or record.get("prepare_run_id") != prepared
         or record.get("state") != "STAGE_CLEARED"
@@ -304,20 +346,36 @@ def verify_runner(raw: bytes, incident: str, prepared: str) -> dict[str, Any]:
     return record
 
 
+def verify_runner(raw: bytes, incident: str, prepared: str) -> dict[str, Any]:
+    return _verify_runner(raw, incident, prepared, None)
+
+
+def verify_runner_v3(raw: bytes, incident: str, source_sha: str) -> dict[str, Any]:
+    return _verify_runner(raw, incident, None, source_sha)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 3 or args[0] not in ("host", "verify"):
+    if len(args) != 3 or args[0] not in ("host", "verify", "host-v3", "verify-v3"):
         print("BOCA_STAGE_RECOVERY state=NO_GO reason=INPUT", file=sys.stderr)
         return 3
     mode, incident, prepared = args
     try:
-        if mode == "host":
-            receipt = observer._canonical(recover(incident, prepared)) + b"\n"
+        if mode in ("host", "host-v3"):
+            result = (
+                recover_v3(incident, prepared) if mode == "host-v3" else recover(incident, prepared)
+            )
+            receipt = observer._canonical(result) + b"\n"
             if len(receipt) > MAX_RECEIPT:
                 raise StageRecoveryError("host receipt exceeds bound")
             sys.stdout.buffer.write(receipt)
         else:
-            record = verify_runner(sys.stdin.buffer.read(MAX_RECEIPT + 1), incident, prepared)
+            raw = sys.stdin.buffer.read(MAX_RECEIPT + 1)
+            record = (
+                verify_runner_v3(raw, incident, prepared)
+                if mode == "verify-v3"
+                else verify_runner(raw, incident, prepared)
+            )
             print(
                 "BOCA_STAGE_RECOVERY state=STAGE_CLEARED"
                 f" incident={record['incident_run_id']}"

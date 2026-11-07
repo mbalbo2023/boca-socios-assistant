@@ -1,0 +1,5 @@
+# V3 stage recovery — design (CODE_ONLY)
+
+Recover only an authenticated, uncommitted stage from an owner-dispatched failed V3 Cutover. The existing numeric context is an untrusted incident selector, not an approval or a path; derive the source SHA from GitHub and validate it against durable host records. PR0, exact main, owner, attempt one and per-incident history are mandatory. Preserve legacy recovery and `discard_recovered` unchanged.
+
+The chosen approach reuses the stage-recovery bundle with a distinct internal V3 mode, two concordant host-v3 snapshots under one Boca lease, authenticated intent/result and stage marker, and a third snapshot with terminal ACK. A fixed incident alias is not reusable; relying on a historical observation as current state is unsafe. The #858 summary remains historical evidence, not a machine-readable artifact or authority. Unknown state fails closed. No Docker writes, images, volumes, unrelated services, browser navigation, or Cutover retry are authorized. Stage clearance leaves cleanup INDETERMINATE and requires separate Boca-only inventory before any later Cutover.

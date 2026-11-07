@@ -195,6 +195,69 @@ def test_positive_single_exact_stage_clear_preserves_live_inode_and_receipts(wor
         recovery.recover(INCIDENT, PREPARE)  # never a blind repeat
 
 
+def test_v3_uses_git_authenticated_source_and_no_prepare(world, monkeypatch):
+    root, _ = world
+
+    def host(run, prepared, *, source_sha):
+        assert run == INCIDENT and prepared is None and source_sha == TARGET_SHA
+        result = snapshot(root)
+        result.update(
+            version="boca-postapply-reconcile-v2",
+            prepare_run_id=None,
+            incident_source_sha=source_sha,
+        )
+        return result
+
+    monkeypatch.setattr(recovery.observer, "_host", host)
+    receipt = recovery.recover_v3(INCIDENT, TARGET_SHA)
+    assert receipt["incident_source_sha"] == TARGET_SHA
+    assert receipt["prepare_run_id"] is None
+    assert receipt["go_for_retry"] is False
+    assert (
+        recovery.verify_runner_v3(
+            recovery.observer._canonical(receipt) + b"\n", INCIDENT, TARGET_SHA
+        )
+        == receipt
+    )
+
+
+def test_v3_rejects_source_mismatch_before_stage_effect(world):
+    root, _ = world
+    with pytest.raises(recovery.StageRecoveryError):
+        recovery.recover_v3(INCIDENT, "9" * 40)
+    assert (root / f"cutover-a-{INCIDENT}").exists()
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"commit_started": True},
+        {"browser_workers": [{"id": "d" * 64}]},
+        {"candidate_controllers": [{"id": "e" * 64}]},
+        {"port_8443": "UNVERIFIED"},
+        {"incident_source_sha": "9" * 40},
+        {"promotion_intent": "PRESENT"},
+    ],
+)
+def test_v3_unsafe_snapshot_never_deletes_stage(world, monkeypatch, override):
+    root, _ = world
+
+    def host(run, prepared, *, source_sha):
+        observed = snapshot(root)
+        observed.update(
+            version="boca-postapply-reconcile-v2",
+            prepare_run_id=None,
+            incident_source_sha=source_sha,
+        )
+        observed.update(override)
+        return observed
+
+    monkeypatch.setattr(recovery.observer, "_host", host)
+    with pytest.raises(recovery.StageRecoveryError):
+        recovery.recover_v3(INCIDENT, TARGET_SHA)
+    assert (root / f"cutover-a-{INCIDENT}").exists()
+
+
 @pytest.mark.parametrize(
     "override",
     [

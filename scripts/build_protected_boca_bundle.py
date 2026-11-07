@@ -109,6 +109,9 @@ RECOVERY_MAIN = (
 ).encode("ascii")
 MAIN = (
     "import sys\n"
+    "if len(sys.argv) > 1 and sys.argv[1] == 'cutover-stage-recover-v3':\n"
+    "    from scripts import host_cutover_stage_recovery as recovery\n"
+    "    raise SystemExit(recovery.main(['host-v3', *sys.argv[2:]]))\n"
     "if len(sys.argv) > 1 and sys.argv[1] == 'cutover-stage-recover':\n"
     "    from scripts import host_cutover_stage_recovery as recovery\n"
     "    raise SystemExit(recovery.main(['host', *sys.argv[2:]]))\n"
