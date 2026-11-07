@@ -1,6 +1,50 @@
 # Safe operations — verified evidence and gated procedures
 
-## A45-R91 — instrucciones de recuperación exacta, sólo tras QA/merge/PR0
+## A45-R92 — diagnóstico STOP CODE_ONLY; ningún preflight físico autorizado
+
+La recuperación protegida R91 [#831](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42372284155)
+declaró `CLEANED/VERIFIED` del residuo #827. No se repite #827, #829 ni
+#831. El motivo físico por el que el STOP #827 devolvió `ACK_MISMATCH`
+sigue **sin demostrar**: observar el contenedor detenido posteriormente no
+reconstruye stdout ni demuestra que STOP lo detuviera.
+
+R92 propone únicamente observabilidad de código: un `docker stop --time 5`
+sobre el CID completo, categorías fijas del ACK sin sus bytes y fallo cerrado
+con **un STOP, cero RM, cleanup INDETERMINATE, NO_GO y no_retry** si el ACK
+no es exactamente el CID. El runner sólo exhibe el subtipo como claim no
+verificado; no crea GO ni modifica el contrato PASS. Detalles en
+[ADR0201](ADR/0201-r92-worker-stop-ack-evidence.md).
+
+**No despachar un nuevo `cutover-a-worker-preflight` con este candidato.**
+Requiere PR/checks/CI/Security postmerge, nuevo release dual de idéntico SHA,
+PR0, revisión de capacidad/legacy/ausencia de residuos y consenso físico
+explícito. El preflight es one-shot por SHA y físicamente crea un probe;
+PREPARE/GO_B y APPLY son fases independientes, actualmente NO_GO. El
+procedimiento de ocho coordenadas aparece abajo, pero no constituye GO.
+
+### Worker preflight — checklist vigente, `NO_GO` hasta nuevo consenso
+
+Sólo para una futura autorización independiente de
+`operation=cutover-a-worker-preflight`: verificar **antes** del despacho
+un manifest **dual** publicado para el mismo SHA de `main`, PR0, CI/Security,
+capacidad y salud del legacy. El formulario exige las ocho coordenadas
+exactas `source_sha`, `image_ref`, `browser_image_ref`, `release_run_id`,
+`legacy_source_sha`, `legacy_image_ref`, `legacy_release_run_id` y
+`legacy_controller_id`. Todas se obtienen de receipts publicados/observación
+fresca, nunca de un ejemplo o inferencia. `protected_action_context` debe
+quedar **vacío**, `service=controller` y
+`resource_budget=1.5cpu-1024m-192pids`.
+
+Es **one-shot por SHA**, `no_retry=1`: incluso un formulario inválido
+rechazado antes de **SSH** consume el único intento; resultado `NO_GO`
+sin reintento de esa fuente. La opción `cutover-a-apply` de **PREPARE**
+para GO_B sigue **separada**, con esas ocho coordenadas vacías y su propio
+control, sin autorización por preflight o recovery. No ejecutar sin nuevo
+GO físico explícito; véase guía histórica más detallada y ADR0198.
+
+---
+
+## Histórico A45-R91 — instrucciones de recuperación exacta ya ejecutada mediante #831
 
 El [observador #829](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42370005970)
 confirmó probe #827 detenido, controller original saludable y cero efectos;

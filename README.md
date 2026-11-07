@@ -1,6 +1,22 @@
 # Boca Socios Assistant
 
-## A45-R91 — recuperación exclusiva de probe #827 detenido (07/11/2026 ART; CODE_ONLY)
+## A45-R92 — diagnóstico de STOP sin reinterpretar ACK (07/11/2026 ART; CODE_ONLY)
+
+La única recuperación R91 [#831](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42372284155)
+informó `CLEANED/VERIFIED` del residuo detenido #827, manteniendo el
+controller original sano. No determina qué bytes emitió `docker stop` en el
+preflight fallido. R92 distingue formas de ACK (`ACK_EMPTY`, `ACK_SHORT_ID`,
+`ACK_NAME`, `ACK_MULTILINE`, `ACK_OTHER_ID`, `ACK_MISMATCH`) sin imprimir
+stdout/stderr privado y conserva `docker stop --time 5`; toda anomalía sigue
+**NO_GO**, un solo STOP, ningún RM y ningún retry. Un PASS exige el mismo
+ACK de CID completo y no ha cambiado. Ningún nuevo preflight físico,
+PREPARE/GO_B/APPLY, Cutover ni Telegram se autorizan por este cambio.
+[ADR0201](docs/ADR/0201-r92-worker-stop-ack-evidence.md) y
+[OPERATIONS](docs/OPERATIONS.md).
+
+---
+
+## Histórico A45-R91 — recuperación exclusiva del probe #827 detenido (07/11/2026 ART)
 
 La [inspección #829](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42370005970)
 probó que el residuo temporal del preflight #827 está detenido y tiene CID

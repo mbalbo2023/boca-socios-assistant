@@ -1,6 +1,19 @@
 # Backlog y dependencias de la BETA
 
-## Prioridad física vigente — 07/11/2026, R91 CODE_ONLY
+## Prioridad física vigente — 07/11/2026, R92 diagnóstico CODE_ONLY
+
+R91 [#831](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42372284155)
+informó `CLEANED/VERIFIED` del probe detenido #827; la causa exacta de su
+`STOP/ACK_MISMATCH` continúa indeterminada. R92 agrega sólo subtipos acotados
+sin stdout y conserva `--time`, sin segunda operación Docker ni cambio al PASS.
+Próximos gates independientes: pruebas/PR/CI/Security/merge, release dual
+del mismo nuevo SHA, PR0, legacy y almacenamiento observados, consentimiento
+físico expreso para **una** operación one-shot. GO_B/PREPARE/APPLY, BETA
+integral, Telegram y BLACKBOX continúan NO_GO. [ADR0201](ADR/0201-r92-worker-stop-ack-evidence.md).
+
+---
+
+## Histórico — 07/11/2026, R91 CODE_ONLY (sustituido por R92)
 
 [#827](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42368541950)
 falló `STOP/ACK_MISMATCH`; [#829](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42370005970)

@@ -110,12 +110,20 @@ def test_r88_stop_native_failure_is_classified_without_raw_stderr(
     assert "PRIVATE" not in str(failure)
 
 
-@pytest.mark.parametrize("ack", ["", "other-container", "e" * 64, CID + " extra"])
+@pytest.mark.parametrize(
+    ("ack", "expected"),
+    [
+        ("", "ACK_EMPTY"),
+        ("other-container", "ACK_MISMATCH"),
+        ("e" * 64, "ACK_OTHER_ID"),
+        (CID + " extra", "ACK_MISMATCH"),
+    ],
+)
 def test_r88_stop_ack_mismatch_leaves_the_probe_untouched_after_ambiguous_effect(
-    monkeypatch: pytest.MonkeyPatch, ack: str
+    monkeypatch: pytest.MonkeyPatch, ack: str, expected: str
 ) -> None:
     rig, failure = _stop_failure(monkeypatch, ack=ack, stopped_before_error=True)
-    assert failure.stop_failure_cause == "ACK_MISMATCH"
+    assert failure.stop_failure_cause == expected
     assert failure.cleanup_failed_stage == "STOP"
     assert failure.cleanup == "INDETERMINATE"
     assert rig.stop_attempts == 1 and rig.rm_attempts == 0
