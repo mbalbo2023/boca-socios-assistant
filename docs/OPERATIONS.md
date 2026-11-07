@@ -1,19 +1,30 @@
 # Safe operations — verified evidence and gated procedures
 
 **Estado vigente:** [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
-como única referencia operativa. El [corte R85 en README](../README.md)
-es candidato CODE_ONLY: el observador #815 falló sin diagnóstico, mientras
-[READ_ONLY #816](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42350561170)
-confirmó legacy sano y probe #807 ausente **sin autorizar Cutover**.
-La [release dual R84 #730](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42349621015)
-GREEN sólo acredita imágenes; el controller legacy sigue activo, la BETA integral
-no está instalada. R85 corrige el rechazo de todo READY legítimo por tamaño
-(710 bytes exactos frente a 640) y una salida de fallo tipada privada del
-runner, sin modificar SSH remoto ni seguridad. Hasta PR/CI/merge, nuevo
-release exacto, PR0 e inventario/GO independiente, **NO_GO físico**.
-Véanse [ADR0194](ADR/0194-r85-cutover-observer-failure-provenance.md),
-[ADR0193](ADR/0193-r84-worker-storage-admission.md).
-Las guías R77/R50/R40 siguientes son cortes históricos.
+como fuente única operativa. R85 se fusionó en
+`main=0538b3fb29cc0245a8387b7023c394883d0ea9a8`; su
+[release dual #732](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42352641660)
+es una publicación, no instalación. El observador protegido
+[#818](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42353081082)
+vio el controlador legacy `RUNNING` y worker ausente **antes del intento**
+[#819](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42353468231).
+Ese único preflight **FALLÓ** en STOP de limpieza (`CLEANUP/INDETERMINATE`,
+`host=UNVERIFIED`); el estado físico posterior es desconocido. **No ejecutar
+Cutover A, PREPARE, GO_B, APPLY, otro preflight, `docker prune`, stop/rm ni
+acciones de otras aplicaciones** hasta observación nueva y revisión.
+
+R86 prepara una extensión CODE_ONLY de la operación protegida existente
+`cutover-a-worker-inspect` para el intento #819, reutilizando `ps`/`inspect`
+de metadata únicamente. Tras revisión/merge/PR0, la única operación prevista
+es **READ_ONLY**, con `protected_action_context=42353468231`, pins del legacy
+exactos según [ADR0195](ADR/0195-r86-worker-819-exact-readonly-inventory.md),
+`service=controller`, `resource_budget=1.5cpu-1024m-192pids` y todos los
+campos de imagen/release/secretos vacíos. Sólo el propio agente la ejecutará
+desde GitHub Actions; no hay instrucción para terminal ni nueva autorización
+al dueño. El inspector **siempre** emite `READ_ONLY_NO_GO`, incluso con probe
+ausente; no instala, detiene ni limpia. Para futura operación con efectos se
+requieren nueva release dual del SHA aplicable, GO independiente y postflight.
+Las guías R85/R77/R50/R40 siguientes son cortes históricos.
 
 ## R50 — Cutover A: contrato de dos pulls, candidato NO INSTALADO
 

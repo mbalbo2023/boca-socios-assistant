@@ -1,5 +1,5 @@
 name: Boca first deploy
-run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-preflight' && 'BOCA-R84-WORKER-PREFLIGHT-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-807' && 'BOCA-R82-WORKER-807-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R80-WORKER-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42341290485' && 'BOCA-R81-WORKER-807-READONLY' || 'Boca first deploy' }}
+run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-preflight' && 'BOCA-R84-WORKER-PREFLIGHT-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-807' && 'BOCA-R82-WORKER-807-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R80-WORKER-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42353468231' && 'BOCA-R86-WORKER-819-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42341290485' && 'BOCA-R81-WORKER-807-READONLY' || 'Boca first deploy' }}
 
 on:
   pull_request:
@@ -163,6 +163,7 @@ jobs:
       - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
         run: |
           uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py tests/test_r82_exact_worker_807_recovery.py tests/test_r82_recovery_bundle.py tests/test_r82_recovery_dispatch.py tests/test_r82_recovery_workflow.py tests/test_r83_primary_phase.py tests/test_r83_cleanup_stages.py tests/test_r83_preflight_workflow.py tests/test_r83_bundle_caps.py tests/test_r84_worker_storage_admission.py tests/test_r84_worker_preflight_dispatch.py tests/test_r85_cutover_observe_provenance.py
+          uv run pytest -q tests/test_r86_exact_worker_819_observer.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
       - name: Validate protected official notice artifact import offline only
         run: |
@@ -963,13 +964,14 @@ jobs:
               test -z "$BOCA_SITE_ENVELOPE"
               ;;
             cutover-a-worker-inspect)
-              # Only read-only postmortems of exact failed probes #795/#807.
+              # Only read-only postmortems of exact failed probes #795/#807/#819.
               # Never use the APPLY observer for a temporary worker.
               test "$BOCA_HOST_READONLY_ENV_READY" = ready
               test "$BOCA_DEPLOY_ENV_READY" = ready
               case "$BOCA_PROTECTED_ACTION_CONTEXT" in
                 42329475083) test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42329475083 ;;
                 42341290485) test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42341290485 ;;
+                42353468231) test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42353468231 ;;
                 *) exit 1 ;;
               esac
               test "$BOCA_LEGACY_CONTROLLER_ID" = 27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793
@@ -2018,20 +2020,26 @@ jobs:
         if: inputs.operation == 'cutover-a-worker-inspect'
         run: |
           set -euo pipefail
-          # Exact #795 or #807 and legacy pins were validated before SSH.
+          # Exact #795, #807 or #819 and legacy pins were validated before SSH.
           # No Docker writes, no probe retry, no container exec or secret input.
+          # Bound remote output as it arrives and never use a predictable file
+          # pathname for a host-origin receipt (see R85 Cutover observer RCA).
+          umask 077
+          inspect_dir="$(mktemp -d "$RUNNER_TEMP/boca-worker-readonly-inspect.XXXXXXXX")"
+          trap 'rm -f -- "$inspect_dir/receipt"; rmdir -- "$inspect_dir"' EXIT
           remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' \
             python3 - host "$BOCA_PROTECTED_ACTION_CONTEXT" "$BOCA_LEGACY_CONTROLLER_ID" \
             "$BOCA_LEGACY_SOURCE_SHA" "$BOCA_LEGACY_IMAGE_REF")"
-          set +e
-          timeout --signal=TERM --kill-after=5s 75s ssh \
-            -F "$RUNNER_TEMP/boca-ssh/config" \
-            -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
-            boca-target "$remote_command" \
-            < scripts/host_cutover_worker_inspect.py \
-            > "$RUNNER_TEMP/boca-worker-readonly-inspect.json" 2>/dev/null
-          observer_rc=$?
-          set -e
+          observer_rc=0
+          (
+            ulimit -f 4 || exit 99
+            timeout --signal=TERM --kill-after=5s 75s ssh \
+              -F "$RUNNER_TEMP/boca-ssh/config" \
+              -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+              boca-target "$remote_command" \
+              < scripts/host_cutover_worker_inspect.py \
+              > "$inspect_dir/receipt" 2>/dev/null
+          ) || observer_rc=$?
           if [[ "$observer_rc" -ne 0 ]]; then
             transport=HOST_EXIT_NONZERO
             if [[ "$observer_rc" -eq 124 || "$observer_rc" -eq 137 ]]; then transport=TIMEOUT; fi
@@ -2042,10 +2050,10 @@ jobs:
           python3 scripts/host_cutover_worker_inspect.py verify \
             "$BOCA_PROTECTED_ACTION_CONTEXT" "$BOCA_LEGACY_CONTROLLER_ID" \
             "$BOCA_LEGACY_SOURCE_SHA" "$BOCA_LEGACY_IMAGE_REF" \
-            < "$RUNNER_TEMP/boca-worker-readonly-inspect.json" \
+            < "$inspect_dir/receipt" \
             >> "$GITHUB_STEP_SUMMARY"
           # Exact bounded observer metadata; never expose env/config/secrets.
-          python3 - "$RUNNER_TEMP/boca-worker-readonly-inspect.json" <<'PY'
+          python3 - "$inspect_dir/receipt" <<'PY'
           import os
           import sys
           from pathlib import Path

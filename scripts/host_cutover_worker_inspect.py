@@ -47,10 +47,19 @@ FAILED_WORKER_807_IMAGE = (
     "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
     "c31b41f0fd6332d9d4946d4047c7eb1e58e53ba04ad2ffdedfbb7aa54bcaaa04"
 )
+# The single R85 preflight #819 reported CLEANUP/STOP INDETERMINATE. The
+# paired browser digest belongs to independently authenticated release #732.
+# This identity authorizes metadata observation only, NEVER physical cleanup.
+FAILED_WORKER_819_SOURCE = "0538b3fb29cc0245a8387b7023c394883d0ea9a8"
+FAILED_WORKER_819_IMAGE = (
+    "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
+    "d740c610d032aa20fecff1602cc96e49fd63c597c49855990a9bc081a6998619"
+)
 KNOWN_FAILED_PROBES = MappingProxyType(
     {
         "42329475083": (FAILED_WORKER_SOURCE, FAILED_WORKER_IMAGE),
         "42341290485": (FAILED_WORKER_807_SOURCE, FAILED_WORKER_807_IMAGE),
+        "42353468231": (FAILED_WORKER_819_SOURCE, FAILED_WORKER_819_IMAGE),
     }
 )
 INSPECT = (
