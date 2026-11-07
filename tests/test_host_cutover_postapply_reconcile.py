@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import os
 import stat
 from pathlib import Path
@@ -172,6 +173,8 @@ def test_postapply_runtime_only_read_from_boca_fixtures(monkeypatch: pytest.Monk
     assert output["browser_workers"][0]["running"] is True
     assert output["port_8443"] == "BOCA_CONTROLLER_DOCKER_BOUND"
     assert output["result"] == "PRESENT"
+    assert output["worker_id_recorded"] is False
+    assert output["candidate_id_recorded"] is False
     assert output["prepared_go_marker_reason"] == "MARKER_SCHEMA_VALID"
     assert output["stage_preflight"]["reason"] == "STAGE_PREFLIGHT_MATCH"
     assert output["stage_preflight"]["compose_digest_evaluated"] is True
@@ -179,6 +182,48 @@ def test_postapply_runtime_only_read_from_boca_fixtures(monkeypatch: pytest.Monk
     assert output["foreign_resources_touched"] is False
     assert len(reconcile._canonical(output) + b"\n") <= reconcile.MAX_JSON
     assert reconcile.verify_runner(reconcile._canonical(output) + b"\n", RUN, PREPARE) == output
+
+
+@pytest.mark.parametrize(
+    ("worker_id", "candidate_id", "expected"),
+    [
+        (None, None, (False, False)),
+        ("9" * 64, None, (True, False)),
+        ("9" * 64, "f" * 64, (True, True)),
+    ],
+)
+def test_readonly_observer_reports_durable_phase_without_exposing_ids(
+    monkeypatch: pytest.MonkeyPatch,
+    worker_id: str | None,
+    candidate_id: str | None,
+    expected: tuple[bool, bool],
+) -> None:
+    result = json.loads(_result())
+    result["worker_id"] = worker_id
+    result["candidate_id"] = candidate_id
+    files = {
+        f"boca-cutover-a-intent-{RUN}.json": _intent(),
+        f"boca-cutover-a-result-{RUN}.json": reconcile._canonical(result),
+    }
+    monkeypatch.setattr(reconcile.os, "geteuid", lambda: 10001)
+    monkeypatch.setattr(reconcile.os, "getegid", lambda: 10001)
+    monkeypatch.setattr(reconcile, "_private_home", lambda: Path("/home/fixture-boca-owner"))
+    monkeypatch.setattr(reconcile.Path, "is_dir", lambda self: self.name == reconcile.RECEIPT_DIR)
+    monkeypatch.setattr(reconcile.Path, "is_symlink", lambda self: False)
+    monkeypatch.setattr(reconcile, "_read_private", lambda name, *, directory: files.get(name))
+    monkeypatch.setattr(reconcile, "_docker_snapshot", lambda: [])
+    monkeypatch.setattr(reconcile, "_marker", lambda prepared: ("UNREADABLE", "DIRECTORY"))
+    monkeypatch.setattr(reconcile, "_stage_preflight", lambda intent: {"reason": "STAGE_ROOT_ENTRIES"})
+    monkeypatch.setattr(
+        reconcile,
+        "_staged_attempt",
+        lambda attempt: {"stage": "PRESENT", "promotion_intent": "ABSENT", "promotion_result": "ABSENT"},
+    )
+    observed = reconcile._host(RUN, PREPARE)
+    assert (observed["worker_id_recorded"], observed["candidate_id_recorded"]) == expected
+    assert worker_id not in reconcile._canonical(observed).decode() if worker_id else True
+    assert candidate_id not in reconcile._canonical(observed).decode() if candidate_id else True
+    assert reconcile.verify_runner(reconcile._canonical(observed) + b"\n", RUN, PREPARE) == observed
 
 
 def test_no_docker_write_or_foreign_inspect_command() -> None:
