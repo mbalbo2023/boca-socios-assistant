@@ -267,6 +267,27 @@ def test_go_b_host_receipt_requires_canonical_redacted_postflight_with_exact_ids
     ).redacted_json()
     _file(path, exact_ack + b"BOCA_CUTOVER_A_POSTFLIGHT " + report.encode("ascii") + b"\n")
     assert go.assert_actions_host_receipt(env) == report
+    # The exact historical image exception must survive the whole protected
+    # host transcript parser, not only the standalone JSON grammar.
+    retained = cleanup.CleanupReceipt(
+        "SUCCESS",
+        request.plan.attempt_id,
+        "ACCEPT",
+        disk_before,
+        disk_after,
+        (),
+        (),
+        (),
+        (
+            cleanup.HistoricalRetainedImageProof(
+                cleanup.HISTORICAL_RETIRE_TARGET,
+                cleanup.HISTORICAL_RETIRE_DIGEST,
+                cleanup.HISTORICAL_RETIRE_REVISION,
+            ),
+        ),
+    ).redacted_json()
+    _file(path, exact_ack + b"BOCA_CUTOVER_A_POSTFLIGHT " + retained.encode("ascii") + b"\n")
+    assert go.assert_actions_host_receipt(env) == retained
     for malformed in (
         exact_ack,
         exact_ack + b"BOCA_CUTOVER_A_POSTFLIGHT {}\n",
@@ -294,6 +315,32 @@ def test_go_b_host_receipt_requires_canonical_redacted_postflight_with_exact_ids
         _file(path, exact_ack + b"BOCA_CUTOVER_A_POSTFLIGHT " + serialized + b"\n")
         with pytest.raises(go.CutoverGoError):
             go.assert_actions_host_receipt(env)
+
+
+def test_runner_accepts_only_exact_historical_quarantine_receipt_v2() -> None:
+    disk = cleanup.DiskInodes(2000, 200, 4000, 400, 8, 10, 16, 18)
+    proof = cleanup.HistoricalRetainedImageProof(
+        cleanup.HISTORICAL_RETIRE_TARGET,
+        cleanup.HISTORICAL_RETIRE_DIGEST,
+        cleanup.HISTORICAL_RETIRE_REVISION,
+    )
+    receipt = cleanup.CleanupReceipt(
+        "SUCCESS", "50000000001", "ACCEPT", disk, disk, (), (), (), (proof,)
+    )
+    raw = receipt.redacted_json().encode("ascii")
+    assert go.verify_postflight_json(raw, "50000000001") == raw.decode("ascii")
+    body = json.loads(raw)
+    for changed in (
+        {"version": 1},
+        {"retained_attested": []},
+        {"retained_attested": [dict(body["retained_attested"][0], digest="sha256:foreign")]},
+        {"retained_attested": [dict(body["retained_attested"][0], id="sha256:" + "1" * 64)]},
+        {"retained_attested": [dict(body["retained_attested"][0], unknown=True)]},
+    ):
+        mutated = dict(body, **changed)
+        payload = json.dumps(mutated, sort_keys=True, separators=(",", ":")).encode("ascii")
+        with pytest.raises(go.CutoverGoError):
+            go.verify_postflight_json(payload, "50000000001")
 
 
 def test_bound_go_requires_distinct_protected_variable_which_is_absent_by_default(

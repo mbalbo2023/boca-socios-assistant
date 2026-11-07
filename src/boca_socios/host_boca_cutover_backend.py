@@ -120,7 +120,7 @@ def _precommit_legacy_image_cleanup(
     legacy_record: dict[str, object],
     candidate_id: str,
     worker_id: str,
-) -> cleanup.LegacyImageProof:
+) -> tuple[cleanup.LegacyImageProof, cleanup.HistoricalRetainedImageProof | None]:
     """Block irreversible commit if old image cleanup would be uncertain.
 
     The old controller was already checked for exact historical GHCR digest,
@@ -142,10 +142,18 @@ def _precommit_legacy_image_cleanup(
             for image in inventory.images
         ):
             raise cleanup.CleanupError("historical Boca image/container binding drifted")
+        retained = (
+            cleanup.attest_historical_retained_image(inventory)
+            if cleanup.HISTORICAL_RETIRE_TARGET in inventory.global_image_ids
+            or any(i.ident == cleanup.HISTORICAL_RETIRE_TARGET for i in inventory.images)
+            else None
+        )
         planned = cleanup.plan(
             inventory,
             plan.attempt_id,
-            preserve_images=frozenset({proof.ident}),
+            preserve_images=frozenset(
+                {proof.ident} | ({retained.ident} if retained is not None else set())
+            ),
             preserve_containers=frozenset({plan.legacy_id, candidate_id, worker_id}),
             retire_containers=frozenset(),
         )
@@ -154,7 +162,7 @@ def _precommit_legacy_image_cleanup(
             # be safely deleted or declared cleaned. Stop while old CID is
             # still recoverable; never weaken generic cleanup classification.
             raise cleanup.CleanupError("Boca cleanup has precommit unknown residue")
-        return proof
+        return proof, retained
     except (cleanup.CleanupError, OSError, ValueError) as exc:
         raise CutoverError("cutover precommit exact legacy image cleanup unproven") from exc
 
@@ -258,6 +266,7 @@ class RootlessCutoverBackend:
         self.worker_hash: str | None = None
         self.controller_hash: str | None = None
         self.legacy_image_proof: cleanup.LegacyImageProof | None = None
+        self.retained_image_proof: cleanup.HistoricalRetainedImageProof | None = None
 
     def _guard(self, plan: CutoverPlan, lease: cleanup.BocaJobLease, state: State) -> None:
         cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
@@ -448,7 +457,7 @@ class RootlessCutoverBackend:
             running=False,
             restart_policy="no",
         )
-        self.legacy_image_proof = _precommit_legacy_image_cleanup(
+        self.legacy_image_proof, self.retained_image_proof = _precommit_legacy_image_cleanup(
             plan, legacy_record, candidate_id, worker_id
         )
         self.state = "ACCEPTED"
@@ -576,6 +585,15 @@ class RootlessCutoverBackend:
                 return "NO_GO"
             preserve = frozenset({candidate_id, worker_id})
         outcome: Literal["SUCCESS", "FAILURE"] = "FAILURE" if safely_recovered else "SUCCESS"
+        retained = self.retained_image_proof
+        if safely_recovered and retained is None:
+            # No irreversible commit occurred. Freshly attest the same exact
+            # preexisting orphan for the failed-attempt cleanup path too.
+            observed = cleanup.capture_inventory()
+            if cleanup.HISTORICAL_RETIRE_TARGET in observed.global_image_ids or any(
+                i.ident == cleanup.HISTORICAL_RETIRE_TARGET for i in observed.images
+            ):
+                retained = cleanup.attest_historical_retained_image(observed)
         receipt = cleanup.execute_protected(
             outcome,
             plan.attempt_id,
@@ -584,6 +602,7 @@ class RootlessCutoverBackend:
             retire_containers=frozenset(),
             lease=lease,
             historical_legacy=self.legacy_image_proof if safely_committed else None,
+            historical_retained=retained,
         )
         if receipt.status != "ACCEPT":
             return receipt

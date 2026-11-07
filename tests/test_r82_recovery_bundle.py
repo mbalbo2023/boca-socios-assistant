@@ -67,6 +67,11 @@ R103_CLEANUP_INVENTORY_FULL_CUTOVER_SHA = (
 R104_COMBINED_DIAGNOSTIC_FULL_CUTOVER_SHA = (
     "6c3d11bcffe2961c2ad185481277e2f86b673072f2210daa16e4f3fa5c9abe87"
 )
+# R108: one exact historical-image quarantine and v2 postflight proof; keep
+# every prior pin as immutable historical evidence.
+R108_HISTORICAL_QUARANTINE_FULL_CUTOVER_SHA = (
+    "8fca328150a3046960494b3d5e253294ffab80f6463ce9f6ccb67ae85f47b0d4"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -224,7 +229,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R104_COMBINED_DIAGNOSTIC_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R108_HISTORICAL_QUARANTINE_FULL_CUTOVER_SHA
+    assert digest != R104_COMBINED_DIAGNOSTIC_FULL_CUTOVER_SHA
     assert digest != R103_CLEANUP_INVENTORY_FULL_CUTOVER_SHA
     assert digest != V3_STAGE_RECOVERY_FULL_CUTOVER_SHA
     assert digest != R101_FULL_CUTOVER_SHA

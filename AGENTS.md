@@ -106,6 +106,22 @@ no browser-worker/CDP activation is implied by this instruction.
    cleanup failure is NO_GO/INDETERMINATE with fresh Boca-only inventory and
    no blind retry. A green deployment without this final receipt is NOT fully
    accepted; this code-only instruction does not authorize a host operation.
+
+   **Cutover V3 forensic exception, 2026-11-07 (R108, #417/#45):** only the
+   historical, unused Boca controller image with immutable ID
+   `sha256:a44453ab30cb17fa42f71723cf64b1097dabdf0e56369186077c47bc8224f90b`
+   may remain after a successful V3 Cutover. Release #41559973013 and manifest
+   artifact #13196392925, SHA/revision/digest, zero references and aliases
+   must match fresh rootless inventory under the same lease at precommit and
+   at **every** finalizer probe; the failure of retirement run #746
+   (`42261978336`) is the documented reason to preserve forensic evidence.
+   A canonical V2 cleanup receipt MUST explicitly report
+   `KNOWN_HISTORICAL_QUARANTINE`, never claim that the image was removed.
+   This is an intentional **one-image exception** to the general obsolete
+   Boca-image removal rule above, not a general relaxation: any other unknown,
+   identity drift, shared reference, missing proof, foreign workload or
+   incomplete cleanup remains NO_GO/INDETERMINATE. No image removal retry is
+   authorized by this clause. See ADR0209 and issue #417.
 10. Use YYYY-MM-DD in America/Argentina/Buenos_Aires for user-facing times.
 
 ### Owner release hygiene clarification — 2026-11-06

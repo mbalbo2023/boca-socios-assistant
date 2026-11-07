@@ -145,6 +145,16 @@ main is protected before verifying GitHub's **actual ruleset state**. See
    workload; if cleanup cannot run or prove the result, record
    NO_GO/INDETERMINATE and require a new read-only Boca inventory before retry.
    A successful application start alone does not satisfy final acceptance.
+
+   **Narrow R108 Cutover V3 exception:** the single historical Boca image
+   `sha256:a44453ab30cb17fa42f71723cf64b1097dabdf0e56369186077c47bc8224f90b`
+   may be quarantined as forensic evidence only when its immutable historical
+   release proof, lack of references and fresh same-lease rootless inventories
+   match exactly. Report `retained_attested` in canonical cleanup V2;
+   this is **not** literal deletion of every obsolete image. All other images,
+   known residues and uncertain resources retain the normal acceptance gates.
+   The failed historical retirement Action #746 must not be blindly retried.
+   See [ADR0209](ADR/0209-r108-attested-historical-quarantine.md).
 9. Diagnose source failures through Actions before deciding on code changes.
    Report source health as a timestamped semaphore. A source outage cannot
    turn a safe dormant-controller deploy into NO_GO or justify redeployment;

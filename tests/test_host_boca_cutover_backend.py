@@ -157,8 +157,9 @@ def fake_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[list[str
     monkeypatch.setattr(
         adapter,
         "_precommit_legacy_image_cleanup",
-        lambda _plan, _legacy, _candidate, _worker: cleanup.LegacyImageProof(
-            OLD_IMAGE_ID, _plan.legacy_image, _plan.legacy_sha
+        lambda _plan, _legacy, _candidate, _worker: (
+            cleanup.LegacyImageProof(OLD_IMAGE_ID, _plan.legacy_image, _plan.legacy_sha),
+            None,
         ),
     )
 
@@ -226,6 +227,13 @@ def fake_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[list[str
         return cleanup.CleanupReceipt(outcome, attempt_id, "ACCEPT", disk, disk, (), (), ())
 
     monkeypatch.setattr(adapter.cleanup, "execute_protected", clean)
+    monkeypatch.setattr(
+        adapter.cleanup,
+        "capture_inventory",
+        lambda **_kw: cleanup.Inventory(
+            (), (), (), (), cleanup.DiskInodes(1000, 100, 3000, 300, 8, 10, 16, 18)
+        ),
+    )
     monkeypatch.setattr(adapter, "_SQL_SHA", SHA(SQL))
     return events, stage.ROOT
 
@@ -635,6 +643,7 @@ def test_prepared_cutover_backend_aborts_on_missing_durable_marker(
 def _precommit_inventory(
     *,
     extra_unknown: bool = False,
+    exact_historical: bool = False,
 ) -> cleanup.Inventory:
     """Three exact Boca CIDs; only the old image has authenticated exception."""
     plan = _plan()
@@ -654,6 +663,14 @@ def _precommit_inventory(
         images += (
             cleanup.Image(
                 "sha256:" + "9" * 64,
+                ("ghcr.io/mbalbo2023/boca-socios-assistant:unverified",),
+                None,
+            ),
+        )
+    if exact_historical:
+        images += (
+            cleanup.Image(
+                cleanup.HISTORICAL_RETIRE_TARGET,
                 ("ghcr.io/mbalbo2023/boca-socios-assistant:unverified",),
                 None,
             ),
@@ -717,10 +734,49 @@ def test_precommit_exact_old_image_proof_allows_only_known_boca_image(
         "delete_exact",
         lambda _target: pytest.fail("precommit cleanup must be read-only"),
     )
-    assert (
-        adapter._precommit_legacy_image_cleanup(plan, {"Image": OLD_IMAGE_ID}, NEW, WORKER) == proof
+    assert adapter._precommit_legacy_image_cleanup(plan, {"Image": OLD_IMAGE_ID}, NEW, WORKER) == (
+        proof,
+        None,
     )
     assert calls == [("attest", OLD_IMAGE_ID), ("inventory", OLD_IMAGE_ID)]
+
+
+def test_precommit_verifies_one_historical_image_and_still_rejects_other_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan = _plan()
+    legacy = cleanup.LegacyImageProof(OLD_IMAGE_ID, plan.legacy_image, plan.legacy_sha)
+    historical = cleanup.HistoricalRetainedImageProof(
+        cleanup.HISTORICAL_RETIRE_TARGET,
+        cleanup.HISTORICAL_RETIRE_DIGEST,
+        cleanup.HISTORICAL_RETIRE_REVISION,
+    )
+    source = _precommit_inventory(exact_historical=True)
+    observed: list[str] = []
+    monkeypatch.setattr(adapter.cleanup, "attest_historical_legacy_image", lambda *_a: legacy)
+    monkeypatch.setattr(adapter.cleanup, "capture_inventory", lambda *, historical_legacy: source)
+
+    def attest(snapshot: cleanup.Inventory) -> cleanup.HistoricalRetainedImageProof:
+        assert snapshot is source
+        observed.append("history")
+        return historical
+
+    monkeypatch.setattr(adapter.cleanup, "attest_historical_retained_image", attest)
+    assert adapter._precommit_legacy_image_cleanup(plan, {"Image": OLD_IMAGE_ID}, NEW, WORKER) == (
+        legacy,
+        historical,
+    )
+    assert observed == ["history"]
+
+    different = _precommit_inventory(exact_historical=True, extra_unknown=True)
+    monkeypatch.setattr(
+        adapter.cleanup, "capture_inventory", lambda *, historical_legacy: different
+    )
+    monkeypatch.setattr(
+        adapter.cleanup, "attest_historical_retained_image", lambda _snapshot: historical
+    )
+    with pytest.raises(cutover.CutoverError, match="precommit"):
+        adapter._precommit_legacy_image_cleanup(plan, {"Image": OLD_IMAGE_ID}, NEW, WORKER)
 
 
 @pytest.mark.parametrize("failure", ["other-unverified", "unknown-legacy-id", "missing-image"])
