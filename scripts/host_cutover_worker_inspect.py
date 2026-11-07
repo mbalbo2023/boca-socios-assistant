@@ -16,6 +16,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 UID = 10001
@@ -37,6 +38,20 @@ FAILED_WORKER_SOURCE = "92624ed6b7e75c6010f59670c866df00a29766dd"
 FAILED_WORKER_IMAGE = (
     "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
     "3894cfff995858d7c0ffdb994180a0d28a8a92bb69a0526fb040db2297fd8bf9"
+)
+# The single later failed #807 probe was built from the independently
+# authenticated, paired controller/browser release #723. These pins never
+# derive from caller-controlled workflow inputs or a mutable image tag.
+FAILED_WORKER_807_SOURCE = "1199c46fee8053e637b220ad9365ce3af15eb8e5"
+FAILED_WORKER_807_IMAGE = (
+    "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
+    "c31b41f0fd6332d9d4946d4047c7eb1e58e53ba04ad2ffdedfbb7aa54bcaaa04"
+)
+KNOWN_FAILED_PROBES = MappingProxyType(
+    {
+        "42329475083": (FAILED_WORKER_SOURCE, FAILED_WORKER_IMAGE),
+        "42341290485": (FAILED_WORKER_807_SOURCE, FAILED_WORKER_807_IMAGE),
+    }
 )
 INSPECT = (
     '{"id":{{json .Id}},"name":{{json .Name}},'
@@ -95,6 +110,7 @@ def canonical(value: Any) -> bytes:
 def _validate(attempt: str, original_id: str, original_sha: str, original_image: str) -> None:
     if (
         not RUN_ID.fullmatch(attempt)
+        or attempt not in KNOWN_FAILED_PROBES
         or not CONTAINER_ID.fullmatch(original_id)
         or not SOURCE_SHA.fullmatch(original_sha)
         or not IMAGE.fullmatch(original_image)
@@ -233,8 +249,20 @@ def _named_id(name: str) -> str | None:
     return rows[0] if rows else None
 
 
+def _unique_inspect_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject ambiguous Docker metadata instead of trusting JSON last-wins."""
+    fields: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in fields:
+            raise InspectError("INSPECT_DUPLICATE_FIELD")
+        fields[key] = value
+    return fields
+
+
 def _inspect_record(cid: str, template: str) -> dict[str, Any]:
-    value = json.loads(_docker("inspect", "--format", template, cid))
+    value = json.loads(
+        _docker("inspect", "--format", template, cid), object_pairs_hook=_unique_inspect_fields
+    )
     if (
         not isinstance(value, dict)
         or set(value)
@@ -331,12 +359,13 @@ def observe(
     if probe_id is not None:
         try:
             probe = _inspect_no_health(probe_id)
+            expected_source, expected_image = KNOWN_FAILED_PROBES[attempt]
             if (
                 probe["name"] == f"/{name}"
                 and probe["project"] == PROJECT
                 and probe["attempt"] == attempt
-                and probe["image_ref"] == FAILED_WORKER_IMAGE
-                and probe["revision"] == FAILED_WORKER_SOURCE
+                and probe["image_ref"] == expected_image
+                and probe["revision"] == expected_source
             ):
                 # Matching immutable metadata is NOT sufficient authority to
                 # clean up or launch Cutover: runtime ownership remains gated.
@@ -422,6 +451,7 @@ def observe(
 def verify(raw: bytes, attempt: str, original_id: str) -> dict[str, Any]:
     if (
         not RUN_ID.fullmatch(attempt)
+        or attempt not in KNOWN_FAILED_PROBES
         or not CONTAINER_ID.fullmatch(original_id)
         or not 0 < len(raw) <= 2048
     ):
