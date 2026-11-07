@@ -8,7 +8,7 @@ on:
         description: Boca-only host operation; browser IPC is a separate, opt-in, protected BETA gate
         required: true
         type: choice
-        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, cutover-a-reconcile, cutover-a-stage-recover, cutover-a-image-retire, cutover-a-observe, cutover-a-apply, official-notice-import, protected-go-prepare, lifecycle-apply, telegram-activate, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
+        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, cutover-a-reconcile, cutover-a-stage-recover, cutover-a-image-retire, cutover-a-observe, cutover-a-worker-preflight, cutover-a-apply, official-notice-import, protected-go-prepare, lifecycle-apply, telegram-activate, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
         description: Exact main SHA (blank allowed only for reviewed Cutover/import GO_B; derived from github.sha)
         required: false
@@ -161,7 +161,7 @@ jobs:
           uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
       - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
         run: |
-          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py
+          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
       - name: Validate protected official notice artifact import offline only
         run: |
@@ -895,7 +895,7 @@ jobs:
             [[ "$BOCA_BUDGET" = 1.5cpu-1024m-192pids || "$BOCA_BUDGET" = 1.75cpu-1152m-224pids ]]
           elif [[ "$BOCA_OPERATION" = beta-browser-install ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
-          elif [[ "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-image-retire || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-activate ]]; then
+          elif [[ "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-image-retire || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-worker-preflight || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-activate ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
           elif [[ "$BOCA_OPERATION" = beta-browser-telegram-start || ( "$BOCA_TELEGRAM_OWNER_READY" = ready && ( "$BOCA_OPERATION" = beta-browser-* || ( "$BOCA_OPERATION" = telegram-* && -n "$BOCA_BROWSER_IMAGE_REF" ) ) ) ]]; then
             test "$BOCA_BUDGET" = 1.75cpu-1152m-224pids
@@ -904,8 +904,8 @@ jobs:
           else
             test "$BOCA_BUDGET" = 0.5cpu-256m-64pids
           fi
-          if [[ "$BOCA_OPERATION" != beta-browser-* && "$BOCA_OPERATION" != telegram-* && "$BOCA_OPERATION" != cutover-a-observe && "$BOCA_OPERATION" != cutover-a-apply && "$BOCA_OPERATION" != official-notice-import && "$BOCA_OPERATION" != protected-go-prepare && "$BOCA_OPERATION" != lifecycle-apply ]]; then test -z "$BOCA_BROWSER_IMAGE_REF"; fi
-          if [[ "$BOCA_OPERATION" != cutover-a-observe && "$BOCA_OPERATION" != cutover-a-apply ]]; then
+          if [[ "$BOCA_OPERATION" != beta-browser-* && "$BOCA_OPERATION" != telegram-* && "$BOCA_OPERATION" != cutover-a-observe && "$BOCA_OPERATION" != cutover-a-worker-preflight && "$BOCA_OPERATION" != cutover-a-apply && "$BOCA_OPERATION" != official-notice-import && "$BOCA_OPERATION" != protected-go-prepare && "$BOCA_OPERATION" != lifecycle-apply ]]; then test -z "$BOCA_BROWSER_IMAGE_REF"; fi
+          if [[ "$BOCA_OPERATION" != cutover-a-observe && "$BOCA_OPERATION" != cutover-a-worker-preflight && "$BOCA_OPERATION" != cutover-a-apply ]]; then
             test -z "$BOCA_LEGACY_SOURCE_SHA"
             test -z "$BOCA_LEGACY_IMAGE_REF"
             if [[ "$BOCA_OPERATION" != cutover-a-reconcile && "$BOCA_OPERATION" != cutover-a-stage-recover && "$BOCA_OPERATION" != cutover-a-image-retire ]]; then test -z "$BOCA_LEGACY_RELEASE_RUN_ID"; fi
@@ -916,7 +916,7 @@ jobs:
             [[ "$BOCA_INCIDENT_PREPARE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
             test "$BOCA_PROTECTED_ACTION_CONTEXT" != "$BOCA_INCIDENT_PREPARE_RUN_ID"
             test "$BOCA_PROTECTED_ACTION_CONTEXT" != "$GITHUB_RUN_ID"
-          else
+          elif [[ "$BOCA_OPERATION" != cutover-a-observe && "$BOCA_OPERATION" != cutover-a-worker-preflight && "$BOCA_OPERATION" != cutover-a-apply ]]; then
             test -z "$BOCA_INCIDENT_PREPARE_RUN_ID"
           fi
           if [[ "$BOCA_OPERATION" != telegram-install ]]; then test -z "$BOCA_TELEGRAM_ENVELOPE"; fi
@@ -1066,17 +1066,17 @@ jobs:
                 [[ "$BOCA_TELEGRAM_EXPECTED_CHAT_HMAC" =~ ^[0-9a-f]{64}$ ]]
               fi
               ;;
-            cutover-a-observe|cutover-a-apply)
+            cutover-a-observe|cutover-a-worker-preflight|cutover-a-apply)
               test "$BOCA_DEPLOY_ENV_READY" = ready
               test "$BOCA_BETA_ENV_READY" = ready
               test "$BOCA_BROWSER_ENV_READY" = ready
               test "$BOCA_BETA_PANEL_ORIGIN" = http://localhost:8443
               test -n "$BOCA_BETA_OWNER_SUBJECT"
-              if [[ "$BOCA_OPERATION" = cutover-a-observe || -n "$BOCA_PROTECTED_ACTION_CONTEXT" ]]; then
+              if [[ "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-worker-preflight || -n "$BOCA_PROTECTED_ACTION_CONTEXT" ]]; then
                 [[ "$BOCA_LEGACY_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
                 [[ "$BOCA_LEGACY_IMAGE_REF" =~ ^ghcr[.]io/mbalbo2023/boca-socios-assistant@sha256:[0-9a-f]{64}$ ]]
                 [[ "$BOCA_LEGACY_RELEASE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
-                if [[ "$BOCA_OPERATION" = cutover-a-apply ]]; then
+                if [[ "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = cutover-a-worker-preflight ]]; then
                   [[ "$BOCA_LEGACY_CONTROLLER_ID" =~ ^[0-9a-f]{64}$ ]]
                 fi
               else
@@ -1087,13 +1087,19 @@ jobs:
                 test -z "$BOCA_LEGACY_CONTROLLER_ID"
               fi
               [[ "$BOCA_BROWSER_IMAGE_REF" =~ ^ghcr[.]io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}$ ]]
-              if [[ "$BOCA_OPERATION" = cutover-a-observe || -n "$BOCA_PROTECTED_ACTION_CONTEXT" ]]; then
+              if [[ "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-worker-preflight || -n "$BOCA_PROTECTED_ACTION_CONTEXT" ]]; then
                 test "$BOCA_LEGACY_SOURCE_SHA" != "$BOCA_SOURCE_SHA"
                 test "$BOCA_LEGACY_IMAGE_REF" != "$BOCA_IMAGE_REF"
               fi
               test -n "$BOCA_IMAGE_REF"
               test -n "$BOCA_RELEASE_RUN_ID"
               test -z "$BOCA_SITE_ENVELOPE"
+              if [[ "$BOCA_OPERATION" = cutover-a-worker-preflight ]]; then
+                # Reversible Boca-only rootless pull/probe; NO PREPARE/GO/port switch.
+                test -z "$BOCA_PROTECTED_ACTION_CONTEXT"
+                test -z "$BOCA_TELEGRAM_ENVELOPE"
+                test -z "$BOCA_OWNER_ENVELOPE"
+              fi
               ;;
             official-notice-import)
               # Information-only data import, never a new application deploy.
@@ -1234,14 +1240,14 @@ jobs:
           PYTHONPATH: src
         run: python scripts/check_deploy_inputs.py --infrastructure-preflight "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_SERVICE" "$BOCA_BUDGET" "$BOCA_RELEASE_RUN_ID"
       - name: Validate immutable inputs and successful matching release
-        if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic' || inputs.operation == 'site-prepare' || inputs.operation == 'site-install' || inputs.operation == 'site-verify' || startsWith(inputs.operation, 'owner-') || inputs.operation == 'beta-install' || inputs.operation == 'beta-start' || startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'beta-acceptance' || startsWith(inputs.operation, 'telegram-') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
+        if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic' || inputs.operation == 'site-prepare' || inputs.operation == 'site-install' || inputs.operation == 'site-verify' || startsWith(inputs.operation, 'owner-') || inputs.operation == 'beta-install' || inputs.operation == 'beta-start' || startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'beta-acceptance' || startsWith(inputs.operation, 'telegram-') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-worker-preflight' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
         env:
           PYTHONPATH: src
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [[ "$BOCA_BUDGET" = 1.75cpu-1152m-224pids ]]; then
             python scripts/check_deploy_inputs.py --browser-ipc-v2 --telegram-runtime "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_SERVICE" "$BOCA_BUDGET" "$BOCA_RELEASE_RUN_ID"
-          elif [[ "$BOCA_OPERATION" = beta-browser-* || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || ( "$BOCA_OPERATION" = telegram-* && -n "$BOCA_BROWSER_IMAGE_REF" ) ]]; then
+          elif [[ "$BOCA_OPERATION" = beta-browser-* || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-worker-preflight || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || ( "$BOCA_OPERATION" = telegram-* && -n "$BOCA_BROWSER_IMAGE_REF" ) ]]; then
             python scripts/check_deploy_inputs.py --browser-ipc-v2 "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_SERVICE" "$BOCA_BUDGET" "$BOCA_RELEASE_RUN_ID"
           else
             python scripts/check_deploy_inputs.py "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_SERVICE" "$BOCA_BUDGET" "$BOCA_RELEASE_RUN_ID"
@@ -1255,7 +1261,7 @@ jobs:
             "$RUNNER_TEMP/boca-release-manifest/boca-release-manifest.json" \
             "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID"
       - name: Require same-run immutable browser companion release manifest
-        if: startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
+        if: startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-worker-preflight' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
         env:
           PYTHONPATH: src
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1443,7 +1449,7 @@ jobs:
             "$RUNNER_TEMP/boca-official-artifact.zip" \
             "$RUNNER_TEMP/boca-legacy-inventory.observed.json"
       - name: Authenticate separate historical controller release and original Compose file
-        if: inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply'
+        if: inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-worker-preflight' || inputs.operation == 'cutover-a-apply'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONPATH: src
@@ -1493,10 +1499,10 @@ jobs:
       - name: Hash reviewed Boca Compose file
         run: sha256sum compose.yaml | cut -d' ' -f1 > "$RUNNER_TEMP/boca-compose.sha"
       - name: Hash reviewed served BETA Compose file
-        if: inputs.operation == 'beta-install' || inputs.operation == 'beta-start' || startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'beta-acceptance' || startsWith(inputs.operation, 'telegram-') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
+        if: inputs.operation == 'beta-install' || inputs.operation == 'beta-start' || startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'beta-acceptance' || startsWith(inputs.operation, 'telegram-') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-worker-preflight' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
         run: sha256sum compose.beta.yaml | cut -d' ' -f1 > "$RUNNER_TEMP/boca-beta-compose.sha"
       - name: Hash reviewed optional browser IPC overlay and seccomp
-        if: startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
+        if: startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-worker-preflight' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
         run: |
           sha256sum compose.beta.browser.yaml | cut -d' ' -f1 > "$RUNNER_TEMP/boca-browser-overlay.sha"
           sha256sum docker/seccomp_profile.json | cut -d' ' -f1 > "$RUNNER_TEMP/boca-browser-seccomp.sha"
@@ -1520,7 +1526,7 @@ jobs:
           docker compose -p boca-socios -f compose.beta.yaml config --format json > "$RUNNER_TEMP/boca-beta-runner-model.json"
           python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-beta-runner-model.json" "$BOCA_IMAGE_REF"
       - name: Validate exact optional dual-service IPC Compose model before SSH
-        if: startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
+        if: startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-worker-preflight' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
         env:
           BOCA_IMAGE: ${{ inputs.image_ref }}
           BOCA_BROWSER_IMAGE: ${{ inputs.browser_image_ref }}
@@ -2225,6 +2231,93 @@ jobs:
             exit 1
           fi
           printf 'BOCA_CUTOVER_A state=ACCEPTED terminal=RECORDED cleanup=ACCEPT; Samsung Chrome/Termius live BETA validation still required.\n' >> "$GITHUB_STEP_SUMMARY"
+      - name: Preflight exact dual GHCR image and rootless worker boundary without PREPARE
+        id: cutover_worker_preflight_host
+        if: inputs.operation == 'cutover-a-worker-preflight'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src:.
+        run: |
+          set -euo pipefail
+          # A distinct, optional pre-Cutover probe: pulls exact Boca images,
+          # starts one disposable network-none UID10002 Python process, verifies
+          # rootless cgroups/seccomp, then deletes only its exact container ID.
+          # It cannot consume GO_B, create IPC/persistent volumes, occupy 8443,
+          # change the legacy container or contact Boca/Telegram.
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
+            > "$RUNNER_TEMP/boca-main-ref-worker-preflight.json"
+          python scripts/check_main_ref.py \
+            "$RUNNER_TEMP/boca-main-ref-worker-preflight.json" "$BOCA_SOURCE_SHA"
+          python scripts/build_protected_boca_bundle.py \
+            . "$RUNNER_TEMP/boca-worker-preflight-review.pyz"
+          bundle_digest="$(sha256sum "$RUNNER_TEMP/boca-worker-preflight-review.pyz" | cut -d' ' -f1)"
+          remote_command="$(python3 - "$bundle_digest" "$GITHUB_RUN_ID" \
+            "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" \
+            "$BOCA_LEGACY_SOURCE_SHA" "$BOCA_LEGACY_IMAGE_REF" "$BOCA_LEGACY_CONTROLLER_ID" <<'PY'
+          import shlex
+          import sys
+
+          with open('scripts/boca_protected_memfd_bootstrap.py', encoding='utf-8') as stream:
+              bootstrap = stream.read()
+          print(shlex.join(['python3', '-c', bootstrap, *sys.argv[1:2],
+                            'cutover-worker-preflight', *sys.argv[2:]]))
+          PY
+          )"
+          timeout --signal=TERM --kill-after=5s 420s ssh \
+            -F "$RUNNER_TEMP/boca-ssh/config" \
+            -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+            boca-target "$remote_command" \
+            < "$RUNNER_TEMP/boca-worker-preflight-review.pyz" \
+            > "$RUNNER_TEMP/boca-worker-preflight.receipt" 2>/dev/null
+      - name: Require exact Boca rootless worker preflight receipt and bounded cleanup
+        if: ${{ always() && inputs.operation == 'cutover-a-worker-preflight' }}
+        env:
+          BOCA_PREFLIGHT_HOST_OUTCOME: ${{ steps.cutover_worker_preflight_host.outcome }}
+        run: |
+          set -euo pipefail
+          if [[ "$BOCA_PREFLIGHT_HOST_OUTCOME" != success ]]; then
+            # A CLI failure may still return a bounded diagnostic. Never trust
+            # arbitrary stdout or mistake a claimed phase for an accepted ACK.
+            claim="$(python3 - "$RUNNER_TEMP/boca-worker-preflight.receipt" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          try:
+              raw = Path(sys.argv[1]).read_bytes()
+              assert len(raw) <= 160 and raw.endswith(b'\n')
+              line = raw.decode('ascii')
+              match = re.fullmatch(
+                  r'BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO '
+                  r'failed_phase=(ATTEST|GHCR_PULL|WORKER_CREATE|WORKER_START|WORKER_BOUNDARY|CLEANUP|UNVERIFIED) '
+                  r'cleanup=(VERIFIED|INDETERMINATE|UNVERIFIED)\n', line,
+              )
+              print(f'phase_claim={match.group(1)} cleanup_claim={match.group(2)}' if match
+                    else 'phase_claim=UNVERIFIED cleanup_claim=UNVERIFIED')
+          except (OSError, UnicodeError, AssertionError):
+              print('phase_claim=UNVERIFIED cleanup_claim=UNVERIFIED')
+          PY
+          )"
+            printf 'BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO host=UNVERIFIED %s next=read_only_boca_inventory no_retry=1\n' "$claim" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/boca-worker-preflight.receipt" "$BOCA_SOURCE_SHA" <<'PY'
+          from pathlib import Path
+          import sys
+
+          file, source = sys.argv[1:]
+          expected = (
+              f'BOCA_CUTOVER_WORKER_PREFLIGHT state=PASS source_sha={source} '
+              'images=VERIFIED worker_boundary=VERIFIED cleanup=VERIFIED '
+              'original=RUNNING port=127.0.0.1:8443 ipc_worker=NOT_TESTED '
+              'prepared_go=UNCONSUMED foreign=UNTOUCHED\n'
+          )
+          raw = Path(file).read_bytes()
+          if raw != expected.encode('ascii'):
+              raise SystemExit('Boca preflight failed exact receipt verification')
+          with open(__import__('os').environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as report:
+              report.write(expected)
+          PY
       - name: Observe original RUNNING singleton for cutover A without host effects
         if: inputs.operation == 'cutover-a-observe'
         env:

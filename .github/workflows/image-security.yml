@@ -14,8 +14,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  scan:
-    name: image-security-scan
+  controller-scan:
+    name: image-security-controller-scan
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -27,7 +27,32 @@ jobs:
         run: docker build --tag boca-socios-scan:${{ github.sha }} .
       - name: Scan OS and library vulnerabilities
         run: bash scripts/trivy_scan_image.sh "boca-socios-scan:$GITHUB_SHA"
+
+  browser-scan:
+    name: image-security-browser-scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Build local isolated browser worker image without publishing
         run: docker build --file Dockerfile.browser --tag boca-browser-scan:${{ github.sha }} .
       - name: Scan browser OS and library vulnerabilities
         run: bash scripts/trivy_scan_image.sh "boca-browser-scan:$GITHUB_SHA"
+
+  scan:
+    name: image-security-scan
+    needs: [controller-scan, browser-scan]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Require both exact-source vulnerability scans to pass
+        env:
+          CONTROLLER_RESULT: ${{ needs.controller-scan.result }}
+          BROWSER_RESULT: ${{ needs.browser-scan.result }}
+        run: |
+          test "$CONTROLLER_RESULT" = success
+          test "$BROWSER_RESULT" = success
