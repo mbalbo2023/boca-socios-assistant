@@ -450,3 +450,75 @@ def test_stage_preflight_without_compose_fd_has_no_invented_inode_evidence(
 def test_marker_unknown_volume_is_readonly_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(reconcile, "_docker", lambda *args: "")
     assert reconcile._marker(PREPARE) == ("VOLUME_UNVERIFIED", "VOLUME_NAME_UNVERIFIED")
+
+
+def test_v3_postapply_reconcile_without_prepare_is_readonly_and_source_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """V3 #853 has no PREPARE; host evidence must bind to authenticated run SHA."""
+    files = {
+        f"boca-cutover-a-intent-{RUN}.json": _intent(),
+        f"boca-cutover-a-result-{RUN}.json": _result(),
+    }
+    monkeypatch.setattr(reconcile.os, "geteuid", lambda: 10001)
+    monkeypatch.setattr(reconcile.os, "getegid", lambda: 10001)
+    monkeypatch.setattr(reconcile, "_private_home", lambda: Path("/home/fixture-boca-owner"))
+    monkeypatch.setattr(reconcile.Path, "is_dir", lambda self: self.name == reconcile.RECEIPT_DIR)
+    monkeypatch.setattr(reconcile.Path, "is_symlink", lambda self: False)
+    monkeypatch.setattr(reconcile, "_read_private", lambda name, *, directory: files.get(name))
+    original = _container(
+        LEGACY_ID,
+        service="controller",
+        revision="b" * 40,
+        name="/boca-socios-controller-legacy-" + RUN,
+        running=True,
+    )
+    worker = _container(
+        "9" * 64,
+        service="browser-worker",
+        revision=TARGET_SHA,
+        name="/boca-socios-browser-worker-1",
+        running=False,
+    )
+    monkeypatch.setattr(reconcile, "_docker_snapshot", lambda: [original, worker])
+    monkeypatch.setattr(
+        reconcile, "_marker", lambda prepared: pytest.fail("V3 must not inspect PREPARE marker")
+    )
+    monkeypatch.setattr(reconcile, "_stage_preflight", lambda intent: {"reason": "STAGE_CHECK"})
+    monkeypatch.setattr(
+        reconcile,
+        "_staged_attempt",
+        lambda attempt: {
+            "stage": "PRESENT",
+            "promotion_intent": "ABSENT",
+            "promotion_result": "ABSENT",
+        },
+    )
+
+    record = reconcile._host(RUN, None, source_sha=TARGET_SHA)
+    assert record["version"] == "boca-postapply-reconcile-v2"
+    assert record["prepare_run_id"] is None
+    assert record["incident_source_sha"] == TARGET_SHA
+    assert record["prepared_go_marker"] == "NOT_APPLICABLE"
+    assert record["prepared_go_marker_reason"] == "V3_DISPATCH_WITHOUT_PREPARE"
+    assert record["original"]["id"] == LEGACY_ID
+    assert record["browser_workers"][0]["running"] is False
+    assert record["runtime_attested"] is False
+    assert record["go_for_retry"] is False
+    assert record["foreign_resources_touched"] is False
+    raw = reconcile._canonical(record) + b"\n"
+    assert reconcile.verify_runner(raw, RUN, None, source_sha=TARGET_SHA) == record
+    with pytest.raises(reconcile.ReconcileError, match="RECEIPT_CONTRACT"):
+        reconcile.verify_runner(raw, RUN, None, source_sha="e" * 40)
+    with pytest.raises(reconcile.ReconcileError, match="RECEIPT_CONTRACT"):
+        reconcile.verify_runner(raw, RUN, PREPARE)
+    with pytest.raises(reconcile.ReconcileError, match="V3_SOURCE_MISMATCH"):
+        reconcile._host(RUN, None, source_sha="e" * 40)
+
+
+def test_v3_readonly_observer_rejects_untrusted_run_coordinates() -> None:
+    for run, source in (("0", TARGET_SHA), (RUN, "not-a-sha"), (RUN, "")):
+        with pytest.raises(reconcile.ReconcileError):
+            reconcile._host(run, None, source_sha=source)
+    with pytest.raises(reconcile.ReconcileError, match="V3_SOURCE_ID"):
+        reconcile._host(RUN, PREPARE, source_sha=TARGET_SHA)

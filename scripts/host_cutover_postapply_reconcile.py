@@ -495,9 +495,14 @@ def _staged_attempt(run_id: str) -> dict[str, str]:
         os.close(descriptor)
 
 
-def _host(run_id: str, prepared_id: str) -> dict[str, Any]:
-    if not RUN.fullmatch(run_id) or not RUN.fullmatch(prepared_id) or run_id == prepared_id:
+def _host(run_id: str, prepared_id: str | None, *, source_sha: str | None = None) -> dict[str, Any]:
+    if not RUN.fullmatch(run_id):
         raise ReconcileError("RUN_ID")
+    if source_sha is None:
+        if prepared_id is None or not RUN.fullmatch(prepared_id) or run_id == prepared_id:
+            raise ReconcileError("RUN_ID")
+    elif prepared_id is not None or not SOURCE.fullmatch(source_sha):
+        raise ReconcileError("V3_SOURCE_ID")
     if os.geteuid() != UID or os.getegid() != UID:
         raise ReconcileError("ROOTLESS_UID")
     home = _private_home()
@@ -511,6 +516,9 @@ def _host(run_id: str, prepared_id: str) -> dict[str, Any]:
         raise ReconcileError("RECEIPT_DIRECTORY")
     intent = _record(intent_bytes, run_id, kind="intent")
     result = _record(result_bytes, run_id, kind="result")
+    if source_sha is not None and intent is not None:
+        if intent["target_source_sha"] != source_sha:
+            raise ReconcileError("V3_SOURCE_MISMATCH")
     if result is not None and (
         intent is None
         or result["legacy_id"] != intent["legacy_id"]
@@ -533,8 +541,12 @@ def _host(run_id: str, prepared_id: str) -> dict[str, Any]:
         and item["id"] != legacy
     ]
     workers = [item for item in first if item["service"] == "browser-worker"]
-    marker_status, marker_reason = _marker(prepared_id)
-    return {
+    marker_status, marker_reason = (
+        _marker(prepared_id)
+        if prepared_id is not None
+        else ("NOT_APPLICABLE", "V3_DISPATCH_WITHOUT_PREPARE")
+    )
+    receipt: dict[str, Any] = {
         "version": "boca-postapply-reconcile-v1",
         "incident_run_id": run_id,
         "prepare_run_id": prepared_id,
@@ -563,11 +575,22 @@ def _host(run_id: str, prepared_id: str) -> dict[str, Any]:
         "go_for_retry": False,
         "foreign_resources_touched": False,
     }
+    if source_sha is not None:
+        receipt["version"] = "boca-postapply-reconcile-v2"
+        receipt["incident_source_sha"] = source_sha
+    return receipt
 
 
-def verify_runner(raw: bytes, run_id: str, prepared_id: str) -> dict[str, Any]:
-    if not RUN.fullmatch(run_id) or not RUN.fullmatch(prepared_id) or run_id == prepared_id:
+def verify_runner(
+    raw: bytes, run_id: str, prepared_id: str | None, *, source_sha: str | None = None
+) -> dict[str, Any]:
+    if not RUN.fullmatch(run_id):
         raise ReconcileError("RUN_ID")
+    if source_sha is None:
+        if prepared_id is None or not RUN.fullmatch(prepared_id) or run_id == prepared_id:
+            raise ReconcileError("RUN_ID")
+    elif prepared_id is not None or not SOURCE.fullmatch(source_sha):
+        raise ReconcileError("V3_SOURCE_ID")
     if not 0 < len(raw) <= MAX_JSON:
         raise ReconcileError("RECEIPT_BOUNDS")
     try:
@@ -576,9 +599,23 @@ def verify_runner(raw: bytes, run_id: str, prepared_id: str) -> dict[str, Any]:
         raise ReconcileError("RECEIPT_JSON") from exc
     if (
         type(record) is not dict
-        or record.get("version") != "boca-postapply-reconcile-v1"
+        or record.get("version")
+        != (
+            "boca-postapply-reconcile-v2"
+            if source_sha is not None
+            else "boca-postapply-reconcile-v1"
+        )
         or record.get("incident_run_id") != run_id
         or record.get("prepare_run_id") != prepared_id
+        or (
+            source_sha is not None
+            and (
+                record.get("incident_source_sha") != source_sha
+                or record.get("prepared_go_marker") != "NOT_APPLICABLE"
+                or record.get("prepared_go_marker_reason") != "V3_DISPATCH_WITHOUT_PREPARE"
+            )
+        )
+        or (source_sha is None and "incident_source_sha" in record)
         or record.get("go_for_retry") is not False
         or record.get("runtime_attested") is not False
         or record.get("foreign_resources_touched") is not False
@@ -605,20 +642,23 @@ def verify_runner(raw: bytes, run_id: str, prepared_id: str) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 3 or args[0] not in ("host", "verify"):
+    if len(args) != 3 or args[0] not in ("host", "verify", "host-v3", "verify-v3"):
         print("BOCA_POSTAPPLY_RECONCILE state=NO_GO reason=INPUT", file=sys.stderr)
         return 3
-    mode, run_id, prepare_id = args
+    mode, run_id, coordinate = args
+    is_v3 = mode.endswith("-v3")
+    prepare_id = None if is_v3 else coordinate
+    source_sha = coordinate if is_v3 else None
     try:
-        if mode == "host":
-            result = _host(run_id, prepare_id)
+        if mode in ("host", "host-v3"):
+            result = _host(run_id, prepare_id, source_sha=source_sha)
             output = _canonical(result) + b"\n"
             if len(output) > MAX_JSON:
                 raise ReconcileError("RECEIPT_BOUNDS")
             sys.stdout.buffer.write(output)
         else:
             raw = sys.stdin.buffer.read(MAX_JSON + 1)
-            result = verify_runner(raw, run_id, prepare_id)
+            result = verify_runner(raw, run_id, prepare_id, source_sha=source_sha)
             print(
                 "BOCA_POSTAPPLY_RECONCILE state=READ_ONLY_NO_GO"
                 f" intent={result['intent']} result={result['result']}"

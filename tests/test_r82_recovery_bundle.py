@@ -51,6 +51,9 @@ R81_FULL_CUTOVER_SHA = "a7c43c6f8ea944cd8ec8e7180efa540203c42d5cbde90258f6ae8caa
 # ADR0206 V3 deliberately updates CLI and entrypoint, retaining identical ZIP
 # composition and recovery/preflight isolation; this is the reviewed new pin.
 R83_FULL_CUTOVER_SHA = "8b3082dcf6de0f7bfeb8fac784a6d3ea56a655085c33224547f558200abc9476"
+# R101: the V3 read-only observer is a reviewed member of the full host ZIP.
+# Preserve the prior R83 checksum above as immutable historical evidence.
+R101_FULL_CUTOVER_SHA = "4509410ee64a6108649402a8ef2a0038b6847fd9965917452c49497eab36557e"
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -203,13 +206,14 @@ def test_both_recovery_modes_reject_modified_bytes_and_injected_entries(
     assert b"BOCA_RECOVERY_FIXTURE" not in result.stdout
 
 
-def test_r83_complete_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) -> None:
-    """R82 recovery remains isolated; R83 deliberately removes preflight code."""
+def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) -> None:
+    """R101 observer does not change the intentionally isolated R83 recovery modes."""
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R83_FULL_CUTOVER_SHA
-    assert digest != R81_FULL_CUTOVER_SHA  # superseded intentionally, not silently changed
+    assert digest == hashlib.sha256(raw).hexdigest() == R101_FULL_CUTOVER_SHA
+    assert digest != R83_FULL_CUTOVER_SHA  # historical pin retained, explicitly superseded
+    assert digest != R81_FULL_CUTOVER_SHA
     assert len(raw) <= 512_000
     bootstrap.verify(raw, digest)
     with pytest.raises(ValueError):
