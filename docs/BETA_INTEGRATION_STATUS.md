@@ -1,6 +1,17 @@
 # Estado de integración BETA
 
-## A45-R92 — recuperación #831 verificada; fix-forward STOP sólo CODE_ONLY (07/11/2026 ART)
+## A45-R93 — preflight R92 #834 falló; nuevo inventario sólo CODE_ONLY (07/11/2026 ART)
+
+| Frente | Evidencia real | Estado |
+| --- | --- | --- |
+| R92 integración | PR #434 fusionado en `79da7ebe9918d98216ac7eb46ff008d7f6e62429`; CI/Security y release dual #741 GREEN, observación previa #833 READY | Código/artefactos GREEN; no demuestra instalación |
+| Worker R92 | [#834](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42375050546): `CLEANUP/STOP/ACK_MULTILINE`, sin RM, sin aceptación | **NO_GO** físico; estado del probe y legacy ahora UNVERIFIED; no retry mismo SHA |
+| R93 | [ADR0202](ADR/0202-r93-worker-834-exact-readonly-inventory.md) inspección READ_ONLY del #834 por pins exactos | CODE_ONLY hasta QA/PR/merge y recibo físico, cero writes |
+| Cutover A, BETA integral, Telegram | Sin GO_B/APPLY ni aceptación | **NO INSTALADOS/NO_GO**; no tocar apps ajenas |
+
+---
+
+## Histórico A45-R92 — recuperación #831 y STOP CODE_ONLY (sustituido)
 
 | Frente | Evidencia real | Estado |
 | --- | --- | --- |

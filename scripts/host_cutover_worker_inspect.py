@@ -62,12 +62,20 @@ FAILED_WORKER_827_IMAGE = (
     "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
     "902276a94bbec0ed0be30432baf97b5bd1298fc15e21eda750ccb785fa76bde0"
 )
+# The only R92 preflight #834 failed with STOP/ACK_MULTILINE; physical state
+# remains unverified. Permit metadata reads only, NEVER cleanup or retries.
+FAILED_WORKER_834_SOURCE = "79da7ebe9918d98216ac7eb46ff008d7f6e62429"
+FAILED_WORKER_834_IMAGE = (
+    "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
+    "ed276066b108fad5b130d0fdffdd3f38a5a3d912253b1d4267bd4b6184992ba8"
+)
 KNOWN_FAILED_PROBES = MappingProxyType(
     {
         "42329475083": (FAILED_WORKER_SOURCE, FAILED_WORKER_IMAGE),
         "42341290485": (FAILED_WORKER_807_SOURCE, FAILED_WORKER_807_IMAGE),
         "42353468231": (FAILED_WORKER_819_SOURCE, FAILED_WORKER_819_IMAGE),
         "42368541950": (FAILED_WORKER_827_SOURCE, FAILED_WORKER_827_IMAGE),
+        "42375050546": (FAILED_WORKER_834_SOURCE, FAILED_WORKER_834_IMAGE),
     }
 )
 INSPECT = (

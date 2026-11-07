@@ -1,6 +1,22 @@
 # Boca Socios Assistant
 
-## A45-R92 — diagnóstico de STOP sin reinterpretar ACK (07/11/2026 ART; CODE_ONLY)
+## A45-R93 — inventario protegido exacto del #834 (07/11/2026 ART; CODE_ONLY)
+
+El preflight R92 [#834](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42375050546)
+falló físicamente al validar un ACK **multilínea** de STOP; `docker rm` no se
+ejecutó, y el estado actual del worker/legacy permanece **NO VERIFICADO**.
+La release dual R92 #741 estaba publicada y la observación previa #833 fue
+READY, pero **no hay nuevo deploy, Cutover, aceptación BETA ni Telegram**.
+El mismo SHA no se reintenta. R93 extiende únicamente el inspector READ_ONLY
+para el contexto exacto #834: no toca Docker ni autoriza recovery. Sólo después
+del PR/checks/revisión y merge podrá obtenerse un recibo físico del mismo
+incidente. Véase [ADR0202](docs/ADR/0202-r93-worker-834-exact-readonly-inventory.md),
+[RCA #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417) y
+[continuidad #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+
+---
+
+## Histórico A45-R92 — diagnóstico de STOP sin reinterpretar ACK (07/11/2026 ART)
 
 La única recuperación R91 [#831](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42372284155)
 informó `CLEANED/VERIFIED` del residuo detenido #827, manteniendo el

@@ -104,6 +104,7 @@ def test_r90_827_identity_closed_and_recovery_not_authorized() -> None:
         "42341290485",
         "42353468231",
         ATTEMPT,
+        "42375050546",
     }
     with pytest.raises(observer.InspectError, match="COORDINATES"):
         observer._validate("42368541951", LEGACY_ID, LEGACY_SOURCE, LEGACY_IMAGE)
