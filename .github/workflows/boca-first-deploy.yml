@@ -1,5 +1,5 @@
 name: Boca first deploy
-run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-807' && 'BOCA-R82-WORKER-807-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R80-WORKER-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42341290485' && 'BOCA-R81-WORKER-807-READONLY' || 'Boca first deploy' }}
+run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-preflight' && 'BOCA-R84-WORKER-PREFLIGHT-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-807' && 'BOCA-R82-WORKER-807-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R80-WORKER-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42341290485' && 'BOCA-R81-WORKER-807-READONLY' || 'Boca first deploy' }}
 
 on:
   pull_request:
@@ -162,7 +162,7 @@ jobs:
           uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
       - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
         run: |
-          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py tests/test_r82_exact_worker_807_recovery.py tests/test_r82_recovery_bundle.py tests/test_r82_recovery_dispatch.py tests/test_r82_recovery_workflow.py tests/test_r83_primary_phase.py tests/test_r83_cleanup_stages.py tests/test_r83_preflight_workflow.py tests/test_r83_bundle_caps.py
+          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py tests/test_r82_exact_worker_807_recovery.py tests/test_r82_recovery_bundle.py tests/test_r82_recovery_dispatch.py tests/test_r82_recovery_workflow.py tests/test_r83_primary_phase.py tests/test_r83_cleanup_stages.py tests/test_r83_preflight_workflow.py tests/test_r83_bundle_caps.py tests/test_r84_worker_storage_admission.py tests/test_r84_worker_preflight_dispatch.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
       - name: Validate protected official notice artifact import offline only
         run: |
@@ -2482,6 +2482,25 @@ jobs:
             exit 1
           fi
           printf 'BOCA_CUTOVER_A state=ACCEPTED terminal=RECORDED cleanup=ACCEPT; Samsung Chrome/Termius live BETA validation still required.\n' >> "$GITHUB_STEP_SUMMARY"
+      - name: Require one unique R84 worker preflight dispatch before SSH
+        id: cutover_worker_preflight_dispatch_gate
+        if: inputs.operation == 'cutover-a-worker-preflight'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Fail closed on another fresh dispatch of this same source SHA,
+          # including failed, cancelled or queued runs. A reviewed new SHA
+          # may fix forward, but a second click cannot trigger host effects.
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/boca-first-deploy.yml/runs?event=workflow_dispatch&head_sha=$GITHUB_SHA&per_page=100" \
+            --jq '{total_count,workflow_runs:[.workflow_runs[]|{id,display_title,event,head_sha,head_branch,run_attempt,actor:{login:.actor.login},repository:{full_name:.repository.full_name},path}]}' \
+            > "$RUNNER_TEMP/boca-r84-preflight-run-history.json" 2>/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=1" \
+            > "$RUNNER_TEMP/boca-r84-preflight-open-prs.json" 2>/dev/null
+          python -m scripts.check_worker_preflight_dispatch \
+            "$RUNNER_TEMP/boca-r84-preflight-run-history.json" \
+            "$RUNNER_TEMP/boca-r84-preflight-open-prs.json" \
+            "$GITHUB_SHA" "$GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
       - name: Preflight exact dual GHCR image and rootless worker boundary without PREPARE
         id: cutover_worker_preflight_host
         if: inputs.operation == 'cutover-a-worker-preflight'
@@ -2523,10 +2542,17 @@ jobs:
       - name: Require exact Boca rootless worker preflight receipt and bounded cleanup
         if: ${{ always() && inputs.operation == 'cutover-a-worker-preflight' }}
         env:
+          BOCA_PREFLIGHT_DISPATCH_OUTCOME: ${{ steps.cutover_worker_preflight_dispatch_gate.outcome }}
           BOCA_PREFLIGHT_HOST_OUTCOME: ${{ steps.cutover_worker_preflight_host.outcome }}
         run: |
           set -euo pipefail
           if [[ "$BOCA_PREFLIGHT_HOST_OUTCOME" != success ]]; then
+            if [[ "$BOCA_PREFLIGHT_DISPATCH_OUTCOME" != success ]]; then
+              # A denied or skipped gate never reached SSH in this run.
+              # Do not invent any observation about the droplet itself.
+              printf 'BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO dispatch_gate=NOT_PASSED ssh=NOT_ATTEMPTED_BY_RUN no_retry=1\n' >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
             # A CLI failure may still return a bounded diagnostic. Never trust
             # arbitrary stdout or mistake a claimed phase for an accepted ACK.
             claim="$(python3 - "$RUNNER_TEMP/boca-worker-preflight.receipt" <<'PY'

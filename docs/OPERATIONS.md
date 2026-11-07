@@ -1,8 +1,15 @@
 # Safe operations — verified evidence and gated procedures
 
-**Estado actual:** leer primero
-[R77 — Inventario físico diferencial](#r77--inventario-físico-diferencial-posterior-al-798).
-Los apartados R50/R40 y las guías antiguas describen cortes históricos.
+**Estado vigente:** [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
+como única referencia operativa. El [corte R84 en README](../README.md)
+es histórico al momento de publicarse; verificar SHA/Actions actuales antes de actuar.
+El controller legacy sigue activo; BETA integral no instalada. R83 release
+[#727](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42347255399)
+GREEN sólo acredita imágenes, no un Cutover. R84 restaura el gate R50 de
+capacidad/inodos **antes de admitir otro preflight**, con anti-replay pre-SSH
+por SHA. Hasta PR/CI/merge, nueva release propia, cero PR e inventario
+READ_ONLY, **NO_GO físico**. Véase [ADR0193](ADR/0193-r84-worker-storage-admission.md).
+Las guías R77/R50/R40 siguientes son cortes históricos.
 
 ## R50 — Cutover A: contrato de dos pulls, candidato NO INSTALADO
 

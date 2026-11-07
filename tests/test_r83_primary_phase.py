@@ -138,7 +138,7 @@ class Scenario:
         monkeypatch.setattr(preflight, "_require_clean_namespace", lambda _name: None)
         monkeypatch.setattr(preflight.host, "_browser_engine_version", lambda: "28.0.1")
         monkeypatch.setattr(preflight.host, "_storage_snapshot", lambda: object())
-        monkeypatch.setattr(preflight, "_pull_observing_capacity", pull)
+        monkeypatch.setattr(preflight.host, "_browser_pull_both", lambda *_args: pull(_pins()))
         monkeypatch.setattr(
             preflight,
             "_temporary_seccomp",

@@ -57,6 +57,9 @@ def _verify_receipt(
     env.update(
         RUNNER_TEMP=str(tmp_path),
         GITHUB_STEP_SUMMARY=str(tmp_path / "step-summary.md"),
+        # The R83 receipt fixtures model a dispatched, attempted host step.
+        # R84 now separately rejects a pre-SSH gate denial.
+        BOCA_PREFLIGHT_DISPATCH_OUTCOME="success",
         BOCA_PREFLIGHT_HOST_OUTCOME=host_outcome,
         BOCA_SOURCE_SHA=SOURCE_SHA,
     )

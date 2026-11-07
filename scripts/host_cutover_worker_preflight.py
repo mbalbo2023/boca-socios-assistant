@@ -354,16 +354,6 @@ def _cleanup_exact(pins: Coordinates, name: str) -> None:
         raise CleanupStageError(stage) from exc
 
 
-def _pull_observing_capacity(pins: Coordinates) -> None:
-    """Pull both digests and verify rootless storage identity, not a byte margin."""
-    before = host._storage_snapshot()
-    for image in (pins.controller, pins.browser):
-        host._run("docker", "pull", image, timeout=120)
-        host._browser_validate_image(image, pins.source)
-        current = host._storage_snapshot()
-        host._validate_storage_continuity(before, current, require_capacity=False)
-
-
 def execute(pins: Coordinates, profile: bytes) -> tuple[str, str]:
     """Require exact cleanup for PASS."""
     pins.validate()
@@ -386,7 +376,9 @@ def execute(pins: Coordinates, profile: bytes) -> tuple[str, str]:
             host._browser_engine_version()
             host._storage_snapshot()
             phase = "GHCR_PULL"
-            _pull_observing_capacity(pins)
+            # Reuse the reviewed R50 4 GiB pre-pull/1 GiB post-pull and
+            # 50k-inode admission policy. No independent or weaker variant.
+            host._browser_pull_both(pins.controller, pins.browser, pins.source)
             phase = "SECCOMP_ENTER"
             with _temporary_seccomp(pins.attempt, profile) as path:
                 try:

@@ -112,6 +112,7 @@ def test_exact_success_pulls_boca_pair_once_and_cleans_only_own_id(
     monkeypatch.setattr(
         probe.host, "_browser_validate_image", lambda *a: events.append(("image", *a))
     )
+    monkeypatch.setattr(probe.host, "_validate_storage_capacity", lambda *a, **k: None)
     monkeypatch.setattr(probe.host, "_validate_storage_continuity", lambda *a, **k: None)
     monkeypatch.setattr(
         probe.host,
@@ -184,7 +185,7 @@ def test_seccomp_cleanup_indeterminate_must_not_be_reported_as_verified(
     monkeypatch.setattr(probe, "_require_clean_namespace", lambda _name: None)
     monkeypatch.setattr(probe.host, "_browser_engine_version", lambda: "28.0.1")
     monkeypatch.setattr(probe.host, "_storage_snapshot", lambda: object())
-    monkeypatch.setattr(probe, "_pull_observing_capacity", lambda _pins: None)
+    monkeypatch.setattr(probe.host, "_browser_pull_both", lambda *_pins: None)
     monkeypatch.setattr(probe, "_cleanup_exact", lambda *_a: None)
 
     @contextmanager
