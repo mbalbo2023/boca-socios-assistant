@@ -1,6 +1,25 @@
 # Boca Socios Assistant
 
-## A45-R89 — guía de inputs para preflight único; host NO_GO (07/11/2026 ART)
+## A45-R90 — #827 falló al detener el probe; inventario exacto CODE_ONLY (07/11/2026 ART)
+
+El único preflight R89 protegido [#827](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42368541950)
+falló físicamente con `CLEANUP/STOP/ACK_MISMATCH/INDETERMINATE`, sin
+`docker rm` y sin recibo de instalación. Partió de
+`main=8a69d155354362e0712dab1229f7d7e4b3e24dd6`, release dual
+[#737](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42361009081).
+El estado del probe, seccomp y controlador original después de ese fallo **es
+desconocido**. No repetir #827, no eliminar a ciegas, no PREPARE/GO_B/APPLY.
+
+R90 **sólo propone**, desde el mismo inspector `cutover-a-worker-inspect`,
+agregar el run #827 con SHA/browser digest inmutables y compuerta exclusiva
+READ_ONLY. No hay inspección física #827 realizada por este código hasta
+PR, checks, revisión, merge y Action específica. No se habilita recuperación
+ni nuevo Cutover automáticamente; BETA integral y Telegram **NO_GO**.
+Contrato, RCA, tests y siguiente paso en [ADR0199](docs/ADR/0199-r90-worker-827-exact-readonly-inventory.md),
+[#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417) y
+[#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+
+## Histórico A45-R89 — guía de inputs para preflight único; host NO_GO (07/11/2026 ART; sustituido)
 
 R88 quedó fusionado por [PR #430](https://github.com/mbalbo2023/boca-socios-assistant/pull/430)
 (`main=15b25e753528651069323dc499b353359a5bc304`, tree

@@ -1,6 +1,15 @@
 # Estado de integración BETA
 
-## A45-R89 — guía de formulario, sin nuevo intento físico (07/11/2026 ART)
+## A45-R90 — único preflight #827 fallido; observación exacta aún CODE_ONLY (07/11/2026 ART)
+
+| Frente | Evidencia | Veredicto |
+| --- | --- | --- |
+| R89 / release dual | `main=8a69d155354362e0712dab1229f7d7e4b3e24dd6`, [release #737](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42361009081) publicado, PR0 y consenso 3/3 antes del run | Imagen disponible, **no instalada** |
+| Preflight físico único #827 | [Actions 42368541950](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42368541950) **FAILURE**: `CLEANUP/STOP/ACK_MISMATCH/INDETERMINATE`, sin `docker rm`; `host=UNVERIFIED`, no artifact | **NO_GO**, no repetir; probe/seccomp/legacy actual desconocidos |
+| R90 | [ADR0199](ADR/0199-r90-worker-827-exact-readonly-inventory.md), extensión mínima de inspector existente con run/SHA/digest exactos, prueba adversarial, sin Docker write | CODE_ONLY; faltan PR/CI/revisión/merge y recibo READ_ONLY |
+| Cutover, BETA integral, Telegram | Sin nuevo PREPARE, GO_B, APPLY ni aceptación real | **NO_GO**, preservar sistemas ajenos y datos |
+
+## Histórico A45-R89 — guía de formulario, sin nuevo intento físico (07/11/2026 ART; sustituido)
 
 | Frente | Evidencia | Veredicto |
 | --- | --- | --- |

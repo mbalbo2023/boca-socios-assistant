@@ -1,6 +1,19 @@
 # Backlog y dependencias de la BETA
 
-## Prioridades operativas — 04/11/2026, posterior al primer deploy
+## Prioridad física vigente — 07/11/2026, R90 CODE_ONLY
+
+El único worker preflight [#827](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42368541950)
+falló `CLEANUP/STOP/ACK_MISMATCH/INDETERMINATE`; su limpieza y salud de
+controller legacy posterior son desconocidas. Secuencia de dependencia
+obligatoria en [ADR0199](ADR/0199-r90-worker-827-exact-readonly-inventory.md):
+validar PR/CI/arquitectura del inspector READ_ONLY existente con pin #827,
+merge y PR0; despachar sólo el inventario exacto por Actions; decidir si
+existe un residuo detenido susceptible de recuperación quirúrgica separada;
+recién después revisar causa STOP y el próximo preflight con release propio.
+**No repetir #827, no Cutover/PREPARE/GO_B/APPLY, no tocar otros Docker ni
+BLACKBOX.** La BETA integral sigue sin instalación ni aceptación física.
+
+## Histórico — prioridades operativas — 04/11/2026, posterior al primer deploy
 
 `main=cabce9f1e452e63ded115f447559a358dc0f4d1b`:
 [release #41893887078](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/41893887078),
