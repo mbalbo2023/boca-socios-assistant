@@ -597,6 +597,45 @@ def verify_postflight_json(raw: bytes, expected_attempt_id: str) -> str:
         raise CutoverGoError("Boca postdeploy exact receipt missing or malformed") from exc
 
 
+def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
+    """Report only allowlisted host claims after a FAILED SSH step.
+
+    This is diagnostic metadata, never an authenticated terminal receipt.
+    It cannot turn a remote NO_GO into accepted host evidence.
+    """
+    if (
+        environment.get("BOCA_OPERATION") != "cutover-a-apply"
+        or environment.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+    ):
+        raise CutoverGoError("Cutover SSH diagnosis wrong event/operation")
+    rc_raw = environment.get("BOCA_CUTOVER_A_SSH_RC", "")
+    if re.fullmatch(r"[1-9][0-9]{0,2}", rc_raw) is None or int(rc_raw) > 255:
+        raise CutoverGoError("Cutover SSH diagnosis requires bounded nonzero exit")
+    ssh_rc = int(rc_raw)
+    try:
+        raw = _read_bounded(Path(environment["RUNNER_TEMP"]) / HOST_RECEIPT_NAME, 9000)
+    except (CutoverGoError, KeyError, OSError, ValueError):
+        raw = b""
+    recorded = b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n"
+    unverified = b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=UNVERIFIED runtime=UNVERIFIED\n"
+    host_claim = "NONE"
+    if raw == recorded or (
+        raw.startswith(_POSTFLIGHT_PREFIX)
+        and raw.count(b"\n") == 2
+        and raw.endswith(recorded)
+        and 0 < len(raw) <= 9000
+    ):
+        host_claim = "NO_GO_RECORDED_UNVERIFIED"
+    elif raw == unverified:
+        host_claim = "NO_GO_UNVERIFIED"
+    transport = "TIMEOUT" if ssh_rc == 124 else "SSH_255" if ssh_rc == 255 else "EXIT_NONZERO"
+    return (
+        f"BOCA_CUTOVER_A_SSH_DIAGNOSTIC state=NO_GO ssh_rc={ssh_rc} "
+        f"transport={transport} host_claim={host_claim} phase=UNVERIFIED "
+        "host=UNVERIFIED terminal=UNVERIFIED no_retry=true"
+    )
+
+
 def assert_actions_host_receipt(environment: Mapping[str, str]) -> str | None:
     """Fail closed on wrong SSH/GO or incomplete v2 cleanup; preserve v1 ABI."""
     if (
@@ -665,8 +704,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--from-actions", action="store_true")
     parser.add_argument("--prepared-from-actions", action="store_true")
     parser.add_argument("--assert-host-receipt", action="store_true")
+    parser.add_argument("--report-host-failure", action="store_true")
     args = parser.parse_args(argv)
     try:
+        if args.report_host_failure:
+            if (
+                args.request_path is not None
+                or args.from_actions
+                or args.prepared_from_actions
+                or args.assert_host_receipt
+            ):
+                raise CutoverGoError("Cutover SSH diagnosis arguments unexpected")
+            print(classify_cutover_ssh_failure(os.environ))
+            return 0
         if args.assert_host_receipt:
             if args.request_path is not None or args.from_actions or args.prepared_from_actions:
                 raise CutoverGoError("Cutover A receipt assertion arguments unexpected")
@@ -704,7 +754,10 @@ def main(argv: list[str] | None = None) -> int:
                 protected_go_digest=os.environ.get("BOCA_CUTOVER_A_GO_BINDING_SHA256", ""),
             )
     except (CutoverGoError, CutoverCliError, UnicodeError, json.JSONDecodeError, TypeError):
-        print("BOCA_CUTOVER_A_GO state=NO_GO host=untouched", file=sys.stderr)
+        if args.assert_host_receipt or args.report_host_failure:
+            print("BOCA_CUTOVER_A_HOST_VERIFY state=NO_GO host=UNVERIFIED", file=sys.stderr)
+        else:
+            print("BOCA_CUTOVER_A_GO state=NO_GO host=untouched", file=sys.stderr)
         return 1
     print(f"BOCA_CUTOVER_A_GO state=PASS sha256={approved} host=untouched")
     return 0

@@ -539,6 +539,17 @@
         "tests/test_host_boca_cleanup.py::test_cutover_reconcile_full_preflight_passes_offline_without_host_credentials",
         "tests/test_host_boca_cleanup.py::test_cleanup_readonly_continues_after_valid_stage_inode_no_go_observation"
       ]
+    },
+    {
+      "id": "RCA-45",
+      "issue": 45,
+      "fix_pr": 413,
+      "root_cause": "Cutover SSH returned nonzero and set -e suppressed the already-sanitized remote NO_GO receipt; the post-SSH receipt verifier also incorrectly claimed the host remained untouched.",
+      "prevention": "Keep the original failing SSH status, classify only bounded allowlisted remote NO_GO markers, never accept nonzero as success, and report host UNVERIFIED for all post-SSH verification failures.",
+      "regression_tests": [
+        "tests/test_cutover_a_go.py::test_post_ssh_missing_ack_never_claims_original_host_untouched",
+        "tests/test_cutover_a_go.py::test_failed_ssh_diagnostic_is_redacted_and_never_accepts_host"
+      ]
     }
   ]
 }

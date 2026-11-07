@@ -56,6 +56,38 @@ independent jobs and serialize final integration/host operations. Do not omit
 required checks, substitute old evidence, relax gates or promote untrusted PR
 artifacts to privileged release merely to reduce elapsed time.
 
+## Agile PR and Actions governance (R68, 2026-11-06 ART)
+
+Keep one source-of-truth integration branch per reviewed release. Before opening
+a PR, query all open PRs and compare changed paths/hunks with `main` and active
+owner scopes; do not create replacement code where an existing feature is being
+reviewed. Default base is `main`. A PR against another feature branch must
+state its parent, why that dependency is needed and the planned promotion or
+closure; stacked PRs do not independently certify a final release.
+
+Every PR must carry issue/scope owner, current base and head SHAs, status
+(ACTIVE/BLOCKED/SUPERSEDED/EXPERIMENT), tests and last evidence. A centralized
+backlog review reconciles open drafts with `main` at each release freeze.
+Close only an *exactly demonstrated* superseded or abandoned PR, with linked
+replacement/merged commits and an explanatory comment; never bulk-close by
+age, title similarity or number alone. Dependency bumps must satisfy the
+current Python/runtime constraints before being considered mergeable.
+
+Batch logically related file changes into **one atomic commit** before opening
+or refreshing a PR; avoid file-by-file commits that trigger four redundant
+GitHub Actions waves. All required checks must still complete against the
+final reviewed SHA. Avoid workflow-level path filters for required contexts,
+which can leave required checks pending; any future docs-only fast path must
+retain the named required job with an explicit, tested classification.
+
+Measure queue, uv sync, controller/browser builds, scans, PR wall time,
+protected publish, PREPARE, APPLY and postflight separately. GitHub-hosted
+runner checks may run in parallel; only Boca's single physical deploy mutex
+may mutate the shared host. Reuse caches or immutable artifacts only after
+proving provenance and branch-trust separation; never consume an untrusted
+PR cache in the protected release without rebuilding/verifying by digest.
+Do not confuse remote GO wait, dispatch latency and container startup time.
+
 ## Branch protection contract
 
 - Default branch: main; no direct pushes, branch deletion or force-pushes.

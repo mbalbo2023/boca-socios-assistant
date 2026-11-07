@@ -415,3 +415,49 @@ Hasta SHA exacto CI verde, revisión técnica, merge y único ACK
 el nuevo Cutover requiere release+PREPARE+GO_B **nuevos** y diagnóstico
 del stopper funcional, no repetir #778. No afectar BLACKBOX,
 otros Docker/Porota, datos ni puerto 8443, ni ejecutar navegación real.
+
+## R68 — RCA del pipeline y diagnóstico de Cutover (06/11/2026 ART; CODE_ONLY)
+
+El Stage del incidente #778 fue recuperado por #788 y observado ABSENT por
+#789. El controller legacy permaneció sano. **No** conservar la instrucción
+histórica de R62 como si Stage continuara en cuarentena.
+
+Los APPLY #763/#770/#778 terminaron en el mismo SSH, con 19/14/77 s dentro
+de esa fase. El código 3 de `host_boca_cutover_cli.run_cli` significa
+`NO_GO` genérico, no prueba corte de SSH ni causa Docker. La fase original
+(Stage, pull GHCR, create/start/health del worker o compensación) sigue
+INDETERMINADA. Dos defectos **sí** quedaron evidenciados:
+
+1. El runner `boca-first-deploy.yml` abortaba por `set -e` al recibir rc3,
+   sin clasificar/publicar el contenido redaccionado del stdout, mientras
+   descartaba deliberadamente stderr para evitar exfiltración de secretos.
+2. `check_cutover_a_go.py --assert-host-receipt` imprimía
+   `host=untouched` si faltaba el ACK, aunque el host podía haber iniciado
+   un Stage/worker reversible. La frase solo es válida ANTES de SSH.
+
+**Cambio candidato R68:** mantener código de salida remoto original, recibo
+positivo con verificación exacta y resultado rojo ante fallos; añadir una
+clasificación runner de `ssh_rc`, `TIMEOUT/SSH_255/EXIT_NONZERO` y afirmación
+allowlist de CLI (nunca texto bruto ni owner/secretos). Ante falta de ACK,
+`host=UNVERIFIED`; el claim remoto NO acredita resultado durable ni
+compromiso irreversible. Las pruebas adversariales deben impedir que un
+stdout inventado transforme un exit3 en verde. Esta primera fase hace
+diagnosticable el **tipo de retorno**; todavía **NO instrumenta la fase
+interna de Stage/pull/health**, por lo que no autoriza nuevo APPLY hasta
+completar un preflight rootless inocuo, con recibos exactos.
+
+**Cuello de botella medido:** #412 ejecutó cuatro workflows PR sobre el mismo
+SHA, reconstruyendo `Dockerfile.browser` cuatro veces (~295 s acumulados).
+Camino crítico de PR ~204 s; release manual #704 ~179 s, PREPARE #776 ~25 s,
+Cutover fallido #778 ~93 s. Separación PREPARE→APPLY ~65m22s, no
+atribuible exclusivamente a CI. Existe un workflow de 3611 líneas y 45
+operaciones; separar lógica de validación por reusable workflow manteniendo
+un único workflow físico es una propuesta P1, no una modificación R68.
+Los guards de seguridad no causan las cuatro reconstrucciones redundantes.
+
+**Plan de validación adicional:** pruebas de error/fase sin host, verify SSH
+runtime con recibo sanitizado y chequeo final original/volúmenes/8443, después
+preflight reversible rootless de digests y worker. Sólo entonces release
+congelado + nuevo PREPARE/GO_B + un único APPLY. Sin desplegar BLACKBOX ni
+navegar Boca; cero cambios sobre Porota, otras aplicaciones o Docker host.
+Véase #45 R67/R68. Los indicadores R68 son propuestos hasta SHA/Actions verdes.
