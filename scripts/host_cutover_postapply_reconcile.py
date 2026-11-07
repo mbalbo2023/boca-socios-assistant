@@ -495,9 +495,7 @@ def _staged_attempt(run_id: str) -> dict[str, str]:
         os.close(descriptor)
 
 
-def _host(
-    run_id: str, prepared_id: str | None, *, source_sha: str | None = None
-) -> dict[str, Any]:
+def _host(run_id: str, prepared_id: str | None, *, source_sha: str | None = None) -> dict[str, Any]:
     if not RUN.fullmatch(run_id):
         raise ReconcileError("RUN_ID")
     if source_sha is None:
