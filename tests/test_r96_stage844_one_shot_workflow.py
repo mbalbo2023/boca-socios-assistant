@@ -7,10 +7,12 @@ import sys
 from pathlib import Path
 
 import pytest
-from scripts.check_release_dispatch import DispatchError
-from scripts.check_worker_preflight_dispatch import validate_dispatch_history
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from scripts.check_release_dispatch import DispatchError  # noqa: E402
+from scripts.check_worker_preflight_dispatch import validate_dispatch_history  # noqa: E402
+
 WORKFLOW = ROOT / ".github/workflows/boca-first-deploy.yml"
 OPERATION = "cutover-a-stage-recover-844"
 INCIDENT = "42388694186"
