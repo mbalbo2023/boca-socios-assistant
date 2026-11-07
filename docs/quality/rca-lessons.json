@@ -545,11 +545,13 @@
       "issue": 45,
       "fix_pr": 413,
       "root_cause": "Cutover SSH returned nonzero and set -e suppressed the already-sanitized remote NO_GO receipt; the post-SSH receipt verifier also incorrectly claimed the host remained untouched.",
-      "prevention": "Preserve failed SSH status and host UNVERIFIED; classify bounded NO_GO and optional allowlisted failure phase as an unverified claim. Keep exact positive ACK unchanged, no transport guess, and enforce state-machine phase regressions.",
+      "prevention": "Preserve SSH NO_GO and host UNVERIFIED. Parse one exact bounded OBSERVE prefix before postflight/allowlisted failure phase; never convert that claim into physical ACK or leak raw output. Keep positive receipt unchanged, no retry, and require RED/GREEN regressions (R97 continuation of PR #413).",
       "regression_tests": [
         "tests/test_cutover_a_go.py::test_post_ssh_missing_ack_never_claims_original_host_untouched",
         "tests/test_cutover_a_go.py::test_failed_ssh_diagnostic_is_redacted_and_never_accepts_host",
         "tests/test_cutover_a_go.py::test_failed_ssh_allows_exact_phase_claim_without_promoting_host_acceptance",
+        "tests/test_cutover_a_go.py::test_failed_ssh_phase_survives_real_prior_observation_without_host_acceptance",
+        "tests/test_cutover_a_go.py::test_failed_ssh_observation_prefix_must_be_exact_and_single",
         "tests/test_host_boca_cutover.py::test_precommit_failure_recovers_before_selective_postflight",
         "tests/test_host_boca_cutover_cli.py::test_cli_nonacceptance_reports_only_allowlisted_failure_phase"
       ]

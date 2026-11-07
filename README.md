@@ -1,5 +1,31 @@
 # Boca Socios Assistant
 
+## A45-R97 — fase Cutover todavía no probada (07/11/2026 ART)
+
+La recuperación protegida [#848](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42397473346)
+desde `main=43edb1ae786b58ea832feb9e758fb99edc967d98` informó
+`STAGE_CLEARED`, ACK físico `ACCEPT`, `docker_writes=0` y ninguna intervención
+en servicios ajenos. La reconciliación **READ_ONLY**
+[#849](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42397628309)
+confirmó stage #844 **ausente**, controlador legacy único RUNNING/healthy,
+binding exclusivo `127.0.0.1:8443`, cero worker/candidato, sin promoción,
+`commit_started=false`, original recuperado y terminal #844 en `NO_GO`.
+El marcador PREPARE `UNREADABLE/DIRECTORY` es una lectura distinta al
+consumidor protegido; no prueba que el GO haya fallado.
+
+**La BETA integral sigue NO INSTALADA.** El fallo físico del Cutover
+[#844](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42388694186)
+permanece sin fase causal demostrable. R97 propone una corrección estricta
+**sólo al diagnóstico de Actions**: reconocer la línea legítima OBSERVE que
+precede al recibo `NO_GO` para no ocultar un `FAILURE_PHASE` posterior. El
+contrato, los riesgos y las regresiones están en
+[ADR0205](docs/ADR/0205-r97-cutover-failure-phase-claims.md). Este trabajo
+**no** autoriza reintentar #844 ni acredita otro Cutover. Sigue vigente
+terminar instalación mediante release, GO exacto, operación única protegida
+y aceptación física, sin tocar Porota ni los blackboxes.
+
+---
+
 ## A45-R96 — stage exacto #844, CODE_ONLY (07/11/2026 ART)
 
 R95 quedó publicado en `main=e3cbd38856a2aa75e9ec5e276335da0be6ed520b`
@@ -12,12 +38,12 @@ promoción ausente, stage #844 presente y `cleanup=INDETERMINATE`.
 **Nueva BETA integral NO instalada.** Nunca reintentar #844 ni reutilizar
 PREPARE #843.
 
-R96 prepara exclusivamente la **recuperación exacta del stage #844**, sin
+R96 preparó exclusivamente la **recuperación exacta del stage #844**, sin
 operaciones Docker ni efectos sobre Porota/otros servicios. Nuevo alias de
 un solo uso `cutover-a-stage-recover-844` fijado a #843/#844/#845,
 verificador de evidencia R95, histórico REST paginado completo, antirreplay
-entre commits, PR0 y ACK físico obligatorio. En este punto R96 es
-**CODE_ONLY**, sin recuperación física ni nuevo Cutover ejecutados.
+entre commits, PR0 y ACK físico obligatorio. En aquel checkpoint R96 era
+**CODE_ONLY**; la ejecución física posterior #848 figura arriba.
 Contrato y siguientes comprobaciones:
 [diseño](docs/superpowers/specs/2026-11-07-r96-stage-844-exact-recovery-design.md),
 [plan](docs/superpowers/plans/2026-11-07-r96-stage-844-exact-recovery.md),
