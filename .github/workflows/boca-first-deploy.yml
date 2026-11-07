@@ -1,5 +1,5 @@
 name: Boca first deploy
-run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R79-WORKER-RECOVER-ONCE' || 'Boca first deploy' }}
+run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R80-WORKER-RECOVER-ONCE' || 'Boca first deploy' }}
 
 on:
   pull_request:
@@ -162,7 +162,7 @@ jobs:
           uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
       - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
         run: |
-          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py
+          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
       - name: Validate protected official notice artifact import offline only
         run: |
@@ -1860,9 +1860,9 @@ jobs:
           # suffices to fail; the empty first page proves no OPEN PR exists.
           gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=1" \
             > "$RUNNER_TEMP/boca-worker-recover-open-prs.json" 2>/dev/null
-          # A new workflow_dispatch has run_attempt=1 even after a previous
-          # ambiguous run. Require this to be the ONE EVER R79-tagged dispatch;
-          # no retry under another run ID or later main SHA is accepted.
+          # R79 #804 failed PRE-SSH and its host step was skipped. An R80
+          # dispatch is allowed only after REST independently proves that
+          # exact no-effect terminal state; a second R80 is never accepted.
           gh api "repos/$GITHUB_REPOSITORY/actions/workflows/boca-first-deploy.yml/runs?event=workflow_dispatch&created=%3E%3D2026-11-07&per_page=100" \
             --jq '{total_count,workflow_runs:[.workflow_runs[]|{id,display_title,event,head_sha,head_branch,run_attempt,actor:{login:.actor.login}}]}' \
             > "$RUNNER_TEMP/boca-worker-recover-run-history.json" 2>/dev/null
@@ -1872,107 +1872,26 @@ jobs:
             > "$RUNNER_TEMP/boca-worker-recover-witness-run.json" 2>/dev/null
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/42329201039" \
             > "$RUNNER_TEMP/boca-worker-recover-release-run.json" 2>/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42339451485" \
+            > "$RUNNER_TEMP/boca-worker-recover-prior-run.json" 2>/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42339451485/attempts/1/jobs?per_page=100" \
+            --jq '{total_count,jobs:[.jobs[]|{id,name,run_id,status,conclusion,steps:[.steps[]?|{number,name,status,conclusion}]}]}' \
+            > "$RUNNER_TEMP/boca-worker-recover-prior-jobs.json" 2>/dev/null
           # Revalidate exact current main as close as possible to the effect;
           # the historical failed image source is deliberately independent.
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
             > "$RUNNER_TEMP/boca-worker-recover-main-ref.json" 2>/dev/null
           python scripts/check_main_ref.py \
             "$RUNNER_TEMP/boca-worker-recover-main-ref.json" "$GITHUB_SHA"
-          python3 - "$RUNNER_TEMP/boca-worker-recover-open-prs.json" \
+          python3 scripts/check_worker_recovery_dispatch.py \
+            "$RUNNER_TEMP/boca-worker-recover-open-prs.json" \
             "$RUNNER_TEMP/boca-worker-recover-failed-run.json" \
             "$RUNNER_TEMP/boca-worker-recover-witness-run.json" \
             "$RUNNER_TEMP/boca-worker-recover-release-run.json" \
-            "$RUNNER_TEMP/boca-worker-recover-run-history.json" <<'PY'
-          import json
-          import os
-          import sys
-          from pathlib import Path
-
-          def bounded_json(path):
-              raw = Path(path).read_bytes()
-              if not 0 < len(raw) <= 32768:
-                  raise ValueError("bounds")
-              return json.loads(raw)
-
-          def exact_run(record, *, number, source, conclusion, path):
-              if not isinstance(record, dict):
-                  raise ValueError("record")
-              actor = record.get("actor")
-              repo = record.get("repository")
-              if (
-                  type(record.get("id")) is not int
-                  or record["id"] != number
-                  or record.get("event") != "workflow_dispatch"
-                  or record.get("status") != "completed"
-                  or record.get("conclusion") != conclusion
-                  or type(record.get("run_attempt")) is not int
-                  or record["run_attempt"] != 1
-                  or record.get("head_branch") != "main"
-                  or record.get("head_sha") != source
-                  # REST workflow-run path is ref-qualified, e.g.
-                  # ".github/workflows/name.yml@main", not a bare filename.
-                  or record.get("path") not in (f"{path}@main", f"{path}@refs/heads/main")
-                  or not isinstance(actor, dict)
-                  or actor.get("login") != "mbalbo2023"
-                  or not isinstance(repo, dict)
-                  or repo.get("full_name") != "mbalbo2023/boca-socios-assistant"
-              ):
-                  raise ValueError("provenance")
-
-          try:
-              prs, failed, witness, release, history = (
-                  bounded_json(path) for path in sys.argv[1:]
-              )
-              if prs != []:
-                  raise ValueError("open_pr")
-              # First page is complete, or fail closed. The unique display
-              # title is source-controlled and never supplied as a host input.
-              if not isinstance(history, dict):
-                  raise ValueError("history")
-              runs = history.get("workflow_runs")
-              total = history.get("total_count")
-              if (
-                  type(total) is not int or not 1 <= total <= 100
-                  or not isinstance(runs, list) or len(runs) != total
-              ):
-                  raise ValueError("history_bounds")
-              matches = [
-                  run for run in runs if isinstance(run, dict)
-                  and run.get("display_title") == "BOCA-R79-WORKER-RECOVER-ONCE"
-              ]
-              if len(matches) != 1:
-                  raise ValueError("replay")
-              current = matches[0]
-              if (
-                  type(current.get("id")) is not int
-                  or current["id"] != int(os.environ["GITHUB_RUN_ID"])
-                  or current.get("event") != "workflow_dispatch"
-                  or current.get("head_branch") != "main"
-                  or current.get("head_sha") != os.environ["GITHUB_SHA"]
-                  or current.get("run_attempt") != 1
-                  or not isinstance(current.get("actor"), dict)
-                  or current["actor"].get("login") != "mbalbo2023"
-              ):
-                  raise ValueError("history_current")
-              exact_run(
-                  failed, number=42329475083,
-                  source="92624ed6b7e75c6010f59670c866df00a29766dd",
-                  conclusion="failure", path=".github/workflows/boca-first-deploy.yml",
-              )
-              exact_run(
-                  witness, number=42337103473,
-                  source="7dc0b477479aec118ed4e46edd1ffb4541558dbc",
-                  conclusion="success", path=".github/workflows/boca-first-deploy.yml",
-              )
-              exact_run(
-                  release, number=42329201039,
-                  source="92624ed6b7e75c6010f59670c866df00a29766dd",
-                  conclusion="success", path=".github/workflows/release-image.yml",
-              )
-          except (OSError, UnicodeError, ValueError, TypeError, KeyError):
-              raise SystemExit("BOCA_WORKER_RECOVERY_GATE state=NO_GO reason=UNVERIFIED") from None
-          PY
-          printf 'BOCA_WORKER_RECOVERY_GATE state=PASS incident=42329475083 witness=42337103473 release=42329201039 open_prs=0 dispatch=UNIQUE main=VERIFIED host_writes=0\n' >> "$GITHUB_STEP_SUMMARY"
+            "$RUNNER_TEMP/boca-worker-recover-run-history.json" \
+            "$RUNNER_TEMP/boca-worker-recover-prior-run.json" \
+            "$RUNNER_TEMP/boca-worker-recover-prior-jobs.json" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Recover only the stopped exact 795 worker probe under Boca lease
         id: cutover_worker_recover_host
         if: inputs.operation == 'cutover-a-worker-recover'

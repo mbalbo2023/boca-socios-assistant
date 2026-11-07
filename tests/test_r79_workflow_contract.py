@@ -1,4 +1,4 @@
-"""R79 protected workflow contract: only the fixed #795 recovery may reach SSH."""
+"""R79 host recovery invariants carried into the R80 protected dispatch."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ REPO = "mbalbo2023/boca-socios-assistant"
 R78_MAIN = "7dc0b477479aec118ed4e46edd1ffb4541558dbc"
 FAILED_SOURCE = "92624ed6b7e75c6010f59670c866df00a29766dd"
 CID = "65d844edb438710f44ce83c397906932710ad7f04f3e7a52634f9eaaf1fcc504"
-ONCE_TITLE = "BOCA-R79-WORKER-RECOVER-ONCE"
+ONCE_TITLE = "BOCA-R80-WORKER-RECOVER-ONCE"
 HISTORY_URI = (
     f"repos/{REPO}/actions/workflows/boca-first-deploy.yml/runs?"
     "event=workflow_dispatch&created=%3E%3D2026-11-07&per_page=100"
@@ -137,49 +137,22 @@ def test_recovery_input_gate_rejects_extra_authority(field: str, invalid: str) -
     assert result.returncode != 0, f"unexpectedly accepted {field}"
 
 
-def _run_record(
-    run_id: int, source: str, *, result: str, workflow: str = "boca-first-deploy.yml"
-) -> dict[str, object]:
-    return {
-        "id": run_id,
-        "event": "workflow_dispatch",
-        "status": "completed",
-        "conclusion": result,
-        "run_attempt": 1,
-        "head_branch": "main",
-        "head_sha": source,
-        "path": f".github/workflows/{workflow}@main",
-        "actor": {"login": "mbalbo2023"},
-        "repository": {"full_name": REPO},
-    }
-
-
 def _github_fixtures() -> dict[str, object]:
+    # Reuse the R80 live-REST-shaped fixture; the old R79 happy path no longer
+    # describes the protected one-shot state after physical pre-SSH abort #804.
+    from test_r80_recovery_gate import _evidence
+
+    data = _evidence()
+    data["history"]["workflow_runs"][2]["head_sha"] = R78_MAIN
     prefix = f"repos/{REPO}"
     return {
-        f"{prefix}/pulls?state=open&per_page=1": [],
-        HISTORY_URI: {
-            "total_count": 2,
-            "workflow_runs": [
-                {"id": 42337103473, "display_title": "Boca first deploy"},
-                {
-                    "id": 99999999999,
-                    "display_title": ONCE_TITLE,
-                    "event": "workflow_dispatch",
-                    "head_sha": R78_MAIN,
-                    "head_branch": "main",
-                    "run_attempt": 1,
-                    "actor": {"login": "mbalbo2023"},
-                },
-            ],
-        },
-        f"{prefix}/actions/runs/42329475083": _run_record(
-            42329475083, FAILED_SOURCE, result="failure"
-        ),
-        f"{prefix}/actions/runs/42337103473": _run_record(42337103473, R78_MAIN, result="success"),
-        f"{prefix}/actions/runs/42329201039": _run_record(
-            42329201039, FAILED_SOURCE, result="success", workflow="release-image.yml"
-        ),
+        f"{prefix}/pulls?state=open&per_page=1": data["prs"],
+        HISTORY_URI: data["history"],
+        f"{prefix}/actions/runs/42329475083": data["failed"],
+        f"{prefix}/actions/runs/42337103473": data["witness"],
+        f"{prefix}/actions/runs/42329201039": data["release"],
+        f"{prefix}/actions/runs/42339451485": data["prior"],
+        f"{prefix}/actions/runs/42339451485/attempts/1/jobs?per_page=100": data["jobs"],
         f"{prefix}/git/ref/heads/main": {
             "ref": "refs/heads/main",
             "object": {"type": "commit", "sha": R78_MAIN},
