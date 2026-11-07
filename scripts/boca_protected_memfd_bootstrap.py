@@ -35,6 +35,7 @@ EXPECTED_ENTRIES = frozenset(
         "scripts/__init__.py",
         "scripts/host_cutover_postapply_reconcile.py",
         "scripts/host_cutover_stage_recovery.py",
+        "scripts/host_cutover_worker_preflight.py",
         "boca_socios/host_lifecycle_actions.py",
         "boca_socios/host_lifecycle_observe.py",
         "boca_socios/host_cutover_inventory_observe.py",

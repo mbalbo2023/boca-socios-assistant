@@ -311,8 +311,10 @@ def test_fingerprint_must_come_from_approved_prepared_recipient() -> None:
         ("purpose", "boca-telegram-bot-v1"),
         ("repository", "another/repository"),
         ("uid", 10002),
-        ("nonce", bootstrap._b64(os.urandom(12))),
-        ("salt", bootstrap._b64(os.urandom(16))),
+        # Collection must be identical across pytest-xdist workers. The
+        # encrypted envelope itself still receives fresh random bytes in _run.
+        ("nonce", bootstrap._b64(b"n" * 12)),
+        ("salt", bootstrap._b64(b"s" * 16)),
         ("ciphertext", bootstrap._b64(b"wrong-authentication-tag")),
     ],
 )

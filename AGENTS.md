@@ -108,6 +108,53 @@ no browser-worker/CDP activation is implied by this instruction.
    accepted; this code-only instruction does not authorize a host operation.
 10. Use YYYY-MM-DD in America/Argentina/Buenos_Aires for user-facing times.
 
+### Owner release hygiene clarification — 2026-11-06
+
+The owner has authorized completion of the Boca simulation BETA through a
+physically verified deployment. Do not request another project GO for that
+already authorized scope. This does **not** replace exact-SHA release,
+protected environment binding, single-owner lease, fail-closed Cutover A,
+Boca-only cleanup, or terminal host receipt requirements. Never equate an
+Actions green check with a successful physical deployment.
+
+**Zero open pull requests before the final release/deploy, including physical
+Cutover A**, is a release invariant. Before preparing the final image,
+enumerate *every* open PR, its head/base,
+changed paths, CI, linked issues and branch dependents. Decide each one
+individually with scope-owner architectural, infrastructure/DevOps and QA
+cross-review. Record one evidence-based consensus in issue #45, with an
+explicitly attributable opinion for each relevant discipline. Do not assert
+unanimity when it was not obtained: investigate any disagreement and repeat
+the review before taking the disputed action.
+
+- Merge only an actual missing, tested capability into the single release
+  candidate. Check current `main` and in-progress branches first: no code
+  duplication, no resurrection of an outdated implementation.
+- When code is already present or superseded, close that PR with a concrete
+  comparison and a reference to the successor implementation. Retain its
+  branch, commits and review history.
+- For unique work, determine whether the current BETA *requires* it. If yes,
+  implement and test the requirement before claiming BETA complete, using a
+  short-lived PR that is merged or otherwise resolved before Cutover. If no,
+  record why it is an experiment, incompatible proposal or separate owner-only
+  product scope; preserve its branch and source evidence, without describing
+  the unneeded proposal as an unresolved BETA blocker.
+- Keep issues requiring genuine host, Chrome or Telegram acceptance open until
+  physical evidence satisfies their acceptance criteria. PR closure never
+  auto-closes such issues. Fix-forward after an actual NO_GO; never blindly
+  retry a failed host operation.
+
+The issue #45 checkpoint is the durable per-PR ledger. Do not leave stacks of
+obsolete draft PRs indefinitely or use a generic bulk-close operation. If a
+new PR appears while the release is prepared, reconcile it before Cutover.
+
+For fast feedback, use narrowly selected tests during intermediate local
+development when the change scope allows it. **Every mergeable exact SHA**
+still needs the full applicable gates in step 5 above, and the **final
+exact-SHA release candidate** needs complete relevant regression and
+isolation evidence, including blackbox exclusions and host-contract tests.
+Speed improvements must not silently weaken Cutover acceptance.
+
 ## Approved BETA preparation scope
 
 ### Owner correction: capacity is observed after BETA deployment

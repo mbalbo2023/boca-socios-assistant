@@ -831,6 +831,8 @@ def test_workflow_cutover_apply_requires_separate_go_and_legacy_release_proof() 
         "cutover-a-stage-recover",
         "cutover-a-image-retire",
         "cutover-a-observe",
+        # P0 rootless/GHCR image probe is a distinct, non-GO transaction.
+        "cutover-a-worker-preflight",
         "cutover-a-apply",
     ]
     # The new incident reconciliation reads host state but never consumes GO_B.

@@ -63,6 +63,25 @@ def test_all_six_trivy_gates_keep_exact_local_sha_and_high_critical_fail_closed(
         assert required in SCAN
 
 
+def test_controller_and_browser_security_scans_are_parallel_and_both_required() -> None:
+    controller = SECURITY.split("  controller-scan:\n", 1)[1].split("  browser-scan:\n", 1)[0]
+    browser = SECURITY.split("  browser-scan:\n", 1)[1].split("  scan:\n", 1)[0]
+    gate = SECURITY.split("  scan:\n", 1)[1]
+
+    assert "name: image-security-controller-scan" in controller
+    assert "name: image-security-browser-scan" in browser
+    assert controller.count("docker build") == browser.count("docker build") == 1
+    assert controller.count("bash scripts/trivy_scan_image.sh") == 1
+    assert browser.count("bash scripts/trivy_scan_image.sh") == 1
+    assert "needs:" not in controller + browser  # No serial cross-image dependency.
+    assert "continue-on-error" not in controller + browser
+    assert "name: image-security-scan" in gate  # Existing named check remains.
+    assert "needs: [controller-scan, browser-scan]" in gate
+    assert "if: always()" in gate  # Report failure even when one scan fails/skips.
+    assert 'test "$CONTROLLER_RESULT" = success' in gate
+    assert 'test "$BROWSER_RESULT" = success' in gate
+
+
 def test_trivy_failure_cannot_skip_release_login_or_report_success() -> None:
     publish = RELEASE.split("  publish:\n", 1)[1]
     assert (
