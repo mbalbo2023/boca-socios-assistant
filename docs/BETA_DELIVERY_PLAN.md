@@ -1,6 +1,22 @@
 # Plan de entrega y aceptación de la BETA funcional
 
-## Ruta de release A45-R21.21 — 05/11/2026 ART (CODE_ONLY / NO DEPLOY)
+## Corte A45-R94 — recuperación puntual #834 propuesta, BETA NO_GO (07/11/2026 ART)
+
+El preflight [#834](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42375050546)
+falló en `STOP/ACK_MULTILINE`, sin RM. El inventario protegido de solo
+lectura [#836](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42376876875)
+identificó su CID exacto detenido, sin seccomp y con legacy sano. R94 es
+únicamente un candidato CODE_ONLY de **un RM no forzado tras dos atestaciones
+completas**, con gates de run/lease/PR0/anti-replay; no hubo aún limpieza R94
+ni Cutover. Exige revisión 3/3, PR/CI/Security/merge y GO físico independiente.
+El potencial fix de STOP `-t` corresponde a R95 separado; no reintentar #834.
+La entrega funcional, PREPARE/GO_B/APPLY, Telegram y aceptación Samsung de
+BETA integral permanecen **NO_GO**. Contrato [ADR0203](ADR/0203-r94-worker-834-stopped-only-recovery.md)
+y [operaciones](OPERATIONS.md); el plan R21 siguiente es histórico.
+
+---
+
+## Histórico — Ruta de release A45-R21.21 — 05/11/2026 ART (CODE_ONLY / NO DEPLOY)
 
 **Corte fuente:** [#319](https://github.com/mbalbo2023/boca-socios-assistant/pull/319) DRAFT HEAD `3cbe31703d74413f8de66ac8783ec68b1b7f8a87`, TREE `208a75e0c7310ea25db55ca509563f0b57972f42`; overlays #372 cleanup Cutover, #375 inventario, #374 Telegram stage fresh WebAuthn y #376 GO_B dos despachos, fuentes 4/4, 4/4, 6/6 y 4/4 GREEN (3652/3682/3668/3702 pytest +34 respectivamente). **QA #319 exacta:** **7/7 GitHub Actions COMPLETED SUCCESS exact SHA R21.21**: [CI 42064964129](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964129) **3718 pytest PASS +34 subtests**, Ruff/format547/MyPy128/image-build PASS; [FirstDeploy 42064964223](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964223) PR-validation + runtime-smoke SUCCESS, **host SKIPPED**; [Release 42064964145](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964145) validación SUCCESS, **publish SKIPPED**; [Panel 42064964232](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964232), [News 42064964239](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964239), [Telegram 42064964156](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964156), [Security 42064964402](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42064964402) SUCCESS. Artifacts de CI/FirstDeploy/Release consultados: **0**; no recibo físico ni imagen publicada. La instalación legacy `main=cabce9f1e452e63ded115f447559a358dc0f4d1b` aceptada 04/11 y Chrome Samsung comprobado **no** equivalen a BETA integral.
 
