@@ -1,5 +1,5 @@
 name: Boca first deploy
-run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-827' && 'BOCA-R91-WORKER-827-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-819' && 'BOCA-R87-WORKER-819-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-preflight' && 'BOCA-R84-WORKER-PREFLIGHT-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-807' && 'BOCA-R82-WORKER-807-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R80-WORKER-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42368541950' && 'BOCA-R90-WORKER-827-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42353468231' && 'BOCA-R86-WORKER-819-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42341290485' && 'BOCA-R81-WORKER-807-READONLY' || 'Boca first deploy' }}
+run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-827' && 'BOCA-R91-WORKER-827-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-819' && 'BOCA-R87-WORKER-819-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-preflight' && 'BOCA-R84-WORKER-PREFLIGHT-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-807' && 'BOCA-R82-WORKER-807-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R80-WORKER-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42375050546' && 'BOCA-R93-WORKER-834-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42368541950' && 'BOCA-R90-WORKER-827-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42353468231' && 'BOCA-R86-WORKER-819-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42341290485' && 'BOCA-R81-WORKER-807-READONLY' || 'Boca first deploy' }}
 
 on:
   pull_request:
@@ -163,7 +163,7 @@ jobs:
       - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
         run: |
           uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py tests/test_r82_exact_worker_807_recovery.py tests/test_r82_recovery_bundle.py tests/test_r82_recovery_dispatch.py tests/test_r82_recovery_workflow.py tests/test_r83_primary_phase.py tests/test_r83_cleanup_stages.py tests/test_r83_preflight_workflow.py tests/test_r83_bundle_caps.py tests/test_r84_worker_storage_admission.py tests/test_r84_worker_preflight_dispatch.py tests/test_r85_cutover_observe_provenance.py tests/test_r87_exact_worker_819_recovery.py tests/test_r87_recovery_bundle.py tests/test_r87_recovery_dispatch.py tests/test_r87_recovery_workflow.py tests/test_r88_preflight_capture.py tests/test_r88_stop_diagnostics.py tests/test_r89_preflight_input_descriptions.py
-          uv run pytest -q tests/test_r86_exact_worker_819_observer.py tests/test_r90_exact_worker_827_observer.py
+          uv run pytest -q tests/test_r86_exact_worker_819_observer.py tests/test_r90_exact_worker_827_observer.py tests/test_r93_exact_worker_834_observer.py
           uv run pytest -q tests/test_r91_worker_827_recovery.py tests/test_r91_worker_827_dispatch.py tests/test_r91_worker_827_workflow.py tests/test_r92_stop_ack_evidence.py tests/test_r92_preflight_receipt.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
       - name: Validate protected official notice artifact import offline only
@@ -965,7 +965,7 @@ jobs:
               test -z "$BOCA_SITE_ENVELOPE"
               ;;
             cutover-a-worker-inspect)
-              # Only read-only postmortems of exact failed probes #795/#807/#819/#827.
+              # Only read-only postmortems of exact failed probes #795/#807/#819/#827/#834.
               # Never use the APPLY observer for a temporary worker.
               test "$BOCA_HOST_READONLY_ENV_READY" = ready
               test "$BOCA_DEPLOY_ENV_READY" = ready
@@ -974,6 +974,7 @@ jobs:
                 42341290485) test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42341290485 ;;
                 42353468231) test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42353468231 ;;
                 42368541950) test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42368541950 ;;
+                42375050546) test "$BOCA_PROTECTED_ACTION_CONTEXT" = 42375050546 ;;
                 *) exit 1 ;;
               esac
               test "$BOCA_LEGACY_CONTROLLER_ID" = 27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793

@@ -1,6 +1,37 @@
 # Safe operations — verified evidence and gated procedures
 
-## A45-R92 — diagnóstico STOP CODE_ONLY; ningún preflight físico autorizado
+## A45-R93 — inspector exacto del preflight fallido #834 (07/11/2026 ART)
+
+El único R92 worker preflight [#834](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42375050546)
+falló `CLEANUP/STOP/ACK_MULTILINE`, sin ejecución de RM ni aceptación.
+La observación READ_ONLY #833 **precede** al fallo y no prueba el estado
+actual. R93 amplía únicamente la whitelist del inspector para el intento
+`42375050546`, fuente R92 `79da7ebe9918d98216ac7eb46ff008d7f6e62429`
+y digest OCI browser `ed276066...`. Ver
+[ADR0202](ADR/0202-r93-worker-834-exact-readonly-inventory.md).
+
+**Después de merge y review**, formulario `Boca first deploy`:
+
+| Campo | Valor exacto |
+| --- | --- |
+| `operation` | `cutover-a-worker-inspect` |
+| `protected_action_context` | `42375050546` |
+| `service` | `controller` |
+| `resource_budget` | `1.5cpu-1024m-192pids` |
+| `legacy_controller_id` | `27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793` |
+| `legacy_source_sha` | `cabce9f1e452e63ded115f447559a358dc0f4d1b` |
+| `legacy_image_ref` | `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:cf6e4266cfcfea0c07fa31301d59c7aaa3b9c2fefb9f6843baddd208cacd3b59` |
+
+Todos los demás campos opcionales **vacíos**, incluidas referencias de release,
+source_sha/image_ref/browser_image_ref y cualquier secreto/envelope. Sólo
+consultas rootless `ps`/`inspect`; ninguna parada/remoción. Si el worker está
+detenido y los pins coinciden, requiere revisión y recuperación **separada**.
+Si continúa corriendo o resulta incierto, NO_GO, sin afectar controller ni
+otras aplicaciones. **Nunca repetir el preflight #834**.
+
+---
+
+## A45-R92 — diagnóstico STOP CODE_ONLY (sustituido por #834)
 
 La recuperación protegida R91 [#831](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42372284155)
 declaró `CLEANED/VERIFIED` del residuo #827. No se repite #827, #829 ni
