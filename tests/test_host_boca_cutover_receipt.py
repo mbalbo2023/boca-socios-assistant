@@ -120,6 +120,76 @@ def test_worker_failure_uses_additive_v2_terminal_schema_without_changing_v1(
         terminal.verify_persisted_exact(_plan(), replace(failed, worker_primary_phase="START"))
 
 
+@pytest.mark.parametrize(
+    ("exit_code", "oom"),
+    [(0, False), (1, False), (137, True), ("UNKNOWN", False), (137, "UNKNOWN")],
+)
+def test_worker_exit_durable_v3_roundtrip_strict_without_changing_v1_v2(
+    exit_code: object, oom: object
+) -> None:
+    failed = cutover.CutoverReceipt(
+        ATTEMPT,
+        "NO_GO",
+        "INDETERMINATE",
+        False,
+        False,
+        None,
+        None,
+        failed_phase="PREPARE_WORKER",
+        worker_primary_phase="HEALTH_EXITED",
+        worker_compensation="VERIFIED",
+        worker_exit_code=exit_code,
+        worker_oom_killed=oom,
+    )
+    record = terminal.TerminalRecord.from_receipt(_plan(), failed)
+    payload = json.loads(record.serialized())
+    assert payload["version"] == terminal.VERSION_V3
+    assert payload["worker_exit_code"] == exit_code
+    assert payload["worker_oom_killed"] == oom
+    assert payload["state"] == "NO_GO"
+    with cleanup.protected_boca_job_lease(ATTEMPT) as lease:
+        terminal.prepare_destination(_plan(), lease)
+        terminal.write_once(record, plan=_plan(), lease=lease)
+    assert terminal.reconcile_persisted(_plan()) == "RECORD_PRESENT_RUNTIME_UNVERIFIED"
+    terminal.verify_persisted_exact(_plan(), failed)
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "oom", "phase"),
+    [
+        (True, False, "HEALTH_EXITED"),
+        (256, True, "HEALTH_EXITED"),
+        (-1, False, "HEALTH_EXITED"),
+        ("137", True, "HEALTH_EXITED"),
+        (137, 1, "HEALTH_EXITED"),
+        (137, "true", "HEALTH_EXITED"),
+        (137, True, "HEALTH_UNHEALTHY"),
+    ],
+)
+def test_worker_exit_durable_v3_rejects_ambiguous_types_and_wrong_phase(
+    exit_code: object, oom: object, phase: str
+) -> None:
+    record = terminal.TerminalRecord.from_receipt(
+        _plan(),
+        cutover.CutoverReceipt(
+            ATTEMPT,
+            "NO_GO",
+            "NO_GO",
+            False,
+            False,
+            None,
+            None,
+            failed_phase="PREPARE_WORKER",
+            worker_primary_phase=phase,
+            worker_compensation="VERIFIED",
+            worker_exit_code=exit_code,
+            worker_oom_killed=oom,
+        ),
+    )
+    with pytest.raises(terminal.TerminalReceiptError):
+        record.serialized()
+
+
 def test_cutover_terminal_sink_runs_before_release_of_same_lease(tmp_path: Path) -> None:
     class Fake:
         def attest_original(self, _p: object, _l: object) -> None: ...

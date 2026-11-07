@@ -687,6 +687,71 @@ def test_failed_ssh_typed_worker_phase_is_bounded_diagnostic_only(
 
 
 @pytest.mark.parametrize(
+    ("exit_code", "oom"),
+    [
+        ("0", "NO"),
+        ("1", "YES"),
+        ("137", "YES"),
+        ("137", "NO"),
+        ("UNKNOWN", "UNKNOWN"),
+        ("UNKNOWN", "NO"),
+    ],
+)
+def test_failed_ssh_v3_worker_exit_is_strictly_typed_and_never_go(
+    tmp_path: Path, exit_code: str, oom: str
+) -> None:
+    request, env = _actions_fixture(tmp_path)
+    env["BOCA_CUTOVER_A_SSH_RC"] = "3"
+    payload = (
+        _cutover_observe_ready(request.plan)
+        + f"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED "
+        f"exit_code={exit_code} oom={oom}\n".encode("ascii")
+        + b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n"
+        + b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n"
+    )
+    _file(Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME, payload)
+    report = go.classify_cutover_ssh_failure(env)
+    assert "host_claim=NO_GO_RECORDED_UNVERIFIED" in report
+    assert f"worker_exit_code_claim={exit_code} worker_oom_claim={oom}" in report
+    assert "terminal=UNVERIFIED no_retry=true" in report
+    assert "ACCEPTED" not in report
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "exit_code=01 oom=NO",
+        "exit_code=-1 oom=NO",
+        "exit_code=256 oom=NO",
+        "exit_code=True oom=NO",
+        "exit_code=1 oom=true",
+        "exit_code=137 oom=1",
+        "exit_code=137 oom=YES Extra=PRIVATE",
+        "exit_code=137 oom=NO\nRAW=PRIVATE",
+        "exit_code=137",
+        "oom=YES",
+    ],
+)
+def test_failed_ssh_v3_rejects_invalid_worker_exit_without_leaking_data(
+    tmp_path: Path, mutation: str
+) -> None:
+    _request, env = _actions_fixture(tmp_path)
+    env["BOCA_CUTOVER_A_SSH_RC"] = "3"
+    _file(
+        Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME,
+        f"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED "
+        f"{mutation}\n".encode()
+        + b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n"
+        + b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n",
+    )
+    report = go.classify_cutover_ssh_failure(env)
+    assert "host_claim=NONE" in report
+    assert "worker_exit_code_claim=UNKNOWN worker_oom_claim=UNKNOWN" in report
+    assert "terminal=UNVERIFIED no_retry=true" in report
+    assert "PRIVATE" not in report
+
+
+@pytest.mark.parametrize(
     "mutation",
     [
         lambda ready: ready + ready,

@@ -24,6 +24,7 @@ from boca_socios.host_boca_cutover import (
     WORKER_PRIMARY_PHASES,
     CutoverPlan,
     CutoverReceipt,
+    valid_worker_exit_evidence,
 )
 
 VERSION = "boca-cutover-a-host-invocation-v1"
@@ -237,12 +238,27 @@ def run_cli(
                 and receipt.worker_primary_phase in WORKER_PRIMARY_PHASES
                 and receipt.worker_compensation in WORKER_COMPENSATION_STATES
             ):
-                print(
+                line = (
                     "BOCA_CUTOVER_A_WORKER_FAILURE primary="
                     + receipt.worker_primary_phase
                     + " compensation="
                     + receipt.worker_compensation
                 )
+                if receipt.worker_exit_code is not None or receipt.worker_oom_killed is not None:
+                    if not valid_worker_exit_evidence(
+                        receipt.worker_primary_phase,
+                        receipt.worker_exit_code,
+                        receipt.worker_oom_killed,
+                    ):
+                        raise CutoverCliError("Cutover A worker exit metadata invalid")
+                    exit_code = receipt.worker_exit_code
+                    oom = receipt.worker_oom_killed
+                    line += (
+                        f" exit_code={exit_code}"
+                        + " oom="
+                        + ("YES" if oom is True else "NO" if oom is False else "UNKNOWN")
+                    )
+                print(line)
             # A bounded phase hint only; never an authenticated result.
             if receipt.failed_phase in CUTOVER_FAILURE_PHASES:
                 print("BOCA_CUTOVER_A_FAILURE_PHASE phase=" + receipt.failed_phase)

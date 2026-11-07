@@ -59,6 +59,15 @@ WORKER_PRIMARY_PHASES: frozenset[str] = frozenset(
 WORKER_COMPENSATION_STATES: frozenset[str] = frozenset({"VERIFIED", "INDETERMINATE", "UNVERIFIED"})
 
 
+def valid_worker_exit_evidence(primary: object, exit_code: object, oom_killed: object) -> bool:
+    """Only typed Docker ExitCode/OOMKilled, never Python bool-as-int or raw inspect."""
+    return (
+        primary == "HEALTH_EXITED"
+        and (type(exit_code) is int and 0 <= exit_code <= 255 or exit_code == "UNKNOWN")
+        and (type(oom_killed) is bool or oom_killed == "UNKNOWN")
+    )
+
+
 class CutoverError(ValueError):
     """Cutover has no acceptable positive evidence for an effect."""
 
@@ -124,6 +133,8 @@ class CutoverReceipt:
     failed_phase: CutoverPhase = "NONE"
     worker_primary_phase: str = "NONE"
     worker_compensation: str = "NONE"
+    worker_exit_code: int | Literal["UNKNOWN"] | None = None
+    worker_oom_killed: bool | Literal["UNKNOWN"] | None = None
 
     @property
     def accepted(self) -> bool:
@@ -233,6 +244,8 @@ def run_cutover_a(
         failed_phase: CutoverPhase = "NONE"
         worker_primary_phase = "NONE"
         worker_compensation = "NONE"
+        worker_exit_code: int | Literal["UNKNOWN"] | None = None
+        worker_oom_killed: bool | Literal["UNKNOWN"] | None = None
         try:
             backend.attest_original(plan, lease)
             # PREPARE consumption is durable under the SAME flock, strictly
@@ -279,6 +292,11 @@ def run_cutover_a(
                 ):
                     worker_primary_phase = primary
                     worker_compensation = compensation
+                    maybe_exit = getattr(exc, "exit_code", None)
+                    maybe_oom = getattr(exc, "oom_killed", None)
+                    if valid_worker_exit_evidence(primary, maybe_exit, maybe_oom):
+                        worker_exit_code = maybe_exit
+                        worker_oom_killed = maybe_oom
             # Fail closed; only backend's independent exact-ID reinspection may
             # report positive recovery.  Never guess what a lost Docker receipt did.
             if effect_started and not commit_started:
@@ -340,6 +358,8 @@ def run_cutover_a(
             failed_phase if state != "ACCEPTED" else "NONE",
             worker_primary_phase if state != "ACCEPTED" else "NONE",
             worker_compensation if state != "ACCEPTED" else "NONE",
+            worker_exit_code if state != "ACCEPTED" else None,
+            worker_oom_killed if state != "ACCEPTED" else None,
         )
         # O_EXCL result must be persisted *before releasing the SAME flock*.
         # Callers cannot safely write it after run_cutover_a returns. Missing

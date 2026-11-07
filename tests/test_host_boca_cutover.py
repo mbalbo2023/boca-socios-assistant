@@ -179,6 +179,26 @@ def test_worker_primary_and_compensation_are_preserved_without_private_exception
     assert receipt.state == "NO_GO" and not receipt.accepted
 
 
+def test_worker_exit_metadata_reaches_cutover_receipt_without_changing_no_go() -> None:
+    from boca_socios.host_first_deploy import CutoverWorkerPhaseError
+
+    class ExitedWorker(FakeHost):
+        def prepare_worker(self, plan: cutover.CutoverPlan, lease: cleanup.BocaJobLease) -> str:
+            raise CutoverWorkerPhaseError(
+                "HEALTH_EXITED", "INDETERMINATE", exit_code=137, oom_killed=True
+            )
+
+    receipt = cutover.run_cutover_a(_plan(), backend=ExitedWorker(recovered=False))
+    assert receipt.failed_phase == "PREPARE_WORKER"
+    assert receipt.worker_primary_phase == "HEALTH_EXITED"
+    assert receipt.worker_compensation == "INDETERMINATE"
+    assert receipt.worker_exit_code == 137
+    assert receipt.worker_oom_killed is True
+    # A successful selective finalizer can report cleanup ACCEPT while the
+    # original worker phase and terminal Cutover both remain NO_GO.
+    assert receipt.state == "NO_GO" and not receipt.accepted
+
+
 def test_ambiguous_recovery_never_claims_legacy_restored() -> None:
     host = FakeHost(failure="activate", recovered=False)
     receipt = cutover.run_cutover_a(_plan(), backend=host)
