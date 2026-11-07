@@ -459,8 +459,72 @@ def test_effectful_dispatch_is_inert_without_independent_exact_run_go() -> None:
         'boca-target "$remote_command"'
     )
     assert "GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}" in effect
+    assert "|| host_ssh_rc=$?" in effect
+    assert "--report-host-failure" in effect
+    assert 'exit "$host_ssh_rc"' in effect
+    assert "2>/dev/null" in effect
     assert "docker image prune" not in workflow
     assert "docker system prune" not in workflow
+
+
+
+def test_post_ssh_missing_ack_never_claims_original_host_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _request, env = _actions_fixture(tmp_path)
+    env.update({"BOCA_CUTOVER_A_GO_PREFLIGHT": "success", "BOCA_CUTOVER_A_HOST_APPLY": "failure"})
+    monkeypatch.setattr(os, "environ", env)
+    assert go.main(["--assert-host-receipt"]) == 1
+    stderr = capsys.readouterr().err
+    assert stderr == "BOCA_CUTOVER_A_HOST_VERIFY state=NO_GO host=UNVERIFIED\n"
+    assert "untouched" not in stderr
+
+
+@pytest.mark.parametrize(
+    ("ssh_rc", "remote_stdout", "claim", "transport"),
+    [
+        (3, b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=UNVERIFIED runtime=UNVERIFIED\n",
+         "NO_GO_UNVERIFIED", "EXIT_NONZERO"),
+        (3, b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n",
+         "NO_GO_RECORDED_UNVERIFIED", "EXIT_NONZERO"),
+        (124, b"SECRET=must-never-show\n", "NONE", "TIMEOUT"),
+        (255, b"BOCA_CUTOVER_A_HOST state=ACCEPTED\n", "NONE", "SSH_255"),
+        (3, b"bogus\nBOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n",
+         "NONE", "EXIT_NONZERO"),
+    ],
+)
+def test_failed_ssh_diagnostic_is_redacted_and_never_accepts_host(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    ssh_rc: int,
+    remote_stdout: bytes,
+    claim: str,
+    transport: str,
+) -> None:
+    _request, env = _actions_fixture(tmp_path)
+    env["BOCA_CUTOVER_A_SSH_RC"] = str(ssh_rc)
+    _file(Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME, remote_stdout)
+    monkeypatch.setattr(os, "environ", env)
+    assert go.main(["--report-host-failure"]) == 0
+    receipt = capsys.readouterr().out
+    assert f"host_claim={claim}" in receipt
+    assert f"transport={transport}" in receipt
+    assert "host=UNVERIFIED" in receipt and "terminal=UNVERIFIED" in receipt
+    assert "state=ACCEPTED" not in receipt and "SECRET" not in receipt
+
+
+def test_failed_ssh_diagnostic_rejects_zero_rc_and_no_operation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _request, env = _actions_fixture(tmp_path)
+    for changed in (
+        {"BOCA_CUTOVER_A_SSH_RC": "0"},
+        {"BOCA_OPERATION": "other", "BOCA_CUTOVER_A_SSH_RC": "3"},
+    ):
+        monkeypatch.setattr(os, "environ", {**env, **changed})
+        assert go.main(["--report-host-failure"]) == 1
+        assert "host=UNVERIFIED" in capsys.readouterr().err
 
 
 def test_prepared_cutover_review_remains_exact_across_distinct_apply_runs(

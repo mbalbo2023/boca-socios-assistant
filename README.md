@@ -1,6 +1,40 @@
 # Boca Socios Assistant
 
-## R62 — Cutover #778 NO_GO y Stage en cuarentena (06/11/2026 ART; candidato CODE_ONLY)
+## Estado vigente A45-R68 — RCA y mejora de ingeniería de despliegue (06/11/2026 ART)
+
+**main verificado:** `bb621e4474c0d7c75b417c3dd6e051888d9947ed` al abrir
+este trabajo. El Cutover A #778 continúa **NO_GO**: la BETA integral NO
+está instalada. El Stage temporal de #778 **ya fue recuperado físicamente**
+en la ejecución protegida
+[#788](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42319964660)
+(ACK `STAGE_CLEARED`) y comprobado ausente mediante la observación
+independiente
+[#789](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42320122399).
+El controlador legacy sigue sano en `127.0.0.1:8443`; espacio observado
+39,77 GB libres. Queda una imagen histórica Boca de procedencia aún
+INDETERMINADA; no se ha eliminado ni corresponde limpieza global.
+
+**RCA comprobado:** los Cutover #763/#770/#778 fallaron sin fase
+identificada. En #778 el CLI devolvió código 3, pero el runner ocultó la
+salida diagnóstica y el verificador posterior podía afirmar falsamente
+`host=untouched`. La causa **física** anterior al ACK sigue sin demostrar.
+La corrección candidata R68 instrumenta únicamente una clasificación
+sanitizada del fallo y corrige la semántica posterior a SSH; no cambia las
+garantías de GO, imagen exacta, lease, datos, singleton ni recepción ACCEPT.
+Hasta pruebas y merge, **es propuesta CODE_ONLY, no funciona aún en main**.
+
+**Eficiencia:** hay 63 PR OPEN, 57 DRAFT, 41 con base distinta de main
+(33 sobre una rama integral divergente). El PR #412 reconstruyó la imagen
+browser en cuatro workflows independientes; las validaciones ya son paralelas,
+pero sus builds son redundantes. Prioridad siguiente: reconciliar el backlog
+por diff vs main y agrupar builds verificados; publicar cambios multiarchivo
+en un solo commit, conservando las operaciones físicas serializadas.
+Evidencia/RCA: [#45 R67](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6699936387)
+y [#45 R68](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6700063353).
+La aprobación general del propietario sigue vigente; no repetir PREPARE ni
+APPLY mientras el diagnóstico P0 siga sin fase verificable.
+
+## Histórico — R62 antes de recuperar físicamente Stage #778 (06/11/2026 ART; corte sustituido)
 
 El `main=a8b577161288fe653fef65d3d5890f3661fb15d4` publicó release
 dual [#704](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42309505084)

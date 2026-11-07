@@ -2197,12 +2197,21 @@ jobs:
           # A single SSH process retains the Boca lease and FIFO, permanent
           # intent/result and selective postflight in its own try/finally.
           # On SSH loss: NO_GO, no cleanup guesses and no retry in this job.
+          # Preserve the FAILED SSH status while classifying only allowlisted,
+          # redacted host-output shapes. Never publish raw stderr, ZIP or token.
+          host_ssh_rc=0
           timeout --signal=TERM --kill-after=5s 900s ssh \
             -F "$RUNNER_TEMP/boca-ssh/config" \
             -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
             boca-target "$remote_command" \
             < "$RUNNER_TEMP/boca-cutover-a-review.pyz" \
-            > "$RUNNER_TEMP/boca-cutover-a-host.receipt" 2>/dev/null
+            > "$RUNNER_TEMP/boca-cutover-a-host.receipt" 2>/dev/null || host_ssh_rc=$?
+          if [[ "$host_ssh_rc" -ne 0 ]]; then
+            if ! BOCA_CUTOVER_A_SSH_RC="$host_ssh_rc" python scripts/check_cutover_a_go.py --report-host-failure | tee -a "$GITHUB_STEP_SUMMARY"; then
+              printf 'BOCA_CUTOVER_A_SSH_DIAGNOSTIC state=NO_GO diagnostic=UNVERIFIED host=UNVERIFIED no_retry=true\n' >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit "$host_ssh_rc"
+          fi
       - name: Fail closed on absent or ambiguous Cutover A host terminal receipt
         if: ${{ always() && inputs.operation == 'cutover-a-apply' && inputs.protected_action_context != '' }}
         env:
