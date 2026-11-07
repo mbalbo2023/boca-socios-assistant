@@ -1,6 +1,30 @@
 # Boca Socios Assistant
 
-## Estado A45-R81 — #807 NO_GO físico; inventario exacto y sin reintento (07/11/2026 ART)
+## Estado A45-R82 — recuperación quirúrgica #807 CODE_ONLY (07/11/2026 ART)
+
+El observador protegido R81 [#809 / 42342822240](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42342822240)
+acreditó por recibo canónico que el probe temporal exacto del preflight #807
+(`CID=06ac6e6b596c8286957cdfa21d6f4e3f6b7f19a7da4cff8b8c9ba47a1307a70d`)
+**estaba detenido** (`PRESENT_PIN_MATCH`, `probe_running=false`, JSON completo
+bajo límite), el seccomp temporal **ausente** y el controlador original **sano**
+en `127.0.0.1:8443`. La Action fue READ_ONLY, con cero escrituras;
+**no equivale a una autorización de borrado ni a un deploy**.
+
+R82 incorpora una operación protegida distinta `cutover-a-worker-recover-807`,
+un único marcador anti-replay y el recuperador R80 reutilizado con dos perfiles
+estáticos. Antes de un único `docker container rm` no forzado exige cero PR,
+evidencias GitHub exactas, dos inspecciones completas y lease Boca; después
+verifica ausencia del ID/nombre y salud del controlador original. Cualquier
+evidencia incompleta, error o ACK ambiguo resulta NO_GO/INDETERMINATE **sin
+reintento**. La operación no cambia Cutover/PREPARE/APPLY ni toca otras apps,
+imágenes, volúmenes o BLACKBOX. Véanse [ADR0191](docs/ADR/0191-r82-exact-stopped-worker-807-recovery.md),
+[RCA #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417) y
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+
+**R82 permanece CODE_ONLY hasta revisión, Actions y merge del SHA exacto.**
+La aceptación física de BETA y GO_B siguen **NO_GO**.
+
+## Histórico A45-R81 — #807 NO_GO físico antes de #809 (07/11/2026 ART)
 
 La recuperación protegida R80 [#806](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42340750343)
 **sí eliminó y verificó únicamente el antiguo probe detenido #795**, con

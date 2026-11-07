@@ -1,5 +1,5 @@
 name: Boca first deploy
-run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R80-WORKER-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42341290485' && 'BOCA-R81-WORKER-807-READONLY' || 'Boca first deploy' }}
+run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-807' && 'BOCA-R82-WORKER-807-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R80-WORKER-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42341290485' && 'BOCA-R81-WORKER-807-READONLY' || 'Boca first deploy' }}
 
 on:
   pull_request:
@@ -9,7 +9,7 @@ on:
         description: Boca-only host operation; browser IPC is a separate, opt-in, protected BETA gate
         required: true
         type: choice
-        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, cutover-a-reconcile, cutover-a-stage-recover, cutover-a-image-retire, cutover-a-observe, cutover-a-worker-inspect, cutover-a-worker-recover, cutover-a-worker-preflight, cutover-a-apply, official-notice-import, protected-go-prepare, lifecycle-apply, telegram-activate, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
+        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, cutover-a-reconcile, cutover-a-stage-recover, cutover-a-image-retire, cutover-a-observe, cutover-a-worker-inspect, cutover-a-worker-recover, cutover-a-worker-recover-807, cutover-a-worker-preflight, cutover-a-apply, official-notice-import, protected-go-prepare, lifecycle-apply, telegram-activate, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
         description: Exact main SHA (blank allowed only for reviewed Cutover/import GO_B; derived from github.sha)
         required: false
@@ -162,7 +162,7 @@ jobs:
           uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
       - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
         run: |
-          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py
+          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py tests/test_r82_exact_worker_807_recovery.py tests/test_r82_recovery_bundle.py tests/test_r82_recovery_dispatch.py tests/test_r82_recovery_workflow.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
       - name: Validate protected official notice artifact import offline only
         run: |
@@ -785,7 +785,7 @@ jobs:
       BOCA_INCIDENT_PREPARE_RUN_ID: ${{ inputs.legacy_release_run_id }}
       BOCA_IMAGE_REF: ${{ inputs.image_ref }}
       BOCA_BROWSER_IMAGE_REF: ${{ inputs.browser_image_ref }}
-      BOCA_SOURCE_SHA: ${{ (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'cutover-a-reconcile' || inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-image-retire' || inputs.operation == 'cutover-a-worker-inspect' || inputs.operation == 'cutover-a-worker-recover') && github.sha || inputs.source_sha }}
+      BOCA_SOURCE_SHA: ${{ (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'cutover-a-reconcile' || inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-image-retire' || inputs.operation == 'cutover-a-worker-inspect' || inputs.operation == 'cutover-a-worker-recover' || inputs.operation == 'cutover-a-worker-recover-807') && github.sha || inputs.source_sha }}
       BOCA_SOURCE_SHA_SUBMITTED: ${{ inputs.source_sha }}
       BOCA_SERVICE: ${{ inputs.service }}
       BOCA_BUDGET: ${{ inputs.resource_budget }}
@@ -881,7 +881,7 @@ jobs:
           else
             test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"
           fi
-          if [[ "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-image-retire || "$BOCA_OPERATION" = cutover-a-worker-inspect || "$BOCA_OPERATION" = cutover-a-worker-recover ]]; then
+          if [[ "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-image-retire || "$BOCA_OPERATION" = cutover-a-worker-inspect || "$BOCA_OPERATION" = cutover-a-worker-recover || "$BOCA_OPERATION" = cutover-a-worker-recover-807 ]]; then
             [[ -z "$BOCA_SOURCE_SHA_SUBMITTED" || "$BOCA_SOURCE_SHA_SUBMITTED" = "$GITHUB_SHA" ]]
             [[ -z "$BOCA_PROTECTED_ACTION_CONTEXT" || "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^[1-9][0-9]{0,19}$ ]]
             [[ "$BOCA_PROTECTED_ACTION_CONTEXT" != "$GITHUB_RUN_ID" ]]
@@ -897,7 +897,7 @@ jobs:
             [[ "$BOCA_BUDGET" = 1.5cpu-1024m-192pids || "$BOCA_BUDGET" = 1.75cpu-1152m-224pids ]]
           elif [[ "$BOCA_OPERATION" = beta-browser-install ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
-          elif [[ "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-image-retire || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-worker-inspect || "$BOCA_OPERATION" = cutover-a-worker-recover || "$BOCA_OPERATION" = cutover-a-worker-preflight || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-activate ]]; then
+          elif [[ "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-image-retire || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-worker-inspect || "$BOCA_OPERATION" = cutover-a-worker-recover || "$BOCA_OPERATION" = cutover-a-worker-recover-807 || "$BOCA_OPERATION" = cutover-a-worker-preflight || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-activate ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
           elif [[ "$BOCA_OPERATION" = beta-browser-telegram-start || ( "$BOCA_TELEGRAM_OWNER_READY" = ready && ( "$BOCA_OPERATION" = beta-browser-* || ( "$BOCA_OPERATION" = telegram-* && -n "$BOCA_BROWSER_IMAGE_REF" ) ) ) ]]; then
             test "$BOCA_BUDGET" = 1.75cpu-1152m-224pids
@@ -925,9 +925,9 @@ jobs:
           if [[ "$BOCA_OPERATION" != owner-install ]]; then test -z "$BOCA_OWNER_ENVELOPE"; fi
           if [[ "$BOCA_OPERATION" != owner-enroll ]]; then test -z "$BOCA_OWNER_CAPABILITY_SHA256"; fi
           case "$BOCA_OPERATION" in
-            cutover-a-worker-recover)
-              # One fixed historical stopped-probe incident, never an input-driven
-              # Docker operation or an alternate GO_B/PREPARE/release channel.
+            cutover-a-worker-recover|cutover-a-worker-recover-807)
+              # Two separately gated fixed stopped-probe incidents: old R80
+              # #795 and new R82 #807, with no input-driven Docker target.
               test "$BOCA_HOST_READONLY_ENV_READY" = ready
               test "$BOCA_DEPLOY_ENV_READY" = ready
               test "$BOCA_BETA_ENV_READY" = ready
@@ -1906,25 +1906,68 @@ jobs:
             "$RUNNER_TEMP/boca-worker-recover-prior-run.json" \
             "$RUNNER_TEMP/boca-worker-recover-prior-jobs.json" \
             | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Recover only the stopped exact 795 worker probe under Boca lease
+      - name: Require exact 807/809 evidence and zero open PRs before recovery SSH
+        if: inputs.operation == 'cutover-a-worker-recover-807'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          # The current protected run is unique and first-attempt. A second
+          # R82 dispatch or incomplete REST history aborts BEFORE host access.
+          gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=1" \
+            > "$RUNNER_TEMP/boca-r82-open-prs.json" 2>/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/boca-first-deploy.yml/runs?event=workflow_dispatch&created=%3E%3D2026-11-07&per_page=100" \
+            --jq '{total_count,workflow_runs:[.workflow_runs[]|{id,display_title,status,conclusion,event,head_sha,head_branch,run_attempt,actor:{login:.actor.login}}]}' \
+            > "$RUNNER_TEMP/boca-r82-run-history.json" 2>/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42341290485" \
+            > "$RUNNER_TEMP/boca-r82-failed-run.json" 2>/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42342822240" \
+            > "$RUNNER_TEMP/boca-r82-witness-run.json" 2>/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42340930071" \
+            > "$RUNNER_TEMP/boca-r82-release-run.json" 2>/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42341290485/attempts/1/jobs?per_page=100" \
+            --jq '{total_count,jobs:[.jobs[]|{id,name,run_id,status,conclusion,steps:[.steps[]?|{number,name,status,conclusion}]}]}' \
+            > "$RUNNER_TEMP/boca-r82-failed-jobs.json" 2>/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42342822240/attempts/1/jobs?per_page=100" \
+            --jq '{total_count,jobs:[.jobs[]|{id,name,run_id,status,conclusion,steps:[.steps[]?|{number,name,status,conclusion}]}]}' \
+            > "$RUNNER_TEMP/boca-r82-witness-jobs.json" 2>/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
+            > "$RUNNER_TEMP/boca-r82-main-ref.json" 2>/dev/null
+          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-r82-main-ref.json" "$GITHUB_SHA"
+          python3 scripts/check_worker_recovery_dispatch.py --r82 \
+            "$RUNNER_TEMP/boca-r82-open-prs.json" \
+            "$RUNNER_TEMP/boca-r82-failed-run.json" \
+            "$RUNNER_TEMP/boca-r82-witness-run.json" \
+            "$RUNNER_TEMP/boca-r82-release-run.json" \
+            "$RUNNER_TEMP/boca-r82-run-history.json" \
+            "$RUNNER_TEMP/boca-r82-failed-jobs.json" \
+            "$RUNNER_TEMP/boca-r82-witness-jobs.json" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Recover only the stopped exact 795 or 807 worker probe under Boca lease
         id: cutover_worker_recover_host
-        if: inputs.operation == 'cutover-a-worker-recover'
+        if: inputs.operation == 'cutover-a-worker-recover' || inputs.operation == 'cutover-a-worker-recover-807'
         run: |
           set -euo pipefail
           # Host code contains the only permitted CID/attempt/legacy pins.
           # Its protected Boca lease covers fresh precheck, one stopped-only
           # docker container rm by full CID, and independent postflight.
+          case "$BOCA_OPERATION" in
+            cutover-a-worker-recover) worker_mode=cutover-worker-recover ;;
+            cutover-a-worker-recover-807) worker_mode=cutover-worker-807-recover ;;
+            *) exit 1 ;;
+          esac
           python3 scripts/build_protected_boca_bundle.py --worker-recovery \
             . "$RUNNER_TEMP/boca-worker-recovery-review.pyz"
           bundle_digest="$(sha256sum "$RUNNER_TEMP/boca-worker-recovery-review.pyz" | cut -d' ' -f1)"
           [[ "$bundle_digest" =~ ^[0-9a-f]{64}$ ]]
-          remote_command="$(python3 - "$bundle_digest" <<'PY'
+          remote_command="$(python3 - "$bundle_digest" "$worker_mode" <<'PY'
           import shlex
           import sys
 
           with open('scripts/boca_protected_memfd_bootstrap.py', encoding='utf-8') as stream:
               bootstrap = stream.read()
-          print(shlex.join(['python3', '-c', bootstrap, sys.argv[1], 'cutover-worker-recover']))
+          print(shlex.join(['python3', '-c', bootstrap, sys.argv[1], sys.argv[2]]))
           PY
           )"
           # One bounded SSH delivery; no host script file, no remote arguments,
@@ -1937,7 +1980,7 @@ jobs:
             > "$RUNNER_TEMP/boca-worker-recovery.receipt.json" 2>/dev/null
       - name: Require exact terminal worker recovery receipt on every outcome
         id: cutover_worker_recovery_verify
-        if: ${{ always() && inputs.operation == 'cutover-a-worker-recover' }}
+        if: ${{ always() && (inputs.operation == 'cutover-a-worker-recover' || inputs.operation == 'cutover-a-worker-recover-807') }}
         env:
           PYTHONPATH: src:.
           BOCA_WORKER_RECOVERY_HOST_OUTCOME: ${{ steps.cutover_worker_recover_host.outcome }}
@@ -1948,8 +1991,13 @@ jobs:
             printf 'BOCA_WORKER_RECOVERY state=NO_GO cleanup=INDETERMINATE host=UNVERIFIED retry=NO_GO cutover=NO_GO\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+          case "$BOCA_OPERATION" in
+            cutover-a-worker-recover) verifier_mode=verify; recovery_attempt=42329475083 ;;
+            cutover-a-worker-recover-807) verifier_mode=verify-807; recovery_attempt=42341290485 ;;
+            *) exit 1 ;;
+          esac
           set +e
-          verification="$(python -m scripts.host_cutover_worker_recovery verify "$receipt" 2>/dev/null)"
+          verification="$(python -m scripts.host_cutover_worker_recovery "$verifier_mode" "$receipt" 2>/dev/null)"
           verifier_rc=$?
           set -e
           if [[ "$verifier_rc" -ne 0 || "$verification" != BOCA_WORKER_RECOVERY_VERIFIED ]]; then
@@ -1957,12 +2005,12 @@ jobs:
             exit 1
           fi
           cp -- "$receipt" "$RUNNER_TEMP/boca-worker-recovery.verified.json"
-          printf 'BOCA_WORKER_RECOVERY state=CLEANED cleanup=VERIFIED attempt=42329475083 legacy=RUNNING_HEALTHY loopback=127.0.0.1:8443 foreign=UNTOUCHED retry=NO_GO cutover=NO_GO\n' >> "$GITHUB_STEP_SUMMARY"
+          printf 'BOCA_WORKER_RECOVERY state=CLEANED cleanup=VERIFIED attempt=%s legacy=RUNNING_HEALTHY loopback=127.0.0.1:8443 foreign=UNTOUCHED retry=NO_GO cutover=NO_GO\n' "$recovery_attempt" >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve only independently verified worker recovery receipt
-        if: inputs.operation == 'cutover-a-worker-recover' && steps.cutover_worker_recovery_verify.outcome == 'success'
+        if: (inputs.operation == 'cutover-a-worker-recover' || inputs.operation == 'cutover-a-worker-recover-807') && steps.cutover_worker_recovery_verify.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: boca-worker-recovery-42329475083
+          name: ${{ inputs.operation == 'cutover-a-worker-recover-807' && 'boca-worker-recovery-42341290485' || 'boca-worker-recovery-42329475083' }}
           path: ${{ runner.temp }}/boca-worker-recovery.verified.json
           if-no-files-found: error
           retention-days: 90
