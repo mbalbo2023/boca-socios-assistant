@@ -829,6 +829,8 @@ def test_workflow_cutover_apply_requires_separate_go_and_legacy_release_proof() 
         # R47 one-time, exact-incident remedial operations are independently
         # host/ACK gated; neither promotes nor replays the original APPLY.
         "cutover-a-stage-recover",
+        # R96 #844 exact one-shot recovery is a distinct signed incident.
+        "cutover-a-stage-recover-844",
         "cutover-a-image-retire",
         "cutover-a-observe",
         # R76 one exact failed preflight metadata-only inspection, no GO.

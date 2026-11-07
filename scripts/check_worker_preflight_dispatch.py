@@ -17,18 +17,31 @@ WORKFLOW_PATHS = {WORKFLOW, f"{WORKFLOW}@main", f"{WORKFLOW}@refs/heads/main"}
 
 
 def validate_dispatch_history(
-    history: object, open_prs: object, source_sha: str, run_id: str
+    history: object,
+    open_prs: object,
+    source_sha: str,
+    run_id: str,
+    *,
+    marker: str = TITLE,
+    across_all_shas: bool = False,
 ) -> None:
-    """Accept one unique protected workflow_dispatch for exactly this source SHA."""
+    """Accept one unique protected dispatch for a fixed marker and provenance.
+
+    The original R84 path stays filtered by exact source SHA. Incident-bound
+    recoveries use a complete bounded workflow history across source SHAs:
+    a new commit must never make the same physical recovery replayable.
+    """
     if not SOURCE_SHA.fullmatch(source_sha) or not RUN_ID.fullmatch(run_id):
         raise DispatchError("unreviewed worker preflight coordinates")
+    if not isinstance(marker, str) or not marker or type(across_all_shas) is not bool:
+        raise DispatchError("invalid unique dispatch marker policy")
     if open_prs != [] or not isinstance(history, dict):
         raise DispatchError("open pull requests or unverified worker history")
     count = history.get("total_count")
     runs = history.get("workflow_runs")
     if (
         type(count) is not int
-        or not 1 <= count <= 100
+        or not 1 <= count <= (2000 if across_all_shas else 100)
         or not isinstance(runs, list)
         or len(runs) != count
         or any(not isinstance(item, dict) for item in runs)
@@ -42,12 +55,17 @@ def validate_dispatch_history(
             type(identifier) is not int
             or identifier <= 0
             or identifier in seen
-            or record.get("head_sha") != source_sha
+            or (
+                not isinstance(record.get("head_sha"), str)
+                or not SOURCE_SHA.fullmatch(record["head_sha"])
+                if across_all_shas
+                else record.get("head_sha") != source_sha
+            )
             or record.get("event") != "workflow_dispatch"
         ):
             raise DispatchError("worker history origin or identity unverified")
         seen.add(identifier)
-        if record.get("display_title") == TITLE:
+        if record.get("display_title") == marker:
             matched.append(record)
     if len(matched) != 1:
         raise DispatchError("worker preflight absent or repeated for exact SHA")
@@ -56,6 +74,7 @@ def validate_dispatch_history(
     repository = current.get("repository")
     if not (
         current["id"] == int(run_id)
+        and current.get("head_sha") == source_sha
         and current.get("head_branch") == "main"
         and current.get("path") in WORKFLOW_PATHS
         and type(current.get("run_attempt")) is int

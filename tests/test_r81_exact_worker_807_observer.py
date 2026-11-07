@@ -438,7 +438,7 @@ def test_r81_cli_verify_reports_readonly_no_go_even_for_clean_inventory(
 def _workflow_gate() -> str:
     workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
     first = "            cutover-a-worker-inspect)\n"
-    last = "            cutover-a-stage-recover|cutover-a-image-retire)"
+    last = "            cutover-a-stage-recover|cutover-a-stage-recover-844|cutover-a-image-retire)"
     assert workflow.count(first) == 1
     gate = workflow.split(first, 1)[1].split(last, 1)[0].rstrip()
     assert gate.endswith(";;")

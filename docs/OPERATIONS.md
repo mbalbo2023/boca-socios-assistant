@@ -1,5 +1,43 @@
 # Safe operations — verified evidence and gated procedures
 
+## A45-R96 — recuperación del stage #844, no equivale a BETA (07/11/2026 ART)
+
+R95 dual release #746 PASS y PREPARE #843 READY. El **único** Cutover A
+[#844](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42388694186)
+terminó **FAILURE `ssh_rc=3`**. READ_ONLY
+[#845](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42388994569)
+registró intent/result presentes, terminal `NO_GO`, stage presente,
+`cleanup=INDETERMINATE`, original CID exacto
+`27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793`
+saludable en `127.0.0.1:8443`, sin worker/candidato y sin promoción.
+No repetir #844 ni reutilizar #843: el marcador anterior es UNREADABLE,
+lo cual nunca significa disponible. No tocar recursos ajenos ni Docker global.
+
+**R96 es exclusivamente CODE_ONLY hasta que GitHub valide el SHA y se ejecute
+una recuperación independiente.** El único formulario posible, **tras PR
+fusionado, CI/Security y revisión 3/3**, es:
+
+| Campo | Valor exacto R96 |
+| --- | --- |
+| `operation` | `cutover-a-stage-recover-844` |
+| `protected_action_context` | `42388694186` |
+| `legacy_release_run_id` | `42381545964` |
+| `service` | `controller` |
+| `resource_budget` | `1.5cpu-1024m-192pids` |
+| Todo lo demás | **Vacío**, incluido `source_sha`, imágenes, propietario, Telegram y avisos oficiales |
+
+GitHub Actions exige main vigente, ningún PR abierto, un solo nombre
+`BOCA-R96-STAGE-844-RECOVER-ONCE` incluso entre SHAs, historial paginado
+completo **por debajo del límite API 1.000**, procedencia exacta de #843/#844/#845
+y primera tentativa. Un único SSH envía ZIP revisado y solo puede eliminar
+archivos del stage `cutover-a-42388694186` con lease UID10001, hashes, marcador,
+inodo Compose y dos lecturas idénticas. Si no hay ACK exacto, **NO repetir**.
+Tras ACK comprobado exigir un nuevo inventario READ_ONLY; **la BETA no se
+considera desplegada por recuperar el stage**. Continuar el RCA del `ssh_rc=3`
+antes de un Cutover distinto, con nueva evidencia y revisión independiente.
+
+---
+
 ## A45-R95 — STOP Docker compatible, nuevo preflight todavía NO_GO (07/11/2026 ART)
 
 La recuperación física **R94 ya finalizó** en [Action #839](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42379062317)
