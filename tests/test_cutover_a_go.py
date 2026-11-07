@@ -602,6 +602,43 @@ def test_failed_ssh_phase_survives_real_prior_observation_without_host_acceptanc
 
 
 @pytest.mark.parametrize(
+    "bad_line",
+    [
+        b"",
+        b"BOCA_CUTOVER_A_WORKER_FAILURE primary=CREATE compensation=INDETERMINATE\n",
+        b"BOCA_CUTOVER_A_WORKER_FAILURE primary=CREATE compensation=INDETERMINATE PRIVATE=secret\n",
+        b"BOCA_CUTOVER_A_WORKER_FAILURE primary=FAKE compensation=VERIFIED\n",
+    ],
+)
+def test_failed_ssh_typed_worker_phase_is_bounded_diagnostic_only(
+    tmp_path: Path, bad_line: bytes
+) -> None:
+    _request, env = _actions_fixture(tmp_path)
+    env["BOCA_CUTOVER_A_SSH_RC"] = "3"
+    typed = b"BOCA_CUTOVER_A_WORKER_FAILURE primary=CREATE compensation=VERIFIED\n"
+    prefix = (
+        typed
+        if not bad_line
+        else (bad_line if b"PRIVATE" in bad_line or b"FAKE" in bad_line else typed + bad_line)
+    )
+    stdout = (
+        prefix
+        + b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n"
+        + b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n"
+    )
+    _file(Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME, stdout)
+    report = go.classify_cutover_ssh_failure(env)
+    if not bad_line:
+        assert "worker_primary_claim=CREATE worker_compensation_claim=VERIFIED" in report
+        assert "phase_claim=PREPARE_WORKER" in report
+    else:
+        assert "host_claim=NONE" in report
+        assert "worker_primary_claim=UNVERIFIED worker_compensation_claim=UNVERIFIED" in report
+    assert "host=UNVERIFIED terminal=UNVERIFIED no_retry=true" in report
+    assert "PRIVATE" not in report and "secret" not in report
+
+
+@pytest.mark.parametrize(
     "mutation",
     [
         lambda ready: ready + ready,

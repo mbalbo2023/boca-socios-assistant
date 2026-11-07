@@ -84,6 +84,40 @@ def test_terminal_result_is_o_excl_fsynced_and_readback_with_same_lease(tmp_path
         terminal.verify_persisted_exact(plan, replace(_accepted(), candidate_id="8" * 64))
 
 
+def test_worker_failure_uses_additive_v2_terminal_schema_without_changing_v1(
+    tmp_path: Path,
+) -> None:
+    old = terminal.TerminalRecord.from_receipt(_plan(), _accepted()).serialized()
+    assert json.loads(old)["version"] == terminal.VERSION
+    assert "worker_primary_phase" not in json.loads(old)
+
+    failed = cutover.CutoverReceipt(
+        ATTEMPT,
+        "NO_GO",
+        "INDETERMINATE",
+        False,
+        False,
+        None,
+        None,
+        failed_phase="PREPARE_WORKER",
+        worker_primary_phase="CREATE",
+        worker_compensation="INDETERMINATE",
+    )
+    record = terminal.TerminalRecord.from_receipt(_plan(), failed)
+    raw = record.serialized()
+    payload = json.loads(raw)
+    assert payload["version"] == terminal.VERSION_V2
+    assert payload["worker_primary_phase"] == "CREATE"
+    assert payload["worker_compensation"] == "INDETERMINATE"
+    with cleanup.protected_boca_job_lease(ATTEMPT) as lease:
+        terminal.prepare_destination(_plan(), lease)
+        terminal.write_once(record, plan=_plan(), lease=lease)
+    assert terminal.reconcile_persisted(_plan()) == "RECORD_PRESENT_RUNTIME_UNVERIFIED"
+    terminal.verify_persisted_exact(_plan(), failed)
+    with pytest.raises(terminal.TerminalReceiptError, match="differs from original bytes"):
+        terminal.verify_persisted_exact(_plan(), replace(failed, worker_primary_phase="START"))
+
+
 def test_cutover_terminal_sink_runs_before_release_of_same_lease(tmp_path: Path) -> None:
     class Fake:
         def attest_original(self, _p: object, _l: object) -> None: ...

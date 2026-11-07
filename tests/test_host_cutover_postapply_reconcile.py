@@ -92,6 +92,54 @@ def test_exact_canonical_markers(kind: str, raw: bytes) -> None:
         reconcile._record(raw + b"\n", RUN, kind=kind)
 
 
+def _typed_result(**overrides: object) -> bytes:
+    result = json.loads(_result())
+    result.update(
+        version="boca-cutover-a-terminal-v2",
+        worker_primary_phase="CREATE",
+        worker_compensation="INDETERMINATE",
+    )
+    result.update(overrides)
+    return reconcile._canonical(result)
+
+
+def test_typed_v2_terminal_is_accepted_by_shared_readonly_observer() -> None:
+    result = reconcile._record(_typed_result(), RUN, kind="result")
+    assert result is not None
+    assert result["worker_primary_phase"] == "CREATE"
+    assert result["worker_compensation"] == "INDETERMINATE"
+    assert reconcile._record(_result(), RUN, kind="result")["version"] == (
+        "boca-cutover-a-terminal-v1"
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"worker_primary_phase": "SHELL"},
+        {"worker_primary_phase": "PULL;echo secret"},
+        {"worker_primary_phase": None},
+        {"worker_primary_phase": ["CREATE"]},
+        {"worker_compensation": "UNKNOWN"},
+        {"worker_compensation": None},
+        {"worker_compensation": {"phase": "VERIFIED"}},
+        {"state": "ACCEPTED"},
+        {"extra_field": "leak"},
+    ],
+)
+def test_typed_v2_terminal_rejects_invalid_and_extra_fields(change: dict[str, object]) -> None:
+    with pytest.raises(reconcile.ReconcileError):
+        reconcile._record(_typed_result(**change), RUN, kind="result")
+
+
+@pytest.mark.parametrize("absent", ["worker_primary_phase", "worker_compensation"])
+def test_typed_v2_terminal_rejects_partial_receipts(absent: str) -> None:
+    record = json.loads(_typed_result())
+    del record[absent]
+    with pytest.raises(reconcile.ReconcileError):
+        reconcile._record(reconcile._canonical(record), RUN, kind="result")
+
+
 def test_duplicate_marker_keys_rejected() -> None:
     malformed = _intent().replace(
         b'"attempt_id":"42096941815"', b'"attempt_id":"42096941815","attempt_id":"42096941815"'

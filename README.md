@@ -1,5 +1,20 @@
 # Boca Socios Assistant
 
+## R103 — Inventario Docker post-Cutover V3 (candidato CODE_ONLY)
+
+El observador #858 dejó `cleanup=INDETERMINATE`: ver legacy saludable y
+cero trabajadores no demuestra ausencia de imágenes ni volumen IPC. Este
+censo Docker sigue pendiente aunque #860 ya acreditó `STAGE_CLEARED`; la
+recuperación de Stage no es una limpieza de imágenes/IPC. El
+candidato enlaza el **planner READ_ONLY existente** a V3 sin PREPARE,
+derivando el CID original desde el recibo v2 y el SHA de #853 autenticado en
+GitHub. Conserva el mismo workflow y selector `cutover-a-reconcile`, sin
+Docker writes, eliminación de datos, nuevo alias ni cambio de controles.
+Incluso una observación satisfactoria mantiene `go_for_retry=false`; un
+Cutover posterior requiere evidencia y aceptación independientes. La rama,
+los tests y [ADR0207](docs/ADR/0207-v3-postapply-readonly-docker-inventory.md)
+son **código no desplegado** hasta su integración y recibo físico.
+
 ## Recuperación Stage V3 — propuesta CODE_ONLY
 
 La operación existente `cutover-a-stage-recover` propone recuperar un Stage

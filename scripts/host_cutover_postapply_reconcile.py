@@ -132,12 +132,17 @@ def _record(raw: bytes | None, run_id: str, *, kind: str) -> dict[str, Any] | No
         obj = json.loads(raw.decode("ascii"), object_pairs_hook=unique)
     except (ValueError, UnicodeError) as exc:
         raise ReconcileError("MARKER_PARSE") from exc
-    expected_version = (
-        "boca-cutover-a-intent-v1" if kind == "intent" else "boca-cutover-a-terminal-v1"
+    result_v1 = "boca-cutover-a-terminal-v1"
+    result_v2 = "boca-cutover-a-terminal-v2"
+    version = obj.get("version") if isinstance(obj, dict) else None
+    valid_version = (
+        version == "boca-cutover-a-intent-v1"
+        if kind == "intent"
+        else version in (result_v1, result_v2)
     )
     if (
         not isinstance(obj, dict)
-        or obj.get("version") != expected_version
+        or not valid_version
         or obj.get("attempt_id") != run_id
         or _canonical(obj) != raw
     ):
@@ -168,26 +173,49 @@ def _record(raw: bytes | None, run_id: str, *, kind: str) -> dict[str, Any] | No
         ):
             raise ReconcileError("INTENT_SCHEMA")
     else:
+        base_fields = {
+            "version",
+            "attempt_id",
+            "legacy_source_sha",
+            "target_source_sha",
+            "legacy_id",
+            "intent_sha256",
+            "state",
+            "cleanup",
+            "original_restored",
+            "irreversible_commit_started",
+            "candidate_id",
+            "worker_id",
+        }
+        typed = version == result_v2
+        typed_fields = {"worker_primary_phase", "worker_compensation"}
+        allowed_phases = {
+            "ATTEST",
+            "STORAGE",
+            "PULL",
+            "IPC",
+            "CREATE",
+            "START",
+            "HEALTH",
+            "UNVERIFIED",
+        }
+        allowed_compensation = {"VERIFIED", "INDETERMINATE", "UNVERIFIED"}
         if (
-            set(obj)
-            != {
-                "version",
-                "attempt_id",
-                "legacy_source_sha",
-                "target_source_sha",
-                "legacy_id",
-                "intent_sha256",
-                "state",
-                "cleanup",
-                "original_restored",
-                "irreversible_commit_started",
-                "candidate_id",
-                "worker_id",
-            }
+            set(obj) != (base_fields | typed_fields if typed else base_fields)
             or obj.get("state") not in ("ACCEPTED", "RECOVERED", "NO_GO")
             or obj.get("cleanup") not in ("ACCEPT", "NO_GO", "INDETERMINATE")
             or type(obj.get("original_restored")) is not bool
             or type(obj.get("irreversible_commit_started")) is not bool
+            or (
+                typed
+                and (
+                    obj["state"] == "ACCEPTED"
+                    or type(obj.get("worker_primary_phase")) is not str
+                    or obj["worker_primary_phase"] not in allowed_phases
+                    or type(obj.get("worker_compensation")) is not str
+                    or obj["worker_compensation"] not in allowed_compensation
+                )
+            )
             or any(
                 value is not None and (type(value) is not str or not IDENT.fullmatch(value))
                 for value in (obj.get("candidate_id"), obj.get("worker_id"))
@@ -638,6 +666,48 @@ def verify_runner(
     ):
         raise ReconcileError("RECEIPT_CONTRACT")
     return record
+
+
+def verified_cleanup_legacy_id(raw: bytes, run_id: str, coordinate: str, *, v3: bool) -> str:
+    """Resolve only the restored Boca CID from a verified post-Cutover receipt.
+
+    `coordinate` is the authenticated incident SHA for V3; legacy v1 instead
+    receives its PREPARE run. This never promotes or deletes Docker resources.
+    """
+    if type(v3) is not bool:
+        raise ReconcileError("CLEANUP_RECEIPT_VERSION")
+    receipt = verify_runner(
+        raw,
+        run_id,
+        None if v3 else coordinate,
+        source_sha=coordinate if v3 else None,
+    )
+    original = receipt.get("original")
+    legacy_id = receipt.get("legacy_id")
+    if (
+        receipt.get("intent") != "PRESENT"
+        or receipt.get("result") != "PRESENT"
+        or receipt.get("original_restored") is not True
+        or receipt.get("commit_started") is not False
+        or type(original) is not dict
+        or type(legacy_id) is not str
+        or IDENT.fullmatch(legacy_id) is None
+        or original.get("id") != legacy_id
+        or original.get("running") is not True
+        or original.get("health") != "healthy"
+    ):
+        raise ReconcileError("CLEANUP_ORIGINAL_UNVERIFIED")
+    if v3 and (
+        receipt.get("terminal_state") != "NO_GO"
+        or receipt.get("cleanup") != "INDETERMINATE"
+        or receipt.get("port_8443") != "BOCA_CONTROLLER_DOCKER_BOUND"
+        or original.get("name") != "/boca-socios-controller-1"
+        or original.get("service") != "controller"
+        or original.get("port_binding")
+        != {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
+    ):
+        raise ReconcileError("CLEANUP_V3_ORIGINAL_UNVERIFIED")
+    return legacy_id
 
 
 def main(argv: list[str] | None = None) -> int:

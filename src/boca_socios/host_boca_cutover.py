@@ -39,6 +39,10 @@ CutoverPhase = Literal[
     "FINALIZE",
 ]
 CUTOVER_FAILURE_PHASES: frozenset[str] = frozenset(get_args(CutoverPhase)) - {"NONE"}
+WORKER_PRIMARY_PHASES: frozenset[str] = frozenset(
+    {"ATTEST", "STORAGE", "PULL", "IPC", "CREATE", "START", "HEALTH", "UNVERIFIED"}
+)
+WORKER_COMPENSATION_STATES: frozenset[str] = frozenset({"VERIFIED", "INDETERMINATE", "UNVERIFIED"})
 
 
 class CutoverError(ValueError):
@@ -104,6 +108,8 @@ class CutoverReceipt:
     cleanup_receipt: CleanupReceipt | None = None
     # A redacted diagnostic only, never evidence of physical acceptance.
     failed_phase: CutoverPhase = "NONE"
+    worker_primary_phase: str = "NONE"
+    worker_compensation: str = "NONE"
 
     @property
     def accepted(self) -> bool:
@@ -211,6 +217,8 @@ def run_cutover_a(
         final_evidence: CleanupReceipt | None = None
         phase: CutoverPhase = "ATTEST_ORIGINAL"
         failed_phase: CutoverPhase = "NONE"
+        worker_primary_phase = "NONE"
+        worker_compensation = "NONE"
         try:
             backend.attest_original(plan, lease)
             # PREPARE consumption is durable under the SAME flock, strictly
@@ -244,6 +252,19 @@ def run_cutover_a(
             committed = True
         except BaseException as exc:
             failed_phase = phase
+            # Fixed enum-only diagnostic. Exception messages and Docker output
+            # must never enter persistent receipts or Actions stdout.
+            if phase == "PREPARE_WORKER":
+                primary = getattr(exc, "primary", None)
+                compensation = getattr(exc, "compensation", None)
+                if (
+                    type(primary) is str
+                    and primary in WORKER_PRIMARY_PHASES
+                    and type(compensation) is str
+                    and compensation in WORKER_COMPENSATION_STATES
+                ):
+                    worker_primary_phase = primary
+                    worker_compensation = compensation
             # Fail closed; only backend's independent exact-ID reinspection may
             # report positive recovery.  Never guess what a lost Docker receipt did.
             if effect_started and not commit_started:
@@ -303,6 +324,8 @@ def run_cutover_a(
             worker,
             final_evidence,
             failed_phase if state != "ACCEPTED" else "NONE",
+            worker_primary_phase if state != "ACCEPTED" else "NONE",
+            worker_compensation if state != "ACCEPTED" else "NONE",
         )
         # O_EXCL result must be persisted *before releasing the SAME flock*.
         # Callers cannot safely write it after run_cutover_a returns. Missing

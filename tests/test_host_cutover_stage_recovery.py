@@ -195,6 +195,28 @@ def test_positive_single_exact_stage_clear_preserves_live_inode_and_receipts(wor
         recovery.recover(INCIDENT, PREPARE)  # never a blind repeat
 
 
+def test_typed_v2_result_is_accepted_by_same_stage_recovery_record_gate(world):
+    _, records = world
+    name = f"boca-cutover-a-result-{INCIDENT}.json"
+    terminal = json.loads(records[name])
+    terminal.update(
+        version="boca-cutover-a-terminal-v2",
+        worker_primary_phase="CREATE",
+        worker_compensation="INDETERMINATE",
+    )
+    records[name] = recovery.observer._canonical(terminal)
+
+    verified_intent, verified_result, intent_hash, result_hash = recovery._verified_records(
+        INCIDENT
+    )
+    assert verified_intent["attempt_id"] == INCIDENT
+    assert verified_result["version"] == "boca-cutover-a-terminal-v2"
+    assert verified_result["worker_primary_phase"] == "CREATE"
+    assert verified_result["worker_compensation"] == "INDETERMINATE"
+    assert intent_hash == sha(records[f"boca-cutover-a-intent-{INCIDENT}.json"])
+    assert result_hash == sha(records[name])
+
+
 def test_v3_uses_git_authenticated_source_and_no_prepare(world, monkeypatch):
     root, _ = world
 
