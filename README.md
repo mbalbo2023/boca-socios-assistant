@@ -1,6 +1,29 @@
 # Boca Socios Assistant
 
-## Estado A45-R79 — recuperación exacta del probe detenido (07/11/2026 ART)
+## Estado A45-R80 — RCA del gate pre-SSH y única continuación (07/11/2026 ART)
+
+R79 fue fusionado como `main=d9100c6c4666c61ba66fbbefa48e61102a20ce5d`,
+con CI y seguridad postmerge GREEN y cero PR abiertos. Su único dispatch
+protegido [#804](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42339451485)
+**falló ANTES del SSH**: el gate #37 devolvió `NO_GO reason=UNVERIFIED`, el
+paso #38 de recuperación física quedó `skipped` y el verificador terminal #39
+falló por ausencia de recibo. **No se eliminó el probe ni hubo Cutover**.
+
+El RCA identificó un error en la representación de un metadato: el REST real
+de GitHub entrega `run.path` sin `@main`; el validador R79 sólo aceptaba
+rutas con sufijo. R80 mantiene todas las identidades históricas y añade
+prueba independiente de #804 por run, job y 154 estados de pasos del REST.
+Sólo se admitirá un nuevo dispatch con el título
+`BOCA-R80-WORKER-RECOVER-ONCE`, después de CI, QA, Arquitectura, seguridad,
+merge y cero PR abiertos; un segundo R80 o evidencia incompleta bloquea SSH.
+El ejecutor, CID, presupuesto, lease y aislamiento del host **no cambian**.
+
+R80 **no** es un re-run de #804, no es permiso de Cutover y no autoriza
+Telegram ni reservas reales. Ver [ADR0189](docs/ADR/0189-r80-github-rest-pre-ssh-recovery.md),
+[issue #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417)
+y el checkpoint de continuidad [#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+
+## Histórico A45-R79 — recuperación exacta del probe detenido (07/11/2026 ART)
 
 La [Action #802 / 42337103473](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42337103473)
 confirmó bajo el socket Docker rootless Boca que el contenedor temporal del
@@ -20,8 +43,9 @@ un ZIP mínimo SHA256/memfd con allowlist separada, sin agrandar el bundle de
 Cutover. [ADR0188](docs/ADR/0188-exact-stopped-worker-recovery.md) define
 alcance, límites, evidencia y siguiente cadena de gates.
 
-**Estado actual:** corrección R79 CODE_ONLY, pendiente CI/revisión y recibo
-físico. No se declara limpieza verificada, Cutover autorizado ni BETA instalada.
+**Resultado R79:** código, revisiones y CI certificados; ejecución física
+rechazada por el gate pre-SSH del run #804. No hay limpieza verificada,
+Cutover autorizado ni BETA instalada.
 La autorización previa del propietario continúa vigente; no se alteran otras
 aplicaciones, Docker ajenos o los dos módulos de navegador BLACKBOX.
 
