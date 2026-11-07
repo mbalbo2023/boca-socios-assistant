@@ -151,7 +151,17 @@ R112_RECEIPT_KEYS = {
     "observer_writes",
     "foreign_resources_touched",
     "retry_authorized",
+    "reason",
 }
+R112_FAILURE_REASONS = frozenset(
+    {
+        "UID_UNVERIFIED",
+        "SOCKET_UNVERIFIED",
+        "DOCKER_COMMAND_FAILED",
+        "DOCKER_OUTPUT_INVALID",
+        "TIMEOUT",
+    }
+)
 
 
 class InspectError(ValueError):
@@ -376,12 +386,16 @@ def _r112_empty_receipt() -> dict[str, Any]:
         "observer_writes": 0,
         "foreign_resources_touched": False,
         "retry_authorized": False,
+        "reason": None,
     }
 
 
-def _r112_failed_receipt() -> dict[str, Any]:
+def _r112_failed_receipt(reason: str) -> dict[str, Any]:
+    if reason not in R112_FAILURE_REASONS:
+        raise InspectError("EVENT_FAILURE_REASON")
     result = _r112_empty_receipt()
     result["state"] = "INDETERMINATE"
+    result["reason"] = reason
     return result
 
 
@@ -447,21 +461,24 @@ def summarize_worker_events(raw: str) -> dict[str, Any]:
 
 def observe_worker_events() -> dict[str, Any]:
     """Read only the fixed historical attempt on UID10001 rootless Docker."""
-    if os.getuid() != UID or _runtime_stat("docker.sock") != "PRESENT_OWNED":
-        return _r112_failed_receipt()
+    if os.getuid() != UID:
+        return _r112_failed_receipt("UID_UNVERIFIED")
+    if _runtime_stat("docker.sock") != "PRESENT_OWNED":
+        return _r112_failed_receipt("SOCKET_UNVERIFIED")
     try:
         raw = _run_bounded(
             ("docker", "events", *R112_EVENT_FLAGS), stdout_limit=R112_EVENT_OUTPUT_LIMIT
         )
+    except (TimeoutError, subprocess.TimeoutExpired):
+        return _r112_failed_receipt("TIMEOUT")
+    except (OSError, subprocess.CalledProcessError):
+        return _r112_failed_receipt("DOCKER_COMMAND_FAILED")
+    except (InspectError, ValueError, UnicodeError):
+        return _r112_failed_receipt("DOCKER_OUTPUT_INVALID")
+    try:
         return summarize_worker_events(raw)
-    except (
-        OSError,
-        ValueError,
-        TimeoutError,
-        subprocess.TimeoutExpired,
-        subprocess.CalledProcessError,
-    ):
-        return _r112_failed_receipt()
+    except (InspectError, ValueError, UnicodeError):
+        return _r112_failed_receipt("DOCKER_OUTPUT_INVALID")
 
 
 def verify_worker_events(raw: bytes) -> dict[str, Any]:
@@ -477,6 +494,11 @@ def verify_worker_events(raw: bytes) -> dict[str, Any]:
         or record["version"] != "boca-worker-events-r112-v1"
         or record["attempt"] != R112_RUN
         or record["state"] not in {"UNKNOWN", "OBSERVED", "AMBIGUOUS", "INDETERMINATE"}
+        or (
+            record["state"] == "INDETERMINATE"
+            and (type(record["reason"]) is not str or record["reason"] not in R112_FAILURE_REASONS)
+        )
+        or (record["state"] != "INDETERMINATE" and record["reason"] is not None)
         or record["oom"] not in {"UNKNOWN", "YES"}
         or (
             record["exit_code"] is not None
@@ -805,6 +827,7 @@ def main(argv: list[str] | None = None) -> int:
                     f"BOCA_WORKER_EVENTS_R112 state={record['state']}"
                     f" attempt={R112_RUN} exit_code={record['exit_code']}"
                     f" oom={record['oom']} observer_writes=0"
+                    f" reason={record['reason'] or 'NONE'}"
                     " foreign_resources_touched=0 retry=NO_GO cutover=NO_GO"
                 )
                 if record["state"] == "INDETERMINATE":
