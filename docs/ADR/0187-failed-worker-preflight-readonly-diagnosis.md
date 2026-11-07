@@ -60,3 +60,30 @@ Tests offline `tests/test_cutover_worker_readonly_inspect.py`, linter,
 tipado y suite aplicable para el SHA final; resultados de GitHub Actions
 se añadirán en issue #45 cuando existan. Ningún resultado físico se infiere
 de las pruebas locales.
+
+## R77 — Evidencia adicional y separación de fallos
+
+El run físico [#798](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42331553991)
+del observador R76 terminó SUCCESS, pero **siempre** con resultado funcional
+`READ_ONLY_NO_GO`: `socket=PRESENT_OWNED`, `seccomp=ABSENT`,
+`probe=PRESENT_UNVERIFIED`, `docker=READ_FAILED`, `original=UNVERIFIED`.
+La búsqueda del probe por nombre exacto devolvió un CID candidato. El único
+`try` anterior no identifica cuál de las dos inspecciones falló; tampoco
+permite inferir que el controlador haya caído. RCA de acoplamiento del
+observador **comprobado**; RCA físico **todavía no demostrado**.
+
+Decisión de dos revisiones independientes de QA e Infra: mantener la misma
+operación manual READ_ONLY; dividir la lista de probe, metadata de probe e
+inspección del legacy original en etapas independientes, cada una con estado
+y rc categorizados (sin exponer Docker stdout/stderr, secretos o mensajes de
+excepción); preservar `probe_candidate_id` como un mero candidato. Solo
+ante error no cero del `inspect` completo, después de intentar ambas
+identidades, permitir una consulta mínima distinta del **mismo** ID
+`docker inspect --format '{{.Id}}'`, hasta dos como máximo. Igualdad de ID
+significa únicamente metadata básica alcanzable en ese momento, no prueba
+de plantilla incorrecta, pertenencia, salud ni autorización de limpieza.
+
+La validación del recibo es fail-closed y coherente por etapa. No toca los
+dos BLACKBOX, otras apps/daemons, puertos, SQLite ni contenedores. Se exige
+CI, revisión y merge antes de volver a observar; tras leer el nuevo recibo,
+ningún estado de este observador concede GO de Cutover físico.

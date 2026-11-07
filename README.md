@@ -1,5 +1,26 @@
 # Boca Socios Assistant
 
+## Estado físico A45-R77 — diferencial READ_ONLY posterior al recibo #798
+
+El diagnóstico [#798 / run 42331553991](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42331553991)
+corrió en `main=ff64eb4af52629fa4344d008d58bec83c01489be` y registró
+`socket=PRESENT_OWNED`, `seccomp=ABSENT`, `probe=PRESENT_UNVERIFIED`,
+`docker=READ_FAILED`, `original=UNVERIFIED`, `observer_writes=0`.
+**No acredita limpieza ni la caída del controlador anterior.** El inventario
+confirmó que la búsqueda por nombre exacto de probe devolvió un candidato,
+pero una inspección posterior falló sin distinguir si ocurrió en probe u
+original: ambos estaban dentro del mismo bloque `try`.
+
+**Corrección candidata R77:** dividir los tres pasos de lectura (lista del
+probe, metadata del probe e inspección del controlador legacy) en observaciones
+independientes con estados/exit codes acotados, conservar CID candidato
+**no autoritativo**, y consultar únicamente `docker inspect --format '{{.Id}}'`
+por el **mismo CID** si el inspect completo devuelve `CalledProcessError`.
+El resultado del formato mínimo **no demuestra RCA de plantilla** ni habilita
+limpieza, retiro de imágenes o Cutover. Ver
+[ADR0187](docs/ADR/0187-failed-worker-preflight-readonly-diagnosis.md),
+[issue #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+
 ## Estado físico A45-R76 — incidente preflight worker (06/11/2026 ART)
 
 La certificación previa del candidato [PR #415](https://github.com/mbalbo2023/boca-socios-assistant/pull/415)

@@ -1,7 +1,7 @@
 # Safe operations — verified evidence and gated procedures
 
-**Estado actual (06/11/2026 ART):** leer primero
-[R76 — Investigación previa al Cutover](#r76--investigación-previa-al-cutover-06112026-art).
+**Estado actual:** leer primero
+[R77 — Inventario físico diferencial](#r77--inventario-físico-diferencial-posterior-al-798).
 Los apartados R50/R40 y las guías antiguas describen cortes históricos.
 
 ## R50 — Cutover A: contrato de dos pulls, candidato NO INSTALADO
@@ -1106,4 +1106,30 @@ No requiere comandos de terminal, PIN, credenciales, nueva sesión Chrome ni
 autorización de GO de Cutover. Su recibo `READ_ONLY_NO_GO` **no habilita retry**:
 sirve exclusivamente para decidir el fix-forward a partir de identidades
 concretas; ver [ADR0187](ADR/0187-failed-worker-preflight-readonly-diagnosis.md).
+
+## R77 — Inventario físico diferencial posterior al #798
+
+El primer recibo [#798](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42331553991)
+es real y **READ_ONLY**:
+`socket=PRESENT_OWNED`, `seccomp=ABSENT`, `probe=PRESENT_UNVERIFIED`,
+`docker=READ_FAILED`, `original=UNVERIFIED`. Es evidencia de candidato
+por nombre exacto, **no** de identidad del contenedor, salud del original
+o causa completa de la falla.
+
+La candidata R77 modifica **solo el observador y sus pruebas/documentación**:
+realiza `docker ps` del probe, `inspect` del CID candidato e `inspect` del
+controlador original de manera independiente; registra para cada fase
+`OK/ABSENT/COMMAND_FAILED/TIMEOUT/IDENTITY_MISMATCH/...` y exit code entero
+acotado cuando aplica. Solo después de ambas inspecciones, si un `inspect`
+completo falló con exit no cero, puede usar **una** consulta diferente por
+el mismo CID: `docker inspect --format '{{.Id}}'`, con resultado
+`ID_CONFIRMED|ID_UNVERIFIED`. Esto no prueba causa del error ni propiedad.
+No hay ninguna escritura host, reintento del preflight, limpieza, PREPARE,
+APPLY, importación, ni modificación de otras aplicaciones.
+
+Tras QA, 4/4 Actions y merge a main (0 PR abiertos), volver a ejecutar la
+**misma operación exclusivamente READ_ONLY** `cutover-a-worker-inspect`,
+con las coordenadas exactas R76 indicadas arriba, y analizar diferencias
+de estados/recibos antes de cualquier otra decisión. Ver
+[ADR0187](ADR/0187-failed-worker-preflight-readonly-diagnosis.md).
 
