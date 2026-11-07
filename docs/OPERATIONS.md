@@ -1,14 +1,18 @@
 # Safe operations — verified evidence and gated procedures
 
 **Estado vigente:** [checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45)
-como única referencia operativa. El [corte R84 en README](../README.md)
-es histórico al momento de publicarse; verificar SHA/Actions actuales antes de actuar.
-El controller legacy sigue activo; BETA integral no instalada. R83 release
-[#727](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42347255399)
-GREEN sólo acredita imágenes, no un Cutover. R84 restaura el gate R50 de
-capacidad/inodos **antes de admitir otro preflight**, con anti-replay pre-SSH
-por SHA. Hasta PR/CI/merge, nueva release propia, cero PR e inventario
-READ_ONLY, **NO_GO físico**. Véase [ADR0193](ADR/0193-r84-worker-storage-admission.md).
+como única referencia operativa. El [corte R85 en README](../README.md)
+es candidato CODE_ONLY: el observador #815 falló sin diagnóstico, mientras
+[READ_ONLY #816](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42350561170)
+confirmó legacy sano y probe #807 ausente **sin autorizar Cutover**.
+La [release dual R84 #730](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42349621015)
+GREEN sólo acredita imágenes; el controller legacy sigue activo, la BETA integral
+no está instalada. R85 corrige el rechazo de todo READY legítimo por tamaño
+(710 bytes exactos frente a 640) y una salida de fallo tipada privada del
+runner, sin modificar SSH remoto ni seguridad. Hasta PR/CI/merge, nuevo
+release exacto, PR0 e inventario/GO independiente, **NO_GO físico**.
+Véanse [ADR0194](ADR/0194-r85-cutover-observer-failure-provenance.md),
+[ADR0193](ADR/0193-r84-worker-storage-admission.md).
 Las guías R77/R50/R40 siguientes son cortes históricos.
 
 ## R50 — Cutover A: contrato de dos pulls, candidato NO INSTALADO

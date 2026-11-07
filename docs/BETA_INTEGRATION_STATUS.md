@@ -1,6 +1,16 @@
 # Estado de integración BETA
 
-## Estado A45-R82 — inventario R81 confirmado; recovery R82 candidato (07/11/2026 ART)
+## Estado A45-R85 — observación protegida y arreglo prospectivo (07/11/2026 ART)
+
+| Fase | Evidencia comprobada | Estado y límite |
+| --- | --- | --- |
+| R84 code/release | [PR #426](https://github.com/mbalbo2023/boca-socios-assistant/pull/426) integrado `main=03a901d6a4415378ef581032a800bc431586d55b`; [release dual #730](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42349621015) SUCCESS | Dos manifiestos, cero instalación nueva |
+| Cutover observe #815 | [Run 42350024273](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42350024273) NO_GO, stderr y rc clasificado perdidos | RCA físico `INDETERMINATE`; no rerun |
+| Worker inspection #816 | [Run 42350561170](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42350561170) job SUCCESS, recibo `READ_ONLY_NO_GO`, original RUNNING_HEALTHY, probe #807 ABSENT, seccomp ABSENT, cero escrituras | No revisa todas las condiciones del observador; **NO_GO Cutover** |
+| R85 defecto positivo reproducido | Host READY 710 bytes exactos, workflow R84 lo rechaza por máximo 640; TDD con fake SSH | Corrección runner-only CODE_ONLY candidata, [ADR0194](ADR/0194-r85-cutover-observer-failure-provenance.md); no explica #815 |
+| BETA integral/GO_B/Telegram | Sin PREPARE/APPLY/ACK propio de R85 | **NO_GO** hasta nueva release, gates físicos y aceptación independiente |
+
+## Histórico A45-R82 — inventario R81 confirmado; recovery R82 candidato (07/11/2026 ART)
 
 | Fase | Evidencia verificada | Estado y límite |
 | --- | --- | --- |

@@ -1,6 +1,39 @@
 # Boca Socios Assistant
 
-## Corte documental A45-R84 — corrección preventiva antes del Cutover (07/11/2026 ART)
+## Corte documental A45-R85 — QA del observador antes del próximo Cutover (07/11/2026 ART)
+
+En GitHub, [PR #426](https://github.com/mbalbo2023/boca-socios-assistant/pull/426)
+quedó fusionado en `main=03a901d6a4415378ef581032a800bc431586d55b`,
+con CI y seguridad postmerge GREEN y cero PR abiertos al corte. La publicación
+dual protegida [#730 / 42349621015](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42349621015)
+terminó SUCCESS con dos manifiestos asociados a ese SHA; **publicar imágenes
+no significa instalar BETA**.
+
+El único observador `cutover-a-observe`
+[#815 / 42350024273](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42350024273)
+terminó NO_GO en su SSH sin publicar razón tipada: el motivo físico **sigue
+INDETERMINATE**. Una inspección READ_ONLY diferente
+[#816 / 42350561170](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42350561170)
+confirmó `original=RUNNING_HEALTHY`, `probe=ABSENT` (#807),
+`socket=PRESENT_OWNED`, `seccomp=ABSENT` y `observer_writes=0`; su propio
+recibo fue `READ_ONLY_NO_GO`, **no READY ni autorización de Cutover**.
+
+**Defecto P1 adicional comprobado en TDD:** el recibo READY del host mide
+**710 bytes exactos**, pero el runner sólo aceptaba hasta 640: un READY
+auténtico hubiera fallado igualmente, *después* del SSH; no explica #815.
+R85 es un **candidato de código aún no integrado** que exige 710 bytes
+exactos, todas las comparaciones de SHA/CID/digests intactas, y clasifica
+sólo códigos acotados de error del SSH/host sin publicar stderr bruto. No
+cambia el observador remoto, los paquetes de Cutover/preflight, BLACKBOX,
+GO_B ni Docker. Véanse [ADR0194](docs/ADR/0194-r85-cutover-observer-failure-provenance.md),
+[RCA #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417) y
+[checkpoint #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45).
+**BETA integral, preflight R84, PREPARE, GO_B, APPLY, Telegram y aceptación
+Chrome siguen NO_GO** hasta pruebas y recibos físicos propios. El próximo SHA
+necesita su PR/4 checks/merge/PR0 y nuevo release antes de un solo intento
+físico distinto; no repetir #815 ni #816.
+
+## Histórico A45-R84 — corrección preventiva antes del Cutover (07/11/2026 ART)
 
 La recuperación protegida [#811 / 42344899979](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42344899979)
 **retiró solamente el worker detenido #807** y dejó el controller legacy
