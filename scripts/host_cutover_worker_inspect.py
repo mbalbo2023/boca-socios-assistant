@@ -55,11 +55,19 @@ FAILED_WORKER_819_IMAGE = (
     "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
     "d740c610d032aa20fecff1602cc96e49fd63c597c49855990a9bc081a6998619"
 )
+# One R89 preflight #827 reached cleanup but STOP returned an unexpected ACK.
+# Only immutable metadata observation is authorized; no retry or removal.
+FAILED_WORKER_827_SOURCE = "8a69d155354362e0712dab1229f7d7e4b3e24dd6"
+FAILED_WORKER_827_IMAGE = (
+    "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
+    "902276a94bbec0ed0be30432baf97b5bd1298fc15e21eda750ccb785fa76bde0"
+)
 KNOWN_FAILED_PROBES = MappingProxyType(
     {
         "42329475083": (FAILED_WORKER_SOURCE, FAILED_WORKER_IMAGE),
         "42341290485": (FAILED_WORKER_807_SOURCE, FAILED_WORKER_807_IMAGE),
         "42353468231": (FAILED_WORKER_819_SOURCE, FAILED_WORKER_819_IMAGE),
+        "42368541950": (FAILED_WORKER_827_SOURCE, FAILED_WORKER_827_IMAGE),
     }
 )
 INSPECT = (

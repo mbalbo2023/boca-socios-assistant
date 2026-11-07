@@ -1,6 +1,32 @@
 # Safe operations — verified evidence and gated procedures
 
-## Vigente A45-R89 — formulario de preflight de una sola oportunidad (07/11/2026 ART)
+## Vigente A45-R90 — único inventario READ_ONLY permitido para #827 (07/11/2026 ART)
+
+El único preflight R89 [#827](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42368541950)
+falló `CLEANUP/STOP/ACK_MISMATCH/INDETERMINATE`: ninguna BETA integral
+instalada/aceptada, estado del probe/legacy posterior desconocido. **No
+reintentar el preflight**, otro `stop`, recuperación, PREPARE, GO_B ni APPLY.
+El diseño exacto [ADR0199](ADR/0199-r90-worker-827-exact-readonly-inventory.md)
+requiere PR, checks y revisión independiente antes de ejecutar siquiera
+la observación. Reutiliza la operación actual, sin nuevo workflow:
+
+| Input del formulario `Boca first deploy` | Valor posterior a merge R90 |
+| --- | --- |
+| `operation` | `cutover-a-worker-inspect` |
+| `protected_action_context` | `42368541950` |
+| `service` | `controller` |
+| `resource_budget` | `1.5cpu-1024m-192pids` |
+| `legacy_controller_id` | `27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793` |
+| `legacy_source_sha` | `cabce9f1e452e63ded115f447559a358dc0f4d1b` |
+| `legacy_image_ref` | `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:cf6e4266cfcfea0c07fa31301d59c7aaa3b9c2fefb9f6843baddd208cacd3b59` |
+
+Todos los demás inputs optativos deben estar **vacíos**, incluidos
+`source_sha`, `image_ref`, `browser_image_ref`, `release_run_id` y
+`legacy_release_run_id`. Acción de solo lectura y recibo
+`READ_ONLY_NO_GO`, aun si el probe está detenido. Nunca inferir del run
+#821 el CID del probe #827; la recuperación #823 sólo limpió al #819.
+
+## Guía técnica R89 para futuros preflights — NO habilita repetir #827 ni otro despacho R90
 
 R88 se integró por [PR #430](https://github.com/mbalbo2023/boca-socios-assistant/pull/430)
 en `main=15b25e753528651069323dc499b353359a5bc304`, árbol
