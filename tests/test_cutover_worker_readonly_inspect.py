@@ -35,10 +35,13 @@ def _fake_docker_process(
 
     def spawn(argv: tuple[str, ...], **kwargs: object) -> subprocess.Popen[bytes]:
         calls.append(argv)
-        assert argv[0] == "docker"
+        assert argv[0] == "/usr/bin/docker"
         env = kwargs["env"]
         assert isinstance(env, dict)
         assert env["DOCKER_HOST"] == "unix:///run/user/10001/docker.sock"
+        assert env["PATH"] == "/usr/bin:/bin"
+        assert env["XDG_RUNTIME_DIR"] == "/run/user/10001"
+        assert set(env) == {"DOCKER_HOST", "XDG_RUNTIME_DIR", "PATH", "LANG"}
         assert all(not key.startswith("DOCKER_") for key in env if key != "DOCKER_HOST")
         child = real_popen((sys.executable, "-c", script), **kwargs)
         children.append(child)
@@ -358,7 +361,7 @@ def test_docker_command_allowlist_and_exact_rootless_socket(
 ) -> None:
     calls, children = _fake_docker_process(monkeypatch, f"print('{PROBE_ID}')")
     assert observer._named_id(f"{observer.PREFIX}{ATTEMPT}") == PROBE_ID
-    assert calls[0][:3] == ("docker", "ps", "-a")
+    assert calls[0][:3] == ("/usr/bin/docker", "ps", "-a")
     observer._docker("inspect", "--format", observer.INSPECT_NO_HEALTH, PROBE_ID)
     observer._docker("inspect", "--format", observer.INSPECT_FULL_JSON_LENGTH, PROBE_ID)
     assert calls[1][3] == observer.INSPECT_NO_HEALTH
@@ -380,7 +383,7 @@ def test_full_json_size_query_is_bounded_to_exact_cid(
 ) -> None:
     actual, children = _fake_docker_process(monkeypatch, "print('65536')")
     assert observer._full_json_length(PROBE_ID) == 65536
-    assert actual == [("docker", "inspect", "--format", "{{len (json .)}}", PROBE_ID)]
+    assert actual == [("/usr/bin/docker", "inspect", "--format", "{{len (json .)}}", PROBE_ID)]
     assert children[0].poll() == 0
 
 

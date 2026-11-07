@@ -116,7 +116,7 @@ jobs:
           # exact CID is removed by this same step, including on failures.
           fixture_id=""
           cleanup_fixture() {
-            if [[ -n "$fixture_id" ]]; then
+            if [[ -n "$fixture_id" ]] && docker container inspect "$fixture_id" > /dev/null 2>&1; then
               docker container rm "$fixture_id" > /dev/null
             fi
           }
@@ -129,6 +129,7 @@ jobs:
             "$BOCA_BROWSER_TAG")"
           python3 - "$fixture_id" <<'PY'
           import json
+          import os
           import subprocess
           import sys
 
@@ -149,6 +150,20 @@ jobs:
           ).stdout.strip()
           assert size.isdecimal() and 0 < int(size) < 10**9
           print("BOCA_WORKER_DOCKER_TEMPLATE state=PASS health=ABSENT observer_writes=0 inspect_json=REDACTED")
+          # Exercise the exact stopped-only Docker primitive used by R79,
+          # strictly on this disposable CI fixture (never the pinned host CID).
+          removed = subprocess.run(
+              ("docker", "container", "rm", cid),
+              check=True, capture_output=True, text=True, timeout=12,
+          )
+          assert removed.stdout.strip() == cid
+          for selector in (f"id={cid}", f"name=^/{os.environ['BOCA_DOCKER_FIXTURE_NAME']}$"):
+              absent = subprocess.run(
+                  ("docker", "ps", "-a", "-q", "--no-trunc", "--filter", selector),
+                  check=True, capture_output=True, text=True, timeout=12,
+              )
+              assert absent.stdout.strip() == ""
+          print("BOCA_WORKER_RECOVERY_DOCKER state=PASS removed=EXACT_CID post=ABSENT runner=EPHEMERAL")
           PY
       - name: Measure one offline Chromium startup under resource caps
         run: >-

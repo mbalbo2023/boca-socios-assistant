@@ -1,6 +1,31 @@
 # Boca Socios Assistant
 
-## Estado A45-R78 — observación diferencial candidata (07/11/2026 ART)
+## Estado A45-R79 — recuperación exacta del probe detenido (07/11/2026 ART)
+
+La [Action #802 / 42337103473](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42337103473)
+confirmó bajo el socket Docker rootless Boca que el contenedor temporal del
+preflight fallido #795 **existe, está detenido**, tiene identidad histórica
+coincidente y JSON bajo el límite de inspección; su seccomp temporal está
+ausente. El controlador anterior conserva el CID atestado, salud y el puerto
+único `127.0.0.1:8443`. El diagnóstico fue **READ_ONLY_NO_GO**, no hizo limpieza.
+
+R79 desarrolla una operación manual separada `cutover-a-worker-recover`,
+protegida por GitHub Actions, para **un solo** `docker container rm` del CID
+histórico completo, únicamente tras dos inspecciones frescas de identidad,
+aislamiento y legacy saludable. Todo fallo previo impide tocar el contenedor;
+un resultado posterior ambiguo prohíbe reintentar a ciegas. Un identificador
+único de ejecución y su historia de Actions bloquean un segundo dispatch, aun
+desde otro SHA. El transporte es
+un ZIP mínimo SHA256/memfd con allowlist separada, sin agrandar el bundle de
+Cutover. [ADR0188](docs/ADR/0188-exact-stopped-worker-recovery.md) define
+alcance, límites, evidencia y siguiente cadena de gates.
+
+**Estado actual:** corrección R79 CODE_ONLY, pendiente CI/revisión y recibo
+físico. No se declara limpieza verificada, Cutover autorizado ni BETA instalada.
+La autorización previa del propietario continúa vigente; no se alteran otras
+aplicaciones, Docker ajenos o los dos módulos de navegador BLACKBOX.
+
+## Histórico A45-R78 — observación diferencial candidata (07/11/2026 ART)
 
 `main=0f5f0542364777a2926583f2c5dbd3fd25dfa31f` era la referencia al
 iniciar R78; **este párrafo no certifica el SHA actual ni un deploy nuevo**.

@@ -149,9 +149,26 @@ def _docker(*args: str) -> str:
         and CONTAINER_ID.fullmatch(args[3]) is not None
     ):
         raise InspectError("DOCKER_COMMAND")
-    env = {key: value for key, value in os.environ.items() if not key.startswith("DOCKER_")}
-    env["DOCKER_HOST"] = f"unix://{SOCKET}"
-    command = ("docker", *args)
+    return _run_bounded(("docker", *args))
+
+
+def _run_bounded(command: tuple[str, ...], *, stdout_limit: int = DOCKER_OUTPUT_LIMIT) -> str:
+    """Rootless, no-shell, byte/deadline-bounded subprocess shared by guarded callers.
+
+    The public observer still passes through `_docker`'s READ_ONLY allowlist.
+    The recovery module separately pins the *only* allowed Docker write.
+    """
+    if not command or command[0] != "docker" or not 0 < stdout_limit <= 65535:
+        raise InspectError("DOCKER_COMMAND")
+    env = {
+        "DOCKER_HOST": f"unix://{SOCKET}",
+        "XDG_RUNTIME_DIR": str(RUNTIME),
+        "PATH": "/usr/bin:/bin",
+        "LANG": "C",
+    }
+    # Rootless Docker is installed at this reviewed host path. A caller's PATH
+    # or Docker context/credentials can never select a different executable.
+    command = ("/usr/bin/docker", *command[1:])
     started = time.monotonic()
     process = subprocess.Popen(  # noqa: S603 - narrow READ_ONLY Docker metadata
         command,  # noqa: S607 - pinned rootless Docker socket, no shell
@@ -176,11 +193,11 @@ def _docker(*args: str) -> str:
                 if not ready:
                     raise subprocess.TimeoutExpired(command, DOCKER_TIMEOUT_SECONDS)
                 for key, _event in ready:
-                    chunk = os.read(key.fd, DOCKER_OUTPUT_LIMIT + 1)
+                    chunk = os.read(key.fd, max(stdout_limit, DOCKER_OUTPUT_LIMIT) + 1)
                     if not chunk:
                         selector.unregister(key.fileobj)
                     elif key.fileobj is process.stdout:
-                        if len(output) + len(chunk) > DOCKER_OUTPUT_LIMIT:
+                        if len(output) + len(chunk) > stdout_limit:
                             raise InspectError("DOCKER_BOUNDS")
                         output.extend(chunk)
                     else:

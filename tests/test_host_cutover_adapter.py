@@ -833,6 +833,8 @@ def test_workflow_cutover_apply_requires_separate_go_and_legacy_release_proof() 
         "cutover-a-observe",
         # R76 one exact failed preflight metadata-only inspection, no GO.
         "cutover-a-worker-inspect",
+        # R79 one exact stopped-only recovery; no automatic worker preflight or Cutover.
+        "cutover-a-worker-recover",
         # P0 rootless/GHCR image probe is a distinct, non-GO transaction.
         "cutover-a-worker-preflight",
         "cutover-a-apply",
