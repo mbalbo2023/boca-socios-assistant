@@ -2287,7 +2287,7 @@ jobs:
           assert incident["repository"]["full_name"] == "mbalbo2023/boca-socios-assistant"
           assert incident["actor"]["login"] == "mbalbo2023"
           assert incident["display_title"] == "BOCA-SIMULATION-DEPLOY-V3"
-          assert incident["path"].startswith(".github/workflows/boca-first-deploy.yml@")
+          assert incident["path"] == ".github/workflows/boca-first-deploy.yml"
           with open(os.environ["GITHUB_ENV"], "a", encoding="ascii") as output:
               output.write(f"BOCA_INCIDENT_SOURCE_SHA={expected_sha}\n")
           print("BOCA_V3_INCIDENT state=ATTESTED incident=42405706503"

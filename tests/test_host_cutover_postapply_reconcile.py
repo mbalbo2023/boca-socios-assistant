@@ -488,8 +488,11 @@ def test_v3_postapply_reconcile_without_prepare_is_readonly_and_source_bound(
     monkeypatch.setattr(
         reconcile,
         "_staged_attempt",
-        lambda attempt: {"stage": "PRESENT", "promotion_intent": "ABSENT",
-                         "promotion_result": "ABSENT"},
+        lambda attempt: {
+            "stage": "PRESENT",
+            "promotion_intent": "ABSENT",
+            "promotion_result": "ABSENT",
+        },
     )
 
     record = reconcile._host(RUN, None, source_sha=TARGET_SHA)
@@ -507,7 +510,7 @@ def test_v3_postapply_reconcile_without_prepare_is_readonly_and_source_bound(
     assert reconcile.verify_runner(raw, RUN, None, source_sha=TARGET_SHA) == record
     with pytest.raises(reconcile.ReconcileError, match="RECEIPT_CONTRACT"):
         reconcile.verify_runner(raw, RUN, None, source_sha="e" * 40)
-    with pytest.raises(reconcile.ReconcileError, match="RUN_ID"):
+    with pytest.raises(reconcile.ReconcileError, match="RECEIPT_CONTRACT"):
         reconcile.verify_runner(raw, RUN, PREPARE)
     with pytest.raises(reconcile.ReconcileError, match="V3_SOURCE_MISMATCH"):
         reconcile._host(RUN, None, source_sha="e" * 40)
