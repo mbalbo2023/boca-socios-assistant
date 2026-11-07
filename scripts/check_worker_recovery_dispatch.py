@@ -26,6 +26,16 @@ R82_WITNESS_ID = 42342822240
 R82_WITNESS_SHA = "8146ab94c1fedf02fbe0ba14e225bbce61339044"
 R82_WITNESS_JOB = 128314064855
 R82_RELEASE_ID = 42340930071
+R87_TITLE = "BOCA-R87-WORKER-819-RECOVER-ONCE"
+R87_FAILED_TITLE = "BOCA-R84-WORKER-PREFLIGHT-ONCE"
+R87_WITNESS_TITLE = "BOCA-R86-WORKER-819-READONLY"
+R87_FAILED_ID = 42353468231
+R87_FAILED_SHA = "0538b3fb29cc0245a8387b7023c394883d0ea9a8"
+R87_FAILED_JOB = 128346380462
+R87_WITNESS_ID = 42355552701
+R87_WITNESS_SHA = "2859b9d31621e3cbec70b1aec649cc281ba130f5"
+R87_WITNESS_JOB = 128352753886
+R87_RELEASE_ID = 42352641660
 R80_RECOVERY_ID = 42340750343
 PRIOR_ID = 42339451485
 PRIOR_SHA = "d9100c6c4666c61ba66fbbefa48e61102a20ce5d"
@@ -314,7 +324,10 @@ def _r82_jobs(
     job_id: int,
     conclusion: str,
     executed: dict[int, tuple[str, str]],
+    step_numbers: list[int] | None = None,
 ) -> None:
+    if step_numbers is None:
+        step_numbers = PRIOR_STEP_NUMBERS
     _expect(isinstance(receipt, dict))
     jobs = receipt.get("jobs")
     _expect(
@@ -347,9 +360,9 @@ def _r82_jobs(
     steps = job.get("steps")
     _expect(
         isinstance(steps, list)
-        and len(steps) == len(PRIOR_STEP_NUMBERS)
+        and len(steps) == len(step_numbers)
         and all(isinstance(step, dict) for step in steps)
-        and [step.get("number") for step in steps] == PRIOR_STEP_NUMBERS
+        and [step.get("number") for step in steps] == step_numbers
     )
     for step in steps:
         number = step["number"]
@@ -410,19 +423,166 @@ def verify_r82(paths: list[str], *, run_id: int, source: str) -> None:
     )
 
 
+# The genuine #819 and #821 manual jobs were recorded with 1..154 and
+# 308/309. These are historical REST facts: never infer them from a new
+# workflow layout or weaken the R82 job contract.
+R87_STEP_NUMBERS = [*range(1, 155), 308, 309]
+R87_COMMON = {
+    number: (name, "success")
+    for number, name in {
+        1: "Set up job",
+        5: "Require verified protected environment and matching main commit",
+        6: "Reject legacy install routes without same-lease Boca-only postflight",
+        7: "Checkout exact main commit without persisted credentials",
+        8: "Confirm current main HEAD before host access",
+        19: "Hash reviewed Boca Compose file",
+        36: "Configure pinned SSH host key and dedicated identity",
+        308: "Post Checkout exact main commit without persisted credentials",
+        309: "Complete job",
+    }.items()
+}
+R87_FAILED_EXECUTED = {
+    **R87_COMMON,
+    **{
+        number: (name, "success")
+        for number, name in {
+            10: "Validate immutable inputs and successful matching release",
+            11: "Require same-run immutable browser companion release manifest",
+            18: "Authenticate separate historical controller release and original Compose file",
+            20: "Hash reviewed served BETA Compose file",
+            21: "Hash reviewed optional browser IPC overlay and seccomp",
+            24: "Validate exact optional dual-service IPC Compose model before SSH",
+            58: "Require one unique R84 worker preflight dispatch before SSH",
+        }.items()
+    },
+    59: ("Preflight exact dual GHCR image and rootless worker boundary without PREPARE", "failure"),
+    60: ("Require exact Boca rootless worker preflight receipt and bounded cleanup", "failure"),
+}
+R87_WITNESS_EXECUTED = {
+    **R87_COMMON,
+    42: ("Inspect one failed Boca worker probe READ_ONLY by exact identity", "success"),
+}
+
+
+def _r87_history(history: Any, *, run_id: int, source: str) -> None:
+    """One global R87 marker, not one attempt per different main SHA."""
+    _expect(isinstance(history, dict))
+    runs = history.get("workflow_runs")
+    total = history.get("total_count")
+    _expect(
+        type(total) is int
+        and 3 <= total <= 100
+        and isinstance(runs, list)
+        and len(runs) == total
+        and all(isinstance(item, dict) for item in runs)
+    )
+    for title, expected_id, expected_sha in (
+        (R87_FAILED_TITLE, R87_FAILED_ID, R87_FAILED_SHA),
+        (R87_WITNESS_TITLE, R87_WITNESS_ID, R87_WITNESS_SHA),
+        (R87_TITLE, run_id, source),
+    ):
+        matched = [item for item in runs if item.get("display_title") == title]
+        _expect(len(matched) == 1)
+        item = matched[0]
+        actor = item.get("actor")
+        _expect(
+            type(item.get("id")) is int
+            and item["id"] == expected_id
+            and item.get("event") == "workflow_dispatch"
+            and item.get("head_branch") == "main"
+            and item.get("head_sha") == expected_sha
+            and type(item.get("run_attempt")) is int
+            and item["run_attempt"] == 1
+            and isinstance(actor, dict)
+            and actor.get("login") == "mbalbo2023"
+        )
+        if title == R87_TITLE:
+            _expect(
+                item.get("status") in {"in_progress", "queued", "waiting", "pending"}
+                and item.get("conclusion") is None
+            )
+        else:
+            _expect(
+                item.get("status") == "completed"
+                and item.get("conclusion")
+                == ("failure" if title == R87_FAILED_TITLE else "success")
+            )
+
+
+def verify_r87(paths: list[str], *, run_id: int, source: str) -> None:
+    """Attest #819 failed, #821 read-only, #732 release and unique R87 BEFORE SSH."""
+    _expect(len(paths) == 7 and type(run_id) is int and run_id > 0)
+    _expect(
+        type(source) is str and len(source) == 40 and all(c in "0123456789abcdef" for c in source)
+    )
+    prs, failed, witness, release, history, failed_jobs, witness_jobs = [
+        _read_json(path, maximum=131072 if index in (5, 6) else 32768)
+        for index, path in enumerate(paths)
+    ]
+    _expect(prs == [])
+    _run(
+        failed,
+        number=R87_FAILED_ID,
+        source=R87_FAILED_SHA,
+        conclusion="failure",
+        workflow=DEPLOY,
+        title=R87_FAILED_TITLE,
+    )
+    _run(
+        witness,
+        number=R87_WITNESS_ID,
+        source=R87_WITNESS_SHA,
+        conclusion="success",
+        workflow=DEPLOY,
+        title=R87_WITNESS_TITLE,
+    )
+    _run(
+        release,
+        number=R87_RELEASE_ID,
+        source=R87_FAILED_SHA,
+        conclusion="success",
+        workflow=RELEASE,
+    )
+    _r87_history(history, run_id=run_id, source=source)
+    _r82_jobs(
+        failed_jobs,
+        run_id=R87_FAILED_ID,
+        job_id=R87_FAILED_JOB,
+        conclusion="failure",
+        executed=R87_FAILED_EXECUTED,
+        step_numbers=R87_STEP_NUMBERS,
+    )
+    _r82_jobs(
+        witness_jobs,
+        run_id=R87_WITNESS_ID,
+        job_id=R87_WITNESS_JOB,
+        conclusion="success",
+        executed=R87_WITNESS_EXECUTED,
+        step_numbers=R87_STEP_NUMBERS,
+    )
+
+
 def main(argv: list[str]) -> int:
     try:
         _expect(os.environ.get("GITHUB_RUN_ID", "").isdigit())
         run_id = int(os.environ["GITHUB_RUN_ID"])
         source = os.environ["GITHUB_SHA"]
-        if len(argv) > 1 and argv[1] == "--r82":
+        if len(argv) > 1 and argv[1] == "--r87":
+            verify_r87(argv[2:], run_id=run_id, source=source)
+        elif len(argv) > 1 and argv[1] == "--r82":
             verify_r82(argv[2:], run_id=run_id, source=source)
         else:
             verify(argv[1:], run_id=run_id, source=source)
     except (OSError, UnicodeError, ValueError, TypeError, KeyError, json.JSONDecodeError):
         print("BOCA_WORKER_RECOVERY_GATE state=NO_GO reason=UNVERIFIED")
         return 1
-    if len(argv) > 1 and argv[1] == "--r82":
+    if len(argv) > 1 and argv[1] == "--r87":
+        print(
+            "BOCA_WORKER_RECOVERY_GATE state=PASS incident=42353468231 "
+            "witness=42355552701 release=42352641660 open_prs=0 "
+            "dispatch=UNIQUE_R87 main=VERIFIED prior=READ_ONLY_NO_EFFECT host_writes=0"
+        )
+    elif len(argv) > 1 and argv[1] == "--r82":
         print(
             "BOCA_WORKER_RECOVERY_GATE state=PASS incident=42341290485 "
             "witness=42342822240 release=42340930071 open_prs=0 "

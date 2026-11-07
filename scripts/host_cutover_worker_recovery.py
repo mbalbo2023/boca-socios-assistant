@@ -1,4 +1,4 @@
-"""One-shot, stopped-only recovery of two separately gated Boca incidents.
+"""One-shot, stopped-only recovery of three separately gated Boca incidents.
 
 No free-form Docker target, mutable input, stop/force/volume/image operation,
 or Cutover authorization exists in this module. The only possible container
@@ -59,10 +59,22 @@ TARGET_807 = RecoveryTarget(
     LEGACY_SOURCE,
     LEGACY_IMAGE,
 )
+TARGET_819 = RecoveryTarget(
+    "42353468231",
+    "4c2c40eaa7183e83440792466e844093a29c8b977e72c098c7be6a469f066547",
+    "0538b3fb29cc0245a8387b7023c394883d0ea9a8",
+    (
+        "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
+        "d740c610d032aa20fecff1602cc96e49fd63c597c49855990a9bc081a6998619"
+    ),
+    LEGACY_ID,
+    LEGACY_SOURCE,
+    LEGACY_IMAGE,
+)
 
 
 def _known_target(target: RecoveryTarget) -> None:
-    if target is not TARGET_795 and target is not TARGET_807:
+    if target is not TARGET_795 and target is not TARGET_807 and target is not TARGET_819:
         raise RecoveryError("UNREVIEWED_TARGET")
 
 
@@ -187,7 +199,9 @@ def _inspect_full_exact(cid: str, target: RecoveryTarget = TARGET_795) -> dict[s
 def _validate_isolation(
     record: dict[str, Any], profile: bytes, target: RecoveryTarget = TARGET_795
 ) -> None:
-    if target is TARGET_807 and hashlib.sha256(profile).hexdigest() != SECCOMP_SHA256:
+    if (target is TARGET_807 or target is TARGET_819) and hashlib.sha256(
+        profile
+    ).hexdigest() != SECCOMP_SHA256:
         raise RecoveryError("PROFILE_SHA_MISMATCH")
     config = record.get("Config")
     host = record.get("HostConfig")
@@ -359,15 +373,19 @@ def verify_runner(raw: bytes, target: RecoveryTarget = TARGET_795) -> dict[str, 
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     try:
-        if args in (["host"], ["host-807"]):
-            result = execute(TARGET_807 if args == ["host-807"] else TARGET_795)
+        host_targets = {"host": TARGET_795, "host-807": TARGET_807, "host-819": TARGET_819}
+        verify_targets = {
+            "verify": TARGET_795,
+            "verify-807": TARGET_807,
+            "verify-819": TARGET_819,
+        }
+        if len(args) == 1 and args[0] in host_targets:
+            result = execute(host_targets[args[0]])
             sys.stdout.buffer.write(observer.canonical(result) + b"\n")
             return 0 if result["cleanup"] == "VERIFIED" else 3
-        if len(args) == 2 and args[0] in {"verify", "verify-807"}:
+        if len(args) == 2 and args[0] in verify_targets:
             with Path(args[1]).open("rb") as file:
-                verify_runner(
-                    file.read(1025), TARGET_807 if args[0] == "verify-807" else TARGET_795
-                )
+                verify_runner(file.read(1025), verify_targets[args[0]])
             print("BOCA_WORKER_RECOVERY_VERIFIED")
             return 0
     except (OSError, ValueError, TypeError, UnicodeError):

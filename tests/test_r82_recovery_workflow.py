@@ -27,7 +27,7 @@ SOURCE = "b" * 40
 RUN_ID = "99999999999"
 GATE_STEP = "Require exact 807/809 evidence and zero open PRs before recovery SSH"
 INPUT_STEP = "Require verified protected environment and matching main commit"
-HOST_STEP = "Recover only the stopped exact 795 or 807 worker probe under Boca lease"
+HOST_STEP = "Recover only the stopped exact 795 807 or 819 worker probe under Boca lease"
 VERIFY_STEP = "Require exact terminal worker recovery receipt on every outcome"
 REPO = "mbalbo2023/boca-socios-assistant"
 
@@ -344,9 +344,12 @@ def test_r82_terminal_verifier_denies_missing_or_forged_receipts_without_retry(
 ) -> None:
     body = _step_bash(VERIFY_STEP)
     assert "docker " not in body and "ssh " not in body
+    private = tmp_path / "boca-worker-recovery.abcdefgh"
+    private.mkdir(mode=0o700)
+    receipt = private / "receipt"
     if host_outcome == "success":
         # A forged/partial receipt can never certify the #807 host mutation.
-        (tmp_path / "boca-worker-recovery.receipt.json").write_text(
+        receipt.write_text(
             '{"version":"boca-worker-recovery-v1","status":"CLEANED"}',
             encoding="utf-8",
         )
@@ -354,6 +357,7 @@ def test_r82_terminal_verifier_denies_missing_or_forged_receipts_without_retry(
     env.update(
         RUNNER_TEMP=str(tmp_path),
         GITHUB_STEP_SUMMARY=str(tmp_path / "summary.md"),
+        BOCA_WORKER_RECOVERY_RECEIPT=str(receipt),
         BOCA_WORKER_RECOVERY_HOST_OUTCOME=host_outcome,
         PYTHONPATH="src:.",
     )
@@ -373,6 +377,7 @@ def test_r82_terminal_verifier_denies_missing_or_forged_receipts_without_retry(
     assert "retry=NO_GO cutover=NO_GO" in summary
     assert "state=CLEANED" not in summary
     assert not (tmp_path / "boca-worker-recovery.verified.json").exists()
+    assert not receipt.exists() and not private.exists()
 
 
 def test_pull_request_cannot_enter_protected_deploy_or_issue_host_receipt() -> None:
