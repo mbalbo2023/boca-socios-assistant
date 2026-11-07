@@ -57,6 +57,11 @@ R101_FULL_CUTOVER_SHA = "4509410ee64a6108649402a8ef2a0038b6847fd9965917452c49497
 V3_STAGE_RECOVERY_FULL_CUTOVER_SHA = (
     "8fd17dc5e6fcebabc4fe051c7ef0ed6fb662c734b694f9619b3fe2ebcca4bf73"
 )
+# R103: the reviewed read-only postapply inventory helper enters the host ZIP.
+# Historical V3 Stage recovery checksum above remains unchanged.
+R103_CLEANUP_INVENTORY_FULL_CUTOVER_SHA = (
+    "f63434d671ff55d3d71ffb0d73dc97cecbdc0b1f13ad58066461e52fe57d40ef"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -214,7 +219,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == V3_STAGE_RECOVERY_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R103_CLEANUP_INVENTORY_FULL_CUTOVER_SHA
+    assert digest != V3_STAGE_RECOVERY_FULL_CUTOVER_SHA
     assert digest != R101_FULL_CUTOVER_SHA
     assert digest != R83_FULL_CUTOVER_SHA  # historical pin retained, explicitly superseded
     assert digest != R81_FULL_CUTOVER_SHA

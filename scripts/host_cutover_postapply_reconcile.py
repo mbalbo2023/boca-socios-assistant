@@ -640,6 +640,48 @@ def verify_runner(
     return record
 
 
+def verified_cleanup_legacy_id(raw: bytes, run_id: str, coordinate: str, *, v3: bool) -> str:
+    """Resolve only the restored Boca CID from a verified post-Cutover receipt.
+
+    `coordinate` is the authenticated incident SHA for V3; legacy v1 instead
+    receives its PREPARE run. This never promotes or deletes Docker resources.
+    """
+    if type(v3) is not bool:
+        raise ReconcileError("CLEANUP_RECEIPT_VERSION")
+    receipt = verify_runner(
+        raw,
+        run_id,
+        None if v3 else coordinate,
+        source_sha=coordinate if v3 else None,
+    )
+    original = receipt.get("original")
+    legacy_id = receipt.get("legacy_id")
+    if (
+        receipt.get("intent") != "PRESENT"
+        or receipt.get("result") != "PRESENT"
+        or receipt.get("original_restored") is not True
+        or receipt.get("commit_started") is not False
+        or type(original) is not dict
+        or type(legacy_id) is not str
+        or IDENT.fullmatch(legacy_id) is None
+        or original.get("id") != legacy_id
+        or original.get("running") is not True
+        or original.get("health") != "healthy"
+    ):
+        raise ReconcileError("CLEANUP_ORIGINAL_UNVERIFIED")
+    if v3 and (
+        receipt.get("terminal_state") != "NO_GO"
+        or receipt.get("cleanup") != "INDETERMINATE"
+        or receipt.get("port_8443") != "BOCA_CONTROLLER_DOCKER_BOUND"
+        or original.get("name") != "/boca-socios-controller-1"
+        or original.get("service") != "controller"
+        or original.get("port_binding")
+        != {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
+    ):
+        raise ReconcileError("CLEANUP_V3_ORIGINAL_UNVERIFIED")
+    return legacy_id
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if len(args) != 3 or args[0] not in ("host", "verify", "host-v3", "verify-v3"):

@@ -991,7 +991,7 @@ def test_postapply_cleanup_workflow_uses_existing_only_readonly_dispatch() -> No
     )[0]
     assert "if: inputs.operation == 'cutover-a-reconcile'" in block
     assert "< src/boca_socios/host_boca_cleanup.py" in block
-    assert "host_cutover_postapply_reconcile import verify_runner" in block
+    assert "host_cutover_postapply_reconcile import verified_cleanup_legacy_id" in block
     assert "src/boca_socios/host_boca_cleanup.py verify" in block
     assert "cleanup_executed=false" in block
     assert not any(

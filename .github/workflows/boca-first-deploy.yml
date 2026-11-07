@@ -2355,33 +2355,26 @@ jobs:
               summary.write("```\n</details>\n")
           PY
       - name: Plan Boca-only Docker cleanup READ_ONLY without deleting resources
-        # Legacy planner requires PREPARE. V3 #853 has no PREPARE; preserve all
-        # resources until the exact read-only physical inventory is evaluated.
-        if: inputs.operation == 'cutover-a-reconcile' && inputs.protected_action_context != '42405706503'
+        # Reuse the same Boca-only planner for legacy PREPARE and V3 incidents.
+        # V3 binds source SHA to the authenticated GitHub incident above;
+        # neither protocol can supply a caller-selected legacy CID.
+        if: inputs.operation == 'cutover-a-reconcile'
         run: |
           set -euo pipefail
           # Reuse the existing protected, exact-incident reconciliation. Never
           # accept an arbitrary caller-supplied container ID or broad scan.
-          legacy_id="$(python3 - "$BOCA_PROTECTED_ACTION_CONTEXT" "$BOCA_INCIDENT_PREPARE_RUN_ID" "$RUNNER_TEMP/boca-cutover-postapply-reconcile.json" <<'PY'
+          legacy_id="$(python3 - "$BOCA_PROTECTED_ACTION_CONTEXT" "$BOCA_INCIDENT_PREPARE_RUN_ID" "${BOCA_INCIDENT_SOURCE_SHA:-}" "$RUNNER_TEMP/boca-cutover-postapply-reconcile.json" <<'PY'
           import sys
           from pathlib import Path
-          from scripts.host_cutover_postapply_reconcile import verify_runner
+          from scripts.host_cutover_postapply_reconcile import verified_cleanup_legacy_id
 
-          incident, prepared, path = sys.argv[1:]
-          receipt = verify_runner(Path(path).read_bytes(), incident, prepared)
-          original = receipt.get("original")
-          if (
-              receipt.get("intent") != "PRESENT"
-              or receipt.get("result") != "PRESENT"
-              or receipt.get("original_restored") is not True
-              or receipt.get("commit_started") is not False
-              or type(original) is not dict
-              or original.get("id") != receipt.get("legacy_id")
-              or original.get("running") is not True
-              or original.get("health") != "healthy"
-          ):
-              raise SystemExit("NO_GO: original Boca controller is not positively restored")
-          print(original["id"])
+          incident, prepared, source, path = sys.argv[1:]
+          if bool(prepared) == bool(source):
+              raise SystemExit("NO_GO: Cutover cleanup observer protocol ambiguous")
+          print(verified_cleanup_legacy_id(
+              Path(path).read_bytes(), incident, source if source else prepared,
+              v3=bool(source),
+          ))
           PY
           )"
           [[ "$legacy_id" =~ ^[0-9a-f]{64}$ ]]
