@@ -139,11 +139,152 @@ def test_daemon_failure_is_reported_without_fabricated_absence(
         raise subprocess.CalledProcessError(1, ["docker", "ps"])
 
     monkeypatch.setattr(observer, "_named_id", failed)
+    monkeypatch.setattr(observer, "_inspect_id", lambda _cid: _original())
     record = observer.observe(ATTEMPT, LEGACY_ID, LEGACY_SHA, LEGACY_IMAGE)
-    assert record["docker"] == "READ_FAILED"
+    assert record["docker"] == "PARTIAL"
+    assert record["probe_list_stage"] == "COMMAND_FAILED"
+    assert record["probe_list_rc"] == 1
     assert record["probe"] == "UNVERIFIED"
-    assert record["original"] == "UNVERIFIED"
+    assert record["original"] == "RUNNING_HEALTHY"
     observer.verify(observer.canonical(record) + b"\n", ATTEMPT, LEGACY_ID)
+
+
+def test_failed_probe_inspect_preserves_candidate_and_original_and_redacts_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _rootless(monkeypatch)
+    monkeypatch.setattr(observer, "_named_id", lambda _name: PROBE_ID)
+
+    def inspect(cid: str) -> dict[str, object]:
+        if cid == PROBE_ID:
+            raise subprocess.CalledProcessError(1, ["docker", "inspect"], stderr="SECRET_MARKER")
+        return _original()
+
+    monkeypatch.setattr(observer, "_inspect_id", inspect)
+    minimal: list[str] = []
+
+    def basic(cid: str) -> str:
+        minimal.append(cid)
+        return "ID_CONFIRMED"
+
+    monkeypatch.setattr(observer, "_basic_probe", basic)
+    record = observer.observe(ATTEMPT, LEGACY_ID, LEGACY_SHA, LEGACY_IMAGE)
+    assert record["docker"] == "PARTIAL"
+    assert record["probe_candidate_id"] == PROBE_ID
+    assert record["probe_id"] is None
+    assert record["probe"] == "PRESENT_UNVERIFIED"
+    assert record["probe_inspect_stage"] == "COMMAND_FAILED"
+    assert record["probe_inspect_rc"] == 1
+    assert record["probe_basic_stage"] == "ID_CONFIRMED"
+    assert record["original"] == "RUNNING_HEALTHY"
+    assert record["original_port"] == "LOOPBACK_8443"
+    assert record["original_inspect_stage"] == "OK"
+    assert minimal == [PROBE_ID]
+    raw = observer.canonical(record) + b"\n"
+    assert b"SECRET_MARKER" not in raw
+    assert observer.verify(raw, ATTEMPT, LEGACY_ID) == record
+
+
+def test_probe_attested_but_original_inspect_fails_independently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _rootless(monkeypatch)
+    monkeypatch.setattr(observer, "_named_id", lambda _name: PROBE_ID)
+
+    def inspect(cid: str) -> dict[str, object]:
+        if cid == LEGACY_ID:
+            raise subprocess.CalledProcessError(125, ["docker", "inspect"])
+        return _probe()
+
+    monkeypatch.setattr(observer, "_inspect_id", inspect)
+    monkeypatch.setattr(observer, "_basic_probe", lambda _cid: "ID_UNVERIFIED")
+    record = observer.observe(ATTEMPT, LEGACY_ID, LEGACY_SHA, LEGACY_IMAGE)
+    assert record["probe"] == "PRESENT_LABEL_MATCH"
+    assert record["probe_id"] == PROBE_ID
+    assert record["original"] == "UNVERIFIED"
+    assert record["original_inspect_stage"] == "COMMAND_FAILED"
+    assert record["original_inspect_rc"] == 125
+    assert record["original_basic_stage"] == "ID_UNVERIFIED"
+    observer.verify(observer.canonical(record) + b"\n", ATTEMPT, LEGACY_ID)
+
+
+def test_probe_lookup_ambiguous_still_inspects_original(monkeypatch: pytest.MonkeyPatch) -> None:
+    _rootless(monkeypatch)
+    monkeypatch.setattr(
+        observer,
+        "_named_id",
+        lambda _name: (_ for _ in ()).throw(observer.InspectError("PROBE_SET")),
+    )
+    monkeypatch.setattr(observer, "_inspect_id", lambda _cid: _original())
+    record = observer.observe(ATTEMPT, LEGACY_ID, LEGACY_SHA, LEGACY_IMAGE)
+    assert record["probe_list_stage"] == "METADATA_INVALID"
+    assert record["probe_candidate_id"] is None
+    assert record["original"] == "RUNNING_HEALTHY"
+    observer.verify(observer.canonical(record) + b"\n", ATTEMPT, LEGACY_ID)
+
+
+def test_timeout_does_not_trigger_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    _rootless(monkeypatch)
+    monkeypatch.setattr(observer, "_named_id", lambda _name: PROBE_ID)
+
+    def inspect(cid: str) -> dict[str, object]:
+        if cid == PROBE_ID:
+            raise subprocess.TimeoutExpired(["docker", "inspect"], 12)
+        return _original()
+
+    monkeypatch.setattr(observer, "_inspect_id", inspect)
+    monkeypatch.setattr(
+        observer, "_basic_probe", lambda _cid: pytest.fail("fallback after timeout")
+    )
+    record = observer.observe(ATTEMPT, LEGACY_ID, LEGACY_SHA, LEGACY_IMAGE)
+    assert record["probe_inspect_stage"] == "TIMEOUT"
+    assert record["probe_basic_stage"] == "SKIPPED"
+    assert record["original"] == "RUNNING_HEALTHY"
+
+
+def test_both_rich_fail_then_bounded_minimal_in_original_last_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _rootless(monkeypatch)
+    seen: list[str] = []
+
+    def lookup(_name: str) -> str:
+        seen.append("list")
+        return PROBE_ID
+
+    def rich(cid: str) -> dict[str, object]:
+        seen.append(f"rich:{cid}")
+        raise subprocess.CalledProcessError(1, ["docker", "inspect"])
+
+    def basic(cid: str) -> str:
+        seen.append(f"basic:{cid}")
+        return "ID_CONFIRMED"
+
+    monkeypatch.setattr(observer, "_named_id", lookup)
+    monkeypatch.setattr(observer, "_inspect_id", rich)
+    monkeypatch.setattr(observer, "_basic_probe", basic)
+    record = observer.observe(ATTEMPT, LEGACY_ID, LEGACY_SHA, LEGACY_IMAGE)
+    assert seen == [
+        "list",
+        f"rich:{PROBE_ID}",
+        f"rich:{LEGACY_ID}",
+        f"basic:{PROBE_ID}",
+        f"basic:{LEGACY_ID}",
+    ]
+    assert record["probe_basic_stage"] == "ID_CONFIRMED"
+    assert record["original_basic_stage"] == "ID_CONFIRMED"
+    assert observer.verify(observer.canonical(record) + b"\n", ATTEMPT, LEGACY_ID) == record
+
+
+def test_unusual_docker_exit_code_is_categorized_not_leaked() -> None:
+    assert observer._failure(subprocess.CalledProcessError(-9, ["docker"])) == (
+        "COMMAND_FAILED",
+        255,
+    )
+    assert observer._failure(subprocess.CalledProcessError(900, ["docker"])) == (
+        "COMMAND_FAILED",
+        255,
+    )
 
 
 def test_socket_absent_never_queries_docker(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -207,6 +348,32 @@ def test_docker_command_allowlist_and_exact_rootless_socket(
     assert len(calls) == 1
 
 
+def test_minimal_inspect_fallback_accepts_only_same_cid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    actual: list[tuple[str, ...]] = []
+
+    def fake_run(argv: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        actual.append(argv)
+        assert kwargs["timeout"] == 10
+        return subprocess.CompletedProcess(argv, 0, stdout=LEGACY_ID + "\n", stderr="")
+
+    monkeypatch.setattr(observer.subprocess, "run", fake_run)
+    assert observer._basic_probe(LEGACY_ID) == "ID_CONFIRMED"
+    assert observer._basic_probe(PROBE_ID) == "ID_UNVERIFIED"
+    assert actual[0] == ("docker", "inspect", "--format", "{{.Id}}", LEGACY_ID)
+
+
+def test_minimal_inspect_failure_does_not_leak_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail(argv: tuple[str, ...], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.CalledProcessError(1, argv, stderr="SECRET_MARKER")
+
+    monkeypatch.setattr(observer.subprocess, "run", fail)
+    assert observer._basic_probe(LEGACY_ID) == "ID_UNVERIFIED"
+
+
 def test_oversized_docker_metadata_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     def oversized(argv: tuple[str, ...], **_kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(argv, 0, stdout="f" * 2049, stderr="")
@@ -251,6 +418,14 @@ def test_verify_rejects_forged_acks_and_invalid_inputs(monkeypatch: pytest.Monke
         ("probe", "PRESENT_LABEL_MATCH"),
         ("probe_running", True),
         ("original_port", "UNVERIFIED"),
+        ("probe_list_stage", "TIMEOUT"),
+        ("original_inspect_stage", "COMMAND_FAILED"),
+        ("probe_candidate_id", "not-a-cid"),
+        ("probe_list_rc", 1),
+        ("probe_basic_stage", "ID_CONFIRMED"),
+        ("original_basic_stage", "ID_CONFIRMED"),
+        ("probe_candidate_id", PROBE_ID),
+        ("socket", "ABSENT"),
     ):
         bad = {**record, key: value}
         with pytest.raises(observer.InspectError):
