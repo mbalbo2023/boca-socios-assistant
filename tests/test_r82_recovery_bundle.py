@@ -48,7 +48,9 @@ FAKE_RECOVERY = (
 R81_FULL_CUTOVER_SHA = "a7c43c6f8ea944cd8ec8e7180efa540203c42d5cbde90258f6ae8caad0e387fd"
 # R83 deliberately splits the worker preflight into its own immutable bundle.
 # Preserve the R81 checksum as historical evidence and pin the new composition.
-R83_FULL_CUTOVER_SHA = "f52fb7d4338ae02f534e5523abc355639d289ad0939ed7058a2f8c8535722ad9"
+# ADR0206 V3 deliberately updates CLI and entrypoint, retaining identical ZIP
+# composition and recovery/preflight isolation; this is the reviewed new pin.
+R83_FULL_CUTOVER_SHA = "8b3082dcf6de0f7bfeb8fac784a6d3ea56a655085c33224547f558200abc9476"
 
 
 def _fixture_root(tmp_path: Path) -> Path:

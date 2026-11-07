@@ -436,21 +436,22 @@ def test_fifo_0600_cannot_block_go_preflight_before_regular_file_attestation(
     assert "BOCA_CUTOVER_A_GO state=NO_GO host=untouched" in result.stderr
 
 
-def test_effectful_dispatch_is_inert_without_independent_exact_run_go() -> None:
+def test_effectful_dispatch_v3_requires_authenticated_exact_run_binding() -> None:
     workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
     assert "cutover-a-observe" in workflow
     assert "cutover-a-apply" in workflow
     assert (
-        "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}" in workflow
+        "BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}"
+        not in workflow
     )
-    assert "python scripts/check_cutover_a_go.py --prepared-from-actions" in workflow
+    assert (
+        'check_boca_deploy_dispatch.py "$RUNNER_TEMP/boca-dispatch-v3" --write-invocation'
+        in workflow
+    )
     assert "python scripts/check_cutover_a_go.py --from-actions" not in workflow
     assert "check_legacy_go_dispatch.py apply" in workflow
     assert "python scripts/check_cutover_a_go.py --assert-host-receipt" in workflow
-    assert (
-        "always() && inputs.operation == 'cutover-a-apply' && inputs.protected_action_context != ''"
-        in workflow
-    )
+    assert "always() && inputs.operation == 'cutover-a-apply'" in workflow
     assert "timeout --signal=TERM --kill-after=5s 900s ssh" in workflow
     effect = workflow.split("      - name: Apply exactly one reviewed Cutover A", 1)[1].split(
         "      - name:", 1

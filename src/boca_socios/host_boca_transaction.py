@@ -209,6 +209,16 @@ def main() -> int:
             return 1
         print("BOCA_CUTOVER_MEMFD state=PASS host=untouched option_b=present")
         return 0
+    if len(sys.argv) == 3 and sys.argv[1] == "cutover-a-dispatch-v3":
+        from boca_socios.host_boca_cutover_cli import run_cli
+
+        # The protected owner's single dispatch replaces the historical GO_B.
+        # This is a byte/run binding, not independently granted approval.
+        return run_cli(
+            sys.argv[2],
+            approved_go_binding_sha256=os.environ.get("BOCA_CUTOVER_A_DISPATCH_BINDING_SHA256", ""),
+            dispatch_v3=True,
+        )
     if len(sys.argv) == 3 and sys.argv[1] == "cutover-a-apply":
         from boca_socios.host_boca_cutover_cli import run_cli
 

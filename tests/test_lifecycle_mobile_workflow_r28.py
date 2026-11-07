@@ -112,6 +112,6 @@ def test_mobile_prepare_artifact_is_not_itself_approval_or_telegram_access() -> 
     assert "BOCA_LIFECYCLE_GO_BINDING_SHA256" in w
     assert "telegram-activate)" in w
     assert "state=NO_GO reason=host_same_lease_backend_unverified" in w
-    assert "BOCA_CUTOVER_A_GO_BINDING_SHA256" in w
+    assert "BOCA_CUTOVER_A_DISPATCH_BINDING_SHA256" in w
     assert "BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256" in w
     assert "docker system prune" not in w

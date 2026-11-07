@@ -1,12 +1,12 @@
 name: Boca first deploy
-run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-stage-recover-844' && 'BOCA-R96-STAGE-844-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-834' && 'BOCA-R94-WORKER-834-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-827' && 'BOCA-R91-WORKER-827-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-819' && 'BOCA-R87-WORKER-819-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-preflight' && 'BOCA-R84-WORKER-PREFLIGHT-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-807' && 'BOCA-R82-WORKER-807-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R80-WORKER-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42375050546' && 'BOCA-R93-WORKER-834-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42368541950' && 'BOCA-R90-WORKER-827-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42353468231' && 'BOCA-R86-WORKER-819-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42341290485' && 'BOCA-R81-WORKER-807-READONLY' || 'Boca first deploy' }}
+run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-apply' && 'BOCA-SIMULATION-DEPLOY-V3' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-stage-recover-844' && 'BOCA-R96-STAGE-844-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-834' && 'BOCA-R94-WORKER-834-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-827' && 'BOCA-R91-WORKER-827-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-819' && 'BOCA-R87-WORKER-819-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-preflight' && 'BOCA-R84-WORKER-PREFLIGHT-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-807' && 'BOCA-R82-WORKER-807-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R80-WORKER-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42375050546' && 'BOCA-R93-WORKER-834-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42368541950' && 'BOCA-R90-WORKER-827-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42353468231' && 'BOCA-R86-WORKER-819-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42341290485' && 'BOCA-R81-WORKER-807-READONLY' || 'Boca first deploy' }}
 
 on:
   pull_request:
   workflow_dispatch:
     inputs:
       operation:
-        description: Boca-only host operation; browser IPC is a separate, opt-in, protected BETA gate
+        description: cutover-a-apply is ONE simulation deploy dispatch; leave all pins and protected_action_context blank. No login/tickets.
         required: true
         type: choice
         options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, cutover-a-reconcile, cutover-a-stage-recover, cutover-a-stage-recover-844, cutover-a-image-retire, cutover-a-observe, cutover-a-worker-inspect, cutover-a-worker-recover, cutover-a-worker-recover-807, cutover-a-worker-recover-819, cutover-a-worker-recover-827, cutover-a-worker-recover-834, cutover-a-worker-preflight, cutover-a-apply, official-notice-import, protected-go-prepare, lifecycle-apply, telegram-activate, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
@@ -95,7 +95,7 @@ on:
         required: false
         type: string
       protected_action_context:
-        description: Leave blank for Boca READ_ONLY PREPARE; cutover-a-worker-preflight is EFFECTFUL (NOT READ_ONLY) yet REQUIRES blank; APPLY uses only prior PREPARE run ID; never JSON/PIN/secret.
+        description: cutover-a-apply V3 REQUIRES blank; Leave blank for Boca READ_ONLY PREPARE (official/lifecycle only); cutover-a-worker-preflight is EFFECTFUL (NOT READ_ONLY) yet REQUIRES blank; official/lifecycle APPLY uses only prior PREPARE run ID; never JSON/PIN/secret.
         required: false
         type: string
       service:
@@ -167,6 +167,7 @@ jobs:
           uv run pytest -q tests/test_r91_worker_827_recovery.py tests/test_r91_worker_827_dispatch.py tests/test_r91_worker_827_workflow.py tests/test_r92_stop_ack_evidence.py tests/test_r92_preflight_receipt.py tests/test_r95_stop_short_alias.py
           uv run pytest -q tests/test_r94_worker_834_recovery.py tests/test_r94_worker_834_dispatch.py tests/test_r94_worker_834_workflow.py
           uv run pytest -q tests/test_r96_stage844_one_shot_workflow.py tests/test_r96_stage844_evidence_gate.py tests/test_r96_stage844_dispatch_gate.py
+          uv run pytest -q tests/test_boca_deploy_dispatch_v3.py tests/test_cutover_dispatch_protocol_v3.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
       - name: Validate protected official notice artifact import offline only
         run: |
@@ -783,6 +784,7 @@ jobs:
       contents: read
       actions: read
       pull-requests: read
+      checks: read
     env:
       BOCA_OPERATION: ${{ inputs.operation }}
       BOCA_PROTECTED_ACTION_CONTEXT: ${{ inputs.protected_action_context }}
@@ -792,7 +794,7 @@ jobs:
       BOCA_SOURCE_SHA: ${{ (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'cutover-a-reconcile' || inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-stage-recover-844' || inputs.operation == 'cutover-a-image-retire' || inputs.operation == 'cutover-a-worker-inspect' || inputs.operation == 'cutover-a-worker-recover' || inputs.operation == 'cutover-a-worker-recover-807' || inputs.operation == 'cutover-a-worker-recover-819' || inputs.operation == 'cutover-a-worker-recover-827' || inputs.operation == 'cutover-a-worker-recover-834') && github.sha || inputs.source_sha }}
       BOCA_SOURCE_SHA_SUBMITTED: ${{ inputs.source_sha }}
       BOCA_SERVICE: ${{ inputs.service }}
-      BOCA_BUDGET: ${{ inputs.resource_budget }}
+      BOCA_BUDGET: ${{ inputs.operation == 'cutover-a-apply' && '1.5cpu-1024m-192pids' || inputs.resource_budget }}
       BOCA_RELEASE_RUN_ID: ${{ inputs.release_run_id }}
       BOCA_OWNER_CAPABILITY_SHA256: ${{ inputs.owner_capability_sha256 }}
       BOCA_FAILED_TELEGRAM_RUN_ID: ${{ inputs.failed_telegram_run_id }}
@@ -809,13 +811,29 @@ jobs:
       BOCA_OFFICIAL_NEWS_HTML_SHA256: ${{ inputs.official_news_html_sha256 }}
       BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC: ${{ inputs.official_news_observed_at_utc }}
     steps:
-      - name: Checkout exact reviewed main for legacy GO_B artifact discovery
+      - name: Checkout exact reviewed main for authenticated artifact discovery
         if: inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - name: Authenticate owner single-dispatch V3 before any host access
+        if: inputs.operation == 'cutover-a-apply'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src:scripts
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/boca-dispatch-v3"
+          cp "$GITHUB_EVENT_PATH" "$RUNNER_TEMP/boca-dispatch-v3/event.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$RUNNER_TEMP/boca-dispatch-v3/run.json"
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-dispatch-v3/main.json"
+          gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=1" > "$RUNNER_TEMP/boca-dispatch-v3/pulls.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/boca-first-deploy.yml/runs?head_sha=$GITHUB_SHA&per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/history.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/checks.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/ci.json"
+          python scripts/check_boca_deploy_dispatch.py "$RUNNER_TEMP/boca-dispatch-v3"
       - name: Restore independently reviewed legacy PREPARE source for APPLY
-        if: (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import') && inputs.protected_action_context != ''
+        if: inputs.operation == 'official-notice-import' && inputs.protected_action_context != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONPATH: src:scripts
@@ -1289,9 +1307,9 @@ jobs:
               exit 1
               ;;
             cutover-a-apply)
-              # An allowed path is NOT a GO: the separate protected variable,
-              # exact manifests, SSH receipt and postflight still govern it.
-              printf 'BOCA_POSTDEPLOY route=protected_cutover_a independent_go=REQUIRED host=untouched\n' >> "$GITHUB_STEP_SUMMARY"
+              # V3 deliberately replaces separate GO_B with owner dispatch.
+              # Exact source, manifests, single lease and physical ACK remain.
+              printf 'BOCA_POSTDEPLOY route=protected_cutover_v3 authority=owner_dispatch host=untouched\n' >> "$GITHUB_STEP_SUMMARY"
               ;;
             *)
               # Observers, existing-service starts/stops and non-install
@@ -1416,7 +1434,7 @@ jobs:
             printf '  ForwardAgent no\n'
           } > "$RUNNER_TEMP/boca-legacy-readonly-ssh/config"
           chmod 600 "$RUNNER_TEMP/boca-legacy-readonly-ssh/config"
-      - name: Observe ONLY Boca rootless original/installed controller before GO_B review
+      - name: Observe ONLY Boca rootless original/installed controller before reviewed transaction
         id: legacy_inventory_host_read
         if: (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import') && inputs.protected_action_context == ''
         env:
@@ -1629,7 +1647,7 @@ jobs:
           esac
           docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml config --format json > "$RUNNER_TEMP/boca-browser-runner-model.json"
           python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-runner-model.json" "$BOCA_IMAGE_REF" --topology=browser-ipc-v2
-      - name: Build exact reviewed Cutover A ZIP for both GO_B phases
+      - name: Build exact reviewed Cutover A ZIP for owner dispatch V3
         if: inputs.operation == 'cutover-a-apply'
         env:
           PYTHONPATH: src:scripts
@@ -1658,7 +1676,7 @@ jobs:
             -o "$RUNNER_TEMP/boca-official-artifact.zip"
       - name: Prepare no-effect immutable Cutover or official GO_B review object
         id: legacy_go_prepare
-        if: (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import') && inputs.protected_action_context == ''
+        if: inputs.operation == 'official-notice-import' && inputs.protected_action_context == ''
         env:
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
           PYTHONPATH: src:scripts
@@ -1671,7 +1689,7 @@ jobs:
           python scripts/check_legacy_go_dispatch.py prepare
           printf 'BOCA_LEGACY_PREPARE state=READY host_effects=0 prepared_run=%s\n' "$GITHUB_RUN_ID"
       - name: Publish inert reviewed GO_B PREPARE coordinates and receipt
-        if: (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import') && inputs.protected_action_context == ''
+        if: inputs.operation == 'official-notice-import' && inputs.protected_action_context == ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: boca-protected-legacy-go-prepare
@@ -1680,26 +1698,18 @@ jobs:
             ${{ runner.temp }}/boca-legacy-prepare.receipt.json
           if-no-files-found: error
           retention-days: 2
-      - name: Require independently approved Cutover A GO_B bound to PREPARE and reviewed bytes
+      - name: Bind owner dispatch V3 to exact dual release and reviewed bytes
         id: cutover_go_preflight
-        if: inputs.operation == 'cutover-a-apply' && inputs.protected_action_context != ''
+        if: inputs.operation == 'cutover-a-apply'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BOCA_CUTOVER_A_GO_BINDING_SHA256: ${{ vars.BOCA_CUTOVER_A_GO_BINDING_SHA256 }}
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
           PYTHONPATH: src:scripts
         run: |
           set -euo pipefail
-          [[ "$BOCA_CUTOVER_A_GO_BINDING_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-cutover.json"
-          python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-cutover.json" "$BOCA_SOURCE_SHA"
-          # GH PREPARE success, source, owner, artifact and expiry revalidated
-          # before exact 3-file O_EXCL private evidence is ever staged.
-          python scripts/check_legacy_go_dispatch.py apply \
-            "$RUNNER_TEMP/boca-legacy-prepare-run.json" \
-            "$RUNNER_TEMP/boca-legacy-prepared/boca-legacy-prepare.coordinates.json" \
-            "$RUNNER_TEMP/boca-legacy-prepared/boca-legacy-prepare.receipt.json"
-          python scripts/check_cutover_a_go.py --prepared-from-actions
+          # No Environment GO_B or PREPARE artifact authorizes V3. This hash
+          # binds the already authenticated owner's dispatch to reviewed bytes.
+          python scripts/check_boca_deploy_dispatch.py "$RUNNER_TEMP/boca-dispatch-v3" --write-invocation
       - name: Require independent GO and exact official source artifact before SSH
         id: official_import_go_preflight
         if: inputs.operation == 'official-notice-import' && inputs.protected_action_context != ''
@@ -1851,7 +1861,7 @@ jobs:
             --name boca-protected-go-prepare --dir "$RUNNER_TEMP"
           python scripts/check_protected_go_prepare.py --apply
       - name: Configure pinned SSH host key and dedicated identity
-        if: inputs.operation != 'protected-go-prepare' && !((inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import') && inputs.protected_action_context == '')
+        if: inputs.operation != 'protected-go-prepare' && !(inputs.operation == 'official-notice-import' && inputs.protected_action_context == '')
         env:
           BOCA_HOST: ${{ vars.BOCA_DEPLOY_HOST }}
           BOCA_SSH_KEY: ${{ secrets.BOCA_DEPLOY_SSH_KEY }}
@@ -2652,7 +2662,7 @@ jobs:
           printf 'BOCA_OFFICIAL_IMPORT state=ACCEPTED source=UNVERIFIED availability=UNVERIFIED actionable=false; physical Samsung Chrome panel observation still required.\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Apply exactly one reviewed Cutover A host transaction through memfd
         id: cutover_host_apply
-        if: inputs.operation == 'cutover-a-apply' && inputs.protected_action_context != ''
+        if: inputs.operation == 'cutover-a-apply'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONPATH: src:scripts
@@ -2661,6 +2671,14 @@ jobs:
           # Recheck immediately before SSH: main may have moved since GO.
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref-cutover-effect.json"
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-cutover-effect.json" "$BOCA_SOURCE_SHA"
+          # Refresh ALL admission evidence immediately before the single effect.
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$RUNNER_TEMP/boca-dispatch-v3/run.json"
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-dispatch-v3/main.json"
+          gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=1" > "$RUNNER_TEMP/boca-dispatch-v3/pulls.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/boca-first-deploy.yml/runs?head_sha=$GITHUB_SHA&per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/history.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/checks.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/ci.json"
+          python scripts/check_boca_deploy_dispatch.py "$RUNNER_TEMP/boca-dispatch-v3"
           test -s "$RUNNER_TEMP/boca-cutover-a-review.pyz"
           test -s "$RUNNER_TEMP/boca-cutover-a-invocation.token"
           test -s "$RUNNER_TEMP/boca-cutover-a-approved.digest"
@@ -2676,12 +2694,12 @@ jobs:
 
           token, approved, bundle = sys.argv[1:]
           invocation = CutoverInvocation.decode(token)
-          if invocation.bundle_sha256 != bundle or invocation.go_binding_sha256 != approved:
+          if not invocation.dispatch_v3 or invocation.bundle_sha256 != bundle or invocation.go_binding_sha256 != approved:
               raise SystemExit("BOCA_CUTOVER_A GO/ZIP mismatch before SSH")
           with open("scripts/boca_protected_memfd_bootstrap.py", encoding="utf-8") as script:
               source = script.read()
-          args = ["python3", "-c", source, bundle, "cutover-a-apply", token]
-          print("BOCA_CUTOVER_A_APPROVED_GO_BINDING_SHA256=" + shlex.quote(approved) + " " + shlex.join(args))
+          args = ["python3", "-c", source, bundle, "cutover-a-dispatch-v3", token]
+          print("BOCA_CUTOVER_A_DISPATCH_BINDING_SHA256=" + shlex.quote(approved) + " " + shlex.join(args))
           PY
           )"
           # A single SSH process retains the Boca lease and FIFO, permanent
@@ -2703,7 +2721,7 @@ jobs:
             exit "$host_ssh_rc"
           fi
       - name: Fail closed on absent or ambiguous Cutover A host terminal receipt
-        if: ${{ always() && inputs.operation == 'cutover-a-apply' && inputs.protected_action_context != '' }}
+        if: ${{ always() && inputs.operation == 'cutover-a-apply' }}
         env:
           PYTHONPATH: src:scripts
           BOCA_CUTOVER_A_GO_PREFLIGHT: ${{ steps.cutover_go_preflight.outcome }}

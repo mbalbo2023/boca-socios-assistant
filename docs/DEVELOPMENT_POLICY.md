@@ -152,6 +152,20 @@ main is protected before verifying GitHub's **actual ruleset state**. See
 
 ## No parallel deployment paths
 
+### Cutover V3 authority (2026-11-07)
+
+The owner replaced the Cutover-specific manual GO_B and two-dispatch
+PREPARE/APPLY process with a single authenticated owner dispatch. The reviewed
+`cutover-a-apply` route now resolves source, dual immutable GHCR images and
+installed legacy identity automatically; the user must not copy hashes or
+PREPARE run IDs. Its generated digest binds the reviewed bytes to this run,
+not an independent approval. Environment secrets/main restrictions remain;
+no changes to reviewer settings, auto-approval or credential recovery are
+part of the implementation. Official-import/lifecycle policies are unchanged.
+Source/CI/PR0, single lease, UID10001, protected storage/passkey, localhost8443,
+no real navigation/login/tickets and mandatory physical cleanup/ACK still
+gate acceptance. See [ADR0206](ADR/0206-single-dispatch-cutover-v3.md).
+
 There must remain **exactly one** controlled deploy workflow. Never add
 automatic push-based deployment, personal SSH procedures, host cron jobs,
 any unrelated deployment integration or Docker cleanup of another project.

@@ -110,6 +110,20 @@ no browser-worker/CDP activation is implied by this instruction.
 
 ### Owner release hygiene clarification — 2026-11-06
 
+**Superseding owner instruction — 2026-11-07, Cutover V3 only:**
+`cutover-a-apply` is one explicit owner `workflow_dispatch` from exact current
+main. No separate PREPARE/APPLY dispatch, copied GO_B hash, email or code is
+required or accepted for this route. All source/release/image/legacy pins and
+`protected_action_context` stay blank in the form and are derived/verified by
+the protected workflow. The V3 dispatch itself authorizes the transaction;
+its generated digest is integrity binding, never a second approval. Preserve
+the Environment's main-only secret boundary, owner and triggering-owner checks,
+attempt=1/anti-replay, PR0, exact source/dual release, rootless same lease,
+passkey/loopback8443, terminal ACK and detailed cleanup. Other operations,
+including official-import/lifecycle, retain their separate existing contracts.
+Historical GO_B/Cutover instructions below are superseded only for this route.
+See `docs/ADR/0206-single-dispatch-cutover-v3.md`.
+
 The owner has authorized completion of the Boca simulation BETA through a
 physically verified deployment. Do not request another project GO for that
 already authorized scope. This does **not** replace exact-SHA release,
