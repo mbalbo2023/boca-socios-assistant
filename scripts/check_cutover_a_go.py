@@ -597,7 +597,6 @@ def verify_postflight_json(raw: bytes, expected_attempt_id: str) -> str:
         raise CutoverGoError("Boca postdeploy exact receipt missing or malformed") from exc
 
 
-
 def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
     """Report only allowlisted host claims after a FAILED SSH step.
 

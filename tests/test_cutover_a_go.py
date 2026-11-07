@@ -467,7 +467,6 @@ def test_effectful_dispatch_is_inert_without_independent_exact_run_go() -> None:
     assert "docker system prune" not in workflow
 
 
-
 def test_post_ssh_missing_ack_never_claims_original_host_untouched(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -483,14 +482,26 @@ def test_post_ssh_missing_ack_never_claims_original_host_untouched(
 @pytest.mark.parametrize(
     ("ssh_rc", "remote_stdout", "claim", "transport"),
     [
-        (3, b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=UNVERIFIED runtime=UNVERIFIED\n",
-         "NO_GO_UNVERIFIED", "EXIT_NONZERO"),
-        (3, b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n",
-         "NO_GO_RECORDED_UNVERIFIED", "EXIT_NONZERO"),
+        (
+            3,
+            b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=UNVERIFIED runtime=UNVERIFIED\n",
+            "NO_GO_UNVERIFIED",
+            "EXIT_NONZERO",
+        ),
+        (
+            3,
+            b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n",
+            "NO_GO_RECORDED_UNVERIFIED",
+            "EXIT_NONZERO",
+        ),
         (124, b"SECRET=must-never-show\n", "NONE", "TIMEOUT"),
         (255, b"BOCA_CUTOVER_A_HOST state=ACCEPTED\n", "NONE", "SSH_255"),
-        (3, b"bogus\nBOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n",
-         "NONE", "EXIT_NONZERO"),
+        (
+            3,
+            b"bogus\nBOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n",
+            "NONE",
+            "EXIT_NONZERO",
+        ),
     ],
 )
 def test_failed_ssh_diagnostic_is_redacted_and_never_accepts_host(
