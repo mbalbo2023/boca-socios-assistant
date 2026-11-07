@@ -24,7 +24,30 @@ PREFIX = "boca-socios-cutover-preflight-"
 LABEL = "boca.socios.cutover-preflight-attempt"
 RUNTIME = Path("/run/user/10001")
 PHASES = frozenset(
-    {"ATTEST", "GHCR_PULL", "WORKER_CREATE", "WORKER_START", "WORKER_BOUNDARY", "CLEANUP"}
+    {
+        "ATTEST",
+        "GHCR_PULL",
+        "SECCOMP_ENTER",
+        "WORKER_CREATE",
+        "WORKER_START",
+        "WORKER_BOUNDARY",
+        "CLEANUP",
+    }
+)
+PRIMARY_PHASES = (PHASES - {"CLEANUP"}) | {"NONE", "UNVERIFIED"}
+CLEANUP_STAGES = frozenset(
+    {
+        "NONE",
+        "TEMP_SECCOMP",
+        "PS",
+        "INSPECT",
+        "OWNERSHIP",
+        "STOP",
+        "RM",
+        "POST_ID",
+        "LEGACY",
+        "UNVERIFIED",
+    }
 )
 BOUNDARY_COMMAND = (
     "import os,pathlib; "
@@ -51,11 +74,37 @@ class TempSeccompCleanupError(WorkerPreflightError):
     """Unverified cleanup."""
 
 
+class CleanupStageError(WorkerPreflightError):
+    """Bounded stage classification; no raw Docker output crosses the boundary."""
+
+    def __init__(self, stage: str) -> None:
+        self.stage = stage if stage in CLEANUP_STAGES else "UNVERIFIED"
+        message = (
+            "probe cleanup exact ownership unverified"
+            if self.stage == "OWNERSHIP"
+            else "probe exact cleanup stage unverified"
+        )
+        super().__init__(message)
+
+
 class PreflightFailure(WorkerPreflightError):
-    def __init__(self, phase: str, cleanup: str) -> None:
+    def __init__(
+        self,
+        phase: str,
+        cleanup: str,
+        *,
+        primary_failed_phase: str = "UNVERIFIED",
+        cleanup_failed_stage: str = "UNVERIFIED",
+    ) -> None:
         super().__init__("bounded pre-Cutover probe failed")
         self.phase = phase if phase in PHASES else "UNVERIFIED"
         self.cleanup = cleanup if cleanup in {"VERIFIED", "INDETERMINATE"} else "UNVERIFIED"
+        self.primary_failed_phase = (
+            primary_failed_phase if primary_failed_phase in PRIMARY_PHASES else "UNVERIFIED"
+        )
+        self.cleanup_failed_stage = (
+            cleanup_failed_stage if cleanup_failed_stage in CLEANUP_STAGES else "UNVERIFIED"
+        )
 
 
 @dataclass(frozen=True)
@@ -262,31 +311,47 @@ def _probe_argv(pins: Coordinates, path: Path) -> tuple[str, ...]:
 
 
 def _cleanup_exact(pins: Coordinates, name: str) -> None:
-    container = _named_id(name)
-    if container is None:
-        return
-    observed = host._browser_inspect_record(container)
-    config = observed.get("Config")
-    labels = config.get("Labels") if isinstance(config, dict) else None
-    state = observed.get("State")
-    if (
-        observed.get("Name") != f"/{name}"
-        or not isinstance(config, dict)
-        or config.get("Image") != pins.browser
-        or not isinstance(labels, dict)
-        or labels.get(LABEL) != pins.attempt
-        or labels.get("com.docker.compose.project") != host.PROJECT
-        or not isinstance(state, dict)
-        or type(state.get("Running")) is not bool
-    ):
-        raise WorkerPreflightError("probe cleanup exact ownership unverified")
-    if state["Running"]:
-        if host._run("docker", "stop", "--time", "5", container, timeout=20) != container:
-            raise WorkerPreflightError("probe exact container stop unverified")
-    if host._run("docker", "rm", container, timeout=20) != container:
-        raise WorkerPreflightError("probe exact container removal unverified")
-    if _named_id(name) is not None:
-        raise WorkerPreflightError("probe container retained after cleanup")
+    stage = "PS"
+    try:
+        container = _named_id(name)
+        if container is None:
+            return
+        stage = "INSPECT"
+        observed = host._browser_inspect_record(container)
+        stage = "OWNERSHIP"
+        config = observed.get("Config")
+        labels = config.get("Labels") if isinstance(config, dict) else None
+        state = observed.get("State")
+        if (
+            observed.get("Name") != f"/{name}"
+            or not isinstance(config, dict)
+            or config.get("Image") != pins.browser
+            or not isinstance(labels, dict)
+            or labels.get(LABEL) != pins.attempt
+            or labels.get("com.docker.compose.project") != host.PROJECT
+            or not isinstance(state, dict)
+            or type(state.get("Running")) is not bool
+        ):
+            raise WorkerPreflightError("probe cleanup exact ownership unverified")
+        if state["Running"]:
+            stage = "STOP"
+            if host._run("docker", "stop", "--time", "5", container, timeout=20) != container:
+                raise WorkerPreflightError("probe exact container stop unverified")
+        stage = "RM"
+        if host._run("docker", "rm", container, timeout=20) != container:
+            raise WorkerPreflightError("probe exact container removal unverified")
+        stage = "POST_ID"
+        if _named_id(name) is not None:
+            raise WorkerPreflightError("probe container retained after cleanup")
+    except (
+        host.PreflightError,
+        WorkerPreflightError,
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+    ) as exc:
+        raise CleanupStageError(stage) from exc
 
 
 def _pull_observing_capacity(pins: Coordinates) -> None:
@@ -307,6 +372,8 @@ def execute(pins: Coordinates, profile: bytes) -> tuple[str, str]:
     name = f"{PREFIX}{pins.attempt}"
     with protected_boca_job_lease(pins.attempt):
         failure: Exception | None = None
+        primary_failed_phase = "NONE"
+        cleanup_failed_stage = "NONE"
         try:
             host._cutover_legacy_record(
                 pins.legacy_id,
@@ -320,32 +387,46 @@ def execute(pins: Coordinates, profile: bytes) -> tuple[str, str]:
             host._storage_snapshot()
             phase = "GHCR_PULL"
             _pull_observing_capacity(pins)
+            phase = "SECCOMP_ENTER"
             with _temporary_seccomp(pins.attempt, profile) as path:
-                phase = "WORKER_CREATE"
-                candidate = host._run(*_probe_argv(pins, path), timeout=60)
-                if not ID.fullmatch(candidate) or _named_id(name) != candidate:
-                    raise WorkerPreflightError("probe create returned ambiguous ID")
-                _inspect_probe(candidate, name, pins, profile, running=False)
-                phase = "WORKER_START"
-                if host._run("docker", "start", candidate, timeout=30) != candidate:
-                    raise WorkerPreflightError("probe exact start receipt invalid")
-                _inspect_probe(candidate, name, pins, profile, running=True)
-                phase = "WORKER_BOUNDARY"
-                if (
-                    host._run(
-                        "docker",
-                        "exec",
-                        "--user",
-                        "10002:10002",
-                        candidate,
-                        "python",
-                        "-c",
-                        BOUNDARY_COMMAND,
-                        timeout=20,
-                    )
-                    != "BOCA_CUTOVER_WORKER_BOUNDARY_PASS"
+                try:
+                    phase = "WORKER_CREATE"
+                    candidate = host._run(*_probe_argv(pins, path), timeout=60)
+                    if not ID.fullmatch(candidate) or _named_id(name) != candidate:
+                        raise WorkerPreflightError("probe create returned ambiguous ID")
+                    _inspect_probe(candidate, name, pins, profile, running=False)
+                    phase = "WORKER_START"
+                    if host._run("docker", "start", candidate, timeout=30) != candidate:
+                        raise WorkerPreflightError("probe exact start receipt invalid")
+                    _inspect_probe(candidate, name, pins, profile, running=True)
+                    phase = "WORKER_BOUNDARY"
+                    if (
+                        host._run(
+                            "docker",
+                            "exec",
+                            "--user",
+                            "10002:10002",
+                            candidate,
+                            "python",
+                            "-c",
+                            BOUNDARY_COMMAND,
+                            timeout=20,
+                        )
+                        != "BOCA_CUTOVER_WORKER_BOUNDARY_PASS"
+                    ):
+                        raise WorkerPreflightError("worker rootless kernel boundary unproven")
+                except (
+                    host.PreflightError,
+                    WorkerPreflightError,
+                    OSError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
                 ):
-                    raise WorkerPreflightError("worker rootless kernel boundary unproven")
+                    # Capture before the context manager's __exit__: an inode
+                    # cleanup error there must not erase the original phase.
+                    primary_failed_phase = phase
+                    raise
         except (
             host.PreflightError,
             WorkerPreflightError,
@@ -357,12 +438,28 @@ def execute(pins: Coordinates, profile: bytes) -> tuple[str, str]:
             failure = exc
             if isinstance(exc, TempSeccompCleanupError):
                 cleanup = "INDETERMINATE"
+                cleanup_failed_stage = "TEMP_SECCOMP"
+                if phase == "SECCOMP_ENTER":
+                    primary_failed_phase = "SECCOMP_ENTER"
+            elif primary_failed_phase == "NONE":
+                primary_failed_phase = phase
         finally:
             try:
                 phase_at_cleanup = phase
                 _cleanup_exact(pins, name)
-            except (host.PreflightError, WorkerPreflightError, OSError, ValueError):
+            except (
+                host.PreflightError,
+                WorkerPreflightError,
+                OSError,
+                ValueError,
+                TypeError,
+                KeyError,
+            ) as exc:
                 cleanup = "INDETERMINATE"
+                if cleanup_failed_stage == "NONE":
+                    cleanup_failed_stage = (
+                        exc.stage if isinstance(exc, CleanupStageError) else "UNVERIFIED"
+                    )
             try:
                 host._cutover_legacy_record(
                     pins.legacy_id,
@@ -371,12 +468,24 @@ def execute(pins: Coordinates, profile: bytes) -> tuple[str, str]:
                     name=host.CUTOVER_LEGACY_NAME,
                     running=True,
                 )
-            except (host.PreflightError, OSError, ValueError):
+            except (host.PreflightError, OSError, ValueError, TypeError, KeyError):
                 cleanup = "INDETERMINATE"
+                if cleanup_failed_stage == "NONE":
+                    cleanup_failed_stage = "LEGACY"
             if cleanup != "VERIFIED":
-                raise PreflightFailure("CLEANUP", cleanup)
+                raise PreflightFailure(
+                    "CLEANUP",
+                    cleanup,
+                    primary_failed_phase=primary_failed_phase,
+                    cleanup_failed_stage=cleanup_failed_stage,
+                ) from None
         if failure is not None:
-            raise PreflightFailure(phase_at_cleanup, cleanup) from None
+            raise PreflightFailure(
+                phase_at_cleanup,
+                cleanup,
+                primary_failed_phase=primary_failed_phase,
+                cleanup_failed_stage=cleanup_failed_stage,
+            ) from None
     return phase, cleanup
 
 
@@ -384,7 +493,8 @@ def main(argv: list[str] | None = None) -> int:
     arguments = sys.argv[1:] if argv is None else argv
     if len(arguments) != 8 or arguments[0] != "host":
         print(
-            "BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO failed_phase=ATTEST cleanup=UNVERIFIED",
+            "BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO failed_phase=ATTEST cleanup=UNVERIFIED "
+            "primary_failed_phase=ATTEST cleanup_failed_stage=UNVERIFIED",
             flush=True,
         )
         return 3
@@ -394,7 +504,8 @@ def main(argv: list[str] | None = None) -> int:
     except PreflightFailure as exc:
         print(
             f"BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO failed_phase={exc.phase} "
-            f"cleanup={exc.cleanup}",
+            f"cleanup={exc.cleanup} primary_failed_phase={exc.primary_failed_phase} "
+            f"cleanup_failed_stage={exc.cleanup_failed_stage}",
             flush=True,
         )
         return 3
@@ -408,7 +519,8 @@ def main(argv: list[str] | None = None) -> int:
         zipfile.BadZipFile,
     ):
         print(
-            "BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO failed_phase=UNVERIFIED cleanup=UNVERIFIED",
+            "BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO failed_phase=UNVERIFIED "
+            "cleanup=UNVERIFIED primary_failed_phase=UNVERIFIED cleanup_failed_stage=UNVERIFIED",
             flush=True,
         )
         return 3

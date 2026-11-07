@@ -35,7 +35,6 @@ EXPECTED_ENTRIES = frozenset(
         "scripts/__init__.py",
         "scripts/host_cutover_postapply_reconcile.py",
         "scripts/host_cutover_stage_recovery.py",
-        "scripts/host_cutover_worker_preflight.py",
         "boca_socios/host_lifecycle_actions.py",
         "boca_socios/host_lifecycle_observe.py",
         "boca_socios/host_cutover_inventory_observe.py",
@@ -75,18 +74,46 @@ RECOVERY_ENTRIES = frozenset(
         "scripts/host_cutover_worker_recovery.py",
     }
 )
+# Seven-entry immutable R83 worker diagnostic, never a Cutover or recovery ZIP.
+PREFLIGHT_ENTRIES = frozenset(
+    {
+        "__main__.py",
+        "docker/seccomp_profile.json",
+        "boca_socios/__init__.py",
+        "boca_socios/host_first_deploy.py",
+        "boca_socios/host_boca_cleanup.py",
+        "scripts/__init__.py",
+        "scripts/host_cutover_worker_preflight.py",
+    }
+)
 MAX_ZIP = 512_000
 # Must match the bounded explicit allowlist in build_protected_boca_bundle;
 # independently enforce the unchanged 512k compressed ZIP cap.
 MAX_UNCOMPRESSED = 860_000
 RECOVERY_MAX_ZIP = 128_000
 RECOVERY_MAX_UNCOMPRESSED = 256_000
+PREFLIGHT_MAX_ZIP = 128_000
+PREFLIGHT_MAX_UNCOMPRESSED = 480_000
 
 
-def verify(raw: bytes, expected_sha: str, *, recovery: bool = False) -> None:
+def verify(
+    raw: bytes,
+    expected_sha: str,
+    *,
+    recovery: bool = False,
+    worker_preflight: bool = False,
+) -> None:
     """Verify digest, exact transport variant, file types and separate bounds."""
-    max_zip = RECOVERY_MAX_ZIP if recovery else MAX_ZIP
-    max_uncompressed = RECOVERY_MAX_UNCOMPRESSED if recovery else MAX_UNCOMPRESSED
+    if recovery and worker_preflight:
+        raise ValueError("protected Boca bundle modes must be exclusive")
+    max_zip = RECOVERY_MAX_ZIP if recovery else PREFLIGHT_MAX_ZIP if worker_preflight else MAX_ZIP
+    max_uncompressed = (
+        RECOVERY_MAX_UNCOMPRESSED
+        if recovery
+        else PREFLIGHT_MAX_UNCOMPRESSED
+        if worker_preflight
+        else MAX_UNCOMPRESSED
+    )
     if not re.fullmatch(r"[0-9a-f]{64}", expected_sha):
         raise ValueError("protected Boca bundle expected digest invalid")
     if not raw or len(raw) > max_zip or hashlib.sha256(raw).hexdigest() != expected_sha:
@@ -97,6 +124,8 @@ def verify(raw: bytes, expected_sha: str, *, recovery: bool = False) -> None:
         allowlisted = (
             (RECOVERY_ENTRIES,)
             if recovery
+            else (PREFLIGHT_ENTRIES,)
+            if worker_preflight
             else (EXPECTED_ENTRIES, EXPECTED_ENTRIES | OPTION_B_ENTRIES)
         )
         if (
@@ -122,10 +151,14 @@ def main() -> int:
         return 2
     try:
         recovery = sys.argv[2] in {"cutover-worker-recover", "cutover-worker-807-recover"}
+        worker_preflight = sys.argv[2] == "cutover-worker-preflight"
         if recovery and len(sys.argv) != 3:
             raise ValueError("stopped worker recovery accepts no user coordinates")
-        raw = sys.stdin.buffer.read((RECOVERY_MAX_ZIP if recovery else MAX_ZIP) + 1)
-        verify(raw, sys.argv[1], recovery=recovery)
+        if worker_preflight and len(sys.argv) != 10:
+            raise ValueError("worker preflight requires exact reviewed coordinates")
+        bound = RECOVERY_MAX_ZIP if recovery else PREFLIGHT_MAX_ZIP if worker_preflight else MAX_ZIP
+        raw = sys.stdin.buffer.read(bound + 1)
+        verify(raw, sys.argv[1], recovery=recovery, worker_preflight=worker_preflight)
         # The memfd is passed to the *same* process via exec. No temporary
         # container, host file or broader Docker resource is ever created.
         fd = os.memfd_create("boca-protected-transaction", flags=0)

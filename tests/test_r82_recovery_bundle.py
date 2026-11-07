@@ -46,6 +46,9 @@ FAKE_RECOVERY = (
 # Snapshot of the unchanged complete Cutover ZIP from R81 main 8146ab94.
 # Its composition must not change merely to add a recovery-only entrypoint.
 R81_FULL_CUTOVER_SHA = "a7c43c6f8ea944cd8ec8e7180efa540203c42d5cbde90258f6ae8caad0e387fd"
+# R83 deliberately splits the worker preflight into its own immutable bundle.
+# Preserve the R81 checksum as historical evidence and pin the new composition.
+R83_FULL_CUTOVER_SHA = "f52fb7d4338ae02f534e5523abc355639d289ad0939ed7058a2f8c8535722ad9"
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -198,12 +201,13 @@ def test_both_recovery_modes_reject_modified_bytes_and_injected_entries(
     assert b"BOCA_RECOVERY_FIXTURE" not in result.stdout
 
 
-def test_complete_cutover_zip_remains_byte_identical_and_distinct(tmp_path: Path) -> None:
-    """R82 routing must not enlarge or contaminate the full Cutover package."""
+def test_r83_complete_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) -> None:
+    """R82 recovery remains isolated; R83 deliberately removes preflight code."""
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R81_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R83_FULL_CUTOVER_SHA
+    assert digest != R81_FULL_CUTOVER_SHA  # superseded intentionally, not silently changed
     assert len(raw) <= 512_000
     bootstrap.verify(raw, digest)
     with pytest.raises(ValueError):
@@ -211,3 +215,5 @@ def test_complete_cutover_zip_remains_byte_identical_and_distinct(tmp_path: Path
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
         assert "scripts/host_cutover_worker_recovery.py" not in archive.namelist()
         assert "scripts/host_cutover_worker_inspect.py" not in archive.namelist()
+        assert "scripts/host_cutover_worker_preflight.py" not in archive.namelist()
+        assert b"cutover-worker-preflight" not in archive.read("__main__.py")

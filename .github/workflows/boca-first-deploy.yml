@@ -162,7 +162,7 @@ jobs:
           uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
       - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
         run: |
-          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py tests/test_r82_exact_worker_807_recovery.py tests/test_r82_recovery_bundle.py tests/test_r82_recovery_dispatch.py tests/test_r82_recovery_workflow.py
+          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py tests/test_r82_exact_worker_807_recovery.py tests/test_r82_recovery_bundle.py tests/test_r82_recovery_dispatch.py tests/test_r82_recovery_workflow.py tests/test_r83_primary_phase.py tests/test_r83_cleanup_stages.py tests/test_r83_preflight_workflow.py tests/test_r83_bundle_caps.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
       - name: Validate protected official notice artifact import offline only
         run: |
@@ -2500,7 +2500,7 @@ jobs:
           python scripts/check_main_ref.py \
             "$RUNNER_TEMP/boca-main-ref-worker-preflight.json" "$BOCA_SOURCE_SHA"
           python scripts/build_protected_boca_bundle.py \
-            . "$RUNNER_TEMP/boca-worker-preflight-review.pyz"
+            --worker-preflight . "$RUNNER_TEMP/boca-worker-preflight-review.pyz"
           bundle_digest="$(sha256sum "$RUNNER_TEMP/boca-worker-preflight-review.pyz" | cut -d' ' -f1)"
           remote_command="$(python3 - "$bundle_digest" "$GITHUB_RUN_ID" \
             "$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" \
@@ -2535,18 +2535,32 @@ jobs:
           from pathlib import Path
 
           try:
-              raw = Path(sys.argv[1]).read_bytes()
-              assert len(raw) <= 160 and raw.endswith(b'\n')
+              with Path(sys.argv[1]).open('rb') as stream:
+                  raw = stream.read(257)
+              assert 0 < len(raw) <= 256 and raw.endswith(b'\n')
               line = raw.decode('ascii')
               match = re.fullmatch(
                   r'BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO '
-                  r'failed_phase=(ATTEST|GHCR_PULL|WORKER_CREATE|WORKER_START|WORKER_BOUNDARY|CLEANUP|UNVERIFIED) '
-                  r'cleanup=(VERIFIED|INDETERMINATE|UNVERIFIED)\n', line,
+                  r'failed_phase=(ATTEST|GHCR_PULL|SECCOMP_ENTER|WORKER_CREATE|WORKER_START|WORKER_BOUNDARY|CLEANUP|UNVERIFIED) '
+                  r'cleanup=(VERIFIED|INDETERMINATE|UNVERIFIED) '
+                  r'primary_failed_phase=(NONE|ATTEST|GHCR_PULL|SECCOMP_ENTER|WORKER_CREATE|WORKER_START|WORKER_BOUNDARY|UNVERIFIED) '
+                  r'cleanup_failed_stage=(NONE|TEMP_SECCOMP|PS|INSPECT|OWNERSHIP|STOP|RM|POST_ID|LEGACY|UNVERIFIED)\n',
+                  line,
               )
-              print(f'phase_claim={match.group(1)} cleanup_claim={match.group(2)}' if match
-                    else 'phase_claim=UNVERIFIED cleanup_claim=UNVERIFIED')
+              if match:
+                  phase, cleanup, primary, stage = match.groups()
+                  assert (cleanup != 'VERIFIED' or stage == 'NONE')
+                  assert (cleanup != 'INDETERMINATE' or stage != 'NONE')
+                  assert (cleanup != 'INDETERMINATE' or phase == 'CLEANUP')
+                  assert (phase != 'CLEANUP' or cleanup == 'INDETERMINATE')
+                  print(f'phase_claim={phase} cleanup_claim={cleanup} '
+                        f'primary_failed_phase_claim={primary} cleanup_failed_stage_claim={stage}')
+              else:
+                  print('phase_claim=UNVERIFIED cleanup_claim=UNVERIFIED '
+                        'primary_failed_phase_claim=UNVERIFIED cleanup_failed_stage_claim=UNVERIFIED')
           except (OSError, UnicodeError, AssertionError):
-              print('phase_claim=UNVERIFIED cleanup_claim=UNVERIFIED')
+              print('phase_claim=UNVERIFIED cleanup_claim=UNVERIFIED '
+                    'primary_failed_phase_claim=UNVERIFIED cleanup_failed_stage_claim=UNVERIFIED')
           PY
           )"
             printf 'BOCA_CUTOVER_WORKER_PREFLIGHT state=NO_GO host=UNVERIFIED %s next=read_only_boca_inventory no_retry=1\n' "$claim" >> "$GITHUB_STEP_SUMMARY"
@@ -2563,7 +2577,8 @@ jobs:
               'original=RUNNING port=127.0.0.1:8443 ipc_worker=NOT_TESTED '
               'prepared_go=UNCONSUMED foreign=UNTOUCHED\n'
           )
-          raw = Path(file).read_bytes()
+          with Path(file).open('rb') as stream:
+              raw = stream.read(len(expected.encode('ascii')) + 1)
           if raw != expected.encode('ascii'):
               raise SystemExit('Boca preflight failed exact receipt verification')
           with open(__import__('os').environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as report:
