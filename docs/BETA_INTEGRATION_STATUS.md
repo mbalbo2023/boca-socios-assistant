@@ -1,6 +1,17 @@
 # Estado de integración BETA
 
-## A45-R94 — #836 observó detenido el probe #834; recuperación sólo CODE_ONLY
+## A45-R95 — recuperación #834 acreditada, siguiente preflight CODE_ONLY
+
+| Frente | Evidencia real | Estado |
+| --- | --- | --- |
+| R94 | [PR #436](https://github.com/mbalbo2023/boca-socios-assistant/pull/436) MERGED en `24417e457a93887a1def955aa2a283eff64c170a`; 4/4 checks PR, 2/2 postmerge, PR0 | Código integrado y verificado |
+| Cleanup #834 | [Action #839](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42379062317): `CLEANED cleanup=VERIFIED`, CID ausente, legado `RUNNING_HEALTHY`, `foreign=UNTOUCHED`, artefacto `13576344307` | **FÍSICO VERIFICADO, no repetir** |
+| R95 | [ADR0204](ADR/0204-r95-portable-docker-stop-flag.md): un argumento `--time` → `-t`, mantiene STOP/ACK/no_retry, regresión añadida al selector protegido | CODE_ONLY; no prueba causa física del ACK_MULTILINE |
+| Preflight/Cutover/GO_B/BETA/Telegram | Release dual nueva, ocho coordenadas, PR0, 3-owner review y aceptación física aún por realizar | **NO_GO**, sin nueva instalación |
+
+---
+
+## Histórico A45-R94 — #836 observó detenido el probe #834; recuperación entonces CODE_ONLY
 
 | Frente | Evidencia | Estado |
 | --- | --- | --- |

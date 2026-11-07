@@ -398,7 +398,7 @@ def _cleanup_exact(pins: Coordinates, name: str) -> None:
         if state["Running"]:
             stage = "STOP"
             try:
-                stop_ack = host._run("docker", "stop", "--time", "5", container, timeout=20)
+                stop_ack = host._run("docker", "stop", "-t", "5", container, timeout=20)
             except (host.PreflightError, OSError) as exc:
                 stop_failure_cause = _classify_stop_failure(exc)
                 raise
