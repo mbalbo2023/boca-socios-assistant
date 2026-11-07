@@ -213,11 +213,17 @@ def test_readonly_observer_reports_durable_phase_without_exposing_ids(
     monkeypatch.setattr(reconcile, "_read_private", lambda name, *, directory: files.get(name))
     monkeypatch.setattr(reconcile, "_docker_snapshot", lambda: [])
     monkeypatch.setattr(reconcile, "_marker", lambda prepared: ("UNREADABLE", "DIRECTORY"))
-    monkeypatch.setattr(reconcile, "_stage_preflight", lambda intent: {"reason": "STAGE_ROOT_ENTRIES"})
+    monkeypatch.setattr(
+        reconcile, "_stage_preflight", lambda intent: {"reason": "STAGE_ROOT_ENTRIES"}
+    )
     monkeypatch.setattr(
         reconcile,
         "_staged_attempt",
-        lambda attempt: {"stage": "PRESENT", "promotion_intent": "ABSENT", "promotion_result": "ABSENT"},
+        lambda attempt: {
+            "stage": "PRESENT",
+            "promotion_intent": "ABSENT",
+            "promotion_result": "ABSENT",
+        },
     )
     observed = reconcile._host(RUN, PREPARE)
     assert (observed["worker_id_recorded"], observed["candidate_id_recorded"]) == expected
