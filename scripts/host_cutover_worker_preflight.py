@@ -51,7 +51,19 @@ CLEANUP_STAGES = frozenset(
     }
 )
 STOP_FAILURE_CAUSES = frozenset(
-    {"NONE", "TIMEOUT", "NONZERO", "OSERROR", "ACK_MISMATCH", "UNVERIFIED"}
+    {
+        "NONE",
+        "TIMEOUT",
+        "NONZERO",
+        "OSERROR",
+        "ACK_MISMATCH",
+        "ACK_EMPTY",
+        "ACK_SHORT_ID",
+        "ACK_NAME",
+        "ACK_MULTILINE",
+        "ACK_OTHER_ID",
+        "UNVERIFIED",
+    }
 )
 BOUNDARY_COMMAND = (
     "import os\n"
@@ -344,6 +356,21 @@ def _classify_stop_failure(exc: Exception) -> str:
     return "UNVERIFIED"
 
 
+def _classify_stop_ack(ack: str, expected_id: str, expected_name: str) -> str:
+    """Report only an allowlisted shape, never the Docker stdout bytes."""
+    if not ack:
+        return "ACK_EMPTY"
+    if "\n" in ack or "\r" in ack:
+        return "ACK_MULTILINE"
+    if ack in {expected_name, f"/{expected_name}"}:
+        return "ACK_NAME"
+    if 12 <= len(ack) < 64 and expected_id.startswith(ack) and re.fullmatch(r"[0-9a-f]+", ack):
+        return "ACK_SHORT_ID"
+    if ID.fullmatch(ack):
+        return "ACK_OTHER_ID"
+    return "ACK_MISMATCH"
+
+
 def _cleanup_exact(pins: Coordinates, name: str) -> None:
     stage = "PS"
     stop_failure_cause = "UNVERIFIED"
@@ -376,7 +403,7 @@ def _cleanup_exact(pins: Coordinates, name: str) -> None:
                 stop_failure_cause = _classify_stop_failure(exc)
                 raise
             if stop_ack != container:
-                stop_failure_cause = "ACK_MISMATCH"
+                stop_failure_cause = _classify_stop_ack(stop_ack, container, name)
                 raise WorkerPreflightError("probe exact container stop unverified")
         stage = "RM"
         if host._run("docker", "rm", container, timeout=20) != container:

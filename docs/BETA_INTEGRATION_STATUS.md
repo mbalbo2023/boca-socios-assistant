@@ -1,6 +1,16 @@
 # Estado de integración BETA
 
-## A45-R91 — residuo #827 detenido; recuperación R91 sólo CODE_ONLY (07/11/2026 ART)
+## A45-R92 — recuperación #831 verificada; fix-forward STOP sólo CODE_ONLY (07/11/2026 ART)
+
+| Frente | Evidencia real | Estado |
+| --- | --- | --- |
+| R91 físico | [#831](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42372284155): `CLEANED/VERIFIED` del #827 detenido; sin prueba del stdout del STOP fallido | Residuo exacto limpiado; no repetir #827/#831 |
+| R92 | [ADR0201](ADR/0201-r92-worker-stop-ack-evidence.md): ACK tipado sin bytes, CLI flag previo `--time`, un STOP y cero RM ante mismatch; PASS intacto | CODE_ONLY hasta revisión, PR/CI/merge, fresh release y GO independiente |
+| Worker preflight/Cutover/GO_B/Telegram | Un nuevo preflight requiere ocho inputs nuevos, release dual mismo SHA, PR0 y consenso físico expreso | **NO_GO**; sin PREPARE/APPLY ni BETA integral |
+
+---
+
+## Histórico A45-R91 — residuo #827 detenido; recuperación entonces CODE_ONLY (07/11/2026 ART)
 
 | Frente | Evidencia real | Estado |
 | --- | --- | --- |
