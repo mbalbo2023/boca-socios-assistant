@@ -70,6 +70,23 @@ OPTION_B_SOURCES = (
     "src/boca_socios/panel/owner_session_sql/0001_owner_browser_session.sql",
 )
 OPTION_B_STDLIB_BUNDLE_NAME = "boca_socios/owner_session_disk_bootstrap.py"
+# Dedicated one-incident recovery payload.  The full Cutover package is at
+# its 860k source ceiling and must never inherit these extra files.
+RECOVERY_SOURCES = (
+    "docker/seccomp_profile.json",
+    "src/boca_socios/__init__.py",
+    "src/boca_socios/host_boca_cleanup.py",
+    "scripts/__init__.py",
+    "scripts/host_cutover_worker_inspect.py",
+    "scripts/host_cutover_worker_recovery.py",
+)
+RECOVERY_MAIN = (
+    "import sys\n"
+    "if sys.argv[1:] != ['cutover-worker-recover']:\n"
+    "    raise SystemExit(3)\n"
+    "from scripts import host_cutover_worker_recovery as recovery\n"
+    "raise SystemExit(recovery.main(['host']))\n"
+).encode("ascii")
 MAIN = (
     "import sys\n"
     "if len(sys.argv) > 1 and sys.argv[1] == 'cutover-stage-recover':\n"
@@ -106,24 +123,34 @@ MAIN = (
 # Keep the hard compressed transport cap independent and unchanged at 512kB.
 MAX_SOURCE_BYTES = 860_000
 MAX_ARCHIVE_BYTES = 512_000
+RECOVERY_MAX_SOURCE_BYTES = 256_000
+RECOVERY_MAX_ARCHIVE_BYTES = 128_000
 
 
-def build(root: Path, target: Path) -> str:
-    """Write a reproducible archive to a trusted runner-only target."""
-    files: dict[str, bytes] = {"__main__.py": MAIN, **HOST_ONLY_INIT}
-    b_sources = tuple(root / rel for rel in OPTION_B_SOURCES)
-    if any(source.exists() or source.is_symlink() for source in b_sources):
-        if not all(source.is_file() and not source.is_symlink() for source in b_sources):
-            raise ValueError("Boca Option B requires both reviewed session source and SQL")
-        sources = (*SOURCES, *OPTION_B_SOURCES)
+def build(root: Path, target: Path, *, worker_recovery: bool = False) -> str:
+    """Write one deterministic, explicitly allowlisted runner-only archive."""
+    if worker_recovery:
+        files: dict[str, bytes] = {"__main__.py": RECOVERY_MAIN}
+        sources: tuple[str, ...] = RECOVERY_SOURCES
+        max_source = RECOVERY_MAX_SOURCE_BYTES
+        max_archive = RECOVERY_MAX_ARCHIVE_BYTES
     else:
-        sources = SOURCES
+        files = {"__main__.py": MAIN, **HOST_ONLY_INIT}
+        b_sources = tuple(root / rel for rel in OPTION_B_SOURCES)
+        if any(source.exists() or source.is_symlink() for source in b_sources):
+            if not all(source.is_file() and not source.is_symlink() for source in b_sources):
+                raise ValueError("Boca Option B requires both reviewed session source and SQL")
+            sources = (*SOURCES, *OPTION_B_SOURCES)
+        else:
+            sources = SOURCES
+        max_source = MAX_SOURCE_BYTES
+        max_archive = MAX_ARCHIVE_BYTES
     for rel in sources:
         source = root / rel
         if source.is_symlink():
             raise ValueError("Boca protected package source may not be a symlink")
         item = source.lstat()
-        if not stat.S_ISREG(item.st_mode) or not 0 < item.st_size <= MAX_SOURCE_BYTES:
+        if not stat.S_ISREG(item.st_mode) or not 0 < item.st_size <= max_source:
             raise ValueError("Boca protected package source missing/oversized")
         data = source.read_bytes()
         if len(data) != item.st_size:
@@ -135,7 +162,7 @@ def build(root: Path, target: Path) -> str:
             OPTION_B_STDLIB_BUNDLE_NAME if rel == OPTION_B_SOURCES[0] else rel.removeprefix("src/")
         )
         files[name] = data
-    if not 0 < sum(len(item) for item in files.values()) <= MAX_SOURCE_BYTES:
+    if not 0 < sum(len(item) for item in files.values()) <= max_source:
         raise ValueError("Boca protected package total exceeds bounded contract")
     if target.is_symlink() or target.exists():
         raise ValueError("Boca protected package target must be a fresh artifact")
@@ -152,7 +179,7 @@ def build(root: Path, target: Path) -> str:
             stream.flush()
             os.fsync(stream.fileno())
         raw = target.read_bytes()
-        if not 0 < len(raw) <= MAX_ARCHIVE_BYTES:
+        if not 0 < len(raw) <= max_archive:
             raise ValueError("Boca protected package ZIP exceeds bounded contract")
         return hashlib.sha256(raw).hexdigest()
     except Exception:
@@ -161,12 +188,21 @@ def build(root: Path, target: Path) -> str:
         raise
 
 
+def build_worker_recovery(root: Path, target: Path) -> str:
+    """Build only the small stopped-worker recovery transport, never Cutover."""
+    return build(root, target, worker_recovery=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Boca-only deterministic host code bundle")
+    parser.add_argument("--worker-recovery", action="store_true")
     parser.add_argument("repository_root", type=Path)
     parser.add_argument("runner_target", type=Path)
     args = parser.parse_args()
-    print(f"BOCA_PROTECTED_BUNDLE sha256={build(args.repository_root, args.runner_target)}")
+    print(
+        "BOCA_PROTECTED_BUNDLE sha256="
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery)}"
+    )
     return 0
 
 

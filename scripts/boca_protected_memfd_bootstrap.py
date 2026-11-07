@@ -62,29 +62,52 @@ OPTION_B_ENTRIES = frozenset(
         "boca_socios/panel/owner_session_sql/0001_owner_browser_session.sql",
     }
 )
+# A separate, much smaller transport for the one stopped preflight container.
+# It cannot dispatch Cutover and does not include host_first_deploy or Compose.
+RECOVERY_ENTRIES = frozenset(
+    {
+        "__main__.py",
+        "docker/seccomp_profile.json",
+        "boca_socios/__init__.py",
+        "boca_socios/host_boca_cleanup.py",
+        "scripts/__init__.py",
+        "scripts/host_cutover_worker_inspect.py",
+        "scripts/host_cutover_worker_recovery.py",
+    }
+)
 MAX_ZIP = 512_000
 # Must match the bounded explicit allowlist in build_protected_boca_bundle;
 # independently enforce the unchanged 512k compressed ZIP cap.
 MAX_UNCOMPRESSED = 860_000
+RECOVERY_MAX_ZIP = 128_000
+RECOVERY_MAX_UNCOMPRESSED = 256_000
 
 
-def verify(raw: bytes, expected_sha: str) -> None:
+def verify(raw: bytes, expected_sha: str, *, recovery: bool = False) -> None:
+    """Verify digest, exact transport variant, file types and separate bounds."""
+    max_zip = RECOVERY_MAX_ZIP if recovery else MAX_ZIP
+    max_uncompressed = RECOVERY_MAX_UNCOMPRESSED if recovery else MAX_UNCOMPRESSED
     if not re.fullmatch(r"[0-9a-f]{64}", expected_sha):
         raise ValueError("protected Boca bundle expected digest invalid")
-    if not raw or len(raw) > MAX_ZIP or hashlib.sha256(raw).hexdigest() != expected_sha:
+    if not raw or len(raw) > max_zip or hashlib.sha256(raw).hexdigest() != expected_sha:
         raise ValueError("protected Boca bundle SHA/size mismatch")
     with zipfile.ZipFile(io.BytesIO(raw), "r") as package:
         entries = package.infolist()
         names = [entry.filename for entry in entries]
+        allowlisted = (
+            (RECOVERY_ENTRIES,)
+            if recovery
+            else (EXPECTED_ENTRIES, EXPECTED_ENTRIES | OPTION_B_ENTRIES)
+        )
         if (
-            set(names) not in (EXPECTED_ENTRIES, EXPECTED_ENTRIES | OPTION_B_ENTRIES)
+            frozenset(names) not in allowlisted
             or len(names) != len(set(names))
             or any(entry.is_dir() for entry in entries)
-            or sum(entry.file_size for entry in entries) > MAX_UNCOMPRESSED
+            or sum(entry.file_size for entry in entries) > max_uncompressed
         ):
             raise ValueError("protected Boca bundle entry allowlist mismatch")
         for entry in entries:
-            if entry.file_size == 0 or entry.file_size > MAX_UNCOMPRESSED:
+            if entry.file_size == 0 or entry.file_size > max_uncompressed:
                 raise ValueError("protected Boca bundle entry size invalid")
             # The ZIP is a code bundle, never a deployed filesystem tree.
             # Refuse symlink/special entries to avoid importing from outside.
@@ -98,8 +121,11 @@ def main() -> int:
         print("BOCA_BUNDLE state=NO_GO reason=arguments", file=sys.stderr)
         return 2
     try:
-        raw = sys.stdin.buffer.read(MAX_ZIP + 1)
-        verify(raw, sys.argv[1])
+        recovery = sys.argv[2] == "cutover-worker-recover"
+        if recovery and len(sys.argv) != 3:
+            raise ValueError("stopped worker recovery accepts no user coordinates")
+        raw = sys.stdin.buffer.read((RECOVERY_MAX_ZIP if recovery else MAX_ZIP) + 1)
+        verify(raw, sys.argv[1], recovery=recovery)
         # The memfd is passed to the *same* process via exec. No temporary
         # container, host file or broader Docker resource is ever created.
         fd = os.memfd_create("boca-protected-transaction", flags=0)
