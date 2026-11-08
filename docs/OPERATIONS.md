@@ -1,13 +1,25 @@
 # Safe operations — verified evidence and gated procedures
 
+## R119 CODE_ONLY — adaptar el planner a RECOVERED/ACCEPT #878 (08/11/2026 ART)
+
+El observer de [Action #883](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42531818647)
+confirmó legacy restaurado, healthy y único en loopback8443; su segundo
+paso no inventarió imágenes/volúmenes porque sólo aceptaba el par histórico
+NO_GO/INDETERMINATE. La excepción R119 **no cambia el formulario**, no
+efectúa escrituras y sólo reconoce el terminal v3 exacto de #878 con fallo
+HEALTH_EXITED/ExitCode1/OOMfalse, compensación VERIFIED, stage ausente,
+identidades y preflight estrictos. Nunca interpretar RECOVERED como Cutover
+aceptado. Un próximo inventario requiere consenso y checks postmerge
+separados; **NO ejecutar reintentos durante CODE_ONLY**. Sin limpieza global
+ni contacto con otro Docker. [ADR0214](ADR/0214-r119-recovered-terminal-readonly-inventory.md).
+
 ## R118 CODE_ONLY — preparar inventario Boca del incidente V3 #878 (08/11/2026 ART)
 
-El selector existente `cutover-a-reconcile` admitirá después de PR/revisión/
-merge un segundo incidente V3 exacto, `42426260583`, con SHA origen
-`f57173862df3143062a136452f2ffc7e3cc51d35`, sin PREPARE. Antes no
-se debe intentar un despacho de diagnóstico físico. El observer ahora valida
+El selector existente `cutover-a-reconcile` admite desde PR #450
+un segundo incidente V3 exacto, `42426260583`, con SHA origen
+`f57173862df3143062a136452f2ffc7e3cc51d35`, sin PREPARE. El observer valida
 el recibo persistente terminal v3 (ExitCode/OOM) que generó R114 y luego
-reutiliza el plan de limpieza **sin borrar**. Ni un inventario limpio acredita
+reutiliza el plan de limpieza **sin borrar** (aún bloqueado en #883, ver R119). Ni un inventario limpio acredita
 `Cutover GO`: no reintentar #878 ni despachar otro Cutover; conservar la imagen
 histórica ADR0209, clasificar residuos Boca sin afectar otros recursos y
 documentar evidencia en #417/#45. [ADR0213](ADR/0213-r118-readonly-inventory-after-terminal-v3.md).

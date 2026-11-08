@@ -9,9 +9,12 @@ import os
 import subprocess
 import sys
 import textwrap
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+
+from boca_socios import host_boca_cleanup as cleanup
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
@@ -31,7 +34,7 @@ PREPARE = "42381545964"
 
 def _receipt(*, v3: bool) -> dict[str, object]:
     obj: dict[str, object] = {
-        "version": f"boca-postapply-reconcile-{'v2' if v3 else 'v1'}",
+        "version": f"boca-postapply-reconcile-{'v3' if v3 else 'v1'}",
         "incident_run_id": RUN,
         "prepare_run_id": None if v3 else PREPARE,
         "intent": "PRESENT",
@@ -52,6 +55,10 @@ def _receipt(*, v3: bool) -> dict[str, object]:
             "service": "controller",
             "port_binding": {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]},
         },
+        "boca_containers": 1,
+        "candidate_controllers": [],
+        "browser_workers": [],
+        "stage_preflight": {"reason": "STAGE_PREFLIGHT_MATCH"},
         "port_8443": "BOCA_CONTROLLER_DOCKER_BOUND",
         "worker_id_recorded": False,
         "candidate_id_recorded": False,
@@ -61,13 +68,221 @@ def _receipt(*, v3: bool) -> dict[str, object]:
         "prepared_go_marker": "NOT_APPLICABLE" if v3 else "PRESENT_VERIFIED",
         "prepared_go_marker_reason": "V3_DISPATCH_WITHOUT_PREPARE" if v3 else "MARKER_SCHEMA_VALID",
     }
+    obj["boca_inventory"] = [obj["original"]]
     if v3:
         obj["incident_source_sha"] = SOURCE
+        obj["terminal_worker_evidence"] = None
     return obj
 
 
 def _raw(obj: dict[str, object]) -> bytes:
     return json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n"
+
+
+def _recovered_receipt() -> dict[str, object]:
+    """Only the strongly bound, synthetic #878/#883 external observation."""
+    obj = _receipt(v3=True)
+    obj.update(
+        incident_run_id=LATEST_RUN,
+        incident_source_sha=LATEST_SOURCE,
+        terminal_state="RECOVERED",
+        cleanup="ACCEPT",
+        terminal_worker_evidence={
+            "version": "boca-cutover-a-terminal-v3",
+            "worker_primary_phase": "HEALTH_EXITED",
+            "worker_compensation": "VERIFIED",
+            "worker_exit_code": 1,
+            "worker_oom_killed": False,
+        },
+        boca_containers=1,
+        boca_inventory=[obj["original"]],
+        candidate_controllers=[],
+        browser_workers=[],
+        stage_preflight={
+            "reason": "STAGE_PREFLIGHT_MATCH",
+            "root_entries_count": 1,
+            "root_entries_expected": True,
+            "compose_digest_match": True,
+            "compose_digest_evaluated": True,
+            "compose_inode_checks": {
+                "regular": True,
+                "uid_ok": True,
+                "gid_ok": True,
+                "nlink_one": True,
+                "mode_0600": False,
+                "size_ok": True,
+            },
+            "compose_inode_mode_octal": "0644",
+            "compose_legacy_mode_accepted": True,
+            "plan_hashes_unique": True,
+        },
+    )
+    return obj
+
+
+def test_recovered_v3_exact_878_only_enters_readonly_planner() -> None:
+    record = _recovered_receipt()
+    assert observer.verify_runner(_raw(record), LATEST_RUN, None, source_sha=LATEST_SOURCE)
+    assert (
+        observer.verified_cleanup_legacy_id(_raw(record), LATEST_RUN, LATEST_SOURCE, v3=True)
+        == LEGACY_ID
+    )
+    with pytest.raises(observer.ReconcileError):
+        observer.verified_cleanup_legacy_id(_raw(record), RUN, SOURCE, v3=True)
+
+
+@pytest.mark.parametrize(
+    ("field", "bad"),
+    [
+        ("terminal_state", "NO_GO"),
+        ("terminal_state", "ACCEPTED"),
+        ("cleanup", "INDETERMINATE"),
+        ("cleanup", "NO_GO"),
+        ("original_restored", False),
+        ("commit_started", True),
+        ("worker_id_recorded", True),
+        ("candidate_id_recorded", True),
+        ("boca_containers", 2),
+        ("boca_containers", True),
+        ("boca_inventory", []),
+        ("candidate_controllers", [{"id": "b" * 64}]),
+        ("browser_workers", [{"id": "b" * 64}]),
+        ("stage", "PRESENT"),
+        ("promotion_intent", "PRESENT"),
+        ("promotion_result", "PRESENT"),
+        ("stage_preflight", {"reason": "UNVERIFIED"}),
+        ("port_8443", "UNVERIFIED"),
+        ("prepared_go_marker", "PRESENT_VERIFIED"),
+        ("terminal_worker_evidence", None),
+    ],
+)
+def test_recovered_v3_rejects_any_changed_external_state(field: str, bad: object) -> None:
+    obj = _recovered_receipt()
+    obj[field] = bad
+    with pytest.raises(observer.ReconcileError):
+        observer.verified_cleanup_legacy_id(_raw(obj), LATEST_RUN, LATEST_SOURCE, v3=True)
+
+
+@pytest.mark.parametrize(
+    ("field", "bad"),
+    [
+        ("version", "boca-cutover-a-terminal-v2"),
+        ("worker_primary_phase", "HEALTH_TIMEOUT"),
+        ("worker_compensation", "INDETERMINATE"),
+        ("worker_exit_code", 0),
+        ("worker_exit_code", True),
+        ("worker_exit_code", "UNKNOWN"),
+        ("worker_oom_killed", True),
+        ("worker_oom_killed", 0),
+        ("worker_oom_killed", "UNKNOWN"),
+    ],
+)
+def test_recovered_v3_rejects_untrusted_terminal_worker_evidence(field: str, bad: object) -> None:
+    obj = _recovered_receipt()
+    evidence = obj["terminal_worker_evidence"]
+    assert type(evidence) is dict
+    obj["terminal_worker_evidence"] = {**evidence, field: bad}
+    with pytest.raises(observer.ReconcileError):
+        observer.verified_cleanup_legacy_id(_raw(obj), LATEST_RUN, LATEST_SOURCE, v3=True)
+
+
+@pytest.mark.parametrize(
+    ("field", "bad"),
+    [
+        ("root_entries_count", 2),
+        ("root_entries_count", True),
+        ("root_entries_expected", False),
+        ("compose_digest_match", False),
+        ("compose_digest_evaluated", False),
+        ("compose_legacy_mode_accepted", False),
+        ("plan_hashes_unique", False),
+        ("compose_inode_mode_octal", "0666"),
+        ("compose_inode_mode_octal", "0600"),
+    ],
+)
+def test_recovered_v3_rejects_unverified_stage_preflight(field: str, bad: object) -> None:
+    obj = _recovered_receipt()
+    preflight = obj["stage_preflight"]
+    assert type(preflight) is dict
+    obj["stage_preflight"] = {**preflight, field: bad}
+    with pytest.raises(observer.ReconcileError):
+        observer.verified_cleanup_legacy_id(_raw(obj), LATEST_RUN, LATEST_SOURCE, v3=True)
+
+
+@pytest.mark.parametrize("field", ["regular", "uid_ok", "gid_ok", "nlink_one", "size_ok"])
+def test_recovered_v3_rejects_unverified_compose_inode(field: str) -> None:
+    obj = _recovered_receipt()
+    preflight = obj["stage_preflight"]
+    assert type(preflight) is dict
+    inode = preflight["compose_inode_checks"]
+    assert type(inode) is dict
+    obj["stage_preflight"] = {**preflight, "compose_inode_checks": {**inode, field: False}}
+    with pytest.raises(observer.ReconcileError):
+        observer.verified_cleanup_legacy_id(_raw(obj), LATEST_RUN, LATEST_SOURCE, v3=True)
+
+
+def test_recovered_v3_accepts_strict_private_compose_mode_0600() -> None:
+    obj = _recovered_receipt()
+    preflight = obj["stage_preflight"]
+    assert type(preflight) is dict
+    checks = preflight["compose_inode_checks"]
+    assert type(checks) is dict
+    obj["stage_preflight"] = {
+        **preflight,
+        "compose_inode_mode_octal": "0600",
+        "compose_inode_checks": {**checks, "mode_0600": True},
+    }
+    assert (
+        observer.verified_cleanup_legacy_id(_raw(obj), LATEST_RUN, LATEST_SOURCE, v3=True)
+        == LEGACY_ID
+    )
+
+
+def test_recovered_v3_rejects_additional_worker_evidence_keys() -> None:
+    obj = _recovered_receipt()
+    evidence = obj["terminal_worker_evidence"]
+    assert type(evidence) is dict
+    obj["terminal_worker_evidence"] = {**evidence, "untrusted": "data"}
+    with pytest.raises(observer.ReconcileError):
+        observer.verified_cleanup_legacy_id(_raw(obj), LATEST_RUN, LATEST_SOURCE, v3=True)
+
+
+def test_recovered_v3_rejects_other_incident_even_with_matching_coordinates() -> None:
+    obj = _recovered_receipt()
+    obj.update(incident_run_id=RUN, incident_source_sha=SOURCE)
+    with pytest.raises(observer.ReconcileError):
+        observer.verified_cleanup_legacy_id(_raw(obj), RUN, SOURCE, v3=True)
+
+
+def test_postapply_receipt_protocol_versions_and_private_extra_fields() -> None:
+    current = _recovered_receipt()
+    assert observer.verify_runner(_raw(current), LATEST_RUN, None, source_sha=LATEST_SOURCE)
+    for candidate in (
+        {**current, "private_data": "must-never-enter-actions-summary"},
+        {**current, "version": "boca-postapply-reconcile-v2"},
+        {key: value for key, value in current.items() if key != "terminal_worker_evidence"},
+    ):
+        with pytest.raises(observer.ReconcileError, match="RECEIPT_CONTRACT"):
+            observer.verify_runner(_raw(candidate), LATEST_RUN, None, source_sha=LATEST_SOURCE)
+
+    # Historical R118 postapply-v2 receipt continues to verify as evidence,
+    # but never proves the newly typed positive RECOVERED exception.
+    historical = _receipt(v3=True)
+    historical["version"] = "boca-postapply-reconcile-v2"
+    historical.pop("terminal_worker_evidence")
+    assert observer.verify_runner(_raw(historical), RUN, None, source_sha=SOURCE)
+    assert observer.verified_cleanup_legacy_id(_raw(historical), RUN, SOURCE, v3=True) == LEGACY_ID
+    historical.update(terminal_state="RECOVERED", cleanup="ACCEPT")
+    with pytest.raises(observer.ReconcileError):
+        observer.verified_cleanup_legacy_id(_raw(historical), RUN, SOURCE, v3=True)
+
+
+def test_postapply_legacy_v1_rejects_unreviewed_extra_data() -> None:
+    historical = _receipt(v3=False)
+    assert observer.verify_runner(_raw(historical), RUN, PREPARE)
+    historical["private_data"] = "not-for-github-summary"
+    with pytest.raises(observer.ReconcileError, match="RECEIPT_CONTRACT"):
+        observer.verify_runner(_raw(historical), RUN, PREPARE)
 
 
 def test_v3_original_derived_after_stage_cleared_without_prepare() -> None:
@@ -204,8 +419,12 @@ def test_exact_embedded_github_attestation_accepts_only_trusted_v3_incidents(
                 assert f"BOCA_INCIDENT_SOURCE_SHA={sha}\n" in (tmp_path / "github-env").read_text()
 
 
+@pytest.mark.parametrize(
+    ("terminal_state", "cleanup_state"),
+    [("NO_GO", "INDETERMINATE"), ("RECOVERED", "ACCEPT")],
+)
 def test_latest_terminal_v3_to_host_and_real_cleanup_handoff_offline(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    terminal_state: str, cleanup_state: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Real observer+runner logic with synthetic owner data; zero Docker/SSH."""
     legacy_sha = "b" * 40
@@ -235,8 +454,8 @@ def test_latest_terminal_v3_to_host_and_real_cleanup_handoff_offline(
         "legacy_source_sha": legacy_sha,
         "target_source_sha": LATEST_SOURCE,
         "intent_sha256": hashlib.sha256(intent).hexdigest(),
-        "state": "NO_GO",
-        "cleanup": "INDETERMINATE",
+        "state": terminal_state,
+        "cleanup": cleanup_state,
         "original_restored": True,
         "irreversible_commit_started": False,
         "candidate_id": None,
@@ -268,7 +487,11 @@ def test_latest_terminal_v3_to_host_and_real_cleanup_handoff_offline(
     monkeypatch.setattr(observer.Path, "is_symlink", lambda self: False)
     monkeypatch.setattr(observer, "_read_private", lambda name, *, directory: stored.get(name))
     monkeypatch.setattr(observer, "_docker_snapshot", lambda: [original])
-    monkeypatch.setattr(observer, "_stage_preflight", lambda marker: {})
+    monkeypatch.setattr(
+        observer,
+        "_stage_preflight",
+        lambda marker: _recovered_receipt()["stage_preflight"],
+    )
     monkeypatch.setattr(
         observer, "_marker", lambda prepared: ("PRESENT_VERIFIED", "MARKER_SCHEMA_VALID")
     )
@@ -302,6 +525,61 @@ def test_latest_terminal_v3_to_host_and_real_cleanup_handoff_offline(
     )
     assert handoff.returncode == 0
     assert handoff.stdout.strip() == LEGACY_ID
+
+    # Exercise the actual next Boca-only planner contract, not just the
+    # workflow's CID handoff. All Docker identities here are synthetic.
+    active_image = "sha256:" + "a" * 64
+    foreign_image = "sha256:" + "b" * 64
+    labels = (("com.docker.compose.project", "boca-socios"),)
+    inventory = cleanup.Inventory(
+        containers=(
+            cleanup.Container(
+                LEGACY_ID,
+                "/boca-socios-controller-1",
+                active_image,
+                True,
+                (*labels, ("com.docker.compose.service", "controller")),
+                ("boca-socios_boca_data", "boca-socios_boca_key", "boca-socios_boca_owner"),
+                ("boca-socios_boca_private",),
+            ),
+        ),
+        images=(
+            cleanup.Image(
+                active_image,
+                ("ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "c" * 64,),
+                None,
+            ),
+        ),
+        networks=(cleanup.Network("boca-socios_boca_private", "d" * 64, (LEGACY_ID,), labels),),
+        volumes=tuple(
+            cleanup.Volume(name, labels)
+            for name in ("boca-socios_boca_data", "boca-socios_boca_key", "boca-socios_boca_owner")
+        ),
+        disk=cleanup.DiskInodes(100_000, 700, 500_000, 900, 100, 101, 200, 201),
+        global_image_ids=frozenset({active_image}),
+    )
+    for observed_images, classification in (
+        (inventory, "NO_CONFIRMED_REMNANTS"),
+        (
+            replace(inventory, global_image_ids=frozenset({active_image, foreign_image})),
+            "INDETERMINATE",
+        ),
+    ):
+        planned = cleanup.observe_postapply_cleanup(
+            LATEST_RUN, handoff.stdout.strip(), probe=lambda snapshot=observed_images: snapshot
+        )
+        assert planned["status"] == "READ_ONLY_NO_GO"
+        assert planned["classification"] == classification
+        assert planned["cleanup_executed"] is False
+        assert planned["go_for_retry"] is False
+        assert planned["observer_writes"] == 0
+        assert foreign_image not in str(planned)
+        assert (
+            cleanup.verify_readonly_cleanup_receipt(
+                cleanup.canonical_readonly_cleanup_receipt(planned), LATEST_RUN, LEGACY_ID
+            )
+            == planned
+        )
     with pytest.raises(observer.ReconcileError):
         observer._host(LATEST_RUN, PREPARE)
     stored[f"boca-cutover-a-result-{LATEST_RUN}.json"] = observer._canonical(
