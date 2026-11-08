@@ -5,7 +5,7 @@
 | Frente | Evidencia | Estado |
 | --- | --- | --- |
 | Fuente inicial | `main=f57173862df3143062a136452f2ffc7e3cc51d35`, PR0 al iniciar; CI y release dual R114 verdes | Legacy físico sigue siendo el controller instalado |
-| R116 #354 | Se reprodujo RED de argv y postflight por opt-in omitido; corrección mínima; suite focal 295 PASS; full local 5546 PASS +34 subtests; lint/type/policy PASS | Rama local CODE_ONLY, no atribuir a main hasta PR/CI/merge |
+| R116 #354 | [PR DRAFT #449](https://github.com/mbalbo2023/boca-socios-assistant/pull/449): RED de argv/postflight, dos env exactas, suite local 5546 PASS +34 subtests, RCA gate 46 lecciones PASS | Candidato CODE_ONLY, no atribuir a main hasta PR/CI/merge |
 | Worker | Cutover #42426260583: `PREPARE_WORKER/HEALTH_EXITED`, `ExitCode=1`, `OOMKilled=NO`; observación #42426527816: legacy RUNNING, worker ABSENT | RCA interno UNKNOWN; NO_GO otro Cutover sin contrato/evidencia externa e inventario |
 | Telegram, aceptación y limpieza | `telegram-activate` aborta antes SSH por backend sin conectar; Stage/recipient/egress y limpieza detallada no acreditados | Sender OFF; NO_GO BETA integral y Telegram físicos |
 

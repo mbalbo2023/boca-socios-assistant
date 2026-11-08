@@ -1,6 +1,7 @@
 # ADR0212 — R116: paridad de stage Telegram cifrado en Cutover IPC
 
-Fecha: 2026-11-08 ART. Issues #354, #417 y #45. **CODE_ONLY / NO_GO host**.
+Fecha: 2026-11-08 ART. Issues #354, #417 y #45; PR #449.
+**CODE_ONLY / NO_GO host**.
 
 ## Evidencia y RCA independiente
 
@@ -58,6 +59,10 @@ Telegram Bot API/sender y no se habilita navegación o reserva real.
   **5546 PASS +34 subtests**, cero fallos (25,50 s). Ruff check,
   Ruff format `706 files`, MyPy `136 source files` y policy PASS. Son pruebas
   en workspace local, no evidencia de Actions ni del droplet.
+- El registro `RCA-354` fija el PR #449 y los tres selectores de regresión;
+  la ejecución local posterior con JUnit verificó `RCA_GATE_PASS`:
+  46 lecciones, 159 selectores ejecutados y 11 excepciones BLACKBOX
+  externamente atestadas. No equivale al check Actions del SHA final.
 
 **Permanecen NO_GO** la BETA integral física, la causa interna del ExitCode1
 del worker, las comprobaciones de arranque del blackbox que corresponden a su

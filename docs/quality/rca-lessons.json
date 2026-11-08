@@ -572,6 +572,18 @@
         "tests/test_r85_cutover_observe_provenance.py::test_unknown_host_messages_fail_closed_without_raw_text",
         "tests/test_r85_cutover_observe_provenance.py::test_real_workflow_step_one_fake_ssh_and_safe_terminal_no_go"
       ]
+    },
+    {
+      "id": "RCA-354",
+      "issue": 354,
+      "fix_pr": 449,
+      "root_cause": "The approved IPC Compose overlay enabled encrypted Telegram staging, but Cutover V3 created its controller through direct Docker argv without that variable. Its postflight inspected other selectors and silently accepted the omitted setting.",
+      "prevention": "Require the exact encrypted-only opt-in in V3 candidate Docker argv and effective Config.Env postflight. Test missing, off, invalid and duplicate values; retain the legacy/worker isolation and repin only the reviewed deterministic Cutover ZIP.",
+      "regression_tests": [
+        "tests/test_host_cutover_adapter.py::test_candidate_argv_enables_only_encrypted_ipc_telegram_stage",
+        "tests/test_host_browser_ipc_install.py::test_controller_postflight_requires_encrypted_stage",
+        "tests/test_r82_recovery_bundle.py::test_current_cutover_zip_is_pinned_and_excludes_preflight"
+      ]
     }
   ]
 }
