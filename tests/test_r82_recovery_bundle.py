@@ -89,6 +89,11 @@ R114_EXIT_EVIDENCE_FULL_CUTOVER_SHA = (
 R116_TELEGRAM_STAGE_PARITY_FULL_CUTOVER_SHA = (
     "2e6eb49323be4edcbe427aee34c7f2801c8698f8ccf8ba46945907550749c14d"
 )
+# R118: the existing READ_ONLY observer now verifies terminal v3 exit fields;
+# R116 remains the immutable pin of the earlier physical Cutover code.
+R118_READONLY_LATEST_CUTOVER_SHA = (
+    "a34535af33d9e7073d16a97c50ce1e0a529db39dae35302b79c0cb0ecb152e77"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -246,7 +251,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R116_TELEGRAM_STAGE_PARITY_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R118_READONLY_LATEST_CUTOVER_SHA
+    assert digest != R116_TELEGRAM_STAGE_PARITY_FULL_CUTOVER_SHA
     assert digest != R114_EXIT_EVIDENCE_FULL_CUTOVER_SHA
     assert digest != R110_HEALTH_DIAGNOSTIC_FULL_CUTOVER_SHA
     assert digest != R108_HISTORICAL_QUARANTINE_FULL_CUTOVER_SHA
