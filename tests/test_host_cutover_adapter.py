@@ -426,6 +426,18 @@ def test_candidate_argv_reuses_exact_volume_names_no_invisible_restart() -> None
     assert "docker compose" not in " ".join(argv)
 
 
+def test_candidate_argv_enables_only_encrypted_ipc_telegram_stage() -> None:
+    argv = host._cutover_candidate_create_argv(
+        TARGET_IMAGE, TARGET_SHA, ATTEMPT, ORIGIN, OWNER, CONFIG_HASH
+    )
+    values = [argv[index + 1] for index, value in enumerate(argv[:-1]) if value == "--env"]
+    assert values.count("BOCA_TELEGRAM_PAIRING_STAGE_MODE=encrypted-only") == 1
+    assert not any(
+        value.startswith("BOCA_TELEGRAM_TOKEN=") or value.startswith("BOCA_TELEGRAM_SENDER=")
+        for value in values
+    )
+
+
 def _worker_preparation_fake(
     monkeypatch: pytest.MonkeyPatch, *, fail_at: str | None = None
 ) -> tuple[list[tuple[str, ...]], dict[str, object], dict[str, object]]:

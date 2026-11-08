@@ -1022,6 +1022,7 @@ def controller_record() -> dict[str, object]:
                 "BOCA_RUNTIME_MODE=simulation",
                 "BOCA_ENGINE_MODE=off",
                 "BOCA_BROWSER_BACKEND=ipc",
+                "BOCA_TELEGRAM_PAIRING_STAGE_MODE=encrypted-only",
                 f"BOCA_PANEL_ORIGIN={ORIGIN}",
                 f"BOCA_OWNER_SUBJECT={OWNER}",
                 "BOCA_DB_PATH=/data/boca.sqlite3",
@@ -1070,6 +1071,44 @@ def controller_record() -> dict[str, object]:
             )
         ],
     }
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        [],
+        ["BOCA_TELEGRAM_PAIRING_STAGE_MODE=off"],
+        ["BOCA_TELEGRAM_PAIRING_STAGE_MODE="],
+        ["BOCA_TELEGRAM_PAIRING_STAGE_MODE=unexpected"],
+        ["BOCA_TELEGRAM_PAIRING_STAGE_MODE=encrypted-only "],
+        ["BOCA_TELEGRAM_PAIRING_STAGE_MODE=encrypted-only"] * 2,
+        ["BOCA_TELEGRAM_PAIRING_STAGE_MODE=encrypted-only", "BOCA_TELEGRAM_PAIRING_STAGE_MODE=off"],
+    ],
+)
+def test_controller_postflight_requires_encrypted_stage(
+    monkeypatch: pytest.MonkeyPatch, replacement: list[str]
+) -> None:
+    record = controller_record()
+    record["State"] = {"Running": False, "Restarting": False}
+    networks = record["NetworkSettings"]
+    assert isinstance(networks, dict)
+    networks["Ports"] = {}
+    monkeypatch.setattr(host, "_browser_inspect_record", lambda _: record)
+
+    host._browser_controller_postflight(
+        CONTROLLER_ID, IMAGE, SOURCE, ATTEMPT, ORIGIN, OWNER, running=False
+    )
+    config = record["Config"]
+    assert isinstance(config, dict)
+    env = config["Env"]
+    assert isinstance(env, list)
+    config["Env"] = [
+        item for item in env if not item.startswith("BOCA_TELEGRAM_PAIRING_STAGE_MODE=")
+    ] + replacement
+    with pytest.raises(PreflightError):
+        host._browser_controller_postflight(
+            CONTROLLER_ID, IMAGE, SOURCE, ATTEMPT, ORIGIN, OWNER, running=False
+        )
 
 
 @pytest.mark.parametrize(
