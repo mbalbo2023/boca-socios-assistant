@@ -1,5 +1,17 @@
 # Safe operations — verified evidence and gated procedures
 
+## R118 CODE_ONLY — preparar inventario Boca del incidente V3 #878 (08/11/2026 ART)
+
+El selector existente `cutover-a-reconcile` admitirá después de PR/revisión/
+merge un segundo incidente V3 exacto, `42426260583`, con SHA origen
+`f57173862df3143062a136452f2ffc7e3cc51d35`, sin PREPARE. Antes no
+se debe intentar un despacho de diagnóstico físico. El observer ahora valida
+el recibo persistente terminal v3 (ExitCode/OOM) que generó R114 y luego
+reutiliza el plan de limpieza **sin borrar**. Ni un inventario limpio acredita
+`Cutover GO`: no reintentar #878 ni despachar otro Cutover; conservar la imagen
+histórica ADR0209, clasificar residuos Boca sin afectar otros recursos y
+documentar evidencia en #417/#45. [ADR0213](ADR/0213-r118-readonly-inventory-after-terminal-v3.md).
+
 ## R116 CODE_ONLY — precondición de stage Telegram para Cutover IPC (08/11/2026 ART)
 
 El `docker create` de V3 y la inspección efectiva del controlador IPC deben

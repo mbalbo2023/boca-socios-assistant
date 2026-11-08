@@ -103,6 +103,88 @@ def _typed_result(**overrides: object) -> bytes:
     return reconcile._canonical(result)
 
 
+def _exit_result(**overrides: object) -> bytes:
+    result = json.loads(_typed_result())
+    result.update(
+        version="boca-cutover-a-terminal-v3",
+        worker_primary_phase="HEALTH_EXITED",
+        worker_compensation="VERIFIED",
+        worker_exit_code=1,
+        worker_oom_killed=False,
+    )
+    result.update(overrides)
+    return reconcile._canonical(result)
+
+
+def test_v3_terminal_exit_evidence_is_accepted_by_readonly_observer() -> None:
+    result = reconcile._record(_exit_result(), RUN, kind="result")
+    assert result is not None
+    assert result["version"] == "boca-cutover-a-terminal-v3"
+    assert result["worker_primary_phase"] == "HEALTH_EXITED"
+    assert result["worker_exit_code"] == 1
+    assert result["worker_oom_killed"] is False
+    assert reconcile._record(_typed_result(), RUN, kind="result")["version"] == (
+        "boca-cutover-a-terminal-v2"
+    )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"worker_exit_code": -1},
+        {"worker_exit_code": 256},
+        {"worker_exit_code": True},
+        {"worker_exit_code": "1"},
+        {"worker_exit_code": None},
+        {"worker_oom_killed": 0},
+        {"worker_oom_killed": "NO"},
+        {"worker_oom_killed": None},
+        {"worker_primary_phase": "CREATE"},
+        {"state": "ACCEPTED"},
+        {"private_data": "do-not-leak"},
+    ],
+)
+def test_v3_terminal_rejects_bad_exit_evidence(change: dict[str, object]) -> None:
+    with pytest.raises(reconcile.ReconcileError):
+        reconcile._record(_exit_result(**change), RUN, kind="result")
+
+
+def test_v3_terminal_accepts_explicit_unknown_exit_evidence() -> None:
+    result = reconcile._record(
+        _exit_result(worker_exit_code="UNKNOWN", worker_oom_killed="UNKNOWN"),
+        RUN,
+        kind="result",
+    )
+    assert result is not None
+    assert result["worker_exit_code"] == "UNKNOWN"
+
+
+@pytest.mark.parametrize("code,oom", [(0, False), (255, True), (137, True)])
+def test_v3_terminal_accepts_bounded_exact_exit_evidence(code: int, oom: bool) -> None:
+    result = reconcile._record(
+        _exit_result(worker_exit_code=code, worker_oom_killed=oom), RUN, kind="result"
+    )
+    assert result is not None
+    assert result["worker_exit_code"] == code
+    assert result["worker_oom_killed"] is oom
+
+
+@pytest.mark.parametrize("absent", ["worker_exit_code", "worker_oom_killed"])
+def test_v3_terminal_rejects_partial_exit_evidence(absent: str) -> None:
+    payload = json.loads(_exit_result())
+    del payload[absent]
+    with pytest.raises(reconcile.ReconcileError):
+        reconcile._record(reconcile._canonical(payload), RUN, kind="result")
+
+
+def test_v3_terminal_rejects_duplicate_exit_field() -> None:
+    payload = _exit_result().replace(
+        b'"worker_exit_code":1', b'"worker_exit_code":1,"worker_exit_code":1'
+    )
+    with pytest.raises(reconcile.ReconcileError):
+        reconcile._record(payload, RUN, kind="result")
+
+
 @pytest.mark.parametrize("primary", ["CREATE", "HEALTH_UNHEALTHY"])
 def test_typed_v2_terminal_is_accepted_by_shared_readonly_observer(primary: str) -> None:
     result = reconcile._record(_typed_result(worker_primary_phase=primary), RUN, kind="result")

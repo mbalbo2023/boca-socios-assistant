@@ -1,6 +1,22 @@
 # Estado de integración BETA
 
-## A45-R116 — alcance CODE_ONLY en desarrollo, BETA integral aún NO_GO (08/11/2026 ART)
+## A45-R118 — gate de diagnóstico CODE_ONLY, host NO_GO (08/11/2026 ART)
+
+`main=ad2ba371b2ab4d26348717f52dcd37e945ba7714` integra PR #449;
+CI #42485693205 y Security #42485692992 cerraron SUCCESS, PR0 al
+reconciliar R117. El fallo físico #42426260583 antecede a este main;
+su ExitCode1 permanece sin RCA de proceso. R118 desarrolla un **candidato
+CODE_ONLY**, no integrado ni físico, para permitir un futuro inventario
+READ_ONLY del incidente exacto #878: amplía el selector histórico existente
+y el parser de receipt terminal v3, preservando `NO_GO`, BLACKBOX y todos
+los recursos ajenos. Consulte [ADR0213](ADR/0213-r118-readonly-inventory-after-terminal-v3.md).
+
+Telegram aún no tiene custodia rootless/acreditación de recepción ni sender
+activo. La BETA integral B y un nuevo Cutover V3 continúan **NO_GO**.
+
+---
+
+## Histórico A45-R116 — alcance CODE_ONLY de PR #449 anterior a su merge
 
 | Frente | Evidencia | Estado |
 | --- | --- | --- |

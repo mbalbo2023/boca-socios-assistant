@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -21,6 +23,8 @@ SPEC.loader.exec_module(observer)
 
 RUN = "42405706503"
 SOURCE = "1273338005abf7203d26e618648fe55216030cf3"
+LATEST_RUN = "42426260583"
+LATEST_SOURCE = "f57173862df3143062a136452f2ffc7e3cc51d35"
 LEGACY_ID = "a" * 64
 PREPARE = "42381545964"
 
@@ -77,6 +81,17 @@ def test_v3_original_derived_after_stage_cleared_without_prepare() -> None:
     )
 
 
+def test_latest_v3_original_still_requires_exact_incident_sha() -> None:
+    record = _receipt(v3=True)
+    record.update(incident_run_id=LATEST_RUN, incident_source_sha=LATEST_SOURCE)
+    assert (
+        observer.verified_cleanup_legacy_id(_raw(record), LATEST_RUN, LATEST_SOURCE, v3=True)
+        == LEGACY_ID
+    )
+    with pytest.raises(observer.ReconcileError):
+        observer.verified_cleanup_legacy_id(_raw(record), LATEST_RUN, SOURCE, v3=True)
+
+
 @pytest.mark.parametrize(
     ("field", "bad"),
     [
@@ -124,6 +139,176 @@ def test_v3_plan_runs_under_existing_reconcile_and_never_removes_docker() -> Non
     assert "< src/boca_socios/host_boca_cleanup.py" in block
     assert "src/boca_socios/host_boca_cleanup.py verify" in block
     assert all(word not in block for word in ("docker rm", "docker prune", "compose down"))
+
+
+def test_workflow_reconcile_allowlists_latest_v3_without_prepare() -> None:
+    workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
+    assert "42405706503|42426260583" in workflow
+    assert 'incident["id"] in (42405706503, 42426260583)' in workflow
+    assert f'"{LATEST_RUN}": "{LATEST_SOURCE}"' in workflow
+    assert "BOCA_INCIDENT_SOURCE_SHA" in workflow
+    assert "host-v3" in workflow and "verify-v3" in workflow
+
+
+@pytest.mark.parametrize("run_id,sha", [(RUN, SOURCE), (LATEST_RUN, LATEST_SOURCE)])
+def test_exact_embedded_github_attestation_accepts_only_trusted_v3_incidents(
+    tmp_path: Path, run_id: str, sha: str
+) -> None:
+    workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
+    attestation = workflow.split("      - name: Authenticate V3 incident", 1)[1].split(
+        "      - name: Reconcile exact failed Cutover A attempt", 1
+    )[0]
+    script = textwrap.dedent(attestation.split("<<'PY'\n", 1)[1].split("          PY\n", 1)[0])
+    incident = {
+        "id": int(run_id),
+        "run_attempt": 1,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "failure",
+        "head_branch": "main",
+        "head_sha": sha,
+        "repository": {"full_name": "mbalbo2023/boca-socios-assistant"},
+        "actor": {"login": "mbalbo2023"},
+        "display_title": "BOCA-SIMULATION-DEPLOY-V3",
+        "path": ".github/workflows/boca-first-deploy.yml",
+    }
+    env = {
+        **os.environ,
+        "GITHUB_ENV": str(tmp_path / "github-env"),
+        "BOCA_PROTECTED_ACTION_CONTEXT": run_id,
+    }
+    for mutation in (
+        None,
+        {"run_attempt": 2},
+        {"head_sha": "d" * 40},
+        {"actor": {"login": "another-user"}},
+        {"conclusion": "success"},
+        {"path": ".github/workflows/other.yml"},
+        {"id": 11111111111},
+    ):
+        candidate = {**incident, **(mutation or {})}
+        path = tmp_path / "incident.json"
+        path.write_text(json.dumps(candidate))
+        for optimize in (False, True):
+            result = subprocess.run(  # noqa: S603 - local Python fixture, no network.
+                [sys.executable, *(["-O"] if optimize else []), "-c", script, str(path)],
+                cwd=ROOT,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            assert (result.returncode == 0) is (mutation is None)
+            if mutation is None:
+                assert f"BOCA_INCIDENT_SOURCE_SHA={sha}\n" in (tmp_path / "github-env").read_text()
+
+
+def test_latest_terminal_v3_to_host_and_real_cleanup_handoff_offline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real observer+runner logic with synthetic owner data; zero Docker/SSH."""
+    legacy_sha = "b" * 40
+    intent = observer._canonical(
+        {
+            "version": "boca-cutover-a-intent-v1",
+            "attempt_id": LATEST_RUN,
+            "legacy_id": LEGACY_ID,
+            "legacy_source_sha": legacy_sha,
+            "legacy_image_ref": "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "d" * 64,
+            "legacy_compose_sha": "e" * 64,
+            "target_source_sha": LATEST_SOURCE,
+            "target_image_ref": "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "f" * 64,
+            "browser_image_ref": "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
+            + "0" * 64,
+            "target_compose_sha": "e" * 64,
+            "overlay_sha": "1" * 64,
+            "seccomp_sha": "2" * 64,
+            "owner_subject_sha256": "3" * 64,
+            "origin": "http://localhost:8443",
+        }
+    )
+    result = {
+        "version": "boca-cutover-a-terminal-v3",
+        "attempt_id": LATEST_RUN,
+        "legacy_id": LEGACY_ID,
+        "legacy_source_sha": legacy_sha,
+        "target_source_sha": LATEST_SOURCE,
+        "intent_sha256": hashlib.sha256(intent).hexdigest(),
+        "state": "NO_GO",
+        "cleanup": "INDETERMINATE",
+        "original_restored": True,
+        "irreversible_commit_started": False,
+        "candidate_id": None,
+        "worker_id": None,
+        "worker_primary_phase": "HEALTH_EXITED",
+        "worker_compensation": "VERIFIED",
+        "worker_exit_code": 1,
+        "worker_oom_killed": False,
+    }
+    stored = {
+        f"boca-cutover-a-intent-{LATEST_RUN}.json": intent,
+        f"boca-cutover-a-result-{LATEST_RUN}.json": observer._canonical(result),
+    }
+    original = {
+        "id": LEGACY_ID,
+        "name": "/boca-socios-controller-1",
+        "running": True,
+        "health": "healthy",
+        "image_id": "sha256:" + "d" * 64,
+        "revision": legacy_sha,
+        "service": "controller",
+        "attempt": LATEST_RUN,
+        "port_binding": {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]},
+    }
+    monkeypatch.setattr(observer.os, "geteuid", lambda: 10001)
+    monkeypatch.setattr(observer.os, "getegid", lambda: 10001)
+    monkeypatch.setattr(observer, "_private_home", lambda: tmp_path)
+    monkeypatch.setattr(observer.Path, "is_dir", lambda self: self.name == observer.RECEIPT_DIR)
+    monkeypatch.setattr(observer.Path, "is_symlink", lambda self: False)
+    monkeypatch.setattr(observer, "_read_private", lambda name, *, directory: stored.get(name))
+    monkeypatch.setattr(observer, "_docker_snapshot", lambda: [original])
+    monkeypatch.setattr(observer, "_stage_preflight", lambda marker: {})
+    monkeypatch.setattr(
+        observer, "_marker", lambda prepared: ("PRESENT_VERIFIED", "MARKER_SCHEMA_VALID")
+    )
+    monkeypatch.setattr(
+        observer,
+        "_staged_attempt",
+        lambda run_id: {
+            "stage": "ABSENT",
+            "promotion_intent": "ABSENT",
+            "promotion_result": "ABSENT",
+        },
+    )
+    observed = observer._host(LATEST_RUN, None, source_sha=LATEST_SOURCE)
+    raw = _raw(observed)
+    assert observer.verify_runner(raw, LATEST_RUN, None, source_sha=LATEST_SOURCE) == observed
+    assert observer.verified_cleanup_legacy_id(raw, LATEST_RUN, LATEST_SOURCE, v3=True) == LEGACY_ID
+    path = tmp_path / "host-observation.json"
+    path.write_bytes(raw)
+    workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
+    block = workflow.split("      - name: Plan Boca-only Docker cleanup READ_ONLY", 1)[1].split(
+        "      - name: Require one unique R96 stage recovery dispatch", 1
+    )[0]
+    script = textwrap.dedent(block.split("<<'PY'\n", 1)[1].split("          PY\n", 1)[0])
+    handoff = subprocess.run(  # noqa: S603 - local synthetic workflow parser.
+        [sys.executable, "-c", script, LATEST_RUN, "", LATEST_SOURCE, str(path)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    assert handoff.returncode == 0
+    assert handoff.stdout.strip() == LEGACY_ID
+    with pytest.raises(observer.ReconcileError):
+        observer._host(LATEST_RUN, PREPARE)
+    stored[f"boca-cutover-a-result-{LATEST_RUN}.json"] = observer._canonical(
+        {**result, "intent_sha256": "f" * 64}
+    )
+    with pytest.raises(observer.ReconcileError):
+        observer._host(LATEST_RUN, None, source_sha=LATEST_SOURCE)
 
 
 @pytest.mark.parametrize(

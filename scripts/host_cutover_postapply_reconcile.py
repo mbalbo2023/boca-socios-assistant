@@ -134,11 +134,12 @@ def _record(raw: bytes | None, run_id: str, *, kind: str) -> dict[str, Any] | No
         raise ReconcileError("MARKER_PARSE") from exc
     result_v1 = "boca-cutover-a-terminal-v1"
     result_v2 = "boca-cutover-a-terminal-v2"
+    result_v3 = "boca-cutover-a-terminal-v3"
     version = obj.get("version") if isinstance(obj, dict) else None
     valid_version = (
         version == "boca-cutover-a-intent-v1"
         if kind == "intent"
-        else version in (result_v1, result_v2)
+        else version in (result_v1, result_v2, result_v3)
     )
     if (
         not isinstance(obj, dict)
@@ -187,8 +188,10 @@ def _record(raw: bytes | None, run_id: str, *, kind: str) -> dict[str, Any] | No
             "candidate_id",
             "worker_id",
         }
-        typed = version == result_v2
+        typed = version in (result_v2, result_v3)
+        exited = version == result_v3
         typed_fields = {"worker_primary_phase", "worker_compensation"}
+        exited_fields = {"worker_exit_code", "worker_oom_killed"}
         allowed_phases = {
             "ATTEST",
             "STORAGE",
@@ -206,7 +209,12 @@ def _record(raw: bytes | None, run_id: str, *, kind: str) -> dict[str, Any] | No
         }
         allowed_compensation = {"VERIFIED", "INDETERMINATE", "UNVERIFIED"}
         if (
-            set(obj) != (base_fields | typed_fields if typed else base_fields)
+            set(obj)
+            != (
+                base_fields
+                | (typed_fields if typed else set())
+                | (exited_fields if exited else set())
+            )
             or obj.get("state") not in ("ACCEPTED", "RECOVERED", "NO_GO")
             or obj.get("cleanup") not in ("ACCEPT", "NO_GO", "INDETERMINATE")
             or type(obj.get("original_restored")) is not bool
@@ -219,6 +227,21 @@ def _record(raw: bytes | None, run_id: str, *, kind: str) -> dict[str, Any] | No
                     or obj["worker_primary_phase"] not in allowed_phases
                     or type(obj.get("worker_compensation")) is not str
                     or obj["worker_compensation"] not in allowed_compensation
+                )
+            )
+            or (
+                exited
+                and (
+                    obj["worker_primary_phase"] != "HEALTH_EXITED"
+                    or not (
+                        type(obj.get("worker_exit_code")) is int
+                        and 0 <= obj["worker_exit_code"] <= 255
+                        or obj.get("worker_exit_code") == "UNKNOWN"
+                    )
+                    or not (
+                        type(obj.get("worker_oom_killed")) is bool
+                        or obj.get("worker_oom_killed") == "UNKNOWN"
+                    )
                 )
             )
             or any(
@@ -549,6 +572,14 @@ def _host(run_id: str, prepared_id: str | None, *, source_sha: str | None = None
         raise ReconcileError("RECEIPT_DIRECTORY")
     intent = _record(intent_bytes, run_id, kind="intent")
     result = _record(result_bytes, run_id, kind="result")
+    # Terminal V3 is produced only by the single-dispatch, no-PREPARE
+    # protocol. Never reinterpret its exit evidence as legacy PREPARE proof.
+    if (
+        source_sha is None
+        and result is not None
+        and result["version"] == "boca-cutover-a-terminal-v3"
+    ):
+        raise ReconcileError("TERMINAL_PROTOCOL_MISMATCH")
     if source_sha is not None and intent is not None:
         if intent["target_source_sha"] != source_sha:
             raise ReconcileError("V3_SOURCE_MISMATCH")

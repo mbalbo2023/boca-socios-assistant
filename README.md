@@ -1,8 +1,21 @@
 # Boca Socios Assistant
 
-## R116 — Paridad de Telegram cifrado en controlador IPC (08/11/2026 ART, CODE_ONLY)
+## R118 — Diagnóstico post-Cutover V3 del incidente #878 (08/11/2026 ART, CODE_ONLY)
 
-[PR DRAFT #449](https://github.com/mbalbo2023/boca-socios-assistant/pull/449)
+`main=ad2ba371b2ab4d26348717f52dcd37e945ba7714` contiene el PR #449
+fusionado, con CI/Security postmerge SUCCESS y cero PR abiertos al checkpoint
+A45-R117. El incidente físico V3
+[#42426260583](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42426260583)
+continúa `NO_GO`; `ExitCode=1/OOMKilled=NO` no prueba su causa interna.
+La instrumentación **R118 en desarrollo**, aún no integrada, extiende el
+observador y el inventario READ_ONLY Boca-only existentes al incidente exacto,
+incluyendo el parser de recibo terminal v3. Ninguna Action física, cleanup
+ni segundo Cutover ha sido ejecutado por este trabajo. BLACKBOX intocado,
+Telegram sender OFF, BETA integral NO_GO. [ADR0213](docs/ADR/0213-r118-readonly-inventory-after-terminal-v3.md).
+
+## Histórico R116 — Paridad de Telegram cifrado en controlador IPC (08/11/2026 ART)
+
+[PR #449, fusionado en R117](https://github.com/mbalbo2023/boca-socios-assistant/pull/449)
 del frente #354 mantiene el único Cutover V3 y agrega a su
 `docker create` del controller el `BOCA_TELEGRAM_PAIRING_STAGE_MODE=encrypted-only`
 que ya exigía el overlay Compose. El postflight ahora verifica el valor
@@ -10,8 +23,8 @@ que ya exigía el overlay Compose. El postflight ahora verifica el valor
 Pruebas focales antes del cambio: 226 PASS; regresiones RED observadas antes
 del fix y 295 PASS tras el cambio. Suite local completa tras fijar el nuevo
 pin ZIP: **5546 PASS +34 subtests**; Ruff, formato, MyPy y policy PASS.
-Los controles Actions/PR exactos se informarán con sus recibos; la rama
-del PR no equivale a `main` integrado. La regresión queda registrada en
+Los controles Actions/PR exactos se encuentran GREEN en el checkpoint R117;
+este resumen histórico fue redactado antes de la fusión. La regresión queda registrada en
 `docs/quality/rca-lessons.json` como `RCA-354` / PR #449.
 
 El último Cutover V3 [#42426260583](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42426260583)

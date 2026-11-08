@@ -937,7 +937,7 @@ jobs:
           fi
           if [[ "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-stage-recover-844 || "$BOCA_OPERATION" = cutover-a-image-retire ]]; then
             [[ "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^[1-9][0-9]{0,19}$ ]]
-            if [[ "$BOCA_OPERATION" = cutover-a-stage-recover || ( "$BOCA_OPERATION" = cutover-a-reconcile && "$BOCA_PROTECTED_ACTION_CONTEXT" = 42405706503 ) ]]; then
+            if [[ "$BOCA_OPERATION" = cutover-a-stage-recover || ( "$BOCA_OPERATION" = cutover-a-reconcile && "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^(42405706503|42426260583)$ ) ]]; then
               # One exact V3 incident has no independent PREPARE; do not fabricate one.
               test -z "$BOCA_INCIDENT_PREPARE_RUN_ID"
             else
@@ -1006,7 +1006,7 @@ jobs:
               test -z "$BOCA_RELEASE_RUN_ID"
               test -z "$BOCA_LEGACY_SOURCE_SHA"
               test -z "$BOCA_LEGACY_IMAGE_REF"
-              if [[ "$BOCA_PROTECTED_ACTION_CONTEXT" = 42405706503 ]]; then
+              if [[ "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^(42405706503|42426260583)$ ]]; then
                 test -z "$BOCA_LEGACY_RELEASE_RUN_ID"
               else
                 test "$BOCA_LEGACY_RELEASE_RUN_ID" = "$BOCA_INCIDENT_PREPARE_RUN_ID"
@@ -2331,8 +2331,8 @@ jobs:
             < "$events_dir/receipt" \
             >> "$GITHUB_STEP_SUMMARY"
           # A successful READ_ONLY probe does not authorize another Cutover.
-      - name: Authenticate V3 incident #853 from GitHub READ_ONLY
-        if: inputs.operation == 'cutover-a-reconcile' && inputs.protected_action_context == '42405706503'
+      - name: Authenticate V3 incident #853 or #878 from GitHub READ_ONLY
+        if: inputs.operation == 'cutover-a-reconcile' && (inputs.protected_action_context == '42405706503' || inputs.protected_action_context == '42426260583')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -2346,21 +2346,33 @@ jobs:
           from pathlib import Path
 
           incident = json.loads(Path(sys.argv[1]).read_bytes())
-          expected_sha = "1273338005abf7203d26e618648fe55216030cf3"
-          assert incident["id"] == 42405706503
-          assert incident["run_attempt"] == 1
-          assert incident["event"] == "workflow_dispatch"
-          assert incident["status"] == "completed"
-          assert incident["conclusion"] == "failure"
-          assert incident["head_branch"] == "main"
-          assert incident["head_sha"] == expected_sha
-          assert incident["repository"]["full_name"] == "mbalbo2023/boca-socios-assistant"
-          assert incident["actor"]["login"] == "mbalbo2023"
-          assert incident["display_title"] == "BOCA-SIMULATION-DEPLOY-V3"
-          assert incident["path"] == ".github/workflows/boca-first-deploy.yml"
+          expected_sources = {
+              "42405706503": "1273338005abf7203d26e618648fe55216030cf3",
+              "42426260583": "f57173862df3143062a136452f2ffc7e3cc51d35",
+          }
+          # `assert` is disabled by PYTHONOPTIMIZE/-O: authorization gates
+          # must instead reject invalid evidence in every interpreter mode.
+          if not isinstance(incident, dict) or type(incident.get("id")) is not int:
+              raise SystemExit("BOCA_V3_INCIDENT identity=UNVERIFIED")
+          if not (
+              incident["id"] in (42405706503, 42426260583)
+              and str(incident["id"]) == os.environ["BOCA_PROTECTED_ACTION_CONTEXT"]
+              and incident.get("run_attempt") == 1
+              and incident.get("event") == "workflow_dispatch"
+              and incident.get("status") == "completed"
+              and incident.get("conclusion") == "failure"
+              and incident.get("head_branch") == "main"
+              and incident.get("head_sha") == expected_sources[str(incident["id"])]
+              and incident.get("repository", {}).get("full_name") == "mbalbo2023/boca-socios-assistant"
+              and incident.get("actor", {}).get("login") == "mbalbo2023"
+              and incident.get("display_title") == "BOCA-SIMULATION-DEPLOY-V3"
+              and incident.get("path") == ".github/workflows/boca-first-deploy.yml"
+          ):
+              raise SystemExit("BOCA_V3_INCIDENT identity=UNVERIFIED")
+          expected_sha = expected_sources[str(incident["id"])]
           with open(os.environ["GITHUB_ENV"], "a", encoding="ascii") as output:
               output.write(f"BOCA_INCIDENT_SOURCE_SHA={expected_sha}\n")
-          print("BOCA_V3_INCIDENT state=ATTESTED incident=42405706503"
+          print(f"BOCA_V3_INCIDENT state=ATTESTED incident={incident['id']}"
                 " attempt=1 event=workflow_dispatch source=EXACT_MAIN"
                 " contents=READ_ONLY host_writes=0")
           PY
@@ -2368,9 +2380,9 @@ jobs:
         if: inputs.operation == 'cutover-a-reconcile'
         run: |
           set -euo pipefail
-          # V3 #853 has no separate PREPARE. Authenticate incident SHA via
+          # V3 #853 and #878 have no separate PREPARE. Authenticate SHA via
           # GitHub first; stream only reviewed stdlib reads on Boca UID10001.
-          if [[ "$BOCA_PROTECTED_ACTION_CONTEXT" = 42405706503 ]]; then
+          if [[ "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^(42405706503|42426260583)$ ]]; then
             remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' \
               python3 - host-v3 "$BOCA_PROTECTED_ACTION_CONTEXT" "$BOCA_INCIDENT_SOURCE_SHA")"
           else
@@ -2390,7 +2402,7 @@ jobs:
             printf 'BOCA_POSTAPPLY_RECONCILE state=INDETERMINATE reason=host_observation_failed scope=OBSERVER_ONLY observer_writes=0 prior_apply_effects=UNKNOWN retry=NO_GO; do not prune or reapply.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          if [[ "$BOCA_PROTECTED_ACTION_CONTEXT" = 42405706503 ]]; then
+          if [[ "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^(42405706503|42426260583)$ ]]; then
             python3 scripts/host_cutover_postapply_reconcile.py verify-v3 \
               "$BOCA_PROTECTED_ACTION_CONTEXT" "$BOCA_INCIDENT_SOURCE_SHA" \
               < "$RUNNER_TEMP/boca-cutover-postapply-reconcile.json" \
