@@ -83,6 +83,12 @@ R110_HEALTH_DIAGNOSTIC_FULL_CUTOVER_SHA = (
 R114_EXIT_EVIDENCE_FULL_CUTOVER_SHA = (
     "3716ed03c841ec8a8adb7ab7809d32d23853a47c2733403921215edf10c25811"
 )
+# R116: same strict allowlist and capacity caps; the reviewed IPC controller
+# now includes and verifies the encrypted Telegram staging selector.
+# R114 remains an immutable historical digest for incident provenance.
+R116_TELEGRAM_STAGE_PARITY_FULL_CUTOVER_SHA = (
+    "2e6eb49323be4edcbe427aee34c7f2801c8698f8ccf8ba46945907550749c14d"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -240,7 +246,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R114_EXIT_EVIDENCE_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R116_TELEGRAM_STAGE_PARITY_FULL_CUTOVER_SHA
+    assert digest != R114_EXIT_EVIDENCE_FULL_CUTOVER_SHA
     assert digest != R110_HEALTH_DIAGNOSTIC_FULL_CUTOVER_SHA
     assert digest != R108_HISTORICAL_QUARANTINE_FULL_CUTOVER_SHA
     assert digest != R104_COMBINED_DIAGNOSTIC_FULL_CUTOVER_SHA

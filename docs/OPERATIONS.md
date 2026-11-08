@@ -1,5 +1,19 @@
 # Safe operations — verified evidence and gated procedures
 
+## R116 CODE_ONLY — precondición de stage Telegram para Cutover IPC (08/11/2026 ART)
+
+El `docker create` de V3 y la inspección efectiva del controlador IPC deben
+concordar con el opt-in `encrypted-only` del overlay Compose. La corrección
+#354 documentada en [ADR0212](ADR/0212-r116-cutover-ipc-telegram-stage-parity.md)
+no cambia el formulario ni autoriza un nuevo intento físico: Cutover R114
+[#42426260583](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42426260583)
+permanece NO_GO por worker ExitCode1 sin causa interna acreditada. Primero
+resolver/aceptar ese incidente, certificar contrato externo del blackbox y
+tener PR0, revisión/CI/release exactas y nuevo inventario Boca-only.
+Telegram `telegram-activate` conserva su bloqueo antes de SSH hasta tener
+backend same-lease, recipient/egress y cleanup final auténticos. Nunca quitar
+ese bloqueo para simular una activación; sender permanece OFF.
+
 ## Procedimiento vigente Cutover V3 — un despacho (2026-11-07 ART)
 
 **CODE_ONLY: no ejecutar antes de PR/CI exactos, merge, PR0, nueva release dual
