@@ -94,6 +94,11 @@ R116_TELEGRAM_STAGE_PARITY_FULL_CUTOVER_SHA = (
 R118_READONLY_LATEST_CUTOVER_SHA = (
     "a34535af33d9e7073d16a97c50ce1e0a529db39dae35302b79c0cb0ecb152e77"
 )
+# R119: the strict positive recovery gate and typed evidence projection alter
+# only the reviewed READ_ONLY observer. Preserve R118's prior physical pin.
+R119_RECOVERED_READONLY_FULL_CUTOVER_SHA = (
+    "aa43ffb3ec71104707b6df7eb14a5d66fb10df25aeb3297305854fbf27db75b7"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -251,7 +256,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R118_READONLY_LATEST_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R119_RECOVERED_READONLY_FULL_CUTOVER_SHA
+    assert digest != R118_READONLY_LATEST_CUTOVER_SHA
     assert digest != R116_TELEGRAM_STAGE_PARITY_FULL_CUTOVER_SHA
     assert digest != R114_EXIT_EVIDENCE_FULL_CUTOVER_SHA
     assert digest != R110_HEALTH_DIAGNOSTIC_FULL_CUTOVER_SHA

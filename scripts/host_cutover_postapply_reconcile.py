@@ -28,6 +28,54 @@ RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
 IDENT = re.compile(r"[0-9a-f]{64}\Z")
 SOURCE = re.compile(r"[0-9a-f]{40}\Z")
 MAX_JSON = 4096
+# The positive compensation observed in #883 may unlock *only* a second
+# read-only inventory, never another Cutover, cleanup or retry decision.
+RECOVERED_INVENTORY_RUN = "42426260583"
+RECOVERED_INVENTORY_SHA = "f57173862df3143062a136452f2ffc7e3cc51d35"
+TERMINAL_V3 = "boca-cutover-a-terminal-v3"
+WORKER_EVIDENCE_FIELDS = frozenset(
+    {
+        "version",
+        "worker_primary_phase",
+        "worker_compensation",
+        "worker_exit_code",
+        "worker_oom_killed",
+    }
+)
+# Do not allow arbitrary runner-supplied fields into Actions job summaries.
+# Historical v1/v2 envelopes remain verifiable byte-for-byte under their
+# original schema; the added redacted evidence belongs only to receipt v3.
+RECEIPT_FIELDS = frozenset(
+    {
+        "version",
+        "incident_run_id",
+        "prepare_run_id",
+        "intent",
+        "result",
+        "terminal_state",
+        "cleanup",
+        "worker_id_recorded",
+        "candidate_id_recorded",
+        "commit_started",
+        "original_restored",
+        "legacy_id",
+        "original",
+        "candidate_controllers",
+        "browser_workers",
+        "boca_inventory",
+        "boca_containers",
+        "port_8443",
+        "prepared_go_marker",
+        "prepared_go_marker_reason",
+        "stage_preflight",
+        "stage",
+        "promotion_intent",
+        "promotion_result",
+        "runtime_attested",
+        "go_for_retry",
+        "foreign_resources_touched",
+    }
+)
 FIELDS = (
     "id",
     "name",
@@ -640,8 +688,15 @@ def _host(run_id: str, prepared_id: str | None, *, source_sha: str | None = None
         "foreign_resources_touched": False,
     }
     if source_sha is not None:
-        receipt["version"] = "boca-postapply-reconcile-v2"
+        receipt["version"] = "boca-postapply-reconcile-v3"
         receipt["incident_source_sha"] = source_sha
+        # Only bounded, typed external terminal facts. Never copy Docker
+        # stdout, environment, exception messages or protected module bytes.
+        receipt["terminal_worker_evidence"] = (
+            {field: result[field] for field in WORKER_EVIDENCE_FIELDS}
+            if result is not None and result["version"] == TERMINAL_V3
+            else None
+        )
     return receipt
 
 
@@ -661,14 +716,39 @@ def verify_runner(
         record = json.loads(raw.decode("ascii"))
     except (ValueError, UnicodeError) as exc:
         raise ReconcileError("RECEIPT_JSON") from exc
+    version = record.get("version") if type(record) is dict else None
+    allowed_versions = (
+        ("boca-postapply-reconcile-v2", "boca-postapply-reconcile-v3")
+        if source_sha is not None
+        else ("boca-postapply-reconcile-v1",)
+    )
+    expected_fields = (
+        RECEIPT_FIELDS
+        | ({"incident_source_sha"} if source_sha is not None else set())
+        | ({"terminal_worker_evidence"} if version == "boca-postapply-reconcile-v3" else set())
+    )
+    worker_evidence = record.get("terminal_worker_evidence") if type(record) is dict else None
+    evidence_valid = worker_evidence is None or (
+        type(worker_evidence) is dict
+        and set(worker_evidence) == WORKER_EVIDENCE_FIELDS
+        and worker_evidence.get("version") == TERMINAL_V3
+        and worker_evidence.get("worker_primary_phase") == "HEALTH_EXITED"
+        and worker_evidence.get("worker_compensation")
+        in ("VERIFIED", "INDETERMINATE", "UNVERIFIED")
+        and (
+            type(worker_evidence.get("worker_exit_code")) is int
+            and 0 <= worker_evidence["worker_exit_code"] <= 255
+            or worker_evidence.get("worker_exit_code") == "UNKNOWN"
+        )
+        and (
+            type(worker_evidence.get("worker_oom_killed")) is bool
+            or worker_evidence.get("worker_oom_killed") == "UNKNOWN"
+        )
+    )
     if (
         type(record) is not dict
-        or record.get("version")
-        != (
-            "boca-postapply-reconcile-v2"
-            if source_sha is not None
-            else "boca-postapply-reconcile-v1"
-        )
+        or version not in allowed_versions
+        or set(record) != expected_fields
         or record.get("incident_run_id") != run_id
         or record.get("prepare_run_id") != prepared_id
         or (
@@ -680,6 +760,8 @@ def verify_runner(
             )
         )
         or (source_sha is None and "incident_source_sha" in record)
+        or (version == "boca-postapply-reconcile-v3" and not evidence_valid)
+        or (source_sha is None and "terminal_worker_evidence" in record)
         or record.get("go_for_retry") is not False
         or record.get("runtime_attested") is not False
         or record.get("foreign_resources_touched") is not False
@@ -702,6 +784,32 @@ def verify_runner(
     ):
         raise ReconcileError("RECEIPT_CONTRACT")
     return record
+
+
+def _recovered_preflight_verified(raw: Any) -> bool:
+    """Match the prior unmodified Stage policy, including legacy 0644 Compose."""
+    if type(raw) is not dict:
+        return False
+    checks = raw.get("compose_inode_checks")
+    mode = raw.get("compose_inode_mode_octal")
+    return bool(
+        raw.get("reason") == "STAGE_PREFLIGHT_MATCH"
+        and type(raw.get("root_entries_count")) is int
+        and raw["root_entries_count"] == 1
+        and raw.get("root_entries_expected") is True
+        and raw.get("compose_digest_match") is True
+        and raw.get("compose_digest_evaluated") is True
+        and raw.get("compose_legacy_mode_accepted") is True
+        and raw.get("plan_hashes_unique") is True
+        and mode in ("0600", "0644")
+        and type(checks) is dict
+        and set(checks) == {"regular", "uid_ok", "gid_ok", "nlink_one", "mode_0600", "size_ok"}
+        and all(
+            checks.get(key) is True
+            for key in ("regular", "uid_ok", "gid_ok", "nlink_one", "size_ok")
+        )
+        and checks.get("mode_0600") is (mode == "0600")
+    )
 
 
 def verified_cleanup_legacy_id(raw: bytes, run_id: str, coordinate: str, *, v3: bool) -> str:
@@ -733,16 +841,49 @@ def verified_cleanup_legacy_id(raw: bytes, run_id: str, coordinate: str, *, v3: 
         or original.get("health") != "healthy"
     ):
         raise ReconcileError("CLEANUP_ORIGINAL_UNVERIFIED")
-    if v3 and (
-        receipt.get("terminal_state") != "NO_GO"
-        or receipt.get("cleanup") != "INDETERMINATE"
-        or receipt.get("port_8443") != "BOCA_CONTROLLER_DOCKER_BOUND"
-        or original.get("name") != "/boca-socios-controller-1"
-        or original.get("service") != "controller"
-        or original.get("port_binding")
-        != {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
-    ):
-        raise ReconcileError("CLEANUP_V3_ORIGINAL_UNVERIFIED")
+    if v3:
+        # Historical #853 NO_GO/INDETERMINATE admission is unchanged.
+        historical = (
+            receipt.get("terminal_state") == "NO_GO" and receipt.get("cleanup") == "INDETERMINATE"
+        )
+        # #878's positive recovery is *not* a Cutover acceptance. Recheck the
+        # precise external worker failure, full Boca topology and Stage state.
+        # Images, volumes and networks intentionally remain for the *next*
+        # read-only planner to inventory independently.
+        recovered = (
+            run_id == RECOVERED_INVENTORY_RUN
+            and coordinate == RECOVERED_INVENTORY_SHA
+            and receipt.get("terminal_state") == "RECOVERED"
+            and receipt.get("cleanup") == "ACCEPT"
+            and receipt.get("terminal_worker_evidence")
+            == {
+                "version": TERMINAL_V3,
+                "worker_primary_phase": "HEALTH_EXITED",
+                "worker_compensation": "VERIFIED",
+                "worker_exit_code": 1,
+                "worker_oom_killed": False,
+            }
+            and receipt.get("worker_id_recorded") is False
+            and receipt.get("candidate_id_recorded") is False
+            and type(receipt.get("boca_containers")) is int
+            and receipt["boca_containers"] == 1
+            and receipt.get("boca_inventory") == [original]
+            and receipt.get("candidate_controllers") == []
+            and receipt.get("browser_workers") == []
+            and receipt.get("stage") == "ABSENT"
+            and receipt.get("promotion_intent") == "ABSENT"
+            and receipt.get("promotion_result") == "ABSENT"
+            and _recovered_preflight_verified(receipt.get("stage_preflight"))
+        )
+        if (
+            not (historical or recovered)
+            or receipt.get("port_8443") != "BOCA_CONTROLLER_DOCKER_BOUND"
+            or original.get("name") != "/boca-socios-controller-1"
+            or original.get("service") != "controller"
+            or original.get("port_binding")
+            != {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
+        ):
+            raise ReconcileError("CLEANUP_V3_ORIGINAL_UNVERIFIED")
     return legacy_id
 
 

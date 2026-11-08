@@ -1,12 +1,29 @@
 # Estado de integración BETA
 
+## A45-R119 — observación física RECOVERED, planner en corrección CODE_ONLY
+
+PR #450 fusionado en `main=6a0aa2ea72f61e4bb6178e3cd12e9194f760d0d8`,
+CI/Security postmerge SUCCESS, cero PR abiertos antes de #883.
+[Action #883](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42531818647)
+`cutover-a-reconcile` produjo observer `READ_ONLY_NO_GO`,
+`terminal=RECOVERED`, `cleanup=ACCEPT`, legacy restaurado HEALTHY en
+127.0.0.1:8443, candidatos/workers/Stage ausentes. Su planner abortó
+`CLEANUP_V3_ORIGINAL_UNVERIFIED` y no efectuó ninguna limpieza.
+R119 CODE_ONLY corrige ese único gate para un futuro inventario del incidente
+#878 autenticado, preservando la semántica de no-retry y recursos ajenos.
+**NO_GO físico** para otro Cutover, IPC, Telegram y BETA integral B; causa
+del ExitCode1 interna UNKNOWN, residuos de imágenes/volúmenes no certificados.
+Ver [ADR0214](ADR/0214-r119-recovered-terminal-readonly-inventory.md).
+
+---
+
 ## A45-R118 — gate de diagnóstico CODE_ONLY, host NO_GO (08/11/2026 ART)
 
 `main=ad2ba371b2ab4d26348717f52dcd37e945ba7714` integra PR #449;
 CI #42485693205 y Security #42485692992 cerraron SUCCESS, PR0 al
 reconciliar R117. El fallo físico #42426260583 antecede a este main;
-su ExitCode1 permanece sin RCA de proceso. R118 desarrolla un **candidato
-CODE_ONLY**, no integrado ni físico, para permitir un futuro inventario
+su ExitCode1 permanece sin RCA de proceso. R118 integró el **candidato
+CODE_ONLY** mediante PR #450 para permitir un inventario
 READ_ONLY del incidente exacto #878: amplía el selector histórico existente
 y el parser de receipt terminal v3, preservando `NO_GO`, BLACKBOX y todos
 los recursos ajenos. Consulte [ADR0213](ADR/0213-r118-readonly-inventory-after-terminal-v3.md).

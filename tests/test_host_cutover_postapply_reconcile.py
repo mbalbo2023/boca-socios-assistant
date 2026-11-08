@@ -627,7 +627,7 @@ def test_v3_postapply_reconcile_without_prepare_is_readonly_and_source_bound(
     )
 
     record = reconcile._host(RUN, None, source_sha=TARGET_SHA)
-    assert record["version"] == "boca-postapply-reconcile-v2"
+    assert record["version"] == "boca-postapply-reconcile-v3"
     assert record["prepare_run_id"] is None
     assert record["incident_source_sha"] == TARGET_SHA
     assert record["prepared_go_marker"] == "NOT_APPLICABLE"

@@ -1,5 +1,19 @@
 # Boca Socios Assistant
 
+## R119 — Recuperación positiva no equivale a Cutover GO (08/11/2026 ART)
+
+[R118/PR #450](https://github.com/mbalbo2023/boca-socios-assistant/pull/450)
+se integró en `main=6a0aa2ea72f61e4bb6178e3cd12e9194f760d0d8`,
+CI/Security postmerge GREEN y PR0. El diagnóstico físico único
+[#883](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42531818647)
+confirmó **RECOVERED/ACCEPT** del incidente #878: legacy Boca saludable,
+worker/candidato ausentes, Stage ausente; su segundo planificador falló por
+`CLEANUP_V3_ORIGINAL_UNVERIFIED`. R119 prepara un gate **solo CODE_ONLY**
+para que el planner READ_ONLY admita esa compensación auténtica y exacta
+sin modificar Docker, reservar, activar Telegram ni repetir Cutover. El
+inventario de imágenes/volúmenes, RCA interna ExitCode1, BETA y Cutover
+siguen **NO_GO**. [ADR0214](docs/ADR/0214-r119-recovered-terminal-readonly-inventory.md).
+
 ## R118 — Diagnóstico post-Cutover V3 del incidente #878 (08/11/2026 ART, CODE_ONLY)
 
 `main=ad2ba371b2ab4d26348717f52dcd37e945ba7714` contiene el PR #449
@@ -7,10 +21,10 @@ fusionado, con CI/Security postmerge SUCCESS y cero PR abiertos al checkpoint
 A45-R117. El incidente físico V3
 [#42426260583](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42426260583)
 continúa `NO_GO`; `ExitCode=1/OOMKilled=NO` no prueba su causa interna.
-La instrumentación **R118 en desarrollo**, aún no integrada, extiende el
+La instrumentación **R118, fusionada en PR #450**, extendió el
 observador y el inventario READ_ONLY Boca-only existentes al incidente exacto,
-incluyendo el parser de recibo terminal v3. Ninguna Action física, cleanup
-ni segundo Cutover ha sido ejecutado por este trabajo. BLACKBOX intocado,
+incluyendo el parser de recibo terminal v3. Después se ejecutó únicamente la
+Action diagnóstica #883 (sin cleanup ni segundo Cutover). BLACKBOX intocado,
 Telegram sender OFF, BETA integral NO_GO. [ADR0213](docs/ADR/0213-r118-readonly-inventory-after-terminal-v3.md).
 
 ## Histórico R116 — Paridad de Telegram cifrado en controlador IPC (08/11/2026 ART)
