@@ -717,6 +717,46 @@ def test_failed_ssh_v3_worker_exit_is_strictly_typed_and_never_go(
     assert "ACCEPTED" not in report
 
 
+def test_failed_ssh_v4_worker_signature_survives_runner_claim_only(
+    tmp_path: Path,
+) -> None:
+    request, env = _actions_fixture(tmp_path)
+    env["BOCA_CUTOVER_A_SSH_RC"] = "3"
+    _file(
+        Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME,
+        _cutover_observe_ready(request.plan)
+        + b"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED "
+        + b"exit_code=1 oom=NO signature=EMPTY.EXITED.EARLY_LT_5S.NOT_RUN\n"
+        + b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n"
+        + b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n",
+    )
+    report = go.classify_cutover_ssh_failure(env)
+    assert "worker_exit_signature_claim=EMPTY.EXITED.EARLY_LT_5S.NOT_RUN" in report
+    assert "worker_internal_cause=UNKNOWN" in report
+    assert "worker_start_ack_claim=EXACT_CID_IMPLIED_BY_HEALTH_PHASE" in report
+    assert "host=UNVERIFIED terminal=UNVERIFIED no_retry=true" in report
+
+
+@pytest.mark.parametrize(
+    "bad", ["PRIVATE", "OTHER.EXITED.EARLY_LT_5S.NOT_RUN", "EMPTY.EXITED.X.NOT_RUN"]
+)
+def test_failed_ssh_v4_rejects_nonfinite_signature(tmp_path: Path, bad: str) -> None:
+    request, env = _actions_fixture(tmp_path)
+    env["BOCA_CUTOVER_A_SSH_RC"] = "3"
+    _file(
+        Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME,
+        _cutover_observe_ready(request.plan)
+        + f"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED "
+        f"exit_code=1 oom=NO signature={bad}\n".encode("ascii")
+        + b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n"
+        + b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n",
+    )
+    report = go.classify_cutover_ssh_failure(env)
+    assert "worker_exit_signature_claim=" not in report
+    assert "worker_primary_claim=UNVERIFIED" in report
+    assert "worker_internal_cause=UNKNOWN" in report
+
+
 def test_failed_ssh_exit_one_diagnostic_distinguishes_start_ack_from_unknown_cause(
     tmp_path: Path,
 ) -> None:

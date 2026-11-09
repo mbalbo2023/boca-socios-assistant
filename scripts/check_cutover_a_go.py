@@ -673,6 +673,7 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
     worker_compensation_claim = "UNVERIFIED"
     worker_exit_code_claim = "UNKNOWN"
     worker_oom_claim = "UNKNOWN"
+    worker_exit_signature_claim = ""
     if raw.endswith(recorded):
         prefix = raw[: -len(recorded)]
         observe = _CUTOVER_OBSERVE_PREFIX.match(prefix)
@@ -688,7 +689,11 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
         worker_v3 = re.match(
             rb"BOCA_CUTOVER_A_WORKER_FAILURE primary=([A-Z_]{2,32}) "
             rb"compensation=([A-Z_]{2,32}) exit_code=(0|[1-9][0-9]{0,2}|UNKNOWN) "
-            rb"oom=(YES|NO|UNKNOWN)\n",
+            rb"oom=(YES|NO|UNKNOWN)"
+            rb"(?: signature=((?:EMPTY|PRESENT_UNCLASSIFIED|UNKNOWN)\."
+            rb"(?:EXITED|DEAD|OTHER|UNKNOWN)\."
+            rb"(?:EARLY_LT_5S|LATE_GE_5S|UNKNOWN)\."
+            rb"(?:NOT_RUN|RAN|UNKNOWN)))?\n",
             prefix,
         )
         valid_v3 = (
@@ -731,6 +736,8 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
                             if valid_v3 and worker_v3 is not None:
                                 worker_exit_code_claim = worker_v3.group(3).decode("ascii")
                                 worker_oom_claim = worker_v3.group(4).decode("ascii")
+                                if worker_v3.group(5) is not None:
+                                    worker_exit_signature_claim = worker_v3.group(5).decode("ascii")
     elif raw == unverified:
         host_claim = "NO_GO_UNVERIFIED"
     # This is a code-path inference from an allowlisted HOST CLAIM, never a
@@ -756,7 +763,12 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
         f"worker_primary_claim={worker_primary_claim} "
         f"worker_compensation_claim={worker_compensation_claim} "
         f"worker_exit_code_claim={worker_exit_code_claim} worker_oom_claim={worker_oom_claim} "
-        f"worker_start_ack_claim={worker_start_ack_claim} "
+        + (
+            f"worker_exit_signature_claim={worker_exit_signature_claim} "
+            if worker_exit_signature_claim
+            else ""
+        )
+        + f"worker_start_ack_claim={worker_start_ack_claim} "
         f"worker_internal_cause=UNKNOWN worker_cause_evidence={worker_cause_evidence} "
         "phase=UNVERIFIED "
         "host=UNVERIFIED terminal=UNVERIFIED no_retry=true"

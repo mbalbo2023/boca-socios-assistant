@@ -1,6 +1,25 @@
 # Safe operations — verified evidence and gated procedures
 
-## R125 — comprobación física de linger y corrección de etiqueta 0710
+## R127 CODE_ONLY — captura preparada del worker en Cutover V3
+
+**No ejecutar Cutover por esta nota**: primero cerrar QA, PR, CI exact-SHA,
+release dual e inventario rootless Boca/legacy. El intent O_EXCL/fsync y el
+lease del Cutover existente quedan preparados **antes** del arranque único;
+`_browser_wait_healthy` observa y categoriza el mismo `docker inspect`
+**antes** de la compensación selectiva. No ejecuta otro comando Docker,
+otro workflow, ni sondea el BLACKBOX aparte.
+
+Si falla `PREPARE_WORKER/HEALTH_EXITED`, el recibo V4 guarda
+`worker_exit_signature=ERROR.ESTADO.DURACIÓN.HEALTH` (cuatro valores de
+vocabulario cerrado) y conserva ExitCode/OOM. Actions puede reportar
+`worker_exit_signature_claim=...`, siempre como *claim* no autenticado,
+`worker_internal_cause=UNKNOWN` y `no_retry=true`. No mostrar stderr,
+trazas, cookies, rutas ni `State.Error` original; un error sigue `NO_GO`.
+Es una captura prospectiva y no recupera los bytes perdidos del #878.
+
+Ver [ADR0219](ADR/0219-r127-worker-exit-v4-finite-capture-before-compensation.md).
+
+## Histórico R125 — comprobación física de linger y corrección de etiqueta 0710
 
 [Action #890](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42559518453)
 ejecutó el único `inspect-prerequisites` READ_ONLY con `main` R124:

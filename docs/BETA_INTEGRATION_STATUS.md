@@ -1,6 +1,15 @@
 # Estado de integración BETA
 
-## A45-R125 — linger medido en el host; falso positivo 0710 (CODE_ONLY)
+## A45-R127 — diagnóstico V4 preparado, aún no ejecutado en el host
+
+TDD y código proponen categorías cerradas de Engine/error, Estado,
+duración y healthcheck del mismo inspect previo a compensar, propagadas a
+terminal V4, CLI y runner. Se mantienen intactos el BLACKBOX, otros
+Docker y el único flujo Cutover protegido. El caso físico #878 permanece
+con `worker_internal_cause=UNKNOWN`; estado de BETA integral **NO_GO**.
+Ver [ADR0219](ADR/0219-r127-worker-exit-v4-finite-capture-before-compensation.md).
+
+## Histórico A45-R125 — linger medido en el host; falso positivo 0710 (CODE_ONLY)
 
 [PR #453](https://github.com/mbalbo2023/boca-socios-assistant/pull/453)
 fusionado en `main=b7e7dd77531eaf6c967b439381edd152a7a8159b`.

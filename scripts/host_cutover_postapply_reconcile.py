@@ -33,6 +33,13 @@ MAX_JSON = 4096
 RECOVERED_INVENTORY_RUN = "42426260583"
 RECOVERED_INVENTORY_SHA = "f57173862df3143062a136452f2ffc7e3cc51d35"
 TERMINAL_V3 = "boca-cutover-a-terminal-v3"
+TERMINAL_V4 = "boca-cutover-a-terminal-v4"
+WORKER_SIGNATURE = re.compile(
+    r"(?:EMPTY|PRESENT_UNCLASSIFIED|UNKNOWN)\."
+    r"(?:EXITED|DEAD|OTHER|UNKNOWN)\."
+    r"(?:EARLY_LT_5S|LATE_GE_5S|UNKNOWN)\."
+    r"(?:NOT_RUN|RAN|UNKNOWN)\Z"
+)
 WORKER_EVIDENCE_FIELDS = frozenset(
     {
         "version",
@@ -42,6 +49,7 @@ WORKER_EVIDENCE_FIELDS = frozenset(
         "worker_oom_killed",
     }
 )
+WORKER_EVIDENCE_FIELDS_V4 = WORKER_EVIDENCE_FIELDS | {"worker_exit_signature"}
 # Do not allow arbitrary runner-supplied fields into Actions job summaries.
 # Historical v1/v2 envelopes remain verifiable byte-for-byte under their
 # original schema; the added redacted evidence belongs only to receipt v3.
@@ -183,11 +191,12 @@ def _record(raw: bytes | None, run_id: str, *, kind: str) -> dict[str, Any] | No
     result_v1 = "boca-cutover-a-terminal-v1"
     result_v2 = "boca-cutover-a-terminal-v2"
     result_v3 = "boca-cutover-a-terminal-v3"
+    result_v4 = "boca-cutover-a-terminal-v4"
     version = obj.get("version") if isinstance(obj, dict) else None
     valid_version = (
         version == "boca-cutover-a-intent-v1"
         if kind == "intent"
-        else version in (result_v1, result_v2, result_v3)
+        else version in (result_v1, result_v2, result_v3, result_v4)
     )
     if (
         not isinstance(obj, dict)
@@ -236,8 +245,8 @@ def _record(raw: bytes | None, run_id: str, *, kind: str) -> dict[str, Any] | No
             "candidate_id",
             "worker_id",
         }
-        typed = version in (result_v2, result_v3)
-        exited = version == result_v3
+        typed = version in (result_v2, result_v3, result_v4)
+        exited = version in (result_v3, result_v4)
         typed_fields = {"worker_primary_phase", "worker_compensation"}
         exited_fields = {"worker_exit_code", "worker_oom_killed"}
         allowed_phases = {
@@ -262,6 +271,7 @@ def _record(raw: bytes | None, run_id: str, *, kind: str) -> dict[str, Any] | No
                 base_fields
                 | (typed_fields if typed else set())
                 | (exited_fields if exited else set())
+                | ({"worker_exit_signature"} if version == result_v4 else set())
             )
             or obj.get("state") not in ("ACCEPTED", "RECOVERED", "NO_GO")
             or obj.get("cleanup") not in ("ACCEPT", "NO_GO", "INDETERMINATE")
@@ -290,6 +300,13 @@ def _record(raw: bytes | None, run_id: str, *, kind: str) -> dict[str, Any] | No
                         type(obj.get("worker_oom_killed")) is bool
                         or obj.get("worker_oom_killed") == "UNKNOWN"
                     )
+                )
+            )
+            or (
+                version == result_v4
+                and (
+                    type(obj.get("worker_exit_signature")) is not str
+                    or WORKER_SIGNATURE.fullmatch(obj["worker_exit_signature"]) is None
                 )
             )
             or any(
@@ -620,12 +637,12 @@ def _host(run_id: str, prepared_id: str | None, *, source_sha: str | None = None
         raise ReconcileError("RECEIPT_DIRECTORY")
     intent = _record(intent_bytes, run_id, kind="intent")
     result = _record(result_bytes, run_id, kind="result")
-    # Terminal V3 is produced only by the single-dispatch, no-PREPARE
+    # Terminal V3/V4 is produced only by the single-dispatch, no-PREPARE
     # protocol. Never reinterpret its exit evidence as legacy PREPARE proof.
     if (
         source_sha is None
         and result is not None
-        and result["version"] == "boca-cutover-a-terminal-v3"
+        and result["version"] in (TERMINAL_V3, TERMINAL_V4)
     ):
         raise ReconcileError("TERMINAL_PROTOCOL_MISMATCH")
     if source_sha is not None and intent is not None:
@@ -693,8 +710,15 @@ def _host(run_id: str, prepared_id: str | None, *, source_sha: str | None = None
         # Only bounded, typed external terminal facts. Never copy Docker
         # stdout, environment, exception messages or protected module bytes.
         receipt["terminal_worker_evidence"] = (
-            {field: result[field] for field in WORKER_EVIDENCE_FIELDS}
-            if result is not None and result["version"] == TERMINAL_V3
+            {
+                field: result[field]
+                for field in (
+                    WORKER_EVIDENCE_FIELDS_V4
+                    if result["version"] == TERMINAL_V4
+                    else WORKER_EVIDENCE_FIELDS
+                )
+            }
+            if result is not None and result["version"] in (TERMINAL_V3, TERMINAL_V4)
             else None
         )
     return receipt
@@ -730,8 +754,20 @@ def verify_runner(
     worker_evidence = record.get("terminal_worker_evidence") if type(record) is dict else None
     evidence_valid = worker_evidence is None or (
         type(worker_evidence) is dict
-        and set(worker_evidence) == WORKER_EVIDENCE_FIELDS
-        and worker_evidence.get("version") == TERMINAL_V3
+        and worker_evidence.get("version") in (TERMINAL_V3, TERMINAL_V4)
+        and set(worker_evidence)
+        == (
+            WORKER_EVIDENCE_FIELDS_V4
+            if worker_evidence.get("version") == TERMINAL_V4
+            else WORKER_EVIDENCE_FIELDS
+        )
+        and (
+            worker_evidence.get("version") != TERMINAL_V4
+            or (
+                type(worker_evidence.get("worker_exit_signature")) is str
+                and WORKER_SIGNATURE.fullmatch(worker_evidence["worker_exit_signature"]) is not None
+            )
+        )
         and worker_evidence.get("worker_primary_phase") == "HEALTH_EXITED"
         and worker_evidence.get("worker_compensation")
         in ("VERIFIED", "INDETERMINATE", "UNVERIFIED")

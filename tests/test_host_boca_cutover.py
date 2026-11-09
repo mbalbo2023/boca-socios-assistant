@@ -199,6 +199,25 @@ def test_worker_exit_metadata_reaches_cutover_receipt_without_changing_no_go() -
     assert receipt.state == "NO_GO" and not receipt.accepted
 
 
+def test_worker_v4_exit_signature_survives_cutover_without_host_go() -> None:
+    from boca_socios.host_first_deploy import CutoverWorkerPhaseError
+
+    class ExitedWorker(FakeHost):
+        def prepare_worker(self, plan: cutover.CutoverPlan, lease: cleanup.BocaJobLease) -> str:
+            raise CutoverWorkerPhaseError(
+                "HEALTH_EXITED",
+                "VERIFIED",
+                exit_code=1,
+                oom_killed=False,
+                exit_signature="EMPTY.EXITED.EARLY_LT_5S.NOT_RUN",
+            )
+
+    receipt = cutover.run_cutover_a(_plan(), backend=ExitedWorker(recovered=False))
+    assert receipt.worker_exit_signature == "EMPTY.EXITED.EARLY_LT_5S.NOT_RUN"
+    assert receipt.worker_exit_code == 1 and receipt.worker_oom_killed is False
+    assert receipt.failed_phase == "PREPARE_WORKER" and receipt.state == "NO_GO"
+
+
 def test_ambiguous_recovery_never_claims_legacy_restored() -> None:
     host = FakeHost(failure="activate", recovered=False)
     receipt = cutover.run_cutover_a(_plan(), backend=host)

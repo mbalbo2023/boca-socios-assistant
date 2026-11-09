@@ -28,6 +28,7 @@ import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from fractions import Fraction
 from pathlib import Path
 from time import monotonic, sleep
@@ -159,6 +160,18 @@ class PreflightError(ValueError):
     """First installation cannot proceed without an explicit new review."""
 
 
+_WORKER_EXIT_SIGNATURE = re.compile(
+    r"(?:EMPTY|PRESENT_UNCLASSIFIED|UNKNOWN)\."
+    r"(?:EXITED|DEAD|OTHER|UNKNOWN)\."
+    r"(?:EARLY_LT_5S|LATE_GE_5S|UNKNOWN)\."
+    r"(?:NOT_RUN|RAN|UNKNOWN)\Z"
+)
+_WORKER_RFC3339_NANO = re.compile(
+    r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})"
+    r"(?:\.([0-9]{1,9}))?(Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])\Z"
+)
+
+
 class WorkerHealthPhaseError(PreflightError):
     """Allowlisted worker health state; never expose raw Docker output."""
 
@@ -170,15 +183,19 @@ class WorkerHealthPhaseError(PreflightError):
         *,
         exit_code: int | Literal["UNKNOWN"] | None = None,
         oom_killed: bool | Literal["UNKNOWN"] | None = None,
+        exit_signature: str | None = None,
     ) -> None:
         self.phase = phase if phase in self._PHASES else "HEALTH_WAIT"
         self.exit_code: int | Literal["UNKNOWN"] | None = None
         self.oom_killed: bool | Literal["UNKNOWN"] | None = None
+        self.exit_signature: str | None = None
         if self.phase == "HEALTH_EXITED" and exit_code is not None and oom_killed is not None:
             self.exit_code = (
                 exit_code if type(exit_code) is int and 0 <= exit_code <= 255 else "UNKNOWN"
             )
             self.oom_killed = oom_killed if type(oom_killed) is bool else "UNKNOWN"
+            if type(exit_signature) is str and _WORKER_EXIT_SIGNATURE.fullmatch(exit_signature):
+                self.exit_signature = exit_signature
         super().__init__("browser service health not verified")
 
 
@@ -211,16 +228,20 @@ class CutoverWorkerPhaseError(PreflightError):
         *,
         exit_code: int | Literal["UNKNOWN"] | None = None,
         oom_killed: bool | Literal["UNKNOWN"] | None = None,
+        exit_signature: str | None = None,
     ) -> None:
         self.primary = primary if primary in self._PRIMARY else "UNVERIFIED"
         self.compensation = compensation if compensation in self._COMPENSATION else "UNVERIFIED"
         self.exit_code: int | Literal["UNKNOWN"] | None = None
         self.oom_killed: bool | Literal["UNKNOWN"] | None = None
+        self.exit_signature: str | None = None
         if self.primary == "HEALTH_EXITED" and exit_code is not None and oom_killed is not None:
             self.exit_code = (
                 exit_code if type(exit_code) is int and 0 <= exit_code <= 255 else "UNKNOWN"
             )
             self.oom_killed = oom_killed if type(oom_killed) is bool else "UNKNOWN"
+            if type(exit_signature) is str and _WORKER_EXIT_SIGNATURE.fullmatch(exit_signature):
+                self.exit_signature = exit_signature
         message = (
             "cutover A worker failed; selective cleanup INDETERMINATE, no retry"
             if self.compensation == "INDETERMINATE"
@@ -5505,6 +5526,7 @@ def _cutover_prepare_worker(
     phase = "IPC"
     exit_code: int | Literal["UNKNOWN"] | None = None
     oom_killed: bool | Literal["UNKNOWN"] | None = None
+    exit_signature: str | None = None
     try:
         _browser_create_ipc_volume(browser_image, attempt_id)
         phase = "CREATE"
@@ -5532,6 +5554,7 @@ def _cutover_prepare_worker(
         except WorkerHealthPhaseError as exc:
             phase = exc.phase
             exit_code, oom_killed = exc.exit_code, exc.oom_killed
+            exit_signature = exc.exit_signature
             raise
         phase = "HEALTH_POSTFLIGHT"
         _browser_worker_postflight(
@@ -5556,10 +5579,18 @@ def _cutover_prepare_worker(
             )
         except (PreflightError, OSError, ValueError, KeyError, TypeError):
             raise CutoverWorkerPhaseError(
-                phase, "INDETERMINATE", exit_code=exit_code, oom_killed=oom_killed
+                phase,
+                "INDETERMINATE",
+                exit_code=exit_code,
+                oom_killed=oom_killed,
+                exit_signature=exit_signature,
             ) from None
         raise CutoverWorkerPhaseError(
-            phase, "VERIFIED", exit_code=exit_code, oom_killed=oom_killed
+            phase,
+            "VERIFIED",
+            exit_code=exit_code,
+            oom_killed=oom_killed,
+            exit_signature=exit_signature,
         ) from None
 
 
@@ -6388,6 +6419,52 @@ def _browser_installed(
     return BrowserInstalled(controller, worker, marker, TELEGRAM_VOLUME in volumes, sender)
 
 
+def _worker_rfc3339nano_ns(value: object) -> int | None:
+    """Strict Docker RFC3339Nano as integer nanoseconds; reject zero-date sentinel."""
+    if type(value) is not str or not 0 < len(value) <= 64:
+        return None
+    match = _WORKER_RFC3339_NANO.fullmatch(value)
+    if match is None or match.group(1).startswith("0001-"):
+        return None
+    try:
+        offset = "+00:00" if match.group(3) == "Z" else match.group(3)
+        instant = datetime.fromisoformat(match.group(1) + offset)
+        elapsed = instant - datetime(1970, 1, 1, tzinfo=UTC)
+    except ValueError:
+        return None
+    nanos = int((match.group(2) or "0").ljust(9, "0"))
+    return (elapsed.days * 86400 + elapsed.seconds) * 1_000_000_000 + nanos
+
+
+def _worker_exit_signature_from_state(state: dict[str, object]) -> str:
+    """Four finite categories from one Docker snapshot; never retain its text."""
+    error = state.get("Error")
+    engine = (
+        "UNKNOWN"
+        if type(error) is not str
+        else ("EMPTY" if error == "" else "PRESENT_UNCLASSIFIED")
+    )
+    status = state.get("Status")
+    container_state = (
+        "UNKNOWN"
+        if type(status) is not str
+        else "EXITED"
+        if status == "exited"
+        else "DEAD"
+        if status == "dead"
+        else "OTHER"
+    )
+    duration = "UNKNOWN"
+    first = _worker_rfc3339nano_ns(state.get("StartedAt"))
+    last = _worker_rfc3339nano_ns(state.get("FinishedAt"))
+    if first is not None and last is not None and last > first:
+        duration = "EARLY_LT_5S" if last - first < 5_000_000_000 else "LATE_GE_5S"
+    health = state.get("Health")
+    checks = health.get("Log") if type(health) is dict else None
+    health_progress = "UNKNOWN" if type(checks) is not list else "RAN" if checks else "NOT_RUN"
+    return f"{engine}.{container_state}.{duration}.{health_progress}"
+
+
 def _browser_wait_healthy(container: str) -> None:
     deadline = monotonic() + 90
     while monotonic() < deadline:
@@ -6408,7 +6485,10 @@ def _browser_wait_healthy(container: str) -> None:
                 raw_oom_killed if type(raw_oom_killed) is bool else "UNKNOWN"
             )
             raise WorkerHealthPhaseError(
-                "HEALTH_EXITED", exit_code=exit_code, oom_killed=oom_killed
+                "HEALTH_EXITED",
+                exit_code=exit_code,
+                oom_killed=oom_killed,
+                exit_signature=_worker_exit_signature_from_state(state),
             )
         health = state.get("Health")
         if not isinstance(health, dict):

@@ -300,6 +300,45 @@ def test_cli_exited_worker_prints_only_v3_allowlist_with_no_go(
     )
 
 
+def test_cli_v4_worker_signature_is_bounded_and_never_success(
+    reviewed_context: tuple[str, CutoverPlan, str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    encoded, plan, _ = reviewed_context
+
+    def exited(_plan: CutoverPlan) -> CutoverReceipt:
+        return CutoverReceipt(
+            plan.attempt_id,
+            "NO_GO",
+            "INDETERMINATE",
+            False,
+            False,
+            None,
+            None,
+            failed_phase="PREPARE_WORKER",
+            worker_primary_phase="HEALTH_EXITED",
+            worker_compensation="VERIFIED",
+            worker_exit_code=1,
+            worker_oom_killed=False,
+            worker_exit_signature="PRESENT_UNCLASSIFIED.EXITED.EARLY_LT_5S.NOT_RUN",
+        )
+
+    assert (
+        cli.run_cli(
+            encoded,
+            approved_go_binding_sha256=GO,
+            execute=exited,
+            reconcile=lambda _p, _r: None,
+        )
+        == 3
+    )
+    assert capsys.readouterr().out == (
+        "BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED "
+        "exit_code=1 oom=NO signature=PRESENT_UNCLASSIFIED.EXITED.EARLY_LT_5S.NOT_RUN\n"
+        "BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n"
+        "BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n"
+    )
+
+
 def test_cli_unexpected_host_error_never_leaks_exception_or_claims_success(
     reviewed_context: tuple[str, CutoverPlan, str], capsys: pytest.CaptureFixture[str]
 ) -> None:
