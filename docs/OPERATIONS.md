@@ -1,10 +1,36 @@
 # Safe operations — verified evidence and gated procedures
 
-## R127 CODE_ONLY — captura preparada del worker en Cutover V3
+## R128 CODE_ONLY — observación independiente del Cutover #893 (09/11/2026 ART)
 
-**No ejecutar Cutover por esta nota**: primero cerrar QA, PR, CI exact-SHA,
-release dual e inventario rootless Boca/legacy. El intent O_EXCL/fsync y el
-lease del Cutover existente quedan preparados **antes** del arranque único;
+El Cutover V3 [#893](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42658939650)
+(intento 1, SHA `759a1dbadd6e50ab8c331daefc4e39608025a66f`)
+terminó `FAILURE / PREPARE_WORKER / HEALTH_EXITED / ExitCode=1 / OOM=false`,
+con firma `EMPTY.EXITED.EARLY_LT_5S.NOT_RUN`; `host=UNVERIFIED` y
+`terminal=UNVERIFIED` siguen impidiendo acreditar la compensación física y
+la causa interna del worker. **No repetir el arranque.**
+
+La rama R128 prepara **únicamente** ampliar el selector ya existente
+`cutover-a-reconcile`: fija el run #893 y su SHA con autenticación GitHub
+`actor`/`triggering_actor`, no acepta PREPARE ficticio y reutiliza las lecturas
+rootless `host-v3/verify-v3` que reconocen el terminal V4. Para #893 se omite
+el planificador histórico de cleanup, incluso READ_ONLY, por ausencia de ID
+legacy autenticado; no se ejecuta ningún comando de mutación en host. Si y
+sólo si PR, CI, QA/Arquitectura/Infraestructura y merge están GREEN, se
+podrá despachar **una única** operación de observación con
+`operation=cutover-a-reconcile`, `service=controller`,
+`resource_budget=1.5cpu-1024m-192pids`,
+`protected_action_context=42658939650`, los demás pines vacíos. Un resultado
+verde será evidencia de diagnóstico, **nunca GO para otro Cutover**.
+
+Consultar [ADR0220](ADR/0220-r128-893-exact-readonly-reconcile.md) y los
+checkpoints canónicos #417/#45. No se leen archivos BLACKBOX, datos ajenos,
+Porota ni otros contenedores. No publicar stderr ni trazas del worker.
+
+## Histórico R127 — captura V4 aplicada en el intento fallido #893
+
+**R127 se fusionó y ejecutó exactamente una vez mediante #893; resultado NO_GO.**
+No repetir Cutover por esta nota. El intent O_EXCL/fsync y el
+lease del Cutover existente se prepararon **antes** del arranque único;
 `_browser_wait_healthy` observa y categoriza el mismo `docker inspect`
 **antes** de la compensación selectiva. No ejecuta otro comando Docker,
 otro workflow, ni sondea el BLACKBOX aparte.

@@ -347,8 +347,12 @@ def test_v3_plan_runs_under_existing_reconcile_and_never_removes_docker() -> Non
     block = workflow.split("      - name: Plan Boca-only Docker cleanup READ_ONLY", 1)[1].split(
         "      - name: Require one unique R96 stage recovery dispatch", 1
     )[0]
-    assert "if: inputs.operation == 'cutover-a-reconcile'\n" in block
+    assert (
+        "if: inputs.operation == 'cutover-a-reconcile' "
+        "&& inputs.protected_action_context != '42658939650'\n"
+    ) in block
     assert "inputs.protected_action_context != '42405706503'" not in block
+    assert "inputs.protected_action_context != '42426260583'" not in block
     assert "BOCA_INCIDENT_SOURCE_SHA" in block
     assert "verified_cleanup_legacy_id" in block
     assert "< src/boca_socios/host_boca_cleanup.py" in block
@@ -358,21 +362,28 @@ def test_v3_plan_runs_under_existing_reconcile_and_never_removes_docker() -> Non
 
 def test_workflow_reconcile_allowlists_latest_v3_without_prepare() -> None:
     workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
-    assert "42405706503|42426260583" in workflow
-    assert 'incident["id"] in (42405706503, 42426260583)' in workflow
+    assert "42405706503|42426260583|42658939650" in workflow
+    assert 'incident["id"] in (42405706503, 42426260583, 42658939650)' in workflow
     assert f'"{LATEST_RUN}": "{LATEST_SOURCE}"' in workflow
     assert "BOCA_INCIDENT_SOURCE_SHA" in workflow
     assert "host-v3" in workflow and "verify-v3" in workflow
 
 
-@pytest.mark.parametrize("run_id,sha", [(RUN, SOURCE), (LATEST_RUN, LATEST_SOURCE)])
+@pytest.mark.parametrize(
+    "run_id,sha",
+    [
+        (RUN, SOURCE),
+        (LATEST_RUN, LATEST_SOURCE),
+        ("42658939650", "759a1dbadd6e50ab8c331daefc4e39608025a66f"),
+    ],
+)
 def test_exact_embedded_github_attestation_accepts_only_trusted_v3_incidents(
     tmp_path: Path, run_id: str, sha: str
 ) -> None:
     workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
-    attestation = workflow.split("      - name: Authenticate V3 incident", 1)[1].split(
-        "      - name: Reconcile exact failed Cutover A attempt", 1
-    )[0]
+    attestation = workflow.split("      - name: Authenticate exact failed V3 incidents", 1)[
+        1
+    ].split("      - name: Reconcile exact failed Cutover A attempt", 1)[0]
     script = textwrap.dedent(attestation.split("<<'PY'\n", 1)[1].split("          PY\n", 1)[0])
     incident = {
         "id": int(run_id),
@@ -384,6 +395,7 @@ def test_exact_embedded_github_attestation_accepts_only_trusted_v3_incidents(
         "head_sha": sha,
         "repository": {"full_name": "mbalbo2023/boca-socios-assistant"},
         "actor": {"login": "mbalbo2023"},
+        "triggering_actor": {"login": "mbalbo2023"},
         "display_title": "BOCA-SIMULATION-DEPLOY-V3",
         "path": ".github/workflows/boca-first-deploy.yml",
     }
@@ -395,9 +407,16 @@ def test_exact_embedded_github_attestation_accepts_only_trusted_v3_incidents(
     for mutation in (
         None,
         {"run_attempt": 2},
+        {"run_attempt": "1"},
         {"head_sha": "d" * 40},
+        {"head_branch": "feature/unauthorized"},
         {"actor": {"login": "another-user"}},
+        {"triggering_actor": {"login": "another-user"}},
         {"conclusion": "success"},
+        {"status": "in_progress"},
+        {"event": "push"},
+        {"repository": {"full_name": "elsewhere/another-repository"}},
+        {"display_title": "SPOOFED-WORKFLOW"},
         {"path": ".github/workflows/other.yml"},
         {"id": 11111111111},
     ):
