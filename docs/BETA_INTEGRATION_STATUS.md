@@ -1,5 +1,9 @@
 # Estado de integración BETA
 
+## Worker y evidencia R131
+
+El laboratorio de captura externa tiene alcance de CI. La BETA integral requiere validación física del worker e IPC. El último inventario físico registrado es #895. [ADR0221](ADR/0221-r131-worker-start-capture-lab.md).
+
 ## A45-R127 — diagnóstico V4 preparado, aún no ejecutado en el host
 
 TDD y código proponen categorías cerradas de Engine/error, Estado,

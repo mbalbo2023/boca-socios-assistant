@@ -1,5 +1,9 @@
 # Boca Socios Assistant
 
+## Captura del arranque en CI
+
+El job de imagen prueba en Docker efímero una captura preparada antes de arrancar un proceso ficticio. El worker físico del intento #893 sigue con causa interna desconocida. [ADR0221](docs/ADR/0221-r131-worker-start-capture-lab.md).
+
 ## R127 — captura preparada para ExitCode=1 del worker (CODE_ONLY, no Cutover)
 
 El #878 dejó `ExitCode=1`/OOM false y journal de shim desconectado sin

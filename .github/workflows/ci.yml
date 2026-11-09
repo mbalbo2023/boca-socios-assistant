@@ -106,6 +106,9 @@ jobs:
         run: docker build --tag boca-socios-ci:${{ github.sha }} .
       - name: Build isolated Chromium worker without deploying
         run: docker build --file Dockerfile.browser --tag boca-browser-ci:${{ github.sha }} .
+      - name: Capture an immediate fixture exit before removal on runner Docker
+        timeout-minutes: 2
+        run: python3 -m scripts.check_worker_start_capture
       - name: Prove healthless worker inspect formats on disposable runner Docker
         env:
           BOCA_BROWSER_TAG: boca-browser-ci:${{ github.sha }}
