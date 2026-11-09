@@ -1,7 +1,7 @@
 # ADR0216 — R122: significado del ExitCode 1 sin inventar una RCA interna
 
-Fecha: 2026-11-08 ART. Issue #417, continuidad #45. Estado: **candidato
-CODE_ONLY, pendiente de PR/CI/merge; NO_GO físico**.
+Fecha: 2026-11-08 ART. Issue #417, continuidad #45. Estado: **PR #452
+CODE_ONLY, pendiente de CI exact-SHA y merge; NO_GO físico**.
 
 ## Evidencia y límite histórico
 
@@ -66,6 +66,16 @@ ajuste; incluyen uno positivo y 10 negativos con fases distintas, ExitCode
 privados maliciosos. Se añadieron 4 negativos: transportes 124/255 (RED antes
 del gate exacto `ssh_rc=3`), archivo ausente y recibo truncado. Se requiere la suite completa, Ruff, formato, Mypy,
 política, revisión independiente y CI exact-SHA antes de integración.
+
+El primer CI del PR #452 ([run #42553934453](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42553934453))
+falló únicamente en dos aserciones Rule84 de la guía vigente de worker
+preflight. RCA: el helper de test recortaba `OPERATIONS.md` ante el primer
+`## Histórico`, pero R122 incorporó el checkpoint R119 por encima del
+procedimiento V3. La sección vigente y las ocho coordenadas seguían presentes;
+un selector documental global las ocultó a la prueba. Se corrigió el helper
+para localizar el único H2 de `Procedimiento vigente Cutover V3` y limitarse
+al siguiente H2, **sin alterar ninguna aserción de ocho coordenadas, one-shot,
+NO_GO o gate pre-SSH**. Se exige nueva suite y CI verde del SHA corregido.
 
 El diseño prospectivo R123 evalúa únicamente metadatos tipados derivados
 del **mismo** `docker inspect` antes de compensación (banderas de error del

@@ -146,7 +146,13 @@ def test_r89_guidance_regression_is_selected_by_protected_pr_validation() -> Non
 
 def _current_worker_guide() -> str:
     text = OPERATIONS.read_text(encoding="utf-8")
-    current = text.split("\n## Histórico", 1)[0]
+    current_headings = list(re.finditer(r"(?m)^## Procedimiento vigente Cutover V3[^\n]*$", text))
+    assert len(current_headings) == 1, "Rule84 requires exactly one current Cutover V3 procedure"
+    # Scope to the actual current procedure, not an unrelated historical
+    # checkpoint that may precede it in the living operations document.
+    remainder = text[current_headings[0].end() :]
+    next_section = re.search(r"(?m)^## ", remainder)
+    current = remainder[: next_section.start()] if next_section else remainder
     headings = list(re.finditer(r"(?im)^###\s+[^\n]*worker preflight[^\n]*$", current))
     assert len(headings) == 1, (
         "Rule84 requires one current worker preflight checklist before historical instructions"
