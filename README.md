@@ -1,11 +1,25 @@
 # Boca Socios Assistant
 
+## R125 — modo 0710 del data-root rootless: etiqueta corregida (CODE_ONLY)
+
+La lectura auténtica de [Action #890](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42559518453)
+en `main=b7e7dd77531eaf6c967b439381edd152a7a8159b` verificó
+`linger=YES`, UID/GID10001, home/runtime0700, Docker rootless activo,
+rangos de IDs subordinados y binarios de mapeo presentes. R124 emitió
+`data_root=UNSAFE` para UID/GID10001/modo0710: es **una clasificación
+equivocada**, porque Moby usa modo 0710 para la raíz del daemon.
+R125 distingue `OWNER_0710` de los directorios privados 0700 y valida
+la coherencia del recibo; esto **no demuestra** cuál es el data-root efectivo,
+no identifica el ExitCode1 histórico ni autoriza el Cutover. No cambiar
+permisos ni repetir la inspección por esta etiqueta. [ADR0218](docs/ADR/0218-r125-dataroot-mode0710-false-positive.md).
+
 ## R124 — diagnóstico READ_ONLY de `linger` y rootless Boca (CODE_ONLY)
 
 R122 quedó **fusionado** mediante [PR #452](https://github.com/mbalbo2023/boca-socios-assistant/pull/452)
 en `main=70e91f0884e054c5494c034dbe6445fc0f931160`, con cuatro workflows
 del SHA previo al merge en verde. La causa interna del ExitCode1 en #878
-continúa `UNKNOWN`. R124 es una ampliación aún **no desplegada** de la
+continúa `UNKNOWN`. R124 es una ampliación **ya integrada en PR #453 y
+ejecutada únicamente como lectura en Action #890** de la
 inspección `inspect-prerequisites` existente: medir el estado actual de
 systemd `Linger` para UID10001 y metadatos acotados de home/runtime/sockets,
 configuración rootless y rangos `subuid/subgid`, sin ejecutar Docker ni
@@ -16,10 +30,10 @@ remota antes de publicarla y un fallo SSH no provoca un segundo intento.
 El socket Docker con escritura pública es NO_GO; el modo systemd `0666`
 de sus sockets de usuario bajo runtime privado 0700 es informativo.
 
-Un `linger=YES` futuro probaría solo la política actual, no la causa del
+El `linger=YES` observado prueba solo la política actual, no la causa del
 worker desaparecido. Un GID del socket distinto al GID del usuario es
-informativo bajo user namespaces. **Hasta PR, CI exacto, merge y Action
-READ_ONLY física, `linger=UNKNOWN` y Cutover/BETA/Telegram siguen NO_GO.**
+informativo bajo user namespaces. **La lectura física confirmó el estado
+actual de linger; Cutover/BETA/Telegram siguen NO_GO.**
 [ADR0217](docs/ADR/0217-r124-linger-rootless-readonly-metadata.md).
 
 ## R122 — ExitCode=1: inferencia tipada, causa interna no recuperada (08/11/2026 ART)

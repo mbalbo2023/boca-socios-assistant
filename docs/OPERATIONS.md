@@ -1,10 +1,21 @@
 # Safe operations — verified evidence and gated procedures
 
-## R124 — futuro diagnóstico de `linger` en Action Boca existente
+## R125 — comprobación física de linger y corrección de etiqueta 0710
 
-**CODE_ONLY hasta PR, checks exactos y merge**. El valor actual de `Linger`
-no fue observado. El selector de lectura `inspect-prerequisites` conserva la
-inspección anterior y añadirá un paso acotado para `loginctl show-user 10001
+[Action #890](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42559518453)
+ejecutó el único `inspect-prerequisites` READ_ONLY con `main` R124:
+`linger=YES`, home/runtime0700, UID/GID10001, Docker user service activo,
+subuid/subgid y mapeos disponibles. El data-root de metadatos modo0710
+se etiquetó falsamente `UNSAFE` al reutilizar `_dir` (0700 estricto).
+Moby utiliza 0710 para el directorio raíz, por lo que R125 reclasifica
+solo ese campo como `OWNER_0710`. No ejecuta chmod, consulta Docker,
+repite Action ni cambia el gate físico. El ExitCode1 histórico sigue
+`UNKNOWN` y Cutover/BETA/Telegram **NO_GO**. [ADR0218](ADR/0218-r125-dataroot-mode0710-false-positive.md).
+
+## Histórico R124 — `linger` en Action Boca existente
+
+**PR #453 integrado, lectura #890 completada**. El selector de lectura `inspect-prerequisites` conserva la
+inspección anterior y añadió un paso acotado para `loginctl show-user 10001
 --property=Linger --value`, UID/GID/modos de directorios y sockets Boca,
 rangos dedicados `subuid/subgid`, binarios de mapeo y user namespaces.
 El script no instala archivos ni consulta Docker, y el host no cambia.
@@ -15,10 +26,10 @@ sockets de systemd en modo predeterminado `0666` son informativos si su
 runtime está verificado 0700. Sin escritura para el UID, NO_GO. El runner valida las seis líneas
 sin mostrar stdout inesperado ni stderr del host.
 
-Para una futura **única observación READ_ONLY**, desde el workflow
+Para la observación READ_ONLY ya efectuada, se utilizó el workflow
 [Boca first deploy](https://github.com/mbalbo2023/boca-socios-assistant/actions/workflows/boca-first-deploy.yml)
 en `main` validado: `operation=inspect-prerequisites`, `source_sha` igual al
-SHA completo **vigente** de `main`, `service=controller`,
+SHA completo **vigente** de `main` durante #890, `service=controller`,
 `resource_budget=0.5cpu-256m-64pids`, todos los demás campos vacíos.
 No elegir `prepare-rootless`, `start-existing`, `cutover-a-apply`, ninguna
 opción de worker, ni `telegram-activate` para esta verificación. Primero

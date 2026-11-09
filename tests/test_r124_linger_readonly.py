@@ -215,6 +215,56 @@ def test_user_namespaces_zero_means_disabled() -> None:
         assert probe._userns() == "DISABLED"
 
 
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [
+        (probe.Metadata("DIRECTORY", 10001, 10001, 0o710), "OWNER_0710"),
+        (probe.Metadata("DIRECTORY", 10001, 10001, 0o700), "PRIVATE"),
+        (probe.Metadata("DIRECTORY", 10001, 10001, 0o711), "UNSAFE"),
+        (probe.Metadata("DIRECTORY", 10001, 10001, 0o750), "UNSAFE"),
+        (probe.Metadata("DIRECTORY", 10001, 10001, 0o720), "UNSAFE"),
+        (probe.Metadata("DIRECTORY", 10001, 10001, 0o777), "UNSAFE"),
+        (probe.Metadata("DIRECTORY", 10001, 166523, 0o710), "UNSAFE"),
+        (probe.Metadata("DIRECTORY", 0, 10001, 0o710), "UNSAFE"),
+        (probe.Metadata("SOCKET", 10001, 10001, 0o710), "SOCKET"),
+        (probe.Metadata("ABSENT"), "ABSENT"),
+    ],
+)
+def test_docker_root_mode_is_not_home_runtime_mode(metadata: probe.Metadata, expected: str) -> None:
+    assert probe._docker_root_dir(metadata) == expected
+
+
+def test_docker_data_root_default_mode_does_not_create_false_unsafe() -> None:
+    home = probe.Metadata("DIRECTORY", 10001, 10001, 0o700)
+    engine_root = probe.Metadata("DIRECTORY", 10001, 10001, 0o710)
+    socket = probe.Metadata("SOCKET", 10001, 166523, 0o660)
+    with (
+        patch.object(probe, "_dedicated_home", return_value=Path("/home/boca-deploy")),
+        patch.object(probe, "_linger", return_value="YES"),
+        patch.object(
+            probe,
+            "_fixed_metadata",
+            side_effect=[
+                home,
+                home,
+                socket,
+                socket,
+                socket,
+                probe.Metadata("REGULAR", 0, 0, 0o644),
+                engine_root,
+                probe.Metadata("REGULAR", 10001, 10001, 0o600),
+            ],
+        ),
+        patch.object(probe, "_subids", side_effect=["VALID", "VALID"]),
+        patch.object(probe, "_binary", return_value="AVAILABLE"),
+        patch.object(probe, "_userns", return_value="AVAILABLE"),
+    ):
+        lines, state = probe.collect()
+    assert state == "METADATA_CANDIDATE"
+    assert "data_root=OWNER_0710" in "\n".join(lines)
+    assert "data_mode=0710" in "\n".join(lines)
+
+
 def test_collect_reports_metadata_only_without_docker_calls() -> None:
     owned = probe.Metadata("DIRECTORY", 10001, 10001, 0o700)
     sock = probe.Metadata("SOCKET", 10001, 166523, 0o660)
