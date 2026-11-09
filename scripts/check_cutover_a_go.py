@@ -733,6 +733,22 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
                                 worker_oom_claim = worker_v3.group(4).decode("ascii")
     elif raw == unverified:
         host_claim = "NO_GO_UNVERIFIED"
+    # This is a code-path inference from an allowlisted HOST CLAIM, never a
+    # second Docker ACK or an explanation of the worker's internal exception.
+    # The adapter checks the exact docker-start CID before HEALTH_EXITED.
+    worker_start_ack_claim = "UNVERIFIED"
+    worker_cause_evidence = "UNVERIFIED"
+    if (
+        ssh_rc == 3
+        and host_claim == "NO_GO_RECORDED_UNVERIFIED"
+        and phase_claim == "PREPARE_WORKER"
+        and worker_primary_claim == "HEALTH_EXITED"
+        and worker_compensation_claim == "VERIFIED"
+        and worker_exit_code_claim == "1"
+        and worker_oom_claim == "NO"
+    ):
+        worker_start_ack_claim = "EXACT_CID_IMPLIED_BY_HEALTH_PHASE"
+        worker_cause_evidence = "INFERENCE_NOT_CAUSE"
     transport = "TIMEOUT" if ssh_rc == 124 else "SSH_255" if ssh_rc == 255 else "EXIT_NONZERO"
     return (
         f"BOCA_CUTOVER_A_SSH_DIAGNOSTIC state=NO_GO ssh_rc={ssh_rc} "
@@ -740,6 +756,8 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
         f"worker_primary_claim={worker_primary_claim} "
         f"worker_compensation_claim={worker_compensation_claim} "
         f"worker_exit_code_claim={worker_exit_code_claim} worker_oom_claim={worker_oom_claim} "
+        f"worker_start_ack_claim={worker_start_ack_claim} "
+        f"worker_internal_cause=UNKNOWN worker_cause_evidence={worker_cause_evidence} "
         "phase=UNVERIFIED "
         "host=UNVERIFIED terminal=UNVERIFIED no_retry=true"
     )

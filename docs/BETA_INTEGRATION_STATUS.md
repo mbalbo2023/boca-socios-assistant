@@ -1,6 +1,31 @@
 # Estado de integración BETA
 
-## A45-R119 — observación física RECOVERED, planner en corrección CODE_ONLY
+## A45-R122 — RCA interna ExitCode=1 todavía desconocida
+
+El #878 verificó `HEALTH_EXITED`, salida `1` y `OOMKilled=false`; por el
+orden del adaptador, `docker start` había devuelto el CID exacto. Las trazas
+de error del proceso no quedaron preservadas antes de la compensación. R122
+propone **sólo CODE_ONLY** una clasificación no causal del reporte de Actions,
+con `worker_internal_cause=UNKNOWN`, sin extender el recibo físico ni
+repetir Cutover. No acredita BETA integral, Telegram ni el motivo interno.
+R123 es diseño pendiente de telemetría prospectiva con metadatos cerrados,
+sin nuevo despacho autorizado. [ADR0216](ADR/0216-r122-worker-exit-one-diagnostic-classification.md).
+
+## A45-R121.7 — R119 integrado y observación READ_ONLY #886
+
+PR [#451](https://github.com/mbalbo2023/boca-socios-assistant/pull/451)
+fusionado; `main=a28c218411640d4de56ad3cbecd946dbc75efe0d`.
+[Action #886](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42547709593)
+terminó `SUCCESS` como inventario **READ_ONLY**: legado HEALTHY en
+`127.0.0.1:8443`, worker/candidato ausentes, 1 contenedor, 2 imágenes,
+3 volúmenes y 1 red Boca; no se hicieron escrituras. La clasificación de
+limpieza continúa **INDETERMINATE** por una imagen histórica R108 conservada
+(`uncertain=1`). Independientemente, el dato de custodia fue
+`OWNER=FILES_INACCESSIBLE`: se trata de dos hallazgos distintos. No se
+autoriza limpieza, Cutover ni BETA.
+La causa interna `ExitCode=1` del #878 sigue `UNKNOWN`.
+
+## Histórico A45-R119 — observación #883 y entonces planner CODE_ONLY
 
 PR #450 fusionado en `main=6a0aa2ea72f61e4bb6178e3cd12e9194f760d0d8`,
 CI/Security postmerge SUCCESS, cero PR abiertos antes de #883.
@@ -9,7 +34,7 @@ CI/Security postmerge SUCCESS, cero PR abiertos antes de #883.
 `terminal=RECOVERED`, `cleanup=ACCEPT`, legacy restaurado HEALTHY en
 127.0.0.1:8443, candidatos/workers/Stage ausentes. Su planner abortó
 `CLEANUP_V3_ORIGINAL_UNVERIFIED` y no efectuó ninguna limpieza.
-R119 CODE_ONLY corrige ese único gate para un futuro inventario del incidente
+R119 CODE_ONLY corrigió ese único gate para el inventario del incidente
 #878 autenticado, preservando la semántica de no-retry y recursos ajenos.
 **NO_GO físico** para otro Cutover, IPC, Telegram y BETA integral B; causa
 del ExitCode1 interna UNKNOWN, residuos de imágenes/volúmenes no certificados.
