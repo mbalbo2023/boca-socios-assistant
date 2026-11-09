@@ -87,13 +87,13 @@ PREFLIGHT_ENTRIES = frozenset(
     }
 )
 MAX_ZIP = 512_000
-# Same R119 source limit as the builder: measured 877124 bytes, bound 880000.
+# R127 source ceilings match the measured builder limits; compressed caps remain unchanged.
 # Exact entry allowlist/digest and independent 512k compressed cap unchanged.
-MAX_UNCOMPRESSED = 880_000
+MAX_UNCOMPRESSED = 886_000
 RECOVERY_MAX_ZIP = 128_000
 RECOVERY_MAX_UNCOMPRESSED = 256_000
 PREFLIGHT_MAX_ZIP = 128_000
-PREFLIGHT_MAX_UNCOMPRESSED = 480_000
+PREFLIGHT_MAX_UNCOMPRESSED = 484_000
 
 
 def verify(

@@ -32,7 +32,7 @@ WORKER_SOURCES = (
     "scripts/host_cutover_worker_preflight.py",
 )
 WORKER_ENTRIES = frozenset({"__main__.py", *(item.removeprefix("src/") for item in WORKER_SOURCES)})
-WORKER_SOURCE_CAP = 480_000
+WORKER_SOURCE_CAP = 484_000
 WORKER_ZIP_CAP = 128_000
 INVALID_COORDINATES = ("bad-coordinate",) * 7
 
@@ -116,11 +116,11 @@ def _zip_of_exact_size(size: int) -> bytes:
 
 
 def test_transport_caps_are_separate_from_full_cutover_and_recovery() -> None:
-    assert builder.MAX_SOURCE_BYTES == bootstrap.MAX_UNCOMPRESSED == 880_000
+    assert builder.MAX_SOURCE_BYTES == bootstrap.MAX_UNCOMPRESSED == 886_000
     assert builder.MAX_ARCHIVE_BYTES == bootstrap.MAX_ZIP == 512_000
     assert builder.RECOVERY_MAX_SOURCE_BYTES == bootstrap.RECOVERY_MAX_UNCOMPRESSED == 256_000
     assert builder.RECOVERY_MAX_ARCHIVE_BYTES == bootstrap.RECOVERY_MAX_ZIP == 128_000
-    assert builder.PREFLIGHT_MAX_SOURCE_BYTES == bootstrap.PREFLIGHT_MAX_UNCOMPRESSED == 480_000
+    assert builder.PREFLIGHT_MAX_SOURCE_BYTES == bootstrap.PREFLIGHT_MAX_UNCOMPRESSED == 484_000
     assert builder.PREFLIGHT_MAX_ARCHIVE_BYTES == bootstrap.PREFLIGHT_MAX_ZIP == 128_000
     assert "scripts/host_cutover_worker_preflight.py" not in builder.SOURCES
 
@@ -184,7 +184,7 @@ def test_bootstrap_exact_worker_zip_size_boundary(zip_size: int, allowed: bool) 
             bootstrap.verify(raw, _sha(raw), worker_preflight=True)
 
 
-def test_bootstrap_rejects_worker_uncompressed_480001_even_with_valid_digest() -> None:
+def test_bootstrap_rejects_worker_uncompressed_overcap_even_with_valid_digest() -> None:
     raw = _zip_with_entries(tuple(sorted(WORKER_ENTRIES)), filler=WORKER_SOURCE_CAP)
     assert len(raw) < WORKER_ZIP_CAP
     with pytest.raises(ValueError, match="allowlist|size"):

@@ -653,6 +653,125 @@ def test_worker_exited_captures_only_exact_docker_state_before_compensation(
     assert "PRIVATE" not in str(captured.value)
 
 
+@pytest.mark.parametrize(
+    ("state_extra", "expected_signature"),
+    [
+        (
+            {
+                "Status": "exited",
+                "Error": "",
+                "StartedAt": "2026-11-09T15:00:00.000000000Z",
+                "FinishedAt": "2026-11-09T15:00:00.251000000Z",
+                "Health": {"Log": []},
+            },
+            "EMPTY.EXITED.EARLY_LT_5S.NOT_RUN",
+        ),
+        (
+            {
+                "Status": "dead",
+                "Error": "PRIVATE=never-publish",
+                "StartedAt": "2026-11-09T15:00:00Z",
+                "FinishedAt": "2026-11-09T15:00:05Z",
+                "Health": {"Log": [{"Output": "PRIVATE=never-publish"}]},
+            },
+            "PRESENT_UNCLASSIFIED.DEAD.LATE_GE_5S.RAN",
+        ),
+        (
+            {
+                "Status": 1,
+                "Error": None,
+                "StartedAt": "2026-11-09T15:00:05Z",
+                "FinishedAt": "2026-11-09T15:00:00Z",
+                "Health": {"Log": "PRIVATE=never-publish"},
+            },
+            "UNKNOWN.UNKNOWN.UNKNOWN.UNKNOWN",
+        ),
+        (
+            {
+                "Status": "exited",
+                "Error": "",
+                "StartedAt": "0001-01-01T00:00:00Z",
+                "FinishedAt": "2026-11-09T15:00:05Z",
+                "Health": {"Log": []},
+            },
+            "EMPTY.EXITED.UNKNOWN.NOT_RUN",
+        ),
+        (
+            {
+                "Status": "exited",
+                "Error": "",
+                "StartedAt": "2026-11-09X15:00:00+00:00:45",
+                "FinishedAt": "2026-11-09X15:00:00.250+00:00:45",
+                "Health": {"Log": []},
+            },
+            "EMPTY.EXITED.UNKNOWN.NOT_RUN",
+        ),
+        (
+            {
+                "Status": "exited",
+                "Error": "",
+                "StartedAt": "2026-11-09T15:00:00.123456999Z",
+                "FinishedAt": "2026-11-09T15:00:05.123456000Z",
+                "Health": {"Log": []},
+            },
+            "EMPTY.EXITED.EARLY_LT_5S.NOT_RUN",
+        ),
+    ],
+)
+def test_exited_worker_v4_signature_from_one_inspect_without_secret_leak(
+    monkeypatch: pytest.MonkeyPatch,
+    state_extra: dict[str, object],
+    expected_signature: str,
+) -> None:
+    inspections: list[str] = []
+
+    def inspect(container: str) -> dict[str, object]:
+        inspections.append(container)
+        return {
+            "State": {"Running": False, "ExitCode": 1, "OOMKilled": False, **state_extra},
+            "Config": {"Env": ["PRIVATE=never-publish"]},
+            "Mounts": ["PRIVATE=never-publish"],
+        }
+
+    monkeypatch.setattr(host, "_browser_inspect_record", inspect)
+    with pytest.raises(host.WorkerHealthPhaseError) as captured:
+        host._browser_wait_healthy(WORKER_ID)
+    assert inspections == [WORKER_ID]
+    assert captured.value.exit_signature == expected_signature
+    assert captured.value.exit_code == 1
+    assert captured.value.oom_killed is False
+    assert "PRIVATE" not in str(captured.value)
+    assert "PRIVATE" not in repr(captured.value.__dict__)
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_worker_v4_signature_survives_exact_boca_compensation(
+    monkeypatch: pytest.MonkeyPatch, cleanup_fails: bool
+) -> None:
+    _worker_preparation_fake(monkeypatch)
+
+    def exited(_container: str) -> None:
+        raise host.WorkerHealthPhaseError(
+            "HEALTH_EXITED",
+            exit_code=1,
+            oom_killed=False,
+            exit_signature="EMPTY.EXITED.EARLY_LT_5S.NOT_RUN",
+        )
+
+    monkeypatch.setattr(host, "_browser_wait_healthy", exited)
+    if cleanup_fails:
+        monkeypatch.setattr(
+            host,
+            "_cutover_compensate_worker",
+            lambda *_args: (_ for _ in ()).throw(host.PreflightError("PRIVATE")),
+        )
+    with pytest.raises(host.CutoverWorkerPhaseError) as captured:
+        _prepare_worker()
+    assert captured.value.exit_signature == "EMPTY.EXITED.EARLY_LT_5S.NOT_RUN"
+    assert captured.value.compensation == ("INDETERMINATE" if cleanup_fails else "VERIFIED")
+    assert "PRIVATE" not in repr(captured.value.__dict__)
+
+
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_worker_exited_evidence_survives_both_compensation_outcomes(
     monkeypatch: pytest.MonkeyPatch, cleanup_fails: bool

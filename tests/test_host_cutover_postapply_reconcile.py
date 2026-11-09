@@ -128,6 +128,23 @@ def test_v3_terminal_exit_evidence_is_accepted_by_readonly_observer() -> None:
     )
 
 
+def test_v4_terminal_exit_signature_readonly_schema_and_canary_rejection() -> None:
+    signature = "EMPTY.EXITED.EARLY_LT_5S.NOT_RUN"
+    raw = _exit_result(version="boca-cutover-a-terminal-v4", worker_exit_signature=signature)
+    record = reconcile._record(raw, RUN, kind="result")
+    assert record is not None and record["worker_exit_signature"] == signature
+    for bad in ("PRIVATE", "UNKNOWN", 1, "EMPTY.DEAD.LATE_GE_5S.INVALID"):
+        with pytest.raises(reconcile.ReconcileError):
+            reconcile._record(
+                _exit_result(version="boca-cutover-a-terminal-v4", worker_exit_signature=bad),
+                RUN,
+                kind="result",
+            )
+    # Adding V4-only fields to historical V3 is always rejected.
+    with pytest.raises(reconcile.ReconcileError):
+        reconcile._record(_exit_result(worker_exit_signature=signature), RUN, kind="result")
+
+
 @pytest.mark.parametrize(
     "change",
     [

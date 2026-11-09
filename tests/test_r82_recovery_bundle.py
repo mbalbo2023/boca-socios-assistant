@@ -99,6 +99,11 @@ R118_READONLY_LATEST_CUTOVER_SHA = (
 R119_RECOVERED_READONLY_FULL_CUTOVER_SHA = (
     "aa43ffb3ec71104707b6df7eb14a5d66fb10df25aeb3297305854fbf27db75b7"
 )
+# R127: V4 finite worker metadata, same entry allowlist and compressed caps.
+# Preserve R119 as a historical provenance pin, never replace its literal.
+R127_WORKER_EXIT_CAPTURE_FULL_CUTOVER_SHA = (
+    "df11ea1c522252a89fade7b1261b05c110176bfd6a067967f74c83c3418b0808"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -256,7 +261,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R119_RECOVERED_READONLY_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R127_WORKER_EXIT_CAPTURE_FULL_CUTOVER_SHA
+    assert digest != R119_RECOVERED_READONLY_FULL_CUTOVER_SHA
     assert digest != R118_READONLY_LATEST_CUTOVER_SHA
     assert digest != R116_TELEGRAM_STAGE_PARITY_FULL_CUTOVER_SHA
     assert digest != R114_EXIT_EVIDENCE_FULL_CUTOVER_SHA

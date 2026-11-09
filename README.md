@@ -1,6 +1,18 @@
 # Boca Socios Assistant
 
-## R125 — modo 0710 del data-root rootless: etiqueta corregida (CODE_ONLY)
+## R127 — captura preparada para ExitCode=1 del worker (CODE_ONLY, no Cutover)
+
+El #878 dejó `ExitCode=1`/OOM false y journal de shim desconectado sin
+excepción interna recuperable. R127 instrumenta el **mismo** `docker inspect`
+previo a la compensación para conservar cuatro categorías finitas V4
+(`State.Error` presente/ausente, estado, duración y healthcheck), sin logs
+privados ni lectura/ejecución BLACKBOX. El intent del workflow existente se
+prepara antes del `docker start`; no hay otro host workflow ni retry.
+
+Código en revisión; **NO_GO físico** hasta PR, tests, CI exact-SHA, release
+y única transacción protegida. Véase [ADR0219](docs/ADR/0219-r127-worker-exit-v4-finite-capture-before-compensation.md).
+
+## Histórico R125 — modo 0710 del data-root rootless: etiqueta corregida (CODE_ONLY)
 
 La lectura auténtica de [Action #890](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42559518453)
 en `main=b7e7dd77531eaf6c967b439381edd152a7a8159b` verificó

@@ -68,6 +68,19 @@ def valid_worker_exit_evidence(primary: object, exit_code: object, oom_killed: o
     )
 
 
+_WORKER_EXIT_SIGNATURE = re.compile(
+    r"(?:EMPTY|PRESENT_UNCLASSIFIED|UNKNOWN)\."
+    r"(?:EXITED|DEAD|OTHER|UNKNOWN)\."
+    r"(?:EARLY_LT_5S|LATE_GE_5S|UNKNOWN)\."
+    r"(?:NOT_RUN|RAN|UNKNOWN)\Z"
+)
+
+
+def valid_worker_exit_signature(value: object) -> bool:
+    """A finite, four-part fingerprint, never Docker strings or BLACKBOX text."""
+    return type(value) is str and _WORKER_EXIT_SIGNATURE.fullmatch(value) is not None
+
+
 class CutoverError(ValueError):
     """Cutover has no acceptable positive evidence for an effect."""
 
@@ -135,6 +148,7 @@ class CutoverReceipt:
     worker_compensation: str = "NONE"
     worker_exit_code: int | Literal["UNKNOWN"] | None = None
     worker_oom_killed: bool | Literal["UNKNOWN"] | None = None
+    worker_exit_signature: str | None = None
 
     @property
     def accepted(self) -> bool:
@@ -246,6 +260,7 @@ def run_cutover_a(
         worker_compensation = "NONE"
         worker_exit_code: int | Literal["UNKNOWN"] | None = None
         worker_oom_killed: bool | Literal["UNKNOWN"] | None = None
+        worker_exit_signature: str | None = None
         try:
             backend.attest_original(plan, lease)
             # PREPARE consumption is durable under the SAME flock, strictly
@@ -297,6 +312,9 @@ def run_cutover_a(
                     if valid_worker_exit_evidence(primary, maybe_exit, maybe_oom):
                         worker_exit_code = maybe_exit
                         worker_oom_killed = maybe_oom
+                        maybe_signature = getattr(exc, "exit_signature", None)
+                        if valid_worker_exit_signature(maybe_signature):
+                            worker_exit_signature = maybe_signature
             # Fail closed; only backend's independent exact-ID reinspection may
             # report positive recovery.  Never guess what a lost Docker receipt did.
             if effect_started and not commit_started:
@@ -360,6 +378,7 @@ def run_cutover_a(
             worker_compensation if state != "ACCEPTED" else "NONE",
             worker_exit_code if state != "ACCEPTED" else None,
             worker_oom_killed if state != "ACCEPTED" else None,
+            worker_exit_signature if state != "ACCEPTED" else None,
         )
         # O_EXCL result must be persisted *before releasing the SAME flock*.
         # Callers cannot safely write it after run_cutover_a returns. Missing

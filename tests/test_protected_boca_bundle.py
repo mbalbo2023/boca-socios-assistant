@@ -52,7 +52,7 @@ def test_bounded_source_growth_keeps_archive_digest_and_archive_limit_independen
 ) -> None:
     sources = (*builder.SOURCES, *builder.OPTION_B_SOURCES)
     total = sum((ROOT / item).stat().st_size for item in sources)
-    assert 830_000 < total < builder.MAX_SOURCE_BYTES == 880_000
+    assert 830_000 < total < builder.MAX_SOURCE_BYTES == 886_000
     assert builder.MAX_ARCHIVE_BYTES == 512_000
     output, digest = _build(tmp_path)
     raw = output.read_bytes()

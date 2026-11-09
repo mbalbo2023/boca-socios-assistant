@@ -190,6 +190,60 @@ def test_worker_exit_durable_v3_rejects_ambiguous_types_and_wrong_phase(
         record.serialized()
 
 
+def test_worker_exit_durable_v4_preserves_exact_v3_bytes() -> None:
+    failed = cutover.CutoverReceipt(
+        ATTEMPT,
+        "NO_GO",
+        "INDETERMINATE",
+        False,
+        False,
+        None,
+        None,
+        failed_phase="PREPARE_WORKER",
+        worker_primary_phase="HEALTH_EXITED",
+        worker_compensation="VERIFIED",
+        worker_exit_code=1,
+        worker_oom_killed=False,
+        worker_exit_signature="EMPTY.EXITED.EARLY_LT_5S.NOT_RUN",
+    )
+    record = terminal.TerminalRecord.from_receipt(_plan(), failed)
+    payload = json.loads(record.serialized())
+    assert payload["version"] == terminal.VERSION_V4
+    assert payload["worker_exit_signature"] == "EMPTY.EXITED.EARLY_LT_5S.NOT_RUN"
+    with cleanup.protected_boca_job_lease(ATTEMPT) as lease:
+        terminal.prepare_destination(_plan(), lease)
+        terminal.write_once(record, plan=_plan(), lease=lease)
+    assert terminal.reconcile_persisted(_plan()) == "RECORD_PRESENT_RUNTIME_UNVERIFIED"
+    terminal.verify_persisted_exact(_plan(), failed)
+    with pytest.raises(terminal.TerminalReceiptError):
+        terminal.verify_persisted_exact(
+            _plan(), replace(failed, worker_exit_signature="UNKNOWN.EXITED.UNKNOWN.UNKNOWN")
+        )
+
+
+@pytest.mark.parametrize(
+    "signature", ["OTHER.EXITED.EARLY_LT_5S.NOT_RUN", "PRIVATE", "", "UNKNOWN", 123]
+)
+def test_worker_exit_durable_v4_rejects_untrusted_signature(signature: object) -> None:
+    failed = cutover.CutoverReceipt(
+        ATTEMPT,
+        "NO_GO",
+        "NO_GO",
+        False,
+        False,
+        None,
+        None,
+        failed_phase="PREPARE_WORKER",
+        worker_primary_phase="HEALTH_EXITED",
+        worker_compensation="VERIFIED",
+        worker_exit_code=1,
+        worker_oom_killed=False,
+        worker_exit_signature=signature,
+    )
+    with pytest.raises(terminal.TerminalReceiptError):
+        terminal.TerminalRecord.from_receipt(_plan(), failed).serialized()
+
+
 def test_cutover_terminal_sink_runs_before_release_of_same_lease(tmp_path: Path) -> None:
     class Fake:
         def attest_original(self, _p: object, _l: object) -> None: ...

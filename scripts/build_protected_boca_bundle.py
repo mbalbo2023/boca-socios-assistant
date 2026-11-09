@@ -141,15 +141,14 @@ MAIN = (
 # R46/R47 adds the reviewed physical cleanup proof and exact-incident recovery
 # observer to this explicit allowlist (approximately 39kB more uncompressed).
 # Keep the hard compressed transport cap independent and unchanged at 512kB.
-# R119 measured 877124 uncompressed bytes after the reviewed read-only
-# terminal projection, over R114's 872000 bound. Keep an explicit 880000
-# uncompressed ceiling (2876 bytes spare), never change 512k compressed cap.
-# Same exact entry allowlist, immutable digest and 512k compressed cap.
-MAX_SOURCE_BYTES = 880_000
+# R127 measured exactly 883682 full / 482747 preflight source bytes after
+# V4 enum-only worker diagnosis. Raise only these two source ceilings, retaining
+# the exact allowlist, immutable digest and unchanged 512k/128k compressed caps.
+MAX_SOURCE_BYTES = 886_000
 MAX_ARCHIVE_BYTES = 512_000
 RECOVERY_MAX_SOURCE_BYTES = 256_000
 RECOVERY_MAX_ARCHIVE_BYTES = 128_000
-PREFLIGHT_MAX_SOURCE_BYTES = 480_000
+PREFLIGHT_MAX_SOURCE_BYTES = 484_000
 PREFLIGHT_MAX_ARCHIVE_BYTES = 128_000
 
 
