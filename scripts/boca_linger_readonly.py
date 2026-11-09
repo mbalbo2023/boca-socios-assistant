@@ -202,6 +202,19 @@ def _dir(meta: Metadata) -> str:
     return meta.state
 
 
+def _docker_root_dir(meta: Metadata) -> str:
+    """Distinguish Moby's 0710 data-root from private 0700 home/runtime.
+
+    Docker's setupDaemonRoot() explicitly calls MkdirAllAndChown with 0710.
+    This is a metadata observation, not a probe of the daemon's actual data-root.
+    """
+    if meta.state != "DIRECTORY":
+        return meta.state
+    if (meta.uid, meta.gid) != (UID, UID) or meta.mode is None:
+        return "UNSAFE"
+    return {0o710: "OWNER_0710", 0o700: "PRIVATE"}.get(meta.mode, "UNSAFE")
+
+
 def _socket(meta: Metadata, *, systemd_default: bool = False) -> str:
     if meta.state == "SOCKET":
         if meta.uid != UID or meta.mode is None:
@@ -263,7 +276,7 @@ def collect() -> tuple[list[str], str]:
         f"BOCA_LINGER_SOCKET manager={manager_state} {_fields('manager', manager)}"
         f" bus={bus_state} {_fields('bus', bus)}"
         f" docker_socket={docker_state} {_fields('docker', docker)}",
-        f"BOCA_LINGER_LAYOUT data_root={_dir(data_root)} {_fields('data', data_root)}"
+        f"BOCA_LINGER_LAYOUT data_root={_docker_root_dir(data_root)} {_fields('data', data_root)}"
         f" unit={user_unit.state} {_fields('unit', user_unit)}"
         f" marker={marker.state} {_fields('marker', marker)}",
         f"BOCA_LINGER_IDS subuid={subuid} subgid={subgid}"

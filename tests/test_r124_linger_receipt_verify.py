@@ -21,6 +21,46 @@ def test_validator_accepts_only_full_coherent_candidate() -> None:
     assert verifier.verify(VALID.encode("ascii"), 0) == "METADATA_CANDIDATE"
 
 
+def test_validator_accepts_expected_docker_data_root_0710() -> None:
+    engine = VALID.replace("data_root=PRIVATE", "data_root=OWNER_0710").replace(
+        "data_mode=0700", "data_mode=0710"
+    )
+    assert verifier.verify(engine.encode("ascii"), 0) == "METADATA_CANDIDATE"
+
+
+def test_r125_does_not_revalidate_the_incorrect_r124_historical_label() -> None:
+    # #890 remains valid evidence under R124 at its original workflow SHA.
+    # New receipts must use OWNER_0710 for the same metadata tuple.
+    historical = VALID.replace("data_root=PRIVATE", "data_root=UNSAFE").replace(
+        "data_mode=0700", "data_mode=0710"
+    )
+    with pytest.raises(verifier.ReceiptError):
+        verifier.verify(historical.encode("ascii"), 0)
+
+
+@pytest.mark.parametrize(
+    "altered",
+    [
+        VALID.replace("data_root=PRIVATE", "data_root=OWNER_0710"),
+        VALID.replace("data_root=PRIVATE", "data_root=OWNER_0710").replace(
+            "data_mode=0700", "data_mode=0711"
+        ),
+        VALID.replace("data_root=PRIVATE", "data_root=OWNER_0710").replace(
+            "data_mode=0700", "data_mode=0777"
+        ),
+        VALID.replace("data_root=PRIVATE", "data_root=OWNER_0710")
+        .replace("data_mode=0700", "data_mode=0710")
+        .replace("data_gid=10001", "data_gid=166523"),
+        VALID.replace("data_root=PRIVATE", "data_root=UNSAFE").replace(
+            "data_mode=0700", "data_mode=0710"
+        ),
+    ],
+)
+def test_validator_rejects_forged_docker_default_or_insecure_metadata(altered: str) -> None:
+    with pytest.raises(verifier.ReceiptError):
+        verifier.verify(altered.encode("ascii"), 0)
+
+
 def test_validator_accepts_systemd_default_socket_mode_inside_private_runtime() -> None:
     systemd = (
         VALID.replace("manager=OWNED", "manager=SYSTEMD_DEFAULT")

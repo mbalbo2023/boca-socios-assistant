@@ -1,13 +1,26 @@
 # Estado de integración BETA
 
-## A45-R124 — `linger` y prerequisitos rootless (CODE_ONLY, aún sin lectura física)
+## A45-R125 — linger medido en el host; falso positivo 0710 (CODE_ONLY)
+
+[PR #453](https://github.com/mbalbo2023/boca-socios-assistant/pull/453)
+fusionado en `main=b7e7dd77531eaf6c967b439381edd152a7a8159b`.
+[Action #890](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42559518453)
+completó la lectura `inspect-prerequisites`: `linger=YES`, home/runtime
+0700, docker.service rootless activo, UID10001/GID10001, subuid/subgid
+y binarios correctos. El `data_root=UNSAFE mode0710` es falso positivo
+del clasificador R124: Docker/Moby prepara ese directorio con modo0710.
+R125 corrige solo el reporte (`OWNER_0710`) y su verificador; no cambia
+servidor, Docker, módulos BLACKBOX ni gates. No explica `ExitCode1` de #878.
+Cutover, Telegram y BETA integral siguen **NO_GO**. [ADR0218](ADR/0218-r125-dataroot-mode0710-false-positive.md).
+
+## Histórico A45-R124 — `linger` y prerequisitos rootless
 
 [PR #452](https://github.com/mbalbo2023/boca-socios-assistant/pull/452)
 quedó fusionado como `main=70e91f0884e054c5494c034dbe6445fc0f931160`;
 sus cuatro workflows del SHA de PR cerraron SUCCESS. No hubo operación
 física. El RCA interno `ExitCode=1` de #878 sigue UNKNOWN.
 
-R124 propone exclusivamente extender el selector READ_ONLY
+R124 extendió exclusivamente el selector READ_ONLY
 `inspect-prerequisites` con `loginctl` de consulta sobre UID10001, el estado
 de linger, home/runtime/directorios/servicio, sockets con UID/GID/modo,
 subuid/subgid y binarios `newuidmap/newgidmap`, sin consultar Docker ni
@@ -17,9 +30,9 @@ se declara incorrecto de forma automática. El home se fija a
 El modo predeterminado `0666` del bus systemd bajo runtime privado no es
 por sí solo un defecto. El recibo de seis líneas se valida en Actions antes de publicarse;
 el inspector anterior solo corre si fue validado, sin otro SSH tras fallo
-de transporte. **Linger actual todavía no
-medido**: CODE_ONLY hasta PR, QA exact-SHA, merge y una única Action de
-lectura. Sin nuevas operaciones de Cutover, Telegram ni limpieza.
+de transporte. **Linger actual medido en Action #890: YES**; la descripción
+anterior corresponde al diseño previo a su integración. Sin nuevas
+operaciones de Cutover, Telegram ni limpieza.
 [ADR0217](ADR/0217-r124-linger-rootless-readonly-metadata.md).
 
 ## A45-R122 — RCA interna ExitCode=1 todavía desconocida

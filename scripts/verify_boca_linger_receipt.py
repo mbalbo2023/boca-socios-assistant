@@ -17,6 +17,7 @@ NUM = r"(?:UNKNOWN|[0-9]{1,10})"
 MODE = r"(?:UNKNOWN|[0-7]{4})"
 FILE = r"(?:DIRECTORY|SOCKET|REGULAR|UNSAFE|ABSENT|UNAVAILABLE)"
 DIRECTORY = r"(?:PRIVATE|DIRECTORY|SOCKET|REGULAR|UNSAFE|ABSENT|UNAVAILABLE)"
+DOCKER_ROOT = r"(?:OWNER_0710|PRIVATE|SOCKET|REGULAR|UNSAFE|ABSENT|UNAVAILABLE)"
 SOCKET = r"(?:OWNED|SYSTEMD_DEFAULT|OPEN_MODE|NO_OWNER_WRITE|DIRECTORY|REGULAR|UNSAFE|ABSENT|UNAVAILABLE)"
 YES_NO = r"(?:YES|NO|UNKNOWN)"
 
@@ -57,7 +58,7 @@ FIELDS: tuple[tuple[str, dict[str, str]], ...] = (
     (
         "BOCA_LINGER_LAYOUT",
         {
-            "data_root": DIRECTORY,
+            "data_root": DOCKER_ROOT,
             **_meta("data"),
             "unit": FILE,
             **_meta("unit"),
@@ -137,6 +138,21 @@ def _coherent(rows: list[dict[str, str]]) -> bool:
             dirs[f"{name}_mode"],
         ) != (str(UID), str(UID), "0700"):
             return False
+    docker_root_metadata = (
+        layout["data_uid"],
+        layout["data_gid"],
+        layout["data_mode"],
+    )
+    docker_root_mode = layout["data_root"]
+    if docker_root_mode == "OWNER_0710" and docker_root_metadata != (str(UID), str(UID), "0710"):
+        return False
+    if docker_root_mode == "PRIVATE" and docker_root_metadata != (str(UID), str(UID), "0700"):
+        return False
+    if docker_root_mode == "UNSAFE" and docker_root_metadata in {
+        (str(UID), str(UID), "0710"),
+        (str(UID), str(UID), "0700"),
+    }:
+        return False
     for name, prefix in (("manager", "manager"), ("bus", "bus"), ("docker_socket", "docker")):
         state = sockets[name]
         if state in ("OWNED", "OPEN_MODE", "SYSTEMD_DEFAULT", "NO_OWNER_WRITE"):
