@@ -1,5 +1,27 @@
 # Boca Socios Assistant
 
+## R124 — diagnóstico READ_ONLY de `linger` y rootless Boca (CODE_ONLY)
+
+R122 quedó **fusionado** mediante [PR #452](https://github.com/mbalbo2023/boca-socios-assistant/pull/452)
+en `main=70e91f0884e054c5494c034dbe6445fc0f931160`, con cuatro workflows
+del SHA previo al merge en verde. La causa interna del ExitCode1 en #878
+continúa `UNKNOWN`. R124 es una ampliación aún **no desplegada** de la
+inspección `inspect-prerequisites` existente: medir el estado actual de
+systemd `Linger` para UID10001 y metadatos acotados de home/runtime/sockets,
+configuración rootless y rangos `subuid/subgid`, sin ejecutar Docker ni
+habilitar servicios. Va en un helper independiente porque el ZIP de worker
+preflight tenía solamente 362 bytes de margen; no se tocan sus límites.
+El home se restringe a `/home/boca-deploy`; un runner valida toda salida
+remota antes de publicarla y un fallo SSH no provoca un segundo intento.
+El socket Docker con escritura pública es NO_GO; el modo systemd `0666`
+de sus sockets de usuario bajo runtime privado 0700 es informativo.
+
+Un `linger=YES` futuro probaría solo la política actual, no la causa del
+worker desaparecido. Un GID del socket distinto al GID del usuario es
+informativo bajo user namespaces. **Hasta PR, CI exacto, merge y Action
+READ_ONLY física, `linger=UNKNOWN` y Cutover/BETA/Telegram siguen NO_GO.**
+[ADR0217](docs/ADR/0217-r124-linger-rootless-readonly-metadata.md).
+
 ## R122 — ExitCode=1: inferencia tipada, causa interna no recuperada (08/11/2026 ART)
 
 El Cutover V3 histórico [#878](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42426260583)
@@ -7,11 +29,11 @@ registró `HEALTH_EXITED`, `ExitCode=1`, `OOMKilled=false` y compensación
 verificada. El supervisor había obtenido el CID exacto de `docker start` antes
 de observar el proceso detenido; **eso no identifica la excepción interna**.
 El stderr SSH fue descartado y no quedó traza del proceso antes de la
-eliminación selectiva del worker. R122 es un **candidato CODE_ONLY** que
+eliminación selectiva del worker. R122 quedó **integrado** como CODE_ONLY
+tras [PR #452](https://github.com/mbalbo2023/boca-socios-assistant/pull/452):
 incorpora al reporte de error de GitHub Actions una inferencia explícitamente
 no causal y `worker_internal_cause=UNKNOWN`, sin cambiar Docker, SSH, el
-protocolo terminal ni los dos módulos BLACKBOX. Las pruebas y controles aún
-requieren PR/CI exact-SHA. Otro Cutover y la BETA integral siguen **NO_GO**;
+protocolo terminal ni los dos módulos BLACKBOX. Otro Cutover y la BETA integral siguen **NO_GO**;
 el diseño R123 de telemetría prospectiva no está implementado.
 [ADR0216](docs/ADR/0216-r122-worker-exit-one-diagnostic-classification.md).
 
