@@ -717,6 +717,140 @@ def test_failed_ssh_v3_worker_exit_is_strictly_typed_and_never_go(
     assert "ACCEPTED" not in report
 
 
+def test_failed_ssh_exit_one_diagnostic_distinguishes_start_ack_from_unknown_cause(
+    tmp_path: Path,
+) -> None:
+    request, env = _actions_fixture(tmp_path)
+    env["BOCA_CUTOVER_A_SSH_RC"] = "3"
+    _file(
+        Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME,
+        _cutover_observe_ready(request.plan)
+        + b"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED "
+        + b"exit_code=1 oom=NO\n"
+        + b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n"
+        + b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n",
+    )
+    report = go.classify_cutover_ssh_failure(env)
+
+    assert "worker_start_ack_claim=EXACT_CID_IMPLIED_BY_HEALTH_PHASE" in report
+    assert "worker_internal_cause=UNKNOWN" in report
+    assert "worker_cause_evidence=INFERENCE_NOT_CAUSE" in report
+    assert "worker_exit_code_claim=1 worker_oom_claim=NO" in report
+    assert "state=NO_GO" in report
+    assert "host=UNVERIFIED terminal=UNVERIFIED no_retry=true" in report
+
+
+@pytest.mark.parametrize("ssh_rc", ["124", "255"])
+def test_failed_ssh_exit_one_inference_rejects_transport_failure_even_with_host_claim(
+    tmp_path: Path, ssh_rc: str
+) -> None:
+    request, env = _actions_fixture(tmp_path)
+    env["BOCA_CUTOVER_A_SSH_RC"] = ssh_rc
+    _file(
+        Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME,
+        _cutover_observe_ready(request.plan)
+        + b"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED "
+        + b"exit_code=1 oom=NO\n"
+        + b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n"
+        + b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n",
+    )
+    report = go.classify_cutover_ssh_failure(env)
+
+    assert f"ssh_rc={ssh_rc}" in report
+    assert "worker_start_ack_claim=UNVERIFIED" in report
+    assert "worker_internal_cause=UNKNOWN worker_cause_evidence=UNVERIFIED" in report
+    assert "host=UNVERIFIED terminal=UNVERIFIED no_retry=true" in report
+
+
+@pytest.mark.parametrize("receipt_state", ["absent", "truncated"])
+def test_failed_ssh_exit_one_inference_rejects_missing_or_truncated_receipt(
+    tmp_path: Path, receipt_state: str
+) -> None:
+    request, env = _actions_fixture(tmp_path)
+    env["BOCA_CUTOVER_A_SSH_RC"] = "3"
+    if receipt_state == "truncated":
+        _file(
+            Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME,
+            _cutover_observe_ready(request.plan)
+            + b"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED "
+            + b"compensation=VERIFIED exit_code=1 oom=NO\n"
+            + b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n"
+            + b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED",
+        )
+    report = go.classify_cutover_ssh_failure(env)
+
+    assert "worker_start_ack_claim=UNVERIFIED" in report
+    assert "worker_internal_cause=UNKNOWN worker_cause_evidence=UNVERIFIED" in report
+    assert "host=UNVERIFIED terminal=UNVERIFIED no_retry=true" in report
+
+
+@pytest.mark.parametrize(
+    ("worker_line", "phase_line"),
+    [
+        (
+            b"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED exit_code=0 oom=NO\n",
+            b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n",
+        ),
+        (
+            b"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED exit_code=137 oom=NO\n",
+            b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n",
+        ),
+        (
+            b"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED exit_code=1 oom=YES\n",
+            b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n",
+        ),
+        (
+            b"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED exit_code=UNKNOWN oom=NO\n",
+            b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n",
+        ),
+        (
+            b"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=INDETERMINATE exit_code=1 oom=NO\n",
+            b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n",
+        ),
+        (
+            b"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_TIMEOUT compensation=VERIFIED\n",
+            b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n",
+        ),
+        (
+            b"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED exit_code=1 oom=NO\n",
+            b"BOCA_CUTOVER_A_FAILURE_PHASE phase=START\n",
+        ),
+        (
+            b"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED exit_code=01 oom=NO\n",
+            b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n",
+        ),
+        (
+            b"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED exit_code=1 oom=NO PRIVATE=not-for-report\n",
+            b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n",
+        ),
+        (
+            b"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED exit_code=1 oom=NO\n"
+            b"BOCA_CUTOVER_A_WORKER_FAILURE primary=HEALTH_EXITED compensation=VERIFIED exit_code=1 oom=NO\n",
+            b"BOCA_CUTOVER_A_FAILURE_PHASE phase=PREPARE_WORKER\n",
+        ),
+    ],
+)
+def test_failed_ssh_exit_one_inference_requires_one_exact_verified_worker_claim(
+    tmp_path: Path, worker_line: bytes, phase_line: bytes
+) -> None:
+    request, env = _actions_fixture(tmp_path)
+    env["BOCA_CUTOVER_A_SSH_RC"] = "3"
+    _file(
+        Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME,
+        _cutover_observe_ready(request.plan)
+        + worker_line
+        + phase_line
+        + b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=RECORDED runtime=UNVERIFIED\n",
+    )
+    report = go.classify_cutover_ssh_failure(env)
+
+    assert "worker_start_ack_claim=UNVERIFIED" in report
+    assert "worker_internal_cause=UNKNOWN" in report
+    assert "worker_cause_evidence=UNVERIFIED" in report
+    assert "host=UNVERIFIED terminal=UNVERIFIED no_retry=true" in report
+    assert "PRIVATE" not in report and "not-for-report" not in report
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

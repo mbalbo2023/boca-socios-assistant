@@ -1,6 +1,26 @@
 # Safe operations — verified evidence and gated procedures
 
-## R119 CODE_ONLY — adaptar el planner a RECOVERED/ACCEPT #878 (08/11/2026 ART)
+## R122 CODE_ONLY — cómo leer el diagnóstico de ExitCode 1
+
+`check_cutover_a_go.py --report-host-failure` es un reporte tipado de un
+SSH que falló, **no** un recibo de aceptación del host. Un candidato R122
+añade `worker_start_ack_claim=EXACT_CID_IMPLIED_BY_HEALTH_PHASE` solamente
+cuando `ssh_rc=3` y el parser confirma exactamente fase `PREPARE_WORKER`, subfase
+`HEALTH_EXITED`, compensación `VERIFIED`, `exit_code=1` y `oom=NO`. Esto
+significa que el flujo del supervisor había aceptado el CID de `docker
+start` antes de observar la salida del worker. Siempre se emite
+`worker_internal_cause=UNKNOWN`; `worker_cause_evidence=INFERENCE_NOT_CAUSE`
+advierte que **no se sabe qué instrucción o dependencia falló**. Si falta
+cualquier evidencia, ambos claims de inferencia son `UNVERIFIED`, incluidos
+timeout `124` y fallo de enlace SSH `255`.
+
+Sin nuevas lecturas Docker, sin stderr/logs privados, sin interacción con el
+BLACKBOX y sin cambios a la Action física, la operación sigue
+`NO_GO host=UNVERIFIED terminal=UNVERIFIED no_retry=true`. No repetir #878,
+no iniciar otro worker/Cutover ni limpiar volúmenes para intentar obtener
+la excepción perdida. [ADR0216](ADR/0216-r122-worker-exit-one-diagnostic-classification.md).
+
+## Histórico R119 CODE_ONLY — planner anterior a observación #886 (08/11/2026 ART)
 
 El observer de [Action #883](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42531818647)
 confirmó legacy restaurado, healthy y único en loopback8443; su segundo

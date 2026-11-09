@@ -1,5 +1,20 @@
 # Boca Socios Assistant
 
+## R122 — ExitCode=1: inferencia tipada, causa interna no recuperada (08/11/2026 ART)
+
+El Cutover V3 histórico [#878](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42426260583)
+registró `HEALTH_EXITED`, `ExitCode=1`, `OOMKilled=false` y compensación
+verificada. El supervisor había obtenido el CID exacto de `docker start` antes
+de observar el proceso detenido; **eso no identifica la excepción interna**.
+El stderr SSH fue descartado y no quedó traza del proceso antes de la
+eliminación selectiva del worker. R122 es un **candidato CODE_ONLY** que
+incorpora al reporte de error de GitHub Actions una inferencia explícitamente
+no causal y `worker_internal_cause=UNKNOWN`, sin cambiar Docker, SSH, el
+protocolo terminal ni los dos módulos BLACKBOX. Las pruebas y controles aún
+requieren PR/CI exact-SHA. Otro Cutover y la BETA integral siguen **NO_GO**;
+el diseño R123 de telemetría prospectiva no está implementado.
+[ADR0216](docs/ADR/0216-r122-worker-exit-one-diagnostic-classification.md).
+
 ## R119 — Recuperación positiva no equivale a Cutover GO (08/11/2026 ART)
 
 [R118/PR #450](https://github.com/mbalbo2023/boca-socios-assistant/pull/450)
