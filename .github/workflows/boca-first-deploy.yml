@@ -138,6 +138,7 @@ jobs:
       - name: Check dispatch and first-install boundaries offline
         run: |
           uv run pytest -q tests/test_host_beta_resume.py tests/test_host_cutover_adapter.py tests/test_effective_unit_shape.py tests/test_infrastructure_diagnostics.py tests/test_kernel_netfilter_readonly.py tests/test_owner_enrollment_argv.py tests/test_host_cpu_capacity.py tests/test_infrastructure_preflight.py tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_beta_browser_deploy_contract.py tests/test_browser_ipc_workflow.py tests/test_host_browser_lifecycle.py tests/test_host_browser_ipc_file_stage.py tests/test_host_browser_ipc_install.py tests/test_host_browser_ipc_cleanup.py tests/test_host_browser_ipc_cross_contract.py tests/test_host_first_deploy.py tests/test_host_loopback_port.py tests/test_host_beta_install.py tests/test_host_beta_cleanup.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_owner_bootstrap.py tests/test_host_owner_enroll_lifecycle.py tests/test_host_owner_enroll_cleanup.py tests/test_host_operation_gate.py tests/test_main_ref_gate.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_telegram_one_shot.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
+          uv run pytest -q tests/test_r124_linger_readonly.py tests/test_r124_linger_receipt_verify.py
           uv run python scripts/check_repo_policy.py
       - name: Validate optional served BETA Compose model without host access
         env:
@@ -3630,11 +3631,39 @@ jobs:
           remote_command="$(python3 -c 'import shlex, sys; print(shlex.join(sys.argv[1:]))' python3 - stop-test "$BOCA_SOURCE_SHA")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_rootless_setup.py
           printf 'Boca test services and dedicated daemon stopped or already stopped; inspect preceding receipt. Data and key retained. Source: `%s`.\n' "$BOCA_SOURCE_SHA" >> "$GITHUB_STEP_SUMMARY"
-      - name: Inspect dedicated user prerequisites without Docker
+      - name: Inspect Boca linger metadata without Docker
+        id: boca_linger_metadata
         if: inputs.operation == 'inspect-prerequisites'
+        run: |
+          set -euo pipefail
+          # First READ_ONLY observation, before the existing inspector, so a
+          # prior NO_GO cannot hide linger. Never retry on SSH/transport failure.
+          umask 077
+          receipt="$(mktemp "$RUNNER_TEMP/boca-linger.XXXXXXXX")"
+          trap 'rm -f "$receipt"' EXIT
+          remote_command='python3 -I -S -'
+          if (ulimit -f 16 && timeout --signal=TERM --kill-after=5s 30s ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < scripts/boca_linger_readonly.py > "$receipt" 2>/dev/null); then
+            remote_status=0
+          else
+            remote_status=$?
+          fi
+          # A validated metadata NO_GO (remote_status=1) is a completed read;
+          # SSH/identity failures (or untrusted output) stop before next SSH.
+          python3 -I -S scripts/verify_boca_linger_receipt.py "$receipt" "$remote_status" "$GITHUB_OUTPUT"
+      - name: Inspect dedicated user prerequisites without Docker
+        id: boca_inspect_prerequisites
+        if: ${{ inputs.operation == 'inspect-prerequisites' && steps.boca_linger_metadata.outcome == 'success' }}
         run: |
           remote_command="$(python3 -c 'import shlex, sys; print(shlex.join(sys.argv[1:]))' python3 - inspect-prerequisites "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$(cat "$RUNNER_TEMP/boca-compose.sha")")"
           ssh -F "$RUNNER_TEMP/boca-ssh/config" boca-target "$remote_command" < src/boca_socios/host_first_deploy.py
+      - name: Enforce Boca linger prerequisites without additional SSH
+        if: ${{ !cancelled() && inputs.operation == 'inspect-prerequisites' && steps.boca_inspect_prerequisites.outcome == 'success' }}
+        run: |
+          if [[ '${{ steps.boca_linger_metadata.outputs.candidate }}' != 'true' ]]; then
+            printf 'BOCA_LINGER_GATE status=NO_GO reason=PREREQUISITES_UNPROVEN\n'
+            exit 1
+          fi
+          printf 'BOCA_LINGER_GATE status=METADATA_CANDIDATE deploy=NO_GO\n'
       - name: Inspect only existing Boca host Chrome executable without launching it
         if: inputs.operation == 'chrome-host-inspect'
         run: |

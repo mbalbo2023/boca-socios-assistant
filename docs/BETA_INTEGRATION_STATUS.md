@@ -1,11 +1,33 @@
 # Estado de integración BETA
 
+## A45-R124 — `linger` y prerequisitos rootless (CODE_ONLY, aún sin lectura física)
+
+[PR #452](https://github.com/mbalbo2023/boca-socios-assistant/pull/452)
+quedó fusionado como `main=70e91f0884e054c5494c034dbe6445fc0f931160`;
+sus cuatro workflows del SHA de PR cerraron SUCCESS. No hubo operación
+física. El RCA interno `ExitCode=1` de #878 sigue UNKNOWN.
+
+R124 propone exclusivamente extender el selector READ_ONLY
+`inspect-prerequisites` con `loginctl` de consulta sobre UID10001, el estado
+de linger, home/runtime/directorios/servicio, sockets con UID/GID/modo,
+subuid/subgid y binarios `newuidmap/newgidmap`, sin consultar Docker ni
+alterar archivos. El GID166523 históricamente observado en el socket no
+se declara incorrecto de forma automática. El home se fija a
+`/home/boca-deploy`; socket Docker público o stdout SSH inesperado son NO_GO.
+El modo predeterminado `0666` del bus systemd bajo runtime privado no es
+por sí solo un defecto. El recibo de seis líneas se valida en Actions antes de publicarse;
+el inspector anterior solo corre si fue validado, sin otro SSH tras fallo
+de transporte. **Linger actual todavía no
+medido**: CODE_ONLY hasta PR, QA exact-SHA, merge y una única Action de
+lectura. Sin nuevas operaciones de Cutover, Telegram ni limpieza.
+[ADR0217](ADR/0217-r124-linger-rootless-readonly-metadata.md).
+
 ## A45-R122 — RCA interna ExitCode=1 todavía desconocida
 
 El #878 verificó `HEALTH_EXITED`, salida `1` y `OOMKilled=false`; por el
 orden del adaptador, `docker start` había devuelto el CID exacto. Las trazas
 de error del proceso no quedaron preservadas antes de la compensación. R122
-propone **sólo CODE_ONLY** una clasificación no causal del reporte de Actions,
+**integró CODE_ONLY** una clasificación no causal del reporte de Actions,
 con `worker_internal_cause=UNKNOWN`, sin extender el recibo físico ni
 repetir Cutover. No acredita BETA integral, Telegram ni el motivo interno.
 R123 es diseño pendiente de telemetría prospectiva con metadatos cerrados,

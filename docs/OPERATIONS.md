@@ -1,10 +1,40 @@
 # Safe operations — verified evidence and gated procedures
 
+## R124 — futuro diagnóstico de `linger` en Action Boca existente
+
+**CODE_ONLY hasta PR, checks exactos y merge**. El valor actual de `Linger`
+no fue observado. El selector de lectura `inspect-prerequisites` conserva la
+inspección anterior y añadirá un paso acotado para `loginctl show-user 10001
+--property=Linger --value`, UID/GID/modos de directorios y sockets Boca,
+rangos dedicados `subuid/subgid`, binarios de mapeo y user namespaces.
+El script no instala archivos ni consulta Docker, y el host no cambia.
+El home de `boca-deploy` debe ser exactamente `/home/boca-deploy`; si no,
+el diagnóstico falla sin inspeccionar otro directorio. Los sockets con
+escritura pública del socket **Docker** quedan `OPEN_MODE`/NO_GO; los
+sockets de systemd en modo predeterminado `0666` son informativos si su
+runtime está verificado 0700. Sin escritura para el UID, NO_GO. El runner valida las seis líneas
+sin mostrar stdout inesperado ni stderr del host.
+
+Para una futura **única observación READ_ONLY**, desde el workflow
+[Boca first deploy](https://github.com/mbalbo2023/boca-socios-assistant/actions/workflows/boca-first-deploy.yml)
+en `main` validado: `operation=inspect-prerequisites`, `source_sha` igual al
+SHA completo **vigente** de `main`, `service=controller`,
+`resource_budget=0.5cpu-256m-64pids`, todos los demás campos vacíos.
+No elegir `prepare-rootless`, `start-existing`, `cutover-a-apply`, ninguna
+opción de worker, ni `telegram-activate` para esta verificación. Primero
+se observa `linger`: si falla SSH/autenticación o el formato del recibo,
+**se detiene sin un segundo SSH**. Solo después de un recibo validado,
+incluido `PREREQUISITES_UNPROVEN`, corre el inspector anterior y el gate
+final; **ningún NO_GO queda convertido en PASS**. Un resultado `linger=NO|UNKNOWN`
+requiere RCA separada, no `enable-linger` automático ni cambios de permisos.
+`linger=YES` tampoco prueba salud IPC ni causa del ExitCode1 histórico.
+[ADR0217](ADR/0217-r124-linger-rootless-readonly-metadata.md).
+
 ## R122 CODE_ONLY — cómo leer el diagnóstico de ExitCode 1
 
 `check_cutover_a_go.py --report-host-failure` es un reporte tipado de un
-SSH que falló, **no** un recibo de aceptación del host. Un candidato R122
-añade `worker_start_ack_claim=EXACT_CID_IMPLIED_BY_HEALTH_PHASE` solamente
+SSH que falló, **no** un recibo de aceptación del host. R122, integrado
+mediante PR #452, añade `worker_start_ack_claim=EXACT_CID_IMPLIED_BY_HEALTH_PHASE` solamente
 cuando `ssh_rc=3` y el parser confirma exactamente fase `PREPARE_WORKER`, subfase
 `HEALTH_EXITED`, compensación `VERIFIED`, `exit_code=1` y `oom=NO`. Esto
 significa que el flujo del supervisor había aceptado el CID de `docker
