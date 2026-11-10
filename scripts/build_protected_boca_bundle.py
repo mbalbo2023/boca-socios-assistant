@@ -96,6 +96,35 @@ PREFLIGHT_SOURCES = (
     "scripts/__init__.py",
     "scripts/host_cutover_worker_preflight.py",
 )
+# W1 has its OWN limited executable, not the enormous Cutover dispatcher or
+# unrelated recovery/notification/Compose payloads. All imports are stdlib or
+# existing, explicitly selected host attestors; never include BLACKBOX files.
+W1_SOURCES = (
+    "src/boca_socios/__init__.py",
+    "src/boca_socios/host_first_deploy.py",
+    "src/boca_socios/host_boca_cleanup.py",
+    "src/boca_socios/host_boca_lifecycle.py",
+    "src/boca_socios/host_lifecycle_rootless_adapter.py",
+    "src/boca_socios/host_on_demand_lifecycle.py",
+    "src/boca_socios/host_on_demand_service.py",
+    "src/boca_socios/host_cutover_ipc_probe.py",
+    "src/boca_socios/worker_start_capture.py",
+    "src/boca_socios/host_worker_w1.py",
+    "src/boca_socios/panel/lifecycle_intents.py",
+    "src/boca_socios/integration/engine_socket.py",
+    "src/boca_socios/storage/__init__.py",
+    "src/boca_socios/storage/migrations/__init__.py",
+    *tuple(
+        source for source in SOURCES if source.startswith("src/boca_socios/storage/migrations/000")
+    ),
+)
+W1_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 3 or sys.argv[1] != 'worker-diagnose-once':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_worker_w1 import main as w1\n"
+    "raise SystemExit(w1(['host',sys.argv[2]]))\n"
+).encode("ascii")
 PREFLIGHT_MAIN = (
     "import sys\n"
     "if len(sys.argv) != 9 or sys.argv[1] != 'cutover-worker-preflight':\n"
@@ -173,13 +202,20 @@ RECOVERY_MAX_SOURCE_BYTES = 256_000
 RECOVERY_MAX_ARCHIVE_BYTES = 128_000
 PREFLIGHT_MAX_SOURCE_BYTES = 520_000
 PREFLIGHT_MAX_ARCHIVE_BYTES = 128_000
+W1_MAX_SOURCE_BYTES = 900_000
+W1_MAX_ARCHIVE_BYTES = 320_000
 
 
 def build(
-    root: Path, target: Path, *, worker_recovery: bool = False, worker_preflight: bool = False
+    root: Path,
+    target: Path,
+    *,
+    worker_recovery: bool = False,
+    worker_preflight: bool = False,
+    worker_w1: bool = False,
 ) -> str:
     """Write one deterministic, explicitly allowlisted runner-only archive."""
-    if worker_recovery and worker_preflight:
+    if sum((worker_recovery, worker_preflight, worker_w1)) > 1:
         raise ValueError("Boca protected bundle modes must be exclusive")
     if worker_recovery:
         files: dict[str, bytes] = {"__main__.py": RECOVERY_MAIN}
@@ -191,6 +227,11 @@ def build(
         sources = PREFLIGHT_SOURCES
         max_source = PREFLIGHT_MAX_SOURCE_BYTES
         max_archive = PREFLIGHT_MAX_ARCHIVE_BYTES
+    elif worker_w1:
+        files = {"__main__.py": W1_MAIN, **HOST_ONLY_INIT}
+        sources = W1_SOURCES
+        max_source = W1_MAX_SOURCE_BYTES
+        max_archive = W1_MAX_ARCHIVE_BYTES
     else:
         files = {"__main__.py": MAIN, **HOST_ONLY_INIT}
         b_sources = tuple(root / rel for rel in OPTION_B_SOURCES)
@@ -260,12 +301,13 @@ def main() -> int:
     variant = parser.add_mutually_exclusive_group()
     variant.add_argument("--worker-recovery", action="store_true")
     variant.add_argument("--worker-preflight", action="store_true")
+    variant.add_argument("--worker-w1", action="store_true")
     parser.add_argument("repository_root", type=Path)
     parser.add_argument("runner_target", type=Path)
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1)}"
     )
     return 0
 

@@ -94,6 +94,40 @@ PREFLIGHT_ENTRIES = frozenset(
         "scripts/host_cutover_worker_preflight.py",
     }
 )
+W1_ENTRIES = frozenset(
+    {"__main__.py", "boca_socios/panel/__init__.py", "boca_socios/integration/__init__.py"}
+    | {
+        source.removeprefix("src/")
+        for source in (
+            "src/boca_socios/__init__.py",
+            "src/boca_socios/host_first_deploy.py",
+            "src/boca_socios/host_boca_cleanup.py",
+            "src/boca_socios/host_boca_lifecycle.py",
+            "src/boca_socios/host_lifecycle_rootless_adapter.py",
+            "src/boca_socios/host_on_demand_lifecycle.py",
+            "src/boca_socios/host_on_demand_service.py",
+            "src/boca_socios/host_cutover_ipc_probe.py",
+            "src/boca_socios/worker_start_capture.py",
+            "src/boca_socios/host_worker_w1.py",
+            "src/boca_socios/panel/lifecycle_intents.py",
+            "src/boca_socios/integration/engine_socket.py",
+            "src/boca_socios/storage/__init__.py",
+            "src/boca_socios/storage/migrations/__init__.py",
+            *(
+                f"src/boca_socios/storage/migrations/000{i}_{name}.sql"
+                for i, name in (
+                    (1, "initial"),
+                    (2, "notification_outbox"),
+                    (3, "reservation_guard"),
+                    (4, "credential_key_policy"),
+                    (5, "simulation_outcomes"),
+                    (6, "beta_commands"),
+                    (7, "telegram_delivery"),
+                )
+            ),
+        )
+    }
+)
 MAX_ZIP = 512_000
 # R138 source bounds match the builder. Each variant checks its own entry set and digest.
 MAX_UNCOMPRESSED = 1_147_000
@@ -101,6 +135,8 @@ RECOVERY_MAX_ZIP = 128_000
 RECOVERY_MAX_UNCOMPRESSED = 256_000
 PREFLIGHT_MAX_ZIP = 128_000
 PREFLIGHT_MAX_UNCOMPRESSED = 520_000
+W1_MAX_ZIP = 320_000
+W1_MAX_UNCOMPRESSED = 900_000
 
 
 def verify(
@@ -109,16 +145,27 @@ def verify(
     *,
     recovery: bool = False,
     worker_preflight: bool = False,
+    worker_w1: bool = False,
 ) -> None:
     """Verify digest, exact transport variant, file types and separate bounds."""
-    if recovery and worker_preflight:
+    if sum((recovery, worker_preflight, worker_w1)) > 1:
         raise ValueError("protected Boca bundle modes must be exclusive")
-    max_zip = RECOVERY_MAX_ZIP if recovery else PREFLIGHT_MAX_ZIP if worker_preflight else MAX_ZIP
+    max_zip = (
+        RECOVERY_MAX_ZIP
+        if recovery
+        else PREFLIGHT_MAX_ZIP
+        if worker_preflight
+        else W1_MAX_ZIP
+        if worker_w1
+        else MAX_ZIP
+    )
     max_uncompressed = (
         RECOVERY_MAX_UNCOMPRESSED
         if recovery
         else PREFLIGHT_MAX_UNCOMPRESSED
         if worker_preflight
+        else W1_MAX_UNCOMPRESSED
+        if worker_w1
         else MAX_UNCOMPRESSED
     )
     if not re.fullmatch(r"[0-9a-f]{64}", expected_sha):
@@ -133,6 +180,8 @@ def verify(
             if recovery
             else (PREFLIGHT_ENTRIES,)
             if worker_preflight
+            else (W1_ENTRIES,)
+            if worker_w1
             else (EXPECTED_ENTRIES, EXPECTED_ENTRIES | OPTION_B_ENTRIES)
         )
         if (
@@ -165,6 +214,7 @@ def main() -> int:
             "cutover-worker-834-recover",
         }
         worker_preflight = sys.argv[2] == "cutover-worker-preflight"
+        worker_w1 = sys.argv[2] == "worker-diagnose-once"
         if (
             sys.argv[2] in ("cutover-stage-recover-904", "cutover-image-plan-916")
             and len(sys.argv) != 8
@@ -176,9 +226,25 @@ def main() -> int:
             raise ValueError("stopped worker recovery accepts no user coordinates")
         if worker_preflight and len(sys.argv) != 10:
             raise ValueError("worker preflight requires exact reviewed coordinates")
-        bound = RECOVERY_MAX_ZIP if recovery else PREFLIGHT_MAX_ZIP if worker_preflight else MAX_ZIP
+        if worker_w1 and len(sys.argv) != 4:
+            raise ValueError("W1 requires one GitHub run ID only")
+        bound = (
+            RECOVERY_MAX_ZIP
+            if recovery
+            else PREFLIGHT_MAX_ZIP
+            if worker_preflight
+            else W1_MAX_ZIP
+            if worker_w1
+            else MAX_ZIP
+        )
         raw = sys.stdin.buffer.read(bound + 1)
-        verify(raw, sys.argv[1], recovery=recovery, worker_preflight=worker_preflight)
+        verify(
+            raw,
+            sys.argv[1],
+            recovery=recovery,
+            worker_preflight=worker_preflight,
+            worker_w1=worker_w1,
+        )
         # The memfd is passed to the *same* process via exec. No temporary
         # container, host file or broader Docker resource is ever created.
         fd = os.memfd_create("boca-protected-transaction", flags=0)
