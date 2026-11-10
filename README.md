@@ -1,5 +1,17 @@
 # Boca Socios Assistant
 
+## R162 — `krb5-libs` estable para desbloquear la imagen del controlador (CODE_ONLY)
+
+El escaneo de la imagen del controlador del `main=713fb9a...` detectó
+`CVE-2026-107364` HIGH en `krb5-libs=1.22.2-r1` y bloqueó la publicación.
+El titular propuso la versión corregida `1.22.3-r0` desde `edge`, pero Alpine
+3.24 `main` ya publicó esa misma versión estable el 10/11/2026. Se incorpora
+un pin específico **solo en la etapa runtime del controlador** y se conservan
+los controles Trivy, SHA exacto, BLACKBOX y despliegue protegido. La corrección
+en código no demuestra imagen publicada, instalación o arranque del worker:
+requiere nuevas Actions y recibos físicos. [ADR0230](docs/ADR/0230-r162-controller-krb5-stable-security.md) ·
+[RCA #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+
 ## R150 — W1 identificó el nombre `synthetic`; corrección de imagen en revisión
 
 La única prueba física autorizada del worker, [Action #934](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42841239384),

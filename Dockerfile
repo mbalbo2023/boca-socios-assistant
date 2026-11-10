@@ -17,6 +17,10 @@ ENV PYTHONUNBUFFERED=1 \
     BOCA_DB_PATH=/data/boca.sqlite3 \
     BOCA_MASTER_KEY_FILE=/run/secrets/boca_master_key
 
+# Alpine v3.24/main backport for CVE-2026-107364 (MITKRB5-SA-2026-001).
+# Pin the patched stable package; never mix the edge repository into the image.
+RUN apk add --no-cache 'krb5-libs=1.22.3-r0'
+
 RUN addgroup -S -g 10001 boca && \
     adduser -S -D -H -u 10001 -G boca -s /sbin/nologin boca && \
     mkdir -p /data && chown boca:boca /data
