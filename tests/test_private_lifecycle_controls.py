@@ -162,6 +162,9 @@ def test_one_touch_commit_precedes_wake_and_stop_can_follow_immediately(tmp_path
 
     app, db = _app(tmp_path / "boca.sqlite3", provider, FakeHost(), bot_control=observe)
     cookie = _login(app, key, credential_id)
+    _, _, home = _request(app, "/", cookie=cookie)
+    assert b"Iniciar bot" in home and b"Detener bot" in home
+    assert b"Pausar o reanudar nuevas simulaciones" not in home
     _, _, page = _request(app, "/control", cookie=cookie)
     assert b"Iniciar bot" in page and b"Detener bot" in page
     assert b"/control/chromium/" not in page
@@ -178,6 +181,45 @@ def test_one_touch_commit_precedes_wake_and_stop_can_follow_immediately(tmp_path
         "owner_lifecycle_v1_request_bot_stop",
     ]
     assert b"Pendiente" in _request(app, "/control", cookie=cookie)[2]
+
+
+def test_unavailable_lifecycle_keeps_other_home_sections_reachable(tmp_path: Path) -> None:
+    provider, key, credential_id = _passkey([0.0])
+    app, db = _app(tmp_path / "boca.sqlite3", provider, FakeHost(), bot_control=lambda _: None)
+    cookie = _login(app, key, credential_id)
+    with db.connection() as conn, conn:
+        conn.execute(
+            "INSERT INTO audit_events(audit_id,action) VALUES (?,?)",
+            (str(uuid4()), "owner_lifecycle_v1_unknown"),
+        )
+    code, _, home = _request(app, "/", cookie=cookie)
+    assert code == 200 and b"Control del bot no disponible" in home and b'href="/socios"' in home
+    assert b"/control/bot/iniciar" not in home
+    assert _request(app, "/control", cookie=cookie)[0] == 503
+
+
+def test_historical_legacy_ack_cannot_enable_admission_or_appear_as_current_profile(
+    tmp_path: Path,
+) -> None:
+    from boca_socios.panel.lifecycle_intents import LifecycleIntentStore
+
+    provider, key, credential_id = _passkey([0.0])
+    wakes: list[str] = []
+    app, db = _app(tmp_path / "boca.sqlite3", provider, FakeHost(), bot_control=wakes.append)
+    old = str(uuid4())
+    LifecycleIntentStore(db).request("bot", "start", old)
+    for phase in ("CLAIMED", "APPLIED"):
+        with db.connection() as conn, conn:
+            conn.execute(
+                "INSERT INTO audit_events(audit_id,action) VALUES (?,?)",
+                host_marker(old, "bot", "start", phase),
+            )
+    cookie = _login(app, key, credential_id)
+    assert not app._read_intake()
+    _, _, page = _request(app, "/control", cookie=cookie)
+    assert b"perfil bajo demanda" in page and old.encode() not in page
+    assert _lifecycle_action(app, cookie, "bot", "start")[0] == 303
+    assert len(wakes) == 1 and wakes[0] != old
 
 
 def test_lost_wake_is_recoverable_by_owner_without_creating_a_second_intent(tmp_path: Path) -> None:
@@ -202,6 +244,34 @@ def test_lost_wake_is_recoverable_by_owner_without_creating_a_second_intent(tmp_
         ).fetchone() == (1,)
 
 
+def test_retry_of_identical_failed_post_wakes_its_exact_committed_request_once(
+    tmp_path: Path,
+) -> None:
+    operations = []
+    provider, key, credential_id = _passkey([0.0])
+
+    def notify(operation: str) -> None:
+        operations.append(operation)
+        if len(operations) == 1:
+            raise ConnectionError
+
+    app, _ = _app(tmp_path / "boca.sqlite3", provider, FakeHost(), bot_control=notify)
+    cookie = _login(app, key, credential_id)
+    _, _, page = _request(app, "/control", cookie=cookie)
+    fields = _bot_fields(page, "iniciar")
+
+    def submit():
+        return _request(app, "/control/bot/iniciar", cookie=cookie, method="POST", payload=fields)[
+            0
+        ]
+
+    assert submit() == 503
+    assert submit() == 503 and operations == [fields["operation_id"]]
+    sleep(1.05)
+    assert submit() == 303 and operations == [fields["operation_id"]] * 2
+    assert submit() == 303 and len(operations) == 2
+
+
 @pytest.mark.parametrize(
     ("phase", "label"), [("FAILED", "Fallo confirmado"), ("UNCERTAIN", "Resultado incierto")]
 )
@@ -221,6 +291,8 @@ def test_confirmed_failure_and_unknown_result_are_different_owner_states(
             )
     _, _, page = _request(app, "/control", cookie=cookie)
     assert b'aria-live="polite"' in page and label.encode() in page
+    assert b"<summary>Identificador de solicitud</summary>" in page
+    assert b"<code>" + operations[0].encode() + b"</code>" in page
 
 
 def test_on_demand_denies_unauthenticated_foreign_or_separate_chromium_orders(

@@ -1,8 +1,8 @@
 """Only a canonical correlation ID may cross the on-demand Unix socket."""
 
-import os
 import socket
 from pathlib import Path
+from runpy import run_path
 from unittest.mock import MagicMock, Mock
 from uuid import uuid4
 
@@ -33,32 +33,33 @@ def test_socket_delivers_one_bounded_ascii_frame_without_peer_reply(
         client.recv.assert_not_called()
 
 
-def test_real_named_socket_uses_one_connection_and_closes_after_delivery(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_hosted_linux_ci_invokes_the_mandatory_named_wake_check(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    assert bot_control.CONTROL_SOCKET == "/run/boca-bot-control/control.sock"
-    operation = str(uuid4())
-    try:
-        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    except PermissionError:
-        if os.getenv("GITHUB_ACTIONS") == "true":
-            raise
-        pytest.skip("This sandbox denies named Unix sockets; the wire contract uses socketpair.")
-    with listener as server:
-        monkeypatch.setattr(bot_control, "CONTROL_SOCKET", str(tmp_path / "control.sock"))
-        server.bind(bot_control.CONTROL_SOCKET)
-        server.listen(1)
-        server.settimeout(0.2)
-        bot_control.wake_bot_control(operation)
-        with server.accept()[0] as connection:
-            connection.settimeout(0.2)
-            assert connection.recv(128) == operation.encode("ascii") + b"\n"
-            assert connection.recv(1) == b""
+    root = Path(__file__).resolve().parents[1]
+    script = "scripts/check_engine_socket_linux.py"
+    assert f"run: uv run python {script}" in (root / ".github/workflows/ci.yml").read_text()
+    lab = run_path(str(root / script))
+    assert "check_bot_control_socket" in lab
+
+    class Marker(Exception):
+        """Reached the named-socket gate before running any other checks."""
+
+    required = Mock(side_effect=Marker)
+    monkeypatch.setitem(lab["main"].__globals__, "check_bot_control_socket", required)
+    with pytest.raises(Marker):
+        lab["main"]()
+    required.assert_called_once()
 
 
 @pytest.mark.parametrize(
     "operation",
-    ["bad", str(uuid4()).upper(), "00000000-0000-0000-0000-000000000000", str(uuid4()) + "\n"],
+    [
+        "bad",
+        "DC33398E-F923-4E85-95BF-A3F4C58C520F",
+        "00000000-0000-0000-0000-000000000000",
+        "dc33398e-f923-4e85-95bf-a3f4c58c520f\n",
+    ],
 )
 def test_invalid_uuid_never_connects(operation: str, monkeypatch: pytest.MonkeyPatch) -> None:
     def forbidden(*args: object) -> None:

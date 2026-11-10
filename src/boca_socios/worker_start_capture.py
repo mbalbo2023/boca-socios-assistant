@@ -57,6 +57,44 @@ class CaptureResult(StrEnum):
     MISSING_IPC_PROTOCOL = "MISSING_IPC_PROTOCOL"
     MISSING_DOMAIN_PACKAGE = "MISSING_DOMAIN_PACKAGE"
     MISSING_DOMAIN_POLICY = "MISSING_DOMAIN_POLICY"
+    MISSING_IPC_CLIENT = "MISSING_IPC_CLIENT"
+    MISSING_BROWSER_ON_DEMAND = "MISSING_BROWSER_ON_DEMAND"
+    MISSING_PLAYWRIGHT_FACTORY = "MISSING_PLAYWRIGHT_FACTORY"
+    MISSING_WORKER_HEALTH = "MISSING_WORKER_HEALTH"
+    MISSING_BROWSER_SYNTHETIC = "MISSING_BROWSER_SYNTHETIC"
+    MISSING_BROWSER_IPC_WORKER = "MISSING_BROWSER_IPC_WORKER"
+    MISSING_BARE_CONTRACTS = "MISSING_BARE_CONTRACTS"
+    MISSING_BARE_IPC_PROTOCOL = "MISSING_BARE_IPC_PROTOCOL"
+    MISSING_BARE_IPC_CLIENT = "MISSING_BARE_IPC_CLIENT"
+    MISSING_BARE_ON_DEMAND = "MISSING_BARE_ON_DEMAND"
+    MISSING_BARE_PLAYWRIGHT_FACTORY = "MISSING_BARE_PLAYWRIGHT_FACTORY"
+    MISSING_BARE_WORKER_HEALTH = "MISSING_BARE_WORKER_HEALTH"
+    MISSING_BARE_SYNTHETIC = "MISSING_BARE_SYNTHETIC"
+    MISSING_BARE_IPC_WORKER = "MISSING_BARE_IPC_WORKER"
+    MISSING_BARE_POLICY = "MISSING_BARE_POLICY"
+    MISSING_SCRIPTS_PACKAGE = "MISSING_SCRIPTS_PACKAGE"
+    MISSING_SCRIPT_VERIFY_CHROMIUM = "MISSING_SCRIPT_VERIFY_CHROMIUM"
+    MISSING_SCRIPT_OBSERVE_HOME = "MISSING_SCRIPT_OBSERVE_HOME"
+    MISSING_SCRIPT_BROWSER_BUDGET = "MISSING_SCRIPT_BROWSER_BUDGET"
+    MISSING_SCRIPT_TICKET_FLOW = "MISSING_SCRIPT_TICKET_FLOW"
+    MISSING_BARE_VERIFY_CHROMIUM = "MISSING_BARE_VERIFY_CHROMIUM"
+    MISSING_BARE_OBSERVE_HOME = "MISSING_BARE_OBSERVE_HOME"
+    MISSING_BARE_BROWSER_BUDGET = "MISSING_BARE_BROWSER_BUDGET"
+    MISSING_BARE_TICKET_FLOW = "MISSING_BARE_TICKET_FLOW"
+    MISSING_CONTROLLER_ACCEPTANCE = "MISSING_CONTROLLER_ACCEPTANCE"
+    MISSING_CONTROLLER_EVENTS = "MISSING_CONTROLLER_EVENTS"
+    MISSING_CONTROLLER_INTEGRATION = "MISSING_CONTROLLER_INTEGRATION"
+    MISSING_CONTROLLER_NOTIFY = "MISSING_CONTROLLER_NOTIFY"
+    MISSING_CONTROLLER_PANEL = "MISSING_CONTROLLER_PANEL"
+    MISSING_CONTROLLER_QUEUE = "MISSING_CONTROLLER_QUEUE"
+    MISSING_CONTROLLER_SECURITY = "MISSING_CONTROLLER_SECURITY"
+    MISSING_CONTROLLER_STORAGE = "MISSING_CONTROLLER_STORAGE"
+    MISSING_CONTROLLER_CONFIG = "MISSING_CONTROLLER_CONFIG"
+    MISSING_CONTROLLER_RUNTIME = "MISSING_CONTROLLER_RUNTIME"
+    MISSING_PLAYWRIGHT_ASYNC_API = "MISSING_PLAYWRIGHT_ASYNC_API"
+    MISSING_CRYPTOGRAPHY = "MISSING_CRYPTOGRAPHY"
+    MISSING_CFFI = "MISSING_CFFI"
+    MISSING_PYCPARSER = "MISSING_PYCPARSER"
     ENTRY_MODULE_MISSING = "ENTRY_MODULE_MISSING"
 
 
@@ -90,6 +128,7 @@ _EXCEPTIONS = {
 }
 _IPC = b"boca_socios.browser.ipc_protocol.SyntheticIPCError: "
 _BOUNDARY = b"boca_socios.browser.on_demand.WorkerBoundaryError: "
+_HEALTH_BOUNDARY = b"boca_socios.browser.worker_health.WorkerBoundaryError: "
 _MISSING = b"ModuleNotFoundError: No module named "
 # Dockerfile.browser fixes both the interpreter directory and the -m target.
 _PYTHON = b"/app/.venv/bin/python: "
@@ -103,6 +142,8 @@ _EXACT_LINES = (
     (_IPC + b"ipc_frame_unverified", CaptureResult.IPC_FRAME_UNVERIFIED),
     (_BOUNDARY + b"worker_identity_unverified", CaptureResult.WORKER_IDENTITY_UNVERIFIED),
     (_BOUNDARY + b"worker_limits_unverified", CaptureResult.WORKER_LIMITS_UNVERIFIED),
+    (_HEALTH_BOUNDARY + b"worker_identity_unverified", CaptureResult.WORKER_IDENTITY_UNVERIFIED),
+    (_HEALTH_BOUNDARY + b"worker_limits_unverified", CaptureResult.WORKER_LIMITS_UNVERIFIED),
     (_MISSING + b"'playwright'", CaptureResult.MISSING_PLAYWRIGHT),
     (_MISSING + b"'greenlet'", CaptureResult.MISSING_GREENLET),
     (_MISSING + b"'pyee'", CaptureResult.MISSING_PYEE),
@@ -113,6 +154,49 @@ _EXACT_LINES = (
     (_MISSING + b"'boca_socios.browser.ipc_protocol'", CaptureResult.MISSING_IPC_PROTOCOL),
     (_MISSING + b"'boca_socios.domain'", CaptureResult.MISSING_DOMAIN_PACKAGE),
     (_MISSING + b"'boca_socios.domain.policy'", CaptureResult.MISSING_DOMAIN_POLICY),
+    # Fixed names from the browser COPY paths, public package boundaries and uv.lock.
+    # An unqualified sibling has its own receipt, so a packaging fix can distinguish it.
+    (_MISSING + b"'boca_socios.browser.ipc_client'", CaptureResult.MISSING_IPC_CLIENT),
+    (_MISSING + b"'boca_socios.browser.on_demand'", CaptureResult.MISSING_BROWSER_ON_DEMAND),
+    (
+        _MISSING + b"'boca_socios.browser.playwright_factory'",
+        CaptureResult.MISSING_PLAYWRIGHT_FACTORY,
+    ),
+    (_MISSING + b"'boca_socios.browser.worker_health'", CaptureResult.MISSING_WORKER_HEALTH),
+    (_MISSING + b"'boca_socios.browser.synthetic'", CaptureResult.MISSING_BROWSER_SYNTHETIC),
+    (_MISSING + b"'boca_socios.browser.ipc_worker'", CaptureResult.MISSING_BROWSER_IPC_WORKER),
+    (_MISSING + b"'contracts'", CaptureResult.MISSING_BARE_CONTRACTS),
+    (_MISSING + b"'ipc_protocol'", CaptureResult.MISSING_BARE_IPC_PROTOCOL),
+    (_MISSING + b"'ipc_client'", CaptureResult.MISSING_BARE_IPC_CLIENT),
+    (_MISSING + b"'on_demand'", CaptureResult.MISSING_BARE_ON_DEMAND),
+    (_MISSING + b"'playwright_factory'", CaptureResult.MISSING_BARE_PLAYWRIGHT_FACTORY),
+    (_MISSING + b"'worker_health'", CaptureResult.MISSING_BARE_WORKER_HEALTH),
+    (_MISSING + b"'synthetic'", CaptureResult.MISSING_BARE_SYNTHETIC),
+    (_MISSING + b"'ipc_worker'", CaptureResult.MISSING_BARE_IPC_WORKER),
+    (_MISSING + b"'policy'", CaptureResult.MISSING_BARE_POLICY),
+    (_MISSING + b"'scripts'", CaptureResult.MISSING_SCRIPTS_PACKAGE),
+    (_MISSING + b"'scripts.verify_chromium_worker'", CaptureResult.MISSING_SCRIPT_VERIFY_CHROMIUM),
+    (_MISSING + b"'scripts.observe_public_home'", CaptureResult.MISSING_SCRIPT_OBSERVE_HOME),
+    (_MISSING + b"'scripts.measure_browser_budget'", CaptureResult.MISSING_SCRIPT_BROWSER_BUDGET),
+    (_MISSING + b"'scripts.run_synthetic_ticket_flow'", CaptureResult.MISSING_SCRIPT_TICKET_FLOW),
+    (_MISSING + b"'verify_chromium_worker'", CaptureResult.MISSING_BARE_VERIFY_CHROMIUM),
+    (_MISSING + b"'observe_public_home'", CaptureResult.MISSING_BARE_OBSERVE_HOME),
+    (_MISSING + b"'measure_browser_budget'", CaptureResult.MISSING_BARE_BROWSER_BUDGET),
+    (_MISSING + b"'run_synthetic_ticket_flow'", CaptureResult.MISSING_BARE_TICKET_FLOW),
+    (_MISSING + b"'boca_socios.acceptance'", CaptureResult.MISSING_CONTROLLER_ACCEPTANCE),
+    (_MISSING + b"'boca_socios.events'", CaptureResult.MISSING_CONTROLLER_EVENTS),
+    (_MISSING + b"'boca_socios.integration'", CaptureResult.MISSING_CONTROLLER_INTEGRATION),
+    (_MISSING + b"'boca_socios.notify'", CaptureResult.MISSING_CONTROLLER_NOTIFY),
+    (_MISSING + b"'boca_socios.panel'", CaptureResult.MISSING_CONTROLLER_PANEL),
+    (_MISSING + b"'boca_socios.queue'", CaptureResult.MISSING_CONTROLLER_QUEUE),
+    (_MISSING + b"'boca_socios.security'", CaptureResult.MISSING_CONTROLLER_SECURITY),
+    (_MISSING + b"'boca_socios.storage'", CaptureResult.MISSING_CONTROLLER_STORAGE),
+    (_MISSING + b"'boca_socios.config'", CaptureResult.MISSING_CONTROLLER_CONFIG),
+    (_MISSING + b"'boca_socios.runtime'", CaptureResult.MISSING_CONTROLLER_RUNTIME),
+    (_MISSING + b"'playwright.async_api'", CaptureResult.MISSING_PLAYWRIGHT_ASYNC_API),
+    (_MISSING + b"'cryptography'", CaptureResult.MISSING_CRYPTOGRAPHY),
+    (_MISSING + b"'cffi'", CaptureResult.MISSING_CFFI),
+    (_MISSING + b"'pycparser'", CaptureResult.MISSING_PYCPARSER),
     (_PYTHON + b"No module named " + _ENTRY, CaptureResult.ENTRY_MODULE_MISSING),
     (_FIND_ENTRY + _MISSING + b"'boca_socios')", CaptureResult.MISSING_BOCA_PACKAGE),
     (_FIND_ENTRY + _MISSING + b"'boca_socios.browser')", CaptureResult.MISSING_BROWSER_PACKAGE),

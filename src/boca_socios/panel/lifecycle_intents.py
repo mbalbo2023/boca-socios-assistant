@@ -28,6 +28,7 @@ _RESULTS = ("APPLIED", "REFUSED", "FAILED")
 _OPEN = ("REQUESTED", "CLAIMED", "UNCERTAIN")
 _PREFIX = "owner_lifecycle_v1_"
 _NAMESPACE = UUID("7a5e4b3a-2781-4f2d-978c-98bd64391508")
+_ON_DEMAND = "boca_bot_on_demand_v1:"
 _WORK_BINDING = "boca_bot_work_v1:"
 _WORK_STOP = "boca_bot_work_stop_v1:"
 _REQUEST_ACTIONS = {
@@ -63,6 +64,7 @@ class LifecycleIntent:
     status: LifecycleStatus
     requested_at: str
     work_start_id: str | None = None
+    on_demand: bool = False
 
 
 def canonical_operation_id(value: str) -> str:
@@ -82,6 +84,19 @@ def _action(component: str, target: str) -> str:
         return _REQUEST_ACTIONS[(component, target)]
     except (KeyError, TypeError):
         raise ValueError("unknown lifecycle control") from None
+
+
+def _profile_marker(operation_id: str, request_action: str) -> tuple[str, str]:
+    return str(uuid5(_NAMESPACE, _ON_DEMAND + operation_id)), _ON_DEMAND + request_action
+
+
+def _insert_request(
+    connection: sqlite3.Connection, operation_id: str, action: str, *, on_demand: bool
+) -> None:
+    insert = "INSERT INTO audit_events(audit_id,action) VALUES (?,?)"
+    connection.execute(insert, (operation_id, action))
+    if on_demand:
+        connection.execute(insert, _profile_marker(operation_id, action))
 
 
 def host_marker(
@@ -157,6 +172,9 @@ class LifecycleIntentStore:
         before = _db_identity(self._database.path)
         try:
             with self._database.connection() as connection:
+                # CLAIM and ACK can both commit while the owner opens Control.
+                # Read the request and all its receipts from one WAL snapshot.
+                connection.execute("BEGIN")
                 state = self._current(connection)
             if _db_identity(self._database.path) != before:
                 raise LifecycleStorageUnavailable("Boca controller storage identity changed")
@@ -191,10 +209,15 @@ class LifecycleIntentStore:
                         raise LifecycleConflict("lifecycle request UUID already used")
                     if state is None or state.operation_id != operation_id:
                         raise LifecycleConflict("lifecycle request already superseded")
+                    if on_demand != state.on_demand:
+                        raise LifecycleConflict(
+                            "lifecycle request belongs to another control profile"
+                        )
                     result = state
                 elif (
                     on_demand
                     and state is not None
+                    and state.on_demand
                     and state.component == component
                     and state.target == target
                     and (state.status in _OPEN or state.status == "APPLIED")
@@ -208,17 +231,16 @@ class LifecycleIntentStore:
                         and state.status in _OPEN
                         and not (
                             on_demand
+                            and state.on_demand
                             and state.component == "bot"
                             and state.target == "start"
                             and target == "stop"
                             and state.status in ("REQUESTED", "CLAIMED")
                         )
+                        and not (on_demand and not state.on_demand and state.status == "REQUESTED")
                     ):
                         raise LifecycleConflict("protected host operation remains unconfirmed")
-                    connection.execute(
-                        "INSERT INTO audit_events(audit_id,action) VALUES (?,?)",
-                        (operation_id, action),
-                    )
+                    _insert_request(connection, operation_id, action, on_demand=on_demand)
                     fresh = self._current(connection)
                     if fresh is None or fresh.operation_id != operation_id:
                         raise LifecycleStorageUnavailable("Boca lifecycle request did not persist")
@@ -238,6 +260,7 @@ class LifecycleIntentStore:
         current = LifecycleIntentStore._current(connection)
         if (
             current is None
+            or not current.on_demand
             or current.operation_id != start_operation_id
             or (current.component, current.target, current.status) != ("bot", "start", "APPLIED")
         ):
@@ -293,15 +316,15 @@ class LifecycleIntentStore:
                     result = current  # Recover an already committed wake after interruption.
                 elif (
                     current is not None
+                    and current.on_demand
                     and current.operation_id == start_operation_id
                     and (current.component, current.target, current.status)
                     == ("bot", "start", "APPLIED")
                     and self._work_finished(connection, start_operation_id)
                 ):
                     stop_id = str(uuid4())
-                    connection.execute(
-                        "INSERT INTO audit_events(audit_id,action) VALUES (?,?)",
-                        (stop_id, _REQUEST_ACTIONS[("bot", "stop")]),
+                    _insert_request(
+                        connection, stop_id, _REQUEST_ACTIONS[("bot", "stop")], on_demand=True
                     )
                     connection.execute(
                         "INSERT INTO audit_events(audit_id,action) VALUES (?,?)",
@@ -413,6 +436,13 @@ class LifecycleIntentStore:
             raise LifecycleStorageUnavailable("invalid lifecycle request row")
         component = cast(LifecycleComponent, matched[0])
         target = cast(LifecycleTarget, matched[1])
+        profile_id, profile_action = _profile_marker(operation_id, stored_action)
+        profile = connection.execute(
+            "SELECT rowid,action FROM audit_events WHERE audit_id=?", (profile_id,)
+        ).fetchone()
+        on_demand = profile is not None
+        if on_demand and (component != "bot" or profile != (rowid + 1, profile_action)):
+            raise LifecycleStorageUnavailable("invalid on-demand request provenance")
         claim_id, claim_action = host_marker(operation_id, component, target, "CLAIMED")
         claim = connection.execute(
             "SELECT rowid,action FROM audit_events WHERE audit_id=?", (claim_id,)
@@ -445,7 +475,7 @@ class LifecycleIntentStore:
                 host_marker(operation_id, component, target, "REFUSED")[1]: "REFUSED",
                 host_marker(operation_id, component, target, "UNCERTAIN")[1]: "UNCERTAIN",
             }
-            if component == "bot":
+            if on_demand:
                 allowed[host_marker(operation_id, component, target, "FAILED")[1]] = "FAILED"
             if (
                 claim is None
@@ -463,7 +493,11 @@ class LifecycleIntentStore:
                 (str(uuid5(_NAMESPACE, _WORK_STOP + operation_id)),),
             ).fetchone()
             if correlation is not None:
-                if correlation[0] <= rowid or not correlation[1].startswith(_WORK_STOP):
+                if (
+                    not on_demand
+                    or correlation[0] <= rowid
+                    or not correlation[1].startswith(_WORK_STOP)
+                ):
                     raise LifecycleStorageUnavailable("invalid work-stop correlation")
                 work_start_id = canonical_operation_id(correlation[1][len(_WORK_STOP) :])
                 if not connection.execute(
@@ -471,4 +505,6 @@ class LifecycleIntentStore:
                     (work_start_id, _REQUEST_ACTIONS[("bot", "start")], rowid),
                 ).fetchone():
                     raise LifecycleStorageUnavailable("work-stop start unavailable")
-        return LifecycleIntent(operation_id, component, target, status, recorded_at, work_start_id)
+        return LifecycleIntent(
+            operation_id, component, target, status, recorded_at, work_start_id, on_demand
+        )

@@ -157,17 +157,14 @@ MAIN = (
     "from boca_socios.host_boca_transaction import main\n"
     "raise SystemExit(main())\n"
 ).encode("ascii")
-# R46/R47 adds the reviewed physical cleanup proof and exact-incident recovery
-# observer to this explicit allowlist (approximately 39kB more uncompressed).
-# Keep the hard compressed transport cap independent and unchanged at 512kB.
-# The full package includes the R132 bounded worker capture and private receipt.
-# Only the existing host adapter grew in the separate preflight. Preserve the
-# compressed transport boundaries and each variant's independent allowlist.
-MAX_SOURCE_BYTES = 926_000
+# The complete R135 archive adds the installed control, lifecycle and readback.
+# The separate worker preflight carries the updated host adapter. Each reviewed
+# entry set retains its own compressed transport bound.
+MAX_SOURCE_BYTES = 1_040_000
 MAX_ARCHIVE_BYTES = 512_000
 RECOVERY_MAX_SOURCE_BYTES = 256_000
 RECOVERY_MAX_ARCHIVE_BYTES = 128_000
-PREFLIGHT_MAX_SOURCE_BYTES = 492_000
+PREFLIGHT_MAX_SOURCE_BYTES = 500_000
 PREFLIGHT_MAX_ARCHIVE_BYTES = 128_000
 
 

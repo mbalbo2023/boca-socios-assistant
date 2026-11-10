@@ -2,6 +2,7 @@
 
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
@@ -312,6 +313,35 @@ def test_claim_reads_exact_accepted_work_binding_and_manual_stop_wins(tmp_path: 
         assert not store.may_run_work(conn, start, command)
 
 
+@pytest.mark.parametrize(
+    "legacy_phase", ["REQUESTED", "CLAIMED", "UNCERTAIN", "APPLIED", "REFUSED"]
+)
+def test_profile_provenance_and_quarantine_of_legacy_requests(
+    tmp_path: Path, legacy_phase: str
+) -> None:
+    store, db = _store(tmp_path / "boca.sqlite3")
+    old, fresh = str(uuid4()), str(uuid4())
+    store.request("bot", "start", old)
+    if legacy_phase != "REQUESTED":
+        _insert_marker(db, host_marker(old, "bot", "start", "CLAIMED"))
+    if legacy_phase not in ("REQUESTED", "CLAIMED"):
+        _insert_marker(db, host_marker(old, "bot", "start", legacy_phase))
+    assert not store.current().on_demand
+    with pytest.raises(LifecycleConflict):
+        store.request("bot", "start", old, on_demand=True)
+    if legacy_phase in ("CLAIMED", "UNCERTAIN"):
+        for target in ("start", "stop"):
+            with pytest.raises(LifecycleConflict):
+                store.request("bot", target, fresh, on_demand=True)
+        assert store.current().operation_id == old
+    else:
+        intent = store.request("bot", "start", fresh, on_demand=True)
+        assert intent.on_demand and intent.operation_id == fresh
+        with db.connection() as connection:
+            assert not store.for_operation(connection, old).on_demand
+            assert store.for_operation(connection, fresh).on_demand
+
+
 def test_manual_and_derived_stop_converge_and_wait_for_all_active_work(tmp_path: Path) -> None:
     store, db, start, command = _work_run(tmp_path)
     with db.connection() as conn, conn:
@@ -344,3 +374,27 @@ def test_manual_and_derived_stop_converge_and_wait_for_all_active_work(tmp_path:
         assert conn.execute(
             "SELECT count(*) FROM audit_events WHERE action='owner_lifecycle_v1_request_bot_stop'"
         ).fetchone() == (1,)
+
+
+def test_status_read_spans_one_snapshot_when_host_claims_and_acknowledges(tmp_path: Path) -> None:
+    store, writer = _store(tmp_path / "boca.sqlite3")
+    operation = str(uuid4())
+    store.request("bot", "start", operation, on_demand=True)
+    after_claim_read = host_marker(operation, "bot", "start", "UNCERTAIN")[0]
+    moments = []
+
+    def interleave(statement: str) -> None:
+        if after_claim_read in statement and not moments:
+            moments.append("host-ack")
+            for phase in ("CLAIMED", "APPLIED"):
+                _insert_marker(writer, host_marker(operation, "bot", "start", phase))
+
+    class Reader(Database):
+        @contextmanager
+        def connection(self):
+            with super().connection() as conn:
+                conn.set_trace_callback(interleave)
+                yield conn
+
+    assert LifecycleIntentStore(Reader(writer.path)).current().status == "REQUESTED"
+    assert moments == ["host-ack"] and store.current().status == "APPLIED"

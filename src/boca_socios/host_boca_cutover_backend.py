@@ -1,12 +1,9 @@
-"""Exact-ID rootless host adapter for Cutover A; intentionally NOT wired to CLI.
+"""Rootless Boca Cutover, guarded by one lease and immutable release coordinates.
 
-This is real host-facing code backed by existing well-tested cutover helpers,
-not merely a fake protocol. The legacy singleton is observed first, remains
-running until a new attempt worker is healthy, and its original container ID
-is never inferred from names. Only a separate protected workflow with a GO,
-two reviewed release manifests and one SSH process may construct this adapter.
-No current GitHub Action does so. All destructive host functions are unreachable
-by the authenticated ZIP's public main() until a later acceptance gate lands.
+The authenticated V3 on-demand profile creates and attests a stopped worker
+before parking the original. It installs the controller-only activation socket
+and retires the original only after exact-ID, engine and loopback acceptance.
+Historical releases retain their original running-worker acceptance contract.
 """
 
 from __future__ import annotations
@@ -14,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import io
+import os
 import re
 import stat
 import sys
@@ -287,6 +285,47 @@ def _controller_database_identity(controller: str) -> tuple[int, int]:
     if match is None:
         raise CutoverError("private controller database identity unavailable")
     return int(match[1]), int(match[2])
+
+
+def _verify_mounted_control(controller: str, directory: Path) -> tuple[int, int]:
+    """Match the listening socket's inode across the read-only bind. No frame is sent."""
+    path = directory / "control.sock"
+    before = path.lstat()
+    if (
+        not _HEX.fullmatch(controller)
+        or not stat.S_ISSOCK(before.st_mode)
+        or stat.S_IMODE(before.st_mode) != 0o666
+        or before.st_nlink != 1
+        or (before.st_uid, before.st_gid) != (os.geteuid(), os.getegid())
+    ):
+        raise CutoverError("on-demand mounted socket identity unavailable")
+    result = host._run(
+        "docker",
+        "exec",
+        "--user",
+        "10001:10001",
+        controller,
+        "/app/.venv/bin/python",
+        "-I",
+        "-B",
+        "-c",
+        "import os,stat; d=os.lstat('/run/boca-bot-control'); "
+        "assert os.geteuid()==os.getegid()==10001 and stat.S_ISDIR(d.st_mode) "
+        "and stat.S_IMODE(d.st_mode)==0o711; "
+        "s=os.lstat('/run/boca-bot-control/control.sock'); "
+        "assert stat.S_ISSOCK(s.st_mode) and stat.S_IMODE(s.st_mode)==0o666; "
+        "print(s.st_dev,s.st_ino)",
+        timeout=8,
+    )
+    after = path.lstat()
+    if (
+        not os.path.samestat(before, after)
+        or (before.st_mode, before.st_uid, before.st_gid, before.st_nlink)
+        != (after.st_mode, after.st_uid, after.st_gid, after.st_nlink)
+        or result != f"{before.st_dev} {before.st_ino}"
+    ):
+        raise CutoverError("on-demand socket bind differs across the controller namespace")
+    return before.st_dev, before.st_ino
 
 
 def _bootstrap_in_data_namespace(plan: CutoverPlan, identity: tuple[int, int]) -> str:
@@ -576,24 +615,6 @@ class RootlessCutoverBackend:
             if not self.worker_hash or not self.controller_hash or self.database_path is None:
                 raise CutoverError("on-demand verified installation coordinates missing")
             self._verify_cold_pair(plan, candidate_id, worker_id)
-            if _controller_database_identity(candidate_id) != self.database_identity or (
-                host._run(
-                    "docker",
-                    "exec",
-                    "--user",
-                    "10001:10001",
-                    candidate_id,
-                    "/app/.venv/bin/python",
-                    "-I",
-                    "-B",
-                    "-m",
-                    "boca_socios.host_on_demand_lifecycle",
-                    "ready",
-                    timeout=8,
-                )
-                != "BOCA_LEDGER_READY"
-            ):
-                raise CutoverError("on-demand candidate ledger identity/schema unverified")
             host._cutover_compose_pair(
                 candidate_id,
                 worker_id,
@@ -617,6 +638,7 @@ class RootlessCutoverBackend:
                 pair=ReviewedInstalledPair(plan.attempt_id, self.controller_hash, self.worker_hash),
             )
             install_control(self.installation, lease)
+            self._cycle_idle_panel(plan, candidate_id, worker_id, lease)
         else:
             if not self.controller_hash:
                 raise CutoverError("cutover candidate resolved Compose hash missing")
@@ -692,6 +714,76 @@ class RootlessCutoverBackend:
             or engine.pid <= 0
         ):
             raise CutoverError("on-demand controller engine did not confirm STOPPED")
+
+        if _controller_database_identity(candidate) != self.database_identity or (
+            host._run(
+                "docker",
+                "exec",
+                "--user",
+                "10001:10001",
+                candidate,
+                "/app/.venv/bin/python",
+                "-I",
+                "-B",
+                "-m",
+                "boca_socios.host_on_demand_lifecycle",
+                "ready",
+                timeout=8,
+            )
+            != "BOCA_LEDGER_READY"
+        ):
+            raise CutoverError("on-demand candidate ledger identity/schema unverified")
+
+    def _cycle_idle_panel(
+        self,
+        plan: CutoverPlan,
+        candidate: str,
+        worker: str,
+        lease: cleanup.BocaJobLease,
+    ) -> None:
+        """Exercise one panel cold boot while rollback to the parked original is possible."""
+        from boca_socios.host_on_demand_service import verify_control
+
+        self._guard(plan, lease, "CANDIDATE")
+        if (
+            candidate != self.candidate_id
+            or worker != self.worker_id
+            or self.control_directory is None
+            or self.installation is None
+        ):
+            raise CutoverError("on-demand panel restart coordinates unavailable")
+        socket_identity = _verify_mounted_control(candidate, self.control_directory)
+        host._cutover_legacy_record(
+            plan.legacy_id,
+            plan.legacy_image,
+            plan.legacy_sha,
+            name=f"boca-socios-controller-legacy-{plan.attempt_id}",
+            running=False,
+            restart_policy="no",
+        )
+        if host._run("docker", "stop", "--time", "8", candidate, timeout=30) != candidate:
+            raise CutoverError("on-demand panel stop receipt unverified")
+        stopped = host._run(
+            "docker",
+            "inspect",
+            "--type",
+            "container",
+            "--format",
+            "{{.Id}} {{.State.Status}} {{.State.Pid}} {{.State.Running}} "
+            "{{.State.Restarting}} {{.State.Dead}}",
+            candidate,
+            timeout=8,
+        )
+        if stopped != f"{candidate} exited 0 false false false":
+            raise CutoverError("on-demand panel did not reach exited with zero processes")
+        self._guard(plan, lease, "CANDIDATE")
+        if host._run("docker", "start", candidate, timeout=30) != candidate:
+            raise CutoverError("on-demand panel restart receipt unverified")
+        host._browser_wait_healthy(candidate)
+        self._verify_cold_pair(plan, candidate, worker)
+        verify_control(self.installation, lease)
+        if _verify_mounted_control(candidate, self.control_directory) != socket_identity:
+            raise CutoverError("on-demand control socket was replaced during panel restart")
 
     def _disable_control(self, plan: CutoverPlan, lease: cleanup.BocaJobLease) -> None:
         if self.control_prepared:
@@ -879,10 +971,11 @@ class RootlessCutoverBackend:
             if self.on_demand:
                 from boca_socios.host_on_demand_service import verify_control
 
-                if self.installation is None:
+                if self.installation is None or self.control_directory is None:
                     return "NO_GO"
                 self._verify_cold_pair(plan, candidate_id, worker_id)
                 verify_control(self.installation, lease)
+                _verify_mounted_control(candidate_id, self.control_directory)
             stage.finalize_promoted(
                 plan.attempt_id, plan.legacy_compose_sha, candidate_id, worker_id
             )

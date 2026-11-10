@@ -76,7 +76,7 @@ def test_start_requires_worker_before_creating_thread_and_retry_can_succeed(prep
         with pytest.raises(RuntimeError, match="START"):
             service.commands.start_engine()
         start_id = str(uuid4())
-        LifecycleIntentStore(database).request("bot", "start", start_id)
+        LifecycleIntentStore(database).request("bot", "start", start_id, on_demand=True)
         with database.connection() as connection, connection:
             connection.execute(
                 "INSERT INTO audit_events(audit_id,action) VALUES (?,?)",
@@ -116,7 +116,7 @@ def test_commands_need_applied_start_and_live_worker_before_durable_enqueue(prep
     async def exercise() -> None:
         nonlocal ready
         ready = True
-        store.request("bot", "start", operation_id)
+        store.request("bot", "start", operation_id, on_demand=True)
         with pytest.raises(RuntimeError):
             await coordinator.begin(command_id, intent)
         ready = False
@@ -134,7 +134,7 @@ def test_real_work_closes_only_its_session_after_durable_result_and_blocks_late_
     database, _key, browser = prepared
     ledger = LifecycleIntentStore(database)
     start_id = str(uuid4())
-    ledger.request("bot", "start", start_id)
+    ledger.request("bot", "start", start_id, on_demand=True)
     confirm_start(database, start_id)
     woke = []
     session = beta.OnDemandBotSession(ledger=ledger, check_worker=lambda: None, wake=woke.append)
@@ -196,7 +196,7 @@ def test_owner_stop_preempts_a_second_accepted_command_in_the_claim_transaction(
     database, _key, _browser = prepared
     ledger = LifecycleIntentStore(database)
     start_id, human_stop = str(uuid4()), str(uuid4())
-    ledger.request("bot", "start", start_id)
+    ledger.request("bot", "start", start_id, on_demand=True)
     confirm_start(database, start_id)
     database.create_event("next", "Second synthetic event")
     woke = []
@@ -242,7 +242,7 @@ def test_prior_applied_start_cannot_restart_an_engine_over_its_private_socket(pr
     database, key, browser = prepared
     ledger = LifecycleIntentStore(database)
     start_id = str(uuid4())
-    ledger.request("bot", "start", start_id)
+    ledger.request("bot", "start", start_id, on_demand=True)
     confirm_start(database, start_id)
     session = beta.OnDemandBotSession(
         ledger=ledger, check_worker=lambda: None, wake=lambda _id: None
@@ -257,6 +257,45 @@ def test_prior_applied_start_cannot_restart_an_engine_over_its_private_socket(pr
     try:
         with pytest.raises(RuntimeError, match="START"):
             service.commands.start_engine()
+        assert service.ready and service.commands.engine_stopped and browser.calls == 0
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize("status", ["CLAIMED", "APPLIED"])
+def test_legacy_start_never_authorizes_on_demand_motor_or_work(prepared, status):
+    database, key, browser = prepared
+    ledger = LifecycleIntentStore(database)
+    legacy_id = str(uuid4())
+    ledger.request("bot", "start", legacy_id)
+    with database.connection() as connection, connection:
+        for phase in ("CLAIMED", "APPLIED"):
+            connection.execute(
+                "INSERT INTO audit_events(audit_id,action) VALUES (?,?)",
+                host_marker(legacy_id, "bot", "start", phase),
+            )
+            if phase == status:
+                break
+
+    def unexpected_socket_access() -> None:
+        pytest.fail("legacy receipt reached the on-demand worker")
+
+    session = beta.OnDemandBotSession(
+        ledger=ledger, check_worker=unexpected_socket_access, wake=lambda _id: None
+    )
+    service = LocalBetaRuntime.start(
+        database_path=database.path,
+        key_file=key,
+        browser=browser,
+        initial_engine_stopped=True,
+        bot_session=session,
+    )
+    try:
+        with pytest.raises(RuntimeError, match="START"):
+            if status == "CLAIMED":
+                service.commands.start_engine()
+            else:
+                session.require_start("APPLIED")
         assert service.ready and service.commands.engine_stopped and browser.calls == 0
     finally:
         service.close()

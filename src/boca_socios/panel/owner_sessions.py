@@ -286,7 +286,7 @@ class OwnerSessions:
         *,
         pending_start: Callable[[], bool] | None = None,
     ) -> tuple[int, EnrollmentOperation | None]:
-        """0 means newly reserved; a recorded status is an immutable replay."""
+        """Reserve once, or allow a bounded retry of a previously committed wake."""
         if not hmac.compare_digest(session.csrf.encode("ascii"), csrf.encode("utf-8")):
             return 403, None
         fingerprint = hmac.digest(session.fingerprint_key, body, "sha256")
@@ -304,7 +304,14 @@ class OwnerSessions:
                     return 409, None
                 if operation.state == "pending":
                     return 409, None
-                return operation.status, operation
+                if (
+                    operation.status != 503
+                    or operation.lifecycle_id is None
+                    or now < session.next_write
+                ):
+                    return operation.status, operation
+                # The intent already exists. Only its exact failed wake can
+                # be redelivered; the handler must re-read its current receipt.
             if now < session.next_write:
                 # A second, independently bounded write lets the owner cancel
                 # a START immediately, including before its first host claim.

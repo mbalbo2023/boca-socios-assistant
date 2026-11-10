@@ -49,6 +49,7 @@ class OnDemandBotSession:
         state = self.ledger.current()
         if (
             state is None
+            or not state.on_demand
             or state.component != "bot"
             or state.target != "start"
             or state.status != status

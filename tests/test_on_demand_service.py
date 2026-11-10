@@ -112,7 +112,7 @@ class Manager:
     def __init__(self, home: Path) -> None:
         self.home = home
         self.active = False
-        self.known = False
+        self.known = set()
         self.foreign = False
         self.effects = []
 
@@ -122,7 +122,7 @@ class Manager:
         if args[0] == "show":
             unit = args[-1]
             target = SOCKET if unit == SOCKET else UNIT
-            present = self.known and (folder / target).exists()
+            present = target in self.known
             if self.foreign:
                 return "LoadState=loaded\nFragmentPath=/etc/foreign.socket\nDropInPaths=\nActiveState=inactive\nSubState=dead\n"
             return (
@@ -133,7 +133,7 @@ class Manager:
             )
         self.effects.append(args)
         if args == ("daemon-reload",):
-            self.known = True
+            self.known = {name for name in (SOCKET, UNIT) if (folder / name).exists()}
         elif args == ("start", SOCKET):
             path = home / ".boca-on-demand/socket/control.sock"
             # A unit-manager fixture creates only the expected inode. Wire tests use real pairs.
@@ -344,3 +344,24 @@ def test_units_pass_offline_systemd_verifier(tmp_path):
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_cut_during_unit_reload_after_unlink_can_resume(host, monkeypatch):
+    home, unit, manager, lease = host
+    item = installation(home)
+    service.prepare_control_directory(ATTEMPT, lease)
+    service.install_control(item, lease)
+
+    def interrupted(home, *args):
+        if args == ("daemon-reload",):
+            raise service.ControlRefused("fixture lost manager before cache refresh")
+        return manager(home, *args)
+
+    monkeypatch.setattr(service, "_systemctl", interrupted)
+    with pytest.raises(service.ControlRefused):
+        service.remove_control(ATTEMPT, lease)
+    assert not (unit / SOCKET).exists() and not manager.active
+    assert SOCKET in manager.known
+    monkeypatch.setattr(service, "_systemctl", manager)
+    service.remove_control(ATTEMPT, lease)
+    assert not (home / ".boca-on-demand").exists() and not manager.known

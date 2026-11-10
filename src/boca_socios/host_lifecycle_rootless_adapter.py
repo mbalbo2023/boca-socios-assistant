@@ -60,6 +60,7 @@ _LIFECYCLE_FIELDS = frozenset(
         "HostConfig.NetworkMode",
         "HostConfig.PortBindings",
         "NetworkSettings.Ports",
+        "NetworkSettings.Networks",
         "RestartCount",
         "State.Restarting",
         "State.Health.Status",
@@ -171,7 +172,8 @@ class ProductionRootlessDockerIO:
             return cleanup._inspect_field("volume", ident, field)
         if (
             kind != "container"
-            or not cleanup.HEX_ID.fullmatch(ident)
+            or type(ident) is not str
+            or not _HASH.fullmatch(ident)
             or field not in _LIFECYCLE_FIELDS
         ):
             raise LifecycleAdapterNoGo("exact Boca lifecycle inspection field required")
@@ -183,10 +185,15 @@ class ProductionRootlessDockerIO:
             raise LifecycleAdapterNoGo("Boca lifecycle field receipt invalid") from None
 
     def engine_request(self, controller_id: str, operation: str) -> EngineReceipt:
-        if not cleanup.HEX_ID.fullmatch(controller_id) or operation not in (
-            "status",
-            "start",
-            "stop",
+        if (
+            type(controller_id) is not str
+            or not _HASH.fullmatch(controller_id)
+            or operation
+            not in (
+                "status",
+                "start",
+                "stop",
+            )
         ):
             raise LifecycleAdapterNoGo("Boca engine invocation coordinates invalid")
         # In-container UID10001 through the exact pre-attested controller ID,
@@ -223,7 +230,11 @@ class ProductionRootlessDockerIO:
         return EngineReceipt(cast(ControlState, parsed["state"]), parsed["changed"], parsed["pid"])
 
     def worker_action(self, worker_id: str, operation: str) -> None:
-        if not cleanup.HEX_ID.fullmatch(worker_id) or operation not in ("start", "stop"):
+        if (
+            type(worker_id) is not str
+            or not _HASH.fullmatch(worker_id)
+            or operation not in ("start", "stop")
+        ):
             raise LifecycleAdapterNoGo("Boca worker invocation coordinates invalid")
         if operation == "stop":
             output = cleanup._docker("stop", "--time", "8", worker_id)
@@ -545,6 +556,11 @@ class RootlessLifecycleProbe:
         restart_count = self._io.field("container", ident, "RestartCount")
         ports = self._io.field("container", ident, "NetworkSettings.Ports")
         if self._on_demand and service == "browser-worker":
+            from boca_socios.host_first_deploy import _browser_worker_none_network
+
+            _browser_worker_none_network(
+                self._io.field("container", ident, "NetworkSettings.Networks")
+            )
             if self._io.field("container", ident, "HostConfig.PortBindings") not in ({}, None):
                 raise LifecycleAdapterNoGo("Boca worker gained host ports")
             # Docker serializes an empty port map as null on a never-started CID.

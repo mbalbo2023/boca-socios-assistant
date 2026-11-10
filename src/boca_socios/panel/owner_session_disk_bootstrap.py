@@ -1,9 +1,9 @@
-"""Host-only, stdlib-only Option B SQLite bootstrap for a held Boca transaction.
+"""Option B SQLite bootstrap for the protected Boca cutover.
 
-This deliberately imports NO boca_socios modules or resources. A reviewed
-memfd ZIP transports this source and the exact SQL bytes. No CLI, Docker,
-network, startup, migration of boca.sqlite3, backup or cleanup is present.
-The protected cutover owns host Docker attestation and the uninterrupted FD.
+The historical host entry checks the same open lease description. The V3
+data-only container entry runs as the database owner's namespaced UID and
+matches the device/inode from the original controller. Both validate the
+same reviewed SQL and preserve the legacy database byte-for-byte.
 """
 
 from __future__ import annotations

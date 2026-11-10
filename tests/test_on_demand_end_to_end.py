@@ -55,6 +55,9 @@ class WorkerFixture(docker_fixture.FakeIO):
             }
         )
         self.fields["container", docker_fixture.WORKER, "HostConfig.PortBindings"] = {}
+        self.fields["container", docker_fixture.WORKER, "NetworkSettings.Networks"] = {
+            "none": {"IPAddress": "", "GlobalIPv6Address": ""}
+        }
         self.probe = adapter.RootlessLifecycleProbe(docker_fixture._binding(), self, on_demand=True)
 
     def observe(self, coordinates, lease):
@@ -198,7 +201,7 @@ class OwnerJourney:
         with self.db.connection() as connection:
             return LifecycleIntentStore.for_operation(connection, operation)
 
-    def deliver(self, *, authorized=True):
+    def deliver(self, *, authorized=True, entered=None):
         result = []
 
         def peer(conn, installation):
@@ -208,6 +211,8 @@ class OwnerJourney:
 
         def apply(operation, installation):
             assert self.intent(operation) is not None
+            if entered is not None:
+                entered.set()
             receipt = lifecycle.apply_panel_request(operation, installation, io=self.io)
             result.append(receipt)
             return receipt
@@ -295,23 +300,33 @@ def test_owner_stop_while_start_is_claimed_never_enables_the_engine(journey):
     j = journey
     start = j.click("iniciar")
     entered, release = Event(), Event()
+    stopping = Event()
 
     def pause():
         entered.set()
         assert release.wait(10)
 
     j.io.after_start = pause
-    with ThreadPoolExecutor(max_workers=1) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         applying = pool.submit(j.deliver)
         try:
             assert entered.wait(5)
             assert j.intent(start["operation_id"]).status == "CLAIMED"
             stop = j.click("detener", advance_clock=False)
-            assert b"Pendiente" in j.control()
+            # Two independently accepted Unix connections, as with systemd Accept=yes.
+            stopping_result = pool.submit(j.deliver, entered=stopping)
+            assert stopping.wait(5) and not stopping_result.done()
+            assert (
+                j.intent(stop["operation_id"]).status == "REQUESTED" and b"Pendiente" in j.control()
+            )
         finally:
             release.set()
         assert applying.result(timeout=5).status == "FAILED"
-    assert j.deliver().status == j.intent(stop["operation_id"]).status == "APPLIED"
+        assert (
+            stopping_result.result(timeout=5).status
+            == j.intent(stop["operation_id"]).status
+            == "APPLIED"
+        )
     assert j.intent(start["operation_id"]).status == "FAILED"
     assert j.io.effects == [
         ("worker", docker_fixture.WORKER, "start"),
@@ -320,7 +335,7 @@ def test_owner_stop_while_start_is_claimed_never_enables_the_engine(journey):
     assert j.io.state == "exited" and not j.io.engine_running and "confirmó".encode() in j.control()
 
 
-def test_worker_failure_keeps_owner_session_and_panel_after_recreation(journey):
+def test_worker_failure_keeps_owner_session_and_panel_after_recreation(journey, monkeypatch):
     j = journey
     start = j.click("iniciar")
 
@@ -339,6 +354,26 @@ def test_worker_failure_keeps_owner_session_and_panel_after_recreation(journey):
     j.channel.wake(start["operation_id"])
     assert j.deliver() == receipt
     assert j.io.effects == [("worker", docker_fixture.WORKER, "start")]
+
+    # Cross the independent Actions readback boundary against this same real file.
+    # Only the container exec is substituted. The SELECTs use production read-only SQL.
+    def in_controller(cid, action, fingerprint):
+        assert cid == j.installation.controller_id and action == "status"
+        assert fingerprint == j.installation.fingerprint()
+        return lifecycle._status_wire(j.path, fingerprint) + "\n"
+
+    monkeypatch.setattr(lifecycle, "_controller_command", in_controller)
+    with j.db.connection() as db:
+        before = db.execute("SELECT count(*) FROM audit_events").fetchone()
+        readback = lifecycle.read_panel_status(j.installation)
+        assert readback.operation_id == start["operation_id"] and readback.target == "start"
+        assert (readback.status, readback.cause, readback.exit_code, readback.oom) == (
+            "FAILED",
+            "MODULE_NOT_FOUND_ERROR",
+            1,
+            False,
+        )
+        assert db.execute("SELECT count(*) FROM audit_events").fetchone() == before
 
 
 @pytest.mark.parametrize("fault", [None, "replayed-stream", "replayed-start-time"])

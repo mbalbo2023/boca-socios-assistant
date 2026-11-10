@@ -459,3 +459,48 @@ def test_on_demand_cannot_silently_use_old_health_or_discard_control() -> None:
     del candidate["services"]["controller"]["environment"]["BOCA_BOT_CONTROL"]
     with pytest.raises(ContractError):
         valid(candidate)
+
+
+@pytest.mark.parametrize(
+    ("mode", "operation", "returncode"),
+    [
+        ("on-demand", "cutover-a-apply", 0),
+        ("on-demand", "beta-browser-status", 0),
+        ("on-demand", "beta-browser-start", 1),
+        ("on-demand", "beta-browser-restart", 1),
+        ("on-demand", "beta-browser-acceptance", 1),
+        ("on-demand", "lifecycle-apply", 1),
+        ("legacy", "lifecycle-apply", 0),
+    ],
+)
+def test_reviewed_model_controls_effectful_legacy_routes(
+    tmp_path: Path, mode: str, operation: str, returncode: int
+) -> None:
+    from textwrap import dedent
+
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
+    ).read_text()
+    guard = workflow.split('          mode="$(jq -er', 1)[1].split("      - name:", 1)[0]
+    guard = dedent('          mode="$(jq -er' + guard)
+    assert workflow.index(guard.splitlines()[0]) < workflow.index(
+        "      - name: Mark existing browser lifecycle attempt"
+    )
+    candidate = on_demand_model() if mode == "on-demand" else browser_model()
+    (tmp_path / "boca-browser-runner-model.json").write_text(json.dumps(candidate))
+    result = subprocess.run(  # noqa: S603 - reviewed workflow fragment against isolated fixture
+        ["/bin/bash", "-eu", "-o", "pipefail", "-c", guard],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "BOCA_OPERATION": operation,
+            "RUNNER_TEMP": str(tmp_path),
+            "GITHUB_OUTPUT": str(tmp_path / "output"),
+            "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+        },
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+    assert (result.returncode, result.stdout, result.stderr) == (returncode, b"", b"")
+    assert (tmp_path / "output").read_text() == f"mode={mode}\n"
+    assert (tmp_path / "summary").exists() == (returncode != 0)

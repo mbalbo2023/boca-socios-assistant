@@ -4550,7 +4550,7 @@ def _browser_named_probe(phase_name: str, attempt_id: str, command: tuple[str, .
     """Give every `docker run --rm` a C2b-cleanable positive attempt ID.
 
     A lost CLI/SSH can leave a daemon container alive despite `--rm`. Exactly
-    one of seven known named probes may exist at a time, so the same protected
+    one reviewed, named probe may exist at a time, so the same protected
     job can inspect/stop it selectively without touching any other workload.
     """
     permitted = {
@@ -4916,6 +4916,19 @@ def _browser_effective_seccomp_options(
         raise PreflightError("worker did not load exact reviewed effective seccomp JSON")
 
 
+def _browser_worker_none_network(attached: object) -> None:
+    """Accept only the recorded Docker 'none' network and empty IPv4/IPv6 at any state."""
+    if not isinstance(attached, dict) or not set(attached) <= {"none"}:
+        raise PreflightError("browser worker has an IP network attachment")
+    for endpoint in attached.values():
+        if (
+            not isinstance(endpoint, dict)
+            or endpoint.get("IPAddress") not in (None, "")
+            or endpoint.get("GlobalIPv6Address") not in (None, "")
+        ):
+            raise PreflightError("browser worker received an IP address")
+
+
 def _browser_worker_postflight(
     container: str,
     browser_image: str,
@@ -4989,16 +5002,7 @@ def _browser_worker_postflight(
     networks = record.get("NetworkSettings")
     if not isinstance(networks, dict) or networks.get("Ports") not in (None, {}):
         raise PreflightError("browser worker has unexpected IP ports")
-    attached = networks.get("Networks")
-    if not isinstance(attached, dict) or not set(attached) <= {"none"}:
-        raise PreflightError("browser worker has an IP network attachment")
-    for endpoint in attached.values():
-        if (
-            not isinstance(endpoint, dict)
-            or endpoint.get("IPAddress") not in (None, "")
-            or endpoint.get("GlobalIPv6Address") not in (None, "")
-        ):
-            raise PreflightError("browser worker received an IP address")
+    _browser_worker_none_network(networks.get("Networks"))
     _browser_check_mounts(record, controller=False)
     if running and verify_runtime:
         _browser_worker_probe(container)
@@ -6011,7 +6015,7 @@ def _cutover_activate_candidate(
     control_directory: Path | None = None,
     worker_config_hash: str | None = None,
 ) -> str:
-    """Future effectful handoff AFTER park; inaccessible from all workflows.
+    """Start the candidate after positively parking the original.
 
     Keeps old ID parked until a **different** positive-acceptance retirement
     step, so every candidate-create/start/health failure is recoverable.  No
@@ -6193,12 +6197,12 @@ def _cutover_retire_accepted_original(
     control_directory: Path | None = None,
     worker_config_hash: str | None = None,
 ) -> None:
-    """Future separate commit point, only after positive candidate acceptance.
+    """Retire the exact old ID only after positive candidate acceptance.
 
     Once the accepted candidate owns 8443, old ID cannot be restarted without
     a port collision. Unknown retirement outcome is explicitly INDETERMINATE;
     never blindly retry deletion or restore the parked ID over the new one.
-    This helper is NOT wired to phase() or any protected GitHub workflow.
+    The outer protected Cutover writes durable intent before calling this helper.
     """
     if (
         re.fullmatch(r"[0-9a-f]{64}", candidate_id) is None

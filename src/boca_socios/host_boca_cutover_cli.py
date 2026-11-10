@@ -118,7 +118,7 @@ class CutoverInvocation:
 
 IDLE_RECEIPT = (
     "BOCA_BOT_INSTALL state=IDLE_INSTALLED panel=HEALTHY engine=STOPPED "
-    "worker=CREATED pid=0 runtime_start=UNVERIFIED"
+    "worker=CREATED pid=0 controller_restart=VERIFIED runtime_start=UNVERIFIED"
 )
 
 

@@ -53,8 +53,9 @@ _UID = 10001
 _MARKER = "attempt"
 _BINDING = "binding.json"
 _ARCHIVE = "handler.pyz"
+_REMOVING = "removing"
 _PROPERTIES = ("LoadState", "FragmentPath", "DropInPaths", "ActiveState", "SubState")
-_DATA = frozenset({_MARKER, _BINDING, _ARCHIVE, _SOCKET, _SERVICE, "socket"})
+_DATA = frozenset({_MARKER, _BINDING, _ARCHIVE, _SOCKET, _SERVICE, _REMOVING, "socket"})
 # Only named source bytes from the already-verified Cutover ZIP may become durable.
 # Never persist the transaction dispatcher, incident recovery scripts or deployment files.
 _RUNTIME_FILES = (
@@ -177,13 +178,32 @@ def _sync(path: Path) -> None:
 
 
 def _new(path: Path, content: bytes) -> None:
-    # A complete private inode is published exclusively; an existing name is never overwritten.
-    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".publishing-") as f:
-        f.write(content)
-        f.flush()
-        os.fsync(f.fileno())
-        os.link(f.name, path, follow_symlinks=False)
-    _sync(path.parent)
+    # Prefer an unnamed inode so process termination cannot leave a half-written
+    # file or extra hard link in the private payload directory. linkat publishes
+    # exclusively, and reopens no source pathname controlled by a caller.
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        try:
+            fd = os.open(".", os.O_TMPFILE | os.O_RDWR, 0o600, dir_fd=directory)
+        except OSError as exc:
+            if exc.errno not in (errno.EOPNOTSUPP, errno.EISDIR, errno.EINVAL):
+                raise
+            with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".publishing-") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+                os.link(f.name, path, follow_symlinks=False)
+        else:
+            with os.fdopen(fd, "wb") as temporary:
+                temporary.write(content)
+                temporary.flush()
+                os.fsync(fd)
+                os.link(
+                    f"/proc/self/fd/{fd}", path.name, dst_dir_fd=directory, follow_symlinks=True
+                )
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def _check_attempt(attempt: str) -> bytes:
@@ -220,6 +240,8 @@ def prepare_control_directory(attempt: str, lease: BocaJobLease) -> Path:
             if not any(root.iterdir()):
                 root.rmdir()
             raise
+    if _present(root / _REMOVING):
+        raise _refuse()
     folder = root / "socket"
     if not _present(folder):
         folder.mkdir(mode=0o711)
@@ -408,6 +430,14 @@ def _socket(root: Path) -> None:
         raise _refuse()
 
 
+def _unit_link(root: Path, directory: Path, name: str, data: bytes) -> bool:
+    canonical = root / name
+    linked = _matches(canonical, directory / name)
+    if _present(canonical) and _read(canonical, 4096, links=((2,) if linked else (1,))) != data:
+        raise _refuse()
+    return linked
+
+
 def _inspect(home: Path, root: Path, contents: dict[str, bytes]) -> tuple[bool, bool]:
     directory = _unit_dir(home)
     folder = root / "socket"
@@ -417,10 +447,7 @@ def _inspect(home: Path, root: Path, contents: dict[str, bytes]) -> tuple[bool, 
     active = False
     loaded: dict[str, bool] = {}
     for name, data in contents.items():
-        canonical, destination = root / name, directory / name
-        linked = _matches(canonical, destination)
-        if _present(canonical) and _read(canonical, 4096, links=((2,) if linked else (1,))) != data:
-            raise _refuse()
+        linked = _unit_link(root, directory, name, data)
         state = _known(home, directory, name, linked)
         loaded[name] = linked and state["LoadState"] == "loaded"
         if name == _SOCKET:
@@ -444,6 +471,8 @@ def install_control(
     home = _home()
     root = _owned(home, run)
     _directory(root / "socket", mode=0o711)
+    if _present(root / _REMOVING):
+        raise _refuse()
     directory = _unit_dir(home)
     archive = _bundle(bundle_sha256)
     digest = _sha(archive)
@@ -519,8 +548,22 @@ def remove_control(attempt: str, lease: BocaJobLease) -> None:
         ):
             raise _refuse()
         units = _units(digest, _sha(raw))
-        active, _ = _inspect(home, root, units)
         directory = _unit_dir(home)
+        removing = root / _REMOVING
+        proof = _sha(raw).encode("ascii")
+        if _present(removing):
+            if _read(removing, 64) != proof:
+                raise _refuse()
+            # A previous process may have unlinked an exact hardlink before its
+            # manager reload. Recheck the remaining on-disk inodes/enable link
+            # before asking the dedicated user manager to refresh that stale cache.
+            for name, data in units.items():
+                _unit_link(root, directory, name, data)
+            _enabled(directory, _present(directory / _SOCKET))
+            _systemctl(home, "daemon-reload")
+        active, _ = _inspect(home, root, units)
+        if not _present(removing):
+            _new(removing, proof)
         if active:
             _systemctl(home, "stop", _SOCKET)
             if _inspect(home, root, units)[0]:
@@ -541,7 +584,7 @@ def remove_control(attempt: str, lease: BocaJobLease) -> None:
             state = _known(home, directory, name, False)
             if state["LoadState"] != "not-found":
                 raise _refuse()
-        for name in (*units, _ARCHIVE, _BINDING):
+        for name in (*units, _ARCHIVE, _REMOVING, _BINDING):
             (root / name).unlink(missing_ok=True)
     # Only an absent or empty known socket directory may be removed here.
     if _present(folder):
@@ -697,6 +740,8 @@ def socket_main(binding_sha256: str) -> int:
             if _sha(archive.read(_MAX_ZIP + 1)) != digest:
                 return 3
         _owned(home, installation.installation_run_id)
+        if _present(root / _REMOVING):
+            return 3
         with socket.socket(fileno=0) as accepted:
             return 0 if handle_connection(accepted, installation) else 3
     except Exception:

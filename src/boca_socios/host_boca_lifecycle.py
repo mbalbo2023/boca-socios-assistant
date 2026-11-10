@@ -251,7 +251,7 @@ def _reviewed_legacy_migrations() -> dict[int, str]:
 
 @contextmanager
 def _controller_ledger(path: Path, *, readonly: bool = False) -> Iterator[sqlite3.Connection]:
-    """Existing SQLite RW-only; no implicit create, recovery or migration."""
+    """Attest the existing legacy DB in one read-only or write transaction."""
     before = _identity(path)
     try:
         mode = "ro" if readonly else "rw"

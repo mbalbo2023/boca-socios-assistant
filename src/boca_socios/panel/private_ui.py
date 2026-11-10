@@ -94,13 +94,25 @@ def login(challenge: str, credential_id: str) -> bytes:
     )
 
 
-def home(csrf: str) -> bytes:
+def home(
+    csrf: str,
+    *,
+    bot: tuple[LifecycleIntent | None, str, str] | None = None,
+    bot_unavailable: bool = False,
+) -> bytes:
+    if bot is not None:
+        intent, start_id, stop_id = bot
+        controls = "<h2>Control del bot</h2>" + _bot_controls(intent, csrf, start_id, stop_id)
+    elif bot_unavailable:
+        controls = '<p role="status">Control del bot no disponible. <a href="/control">Consultar estado</a></p>'
+    else:
+        controls = '<p><a href="/control">Pausar o reanudar nuevas simulaciones</a></p>'
     return _page(
         "Inicio",
         "<h1>Boca Socios Assistant</h1><p>Modo de simulación. "
         "Ninguna acción reserva ni compra entradas en Boca.</p>"
+        f"{controls}"
         '<p><a href="/socios">Consultar o agregar socios</a></p>'
-        '<p><a href="/control">Pausar o reanudar nuevas simulaciones</a></p>'
         '<p><a href="/comandos">Iniciar, detener o consultar simulaciones</a></p>'
         '<p><a href="/estado">Consultar estado local</a></p>'
         '<p><a href="/avisos">Consultar avisos locales y estado Telegram</a></p>'
@@ -222,10 +234,23 @@ def _lifecycle_controls(intent: LifecycleIntent | None, csrf: str, operation_id:
 
 
 def bot_control(intent: LifecycleIntent | None, csrf: str, start_id: str, stop_id: str) -> bytes:
+    return _page(
+        "Control del bot",
+        "<h1>Control del bot</h1>" + _bot_controls(intent, csrf, start_id, stop_id),
+    )
+
+
+def _bot_controls(intent: LifecycleIntent | None, csrf: str, start_id: str, stop_id: str) -> str:
     """Voice-friendly simulation controls. Only a protected receipt establishes outcome."""
     observed = "Todavía no hay un recibo de inicio o detención del bot."
     available = {"start", "stop"}
-    if intent is not None:
+    receipt_id = ""
+    if intent is not None and not intent.on_demand:
+        observed = "Todavía no hay una solicitud del perfil bajo demanda."
+        if intent.status in ("CLAIMED", "UNCERTAIN"):
+            observed = "Una orden del perfil anterior requiere verificación en el servidor. Los controles están bloqueados."
+            available.clear()
+    elif intent is not None:
         component = "bot" if intent.component == "bot" else "Chromium"
         action = ("Inicio" if intent.target == "start" else "Detención") + " de " + component
         if intent.work_start_id is not None:
@@ -238,7 +263,14 @@ def bot_control(intent: LifecycleIntent | None, csrf: str, start_id: str, stop_i
             "FAILED": "Fallo confirmado por el ejecutor.",
             "UNCERTAIN": "Resultado incierto. Hace falta verificar el estado en el servidor.",
         }
-        observed = f"{action}. {states[intent.status]} Solicitud de {intent.requested_at} UTC."
+        observed = f"Última solicitud, {intent.requested_at} UTC. {action}. {states[intent.status]}"
+        if (intent.target, intent.status) == ("start", "APPLIED"):
+            observed += " Si el servicio se reinició desde entonces, pulse Detener bot antes de iniciar otra sesión."
+        receipt_id = (
+            "<details><summary>Identificador de solicitud</summary><code>"
+            + escape(intent.operation_id)
+            + "</code></details>"
+        )
         if intent.status in ("REQUESTED", "CLAIMED", "UNCERTAIN"):
             available.clear()
             if intent.component == "bot" and intent.status == "REQUESTED":
@@ -262,14 +294,14 @@ def bot_control(intent: LifecycleIntent | None, csrf: str, start_id: str, stop_i
             f'<input type="hidden" name="operation_id" value="{escape(operation_id, quote=True)}">'
             f'<button type="submit"{disabled}>{title}</button></form>'
         )
-    return _page(
-        "Control del bot",
-        '<h1>Control del bot</h1><p role="status" aria-live="polite">'
+    return (
+        '<p role="status" aria-live="polite">'
         + escape(observed)
         + "</p>"
+        + receipt_id
         + "".join(buttons)
         + '<p><a href="/control">Actualizar estado del bot</a></p>'
-        '<p><a href="/comandos">Elegir una simulación</a></p>',
+        '<p><a href="/comandos">Elegir una simulación</a></p>'
     )
 
 

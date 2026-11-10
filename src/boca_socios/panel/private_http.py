@@ -295,6 +295,8 @@ class PrivatePanelApplication:
             if not self._empty_get(environ):
                 return _error(start, 400, "Solicitud inválida.")
             if path == "/":
+                if self._bot_control is not None and "simulation:write" in session.permissions:
+                    return self._bot_page(start, session, home=True)
                 return _response(start, 200, private_ui.home(session.csrf))
             if path == "/telegram/configurar":
                 return _response(start, 200, telegram_setup_ui.page(), csp=telegram_setup_ui.CSP)
@@ -322,6 +324,8 @@ class PrivatePanelApplication:
             if path == "/comandos":
                 return self._command_list(start, session)
             if path == "/control":
+                if self._bot_control is not None:
+                    return self._bot_page(start, session, home=False)
                 return self._control_page(start, session)
             if path == "/estado":
                 snapshot = read_local_status(self._database_path, observed_at=self._now())
@@ -693,23 +697,30 @@ class PrivatePanelApplication:
             ),
         )
 
-    def _control_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
+    def _bot_page(self, start: StartResponse, session: OwnerSession, *, home: bool) -> list[bytes]:
         try:
             lifecycle = self._lifecycle.current()
         except LifecycleStorageUnavailable:
-            return _error(start, 503, "Estado de solicitudes al host no disponible.")
-        if self._bot_control is not None:
+            status, reason = 503, "Estado de solicitudes al host no disponible."
+        else:
             start_id = self._sessions.new_operation(
                 session, form_scope=b"owner-lifecycle-v1:bot:start"
             )
             stop_id = self._sessions.new_operation(
                 session, form_scope=b"owner-lifecycle-v1:bot:stop"
             )
-            if start_id is None or stop_id is None:
-                return _error(start, 429, "Demasiados formularios abiertos. Vuelva a ingresar.")
-            return _response(
-                start, 200, private_ui.bot_control(lifecycle, session.csrf, start_id, stop_id)
-            )
+            if start_id is not None and stop_id is not None:
+                if home:
+                    body = private_ui.home(session.csrf, bot=(lifecycle, start_id, stop_id))
+                else:
+                    body = private_ui.bot_control(lifecycle, session.csrf, start_id, stop_id)
+                return _response(start, 200, body)
+            status, reason = 429, "Demasiados formularios abiertos. Vuelva a ingresar."
+        if home:
+            return _response(start, 200, private_ui.home(session.csrf, bot_unavailable=True))
+        return _error(start, status, reason)
+
+    def _control_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
         operation_id = self._sessions.new_operation(session)
         if operation_id is None:
             return _error(start, 429, "Demasiados formularios abiertos. Vuelva a ingresar.")
@@ -718,6 +729,10 @@ class PrivatePanelApplication:
             ready = self._commands is not None and not self._commands.failed
         if accepting is None:
             return _error(start, 503, "Estado de admisión no disponible. No inicie simulaciones.")
+        try:
+            lifecycle = self._lifecycle.current()
+        except LifecycleStorageUnavailable:
+            return _error(start, 503, "Estado de solicitudes al host no disponible.")
         return _response(
             start,
             200,
@@ -758,9 +773,18 @@ class PrivatePanelApplication:
             return _error(start, result, "Solicitud ya procesada o no autorizada.")
         assert operation is not None
         try:
-            intent = self._lifecycle.request(
-                component, target, fields["operation_id"], on_demand=self._bot_control is not None
-            )
+            if operation.lifecycle_id is not None:
+                intent = self._lifecycle.current()
+                if intent is None or intent.operation_id != operation.lifecycle_id:
+                    self._sessions.finish(operation, 303)
+                    return self._redirect(start, "/control")
+            else:
+                intent = self._lifecycle.request(
+                    component,
+                    target,
+                    fields["operation_id"],
+                    on_demand=self._bot_control is not None,
+                )
         except LifecycleConflict:
             self._sessions.finish(operation, 409)
             return _error(
@@ -769,7 +793,7 @@ class PrivatePanelApplication:
                 "Ya existe una solicitud al host sin cierre confirmado. Consulte Control.",
             )
         except LifecycleStorageUnavailable:
-            self._sessions.finish(operation, 503)
+            self._sessions.finish(operation, 503, lifecycle_id=operation.lifecycle_id)
             return _error(start, 503, "Resultado incierto. Consulte Control antes de repetir.")
         if self._bot_control is not None and intent.status == "REQUESTED":
             try:
@@ -784,6 +808,7 @@ class PrivatePanelApplication:
         intent = self._lifecycle.current()
         return (
             intent is not None
+            and intent.on_demand
             and intent.component == "bot"
             and intent.target == "start"
             and intent.status in ("REQUESTED", "CLAIMED")
@@ -829,6 +854,7 @@ class PrivatePanelApplication:
                 return None
             return (
                 intent is not None
+                and intent.on_demand
                 and intent.component == "bot"
                 and intent.target == "start"
                 and intent.status == "APPLIED"

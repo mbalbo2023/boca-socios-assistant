@@ -87,7 +87,7 @@ class Settings:
             raise ValueError("invalid synthetic browser backend")
         if type(self.bot_control) is not str or self.bot_control not in {"off", "on-demand"}:
             raise ValueError("invalid BETA bot control mode")
-        if self.bot_on_demand and self.browser_backend != "ipc":
+        if self.bot_on_demand and (self.browser_backend != "ipc" or self.site_bridge_mode != "off"):
             raise ValueError("on-demand bot control requires the isolated IPC BETA")
         stage_mode = self.telegram_pairing_stage_mode
         if type(stage_mode) is not str or stage_mode not in {"off", "encrypted-only"}:

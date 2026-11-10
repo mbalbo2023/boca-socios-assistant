@@ -1,0 +1,193 @@
+"""Observe one installed Boca pair and verify its bounded receipt in the Actions runner."""
+
+from __future__ import annotations
+
+import json
+import re
+import sys
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass, fields, replace
+
+from boca_socios import host_boca_lifecycle as host
+from boca_socios.host_boca_cleanup import BocaJobLease, protected_boca_job_lease
+from boca_socios.host_lifecycle_rootless_adapter import (
+    ProductionRootlessDockerIO,
+    RootlessLifecycleProbe,
+)
+from boca_socios.host_on_demand_lifecycle import (
+    OnDemandInstallation,
+    PanelStatus,
+    read_panel_status,
+    validate_panel_status,
+)
+from boca_socios.host_on_demand_service import read_installed_binding
+
+PREFIX = "BOCA_ON_DEMAND_STATUS "
+NO_GO = PREFIX + "result=NO_GO"
+_LIMIT = 2048
+# The shared attestor requires syntactically complete coordinates. Its fixed read-only
+# placeholder is never presented to the ledger, sent on a socket or published as an intent.
+_PROBE_ID = "00000000-0000-4000-8000-000000000001"
+_FIELDS = frozenset(
+    {
+        "schema",
+        "observation_run_id",
+        "source_sha",
+        "controller_image",
+        "worker_image",
+        "installation_run_id",
+        "controller_id",
+        "worker_id",
+        "panel",
+        "engine",
+        "worker_state",
+        "worker_pid",
+        "worker_healthy",
+        "operation",
+    }
+)
+_OP_FIELDS = frozenset(field.name for field in fields(PanelStatus))
+
+
+class StatusUnavailable(ValueError):
+    """A stable, exact, safe-to-publish observation could not be verified."""
+
+
+def _matches(value: object, pattern: re.Pattern[str]) -> bool:
+    return type(value) is str and pattern.fullmatch(value) is not None
+
+
+@dataclass(frozen=True, slots=True)
+class _Pins:
+    source_sha: str
+    controller_image: str
+    worker_image: str
+    observation_run_id: str
+
+    def validate(self) -> None:
+        if not (
+            _matches(self.source_sha, host._SHA)
+            and _matches(self.controller_image, host._CONTROLLER_IMAGE)
+            and _matches(self.worker_image, host._WORKER_IMAGE)
+            and _matches(self.observation_run_id, host._ATTEMPT)
+        ):
+            raise StatusUnavailable
+
+
+def _physical(
+    installation: OnDemandInstallation,
+    coordinates: host.LifecycleHostCoordinates,
+    lease: BocaJobLease,
+) -> tuple[str, int, bool, bool]:
+    io = ProductionRootlessDockerIO()
+    probe = RootlessLifecycleProbe(installation.pair, io, on_demand=True)
+    state = probe.observe(coordinates, lease)
+    engine = state.require(coordinates)
+    phase = io.field("container", installation.worker_id, "State.Status")
+    pid = io.field("container", installation.worker_id, "State.Pid")
+    if type(phase) is not str or type(pid) is not int or state.worker_running != (pid > 0):
+        raise StatusUnavailable
+    return phase, pid, state.worker_healthy, engine
+
+
+def _observe(pins: _Pins) -> dict[str, object]:
+    with protected_boca_job_lease(pins.observation_run_id) as lease:
+        installed = read_installed_binding(lease)
+        if (installed.source_sha, installed.controller_image, installed.worker_image) != (
+            pins.source_sha,
+            pins.controller_image,
+            pins.worker_image,
+        ):
+            raise StatusUnavailable
+        coordinates = replace(installed.coordinates(_PROBE_ID), attempt_id=pins.observation_run_id)
+        live = _physical(installed, coordinates, lease)
+        operation = read_panel_status(installed)
+        # The owner can submit a new request or the worker can exit on its own while
+        # this read holds the deployment lease. Publish only a stable pair of samples.
+        if (
+            _physical(installed, coordinates, lease) != live
+            or read_panel_status(installed) != operation
+        ):
+            raise StatusUnavailable
+        phase, pid, healthy, engine = live
+        return {
+            "schema": 1,
+            **asdict(pins),
+            "installation_run_id": installed.installation_run_id,
+            "controller_id": installed.controller_id,
+            "worker_id": installed.worker_id,
+            "panel": "HEALTHY",
+            "engine": "RUNNING" if engine else "STOPPED",
+            "worker_state": phase,
+            "worker_pid": pid,
+            "worker_healthy": healthy,
+            "operation": asdict(operation) if operation is not None else None,
+        }
+
+
+def _checked(document: object, pins: _Pins) -> str:
+    if type(document) is not dict or document.keys() != _FIELDS:
+        raise StatusUnavailable
+    if (
+        type(document["schema"]) is not int
+        or document["schema"] != 1
+        or any(document[key] != value for key, value in asdict(pins).items())
+        or not _matches(document["installation_run_id"], host._ATTEMPT)
+        or document["installation_run_id"] == pins.observation_run_id
+        or not _matches(document["controller_id"], host._ID)
+        or not _matches(document["worker_id"], host._ID)
+        or document["controller_id"] == document["worker_id"]
+        or document["panel"] != "HEALTHY"
+        or document["engine"] not in ("STOPPED", "RUNNING")
+    ):
+        raise StatusUnavailable
+    phase, pid, healthy = (
+        document["worker_state"],
+        document["worker_pid"],
+        document["worker_healthy"],
+    )
+    if (
+        phase not in ("created", "running", "exited", "dead", "paused")
+        or type(pid) is not int
+        or not 0 <= pid <= 2**31 - 1
+        or (phase in ("running", "paused")) != (pid > 0)
+        or type(healthy) is not bool
+        or healthy
+        and not pid
+    ):
+        raise StatusUnavailable
+    operation = document["operation"]
+    if operation is not None:
+        if type(operation) is not dict or operation.keys() != _OP_FIELDS:
+            raise StatusUnavailable
+        validate_panel_status(PanelStatus(**operation))
+    return PREFIX + json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n"
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    try:
+        if len(args) != 5 or args[0] not in ("host", "verify"):
+            raise StatusUnavailable
+        pins = _Pins(*args[1:])
+        pins.validate()
+        if args[0] == "host":
+            line = _checked(_observe(pins), pins)
+        else:
+            raw = sys.stdin.buffer.read(_LIMIT + 1)
+            if len(raw) > _LIMIT or not raw.startswith(PREFIX.encode("ascii")):
+                raise StatusUnavailable
+            line = _checked(json.loads(raw[len(PREFIX) :].decode("ascii")), pins)
+            if line.encode("ascii") != raw:
+                raise StatusUnavailable
+    except Exception:
+        # A daemon, SQLite, JSON or IO exception can contain private data. Only the
+        # finite failure line is permissible on either side of the SSH boundary.
+        print(NO_GO)
+        return 3
+    sys.stdout.write(line)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
