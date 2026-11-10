@@ -112,6 +112,10 @@ R132_PREARMED_CAPTURE_FULL_CUTOVER_SHA = (
 R135_IDLE_INSTALL_FULL_CUTOVER_SHA = (
     "2a91c7efd38e2d67b32c56838543c043b1d1f576d7da2e6b6784af7f794291eb"
 )
+# R136 reads the fixed historical idle installation and controller inventory.
+R136_INCIDENT_OBSERVER_FULL_CUTOVER_SHA = (
+    "0bc394e88b9837cd92ef5fdb5db7e277f93522e1c19ca962a9c458b764ee421f"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -269,7 +273,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R135_IDLE_INSTALL_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R136_INCIDENT_OBSERVER_FULL_CUTOVER_SHA
+    assert digest != R135_IDLE_INSTALL_FULL_CUTOVER_SHA
     assert digest != R132_PREARMED_CAPTURE_FULL_CUTOVER_SHA
     assert digest != R127_WORKER_EXIT_CAPTURE_FULL_CUTOVER_SHA
     assert digest != R119_RECOVERED_READONLY_FULL_CUTOVER_SHA

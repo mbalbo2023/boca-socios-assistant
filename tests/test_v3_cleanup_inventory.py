@@ -349,7 +349,8 @@ def test_v3_plan_runs_under_existing_reconcile_and_never_removes_docker() -> Non
     )[0]
     assert (
         "if: inputs.operation == 'cutover-a-reconcile' "
-        "&& inputs.protected_action_context != '42658939650'\n"
+        "&& inputs.protected_action_context != '42658939650' "
+        "&& inputs.protected_action_context != '42742150879'\n"
     ) in block
     assert "inputs.protected_action_context != '42405706503'" not in block
     assert "inputs.protected_action_context != '42426260583'" not in block
@@ -362,8 +363,8 @@ def test_v3_plan_runs_under_existing_reconcile_and_never_removes_docker() -> Non
 
 def test_workflow_reconcile_allowlists_latest_v3_without_prepare() -> None:
     workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
-    assert "42405706503|42426260583|42658939650" in workflow
-    assert 'incident["id"] in (42405706503, 42426260583, 42658939650)' in workflow
+    assert "42405706503|42426260583|42658939650|42742150879" in workflow
+    assert 'incident["id"] in (42405706503, 42426260583, 42658939650, 42742150879)' in workflow
     assert f'"{LATEST_RUN}": "{LATEST_SOURCE}"' in workflow
     assert "BOCA_INCIDENT_SOURCE_SHA" in workflow
     assert "host-v3" in workflow and "verify-v3" in workflow
@@ -375,6 +376,7 @@ def test_workflow_reconcile_allowlists_latest_v3_without_prepare() -> None:
         (RUN, SOURCE),
         (LATEST_RUN, LATEST_SOURCE),
         ("42658939650", "759a1dbadd6e50ab8c331daefc4e39608025a66f"),
+        ("42742150879", "b6a53c3348ce39c4d8536487e2baed559c2ca42f"),
     ],
 )
 def test_exact_embedded_github_attestation_accepts_only_trusted_v3_incidents(
@@ -399,6 +401,10 @@ def test_exact_embedded_github_attestation_accepts_only_trusted_v3_incidents(
         "display_title": "BOCA-SIMULATION-DEPLOY-V3",
         "path": ".github/workflows/boca-first-deploy.yml",
     }
+    extra_mutations = ()
+    if run_id == "42742150879":
+        incident["run_number"] = 904
+        extra_mutations = ({"run_number": 903},)
     env = {
         **os.environ,
         "GITHUB_ENV": str(tmp_path / "github-env"),
@@ -419,6 +425,7 @@ def test_exact_embedded_github_attestation_accepts_only_trusted_v3_incidents(
         {"display_title": "SPOOFED-WORKFLOW"},
         {"path": ".github/workflows/other.yml"},
         {"id": 11111111111},
+        *extra_mutations,
     ):
         candidate = {**incident, **(mutation or {})}
         path = tmp_path / "incident.json"

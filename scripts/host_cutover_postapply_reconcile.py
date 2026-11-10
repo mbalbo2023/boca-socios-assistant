@@ -16,6 +16,7 @@ import re
 import stat
 import subprocess
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,74 @@ RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
 IDENT = re.compile(r"[0-9a-f]{64}\Z")
 SOURCE = re.compile(r"[0-9a-f]{40}\Z")
 MAX_JSON = 4096
+R904 = "42742150879"
+R904_SHA = "b6a53c3348ce39c4d8536487e2baed559c2ca42f"
+R904_LIMIT = 16384
+LEGACY904 = "27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793"
+_IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant"
+_BASE = "b9e9465d6ec8e484b615d7bd65aab5a3c150d34a9893ad181167d2099893d811"
+_OVERLAY = "3175803115f55dd99007739716fbaa1c7d677772f9ff658039f794023e708861"
+_SECCOMP = "cc3e61cabda6bbc1e53e54d27ba4d55a9d3be829b6dd1a596f4a7b31b1cc7849"
+_PINS904 = {
+    "legacy_id": LEGACY904,
+    "legacy_source_sha": "cabce9f1e452e63ded115f447559a358dc0f4d1b",
+    "target_source_sha": R904_SHA,
+    "legacy_compose_sha": _BASE,
+    "target_compose_sha": _BASE,
+    "overlay_sha": _OVERLAY,
+    "seccomp_sha": _SECCOMP,
+    "legacy_image_ref": _IMAGE
+    + "@sha256:cf6e4266cfcfea0c07fa31301d59c7aaa3b9c2fefb9f6843baddd208cacd3b59",
+    "target_image_ref": _IMAGE
+    + "@sha256:40ceea681a8568e93bb2d22decb294e712e70de32b68156d998a0bf612b7569b",
+    "browser_image_ref": _IMAGE
+    + "-browser@sha256:8fb79002e937de1ca014db502af053a37046fa4361c44a7719f24e813faf185c",
+}
+_STAGE904 = "cutover-a-" + R904
+_ACT = ".boca-on-demand"
+_UNIT = "boca-bot-control.socket"
+_SERVICE = "boca-bot-control@.service"
+_USER = ".config/systemd/user"
+_FILES904 = {
+    "root": "",
+    "compose": "compose.beta.yaml",
+    "overlay": "compose.beta.browser.yaml",
+    "seccomp": "seccomp_profile.json",
+    "stage": _STAGE904,
+    "stage_base": _STAGE904 + "/compose.beta.yaml",
+    "stage_overlay": _STAGE904 + "/compose.beta.browser.yaml",
+    "stage_seccomp": _STAGE904 + "/seccomp_profile.json",
+    "stage_marker": _STAGE904 + "/cutover-a-marker.json",
+    "promote_intent": _STAGE904 + "/cutover-a-commit-intent.json",
+    "promote_result": _STAGE904 + "/cutover-a-commit-result.json",
+}
+_ACT904 = {
+    "actuator": _ACT,
+    "attempt": _ACT + "/attempt",
+    "binding": _ACT + "/binding.json",
+    "handler": _ACT + "/handler.pyz",
+    "removing": _ACT + "/removing",
+    "socket_dir": _ACT + "/socket",
+    "endpoint": _ACT + "/socket/control.sock",
+    "socket_unit": _ACT + "/" + _UNIT,
+    "service_unit": _ACT + "/" + _SERVICE,
+    "config_dir": ".config",
+    "systemd_dir": ".config/systemd",
+    "user_units": _USER,
+    "wants_dir": _USER + "/default.target.wants",
+    "installed_socket": _USER + "/" + _UNIT,
+    "installed_service": _USER + "/" + _SERVICE,
+    "enabled_socket": _USER + "/default.target.wants/" + _UNIT,
+}
+_DIGEST904 = {
+    "compose": _BASE,
+    "stage_base": _BASE,
+    "overlay": _OVERLAY,
+    "stage_overlay": _OVERLAY,
+    "seccomp": _SECCOMP,
+    "stage_seccomp": _SECCOMP,
+}
+_EXTRAS904 = {"root", "stage", "actuator", "socket_dir"}
 # The positive compensation observed in #883 may unlock *only* a second
 # read-only inventory, never another Cutover, cleanup or retry decision.
 RECOVERED_INVENTORY_RUN = "42426260583"
@@ -149,7 +218,9 @@ def _read_private(
         ):
             raise ReconcileError("DIRECTORY")
         try:
-            child = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=fd)
+            child = os.open(
+                name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=fd
+            )
         except FileNotFoundError:
             return None
         try:
@@ -616,6 +687,228 @@ def _staged_attempt(run_id: str) -> dict[str, str]:
         os.close(descriptor)
 
 
+def _file904(base: Path, path: str, key: str, allowed: set[str], owner: int) -> tuple[Any, Any]:
+    """Only named entries. Never follow a link or open payload, units, credentials or a socket."""
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
+    pieces = path.split("/") if path else []
+    try:
+        with ExitStack() as stack:
+            parent = os.open(base, flags | os.O_DIRECTORY)
+            stack.callback(os.close, parent)
+            for part in pieces[:-1]:
+                perm = os.fstat(parent)
+                if (perm.st_uid, perm.st_gid) != (owner, owner) or perm.st_mode & 0o022:
+                    return "UNSAFE", None
+                parent = os.open(part, flags | os.O_DIRECTORY, dir_fd=parent)
+                stack.callback(os.close, parent)
+            parent_stat = os.fstat(parent)
+            if pieces and (
+                (parent_stat.st_uid, parent_stat.st_gid) != (owner, owner)
+                or parent_stat.st_mode & 0o022
+            ):
+                return "UNSAFE", None
+            leaf = pieces[-1] if pieces else "."
+            meta = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+            kind = next(
+                (
+                    name
+                    for name, test in (
+                        ("file", stat.S_ISREG),
+                        ("dir", stat.S_ISDIR),
+                        ("link", stat.S_ISLNK),
+                        ("socket", stat.S_ISSOCK),
+                    )
+                    if test(meta.st_mode)
+                ),
+                "other",
+            )
+            owned = (meta.st_uid, meta.st_gid) == (owner, owner)
+            facts = [
+                kind,
+                meta.st_dev,
+                meta.st_ino,
+                stat.S_IMODE(meta.st_mode),
+                meta.st_nlink,
+                owned,
+            ]
+            detail: Any = None
+            if owned and kind == "link" and key == "enabled_socket":
+                detail = os.readlink(leaf, dir_fd=parent) == "../" + _UNIT
+            elif owned and kind == "dir" and key in _EXTRAS904 and not meta.st_mode & 0o022:
+                child = os.open(leaf, flags | os.O_DIRECTORY, dir_fd=parent)
+                stack.callback(os.close, child)
+                if not os.path.samestat(meta, os.fstat(child)):
+                    return "UNSTABLE", None
+                with os.scandir(child) as entries:
+                    count = 0
+                    for index, entry in enumerate(entries):
+                        if index >= 256:
+                            return facts, "LIMIT"
+                        count += entry.name not in allowed
+                    detail = count
+            elif (
+                owned
+                and kind == "file"
+                and key in {*_DIGEST904, "stage_marker", "attempt"}
+                and meta.st_nlink == 1
+                and stat.S_IMODE(meta.st_mode) in (0o600, 0o644)
+                and 0 < meta.st_size <= (32768 if key in _DIGEST904 else 2048)
+            ):
+                child = os.open(leaf, flags, dir_fd=parent)
+                stack.callback(os.close, child)
+                if not os.path.samestat(meta, os.fstat(child)):
+                    return "UNSTABLE", None
+                data = os.read(child, meta.st_size + 1)
+                after = os.fstat(child)
+                if (len(data), after.st_size, after.st_mtime_ns, after.st_ctime_ns) != (
+                    meta.st_size,
+                    meta.st_size,
+                    meta.st_mtime_ns,
+                    meta.st_ctime_ns,
+                ):
+                    return "UNSTABLE", None
+                if key in _DIGEST904:
+                    detail = hashlib.sha256(data).hexdigest() == _DIGEST904[key]
+                elif key == "attempt":
+                    detail = data == (R904 + "\n").encode()
+                else:
+                    try:
+                        marker = json.loads(data)
+                    except (ValueError, UnicodeError):
+                        marker = None
+                    if (
+                        type(marker) is dict
+                        and _canonical(marker) == data
+                        and all(
+                            marker.get(k) == v
+                            for k, v in {
+                                "version": "cutover-a-stage-v1",
+                                "attempt_id": R904,
+                                "legacy_controller_id": LEGACY904,
+                                "legacy_source_sha": _PINS904["legacy_source_sha"],
+                                "target_source_sha": R904_SHA,
+                                "legacy_compose_sha": _BASE,
+                                "target_compose_sha": _BASE,
+                                "overlay_compose_sha": _OVERLAY,
+                                "seccomp_sha": _SECCOMP,
+                                "target_image": _PINS904["target_image_ref"],
+                                "browser_image": _PINS904["browser_image_ref"],
+                            }.items()
+                        )
+                    ):
+                        ident = [marker.get("legacy_compose_dev"), marker.get("legacy_compose_ino")]
+                        if all(type(n) is int and 0 <= n < 2**64 for n in ident):
+                            detail = ident
+            return facts, detail
+    except FileNotFoundError:
+        return "ABSENT", None
+    except NotADirectoryError:
+        return "UNSAFE", None
+    except OSError:
+        return "UNREADABLE", None
+
+
+def _files904(root: Path, home: Path, owner: int = UID) -> dict[str, Any]:
+    entries = {}
+    details = {}
+    for base, slots in ((root, _FILES904), (home, _ACT904)):
+        for key, path in slots.items():
+            allowed = {
+                p.rpartition("/")[2] for p in slots.values() if p and p.rpartition("/")[0] == path
+            }
+            entry, detail = _file904(base, path, key, allowed, owner)
+            entries[key] = entry
+            if key in _EXTRAS904 | _DIGEST904.keys() | {
+                "attempt",
+                "enabled_socket",
+                "stage_marker",
+            }:
+                details[key] = detail
+    return {"inodes": entries, "checks": details}
+
+
+def _safe_inventory904(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """No free Docker labels, container names, health output or addresses in this receipt."""
+    port = {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
+    allowed = {
+        "name": (
+            "/boca-socios-controller-1",
+            "/boca-socios-controller-legacy-" + R904,
+            "/boca-socios-browser-worker-1",
+            "/boca-socios-telegram-1",
+        ),
+        "health": (None, "healthy", "starting", "unhealthy"),
+        "revision": (_PINS904["legacy_source_sha"], R904_SHA),
+        "service": ("controller", "browser-worker", "telegram"),
+        "attempt": (None, "", R904),
+        "port_binding": (None, {}, port),
+    }
+    result = []
+    for row in items:
+        if (
+            type(row) is not dict
+            or set(row) != set(FIELDS)
+            or type(row["id"]) is not str
+            or not IDENT.fullmatch(row["id"])
+            or type(row["image_id"]) is not str
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", row["image_id"])
+            or type(row["running"]) is not bool
+        ):
+            raise ReconcileError("R904_INVENTORY")
+        result.append(
+            {
+                **row,
+                **{
+                    key: row[key] if row[key] in values else "OTHER"
+                    for key, values in allowed.items()
+                },
+            }
+        )
+    return result
+
+
+def _processes904(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    result = {}
+    for row in rows:
+        try:
+            fields = json.loads(
+                _docker(
+                    "inspect",
+                    "--format",
+                    "[{{json .Id}},{{json .State.Status}},{{json .State.Pid}},{{json .Config.Image}},{{json .HostConfig.RestartPolicy.Name}},{{json .RestartCount}}]",
+                    row["id"],
+                )
+            )
+            if type(fields) is not list or len(fields) != 6 or fields[0] != row["id"]:
+                raise ReconcileError("R904_CONTAINER")
+            _, phase, pid, image, restart, restarts = fields
+            if (
+                phase
+                not in ("created", "running", "paused", "exited", "dead", "restarting", "removing")
+                or type(pid) is not int
+                or not 0 <= pid < 2**31
+            ):
+                raise ReconcileError("R904_CONTAINER")
+            role = next(
+                (
+                    k
+                    for k in ("legacy_image_ref", "target_image_ref", "browser_image_ref")
+                    if image == _PINS904[k]
+                ),
+                "OTHER",
+            )
+            result[row["id"]] = [
+                phase,
+                pid,
+                role,
+                restart if restart in ("no", "unless-stopped") else "OTHER",
+                restarts if type(restarts) is int and 0 <= restarts < 2**63 else "UNKNOWN",
+            ]
+        except (OSError, TypeError, ValueError):
+            result[row["id"]] = "INDETERMINATE"
+    return result
+
+
 def _host(run_id: str, prepared_id: str | None, *, source_sha: str | None = None) -> dict[str, Any]:
     if not RUN.fullmatch(run_id):
         raise ReconcileError("RUN_ID")
@@ -624,6 +917,8 @@ def _host(run_id: str, prepared_id: str | None, *, source_sha: str | None = None
             raise ReconcileError("RUN_ID")
     elif prepared_id is not None or not SOURCE.fullmatch(source_sha):
         raise ReconcileError("V3_SOURCE_ID")
+    if run_id == R904 and source_sha != R904_SHA:
+        raise ReconcileError("R904_PROVENANCE")
     if os.geteuid() != UID or os.getegid() != UID:
         raise ReconcileError("ROOTLESS_UID")
     home = _private_home()
@@ -655,11 +950,39 @@ def _host(run_id: str, prepared_id: str | None, *, source_sha: str | None = None
         or result["target_source_sha"] != intent["target_source_sha"]
     ):
         raise ReconcileError("RESULT_INTENT_CONFLICT")
-    first = _docker_snapshot()
-    second = _docker_snapshot()
-    if first != second:
-        raise ReconcileError("BOCA_RUNTIME_DRIFT")
-    legacy = intent["legacy_id"] if intent is not None else ""
+    if run_id == R904:
+        if intent is not None and any(intent[k] != value for k, value in _PINS904.items()):
+            raise ReconcileError("R904_INTENT")
+        if result is not None and (
+            result["version"] != "boca-cutover-a-terminal-v1"
+            or result["legacy_source_sha"] != _PINS904["legacy_source_sha"]
+            or result["state"] not in ("RECOVERED", "NO_GO")
+            or result["irreversible_commit_started"]
+            or result["state"] == "RECOVERED"
+            and (not result["original_restored"] or result["cleanup"] != "ACCEPT")
+            or len({result["legacy_id"], result["worker_id"], result["candidate_id"]}) != 3
+            or any(result[k] is None for k in ("worker_id", "candidate_id"))
+        ):
+            raise ReconcileError("R904_TERMINAL")
+    inventory_state = "OBSERVED"
+    if run_id == R904:
+        try:
+            first = _safe_inventory904(_docker_snapshot())
+            if _safe_inventory904(_docker_snapshot()) != first:
+                raise ReconcileError("BOCA_RUNTIME_DRIFT")
+        except (OSError, TypeError, ValueError):
+            first = []
+            inventory_state = "INDETERMINATE"
+        try:
+            staged = _staged_attempt(run_id)
+        except (OSError, ValueError):
+            staged = dict.fromkeys(("stage", "promotion_intent", "promotion_result"), "UNVERIFIED")
+    else:
+        first = _docker_snapshot()
+        if first != _docker_snapshot():
+            raise ReconcileError("BOCA_RUNTIME_DRIFT")
+        staged = _staged_attempt(run_id)
+    legacy = intent["legacy_id"] if intent is not None else LEGACY904 if run_id == R904 else ""
     originals = [item for item in first if item["id"] == legacy] if legacy else []
     candidates = [
         item
@@ -694,12 +1017,12 @@ def _host(run_id: str, prepared_id: str | None, *, source_sha: str | None = None
         "candidate_controllers": candidates,
         "browser_workers": workers,
         "boca_inventory": first,
-        "boca_containers": len(first),
+        "boca_containers": len(first) if inventory_state == "OBSERVED" else None,
         "port_8443": _ports(first),
         "prepared_go_marker": marker_status,
         "prepared_go_marker_reason": marker_reason,
         "stage_preflight": _stage_preflight(intent),
-        **_staged_attempt(run_id),
+        **staged,
         "runtime_attested": False,
         "go_for_retry": False,
         "foreign_resources_touched": False,
@@ -721,7 +1044,225 @@ def _host(run_id: str, prepared_id: str | None, *, source_sha: str | None = None
             if result is not None and result["version"] in (TERMINAL_V3, TERMINAL_V4)
             else None
         )
+    if run_id == R904:
+        receipt["version"] = "boca-postapply-reconcile-904-v1"
+        situation = _files904(Path("/srv/boca-socios"), home)
+        second_files = _files904(Path("/srv/boca-socios"), home)
+        for key, entry in situation["inodes"].items():
+            if entry != second_files["inodes"][key] or situation["checks"].get(key) != second_files[
+                "checks"
+            ].get(key):
+                situation["inodes"][key] = "UNSTABLE"
+                if key in situation["checks"]:
+                    situation["checks"][key] = None
+        receipt["incident_files"] = situation
+        processes = _processes904(first)
+        second_processes = _processes904(first)
+        receipt["processes"] = {
+            cid: value if value == second_processes[cid] else "INDETERMINATE"
+            for cid, value in processes.items()
+        }
+        receipt["inventory_state"] = inventory_state
+        receipt["terminal_ids"] = {
+            key: result[key] if result is not None else None
+            for key in ("candidate_id", "worker_id")
+        }
     return receipt
+
+
+def _verify904(record: dict[str, Any]) -> None:
+    """Exact public projection for this incident, including every nested field."""
+    if (
+        record["legacy_id"] != LEGACY904
+        or record["intent"] not in ("PRESENT", "ABSENT")
+        or record["result"] not in ("PRESENT", "ABSENT")
+        or record["terminal_worker_evidence"] is not None
+    ):
+        raise ReconcileError("R904_SCHEMA")
+    terminal = record["terminal_ids"]
+    if type(terminal) is not dict or set(terminal) != {"candidate_id", "worker_id"}:
+        raise ReconcileError("R904_TERMINAL")
+    if record["result"] == "PRESENT":
+        if (
+            record["intent"] != "PRESENT"
+            or record["terminal_state"] not in ("NO_GO", "RECOVERED")
+            or record["cleanup"] not in ("ACCEPT", "NO_GO", "INDETERMINATE")
+            or type(record["original_restored"]) is not bool
+            or record["commit_started"] is not False
+            or not all(record[k] is True for k in ("worker_id_recorded", "candidate_id_recorded"))
+            or (
+                record["terminal_state"] == "RECOVERED"
+                and (not record["original_restored"] or record["cleanup"] != "ACCEPT")
+            )
+            or not all(type(v) is str and IDENT.fullmatch(v) for v in terminal.values())
+            or len({*terminal.values(), LEGACY904}) != 3
+        ):
+            raise ReconcileError("R904_TERMINAL")
+    elif (
+        record["terminal_state"] != "UNVERIFIED"
+        or record["cleanup"] != "UNVERIFIED"
+        or any(v is not None for v in terminal.values())
+        or any(record[k] is not None for k in ("commit_started", "original_restored"))
+    ):
+        raise ReconcileError("R904_TERMINAL")
+    items = record["boca_inventory"]
+    if type(items) is not list or len(items) > 8 or _safe_inventory904(items) != items:
+        raise ReconcileError("R904_INVENTORY")
+    state = record["inventory_state"]
+    if (
+        state not in ("OBSERVED", "INDETERMINATE")
+        or state == "INDETERMINATE"
+        and (items or record["boca_containers"] is not None)
+        or state == "OBSERVED"
+        and (type(record["boca_containers"]) is not int or record["boca_containers"] != len(items))
+    ):
+        raise ReconcileError("R904_INVENTORY")
+    ids = [x["id"] for x in items]
+    actual = next((x for x in items if x["id"] == LEGACY904), None)
+    if (
+        ids != sorted(set(ids))
+        or record["original"] != actual
+        or record["browser_workers"] != [x for x in items if x["service"] == "browser-worker"]
+        or record["candidate_controllers"]
+        != [
+            x
+            for x in items
+            if record["intent"] == "PRESENT"
+            and x["service"] == "controller"
+            and x["revision"] == R904_SHA
+            and x["id"] != LEGACY904
+        ]
+        or record["port_8443"] != _ports(items)
+    ):
+        raise ReconcileError("R904_INVENTORY")
+    processes = record["processes"]
+    if (
+        type(processes) is not dict
+        or set(processes) != set(ids)
+        or any(
+            type(p) is not list
+            or len(p) != 5
+            or p[0]
+            not in ("created", "running", "paused", "exited", "dead", "restarting", "removing")
+            or type(p[1]) is not int
+            or not 0 <= p[1] < 2**31
+            or p[2] not in ("legacy_image_ref", "target_image_ref", "browser_image_ref", "OTHER")
+            or p[3] not in ("no", "unless-stopped", "OTHER")
+            or p[4] != "UNKNOWN"
+            and (type(p[4]) is not int or not 0 <= p[4] < 2**63)
+            for p in processes.values()
+            if p != "INDETERMINATE"
+        )
+    ):
+        raise ReconcileError("R904_CONTAINER")
+    evidence = record["incident_files"]
+    if type(evidence) is not dict or set(evidence) != {"inodes", "checks"}:
+        raise ReconcileError("R904_FILES")
+    entries, details = evidence["inodes"], evidence["checks"]
+    if (
+        type(entries) is not dict
+        or set(entries) != (_FILES904.keys() | _ACT904.keys())
+        or type(details) is not dict
+        or set(details)
+        != _EXTRAS904 | _DIGEST904.keys() | {"attempt", "enabled_socket", "stage_marker"}
+    ):
+        raise ReconcileError("R904_FILES")
+    for item in entries.values():
+        if item in ("ABSENT", "UNSAFE", "UNSTABLE", "UNREADABLE"):
+            continue
+        if (
+            type(item) is not list
+            or len(item) != 6
+            or item[0] not in ("dir", "file", "link", "socket", "other")
+            or any(type(n) is not int or not 0 <= n < 2**64 for n in item[1:5])
+            or item[3] > 0o7777
+            or type(item[5]) is not bool
+        ):
+            raise ReconcileError("R904_FILES")
+    for key, detail in details.items():
+        if detail is None:
+            continue
+        entry = entries[key]
+        if type(entry) is not list or entry[-1] is not True:
+            raise ReconcileError("R904_FILES")
+        if key in _EXTRAS904:
+            valid = entry[0] == "dir" and (
+                detail == "LIMIT" or type(detail) is int and 0 <= detail <= 256
+            )
+        elif key == "stage_marker":
+            valid = (
+                entry[0] == "file"
+                and type(detail) is list
+                and len(detail) == 2
+                and all(type(n) is int and 0 <= n < 2**64 for n in detail)
+            )
+        else:
+            valid = (
+                entry[0] == ("link" if key == "enabled_socket" else "file") and type(detail) is bool
+            )
+        if not valid:
+            raise ReconcileError("R904_FILES")
+    stage = record["stage_preflight"]
+    empty_stage = _stage_preflight(None)
+    if type(stage) is not dict or set(stage) not in (
+        set(empty_stage),
+        set(empty_stage) | {"legacy_target_compose_equal"},
+    ):
+        raise ReconcileError("R904_STAGE")
+    if (
+        stage["reason"]
+        not in (
+            "INTENT_ABSENT",
+            "STAGE_ROOT_UNREADABLE",
+            "STAGE_ROOT_OWNER_MODE",
+            "STAGE_ROOT_LIST",
+            "STAGE_ROOT_ENTRIES",
+            "STAGE_COMPOSE_UNREADABLE",
+            "STAGE_COMPOSE_INODE_MODE",
+            "STAGE_COMPOSE_CHANGED",
+            "PLAN_ROLE_DIGEST_INVALID",
+            "STAGE_PREFLIGHT_MATCH",
+            "STAGE_COMPOSE_SHA",
+            "STAGE_COMPOSE_IO",
+        )
+        or any(
+            type(stage[k]) is not bool
+            for k in (
+                "root_entries_expected",
+                "compose_digest_match",
+                "compose_digest_evaluated",
+                "plan_hashes_unique",
+            )
+        )
+        or (
+            "legacy_target_compose_equal" in stage
+            and stage["legacy_target_compose_equal"] is not True
+        )
+        or stage["root_entries_count"] is not None
+        and (
+            type(stage["root_entries_count"]) is not int
+            or not 0 <= stage["root_entries_count"] <= 2048
+        )
+        or stage["compose_inode_mode_octal"] is not None
+        and (
+            type(stage["compose_inode_mode_octal"]) is not str
+            or not re.fullmatch(r"[0-7]{4}", stage["compose_inode_mode_octal"])
+        )
+        or stage["compose_legacy_mode_accepted"] is not None
+        and type(stage["compose_legacy_mode_accepted"]) is not bool
+        or any(
+            record[k] not in ("PRESENT", "ABSENT", "UNVERIFIED")
+            for k in ("stage", "promotion_intent", "promotion_result")
+        )
+    ):
+        raise ReconcileError("R904_STAGE")
+    checks = stage["compose_inode_checks"]
+    if checks is not None and (
+        type(checks) is not dict
+        or set(checks) != {"regular", "uid_ok", "gid_ok", "nlink_one", "mode_0600", "size_ok"}
+        or any(type(v) is not bool for v in checks.values())
+    ):
+        raise ReconcileError("R904_STAGE")
 
 
 def verify_runner(
@@ -734,7 +1275,9 @@ def verify_runner(
             raise ReconcileError("RUN_ID")
     elif prepared_id is not None or not SOURCE.fullmatch(source_sha):
         raise ReconcileError("V3_SOURCE_ID")
-    if not 0 < len(raw) <= MAX_JSON:
+    if run_id == R904 and source_sha != R904_SHA:
+        raise ReconcileError("R904_PROVENANCE")
+    if not 0 < len(raw) <= (R904_LIMIT if run_id == R904 else MAX_JSON):
         raise ReconcileError("RECEIPT_BOUNDS")
     try:
         record = json.loads(raw.decode("ascii"))
@@ -742,14 +1285,25 @@ def verify_runner(
         raise ReconcileError("RECEIPT_JSON") from exc
     version = record.get("version") if type(record) is dict else None
     allowed_versions = (
-        ("boca-postapply-reconcile-v2", "boca-postapply-reconcile-v3")
+        ("boca-postapply-reconcile-904-v1",)
+        if run_id == R904
+        else ("boca-postapply-reconcile-v2", "boca-postapply-reconcile-v3")
         if source_sha is not None
         else ("boca-postapply-reconcile-v1",)
     )
     expected_fields = (
         RECEIPT_FIELDS
         | ({"incident_source_sha"} if source_sha is not None else set())
-        | ({"terminal_worker_evidence"} if version == "boca-postapply-reconcile-v3" else set())
+        | (
+            {"terminal_worker_evidence"}
+            if version == "boca-postapply-reconcile-v3" or run_id == R904
+            else set()
+        )
+        | (
+            {"incident_files", "processes", "terminal_ids", "inventory_state"}
+            if run_id == R904
+            else set()
+        )
     )
     worker_evidence = record.get("terminal_worker_evidence") if type(record) is dict else None
     evidence_valid = worker_evidence is None or (
@@ -819,6 +1373,8 @@ def verify_runner(
         or _canonical(record) + b"\n" != raw
     ):
         raise ReconcileError("RECEIPT_CONTRACT")
+    if run_id == R904:
+        _verify904(record)
     return record
 
 
@@ -856,6 +1412,8 @@ def verified_cleanup_legacy_id(raw: bytes, run_id: str, coordinate: str, *, v3: 
     """
     if type(v3) is not bool:
         raise ReconcileError("CLEANUP_RECEIPT_VERSION")
+    if run_id == R904:
+        raise ReconcileError("R904_OBSERVER_ONLY")
     receipt = verify_runner(
         raw,
         run_id,
@@ -933,22 +1491,25 @@ def main(argv: list[str] | None = None) -> int:
     prepare_id = None if is_v3 else coordinate
     source_sha = coordinate if is_v3 else None
     try:
+        limit = R904_LIMIT if run_id == R904 else MAX_JSON
         if mode in ("host", "host-v3"):
             result = _host(run_id, prepare_id, source_sha=source_sha)
             output = _canonical(result) + b"\n"
-            if len(output) > MAX_JSON:
+            if len(output) > limit:
                 raise ReconcileError("RECEIPT_BOUNDS")
             sys.stdout.buffer.write(output)
         else:
-            raw = sys.stdin.buffer.read(MAX_JSON + 1)
+            raw = sys.stdin.buffer.read(limit + 1)
             result = verify_runner(raw, run_id, prepare_id, source_sha=source_sha)
+            unverified = result.get("inventory_state") == "INDETERMINATE"
+            original = "UNVERIFIED" if unverified else str(result["original"] is not None)
+            candidates = "UNVERIFIED" if unverified else str(len(result["candidate_controllers"]))
+            workers = "UNVERIFIED" if unverified else str(len(result["browser_workers"]))
             print(
                 "BOCA_POSTAPPLY_RECONCILE state=READ_ONLY_NO_GO"
                 f" intent={result['intent']} result={result['result']}"
                 f" terminal={result['terminal_state']} cleanup={result['cleanup']}"
-                f" original={result['original'] is not None}"
-                f" candidates={len(result['candidate_controllers'])}"
-                f" workers={len(result['browser_workers'])}"
+                f" original={original} candidates={candidates} workers={workers}"
                 f" port={result['port_8443']}"
                 f" marker={result['prepared_go_marker']}"
                 f" worker_phase={result['worker_id_recorded']}"

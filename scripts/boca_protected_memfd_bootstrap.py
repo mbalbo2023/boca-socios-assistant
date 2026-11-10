@@ -95,7 +95,7 @@ PREFLIGHT_ENTRIES = frozenset(
 )
 MAX_ZIP = 512_000
 # R135 source bounds match the builder. Each variant checks its own entry set and digest.
-MAX_UNCOMPRESSED = 1_040_000
+MAX_UNCOMPRESSED = 1_100_000
 RECOVERY_MAX_ZIP = 128_000
 RECOVERY_MAX_UNCOMPRESSED = 256_000
 PREFLIGHT_MAX_ZIP = 128_000

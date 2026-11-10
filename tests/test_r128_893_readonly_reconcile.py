@@ -11,12 +11,12 @@ WORKFLOW = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text(encoding
 OBSERVER = (ROOT / "scripts/host_cutover_postapply_reconcile.py").read_text(encoding="utf-8")
 INCIDENT = "42658939650"
 SOURCE_SHA = "759a1dbadd6e50ab8c331daefc4e39608025a66f"
-V3_RUNS = "42405706503|42426260583|42658939650"
+V3_RUNS = "42405706503|42426260583|42658939650|42742150879"
 
 
 def test_r128_all_v3_without_prepare_paths_accept_only_exact_incidents() -> None:
     # Input guard + required empty PREPARE + host-v3 + verify-v3 share a
-    # literal, closed, three-incident whitelist. They must not diverge.
+    # literal, closed, four-incident whitelist. They must not diverge.
     assert WORKFLOW.count(f"^({V3_RUNS})$") == 4
     assert "inputs.protected_action_context == '42658939650'" in WORKFLOW
     assert '"$BOCA_PROTECTED_ACTION_CONTEXT" != "$GITHUB_RUN_ID"' in WORKFLOW
@@ -31,7 +31,9 @@ def test_r128_exact_failed_run_source_is_authenticated_before_ssh() -> None:
         "42405706503": "1273338005abf7203d26e618648fe55216030cf3",
         "42426260583": "f57173862df3143062a136452f2ffc7e3cc51d35",
         INCIDENT: SOURCE_SHA,
+        "42742150879": "b6a53c3348ce39c4d8536487e2baed559c2ca42f",
     }
+    assert 'incident["id"] != 42742150879 or incident.get("run_number") == 904' in WORKFLOW
     assert 'incident.get("run_attempt") == 1' in WORKFLOW
     assert 'incident.get("event") == "workflow_dispatch"' in WORKFLOW
     assert 'incident.get("conclusion") == "failure"' in WORKFLOW
@@ -45,7 +47,8 @@ def test_r128_exact_failed_run_source_is_authenticated_before_ssh() -> None:
 def test_r128_does_not_run_historical_cleanup_planner_for_893() -> None:
     assert (
         "if: inputs.operation == 'cutover-a-reconcile' "
-        "&& inputs.protected_action_context != '42658939650'"
+        "&& inputs.protected_action_context != '42658939650' "
+        "&& inputs.protected_action_context != '42742150879'"
     ) in WORKFLOW
     assert "< scripts/host_cutover_postapply_reconcile.py" in WORKFLOW
     assert "scope=OBSERVER_ONLY observer_writes=0" in OBSERVER

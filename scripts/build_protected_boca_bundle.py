@@ -160,7 +160,7 @@ MAIN = (
 # The complete R135 archive adds the installed control, lifecycle and readback.
 # The separate worker preflight carries the updated host adapter. Each reviewed
 # entry set retains its own compressed transport bound.
-MAX_SOURCE_BYTES = 1_040_000
+MAX_SOURCE_BYTES = 1_100_000
 MAX_ARCHIVE_BYTES = 512_000
 RECOVERY_MAX_SOURCE_BYTES = 256_000
 RECOVERY_MAX_ARCHIVE_BYTES = 128_000
