@@ -102,6 +102,7 @@ def _response(
     extra: tuple[str, str] | None = None,
     html: bool = True,
     csp: str = private_ui.CSP,
+    referrer_policy: str = "no-referrer",
 ) -> list[bytes]:
     headers = [
         ("Content-Type", "text/html; charset=utf-8" if html else "application/json"),
@@ -109,7 +110,7 @@ def _response(
         ("Cache-Control", "no-store"),
         ("Content-Security-Policy", csp),
         ("X-Content-Type-Options", "nosniff"),
-        ("Referrer-Policy", "no-referrer"),
+        ("Referrer-Policy", referrer_policy),
         ("X-Frame-Options", "DENY"),
     ]
     if extra is not None:
@@ -714,10 +715,17 @@ class PrivatePanelApplication:
                     body = private_ui.home(session.csrf, bot=(lifecycle, start_id, stop_id))
                 else:
                     body = private_ui.bot_control(lifecycle, session.csrf, start_id, stop_id)
-                return _response(start, 200, body)
+                # Native HTML forms need a non-null same-origin Origin header.
+                # Never send a Referer to another origin; other pages keep no-referrer.
+                return _response(start, 200, body, referrer_policy="same-origin")
             status, reason = 429, "Demasiados formularios abiertos. Vuelva a ingresar."
         if home:
-            return _response(start, 200, private_ui.home(session.csrf, bot_unavailable=True))
+            return _response(
+                start,
+                200,
+                private_ui.home(session.csrf, bot_unavailable=True),
+                referrer_policy="same-origin",
+            )
         return _error(start, status, reason)
 
     def _control_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:

@@ -148,6 +148,71 @@ def _bot_fields(page: bytes, action: str) -> dict[str, str]:
     }
 
 
+def test_on_demand_native_forms_keep_origin_and_csrf_guards(tmp_path: Path) -> None:
+    provider, key, credential_id = _passkey([0.0])
+    wakes: list[str] = []
+    app, _ = _app(tmp_path / "boca.sqlite3", provider, FakeHost(), bot_control=wakes.append)
+
+    # Passkey login keeps its existing challenge and exact-Origin fetch checks.
+    cookie = _login(app, key, credential_id)
+
+    # These two documents contain native HTML POST forms. The policy allows
+    # their same-origin Origin header while suppressing cross-site Referer.
+    for path in ("/", "/control"):
+        code, headers, page = _request(app, path, cookie=cookie)
+        assert code == 200
+        assert headers["Referrer-Policy"] == "same-origin"
+        assert "form-action 'self'" in headers["Content-Security-Policy"]
+        assert b'<form method="post" action="/control/bot/iniciar">' in page
+        assert b'<form method="post" action="/control/bot/detener">' in page
+
+    fields = _bot_fields(page, "iniciar")
+    for origin in ("null", "", "https://evil.example.test"):
+        assert (
+            _request(
+                app,
+                "/control/bot/iniciar",
+                cookie=cookie,
+                method="POST",
+                payload=fields,
+                origin=origin,
+            )[0]
+            == 403
+        )
+    assert (
+        _request(
+            app,
+            "/control/bot/iniciar",
+            cookie=cookie,
+            method="POST",
+            payload={**fields, "csrf": "wrong"},
+        )[0]
+        == 403
+    )
+    assert wakes == []
+    code, headers, _ = _request(
+        app, "/control/bot/iniciar", cookie=cookie, method="POST", payload=fields
+    )
+    assert code == 303 and headers["Location"] == "/control"
+    assert len(wakes) == 1
+
+
+def test_non_bot_pages_keep_no_referrer_policy(tmp_path: Path) -> None:
+    provider, key, credential_id = _passkey([0.0])
+    app, _ = _app(tmp_path / "boca.sqlite3", provider, FakeHost(), bot_control=lambda _: None)
+    cookie = _login(app, key, credential_id)
+    for path in ("/telegram/configurar", "/telegram/emparejar", "/comandos"):
+        code, headers, _ = _request(app, path, cookie=cookie)
+        assert code == 200 and headers["Referrer-Policy"] == "no-referrer"
+
+    other_provider, other_key, other_credential = _passkey([0.0])
+    original, _ = _app(tmp_path / "legacy.sqlite3", other_provider, FakeHost())
+    other_cookie = _login(original, other_key, other_credential)
+    for path in ("/", "/control"):
+        code, headers, _ = _request(original, path, cookie=other_cookie)
+        assert code == 200 and headers["Referrer-Policy"] == "no-referrer"
+
+
 def test_one_touch_commit_precedes_wake_and_stop_can_follow_immediately(tmp_path: Path) -> None:
     received = []
     provider, key, credential_id = _passkey([0.0])
