@@ -9,7 +9,7 @@ on:
         description: cutover-a-apply is ONE simulation deploy dispatch; leave all pins and protected_action_context blank. No login/tickets.
         required: true
         type: choice
-        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, worker-diagnose-once, cutover-a-reconcile, cutover-a-stage-recover, cutover-a-stage-recover-844, cutover-a-image-retire, cutover-a-observe, cutover-a-worker-inspect, cutover-a-worker-events-r112, cutover-a-worker-recover, cutover-a-worker-recover-807, cutover-a-worker-recover-819, cutover-a-worker-recover-827, cutover-a-worker-recover-834, cutover-a-worker-preflight, cutover-a-apply, official-notice-import, protected-go-prepare, lifecycle-apply, telegram-activate, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
+        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, worker-diagnose-once, worker-physical-once, cutover-a-reconcile, cutover-a-stage-recover, cutover-a-stage-recover-844, cutover-a-image-retire, cutover-a-observe, cutover-a-worker-inspect, cutover-a-worker-events-r112, cutover-a-worker-recover, cutover-a-worker-recover-807, cutover-a-worker-recover-819, cutover-a-worker-recover-827, cutover-a-worker-recover-834, cutover-a-worker-preflight, cutover-a-apply, official-notice-import, protected-go-prepare, lifecycle-apply, telegram-activate, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
         description: REQUIRED cutover-a-worker-preflight - exact current main SHA for the new dual release; Cutover APPLY/PREPARE derives github.sha
         required: false
@@ -176,6 +176,11 @@ jobs:
         run: |
           uv run pytest -q tests/test_host_worker_w1.py tests/test_worker_w1_dispatch.py tests/test_worker_w1_bundle.py tests/test_worker_w1_workflow.py
           uv run mypy src/boca_socios/host_worker_w1.py
+      - name: Validate physical worker isolated ZIP and one-start guards offline only
+        run: |
+          uv run pytest -q tests/test_host_worker_physical.py tests/test_worker_physical_bundle.py tests/test_worker_physical_workflow.py tests/test_worker_physical_dispatch.py
+          uv run mypy src/boca_socios/host_worker_physical.py
+          uv run mypy --follow-imports=skip scripts/check_worker_physical_dispatch.py
       - name: Validate protected official notice artifact import offline only
         run: |
           uv run pytest -q tests/test_host_official_notice_actions_r24.py tests/test_official_import_actions_r24.py tests/test_host_official_notice_import.py
@@ -799,7 +804,7 @@ jobs:
       BOCA_INCIDENT_PREPARE_RUN_ID: ${{ inputs.legacy_release_run_id }}
       BOCA_IMAGE_REF: ${{ inputs.image_ref }}
       BOCA_BROWSER_IMAGE_REF: ${{ inputs.browser_image_ref }}
-      BOCA_SOURCE_SHA: ${{ (inputs.operation == 'worker-diagnose-once' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'cutover-a-reconcile' || inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-stage-recover-844' || inputs.operation == 'cutover-a-image-retire' || inputs.operation == 'cutover-a-worker-inspect' || inputs.operation == 'cutover-a-worker-events-r112' || inputs.operation == 'cutover-a-worker-recover' || inputs.operation == 'cutover-a-worker-recover-807' || inputs.operation == 'cutover-a-worker-recover-819' || inputs.operation == 'cutover-a-worker-recover-827' || inputs.operation == 'cutover-a-worker-recover-834') && github.sha || inputs.source_sha }}
+      BOCA_SOURCE_SHA: ${{ (inputs.operation == 'worker-diagnose-once' || inputs.operation == 'worker-physical-once' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'cutover-a-reconcile' || inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-stage-recover-844' || inputs.operation == 'cutover-a-image-retire' || inputs.operation == 'cutover-a-worker-inspect' || inputs.operation == 'cutover-a-worker-events-r112' || inputs.operation == 'cutover-a-worker-recover' || inputs.operation == 'cutover-a-worker-recover-807' || inputs.operation == 'cutover-a-worker-recover-819' || inputs.operation == 'cutover-a-worker-recover-827' || inputs.operation == 'cutover-a-worker-recover-834') && github.sha || inputs.source_sha }}
       BOCA_SOURCE_SHA_SUBMITTED: ${{ inputs.source_sha }}
       BOCA_SERVICE: ${{ inputs.service }}
       BOCA_BUDGET: ${{ (inputs.operation == 'cutover-a-apply' || ((inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-reconcile') && (inputs.protected_action_context == '42742150879' || inputs.protected_action_context == '42750940352'))) && '1.5cpu-1024m-192pids' || inputs.resource_budget }}
@@ -820,7 +825,7 @@ jobs:
       BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC: ${{ inputs.official_news_observed_at_utc }}
     steps:
       - name: Checkout exact reviewed main for authenticated artifact discovery
-        if: inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'worker-diagnose-once'
+        if: inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'worker-diagnose-once' || inputs.operation == 'worker-physical-once'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
@@ -927,7 +932,7 @@ jobs:
             [[ "$BOCA_BUDGET" = 1.5cpu-1024m-192pids || "$BOCA_BUDGET" = 1.75cpu-1152m-224pids ]]
           elif [[ "$BOCA_OPERATION" = beta-browser-install ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
-          elif [[ "$BOCA_OPERATION" = worker-diagnose-once || "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-stage-recover-844 || "$BOCA_OPERATION" = cutover-a-image-retire || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-worker-inspect || "$BOCA_OPERATION" = cutover-a-worker-events-r112 || "$BOCA_OPERATION" = cutover-a-worker-recover || "$BOCA_OPERATION" = cutover-a-worker-recover-807 || "$BOCA_OPERATION" = cutover-a-worker-recover-819 || "$BOCA_OPERATION" = cutover-a-worker-recover-827 || "$BOCA_OPERATION" = cutover-a-worker-recover-834 || "$BOCA_OPERATION" = cutover-a-worker-preflight || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-activate ]]; then
+          elif [[ "$BOCA_OPERATION" = worker-diagnose-once || "$BOCA_OPERATION" = worker-physical-once || "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-stage-recover-844 || "$BOCA_OPERATION" = cutover-a-image-retire || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-worker-inspect || "$BOCA_OPERATION" = cutover-a-worker-events-r112 || "$BOCA_OPERATION" = cutover-a-worker-recover || "$BOCA_OPERATION" = cutover-a-worker-recover-807 || "$BOCA_OPERATION" = cutover-a-worker-recover-819 || "$BOCA_OPERATION" = cutover-a-worker-recover-827 || "$BOCA_OPERATION" = cutover-a-worker-recover-834 || "$BOCA_OPERATION" = cutover-a-worker-preflight || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-activate ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
           elif [[ "$BOCA_OPERATION" = beta-browser-telegram-start || ( "$BOCA_TELEGRAM_OWNER_READY" = ready && ( "$BOCA_OPERATION" = beta-browser-* || ( "$BOCA_OPERATION" = telegram-* && -n "$BOCA_BROWSER_IMAGE_REF" ) ) ) ]]; then
             test "$BOCA_BUDGET" = 1.75cpu-1152m-224pids
@@ -963,6 +968,29 @@ jobs:
           if [[ "$BOCA_OPERATION" != owner-install ]]; then test -z "$BOCA_OWNER_ENVELOPE"; fi
           if [[ "$BOCA_OPERATION" != owner-enroll ]]; then test -z "$BOCA_OWNER_CAPABILITY_SHA256"; fi
           case "$BOCA_OPERATION" in
+            worker-physical-once)
+              # Isolated once-per-release worker boot; all caller-supplied
+              # image/host/legacy/credential fields MUST be blank.
+              test "$BOCA_HOST_READONLY_ENV_READY" = ready
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test "$BOCA_BETA_ENV_READY" = ready
+              test "$BOCA_BROWSER_ENV_READY" = ready
+              test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
+              for unexpected in \
+                "$BOCA_SOURCE_SHA_SUBMITTED" "$BOCA_PROTECTED_ACTION_CONTEXT" \
+                "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" "$BOCA_RELEASE_RUN_ID" \
+                "$BOCA_LEGACY_SOURCE_SHA" "$BOCA_LEGACY_IMAGE_REF" \
+                "$BOCA_LEGACY_RELEASE_RUN_ID" "$BOCA_LEGACY_CONTROLLER_ID" \
+                "$BOCA_SITE_ENVELOPE" "$BOCA_TELEGRAM_ENVELOPE" \
+                "$BOCA_OWNER_ENVELOPE" "$BOCA_OWNER_CAPABILITY_SHA256" \
+                "$BOCA_FAILED_TELEGRAM_RUN_ID" "$BOCA_OFFICIAL_CONTROLLER_ID" \
+                "$BOCA_OFFICIAL_NEWS_RUN_ID" "$BOCA_OFFICIAL_NEWS_SOURCE_SHA" \
+                "$BOCA_OFFICIAL_NEWS_ARTIFACT_ID" "$BOCA_OFFICIAL_NEWS_ZIP_SHA256" \
+                "$BOCA_OFFICIAL_NEWS_JSONL_SHA256" "$BOCA_OFFICIAL_NEWS_HTML_SHA256" \
+                "$BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC"; do
+                test -z "$unexpected"
+              done
+              ;;
             worker-diagnose-once)
               # W1 is a single existing-worker start with prearmed capture and
               # verified stop, not a new release/installation/Cutover.
@@ -1963,6 +1991,54 @@ jobs:
             "$RUNNER_TEMP/boca-w1-dispatch-history.jsonl" \
             "$RUNNER_TEMP/boca-w1-installed-926.json" \
             "$GITHUB_RUN_ID" "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Authenticate one Boca worker physical test and reviewed dual release
+        id: physical_gate
+        if: inputs.operation == 'worker-physical-once'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src:.
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/boca-first-deploy.yml/runs?event=workflow_dispatch&created=%3E%3D2026-11-10&per_page=100" \
+            --jq '.workflow_runs[] | {id,workflow_id,path,repository:{full_name:.repository.full_name},event,head_sha,head_branch,run_attempt,actor:{login:.actor.login}} | @json' \
+            > "$RUNNER_TEMP/boca-physical-history.jsonl"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42806447101" > "$RUNNER_TEMP/boca-physical-installed.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/42847341532" > "$RUNNER_TEMP/boca-physical-release.json"
+          gh api "repos/$GITHUB_REPOSITORY/compare/31cc6987c30d705113d0323b0700c156fec97eb5...$GITHUB_SHA" \
+            > "$RUNNER_TEMP/boca-physical-ancestry.json"
+          gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
+            > "$RUNNER_TEMP/boca-physical-prs.json"
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=100" \
+            > "$RUNNER_TEMP/boca-physical-ci.json"
+          gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?filter=latest&per_page=100" \
+            > "$RUNNER_TEMP/boca-physical-checks.json"
+          python3 scripts/check_worker_physical_dispatch.py \
+            "$RUNNER_TEMP/boca-physical-history.jsonl" \
+            "$RUNNER_TEMP/boca-physical-installed.json" \
+            "$RUNNER_TEMP/boca-physical-release.json" \
+            "$RUNNER_TEMP/boca-physical-ancestry.json" \
+            "$RUNNER_TEMP/boca-physical-prs.json" \
+            "$RUNNER_TEMP/boca-physical-ci.json" \
+            "$RUNNER_TEMP/boca-physical-checks.json" \
+            "$GITHUB_RUN_ID" "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          mkdir -m 700 "$RUNNER_TEMP/boca-physical-controller" "$RUNNER_TEMP/boca-physical-browser"
+          gh run download 42847341532 --repo "$GITHUB_REPOSITORY" \
+            --name boca-release-manifest --dir "$RUNNER_TEMP/boca-physical-controller"
+          gh run download 42847341532 --repo "$GITHUB_REPOSITORY" \
+            --name boca-browser-release-manifest --dir "$RUNNER_TEMP/boca-physical-browser"
+          python3 -m boca_socios.release_manifest verify \
+            "$RUNNER_TEMP/boca-physical-controller/boca-release-manifest.json" \
+            "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:822e88ca0ff617b94baa180c51261fcc0a40fb9d463bf6aeb61ed5c05ce46fad" \
+            "31cc6987c30d705113d0323b0700c156fec97eb5" 42847341532
+          python3 -m boca_socios.browser_release_manifest verify \
+            "$RUNNER_TEMP/boca-physical-browser/boca-browser-release-manifest.json" \
+            "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:822e88ca0ff617b94baa180c51261fcc0a40fb9d463bf6aeb61ed5c05ce46fad" \
+            "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:0f181b5eab2954453d2054866682efa94c8dbad577ec2adfa3774e68222070cb" \
+            "31cc6987c30d705113d0323b0700c156fec97eb5" 42847341532
       - name: Configure pinned SSH host key and dedicated identity
         if: inputs.operation != 'protected-go-prepare' && !(inputs.operation == 'official-notice-import' && inputs.protected_action_context == '')
         env:
@@ -2031,6 +2107,38 @@ jobs:
           if [[ "$outcome" -ne 0 ]]; then
             # Exit 4 = a successfully diagnosed but still broken worker.
             # Any other exit = W1 NO_GO, without assuming that STOP happened.
+            exit 1
+          fi
+      - name: Boca physical corrected worker one-start and exact-CID compensation
+        if: inputs.operation == 'worker-physical-once' && steps.physical_gate.outcome == 'success'
+        env:
+          PYTHONPATH: src
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          bundle="$RUNNER_TEMP/boca-physical-host.pyz"
+          python3 scripts/build_protected_boca_bundle.py --worker-physical . "$bundle"
+          digest="$(sha256sum "$bundle" | cut -d' ' -f1)"
+          remote_command="$(python3 - "$digest" "$GITHUB_RUN_ID" <<'PY_PHYSICAL'
+          import shlex
+          import sys
+          from pathlib import Path
+          bootstrap = Path("scripts/boca_protected_memfd_bootstrap.py").read_text(encoding="utf-8")
+          print(shlex.join(["python3", "-c", bootstrap, sys.argv[1], "worker-physical-once", sys.argv[2]]))
+          PY_PHYSICAL
+          )"
+          set +e
+          receipt="$(timeout --signal=TERM --kill-after=5s 400s ssh \
+              -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 \
+              -o ServerAliveCountMax=2 boca-target "$remote_command" \
+              < "$bundle" 2>/dev/null \
+              | python3 -m boca_socios.host_worker_physical verify "$GITHUB_RUN_ID")"
+          outcome=$?
+          set -e
+          printf '%s\n' "$receipt" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [[ "$outcome" -ne 0 ]]; then
+            # FAILED physical boot with verified CID cleanup is diagnostic
+            # evidence, but NOT a green physical worker acceptance.
             exit 1
           fi
       - name: Require exact 795/802 evidence and zero open PRs before recovery SSH
