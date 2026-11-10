@@ -1,8 +1,8 @@
 # Estado de integración BETA
 
-## Worker y evidencia R131
+## Worker y evidencia R132
 
-El laboratorio de captura externa tiene alcance de CI. La BETA integral requiere validación física del worker e IPC. El último inventario físico registrado es #895. [ADR0221](ADR/0221-r131-worker-start-capture-lab.md).
+El [inventario #895](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42664858124) encontró el controlador original sano y cero workers. La CI de R131 verificó siete escenarios en Docker. El titular autorizó la captura de R132 sólo en el worker Boca y un nuevo Cutover condicionado a la release exacta. La aceptación integral requiere el recibo físico de esa ejecución y las pruebas de producto aplicables. [Decisión y evidencia](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6754980250) · [ADR0222](ADR/0222-r132-worker-start-custody.md).
 
 ## A45-R127 — diagnóstico V4 preparado, aún no ejecutado en el host
 

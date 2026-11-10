@@ -6,19 +6,28 @@ import json
 import os
 import re
 import select
+import shlex
 import shutil
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
 
-from .worker_start_capture import CaptureFailure, CaptureResult, attach_output
+from boca_socios.host_first_deploy import _CUTOVER_CAPTURE_INSPECT
+from boca_socios.worker_start_capture import CaptureFailure, CaptureResult, attach_output
 
 SOCKET = Path("/var/run/docker.sock")
 CID = re.compile(r"[0-9a-f]{64}")
 IMAGE_ID = re.compile(r"sha256:[0-9a-f]{64}")
 LABEL = "boca.socios.ci-capture"
+PROJECTION_LABELS = (
+    ("attempt", "boca.socios.browser-ipc-attempt", "fixture-attempt"),
+    ("revision", "org.opencontainers.image.revision", "fixture-revision"),
+    ("service", "com.docker.compose.service", "fixture-service"),
+    ("project", "com.docker.compose.project", "fixture-project"),
+    ("config_hash", "com.docker.compose.config-hash", "fixture-hash"),
+)
 # Only the public IPC contract, domain policy and simulator types are imported.
 IMAGE_CONTRACT = """\
 import os, sys
@@ -54,7 +63,47 @@ CASES = (
     ("silent", "raise SystemExit(1)", "EMPTY", 1),
     ("stdout", "print('PermissionError: fixture'); raise SystemExit(1)", "STDOUT_ONLY", 1),
     ("overflow", "import os; os.write(2, b'x' * 65536); raise SystemExit(1)", "LIMIT", 1),
+    (
+        "ipc-directory",
+        "from pathlib import Path; "
+        "from boca_socios.browser.ipc_protocol import validate_socket_directory; "
+        "validate_socket_directory(Path('/'))",
+        "IPC_DIRECTORY_UNVERIFIED",
+        1,
+    ),
+    (
+        "missing-distribution",
+        "import sys; sys.path.clear(); import playwright",
+        "MISSING_PLAYWRIGHT",
+        1,
+    ),
 )
+
+# Only the mtime of an empty fixture-private tmpfs file records progress. Both writes
+# must complete before every heartbeat. The bytes are generated inside the container.
+RESIDENT = """\
+import os, secrets, time
+from pathlib import Path
+marker = Path('/dev/shm/boca-capture-progress')
+marker.touch()
+chunk = secrets.token_hex(48).encode() + b'\\n'
+for _ in range(1800):
+    os.write(1, chunk)
+    os.write(2, chunk)
+    os.utime(marker)
+    time.sleep(0.035)
+"""
+RESIDENT_HEALTH = "python -IBc " + shlex.quote("""\
+import os, time
+try:
+    path = '/dev/shm/boca-capture-progress'
+    before = os.stat(path).st_mtime_ns
+    time.sleep(0.20)
+    progressing = os.stat(path).st_mtime_ns > before
+except OSError:
+    progressing = False
+raise SystemExit(0 if progressing else 1)
+""")
 
 
 class LabError(Exception):
@@ -124,9 +173,57 @@ def wait_healthy(cid: str) -> None:
     raise LabError("FIXTURE_HEALTH")
 
 
+def last_successful_probe(cid: str) -> datetime:
+    # Project two scalar metadata fields. Never read or print healthcheck output.
+    result = docker(
+        "inspect",
+        "--format",
+        "{{range .State.Health.Log}}{{json .Start}} {{json .ExitCode}}{{println}}{{end}}",
+        cid,
+    )
+    tokens = result.split()
+    if not tokens or len(tokens) % 2:
+        raise LabError("PROGRESS_PROBE_METADATA")
+    last = None
+    for stamp, code in zip(tokens[::2], tokens[1::2], strict=True):
+        if not re.fullmatch(r'"[0-9.T:Z+\-]{20,40}"', stamp) or not re.fullmatch(
+            r"-?[0-9]{1,3}", code
+        ):
+            raise LabError("PROGRESS_PROBE_METADATA")
+        if code == "0":
+            last = datetime.fromisoformat(stamp[1:-1])
+    if last is None or last.tzinfo is None:
+        raise LabError("PROGRESS_PROBE_METADATA")
+    return last
+
+
+def verify_detached_progress(cid: str) -> None:
+    # The first new result may have been in flight at detach. The next successful
+    # probe witnesses two completed writes while the collector is already gone.
+    previous = last_successful_probe(cid)
+    fresh = 0
+    deadline = monotonic() + 10
+    while monotonic() < deadline:
+        stamp = last_successful_probe(cid)
+        if stamp < previous:
+            break
+        if stamp > previous:
+            previous = stamp
+            fresh += 1
+        if fresh == 2:
+            if (
+                field(cid, ".State.Running") is True
+                and field(cid, ".State.Health.Status") == "healthy"
+            ):
+                return
+            break
+        sleep(0.15)
+    raise LabError("DETACH_CHANGED_PROCESS")
+
+
 def create_fixture(image: str, key: str, program: str, resident: bool) -> str:
     health = (
-        ("--health-cmd", "true", "--health-interval", "1s", "--health-timeout", "1s")
+        ("--health-cmd", RESIDENT_HEALTH, "--health-interval", "1s", "--health-timeout", "2s")
         if resident
         else ("--no-healthcheck",)
     )
@@ -136,6 +233,7 @@ def create_fixture(image: str, key: str, program: str, resident: bool) -> str:
         "never",
         "--label",
         f"{LABEL}={key}",
+        *(arg for _, label, value in PROJECTION_LABELS for arg in ("--label", f"{label}={value}")),
         "--network",
         "none",
         "--log-driver",
@@ -164,6 +262,34 @@ def create_fixture(image: str, key: str, program: str, resident: bool) -> str:
     )
 
 
+def verify_capture_projection(cid: str, image: str) -> None:
+    # Exercise the exact Go template used by the protected worker before start.
+    # Every label has a distinct synthetic value. The synthetic health command differs.
+    observed = json.loads(docker("inspect", "--format", _CUTOVER_CAPTURE_INSPECT, cid))
+    expected = {
+        "cid": cid,
+        "image_id": image,
+        "image_ref": image,
+        **{key: value for key, _, value in PROJECTION_LABELS},
+        "status": "created",
+        "tty": False,
+        "open_stdin": False,
+        "attach_stdin": False,
+        "log_driver": "none",
+        "log_options": 0,
+        "health": False,
+    }
+    if (
+        not isinstance(observed, dict)
+        or observed.keys() != expected.keys()
+        or any(
+            type(observed[key]) is not type(value) or observed[key] != value
+            for key, value in expected.items()
+        )
+    ):
+        raise LabError("CAPTURE_PROJECTION")
+
+
 def verify_fixture(cid: str, image: str, key: str, program: str, resident: bool) -> None:
     # Validate the image/attempt, effective command and isolated output
     # before registering the stream or allowing any process to start.
@@ -179,7 +305,7 @@ def verify_fixture(cid: str, image: str, key: str, program: str, resident: bool)
         ".Config.AttachStdin": False,
         ".Config.Entrypoint": ["python"],
         ".Config.Cmd": ["-O", "-B", "-c", program],
-        ".Config.Healthcheck.Test": ["CMD-SHELL", "true"] if resident else ["NONE"],
+        ".Config.Healthcheck.Test": ["CMD-SHELL", RESIDENT_HEALTH] if resident else ["NONE"],
         "(len .Mounts)": 0,
         ".HostConfig.Privileged": False,
         ".HostConfig.ReadonlyRootfs": True,
@@ -189,6 +315,7 @@ def verify_fixture(cid: str, image: str, key: str, program: str, resident: bool)
         if type(observed) is not type(wanted) or observed != wanted:
             # Only this source-defined selector crosses the output boundary.
             raise LabError(f"PRESTART_CONTRACT field={path}")
+    verify_capture_projection(cid, image)
 
 
 def exercise(image: str, run: str, name: str, program: str, expected: str, exit_code: int) -> None:
@@ -219,19 +346,20 @@ def exercise(image: str, run: str, name: str, program: str, expected: str, exit_
     try:
         verify_fixture(cid, image, key, program, resident)
         if resident:
-            with attach_output(SOCKET, cid):
+            with attach_output(SOCKET, cid) as capture:
                 start_fixture(cid)
                 wait_healthy(cid)
-            if (
-                field(cid, ".State.Running") is not True
-                or field(cid, ".State.Health.Status") != "healthy"
-            ):
-                raise LabError("DETACH_CHANGED_PROCESS")
+                if not capture.close():
+                    raise LabError("DETACH_INACTIVE")
+            verify_detached_progress(cid)
+            print(
+                "BOCA_CAPTURE_LAB case=resident after_detach=PROGRESS_VERIFIED fresh_probes=2",
+                flush=True,
+            )
         else:
-            with attach_output(SOCKET, cid) as capture, ThreadPoolExecutor(max_workers=1) as reader:
-                pending = reader.submit(capture.finish)
+            with attach_output(SOCKET, cid) as capture:
                 start_fixture(cid)
-                signal = pending.result()
+                signal = capture.finish()
             waited = docker("wait", cid)
             if (
                 signal != CaptureResult(expected)
@@ -287,7 +415,7 @@ def main() -> None:
         image,
         os.environ["GITHUB_RUN_ID"],
         "resident",
-        "import time; time.sleep(60)",
+        RESIDENT,
         "DETACHED_HEALTHY",
         0,
     )

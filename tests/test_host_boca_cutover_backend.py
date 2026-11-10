@@ -20,6 +20,7 @@ from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_cutover as cutover
 from boca_socios import host_boca_cutover_backend as adapter
 from boca_socios import host_boca_cutover_receipt as terminal
+from boca_socios import host_cutover_ipc_probe as ipc_probe
 from boca_socios import host_cutover_stage as stage
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -143,6 +144,12 @@ def fake_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[list[str
     monkeypatch.setattr(
         adapter.host, "_cutover_candidate_postflight", lambda *_a: events.append("health") or True
     )
+
+    def verify_peer(candidate_id: str) -> None:
+        assert candidate_id == NEW
+        events.append("ipc-peer")
+
+    monkeypatch.setattr(ipc_probe, "verify_controller_peer", verify_peer)
     monkeypatch.setattr(
         adapter.host, "_browser_worker_postflight", lambda *_a, **_k: events.append("worker-health")
     )
@@ -298,6 +305,7 @@ def test_full_host_adapter_uses_real_stage_promotion_and_cleanup(
         "bootstrap",
         "candidate",
         "health",
+        "ipc-peer",
         "worker-health",
         "loopback",
         "retire",
@@ -309,6 +317,24 @@ def test_full_host_adapter_uses_real_stage_promotion_and_cleanup(
         "seccomp_profile.json",
     }
     assert (root / "compose.beta.yaml").read_bytes() == BASE
+
+
+def test_unverified_controller_peer_blocks_retirement_and_recovers_original(
+    fake_host: tuple[list[str], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    events, root = fake_host
+
+    def peer_unverified(candidate_id: str) -> None:
+        assert candidate_id == NEW
+        raise adapter.host.PreflightError("private transport details")
+
+    monkeypatch.setattr(ipc_probe, "verify_controller_peer", peer_unverified)
+    receipt = _run_adapter(_backend(events))
+    assert receipt.failed_phase == "ACCEPT_CANDIDATE"
+    assert receipt.original_restored and not receipt.irreversible_commit_started
+    assert not receipt.accepted and "retire" not in events
+    assert events[-3:] == ["recover-original", "recover-worker", "cleanup"]
+    assert (root / "compose.beta.yaml").read_bytes() == LEGACY
 
 
 def test_future_host_hook_sequences_durable_intent_and_result_under_one_lease(

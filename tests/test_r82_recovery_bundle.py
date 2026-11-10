@@ -104,6 +104,10 @@ R119_RECOVERED_READONLY_FULL_CUTOVER_SHA = (
 R127_WORKER_EXIT_CAPTURE_FULL_CUTOVER_SHA = (
     "df11ea1c522252a89fade7b1261b05c110176bfd6a067967f74c83c3418b0808"
 )
+# R132 binds the external collector, private readback and controller peer check.
+R132_PREARMED_CAPTURE_FULL_CUTOVER_SHA = (
+    "a903cfefe6e18dd70c28c4c1190730a219169489464bbf10a64d79d81f642070"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -261,7 +265,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R127_WORKER_EXIT_CAPTURE_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R132_PREARMED_CAPTURE_FULL_CUTOVER_SHA
+    assert digest != R127_WORKER_EXIT_CAPTURE_FULL_CUTOVER_SHA
     assert digest != R119_RECOVERED_READONLY_FULL_CUTOVER_SHA
     assert digest != R118_READONLY_LATEST_CUTOVER_SHA
     assert digest != R116_TELEGRAM_STAGE_PARITY_FULL_CUTOVER_SHA

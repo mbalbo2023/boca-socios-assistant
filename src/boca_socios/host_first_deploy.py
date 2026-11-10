@@ -77,6 +77,34 @@ BROWSER_IMAGE_PATTERN = re.compile(
 BROWSER_ATTEMPT_PATTERN = re.compile(r"[1-9][0-9]{0,19}\Z")
 BROWSER_MARKER_VERSION = "browser-ipc-new-only-v2"
 BROWSER_ATTEMPT_LABEL = "boca.socios.browser-ipc-attempt"
+_WORKER_HEALTH_PROGRAM = (
+    "from boca_socios.browser.on_demand import validate_worker_boundary; "
+    "from boca_socios.browser.ipc_worker import validate_no_egress_namespace; "
+    "from boca_socios.browser.ipc_protocol import SOCKET_PATH, socket_identity; "
+    "validate_worker_boundary(); validate_no_egress_namespace(); socket_identity(SOCKET_PATH)"
+)
+# Health is evaluated by status alone. Its ordinary process streams must not
+# become a second, persistent source of output in Docker's State.Health.Log.
+_WORKER_HEALTH_CMD = f"python -c {shlex.quote(_WORKER_HEALTH_PROGRAM)} >/dev/null 2>&1"
+# Select scalar fields directly: false booleans must be explicit and no
+# process output, health log, command environment or owner data is queried.
+_CUTOVER_CAPTURE_INSPECT = (
+    '{"cid":{{json .Id}},"image_id":{{json .Image}},"image_ref":{{json .Config.Image}},'
+    '"attempt":{{json (index .Config.Labels "boca.socios.browser-ipc-attempt")}},'
+    '"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},'
+    '"service":{{json (index .Config.Labels "com.docker.compose.service")}},'
+    '"project":{{json (index .Config.Labels "com.docker.compose.project")}},'
+    '"config_hash":{{json (index .Config.Labels "com.docker.compose.config-hash")}},'
+    '"status":{{json .State.Status}},"tty":{{json .Config.Tty}},'
+    '"open_stdin":{{json .Config.OpenStdin}},"attach_stdin":{{json .Config.AttachStdin}},'
+    '"log_driver":{{json .HostConfig.LogConfig.Type}},'
+    '"log_options":{{if .HostConfig.LogConfig.Config}}'
+    "{{len .HostConfig.LogConfig.Config}}{{else}}0{{end}},"
+    '"health":{{with .Config.Healthcheck}}{{and (eq (len .Test) 2) '
+    '(eq (index .Test 0) "CMD-SHELL") (eq (index .Test 1) '
+    + json.dumps(_WORKER_HEALTH_CMD)
+    + ")}}{{else}}false{{end}}}"
+)
 # Option A is deliberately *not* the new-only browser-install path.  The
 # deployed singleton remains running while its historical Docker identity is
 # observed, and the read-only host gate below never stages files or images.
@@ -209,6 +237,7 @@ class CutoverWorkerPhaseError(PreflightError):
             "PULL",
             "IPC",
             "CREATE",
+            "CAPTURE_PREPARE",
             "START",
             "HEALTH",
             "HEALTH_WAIT",
@@ -229,12 +258,18 @@ class CutoverWorkerPhaseError(PreflightError):
         exit_code: int | Literal["UNKNOWN"] | None = None,
         oom_killed: bool | Literal["UNKNOWN"] | None = None,
         exit_signature: str | None = None,
+        capture_result: str | None = None,
+        capture_worker_id: str | None = None,
+        capture_recorded: bool = False,
     ) -> None:
         self.primary = primary if primary in self._PRIMARY else "UNVERIFIED"
         self.compensation = compensation if compensation in self._COMPENSATION else "UNVERIFIED"
         self.exit_code: int | Literal["UNKNOWN"] | None = None
         self.oom_killed: bool | Literal["UNKNOWN"] | None = None
         self.exit_signature: str | None = None
+        self.capture_result: str | None = None
+        self.capture_worker_id: str | None = None
+        self.capture_recorded = False
         if self.primary == "HEALTH_EXITED" and exit_code is not None and oom_killed is not None:
             self.exit_code = (
                 exit_code if type(exit_code) is int and 0 <= exit_code <= 255 else "UNKNOWN"
@@ -242,6 +277,20 @@ class CutoverWorkerPhaseError(PreflightError):
             self.oom_killed = oom_killed if type(oom_killed) is bool else "UNKNOWN"
             if type(exit_signature) is str and _WORKER_EXIT_SIGNATURE.fullmatch(exit_signature):
                 self.exit_signature = exit_signature
+            if (
+                self.exit_signature is not None
+                and type(capture_worker_id) is str
+                and re.fullmatch(r"[0-9a-f]{64}", capture_worker_id)
+                and capture_result is not None
+            ):
+                # The legacy per-phase Actions transport streams this module
+                # alone. Only the reviewed Cutover bundle includes the reader.
+                from boca_socios.worker_start_capture import is_capture_result
+
+                if is_capture_result(capture_result):
+                    self.capture_result = capture_result
+                    self.capture_worker_id = capture_worker_id
+                    self.capture_recorded = capture_recorded is True
         message = (
             "cutover A worker failed; selective cleanup INDETERMINATE, no retry"
             if self.compensation == "INDETERMINATE"
@@ -4303,6 +4352,14 @@ def _browser_compose_model(
         "user": "10002:10002",
         "network_mode": "none",
         "restart": "no",
+        "logging": {"driver": "none"},
+        "healthcheck": {
+            "test": ["CMD-SHELL", _WORKER_HEALTH_CMD],
+            "interval": "2s",
+            "timeout": "3s",
+            "retries": 3,
+            "start_period": "5s",
+        },
         "read_only": True,
         "cgroup": "private",
         "ipc": "private",
@@ -5212,12 +5269,6 @@ def _cutover_worker_create_argv(
         or not DIGEST_PATTERN.fullmatch(config_hash)
     ):
         raise PreflightError("cutover A worker image or attempt unreviewed")
-    health = (
-        "from boca_socios.browser.on_demand import validate_worker_boundary; "
-        "from boca_socios.browser.ipc_worker import validate_no_egress_namespace; "
-        "from boca_socios.browser.ipc_protocol import SOCKET_PATH, socket_identity; "
-        "validate_worker_boundary(); validate_no_egress_namespace(); socket_identity(SOCKET_PATH)"
-    )
     return (
         "docker",
         "create",
@@ -5241,6 +5292,8 @@ def _cutover_worker_create_argv(
         "10002:10002",
         "--restart",
         "no",
+        "--log-driver",
+        "none",
         "--init",
         "--network",
         "none",
@@ -5280,7 +5333,7 @@ def _cutover_worker_create_argv(
         "--mount",
         f"type=volume,source={BROWSER_IPC_VOLUME},target=/run/boca-browser-ipc,volume-nocopy",
         "--health-cmd",
-        f"python -c {shlex.quote(health)}",
+        _WORKER_HEALTH_CMD,
         "--health-interval",
         "2s",
         "--health-timeout",
@@ -5436,15 +5489,80 @@ def _cutover_worker_name_id() -> str | None:
     return ids[0] if ids else None
 
 
+def _cutover_capture_preflight(
+    container: str, image: str, source_sha: str, attempt_id: str, config_hash: str
+) -> None:
+    """Authenticate the exact stopped worker and a compatible dedicated attach socket."""
+    if (
+        not re.fullmatch(r"[0-9a-f]{64}", container)
+        or not BROWSER_IMAGE_PATTERN.fullmatch(image)
+        or not SHA_PATTERN.fullmatch(source_sha)
+        or not BROWSER_ATTEMPT_PATTERN.fullmatch(attempt_id)
+        or not DIGEST_PATTERN.fullmatch(config_hash)
+    ):
+        raise PreflightError("capture worker coordinates unverified")
+    _require_dedicated_identity()
+    if not _rootless_socket_secure():
+        raise PreflightError("capture rootless socket unverified")
+    versions = _run(
+        "docker",
+        "version",
+        "--format",
+        "{{.Server.MinAPIVersion}} {{.Server.APIVersion}}",
+        timeout=8,
+    )
+    match = re.fullmatch(r"([0-9]{1,3})\.([0-9]{1,3}) ([0-9]{1,3})\.([0-9]{1,3})", versions)
+    if match is None:
+        raise PreflightError("capture API range unavailable")
+    minimum_major, minimum_minor, maximum_major, maximum_minor = map(int, match.groups())
+    if not (minimum_major, minimum_minor) <= (1, 48) <= (maximum_major, maximum_minor):
+        raise PreflightError("capture API outside supported range")
+    image_id = _run("docker", "image", "inspect", "--format", "{{.Id}}", image, timeout=8)
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        raise PreflightError("capture immutable image ID unavailable")
+    raw = _run("docker", "inspect", "--format", _CUTOVER_CAPTURE_INSPECT, container, timeout=8)
+    if not 0 < len(raw) <= 4096:
+        raise PreflightError("capture identity receipt size unverified")
+    record = json.loads(raw, object_pairs_hook=_browser_json_pairs)
+    expected = {
+        "cid": container,
+        "image_id": image_id,
+        "image_ref": image,
+        "attempt": attempt_id,
+        "revision": source_sha,
+        "service": "browser-worker",
+        "project": PROJECT,
+        "config_hash": config_hash,
+        "status": "created",
+        "tty": False,
+        "open_stdin": False,
+        "attach_stdin": False,
+        "log_driver": "none",
+        "log_options": 0,
+        "health": True,
+    }
+    if (
+        not isinstance(record, dict)
+        or record != expected
+        or any(record[key] is not False for key in ("tty", "open_stdin", "attach_stdin"))
+        or type(record["log_options"]) is not int
+        or record["health"] is not True
+    ):
+        raise PreflightError("capture worker identity or private stream boundary unverified")
+
+
 def _cutover_compensate_worker(
     browser_image: str,
     target_sha: str,
     attempt_id: str,
     seccomp_sha: str,
     staged_seccomp: bytes,
+    expected_worker: str | None = None,
 ) -> None:
     """No broad prune. Remove only positively authenticated attempt resources."""
     worker = _cutover_worker_name_id()
+    if expected_worker is not None and worker != expected_worker:
+        raise PreflightError("cutover A cleanup worker CID changed")
     if worker is not None:
         record = _browser_inspect_record(worker)
         state = record.get("State")
@@ -5462,7 +5580,7 @@ def _cutover_compensate_worker(
             staged_seccomp=staged_seccomp,
         )
         if running:
-            if _run("docker", "stop", "--time", "8", worker, timeout=30) != worker:
+            if _run("docker", "stop", "-t", "8", worker, timeout=30) != worker:
                 raise PreflightError("cutover A worker stop receipt unverified")
             _browser_worker_postflight(
                 worker,
@@ -5476,7 +5594,10 @@ def _cutover_compensate_worker(
             )
         if _run("docker", "rm", worker, timeout=20) != worker:
             raise PreflightError("cutover A worker selective removal receipt unverified")
-        if _cutover_worker_name_id() is not None:
+        if (
+            _run("docker", "ps", "-a", "-q", "--no-trunc", "--filter", f"id={worker}", timeout=15)
+            or _cutover_worker_name_id() is not None
+        ):
             raise PreflightError("cutover A worker remained after selective removal")
     ipc = _names("volume", f"name=^{BROWSER_IPC_VOLUME}$")
     if ipc:
@@ -5499,18 +5620,17 @@ def _cutover_prepare_worker(
     worker_config_hash: str,
     seccomp_sha: str,
     staged_seccomp: bytes,
+    persist_capture: Callable[[str, str], object],
 ) -> str:
-    """Future one-worker install while original controller remains RUNNING.
+    """Start the attested worker under the caller's lease while the original stays running."""
+    from boca_socios.worker_start_capture import CaptureFailure, CaptureResult, attach_output
 
-    Precondition: immutable images have been pulled and exact staging already
-    verified by the future protected Action. This helper cannot be dispatched.
-    It never invokes ``docker compose up`` or opens a worker IP network.
-    """
     if (
         re.fullmatch(r"[0-9a-f]{64}", original_id) is None
         or not BROWSER_ATTEMPT_PATTERN.fullmatch(attempt_id)
         or not DIGEST_PATTERN.fullmatch(seccomp_sha)
         or hashlib.sha256(staged_seccomp).hexdigest() != seccomp_sha
+        or not callable(persist_capture)
     ):
         raise PreflightError("cutover A worker source/attempt/seccomp coordinates invalid")
     _cutover_legacy_record(
@@ -5527,12 +5647,16 @@ def _cutover_prepare_worker(
     exit_code: int | Literal["UNKNOWN"] | None = None
     oom_killed: bool | Literal["UNKNOWN"] | None = None
     exit_signature: str | None = None
+    worker_id: str | None = None
+    capture_result: str | None = None
+    capture_recorded = False
     try:
         _browser_create_ipc_volume(browser_image, attempt_id)
         phase = "CREATE"
         created = _run(*worker_create, timeout=60)
         if re.fullmatch(r"[0-9a-f]{64}", created) is None or created == original_id:
             raise PreflightError("cutover A worker create returned invalid ID")
+        worker_id = created
         if _cutover_worker_name_id() != created:
             raise PreflightError("cutover A worker name/ID differs after create")
         _browser_worker_postflight(
@@ -5545,17 +5669,37 @@ def _cutover_prepare_worker(
             verify_runtime=False,
             staged_seccomp=staged_seccomp,
         )
-        phase = "START"
-        if _run("docker", "start", created, timeout=30) != created:
-            raise PreflightError("cutover A worker start receipt invalid")
-        phase = "HEALTH_WAIT"
-        try:
-            _browser_wait_healthy(created)
-        except WorkerHealthPhaseError as exc:
-            phase = exc.phase
-            exit_code, oom_killed = exc.exit_code, exc.oom_killed
-            exit_signature = exc.exit_signature
-            raise
+        phase = "CAPTURE_PREPARE"
+        _cutover_capture_preflight(
+            created, browser_image, target_sha, attempt_id, worker_config_hash
+        )
+        with attach_output(ROOTLESS_SOCKET, created) as capture:
+            # The verified 101 and active reader precede this single start.
+            # Its stdout is only Docker's existing exact-CID ACK.
+            phase = "START"
+            if _run("docker", "start", created, timeout=30) != created:
+                raise PreflightError("cutover A worker start receipt invalid")
+            phase = "HEALTH_WAIT"
+            try:
+                _browser_wait_healthy(created)
+            except WorkerHealthPhaseError as exc:
+                phase = exc.phase
+                exit_code, oom_killed = exc.exit_code, exc.oom_killed
+                exit_signature = exc.exit_signature
+                if phase == "HEALTH_EXITED" and exit_signature is not None:
+                    try:
+                        capture_result = CaptureResult(capture.finish().value).value
+                    except Exception:
+                        # Foreign exceptions never cross this physical boundary.
+                        capture_result = CaptureResult.TRANSPORT.value
+                    try:
+                        persist_capture(created, capture_result)
+                        capture_recorded = True
+                    except Exception:
+                        # The exact process failure and its cleanup remain independent.
+                        # Unconfirmed custody cannot be used to claim a V5 observation.
+                        capture_recorded = False
+                raise
         phase = "HEALTH_POSTFLIGHT"
         _browser_worker_postflight(
             created,
@@ -5569,28 +5713,26 @@ def _cutover_prepare_worker(
             original_id, legacy_image, legacy_sha, name=CUTOVER_LEGACY_NAME, running=True
         )
         return created
-    except (PreflightError, OSError, ValueError, KeyError, TypeError):
+    except (CaptureFailure, PreflightError, OSError, ValueError, KeyError, TypeError):
+        compensation = "VERIFIED"
         try:
             _cutover_compensate_worker(
-                browser_image, target_sha, attempt_id, seccomp_sha, staged_seccomp
+                browser_image, target_sha, attempt_id, seccomp_sha, staged_seccomp, worker_id
             )
             _cutover_legacy_record(
                 original_id, legacy_image, legacy_sha, name=CUTOVER_LEGACY_NAME, running=True
             )
         except (PreflightError, OSError, ValueError, KeyError, TypeError):
-            raise CutoverWorkerPhaseError(
-                phase,
-                "INDETERMINATE",
-                exit_code=exit_code,
-                oom_killed=oom_killed,
-                exit_signature=exit_signature,
-            ) from None
+            compensation = "INDETERMINATE"
         raise CutoverWorkerPhaseError(
             phase,
-            "VERIFIED",
+            compensation,
             exit_code=exit_code,
             oom_killed=oom_killed,
             exit_signature=exit_signature,
+            capture_result=capture_result,
+            capture_worker_id=worker_id,
+            capture_recorded=capture_recorded,
         ) from None
 
 

@@ -29,6 +29,10 @@ SOURCES = (
     "src/boca_socios/host_boca_cutover_backend.py",
     "src/boca_socios/host_boca_cutover_cli.py",
     "src/boca_socios/host_boca_cutover_receipt.py",
+    "src/boca_socios/worker_start_capture.py",
+    "src/boca_socios/worker_start_receipt.py",
+    "src/boca_socios/host_cutover_capture_readback.py",
+    "src/boca_socios/host_cutover_ipc_probe.py",
     "src/boca_socios/host_cutover_stage.py",
     # One-incident post-failure stage recovery uses the same immutable memfd
     # transport as Cutover A; never install these scripts onto the droplet.
@@ -109,6 +113,12 @@ RECOVERY_MAIN = (
 ).encode("ascii")
 MAIN = (
     "import sys\n"
+    "if len(sys.argv) > 1 and sys.argv[1] == 'cutover-a-capture-readback-v3':\n"
+    "    if len(sys.argv) != 3: raise SystemExit(3)\n"
+    "    import os\n"
+    "    from boca_socios.host_cutover_capture_readback import run_host\n"
+    "    binding = os.environ.get('BOCA_CUTOVER_A_DISPATCH_BINDING_SHA256', '')\n"
+    "    raise SystemExit(run_host(sys.argv[2], approved_go_binding_sha256=binding))\n"
     "if len(sys.argv) > 1 and sys.argv[1] == 'cutover-stage-recover-v3':\n"
     "    from scripts import host_cutover_stage_recovery as recovery\n"
     "    raise SystemExit(recovery.main(['host-v3', *sys.argv[2:]]))\n"
@@ -141,14 +151,14 @@ MAIN = (
 # R46/R47 adds the reviewed physical cleanup proof and exact-incident recovery
 # observer to this explicit allowlist (approximately 39kB more uncompressed).
 # Keep the hard compressed transport cap independent and unchanged at 512kB.
-# R127 measured exactly 883682 full / 482747 preflight source bytes after
-# V4 enum-only worker diagnosis. Raise only these two source ceilings, retaining
-# the exact allowlist, immutable digest and unchanged 512k/128k compressed caps.
-MAX_SOURCE_BYTES = 886_000
+# The full package includes the R132 bounded worker capture and private receipt.
+# Only the existing host adapter grew in the separate preflight. Preserve the
+# compressed transport boundaries and each variant's independent allowlist.
+MAX_SOURCE_BYTES = 926_000
 MAX_ARCHIVE_BYTES = 512_000
 RECOVERY_MAX_SOURCE_BYTES = 256_000
 RECOVERY_MAX_ARCHIVE_BYTES = 128_000
-PREFLIGHT_MAX_SOURCE_BYTES = 484_000
+PREFLIGHT_MAX_SOURCE_BYTES = 492_000
 PREFLIGHT_MAX_ARCHIVE_BYTES = 128_000
 
 

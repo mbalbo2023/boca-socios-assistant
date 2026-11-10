@@ -331,6 +331,8 @@ class RootlessCutoverBackend:
         self.state = "STAGED"
 
     def prepare_worker(self, plan: CutoverPlan, lease: cleanup.BocaJobLease) -> str:
+        from boca_socios.worker_start_receipt import persist_before_cleanup
+
         self._guard(plan, lease, "STAGED")
         if not self.worker_hash or not self.controller_hash:
             raise CutoverError("cutover Compose service hashes absent")
@@ -357,6 +359,7 @@ class RootlessCutoverBackend:
                 self.worker_hash,
                 plan.seccomp_sha,
                 seccomp,
+                lambda cid, result: persist_before_cleanup(plan, lease, cid, result),
             )
         except host.CutoverWorkerPhaseError:
             raise
@@ -426,6 +429,8 @@ class RootlessCutoverBackend:
         worker_id: str,
         lease: cleanup.BocaJobLease,
     ) -> None:
+        from boca_socios.host_cutover_ipc_probe import verify_controller_peer
+
         self._guard(plan, lease, "CANDIDATE")
         if not self.controller_hash:
             raise CutoverError("cutover candidate resolved Compose hash missing")
@@ -440,6 +445,9 @@ class RootlessCutoverBackend:
             self.controller_hash,
         ):
             raise CutoverError("cutover candidate not healthy/running by exact ID")
+        # The candidate and worker were bound to this attempt at activation.
+        # Authenticate the listening peer from the controller without sending a request.
+        verify_controller_peer(candidate_id)
         host._browser_worker_postflight(
             worker_id,
             plan.browser_image,

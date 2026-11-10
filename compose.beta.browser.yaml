@@ -24,6 +24,8 @@ services:
     init: true
     restart: "no"
     stop_grace_period: 8s
+    logging:
+      driver: "none"
     environment:
       BOCA_ENVIRONMENT: staging
       BOCA_RUNTIME_MODE: simulation
@@ -52,12 +54,15 @@ services:
     mem_limit: 768m
     cpus: 1.00
     healthcheck:
-      # Read-only local socket/cgroup/lo proof; never sends an IPC command.
+      # Docker keeps health output independently of the service logging driver.
       test:
-        - CMD
-        - python
-        - -c
-        - "from boca_socios.browser.on_demand import validate_worker_boundary; from boca_socios.browser.ipc_worker import validate_no_egress_namespace; from boca_socios.browser.ipc_protocol import SOCKET_PATH, socket_identity; validate_worker_boundary(); validate_no_egress_namespace(); socket_identity(SOCKET_PATH)"
+        - CMD-SHELL
+        - >-
+          python -c 'from boca_socios.browser.on_demand import validate_worker_boundary;
+          from boca_socios.browser.ipc_worker import validate_no_egress_namespace;
+          from boca_socios.browser.ipc_protocol import SOCKET_PATH, socket_identity;
+          validate_worker_boundary(); validate_no_egress_namespace(); socket_identity(SOCKET_PATH)'
+          >/dev/null 2>&1
       interval: 2s
       timeout: 3s
       retries: 3
