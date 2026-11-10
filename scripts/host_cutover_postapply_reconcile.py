@@ -32,6 +32,8 @@ MAX_JSON = 4096
 R904 = "42742150879"
 R904_SHA = "b6a53c3348ce39c4d8536487e2baed559c2ca42f"
 R904_LIMIT = 16384
+CANDIDATE904 = "a0db3bf1f723bc6abdaa7f1b4ccb79b35c3bf298266c7f6fc01543c1afef9acd"
+WORKER904 = "0b6c1b863d0925918ab68965d4bf397dda1999b5b185182454518cf0b6d91598"
 LEGACY904 = "27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793"
 _IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant"
 _BASE = "b9e9465d6ec8e484b615d7bd65aab5a3c150d34a9893ad181167d2099893d811"
@@ -167,7 +169,7 @@ FIELDS = (
 INSPECT_FORMAT = (
     '{"id":{{json .Id}},"name":{{json .Name}},'
     '"running":{{json .State.Running}},'
-    '"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}},'
+    '"health":{{with index .State "Health"}}{{json .Status}}{{else}}null{{end}},'
     '"image_id":{{json .Image}},'
     '"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},'
     '"project":{{json (index .Config.Labels "com.docker.compose.project")}},'
@@ -175,6 +177,72 @@ INSPECT_FORMAT = (
     '"attempt":{{json (index .Config.Labels "boca.socios.browser-ipc-attempt")}},'
     '"port_binding":{{json .HostConfig.PortBindings}}}'
 )
+
+# .Id intentionally selects the JSON representation on Docker releases whose Go field is ID.
+# Its raw template uses missingkey=error. Look up optional map entries with index.
+_PINNED_START = '[{{json .Id}},{{json (index .Config.Labels "com.docker.compose.project")}},'
+PINNED_RUNTIME_FORMAT = (
+    _PINNED_START
+    + "{{json .State.Status}},{{json .State.Pid}},"
+    + '{{with index .State "Health"}}{{json .Status}}{{else}}null{{end}},'
+    + '{{json .RestartCount}},{{with index . "NetworkSettings"}}{{json (index . "Ports")}}{{else}}null{{end}}]'
+)
+PINNED_CONFIG_FORMAT = (
+    _PINNED_START
+    + "{{json .Name}},{{json .Config.Image}},{{json .Image}},"
+    + '{{json (index .Config.Labels "com.docker.compose.service")}},'
+    + '{{json (index .Config.Labels "org.opencontainers.image.revision")}},'
+    + '{{json (index .Config.Labels "boca.socios.browser-ipc-attempt")}},'
+    + '{{with index .HostConfig "RestartPolicy"}}{{json (index . "Name")}}{{else}}null{{end}},'
+    + '{{json (index .HostConfig "PortBindings")}}]'
+)
+_PIN_GROUPS = {
+    "runtime": (
+        PINNED_RUNTIME_FORMAT,
+        ("state", "pid", "health", "restart_count", "published_ports"),
+    ),
+    "config": (
+        PINNED_CONFIG_FORMAT,
+        (
+            "name",
+            "image",
+            "image_id",
+            "service",
+            "revision",
+            "attempt",
+            "restart_policy",
+            "port_binding",
+        ),
+    ),
+}
+_PIN_NAMES = (
+    "/boca-socios-controller-1",
+    "/boca-socios-controller-legacy-" + R904,
+    "/boca-socios-browser-worker-1",
+    "/boca-socios-telegram-1",
+)
+_PIN_ENUMS = {
+    "state": ("created", "running", "paused", "exited", "dead", "restarting", "removing"),
+    "health": ("healthy", "starting", "unhealthy"),
+    "name": _PIN_NAMES,
+    "image": tuple(
+        _PINS904[k] for k in ("legacy_image_ref", "target_image_ref", "browser_image_ref")
+    ),
+    "service": ("controller", "browser-worker", "telegram"),
+    "revision": (_PINS904["legacy_source_sha"], R904_SHA),
+    "attempt": (R904,),
+    "restart_policy": ("no", "unless-stopped", "always", "on-failure"),
+}
+_DOCKER_REASONS = {
+    "DOCKER_PROJECT_LIST": "PROJECT_LIST_FAILED",
+    "BOCA_CONTAINER_SET": "PROJECT_LIST_INVALID",
+    "DOCKER_INSPECT": "INSPECT_FAILED",
+    "DOCKER_CONTAINER_PARSE": "INSPECT_FORMAT",
+    "DOCKER_CONTAINER_IDENTITY": "IDENTITY",
+    "R904_INVENTORY": "INVENTORY_FORMAT",
+    "BOCA_RUNTIME_DRIFT": "DRIFT",
+}
+_LOOPBACK_904 = {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
 
 
 class ReconcileError(ValueError):
@@ -421,20 +489,27 @@ def _docker(*args: str, timeout: int = 15) -> str:
 
 
 def _docker_snapshot() -> list[dict[str, Any]]:
-    ids = _docker(
-        "ps",
-        "-a",
-        "-q",
-        "--no-trunc",
-        "--filter",
-        f"label=com.docker.compose.project={PROJECT}",
-    ).splitlines()
+    try:
+        ids = _docker(
+            "ps",
+            "-a",
+            "-q",
+            "--no-trunc",
+            "--filter",
+            f"label=com.docker.compose.project={PROJECT}",
+        ).splitlines()
+    except (OSError, ReconcileError) as exc:
+        raise ReconcileError("DOCKER_PROJECT_LIST") from exc
     if len(ids) > 8 or len(ids) != len(set(ids)) or any(not IDENT.fullmatch(x) for x in ids):
         raise ReconcileError("BOCA_CONTAINER_SET")
     containers: list[dict[str, Any]] = []
     for item in sorted(ids):
         try:
-            record = json.loads(_docker("inspect", "--format", INSPECT_FORMAT, item))
+            raw = _docker("inspect", "--format", INSPECT_FORMAT, item)
+        except (OSError, ReconcileError) as exc:
+            raise ReconcileError("DOCKER_INSPECT") from exc
+        try:
+            record = json.loads(raw)
         except (ValueError, TypeError) as exc:
             raise ReconcileError("DOCKER_CONTAINER_PARSE") from exc
         if (
@@ -868,7 +943,7 @@ def _safe_inventory904(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _processes904(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    result = {}
+    result: dict[str, Any] = {}
     for row in rows:
         try:
             fields = json.loads(
@@ -907,6 +982,144 @@ def _processes904(rows: list[dict[str, Any]]) -> dict[str, Any]:
         except (OSError, TypeError, ValueError):
             result[row["id"]] = "INDETERMINATE"
     return result
+
+
+def _pin_value(key: str, value: Any) -> Any:
+    if key in ("published_ports", "port_binding"):
+        if value == _LOOPBACK_904:
+            return "LOOPBACK_8443"
+        if value in (None, {}):
+            return "NONE"
+        if value == {"8443/tcp": None}:
+            return "UNPUBLISHED_8443"
+        return "OTHER"
+    if key in ("pid", "restart_count"):
+        limit = 2**31 if key == "pid" else 2**63
+        return value if type(value) is int and 0 <= value < limit else "UNKNOWN"
+    if key == "image_id":
+        return (
+            value
+            if type(value) is str and re.fullmatch(r"sha256:[0-9a-f]{64}", value)
+            else "UNKNOWN"
+        )
+    if key == "health" and value is None or key == "attempt" and value in (None, ""):
+        return "NONE"
+    return value if value in _PIN_ENUMS[key] else "OTHER"
+
+
+def _pin_presence(cid: str) -> str:
+    try:
+        lines = _docker(
+            "ps", "-a", "-q", "--no-trunc", "--filter", "id=" + cid, timeout=3
+        ).splitlines()
+    except (OSError, ValueError):
+        return "ID_QUERY_FAILED"
+    if not lines:
+        return "ABSENT"
+    return "PRESENT" if lines == [cid] else "ID_QUERY_INVALID"
+
+
+def _pin_inspect(cid: str, template: str, keys: tuple[str, ...]) -> tuple[str, dict[str, Any]]:
+    try:
+        raw = _docker("inspect", "--format", template, cid, timeout=3)
+    except (OSError, ValueError):
+        return "QUERY_FAILED", {}
+    try:
+        row = json.loads(raw)
+    except (TypeError, ValueError):
+        return "BAD_FORMAT", {}
+    if type(row) is not list or len(row) != len(keys) + 2:
+        return "BAD_FORMAT", {}
+    if row[:2] != [cid, PROJECT]:
+        return "IDENTITY", {}
+    return "OK", {k: _pin_value(k, v) for k, v in zip(keys, row[2:], strict=True)}
+
+
+def _pinned904(cid: str) -> dict[str, Any]:
+    first = _pin_presence(cid)
+    attrs: dict[str, Any] = {}
+    groups: dict[str, str] = {}
+    if first == "PRESENT":
+        for group, (template, keys) in _PIN_GROUPS.items():
+            status, a = _pin_inspect(cid, template, keys)
+            repeated, b = _pin_inspect(cid, template, keys)
+            if status == repeated == "OK":
+                attrs.update({key: a[key] if a[key] == b[key] else "UNKNOWN" for key in keys})
+                groups[group] = "OK" if a == b else "DRIFT"
+            else:
+                attrs.update(dict.fromkeys(keys, "UNKNOWN"))
+                groups[group] = status if status == repeated else "DRIFT"
+    second = _pin_presence(cid)
+    if first == second and first in ("PRESENT", "ABSENT"):
+        return {"presence": first, "reason": "EXACT_ID", "groups": groups, "attributes": attrs}
+    return {
+        "presence": "INDETERMINATE",
+        "reason": first if first == second else "ID_DRIFT",
+        "groups": {},
+        "attributes": {},
+    }
+
+
+def _verify_pins904(record: dict[str, Any]) -> None:
+    pins = record["pinned_containers"]
+    terminal = record["terminal_ids"]
+    expected = {LEGACY904}
+    if record["result"] == "PRESENT":
+        if terminal != {"candidate_id": CANDIDATE904, "worker_id": WORKER904}:
+            raise ReconcileError("R904_TERMINAL")
+        expected.update((CANDIDATE904, WORKER904))
+    if type(pins) is not dict or set(pins) != expected:
+        raise ReconcileError("R904_PINS")
+    for pin in pins.values():
+        if type(pin) is not dict or set(pin) != {"presence", "reason", "groups", "attributes"}:
+            raise ReconcileError("R904_PINS")
+        present, reason, groups, attrs = (
+            pin[k] for k in ("presence", "reason", "groups", "attributes")
+        )
+        if present != "PRESENT":
+            if (
+                groups != {}
+                or attrs != {}
+                or not (
+                    present == "ABSENT"
+                    and reason == "EXACT_ID"
+                    or present == "INDETERMINATE"
+                    and reason in ("ID_QUERY_FAILED", "ID_QUERY_INVALID", "ID_DRIFT")
+                )
+            ):
+                raise ReconcileError("R904_PINS")
+            continue
+        if (
+            reason != "EXACT_ID"
+            or type(groups) is not dict
+            or groups.keys() != _PIN_GROUPS.keys()
+            or type(attrs) is not dict
+        ):
+            raise ReconcileError("R904_PINS")
+        if set(attrs) != {key for _, keys in _PIN_GROUPS.values() for key in keys}:
+            raise ReconcileError("R904_PINS")
+        for group, (_, keys) in _PIN_GROUPS.items():
+            if groups[group] not in ("OK", "DRIFT", "BAD_FORMAT", "QUERY_FAILED", "IDENTITY"):
+                raise ReconcileError("R904_PINS")
+            for key in keys:
+                val = attrs[key]
+                if val == "UNKNOWN":
+                    continue
+                if groups[group] not in ("OK", "DRIFT"):
+                    raise ReconcileError("R904_PINS")
+                if key in ("published_ports", "port_binding"):
+                    valid = val in ("LOOPBACK_8443", "NONE", "UNPUBLISHED_8443", "OTHER")
+                elif key in ("pid", "restart_count", "image_id"):
+                    valid = _pin_value(key, val) == val
+                else:
+                    valid = (
+                        val in _PIN_ENUMS[key]
+                        or val == "OTHER"
+                        or key in ("health", "attempt")
+                        and val == "NONE"
+                    )
+                if not valid:
+                    raise ReconcileError("R904_PINS")
 
 
 def _host(run_id: str, prepared_id: str | None, *, source_sha: str | None = None) -> dict[str, Any]:
@@ -960,17 +1173,20 @@ def _host(run_id: str, prepared_id: str | None, *, source_sha: str | None = None
             or result["irreversible_commit_started"]
             or result["state"] == "RECOVERED"
             and (not result["original_restored"] or result["cleanup"] != "ACCEPT")
-            or len({result["legacy_id"], result["worker_id"], result["candidate_id"]}) != 3
+            or result["candidate_id"] != CANDIDATE904
+            or result["worker_id"] != WORKER904
             or any(result[k] is None for k in ("worker_id", "candidate_id"))
         ):
             raise ReconcileError("R904_TERMINAL")
     inventory_state = "OBSERVED"
+    inventory_reason = "OK"
     if run_id == R904:
         try:
             first = _safe_inventory904(_docker_snapshot())
             if _safe_inventory904(_docker_snapshot()) != first:
                 raise ReconcileError("BOCA_RUNTIME_DRIFT")
-        except (OSError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError) as exc:
+            inventory_reason = _DOCKER_REASONS.get(str(exc), "READ_ERROR")
             first = []
             inventory_state = "INDETERMINATE"
         try:
@@ -1045,7 +1261,7 @@ def _host(run_id: str, prepared_id: str | None, *, source_sha: str | None = None
             else None
         )
     if run_id == R904:
-        receipt["version"] = "boca-postapply-reconcile-904-v1"
+        receipt["version"] = "boca-postapply-reconcile-904-v2"
         situation = _files904(Path("/srv/boca-socios"), home)
         second_files = _files904(Path("/srv/boca-socios"), home)
         for key, entry in situation["inodes"].items():
@@ -1063,6 +1279,9 @@ def _host(run_id: str, prepared_id: str | None, *, source_sha: str | None = None
             for cid, value in processes.items()
         }
         receipt["inventory_state"] = inventory_state
+        receipt["inventory_reason"] = inventory_reason
+        ids = (LEGACY904, CANDIDATE904, WORKER904) if result is not None else (LEGACY904,)
+        receipt["pinned_containers"] = {cid: _pinned904(cid) for cid in ids}
         receipt["terminal_ids"] = {
             key: result[key] if result is not None else None
             for key in ("candidate_id", "worker_id")
@@ -1105,6 +1324,16 @@ def _verify904(record: dict[str, Any]) -> None:
         or any(record[k] is not None for k in ("commit_started", "original_restored"))
     ):
         raise ReconcileError("R904_TERMINAL")
+    if record["version"] == "boca-postapply-reconcile-904-v2":
+        _verify_pins904(record)
+        reason = record["inventory_reason"]
+        if (
+            record["inventory_state"] == "OBSERVED"
+            and reason != "OK"
+            or record["inventory_state"] != "OBSERVED"
+            and reason not in (*_DOCKER_REASONS.values(), "READ_ERROR")
+        ):
+            raise ReconcileError("R904_INVENTORY")
     items = record["boca_inventory"]
     if type(items) is not list or len(items) > 8 or _safe_inventory904(items) != items:
         raise ReconcileError("R904_INVENTORY")
@@ -1285,7 +1514,7 @@ def verify_runner(
         raise ReconcileError("RECEIPT_JSON") from exc
     version = record.get("version") if type(record) is dict else None
     allowed_versions = (
-        ("boca-postapply-reconcile-904-v1",)
+        ("boca-postapply-reconcile-904-v1", "boca-postapply-reconcile-904-v2")
         if run_id == R904
         else ("boca-postapply-reconcile-v2", "boca-postapply-reconcile-v3")
         if source_sha is not None
@@ -1300,11 +1529,18 @@ def verify_runner(
             else set()
         )
         | (
-            {"incident_files", "processes", "terminal_ids", "inventory_state"}
+            {
+                "incident_files",
+                "processes",
+                "terminal_ids",
+                "inventory_state",
+            }
             if run_id == R904
             else set()
         )
     )
+    if version == "boca-postapply-reconcile-904-v2":
+        expected_fields |= {"inventory_reason", "pinned_containers"}
     worker_evidence = record.get("terminal_worker_evidence") if type(record) is dict else None
     evidence_valid = worker_evidence is None or (
         type(worker_evidence) is dict
@@ -1376,6 +1612,180 @@ def verify_runner(
     if run_id == R904:
         _verify904(record)
     return record
+
+
+RECOVERY_904_PROFILES = frozenset({"OLD_ACTIVE", "OLD_PARKED", "OLD_RENAMED", "OLD_STARTED"})
+
+
+def stage_files_match_908(facts: dict[str, Any], *, present: bool = True) -> bool:
+    """Match only fixed Boca inodes and full content digests physically recorded by #908."""
+    nodes, checks = facts.get("inodes"), facts.get("checks")
+    if type(nodes) is not dict or type(checks) is not dict:
+        return False
+    exact = {"root": ("dir", 3362, 0o700), "compose": ("file", 3220, 0o644)}
+    if present:
+        exact.update(stage=("dir", 3145755, 0o700), stage_marker=("file", 3145756, 0o600))
+    for key, (kind, ino, mode) in exact.items():
+        node = nodes.get(key)
+        if (
+            type(node) is not list
+            or len(node) != 6
+            or node[:4] != [kind, 64769, ino, mode]
+            or node[5] is not True
+            or kind == "file"
+            and node[4] != 1
+        ):
+            return False
+    absent = {"overlay", "seccomp", "promote_intent", "promote_result"} | (
+        _ACT904.keys() - {"config_dir", "systemd_dir", "user_units", "wants_dir"}
+    )
+    if not present:
+        absent.update({"stage", "stage_base", "stage_overlay", "stage_seccomp", "stage_marker"})
+    if any(nodes.get(key) != "ABSENT" for key in absent):
+        return False
+    if (
+        type(checks.get("root")) is not int
+        or checks["root"] != 0
+        or checks.get("compose") is not True
+    ):
+        return False
+    if not present:
+        return True
+    if (
+        type(checks.get("stage")) is not int
+        or checks["stage"] != 0
+        or checks.get("stage_marker") != [64769, 3220]
+    ):
+        return False
+    for key in ("stage_base", "stage_overlay", "stage_seccomp"):
+        n = nodes.get(key)
+        if (
+            checks.get(key) is not True
+            or type(n) is not list
+            or len(n) != 6
+            or n[0] != "file"
+            or n[1] != 64769
+            or n[3] not in (0o600, 0o644)
+            or n[4] != 1
+            or n[5] is not True
+        ):
+            return False
+    return True
+
+
+def recovery_profile904(record: dict[str, Any]) -> str:
+    """Recognize the exact physical and Docker profiles approved for incident #904."""
+    verify_runner(_canonical(record) + b"\n", R904, None, source_sha=R904_SHA)
+    if (
+        record["version"] != "boca-postapply-reconcile-904-v2"
+        or record["terminal_state"] != "NO_GO"
+        or record["cleanup"] != "NO_GO"
+        or record["commit_started"] is not False
+        or record["original_restored"] is not False
+        or record["inventory_state"] != "OBSERVED"
+        or record["inventory_reason"] != "OK"
+        or record["stage"] != "PRESENT"
+        or record["promotion_intent"] != "ABSENT"
+        or record["promotion_result"] != "ABSENT"
+        or record["stage_preflight"]["reason"] != "STAGE_ROOT_ENTRIES"
+        or record["stage_preflight"]["root_entries_count"] != 2
+        or not stage_files_match_908(record["incident_files"])
+    ):
+        raise ReconcileError("R904_RECOVERY_EVIDENCE")
+    pins = record["pinned_containers"]
+    global_rows = {row["id"]: row for row in record["boca_inventory"]}
+    present = {cid for cid, pin in pins.items() if pin["presence"] == "PRESENT"}
+    if (
+        set(pins) != {LEGACY904, CANDIDATE904, WORKER904}
+        or set(global_rows) != present
+        or LEGACY904 not in present
+    ):
+        raise ReconcileError("R904_RECOVERY_SCOPE")
+    roles = {
+        LEGACY904: "legacy_image_ref",
+        CANDIDATE904: "target_image_ref",
+        WORKER904: "browser_image_ref",
+    }
+    for cid, pin in pins.items():
+        if pin["presence"] == "INDETERMINATE":
+            raise ReconcileError("R904_RECOVERY_PRESENCE")
+        if cid not in present:
+            continue
+        a, g = pin["attributes"], global_rows[cid]
+        if (
+            pin["groups"] != {"runtime": "OK", "config": "OK"}
+            or any(v in ("UNKNOWN", "OTHER") for v in a.values())
+            or a["name"] != g["name"]
+            or a["image_id"] != g["image_id"]
+            or a["service"] != g["service"]
+            or a["revision"] != g["revision"]
+            or a["health"] != _pin_value("health", g["health"])
+            or a["attempt"] != _pin_value("attempt", g["attempt"])
+            or a["port_binding"] != _pin_value("port_binding", g["port_binding"])
+            or g["running"] is not (a["state"] == "running")
+            or record["processes"][cid]
+            != [a["state"], a["pid"], roles[cid], a["restart_policy"], a["restart_count"]]
+            or a["image"] != _PINS904[roles[cid]]
+            or a["service"] != ("browser-worker" if cid == WORKER904 else "controller")
+            or a["revision"] != (_PINS904["legacy_source_sha"] if cid == LEGACY904 else R904_SHA)
+            or a["attempt"] != ("NONE" if cid == LEGACY904 else R904)
+        ):
+            raise ReconcileError("R904_RECOVERY_IDENTITY")
+    old = pins[LEGACY904]["attributes"]
+    canonical = _PIN_NAMES[0]
+    parked = _PIN_NAMES[1]
+    stopped_ports = ("NONE", "UNPUBLISHED_8443")
+    if old["port_binding"] != "LOOPBACK_8443":
+        raise ReconcileError("R904_RECOVERY_PORT")
+    running = (
+        old["state"] == "running"
+        and old["pid"] > 0
+        and old["health"] == "healthy"
+        and old["published_ports"] == "LOOPBACK_8443"
+    )
+    stopped = (
+        old["state"] == "exited" and old["pid"] == 0 and old["published_ports"] in stopped_ports
+    )
+    profile = ""
+    if old["name"] == parked and stopped and old["restart_policy"] == "no":
+        profile = "OLD_PARKED"
+    elif old["name"] == canonical and pins[CANDIDATE904]["presence"] == "ABSENT":
+        if running and old["restart_policy"] == "unless-stopped":
+            profile = "OLD_ACTIVE"
+        elif old["restart_policy"] == "no" and (running or stopped):
+            profile = "OLD_STARTED" if running else "OLD_RENAMED"
+    if profile not in RECOVERY_904_PROFILES:
+        raise ReconcileError("R904_RECOVERY_ORIGINAL")
+    if CANDIDATE904 in present:
+        a = pins[CANDIDATE904]["attributes"]
+        if (
+            profile != "OLD_PARKED"
+            or a["name"] != canonical
+            or a["restart_policy"] != "unless-stopped"
+            or a["port_binding"] != "LOOPBACK_8443"
+            or not (
+                a["state"] == "running"
+                and a["pid"] > 0
+                and a["published_ports"] == "LOOPBACK_8443"
+                or a["state"] in ("created", "exited")
+                and a["pid"] == 0
+                and a["published_ports"] in stopped_ports
+            )
+        ):
+            raise ReconcileError("R904_RECOVERY_CANDIDATE")
+    if WORKER904 in present:
+        a = pins[WORKER904]["attributes"]
+        if (
+            a["name"] != _PIN_NAMES[2]
+            or a["state"] != "created"
+            or a["pid"] != 0
+            or a["restart_count"] != 0
+            or a["restart_policy"] != "no"
+            or a["port_binding"] != "NONE"
+            or a["published_ports"] != "NONE"
+        ):
+            raise ReconcileError("R904_RECOVERY_WORKER")
+    return profile
 
 
 def _recovered_preflight_verified(raw: Any) -> bool:
@@ -1501,10 +1911,26 @@ def main(argv: list[str] | None = None) -> int:
         else:
             raw = sys.stdin.buffer.read(limit + 1)
             result = verify_runner(raw, run_id, prepare_id, source_sha=source_sha)
+            if run_id == R904 and result["version"] != "boca-postapply-reconcile-904-v2":
+                raise ReconcileError("R904_CURRENT_SCHEMA")
             unverified = result.get("inventory_state") == "INDETERMINATE"
             original = "UNVERIFIED" if unverified else str(result["original"] is not None)
             candidates = "UNVERIFIED" if unverified else str(len(result["candidate_controllers"]))
             workers = "UNVERIFIED" if unverified else str(len(result["browser_workers"]))
+            pinned_summary = ""
+            if run_id == R904:
+                pinned_summary = f" inventory={result['inventory_state']} inventory_reason={result['inventory_reason']}"
+                for role, cid in (
+                    ("legacy", LEGACY904),
+                    ("candidate", CANDIDATE904),
+                    ("worker", WORKER904),
+                ):
+                    pin = result["pinned_containers"].get(cid)
+                    presence = pin["presence"] if pin else "UNVERIFIED"
+                    status = pin["attributes"].get("state") if pin else None
+                    pinned_summary += f" pinned_{role}={presence}" + (
+                        f"/{status}" if status else ""
+                    )
             print(
                 "BOCA_POSTAPPLY_RECONCILE state=READ_ONLY_NO_GO"
                 f" intent={result['intent']} result={result['result']}"
@@ -1513,7 +1939,7 @@ def main(argv: list[str] | None = None) -> int:
                 f" port={result['port_8443']}"
                 f" marker={result['prepared_go_marker']}"
                 f" worker_phase={result['worker_id_recorded']}"
-                f" candidate_phase={result['candidate_id_recorded']}"
+                f" candidate_phase={result['candidate_id_recorded']}{pinned_summary}"
                 " scope=OBSERVER_ONLY observer_writes=0"
                 " prior_apply_effects=UNKNOWN retry=NO_GO"
             )

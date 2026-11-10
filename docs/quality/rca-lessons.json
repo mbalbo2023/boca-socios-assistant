@@ -16,10 +16,12 @@
       "issue": 80,
       "fix_pr": 81,
       "root_cause": "A private host-owned file is not readable by container UID 10001 under Docker rootless UID remapping.",
-      "prevention": "Keep the key in a Boca-only volume and prove ownership, mode and actual UID 10001 read access before starting.",
+      "prevention": "Keep the key in its Boca volume and prove UID 10001 can read it. After each systemd bind, verify the exact private socket inode and apply its configured access for the mapped controller. Refuse a changed inode or an unexpected owner during activation and cleanup.",
       "regression_tests": [
         "tests/test_host_first_deploy.py::test_key_volume_is_created_once_and_verified_without_host_secret",
-        "tests/test_host_first_deploy.py::test_labeled_local_volume_cannot_redirect_key_initialization"
+        "tests/test_host_first_deploy.py::test_labeled_local_volume_cannot_redirect_key_initialization",
+        "tests/test_on_demand_service.py::test_activation_repairs_only_restrictive_owned_socket_after_every_create",
+        "tests/test_on_demand_service.py::test_normalization_pins_inode_and_never_chmods_replacement"
       ]
     },
     {
@@ -598,7 +600,9 @@
         "tests/test_on_demand_end_to_end.py::test_authenticated_clicks_reach_exact_worker_and_publish_durable_ack",
         "tests/test_on_demand_end_to_end.py::test_owner_stop_while_start_is_claimed_never_enables_the_engine",
         "tests/test_on_demand_end_to_end.py::test_worker_failure_keeps_owner_session_and_panel_after_recreation",
-        "tests/test_host_on_demand_lifecycle.py::test_capture_arm_precedes_docker_and_classifies_exit_inside_attach"
+        "tests/test_host_on_demand_lifecycle.py::test_capture_arm_precedes_docker_and_classifies_exit_inside_attach",
+        "tests/test_cutover_candidate_receipt.py::test_failed_cold_acceptance_survives_compensation_and_lost_first_stdout",
+        "tests/test_cutover_candidate_compensation.py::test_compensate_restarted_pinned_candidate_after_stable_inspect"
       ]
     }
   ]

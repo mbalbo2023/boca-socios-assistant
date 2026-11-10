@@ -39,6 +39,7 @@ SOURCES = (
     "scripts/__init__.py",
     "scripts/host_cutover_postapply_reconcile.py",
     "scripts/host_cutover_stage_recovery.py",
+    "scripts/host_cutover_904_recovery.py",
     # Host-only lifecycle bridge and bounded stdlib dependency closure.
     "src/boca_socios/host_lifecycle_actions.py",
     "src/boca_socios/host_lifecycle_observe.py",
@@ -122,6 +123,9 @@ MAIN = (
     "    from boca_socios.host_cutover_capture_readback import run_host\n"
     "    binding = os.environ.get('BOCA_CUTOVER_A_DISPATCH_BINDING_SHA256', '')\n"
     "    raise SystemExit(run_host(sys.argv[2], approved_go_binding_sha256=binding))\n"
+    "if len(sys.argv) > 1 and sys.argv[1] == 'cutover-stage-recover-904':\n"
+    "    from scripts import host_cutover_904_recovery as recovery904\n"
+    "    raise SystemExit(recovery904.main(['host', *sys.argv[2:]]))\n"
     "if len(sys.argv) > 1 and sys.argv[1] == 'cutover-stage-recover-v3':\n"
     "    from scripts import host_cutover_stage_recovery as recovery\n"
     "    raise SystemExit(recovery.main(['host-v3', *sys.argv[2:]]))\n"
@@ -160,11 +164,11 @@ MAIN = (
 # The complete R135 archive adds the installed control, lifecycle and readback.
 # The separate worker preflight carries the updated host adapter. Each reviewed
 # entry set retains its own compressed transport bound.
-MAX_SOURCE_BYTES = 1_100_000
+MAX_SOURCE_BYTES = 1_120_000
 MAX_ARCHIVE_BYTES = 512_000
 RECOVERY_MAX_SOURCE_BYTES = 256_000
 RECOVERY_MAX_ARCHIVE_BYTES = 128_000
-PREFLIGHT_MAX_SOURCE_BYTES = 500_000
+PREFLIGHT_MAX_SOURCE_BYTES = 520_000
 PREFLIGHT_MAX_ARCHIVE_BYTES = 128_000
 
 

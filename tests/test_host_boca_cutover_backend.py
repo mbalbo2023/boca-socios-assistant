@@ -997,6 +997,18 @@ def test_idle_install_service_tied_to_verified_cids_before_retirement(fake_host,
         "changed-db",
         "changed-socket",
     ):
+        phases = {
+            "running": ("INITIAL_ENGINE_STOPPED", "MISMATCH"),
+            "partial-install": ("CONTROL_INSTALL", "UNVERIFIED"),
+            "stop-lost": ("PANEL_STOP_ACK", "UNVERIFIED"),
+            "lingering-pid": ("PANEL_STOPPED", "MISMATCH"),
+            "start-lost": ("PANEL_START_ACK", "UNVERIFIED"),
+            "second-health": ("PANEL_HEALTH", "UNVERIFIED"),
+            "changed-db": ("RESTART_DATABASE", "MISMATCH"),
+            "changed-socket": ("SOCKET_AFTER", "MISMATCH"),
+        }
+        assert receipt.failed_phase == "ACCEPT_CANDIDATE"
+        assert (receipt.candidate_check, receipt.candidate_result) == phases[case]
         assert not receipt.accepted and not backend.idle_installed
         assert "retire" not in events
         assert events.index("remove-control") < events.index("recover-original")

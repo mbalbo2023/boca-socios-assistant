@@ -37,6 +37,8 @@ def test_recover_exact_observation_after_container_was_removed(
     monkeypatch.setattr(cli, "_bundle_digest", lambda: DIGEST)
     calls = []
 
+    monkeypatch.setattr(readback.terminal, "read_persisted_record", lambda _: None)
+
     def read(approved: CutoverPlan) -> tuple[str, str]:
         calls.append(approved)
         return CID, "PERMISSION_ERROR"
@@ -78,6 +80,8 @@ def test_bad_private_marker_never_exposes_its_value(
 
     plan = _plan()
     monkeypatch.setattr(cli, "_bundle_digest", lambda: DIGEST)
+
+    monkeypatch.setattr(readback.terminal, "read_persisted_record", lambda _: None)
 
     def read(_plan: CutoverPlan) -> tuple[str, str]:
         if fault == "missing":
@@ -169,10 +173,10 @@ def test_reviewed_shell_command_binds_both_modes_to_the_same_dispatch(tmp_path: 
 
 def test_same_action_reads_once_only_after_an_attempted_failed_apply() -> None:
     workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
-    apply, tail = workflow.split("      - name: Read the same failed worker capture", 1)
+    apply, tail = workflow.split("      - name: Read the same failed Cutover", 1)
     block, rest = tail.split("      - name:", 1)
-    assert "capture_readback=true" in apply.split('if [[ "$host_ssh_rc" -ne 0 ]]; then')[-1]
-    assert "steps.cutover_host_apply.outputs.capture_readback == 'true'" in block
+    assert "failure_readback=true" in apply.split('if [[ "$host_ssh_rc" -ne 0 ]]; then')[-1]
+    assert "steps.cutover_host_apply.outputs.failure_readback == 'true'" in block
     assert "steps.cutover_go_preflight.outcome == 'success'" in block
     assert "steps.cutover_host_apply.outcome == 'failure'" in block
     assert "!cancelled()" in block and "inputs.operation == 'cutover-a-apply'" in block
@@ -191,7 +195,7 @@ def test_action_validates_entire_ssh_pipeline_before_publishing(
     from boca_socios import host_cutover_capture_readback as readback
 
     workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
-    step = workflow.split("      - name: Read the same failed worker capture", 1)[1]
+    step = workflow.split("      - name: Read the same failed Cutover", 1)[1]
     script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
     plan = _plan()
     wire = f"BOCA_WORKER_CAPTURE_V1 run={plan.attempt_id} sha={plan.target_sha} observation=EMPTY\n"
@@ -232,7 +236,7 @@ timeout() {
     expected = (
         readback.verify(wire.encode(), plan.attempt_id, plan.target_sha)
         if verified
-        else "BOCA_WORKER_CAPTURE_READBACK state=NO_GO receipt=UNVERIFIED cleanup=UNVERIFIED retry=NO_GO"
+        else "BOCA_CUTOVER_FAILURE_READBACK state=NO_GO receipt=UNVERIFIED cleanup=UNVERIFIED retry=NO_GO"
     )
     assert result.returncode == (0 if verified else 1) and not result.stderr
     assert result.stdout == summary.read_text() == expected + "\n"

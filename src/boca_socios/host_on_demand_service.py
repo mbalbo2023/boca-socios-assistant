@@ -78,15 +78,17 @@ _RUNTIME_FILES = (
 )
 _MAIN = (
     "import sys\n"
-    "from boca_socios.host_on_demand_service import socket_main\n"
-    "raise SystemExit(socket_main(sys.argv[2]) if len(sys.argv) == 3 "
-    "and sys.argv[1] == 'on-demand-serve' else 3)\n"
+    "from boca_socios.host_on_demand_service import socket_main,socket_mode_main\n"
+    "modes={'on-demand-serve':socket_main,'on-demand-socket-mode':socket_mode_main}\n"
+    "raise SystemExit(modes[sys.argv[1]](sys.argv[2]) if len(sys.argv)==3 "
+    "and sys.argv[1] in modes else 3)\n"
 ).encode("ascii")
 # The systemd unit pins BOTH archive and binding SHA. Verify before importing any
 # application Python. Execute the same verified anonymous bytes, no writable path reopen.
 _LOADER = (
     "import fcntl,hashlib,os,sys; "
-    "p,h,b=sys.argv[1:]; "
+    "p,h,b,m=sys.argv[1:]; "
+    "m in ('on-demand-serve','on-demand-socket-mode') or sys.exit(3); "
     "f=os.open(p,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK); "
     "r=os.fdopen(f,'rb').read(512001); "
     "(0<len(r)<=512000 and hashlib.sha256(r).hexdigest()==h) or sys.exit(3); "
@@ -96,7 +98,7 @@ _LOADER = (
     "fcntl.F_SEAL_SHRINK|fcntl.F_SEAL_SEAL); "
     "os.set_inheritable(d,True); "
     "os.execve('/usr/bin/python3',['/usr/bin/python3','-I','-B','/proc/self/fd/'+str(d),"
-    "'on-demand-serve',b],{'PATH':'/usr/bin:/bin','LANG':'C'})"
+    "m,b],{'PATH':'/usr/bin:/bin','LANG':'C'})"
 )
 
 
@@ -323,10 +325,16 @@ def _decode(home: Path, raw: bytes) -> tuple[OnDemandInstallation, str]:
 
 
 def _units(archive_hash: str, plan_hash: str) -> dict[str, bytes]:
+    verified = (
+        f'/usr/bin/python3 -I -B -c "{_LOADER}" '
+        f"%h/.boca-on-demand/{_ARCHIVE} {archive_hash} {plan_hash}"
+    )
     sock = (
         "[Unit]\nDescription=Boca owner panel activation socket\n"
         "[Socket]\nListenStream=%h/.boca-on-demand/socket/control.sock\n"
         "Accept=yes\nSocketMode=0666\nRemoveOnStop=yes\nBacklog=8\nMaxConnections=8\n"
+        f"ExecStartPost={verified} on-demand-socket-mode\n"
+        "StandardOutput=null\nStandardError=null\n"
         "[Install]\nWantedBy=default.target\n"
     )
     service = (
@@ -334,8 +342,7 @@ def _units(archive_hash: str, plan_hash: str) -> dict[str, bytes]:
         "[Service]\nType=oneshot\nStandardInput=socket\nStandardOutput=null\n"
         "StandardError=null\nNoNewPrivileges=yes\nRestrictAddressFamilies=AF_UNIX\n"
         "UMask=0077\nTimeoutStartSec=5min\n"
-        f'ExecStart=/usr/bin/python3 -I -B -c "{_LOADER}" '
-        f"%h/.boca-on-demand/{_ARCHIVE} {archive_hash} {plan_hash}\n"
+        f"ExecStart={verified} on-demand-serve\n"
     )
     return {_SOCKET: sock.encode("ascii"), _SERVICE: service.encode("ascii")}
 
@@ -367,7 +374,11 @@ def _systemctl(home: Path, *args: str) -> str:
         timeout=15,
         check=False,
     )
-    if proc.returncode not in ((0, 4) if args[0] == "show" else (0,)) or len(proc.stdout) > 4096:
+    if proc.returncode not in ((0, 4) if args[0] == "show" else (0,)):
+        # Preserve the exit category for the protected installer without piping
+        # the manager's diagnostics, process output or argument vector into a receipt.
+        raise _refuse() from subprocess.CalledProcessError(proc.returncode, "Boca user manager")
+    if len(proc.stdout) > 4096:
         raise _refuse()
     return proc.stdout.decode("ascii")
 
@@ -415,19 +426,59 @@ def _enabled(directory: Path, socket_owned: bool) -> bool:
     return True
 
 
-def _socket(root: Path) -> None:
+def _socket(root: Path, *, normalize: bool = False, cleanup_only: bool = False) -> None:
+    """Attest the exact pathname socket, optionally during activation or compensation."""
     folder = root / "socket"
-    _directory(folder, mode=0o711)
-    if {p.name for p in folder.iterdir()} != {_SOCKET_NAME}:
-        raise _refuse()
-    s = (folder / _SOCKET_NAME).lstat()
-    if (
-        not stat.S_ISSOCK(s.st_mode)
-        or s.st_nlink != 1
-        or stat.S_IMODE(s.st_mode) != 0o666
-        or (s.st_uid, s.st_gid) != (os.geteuid(), os.getegid())
-    ):
-        raise _refuse()
+    with ExitStack() as stack:
+        directory = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        stack.callback(os.close, directory)
+        parent = os.fstat(directory)
+        owners = (os.geteuid(), os.getegid())
+        if (
+            (parent.st_uid, parent.st_gid) != owners
+            or stat.S_IMODE(parent.st_mode) != 0o711
+            or os.listdir(directory) != [_SOCKET_NAME]
+        ):
+            raise _refuse()
+        node = os.open(_SOCKET_NAME, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory)
+        stack.callback(os.close, node)
+        before = os.fstat(node)
+        mode = stat.S_IMODE(before.st_mode)
+        if (
+            not stat.S_ISSOCK(before.st_mode)
+            or (before.st_uid, before.st_gid) != owners
+            or before.st_nlink != 1
+            or mode & ~0o666
+            or mode & 0o600 != 0o600
+            or not os.path.samestat(parent, folder.lstat())
+            or not os.path.samestat(
+                before, os.stat(_SOCKET_NAME, dir_fd=directory, follow_symlinks=False)
+            )
+        ):
+            raise _refuse()
+        if mode != 0o666:
+            if normalize:
+                # Linux fchmod on O_PATH returns EBADF. This procfs magic link
+                # resolves to the held inode even if the pathname is replaced.
+                os.chmod(f"/proc/self/fd/{node}", 0o666)  # noqa: S103 - remapped client socket
+            elif not cleanup_only:
+                raise _refuse()
+        after = os.fstat(node)
+        published = os.stat(_SOCKET_NAME, dir_fd=directory, follow_symlinks=False)
+        final_parent = folder.lstat()
+        if (
+            not os.path.samestat(parent, final_parent)
+            or (final_parent.st_uid, final_parent.st_gid, final_parent.st_mode)
+            != (parent.st_uid, parent.st_gid, parent.st_mode)
+            or not os.path.samestat(before, after)
+            or not os.path.samestat(after, published)
+            or (after.st_uid, after.st_gid) != owners
+            or after.st_nlink != 1
+            or (published.st_uid, published.st_gid, published.st_mode, published.st_nlink)
+            != (after.st_uid, after.st_gid, after.st_mode, after.st_nlink)
+            or stat.S_IMODE(after.st_mode) != (mode if cleanup_only else 0o666)
+        ):
+            raise _refuse()
 
 
 def _unit_link(root: Path, directory: Path, name: str, data: bytes) -> bool:
@@ -438,7 +489,9 @@ def _unit_link(root: Path, directory: Path, name: str, data: bytes) -> bool:
     return linked
 
 
-def _inspect(home: Path, root: Path, contents: dict[str, bytes]) -> tuple[bool, bool]:
+def _inspect(
+    home: Path, root: Path, contents: dict[str, bytes], *, cleanup_only: bool = False
+) -> tuple[bool, bool]:
     directory = _unit_dir(home)
     folder = root / "socket"
     _directory(folder, mode=0o711)
@@ -453,7 +506,7 @@ def _inspect(home: Path, root: Path, contents: dict[str, bytes]) -> tuple[bool, 
         if name == _SOCKET:
             active = state["ActiveState"] == "active" and state["SubState"] == "listening"
             if active:
-                _socket(root)
+                _socket(root, cleanup_only=cleanup_only)
             elif state["ActiveState"] not in ("inactive", "failed") or _present(
                 root / "socket" / _SOCKET_NAME
             ):
@@ -466,43 +519,55 @@ def install_control(
     installation: OnDemandInstallation, lease: BocaJobLease, *, bundle_sha256: str | None = None
 ) -> None:
     """Publish only a prepared attempt, pin both CIDs, then verify a listening unit."""
-    run = installation.installation_run_id
-    _verify_lease(lease, run)
-    home = _home()
-    root = _owned(home, run)
-    _directory(root / "socket", mode=0o711)
-    if _present(root / _REMOVING):
-        raise _refuse()
-    directory = _unit_dir(home)
-    archive = _bundle(bundle_sha256)
-    digest = _sha(archive)
-    plan = _plan(home, installation, digest)
-    units = _units(digest, _sha(plan))
-    active, ready = _inspect(home, root, units)
-    for name, data in ((_BINDING, plan), (_ARCHIVE, archive), *units.items()):
-        path = root / name
-        if _present(path):
-            if _read(path, len(data), links=(1, 2) if name in units else (1,)) != data:
-                raise _refuse()
-        else:
-            _new(path, data)
-    for name in units:
-        if not _matches(root / name, directory / name):
-            os.link(root / name, directory / name, follow_symlinks=False)
-    _sync(directory)
-    if not _enabled(directory, True):
-        enable = directory / "default.target.wants"
-        os.symlink("../" + _SOCKET, enable / _SOCKET)
-        _sync(enable)
-    if not ready:
-        _systemctl(home, "daemon-reload")
-    if not active:
-        # Verify again after daemon-reload, including owner fragment and drop-ins, before start.
-        _, ready = _inspect(home, root, units)
-        if not ready:
+    # Only the protected installer reports Cutover stages. The installed
+    # handler ZIP intentionally excludes the general deployment dispatcher.
+    from boca_socios.host_boca_cutover import candidate_check
+
+    with candidate_check("CONTROL_HOME_UNITS"):
+        run = installation.installation_run_id
+        _verify_lease(lease, run)
+        home = _home()
+        root = _owned(home, run)
+        _directory(root / "socket", mode=0o711)
+        if _present(root / _REMOVING):
             raise _refuse()
-        _systemctl(home, "start", _SOCKET)
-    verify_control(installation, lease)
+        directory = _unit_dir(home)
+    with candidate_check("CONTROL_ARCHIVE_BINDING"):
+        archive = _bundle(bundle_sha256)
+        digest = _sha(archive)
+        plan = _plan(home, installation, digest)
+        units = _units(digest, _sha(plan))
+    with candidate_check("CONTROL_UNIT_PREFLIGHT"):
+        active, ready = _inspect(home, root, units)
+    with candidate_check("CONTROL_PUBLISH"):
+        for name, data in ((_BINDING, plan), (_ARCHIVE, archive), *units.items()):
+            path = root / name
+            if _present(path):
+                if _read(path, len(data), links=(1, 2) if name in units else (1,)) != data:
+                    raise _refuse()
+            else:
+                _new(path, data)
+        for name in units:
+            if not _matches(root / name, directory / name):
+                os.link(root / name, directory / name, follow_symlinks=False)
+        _sync(directory)
+        if not _enabled(directory, True):
+            enable = directory / "default.target.wants"
+            os.symlink("../" + _SOCKET, enable / _SOCKET)
+            _sync(enable)
+    with candidate_check("CONTROL_MANAGER_RELOAD"):
+        if not ready:
+            _systemctl(home, "daemon-reload")
+        if not active:
+            # Verify owner fragments and drop-ins in the reloaded manager before starting.
+            _, ready = _inspect(home, root, units)
+            if not ready:
+                raise _refuse()
+    if not active:
+        with candidate_check("CONTROL_LISTENER_START"):
+            _systemctl(home, "start", _SOCKET)
+    with candidate_check("CONTROL_LISTENER_VERIFY"):
+        verify_control(installation, lease)
 
 
 def verify_control(installation: OnDemandInstallation, lease: BocaJobLease) -> None:
@@ -520,6 +585,10 @@ def read_installed_binding(lease: BocaJobLease) -> OnDemandInstallation:
 def _verified_installation(home: Path) -> OnDemandInstallation:
     root = home / _ROOT
     _directory(root, mode=0o700)
+    if _present(root / _REMOVING):
+        # The handler rejects every new connection after this durable boundary,
+        # even if interruption left the manager reporting an active listener.
+        raise _refuse()
     raw = _read(root / _BINDING, _MAX_PLAN)
     item, digest = _decode(home, raw)
     _owned(home, item.installation_run_id)
@@ -561,7 +630,9 @@ def remove_control(attempt: str, lease: BocaJobLease) -> None:
                 _unit_link(root, directory, name, data)
             _enabled(directory, _present(directory / _SOCKET))
             _systemctl(home, "daemon-reload")
-        active, _ = _inspect(home, root, units)
+        active, ready = _inspect(home, root, units, cleanup_only=True)
+        if active and not ready:
+            raise _refuse()
         if not _present(removing):
             _new(removing, proof)
         if active:
@@ -722,26 +793,46 @@ def handle_connection(
         return False
 
 
+def _pinned_activation(binding_sha256: str) -> tuple[Path, OnDemandInstallation, str]:
+    if not _DIGEST.fullmatch(binding_sha256):
+        raise _refuse()
+    home = _home()
+    root = home / _ROOT
+    _directory(root, mode=0o700)
+    raw = _read(root / _BINDING, _MAX_PLAN)
+    if _sha(raw) != binding_sha256:
+        raise _refuse()
+    installation, digest = _decode(home, raw)
+    if not re.fullmatch(r"/proc/self/fd/[1-9][0-9]*", sys.argv[0]):
+        raise _refuse()
+    with open(sys.argv[0], "rb") as archive:
+        if _sha(archive.read(_MAX_ZIP + 1)) != digest:
+            raise _refuse()
+    _owned(home, installation.installation_run_id)
+    if _present(root / _REMOVING):
+        raise _refuse()
+    return root, installation, digest
+
+
+def socket_mode_main(binding_sha256: str) -> int:
+    """Socket ExecStartPost; applies to every manager start, including boot."""
+    try:
+        root, _, digest = _pinned_activation(binding_sha256)
+        directory = _unit_dir(root.parent)
+        for name, data in _units(digest, binding_sha256).items():
+            if not _unit_link(root, directory, name, data):
+                raise _refuse()
+        if not _enabled(directory, True):
+            raise _refuse()
+        _socket(root, normalize=True)
+        return 0
+    except Exception:
+        return 3
+
+
 def socket_main(binding_sha256: str) -> int:
     try:
-        if not _DIGEST.fullmatch(binding_sha256):
-            return 3
-        home = _home()
-        root = home / _ROOT
-        _directory(root, mode=0o700)
-        raw = _read(root / _BINDING, _MAX_PLAN)
-        if _sha(raw) != binding_sha256:
-            return 3
-        installation, digest = _decode(home, raw)
-        # The physical service is only reachable through the verified sealed bundle.
-        if not re.fullmatch(r"/proc/self/fd/[1-9][0-9]*", sys.argv[0]):
-            return 3
-        with open(sys.argv[0], "rb") as archive:
-            if _sha(archive.read(_MAX_ZIP + 1)) != digest:
-                return 3
-        _owned(home, installation.installation_run_id)
-        if _present(root / _REMOVING):
-            return 3
+        _, installation, _ = _pinned_activation(binding_sha256)
         with socket.socket(fileno=0) as accepted:
             return 0 if handle_connection(accepted, installation) else 3
     except Exception:

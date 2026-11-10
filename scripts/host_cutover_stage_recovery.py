@@ -295,6 +295,8 @@ def recover(incident: str, prepared: str) -> dict[str, Any]:
 
 
 def recover_v3(incident: str, source_sha: str) -> dict[str, Any]:
+    if incident == observer.R904:
+        raise StageRecoveryError("incident requires its exact controller recovery")
     return _recover(incident, None, source_sha)
 
 
@@ -351,6 +353,8 @@ def verify_runner(raw: bytes, incident: str, prepared: str) -> dict[str, Any]:
 
 
 def verify_runner_v3(raw: bytes, incident: str, source_sha: str) -> dict[str, Any]:
+    if incident == observer.R904:
+        raise StageRecoveryError("incident requires its exact controller recovery")
     return _verify_runner(raw, incident, None, source_sha)
 
 

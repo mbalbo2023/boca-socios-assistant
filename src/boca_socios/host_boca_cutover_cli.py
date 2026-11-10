@@ -287,6 +287,16 @@ def run_cli(
                         f" run={invocation.plan.attempt_id} sha={invocation.plan.target_sha}"
                     )
                 print(line)
+            if receipt.failed_phase == "ACCEPT_CANDIDATE":
+                candidate = terminal.TerminalRecord.from_receipt(
+                    invocation.plan, receipt
+                ).candidate_evidence()
+                if candidate is not None:
+                    print(
+                        "BOCA_CUTOVER_A_CANDIDATE_FAILURE "
+                        + candidate.wire()
+                        + f" run={invocation.plan.attempt_id} sha={invocation.plan.target_sha}"
+                    )
             # A bounded phase hint only; never an authenticated result.
             if receipt.failed_phase in CUTOVER_FAILURE_PHASES:
                 print("BOCA_CUTOVER_A_FAILURE_PHASE phase=" + receipt.failed_phase)

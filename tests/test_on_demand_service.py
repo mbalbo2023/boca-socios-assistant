@@ -7,12 +7,14 @@ import json
 import os
 import socket
 import stat
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
+from boca_socios import host_boca_cutover as cutover
 from boca_socios import host_on_demand_service as service
 from boca_socios.host_boca_cleanup import BocaJobLease
 from boca_socios.host_lifecycle_rootless_adapter import ReviewedInstalledPair
@@ -198,9 +200,10 @@ def test_prepared_only_and_unowned_files_are_preserved(host):
     assert not path.exists()
     service.prepare_control_directory(ATTEMPT, lease)
     (unit / SOCKET).write_bytes(b"foreign")
-    with pytest.raises(service.ControlRefused):
+    with pytest.raises(cutover.CandidateAcceptanceFailure) as caught:
         service.install_control(installation(home), lease)
     service.remove_control(ATTEMPT, lease)
+    assert caught.value.check == "CONTROL_UNIT_PREFLIGHT"
     assert (unit / SOCKET).read_bytes() == b"foreign"
     assert manager.effects == []
 
@@ -209,8 +212,9 @@ def test_compensation_preserves_drift_and_foreign_fragment(host):
     home, unit, manager, lease = host
     service.prepare_control_directory(ATTEMPT, lease)
     manager.foreign = True
-    with pytest.raises(service.ControlRefused):
+    with pytest.raises(cutover.CandidateAcceptanceFailure) as caught:
         service.install_control(installation(home), lease)
+    assert caught.value.check == "CONTROL_UNIT_PREFLIGHT"
     assert not manager.effects
     manager.foreign = False
     service.install_control(installation(home), lease)
@@ -263,6 +267,7 @@ def test_exec_pins_archive_and_uses_sealed_bytes(tmp_path):
         str(archive),
         digest,
         "binding",
+        "on-demand-serve",
     ]
     assert subprocess.run(command, check=False, capture_output=True).returncode == 0  # noqa: S603
     archive.write_bytes(b"changed")
@@ -318,8 +323,9 @@ def test_failed_start_can_be_compensated_without_a_listener(host, monkeypatch):
         return manager(home, *args)
 
     monkeypatch.setattr(service, "_systemctl", failed_start)
-    with pytest.raises(service.ControlRefused):
+    with pytest.raises(cutover.CandidateAcceptanceFailure) as caught:
         service.install_control(installation(home), lease)
+    assert caught.value.check == "CONTROL_LISTENER_START"
     service.remove_control(ATTEMPT, lease)
     assert not (home / ".boca-on-demand").exists()
     assert not (unit / SOCKET).exists() and not (unit / UNIT).exists()
@@ -365,3 +371,174 @@ def test_cut_during_unit_reload_after_unlink_can_resume(host, monkeypatch):
     monkeypatch.setattr(service, "_systemctl", manager)
     service.remove_control(ATTEMPT, lease)
     assert not (home / ".boca-on-demand").exists() and not manager.known
+
+
+@pytest.mark.parametrize(
+    ("operation", "expected"),
+    [
+        ("_home", "CONTROL_HOME_UNITS"),
+        ("_bundle", "CONTROL_ARCHIVE_BINDING"),
+        ("_inspect", "CONTROL_UNIT_PREFLIGHT"),
+        ("_new", "CONTROL_PUBLISH"),
+        ("daemon-reload", "CONTROL_MANAGER_RELOAD"),
+        ("start", "CONTROL_LISTENER_START"),
+        ("verify_control", "CONTROL_LISTENER_VERIFY"),
+    ],
+)
+def test_install_reports_innermost_safe_substep(host, monkeypatch, operation, expected):
+    home, _, manager, lease = host
+    service.prepare_control_directory(ATTEMPT, lease)
+    item = installation(home)
+
+    def unreachable(*args, **kwargs):
+        raise PermissionError("fixture-private-value")
+
+    if operation in ("daemon-reload", "start"):
+
+        def manager_failure(home, *args):
+            if args[0] == operation:
+                unreachable()
+            return manager(home, *args)
+
+        monkeypatch.setattr(service, "_systemctl", manager_failure)
+    else:
+        monkeypatch.setattr(service, operation, unreachable)
+
+    with (
+        pytest.raises(cutover.CandidateAcceptanceFailure) as caught,
+        cutover.candidate_check("CONTROL_INSTALL"),
+    ):
+        service.install_control(item, lease)
+    assert (caught.value.check, caught.value.result) == (expected, "PERMISSION_DENIED")
+    assert "fixture-private-value" not in str(caught.value)
+
+
+def test_interrupted_remove_is_unavailable_even_while_manager_still_listens(host):
+    home, _, manager, lease = host
+    service.prepare_control_directory(ATTEMPT, lease)
+    item = installation(home)
+    service.install_control(item, lease)
+    root = home / ".boca-on-demand"
+    proof = hashlib.sha256((root / "binding.json").read_bytes()).hexdigest().encode("ascii")
+    # remove_control durably publishes this exact marker before asking systemd to stop.
+    service._new(root / "removing", proof)
+    assert manager.active
+    with pytest.raises(service.ControlRefused):
+        service.verify_control(item, lease)
+    with pytest.raises(service.ControlRefused):
+        service.read_installed_binding(lease)
+    service.remove_control(ATTEMPT, lease)
+    assert not (home / ".boca-on-demand").exists() and not manager.active
+
+
+def test_actual_manager_failure_category_discards_its_output(tmp_path, monkeypatch):
+    import subprocess
+
+    def systemctl_error(argv, **kwargs):
+        assert kwargs["stderr"] == subprocess.DEVNULL
+        return subprocess.CompletedProcess(argv, 1, b"private-diagnostic", None)
+
+    monkeypatch.setattr(subprocess, "run", systemctl_error)
+    with (
+        pytest.raises(cutover.CandidateAcceptanceFailure) as failure,
+        cutover.candidate_check("CONTROL_LISTENER_START"),
+    ):
+        service._systemctl(tmp_path, "start", SOCKET)
+    assert (failure.value.check, failure.value.result) == (
+        "CONTROL_LISTENER_START",
+        "COMMAND_FAILED",
+    )
+    assert "private-diagnostic" not in str(failure.value)
+
+
+def test_activation_repairs_only_restrictive_owned_socket_after_every_create(host):
+    home, unit, manager, lease = host
+    item = installation(home)
+    root = home / ".boca-on-demand"
+    directory = service.prepare_control_directory(ATTEMPT, lease)
+    service.install_control(item, lease)
+    assert "ExecStartPost=" in (unit / SOCKET).read_text()
+    assert "on-demand-socket-mode" in (unit / SOCKET).read_text()
+    node = directory / "control.sock"
+    for _ in range(2):
+        manager(home, "stop", SOCKET)
+        manager(home, "start", SOCKET)
+        node.chmod(0o664)  # Ubuntu 24.04's observed just-created pathname.
+        with pytest.raises(service.ControlRefused):
+            service.verify_control(item, lease)
+        inode = node.lstat()
+        service._socket(root, normalize=True)
+        assert os.path.samestat(inode, node.lstat()) and stat.S_IMODE(node.lstat().st_mode) == 0o666
+        service.verify_control(item, lease)
+    node.chmod(0o664)
+    service.remove_control(ATTEMPT, lease)
+    assert not root.exists() and not manager.active
+
+
+def test_mode_hook_requires_exact_binding_runtime_units_and_enable_link(host, monkeypatch):
+    home, unit, _, lease = host
+    directory = service.prepare_control_directory(ATTEMPT, lease)
+    service.install_control(installation(home), lease)
+    node = directory / "control.sock"
+    node.chmod(0o664)
+    pin = hashlib.sha256((directory.parent / "binding.json").read_bytes()).hexdigest()
+    with os.fdopen(os.memfd_create("boca-test"), "wb", buffering=0) as archive:
+        archive.write(ZIP)
+        monkeypatch.setattr(sys, "argv", [f"/proc/self/fd/{archive.fileno()}"])
+        assert service.socket_mode_main("f" * 64) == 3
+        assert stat.S_IMODE(node.lstat().st_mode) == 0o664
+        enable = unit / "default.target.wants" / SOCKET
+        enable.unlink()
+        assert service.socket_mode_main(pin) == 3
+        assert stat.S_IMODE(node.lstat().st_mode) == 0o664
+        enable.symlink_to("../" + SOCKET)
+        assert service.socket_mode_main(pin) == 0
+        assert stat.S_IMODE(node.lstat().st_mode) == 0o666
+        node.chmod(0o664)
+        expected = unit / UNIT
+        expected.unlink()
+        expected.write_text("unowned fragment")
+        assert service.socket_mode_main(pin) == 3
+        assert stat.S_IMODE(node.lstat().st_mode) == 0o664
+        expected.unlink()
+        os.link(directory.parent / UNIT, expected)
+        archive.write(b"drift")
+        assert service.socket_mode_main(pin) == 3
+        assert stat.S_IMODE(node.lstat().st_mode) == 0o664
+
+
+def test_normalization_pins_inode_and_never_chmods_replacement(host, monkeypatch):
+    home, _, _, lease = host
+    directory = service.prepare_control_directory(ATTEMPT, lease)
+    root = directory.parent
+    node = directory / "control.sock"
+    other = home / "foreign"
+    other.write_bytes(b"preserve")
+    other.chmod(0o600)
+    os.mknod(node, stat.S_IFSOCK | 0o600)
+    node.chmod(0o664)
+    real = os.chmod
+
+    def swapped(path, mode):
+        assert str(path).startswith("/proc/self/fd/")
+        node.unlink()
+        node.symlink_to(other)
+        real(path, mode)
+
+    monkeypatch.setattr(os, "chmod", swapped)
+    with pytest.raises(service.ControlRefused):
+        service._socket(root, normalize=True)
+    assert stat.S_IMODE(other.stat().st_mode) == 0o600
+
+
+def test_rejects_unsafe_mode_before_any_normalization_or_rollback(host):
+    home, _, manager, lease = host
+    directory = service.prepare_control_directory(ATTEMPT, lease)
+    service.install_control(installation(home), lease)
+    node = directory / "control.sock"
+    node.chmod(0o667)
+    with pytest.raises(service.ControlRefused):
+        service._socket(directory.parent, normalize=True)
+    with pytest.raises(service.ControlRefused):
+        service.remove_control(ATTEMPT, lease)
+    assert manager.active and stat.S_IMODE(node.stat().st_mode) == 0o667

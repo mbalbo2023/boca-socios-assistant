@@ -118,7 +118,12 @@ def verify_dispatch(env: Mapping[str, str], proof: dict[str, Any]) -> None:
             _require(matching[0].get(key, {}).get("full_name") == REPO)
         else:
             _require(matching[0].get(key) == run[key])
-    ci_runs = _pages(proof["ci"], "workflow_runs")
+    verify_completed_ci(sha, proof["ci"], proof["checks"])
+
+
+def verify_completed_ci(sha: str, ci_pages: Any, check_pages: Any) -> None:
+    """Authenticate one green main push and both required checks in its CI suite."""
+    ci_runs = _pages(ci_pages, "workflow_runs")
     _require(len(ci_runs) == 1)
     ci = ci_runs[0]
     for key, expected_ci in {
@@ -136,7 +141,7 @@ def verify_dispatch(env: Mapping[str, str], proof: dict[str, Any]) -> None:
     _require(type(suite) is int and suite > 0)
     for key in ("repository", "head_repository"):
         _require(ci.get(key, {}).get("full_name") == REPO)
-    checks = _pages(proof["checks"], "check_runs")
+    checks = _pages(check_pages, "check_runs")
     for name in ("quality-and-tests", "image-build"):
         relevant = [item for item in checks if item.get("name") == name]
         _require(len(relevant) == 1)
@@ -202,22 +207,26 @@ def _paginated_json(raw: bytes) -> list[Any]:
     return pages
 
 
+def load_evidence(path: Path, *, paginated: bool = False) -> Any:
+    """Read one bounded runner API response, rejecting duplicate JSON keys."""
+    with path.open("rb") as stream:
+        raw = stream.read(4_000_001)
+    _require(0 < len(raw) <= 4_000_000)
+    return _paginated_json(raw) if paginated else json.loads(raw, object_pairs_hook=_unique)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("evidence", type=Path)
     parser.add_argument("--write-invocation", action="store_true")
     args = parser.parse_args(argv)
     try:
-        proof = {}
-        for name in FILES:
-            with (args.evidence / (name + ".json")).open("rb") as stream:
-                raw = stream.read(4_000_001)
-            _require(0 < len(raw) <= 4_000_000)
-            proof[name] = (
-                _paginated_json(raw)
-                if name in ("history", "checks", "ci")
-                else json.loads(raw, object_pairs_hook=_unique)
+        proof = {
+            name: load_evidence(
+                args.evidence / (name + ".json"), paginated=name in ("history", "checks", "ci")
             )
+            for name in FILES
+        }
         if args.write_invocation:
             write_invocation(os.environ, proof)
         else:

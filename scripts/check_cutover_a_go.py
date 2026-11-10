@@ -35,6 +35,7 @@ from boca_socios.host_boca_cutover import (
     CUTOVER_FAILURE_PHASES,
     WORKER_COMPENSATION_STATES,
     WORKER_PRIMARY_PHASES,
+    CandidateEvidence,
     CutoverPlan,
 )
 from boca_socios.host_boca_cutover_cli import CutoverCliError, CutoverInvocation, encode_invocation
@@ -670,6 +671,7 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
     unverified = b"BOCA_CUTOVER_A_HOST state=NO_GO receipt=UNVERIFIED runtime=UNVERIFIED\n"
     host_claim = "NONE"
     phase_claim = "UNVERIFIED"
+    candidate_claim: CandidateEvidence | None = None
     worker_primary_claim = "UNVERIFIED"
     worker_compensation_claim = "UNVERIFIED"
     worker_exit_code_claim = "UNKNOWN"
@@ -688,6 +690,26 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
             postflight_line, separator, prefix = prefix.partition(b"\n")
             if not separator or len(postflight_line) > 8000:
                 prefix = b"\x00"
+        candidate_line = re.match(
+            rb"BOCA_CUTOVER_A_CANDIDATE_FAILURE ([^\n]{1,180}) "
+            rb"run=([1-9][0-9]{0,19}) sha=([0-9a-f]{40})\n",
+            prefix,
+        )
+        if (
+            candidate_line is not None
+            and ssh_rc == 3
+            and candidate_line[2].decode("ascii") == environment.get("GITHUB_RUN_ID")
+            and candidate_line[3].decode("ascii")
+            == environment.get("GITHUB_SHA")
+            == environment.get("BOCA_SOURCE_SHA")
+            and prefix[candidate_line.end() :]
+            == b"BOCA_CUTOVER_A_FAILURE_PHASE phase=ACCEPT_CANDIDATE\n"
+        ):
+            try:
+                candidate_claim = CandidateEvidence.parse(candidate_line[1].decode("ascii"))
+                prefix = prefix[candidate_line.end() :]
+            except (UnicodeError, ValueError):
+                candidate_claim = None
         worker_v3 = re.match(
             rb"BOCA_CUTOVER_A_WORKER_FAILURE primary=([A-Z_]{2,32}) "
             rb"compensation=([A-Z_]{2,32}) exit_code=(0|[1-9][0-9]{0,2}|UNKNOWN) "
@@ -773,6 +795,15 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
         worker_start_ack_claim = "EXACT_CID_IMPLIED_BY_HEALTH_PHASE"
         worker_cause_evidence = "INFERENCE_NOT_CAUSE"
     transport = "TIMEOUT" if ssh_rc == 124 else "SSH_255" if ssh_rc == 255 else "EXIT_NONZERO"
+    if candidate_claim is not None and phase_claim == "ACCEPT_CANDIDATE":
+        return (
+            f"BOCA_CUTOVER_A_SSH_DIAGNOSTIC state=NO_GO ssh_rc={ssh_rc} "
+            f"transport={transport} host_claim={host_claim} phase_claim={phase_claim} "
+            f"candidate_check_claim={candidate_claim.check} candidate_result_claim={candidate_claim.result} "
+            f"original_restored_claim={'VERIFIED' if candidate_claim.original_restored else 'UNVERIFIED'} "
+            f"cleanup_claim={candidate_claim.cleanup} terminal_state_claim={candidate_claim.terminal} "
+            "phase=UNVERIFIED host=UNVERIFIED terminal=UNVERIFIED no_retry=true"
+        )
     return (
         f"BOCA_CUTOVER_A_SSH_DIAGNOSTIC state=NO_GO ssh_rc={ssh_rc} "
         f"transport={transport} host_claim={host_claim} phase_claim={phase_claim} "

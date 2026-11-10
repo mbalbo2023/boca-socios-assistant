@@ -106,7 +106,7 @@ def test_recovery_cli_builds_only_seven_reviewed_entries(tmp_path: Path) -> None
     bootstrap.verify(raw, digest, recovery=True)
     with pytest.raises(ValueError, match="allowlist"):
         bootstrap.verify(raw, digest)
-    assert builder.MAX_SOURCE_BYTES == bootstrap.MAX_UNCOMPRESSED == 1_100_000
+    assert builder.MAX_SOURCE_BYTES == bootstrap.MAX_UNCOMPRESSED == 1_120_000
     assert builder.MAX_ARCHIVE_BYTES == bootstrap.MAX_ZIP == 512_000
 
 

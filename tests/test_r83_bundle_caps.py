@@ -32,7 +32,7 @@ WORKER_SOURCES = (
     "scripts/host_cutover_worker_preflight.py",
 )
 WORKER_ENTRIES = frozenset({"__main__.py", *(item.removeprefix("src/") for item in WORKER_SOURCES)})
-WORKER_SOURCE_CAP = 500_000
+WORKER_SOURCE_CAP = 520_000
 WORKER_ZIP_CAP = 128_000
 INVALID_COORDINATES = ("bad-coordinate",) * 7
 
@@ -116,11 +116,11 @@ def _zip_of_exact_size(size: int) -> bytes:
 
 
 def test_transport_caps_are_separate_from_full_cutover_and_recovery() -> None:
-    assert builder.MAX_SOURCE_BYTES == bootstrap.MAX_UNCOMPRESSED == 1_100_000
+    assert builder.MAX_SOURCE_BYTES == bootstrap.MAX_UNCOMPRESSED == 1_120_000
     assert builder.MAX_ARCHIVE_BYTES == bootstrap.MAX_ZIP == 512_000
     assert builder.RECOVERY_MAX_SOURCE_BYTES == bootstrap.RECOVERY_MAX_UNCOMPRESSED == 256_000
     assert builder.RECOVERY_MAX_ARCHIVE_BYTES == bootstrap.RECOVERY_MAX_ZIP == 128_000
-    assert builder.PREFLIGHT_MAX_SOURCE_BYTES == bootstrap.PREFLIGHT_MAX_UNCOMPRESSED == 500_000
+    assert builder.PREFLIGHT_MAX_SOURCE_BYTES == bootstrap.PREFLIGHT_MAX_UNCOMPRESSED == 520_000
     assert builder.PREFLIGHT_MAX_ARCHIVE_BYTES == bootstrap.PREFLIGHT_MAX_ZIP == 128_000
     assert "scripts/host_cutover_worker_preflight.py" not in builder.SOURCES
 
