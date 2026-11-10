@@ -366,8 +366,7 @@ def test_probe_create_is_one_disposable_networkless_ipc_only_container() -> None
     assert command[command.index("--cpus") + 1] == "1.00"
     assert command[command.index("--tmpfs") + 1] == "/tmp:rw,noexec,nosuid,size=32m"  # noqa: S108
     assert command[command.index("--mount") + 1] == (
-        "type=volume,source=boca-physical-ipc-42899999999,"
-        "target=/run/boca-browser-ipc"
+        "type=volume,source=boca-physical-ipc-42899999999,target=/run/boca-browser-ipc"
     )
     assert "--read-only" in command
     assert "--cap-drop" in command

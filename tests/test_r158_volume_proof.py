@@ -27,10 +27,7 @@ class VolumeContractTests(unittest.TestCase):
         argv = physical.create_argv(RUN, "/srv/boca/seccomp.json")
         self.assertEqual(
             argv[argv.index("--mount") + 1],
-            (
-                "type=volume,source=boca-physical-ipc-42899999999,"
-                "target=/run/boca-browser-ipc"
-            ),
+            ("type=volume,source=boca-physical-ipc-42899999999,target=/run/boca-browser-ipc"),
         )
         self.assertNotIn(
             "/run/boca-browser-ipc:rw,noexec,nosuid,size=16m,uid=10002,gid=10002,mode=0711",
@@ -110,9 +107,7 @@ class VolumeContractTests(unittest.TestCase):
             patch.object(physical, "_verified_boca_home", return_value=Path(directory)),
             patch.object(physical, "_image_pull_and_verify", return_value="before"),
             patch.object(physical, "_profile_path", return_value="/srv/boca/seccomp.json"),
-            patch.object(
-                physical, "_create_volume", side_effect=physical.PhysicalProbeUnavailable
-            ),
+            patch.object(physical, "_create_volume", side_effect=physical.PhysicalProbeUnavailable),
             patch.object(physical, "_cleanup_initializer") as cleanup_initializer,
             patch.object(physical, "_cleanup_volume") as cleanup_volume,
             patch.object(physical, "_exact_cleanup") as cleanup_cid,
@@ -136,9 +131,7 @@ class VolumeContractTests(unittest.TestCase):
             patch.object(physical, "_verified_boca_home", return_value=Path(directory)),
             patch.object(physical, "_image_pull_and_verify", return_value="before"),
             patch.object(physical, "_profile_path", return_value="/srv/boca/seccomp.json"),
-            patch.object(
-                physical, "_claim_once", side_effect=physical.PhysicalProbeUnavailable
-            ),
+            patch.object(physical, "_claim_once", side_effect=physical.PhysicalProbeUnavailable),
             patch.object(physical, "_create_volume") as create_volume,
             patch.object(physical, "_cleanup_initializer") as cleanup_initializer,
             patch.object(physical, "_cleanup_volume") as cleanup_volume,
