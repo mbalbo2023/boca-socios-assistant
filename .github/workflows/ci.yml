@@ -190,18 +190,26 @@ jobs:
               assert absent.stdout.strip() == ""
           print("BOCA_WORKER_RECOVERY_DOCKER state=PASS removed=EXACT_CID post=ABSENT runner=EPHEMERAL")
           PY
+      - name: Set up Python for the host-side Docker labs
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install locked runtime dependencies for the Docker labs
+        run: |
+          python -m pip install --disable-pip-version-check uv==0.13.4
+          uv sync --frozen --no-dev --no-install-project
       - name: Verify image identity and missing-image evidence on runner Docker
         timeout-minutes: 3
         env:
           PYTHONPATH: src
           BOCA_LAB_RUNNER: ${{ runner.environment }}
-        run: python3 -m scripts.lab_image_recovery_916
+        run: uv run --no-sync python -m scripts.lab_image_recovery_916
       - name: Measure panel stop acknowledgements and cold restart on runner Docker
         timeout-minutes: 3
         env:
           PYTHONPATH: src
           BOCA_LAB_RUNNER: ${{ runner.environment }}
-        run: python3 -m scripts.lab_panel_restart_921
+        run: uv run --no-sync python -m scripts.lab_panel_restart_921
       - name: Measure one offline Chromium startup under resource caps
         run: >-
           docker run --rm --init --network none --cgroupns=private --read-only
