@@ -833,7 +833,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-dispatch-v3/main.json"
           gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=1" > "$RUNNER_TEMP/boca-dispatch-v3/pulls.json"
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/boca-first-deploy.yml/runs?head_sha=$GITHUB_SHA&per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/history.json"
-          gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/checks.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?filter=latest&per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/checks.json"
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/ci.json"
           python scripts/check_boca_deploy_dispatch.py "$RUNNER_TEMP/boca-dispatch-v3"
       - name: Restore independently reviewed legacy PREPARE source for APPLY
@@ -3028,7 +3028,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-dispatch-v3/main.json"
           gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=1" > "$RUNNER_TEMP/boca-dispatch-v3/pulls.json"
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/boca-first-deploy.yml/runs?head_sha=$GITHUB_SHA&per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/history.json"
-          gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/checks.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?filter=latest&per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/checks.json"
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/ci.json"
           python scripts/check_boca_deploy_dispatch.py "$RUNNER_TEMP/boca-dispatch-v3"
           # The builder binds BOCA_CUTOVER_A_DISPATCH_BINDING_SHA256, the exact ZIP,

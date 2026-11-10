@@ -102,6 +102,71 @@ def test_owner_dispatch_needs_no_prepare_or_manual_go() -> None:
     gate().verify_dispatch(env, proof)
 
 
+def test_owner_rerun_of_same_green_ci_suite_is_admitted() -> None:
+    env, proof = evidence()
+    proof["ci"][0]["workflow_runs"][0]["run_attempt"] = 2
+    gate().verify_dispatch(env, proof)
+
+
+@pytest.mark.parametrize("attempt", [None, False, "2", 0, -1, 3, 50])
+def test_invalid_ci_attempt_is_rejected(attempt: Any) -> None:
+    env, proof = evidence()
+    proof["ci"][0]["workflow_runs"][0]["run_attempt"] = attempt
+    with pytest.raises(ValueError):
+        gate().verify_dispatch(env, proof)
+
+
+@pytest.mark.parametrize("triggering_actor", [{"login": "other"}, None, {}])
+def test_ci_rerun_by_non_owner_does_not_authorize_cutover(triggering_actor: Any) -> None:
+    env, proof = evidence()
+    ci = proof["ci"][0]["workflow_runs"][0]
+    ci["run_attempt"] = 2
+    ci["triggering_actor"] = triggering_actor
+    with pytest.raises(ValueError):
+        gate().verify_dispatch(env, proof)
+
+
+@pytest.mark.parametrize("violation", ["failed", "suite", "missing", "duplicate", "ci-failed"])
+def test_ci_rerun_cannot_replace_bad_suite_checks(violation: str) -> None:
+    env, proof = evidence()
+    ci = proof["ci"][0]["workflow_runs"][0]
+    ci["run_attempt"] = 2
+    checks = proof["checks"][0]["check_runs"]
+    if violation == "failed":
+        checks[0]["conclusion"] = "failure"
+    elif violation == "suite":
+        checks[0]["check_suite"]["id"] = 800
+    elif violation == "missing":
+        proof["checks"][0]["check_runs"] = checks[:1]
+        proof["checks"][0]["total_count"] = 1
+    elif violation == "duplicate":
+        checks.append(deepcopy(checks[0]))
+        proof["checks"][0]["total_count"] = 3
+    else:
+        ci["conclusion"] = "failure"
+    with pytest.raises(ValueError):
+        gate().verify_dispatch(env, proof)
+
+
+def test_ci_rerun_does_not_permit_cutover_rerun() -> None:
+    env, proof = evidence()
+    proof["ci"][0]["workflow_runs"][0]["run_attempt"] = 2
+    env["GITHUB_RUN_ATTEMPT"] = "2"
+    proof["run"]["run_attempt"] = 2
+    with pytest.raises(ValueError):
+        gate().verify_dispatch(env, proof)
+
+
+def test_cutover_reads_only_latest_ci_checks_in_both_admission_passes() -> None:
+    workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
+    assert (
+        workflow.count(
+            'gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?filter=latest&per_page=100"'
+        )
+        == 2
+    )
+
+
 def test_foreign_actions_same_named_checks_do_not_authorize_deploy() -> None:
     env, proof = evidence()
     for check in proof["checks"][0]["check_runs"]:

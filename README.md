@@ -1,5 +1,14 @@
 # Boca Socios Assistant
 
+## R140 — ajuste de CI en revisión (CODE_ONLY)
+
+El último `image-build` de CI falló en el primer intento por timeout externo
+de `apt-get` y terminó GREEN al repetir únicamente ese job en el mismo SHA.
+R140 permite ese reintento autenticado del CI sin flexibilizar el único
+despacho del Cutover, que sigue siendo de primer intento y sin reintentos.
+La BETA nueva aún no está aceptada físicamente; el `ExitCode=1` histórico
+del worker no está causalmente resuelto. [ADR0228](docs/ADR/0228-r140-ci-rerun-provenance.md)
+
 ## Control del bot desde Chrome
 
 En el perfil de operación bajo demanda, el panel privado permanece disponible en el puerto local 8443. La sesión con passkey puede pedir **Iniciar** y **Detener** en el control del bot. La pantalla distingue una solicitud recibida de un arranque comprobado. En reposo, el contenedor de navegador no tiene procesos. Las instalaciones y actualizaciones se realizan con la Action protegida.
