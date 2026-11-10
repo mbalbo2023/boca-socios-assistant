@@ -23,7 +23,8 @@ import sys
 import tempfile
 import termios
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
@@ -47,17 +48,52 @@ def require(ok: bool, phase: str) -> None:
         raise LabFailure(phase)
 
 
-def command(*args: str, phase: str, publish: bool = False) -> str:
-    result = subprocess.run(  # noqa: S603 - fixed lab argv, no shell or inherited deployment secrets
-        args,
-        stdin=subprocess.DEVNULL,
-        stdout=None if publish else subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        check=False,
-        timeout=40,
-    )
-    require(result.returncode == 0, phase)
-    return "" if publish else result.stdout.decode("utf-8")
+@contextmanager
+def phase(label: str, *, translate_timeout: bool = True) -> Iterator[None]:
+    role = "fixture" if sys.argv[1:2] == ["--fixture"] else "runner"
+    start = time.monotonic()
+    print(PREFIX, f"role={role}", "event=BEGIN", f"phase={label}", flush=True)
+    try:
+        yield
+    except (subprocess.TimeoutExpired, TimeoutError):
+        print(PREFIX, f"role={role}", "event=FAIL", f"phase={label}", "reason=TIMEOUT", flush=True)
+        if translate_timeout:
+            raise LabFailure(label + "_TIMEOUT") from None
+        raise
+    except Exception as exc:
+        reason = str(exc) if isinstance(exc, LabFailure) else type(exc).__name__
+        print(
+            PREFIX, f"role={role}", "event=FAIL", f"phase={label}", f"reason={reason}", flush=True
+        )
+        raise
+    else:
+        elapsed_ms = round(1000 * (time.monotonic() - start))
+        print(PREFIX, f"role={role}", "event=END", f"phase={label}", f"ms={elapsed_ms}", flush=True)
+
+
+def command(
+    *args: str, label: str, publish: bool = False, timeout: float = 40, polling: bool = False
+) -> str:
+    def run() -> str:
+        try:
+            result = subprocess.run(  # noqa: S603 - fixed lab argv, no shell or deployment secrets
+                args,
+                stdin=subprocess.DEVNULL,
+                stdout=None if publish else subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            raise LabFailure(label + "_TIMEOUT") from None
+        require(result.returncode == 0, label + "_EXIT")
+        return "" if publish else result.stdout.decode("utf-8")
+
+    if polling:
+        # The enclosing phase reports the deadline and the exact poll that failed.
+        return run()
+    with phase(label):
+        return run()
 
 
 def owned(tag: str) -> bool:
@@ -123,8 +159,26 @@ def prepare_unit_directories(home: Path) -> None:
             os.close(fd)
 
 
-def manager(*args: str) -> str:
-    return command(SYSTEMCTL, "--user", *args, phase="MANAGER_QUERY")
+def manager(*args: str, label: str, polling: bool = False) -> str:
+    return command(
+        SYSTEMCTL, "--user", *args, label=label, timeout=3 if polling else 12, polling=polling
+    )
+
+
+def trace_user_manager(real: Callable[..., str]) -> Callable[..., str]:
+    # Observe only. Every result and exception still comes from the actual
+    # production systemctl runner; never print its argv, stdout or stderr.
+    def traced(home: Path, *args: str) -> str:
+        label = {
+            "show": "SHOW_SOCKET" if args[-1] == SOCKET else "SHOW_TEMPLATE",
+            "daemon-reload": "RELOAD",
+            "start": "START_SOCKET",
+            "stop": "STOP_SOCKET",
+        }[args[0]]
+        with phase("USER_" + label, translate_timeout=False):
+            return real(home, *args)
+
+    return traced
 
 
 def verify_reader(connection: socket.socket) -> None:
@@ -155,7 +209,13 @@ def rejected_instance() -> str:
     until = time.monotonic() + 8
     while time.monotonic() < until:
         listing = manager(
-            "list-units", "--all", "--plain", "--no-legend", "boca-bot-control@*.service"
+            "list-units",
+            "--all",
+            "--plain",
+            "--no-legend",
+            "boca-bot-control@*.service",
+            label="DENIED_LIST",
+            polling=True,
         )
         for line in listing.splitlines():
             fields = line.split()
@@ -164,7 +224,13 @@ def rejected_instance() -> str:
             ):
                 continue
             name = fields[0]
-            state = manager("show", "--property=Result,ExecMainStatus,ActiveState", name)
+            state = manager(
+                "show",
+                "--property=Result,ExecMainStatus,ActiveState",
+                name,
+                label="DENIED_STATE",
+                polling=True,
+            )
             if set(state.splitlines()) == {
                 "Result=exit-code",
                 "ExecMainStatus=3",
@@ -210,7 +276,9 @@ def exercise(package: Path, digest: str, run: str, tag: str) -> None:
         from boca_socios.host_lifecycle_rootless_adapter import ReviewedInstalledPair
         from boca_socios.host_on_demand_lifecycle import OnDemandInstallation
 
-        prepare_unit_directories(HOME_DIR)
+        svc._systemctl = trace_user_manager(svc._systemctl)
+        with phase("FIXTURE_UNIT_DIRS"):
+            prepare_unit_directories(HOME_DIR)
         # Validate the *real* systemctl contract for absent units before any creation.
         for name in (SOCKET, SERVICE):
             expected = {
@@ -233,41 +301,114 @@ def exercise(package: Path, digest: str, run: str, tag: str) -> None:
             ReviewedInstalledPair(run, "e" * 64, "f" * 64),
         )
         with protected_boca_job_lease(run) as lease:
-            directory = svc.prepare_control_directory(run, lease)
+            with phase("PREPARE_DIRECTORY"):
+                directory = svc.prepare_control_directory(run, lease)
             try:
-                try:
-                    svc.install_control(item, lease, bundle_sha256=digest)
-                except CandidateAcceptanceFailure as exc:
-                    raise LabFailure(exc.check + "_" + exc.result) from None
-                svc.verify_control(item, lease)
-                require(manager("is-enabled", SOCKET).strip() == "enabled", "ENABLE_RECEIPT")
+                with phase("INSTALL"):
+                    try:
+                        svc.install_control(item, lease, bundle_sha256=digest)
+                    except CandidateAcceptanceFailure as exc:
+                        raise LabFailure(exc.check + "_" + exc.result) from None
+                with phase("VERIFY_BOUND_INSTALL"):
+                    svc.verify_control(item, lease)
                 require(
-                    manager("show", "--property=NAccepted", "--value", SOCKET).strip() == "0",
+                    manager("is-enabled", SOCKET, label="IS_ENABLED").strip() == "enabled",
+                    "ENABLE_RECEIPT",
+                )
+                require(
+                    manager(
+                        "show", "--property=NAccepted", "--value", SOCKET, label="READ_ACCEPTS"
+                    ).strip()
+                    == "0",
                     "INITIAL_ACCEPTS",
                 )
-                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+                with (
+                    phase("SOCKET_FRAME"),
+                    socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection,
+                ):
                     connection.settimeout(2)
                     connection.connect(str(directory / "control.sock"))
                     verify_reader(connection)
-                instance = rejected_instance()
+                with phase("WAIT_DENIED_INSTANCE"):
+                    instance = rejected_instance()
                 require(
-                    manager("show", "--property=NAccepted", "--value", SOCKET).strip() == "1",
+                    manager(
+                        "show", "--property=NAccepted", "--value", SOCKET, label="READ_ACCEPTS"
+                    ).strip()
+                    == "1",
                     "SINGLE_ACCEPT",
                 )
-                manager("reset-failed", instance)
+                manager("reset-failed", instance, label="RESET_DENIED_INSTANCE")
                 # Rejoining while it listens must preserve the same socket inode.
                 inode = (directory / "control.sock").stat()
-                svc.install_control(item, lease, bundle_sha256=digest)
+                with phase("REJOIN"):
+                    svc.install_control(item, lease, bundle_sha256=digest)
                 require(
                     os.path.samestat(inode, (directory / "control.sock").stat()), "LISTENING_INODE"
                 )
             finally:
-                svc.remove_control(run, lease)
+                with phase("REMOVE_CONTROL"):
+                    svc.remove_control(run, lease)
             for name in (SOCKET, SERVICE):
                 require(
                     svc._state(HOME_DIR, name)["LoadState"] == "not-found", "ABSENT_AFTER_CLEANUP"
                 )
             require(not (HOME_DIR / ".boca-on-demand").exists(), "PACKAGE_CLEANUP")
+
+
+def stop_disposable_manager(sudo: tuple[str, ...], tag: str) -> None:
+    """Queue only the disposable user's stop jobs, then observe the actual teardown."""
+    require(owned(tag), "END_MANAGER_IDENTITY")
+    units = (f"user@{UID}.service", f"user-runtime-dir@{UID}.service")
+    command(*sudo, SYSTEMCTL, "--no-block", "stop", *units, label="END_MANAGER_QUEUE", timeout=10)
+    last: tuple[str, ...] | None = None
+    with phase("END_MANAGER_CONFIRM"):
+        deadline = time.monotonic() + 40
+        while time.monotonic() < deadline:
+            left = deadline - time.monotonic()
+            raw = command(
+                *sudo,
+                SYSTEMCTL,
+                "show",
+                "--all",
+                "--property=Id,ActiveState,SubState",
+                *units,
+                label="END_MANAGER_STATE",
+                timeout=min(4, max(0.1, left)),
+                polling=True,
+            )
+            states: dict[str, tuple[str, str]] = {}
+            for block in raw.strip().split("\n\n"):
+                fields = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+                require(
+                    set(fields) == {"Id", "ActiveState", "SubState"} and fields["Id"] not in states,
+                    "END_MANAGER_SHAPE",
+                )
+                states[fields["Id"]] = (fields["ActiveState"], fields["SubState"])
+            require(set(states) == set(units), "END_MANAGER_UNITS")
+            alive = os.path.lexists(RUNTIME)
+            public = tuple(
+                v
+                if v in ("active", "activating", "deactivating", "inactive", "failed")
+                else "other"
+                for v in (states[units[0]][0], states[units[1]][0])
+            )
+            summary = (*public, "present" if alive else "absent")
+            if last != summary:
+                print(
+                    PREFIX,
+                    "role=runner event=STATE phase=END_MANAGER_CONFIRM",
+                    f"manager={summary[0]}",
+                    f"runtime_unit={summary[1]}",
+                    f"runtime_path={summary[2]}",
+                    flush=True,
+                )
+                last = summary
+            require("failed" not in public, "END_MANAGER_UNIT_FAILED")
+            if all(state == ("inactive", "dead") for state in states.values()) and not alive:
+                return
+            time.sleep(min(0.25, max(0.0, deadline - time.monotonic())))
+        raise LabFailure("END_MANAGER_CONFIRM_TIMEOUT")
 
 
 def ephemeral() -> None:
@@ -298,14 +439,14 @@ def ephemeral() -> None:
             str(root / "scripts/build_protected_boca_bundle.py"),
             str(root),
             str(bundle),
-            phase="BUILD",
+            label="BUILD",
         )
         digest = hashlib.sha256(bundle.read_bytes()).hexdigest()
         shutil.copyfile(__file__, helper)
         bundle.chmod(0o444)
         helper.chmod(0o444)
         stage.chmod(0o711)
-        command(*sudo, "/usr/sbin/groupadd", "--gid", str(UID), USER, phase="LAB_GROUP")
+        command(*sudo, "/usr/sbin/groupadd", "--gid", str(UID), USER, label="LAB_GROUP")
         try:
             command(
                 *sudo,
@@ -324,7 +465,7 @@ def ephemeral() -> None:
                 "--comment",
                 tag,
                 USER,
-                phase="LAB_ACCOUNT",
+                label="LAB_ACCOUNT",
             )
             require(
                 owned(tag)
@@ -333,9 +474,9 @@ def ephemeral() -> None:
                 and HOME_DIR.stat().st_uid == UID,
                 "LAB_IDENTITY",
             )
-            command(*sudo, "/usr/bin/chmod", "0700", str(HOME_DIR), phase="LAB_HOME")
-            command(*sudo, "/usr/bin/loginctl", "enable-linger", USER, phase="LAB_LINGER")
-            command(*sudo, SYSTEMCTL, "start", f"user@{UID}.service", phase="LAB_MANAGER")
+            command(*sudo, "/usr/bin/chmod", "0700", str(HOME_DIR), label="LAB_HOME")
+            command(*sudo, "/usr/bin/loginctl", "enable-linger", USER, label="LAB_LINGER")
+            command(*sudo, SYSTEMCTL, "start", f"user@{UID}.service", label="LAB_MANAGER")
             command(
                 *sudo,
                 "-u",
@@ -358,21 +499,17 @@ def ephemeral() -> None:
                 run,
                 tag,
                 publish=True,
-                phase="FIXTURE",
+                # Outer safety envelope covers installation, rejection, rejoin
+                # and teardown. The real user-manager calls each keep their 15s limit.
+                timeout=120,
+                label="FIXTURE",
             )
         finally:
             if owned(tag):
-                command(*sudo, "/usr/bin/loginctl", "disable-linger", USER, phase="END_LINGER")
-                command(
-                    *sudo,
-                    SYSTEMCTL,
-                    "stop",
-                    f"user@{UID}.service",
-                    f"user-runtime-dir@{UID}.service",
-                    phase="END_MANAGER",
-                )
+                command(*sudo, "/usr/bin/loginctl", "disable-linger", USER, label="END_LINGER")
+                stop_disposable_manager(sudo, tag)
                 require(owned(tag), "END_IDENTITY")
-                command(*sudo, "/usr/sbin/userdel", "--remove", USER, phase="END_ACCOUNT")
+                command(*sudo, "/usr/sbin/userdel", "--remove", USER, label="END_ACCOUNT")
             try:
                 group = grp.getgrnam(USER)
             except KeyError:
@@ -384,7 +521,7 @@ def ephemeral() -> None:
                     and unused(lambda: pwd.getpwnam(USER), lambda: pwd.getpwuid(UID)),
                     "END_GROUP_IDENTITY",
                 )
-                command(*sudo, "/usr/sbin/groupdel", USER, phase="END_GROUP")
+                command(*sudo, "/usr/sbin/groupdel", USER, label="END_GROUP")
     require(vacant(), "FINAL_ACCOUNT_RESIDUE")
 
 
@@ -392,7 +529,8 @@ if __name__ == "__main__":
     error_output = sys.stdout if sys.argv[1:2] == ["--fixture"] else sys.stderr
     try:
         if len(sys.argv) == 6 and sys.argv[1] == "--fixture":
-            exercise(Path(sys.argv[2]), *sys.argv[3:])
+            with phase("EXERCISE"):
+                exercise(Path(sys.argv[2]), *sys.argv[3:])
         elif len(sys.argv) == 1:
             ephemeral()
             print(
@@ -402,7 +540,7 @@ if __name__ == "__main__":
         else:
             raise LabFailure("ARGUMENTS")
     except LabFailure as error:
-        print(PREFIX, "state=NO_GO", "check=" + str(error), file=error_output)
+        print(PREFIX, "state=NO_GO", "check=" + str(error), file=error_output, flush=True)
         raise SystemExit(1) from None
     except Exception as error:
         print(
@@ -411,5 +549,6 @@ if __name__ == "__main__":
             "check=UNAVAILABLE",
             "type=" + type(error).__name__,
             file=error_output,
+            flush=True,
         )
         raise SystemExit(1) from None
