@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import stat
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -266,6 +267,7 @@ def test_exec_pins_archive_and_uses_sealed_bytes(tmp_path):
         str(archive),
         digest,
         "binding",
+        "on-demand-serve",
     ]
     assert subprocess.run(command, check=False, capture_output=True).returncode == 0  # noqa: S603
     archive.write_bytes(b"changed")
@@ -447,3 +449,96 @@ def test_actual_manager_failure_category_discards_its_output(tmp_path, monkeypat
         "COMMAND_FAILED",
     )
     assert "private-diagnostic" not in str(failure.value)
+
+
+def test_activation_repairs_only_restrictive_owned_socket_after_every_create(host):
+    home, unit, manager, lease = host
+    item = installation(home)
+    root = home / ".boca-on-demand"
+    directory = service.prepare_control_directory(ATTEMPT, lease)
+    service.install_control(item, lease)
+    assert "ExecStartPost=" in (unit / SOCKET).read_text()
+    assert "on-demand-socket-mode" in (unit / SOCKET).read_text()
+    node = directory / "control.sock"
+    for _ in range(2):
+        manager(home, "stop", SOCKET)
+        manager(home, "start", SOCKET)
+        node.chmod(0o664)  # Ubuntu 24.04's observed just-created pathname.
+        with pytest.raises(service.ControlRefused):
+            service.verify_control(item, lease)
+        inode = node.lstat()
+        service._socket(root, normalize=True)
+        assert os.path.samestat(inode, node.lstat()) and stat.S_IMODE(node.lstat().st_mode) == 0o666
+        service.verify_control(item, lease)
+    node.chmod(0o664)
+    service.remove_control(ATTEMPT, lease)
+    assert not root.exists() and not manager.active
+
+
+def test_mode_hook_requires_exact_binding_runtime_units_and_enable_link(host, monkeypatch):
+    home, unit, _, lease = host
+    directory = service.prepare_control_directory(ATTEMPT, lease)
+    service.install_control(installation(home), lease)
+    node = directory / "control.sock"
+    node.chmod(0o664)
+    pin = hashlib.sha256((directory.parent / "binding.json").read_bytes()).hexdigest()
+    with os.fdopen(os.memfd_create("boca-test"), "wb", buffering=0) as archive:
+        archive.write(ZIP)
+        monkeypatch.setattr(sys, "argv", [f"/proc/self/fd/{archive.fileno()}"])
+        assert service.socket_mode_main("f" * 64) == 3
+        assert stat.S_IMODE(node.lstat().st_mode) == 0o664
+        enable = unit / "default.target.wants" / SOCKET
+        enable.unlink()
+        assert service.socket_mode_main(pin) == 3
+        assert stat.S_IMODE(node.lstat().st_mode) == 0o664
+        enable.symlink_to("../" + SOCKET)
+        assert service.socket_mode_main(pin) == 0
+        assert stat.S_IMODE(node.lstat().st_mode) == 0o666
+        node.chmod(0o664)
+        expected = unit / UNIT
+        expected.unlink()
+        expected.write_text("unowned fragment")
+        assert service.socket_mode_main(pin) == 3
+        assert stat.S_IMODE(node.lstat().st_mode) == 0o664
+        expected.unlink()
+        os.link(directory.parent / UNIT, expected)
+        archive.write(b"drift")
+        assert service.socket_mode_main(pin) == 3
+        assert stat.S_IMODE(node.lstat().st_mode) == 0o664
+
+
+def test_normalization_pins_inode_and_never_chmods_replacement(host, monkeypatch):
+    home, _, _, lease = host
+    directory = service.prepare_control_directory(ATTEMPT, lease)
+    root = directory.parent
+    node = directory / "control.sock"
+    other = home / "foreign"
+    other.write_bytes(b"preserve")
+    other.chmod(0o600)
+    os.mknod(node, stat.S_IFSOCK | 0o600)
+    node.chmod(0o664)
+    real = os.chmod
+
+    def swapped(path, mode):
+        assert str(path).startswith("/proc/self/fd/")
+        node.unlink()
+        node.symlink_to(other)
+        real(path, mode)
+
+    monkeypatch.setattr(os, "chmod", swapped)
+    with pytest.raises(service.ControlRefused):
+        service._socket(root, normalize=True)
+    assert stat.S_IMODE(other.stat().st_mode) == 0o600
+
+
+def test_rejects_unsafe_mode_before_any_normalization_or_rollback(host):
+    home, _, manager, lease = host
+    directory = service.prepare_control_directory(ATTEMPT, lease)
+    service.install_control(installation(home), lease)
+    node = directory / "control.sock"
+    node.chmod(0o667)
+    with pytest.raises(service.ControlRefused):
+        service._socket(directory.parent, normalize=True)
+    with pytest.raises(service.ControlRefused):
+        service.remove_control(ATTEMPT, lease)
+    assert manager.active and stat.S_IMODE(node.stat().st_mode) == 0o667

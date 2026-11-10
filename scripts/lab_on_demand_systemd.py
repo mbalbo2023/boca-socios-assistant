@@ -7,6 +7,7 @@ activation without reaching the Docker client, a quota, the browser or the ledge
 
 from __future__ import annotations
 
+import errno
 import fcntl
 import grp
 import hashlib
@@ -276,6 +277,12 @@ def project_user_unit(home: Path, unit: str, raw: str) -> None:
             if kind != "DIR" or meta.st_uid != UID:
                 break
             try:
+                os.getxattr(path, "system.posix_acl_default", follow_symlinks=False)
+            except OSError as exc:
+                acl = "no" if exc.errno == errno.ENODATA else "unavailable"
+            else:
+                acl = "yes"
+            try:
                 with os.scandir(path) as entries:
                     extra = any(e.name != "control.sock" for e in entries)
             except OSError:
@@ -283,7 +290,12 @@ def project_user_unit(home: Path, unit: str, raw: str) -> None:
             else:
                 contents = "EXTRA" if extra else "NO_EXTRA"
             print(
-                PREFIX, "role=fixture event=FS", "path=DIR", f"other_entries={contents}", flush=True
+                PREFIX,
+                "role=fixture event=FS",
+                "path=DIR",
+                f"other_entries={contents}",
+                f"has_default_acl={acl}",
+                flush=True,
             )
 
 
@@ -436,6 +448,26 @@ def exercise(package: Path, digest: str, run: str, tag: str) -> None:
                         raise LabFailure(exc.check + "_" + exc.result) from None
                 with phase("VERIFY_BOUND_INSTALL"):
                     svc.verify_control(item, lease)
+                with phase("CYCLE_LISTENER"):
+                    node = directory / "control.sock"
+                    # Keep the old inode allocated across stop/start. A passing
+                    # cycle must have created and normalized a different inode.
+                    old = os.open(node, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC)
+                    try:
+                        manager("stop", SOCKET, label="CYCLE_STOP")
+                        require(not os.path.lexists(node), "CYCLE_NODE_REMOVAL")
+                        manager("start", SOCKET, label="CYCLE_START")
+                        new = node.lstat()
+                        require(
+                            not os.path.samestat(os.fstat(old), new)
+                            and stat.S_ISSOCK(new.st_mode)
+                            and stat.S_IMODE(new.st_mode) == 0o666
+                            and (new.st_uid, new.st_gid, new.st_nlink) == (UID, UID, 1),
+                            "CYCLE_NODE_IDENTITY",
+                        )
+                        svc.verify_control(item, lease)
+                    finally:
+                        os.close(old)
                 require(
                     manager("is-enabled", SOCKET, label="IS_ENABLED").strip() == "enabled",
                     "ENABLE_RECEIPT",
