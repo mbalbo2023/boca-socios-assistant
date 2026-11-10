@@ -24,6 +24,7 @@ _ALLOWED_CODE = frozenset(
         "scripts/check_worker_physical_dispatch.py",
         "src/boca_socios/host_worker_physical.py",
         "tests/test_host_worker_physical.py",
+        "tests/test_r158_volume_proof.py",
         "tests/test_worker_physical_bundle.py",
         "tests/test_worker_physical_workflow.py",
         "tests/test_worker_physical_dispatch.py",

@@ -1,4 +1,4 @@
-"""One real, isolated Boca worker boot; disposable CID, no Cutover or site traffic."""
+"""One real, isolated Boca worker boot; disposable CID/IPC volume, no Cutover."""
 
 from __future__ import annotations
 
@@ -42,6 +42,7 @@ _CID = re.compile(r"[0-9a-f]{64}\Z")
 _PROBE_ID = "00000000-0000-4000-8000-000000000001"
 _PREFIX = "BOCA_WORKER_PHYSICAL "
 _MAX_RECEIPT = 1400
+_IPC_DESTINATION = "/run/boca-browser-ipc"
 _FIELDS = frozenset(
     {
         "schema",
@@ -58,6 +59,8 @@ _FIELDS = frozenset(
         "engine",
         "installed_worker",
         "cleanup",
+        "ipc_mount",
+        "ipc_cleanup",
         "image_cache",
     }
 )
@@ -65,6 +68,175 @@ _FIELDS = frozenset(
 
 class PhysicalProbeUnavailable(ValueError):
     """An exact Boca host or receipt guard failed; no private data may escape."""
+
+
+def _volume_name(run_id: str) -> str:
+    if type(run_id) is not str or not _RUN.fullmatch(run_id):
+        raise PhysicalProbeUnavailable
+    return f"boca-physical-ipc-{run_id}"
+
+
+def _volume_labels(run_id: str) -> dict[str, str]:
+    _volume_name(run_id)
+    return {
+        "boca.socios.physical-probe": "1",
+        "boca.socios.physical-run": run_id,
+        "boca.socios.physical-release": RELEASE_RUN_ID,
+        "boca.socios.physical-kind": "ipc-volume",
+    }
+
+
+def _volume_present(run_id: str) -> bool:
+    name = _volume_name(run_id)
+    existing = cleanup._docker("volume", "ls", "-q", "--filter", f"name=^{name}$")
+    if existing not in ("", name, name + "\n"):
+        raise PhysicalProbeUnavailable
+    return existing.strip() == name
+
+
+def _check_volume(run_id: str) -> None:
+    """Reject any foreign, redirected or widened rootless volume identity."""
+    name = _volume_name(run_id)
+    try:
+        record = json.loads(
+            deploy._run("docker", "volume", "inspect", "--format", "{{json .}}", name)
+        )
+        expected = deploy._checked_docker_storage_dir() / "volumes" / name / "_data"
+        if (
+            type(record) is not dict
+            or record.get("Name") != name
+            or record.get("Driver") != "local"
+            or record.get("Scope") != "local"
+            or record.get("Options") not in (None, {})
+            or record.get("Mountpoint") != str(expected)
+            or record.get("Labels") != _volume_labels(run_id)
+            or expected.resolve(strict=True) != expected
+        ):
+            raise PhysicalProbeUnavailable
+    except (OSError, ValueError, TypeError, RuntimeError, deploy.PreflightError):
+        raise PhysicalProbeUnavailable from None
+
+
+def _create_volume(run_id: str) -> None:
+    name = _volume_name(run_id)
+    if _volume_present(run_id):
+        raise PhysicalProbeUnavailable
+    labels = _volume_labels(run_id)
+    argv = ["docker", "volume", "create", "--driver", "local"]
+    for key, value in sorted(labels.items()):
+        argv += ["--label", f"{key}={value}"]
+    argv.append(name)
+    if deploy._run(*argv, timeout=30) != name:
+        raise PhysicalProbeUnavailable
+    _check_volume(run_id)
+
+
+def _initialize_volume(run_id: str) -> None:
+    """The reviewed no-network, UID0-in-userns helper prepares an IPC-only volume."""
+    name = _volume_name(run_id)
+    _check_volume(run_id)
+    initializer = (
+        "import os,stat; p='/run/boca-browser-ipc'; "
+        "os.chown(p,10002,10002); os.chmod(p,0o711); "
+        "s=os.stat(p,follow_symlinks=False); "
+        "assert stat.S_ISDIR(s.st_mode) and s.st_uid==10002 and s.st_gid==10002 "
+        "and stat.S_IMODE(s.st_mode)==0o711; print('BOCA_BROWSER_IPC_DIR_PASS')"
+    )
+    receipt = deploy._browser_named_probe(
+        "ipc-dir-init",
+        run_id,
+        (
+            "docker",
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--user",
+            "0:0",
+            "--network",
+            "none",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--cap-add",
+            "CHOWN",
+            "--cap-add",
+            "FOWNER",
+            "--security-opt",
+            "no-new-privileges",
+            "--pids-limit",
+            "16",
+            "--memory",
+            "64m",
+            "--cpus",
+            "0.25",
+            "--mount",
+            f"type=volume,source={name},target={_IPC_DESTINATION},volume-nocopy",
+            BROWSER_IMAGE,
+            "python",
+            "-c",
+            initializer,
+        ),
+    )
+    if receipt != "BOCA_BROWSER_IPC_DIR_PASS":
+        raise PhysicalProbeUnavailable
+    _check_volume(run_id)
+
+
+def _initializer_ids(run_id: str) -> list[str]:
+    _volume_name(run_id)
+    name = f"boca-socios-browser-ipc-probe-ipc-dir-init-{run_id}"
+    result = cleanup._docker(
+        "ps", "-a", "-q", "--no-trunc", "--filter", f"name=^/{name}$"
+    )
+    ids = result.splitlines()
+    if len(ids) > 1 or any(not _CID.fullmatch(cid) for cid in ids):
+        raise PhysicalProbeUnavailable
+    return ids
+
+
+def _cleanup_initializer(run_id: str) -> None:
+    """Stop only the exact Boca-owned initializer if Docker --rm did not."""
+    ids = _initializer_ids(run_id)
+    if not ids:
+        return
+    cid = ids[0]
+    record = deploy._browser_inspect_record(cid)
+    config = record.get("Config")
+    state = record.get("State")
+    labels = config.get("Labels") if type(config) is dict else None
+    if (
+        record.get("Name") != f"/boca-socios-browser-ipc-probe-ipc-dir-init-{run_id}"
+        or type(config) is not dict
+        or config.get("Image") != BROWSER_IMAGE
+        or type(labels) is not dict
+        or labels.get("com.docker.compose.project") != deploy.PROJECT
+        or labels.get(deploy.BROWSER_ATTEMPT_LABEL) != run_id
+        or labels.get("boca.socios.browser-ipc-phase") != "ipc-dir-init"
+        or type(state) is not dict
+        or type(state.get("Running")) is not bool
+    ):
+        raise PhysicalProbeUnavailable
+    if state["Running"]:
+        if deploy._run("docker", "stop", "-t", "5", cid, timeout=20) != cid:
+            raise PhysicalProbeUnavailable
+    if _initializer_ids(run_id):
+        if deploy._run("docker", "rm", cid, timeout=25) != cid:
+            raise PhysicalProbeUnavailable
+    if _initializer_ids(run_id):
+        raise PhysicalProbeUnavailable
+
+
+def _cleanup_volume(run_id: str) -> None:
+    """Remove the exact owned disposable volume after container compensation."""
+    name = _volume_name(run_id)
+    if not _volume_present(run_id):
+        return
+    _check_volume(run_id)
+    if deploy._run("docker", "volume", "rm", name, timeout=25) != name:
+        raise PhysicalProbeUnavailable
+    if _volume_present(run_id):
+        raise PhysicalProbeUnavailable
 
 
 def create_argv(run_id: str, seccomp_path: str) -> tuple[str, ...]:
@@ -124,8 +296,8 @@ def create_argv(run_id: str, seccomp_path: str) -> tuple[str, ...]:
         "/tmp:rw,noexec,nosuid,size=32m",  # noqa: S108
         "--tmpfs",
         "/home/boca-browser:rw,noexec,nosuid,size=16m",
-        "--tmpfs",
-        "/run/boca-browser-ipc:rw,noexec,nosuid,size=16m,uid=10002,gid=10002,mode=0711",
+        "--mount",
+        f"type=volume,source={_volume_name(run_id)},target={_IPC_DESTINATION},volume-nocopy",
         "--env",
         "BOCA_ENVIRONMENT=staging",
         "--env",
@@ -162,7 +334,7 @@ def checked(document: object, run_id: str) -> str:
         raise PhysicalProbeUnavailable
     if (
         type(document["schema"]) is not int
-        or document["schema"] != 1
+        or document["schema"] != 2
         or document["run_id"] != run_id
         or document["release_run_id"] != RELEASE_RUN_ID
         or document["image_ref"] != BROWSER_IMAGE
@@ -175,6 +347,8 @@ def checked(document: object, run_id: str) -> str:
         or document["engine"] != "STOPPED"
         or document["installed_worker"] != "IDLE"
         or document["cleanup"] != "VERIFIED"
+        or document["ipc_mount"] != "ISOLATED_VOLUME"
+        or document["ipc_cleanup"] != "VERIFIED"
         or document["image_cache"] != "RETAINED"
     ):
         raise PhysicalProbeUnavailable
@@ -221,8 +395,8 @@ def _verified_boca_home() -> Path:
 
 
 def _claim_once(home: Path, run_id: str) -> None:
-    """One permanent release-specific mark, fsynced BEFORE the single START."""
-    name = f".boca-worker-physical-{RELEASE_RUN_ID}.claim"
+    """One new immutable volume-differential mark; preserve historic #937."""
+    name = f".boca-worker-physical-volume-{RELEASE_RUN_ID}.claim"
     try:
         fd = os.open(home / name, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
         try:
@@ -353,6 +527,12 @@ def _identify_probe(cid: str, run_id: str) -> dict[str, Any]:
 def _inspect_probe(cid: str, run_id: str, seccomp_path: str | None = None) -> dict[str, Any]:
     record = _identify_probe(cid, run_id)
     host = record.get("HostConfig")
+    volume = _volume_name(run_id)
+    expected_source = str(
+        deploy._checked_docker_storage_dir() / "volumes" / volume / "_data"
+    )
+    mounts = record.get("Mounts")
+    declared_mounts = host.get("Mounts") if type(host) is dict else None
     if (
         type(host) is not dict
         or host.get("NetworkMode") != "none"
@@ -368,12 +548,26 @@ def _inspect_probe(cid: str, run_id: str, seccomp_path: str | None = None) -> di
         or host.get("CapDrop") != ["ALL"]
         or host.get("CapAdd") not in (["SYS_CHROOT"], ["CAP_SYS_CHROOT"])
         or host.get("Binds") not in (None, [])
-        or record.get("Mounts") != []
+        or type(mounts) is not list
+        or len(mounts) != 1
+        or type(mounts[0]) is not dict
+        or mounts[0].get("Type") != "volume"
+        or mounts[0].get("Name") != volume
+        or mounts[0].get("Source") != expected_source
+        or mounts[0].get("Destination") != _IPC_DESTINATION
+        or mounts[0].get("RW") is not True
+        or type(declared_mounts) is not list
+        or len(declared_mounts) != 1
+        or type(declared_mounts[0]) is not dict
+        or declared_mounts[0].get("Type") != "volume"
+        or declared_mounts[0].get("Source") != volume
+        or declared_mounts[0].get("Target") != _IPC_DESTINATION
+        or type(declared_mounts[0].get("VolumeOptions")) is not dict
+        or declared_mounts[0]["VolumeOptions"].get("NoCopy") is not True
         or host.get("Tmpfs")
         != {
             "/tmp": "rw,noexec,nosuid,size=32m",  # noqa: S108
             "/home/boca-browser": "rw,noexec,nosuid,size=16m",
-            "/run/boca-browser-ipc": "rw,noexec,nosuid,size=16m,uid=10002,gid=10002,mode=0711",
         }
     ):
         raise PhysicalProbeUnavailable
@@ -425,9 +619,12 @@ def _diagnose(run_id: str) -> dict[str, object]:
             try:
                 seccomp_path = _profile_path(Path(name))
                 args = create_argv(run_id, seccomp_path)
-                # Persist the release's one-attempt claim BEFORE Docker create:
-                # even a lost create ACK must not invite a blind second attempt.
+                # Separate #937's historical tmpfs claim from this new, once-only
+                # volume-differential observation. Claim BEFORE first host effect.
                 _claim_once(home, run_id)
+                _create_volume(run_id)
+                _initialize_volume(run_id)
+                _cleanup_initializer(run_id)
                 cid = deploy._run("docker", *args, timeout=35)
                 if not _CID.fullmatch(cid):
                     raise PhysicalProbeUnavailable
@@ -458,10 +655,17 @@ def _diagnose(run_id: str) -> dict[str, object]:
                             boot = "HEALTHY"
                             cause = "NONE"
             finally:
-                if cid is not None:
-                    # A lost start ACK can still leave a running process; exact
-                    # CID removal is mandatory before any positive receipt.
-                    _exact_cleanup(cid, run_id, seccomp_path)
+                try:
+                    if cid is not None:
+                        # Lost START ACK can still leave a running process.
+                        _exact_cleanup(cid, run_id, seccomp_path)
+                finally:
+                    try:
+                        _cleanup_initializer(run_id)
+                    finally:
+                        # Never prune by project, only this positively owned
+                        # ephemeral IPC volume; installed volumes stay untouched.
+                        _cleanup_volume(run_id)
         deploy._validate_storage_continuity(
             storage_before,
             deploy._storage_snapshot(),
@@ -472,7 +676,7 @@ def _diagnose(run_id: str) -> dict[str, object]:
         if cid is None or not started or after_fingerprint != fingerprint or after != installed:
             raise PhysicalProbeUnavailable
         return {
-            "schema": 1,
+            "schema": 2,
             "run_id": run_id,
             "release_run_id": RELEASE_RUN_ID,
             "image_ref": BROWSER_IMAGE,
@@ -486,6 +690,8 @@ def _diagnose(run_id: str) -> dict[str, object]:
             "engine": "STOPPED",
             "installed_worker": "IDLE",
             "cleanup": "VERIFIED",
+            "ipc_mount": "ISOLATED_VOLUME",
+            "ipc_cleanup": "VERIFIED",
             "image_cache": "RETAINED",
         }
 

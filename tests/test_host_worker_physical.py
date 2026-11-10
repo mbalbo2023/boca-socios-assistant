@@ -15,6 +15,7 @@ from boca_socios import host_worker_physical as physical
 
 
 def _probe_record() -> dict[str, Any]:
+    volume = physical._volume_name("42899999999")
     return {
         "Name": "/boca-physical-worker-42899999999",
         "Config": {
@@ -25,7 +26,15 @@ def _probe_record() -> dict[str, Any]:
             },
         },
         "State": {"Status": "created", "Running": False},
-        "Mounts": [],
+        "Mounts": [
+            {
+                "Type": "volume",
+                "Name": volume,
+                "Source": f"/boca-docker/volumes/{volume}/_data",
+                "Destination": "/run/boca-browser-ipc",
+                "RW": True,
+            }
+        ],
         "HostConfig": {
             "NetworkMode": "none",
             "RestartPolicy": {"Name": "no"},
@@ -41,13 +50,27 @@ def _probe_record() -> dict[str, Any]:
             "CapDrop": ["ALL"],
             "CapAdd": ["SYS_CHROOT"],
             "Binds": None,
+            "Mounts": [
+                {
+                    "Type": "volume",
+                    "Source": volume,
+                    "Target": "/run/boca-browser-ipc",
+                    "VolumeOptions": {"NoCopy": True},
+                }
+            ],
             "Tmpfs": {
                 "/tmp": "rw,noexec,nosuid,size=32m",  # noqa: S108
                 "/home/boca-browser": "rw,noexec,nosuid,size=16m",
-                "/run/boca-browser-ipc": "rw,noexec,nosuid,size=16m,uid=10002,gid=10002,mode=0711",
             },
         },
     }
+
+
+@pytest.fixture(autouse=True)
+def exact_rootless_data_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        physical.deploy, "_checked_docker_storage_dir", lambda: Path("/boca-docker")
+    )
 
 
 def test_created_probe_refuses_mounted_volumes_or_relaxed_limits(
@@ -169,7 +192,7 @@ def test_storage_failed_admission_never_pulls(monkeypatch: pytest.MonkeyPatch) -
 def test_release_claim_is_fsynced_and_never_reusable(tmp_path: Path) -> None:
     run_id = "42899999999"
     physical._claim_once(tmp_path, run_id)
-    marker = tmp_path / f".boca-worker-physical-{physical.RELEASE_RUN_ID}.claim"
+    marker = tmp_path / f".boca-worker-physical-volume-{physical.RELEASE_RUN_ID}.claim"
     assert json.loads(marker.read_text()) == {
         "run_id": run_id,
         "release_run_id": physical.RELEASE_RUN_ID,
@@ -191,6 +214,10 @@ def test_lost_create_ack_is_indeterminate_and_never_retries_or_starts(
     monkeypatch.setattr(physical, "_image_pull_and_verify", lambda: "storage-before")
     monkeypatch.setattr(physical, "_profile_path", lambda folder: str(folder / "seccomp.json"))
     monkeypatch.setattr(physical, "_claim_once", lambda *_: calls.append("claim"))
+    monkeypatch.setattr(physical, "_create_volume", lambda *_: None)
+    monkeypatch.setattr(physical, "_initialize_volume", lambda *_: None)
+    monkeypatch.setattr(physical, "_cleanup_initializer", lambda *_: None)
+    monkeypatch.setattr(physical, "_cleanup_volume", lambda *_: None)
     monkeypatch.setattr(
         physical, "_exact_cleanup", lambda *_: pytest.fail("unknown CID must never be guessed")
     )
@@ -230,6 +257,10 @@ def test_physical_witness_arms_before_one_start_and_removes_exact_cid(
     )
     monkeypatch.setattr(physical, "_profile_path", lambda folder: str(folder / "seccomp.json"))
     monkeypatch.setattr(physical, "_claim_once", lambda _home, _run: events.append("claim"))
+    monkeypatch.setattr(physical, "_create_volume", lambda *_: events.append("volume-create"))
+    monkeypatch.setattr(physical, "_initialize_volume", lambda *_: events.append("volume-init"))
+    monkeypatch.setattr(physical, "_cleanup_initializer", lambda *_: events.append("init-cleanup"))
+    monkeypatch.setattr(physical, "_cleanup_volume", lambda *_: events.append("volume-cleanup"))
 
     def docker(action: str, *args: str, timeout: int):
         events.append(f"{action}-{args[0]}")
@@ -299,10 +330,13 @@ def test_physical_witness_arms_before_one_start_and_removes_exact_cid(
     assert result["cause"] == ("MISSING_BARE_SYNTHETIC" if early_exit else "NONE")
     assert result["cleanup"] == "VERIFIED"
     assert result["image_cache"] == "RETAINED"
+    assert result["ipc_mount"] == "ISOLATED_VOLUME"
+    assert result["ipc_cleanup"] == "VERIFIED"
     assert (
         events.index("claim") < events.index("docker-create") < events.index("attach-before-start")
     )
     assert events.index("attach-before-start") < events.index("docker-start")
+    assert events.index("volume-init") < events.index("docker-create")
     assert events.count("docker-start") == 1
     assert (
         events.index("kernel-proof") > events.index("health")
@@ -310,6 +344,7 @@ def test_physical_witness_arms_before_one_start_and_removes_exact_cid(
         else "kernel-proof" not in events
     )
     assert events.index("docker-rm") < events.index("storage-continuity")
+    assert events.index("docker-rm") < events.index("volume-cleanup")
 
 
 @contextmanager
@@ -330,8 +365,9 @@ def test_probe_create_is_one_disposable_networkless_ipc_only_container() -> None
     assert command[command.index("--pids-limit") + 1] == "128"
     assert command[command.index("--cpus") + 1] == "1.00"
     assert command[command.index("--tmpfs") + 1] == "/tmp:rw,noexec,nosuid,size=32m"  # noqa: S108
-    assert (
-        "/run/boca-browser-ipc:rw,noexec,nosuid,size=16m,uid=10002,gid=10002,mode=0711" in command
+    assert command[command.index("--mount") + 1] == (
+        "type=volume,source=boca-physical-ipc-42899999999,"
+        "target=/run/boca-browser-ipc,volume-nocopy"
     )
     assert "--read-only" in command
     assert "--cap-drop" in command
@@ -339,7 +375,7 @@ def test_probe_create_is_one_disposable_networkless_ipc_only_container() -> None
     assert "seccomp=/srv/boca-socios/profile.json" in command
     assert "BOCA_ENGINE_MODE=off" in command
     assert "BOCA_OBSERVER_STOP=1" in command
-    assert "--mount" not in command
+    assert command.count("--mount") == 1
     assert "--volume" not in command
     assert command[-4:] == (
         physical.BROWSER_IMAGE,
@@ -351,7 +387,7 @@ def test_probe_create_is_one_disposable_networkless_ipc_only_container() -> None
 
 def test_receipt_rejects_healthy_without_real_boot_and_cleanup() -> None:
     good = {
-        "schema": 1,
+        "schema": 2,
         "run_id": "42899999999",
         "release_run_id": physical.RELEASE_RUN_ID,
         "image_ref": physical.BROWSER_IMAGE,
@@ -365,6 +401,8 @@ def test_receipt_rejects_healthy_without_real_boot_and_cleanup() -> None:
         "engine": "STOPPED",
         "installed_worker": "IDLE",
         "cleanup": "VERIFIED",
+        "ipc_mount": "ISOLATED_VOLUME",
+        "ipc_cleanup": "VERIFIED",
         "image_cache": "RETAINED",
     }
     validated = physical.checked(good, good["run_id"])
@@ -386,7 +424,7 @@ def test_receipt_only_allows_bounded_error_classes() -> None:
     good = json.loads(
         physical.checked(
             {
-                "schema": 1,
+                "schema": 2,
                 "run_id": "42899999999",
                 "release_run_id": physical.RELEASE_RUN_ID,
                 "image_ref": physical.BROWSER_IMAGE,
@@ -400,6 +438,8 @@ def test_receipt_only_allows_bounded_error_classes() -> None:
                 "engine": "STOPPED",
                 "installed_worker": "IDLE",
                 "cleanup": "VERIFIED",
+                "ipc_mount": "ISOLATED_VOLUME",
+                "ipc_cleanup": "VERIFIED",
                 "image_cache": "RETAINED",
             },
             "42899999999",
