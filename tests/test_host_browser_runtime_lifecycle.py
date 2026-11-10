@@ -48,6 +48,8 @@ def lifecycle(monkeypatch: pytest.MonkeyPatch) -> tuple[list[tuple[str, ...]], l
 
     def run(*args: str, **kwargs: object) -> str:
         commands.append(args)
+        if args[:3] == ("docker", "stop", "--time"):
+            return "Flag --time has been deprecated, use --timeout instead\n" + args[-1]
         if args[:2] in (("docker", "start"), ("docker", "stop")):
             return args[-1]
         if args[-1] == "boca_socios.acceptance.host_probe":
@@ -70,8 +72,8 @@ def test_existing_dual_start_never_initializes_or_recreates_storage(
     expected = [("docker", "start", WORKER_ID), ("docker", "start", CONTROLLER_ID)]
     if operation == "browser-restart":
         expected = [
-            ("docker", "stop", "--time", "35", CONTROLLER_ID),
-            ("docker", "stop", "--time", "35", WORKER_ID),
+            ("docker", "stop", "-t", "35", CONTROLLER_ID),
+            ("docker", "stop", "-t", "35", WORKER_ID),
         ] + expected
     assert commands == expected
     assert states == (
@@ -471,6 +473,9 @@ def sender_phase_fixture(
             return SENDER_ID
         if args[:2] == ("docker", "stop"):
             state["running"] = False
+            if args[2] == "--time":
+                return "Flag --time has been deprecated, use --timeout instead\n" + SENDER_ID
+            assert args == ("docker", "stop", "-t", "10", SENDER_ID) and kwargs == {"timeout": 20}
             return SENDER_ID
         if args[:2] == ("docker", "rm"):
             state["sender"] = False
@@ -554,7 +559,7 @@ def test_sender_failure_cleanup_removes_only_new_sender_and_network_and_reports_
         or command[:3] == ("docker", "network", "rm")
     ]
     assert effects == [
-        ("docker", "stop", "--time", "10", SENDER_ID),
+        ("docker", "stop", "-t", "10", SENDER_ID),
         ("docker", "rm", SENDER_ID),
         ("docker", "network", "rm", host.TELEGRAM_NETWORK),
     ]
@@ -562,6 +567,28 @@ def test_sender_failure_cleanup_removes_only_new_sender_and_network_and_reports_
     assert "BOCA_BROWSER_TELEGRAM_CLEANUP_STORAGE" in output
     assert "before_docker_inodes=" in output and "after_docker_free_bytes=" in output
     assert "sender=absent network=absent data=preserved key=preserved owner=preserved" in output
+
+
+@pytest.mark.parametrize("ack", ["", SENDER_ID[:12], CONTROLLER_ID, "unverified\n" + SENDER_ID])
+def test_sender_compensation_preserves_container_and_network_after_uncertain_stop_ack(
+    monkeypatch, ack
+):
+    commands, state, _ = sender_phase_fixture(monkeypatch, sender=True, network=True)
+    run = host._run
+
+    def docker(*args, **kwargs):
+        value = run(*args, **kwargs)
+        return ack if args[:2] == ("docker", "stop") else value
+
+    monkeypatch.setattr(host, "_run", docker)
+    with pytest.raises(host.PreflightError, match="failed-start stop unverified"):
+        host._browser_telegram_phase(
+            "browser-telegram-cleanup", *COORDS, BOT_ID, CHAT_HMAC, RUNTIME_ATTEMPT
+        )
+    assert not state["running"] and state["sender"] and state["network"]
+    assert not any(
+        args[:2] == ("docker", "rm") or args[:3] == ("docker", "network", "rm") for args in commands
+    )
 
 
 @pytest.mark.parametrize("foreign", ["network", "sender"])

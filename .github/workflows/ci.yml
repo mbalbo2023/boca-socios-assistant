@@ -196,6 +196,12 @@ jobs:
           PYTHONPATH: src
           BOCA_LAB_RUNNER: ${{ runner.environment }}
         run: python3 -m scripts.lab_image_recovery_916
+      - name: Measure panel stop acknowledgements and cold restart on runner Docker
+        timeout-minutes: 3
+        env:
+          PYTHONPATH: src
+          BOCA_LAB_RUNNER: ${{ runner.environment }}
+        run: python3 -m scripts.lab_panel_restart_921
       - name: Measure one offline Chromium startup under resource caps
         run: >-
           docker run --rm --init --network none --cgroupns=private --read-only

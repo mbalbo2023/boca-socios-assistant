@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -855,22 +856,24 @@ def test_idle_profile_requires_authenticated_v3_before_host_calls(monkeypatch):
         adapter.execute_reviewed_cutover(plan)
 
 
-@pytest.mark.parametrize(
-    "case",
-    [
-        "healthy",
-        "running",
-        "partial-install",
-        "retirement",
-        "socket-lost",
-        "stop-lost",
-        "lingering-pid",
-        "start-lost",
-        "second-health",
-        "changed-db",
-        "changed-socket",
-    ],
-)
+_IDLE_FAILURES = {
+    "running": ("INITIAL_ENGINE_STOPPED", "MISMATCH"),
+    "partial-install": ("CONTROL_INSTALL", "UNVERIFIED"),
+    "stop-lost": ("PANEL_STOP_ACK", "UNVERIFIED"),
+    "stop-unexpected-output": ("PANEL_STOP_ACK", "MISMATCH"),
+    "stop-command-failed": ("PANEL_STOP_ACK", "COMMAND_FAILED"),
+    "lingering-pid": ("PANEL_STOPPED", "MISMATCH"),
+    "stopped-foreign-id": ("PANEL_STOPPED", "MISMATCH"),
+    "start-lost": ("PANEL_START_ACK", "UNVERIFIED"),
+    "start-foreign-id": ("PANEL_START_ACK", "MISMATCH"),
+    "start-timeout": ("PANEL_START_ACK", "TIMEOUT"),
+    "second-health": ("PANEL_HEALTH", "UNVERIFIED"),
+    "changed-db": ("RESTART_DATABASE", "MISMATCH"),
+    "changed-socket": ("SOCKET_AFTER", "MISMATCH"),
+}
+
+
+@pytest.mark.parametrize("case", ["healthy", "retirement", "socket-lost", *_IDLE_FAILURES])
 def test_idle_install_service_tied_to_verified_cids_before_retirement(fake_host, monkeypatch, case):
     from boca_socios import host_on_demand_service as control
     from boca_socios.host_lifecycle_rootless_adapter import ProductionRootlessDockerIO
@@ -912,22 +915,40 @@ def test_idle_install_service_tied_to_verified_cids_before_retirement(fake_host,
             assert args[4] == NEW
             events.append("ledger")
             return "BOCA_LEDGER_READY"
-        if args == ("docker", "stop", "--time", "8", NEW):
+        if args[:2] == ("docker", "stop"):
+            assert args[2] in ("--time", "-t") and args[3:] == ("8", NEW)
+            assert _kwargs == {"timeout": 30}
             events.append("panel-stop")
+            if args[2] == "--time":
+                return "Flag --time has been deprecated, use --timeout instead\n" + NEW
             if case == "stop-lost":
                 raise cutover.CutoverError("lost stop receipt")
+            if case == "stop-unexpected-output":
+                return "private warning\n" + NEW
+            if case == "stop-command-failed":
+                raise adapter.host.PreflightError(
+                    "command rejected"
+                ) from subprocess.CalledProcessError(1, "docker")
             return NEW
         if args[:4] == ("docker", "inspect", "--type", "container") and args[-1] == NEW:
             events.append("panel-stopped")
-            return NEW + (
+            cid = OLD if case == "stopped-foreign-id" else NEW
+            return cid + (
                 " exited 9 false false false"
                 if case == "lingering-pid"
                 else " exited 0 false false false"
             )
         if args == ("docker", "start", NEW):
+            assert _kwargs == {"timeout": 30}
             events.append("panel-start")
             if case == "start-lost":
                 raise cutover.CutoverError("lost start receipt")
+            if case == "start-foreign-id":
+                return OLD
+            if case == "start-timeout":
+                raise adapter.host.PreflightError(
+                    "command timed out"
+                ) from subprocess.TimeoutExpired("docker", 30)
             return NEW
         pytest.fail(f"unexpected command {args!r}")
 
@@ -987,33 +1008,17 @@ def test_idle_install_service_tied_to_verified_cids_before_retirement(fake_host,
     assert events.index("directory") < events.index("candidate")
     assert "ipc-peer" not in events and "worker-health" not in events
     assert events.count("panel-stop") <= 1 and events.count("panel-start") <= 1
-    if case in (
-        "running",
-        "partial-install",
-        "stop-lost",
-        "lingering-pid",
-        "start-lost",
-        "second-health",
-        "changed-db",
-        "changed-socket",
-    ):
-        phases = {
-            "running": ("INITIAL_ENGINE_STOPPED", "MISMATCH"),
-            "partial-install": ("CONTROL_INSTALL", "UNVERIFIED"),
-            "stop-lost": ("PANEL_STOP_ACK", "UNVERIFIED"),
-            "lingering-pid": ("PANEL_STOPPED", "MISMATCH"),
-            "start-lost": ("PANEL_START_ACK", "UNVERIFIED"),
-            "second-health": ("PANEL_HEALTH", "UNVERIFIED"),
-            "changed-db": ("RESTART_DATABASE", "MISMATCH"),
-            "changed-socket": ("SOCKET_AFTER", "MISMATCH"),
-        }
+    if case in _IDLE_FAILURES:
         assert receipt.failed_phase == "ACCEPT_CANDIDATE"
-        assert (receipt.candidate_check, receipt.candidate_result) == phases[case]
+        assert (receipt.candidate_check, receipt.candidate_result) == _IDLE_FAILURES[case]
+        assert "private warning" not in repr(receipt)
         assert not receipt.accepted and not backend.idle_installed
         assert "retire" not in events
         assert events.index("remove-control") < events.index("recover-original")
-        if case in ("stop-lost", "lingering-pid"):
+        if _IDLE_FAILURES[case][0] in ("PANEL_STOP_ACK", "PANEL_STOPPED"):
             assert "panel-start" not in events
+        if _IDLE_FAILURES[case][0] == "PANEL_START_ACK":
+            assert "panel-health" not in events
     elif case in ("retirement", "socket-lost"):
         assert receipt.irreversible_commit_started and not receipt.original_restored
         assert not receipt.accepted and not backend.idle_installed

@@ -57,6 +57,8 @@ def candidate(monkeypatch):
             return "\n".join(census)
         effects.append(argv)
         if argv == ("docker", "stop", "--time", "8", CONTROLLER_ID):
+            return "Flag --time has been deprecated, use --timeout instead\n" + CONTROLLER_ID
+        if argv == ("docker", "stop", "-t", "8", CONTROLLER_ID):
             record["State"].update(Status="exited", Running=False, Pid=0)
             record["NetworkSettings"]["Ports"] = {}
         elif argv == ("docker", "rm", CONTROLLER_ID):
@@ -106,7 +108,7 @@ def test_compensate_restarted_pinned_candidate_after_stable_inspect(candidate, r
             )
     compensate(CONTROLLER_ID)
     assert effects == [
-        *([("docker", "stop", "--time", "8", CONTROLLER_ID)] if running else []),
+        *([("docker", "stop", "-t", "8", CONTROLLER_ID)] if running else []),
         ("docker", "rm", CONTROLLER_ID),
         ("port-free", {"after_candidate_removal": True}),
         (ORIGINAL_ID, LEGACY_IMAGE, LEGACY_SHA, ATTEMPT),
@@ -140,20 +142,38 @@ def test_empty_inventory_before_create_can_revive_original_without_removing_any_
     assert effects == [("port-free", {}), (ORIGINAL_ID, LEGACY_IMAGE, LEGACY_SHA, ATTEMPT)]
 
 
+@pytest.mark.parametrize("ack", [CONTROLLER_ID[:12], ORIGINAL_ID, "warning\n" + CONTROLLER_ID, ""])
+def test_ambiguous_stop_ack_after_physical_stop_keeps_candidate_and_parked_original(
+    candidate, monkeypatch, ack
+):
+    record, census, effects = candidate
+    run = host._run
+
+    def docker(*args, **kwargs):
+        value = run(*args, **kwargs)
+        return ack if args[:2] == ("docker", "stop") else value
+
+    monkeypatch.setattr(host, "_run", docker)
+    with pytest.raises(host.PreflightError, match="stop receipt uncertain"):
+        compensate(CONTROLLER_ID)
+    assert record["State"]["Pid"] == 0 and census == [CONTROLLER_ID]
+    assert effects == [("docker", "stop", "-t", "8", CONTROLLER_ID)]
+
+
 def test_uncertain_post_stop_does_not_remove_candidate_or_unpark_original(candidate, monkeypatch):
     record, _census, effects = candidate
     run = host._run
 
     def docker(*args, **kwargs):
         result = run(*args, **kwargs)
-        if args == ("docker", "stop", "--time", "8", CONTROLLER_ID):
+        if args == ("docker", "stop", "-t", "8", CONTROLLER_ID):
             record["State"].update(Status="restarting", Restarting=True)
         return result
 
     monkeypatch.setattr(host, "_run", docker)
     with pytest.raises(host.PreflightError):
         compensate(CONTROLLER_ID)
-    assert effects == [("docker", "stop", "--time", "8", CONTROLLER_ID)]
+    assert effects == [("docker", "stop", "-t", "8", CONTROLLER_ID)]
 
 
 @pytest.mark.parametrize(

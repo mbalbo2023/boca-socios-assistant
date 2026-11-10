@@ -6046,7 +6046,7 @@ def _cutover_compensate_candidate(
             control_directory=control_directory,
             compensating=control_directory is not None,
         ):
-            if _run("docker", "stop", "--time", "8", candidate_id, timeout=30) != candidate_id:
+            if _run("docker", "stop", "-t", "8", candidate_id, timeout=30) != candidate_id:
                 raise PreflightError("cutover A candidate stop receipt uncertain")
             if _cutover_candidate_postflight(
                 candidate_id,
@@ -7040,7 +7040,7 @@ def _browser_lifecycle(
     if operation == "browser-restart":
         # Stop only the exact verified IDs, preserving data, keys and ownership.
         for container in tuple(filter(None, (initial.sender, initial.controller, initial.worker))):
-            if _run("docker", "stop", "--time", "35", container, timeout=45) != container:
+            if _run("docker", "stop", "-t", "35", container, timeout=45) != container:
                 raise PreflightError("existing browser service stop is unverified")
         stopped = _browser_installed(*coordinates, running=False, telegram_owner=owner_assertion)
         if stopped != initial:
@@ -7954,10 +7954,7 @@ def _browser_telegram_phase(
                 runtime_attempt=runtime_attempt,
             )
             if state["Running"]:
-                if (
-                    _run("docker", "stop", "--time", "10", initial.sender, timeout=20)
-                    != initial.sender
-                ):
+                if _run("docker", "stop", "-t", "10", initial.sender, timeout=20) != initial.sender:
                     raise PreflightError("Telegram failed-start stop unverified")
             _telegram_worker_inspect(
                 initial.sender,

@@ -237,7 +237,7 @@ class ProductionRootlessDockerIO:
         ):
             raise LifecycleAdapterNoGo("Boca worker invocation coordinates invalid")
         if operation == "stop":
-            output = cleanup._docker("stop", "--time", "8", worker_id)
+            output = cleanup._docker("stop", "-t", "8", worker_id)
         else:
             output = cleanup._docker("start", worker_id)
         if output not in (worker_id, worker_id + "\n"):
