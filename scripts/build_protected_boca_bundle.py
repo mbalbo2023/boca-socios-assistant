@@ -118,6 +118,19 @@ W1_SOURCES = (
         source for source in SOURCES if source.startswith("src/boca_socios/storage/migrations/000")
     ),
 )
+PHYSICAL_SOURCES = tuple(
+    source for source in W1_SOURCES if source != "src/boca_socios/host_worker_w1.py"
+) + (
+    "src/boca_socios/host_worker_physical.py",
+    "docker/seccomp_profile.json",
+)
+PHYSICAL_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 3 or sys.argv[1] != 'worker-physical-once':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_worker_physical import main as physical\n"
+    "raise SystemExit(physical(['host',sys.argv[2]]))\n"
+).encode("ascii")
 W1_MAIN = (
     "import sys\n"
     "if len(sys.argv) != 3 or sys.argv[1] != 'worker-diagnose-once':\n"
@@ -204,6 +217,8 @@ PREFLIGHT_MAX_SOURCE_BYTES = 520_000
 PREFLIGHT_MAX_ARCHIVE_BYTES = 128_000
 W1_MAX_SOURCE_BYTES = 900_000
 W1_MAX_ARCHIVE_BYTES = 320_000
+PHYSICAL_MAX_SOURCE_BYTES = 900_000
+PHYSICAL_MAX_ARCHIVE_BYTES = 320_000
 
 
 def build(
@@ -213,9 +228,10 @@ def build(
     worker_recovery: bool = False,
     worker_preflight: bool = False,
     worker_w1: bool = False,
+    worker_physical: bool = False,
 ) -> str:
     """Write one deterministic, explicitly allowlisted runner-only archive."""
-    if sum((worker_recovery, worker_preflight, worker_w1)) > 1:
+    if sum((worker_recovery, worker_preflight, worker_w1, worker_physical)) > 1:
         raise ValueError("Boca protected bundle modes must be exclusive")
     if worker_recovery:
         files: dict[str, bytes] = {"__main__.py": RECOVERY_MAIN}
@@ -232,6 +248,11 @@ def build(
         sources = W1_SOURCES
         max_source = W1_MAX_SOURCE_BYTES
         max_archive = W1_MAX_ARCHIVE_BYTES
+    elif worker_physical:
+        files = {"__main__.py": PHYSICAL_MAIN, **HOST_ONLY_INIT}
+        sources = PHYSICAL_SOURCES
+        max_source = PHYSICAL_MAX_SOURCE_BYTES
+        max_archive = PHYSICAL_MAX_ARCHIVE_BYTES
     else:
         files = {"__main__.py": MAIN, **HOST_ONLY_INIT}
         b_sources = tuple(root / rel for rel in OPTION_B_SOURCES)
@@ -302,12 +323,13 @@ def main() -> int:
     variant.add_argument("--worker-recovery", action="store_true")
     variant.add_argument("--worker-preflight", action="store_true")
     variant.add_argument("--worker-w1", action="store_true")
+    variant.add_argument("--worker-physical", action="store_true")
     parser.add_argument("repository_root", type=Path)
     parser.add_argument("runner_target", type=Path)
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical)}"
     )
     return 0
 

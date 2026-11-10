@@ -128,6 +128,10 @@ W1_ENTRIES = frozenset(
         )
     }
 )
+PHYSICAL_ENTRIES = (W1_ENTRIES - {"boca_socios/host_worker_w1.py"}) | {
+    "boca_socios/host_worker_physical.py",
+    "docker/seccomp_profile.json",
+}
 MAX_ZIP = 512_000
 # R138 source bounds match the builder. Each variant checks its own entry set and digest.
 MAX_UNCOMPRESSED = 1_147_000
@@ -137,6 +141,8 @@ PREFLIGHT_MAX_ZIP = 128_000
 PREFLIGHT_MAX_UNCOMPRESSED = 520_000
 W1_MAX_ZIP = 320_000
 W1_MAX_UNCOMPRESSED = 900_000
+PHYSICAL_MAX_ZIP = 320_000
+PHYSICAL_MAX_UNCOMPRESSED = 900_000
 
 
 def verify(
@@ -146,9 +152,10 @@ def verify(
     recovery: bool = False,
     worker_preflight: bool = False,
     worker_w1: bool = False,
+    worker_physical: bool = False,
 ) -> None:
     """Verify digest, exact transport variant, file types and separate bounds."""
-    if sum((recovery, worker_preflight, worker_w1)) > 1:
+    if sum((recovery, worker_preflight, worker_w1, worker_physical)) > 1:
         raise ValueError("protected Boca bundle modes must be exclusive")
     max_zip = (
         RECOVERY_MAX_ZIP
@@ -157,6 +164,8 @@ def verify(
         if worker_preflight
         else W1_MAX_ZIP
         if worker_w1
+        else PHYSICAL_MAX_ZIP
+        if worker_physical
         else MAX_ZIP
     )
     max_uncompressed = (
@@ -166,6 +175,8 @@ def verify(
         if worker_preflight
         else W1_MAX_UNCOMPRESSED
         if worker_w1
+        else PHYSICAL_MAX_UNCOMPRESSED
+        if worker_physical
         else MAX_UNCOMPRESSED
     )
     if not re.fullmatch(r"[0-9a-f]{64}", expected_sha):
@@ -182,6 +193,8 @@ def verify(
             if worker_preflight
             else (W1_ENTRIES,)
             if worker_w1
+            else (PHYSICAL_ENTRIES,)
+            if worker_physical
             else (EXPECTED_ENTRIES, EXPECTED_ENTRIES | OPTION_B_ENTRIES)
         )
         if (
@@ -215,6 +228,7 @@ def main() -> int:
         }
         worker_preflight = sys.argv[2] == "cutover-worker-preflight"
         worker_w1 = sys.argv[2] == "worker-diagnose-once"
+        worker_physical = sys.argv[2] == "worker-physical-once"
         if (
             sys.argv[2] in ("cutover-stage-recover-904", "cutover-image-plan-916")
             and len(sys.argv) != 8
@@ -228,6 +242,8 @@ def main() -> int:
             raise ValueError("worker preflight requires exact reviewed coordinates")
         if worker_w1 and len(sys.argv) != 4:
             raise ValueError("W1 requires one GitHub run ID only")
+        if worker_physical and len(sys.argv) != 4:
+            raise ValueError("Physical Boca probe requires one GitHub run ID only")
         bound = (
             RECOVERY_MAX_ZIP
             if recovery
@@ -235,6 +251,8 @@ def main() -> int:
             if worker_preflight
             else W1_MAX_ZIP
             if worker_w1
+            else PHYSICAL_MAX_ZIP
+            if worker_physical
             else MAX_ZIP
         )
         raw = sys.stdin.buffer.read(bound + 1)
@@ -244,6 +262,7 @@ def main() -> int:
             recovery=recovery,
             worker_preflight=worker_preflight,
             worker_w1=worker_w1,
+            worker_physical=worker_physical,
         )
         # The memfd is passed to the *same* process via exec. No temporary
         # container, host file or broader Docker resource is ever created.
