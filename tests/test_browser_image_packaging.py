@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import re
+import subprocess
+import sys
 from pathlib import Path
 
 
@@ -20,6 +24,34 @@ def test_browser_image_installs_pinned_package_and_fixed_worker_entrypoint() -> 
     assert "COPY src/ ./src/" not in text
     assert "--group browser --no-dev" not in text
     assert "--no-sandbox" not in text
+
+
+def test_browser_image_pythonpath_resolves_bare_synthetic_without_importing_blackbox() -> None:
+    """W1 #934: resolve the bare module name without executing owner-controlled code."""
+    root = Path(__file__).resolve().parents[1]
+    dockerfile = (root / "Dockerfile.browser").read_text(encoding="utf-8")
+    match = re.search(r"\bPYTHONPATH=([^\s\\]+)", dockerfile)
+    assert match is not None, "browser image must declare PYTHONPATH"
+    paths = match.group(1).split(":")
+    assert "/app/src" in paths, "packaged boca_socios imports must remain available"
+    env = {
+        **os.environ,
+        "PYTHONPATH": ":".join(str(root / path.removeprefix("/app/")) for path in paths),
+    }
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import importlib.util; spec=importlib.util.find_spec('synthetic'); "
+            "print(spec.origin if spec else 'MISSING')",
+        ],
+        cwd=root,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert result.stdout.strip() == str(root / "src/boca_socios/browser/synthetic.py")
 
 
 def test_browser_image_explicitly_installs_chromium_and_system_dependencies() -> None:
