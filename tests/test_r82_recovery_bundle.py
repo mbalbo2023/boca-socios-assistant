@@ -124,6 +124,10 @@ R137_CANDIDATE_ACCEPTANCE_FULL_CUTOVER_SHA = (
 R138_RESTORED_PANEL_FINISH_FULL_CUTOVER_SHA = (
     "f8513a879e2530f6f51dea256f4b3e1502eba11048360d193d5f26a02bf3583b"
 )
+# R139 uses the portable stop argument for exact Docker acknowledgements.
+R139_PORTABLE_PANEL_STOP_FULL_CUTOVER_SHA = (
+    "bef701b7719e370790f9d6e6afe01a7e7e77dc490485e998ba77314c78c11aeb"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -281,7 +285,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R138_RESTORED_PANEL_FINISH_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R139_PORTABLE_PANEL_STOP_FULL_CUTOVER_SHA
+    assert digest != R138_RESTORED_PANEL_FINISH_FULL_CUTOVER_SHA
     assert digest != R137_CANDIDATE_ACCEPTANCE_FULL_CUTOVER_SHA
     assert digest != R136_INCIDENT_OBSERVER_FULL_CUTOVER_SHA
     assert digest != R135_IDLE_INSTALL_FULL_CUTOVER_SHA

@@ -280,7 +280,7 @@
       "issue": 250,
       "fix_pr": 253,
       "root_cause": "Owner enrollment stopped the dedicated daemon, browser installation did not resume it, and the legacy stop and acceptance inventory rejected the integrated browser topology or accepted a controller through legacy identity checks.",
-      "prevention": "Recheck current main before guarded start, validate the complete exact installed topology before every stop or resume, and perform marked attempt cleanup on both failure and cancellation.",
+      "prevention": "Recheck current main before guarded start, verify the exact installed topology before stop or resume, and clean marked attempts after failure or cancellation. Use the portable -t grace period wherever Docker STOP must acknowledge its full CID, then inspect the physical state.",
       "regression_tests": [
         "tests/test_host_browser_lifecycle.py::test_browser_install_starts_prepared_daemon_before_preflight",
         "tests/test_host_browser_lifecycle.py::test_guarded_stop_accepts_exact_installed_controller_and_browser_worker",
@@ -288,7 +288,8 @@
         "tests/test_host_browser_lifecycle.py::test_sender_cleanup_only_after_absent_proof_and_on_failure_or_cancellation",
         "tests/test_host_browser_runtime_lifecycle.py::test_dual_acceptance_exercises_real_ipc_and_existing_http_probe",
         "tests/test_host_browser_runtime_lifecycle.py::test_existing_dual_start_never_initializes_or_recreates_storage",
-        "tests/test_host_browser_runtime_lifecycle.py::test_stale_ipc_worker_failure_never_starts_controller_or_retries"
+        "tests/test_host_browser_runtime_lifecycle.py::test_stale_ipc_worker_failure_never_starts_controller_or_retries",
+        "tests/test_host_boca_cutover_backend.py::test_idle_install_service_tied_to_verified_cids_before_retirement"
       ]
     },
     {

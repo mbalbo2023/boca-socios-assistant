@@ -817,9 +817,41 @@ def test_production_worker_command_has_no_compose_or_other_service_target(
     )
     transport.worker_action(WORKER, "start")
     transport.worker_action(WORKER, "stop")
-    assert calls == [("start", WORKER), ("stop", "--time", "8", WORKER)]
+    assert calls == [("start", WORKER), ("stop", "-t", "8", WORKER)]
     with pytest.raises(adapter.LifecycleAdapterNoGo):
         transport.worker_action("porota-1", "stop")
+
+
+@pytest.mark.parametrize(
+    "ack", [WORKER + "\n" + WORKER + "\n", "warning\n" + WORKER + "\n", CONTROLLER]
+)
+def test_worker_stop_uncertain_stdout_never_confirms_stopped(monkeypatch, ack):
+    def docker(*args):
+        assert args == ("stop", "-t", "8", WORKER)
+        return ack
+
+    monkeypatch.setattr(adapter.cleanup, "_docker", docker)
+    with pytest.raises(adapter.LifecycleEffectUncertain, match="ACK uncertain"):
+        adapter.ProductionRootlessDockerIO().worker_action(WORKER, "stop")
+
+
+def test_worker_stop_requires_independent_stopped_state_after_exact_ack(monkeypatch):
+    calls = []
+
+    def docker(*args):
+        calls.append(args)
+        if args == ("stop", "-t", "8", WORKER):
+            return WORKER + "\n"
+        assert args == ("inspect", "--format", "{{json .State.Running}}", WORKER)
+        return "true\n"
+
+    clock = iter((0, 1, 41))
+    monkeypatch.setattr(adapter.cleanup, "_docker", docker)
+    monkeypatch.setattr(adapter, "sleep", lambda _: None)
+    monkeypatch.setattr(adapter, "monotonic", lambda: next(clock))
+    with pytest.raises(adapter.LifecycleEffectUncertain, match="deadline expired"):
+        adapter.ProductionRootlessDockerIO().worker_action(WORKER, "stop")
+    assert len(calls) == 2
 
 
 def test_release_binding_requires_independently_pinned_config_hashes() -> None:

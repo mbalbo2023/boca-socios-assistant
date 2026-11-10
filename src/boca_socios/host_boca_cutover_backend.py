@@ -790,7 +790,8 @@ class RootlessCutoverBackend:
                 restart_policy="no",
             )
         with candidate_check("PANEL_STOP_ACK"):
-            if host._run("docker", "stop", "--time", "8", candidate, timeout=30) != candidate:
+            # R95: the portable flag keeps Docker's deprecation warning out of the exact CID ACK.
+            if host._run("docker", "stop", "-t", "8", candidate, timeout=30) != candidate:
                 raise CandidateMismatch("on-demand panel stop receipt unverified")
         with candidate_check("PANEL_STOPPED"):
             stopped = host._run(

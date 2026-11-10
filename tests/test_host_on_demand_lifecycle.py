@@ -31,7 +31,9 @@ def test_real_docker_boundary_limits_fields_and_accepts_one_cli_newline(monkeypa
             return "true\n"
         if argv == ("inspect", "--format", "{{json .State.Running}}", WORKER):
             return "false\n"
-        assert argv == ("stop", "--time", "8", WORKER)
+        if argv == ("stop", "--time", "8", WORKER):
+            return "Flag --time has been deprecated, use --timeout instead\n" + WORKER + "\n"
+        assert argv == ("stop", "-t", "8", WORKER)
         return WORKER + "\n"
 
     monkeypatch.setattr(adapter.cleanup, "_docker", docker)
