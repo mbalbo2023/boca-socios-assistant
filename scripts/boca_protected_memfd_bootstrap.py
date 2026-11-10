@@ -95,8 +95,8 @@ PREFLIGHT_ENTRIES = frozenset(
     }
 )
 MAX_ZIP = 512_000
-# R135 source bounds match the builder. Each variant checks its own entry set and digest.
-MAX_UNCOMPRESSED = 1_120_000
+# R138 source bounds match the builder. Each variant checks its own entry set and digest.
+MAX_UNCOMPRESSED = 1_147_000
 RECOVERY_MAX_ZIP = 128_000
 RECOVERY_MAX_UNCOMPRESSED = 256_000
 PREFLIGHT_MAX_ZIP = 128_000
@@ -165,8 +165,13 @@ def main() -> int:
             "cutover-worker-834-recover",
         }
         worker_preflight = sys.argv[2] == "cutover-worker-preflight"
-        if sys.argv[2] == "cutover-stage-recover-904" and len(sys.argv) != 8:
-            raise ValueError("incident 904 recovery requires five exact coordinates")
+        if (
+            sys.argv[2] in ("cutover-stage-recover-904", "cutover-image-plan-916")
+            and len(sys.argv) != 8
+        ):
+            raise ValueError("incident operation requires five exact coordinates")
+        if sys.argv[2] == "cutover-image-finish-916" and len(sys.argv) != 10:
+            raise ValueError("image finish requires the observed run and plan digest")
         if recovery and len(sys.argv) != 3:
             raise ValueError("stopped worker recovery accepts no user coordinates")
         if worker_preflight and len(sys.argv) != 10:

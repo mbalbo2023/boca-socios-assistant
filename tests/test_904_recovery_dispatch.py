@@ -219,9 +219,9 @@ def test_workflow_reserves_incident_before_one_transmission_and_verifies_its_pha
     flow = WORKFLOW.read_text()
     assert gate.INVENTORY in flow.splitlines()[1]
     assert f"- name: {gate.PROFILE_STEP}" in flow
-    block = flow.split(
-        "- name: Authenticate both historical runs and the latest pinned inventory", 1
-    )[1].split("- name: Attest one historical Boca image release", 1)[0]
+    block = flow.split("- name: Authenticate the Boca incident and its GitHub evidence", 1)[
+        1
+    ].split("- name: Attest one historical Boca image release", 1)[0]
     assert "inputs.protected_action_context == '42742150879'" in block
     assert block.count('boca-target "$remote_command"') == 1
     assert block.index("check_904_recovery_dispatch authorize") < block.index(
@@ -230,7 +230,7 @@ def test_workflow_reserves_incident_before_one_transmission_and_verifies_its_pha
     assert "cutover-stage-recover-904" in block
     assert "deadline=180s" in block and "deadline=900s" in block
     assert "next=READ_ONLY_904_AND_EXACT_LEGACY_HEALTH" in block
-    assert "scripts.host_cutover_904_recovery verify" in block
+    assert 'scripts.host_cutover_904_recovery "$mode"' in block and "mode=verify" in block
     assert "PHYSICAL_ACK_UNVERIFIED" in block
     assert "docker rm" not in block
 
@@ -289,7 +289,7 @@ def test_actual_summary_shell_requires_matching_transport_and_exact_receipt(
         raw = b"sensitive test bytes" if physical == "garbled" else b""
     (tmp_path / "boca-stage-recovery.receipt").write_bytes(raw)
     summary_file = tmp_path / "summary"
-    step = _workflow_shell("Verify physical outcome and failed subphase of Boca recovery 904")
+    step = _workflow_shell(gate.PLAN_VERIFIED)
     proc = subprocess.run(  # noqa: S603 - exact checked-in workflow with a local fixture
         ["/bin/bash", "-c", step],
         cwd=ROOT,
@@ -318,8 +318,22 @@ def test_actual_summary_shell_requires_matching_transport_and_exact_receipt(
         assert "state=ORIGINAL_RESTORED" not in written
 
 
-@pytest.mark.parametrize("admitted", [False, True])
-def test_actual_dispatch_shell_sends_one_scoped_zip_only_after_admission(tmp_path, admitted):
+@pytest.mark.parametrize(
+    ("context", "operation", "admitted", "plan_id", "mode"),
+    [
+        (gate.R904, "cutover-a-stage-recover", False, None, None),
+        (gate.R904, "cutover-a-stage-recover", True, None, "cutover-stage-recover-904"),
+        (gate.R916, "cutover-a-reconcile", True, None, "cutover-image-plan-916"),
+        (gate.R916, "cutover-a-stage-recover", True, str(READ), "cutover-image-finish-916"),
+        (gate.R916, "cutover-a-stage-recover", True, None, None),
+        (gate.R916, "cutover-a-reconcile", False, None, None),
+        (gate.R916, "cutover-a-apply", True, str(READ), None),
+        (gate.R916, "cutover-a-stage-recover-844", True, str(READ), None),
+    ],
+)
+def test_actual_dispatch_shell_sends_one_scoped_zip_only_after_admission(
+    tmp_path, context, operation, admitted, plan_id, mode
+):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     ssh = bin_dir / "ssh"
@@ -342,14 +356,16 @@ def test_actual_dispatch_shell_sends_one_scoped_zip_only_after_admission(tmp_pat
         "PATH": str(bin_dir) + ":" + os.environ["PATH"],
         "RUNNER_TEMP": str(tmp_path),
         "GITHUB_OUTPUT": str(tmp_path / "output"),
-        "BOCA_OPERATION": "cutover-a-stage-recover",
-        "BOCA_PROTECTED_ACTION_CONTEXT": gate.R904,
+        "BOCA_OPERATION": operation,
+        "BOCA_PROTECTED_ACTION_CONTEXT": context,
         "BOCA_V3_STAGE_INCIDENT_SOURCE": gate.R904_SHA,
         "GITHUB_RUN_ID": str(RUN),
         "GITHUB_SHA": SHA,
     }
     if admitted:
-        env["BOCA_904_ADMITTED"] = str(RUN)
+        env["BOCA_916_ADMITTED" if context == gate.R916 else "BOCA_904_ADMITTED"] = str(RUN)
+    if plan_id:
+        env.update(BOCA_916_PLAN_RUN=plan_id, BOCA_916_PLAN_SHA="a" * 64)
     step = _workflow_shell(
         "Remove only authenticated uncommitted Cutover stage or recover Boca incident 904 under lease"
     )
@@ -357,7 +373,7 @@ def test_actual_dispatch_shell_sends_one_scoped_zip_only_after_admission(tmp_pat
         ["/bin/bash", "-c", step], cwd=ROOT, env=env, capture_output=True, timeout=10, check=False
     )
     called = tmp_path / "called"
-    if not admitted:
+    if mode is None:
         assert proc.returncode != 0 and not called.exists()
         return
     assert proc.returncode == 3
@@ -365,14 +381,13 @@ def test_actual_dispatch_shell_sends_one_scoped_zip_only_after_admission(tmp_pat
     assert (tmp_path / "boca-stage-recovery.receipt").read_bytes() == b"bounded-response\n"
     calls = called.read_text().splitlines()
     assert len(calls) == 1
-    assert json.loads(calls[0])[1:] == [
-        "cutover-stage-recover-904",
-        gate.R904,
-        gate.R904_SHA,
-        str(gate.R908),
-        str(RUN),
-        SHA,
-    ]
+    if context == gate.R904:
+        coords = [gate.R904, gate.R904_SHA, str(gate.R908), str(RUN), SHA]
+    else:
+        coords = [gate.R916, gate.SHA916, gate.R917, str(RUN), SHA]
+    if mode == "cutover-image-finish-916":
+        coords += [plan_id, "a" * 64]
+    assert json.loads(calls[0])[1:] == [mode, *coords]
 
 
 def test_cli_authenticates_paginated_github_proof_and_rejects_raw_event_override(
@@ -407,3 +422,245 @@ def test_cli_authenticates_paginated_github_proof_and_rejects_raw_event_override
     assert gate.main(args) == 1
     output = capsys.readouterr()
     assert "state=NO_GO" in output.err and "secret-sentinel" not in output.err
+
+
+def _proof916(*, observe=False):
+    env, common, _, _ = proof()
+    historical_sha = "3c7dd8ae08bc5372a01a25701b6c5524ec9b3386"
+    plan_title = "BOCA-R138-916-IMAGE-PLAN"
+    finish_title = "BOCA-V3-STAGE-RECOVER-42750940352"
+    operation = "cutover-a-reconcile" if observe else "cutover-a-stage-recover"
+    env.update(
+        BOCA_PROTECTED_ACTION_CONTEXT="42750940352",
+        BOCA_OPERATION=operation,
+        GITHUB_RUN_NUMBER="920",
+        GITHUB_RUN_ID=str(RUN),
+    )
+    current = _run(920, RUN, SHA, plan_title if observe else finish_title, None)
+    previous = _run(919, READ, SHA, plan_title, "success")
+    data = {name: common[name] for name in ("event", "pulls", "main", "ci", "checks")}
+    data["event"]["inputs"].update(operation=operation, protected_action_context="42750940352")
+    data.update(run=current, inventory=previous)
+    genuine = (
+        (915, 42750716605, 129613417052, gate.INVENTORY, "success"),
+        (916, 42750940352, 129614147059, gate.TITLE, "failure"),
+        (917, 42751222045, 129615059001, gate.INVENTORY, "success"),
+    )
+    for n, rid, jid, title, state in genuine:
+        rec = _run(n, rid, historical_sha, title, state)
+        checks = (
+            [gate.AUTH_STEP, gate.READ_STEP, gate.PROFILE_STEP]
+            if n != 916
+            else [
+                "Authenticate both historical runs and the latest pinned inventory",
+                "Remove only authenticated uncommitted Cutover stage or recover Boca incident 904 under lease",
+                "Verify physical outcome and failed subphase of Boca recovery 904",
+            ]
+        )
+        job = _job(rec, jid, checks)
+        if n == 916:
+            for s in job["steps"][-2:]:
+                s["conclusion"] = "failure"
+        data["run" + str(n)] = rec
+        data["job" + str(n)] = job
+    data["jobs"] = {
+        "total_count": 1,
+        "jobs": [_job(previous, 123, [gate.PLAN_VERIFIED, gate.PLAN_ARTIFACT])],
+    }
+    history = {"total_count": 2, "fetched_count": 2, "workflow_runs": [previous, current]}
+    return env, data, history
+
+
+@pytest.mark.parametrize("observe", [True, False])
+def test_916_route_authenticates_distinct_historical_roles_and_current_ci(monkeypatch, observe):
+    env, data, history = _proof916(observe=observe)
+    monkeypatch.setattr(
+        gate, "validate", lambda *_: pytest.fail("#916 is a recovery, never a failed Cutover")
+    )
+    gate.verify_916_dispatch(env, data, history=None if observe else history)
+
+
+@pytest.mark.parametrize(
+    ("path", "wrong"),
+    [
+        (("run915", "head_sha"), "d" * 40),
+        (("run916", "display_title"), deploy.TITLE),
+        (("job916", "steps", 1, "conclusion"), "success"),
+        (("job916", "steps", 2, "conclusion"), "skipped"),
+        (("job917", "steps", 2, "conclusion"), "skipped"),
+        (("job917", "head_sha"), "d" * 40),
+        (("jobs", "jobs", 0, "steps", 0, "conclusion"), "skipped"),
+        (("jobs", "jobs", 0, "steps", 1, "name"), "wrong artifact"),
+        (("inventory", "run_attempt"), 2),
+        (("event", "inputs", "legacy_release_run_id"), "42750940352"),
+        (("event", "inputs", "protected_action_context"), gate.R904),
+        (("run", "display_title"), gate.TITLE),
+        (("pulls",), [{"number": 431}]),
+    ],
+)
+def test_916_rejects_crossed_or_incomplete_evidence(path, wrong):
+    env, data, history = _proof916()
+    value = data
+    for key in path[:-1]:
+        value = value[key]
+    value[path[-1]] = wrong
+    with pytest.raises(ValueError):
+        gate.verify_916_dispatch(env, data, history=history)
+
+
+def test_916_refuses_second_finish_across_different_source_and_explicit_false_latest():
+    env, data, history = _proof916()
+    history["workflow_runs"].append(dict(data["run"], id=90490, head_sha="c" * 40))
+    history["total_count"] = history["fetched_count"] = 3
+    with pytest.raises(ValueError):
+        gate.verify_916_dispatch(env, data, history=history)
+    env, data, history = _proof916()
+    history["workflow_runs"][0]["conclusion"] = "failure"
+    with pytest.raises(ValueError):
+        gate.verify_916_dispatch(env, data, history=history)
+
+
+def test_916_wire_modes_have_distinct_arity_and_are_outside_legacy_routes():
+    from scripts import build_protected_boca_bundle as builder
+
+    steps = WORKFLOW.read_text().split("  deploy:\n", 1)[1].split("      - name: ")[1:]
+    by_name = {step.split("\n", 1)[0]: step for step in steps}
+    for step in (
+        "Authenticate V3 incident and one per-incident recovery before SSH",
+        "Plan Boca-only Docker cleanup READ_ONLY without deleting resources",
+        "Reconcile exact failed Cutover A attempt on Boca host READ_ONLY",
+        "Require verified physical ACK for one exact stage directory",
+    ):
+        condition = next(
+            line for line in by_name[step].splitlines() if line.startswith("        if: ")
+        )
+        assert "inputs.protected_action_context != '42750940352'" in condition
+    for mode in (b"cutover-image-plan-916", b"cutover-image-finish-916"):
+        assert mode in builder.MAIN
+        assert mode not in builder.RECOVERY_MAIN + builder.PREFLIGHT_MAIN
+    assert gate.PLAN_VERIFIED in by_name and gate.PLAN_ARTIFACT in by_name
+
+
+completion916 = importlib.import_module("test_host_cutover_904_recovery").completion916
+
+
+def _summary916(folder, operation, record, *, host_rc="0", host_outcome="success"):
+    from scripts import host_cutover_904_recovery as core
+
+    (folder / "boca-stage-recovery.receipt").write_bytes(core._wire(record))
+    env = {
+        **os.environ,
+        "PATH": str(Path(sys.executable).parent) + ":" + os.environ["PATH"],
+        "RUNNER_TEMP": str(folder),
+        "GITHUB_OUTPUT": str(folder / "step.output"),
+        "GITHUB_STEP_SUMMARY": str(folder / "step.summary"),
+        "HOST_RC": host_rc,
+        "HOST_OUTCOME": host_outcome,
+        "PYTHONPATH": "src:.",
+        "BOCA_OPERATION": operation,
+        "BOCA_PROTECTED_ACTION_CONTEXT": gate.R916,
+        "GITHUB_RUN_ID": record["current_run_id"],
+        "GITHUB_SHA": record["current_source_sha"],
+        "BOCA_916_PLAN_RUN": record.get("observation_run_id", ""),
+        "BOCA_916_PLAN_SHA": record.get("observation_plan_sha256", ""),
+    }
+    proc = subprocess.run(  # noqa: S603 - checked-in runner receipt validation, mock Docker fixture
+        ["/bin/bash", "-c", _workflow_shell(gate.PLAN_VERIFIED)],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    return proc.returncode, (folder / "step.summary").read_text()
+
+
+@pytest.mark.parametrize(
+    "case", ["valid", "epoch", "absent_as_removed", "missing_plan", "lost_ssh", "valid_no_go"]
+)
+def test_finish_summary_cannot_accept_host_output_that_disagrees_with_downloaded_plan(
+    tmp_path, completion916, case
+):
+    from scripts import host_cutover_904_recovery as core
+
+    lab = completion916
+    if case == "absent_as_removed":
+        lab.engines[core.PINS["browser_image_ref"]].present = False
+    plan = lab.observe()
+    assert plan["state"] == "READY"
+    ready = tmp_path / "boca-904-recovery-proof" / "plan" / "boca-916-plan.json"
+    ready.parent.mkdir(parents=True)
+    if case != "missing_plan":
+        ready.write_bytes(core._wire(plan))
+    if case == "valid_no_go":
+        lab.break_post = True
+    result = lab.finish(plan)
+    assert result["state"] == ("NO_GO" if case == "valid_no_go" else "COMPLETED")
+    if case == "epoch":
+        result["process_sha256"] = "a" * 64
+    elif case == "absent_as_removed":
+        assert plan["images"]["worker"]["status"] == "ABSENT"
+        result["images"]["worker"].update(
+            status="REMOVED",
+            step="POST_DELETE",
+            reason="ABSENCE_PROVED",
+            id=core._CONFIG_IDS916["worker"],
+        )
+    if case in ("epoch", "absent_as_removed"):
+        # These individually canonical ACKs pass the wire schema. Only the actual plan
+        # from the observed run can establish the process and per-image transition.
+        coords = (
+            *lab.coords[:3],
+            result["current_run_id"],
+            result["current_source_sha"],
+            plan["current_run_id"],
+            plan["plan_sha256"],
+        )
+        assert core.verify_916(core._wire(result), coords, observation=False) == result
+    host_rc = {"valid_no_go": "3", "lost_ssh": "255"}.get(case, "0")
+    rc, summary = _summary916(
+        tmp_path,
+        gate.FINISH_OPERATION,
+        result,
+        host_rc=host_rc,
+        host_outcome="success" if host_rc == "0" else "failure",
+    )
+    if case == "valid":
+        assert rc == 0 and "state=COMPLETED" in summary
+    else:
+        assert rc != 0 and "state=COMPLETED" not in summary and "state=NO_GO" in summary
+        if case == "valid_no_go":
+            assert "POST_DELETE" in summary
+        else:
+            expected = "PHYSICAL_ACK_UNVERIFIED" if case == "lost_ssh" else "ACK_PLAN_MISMATCH"
+            assert expected in summary and "effects=UNKNOWN" in summary
+    assert not (tmp_path / "boca-916-plan.json").exists()
+
+
+def test_only_accepted_read_only_plan_artifact_can_bind_finish(tmp_path, completion916, capsys):
+    from scripts import host_cutover_904_recovery as core
+
+    plan = completion916.observe()
+    rc, summary = _summary916(tmp_path, gate.OBSERVE_OPERATION, plan)
+    assert rc == 0 and "state=READY" in summary and completion916.changes == []
+    emitted = tmp_path / "boca-916-plan.json"
+    assert (
+        emitted.read_bytes() == core._wire(plan)
+        and (tmp_path / "step.output").read_text() == "publish_plan=true\n"
+    )
+    folder = tmp_path / "download"
+    folder.mkdir()
+    artifact = folder / emitted.name
+    artifact.write_bytes(emitted.read_bytes())
+    args = ["plan-digest-916", str(artifact), plan["current_run_id"], plan["current_source_sha"]]
+    assert gate.main(args) == 0 and capsys.readouterr().out.strip() == plan["plan_sha256"]
+    artifact.write_bytes(emitted.read_bytes() + b"private-sentinel")
+    assert gate.main(args) == 1
+    assert "private-sentinel" not in str(capsys.readouterr())
+    artifact.write_bytes(emitted.read_bytes())
+    (folder / "unverified.json").write_text("other file")
+    assert gate.main(args) == 1
+    (folder / "unverified.json").unlink()
+    artifact.unlink()
+    artifact.symlink_to(emitted)
+    assert gate.main(args) == 1
