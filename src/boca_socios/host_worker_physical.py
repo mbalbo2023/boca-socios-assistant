@@ -86,6 +86,16 @@ def _volume_labels(run_id: str) -> dict[str, str]:
     }
 
 
+def _copy_up_is_default(options: object) -> bool:
+    """Match the installed Compose worker's ordinary named-volume copy-up."""
+    if options is None:
+        return True
+    if type(options) is not dict:
+        return False
+    no_copy = options.get("NoCopy")
+    return no_copy is None or no_copy is False
+
+
 def _volume_present(run_id: str) -> bool:
     name = _volume_name(run_id)
     existing = cleanup._docker("volume", "ls", "-q", "--filter", f"name=^{name}$")
@@ -126,9 +136,17 @@ def _create_volume(run_id: str) -> None:
     for key, value in sorted(labels.items()):
         argv += ["--label", f"{key}={value}"]
     argv.append(name)
-    if deploy._run(*argv, timeout=30) != name:
-        raise PhysicalProbeUnavailable
-    _check_volume(run_id)
+    try:
+        if deploy._run(*argv, timeout=30) != name:
+            raise PhysicalProbeUnavailable
+        _check_volume(run_id)
+    except BaseException:
+        # The create ACK can be lost after the daemon creates a volume. The
+        # pre-existing name check above ran BEFORE this exact creation effect;
+        # compensate only a positively labeled new Boca volume, never a prior
+        # collision or an unrelated volume.
+        _cleanup_volume(run_id)
+        raise
 
 
 def _initialize_volume(run_id: str) -> None:
@@ -186,9 +204,7 @@ def _initialize_volume(run_id: str) -> None:
 def _initializer_ids(run_id: str) -> list[str]:
     _volume_name(run_id)
     name = f"boca-socios-browser-ipc-probe-ipc-dir-init-{run_id}"
-    result = cleanup._docker(
-        "ps", "-a", "-q", "--no-trunc", "--filter", f"name=^/{name}$"
-    )
+    result = cleanup._docker("ps", "-a", "-q", "--no-trunc", "--filter", f"name=^/{name}$")
     ids = result.splitlines()
     if len(ids) > 1 or any(not _CID.fullmatch(cid) for cid in ids):
         raise PhysicalProbeUnavailable
@@ -297,7 +313,7 @@ def create_argv(run_id: str, seccomp_path: str) -> tuple[str, ...]:
         "--tmpfs",
         "/home/boca-browser:rw,noexec,nosuid,size=16m",
         "--mount",
-        f"type=volume,source={_volume_name(run_id)},target={_IPC_DESTINATION},volume-nocopy",
+        f"type=volume,source={_volume_name(run_id)},target={_IPC_DESTINATION}",
         "--env",
         "BOCA_ENVIRONMENT=staging",
         "--env",
@@ -528,9 +544,7 @@ def _inspect_probe(cid: str, run_id: str, seccomp_path: str | None = None) -> di
     record = _identify_probe(cid, run_id)
     host = record.get("HostConfig")
     volume = _volume_name(run_id)
-    expected_source = str(
-        deploy._checked_docker_storage_dir() / "volumes" / volume / "_data"
-    )
+    expected_source = str(deploy._checked_docker_storage_dir() / "volumes" / volume / "_data")
     mounts = record.get("Mounts")
     declared_mounts = host.get("Mounts") if type(host) is dict else None
     if (
@@ -562,8 +576,7 @@ def _inspect_probe(cid: str, run_id: str, seccomp_path: str | None = None) -> di
         or declared_mounts[0].get("Type") != "volume"
         or declared_mounts[0].get("Source") != volume
         or declared_mounts[0].get("Target") != _IPC_DESTINATION
-        or type(declared_mounts[0].get("VolumeOptions")) is not dict
-        or declared_mounts[0]["VolumeOptions"].get("NoCopy") is not True
+        or not _copy_up_is_default(declared_mounts[0].get("VolumeOptions"))
         or host.get("Tmpfs")
         != {
             "/tmp": "rw,noexec,nosuid,size=32m",  # noqa: S108
@@ -611,6 +624,7 @@ def _diagnose(run_id: str) -> dict[str, object]:
         # Docker create reads it, and this directory is Boca UID10001 private.
         with tempfile.TemporaryDirectory(prefix=".boca-physical-", dir=home) as name:
             cid: str | None = None
+            volume_created = False
             started = False
             boot = "FAILED"
             cause = "HEALTH_WAIT"
@@ -623,6 +637,7 @@ def _diagnose(run_id: str) -> dict[str, object]:
                 # volume-differential observation. Claim BEFORE first host effect.
                 _claim_once(home, run_id)
                 _create_volume(run_id)
+                volume_created = True
                 _initialize_volume(run_id)
                 _cleanup_initializer(run_id)
                 cid = deploy._run("docker", *args, timeout=35)
@@ -655,17 +670,18 @@ def _diagnose(run_id: str) -> dict[str, object]:
                             boot = "HEALTHY"
                             cause = "NONE"
             finally:
-                try:
-                    if cid is not None:
-                        # Lost START ACK can still leave a running process.
-                        _exact_cleanup(cid, run_id, seccomp_path)
-                finally:
+                if volume_created:
                     try:
-                        _cleanup_initializer(run_id)
+                        if cid is not None:
+                            # Lost START ACK can still leave a running process.
+                            _exact_cleanup(cid, run_id, seccomp_path)
                     finally:
-                        # Never prune by project, only this positively owned
-                        # ephemeral IPC volume; installed volumes stay untouched.
-                        _cleanup_volume(run_id)
+                        try:
+                            _cleanup_initializer(run_id)
+                        finally:
+                            # Never prune by project, only this positively owned
+                            # ephemeral IPC volume; installed volumes stay untouched.
+                            _cleanup_volume(run_id)
         deploy._validate_storage_continuity(
             storage_before,
             deploy._storage_snapshot(),

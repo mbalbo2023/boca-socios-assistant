@@ -18,6 +18,10 @@ falsifiable hypothesis, not a demonstrated cause of exit zero.**
 
 - Prepare one new physical observation using a new, uniquely labeled **Boca-only
   disposable volume** that reproduces the installed worker's IPC mount kind.
+- Match the installed Compose worker's **default volume copy-up** semantics;
+  only the existing one-shot UID10002 volume initializer uses
+  `volume-nocopy`, exactly as the installer does. A successful probe must not
+  silently rely on a different mount option.
 - Reuse corrected immutable browser image #810, rootless UID10001 socket,
   worker UID10002, seccomp/cgroup/network-none controls, and prearmed bounded
   Engine output-class capture already reviewed in PR #469.

@@ -29,7 +29,7 @@ class VolumeContractTests(unittest.TestCase):
             argv[argv.index("--mount") + 1],
             (
                 "type=volume,source=boca-physical-ipc-42899999999,"
-                "target=/run/boca-browser-ipc,volume-nocopy"
+                "target=/run/boca-browser-ipc"
             ),
         )
         self.assertNotIn(
@@ -76,10 +76,78 @@ class VolumeContractTests(unittest.TestCase):
         with (
             patch.object(physical.cleanup, "_docker", return_value=physical._volume_name(RUN)),
             patch.object(physical.deploy, "_run") as docker,
+            patch.object(physical, "_cleanup_volume") as cleanup_volume,
         ):
             with self.assertRaises(physical.PhysicalProbeUnavailable):
                 physical._create_volume(RUN)
             docker.assert_not_called()
+            cleanup_volume.assert_not_called()
+
+    def test_lost_volume_create_ack_compensates_only_after_absence_proof(self) -> None:
+        with (
+            patch.object(physical, "_volume_present", return_value=False),
+            patch.object(
+                physical.deploy,
+                "_run",
+                side_effect=physical.deploy.PreflightError("create ACK lost"),
+            ),
+            patch.object(physical, "_cleanup_volume") as cleanup_volume,
+        ):
+            with self.assertRaises(physical.deploy.PreflightError):
+                physical._create_volume(RUN)
+            cleanup_volume.assert_called_once_with(RUN)
+
+    def test_preexisting_name_collision_does_not_cleanup_anothers_resources(self) -> None:
+        @contextmanager
+        def lease(_run: str):
+            yield object()
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(physical.cleanup, "protected_boca_job_lease", lease),
+            patch.object(physical, "_verify_rootless"),
+            patch.object(physical, "_idle", return_value=(object(), "fingerprint")),
+            patch.object(physical, "_verified_boca_home", return_value=Path(directory)),
+            patch.object(physical, "_image_pull_and_verify", return_value="before"),
+            patch.object(physical, "_profile_path", return_value="/srv/boca/seccomp.json"),
+            patch.object(
+                physical, "_create_volume", side_effect=physical.PhysicalProbeUnavailable
+            ),
+            patch.object(physical, "_cleanup_initializer") as cleanup_initializer,
+            patch.object(physical, "_cleanup_volume") as cleanup_volume,
+            patch.object(physical, "_exact_cleanup") as cleanup_cid,
+        ):
+            with self.assertRaises(physical.PhysicalProbeUnavailable):
+                physical._diagnose(RUN)
+        cleanup_initializer.assert_not_called()
+        cleanup_volume.assert_not_called()
+        cleanup_cid.assert_not_called()
+
+    def test_replayed_claim_never_touches_an_existing_volume(self) -> None:
+        @contextmanager
+        def lease(_run: str):
+            yield object()
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(physical.cleanup, "protected_boca_job_lease", lease),
+            patch.object(physical, "_verify_rootless"),
+            patch.object(physical, "_idle", return_value=(object(), "fingerprint")),
+            patch.object(physical, "_verified_boca_home", return_value=Path(directory)),
+            patch.object(physical, "_image_pull_and_verify", return_value="before"),
+            patch.object(physical, "_profile_path", return_value="/srv/boca/seccomp.json"),
+            patch.object(
+                physical, "_claim_once", side_effect=physical.PhysicalProbeUnavailable
+            ),
+            patch.object(physical, "_create_volume") as create_volume,
+            patch.object(physical, "_cleanup_initializer") as cleanup_initializer,
+            patch.object(physical, "_cleanup_volume") as cleanup_volume,
+        ):
+            with self.assertRaises(physical.PhysicalProbeUnavailable):
+                physical._diagnose(RUN)
+        create_volume.assert_not_called()
+        cleanup_initializer.assert_not_called()
+        cleanup_volume.assert_not_called()
 
     def test_new_volume_claim_is_independent_and_permanent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -222,7 +290,7 @@ class VolumeContractTests(unittest.TestCase):
                         "Type": "volume",
                         "Source": name,
                         "Target": IPC_DESTINATION,
-                        "VolumeOptions": {"NoCopy": True},
+                        "VolumeOptions": {"NoCopy": False},
                     }
                 ],
             },
@@ -236,6 +304,20 @@ class VolumeContractTests(unittest.TestCase):
                 dict(good, Mounts=[]),
                 dict(good, Mounts=[None]),
                 dict(good, HostConfig=dict(good["HostConfig"], Mounts=[None])),
+                dict(
+                    good,
+                    HostConfig=dict(
+                        good["HostConfig"],
+                        Mounts=[
+                            {
+                                "Type": "volume",
+                                "Source": name,
+                                "Target": IPC_DESTINATION,
+                                "VolumeOptions": {"NoCopy": True},
+                            }
+                        ],
+                    ),
+                ),
                 dict(
                     good,
                     HostConfig=dict(
