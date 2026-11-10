@@ -1,5 +1,24 @@
 # Boca Socios Assistant
 
+## R150 — W1 identificó el nombre `synthetic`; corrección de imagen en revisión
+
+La única prueba física autorizada del worker, [Action #934](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42841239384),
+confirmó `MISSING_BARE_SYNTHETIC`, `missing_module=synthetic`,
+`ExitCode=1`, `OOM=false`. Docker rootless Boca pudo iniciar el proceso:
+el rechazo ocurrió en la resolución del módulo Python. El recibo final
+informó `controller=HEALTHY`, `engine=STOPPED`, `post_pid=0`,
+`cleanup=VERIFIED`; no hubo Cutover ni intervención sobre Porota.
+
+El candidato R150 añade al `PYTHONPATH` de `Dockerfile.browser` el directorio
+del navegador, que ya estaba incluido byte a byte en la imagen. Un test RED
+antes del cambio y GREEN después prueba la resolución del nombre mediante
+`importlib.util.find_spec`, **sin ejecutar ni inspeccionar** `synthetic.py`
+o `ipc_worker.py`. El build comprueba también el nombre bare tras el COPY.
+Esto demuestra la corrección de empaquetado **solo en código e imagen**:
+no acredita todavía un nuevo arranque físico del worker, IPC ni bot operativo.
+No repetir el W1 #934. [RCA y recibo](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6771065839) ·
+[diseño acotado](docs/superpowers/specs/2026-11-10-r150-bare-synthetic-module-design.md).
+
 ## R140 — ajuste de CI en revisión (CODE_ONLY)
 
 El último `image-build` de CI falló en el primer intento por timeout externo
