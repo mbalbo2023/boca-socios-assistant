@@ -16,7 +16,7 @@
       "issue": 80,
       "fix_pr": 81,
       "root_cause": "A private host-owned file is not readable by container UID 10001 under Docker rootless UID remapping.",
-      "prevention": "Keep the key in a Boca-only volume and prove ownership, mode and actual UID 10001 read access before starting. Verify the listener created by the real user manager after every bind. Ubuntu CI created a 0664 Unix socket and the installer rejected it before a controller request. Verify the private inode before enabling its configured access and retain the exact owner checks during cleanup.",
+      "prevention": "Keep the key in its Boca volume and prove UID 10001 can read it. After each systemd bind, verify the exact private socket inode and apply its configured access for the mapped controller. Refuse a changed inode or an unexpected owner during activation and cleanup.",
       "regression_tests": [
         "tests/test_host_first_deploy.py::test_key_volume_is_created_once_and_verified_without_host_secret",
         "tests/test_host_first_deploy.py::test_labeled_local_volume_cannot_redirect_key_initialization",
