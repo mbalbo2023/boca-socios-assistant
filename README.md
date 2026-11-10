@@ -4,7 +4,7 @@
 
 En el perfil de operación bajo demanda, el panel privado permanece disponible en el puerto local 8443. La sesión con passkey puede pedir **Iniciar** y **Detener** en el control del bot. La pantalla distingue una solicitud recibida de un arranque comprobado. En reposo, el contenedor de navegador no tiene procesos. Las instalaciones y actualizaciones se realizan con la Action protegida.
 
-La última evidencia anterior a este cambio corresponde al intento #899. La captura registró `MODULE_NOT_FOUND_ERROR`. El inventario #900 encontró el controlador anterior sano y cero workers. La aceptación de la nueva instalación y de la sesión real se registra por separado. [Decisión de operación](docs/ADR/0223-bot-bajo-demanda.md) · [Seguimiento físico](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+En el intento #899, el proceso del navegador terminó con `MODULE_NOT_FOUND_ERROR`. El inventario #900 encontró el controlador anterior sano y cero workers. La instalación en reposo #904 alcanzó el primer HTTP sano del panel candidato y se detuvo en `ACCEPT_CANDIDATE`. El worker permaneció sin arrancar en esa fase. El observador #905 se detuvo en `LEGACY_COMPOSE` antes de identificar el contenedor que atendía el puerto. El inicio desde la sesión real sigue pendiente. [Decisión de operación](docs/ADR/0223-bot-bajo-demanda.md) · [Recibos físicos de #904 y #905](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6757241696).
 
 ## Diagnóstico del arranque del worker
 
