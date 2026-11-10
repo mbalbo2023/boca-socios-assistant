@@ -16,12 +16,13 @@ from time import monotonic, sleep
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
+from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_cutover_backend as backend
+from boca_socios import host_first_deploy as host
 from boca_socios import host_on_demand_service as service
 from boca_socios.host_boca_cutover import CandidateAcceptanceFailure, CutoverPlan
 from scripts import check_worker_start_capture as fixture
 
-host = backend.host
 ORIGIN = "http://localhost:8443"
 PORTS = {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
 INSPECT = (
@@ -153,7 +154,7 @@ def adapter_cycle(cid: str, *, absent: bool = False) -> None:
         legacy_image="fixture",
         legacy_sha="a" * 40,
     )
-    lease = Mock(spec=backend.cleanup.BocaJobLease)
+    lease = Mock(spec=cleanup.BocaJobLease)
     guards = 0
 
     def guard(*args: object) -> None:
