@@ -190,8 +190,8 @@ def _physical(io: _RootlessIO, installed: Any, coords: Any, lease: Any) -> _Phys
         or not snapshot.controller_running
         or not snapshot.controller_healthy
     ):
-        # LifecycleHostSnapshot.require returns worker_running, so a True result
-        # indicates the worker is running. W1 only observes before / after STOP.
+        # For component=bot,target=stop, require() authenticates all identities
+        # and returns engine_running. Worker state is checked separately below.
         raise W1Unavailable
     state = io.worker_state(installed.worker_id)
     pid = io.field("container", installed.worker_id, "State.Pid")
