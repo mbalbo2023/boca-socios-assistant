@@ -12,6 +12,7 @@ No blackbox navigation module is imported or executed by these tests.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -45,6 +46,40 @@ _ATTEMPT_LABEL = "boca.socios.browser-ipc-attempt"
 _CONFIG_HASH_LABEL = "com.docker.compose.config-hash"
 _REVISION_LABEL = "org.opencontainers.image.revision"
 _CONTROLLER_PORT = {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
+# Only discrete public fields needed by the lifecycle attestor; no Env, Args,
+# raw health output, State.Error, or arbitrary templates cross this boundary.
+_LIFECYCLE_FIELDS = frozenset(
+    {
+        "Config.Image",
+        "Config.User",
+        "HostConfig.RestartPolicy",
+        "HostConfig.ReadonlyRootfs",
+        "HostConfig.Privileged",
+        "HostConfig.PublishAllPorts",
+        "HostConfig.Init",
+        "HostConfig.NetworkMode",
+        "HostConfig.PortBindings",
+        "NetworkSettings.Ports",
+        "NetworkSettings.Networks",
+        "RestartCount",
+        "State.Restarting",
+        "State.Health.Status",
+        "State.Status",
+        "State.StartedAt",
+        "State.FinishedAt",
+        "State.ExitCode",
+        "State.OOMKilled",
+        "State.Pid",
+        "State.Running",
+        "Mounts",
+    }
+)
+
+
+def panel_control_mount() -> str:
+    from boca_socios.host_on_demand_service import control_directory
+
+    return str(control_directory())
 
 
 class LifecycleAdapterNoGo(RuntimeError):
@@ -133,15 +168,32 @@ class ProductionRootlessDockerIO:
         return cleanup.capture_inventory()
 
     def field(self, kind: str, ident: str, field: str) -> object:
-        if kind not in ("container", "volume"):
-            raise LifecycleAdapterNoGo("Boca-only Docker field kind required")
-        return cleanup._inspect_field(cast(Literal["container", "volume"], kind), ident, field)
+        if kind == "volume" and ident == _DATA_VOLUME and field == "Mountpoint":
+            return cleanup._inspect_field("volume", ident, field)
+        if (
+            kind != "container"
+            or type(ident) is not str
+            or not _HASH.fullmatch(ident)
+            or field not in _LIFECYCLE_FIELDS
+        ):
+            raise LifecycleAdapterNoGo("exact Boca lifecycle inspection field required")
+        try:
+            return json.loads(
+                cleanup._docker("inspect", "--format", "{{json ." + field + "}}", ident)
+            )
+        except (TypeError, ValueError):
+            raise LifecycleAdapterNoGo("Boca lifecycle field receipt invalid") from None
 
     def engine_request(self, controller_id: str, operation: str) -> EngineReceipt:
-        if not cleanup.HEX_ID.fullmatch(controller_id) or operation not in (
-            "status",
-            "start",
-            "stop",
+        if (
+            type(controller_id) is not str
+            or not _HASH.fullmatch(controller_id)
+            or operation
+            not in (
+                "status",
+                "start",
+                "stop",
+            )
         ):
             raise LifecycleAdapterNoGo("Boca engine invocation coordinates invalid")
         # In-container UID10001 through the exact pre-attested controller ID,
@@ -178,13 +230,17 @@ class ProductionRootlessDockerIO:
         return EngineReceipt(cast(ControlState, parsed["state"]), parsed["changed"], parsed["pid"])
 
     def worker_action(self, worker_id: str, operation: str) -> None:
-        if not cleanup.HEX_ID.fullmatch(worker_id) or operation not in ("start", "stop"):
+        if (
+            type(worker_id) is not str
+            or not _HASH.fullmatch(worker_id)
+            or operation not in ("start", "stop")
+        ):
             raise LifecycleAdapterNoGo("Boca worker invocation coordinates invalid")
         if operation == "stop":
             output = cleanup._docker("stop", "--time", "8", worker_id)
         else:
             output = cleanup._docker("start", worker_id)
-        if output != worker_id:
+        if output not in (worker_id, worker_id + "\n"):
             raise LifecycleEffectUncertain("Boca exact worker Docker ACK uncertain")
         # A Docker CLI acknowledgement alone is not a verified service state.
         # Loopback/controller health and all resource identities are rechecked
@@ -219,11 +275,27 @@ def _labels(container: cleanup.Container) -> dict[str, str]:
     return labels
 
 
-def _mounts(value: object) -> frozenset[tuple[str, str, bool]]:
+def _mounts(
+    value: object, *, control_source: str | None = None
+) -> frozenset[tuple[str, str, bool]]:
     if not isinstance(value, list) or len(value) > 6:
         raise LifecycleAdapterNoGo("Boca service mount list unavailable")
     observed: set[tuple[str, str, bool]] = set()
     for entry in value:
+        if (
+            isinstance(entry, dict)
+            and control_source is not None
+            and entry.get("Type") == "bind"
+            and entry.get("Source") == control_source
+            and entry.get("Destination") == "/run/boca-bot-control"
+            and entry.get("RW") is False
+            and entry.get("Propagation") == "rprivate"
+        ):
+            item = (control_source, "/run/boca-bot-control", False)
+            if item in observed:
+                raise LifecycleAdapterNoGo("Boca duplicate service mount")
+            observed.add(item)
+            continue
         if (
             not isinstance(entry, dict)
             or entry.get("Type") != "volume"
@@ -243,8 +315,11 @@ def _mounts(value: object) -> frozenset[tuple[str, str, bool]]:
 class RootlessLifecycleProbe:
     """Read-only independently observed Docker + in-controller engine state."""
 
-    def __init__(self, binding: ReviewedInstalledPair, io: LifecycleDockerIO) -> None:
+    def __init__(
+        self, binding: ReviewedInstalledPair, io: LifecycleDockerIO, *, on_demand: bool = False
+    ) -> None:
         binding.require()
+        self._on_demand = on_demand
         self._binding = binding
         self._io = io
 
@@ -349,7 +424,7 @@ class RootlessLifecycleProbe:
             sender_network_valid = sender.networks in ((), (_TELEGRAM_NETWORK,))
         if (
             controller.networks != (_PRIVATE_NETWORK,)
-            or worker.networks
+            or worker.networks not in ((), ("none",))
             or controller.volumes != tuple(sorted(_CONTROLLER_VOLUMES))
             or worker.volumes != (_IPC_VOLUME,)
             or sender is not None
@@ -473,19 +548,40 @@ class RootlessLifecycleProbe:
             else _PRIVATE_NETWORK
         )
         expected_ports = _CONTROLLER_PORT if service == "controller" else {}
+        persistent = self._on_demand and service == "controller"
+        source = panel_control_mount() if persistent else None
+        if source is not None:
+            expected_mounts |= {(source, "/run/boca-bot-control", False)}
         restart = self._io.field("container", ident, "HostConfig.RestartPolicy")
+        restart_count = self._io.field("container", ident, "RestartCount")
+        ports = self._io.field("container", ident, "NetworkSettings.Ports")
+        if self._on_demand and service == "browser-worker":
+            from boca_socios.host_first_deploy import _browser_worker_none_network
+
+            _browser_worker_none_network(
+                self._io.field("container", ident, "NetworkSettings.Networks")
+            )
+            if self._io.field("container", ident, "HostConfig.PortBindings") not in ({}, None):
+                raise LifecycleAdapterNoGo("Boca worker gained host ports")
+            # Docker serializes an empty port map as null on a never-started CID.
+            if ports is None:
+                ports = {}
         if (
             self._io.field("container", ident, "Config.Image") != reference
             or self._io.field("container", ident, "Config.User") != expected_user
-            or restart != {"Name": "no", "MaximumRetryCount": 0}
+            or restart != {"Name": "unless-stopped" if persistent else "no", "MaximumRetryCount": 0}
             or self._io.field("container", ident, "HostConfig.ReadonlyRootfs") is not True
             or self._io.field("container", ident, "HostConfig.Privileged") is not False
             or self._io.field("container", ident, "HostConfig.PublishAllPorts") is not False
             or self._io.field("container", ident, "HostConfig.Init") is not True
-            or self._io.field("container", ident, "RestartCount") != 0
+            or type(restart_count) is not int
+            or restart_count < 0
+            or not persistent
+            and restart_count != 0
             or self._io.field("container", ident, "HostConfig.NetworkMode") != expected_network
-            or self._io.field("container", ident, "NetworkSettings.Ports") != expected_ports
-            or _mounts(self._io.field("container", ident, "Mounts")) != expected_mounts
+            or ports != expected_ports
+            or _mounts(self._io.field("container", ident, "Mounts"), control_source=source)
+            != expected_mounts
             or self._io.field("container", ident, "State.Restarting") is not False
         ):
             raise LifecycleAdapterNoGo("Boca service exact isolation changed")

@@ -49,6 +49,10 @@ controller-only simulation BETA may continue to be prepared and deployed
 under its preexisting exact-SHA safety gates with its browser backend `off`;
 no browser-worker/CDP activation is implied by this instruction.
 
+## Operación del bot a demanda — 2026-11-09
+
+El titular autorizó a su sesión privada con passkey a iniciar y detener el bot Boca de simulación. La instalación y actualización siguen en la Action protegida. El ejecutor local, activado por socket, sólo puede consumir la operación durable de la instalación Boca verificada. El worker queda detenido en reposo, con la captura preparada antes de cada inicio. Se aplican las reglas anteriores sobre los dos módulos protegidos y la navegación del titular. Véase [ADR 0223](docs/ADR/0223-bot-bajo-demanda.md) y [la decisión en #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6756261211).
+
 ## Development protocol
 
 1. Recover exact main HEAD, open PRs, open work items, CI status and current

@@ -1,21 +1,28 @@
 # Optional browser-ipc-v2 overlay. NEVER selected by legacy beta-install.
-# Future use requires a reviewed protected workflow, preprovisioned IPC volume,
-# pinned browser image, verified seccomp file and positive Boca-only host gates.
+# The protected V3 installer prepares an idle worker and the controller-only
+# socket. A request from the authenticated panel can then start that worker.
 # No browser IP networking, published port, owner/key/data mount or live provider.
 name: boca-socios
 
 services:
   controller:
-    # No daemon restart or invisible retry when the IPC worker stops.
-    restart: "no"
+    # Restore the panel after a host restart. Every panel boot keeps the engine stopped.
+    restart: unless-stopped
     environment:
       BOCA_BROWSER_BACKEND: ipc
+      BOCA_BOT_CONTROL: on-demand
       # Only after protected Cutover A installs the IPC controller; sender stays OFF.
       BOCA_TELEGRAM_PAIRING_STAGE_MODE: "encrypted-only"
     labels:
       boca.socios.browser-ipc-attempt: ${BOCA_BROWSER_ATTEMPT_ID:?single_reviewed_GitHub_run_required}
     volumes:
       - boca_browser_ipc:/run/boca-browser-ipc:ro
+      - type: bind
+        source: ${BOCA_CONTROL_DIR:?reviewed_Boca_socket_directory_required}
+        target: /run/boca-bot-control
+        read_only: true
+        bind:
+          create_host_path: false
 
   browser-worker:
     image: ${BOCA_BROWSER_IMAGE:?reviewed_browser_digest_required}
@@ -57,12 +64,7 @@ services:
       # Docker keeps health output independently of the service logging driver.
       test:
         - CMD-SHELL
-        - >-
-          python -c 'from boca_socios.browser.on_demand import validate_worker_boundary;
-          from boca_socios.browser.ipc_worker import validate_no_egress_namespace;
-          from boca_socios.browser.ipc_protocol import SOCKET_PATH, socket_identity;
-          validate_worker_boundary(); validate_no_egress_namespace(); socket_identity(SOCKET_PATH)'
-          >/dev/null 2>&1
+        - python -m boca_socios.browser.worker_health >/dev/null 2>&1
       interval: 2s
       timeout: 3s
       retries: 3

@@ -9,14 +9,18 @@ from __future__ import annotations
 
 import asyncio
 import os
+import socket
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
+from uuid import uuid4
 
 from boca_socios.browser.contracts import SimulationOutcome
 from boca_socios.integration.beta import BetaCoordinator
 from boca_socios.integration.command_host import BetaCommandHost
 from boca_socios.integration.engine_socket import LocalEngineSocket, request_local_engine
 from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
+from boca_socios.panel import bot_control
 from boca_socios.storage.database import Database
 
 
@@ -26,9 +30,28 @@ class _OfflineBrowser:
         return SimulationOutcome.RESERVED_IN_SIMULATOR
 
 
+def check_bot_control_socket(root: Path) -> None:
+    """Exercise a real named UDS, one wire frame, and peer EOF without an ACK."""
+    path = root / "control.sock"
+    operation = str(uuid4())
+    expected = operation.encode("ascii") + b"\n"
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+        server.bind(str(path))
+        server.listen(1)
+        server.settimeout(2)
+        with patch.object(bot_control, "CONTROL_SOCKET", str(path)):
+            bot_control.wake_bot_control(operation)
+        with server.accept()[0] as peer:
+            peer.settimeout(2)
+            with peer.makefile("rb") as stream:
+                assert stream.read(38) == expected
+    path.unlink()
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="boca-engine-ci-") as directory:
         root = Path(directory)
+        check_bot_control_socket(root)
         db = Database(root / "boca.sqlite3")
         outbox = SqliteNotificationOutbox(db)
         browser = _OfflineBrowser()
@@ -60,6 +83,7 @@ def main() -> None:
             commands.close()
         assert not path.exists(), "controller-private AF_UNIX residue"
     print("BOCA_ENGINE_UDS_OFFLINE state=PASS protocol=v1 start_stop=verified port=none")
+    print("BOCA_BOT_CONTROL_UDS_OFFLINE state=PASS frame=37 eof=verified port=none")
 
 
 if __name__ == "__main__":

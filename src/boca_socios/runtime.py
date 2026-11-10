@@ -22,6 +22,7 @@ from wsgiref.simple_server import WSGIRequestHandler, WSGIServer
 from boca_socios.browser.contracts import SimulationOutcome, SyntheticBrowserPort
 from boca_socios.config import Settings
 from boca_socios.events.official_snapshot import OFFICIAL_SNAPSHOT_NAME, load_official_snapshot
+from boca_socios.integration.beta import OnDemandBotSession
 from boca_socios.integration.bridge_client import SiteBridgeTransport, SiteBridgeWorker
 from boca_socios.integration.engine_socket import LocalEngineSocket
 from boca_socios.integration.operational import (
@@ -265,16 +266,28 @@ class ServedBeta:
                 self.runtime.close()
 
 
+def _require_worker_socket() -> None:
+    from boca_socios.browser.ipc_protocol import (
+        SOCKET_PATH,
+        WORKER_UID,
+        SyntheticIPCError,
+        socket_identity,
+    )
+
+    try:
+        socket_identity(SOCKET_PATH, uid=WORKER_UID)
+    except SyntheticIPCError:
+        raise LocalRuntimeUnavailable("synthetic browser worker boundary unavailable") from None
+
+
 def _browser_for_beta(
     settings: Settings, supplied: SyntheticBrowserPort | None = None
 ) -> tuple[SyntheticBrowserPort, float]:
     """Select an inert default or explicitly isolated single-flight IPC.
 
-    A requested worker must have the expected UID and positively identified
-    AF_UNIX socket *before* the application touches member storage or opens
-    an HTTP listener. This metadata gate is not evidence of worker liveness,
-    cgroup enforcement or Docker no-egress; protected host acceptance owns
-    those independent checks.
+    IPC always authenticates the worker socket and kernel peer for each
+    command. Legacy IPC also requires the socket at boot. In on-demand
+    mode only the panel is expected to exist at boot.
     """
     if supplied is not None:
         if settings.browser_backend != "off":
@@ -286,19 +299,14 @@ def _browser_for_beta(
         raise ValueError("invalid synthetic browser backend")
 
     from boca_socios.browser.ipc_client import UnixSyntheticBrowser
-    from boca_socios.browser.ipc_protocol import (
-        SOCKET_PATH,
-        WORKER_UID,
-        SyntheticIPCError,
-        socket_identity,
-    )
 
     if os.geteuid() != 10001 or os.getegid() != 10001:
         raise ValueError("synthetic browser worker boundary unavailable")
-    try:
-        socket_identity(SOCKET_PATH, uid=WORKER_UID)
-    except SyntheticIPCError:
-        raise ValueError("synthetic browser worker boundary unavailable") from None
+    if not settings.bot_on_demand:
+        try:
+            _require_worker_socket()
+        except LocalRuntimeUnavailable:
+            raise ValueError("synthetic browser worker boundary unavailable") from None
     # Allow the existing durable coordinator a finite 30 seconds for the
     # 25-second IPC client budget; never change its five-second default.
     return UnixSyntheticBrowser(), 30.0
@@ -314,13 +322,27 @@ def build_beta_server(
     parameter or an implicit host-side Chromium activation.
     """
     settings.validate_beta()
-    # Defer the owner receipt until IPC UID/socket and storage preflight,
-    # but still before any command thread or recovery can start.
-    initial_engine_stopped = partial(
-        _engine_stopped_after_reboot,
-        settings.db_path,
-        browser_backend=settings.browser_backend,
-    )
+    # The on-demand panel always starts cold. A prior START receipt records
+    # history and cannot authorize a new command loop after a restart.
+    initial_engine_stopped: bool | Callable[[], bool]
+    if settings.bot_on_demand:
+        from boca_socios.panel.bot_control import wake_bot_control
+
+        initial_engine_stopped = True
+        bot_control = wake_bot_control
+        bot_session = OnDemandBotSession(
+            ledger=LifecycleIntentStore(Database(settings.db_path)),
+            check_worker=_require_worker_socket,
+            wake=bot_control,
+        )
+    else:
+        initial_engine_stopped = partial(
+            _engine_stopped_after_reboot,
+            settings.db_path,
+            browser_backend=settings.browser_backend,
+        )
+        bot_control = None
+        bot_session = None
     telegram_pairing_stager = _configured_telegram_pairing_stager(settings)
     selected_browser, command_timeout = _browser_for_beta(settings, browser)
     bridge_enabled = settings.validate_bridge()
@@ -358,6 +380,7 @@ def build_beta_server(
         browser=selected_browser,
         initial_engine_stopped=initial_engine_stopped,
         command_timeout_seconds=command_timeout,
+        bot_session=bot_session,
     )
     bridge: SiteBridgeWorker | None = None
     server: _TLSWSGIServer | _LoopbackHTTPWSGIServer | None = None
@@ -384,6 +407,7 @@ def build_beta_server(
                 settings.db_path.with_name(OFFICIAL_SNAPSHOT_NAME)
             ),
             telegram_pairing_stager=telegram_pairing_stager,
+            bot_control=bot_control,
         )
 
         def app(environ: dict[str, object], start: Callable[..., object]) -> list[bytes]:
@@ -504,8 +528,8 @@ def main(argv: tuple[str, ...] = ()) -> int:
                 beta_config_preflight.check_beta_config(
                     settings, ca_file=ca_file, owner_root=beta_config_preflight.OWNER_ROOT
                 )
-                # This CLI gate must not claim a complete IPC-enabled BETA
-                # configuration when the fixed worker socket is absent.
+                # Legacy IPC requires the live socket. An on-demand panel
+                # may be configured and healthy before a worker exists.
                 if settings.browser_backend == "ipc":
                     _browser_for_beta(settings)
             else:

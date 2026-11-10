@@ -250,11 +250,12 @@ def _reviewed_legacy_migrations() -> dict[int, str]:
 
 
 @contextmanager
-def _controller_ledger(path: Path) -> Iterator[sqlite3.Connection]:
-    """Existing SQLite RW-only; no implicit create, recovery or migration."""
+def _controller_ledger(path: Path, *, readonly: bool = False) -> Iterator[sqlite3.Connection]:
+    """Attest the existing legacy DB in one read-only or write transaction."""
     before = _identity(path)
     try:
-        uri = f"file:{quote(str(path), safe='/')}?mode=rw"
+        mode = "ro" if readonly else "rw"
+        uri = f"file:{quote(str(path), safe='/')}?mode={mode}"
         with closing(sqlite3.connect(uri, uri=True, timeout=1.0)) as connection:
             connection.execute("PRAGMA busy_timeout=1000")
             connection.execute("PRAGMA trusted_schema=OFF")
@@ -264,7 +265,9 @@ def _controller_ledger(path: Path) -> Iterator[sqlite3.Connection]:
             # Schema attestation and protected CLAIM/ACK must share the same
             # SQLite writer transaction. Otherwise a concurrent owner 0008
             # migration could commit after this check but before CLAIMED.
-            connection.execute("BEGIN IMMEDIATE")
+            if readonly:
+                connection.execute("PRAGMA query_only=ON")
+            connection.execute("BEGIN" if readonly else "BEGIN IMMEDIATE")
             # Legacy controller 0008 is forbidden even if another process
             # previously added a checksum/table that appears valid.
             rows = connection.execute(

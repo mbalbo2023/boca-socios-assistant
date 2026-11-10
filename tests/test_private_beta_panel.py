@@ -146,6 +146,7 @@ def _app(
     *,
     official_notices: tuple[OfficialNotice, ...] = (),
     official_loader: Callable[[], tuple[OfficialNotice, ...]] | None = None,
+    bot_control: Callable[[str], None] | None = None,
 ) -> tuple[PrivatePanelApplication, Database]:
     db = Database(path)
     db.migrate()
@@ -163,6 +164,7 @@ def _app(
         events={EVENT_ID: "Partido sintético"},
         observed_official_notices=official_notices,
         official_notices_loader=official_loader,
+        bot_control=bot_control,
     )
     return app, db
 

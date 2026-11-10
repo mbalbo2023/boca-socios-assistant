@@ -38,6 +38,8 @@ class EnrollmentOperation:
     state: str = "new"
     status: int = 503
     member_id: str | None = None
+    form_scope: bytes | None = None
+    lifecycle_id: str | None = None
 
 
 @dataclass(slots=True, repr=False)
@@ -49,6 +51,7 @@ class OwnerSession:
     fingerprint_key: bytes = field(default_factory=lambda: secrets.token_bytes(32))
     operations: dict[str, EnrollmentOperation] = field(default_factory=dict)
     next_write: float = 0
+    next_priority_stop: float = 0
 
 
 class OwnerSessions:
@@ -245,18 +248,45 @@ class OwnerSessions:
                     self._persistent.revoke_matching(key, self._binding)
                 self._sessions.pop(key, None)
 
-    def new_operation(self, session: OwnerSession) -> str | None:
+    def new_operation(
+        self, session: OwnerSession, *, form_scope: bytes | None = None
+    ) -> str | None:
         with self._lock:
-            if self._member_key(session, self._clock()) is None or len(session.operations) >= 16:
+            if self._member_key(session, self._clock()) is None:
+                return None
+            if form_scope is not None:
+                # Reading the same status page must not consume another form
+                # nonce. Retain old completed receipts within the session cap.
+                for identifier, prior in session.operations.items():
+                    if prior.form_scope == form_scope and prior.state == "new":
+                        return identifier
+                if len(session.operations) >= 16:
+                    spent = next(
+                        (
+                            key
+                            for key, prior in session.operations.items()
+                            if prior.form_scope is not None and prior.state == "finished"
+                        ),
+                        None,
+                    )
+                    if spent is not None:
+                        del session.operations[spent]
+            if len(session.operations) >= 16:
                 return None
             identifier = str(uuid4())
-            session.operations[identifier] = EnrollmentOperation()
+            session.operations[identifier] = EnrollmentOperation(form_scope=form_scope)
             return identifier
 
     def reserve(
-        self, session: OwnerSession, operation_id: str, csrf: str, body: bytes
+        self,
+        session: OwnerSession,
+        operation_id: str,
+        csrf: str,
+        body: bytes,
+        *,
+        pending_start: Callable[[], bool] | None = None,
     ) -> tuple[int, EnrollmentOperation | None]:
-        """0 means newly reserved; a recorded status is an immutable replay."""
+        """Reserve once, or allow a bounded retry of a previously committed wake."""
         if not hmac.compare_digest(session.csrf.encode("ascii"), csrf.encode("utf-8")):
             return 403, None
         fingerprint = hmac.digest(session.fingerprint_key, body, "sha256")
@@ -267,23 +297,42 @@ class OwnerSessions:
             operation = session.operations.get(operation_id)
             if operation is None:
                 return 409, None
+            if operation.form_scope is not None and operation.form_scope != body:
+                return 409, None
             if operation.fingerprint is not None:
                 if not hmac.compare_digest(operation.fingerprint, fingerprint):
                     return 409, None
                 if operation.state == "pending":
                     return 409, None
-                return operation.status, operation
+                if (
+                    operation.status != 503
+                    or operation.lifecycle_id is None
+                    or now < session.next_write
+                ):
+                    return operation.status, operation
+                # The intent already exists. Only its exact failed wake can
+                # be redelivered; the handler must re-read its current receipt.
             if now < session.next_write:
-                return 429, None
+                # A second, independently bounded write lets the owner cancel
+                # a START immediately, including before its first host claim.
+                if pending_start is None or now < session.next_priority_stop or not pending_start():
+                    return 429, None
+                session.next_priority_stop = now + 1
             session.next_write = now + 1
             operation.fingerprint = fingerprint
             operation.state = "pending"
             return 0, operation
 
     def finish(
-        self, operation: EnrollmentOperation, status: int, member_id: str | None = None
+        self,
+        operation: EnrollmentOperation,
+        status: int,
+        member_id: str | None = None,
+        *,
+        lifecycle_id: str | None = None,
     ) -> None:
         with self._lock:
             operation.status = status
             operation.member_id = member_id
+            operation.lifecycle_id = lifecycle_id
             operation.state = "finished"

@@ -44,6 +44,9 @@ EXPECTED_ENTRIES = frozenset(
         "boca_socios/host_cutover_inventory_observe.py",
         "boca_socios/host_lifecycle_rootless_adapter.py",
         "boca_socios/host_boca_lifecycle.py",
+        "boca_socios/host_on_demand_lifecycle.py",
+        "boca_socios/host_on_demand_service.py",
+        "boca_socios/host_on_demand_status.py",
         "boca_socios/panel/lifecycle_intents.py",
         "boca_socios/integration/engine_socket.py",
         "boca_socios/storage/__init__.py",
@@ -91,12 +94,12 @@ PREFLIGHT_ENTRIES = frozenset(
     }
 )
 MAX_ZIP = 512_000
-# R132 source bounds match the builder. Each variant checks its own entry set and digest.
-MAX_UNCOMPRESSED = 926_000
+# R135 source bounds match the builder. Each variant checks its own entry set and digest.
+MAX_UNCOMPRESSED = 1_040_000
 RECOVERY_MAX_ZIP = 128_000
 RECOVERY_MAX_UNCOMPRESSED = 256_000
 PREFLIGHT_MAX_ZIP = 128_000
-PREFLIGHT_MAX_UNCOMPRESSED = 492_000
+PREFLIGHT_MAX_UNCOMPRESSED = 500_000
 
 
 def verify(

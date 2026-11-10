@@ -155,6 +155,7 @@ jobs:
           BOCA_BROWSER_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
           BOCA_BROWSER_ATTEMPT_ID: "123456789"
           BOCA_BROWSER_SECCOMP_PATH: /srv/boca-socios/seccomp_profile.json
+          BOCA_CONTROL_DIR: /home/boca-deploy/.boca-on-demand/socket
           BOCA_PANEL_ORIGIN: http://localhost:8443
           BOCA_OWNER_SUBJECT: synthetic-owner
           PYTHONPATH: src
@@ -202,6 +203,7 @@ jobs:
       BOCA_BROWSER_IMAGE: boca-browser-lifecycle-smoke:${{ github.sha }}
       BOCA_BROWSER_ATTEMPT_ID: ${{ github.run_id }}
       BOCA_BROWSER_SECCOMP_PATH: ${{ github.workspace }}/docker/seccomp_profile.json
+      BOCA_CONTROL_DIR: /home/boca-deploy/.boca-on-demand/socket
       BOCA_ENVIRONMENT: staging
       BOCA_PANEL_ORIGIN: http://localhost:8443
       BOCA_OWNER_SUBJECT: synthetic-owner
@@ -1660,12 +1662,14 @@ jobs:
           docker compose -p boca-socios -f compose.beta.yaml config --format json > "$RUNNER_TEMP/boca-beta-runner-model.json"
           python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-beta-runner-model.json" "$BOCA_IMAGE_REF"
       - name: Validate exact optional dual-service IPC Compose model before SSH
+        id: reviewed_browser_model
         if: startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-worker-preflight' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
         env:
           BOCA_IMAGE: ${{ inputs.image_ref }}
           BOCA_BROWSER_IMAGE: ${{ inputs.browser_image_ref }}
           BOCA_BROWSER_ATTEMPT_ID: ${{ github.run_id }}
           BOCA_BROWSER_SECCOMP_PATH: /srv/boca-socios/seccomp_profile.json
+          BOCA_CONTROL_DIR: /home/boca-deploy/.boca-on-demand/socket
           BOCA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
           BOCA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
           PYTHONPATH: src
@@ -1686,6 +1690,16 @@ jobs:
           esac
           docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml config --format json > "$RUNNER_TEMP/boca-browser-runner-model.json"
           python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-runner-model.json" "$BOCA_IMAGE_REF" --topology=browser-ipc-v2
+          mode="$(jq -er '.services.controller.environment.BOCA_BOT_CONTROL // "legacy"' "$RUNNER_TEMP/boca-browser-runner-model.json")"
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+          if [[ "$mode" == on-demand ]]; then
+            case "$BOCA_OPERATION" in
+              beta-browser-start|beta-browser-restart|beta-browser-acceptance|lifecycle-apply)
+                printf 'BOCA_BOT_CONTROL state=REFUSED reason=owner_session_controls_runtime host_effects=none\n' >> "$GITHUB_STEP_SUMMARY"
+                exit 1
+                ;;
+            esac
+          fi
       - name: Build exact reviewed Cutover A ZIP for owner dispatch V3
         if: inputs.operation == 'cutover-a-apply'
         env:
@@ -2884,13 +2898,14 @@ jobs:
           PYTHONPATH: src:scripts
           BOCA_CUTOVER_A_GO_PREFLIGHT: ${{ steps.cutover_go_preflight.outcome }}
           BOCA_CUTOVER_A_HOST_APPLY: ${{ steps.cutover_host_apply.outcome }}
+          BOCA_REQUIRE_IDLE_INSTALL: "1"
         run: |
           set -euo pipefail
           if ! python scripts/check_cutover_a_go.py --assert-host-receipt; then
             printf 'BOCA_CUTOVER_A state=NO_GO: host terminal acceptance/cleanup unverified. Do NOT retry or prune; investigate the exact Boca-only attempt in read-only mode. Other droplet services remain out of scope.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          printf 'BOCA_CUTOVER_A state=ACCEPTED terminal=RECORDED cleanup=ACCEPT; Samsung Chrome/Termius live BETA validation still required.\n' >> "$GITHUB_STEP_SUMMARY"
+          printf 'BOCA_CUTOVER_A state=ACCEPTED terminal=RECORDED cleanup=ACCEPT installation=IDLE_INSTALLED controller_restart=VERIFIED worker=CREATED pid=0 engine=STOPPED owner_start=UNVERIFIED. Samsung Chrome/Termius validation pending.\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Require one unique R84 worker preflight dispatch before SSH
         id: cutover_worker_preflight_dispatch_gate
         if: inputs.operation == 'cutover-a-worker-preflight'
@@ -4142,6 +4157,7 @@ jobs:
           BOCA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
           BOCA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
           BOCA_BROWSER_SECCOMP_PATH: /srv/boca-socios/seccomp_profile.json
+          BOCA_CONTROL_DIR: /home/boca-deploy/.boca-on-demand/socket
           BOCA_BROWSER_ATTEMPT_ID: ${{ github.run_id }}
           PYTHONPATH: src
         run: |
@@ -4260,8 +4276,36 @@ jobs:
         id: boca_browser_telegram_attempt
         if: inputs.operation == 'beta-browser-telegram-start'
         run: printf 'started=true\n' >> "$GITHUB_OUTPUT"
+      - name: Observe installed on-demand bot and its last receipt
+        if: inputs.operation == 'beta-browser-status' && steps.reviewed_browser_model.outputs.mode == 'on-demand'
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          umask 077
+          bundle="$RUNNER_TEMP/boca-bot-status.pyz"
+          python scripts/build_protected_boca_bundle.py . "$bundle"
+          digest="$(sha256sum "$bundle" | cut -d' ' -f1)"
+          pins=("$BOCA_SOURCE_SHA" "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" "$GITHUB_RUN_ID")
+          remote_command="$(python3 - "$digest" "${pins[@]}" <<'PY_STATUS'
+          import shlex
+          import sys
+          from pathlib import Path
+          bootstrap = Path("scripts/boca_protected_memfd_bootstrap.py").read_text(encoding="utf-8")
+          print(shlex.join(["python3", "-c", bootstrap, sys.argv[1], "on-demand-status", *sys.argv[2:]]))
+          PY_STATUS
+          )"
+          # The reader takes a short Boca lease and never asks the bot to start or stop.
+          if ! receipt="$(timeout --signal=TERM --kill-after=5s 120s ssh \
+              -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+              boca-target "$remote_command" < "$bundle" 2>/dev/null \
+              | python3 -m boca_socios.host_on_demand_status verify "${pins[@]}")"; then
+            printf 'BOCA_ON_DEMAND_STATUS observation=UNVERIFIED\n' | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf '%s\n' "$receipt" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Operate only proven existing browser IPC services
-        if: startsWith(inputs.operation, 'beta-browser-') && inputs.operation != 'beta-browser-install' && inputs.operation != 'beta-browser-telegram-recover'
+        if: startsWith(inputs.operation, 'beta-browser-') && (inputs.operation != 'beta-browser-status' || steps.reviewed_browser_model.outputs.mode == 'legacy') && inputs.operation != 'beta-browser-install' && inputs.operation != 'beta-browser-telegram-recover'
         env:
           BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}

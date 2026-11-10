@@ -411,6 +411,14 @@ def test_already_closed_upgrade_or_thread_start_failure_prevents_start(
             b"boca_socios.browser.on_demand.WorkerBoundaryError: worker_limits_unverified",
             "WORKER_LIMITS_UNVERIFIED",
         ),
+        (
+            b"boca_socios.browser.worker_health.WorkerBoundaryError: worker_identity_unverified",
+            "WORKER_IDENTITY_UNVERIFIED",
+        ),
+        (
+            b"boca_socios.browser.worker_health.WorkerBoundaryError: worker_limits_unverified",
+            "WORKER_LIMITS_UNVERIFIED",
+        ),
         (b"ModuleNotFoundError: No module named 'playwright'", "MISSING_PLAYWRIGHT"),
         (b"ModuleNotFoundError: No module named 'greenlet'", "MISSING_GREENLET"),
         (b"ModuleNotFoundError: No module named 'pyee'", "MISSING_PYEE"),
@@ -533,3 +541,123 @@ def test_healthy_cancel_joins_reader_even_if_local_shutdown_fails(
             assert receivers and all(not thread.is_alive() for thread in receivers)
             assert client.fileno() == -1
             assert reader.finish() is CaptureResult.TRANSPORT
+
+
+@pytest.mark.parametrize(
+    ("public_module", "wanted"),
+    [
+        (b"boca_socios.browser.ipc_client", "MISSING_IPC_CLIENT"),
+        (b"boca_socios.browser.on_demand", "MISSING_BROWSER_ON_DEMAND"),
+        (b"boca_socios.browser.playwright_factory", "MISSING_PLAYWRIGHT_FACTORY"),
+        (b"boca_socios.browser.worker_health", "MISSING_WORKER_HEALTH"),
+        (b"boca_socios.browser.synthetic", "MISSING_BROWSER_SYNTHETIC"),
+        (b"boca_socios.browser.ipc_worker", "MISSING_BROWSER_IPC_WORKER"),
+        (b"contracts", "MISSING_BARE_CONTRACTS"),
+        (b"ipc_protocol", "MISSING_BARE_IPC_PROTOCOL"),
+        (b"ipc_client", "MISSING_BARE_IPC_CLIENT"),
+        (b"on_demand", "MISSING_BARE_ON_DEMAND"),
+        (b"playwright_factory", "MISSING_BARE_PLAYWRIGHT_FACTORY"),
+        (b"worker_health", "MISSING_BARE_WORKER_HEALTH"),
+        (b"synthetic", "MISSING_BARE_SYNTHETIC"),
+        (b"ipc_worker", "MISSING_BARE_IPC_WORKER"),
+        (b"policy", "MISSING_BARE_POLICY"),
+        (b"scripts", "MISSING_SCRIPTS_PACKAGE"),
+        (b"scripts.verify_chromium_worker", "MISSING_SCRIPT_VERIFY_CHROMIUM"),
+        (b"scripts.observe_public_home", "MISSING_SCRIPT_OBSERVE_HOME"),
+        (b"scripts.measure_browser_budget", "MISSING_SCRIPT_BROWSER_BUDGET"),
+        (b"scripts.run_synthetic_ticket_flow", "MISSING_SCRIPT_TICKET_FLOW"),
+        (b"verify_chromium_worker", "MISSING_BARE_VERIFY_CHROMIUM"),
+        (b"observe_public_home", "MISSING_BARE_OBSERVE_HOME"),
+        (b"measure_browser_budget", "MISSING_BARE_BROWSER_BUDGET"),
+        (b"run_synthetic_ticket_flow", "MISSING_BARE_TICKET_FLOW"),
+        (b"boca_socios.acceptance", "MISSING_CONTROLLER_ACCEPTANCE"),
+        (b"boca_socios.events", "MISSING_CONTROLLER_EVENTS"),
+        (b"boca_socios.integration", "MISSING_CONTROLLER_INTEGRATION"),
+        (b"boca_socios.notify", "MISSING_CONTROLLER_NOTIFY"),
+        (b"boca_socios.panel", "MISSING_CONTROLLER_PANEL"),
+        (b"boca_socios.queue", "MISSING_CONTROLLER_QUEUE"),
+        (b"boca_socios.security", "MISSING_CONTROLLER_SECURITY"),
+        (b"boca_socios.storage", "MISSING_CONTROLLER_STORAGE"),
+        (b"boca_socios.config", "MISSING_CONTROLLER_CONFIG"),
+        (b"boca_socios.runtime", "MISSING_CONTROLLER_RUNTIME"),
+        (b"playwright.async_api", "MISSING_PLAYWRIGHT_ASYNC_API"),
+        (b"cryptography", "MISSING_CRYPTOGRAPHY"),
+        (b"cffi", "MISSING_CFFI"),
+        (b"pycparser", "MISSING_PYCPARSER"),
+    ],
+)
+def test_packaging_names_roundtrip_as_closed_receipts_without_importing_them(
+    public_module: bytes, wanted: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from boca_socios.host_on_demand_lifecycle import (
+        WorkerStartFailure,
+        _State,
+    )
+
+    _, peer = engine(monkeypatch, fragment=2)
+    with peer:
+        peer.sendall(UPGRADE)
+        with attach_output(SOCKET, CID) as reader:
+            peer.sendall(
+                frame(2, b"Trace fixture\nModuleNotFoundError: No module named '")
+                + frame(1, b"stdout-canary")
+                + frame(2, public_module + b"'\r")
+                + frame(2, b"\n")
+            )
+            peer.shutdown(socket.SHUT_WR)
+            category = reader.finish()
+    assert category.value == wanted
+    detail = WorkerStartFailure(category.value, exit_code=1, oom=False).encode()
+    state = _State.read("start FAILED 1 " + detail + " 1")
+    receipt = state.receipt("00000000-0000-4000-8000-000000000001")
+    assert (receipt.status, receipt.cause, receipt.exit_code, receipt.oom) == (
+        "FAILED",
+        wanted,
+        1,
+        False,
+    )
+    assert detail == wanted + "|1|0|-"
+
+
+@pytest.mark.parametrize(
+    ("channel", "line", "expected"),
+    [
+        (
+            2,
+            b"ModuleNotFoundError: No module named 'ipc_client.CANARY'\r\n",
+            "MODULE_NOT_FOUND_ERROR",
+        ),
+        (2, b"ModuleNotFoundError: No module named 'ipc_client'\r", "MODULE_NOT_FOUND_ERROR"),
+        (
+            2,
+            b"ModuleNotFoundError: No module named 'ipc_client'\rCANARY\n",
+            "MODULE_NOT_FOUND_ERROR",
+        ),
+        (
+            2,
+            b"ModuleNotFoundError: No module named 'boca_socios.storage'CANARY\n",
+            "MODULE_NOT_FOUND_ERROR",
+        ),
+        (
+            2,
+            b"ModuleNotFoundError: No module named 'scripts.observe_public_home'\0CANARY\r\n",
+            "MODULE_NOT_FOUND_ERROR",
+        ),
+        (1, b"ModuleNotFoundError: No module named 'ipc_client'\r\n", "STDOUT_ONLY"),
+    ],
+)
+def test_known_packaging_name_with_private_suffix_never_becomes_a_detail(
+    channel: int,
+    line: bytes,
+    expected: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _, peer = engine(monkeypatch, fragment=1)
+    with peer:
+        peer.sendall(UPGRADE)
+        with attach_output(SOCKET, CID) as reader:
+            peer.sendall(frame(channel, line[:40]) + frame(channel, line[40:]))
+            peer.shutdown(socket.SHUT_WR)
+            assert reader.finish().value == expected
+    assert capsys.readouterr() == ("", "")

@@ -321,7 +321,6 @@ def validate_beta_browser_contract(
     controller = _mapping(services["controller"], "browser-ipc-v2 controller")
     _keys(controller, _SERVICE_FIELDS | {"ports", "labels"}, "browser-ipc-v2 controller")
     _equal(controller["image"], expected_image, "browser-ipc-v2 controller image")
-    _equal(controller["restart"], "no", "browser-ipc-v2 controller no-retry restart")
     _equal(
         controller["labels"],
         {_BROWSER_ATTEMPT_LABEL: expected_attempt_id},
@@ -329,15 +328,35 @@ def validate_beta_browser_contract(
     )
     environment = _mapping(controller["environment"], "browser-ipc-v2 controller environment")
     _equal(environment.get("BOCA_BROWSER_BACKEND"), "ipc", "explicit IPC backend")
+    on_demand = "BOCA_BOT_CONTROL" in environment
+    if on_demand:
+        _equal(environment["BOCA_BOT_CONTROL"], "on-demand", "Boca bot activation")
+    _equal(controller["restart"], "unless-stopped" if on_demand else "no", "controller restart")
     _equal(
         environment.get("BOCA_TELEGRAM_PAIRING_STAGE_MODE"),
         "encrypted-only",
         "encrypted-only Telegram V2 staging on reviewed IPC controller",
     )
     mounts = _list(controller["volumes"], "browser-ipc-v2 controller mounts")
-    if len(mounts) != 4:
-        raise ContractError("browser-ipc-v2 controller must have exactly one extra RO mount")
+    if len(mounts) != (5 if on_demand else 4):
+        raise ContractError("unexpected number of controller mounts")
     _browser_ipc_mount(mounts[3], readonly=True, field="controller IPC mount")
+    if on_demand:
+        control = _mapping(mounts[4], "Boca control socket directory")
+        required = {"type", "source", "target", "read_only"}
+        if not required <= control.keys() <= required | {"bind"}:
+            raise ContractError("unexpected control socket mount options")
+        for key, value in {
+            "type": "bind",
+            "source": "/home/boca-deploy/.boca-on-demand/socket",
+            "target": "/run/boca-bot-control",
+            "read_only": True,
+        }.items():
+            _equal(control[key], value, "Boca control mount " + key)
+        options = _mapping(control.get("bind", {}), "Boca control bind options")
+        if options:
+            _keys(options, {"create_host_path"}, "Boca control bind options")
+            _equal(options["create_host_path"], False, "Boca control directory creation")
 
     worker = _mapping(services["browser-worker"], "browser-ipc-v2 worker")
     _keys(
@@ -396,7 +415,12 @@ def validate_beta_browser_contract(
         # Compose JSON writes integral CPU quota as the JSON integer 1.
         "cpus": 1,
         "healthcheck": {
-            "test": ["CMD-SHELL", f"python -c {shlex.quote(_BROWSER_HEALTH)} >/dev/null 2>&1"],
+            "test": [
+                "CMD-SHELL",
+                "python -m boca_socios.browser.worker_health >/dev/null 2>&1"
+                if on_demand
+                else f"python -c {shlex.quote(_BROWSER_HEALTH)} >/dev/null 2>&1",
+            ],
             "interval": "2s",
             "timeout": "3s",
             "retries": 3,
@@ -442,6 +466,8 @@ def validate_beta_browser_contract(
     legacy_controller["restart"] = "unless-stopped"
     del legacy_controller["labels"]
     legacy_environment = cast(dict[str, object], legacy_controller["environment"])
+    if on_demand:
+        del legacy_environment["BOCA_BOT_CONTROL"]
     del legacy_environment["BOCA_BROWSER_BACKEND"]
     del legacy_environment["BOCA_TELEGRAM_PAIRING_STAGE_MODE"]
     legacy_mounts = cast(list[object], legacy_controller["volumes"])

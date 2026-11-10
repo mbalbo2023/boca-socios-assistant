@@ -856,6 +856,12 @@ def assert_actions_host_receipt(environment: Mapping[str, str]) -> str | None:
         if not raw.startswith(observed):
             raise CutoverGoError("V3 exact original observation absent or mismatched")
         raw = raw[len(observed) :]
+    if environment.get("BOCA_REQUIRE_IDLE_INSTALL") == "1":
+        from boca_socios.host_boca_cutover_cli import IDLE_RECEIPT
+
+        if not invocation.dispatch_v3:
+            raise CutoverGoError("idle installation requires protected V3")
+        expected += (IDLE_RECEIPT + "\n").encode("ascii")
     if invocation.prepare_run_id is None and not invocation.dispatch_v3:
         if raw != expected:
             raise CutoverGoError("Cutover A terminal receipt missing or ambiguous")

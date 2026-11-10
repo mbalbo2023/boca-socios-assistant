@@ -1,9 +1,9 @@
-"""Host-only, stdlib-only Option B SQLite bootstrap for a held Boca transaction.
+"""Option B SQLite bootstrap for the protected Boca cutover.
 
-This deliberately imports NO boca_socios modules or resources. A reviewed
-memfd ZIP transports this source and the exact SQL bytes. No CLI, Docker,
-network, startup, migration of boca.sqlite3, backup or cleanup is present.
-The protected cutover owns host Docker attestation and the uninterrupted FD.
+The historical host entry checks the same open lease description. The V3
+data-only container entry runs as the database owner's namespaced UID and
+matches the device/inode from the original controller. Both validate the
+same reviewed SQL and preserve the legacy database byte-for-byte.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import hashlib
 import os
 import sqlite3
 import stat
+from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 from typing import Literal
@@ -20,6 +21,7 @@ from urllib.parse import quote
 
 _UID = 10001
 _LOCK = Path("/run/user/10001/boca-socios-protected-job.lock")
+_MOUNTED_DATABASE = Path("/data/boca.sqlite3")
 _SESSION_NAME = "boca_owner_session.sqlite3"
 _SESSION_SCHEMA_SHA256 = "38c4c97594143340089395c5230a464372acdd058dbe31169ba4206a1fd83d23"
 _LEGACY_CHECKSUMS = {
@@ -207,9 +209,37 @@ def bootstrap_attested_session_file(
     legacy dev/inode from its Docker attestor. This function itself cannot
     park controllers, inspect foreign workloads, deploy or delete anything.
     """
-    try:
+
+    def verify_host() -> None:
         _uid()
         _held_canonical_lease(held_lease_fd)
+
+    return _bootstrap_session(
+        legacy_path, expected_db_identity, session_schema_bytes, verify_custody=verify_host
+    )
+
+
+def bootstrap_mounted_session(device: int, inode: int) -> Literal["APPLIED", "ALREADY_APPLIED"]:
+    """Fixed data-only entry for a reviewed, network-none container under the host lease."""
+    from importlib.resources import files
+
+    sql = (
+        files("boca_socios.panel.owner_session_sql")
+        .joinpath("0001_owner_browser_session.sql")
+        .read_bytes()
+    )
+    return _bootstrap_session(_MOUNTED_DATABASE, (device, inode), sql, verify_custody=_uid)
+
+
+def _bootstrap_session(
+    legacy_path: Path,
+    expected_db_identity: tuple[int, int],
+    session_schema_bytes: bytes,
+    *,
+    verify_custody: Callable[[], None],
+) -> Literal["APPLIED", "ALREADY_APPLIED"]:
+    try:
+        verify_custody()
         statements = _schema_statements(session_schema_bytes)
         _legacy_contract(legacy_path, expected_db_identity)
         parent = legacy_path.parent
@@ -249,7 +279,7 @@ def bootstrap_attested_session_file(
                     )
                     connection.execute("PRAGMA user_version=1")
                     _session_contract(connection, statements)
-        _held_canonical_lease(held_lease_fd)
+        verify_custody()
         _legacy_contract(legacy_path, expected_db_identity)
         if _regular_identity(session_path) != session_identity:
             raise SessionDiskBootstrapUnavailable("owner session inode changed")

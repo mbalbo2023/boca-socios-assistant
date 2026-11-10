@@ -68,6 +68,9 @@ StartResponse = Callable[[str, list[tuple[str, str]]], object]
 _UUID_PATH = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _INTAKE_PAUSED = "owner_simulation_intake_paused"
 _INTAKE_RESUMED = "owner_simulation_intake_resumed"
+_WAKE_LOST = (
+    "Solicitud guardada. Abra Control y vuelva a pulsar el mismo botón para reenviar el aviso."
+)
 
 
 class OwnerMemberService(Protocol):
@@ -153,6 +156,7 @@ class PrivatePanelApplication:
         observed_official_notices: Iterable[OfficialNotice] = (),
         official_notices_loader: Callable[[], Iterable[OfficialNotice]] | None = None,
         telegram_pairing_stager: Callable[[PairingStageRequest], PairingStageReceipt] | None = None,
+        bot_control: Callable[[str], None] | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         parsed = urlsplit(origin)
@@ -194,6 +198,9 @@ class PrivatePanelApplication:
         if telegram_pairing_stager is not None and not callable(telegram_pairing_stager):
             raise ValueError("Telegram pairing stager must be an explicit local callback")
         self._telegram_pairing_stager = telegram_pairing_stager
+        if bot_control is not None and not callable(bot_control):
+            raise ValueError("bot control requires a local wake callback")
+        self._bot_control = bot_control
         self._passkey = passkey
         self._owner_browser_store = OwnerBrowserSessionStore(
             self._database, owner_subject=owner_subject
@@ -201,8 +208,8 @@ class PrivatePanelApplication:
         # The controller must not serve a healthy panel whose passkey login
         # cannot persist: migration 0008 is an explicit installation gate.
         self._owner_browser_store.verify_schema()
-        # Requests are passive, append-only events. A protected Boca Actions
-        # host operation must later claim/confirm them with verified receipts.
+        # Only the protected host executor may claim and confirm an intent.
+        # The panel can wake it after the durable request transaction commits.
         self._lifecycle = LifecycleIntentStore(self._database)
         self._sessions = OwnerSessions(
             owner_subject=owner_subject,
@@ -288,6 +295,8 @@ class PrivatePanelApplication:
             if not self._empty_get(environ):
                 return _error(start, 400, "Solicitud inválida.")
             if path == "/":
+                if self._bot_control is not None and "simulation:write" in session.permissions:
+                    return self._bot_page(start, session, home=True)
                 return _response(start, 200, private_ui.home(session.csrf))
             if path == "/telegram/configurar":
                 return _response(start, 200, telegram_setup_ui.page(), csp=telegram_setup_ui.CSP)
@@ -315,6 +324,8 @@ class PrivatePanelApplication:
             if path == "/comandos":
                 return self._command_list(start, session)
             if path == "/control":
+                if self._bot_control is not None:
+                    return self._bot_page(start, session, home=False)
                 return self._control_page(start, session)
             if path == "/estado":
                 snapshot = read_local_status(self._database_path, observed_at=self._now())
@@ -384,6 +395,8 @@ class PrivatePanelApplication:
         if path == "/comandos":
             return self._begin(environ, session, start)
         if path in ("/control/reanudar", "/control/pausar"):
+            if self._bot_control is not None:
+                return _error(start, 404, "Ruta no disponible.")
             return self._set_intake(environ, path.rsplit("/", 1)[-1], session, start)
         if isinstance(path, str) and re.fullmatch(
             r"/control/(bot|chromium)/(iniciar|detener)", path
@@ -684,6 +697,29 @@ class PrivatePanelApplication:
             ),
         )
 
+    def _bot_page(self, start: StartResponse, session: OwnerSession, *, home: bool) -> list[bytes]:
+        try:
+            lifecycle = self._lifecycle.current()
+        except LifecycleStorageUnavailable:
+            status, reason = 503, "Estado de solicitudes al host no disponible."
+        else:
+            start_id = self._sessions.new_operation(
+                session, form_scope=b"owner-lifecycle-v1:bot:start"
+            )
+            stop_id = self._sessions.new_operation(
+                session, form_scope=b"owner-lifecycle-v1:bot:stop"
+            )
+            if start_id is not None and stop_id is not None:
+                if home:
+                    body = private_ui.home(session.csrf, bot=(lifecycle, start_id, stop_id))
+                else:
+                    body = private_ui.bot_control(lifecycle, session.csrf, start_id, stop_id)
+                return _response(start, 200, body)
+            status, reason = 429, "Demasiados formularios abiertos. Vuelva a ingresar."
+        if home:
+            return _response(start, 200, private_ui.home(session.csrf, bot_unavailable=True))
+        return _error(start, status, reason)
+
     def _control_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
         operation_id = self._sessions.new_operation(session)
         if operation_id is None:
@@ -713,21 +749,42 @@ class PrivatePanelApplication:
         session: OwnerSession,
         start: StartResponse,
     ) -> list[bytes]:
-        """Persist only owner intent, without contacting a container or browser."""
+        """Authenticate the form, commit the intent, then optionally wake its executor."""
+        if self._bot_control is not None and component != "bot":
+            return _error(start, 404, "Ruta no disponible.")
         fields = self._form(environ, expected={"csrf", "operation_id"})
         if fields is None or _canonical_uuid(fields["operation_id"]) is None:
             return _error(start, 400, "Solicitud de ciclo inválida.")
         fingerprint = f"owner-lifecycle-v1:{component}:{target}".encode("ascii")
         result, operation = self._sessions.reserve(
-            session, fields["operation_id"], fields["csrf"], fingerprint
+            session,
+            fields["operation_id"],
+            fields["csrf"],
+            fingerprint,
+            pending_start=self._start_pending
+            if self._bot_control is not None and target == "stop"
+            else None,
         )
         if result:
             if result == 303:
                 return self._redirect(start, "/control")
+            if result == 503 and operation is not None and operation.lifecycle_id is not None:
+                return _error(start, 503, _WAKE_LOST)
             return _error(start, result, "Solicitud ya procesada o no autorizada.")
         assert operation is not None
         try:
-            self._lifecycle.request(component, target, fields["operation_id"])
+            if operation.lifecycle_id is not None:
+                intent = self._lifecycle.current()
+                if intent is None or intent.operation_id != operation.lifecycle_id:
+                    self._sessions.finish(operation, 303)
+                    return self._redirect(start, "/control")
+            else:
+                intent = self._lifecycle.request(
+                    component,
+                    target,
+                    fields["operation_id"],
+                    on_demand=self._bot_control is not None,
+                )
         except LifecycleConflict:
             self._sessions.finish(operation, 409)
             return _error(
@@ -736,10 +793,26 @@ class PrivatePanelApplication:
                 "Ya existe una solicitud al host sin cierre confirmado. Consulte Control.",
             )
         except LifecycleStorageUnavailable:
-            self._sessions.finish(operation, 503)
+            self._sessions.finish(operation, 503, lifecycle_id=operation.lifecycle_id)
             return _error(start, 503, "Resultado incierto. Consulte Control antes de repetir.")
+        if self._bot_control is not None and intent.status == "REQUESTED":
+            try:
+                self._bot_control(intent.operation_id)
+            except Exception:
+                self._sessions.finish(operation, 503, lifecycle_id=intent.operation_id)
+                return _error(start, 503, _WAKE_LOST)
         self._sessions.finish(operation, 303)
         return self._redirect(start, "/control")
+
+    def _start_pending(self) -> bool:
+        intent = self._lifecycle.current()
+        return (
+            intent is not None
+            and intent.on_demand
+            and intent.component == "bot"
+            and intent.target == "start"
+            and intent.status in ("REQUESTED", "CLAIMED")
+        )
 
     def _set_intake(
         self,
@@ -774,6 +847,18 @@ class PrivatePanelApplication:
 
     def _read_intake(self) -> bool | None:
         """Read the latest owner admission decision; missing ledger fails closed."""
+        if self._bot_control is not None:
+            try:
+                intent = self._lifecycle.current()
+            except LifecycleStorageUnavailable:
+                return None
+            return (
+                intent is not None
+                and intent.on_demand
+                and intent.component == "bot"
+                and intent.target == "start"
+                and intent.status == "APPLIED"
+            )
         try:
             with self._database.connection() as connection:
                 row = connection.execute(
@@ -821,6 +906,12 @@ class PrivatePanelApplication:
                     start, 503, "Estado de admisión no disponible. No inicie simulaciones."
                 )
             if not accepting:
+                if self._bot_control is not None:
+                    return _error(
+                        start,
+                        409,
+                        "Inicie el bot desde Control y espere la confirmación de arranque.",
+                    )
                 return _error(start, 409, "Nuevas simulaciones pausadas. Reanude desde Control.")
             fingerprint = json.dumps(fields, sort_keys=True).encode()
             result, operation = self._sessions.reserve(

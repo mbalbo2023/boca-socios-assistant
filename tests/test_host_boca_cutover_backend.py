@@ -25,7 +25,9 @@ from boca_socios import host_cutover_stage as stage
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = (ROOT / "compose.beta.yaml").read_bytes()
-OVERLAY = (ROOT / "compose.beta.browser.yaml").read_bytes()
+REVIEWED_OVERLAY = (ROOT / "compose.beta.browser.yaml").read_bytes()
+# These archived protocol fixtures predate the opt-in cold profile.
+OVERLAY = b"services:\n  controller:\n    environment:\n      BOCA_BROWSER_BACKEND: ipc\n"
 SECCOMP = (ROOT / "docker/seccomp_profile.json").read_bytes()
 SQL = b"fake reviewed SQL (never executed)"
 LEGACY = b"services:\n  controller:\n    image: frozen-legacy\n"
@@ -59,7 +61,7 @@ def test_authenticated_option_b_memfd_zip_extracts_four_reviewed_sources(
     finally:
         os.close(fd)
     assert source.base == BASE
-    assert source.overlay == OVERLAY
+    assert source.overlay == REVIEWED_OVERLAY
     assert source.seccomp == SECCOMP
     assert (
         source.session_sql
@@ -110,12 +112,12 @@ def fake_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[list[str
     monkeypatch.setattr(
         adapter.host, "_browser_compose_model", lambda *_a, **_k: events.append("model")
     )
-    monkeypatch.setattr(adapter, "_reviewed_compose_hash", lambda _p, svc: SHA(svc.encode()))
+    monkeypatch.setattr(adapter, "_reviewed_compose_hash", lambda _p, svc, **_kw: SHA(svc.encode()))
     monkeypatch.setattr(
         adapter.host, "_browser_pull_both", lambda *_a, **_kw: events.append("pull")
     )
 
-    def prepare(*_args: object) -> str:
+    def prepare(*_args: object, **_kwargs: object) -> str:
         assert original.read_bytes() == LEGACY
         events.append("worker")
         worker_state[0] = "present"
@@ -134,7 +136,7 @@ def fake_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[list[str
         adapter, "_legacy_disk_identity", lambda _p: (Path("/fake/boca.sqlite3"), (5, 6))
     )
 
-    def activate(*_args: object) -> str:
+    def activate(*_args: object, **_kwargs: object) -> str:
         assert original_state[0] == "PARKED"
         assert original.read_bytes() == LEGACY
         events.append("candidate")
@@ -142,7 +144,9 @@ def fake_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[list[str
 
     monkeypatch.setattr(adapter.host, "_cutover_activate_candidate", activate)
     monkeypatch.setattr(
-        adapter.host, "_cutover_candidate_postflight", lambda *_a: events.append("health") or True
+        adapter.host,
+        "_cutover_candidate_postflight",
+        lambda *_a, **_kw: events.append("health") or True,
     )
 
     def verify_peer(candidate_id: str) -> None:
@@ -170,7 +174,7 @@ def fake_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[list[str
         ),
     )
 
-    def retire(*_args: object) -> None:
+    def retire(*_args: object, **_kw: object) -> None:
         assert original_state[0] == "PARKED"
         assert original.read_bytes() == BASE
         assert (stage.ROOT / "compose.beta.browser.yaml").read_bytes() == OVERLAY
@@ -197,7 +201,7 @@ def fake_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[list[str
         lambda: WORKER if worker_state[0] == "present" else None,
     )
 
-    def recover(*_args: object) -> None:
+    def recover(*_args: object, **_kw: object) -> None:
         assert original_state[0] == "PARKED"
         original_state[0] = "RUNNING"
         events.append("recover-original")
@@ -475,7 +479,7 @@ def test_unknown_retirement_never_deletes_candidate_worker_or_restarts_legacy(
 ) -> None:
     events, root = fake_host
 
-    def lost_retirement(*_args: object) -> None:
+    def lost_retirement(*_args: object, **_kw: object) -> None:
         # Assume Docker DID remove the old exact ID before its return was lost.
         events.append("legacy-rm-effect-unknown")
         raise cutover.CutoverError("lost Docker rm receipt after effect")
@@ -509,7 +513,7 @@ def test_failed_precommit_recovery_never_cleans_parked_or_live_worker(
         events.append("bootstrap-failed")
         raise cutover.CutoverError("host session unavailable")
 
-    def failed_recovery(*_args: object) -> None:
+    def failed_recovery(*_args: object, **_kw: object) -> None:
         events.append("recover-unknown")
         raise cutover.CutoverError("original ID remains parked; restart receipt lost")
 
@@ -834,3 +838,225 @@ def test_precommit_cleanup_blocks_irreversible_retirement_if_proof_unknown(
             NEW,
             WORKER,
         )
+
+
+def test_idle_profile_requires_authenticated_v3_before_host_calls(monkeypatch):
+    sources = adapter.ReviewedCutoverSources(
+        BASE,
+        b"services:\n  controller:\n    environment:\n      BOCA_BOT_CONTROL: on-demand\n",
+        SECCOMP,
+        SQL,
+    )
+    plan = replace(_plan(), overlay_sha=SHA(sources.overlay))
+    monkeypatch.setattr(adapter.ReviewedCutoverSources, "from_verified_zip", lambda: sources)
+    monkeypatch.setattr(adapter, "_SQL_SHA", SHA(SQL))
+    monkeypatch.setattr(adapter, "run_cutover_a", lambda *_a, **_k: pytest.fail("host"))
+    with pytest.raises(cutover.CutoverError, match="V3"):
+        adapter.execute_reviewed_cutover(plan)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "healthy",
+        "running",
+        "partial-install",
+        "retirement",
+        "socket-lost",
+        "stop-lost",
+        "lingering-pid",
+        "start-lost",
+        "second-health",
+        "changed-db",
+        "changed-socket",
+    ],
+)
+def test_idle_install_service_tied_to_verified_cids_before_retirement(fake_host, monkeypatch, case):
+    from boca_socios import host_on_demand_service as control
+    from boca_socios.host_lifecycle_rootless_adapter import ProductionRootlessDockerIO
+    from boca_socios.integration.engine_socket import EngineReceipt
+
+    events, _ = fake_host
+    backend = _backend(events)
+    backend.on_demand = True
+    plan = _plan()
+    path = Path("/home/boca-deploy/.boca-on-demand/socket")
+    monkeypatch.setattr(control, "control_directory", lambda: path)
+    monkeypatch.setattr(
+        control,
+        "prepare_control_directory",
+        lambda attempt, lease: events.append("directory") or path,
+    )
+    monkeypatch.setattr(
+        adapter.host, "_cutover_idle_worker", lambda *_: events.append("created-pid-zero")
+    )
+
+    def database(cid):
+        assert cid in (OLD, NEW)
+        events.append("database")
+        return (5, 10 if case == "changed-db" and "panel-start" in events else 8)
+
+    def socket_inode(cid, directory):
+        assert cid == NEW and directory == path
+        events.append("same-socket")
+        return (5, 12 if case == "changed-socket" and "panel-start" in events else 9)
+
+    monkeypatch.setattr(adapter, "_controller_database_identity", database)
+    monkeypatch.setattr(adapter, "_verify_mounted_control", socket_inode)
+    monkeypatch.setattr(
+        adapter.host, "_cutover_compose_pair", lambda *a, **kw: events.append("compose-pair")
+    )
+
+    def docker(*args, **_kwargs):
+        if args[:2] == ("docker", "exec") and args[-1] == "ready":
+            assert args[4] == NEW
+            events.append("ledger")
+            return "BOCA_LEDGER_READY"
+        if args == ("docker", "stop", "--time", "8", NEW):
+            events.append("panel-stop")
+            if case == "stop-lost":
+                raise cutover.CutoverError("lost stop receipt")
+            return NEW
+        if args[:4] == ("docker", "inspect", "--type", "container") and args[-1] == NEW:
+            events.append("panel-stopped")
+            return NEW + (
+                " exited 9 false false false"
+                if case == "lingering-pid"
+                else " exited 0 false false false"
+            )
+        if args == ("docker", "start", NEW):
+            events.append("panel-start")
+            if case == "start-lost":
+                raise cutover.CutoverError("lost start receipt")
+            return NEW
+        pytest.fail(f"unexpected command {args!r}")
+
+    def wait_for_panel(cid):
+        assert cid == NEW
+        events.append("panel-health")
+        if case == "second-health":
+            raise cutover.CutoverError("second boot never became healthy")
+
+    monkeypatch.setattr(adapter.host, "_run", docker)
+    monkeypatch.setattr(adapter.host, "_browser_wait_healthy", wait_for_panel)
+    monkeypatch.setattr(
+        adapter, "_verified_data_volume_path", lambda _p: Path("/fake/boca.sqlite3")
+    )
+    monkeypatch.setattr(
+        adapter, "_bootstrap_in_data_namespace", lambda *_: events.append("bootstrap") or "APPLIED"
+    )
+    monkeypatch.setattr(
+        ProductionRootlessDockerIO,
+        "engine_request",
+        lambda self, cid, op: EngineReceipt(
+            "RUNNING" if case == "running" else "STOPPED", False, 31
+        ),
+    )
+
+    def verify(*_args):
+        events.append("verify-socket")
+        if case == "socket-lost" and "retire" in events:
+            raise cutover.CutoverError("service verification failed")
+
+    monkeypatch.setattr(control, "verify_control", verify)
+    if case == "retirement":
+
+        def lose_retirement(*_args, **_kwargs):
+            events.append("retirement-unknown")
+            raise cutover.CutoverError("uncertain retirement")
+
+        monkeypatch.setattr(adapter.host, "_cutover_retire_accepted_original", lose_retirement)
+
+    def install(binding, lease):
+        cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+        assert (binding.controller_id, binding.worker_id, binding.installation_run_id) == (
+            NEW,
+            WORKER,
+            plan.attempt_id,
+        )
+        assert binding.database_path == Path("/fake/boca.sqlite3")
+        assert binding.pair.controller_config_hash == SHA(b"controller")
+        assert binding.pair.worker_config_hash == SHA(b"browser-worker")
+        events.append("install-control")
+        if case == "partial-install":
+            raise cutover.CutoverError("systemd failure after a partial publish")
+
+    monkeypatch.setattr(control, "install_control", install)
+    monkeypatch.setattr(control, "remove_control", lambda *args: events.append("remove-control"))
+    receipt = _run_adapter(backend)
+    assert events.index("directory") < events.index("candidate")
+    assert "ipc-peer" not in events and "worker-health" not in events
+    assert events.count("panel-stop") <= 1 and events.count("panel-start") <= 1
+    if case in (
+        "running",
+        "partial-install",
+        "stop-lost",
+        "lingering-pid",
+        "start-lost",
+        "second-health",
+        "changed-db",
+        "changed-socket",
+    ):
+        assert not receipt.accepted and not backend.idle_installed
+        assert "retire" not in events
+        assert events.index("remove-control") < events.index("recover-original")
+        if case in ("stop-lost", "lingering-pid"):
+            assert "panel-start" not in events
+    elif case in ("retirement", "socket-lost"):
+        assert receipt.irreversible_commit_started and not receipt.original_restored
+        assert not receipt.accepted and not backend.idle_installed
+        assert events.count("remove-control") == 1
+        assert "recover-original" not in events and "recover-worker" not in events
+        if case == "retirement":
+            assert "cleanup" not in events
+    else:
+        assert receipt.accepted and backend.idle_installed
+        cycle = ["install-control", "panel-stop", "panel-stopped", "panel-start", "panel-health"]
+        assert [events.index(event) for event in cycle] == sorted(
+            events.index(event) for event in cycle
+        )
+        after_boot = events[events.index("panel-health") + 1 : events.index("retire")]
+        assert {
+            "health",
+            "created-pid-zero",
+            "loopback",
+            "database",
+            "ledger",
+            "same-socket",
+        } <= set(after_boot)
+        assert events.index("candidate") < events.index("install-control") < events.index("retire")
+        assert "remove-control" not in events and events.count("verify-socket") >= 1
+
+
+def test_mounted_control_proves_socket_inode_as_exact_controller_without_request(
+    monkeypatch, tmp_path
+):
+    import stat
+
+    # A socket inode is sufficient: inspection must never connect or activate the service.
+    path = tmp_path / "control.sock"
+    os.mknod(path, stat.S_IFSOCK | 0o666)
+    path.chmod(0o666)
+    identity = path.lstat()
+    expected = f"{identity.st_dev} {identity.st_ino}"
+
+    def exact(*args, **_kwargs):
+        assert args[:8] == (
+            "docker",
+            "exec",
+            "--user",
+            "10001:10001",
+            NEW,
+            "/app/.venv/bin/python",
+            "-I",
+            "-B",
+        )
+        assert args[8] == "-c"
+        assert "os.lstat" in args[9] and "connect(" not in args[9]
+        return expected
+
+    monkeypatch.setattr(adapter.host, "_run", exact)
+    adapter._verify_mounted_control(NEW, tmp_path)
+    expected += "9"
+    with pytest.raises(cutover.CutoverError):
+        adapter._verify_mounted_control(NEW, tmp_path)

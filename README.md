@@ -1,5 +1,11 @@
 # Boca Socios Assistant
 
+## Control del bot desde Chrome
+
+En el perfil de operación bajo demanda, el panel privado permanece disponible en el puerto local 8443. La sesión con passkey puede pedir **Iniciar** y **Detener** en el control del bot. La pantalla distingue una solicitud recibida de un arranque comprobado. En reposo, el contenedor de navegador no tiene procesos. Las instalaciones y actualizaciones se realizan con la Action protegida.
+
+La última evidencia anterior a este cambio corresponde al intento #899. La captura registró `MODULE_NOT_FOUND_ERROR`. El inventario #900 encontró el controlador anterior sano y cero workers. La aceptación de la nueva instalación y de la sesión real se registra por separado. [Decisión de operación](docs/ADR/0223-bot-bajo-demanda.md) · [Seguimiento físico](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+
 ## Diagnóstico del arranque del worker
 
 El intento #893 terminó con código 1 antes del primer healthcheck. El laboratorio R131 reprodujo fallos distintos y comprobó la captura previa al arranque en Docker. R132 incorpora esa captura al Cutover protegido y exige verificar desde el controlador la identidad del socket del worker. La evidencia de cada ejecución física se registra en [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417) y [#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45). [ADR0222](docs/ADR/0222-r132-worker-start-custody.md).

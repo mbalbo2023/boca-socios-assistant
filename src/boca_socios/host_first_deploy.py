@@ -86,6 +86,8 @@ _WORKER_HEALTH_PROGRAM = (
 # Health is evaluated by status alone. Its ordinary process streams must not
 # become a second, persistent source of output in Docker's State.Health.Log.
 _WORKER_HEALTH_CMD = f"python -c {shlex.quote(_WORKER_HEALTH_PROGRAM)} >/dev/null 2>&1"
+_ON_DEMAND_HEALTH_CMD = "python -m boca_socios.browser.worker_health >/dev/null 2>&1"
+_CONTROL_MOUNT = "/run/boca-bot-control"
 # Select scalar fields directly: false booleans must be explicit and no
 # process output, health log, command environment or owner data is queried.
 _CUTOVER_CAPTURE_INSPECT = (
@@ -104,6 +106,16 @@ _CUTOVER_CAPTURE_INSPECT = (
     '(eq (index .Test 0) "CMD-SHELL") (eq (index .Test 1) '
     + json.dumps(_WORKER_HEALTH_CMD)
     + ")}}{{else}}false{{end}}}"
+)
+# The cold profile projects only Docker state scalars. No health output, process
+# stream or environment is ever part of the attach admission receipt.
+_ON_DEMAND_CAPTURE_INSPECT = _CUTOVER_CAPTURE_INSPECT.replace(
+    json.dumps(_WORKER_HEALTH_CMD), json.dumps(_ON_DEMAND_HEALTH_CMD)
+).replace(
+    '"status":',
+    '"pid":{{json .State.Pid}},"running":{{json .State.Running}},'
+    '"paused":{{json .State.Paused}},"dead":{{json .State.Dead}},'
+    '"restarting":{{json .State.Restarting}},"status":',
 )
 # Option A is deliberately *not* the new-only browser-install path.  The
 # deployed singleton remains running while its historical Docker identity is
@@ -4257,9 +4269,18 @@ def _browser_compose_env(
     attempt_id: str,
     *,
     seccomp_file: Path | None = None,
+    control_directory: Path | None = None,
 ) -> dict[str, str]:
+    env = _beta_compose_env(image, origin, owner)
+    env.pop("BOCA_CONTROL_DIR", None)
+    if control_directory is not None:
+        from boca_socios.host_on_demand_service import control_directory as reviewed_directory
+
+        if control_directory != reviewed_directory():
+            raise PreflightError("on-demand control directory is outside the Boca home")
+        env["BOCA_CONTROL_DIR"] = str(control_directory)
     return {
-        **_beta_compose_env(image, origin, owner),
+        **env,
         "BOCA_BROWSER_IMAGE": browser_image,
         "BOCA_BROWSER_ATTEMPT_ID": attempt_id,
         "BOCA_BROWSER_SECCOMP_PATH": str(BROWSER_SECCOMP if seccomp_file is None else seccomp_file),
@@ -4276,6 +4297,7 @@ def _browser_compose_model(
     base_file: Path | None = None,
     overlay_file: Path | None = None,
     seccomp_file: Path | None = None,
+    control_directory: Path | None = None,
 ) -> str:
     """Host-side essential boundary, in addition to runner's full C1 validator."""
     if any(path is not None for path in (base_file, overlay_file, seccomp_file)):
@@ -4295,7 +4317,13 @@ def _browser_compose_model(
             "config", "--format", "json", base_file=base_file, overlay_file=overlay_file
         ),
         env=_browser_compose_env(
-            image, origin, owner, browser_image, attempt_id, seccomp_file=seccomp_file
+            image,
+            origin,
+            owner,
+            browser_image,
+            attempt_id,
+            seccomp_file=seccomp_file,
+            control_directory=control_directory,
         ),
     )
     if not 0 < len(raw) <= 65_536:
@@ -4332,7 +4360,7 @@ def _browser_compose_model(
     if (
         controller.get("image") != image
         or controller.get("user") != "10001:10001"
-        or controller.get("restart") != "no"
+        or controller.get("restart") != ("unless-stopped" if control_directory else "no")
         or controller.get("command") != ["python", "-m", "boca_socios.runtime", "serve-beta"]
         or controller.get("ports") != expected_port
         or controller.get("labels") != expected_labels
@@ -4340,6 +4368,8 @@ def _browser_compose_model(
         or controller.get("read_only") is not True
         or not isinstance(controller.get("environment"), dict)
         or controller["environment"].get("BOCA_BROWSER_BACKEND") != "ipc"
+        or controller["environment"].get("BOCA_BOT_CONTROL")
+        != ("on-demand" if control_directory is not None else None)
         or controller["environment"].get("BOCA_RUNTIME_MODE") != "simulation"
         or controller["environment"].get("BOCA_ENGINE_MODE") != "off"
         or controller["environment"].get("BOCA_PANEL_ORIGIN") != origin
@@ -4354,7 +4384,10 @@ def _browser_compose_model(
         "restart": "no",
         "logging": {"driver": "none"},
         "healthcheck": {
-            "test": ["CMD-SHELL", _WORKER_HEALTH_CMD],
+            "test": [
+                "CMD-SHELL",
+                _ON_DEMAND_HEALTH_CMD if control_directory else _WORKER_HEALTH_CMD,
+            ],
             "interval": "2s",
             "timeout": "3s",
             "retries": 3,
@@ -4410,6 +4443,17 @@ def _browser_compose_model(
         (worker, {("boca_browser_ipc", "/run/boca-browser-ipc", False)}),
     ):
         mounts = service.get("volumes")
+        if isinstance(mounts, list) and service is controller and control_directory is not None:
+            binds = [m for m in mounts if isinstance(m, dict) and m.get("type") == "bind"]
+            if len(binds) != 1 or (
+                set(binds[0]) - {"type", "source", "target", "read_only", "bind"}
+                or binds[0].get("source") != str(control_directory)
+                or binds[0].get("target") != _CONTROL_MOUNT
+                or binds[0].get("read_only") is not True
+                or binds[0].get("bind", {}) not in ({}, {"create_host_path": False})
+            ):
+                raise PreflightError("on-demand controller control socket mount changed")
+            mounts = [m for m in mounts if m is not binds[0]]
         if not isinstance(mounts, list) or len(mounts) != len(expected_mounts):
             raise PreflightError("browser IPC service mounts changed")
         observed: set[tuple[str, str, bool]] = set()
@@ -4506,11 +4550,12 @@ def _browser_named_probe(phase_name: str, attempt_id: str, command: tuple[str, .
     """Give every `docker run --rm` a C2b-cleanable positive attempt ID.
 
     A lost CLI/SSH can leave a daemon container alive despite `--rm`. Exactly
-    one of seven known named probes may exist at a time, so the same protected
+    one reviewed, named probe may exist at a time, so the same protected
     job can inspect/stop it selectively without touching any other workload.
     """
     permitted = {
         "ipc-dir-init",
+        "owner-session",
         "synthetic-ipc",
         "key-init",
         "key-verify",
@@ -4688,6 +4733,7 @@ def _browser_check_service_labels(
     attempt_id: str,
     running: bool = True,
     verify_runtime: bool = True,
+    restart_policy: str = "no",
 ) -> tuple[dict[str, object], dict[str, object]]:
     config, host = _browser_config_and_host(record)
     state = record.get("State")
@@ -4713,7 +4759,7 @@ def _browser_check_service_labels(
         or type(record.get("RestartCount")) is not int
         or record["RestartCount"] != 0
         or not isinstance(restart, dict)
-        or restart.get("Name") != "no"
+        or restart.get("Name") != restart_policy
         or restart.get("MaximumRetryCount") != 0
         or host.get("ReadonlyRootfs") is not True
         or host.get("Privileged") is not False
@@ -4724,7 +4770,9 @@ def _browser_check_service_labels(
     return config, host
 
 
-def _browser_check_mounts(record: dict[str, object], *, controller: bool) -> None:
+def _browser_check_mounts(
+    record: dict[str, object], *, controller: bool, control_directory: Path | None = None
+) -> None:
     mounts = record.get("Mounts")
     expected = (
         {
@@ -4736,6 +4784,16 @@ def _browser_check_mounts(record: dict[str, object], *, controller: bool) -> Non
         if controller
         else {(BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", True)}
     )
+    if isinstance(mounts, list) and controller and control_directory is not None:
+        binds = [m for m in mounts if isinstance(m, dict) and m.get("Type") == "bind"]
+        if len(binds) != 1 or (
+            binds[0].get("Source") != str(control_directory)
+            or binds[0].get("Destination") != _CONTROL_MOUNT
+            or binds[0].get("RW") is not False
+            or binds[0].get("Propagation") != "rprivate"
+        ):
+            raise PreflightError("Boca controller host control socket mount untrusted")
+        mounts = [m for m in mounts if m is not binds[0]]
     if not isinstance(mounts, list) or len(mounts) != len(expected):
         raise PreflightError("Boca IPC service has an unexpected mount count")
     actual: set[tuple[str, str, bool]] = set()
@@ -4858,6 +4916,19 @@ def _browser_effective_seccomp_options(
         raise PreflightError("worker did not load exact reviewed effective seccomp JSON")
 
 
+def _browser_worker_none_network(attached: object) -> None:
+    """Accept only the recorded Docker 'none' network and empty IPv4/IPv6 at any state."""
+    if not isinstance(attached, dict) or not set(attached) <= {"none"}:
+        raise PreflightError("browser worker has an IP network attachment")
+    for endpoint in attached.values():
+        if (
+            not isinstance(endpoint, dict)
+            or endpoint.get("IPAddress") not in (None, "")
+            or endpoint.get("GlobalIPv6Address") not in (None, "")
+        ):
+            raise PreflightError("browser worker received an IP address")
+
+
 def _browser_worker_postflight(
     container: str,
     browser_image: str,
@@ -4931,16 +5002,7 @@ def _browser_worker_postflight(
     networks = record.get("NetworkSettings")
     if not isinstance(networks, dict) or networks.get("Ports") not in (None, {}):
         raise PreflightError("browser worker has unexpected IP ports")
-    attached = networks.get("Networks")
-    if not isinstance(attached, dict) or not set(attached) <= {"none"}:
-        raise PreflightError("browser worker has an IP network attachment")
-    for endpoint in attached.values():
-        if (
-            not isinstance(endpoint, dict)
-            or endpoint.get("IPAddress") not in (None, "")
-            or endpoint.get("GlobalIPv6Address") not in (None, "")
-        ):
-            raise PreflightError("browser worker received an IP address")
+    _browser_worker_none_network(networks.get("Networks"))
     _browser_check_mounts(record, controller=False)
     if running and verify_runtime:
         _browser_worker_probe(container)
@@ -5253,7 +5315,12 @@ def _cutover_restore_original(
 
 
 def _cutover_worker_create_argv(
-    browser_image: str, source_sha: str, attempt_id: str, config_hash: str
+    browser_image: str,
+    source_sha: str,
+    attempt_id: str,
+    config_hash: str,
+    *,
+    on_demand: bool = False,
 ) -> tuple[str, ...]:
     """Plan a worker without Compose reconciling/stopping the live singleton.
 
@@ -5333,7 +5400,7 @@ def _cutover_worker_create_argv(
         "--mount",
         f"type=volume,source={BROWSER_IPC_VOLUME},target=/run/boca-browser-ipc,volume-nocopy",
         "--health-cmd",
-        _WORKER_HEALTH_CMD,
+        _ON_DEMAND_HEALTH_CMD if on_demand else _WORKER_HEALTH_CMD,
         "--health-interval",
         "2s",
         "--health-timeout",
@@ -5356,8 +5423,10 @@ def _cutover_candidate_create_argv(
     origin: str,
     owner: str,
     config_hash: str,
+    *,
+    control_directory: Path | None = None,
 ) -> tuple[str, ...]:
-    """Plan a no-restart candidate without touching the legacy controller.
+    """Plan a bounded candidate without touching the legacy controller.
 
     The original must be positively parked and localhost free before a future
     reviewed executor is permitted to send this command to Docker.
@@ -5386,6 +5455,12 @@ def _cutover_candidate_create_argv(
         "BOCA_BIND_PORT": "8443",
         "BOCA_HEALTH_MODE": "beta",
     }
+    if control_directory is not None:
+        from boca_socios.host_on_demand_service import control_directory as reviewed_directory
+
+        if control_directory != reviewed_directory():
+            raise PreflightError("on-demand candidate bind escapes Boca")
+        values["BOCA_BOT_CONTROL"] = "on-demand"
     return (
         "docker",
         "create",
@@ -5408,7 +5483,7 @@ def _cutover_candidate_create_argv(
         "--user",
         "10001:10001",
         "--restart",
-        "no",
+        "unless-stopped" if control_directory else "no",
         "--init",
         "--network",
         BROWSER_BRIDGE,
@@ -5436,6 +5511,11 @@ def _cutover_candidate_create_argv(
         f"type=volume,source={OWNER_VOLUME},target=/run/owner,volume-nocopy,readonly",
         "--mount",
         f"type=volume,source={BROWSER_IPC_VOLUME},target=/run/boca-browser-ipc,volume-nocopy,readonly",
+        *(
+            ("--mount", f"type=bind,source={control_directory},target={_CONTROL_MOUNT},readonly")
+            if control_directory is not None
+            else ()
+        ),
         "--health-cmd",
         "python -m boca_socios.healthcheck",
         "--health-interval",
@@ -5490,7 +5570,14 @@ def _cutover_worker_name_id() -> str | None:
 
 
 def _cutover_capture_preflight(
-    container: str, image: str, source_sha: str, attempt_id: str, config_hash: str
+    container: str,
+    image: str,
+    source_sha: str,
+    attempt_id: str,
+    config_hash: str,
+    *,
+    expected_state: Literal["created", "exited"] = "created",
+    on_demand: bool = False,
 ) -> None:
     """Authenticate the exact stopped worker and a compatible dedicated attach socket."""
     if (
@@ -5499,6 +5586,8 @@ def _cutover_capture_preflight(
         or not SHA_PATTERN.fullmatch(source_sha)
         or not BROWSER_ATTEMPT_PATTERN.fullmatch(attempt_id)
         or not DIGEST_PATTERN.fullmatch(config_hash)
+        or expected_state not in ("created", "exited")
+        or (expected_state != "created" and not on_demand)
     ):
         raise PreflightError("capture worker coordinates unverified")
     _require_dedicated_identity()
@@ -5520,7 +5609,8 @@ def _cutover_capture_preflight(
     image_id = _run("docker", "image", "inspect", "--format", "{{.Id}}", image, timeout=8)
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
         raise PreflightError("capture immutable image ID unavailable")
-    raw = _run("docker", "inspect", "--format", _CUTOVER_CAPTURE_INSPECT, container, timeout=8)
+    projection = _ON_DEMAND_CAPTURE_INSPECT if on_demand else _CUTOVER_CAPTURE_INSPECT
+    raw = _run("docker", "inspect", "--format", projection, container, timeout=8)
     if not 0 < len(raw) <= 4096:
         raise PreflightError("capture identity receipt size unverified")
     record = json.loads(raw, object_pairs_hook=_browser_json_pairs)
@@ -5533,7 +5623,7 @@ def _cutover_capture_preflight(
         "service": "browser-worker",
         "project": PROJECT,
         "config_hash": config_hash,
-        "status": "created",
+        "status": expected_state,
         "tty": False,
         "open_stdin": False,
         "attach_stdin": False,
@@ -5541,14 +5631,70 @@ def _cutover_capture_preflight(
         "log_options": 0,
         "health": True,
     }
+    if on_demand:
+        expected.update(pid=0, running=False, paused=False, dead=False, restarting=False)
     if (
         not isinstance(record, dict)
         or record != expected
-        or any(record[key] is not False for key in ("tty", "open_stdin", "attach_stdin"))
-        or type(record["log_options"]) is not int
-        or record["health"] is not True
+        or any(type(record[key]) is not type(value) for key, value in expected.items())
     ):
         raise PreflightError("capture worker identity or private stream boundary unverified")
+
+
+def _cutover_idle_worker(
+    worker_id: str,
+    image: str,
+    source_sha: str,
+    attempt_id: str,
+    seccomp_sha: str,
+    staged_seccomp: bytes,
+    worker_config_hash: str,
+) -> None:
+    """Attest the new worker's static limits and created/PID=0 without running any command in it."""
+    if _cutover_worker_name_id() != worker_id:
+        raise PreflightError("cold worker exact name/CID unverified")
+    _browser_worker_postflight(
+        worker_id,
+        image,
+        source_sha,
+        attempt_id,
+        seccomp_sha,
+        running=False,
+        verify_runtime=False,
+        staged_seccomp=staged_seccomp,
+    )
+    _cutover_capture_preflight(
+        worker_id, image, source_sha, attempt_id, worker_config_hash, on_demand=True
+    )
+
+
+def _cutover_verify_worker_for_profile(
+    worker_id: str,
+    image: str,
+    source_sha: str,
+    attempt_id: str,
+    seccomp_sha: str,
+    staged_seccomp: bytes,
+    *,
+    control_directory: Path | None,
+    worker_config_hash: str | None,
+) -> None:
+    if control_directory is not None:
+        if worker_config_hash is None:
+            raise PreflightError("cold worker config hash missing")
+        _cutover_idle_worker(
+            worker_id,
+            image,
+            source_sha,
+            attempt_id,
+            seccomp_sha,
+            staged_seccomp,
+            worker_config_hash,
+        )
+    else:
+        _browser_worker_postflight(
+            worker_id, image, source_sha, attempt_id, seccomp_sha, staged_seccomp=staged_seccomp
+        )
 
 
 def _cutover_compensate_worker(
@@ -5621,8 +5767,10 @@ def _cutover_prepare_worker(
     seccomp_sha: str,
     staged_seccomp: bytes,
     persist_capture: Callable[[str, str], object],
+    *,
+    on_demand: bool = False,
 ) -> str:
-    """Start the attested worker under the caller's lease while the original stays running."""
+    """Prepare the attested worker while the original stays running."""
     from boca_socios.worker_start_capture import CaptureFailure, CaptureResult, attach_output
 
     if (
@@ -5637,7 +5785,7 @@ def _cutover_prepare_worker(
         original_id, legacy_image, legacy_sha, name=CUTOVER_LEGACY_NAME, running=True
     )
     worker_create = _cutover_worker_create_argv(
-        browser_image, target_sha, attempt_id, worker_config_hash
+        browser_image, target_sha, attempt_id, worker_config_hash, on_demand=on_demand
     )
     if _cutover_worker_name_id() is not None:
         raise PreflightError("cutover A worker already exists before attempt")
@@ -5657,6 +5805,21 @@ def _cutover_prepare_worker(
         if re.fullmatch(r"[0-9a-f]{64}", created) is None or created == original_id:
             raise PreflightError("cutover A worker create returned invalid ID")
         worker_id = created
+        if on_demand:
+            phase = "CAPTURE_PREPARE"
+            _cutover_idle_worker(
+                created,
+                browser_image,
+                target_sha,
+                attempt_id,
+                seccomp_sha,
+                staged_seccomp,
+                worker_config_hash,
+            )
+            _cutover_legacy_record(
+                original_id, legacy_image, legacy_sha, name=CUTOVER_LEGACY_NAME, running=True
+            )
+            return created
         if _cutover_worker_name_id() != created:
             raise PreflightError("cutover A worker name/ID differs after create")
         _browser_worker_postflight(
@@ -5746,6 +5909,7 @@ def _cutover_candidate_postflight(
     config_hash: str,
     *,
     verify_runtime: bool = True,
+    control_directory: Path | None = None,
 ) -> bool:
     """Authenticate candidate's exact ID including reviewed Compose hash."""
     if re.fullmatch(r"[0-9a-f]{64}", container_id) is None or not DIGEST_PATTERN.fullmatch(
@@ -5774,6 +5938,7 @@ def _cutover_candidate_postflight(
         owner,
         running=running,
         verify_runtime=running and verify_runtime,
+        control_directory=control_directory,
     )
     return running
 
@@ -5788,9 +5953,14 @@ def _cutover_compensate_candidate(
     origin: str,
     owner: str,
     config_hash: str,
+    *,
+    control_directory: Path | None = None,
+    expected_candidate: str | None = None,
 ) -> None:
     """Only remove a positively identified new attempt, then revive old ID."""
     candidate_id = _cutover_candidate_name_id()
+    if expected_candidate is not None and candidate_id != expected_candidate:
+        raise PreflightError("cutover A cleanup candidate CID changed")
     if candidate_id is not None:
         if candidate_id == original_id:
             raise PreflightError("cutover A candidate name points at original ID")
@@ -5803,6 +5973,7 @@ def _cutover_compensate_candidate(
             owner,
             config_hash,
             verify_runtime=False,
+            control_directory=control_directory,
         ):
             if _run("docker", "stop", "--time", "8", candidate_id, timeout=30) != candidate_id:
                 raise PreflightError("cutover A candidate stop receipt uncertain")
@@ -5815,6 +5986,7 @@ def _cutover_compensate_candidate(
                 owner,
                 config_hash,
                 verify_runtime=False,
+                control_directory=control_directory,
             ):
                 raise PreflightError("cutover A candidate still running after stop")
         if _run("docker", "rm", candidate_id, timeout=20) != candidate_id:
@@ -5839,8 +6011,11 @@ def _cutover_activate_candidate(
     config_hash: str,
     seccomp_sha: str,
     staged_seccomp: bytes,
+    *,
+    control_directory: Path | None = None,
+    worker_config_hash: str | None = None,
 ) -> str:
-    """Future effectful handoff AFTER park; inaccessible from all workflows.
+    """Start the candidate after positively parking the original.
 
     Keeps old ID parked until a **different** positive-acceptance retirement
     step, so every candidate-create/start/health failure is recoverable.  No
@@ -5861,21 +6036,30 @@ def _cutover_activate_candidate(
         running=False,
         restart_policy="no",
     )
+    created: str | None = None
     try:
-        _browser_worker_postflight(
+        _cutover_verify_worker_for_profile(
             worker_id,
             browser_image,
             target_sha,
             attempt_id,
             seccomp_sha,
-            staged_seccomp=staged_seccomp,
+            staged_seccomp,
+            control_directory=control_directory,
+            worker_config_hash=worker_config_hash,
         )
         _browser_port_free()
         if _cutover_candidate_name_id() is not None:
             raise PreflightError("cutover A candidate name was not available")
         created = _run(
             *_cutover_candidate_create_argv(
-                target_image, target_sha, attempt_id, origin, owner, config_hash
+                target_image,
+                target_sha,
+                attempt_id,
+                origin,
+                owner,
+                config_hash,
+                control_directory=control_directory,
             ),
             timeout=60,
         )
@@ -5884,14 +6068,28 @@ def _cutover_activate_candidate(
         if _cutover_candidate_name_id() != created:
             raise PreflightError("cutover A candidate name/ID differs after create")
         if _cutover_candidate_postflight(
-            created, target_image, target_sha, attempt_id, origin, owner, config_hash
+            created,
+            target_image,
+            target_sha,
+            attempt_id,
+            origin,
+            owner,
+            config_hash,
+            control_directory=control_directory,
         ):
             raise PreflightError("cutover A candidate unexpectedly started at create")
         if _run("docker", "start", created, timeout=30) != created:
             raise PreflightError("cutover A candidate start receipt unverified")
         _browser_wait_healthy(created)
         if not _cutover_candidate_postflight(
-            created, target_image, target_sha, attempt_id, origin, owner, config_hash
+            created,
+            target_image,
+            target_sha,
+            attempt_id,
+            origin,
+            owner,
+            config_hash,
+            control_directory=control_directory,
         ):
             raise PreflightError("cutover A candidate failed to become running")
         _beta_loopback_health(created, origin)
@@ -5916,6 +6114,8 @@ def _cutover_activate_candidate(
                 origin,
                 owner,
                 config_hash,
+                control_directory=control_directory,
+                expected_candidate=created if control_directory is not None else None,
             )
             # A failed candidate must not strand the attempt-only worker/IPC
             # after the original exact ID has been restored. Reuse the
@@ -5924,7 +6124,7 @@ def _cutover_activate_candidate(
             if _cutover_worker_name_id() != worker_id:
                 raise PreflightError("cutover A worker identity changed during compensation")
             _cutover_compensate_worker(
-                browser_image, target_sha, attempt_id, seccomp_sha, staged_seccomp
+                browser_image, target_sha, attempt_id, seccomp_sha, staged_seccomp, worker_id
             )
         except (PreflightError, OSError, ValueError, KeyError, TypeError) as exc:
             raise PreflightError(
@@ -5933,6 +6133,48 @@ def _cutover_activate_candidate(
         raise PreflightError(
             "cutover A candidate failed; original exact ID restored RUNNING and worker removed"
         ) from None
+
+
+def _cutover_compose_pair(
+    candidate: str,
+    worker: str,
+    target_image: str,
+    browser_image: str,
+    origin: str,
+    owner: str,
+    attempt_id: str,
+    stage_dir: Path,
+    *,
+    control_directory: Path | None,
+    parked_original: str | None = None,
+) -> None:
+    compose = _browser_compose_args(
+        "ps",
+        "-a",
+        "-q",
+        base_file=stage_dir / BETA_COMPOSE.name,
+        overlay_file=stage_dir / BROWSER_COMPOSE.name,
+    )
+    env = _browser_compose_env(
+        target_image,
+        origin,
+        owner,
+        browser_image,
+        attempt_id,
+        seccomp_file=stage_dir / BROWSER_SECCOMP.name,
+        control_directory=control_directory,
+    )
+    controllers = _run(*compose, "controller", timeout=30, env=env).splitlines()
+    if (
+        controllers != [candidate]
+        and (
+            parked_original is None
+            or len(controllers) != 2
+            or set(controllers) != {parked_original, candidate}
+        )
+        or _run(*compose, "browser-worker", timeout=30, env=env) != worker
+    ):
+        raise PreflightError("cutover A Compose exact candidate/worker discovery differs")
 
 
 def _cutover_retire_accepted_original(
@@ -5951,13 +6193,16 @@ def _cutover_retire_accepted_original(
     seccomp_sha: str,
     staged_seccomp: bytes,
     stage_dir: Path,
+    *,
+    control_directory: Path | None = None,
+    worker_config_hash: str | None = None,
 ) -> None:
-    """Future separate commit point, only after positive candidate acceptance.
+    """Retire the exact old ID only after positive candidate acceptance.
 
     Once the accepted candidate owns 8443, old ID cannot be restarted without
     a port collision. Unknown retirement outcome is explicitly INDETERMINATE;
     never blindly retry deletion or restore the parked ID over the new one.
-    This helper is NOT wired to phase() or any protected GitHub workflow.
+    The outer protected Cutover writes durable intent before calling this helper.
     """
     if (
         re.fullmatch(r"[0-9a-f]{64}", candidate_id) is None
@@ -5977,16 +6222,25 @@ def _cutover_retire_accepted_original(
         restart_policy="no",
     )
     if _cutover_candidate_name_id() != candidate_id or not _cutover_candidate_postflight(
-        candidate_id, target_image, target_sha, attempt_id, origin, owner, config_hash
+        candidate_id,
+        target_image,
+        target_sha,
+        attempt_id,
+        origin,
+        owner,
+        config_hash,
+        control_directory=control_directory,
     ):
         raise PreflightError("cutover A accepted candidate identity/health changed")
-    _browser_worker_postflight(
+    _cutover_verify_worker_for_profile(
         worker_id,
         browser_image,
         target_sha,
         attempt_id,
         seccomp_sha,
-        staged_seccomp=staged_seccomp,
+        staged_seccomp,
+        control_directory=control_directory,
+        worker_config_hash=worker_config_hash,
     )
     _beta_loopback_health(candidate_id, origin)
     try:
@@ -5994,24 +6248,17 @@ def _cutover_retire_accepted_original(
             raise PreflightError("cutover A original retirement receipt unverified")
         if original_id in _browser_docker_ids():
             raise PreflightError("cutover A original still exists after retirement")
-        compose = (
-            "docker",
-            "compose",
-            "-p",
-            PROJECT,
-            "-f",
-            str(stage_dir / BETA_COMPOSE.name),
-            "-f",
-            str(stage_dir / BROWSER_COMPOSE.name),
-            "ps",
-            "-a",
-            "-q",
+        _cutover_compose_pair(
+            candidate_id,
+            worker_id,
+            target_image,
+            browser_image,
+            origin,
+            owner,
+            attempt_id,
+            stage_dir,
+            control_directory=control_directory,
         )
-        if (
-            _run(*compose, "controller", timeout=30) != candidate_id
-            or _run(*compose, "browser-worker", timeout=30) != worker_id
-        ):
-            raise PreflightError("cutover A Compose singleton service discovery differs")
     except (PreflightError, OSError, ValueError, KeyError, TypeError) as exc:
         raise PreflightError(
             "cutover A original retirement/Compose outcome INDETERMINATE; do not retry"
@@ -6107,6 +6354,7 @@ def _browser_controller_postflight(
     *,
     running: bool = True,
     verify_runtime: bool = True,
+    control_directory: Path | None = None,
 ) -> None:
     record = _browser_inspect_record(container)
     config, host = _browser_check_service_labels(
@@ -6119,6 +6367,7 @@ def _browser_controller_postflight(
         attempt_id=attempt_id,
         running=running,
         verify_runtime=verify_runtime,
+        restart_policy="unless-stopped" if control_directory is not None else "no",
     )
     environment = config.get("Env")
     if not isinstance(environment, list) or any(type(item) is not str for item in environment):
@@ -6149,6 +6398,8 @@ def _browser_controller_postflight(
     }.items():
         if variables.get(name) != expected:
             raise PreflightError("browser IPC controller runtime selector changed")
+    if variables.get("BOCA_BOT_CONTROL") != ("on-demand" if control_directory else None):
+        raise PreflightError("controller bot control selector changed")
     if any(
         name in variables
         for name in (
@@ -6171,7 +6422,8 @@ def _browser_controller_postflight(
     if (
         not isinstance(endpoint, dict)
         or type(endpoint.get("NetworkID")) is not str
-        or re.fullmatch(r"[0-9a-f]{64}", endpoint["NetworkID"]) is None
+        or (running or endpoint["NetworkID"] != "")
+        and re.fullmatch(r"[0-9a-f]{64}", endpoint["NetworkID"]) is None
         or host.get("NetworkMode") != BROWSER_BRIDGE
         or host.get("PortBindings") != expected_ports
         or (
@@ -6194,7 +6446,7 @@ def _browser_controller_postflight(
         or config.get("Entrypoint") not in (None, [])
     ):
         raise PreflightError("browser IPC controller HostConfig/port boundary changed")
-    _browser_check_mounts(record, controller=True)
+    _browser_check_mounts(record, controller=True, control_directory=control_directory)
     if not running:
         return
     _validate_boca_network(container, endpoint["NetworkID"])

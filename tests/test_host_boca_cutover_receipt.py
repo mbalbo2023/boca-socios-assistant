@@ -546,3 +546,21 @@ def test_production_home_must_not_overlap_ephemeral_or_exact_compose_stage(
     )
     with pytest.raises(terminal.TerminalReceiptError, match="home untrusted"):
         terminal._account_home()
+
+
+def test_idle_install_persists_distinct_result_and_cannot_label_failed_cutover() -> None:
+    plan = _plan()
+    receipt = replace(_accepted(), idle_installed=True)
+    record = terminal.TerminalRecord.from_receipt(plan, receipt)
+    with cleanup.protected_boca_job_lease(ATTEMPT) as lease:
+        terminal.prepare_destination(plan, lease)
+        terminal.write_once(record, plan=plan, lease=lease)
+    data = json.loads(record.serialized())
+    assert data["version"] == terminal.VERSION_V6
+    assert data["idle_installed"] is True
+    assert terminal.reconcile_persisted(plan) == "RECORD_PRESENT_RUNTIME_UNVERIFIED"
+    terminal.verify_persisted_exact(plan, receipt)
+    with pytest.raises(terminal.TerminalReceiptError):
+        terminal.verify_persisted_exact(plan, _accepted())
+    with pytest.raises(terminal.TerminalReceiptError):
+        replace(record, state="NO_GO").serialized()

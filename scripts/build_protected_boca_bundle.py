@@ -45,6 +45,9 @@ SOURCES = (
     "src/boca_socios/host_cutover_inventory_observe.py",
     "src/boca_socios/host_lifecycle_rootless_adapter.py",
     "src/boca_socios/host_boca_lifecycle.py",
+    "src/boca_socios/host_on_demand_lifecycle.py",
+    "src/boca_socios/host_on_demand_service.py",
+    "src/boca_socios/host_on_demand_status.py",
     "src/boca_socios/panel/lifecycle_intents.py",
     "src/boca_socios/integration/engine_socket.py",
     "src/boca_socios/storage/__init__.py",
@@ -125,6 +128,12 @@ MAIN = (
     "if len(sys.argv) > 1 and sys.argv[1] == 'cutover-stage-recover':\n"
     "    from scripts import host_cutover_stage_recovery as recovery\n"
     "    raise SystemExit(recovery.main(['host', *sys.argv[2:]]))\n"
+    "if len(sys.argv) == 6 and sys.argv[1] == 'on-demand-status':\n"
+    "    from boca_socios.host_on_demand_status import main as status\n"
+    "    raise SystemExit(status(['host', *sys.argv[2:]]))\n"
+    "if len(sys.argv) == 3 and sys.argv[1] == 'on-demand-serve':\n"
+    "    from boca_socios.host_on_demand_service import socket_main\n"
+    "    raise SystemExit(socket_main(sys.argv[2]))\n"
     "if len(sys.argv) > 1 and sys.argv[1] in ('lifecycle-apply', 'lifecycle-bridge-selftest'):\n"
     "    from boca_socios import host_lifecycle_actions as bridge\n"
     "    if sys.argv[1] == 'lifecycle-bridge-selftest':\n"
@@ -148,17 +157,14 @@ MAIN = (
     "from boca_socios.host_boca_transaction import main\n"
     "raise SystemExit(main())\n"
 ).encode("ascii")
-# R46/R47 adds the reviewed physical cleanup proof and exact-incident recovery
-# observer to this explicit allowlist (approximately 39kB more uncompressed).
-# Keep the hard compressed transport cap independent and unchanged at 512kB.
-# The full package includes the R132 bounded worker capture and private receipt.
-# Only the existing host adapter grew in the separate preflight. Preserve the
-# compressed transport boundaries and each variant's independent allowlist.
-MAX_SOURCE_BYTES = 926_000
+# The complete R135 archive adds the installed control, lifecycle and readback.
+# The separate worker preflight carries the updated host adapter. Each reviewed
+# entry set retains its own compressed transport bound.
+MAX_SOURCE_BYTES = 1_040_000
 MAX_ARCHIVE_BYTES = 512_000
 RECOVERY_MAX_SOURCE_BYTES = 256_000
 RECOVERY_MAX_ARCHIVE_BYTES = 128_000
-PREFLIGHT_MAX_SOURCE_BYTES = 492_000
+PREFLIGHT_MAX_SOURCE_BYTES = 500_000
 PREFLIGHT_MAX_ARCHIVE_BYTES = 128_000
 
 
