@@ -21,7 +21,7 @@ import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_cutover_stage as stage
@@ -32,6 +32,9 @@ from boca_socios.host_boca_cutover import (
     CutoverReceipt,
     run_cutover_a,
 )
+
+if TYPE_CHECKING:
+    from boca_socios.host_on_demand_lifecycle import OnDemandInstallation
 
 _SQL_SHA = "38c4c97594143340089395c5230a464372acdd058dbe31169ba4206a1fd83d23"
 _BUNDLE_FILES = (
@@ -167,7 +170,9 @@ def _precommit_legacy_image_cleanup(
         raise CutoverError("cutover precommit exact legacy image cleanup unproven") from exc
 
 
-def _reviewed_compose_hash(plan: CutoverPlan, service: str) -> str:
+def _reviewed_compose_hash(
+    plan: CutoverPlan, service: str, *, control_directory: Path | None = None
+) -> str:
     """Use Docker Compose's actual canonical per-service hash; no invented label."""
     if service not in ("controller", "browser-worker"):
         raise CutoverError("cutover Compose service outside allowlist")
@@ -188,6 +193,7 @@ def _reviewed_compose_hash(plan: CutoverPlan, service: str) -> str:
             plan.browser_image,
             plan.attempt_id,
             seccomp_file=seccomp,
+            control_directory=control_directory,
         ),
     )
     # Compose v2 versions print either the one hash or SERVICE<space>HASH.
@@ -197,8 +203,8 @@ def _reviewed_compose_hash(plan: CutoverPlan, service: str) -> str:
     return match.group(1)
 
 
-def _legacy_disk_identity(plan: CutoverPlan) -> tuple[Path, tuple[int, int]]:
-    """Owner-independent, rootless Boca data path; no foreign volume reads."""
+def _verified_data_volume_path(plan: CutoverPlan) -> Path:
+    """The parked original alone references this authenticated rootless volume."""
     host._cutover_legacy_record(
         plan.legacy_id,
         plan.legacy_image,
@@ -213,15 +219,6 @@ def _legacy_disk_identity(plan: CutoverPlan) -> tuple[Path, tuple[int, int]]:
     path = root / "volumes" / host.DATA_VOLUME / "_data" / "boca.sqlite3"
     if not path.is_absolute() or any(component.is_symlink() for component in path.parents):
         raise CutoverError("Boca legacy DB rootless volume path redirected")
-    metadata = path.lstat()
-    if (
-        not stat.S_ISREG(metadata.st_mode)
-        or metadata.st_uid != 10001
-        or metadata.st_gid != 10001
-        or stat.S_IMODE(metadata.st_mode) != 0o600
-        or metadata.st_nlink != 1
-    ):
-        raise CutoverError("Boca legacy DB inode/owner/mode untrusted")
     associated = host._run(
         "docker",
         "ps",
@@ -246,7 +243,97 @@ def _legacy_disk_identity(plan: CutoverPlan) -> tuple[Path, tuple[int, int]]:
     ).splitlines()
     if associated != [plan.legacy_id] or controllers != [plan.legacy_id]:
         raise CutoverError("Boca legacy SQLite volume is shared/ambiguous")
+    return path
+
+
+def _legacy_disk_identity(plan: CutoverPlan) -> tuple[Path, tuple[int, int]]:
+    path = _verified_data_volume_path(plan)
+    metadata = path.lstat()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != 10001
+        or metadata.st_gid != 10001
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_nlink != 1
+    ):
+        raise CutoverError("Boca legacy DB inode/owner/mode untrusted")
     return path, (metadata.st_dev, metadata.st_ino)
+
+
+def _controller_database_identity(controller: str) -> tuple[int, int]:
+    # The container UID owns the SQLite file; on the host that UID is subordinate.
+    if not _HEX.fullmatch(controller):
+        raise CutoverError("controller database CID invalid")
+    program = (
+        "import os,stat; s=os.lstat('/data/boca.sqlite3'); "
+        "assert os.getuid()==os.geteuid()==os.getgid()==os.getegid()==10001; "
+        "assert stat.S_ISREG(s.st_mode) and stat.S_IMODE(s.st_mode)==0o600 "
+        "and s.st_uid==s.st_gid==10001 and s.st_nlink==1; print(s.st_dev,s.st_ino)"
+    )
+    identity = host._run(
+        "docker",
+        "exec",
+        "--user",
+        "10001:10001",
+        controller,
+        "/app/.venv/bin/python",
+        "-I",
+        "-B",
+        "-c",
+        program,
+        timeout=8,
+    )
+    match = re.fullmatch(r"([0-9]{1,20}) ([1-9][0-9]{0,19})", identity)
+    if match is None:
+        raise CutoverError("private controller database identity unavailable")
+    return int(match[1]), int(match[2])
+
+
+def _bootstrap_in_data_namespace(plan: CutoverPlan, identity: tuple[int, int]) -> str:
+    """Only the parked controller's data volume, as its own namespaced UID."""
+    if len(identity) != 2 or any(type(n) is not int or n < 0 for n in identity):
+        raise CutoverError("on-demand bootstrap identity invalid")
+    return host._browser_named_probe(
+        "owner-session",
+        plan.attempt_id,
+        (
+            "docker",
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--user",
+            "10001:10001",
+            "--network",
+            "none",
+            "--log-driver",
+            "none",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--pids-limit",
+            "16",
+            "--memory",
+            "64m",
+            "--cpus",
+            "0.25",
+            "--mount",
+            f"type=volume,source={host.DATA_VOLUME},target=/data,volume-nocopy",
+            "--entrypoint",
+            "/app/.venv/bin/python",
+            plan.target_image,
+            "-I",
+            "-B",
+            "-c",
+            "import sys; from boca_socios.panel.owner_session_disk_bootstrap import "
+            "bootstrap_mounted_session; print(bootstrap_mounted_session(int(sys.argv[1]), "
+            "int(sys.argv[2])))",
+            str(identity[0]),
+            str(identity[1]),
+        ),
+    )
 
 
 class RootlessCutoverBackend:
@@ -257,10 +344,23 @@ class RootlessCutoverBackend:
     requires_persistent_receipt = True
 
     def __init__(
-        self, sources: ReviewedCutoverSources, *, session_bootstrap: Bootstrap | None = None
+        self,
+        sources: ReviewedCutoverSources,
+        *,
+        session_bootstrap: Bootstrap | None = None,
+        on_demand: bool = False,
     ) -> None:
         self.sources = sources
         self.session_bootstrap = session_bootstrap
+        self.on_demand = on_demand
+        self.idle_installed = False
+        self.control_directory: Path | None = None
+        self.control_prepared = False
+        self.installation: OnDemandInstallation | None = None
+        self.worker_id: str | None = None
+        self.candidate_id: str | None = None
+        self.database_identity: tuple[int, int] | None = None
+        self.database_path: Path | None = None
         self.state: State = "INIT"
         self.plan: CutoverPlan | None = None
         self.worker_hash: str | None = None
@@ -316,6 +416,10 @@ class RootlessCutoverBackend:
         directory = stage.verify(plan.attempt_id, plan.legacy_compose_sha)
         if directory != _stage_path(plan):
             raise CutoverError("cutover authenticated stage path drifted")
+        if self.on_demand:
+            from boca_socios.host_on_demand_service import control_directory
+
+            self.control_directory = control_directory()
         host._browser_compose_model(
             plan.target_image,
             plan.origin,
@@ -325,9 +429,14 @@ class RootlessCutoverBackend:
             base_file=directory / "compose.beta.yaml",
             overlay_file=directory / "compose.beta.browser.yaml",
             seccomp_file=directory / "seccomp_profile.json",
+            control_directory=self.control_directory,
         )
-        self.worker_hash = _reviewed_compose_hash(plan, "browser-worker")
-        self.controller_hash = _reviewed_compose_hash(plan, "controller")
+        self.worker_hash = _reviewed_compose_hash(
+            plan, "browser-worker", control_directory=self.control_directory
+        )
+        self.controller_hash = _reviewed_compose_hash(
+            plan, "controller", control_directory=self.control_directory
+        )
         self.state = "STAGED"
 
     def prepare_worker(self, plan: CutoverPlan, lease: cleanup.BocaJobLease) -> str:
@@ -360,6 +469,7 @@ class RootlessCutoverBackend:
                 plan.seccomp_sha,
                 seccomp,
                 lambda cid, result: persist_before_cleanup(plan, lease, cid, result),
+                on_demand=self.on_demand,
             )
         except host.CutoverWorkerPhaseError:
             raise
@@ -369,11 +479,14 @@ class RootlessCutoverBackend:
             raise host.CutoverWorkerPhaseError(primary, "UNVERIFIED") from None
         if not _HEX.fullmatch(worker) or worker == plan.legacy_id:
             raise CutoverError("cutover worker exact ID untrusted")
+        self.worker_id = worker
         self.state = "WORKER"
         return worker
 
     def park_original(self, plan: CutoverPlan, lease: cleanup.BocaJobLease) -> None:
         self._guard(plan, lease, "WORKER")
+        if self.on_demand:
+            self.database_identity = _controller_database_identity(plan.legacy_id)
         host._cutover_park_original(
             plan.legacy_id, plan.legacy_image, plan.legacy_sha, plan.attempt_id
         )
@@ -381,6 +494,18 @@ class RootlessCutoverBackend:
 
     def bootstrap_owner_session(self, plan: CutoverPlan, lease: cleanup.BocaJobLease) -> None:
         self._guard(plan, lease, "PARKED")
+        if self.on_demand:
+            if self.database_identity is None:
+                raise CutoverError("on-demand parked database identity missing")
+            self.database_path = _verified_data_volume_path(plan)
+            result = _bootstrap_in_data_namespace(plan, self.database_identity)
+            self._guard(plan, lease, "PARKED")
+            if result not in ("APPLIED", "ALREADY_APPLIED") or (
+                _verified_data_volume_path(plan) != self.database_path
+            ):
+                raise CutoverError("private same-volume session bootstrap unverified")
+            self.state = "BOOTSTRAPPED"
+            return
         path, db_identity = _legacy_disk_identity(plan)
         bootstrap = self.session_bootstrap or _stdlib_session_bootstrap()
         outcome = bootstrap(
@@ -402,6 +527,14 @@ class RootlessCutoverBackend:
         if not self.controller_hash:
             raise CutoverError("cutover candidate Compose hash absent")
         seccomp = stage.read_verified(plan.attempt_id, plan.legacy_compose_sha, "seccomp")
+        if self.on_demand:
+            from boca_socios.host_on_demand_service import prepare_control_directory
+
+            if self.control_directory is None or self.worker_id != worker_id:
+                raise CutoverError("on-demand binding missing before controller creation")
+            self.control_prepared = True
+            if prepare_control_directory(plan.attempt_id, lease) != self.control_directory:
+                raise CutoverError("on-demand controller socket directory changed")
         candidate = host._cutover_activate_candidate(
             plan.legacy_id,
             plan.legacy_image,
@@ -416,9 +549,12 @@ class RootlessCutoverBackend:
             self.controller_hash,
             plan.seccomp_sha,
             seccomp,
+            control_directory=self.control_directory,
+            worker_config_hash=self.worker_hash,
         )
         if not _HEX.fullmatch(candidate) or candidate in (plan.legacy_id, worker_id):
             raise CutoverError("cutover candidate exact ID untrusted")
+        self.candidate_id = candidate
         self.state = "CANDIDATE"
         return candidate
 
@@ -432,31 +568,78 @@ class RootlessCutoverBackend:
         from boca_socios.host_cutover_ipc_probe import verify_controller_peer
 
         self._guard(plan, lease, "CANDIDATE")
-        if not self.controller_hash:
-            raise CutoverError("cutover candidate resolved Compose hash missing")
-        seccomp = stage.read_verified(plan.attempt_id, plan.legacy_compose_sha, "seccomp")
-        if not host._cutover_candidate_postflight(
-            candidate_id,
-            plan.target_image,
-            plan.target_sha,
-            plan.attempt_id,
-            plan.origin,
-            plan.owner_subject,
-            self.controller_hash,
-        ):
-            raise CutoverError("cutover candidate not healthy/running by exact ID")
-        # The candidate and worker were bound to this attempt at activation.
-        # Authenticate the listening peer from the controller without sending a request.
-        verify_controller_peer(candidate_id)
-        host._browser_worker_postflight(
-            worker_id,
-            plan.browser_image,
-            plan.target_sha,
-            plan.attempt_id,
-            plan.seccomp_sha,
-            staged_seccomp=seccomp,
-        )
-        host._beta_loopback_health(candidate_id, plan.origin)
+        if self.on_demand:
+            from boca_socios.host_lifecycle_rootless_adapter import ReviewedInstalledPair
+            from boca_socios.host_on_demand_lifecycle import OnDemandInstallation
+            from boca_socios.host_on_demand_service import install_control
+
+            if not self.worker_hash or not self.controller_hash or self.database_path is None:
+                raise CutoverError("on-demand verified installation coordinates missing")
+            self._verify_cold_pair(plan, candidate_id, worker_id)
+            if _controller_database_identity(candidate_id) != self.database_identity or (
+                host._run(
+                    "docker",
+                    "exec",
+                    "--user",
+                    "10001:10001",
+                    candidate_id,
+                    "/app/.venv/bin/python",
+                    "-I",
+                    "-B",
+                    "-m",
+                    "boca_socios.host_on_demand_lifecycle",
+                    "ready",
+                    timeout=8,
+                )
+                != "BOCA_LEDGER_READY"
+            ):
+                raise CutoverError("on-demand candidate ledger identity/schema unverified")
+            host._cutover_compose_pair(
+                candidate_id,
+                worker_id,
+                plan.target_image,
+                plan.browser_image,
+                plan.origin,
+                plan.owner_subject,
+                plan.attempt_id,
+                _stage_path(plan),
+                control_directory=self.control_directory,
+                parked_original=plan.legacy_id,
+            )
+            self.installation = OnDemandInstallation(
+                installation_run_id=plan.attempt_id,
+                source_sha=plan.target_sha,
+                controller_id=candidate_id,
+                controller_image=plan.target_image,
+                worker_id=worker_id,
+                worker_image=plan.browser_image,
+                database_path=self.database_path,
+                pair=ReviewedInstalledPair(plan.attempt_id, self.controller_hash, self.worker_hash),
+            )
+            install_control(self.installation, lease)
+        else:
+            if not self.controller_hash:
+                raise CutoverError("cutover candidate resolved Compose hash missing")
+            if not host._cutover_candidate_postflight(
+                candidate_id,
+                plan.target_image,
+                plan.target_sha,
+                plan.attempt_id,
+                plan.origin,
+                plan.owner_subject,
+                self.controller_hash,
+            ):
+                raise CutoverError("cutover candidate not healthy/running by exact ID")
+            verify_controller_peer(candidate_id)
+            host._browser_worker_postflight(
+                worker_id,
+                plan.browser_image,
+                plan.target_sha,
+                plan.attempt_id,
+                plan.seccomp_sha,
+                staged_seccomp=self.sources.seccomp,
+            )
+            host._beta_loopback_health(candidate_id, plan.origin)
         legacy_record = host._cutover_legacy_record(
             plan.legacy_id,
             plan.legacy_image,
@@ -469,6 +652,53 @@ class RootlessCutoverBackend:
             plan, legacy_record, candidate_id, worker_id
         )
         self.state = "ACCEPTED"
+
+    def _verify_cold_pair(self, plan: CutoverPlan, candidate: str, worker: str) -> None:
+        from boca_socios.host_lifecycle_rootless_adapter import ProductionRootlessDockerIO
+
+        if (
+            candidate != self.candidate_id
+            or worker != self.worker_id
+            or self.control_directory is None
+            or not self.worker_hash
+            or not self.controller_hash
+            or not host._cutover_candidate_postflight(
+                candidate,
+                plan.target_image,
+                plan.target_sha,
+                plan.attempt_id,
+                plan.origin,
+                plan.owner_subject,
+                self.controller_hash,
+                control_directory=self.control_directory,
+            )
+        ):
+            raise CutoverError("on-demand controller identity or health unverified")
+        host._cutover_idle_worker(
+            worker,
+            plan.browser_image,
+            plan.target_sha,
+            plan.attempt_id,
+            plan.seccomp_sha,
+            self.sources.seccomp,
+            self.worker_hash,
+        )
+        host._beta_loopback_health(candidate, plan.origin)
+        engine = ProductionRootlessDockerIO().engine_request(candidate, "status")
+        if (
+            engine.state != "STOPPED"
+            or engine.changed
+            or type(engine.pid) is not int
+            or engine.pid <= 0
+        ):
+            raise CutoverError("on-demand controller engine did not confirm STOPPED")
+
+    def _disable_control(self, plan: CutoverPlan, lease: cleanup.BocaJobLease) -> None:
+        if self.control_prepared:
+            from boca_socios.host_on_demand_service import remove_control
+
+            remove_control(plan.attempt_id, lease)
+            self.control_prepared = False
 
     def retire_original(
         self,
@@ -501,6 +731,8 @@ class RootlessCutoverBackend:
             plan.seccomp_sha,
             self.sources.seccomp,
             _stage_path(plan),
+            control_directory=self.control_directory,
+            worker_config_hash=self.worker_hash,
         )
         self.state = "COMMITTED"
 
@@ -508,6 +740,9 @@ class RootlessCutoverBackend:
         cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
         if self.plan != plan or self.state in ("INIT", "COMMITTED", "ACCEPTED"):
             return False
+        self._disable_control(plan, lease)
+        if self.on_demand and self.state == "PARKED" and self.database_path is not None:
+            _verified_data_volume_path(plan)  # A lost one-shot may still own the data volume.
         # Existing helper compensates candidate before worker, verifies each
         # exact ID and only then revives the original ID if localhost is free.
         # Its own partial rollback may already have restored the original.
@@ -534,6 +769,8 @@ class RootlessCutoverBackend:
                 plan.origin,
                 plan.owner_subject,
                 self.controller_hash,
+                control_directory=self.control_directory,
+                expected_candidate=self.candidate_id,
             )
         else:
             raise CutoverError("cutover original exact-ID name drifted during recovery")
@@ -544,6 +781,7 @@ class RootlessCutoverBackend:
                 plan.attempt_id,
                 plan.seccomp_sha,
                 self.sources.seccomp,
+                self.worker_id,
             )
         host._cutover_legacy_record(
             plan.legacy_id,
@@ -567,6 +805,27 @@ class RootlessCutoverBackend:
         cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
         if self.plan != plan:
             return "NO_GO"
+        try:
+            return self._finalize(
+                plan,
+                commit_started=commit_started,
+                candidate_id=candidate_id,
+                worker_id=worker_id,
+                lease=lease,
+            )
+        finally:
+            if self.on_demand and commit_started and not self.idle_installed:
+                self._disable_control(plan, lease)
+
+    def _finalize(
+        self,
+        plan: CutoverPlan,
+        *,
+        commit_started: bool,
+        candidate_id: str | None,
+        worker_id: str | None,
+        lease: cleanup.BocaJobLease,
+    ) -> Literal["ACCEPT", "NO_GO", "INDETERMINATE"] | cleanup.CleanupReceipt:
         safely_recovered = self.state == "RECOVERED" and not commit_started
         safely_committed = (
             self.state == "COMMITTED"
@@ -617,9 +876,17 @@ class RootlessCutoverBackend:
         if self.state == "RECOVERED" and not commit_started:
             stage.discard_recovered(plan.attempt_id, plan.legacy_compose_sha)
         elif self.state == "COMMITTED" and commit_started and candidate_id and worker_id:
+            if self.on_demand:
+                from boca_socios.host_on_demand_service import verify_control
+
+                if self.installation is None:
+                    return "NO_GO"
+                self._verify_cold_pair(plan, candidate_id, worker_id)
+                verify_control(self.installation, lease)
             stage.finalize_promoted(
                 plan.attempt_id, plan.legacy_compose_sha, candidate_id, worker_id
             )
+            self.idle_installed = self.on_demand
         else:
             return "NO_GO"
         # Preserve the SAME attested before/after metrics and exact removed IDs
@@ -628,7 +895,7 @@ class RootlessCutoverBackend:
 
 
 def execute_reviewed_cutover(
-    plan: CutoverPlan, *, prepare_run_id: str | None = None
+    plan: CutoverPlan, *, prepare_run_id: str | None = None, dispatch_v3: bool = False
 ) -> CutoverReceipt:
     """One Boca-only host transaction with optional exact PREPARE consumption.
 
@@ -653,7 +920,14 @@ def execute_reviewed_cutover(
         raise CutoverError("cutover prepared GO identity invalid")
     sources = ReviewedCutoverSources.from_verified_zip()
     sources.validate(plan)
-    backend = RootlessCutoverBackend(sources)
+    # Only the authenticated overlay may request this profile. Compose resolves
+    # and checks its actual service/environment/bind before any Docker creation.
+    on_demand = any(
+        line.lstrip().startswith(b"BOCA_BOT_CONTROL:") for line in sources.overlay.splitlines()
+    )
+    if on_demand and (dispatch_v3 is not True or prepare_run_id is not None):
+        raise CutoverError("on-demand installation requires authenticated V3 dispatch")
+    backend = RootlessCutoverBackend(sources, on_demand=on_demand)
 
     def terminal_preflight(prepared_plan: CutoverPlan, lease: cleanup.BocaJobLease) -> None:
         terminal.prepare_destination(prepared_plan, lease)

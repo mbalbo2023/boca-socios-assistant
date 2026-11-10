@@ -54,6 +54,7 @@ class BetaCommandHost:
                 raise ValueError(f"{name} timeout must be finite and in (0,60]")
         self._coordinator = coordinator
         self._coordinator_factory = coordinator_factory
+        self._before_start: Callable[[], None] | None = None
         self._request_timeout = float(request_timeout_seconds)
         self._startup_timeout = float(startup_timeout_seconds)
         self._shutdown_timeout = float(shutdown_timeout_seconds)
@@ -105,6 +106,7 @@ class BetaCommandHost:
         request_timeout_seconds: float = 5.0,
         startup_timeout_seconds: float = 10.0,
         shutdown_timeout_seconds: float = 35.0,
+        before_start: Callable[[], None] | None = None,
     ) -> BetaCommandHost:
         """Restore an attested owner STOP without creating a running thread.
 
@@ -125,6 +127,7 @@ class BetaCommandHost:
         # __init__ allocates only an inert event-loop object and Thread
         # object. Close the unused loop before a later explicit START replaces
         # it, so STOP-on-reboot leaks neither threads nor loop descriptors.
+        host._before_start = before_start
         host._loop.close()
         with host._lock:
             host._engine_state = "stopped"
@@ -264,6 +267,10 @@ class BetaCommandHost:
                     return False
                 if self._engine_state != "stopped" or self._coordinator_factory is None:
                     raise RuntimeError("local command engine start state unavailable")
+                # A missing worker leaves the panel and genuinely stopped
+                # engine available for an authenticated, subsequent START.
+                if self._before_start is not None:
+                    self._before_start()
                 self._engine_state = "starting"
             try:
                 new_coordinator = self._coordinator_factory()

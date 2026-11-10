@@ -47,6 +47,7 @@ jobs:
           BOCA_OWNER_SUBJECT: synthetic-ci-owner
           BOCA_BROWSER_ATTEMPT_ID: "123456"
           BOCA_BROWSER_SECCOMP_PATH: /srv/boca-socios/seccomp_profile.json
+          BOCA_CONTROL_DIR: /home/boca-deploy/.boca-on-demand/socket
           PYTHONPATH: src
         run: |
           docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml config --format json > "$RUNNER_TEMP/boca-ipc-v2-model.json"

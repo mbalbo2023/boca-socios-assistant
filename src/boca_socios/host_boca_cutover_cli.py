@@ -116,6 +116,12 @@ class CutoverInvocation:
         )
 
 
+IDLE_RECEIPT = (
+    "BOCA_BOT_INSTALL state=IDLE_INSTALLED panel=HEALTHY engine=STOPPED "
+    "worker=CREATED pid=0 runtime_start=UNVERIFIED"
+)
+
+
 def encode_invocation(
     plan: CutoverPlan,
     *,
@@ -207,7 +213,10 @@ def run_cli(
         if invocation.prepare_run_id is None:
             if execute_prepared is not None:
                 raise CutoverCliError("prepared executor cannot run legacy token")
-            receipt = (execute or backend.execute_reviewed_cutover)(invocation.plan)
+            if execute is None and invocation.dispatch_v3:
+                receipt = backend.execute_reviewed_cutover(invocation.plan, dispatch_v3=True)
+            else:
+                receipt = (execute or backend.execute_reviewed_cutover)(invocation.plan)
         else:
             if execute is not None:
                 raise CutoverCliError("legacy executor cannot consume a PREPARE token")
@@ -294,6 +303,8 @@ def run_cli(
         f"target_sha={invocation.plan.target_sha} cleanup=ACCEPT "
         "receipt=RECORDED runtime=UNVERIFIED"
     )
+    if receipt.idle_installed:
+        print(IDLE_RECEIPT)
     if postflight:
         # V2-only strict companion line; the original v1 ACK stays byte-identical.
         # The runner verifies both in one bounded, approved SSH host receipt.

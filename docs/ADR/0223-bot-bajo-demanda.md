@@ -15,6 +15,14 @@ El último arranque observado terminó con código 1 en menos de cinco segundos.
 
 Se conserva la frontera de los dos módulos de navegación a cargo del titular. La ruta de operación conserva simulación, aislamiento de red del worker, límites de recursos, perfiles y montajes vigentes. Los laboratorios de CI usan procesos ajenos a la navegación y datos descartables.
 
+## Fallos encontrados en la ruta de control anterior
+
+El adaptador de producción pedía campos de inspect que su propio lector rechazaba. El doble de pruebas le devolvía los campos directamente. Además, el arranque por CLI comparaba la salida con un CID de 64 caracteres sin contemplar el terminador de línea. Las regresiones deben atravesar el adaptador de producción y usar la forma real de la respuesta.
+
+La UID 10001 de un proceso dentro del controlador también puede diferir de la UID 10001 de la cuenta que ejecuta Docker en el host. Se comprueba la identidad del cliente del socket con las credenciales del kernel y los mapeos del proceso de la instalación. El acceso a SQLite debe ocurrir en el espacio de usuario autorizado o con una identidad efectivamente verificada. [Docker rootless y UID/GID](https://docs.docker.com/engine/security/rootless/uid-gid-mapping/).
+
+El panel puede usar la política Docker `unless-stopped`; el worker conserva `no`. La unidad de usuario activa un servicio por conexión con `Accept=yes`. [Docker restart policies](https://docs.docker.com/engine/containers/start-containers-automatically/) · [systemd.socket](https://www.freedesktop.org/software/systemd/man/latest/systemd.socket.html).
+
 ## Aceptación y trazabilidad
 
 La instalación en reposo, un inicio desde la sesión real, el efecto del motor, la detención con cero procesos y la continuidad del panel son verificaciones distintas. Una ruta HTTP sana o un recibo de solicitud sólo acreditan su propio paso. Chrome y Telegram requieren la evidencia correspondiente a cada función.

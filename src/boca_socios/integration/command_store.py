@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
@@ -50,6 +50,9 @@ _SELECT = """SELECT c.command_id,c.request_id,c.state,c.created_at,c.updated_at,
                    t.member_id,t.event_id FROM beta_commands c
                    JOIN ticket_requests t ON t.request_id=c.request_id"""
 _LOOKUP = _SELECT + " JOIN beta_command_keys k ON k.command_id=c.command_id WHERE k.command_key=?"
+_STOP_UNCLAIMED = (
+    "UPDATE beta_commands SET state='stopped',updated_at=max(updated_at,?) WHERE state='accepted'"
+)
 
 
 def command_key(value: str) -> str:
@@ -100,7 +103,13 @@ class CommandStore:
             )
 
     def enqueue(
-        self, key: str, intent: TicketIntent, *, now: float, max_pending: int
+        self,
+        key: str,
+        intent: TicketIntent,
+        *,
+        now: float,
+        max_pending: int,
+        bind_work: Callable[[sqlite3.Connection, str], None] | None = None,
     ) -> CommandSnapshot:
         command_key(key)
         intent.validate()
@@ -150,6 +159,10 @@ class CommandStore:
             connection.execute(
                 "INSERT INTO beta_command_keys(command_key,command_id) VALUES (?,?)", (key, key)
             )
+            if bind_work is not None:
+                # Only a freshly inserted command belongs to this run. Both
+                # the command and its START association commit or roll back.
+                bind_work(connection, key)
             row = connection.execute(_SELECT + " WHERE c.command_id=?", (key,)).fetchone()
             if row is None:
                 raise RuntimeError("local command was not persisted")
@@ -163,7 +176,9 @@ class CommandStore:
                 return None
             return _snapshot(row)
 
-    def claim_next(self, *, now: float) -> tuple[CommandSnapshot, TicketIntent] | None:
+    def claim_next(
+        self, *, now: float, may_run: Callable[[sqlite3.Connection, str], bool] | None = None
+    ) -> tuple[CommandSnapshot, TicketIntent] | None:
         with self._write() as connection:
             # A second coordinator cannot run another browser while one owns a command.
             active = connection.execute(
@@ -175,6 +190,10 @@ class CommandStore:
                 _SELECT + " WHERE c.state='accepted' ORDER BY c.created_at,c.command_id LIMIT 1"
             ).fetchone()
             if row is None:
+                return None
+            if may_run is not None and not may_run(connection, str(row[0])):
+                # STOP won the SQLite writer lock before the next launch.
+                connection.execute(_STOP_UNCLAIMED, (now,))
                 return None
             connection.execute(
                 "UPDATE beta_commands SET state='running',updated_at=max(updated_at,?) "
@@ -215,6 +234,11 @@ class CommandStore:
                    WHERE command_id=? AND state='completed'""",
                 (now, key),
             )
+
+    def stop_unclaimed(self, *, now: float) -> None:
+        """Close queued work from a preceding on-demand engine before accepting new work."""
+        with self._write() as connection:
+            connection.execute(_STOP_UNCLAIMED, (now,))
 
     def recoverable(self) -> tuple[CommandSnapshot, ...]:
         with closing(sqlite3.connect(self._db.path.as_uri() + "?mode=ro", uri=True)) as connection:

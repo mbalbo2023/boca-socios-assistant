@@ -978,8 +978,14 @@ def _candidate_handoff_fake(
     monkeypatch.setattr(host, "_cutover_worker_name_id", lambda: WORKER_ID)
 
     def cleanup_worker(
-        image: str, source_sha: str, attempt: str, seccomp_sha: str, seccomp: bytes
+        image: str,
+        source_sha: str,
+        attempt: str,
+        seccomp_sha: str,
+        seccomp: bytes,
+        exact_worker: str,
     ) -> None:
+        assert exact_worker == WORKER_ID
         assert (image, source_sha, attempt, seccomp_sha, seccomp) == (
             WORKER_IMAGE,
             TARGET_SHA,

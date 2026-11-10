@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from boca_socios.browser.contracts import SyntheticBrowserPort
-from boca_socios.integration.beta import BetaCoordinator
+from boca_socios.integration.beta import BetaCoordinator, OnDemandBotSession
 from boca_socios.integration.command_host import BetaCommandHost
 from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
 from boca_socios.security.credential_vault import CredentialVault
@@ -102,12 +102,14 @@ class LocalBetaRuntime:
         vault: CredentialVault,
         outbox: SqliteNotificationOutbox,
         commands: BetaCommandHost,
+        bot_on_demand: bool = False,
     ) -> None:
         self.database = database
         self.vault = vault
         self.outbox = outbox
         self.commands = commands
         self.members = MemberEnrollmentService(database, vault)
+        self._bot_on_demand = bot_on_demand
         self._closed = False
 
     @classmethod
@@ -120,11 +122,13 @@ class LocalBetaRuntime:
         initialize_new: bool = False,
         initial_engine_stopped: bool | Callable[[], bool] = False,
         command_timeout_seconds: float = 5.0,
+        bot_session: OnDemandBotSession | None = None,
     ) -> LocalBetaRuntime:
         if (
             type(initialize_new) is not bool
             or (type(initial_engine_stopped) is not bool and not callable(initial_engine_stopped))
             or (initialize_new and initial_engine_stopped is not False)
+            or (bot_session is not None and initial_engine_stopped is not True)
             or not database_path.is_absolute()
         ):
             raise ValueError("invalid local BETA storage configuration")
@@ -147,6 +151,7 @@ class LocalBetaRuntime:
                 outbox=outbox,
                 browser=browser,
                 timeout_seconds=command_timeout_seconds,
+                bot_session=bot_session,
             )
 
         coordinator = new_coordinator()
@@ -166,17 +171,27 @@ class LocalBetaRuntime:
             raise LocalRuntimeUnavailable("owner lifecycle reconciliation invalid")
         if stopped:
             commands = BetaCommandHost.start_stopped(
-                coordinator, coordinator_factory=new_coordinator
+                coordinator,
+                coordinator_factory=new_coordinator,
+                before_start=bot_session.before_engine_start if bot_session is not None else None,
             )
         else:
             commands = BetaCommandHost.start(coordinator, coordinator_factory=new_coordinator)
-        return cls(database=database, vault=vault, outbox=outbox, commands=commands)
+        return cls(
+            database=database,
+            vault=vault,
+            outbox=outbox,
+            commands=commands,
+            bot_on_demand=bot_session is not None,
+        )
 
     @property
     def ready(self) -> bool:
         # Intentionally stopped synthetic command processing is a healthy
         # owner panel, not a reason to take localhost:8443 offline.
-        return not self._closed and (self.commands.engine_stopped or not self.commands.failed)
+        return not self._closed and (
+            self._bot_on_demand or self.commands.engine_stopped or not self.commands.failed
+        )
 
     def close(self) -> None:
         if self._closed:

@@ -45,6 +45,9 @@ SOURCES = (
     "src/boca_socios/host_cutover_inventory_observe.py",
     "src/boca_socios/host_lifecycle_rootless_adapter.py",
     "src/boca_socios/host_boca_lifecycle.py",
+    "src/boca_socios/host_on_demand_lifecycle.py",
+    "src/boca_socios/host_on_demand_service.py",
+    "src/boca_socios/host_on_demand_status.py",
     "src/boca_socios/panel/lifecycle_intents.py",
     "src/boca_socios/integration/engine_socket.py",
     "src/boca_socios/storage/__init__.py",
@@ -125,6 +128,12 @@ MAIN = (
     "if len(sys.argv) > 1 and sys.argv[1] == 'cutover-stage-recover':\n"
     "    from scripts import host_cutover_stage_recovery as recovery\n"
     "    raise SystemExit(recovery.main(['host', *sys.argv[2:]]))\n"
+    "if len(sys.argv) == 6 and sys.argv[1] == 'on-demand-status':\n"
+    "    from boca_socios.host_on_demand_status import main as status\n"
+    "    raise SystemExit(status(['host', *sys.argv[2:]]))\n"
+    "if len(sys.argv) == 3 and sys.argv[1] == 'on-demand-serve':\n"
+    "    from boca_socios.host_on_demand_service import socket_main\n"
+    "    raise SystemExit(socket_main(sys.argv[2]))\n"
     "if len(sys.argv) > 1 and sys.argv[1] in ('lifecycle-apply', 'lifecycle-bridge-selftest'):\n"
     "    from boca_socios import host_lifecycle_actions as bridge\n"
     "    if sys.argv[1] == 'lifecycle-bridge-selftest':\n"

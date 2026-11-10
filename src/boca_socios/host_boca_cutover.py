@@ -152,6 +152,7 @@ class CutoverReceipt:
     worker_oom_killed: bool | Literal["UNKNOWN"] | None = None
     worker_exit_signature: str | None = None
     worker_stderr_observation: str | None = None
+    idle_installed: bool = False
 
     @property
     def accepted(self) -> bool:
@@ -394,6 +395,7 @@ def run_cutover_a(
             worker_oom_killed if state != "ACCEPTED" else None,
             worker_exit_signature if state != "ACCEPTED" else None,
             worker_stderr_observation if state != "ACCEPTED" else None,
+            state == "ACCEPTED" and getattr(backend, "idle_installed", False) is True,
         )
         # O_EXCL result must be persisted *before releasing the SAME flock*.
         # Callers cannot safely write it after run_cutover_a returns. Missing

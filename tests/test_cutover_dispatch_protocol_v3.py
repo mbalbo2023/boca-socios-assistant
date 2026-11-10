@@ -34,11 +34,13 @@ def _v3(tmp_path: Path) -> tuple[go.GoRequest, dict[str, str], str]:
     return request, env, token
 
 
+@pytest.mark.parametrize("idle_install", [False, True])
 @pytest.mark.parametrize("cleanup_present", [False, True])
 def test_v3_requires_cleanup_without_prepare_and_consumes_real_observe_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     cleanup_present: bool,
+    idle_install: bool,
 ) -> None:
     request, env, token = _v3(tmp_path)
     plan = request.plan
@@ -80,6 +82,7 @@ def test_v3_requires_cleanup_without_prepare_and_consumes_real_observe_output(
             "2" * 64,
             "3" * 64,
             cleanup_receipt=detail if cleanup_present else None,
+            idle_installed=idle_install,
         )
 
     fd = os.memfd_create("boca-v3-test", flags=0)
@@ -98,6 +101,8 @@ def test_v3_requires_cleanup_without_prepare_and_consumes_real_observe_output(
     finally:
         os.close(fd)
     _file(Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME, out.getvalue().encode())
+    if idle_install:
+        env["BOCA_REQUIRE_IDLE_INSTALL"] = "1"
     if not cleanup_present:
         assert rc == 3 and "state=ACCEPTED" not in out.getvalue()
         with pytest.raises(go.CutoverGoError):
@@ -105,6 +110,14 @@ def test_v3_requires_cleanup_without_prepare_and_consumes_real_observe_output(
     else:
         assert rc == 0
         assert go.assert_actions_host_receipt(env) is not None
+        if idle_install:
+            missing = out.getvalue().replace(cli.IDLE_RECEIPT + "\n", "")
+            _file(Path(env["RUNNER_TEMP"]) / go.HOST_RECEIPT_NAME, missing.encode())
+            with pytest.raises(go.CutoverGoError):
+                go.assert_actions_host_receipt(env)
+        else:
+            with pytest.raises(go.CutoverGoError):
+                go.assert_actions_host_receipt({**env, "BOCA_REQUIRE_IDLE_INSTALL": "1"})
         original = out.getvalue()
         for bad in (
             original.replace("BOCA_CUTOVER_A_POSTFLIGHT ", "WRONG "),

@@ -174,3 +174,21 @@ def test_host_stdlib_bootstrap_source_has_no_application_dependencies() -> None:
         elif isinstance(node, ast.ImportFrom):
             assert not (node.module or "").startswith("boca_socios")
     assert not hasattr(bootstrap, "main")  # No separate host command/dispatch entrypoint.
+
+
+def test_mounted_bootstrap_requires_same_inode_and_preserves_credential_database(
+    staging, monkeypatch
+):
+    db, _, _ = staging
+    monkeypatch.setattr(bootstrap, "_MOUNTED_DATABASE", db)
+    identity = db.stat()
+    before = db.read_bytes()
+    with pytest.raises(bootstrap.SessionDiskBootstrapUnavailable):
+        bootstrap.bootstrap_mounted_session(identity.st_dev, identity.st_ino + 1)
+    assert not db.with_name("boca_owner_session.sqlite3").exists()
+    assert bootstrap.bootstrap_mounted_session(identity.st_dev, identity.st_ino) == "APPLIED"
+    assert (
+        bootstrap.bootstrap_mounted_session(identity.st_dev, identity.st_ino) == "ALREADY_APPLIED"
+    )
+    assert db.read_bytes() == before
+    assert db.with_name("boca_owner_session.sqlite3").stat().st_mode & 0o777 == 0o600

@@ -107,6 +107,21 @@ except OSError:
 raise SystemExit(0 if progressing else 1)
 """)
 
+# The same immutable process produces a different, closed observation on each run.
+# The first receives a deliberate fixture STOP only after the handler is ready.
+RESTART_FIXTURE = """\
+import signal
+import time
+from pathlib import Path
+def stop_fixture(_signal, _frame):
+    raise PermissionError("fixture")
+signal.signal(signal.SIGTERM, stop_fixture)
+Path("/dev/shm/boca-restart-ready").touch()
+time.sleep(5)
+raise RuntimeError("fixture")
+"""
+RESTART_HEALTH = "test -f /dev/shm/boca-restart-ready"
+
 
 class LabError(Exception):
     """A finite stage, never Docker output or fixture text."""
@@ -373,7 +388,8 @@ def verified_fixture(
 
 def exercise(image: str, run: str, name: str, program: str, expected: str, exit_code: int) -> None:
     resident = name == "resident"
-    with verified_fixture(image, run, name, program, RESIDENT_HEALTH if resident else None) as cid:
+    health_command = {"resident": RESIDENT_HEALTH, "restart-exited": RESTART_HEALTH}.get(name)
+    with verified_fixture(image, run, name, program, health_command) as cid:
         if resident:
             with attach_output(SOCKET, cid) as capture:
                 start_fixture(cid)
@@ -385,6 +401,8 @@ def exercise(image: str, run: str, name: str, program: str, expected: str, exit_
                 "BOCA_CAPTURE_LAB case=resident after_detach=PROGRESS_VERIFIED fresh_probes=2",
                 flush=True,
             )
+        elif name == "restart-exited":
+            exercise_restart(cid)
         else:
             with attach_output(SOCKET, cid) as capture:
                 start_fixture(cid)
@@ -400,6 +418,49 @@ def exercise(image: str, run: str, name: str, program: str, expected: str, exit_
         observed_status = "HEALTHY" if resident else f"EXIT_{exit_code}"
         print(
             f"BOCA_CAPTURE_LAB case={name} observed={expected} state={observed_status}", flush=True
+        )
+
+
+def exercise_restart(cid: str) -> None:
+    previous_finished = None
+    for attempt, (before, expected) in enumerate(
+        (("created", CaptureResult.PERMISSION_ERROR), ("exited", CaptureResult.RUNTIME_ERROR)),
+        start=1,
+    ):
+        if field(cid, ".Id") != cid or field(cid, ".State.Status") != before:
+            raise LabError("RESTART_PRESTATE")
+        with attach_output(SOCKET, cid) as capture:
+            start_fixture(cid)
+            if attempt == 1:
+                wait_healthy(cid)
+                if docker("stop", "-t", "2", cid) != cid:
+                    raise LabError("RESTART_STOP_ACK")
+            observed = capture.finish()
+        if (
+            observed != expected
+            or docker("wait", cid) != "1"
+            or field(cid, ".State.Status") != "exited"
+            or field(cid, ".State.OOMKilled") is not False
+        ):
+            raise LabError("RESTART_OBSERVATION")
+        started_at = field(cid, ".State.StartedAt")
+        finished_at = field(cid, ".State.FinishedAt")
+        if not isinstance(started_at, str) or not isinstance(finished_at, str):
+            raise LabError("RESTART_TIMESTAMPS")
+        started, finished = datetime.fromisoformat(started_at), datetime.fromisoformat(finished_at)
+        if (
+            started.tzinfo is None
+            or finished.tzinfo is None
+            or finished <= started
+            or previous_finished is not None
+            and started <= previous_finished
+        ):
+            raise LabError("RESTART_TIMESTAMPS")
+        previous_finished = finished
+        print(
+            f"BOCA_CAPTURE_LAB case=restart-exited attempt={attempt} "
+            f"before={before} observed={expected.value} state=EXIT_1",
+            flush=True,
         )
 
 
@@ -444,6 +505,9 @@ def main() -> None:
         )
     for case in CASES:
         exercise(image, os.environ["GITHUB_RUN_ID"], *case)
+    exercise(
+        image, os.environ["GITHUB_RUN_ID"], "restart-exited", RESTART_FIXTURE, "RESTART_VERIFIED", 1
+    )
     exercise(
         image,
         os.environ["GITHUB_RUN_ID"],

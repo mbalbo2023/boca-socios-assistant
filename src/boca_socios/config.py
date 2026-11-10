@@ -33,6 +33,11 @@ class Settings:
     source_sha: str = ""
     browser_backend: str = "off"
     telegram_pairing_stage_mode: str = "off"
+    bot_control: str = "off"
+
+    @property
+    def bot_on_demand(self) -> bool:
+        return self.bot_control == "on-demand"
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -58,6 +63,7 @@ class Settings:
             site_hmac_key_file=cls._optional_path("BOCA_SITE_HMAC_KEY_FILE"),
             source_sha=os.environ.get("BOCA_SOURCE_SHA", ""),
             browser_backend=os.environ.get("BOCA_BROWSER_BACKEND", "off"),
+            bot_control=os.environ.get("BOCA_BOT_CONTROL", "off"),
             telegram_pairing_stage_mode=os.environ.get("BOCA_TELEGRAM_PAIRING_STAGE_MODE", "off"),
         )
 
@@ -79,6 +85,10 @@ class Settings:
             "ipc",
         }:
             raise ValueError("invalid synthetic browser backend")
+        if type(self.bot_control) is not str or self.bot_control not in {"off", "on-demand"}:
+            raise ValueError("invalid BETA bot control mode")
+        if self.bot_on_demand and self.browser_backend != "ipc":
+            raise ValueError("on-demand bot control requires the isolated IPC BETA")
         stage_mode = self.telegram_pairing_stage_mode
         if type(stage_mode) is not str or stage_mode not in {"off", "encrypted-only"}:
             raise ValueError("invalid Telegram staging mode")

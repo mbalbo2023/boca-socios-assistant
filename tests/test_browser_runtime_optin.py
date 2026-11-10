@@ -235,3 +235,136 @@ def test_full_beta_config_preflight_verifies_socket_only_when_explicitly_enabled
     assert code == (1 if expect_socket else 0)
     event = json.loads(capsys.readouterr().out)["event"]
     assert event == ("beta_config_unavailable" if expect_socket else "beta_config_ready")
+
+
+def test_bot_control_is_an_explicit_ssh_only_simulation_ipc_opt_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("BOCA_BOT_CONTROL", raising=False)
+    assert not Settings.from_environment().bot_on_demand
+    monkeypatch.setenv("BOCA_BOT_CONTROL", "on-demand")
+    assert Settings.from_environment().bot_on_demand
+    allowed = replace(_settings(tmp_path, "ipc"), bot_control="on-demand")
+    allowed.validate_beta()
+    for variant in (
+        replace(allowed, bot_control="ON-DEMAND"),
+        replace(allowed, bot_control=""),
+        replace(allowed, browser_backend="off"),
+        replace(allowed, site_bridge_mode="poll"),
+        replace(allowed, environment="production"),
+        replace(allowed, panel_origin="https://example.invalid"),
+        replace(allowed, engine_mode="on"),
+        replace(allowed, runtime_mode="live"),
+    ):
+        with pytest.raises(ValueError):
+            variant.validate_beta()
+
+
+def test_on_demand_cold_uses_real_ipc_port_without_inspecting_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = replace(_settings(tmp_path, "ipc"), bot_control="on-demand")
+    monkeypatch.setattr(
+        "boca_socios.browser.ipc_protocol.socket_identity",
+        lambda *_a, **_k: pytest.fail("cold panel touched the worker socket"),
+    )
+    monkeypatch.setattr(runtime_module.os, "geteuid", lambda: 10001)
+    monkeypatch.setattr(runtime_module.os, "getegid", lambda: 10001)
+    selected, timeout = runtime_module._browser_for_beta(settings)
+    assert isinstance(selected, UnixSyntheticBrowser)
+    assert timeout == 30
+    monkeypatch.setattr(runtime_module.os, "getegid", lambda: 10002)
+    with pytest.raises(ValueError, match="worker boundary"):
+        runtime_module._browser_for_beta(settings)
+
+
+@pytest.mark.parametrize("receipt", [None, "REQUESTED", "CLAIMED", "UNCERTAIN", "APPLIED"])
+def test_on_demand_reboot_opens_panel_but_never_recovers_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, receipt: str | None
+) -> None:
+    from uuid import uuid4
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from boca_socios.integration.beta import BetaCoordinator
+    from boca_socios.panel.lifecycle_intents import LifecycleIntentStore, host_marker
+    from boca_socios.storage.database import Database
+
+    legacy = _settings(tmp_path, "off")
+    legacy.master_key_file.write_bytes(base64.b64encode(b"k" * 32) + b"\n")
+    legacy.master_key_file.chmod(0o400)
+    assert legacy.passkey_credential_id_file is not None
+    assert legacy.passkey_public_key_der_file is not None
+    legacy.passkey_credential_id_file.write_bytes(b"local-test-credential")
+    public_key = ec.generate_private_key(ec.SECP256R1()).public_key()
+    legacy.passkey_public_key_der_file.write_bytes(
+        public_key.public_bytes(
+            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+    )
+    runtime_module.initialize_beta(legacy)
+    database = Database(legacy.db_path)
+    operation_id = str(uuid4())
+    if receipt is not None:
+        LifecycleIntentStore(database).request("bot", "start", operation_id)
+        with database.connection() as connection, connection:
+            for phase in ("CLAIMED", "UNCERTAIN", "APPLIED"):
+                if phase == "CLAIMED" and receipt == "REQUESTED":
+                    break
+                if phase == "UNCERTAIN" and receipt != "UNCERTAIN":
+                    continue
+                connection.execute(
+                    "INSERT INTO audit_events(audit_id,action) VALUES (?,?)",
+                    host_marker(operation_id, "bot", "start", phase),
+                )
+                if phase == receipt:
+                    break
+
+    def no_replay(*_a: object, **_k: object) -> None:
+        pytest.fail("cold boot started command recovery")
+
+    monkeypatch.setattr(BetaCoordinator, "recover", no_replay)
+    monkeypatch.setattr(
+        "boca_socios.browser.ipc_protocol.socket_identity",
+        lambda *_a, **_k: pytest.fail("cold boot accessed worker"),
+    )
+    actual_select = runtime_module._browser_for_beta
+
+    def controller_select(settings: Settings, supplied: object) -> tuple[object, float]:
+        with monkeypatch.context() as identity:
+            identity.setattr(runtime_module.os, "geteuid", lambda: 10001)
+            identity.setattr(runtime_module.os, "getegid", lambda: 10001)
+            return actual_select(settings, supplied)
+
+    monkeypatch.setattr(runtime_module, "_browser_for_beta", controller_select)
+    http_server = runtime_module._LoopbackHTTPWSGIServer
+    monkeypatch.setattr(
+        runtime_module,
+        "_LoopbackHTTPWSGIServer",
+        lambda _addr, handler: http_server(("127.0.0.1", 0), handler),
+    )
+    served = runtime_module.build_beta_server(
+        replace(legacy, browser_backend="ipc", bot_control="on-demand")
+    )
+    try:
+        assert served.runtime.commands.engine_stopped
+        assert served.runtime.ready
+        status: list[str] = []
+        response = served.server.get_app()(
+            {
+                "PATH_INFO": "/healthz",
+                "REQUEST_METHOD": "GET",
+                "wsgi.url_scheme": "http",
+                "HTTP_HOST": "localhost:8443",
+            },
+            lambda result, _headers: status.append(result),
+        )
+        assert response == [b"BOCA_BETA_READY"] and status == ["200 OK"]
+        with pytest.raises(RuntimeError, match="stopped"):
+            served.runtime.commands.begin(str(uuid4()), member_id="member", event_id="event")
+        assert not served.runtime.commands.stop_engine()
+        assert not served.runtime.commands.stop_engine()
+        assert served.runtime.commands.engine_stopped
+    finally:
+        served.close()

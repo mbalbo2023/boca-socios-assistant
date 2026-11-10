@@ -402,3 +402,60 @@ def test_ci_resolves_real_compose_overlay_and_validates_it_before_merge() -> Non
     assert workflow.index("Validate optional dual-service IPC Compose resolution") < workflow.index(
         "Lint"
     )
+
+
+def on_demand_model():
+    candidate = browser_model()
+    controller = candidate["services"]["controller"]
+    controller["restart"] = "unless-stopped"
+    controller["environment"]["BOCA_BOT_CONTROL"] = "on-demand"
+    controller["volumes"].append(
+        {
+            "type": "bind",
+            "source": "/home/boca-deploy/.boca-on-demand/socket",
+            "target": "/run/boca-bot-control",
+            "read_only": True,
+            "bind": {},
+        }
+    )
+    candidate["services"]["browser-worker"]["healthcheck"]["test"] = [
+        "CMD-SHELL",
+        "python -m boca_socios.browser.worker_health >/dev/null 2>&1",
+    ]
+    return candidate
+
+
+def test_on_demand_controller_survives_reboot_and_worker_stays_off() -> None:
+    valid(on_demand_model())
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("type", "volume"),
+        ("source", "/var/run/docker.sock"),
+        ("source", "/home/boca-deploy/.boca-on-demand"),
+        ("target", "/run/boca-browser-ipc"),
+        ("read_only", False),
+        ("bind", {"create_host_path": True}),
+        ("bind", {"propagation": "rshared"}),
+    ],
+)
+def test_on_demand_control_mount_has_exact_private_scope(field, value) -> None:
+    candidate = on_demand_model()
+    candidate["services"]["controller"]["volumes"][-1][field] = value
+    with pytest.raises(ContractError):
+        valid(candidate)
+
+
+def test_on_demand_cannot_silently_use_old_health_or_discard_control() -> None:
+    candidate = on_demand_model()
+    candidate["services"]["browser-worker"]["healthcheck"] = browser_model()["services"][
+        "browser-worker"
+    ]["healthcheck"]
+    with pytest.raises(ContractError):
+        valid(candidate)
+    candidate = on_demand_model()
+    del candidate["services"]["controller"]["environment"]["BOCA_BOT_CONTROL"]
+    with pytest.raises(ContractError):
+        valid(candidate)

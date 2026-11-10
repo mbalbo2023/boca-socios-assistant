@@ -181,6 +181,7 @@ def _lifecycle_controls(intent: LifecycleIntent | None, csrf: str, operation_id:
             "CLAIMED": "EN PROCESO. El host tomó la solicitud; aún no confirmó el resultado.",
             "APPLIED": "CONFIRMADA mediante recibo protegido del host; no es monitoreo continuo.",
             "REFUSED": "RECHAZADA sin efecto según recibo protegido del host.",
+            "FAILED": "FALLO confirmado mediante recibo protegido del host.",
             "UNCERTAIN": "INDETERMINADA. Prohibido repetir sin reconciliación protegida.",
         }
         observed = (
@@ -217,6 +218,58 @@ def _lifecycle_controls(intent: LifecycleIntent | None, csrf: str, operation_id:
         "El motor del bot se refiere a las simulaciones, no al servidor del panel.</p>"
         + forms
         + '<p><a href="/control">Actualizar solicitudes y recibos</a></p></section>'
+    )
+
+
+def bot_control(intent: LifecycleIntent | None, csrf: str, start_id: str, stop_id: str) -> bytes:
+    """Voice-friendly simulation controls. Only a protected receipt establishes outcome."""
+    observed = "Todavía no hay un recibo de inicio o detención del bot."
+    available = {"start", "stop"}
+    if intent is not None:
+        component = "bot" if intent.component == "bot" else "Chromium"
+        action = ("Inicio" if intent.target == "start" else "Detención") + " de " + component
+        if intent.work_start_id is not None:
+            action = "Detención automática del bot al finalizar la simulación"
+        states = {
+            "REQUESTED": "Pendiente de ejecución. Puede reenviar el aviso con el mismo botón.",
+            "CLAIMED": "En proceso. El ejecutor tomó la solicitud.",
+            "APPLIED": "El ejecutor confirmó la operación.",
+            "REFUSED": "El ejecutor rechazó la solicitud antes de aplicar cambios.",
+            "FAILED": "Fallo confirmado por el ejecutor.",
+            "UNCERTAIN": "Resultado incierto. Hace falta verificar el estado en el servidor.",
+        }
+        observed = f"{action}. {states[intent.status]} Solicitud de {intent.requested_at} UTC."
+        if intent.status in ("REQUESTED", "CLAIMED", "UNCERTAIN"):
+            available.clear()
+            if intent.component == "bot" and intent.status == "REQUESTED":
+                available.add(intent.target)  # Re-deliver a wake lost after commit.
+            if (intent.component, intent.target) == ("bot", "start") and intent.status in (
+                "REQUESTED",
+                "CLAIMED",
+            ):
+                available.add("stop")
+        elif intent.component == "bot" and intent.status == "APPLIED":
+            available.discard(intent.target)
+    buttons = []
+    for target, path, title, operation_id in (
+        ("start", "iniciar", "Iniciar bot", start_id),
+        ("stop", "detener", "Detener bot", stop_id),
+    ):
+        disabled = "" if target in available else " disabled"
+        buttons.append(
+            f'<form method="post" action="/control/bot/{path}">'
+            f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
+            f'<input type="hidden" name="operation_id" value="{escape(operation_id, quote=True)}">'
+            f'<button type="submit"{disabled}>{title}</button></form>'
+        )
+    return _page(
+        "Control del bot",
+        '<h1>Control del bot</h1><p role="status" aria-live="polite">'
+        + escape(observed)
+        + "</p>"
+        + "".join(buttons)
+        + '<p><a href="/control">Actualizar estado del bot</a></p>'
+        '<p><a href="/comandos">Elegir una simulación</a></p>',
     )
 
 

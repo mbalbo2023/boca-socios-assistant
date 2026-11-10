@@ -38,6 +38,7 @@ VERSION_V2 = "boca-cutover-a-terminal-v2"
 VERSION_V3 = "boca-cutover-a-terminal-v3"
 VERSION_V4 = "boca-cutover-a-terminal-v4"
 VERSION_V5 = "boca-cutover-a-terminal-v5"
+VERSION_V6 = "boca-cutover-a-terminal-v6"
 INTENT_VERSION = "boca-cutover-a-intent-v1"
 RECEIPT_DIR_NAME = ".boca-socios-cutover-receipts"
 MAX_RECEIPT_BYTES = 2048
@@ -72,6 +73,7 @@ class TerminalRecord:
     worker_oom_killed: bool | Literal["UNKNOWN"] | None = None
     worker_exit_signature: str | None = None
     worker_stderr_observation: str | None = None
+    idle_installed: bool = False
 
     @classmethod
     def from_receipt(cls, plan: CutoverPlan, receipt: CutoverReceipt) -> TerminalRecord:
@@ -111,6 +113,7 @@ class TerminalRecord:
             receipt.worker_oom_killed if receipt.failed_phase == "PREPARE_WORKER" else None,
             receipt.worker_exit_signature if receipt.failed_phase == "PREPARE_WORKER" else None,
             receipt.worker_stderr_observation if receipt.failed_phase == "PREPARE_WORKER" else None,
+            receipt.idle_installed,
         )
 
     def serialized(self) -> bytes:
@@ -124,6 +127,8 @@ class TerminalRecord:
             )
             or self.state not in ("ACCEPTED", "RECOVERED", "NO_GO")
             or self.cleanup not in ("ACCEPT", "NO_GO", "INDETERMINATE")
+            or type(self.idle_installed) is not bool
+            or (self.idle_installed and self.state != "ACCEPTED")
             or type(self.original_restored) is not bool
             or type(self.irreversible_commit_started) is not bool
             or any(
@@ -198,6 +203,9 @@ class TerminalRecord:
         if v5:
             payload["version"] = VERSION_V5
             payload["worker_stderr_observation"] = self.worker_stderr_observation
+        if self.idle_installed:
+            payload["version"] = VERSION_V6
+            payload["idle_installed"] = True
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
             "ascii"
         )
@@ -533,7 +541,7 @@ def reconcile_persisted(plan: CutoverPlan) -> Reconciliation:
             if not isinstance(payload, dict):
                 raise TerminalReceiptError("cutover stored terminal result schema invalid")
             version = payload.pop("version", None)
-            fields = set(TerminalRecord.__dataclass_fields__)
+            fields = set(TerminalRecord.__dataclass_fields__) - {"idle_installed"}
             v3_fields = {"worker_exit_code", "worker_oom_killed"}
             v4_fields = {"worker_exit_signature"}
             v5_fields = {"worker_stderr_observation"}
@@ -544,6 +552,8 @@ def reconcile_persisted(plan: CutoverPlan) -> Reconciliation:
                 VERSION_V3: fields - v4_fields - v5_fields,
                 VERSION_V4: fields - v5_fields,
                 VERSION_V5: fields,
+                VERSION_V6: fields - v2_fields - v3_fields - v4_fields - v5_fields
+                | {"idle_installed"},
             }.get(version)
             if expected is None or set(payload) != expected:
                 raise TerminalReceiptError("cutover stored terminal result fields untrusted")

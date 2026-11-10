@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from math import isfinite
 from time import time
+from typing import Literal
 from uuid import uuid4
 
 from boca_socios.browser.contracts import SimulationNotice, SimulationOutcome, SyntheticBrowserPort
@@ -21,6 +24,7 @@ from boca_socios.integration.command_store import (
 from boca_socios.integration.durable import DurableOfflineSimulation
 from boca_socios.integration.offline import StaticOutboxAdapter
 from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
+from boca_socios.panel.lifecycle_intents import LifecycleIntentStore
 from boca_socios.queue import OfflineQueueSimulator, SimulatorConfig
 from boca_socios.reservation_guard import ReservationAttemptGuard, ReservationState
 from boca_socios.storage.database import Database
@@ -31,7 +35,42 @@ __all__ = [
     "CommandConflict",
     "CommandSnapshot",
     "CommandState",
+    "OnDemandBotSession",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class OnDemandBotSession:
+    ledger: LifecycleIntentStore
+    check_worker: Callable[[], None]
+    wake: Callable[[str], None]
+
+    def require_start(self, status: Literal["CLAIMED", "APPLIED"]) -> str:
+        state = self.ledger.current()
+        if (
+            state is None
+            or state.component != "bot"
+            or state.target != "start"
+            or state.status != status
+        ):
+            raise RuntimeError("on-demand bot START unavailable")
+        self.check_worker()
+        return state.operation_id
+
+    def before_engine_start(self) -> None:
+        # Only the host's live claim can start this engine. An old APPLIED
+        # START on disk can never reopen it after a controller restart.
+        self.require_start("CLAIMED")
+
+    def finish(self, start_operation_id: str) -> None:
+        stop = self.ledger.request_work_stop(start_operation_id)
+        if stop is not None and stop.status == "REQUESTED":
+            try:
+                self.wake(stop.operation_id)
+            except OSError:
+                # The correlated STOP is durable. Its same UUID can be
+                # delivered again; no new work may enter this engine.
+                return
 
 
 class BetaCoordinator:
@@ -50,6 +89,7 @@ class BetaCoordinator:
         clock: Callable[[], float] = time,
         max_pending: int = 16,
         timeout_seconds: float = 5,
+        bot_session: OnDemandBotSession | None = None,
     ) -> None:
         if outbox.database is not database:
             raise ValueError("coordinator and outbox must share the same Database instance")
@@ -67,6 +107,8 @@ class BetaCoordinator:
         self._clock = clock
         self._max_pending = max_pending
         self._timeout = timeout_seconds
+        self._bot_session = bot_session
+        self._work_start_id: str | None = None
         self._store = CommandStore(database)
         self._guard = ReservationAttemptGuard(database)
         self._worker: asyncio.Task[None] | None = None
@@ -95,9 +137,23 @@ class BetaCoordinator:
     async def begin(self, command_id: str, intent: TicketIntent) -> CommandSnapshot:
         if self._closed or self._failed:
             raise RuntimeError("local command service is unavailable")
+        start_id = None
+        bind_work = None
+        if self._bot_session is not None:
+            start_id = self._bot_session.require_start("APPLIED")
+            if self._work_start_id is not None and self._work_start_id != start_id:
+                raise RuntimeError("on-demand bot session has changed")
+            ledger = self._bot_session.ledger
+            confirmed_start = start_id
+
+            def bind_work(connection: sqlite3.Connection, key: str) -> None:
+                ledger.bind_work(connection, confirmed_start, key)
+
         snapshot = self._store.enqueue(
-            command_id, intent, now=self._now(), max_pending=self._max_pending
+            command_id, intent, now=self._now(), max_pending=self._max_pending, bind_work=bind_work
         )
+        if snapshot.state is CommandState.ACCEPTED:
+            self._work_start_id = start_id
         self._kick()
         return snapshot
 
@@ -170,9 +226,22 @@ class BetaCoordinator:
 
     async def _drain(self) -> None:
         try:
+            may_run = None
+            if self._bot_session is not None:
+                start_id = self._work_start_id
+                if start_id is None:
+                    return
+                ledger = self._bot_session.ledger
+
+                def may_run(connection: sqlite3.Connection, key: str) -> bool:
+                    return ledger.may_run_work(connection, start_id, key)
+
             while not self._closed:
-                claimed = self._store.claim_next(now=self._now())
+                claimed = self._store.claim_next(now=self._now(), may_run=may_run)
                 if claimed is None:
+                    if self._bot_session is not None and self._work_start_id is not None:
+                        self._closed = True
+                        self._bot_session.finish(self._work_start_id)
                     break
                 record, intent = claimed
                 self._active_key, self._active_member = record.command_id, intent.member_id
@@ -205,13 +274,18 @@ class BetaCoordinator:
         if self._closed or (self._worker is not None and not self._worker.done()):
             raise RuntimeError("recovery requires an idle open service")
         try:
+            if self._bot_session is not None:
+                # A fresh START grants no authority to replay queued work
+                # from a lost controller or a previous stopped session.
+                self._store.stop_unclaimed(now=self._now())
             for snapshot in self._store.recoverable():
                 self._reconcile(snapshot)
         except Exception:
             self._failed = True
             raise RuntimeError("local command recovery failed") from None
         self._failed = False
-        self._kick()
+        if self._bot_session is None:
+            self._kick()
 
     async def wait_idle(self) -> None:
         if self._worker is not None:
@@ -220,6 +294,8 @@ class BetaCoordinator:
     async def close(self) -> None:
         self._closed = True
         try:
+            if self._bot_session is not None:
+                self._store.stop_unclaimed(now=self._now())
             if self._active_key is not None and self._active_member is not None:
                 self._store.stop(self._active_key, member_id=self._active_member, now=self._now())
         except Exception:

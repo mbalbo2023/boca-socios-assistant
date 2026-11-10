@@ -11,62 +11,36 @@ to the BETA controller; importing this module does not activate Chromium.
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from math import isfinite
-from pathlib import Path
 from typing import cast
 
 from boca_socios.browser.contracts import SimulationOutcome
 from boca_socios.browser.synthetic import PagePort, SyntheticTicketScenario
+from boca_socios.browser.worker_health import (
+    CGROUP,
+    CPU_MILLI_LIMIT,
+    MEMORY_LIMIT_BYTES,
+    PIDS_LIMIT,
+    WORKER_UID,
+    WorkerBoundaryError,
+    validate_worker_boundary,
+)
 
-CGROUP = Path("/sys/fs/cgroup")
-WORKER_UID = 10002
-MEMORY_LIMIT_BYTES = 768 * 1024 * 1024
-PIDS_LIMIT = 128
-CPU_MILLI_LIMIT = 1000
-
-
-class WorkerBoundaryError(RuntimeError):
-    """The isolated browser boundary or its lifecycle is not proven safe."""
-
+__all__ = [
+    "CGROUP",
+    "CPU_MILLI_LIMIT",
+    "MEMORY_LIMIT_BYTES",
+    "PIDS_LIMIT",
+    "WORKER_UID",
+    "OnDemandSyntheticBrowser",
+    "PageFactory",
+    "WorkerBoundaryError",
+    "validate_worker_boundary",
+]
 
 PageFactory = Callable[[], AbstractAsyncContextManager[PagePort]]
-
-
-def validate_worker_boundary(
-    *,
-    root: Path = CGROUP,
-    uid: int | None = None,
-    gid: int | None = None,
-) -> None:
-    """Check effective isolated-worker identity and bounded cgroup v2 limits.
-
-    The host deployment gate must separately enforce Docker ``--network none``.
-    A cgroup check does not prove network isolation or start a container.
-    """
-    effective_uid = os.geteuid() if uid is None else uid
-    effective_gid = os.getegid() if gid is None else gid
-    if effective_uid != WORKER_UID or effective_gid != WORKER_UID:
-        raise WorkerBoundaryError("worker_identity_unverified")
-    try:
-        memory_limit = int((root / "memory.max").read_text(encoding="ascii").strip())
-        pid_limit = int((root / "pids.max").read_text(encoding="ascii").strip())
-        cpu = (root / "cpu.max").read_text(encoding="ascii").split()
-        if len(cpu) != 2:
-            raise ValueError("invalid CPU cgroup")
-        cpu_quota, cpu_period = map(int, cpu)
-    except (OSError, ValueError):
-        raise WorkerBoundaryError("worker_limits_unverified") from None
-    if (
-        not 0 < memory_limit <= MEMORY_LIMIT_BYTES
-        or not 0 < pid_limit <= PIDS_LIMIT
-        or not 0 < cpu_quota
-        or not 0 < cpu_period
-        or cpu_quota * 1000 > cpu_period * CPU_MILLI_LIMIT
-    ):
-        raise WorkerBoundaryError("worker_limits_unverified")
 
 
 class OnDemandSyntheticBrowser:
