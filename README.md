@@ -1,8 +1,8 @@
 # Boca Socios Assistant
 
-## Captura del arranque en CI
+## Diagnóstico del arranque del worker
 
-El job de imagen prueba en Docker efímero una captura preparada antes de arrancar un proceso ficticio. El worker físico del intento #893 sigue con causa interna desconocida. [ADR0221](docs/ADR/0221-r131-worker-start-capture-lab.md).
+El intento #893 terminó con código 1 antes del primer healthcheck. El laboratorio R131 reprodujo fallos distintos y comprobó la captura previa al arranque en Docker. R132 incorpora esa captura al Cutover protegido y exige verificar desde el controlador la identidad del socket del worker. La evidencia de cada ejecución física se registra en [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417) y [#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45). [ADR0222](docs/ADR/0222-r132-worker-start-custody.md).
 
 ## R127 — captura preparada para ExitCode=1 del worker (CODE_ONLY, no Cutover)
 

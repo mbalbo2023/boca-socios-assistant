@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol, get_args
 
 from boca_socios.host_boca_cleanup import BocaJobLease, CleanupReceipt, protected_boca_job_lease
+from boca_socios.worker_start_capture import is_capture_result
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
@@ -46,6 +47,7 @@ WORKER_PRIMARY_PHASES: frozenset[str] = frozenset(
         "PULL",
         "IPC",
         "CREATE",
+        "CAPTURE_PREPARE",
         "START",
         "HEALTH",
         "HEALTH_WAIT",
@@ -149,6 +151,7 @@ class CutoverReceipt:
     worker_exit_code: int | Literal["UNKNOWN"] | None = None
     worker_oom_killed: bool | Literal["UNKNOWN"] | None = None
     worker_exit_signature: str | None = None
+    worker_stderr_observation: str | None = None
 
     @property
     def accepted(self) -> bool:
@@ -261,6 +264,7 @@ def run_cutover_a(
         worker_exit_code: int | Literal["UNKNOWN"] | None = None
         worker_oom_killed: bool | Literal["UNKNOWN"] | None = None
         worker_exit_signature: str | None = None
+        worker_stderr_observation: str | None = None
         try:
             backend.attest_original(plan, lease)
             # PREPARE consumption is durable under the SAME flock, strictly
@@ -315,6 +319,16 @@ def run_cutover_a(
                         maybe_signature = getattr(exc, "exit_signature", None)
                         if valid_worker_exit_signature(maybe_signature):
                             worker_exit_signature = maybe_signature
+                            observation = getattr(exc, "capture_result", None)
+                            captured_id = getattr(exc, "capture_worker_id", None)
+                            if (
+                                getattr(exc, "capture_recorded", False) is True
+                                and type(captured_id) is str
+                                and _DIGEST.fullmatch(captured_id)
+                                and captured_id != plan.legacy_id
+                                and is_capture_result(observation)
+                            ):
+                                worker_stderr_observation = observation
             # Fail closed; only backend's independent exact-ID reinspection may
             # report positive recovery.  Never guess what a lost Docker receipt did.
             if effect_started and not commit_started:
@@ -379,6 +393,7 @@ def run_cutover_a(
             worker_exit_code if state != "ACCEPTED" else None,
             worker_oom_killed if state != "ACCEPTED" else None,
             worker_exit_signature if state != "ACCEPTED" else None,
+            worker_stderr_observation if state != "ACCEPTED" else None,
         )
         # O_EXCL result must be persisted *before releasing the SAME flock*.
         # Callers cannot safely write it after run_cutover_a returns. Missing

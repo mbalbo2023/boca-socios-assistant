@@ -9,11 +9,14 @@ from __future__ import annotations
 import copy
 import hashlib
 import re
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from boca_socios import host_first_deploy as host
+from boca_socios import worker_start_capture as stream_capture
 
 LEGACY_SHA = "a" * 40
 TARGET_SHA = "b" * 40
@@ -454,7 +457,7 @@ def _worker_preparation_fake(
     def runner(*args: str, **kwargs: object) -> str:
         if args[:2] == ("docker", "ps"):
             calls.append(args)
-            assert args[-1] == "name=^/boca-socios-browser-worker-1$"
+            assert args[-1] in ("name=^/boca-socios-browser-worker-1$", f"id={WORKER_ID}")
             return WORKER_ID if worker["exists"] else ""
         if args[:2] == ("docker", "create"):
             calls.append(args)
@@ -501,6 +504,14 @@ def _worker_preparation_fake(
     monkeypatch.setattr(host, "_browser_create_ipc_volume", create_volume)
     monkeypatch.setattr(host, "_browser_validate_ipc_volume", lambda _id: None)
     monkeypatch.setattr(host, "_browser_worker_postflight", worker_postflight)
+    monkeypatch.setattr(host, "_cutover_capture_preflight", lambda *_args: None)
+
+    def attach(path: Path, cid: str):
+        assert path == host.ROOTLESS_SOCKET and cid == WORKER_ID
+        assert worker["exists"] and not worker["running"]
+        return nullcontext(SimpleNamespace(finish=lambda: stream_capture.CaptureResult.EMPTY))
+
+    monkeypatch.setattr(stream_capture, "attach_output", attach)
     monkeypatch.setattr(
         host,
         "_names",
@@ -520,6 +531,7 @@ def _prepare_worker() -> str:
         CONFIG_HASH,
         SECCOMP_SHA,
         SECCOMP,
+        lambda _cid, _observation: None,
     )
 
 

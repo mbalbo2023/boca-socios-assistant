@@ -553,15 +553,16 @@
         "tests/test_cutover_a_go.py::test_failed_ssh_phase_survives_real_prior_observation_without_host_acceptance",
         "tests/test_cutover_a_go.py::test_failed_ssh_observation_prefix_must_be_exact_and_single",
         "tests/test_host_boca_cutover.py::test_precommit_failure_recovers_before_selective_postflight",
-        "tests/test_host_boca_cutover_cli.py::test_cli_nonacceptance_reports_only_allowlisted_failure_phase"
+        "tests/test_host_boca_cutover_cli.py::test_cli_nonacceptance_reports_only_allowlisted_failure_phase",
+        "tests/test_worker_capture_projection.py::test_runner_capture_is_closed_and_bound_to_the_failed_ssh"
       ]
     },
     {
       "id": "RCA-417",
       "issue": 417,
       "fix_pr": 426,
-      "root_cause": "R84 duplicated worker pulls without storage/inode admission or cross-dispatch uniqueness. R85 found the Cutover observer discarded SSH failure provenance and capped its valid 710-byte READY at 640. Neither finding proves the physical causes of #807 or #815.",
-      "prevention": "Keep R50 capacity and one-shot gates; on the runner classify only exact bounded redacted observer failures and verify a 710-byte canonical READY with all SHA/digest/ID fields. R84 fix PR #426 preceded the R85 continuation in the same issue.",
+      "root_cause": "R84 duplicated worker pulls without storage/inode admission or cross-dispatch uniqueness. R85 discarded SSH failure provenance and capped its 710-byte READY at 640. In #893 the adapter removed the worker without observing its streams. Distinct process failures reproduce its V4 metadata.",
+      "prevention": "Keep R84 admission/uniqueness and the R85 bounded 710-byte READY. Subscribe before start, persist an enum bound to attempt, image and CID before removal, and verify run/source on readback. Historical #893 remains unattributed.",
       "regression_tests": [
         "tests/test_r84_worker_storage_admission.py::test_worker_preflight_rejects_below_initial_floor_before_any_pull",
         "tests/test_r84_worker_storage_admission.py::test_worker_preflight_blocks_second_pull_on_low_controller_residual",

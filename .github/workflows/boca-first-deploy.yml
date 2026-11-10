@@ -2839,29 +2839,9 @@ jobs:
           gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/checks.json"
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=100" > "$RUNNER_TEMP/boca-dispatch-v3/ci.json"
           python scripts/check_boca_deploy_dispatch.py "$RUNNER_TEMP/boca-dispatch-v3"
-          test -s "$RUNNER_TEMP/boca-cutover-a-review.pyz"
-          test -s "$RUNNER_TEMP/boca-cutover-a-invocation.token"
-          test -s "$RUNNER_TEMP/boca-cutover-a-approved.digest"
-          IFS= read -r host_token < "$RUNNER_TEMP/boca-cutover-a-invocation.token"
-          IFS= read -r approved_digest < "$RUNNER_TEMP/boca-cutover-a-approved.digest"
-          bundle_digest="$(sha256sum "$RUNNER_TEMP/boca-cutover-a-review.pyz" | cut -d' ' -f1)"
-          # Rebind one SSH process to the bytes validated by the independent GO.
-          remote_command="$(python3 - "$host_token" "$approved_digest" "$bundle_digest" <<'PY'
-          import shlex
-          import sys
-
-          from boca_socios.host_boca_cutover_cli import CutoverInvocation
-
-          token, approved, bundle = sys.argv[1:]
-          invocation = CutoverInvocation.decode(token)
-          if not invocation.dispatch_v3 or invocation.bundle_sha256 != bundle or invocation.go_binding_sha256 != approved:
-              raise SystemExit("BOCA_CUTOVER_A GO/ZIP mismatch before SSH")
-          with open("scripts/boca_protected_memfd_bootstrap.py", encoding="utf-8") as script:
-              source = script.read()
-          args = ["python3", "-c", source, bundle, "cutover-a-dispatch-v3", token]
-          print("BOCA_CUTOVER_A_DISPATCH_BINDING_SHA256=" + shlex.quote(approved) + " " + shlex.join(args))
-          PY
-          )"
+          # The builder binds BOCA_CUTOVER_A_DISPATCH_BINDING_SHA256, the exact ZIP,
+          # and this run/SHA before constructing the quoted command.
+          remote_command="$(python3 scripts/check_cutover_a_go.py --dispatch-command cutover-a-dispatch-v3)"
           # A single SSH process retains the Boca lease and FIFO, permanent
           # intent/result and selective postflight in its own try/finally.
           # On SSH loss: NO_GO, no cleanup guesses and no retry in this job.
@@ -2875,11 +2855,29 @@ jobs:
             < "$RUNNER_TEMP/boca-cutover-a-review.pyz" \
             > "$RUNNER_TEMP/boca-cutover-a-host.receipt" 2>/dev/null || host_ssh_rc=$?
           if [[ "$host_ssh_rc" -ne 0 ]]; then
+            printf 'capture_readback=true\n' >> "$GITHUB_OUTPUT" || true
             if ! BOCA_CUTOVER_A_SSH_RC="$host_ssh_rc" python scripts/check_cutover_a_go.py --report-host-failure | tee -a "$GITHUB_STEP_SUMMARY"; then
               printf 'BOCA_CUTOVER_A_SSH_DIAGNOSTIC state=NO_GO diagnostic=UNVERIFIED host=UNVERIFIED no_retry=true\n' >> "$GITHUB_STEP_SUMMARY"
             fi
             exit "$host_ssh_rc"
           fi
+      - name: Read the same failed worker capture from its immutable Boca marker
+        if: ${{ failure() && !cancelled() && inputs.operation == 'cutover-a-apply' && steps.cutover_go_preflight.outcome == 'success' && steps.cutover_host_apply.outcome == 'failure' && steps.cutover_host_apply.outputs.capture_readback == 'true' }}
+        env:
+          PYTHONPATH: src:scripts
+        run: |
+          set -euo pipefail
+          # Only the verified reader's finite projection can reach either output.
+          # Accept it only after SSH and the bounded parser have both completed successfully.
+          if ! remote_command="$(python3 scripts/check_cutover_a_go.py --dispatch-command cutover-a-capture-readback-v3)" ||
+             ! evidence="$(timeout --signal=TERM --kill-after=3s 30s ssh \
+                 -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
+                 boca-target "$remote_command" < "$RUNNER_TEMP/boca-cutover-a-review.pyz" 2>/dev/null \
+                 | python3 -m boca_socios.host_cutover_capture_readback verify)"; then
+            printf 'BOCA_WORKER_CAPTURE_READBACK state=NO_GO receipt=UNVERIFIED cleanup=UNVERIFIED retry=NO_GO\n' | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf '%s\n' "$evidence" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Fail closed on absent or ambiguous Cutover A host terminal receipt
         if: ${{ always() && inputs.operation == 'cutover-a-apply' }}
         env:

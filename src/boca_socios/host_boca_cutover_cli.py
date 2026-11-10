@@ -27,6 +27,7 @@ from boca_socios.host_boca_cutover import (
     valid_worker_exit_evidence,
     valid_worker_exit_signature,
 )
+from boca_socios.worker_start_capture import is_capture_result
 
 VERSION = "boca-cutover-a-host-invocation-v1"
 VERSION_PREPARED = "boca-cutover-a-host-invocation-v2"
@@ -267,6 +268,15 @@ def run_cli(
                     ) or not valid_worker_exit_signature(receipt.worker_exit_signature):
                         raise CutoverCliError("Cutover A worker exit v4 metadata invalid")
                     line += " signature=" + receipt.worker_exit_signature
+                if receipt.worker_stderr_observation is not None:
+                    if not valid_worker_exit_signature(
+                        receipt.worker_exit_signature
+                    ) or not is_capture_result(receipt.worker_stderr_observation):
+                        raise CutoverCliError("Cutover A worker capture invalid")
+                    line += (
+                        f" stderr_observation={receipt.worker_stderr_observation}"
+                        f" run={invocation.plan.attempt_id} sha={invocation.plan.target_sha}"
+                    )
                 print(line)
             # A bounded phase hint only; never an authenticated result.
             if receipt.failed_phase in CUTOVER_FAILURE_PHASES:

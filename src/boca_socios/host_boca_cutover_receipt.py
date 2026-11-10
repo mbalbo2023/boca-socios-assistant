@@ -31,14 +31,17 @@ from boca_socios.host_boca_cutover import (
     valid_worker_exit_evidence,
     valid_worker_exit_signature,
 )
+from boca_socios.worker_start_capture import is_capture_result
 
 VERSION = "boca-cutover-a-terminal-v1"
 VERSION_V2 = "boca-cutover-a-terminal-v2"
 VERSION_V3 = "boca-cutover-a-terminal-v3"
 VERSION_V4 = "boca-cutover-a-terminal-v4"
+VERSION_V5 = "boca-cutover-a-terminal-v5"
 INTENT_VERSION = "boca-cutover-a-intent-v1"
 RECEIPT_DIR_NAME = ".boca-socios-cutover-receipts"
 MAX_RECEIPT_BYTES = 2048
+MAX_DIRECTORY_ENTRIES = 2048
 MIN_FREE_BYTES = 1024 * 1024
 MIN_FREE_INODES = 8
 PERSISTENT_FS = frozenset({"ext4", "xfs", "btrfs", "zfs", "f2fs", "bcachefs"})
@@ -68,6 +71,7 @@ class TerminalRecord:
     worker_exit_code: int | Literal["UNKNOWN"] | None = None
     worker_oom_killed: bool | Literal["UNKNOWN"] | None = None
     worker_exit_signature: str | None = None
+    worker_stderr_observation: str | None = None
 
     @classmethod
     def from_receipt(cls, plan: CutoverPlan, receipt: CutoverReceipt) -> TerminalRecord:
@@ -106,6 +110,7 @@ class TerminalRecord:
             receipt.worker_exit_code if receipt.failed_phase == "PREPARE_WORKER" else None,
             receipt.worker_oom_killed if receipt.failed_phase == "PREPARE_WORKER" else None,
             receipt.worker_exit_signature if receipt.failed_phase == "PREPARE_WORKER" else None,
+            receipt.worker_stderr_observation if receipt.failed_phase == "PREPARE_WORKER" else None,
         )
 
     def serialized(self) -> bytes:
@@ -162,6 +167,9 @@ class TerminalRecord:
         v4 = self.worker_exit_signature is not None
         if v4 and (not v3 or not valid_worker_exit_signature(self.worker_exit_signature)):
             raise TerminalReceiptError("cutover worker exit v4 signature schema invalid")
+        v5 = self.worker_stderr_observation is not None
+        if v5 and (not v4 or not is_capture_result(self.worker_stderr_observation)):
+            raise TerminalReceiptError("cutover worker stderr observation schema invalid")
         # NO_GO is deliberately broad: an old ID may be parked, restored or
         # already gone, with positive/negative/unknown inventory. Preserve the
         # genuine uncertainty rather than rejecting an incident's evidence.
@@ -187,6 +195,9 @@ class TerminalRecord:
             payload["worker_oom_killed"] = self.worker_oom_killed
         if v4:
             payload["worker_exit_signature"] = self.worker_exit_signature
+        if v5:
+            payload["version"] = VERSION_V5
+            payload["worker_stderr_observation"] = self.worker_stderr_observation
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
             "ascii"
         )
@@ -195,8 +206,12 @@ class TerminalRecord:
         return raw
 
 
-def _name(attempt_id: str, kind: Literal["intent", "result"] = "result") -> str:
-    if not cleanup.ATTEMPT_ID.fullmatch(attempt_id) or kind not in ("intent", "result"):
+def _name(attempt_id: str, kind: Literal["intent", "result", "worker-start"] = "result") -> str:
+    if not cleanup.ATTEMPT_ID.fullmatch(attempt_id) or kind not in (
+        "intent",
+        "result",
+        "worker-start",
+    ):
         raise TerminalReceiptError("cutover immutable run ID/marker kind invalid")
     return f"boca-cutover-a-{kind}-{attempt_id}.json"
 
@@ -330,8 +345,11 @@ def _directory(*, create: bool = False) -> int:
         ):
             raise TerminalReceiptError("cutover persistent receipt directory unsafe")
         entries = os.listdir(child)
-        if len(entries) > 2048 or any(
-            re.fullmatch(r"boca-cutover-a-(?:intent|result)-[1-9][0-9]{0,19}\.json", name) is None
+        if len(entries) > MAX_DIRECTORY_ENTRIES or any(
+            re.fullmatch(
+                r"boca-cutover-a-(?:intent|result|worker-start)-[1-9][0-9]{0,19}\.json", name
+            )
+            is None
             for name in entries
         ):
             raise TerminalReceiptError("cutover persistent receipt directory has unknown entries")
@@ -435,15 +453,37 @@ def prepare_destination(plan: CutoverPlan, lease: cleanup.BocaJobLease) -> str:
     raw = _intent_bytes(plan)
     folder = _directory(create=True)
     try:
-        try:
-            os.stat(_name(plan.attempt_id), dir_fd=folder, follow_symlinks=False)
-        except FileNotFoundError:
-            pass
-        else:
-            raise TerminalReceiptError("cutover exact attempt already has a terminal marker")
+        # A failed start can add three files to the existing bounded inventory:
+        # intent, capture before removal and final terminal.
+        if len(os.listdir(folder)) + 3 > MAX_DIRECTORY_ENTRIES:
+            raise TerminalReceiptError("cutover persistent receipt inventory full")
+        for marker in (_name(plan.attempt_id), _name(plan.attempt_id, "worker-start")):
+            try:
+                os.stat(marker, dir_fd=folder, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            raise TerminalReceiptError(
+                "cutover exact attempt already has a terminal or worker marker"
+            )
         return _create_once(folder, _name(plan.attempt_id, "intent"), raw)
     finally:
         os.close(folder)
+
+
+def _check_worker_marker(
+    folder: int, plan: CutoverPlan, intent: bytes, record: TerminalRecord
+) -> None:
+    if record.worker_stderr_observation is None:
+        return
+    from boca_socios.worker_start_receipt import _read_bound_marker
+
+    cid, observation = _read_bound_marker(folder, plan, intent)
+    if observation != record.worker_stderr_observation or (
+        record.worker_id is not None and record.worker_id != cid
+    ):
+        raise TerminalReceiptError(
+            "cutover terminal conflicts with pre-compensation worker capture"
+        )
 
 
 def write_once(record: TerminalRecord, *, plan: CutoverPlan, lease: cleanup.BocaJobLease) -> str:
@@ -463,6 +503,7 @@ def write_once(record: TerminalRecord, *, plan: CutoverPlan, lease: cleanup.Boca
     folder = _directory()
     try:
         _read_exact(folder, _name(plan.attempt_id, "intent"), intent)
+        _check_worker_marker(folder, plan, intent, record)
         return _create_once(folder, _name(plan.attempt_id), raw)
     finally:
         os.close(folder)
@@ -495,12 +536,14 @@ def reconcile_persisted(plan: CutoverPlan) -> Reconciliation:
             fields = set(TerminalRecord.__dataclass_fields__)
             v3_fields = {"worker_exit_code", "worker_oom_killed"}
             v4_fields = {"worker_exit_signature"}
+            v5_fields = {"worker_stderr_observation"}
             v2_fields = {"worker_primary_phase", "worker_compensation"}
             expected = {
-                VERSION: fields - v2_fields - v3_fields - v4_fields,
-                VERSION_V2: fields - v3_fields - v4_fields,
-                VERSION_V3: fields - v4_fields,
-                VERSION_V4: fields,
+                VERSION: fields - v2_fields - v3_fields - v4_fields - v5_fields,
+                VERSION_V2: fields - v3_fields - v4_fields - v5_fields,
+                VERSION_V3: fields - v4_fields - v5_fields,
+                VERSION_V4: fields - v5_fields,
+                VERSION_V5: fields,
             }.get(version)
             if expected is None or set(payload) != expected:
                 raise TerminalReceiptError("cutover stored terminal result fields untrusted")
@@ -514,6 +557,7 @@ def reconcile_persisted(plan: CutoverPlan) -> Reconciliation:
                 or result.legacy_id != plan.legacy_id
             ):
                 raise TerminalReceiptError("cutover stored terminal result conflicts with intent")
+            _check_worker_marker(folder, plan, intent, result)
         except (UnicodeError, json.JSONDecodeError, TypeError) as exc:
             raise TerminalReceiptError("cutover stored terminal result malformed") from exc
         return "RECORD_PRESENT_RUNTIME_UNVERIFIED"
@@ -528,11 +572,14 @@ def verify_persisted_exact(plan: CutoverPlan, receipt: CutoverReceipt) -> None:
     ACCEPTED CLI response. Reconcile the immutable source intent and every
     serialized field against the current in-process CutoverReceipt.
     """
-    expected = TerminalRecord.from_receipt(plan, receipt).serialized()
+    record = TerminalRecord.from_receipt(plan, receipt)
+    expected = record.serialized()
+    intent = _intent_bytes(plan)
     folder = _directory()
     try:
-        _read_exact(folder, _name(plan.attempt_id, "intent"), _intent_bytes(plan))
+        _read_exact(folder, _name(plan.attempt_id, "intent"), intent)
         _read_exact(folder, _name(plan.attempt_id), expected)
+        _check_worker_marker(folder, plan, intent, record)
     finally:
         os.close(folder)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from collections.abc import Mapping
 from copy import deepcopy
 from typing import cast
@@ -349,6 +350,7 @@ def validate_beta_browser_contract(
             "init",
             "restart",
             "stop_grace_period",
+            "logging",
             "environment",
             "labels",
             "volumes",
@@ -376,6 +378,7 @@ def validate_beta_browser_contract(
         "init": True,
         "restart": "no",
         "stop_grace_period": "8s",
+        "logging": {"driver": "none"},
         "network_mode": "none",
         "cgroup": "private",
         "ipc": "private",
@@ -393,7 +396,7 @@ def validate_beta_browser_contract(
         # Compose JSON writes integral CPU quota as the JSON integer 1.
         "cpus": 1,
         "healthcheck": {
-            "test": ["CMD", "python", "-c", _BROWSER_HEALTH],
+            "test": ["CMD-SHELL", f"python -c {shlex.quote(_BROWSER_HEALTH)} >/dev/null 2>&1"],
             "interval": "2s",
             "timeout": "3s",
             "retries": 3,

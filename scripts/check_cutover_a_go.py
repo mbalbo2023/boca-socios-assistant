@@ -44,6 +44,7 @@ from boca_socios.prepared_go_runner import (
     verify_legacy_prepared_go,
 )
 from boca_socios.release_manifest import validate_manifest
+from boca_socios.worker_start_capture import is_capture_result
 
 VERSION = "boca-cutover-a-go-v1"
 REPOSITORY = "mbalbo2023/boca-socios-assistant"
@@ -674,6 +675,7 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
     worker_exit_code_claim = "UNKNOWN"
     worker_oom_claim = "UNKNOWN"
     worker_exit_signature_claim = ""
+    worker_observation_claim = ""
     if raw.endswith(recorded):
         prefix = raw[: -len(recorded)]
         observe = _CUTOVER_OBSERVE_PREFIX.match(prefix)
@@ -693,9 +695,21 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
             rb"(?: signature=((?:EMPTY|PRESENT_UNCLASSIFIED|UNKNOWN)\."
             rb"(?:EXITED|DEAD|OTHER|UNKNOWN)\."
             rb"(?:EARLY_LT_5S|LATE_GE_5S|UNKNOWN)\."
-            rb"(?:NOT_RUN|RAN|UNKNOWN)))?\n",
+            rb"(?:NOT_RUN|RAN|UNKNOWN))"
+            rb"(?: stderr_observation=([A-Z_]{2,48}) "
+            rb"run=([1-9][0-9]{0,19}) sha=([0-9a-f]{40}))?)?\n",
             prefix,
         )
+        if worker_v3 is not None and worker_v3.group(6) is not None:
+            if not (
+                ssh_rc == 3
+                and is_capture_result(worker_v3.group(6).decode("ascii"))
+                and worker_v3.group(7).decode("ascii") == environment.get("GITHUB_RUN_ID")
+                and worker_v3.group(8).decode("ascii")
+                == environment.get("GITHUB_SHA")
+                == environment.get("BOCA_SOURCE_SHA")
+            ):
+                worker_v3 = None
         valid_v3 = (
             worker_v3 is not None
             and worker_v3.group(1) == b"HEALTH_EXITED"
@@ -738,6 +752,8 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
                                 worker_oom_claim = worker_v3.group(4).decode("ascii")
                                 if worker_v3.group(5) is not None:
                                     worker_exit_signature_claim = worker_v3.group(5).decode("ascii")
+                                if worker_v3.group(6) is not None:
+                                    worker_observation_claim = worker_v3.group(6).decode("ascii")
     elif raw == unverified:
         host_claim = "NO_GO_UNVERIFIED"
     # This is a code-path inference from an allowlisted HOST CLAIM, never a
@@ -769,7 +785,12 @@ def classify_cutover_ssh_failure(environment: Mapping[str, str]) -> str:
             else ""
         )
         + f"worker_start_ack_claim={worker_start_ack_claim} "
-        f"worker_internal_cause=UNKNOWN worker_cause_evidence={worker_cause_evidence} "
+        + (
+            f"worker_stderr_observation_claim={worker_observation_claim} "
+            if worker_observation_claim
+            else ""
+        )
+        + f"worker_internal_cause=UNKNOWN worker_cause_evidence={worker_cause_evidence} "
         "phase=UNVERIFIED "
         "host=UNVERIFIED terminal=UNVERIFIED no_retry=true"
     )
@@ -860,7 +881,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prepared-from-actions", action="store_true")
     parser.add_argument("--assert-host-receipt", action="store_true")
     parser.add_argument("--report-host-failure", action="store_true")
+    parser.add_argument(
+        "--dispatch-command", choices=("cutover-a-dispatch-v3", "cutover-a-capture-readback-v3")
+    )
     args = parser.parse_args(argv)
+    if args.dispatch_command:
+        from boca_socios.host_cutover_capture_readback import command
+
+        if (
+            args.request_path is not None
+            or args.from_actions
+            or args.prepared_from_actions
+            or args.assert_host_receipt
+            or args.report_host_failure
+        ):
+            return 1
+        try:
+            print(command(args.dispatch_command, os.environ, read_bounded=_read_bounded))
+        except (OSError, ValueError, KeyError, TypeError):
+            print("BOCA_CUTOVER_A_DISPATCH_COMMAND state=NO_GO", file=sys.stderr)
+            return 1
+        return 0
     try:
         if args.report_host_failure:
             if (

@@ -31,6 +31,10 @@ EXPECTED_ENTRIES = frozenset(
         "boca_socios/host_boca_cutover_backend.py",
         "boca_socios/host_boca_cutover_cli.py",
         "boca_socios/host_boca_cutover_receipt.py",
+        "boca_socios/worker_start_capture.py",
+        "boca_socios/worker_start_receipt.py",
+        "boca_socios/host_cutover_capture_readback.py",
+        "boca_socios/host_cutover_ipc_probe.py",
         "boca_socios/host_cutover_stage.py",
         "scripts/__init__.py",
         "scripts/host_cutover_postapply_reconcile.py",
@@ -87,13 +91,12 @@ PREFLIGHT_ENTRIES = frozenset(
     }
 )
 MAX_ZIP = 512_000
-# R127 source ceilings match the measured builder limits; compressed caps remain unchanged.
-# Exact entry allowlist/digest and independent 512k compressed cap unchanged.
-MAX_UNCOMPRESSED = 886_000
+# R132 source bounds match the builder. Each variant checks its own entry set and digest.
+MAX_UNCOMPRESSED = 926_000
 RECOVERY_MAX_ZIP = 128_000
 RECOVERY_MAX_UNCOMPRESSED = 256_000
 PREFLIGHT_MAX_ZIP = 128_000
-PREFLIGHT_MAX_UNCOMPRESSED = 484_000
+PREFLIGHT_MAX_UNCOMPRESSED = 492_000
 
 
 def verify(

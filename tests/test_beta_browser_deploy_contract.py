@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import runpy
+import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -15,6 +16,7 @@ from boca_socios.deploy_contract import (
     validate_beta_browser_contract,
     validate_beta_contract,
 )
+from boca_socios.host_first_deploy import _cutover_worker_create_argv
 from test_beta_deploy_contract import ORIGIN, OWNER, beta_model
 from test_deploy_contract import IMAGE
 
@@ -54,6 +56,7 @@ def browser_model() -> dict[str, object]:
         "init": True,
         "restart": "no",
         "stop_grace_period": "8s",
+        "logging": {"driver": "none"},
         "environment": {
             "BOCA_ENVIRONMENT": "staging",
             "BOCA_RUNTIME_MODE": "simulation",
@@ -84,7 +87,7 @@ def browser_model() -> dict[str, object]:
         "mem_limit": "805306368",
         "cpus": 1,
         "healthcheck": {
-            "test": ["CMD", "python", "-c", WORKER_HEALTH],
+            "test": ["CMD-SHELL", f"python -c '{WORKER_HEALTH}' >/dev/null 2>&1"],
             "interval": "2s",
             "timeout": "3s",
             "retries": 3,
@@ -111,6 +114,60 @@ def test_versioned_browser_overlay_passes_but_legacy_singleton_rejects_it() -> N
         valid(beta_model())
 
 
+def test_worker_cannot_inherit_daemon_logging() -> None:
+    candidate = browser_model()
+    del candidate["services"]["browser-worker"]["logging"]  # type: ignore[index]
+    with pytest.raises(ContractError):
+        valid(candidate)
+
+
+@pytest.mark.parametrize(
+    "test",
+    [
+        ["CMD", "python", "-c", WORKER_HEALTH],
+        ["CMD-SHELL", f"python -c '{WORKER_HEALTH}' >/dev/null"],
+        ["CMD-SHELL", f"python -c '{WORKER_HEALTH}' 2>&1 >/dev/null"],
+        ["CMD-SHELL", f"python -c '{WORKER_HEALTH}' >/dev/null 2>&1 || true"],
+    ],
+)
+def test_worker_health_rejects_output_or_masked_exit(test: list[str]) -> None:
+    candidate = browser_model()
+    candidate["services"]["browser-worker"]["healthcheck"]["test"] = test  # type: ignore[index]
+    with pytest.raises(ContractError):
+        valid(candidate)
+
+
+@pytest.mark.parametrize("status", [0, 19])
+def test_validated_worker_health_silences_both_streams_and_preserves_exit(
+    status: int, tmp_path: Path
+) -> None:
+    candidate = browser_model()
+    valid(candidate)
+    check = candidate["services"]["browser-worker"]["healthcheck"]["test"]  # type: ignore[index]
+    argv = _cutover_worker_create_argv(BROWSER_IMAGE, "a" * 40, ATTEMPT, "c" * 64)
+    command = argv[argv.index("--health-cmd") + 1]
+    assert check == ["CMD-SHELL", command]
+    # Only this fixture can resolve as python. The protected modules are never loaded.
+    interpreter = tmp_path / "python"
+    interpreter.write_text(
+        "#!/bin/sh\n"
+        'test "$#" = 2 && test "$1" = -c && test "$2" = "$EXPECTED_PROBE" || exit 98\n'
+        "printf fixture-output\n"
+        "printf fixture-error >&2\n"
+        'exit "$FIXTURE_STATUS"\n',
+        encoding="ascii",
+    )
+    interpreter.chmod(0o700)
+    result = subprocess.run(  # noqa: S603 - approved command, fixture-only PATH
+        ["/bin/sh", "-c", command],
+        env={"PATH": str(tmp_path), "EXPECTED_PROBE": WORKER_HEALTH, "FIXTURE_STATUS": str(status)},
+        capture_output=True,
+        timeout=3,
+        check=False,
+    )
+    assert (result.returncode, result.stdout, result.stderr) == (status, b"", b"")
+
+
 def test_compose_normalizes_one_cpu_to_json_integer_not_float() -> None:
     """Keep strict JSON-type checks aligned with actual Docker Compose config."""
     candidate = browser_model()
@@ -132,6 +189,8 @@ def test_compose_normalizes_one_cpu_to_json_integer_not_float() -> None:
         ("user", "0:0"),
         ("init", False),
         ("restart", "always"),
+        ("logging", {"driver": "local"}),
+        ("logging", {"driver": "none", "options": {"max-file": "2"}}),
         ("stop_grace_period", "60s"),
         ("network_mode", "bridge"),
         ("network_mode", "host"),
@@ -181,6 +240,7 @@ def test_worker_environment_cannot_gain_live_or_private_context(field: str, valu
     ("field", "value"),
     [
         ("restart", "unless-stopped"),
+        ("logging", {"driver": "none"}),
         ("image", BROWSER_IMAGE),
         ("cap_add", ["SYS_ADMIN"]),
         ("network_mode", "none"),

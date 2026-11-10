@@ -3,23 +3,13 @@
 from __future__ import annotations
 
 import socket
-from importlib.util import module_from_spec, spec_from_file_location
 from itertools import count
-from pathlib import Path
+from threading import Event, Thread, current_thread
 
 import pytest
 
-# The installed pytest console entry point need not place the checkout on sys.path.
-_spec = spec_from_file_location(
-    "worker_start_capture_under_test",
-    Path(__file__).resolve().parents[1] / "scripts" / "worker_start_capture.py",
-)
-assert _spec is not None and _spec.loader is not None
-capture = module_from_spec(_spec)
-_spec.loader.exec_module(capture)
-CaptureResult = capture.CaptureResult
-CaptureFailure = capture.CaptureFailure
-attach_output = capture.attach_output
+from boca_socios import worker_start_capture as capture
+from boca_socios.worker_start_capture import CaptureFailure, CaptureResult, attach_output
 
 CID = "1a" * 32
 SOCKET = "/synthetic/engine.sock"
@@ -146,9 +136,11 @@ def test_stream_returns_only_its_terminal_category(
 ) -> None:
     client, peer = engine(monkeypatch)
     with peer:
-        peer.sendall(UPGRADE + stream)
-        peer.shutdown(socket.SHUT_WR)
+        peer.sendall(UPGRADE)
         with attach_output(SOCKET, CID) as reader:
+            if stream:
+                peer.sendall(stream)
+            peer.shutdown(socket.SHUT_WR)
             assert reader.finish().value == expected
             assert client.fileno() == -1
     assert capsys.readouterr() == ("", "")
@@ -231,10 +223,11 @@ def test_capture_deadline_starts_at_upgrade_and_overrides_buffered_output(
     now = 0.0
     monkeypatch.setattr(capture, "monotonic", lambda: now)
     with peer:
-        peer.sendall(UPGRADE + frame(2, b"PermissionError\n"))
-        peer.shutdown(socket.SHUT_WR)
+        peer.sendall(UPGRADE)
         with capture.attach_output(SOCKET, CID) as reader:
             now = 120.0
+            peer.sendall(frame(2, b"PermissionError\n"))
+            peer.shutdown(socket.SHUT_WR)
             assert reader.finish() is capture.CaptureResult.TIMEOUT
             assert client.fileno() == -1
 
@@ -255,13 +248,19 @@ def test_local_error_after_upgrade_is_redacted_and_closes_immediately(
 ) -> None:
     client, peer = engine(monkeypatch)
 
-    def interrupted(*args: object) -> bytes:
-        raise problem("SYNTHETIC_CANARY")
+    receive = client.recv
+
+    def interrupted(count: int, flags: int = 0) -> bytes:
+        data = receive(count, flags)
+        if not flags and count == 8:
+            raise problem("SYNTHETIC_CANARY")
+        return data
 
     with peer:
-        peer.sendall(UPGRADE + frame(2, b"RuntimeError\n"))
+        monkeypatch.setattr(client, "recv", interrupted)
+        peer.sendall(UPGRADE)
         with attach_output(SOCKET, CID) as reader:
-            monkeypatch.setattr(client, "recv", interrupted)
+            peer.sendall(frame(2, b"RuntimeError\n"))
             assert reader.finish() is CaptureResult.TRANSPORT
             assert client.fileno() == -1
     assert capsys.readouterr() == ("", "")
@@ -271,20 +270,21 @@ def test_eof_observed_after_capture_deadline_is_timeout(monkeypatch: pytest.Monk
     client, peer = engine(monkeypatch)
     now = 0.0
     monkeypatch.setattr(capture, "monotonic", lambda: now)
+    receive = client.recv
+
+    def late_eof(count: int, flags: int = 0) -> bytes:
+        nonlocal now
+        result = receive(count, flags)
+        if not result and not flags:
+            now = 120.0
+        return result
+
+    monkeypatch.setattr(client, "recv", late_eof)
     with peer:
-        peer.sendall(UPGRADE + frame(2, b"RuntimeError\n"))
-        peer.shutdown(socket.SHUT_WR)
+        peer.sendall(UPGRADE)
         with capture.attach_output(SOCKET, CID) as reader:
-            receive = client.recv
-
-            def late_eof(count: int) -> bytes:
-                nonlocal now
-                result = receive(count)
-                if not result:
-                    now = 120.0
-                return result
-
-            monkeypatch.setattr(client, "recv", late_eof)
+            peer.sendall(frame(2, b"RuntimeError\n"))
+            peer.shutdown(socket.SHUT_WR)
             assert reader.finish() is capture.CaptureResult.TIMEOUT
             assert client.fileno() == -1
 
@@ -314,3 +314,222 @@ def test_local_transport_exception_is_never_chained_or_printed(
     assert failure.value.__context__ is None
     assert str(failure.value) == "TRANSPORT"
     assert capsys.readouterr() == ("", "")
+
+
+def test_reader_consumes_and_closes_at_quota_during_start_before_finish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, peer = engine(monkeypatch)
+    with peer:
+        peer.sendall(UPGRADE)
+        with attach_output(SOCKET, CID) as reader:
+            assert b"stdin=0" in peer.recv(1024)
+            # The caller has started the fixture and is still supervising health.
+            # No call to finish() or close() can do the reading on its behalf.
+            peer.sendall(b"\x01\0\0\0\xff\xff\xff\xff")
+            assert peer.recv(1) == b""
+            assert client.fileno() == -1
+            assert reader.finish() is CaptureResult.LIMIT
+
+
+def test_healthy_cancel_wakes_reader_and_never_claims_its_own_eof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, peer = engine(monkeypatch)
+    waiting = Event()
+    receive = client.recv
+
+    def observed_read(size: int, flags: int = 0) -> bytes:
+        if size == 8 and not flags:
+            waiting.set()
+        return receive(size, flags)
+
+    monkeypatch.setattr(client, "recv", observed_read)
+    with peer:
+        peer.sendall(UPGRADE)
+        with attach_output(SOCKET, CID) as reader:
+            assert waiting.wait(1)
+            assert b"stdin=0" in peer.recv(1024)
+            assert reader.close() is True
+            assert reader.close() is False
+            assert reader.finish() is CaptureResult.TRANSPORT
+            assert client.fileno() == -1
+        assert peer.recv(1) == b""
+
+
+def test_already_closed_upgrade_or_thread_start_failure_prevents_start(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for closed_peer in (True, False):
+        client, peer = engine(monkeypatch)
+        with peer:
+            peer.sendall(UPGRADE)
+            if closed_peer:
+                peer.shutdown(socket.SHUT_WR)
+            else:
+
+                def cannot_start(self: object) -> None:
+                    raise RuntimeError("SYNTHETIC_CANARY")
+
+                monkeypatch.setattr(capture.Thread, "start", cannot_start)
+            with pytest.raises(CaptureFailure) as failure, attach_output(SOCKET, CID):
+                pytest.fail("unarmed reader entered the caller start block")
+            assert failure.value.result is CaptureResult.TRANSPORT
+            assert failure.value.__context__ is None
+            assert client.fileno() == -1
+    assert capsys.readouterr() == ("", "")
+
+
+@pytest.mark.parametrize(
+    ("line", "wanted"),
+    [
+        (
+            b"boca_socios.browser.ipc_protocol.SyntheticIPCError: ipc_path_unverified",
+            "IPC_PATH_UNVERIFIED",
+        ),
+        (
+            b"boca_socios.browser.ipc_protocol.SyntheticIPCError: ipc_directory_unverified",
+            "IPC_DIRECTORY_UNVERIFIED",
+        ),
+        (
+            b"boca_socios.browser.ipc_protocol.SyntheticIPCError: ipc_socket_unverified",
+            "IPC_SOCKET_UNVERIFIED",
+        ),
+        (
+            b"boca_socios.browser.ipc_protocol.SyntheticIPCError: ipc_peer_unverified",
+            "IPC_PEER_UNVERIFIED",
+        ),
+        (
+            b"boca_socios.browser.ipc_protocol.SyntheticIPCError: ipc_frame_unverified",
+            "IPC_FRAME_UNVERIFIED",
+        ),
+        (
+            b"boca_socios.browser.on_demand.WorkerBoundaryError: worker_identity_unverified",
+            "WORKER_IDENTITY_UNVERIFIED",
+        ),
+        (
+            b"boca_socios.browser.on_demand.WorkerBoundaryError: worker_limits_unverified",
+            "WORKER_LIMITS_UNVERIFIED",
+        ),
+        (b"ModuleNotFoundError: No module named 'playwright'", "MISSING_PLAYWRIGHT"),
+        (b"ModuleNotFoundError: No module named 'greenlet'", "MISSING_GREENLET"),
+        (b"ModuleNotFoundError: No module named 'pyee'", "MISSING_PYEE"),
+        (b"ModuleNotFoundError: No module named 'typing_extensions'", "MISSING_TYPING_EXTENSIONS"),
+        (b"ModuleNotFoundError: No module named 'boca_socios'", "MISSING_BOCA_PACKAGE"),
+        (b"ModuleNotFoundError: No module named 'boca_socios.browser'", "MISSING_BROWSER_PACKAGE"),
+        (
+            b"ModuleNotFoundError: No module named 'boca_socios.browser.contracts'",
+            "MISSING_BROWSER_CONTRACTS",
+        ),
+        (
+            b"ModuleNotFoundError: No module named 'boca_socios.browser.ipc_protocol'",
+            "MISSING_IPC_PROTOCOL",
+        ),
+        (b"ModuleNotFoundError: No module named 'boca_socios.domain'", "MISSING_DOMAIN_PACKAGE"),
+        (
+            b"ModuleNotFoundError: No module named 'boca_socios.domain.policy'",
+            "MISSING_DOMAIN_POLICY",
+        ),
+        (
+            b"/app/.venv/bin/python: No module named boca_socios.browser.ipc_worker",
+            "ENTRY_MODULE_MISSING",
+        ),
+        (
+            b"/app/.venv/bin/python: Error while finding module specification for "
+            b"'boca_socios.browser.ipc_worker' (ModuleNotFoundError: No module named 'boca_socios')",
+            "MISSING_BOCA_PACKAGE",
+        ),
+        (
+            b"/app/.venv/bin/python: Error while finding module specification for "
+            b"'boca_socios.browser.ipc_worker' (ModuleNotFoundError: No module named 'boca_socios.browser')",
+            "MISSING_BROWSER_PACKAGE",
+        ),
+        (b"ModuleNotFoundError: No module named 'private.canary'", "MODULE_NOT_FOUND_ERROR"),
+        (b"ModuleNotFoundError: No module named 'playwright' PRIVATE", "MODULE_NOT_FOUND_ERROR"),
+        (
+            b"boca_socios.browser.ipc_protocol.SyntheticIPCError: ipc_directory_unverified!",
+            "UNCLASSIFIED",
+        ),
+        (
+            b" boca_socios.browser.ipc_protocol.SyntheticIPCError: ipc_directory_unverified",
+            "UNCLASSIFIED",
+        ),
+        (
+            b"boca_socios.browser.ipc_protocol.SyntheticIPCError: ipc_directory_unverified\r",
+            "UNCLASSIFIED",
+        ),
+        (
+            b"/app/.venv/bin/python: No module named boca_socios.browser.ipc_worker\x00private",
+            "UNCLASSIFIED",
+        ),
+        (
+            b"/app/.venv/bin/python: Error while finding module specification for "
+            b"'boca_socios.browser.ipc_worker' (ModuleNotFoundError: No module named 'boca_socios.browser')"
+            + b"\r"
+            + b"x" * 512,
+            "UNCLASSIFIED",
+        ),
+    ],
+)
+def test_only_complete_public_final_line_identifies_fixed_detail(
+    monkeypatch: pytest.MonkeyPatch, line: bytes, wanted: str
+) -> None:
+    _, peer = engine(monkeypatch, fragment=3)
+    with peer:
+        peer.sendall(UPGRADE)
+        with attach_output(SOCKET, CID) as reader:
+            peer.sendall(
+                frame(2, b"prior\n" + line[:25])
+                + frame(1, b"stdout")
+                + frame(2, line[25:] + b"\r\n")
+            )
+            peer.shutdown(socket.SHUT_WR)
+            assert reader.finish().value == wanted
+
+
+def test_wire_vocabulary_accepts_only_its_exact_public_values() -> None:
+    class Impersonator(str):
+        def __eq__(self, other: object) -> bool:
+            return True
+
+    assert all(capture.is_capture_result(item.value) for item in CaptureResult)
+    assert capture.is_capture_result(CaptureResult.EMPTY)
+    for invalid in (
+        "private",
+        "",
+        "IPC_PATH_UNVERIFIED\n",
+        None,
+        [],
+        b"TIMEOUT",
+        Impersonator("private"),
+    ):
+        assert not capture.is_capture_result(invalid)
+
+
+def test_healthy_cancel_joins_reader_even_if_local_shutdown_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, peer = engine(monkeypatch)
+    waiting = Event()
+    receivers: list[Thread] = []
+    receive = client.recv
+
+    def observe(size: int, flags: int = 0) -> bytes:
+        if not flags and size == 8:
+            receivers.append(current_thread())
+            waiting.set()
+        return receive(size, flags)
+
+    def broken_shutdown(how: int) -> None:
+        raise OSError("SYNTHETIC_CANARY")
+
+    monkeypatch.setattr(client, "recv", observe)
+    monkeypatch.setattr(client, "shutdown", broken_shutdown)
+    with peer:
+        peer.sendall(UPGRADE)
+        with attach_output(SOCKET, CID) as reader:
+            assert waiting.wait(1)
+            assert reader.close()
+            assert receivers and all(not thread.is_alive() for thread in receivers)
+            assert client.fileno() == -1
+            assert reader.finish() is CaptureResult.TRANSPORT

@@ -1,8 +1,8 @@
 # Safe operations — verified evidence and gated procedures
 
-## Diagnóstico del worker R131
+## Diagnóstico del worker R132
 
-La captura prospectiva se ensaya en el Docker efímero de CI. La última observación física #895 recuperó el controlador original con cero workers. El cambio de driver y la adquisición del flujo en el host requieren una decisión de alcance. [ADR0221](ADR/0221-r131-worker-start-capture-lab.md).
+El [titular autorizó la captura](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6754980250) después del laboratorio [R131](ADR/0221-r131-worker-start-capture-lab.md). El nuevo worker usa `log-driver=none` durante toda su vida. Para revisar una salida temprana, abrir el job del único `cutover-a-apply` y buscar la observación categórica del intento y la lectura independiente del recibo previo a la limpieza. Una categoría ausente o un fallo de transporte deja pendiente la atribución. Para verificar éxito, revisar el recibo físico del candidato y el worker, el loopback y la limpieza. [Diseño y límites de R132](ADR/0222-r132-worker-start-custody.md).
 
 ## R128 CODE_ONLY — observación independiente del Cutover #893 (09/11/2026 ART)
 
