@@ -225,3 +225,103 @@ def test_progress_uses_timestamp_of_last_successful_healthcheck(monkeypatch) -> 
     assert lab.last_successful_probe(cid) == datetime.fromisoformat("2026-11-10T01:02:05.012345Z")
     assert len(inspected) == 1
     assert ".Output" not in inspected[0][2]
+
+
+@pytest.mark.parametrize("health", [True, False])
+def test_main_inspects_stopped_exact_health_command_then_verifies_removal(
+    monkeypatch, capsys, health
+) -> None:
+    import json
+
+    from boca_socios.host_first_deploy import _CUTOVER_CAPTURE_INSPECT, _WORKER_HEALTH_CMD
+
+    image, cid = "sha256:" + "a" * 64, "b" * 64
+    key = "123-health-template"
+    for name, value in {
+        "RUNNER_ENVIRONMENT": "github-hosted",
+        "GITHUB_ACTIONS": "true",
+        "GITHUB_REPOSITORY": "mbalbo2023/boca-socios-assistant",
+        "GITHUB_SHA": "c" * 40,
+        "GITHUB_RUN_ID": "123",
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(lab, "exercise", lambda *args: None)  # independent process cases
+    operations = []
+    contract = {
+        ".Id": cid,
+        ".Image": image,
+        f'(index .Config.Labels "{lab.LABEL}")': key,
+        ".State.Running": False,
+        ".State.Status": "created",
+        ".HostConfig.NetworkMode": "none",
+        ".HostConfig.LogConfig.Type": "none",
+        ".Config.Tty": False,
+        ".Config.OpenStdin": False,
+        ".Config.AttachStdin": False,
+        ".Config.Entrypoint": ["/boca-ci-no-such-health-fixture"],
+        ".Config.Cmd": ["-O", "-B", "-c", "raise SystemExit(97)"],
+        ".Config.Healthcheck.Test": ["CMD-SHELL", _WORKER_HEALTH_CMD],
+        "(len .Mounts)": 0,
+        ".HostConfig.Privileged": False,
+        ".HostConfig.ReadonlyRootfs": True,
+    }
+    monkeypatch.setattr(
+        lab, "field", lambda who, selector: contract[selector] if who == cid else None
+    )
+
+    def engine(*args):
+        if args[0] == "image":
+            return image
+        if args[0] == "version":
+            return "1.44" if "MinAPIVersion" in args[-1] else "1.51"
+        operations.append(args[0])
+        if args[0] == "create":
+            assert args[args.index("--health-cmd") + 1] == _WORKER_HEALTH_CMD
+            assert args[args.index("--entrypoint") + 1 :] == (
+                "/boca-ci-no-such-health-fixture",
+                image,
+                "-O",
+                "-B",
+                "-c",
+                "raise SystemExit(97)",
+            )
+            assert f"{lab.LABEL}={key}" in args
+            assert args[args.index("--network") + 1] == "none"
+            return cid
+        if args == ("inspect", "--format", _CUTOVER_CAPTURE_INSPECT, cid):
+            return json.dumps(
+                {
+                    "cid": cid,
+                    "image_id": image,
+                    "image_ref": image,
+                    "attempt": "fixture-attempt",
+                    "revision": "fixture-revision",
+                    "service": "fixture-service",
+                    "project": "fixture-project",
+                    "config_hash": "fixture-hash",
+                    "status": "created",
+                    "tty": False,
+                    "open_stdin": False,
+                    "attach_stdin": False,
+                    "log_driver": "none",
+                    "log_options": 0,
+                    "health": health,
+                }
+            )
+        if args == ("rm", cid):
+            return cid
+        if args == ("ps", "-aq", "--no-trunc", "--filter", f"id={cid}"):
+            return ""
+        pytest.fail(f"unexpected Docker operation {args[0]}")
+
+    monkeypatch.setattr(lab, "docker", engine)
+    monkeypatch.setattr(lab, "attach_output", lambda *args: pytest.fail("stopped fixture attached"))
+    if health:
+        lab.main()
+    else:
+        with pytest.raises(lab.LabError, match="CAPTURE_PROJECTION"):
+            lab.main()
+    assert operations == ["create", "inspect", "rm", "ps"]
+    output = capsys.readouterr().out
+    assert ("observed=HEALTH_TEMPLATE_MATCH state=CREATED" in output) is health
+    assert "case=health-template cleanup=VERIFIED removed=EXACT_CID" in output

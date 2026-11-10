@@ -10,11 +10,13 @@ import shlex
 import shutil
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from time import monotonic, sleep
 
-from boca_socios.host_first_deploy import _CUTOVER_CAPTURE_INSPECT
+from boca_socios.host_first_deploy import _CUTOVER_CAPTURE_INSPECT, _WORKER_HEALTH_CMD
 from boca_socios.worker_start_capture import CaptureFailure, CaptureResult, attach_output
 
 SOCKET = Path("/var/run/docker.sock")
@@ -221,10 +223,12 @@ def verify_detached_progress(cid: str) -> None:
     raise LabError("DETACH_CHANGED_PROCESS")
 
 
-def create_fixture(image: str, key: str, program: str, resident: bool) -> str:
+def create_fixture(
+    image: str, key: str, program: str, health_command: str | None, entrypoint: str
+) -> str:
     health = (
-        ("--health-cmd", RESIDENT_HEALTH, "--health-interval", "1s", "--health-timeout", "2s")
-        if resident
+        ("--health-cmd", health_command, "--health-interval", "1s", "--health-timeout", "2s")
+        if health_command is not None
         else ("--no-healthcheck",)
     )
     return docker(
@@ -253,7 +257,7 @@ def create_fixture(image: str, key: str, program: str, resident: bool) -> str:
         "16",
         *health,
         "--entrypoint",
-        "python",
+        entrypoint,
         image,
         "-O",
         "-B",
@@ -262,9 +266,8 @@ def create_fixture(image: str, key: str, program: str, resident: bool) -> str:
     )
 
 
-def verify_capture_projection(cid: str, image: str) -> None:
-    # Exercise the exact Go template used by the protected worker before start.
-    # Every label has a distinct synthetic value. The synthetic health command differs.
+def verify_capture_projection(cid: str, image: str, *, health_matches: bool = False) -> None:
+    # Exercise the exact protected Go template on distinctly labeled, stopped fixtures.
     observed = json.loads(docker("inspect", "--format", _CUTOVER_CAPTURE_INSPECT, cid))
     expected = {
         "cid": cid,
@@ -277,7 +280,7 @@ def verify_capture_projection(cid: str, image: str) -> None:
         "attach_stdin": False,
         "log_driver": "none",
         "log_options": 0,
-        "health": False,
+        "health": health_matches,
     }
     if (
         not isinstance(observed, dict)
@@ -290,7 +293,9 @@ def verify_capture_projection(cid: str, image: str) -> None:
         raise LabError("CAPTURE_PROJECTION")
 
 
-def verify_fixture(cid: str, image: str, key: str, program: str, resident: bool) -> None:
+def verify_fixture(
+    cid: str, image: str, key: str, program: str, health_command: str | None, entrypoint: str
+) -> None:
     # Validate the image/attempt, effective command and isolated output
     # before registering the stream or allowing any process to start.
     checks = {
@@ -303,9 +308,9 @@ def verify_fixture(cid: str, image: str, key: str, program: str, resident: bool)
         ".Config.Tty": False,
         ".Config.OpenStdin": False,
         ".Config.AttachStdin": False,
-        ".Config.Entrypoint": ["python"],
+        ".Config.Entrypoint": [entrypoint],
         ".Config.Cmd": ["-O", "-B", "-c", program],
-        ".Config.Healthcheck.Test": ["CMD-SHELL", RESIDENT_HEALTH] if resident else ["NONE"],
+        ".Config.Healthcheck.Test": ["CMD-SHELL", health_command] if health_command else ["NONE"],
         "(len .Mounts)": 0,
         ".HostConfig.Privileged": False,
         ".HostConfig.ReadonlyRootfs": True,
@@ -315,15 +320,22 @@ def verify_fixture(cid: str, image: str, key: str, program: str, resident: bool)
         if type(observed) is not type(wanted) or observed != wanted:
             # Only this source-defined selector crosses the output boundary.
             raise LabError(f"PRESTART_CONTRACT field={path}")
-    verify_capture_projection(cid, image)
+    verify_capture_projection(cid, image, health_matches=health_command == _WORKER_HEALTH_CMD)
 
 
-def exercise(image: str, run: str, name: str, program: str, expected: str, exit_code: int) -> None:
+@contextmanager
+def verified_fixture(
+    image: str,
+    run: str,
+    name: str,
+    program: str,
+    health_command: str | None,
+    entrypoint: str = "python",
+) -> Iterator[str]:
     key = f"{run}-{name}"
-    resident = name == "resident"
     print(f"BOCA_CAPTURE_LAB case={name} phase=PREPARE", flush=True)
     try:
-        cid = create_fixture(image, key, program, resident)
+        cid = create_fixture(image, key, program, health_command, entrypoint)
         if not CID.fullmatch(cid):
             raise LabError("CREATE_IDENTITY")
     except (LabError, OSError, ValueError):
@@ -343,8 +355,25 @@ def exercise(image: str, run: str, name: str, program: str, expected: str, exit_
         except (LabError, OSError, ValueError):
             print("BOCA_CAPTURE_LAB cleanup=INDETERMINATE", flush=True)
         raise
+    completed = False
     try:
-        verify_fixture(cid, image, key, program, resident)
+        verify_fixture(cid, image, key, program, health_command, entrypoint)
+        yield cid
+        completed = True
+    finally:
+        try:
+            remove_fixture(cid, key, image)
+        except (LabError, ValueError, OSError):
+            if completed:
+                raise LabError("CLEANUP_INDETERMINATE") from None
+            print(f"BOCA_CAPTURE_LAB case={name} cleanup=INDETERMINATE", flush=True)
+        else:
+            print(f"BOCA_CAPTURE_LAB case={name} cleanup=VERIFIED removed=EXACT_CID", flush=True)
+
+
+def exercise(image: str, run: str, name: str, program: str, expected: str, exit_code: int) -> None:
+    resident = name == "resident"
+    with verified_fixture(image, run, name, program, RESIDENT_HEALTH if resident else None) as cid:
         if resident:
             with attach_output(SOCKET, cid) as capture:
                 start_fixture(cid)
@@ -372,16 +401,6 @@ def exercise(image: str, run: str, name: str, program: str, expected: str, exit_
         print(
             f"BOCA_CAPTURE_LAB case={name} observed={expected} state={observed_status}", flush=True
         )
-    finally:
-        primary = sys.exc_info()[0] is not None
-        try:
-            remove_fixture(cid, key, image)
-        except (LabError, ValueError, OSError):
-            if not primary:
-                raise LabError("CLEANUP_INDETERMINATE") from None
-            print(f"BOCA_CAPTURE_LAB case={name} cleanup=INDETERMINATE", flush=True)
-        else:
-            print(f"BOCA_CAPTURE_LAB case={name} cleanup=VERIFIED removed=EXACT_CID", flush=True)
 
 
 def main() -> None:
@@ -409,6 +428,20 @@ def main() -> None:
 
     if not api_version("MinAPIVersion") <= (1, 48) <= api_version("APIVersion"):
         raise LabError("ENGINE_API_RANGE")
+    # Inspect the actual production health command as metadata only. This fixture
+    # has a deliberately nonexistent entrypoint and never reaches attach/start.
+    with verified_fixture(
+        image,
+        os.environ["GITHUB_RUN_ID"],
+        "health-template",
+        "raise SystemExit(97)",
+        _WORKER_HEALTH_CMD,
+        entrypoint="/boca-ci-no-such-health-fixture",
+    ):
+        print(
+            "BOCA_CAPTURE_LAB case=health-template observed=HEALTH_TEMPLATE_MATCH state=CREATED",
+            flush=True,
+        )
     for case in CASES:
         exercise(image, os.environ["GITHUB_RUN_ID"], *case)
     exercise(
