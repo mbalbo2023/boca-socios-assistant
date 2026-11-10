@@ -26,6 +26,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 USER = "boca-deploy"
@@ -72,14 +73,23 @@ def phase(label: str, *, translate_timeout: bool = True) -> Iterator[None]:
 
 
 def command(
-    *args: str, label: str, publish: bool = False, timeout: float = 40, polling: bool = False
+    *args: str,
+    label: str,
+    output: Literal["discard", "read", "publish"] = "discard",
+    timeout: float = 40,
+    polling: bool = False,
 ) -> str:
     def run() -> str:
         try:
             result = subprocess.run(  # noqa: S603 - fixed lab argv, no shell or deployment secrets
                 args,
                 stdin=subprocess.DEVNULL,
-                stdout=None if publish else subprocess.PIPE,
+                # A helper may fork and leave its stdout open in a descendant.
+                # Only actual queries need a pipe; administrative calls wait on
+                # the command itself and always require its successful exit.
+                stdout={"discard": subprocess.DEVNULL, "read": subprocess.PIPE, "publish": None}[
+                    output
+                ],
                 stderr=subprocess.DEVNULL,
                 check=False,
                 timeout=timeout,
@@ -87,7 +97,7 @@ def command(
         except subprocess.TimeoutExpired:
             raise LabFailure(label + "_TIMEOUT") from None
         require(result.returncode == 0, label + "_EXIT")
-        return "" if publish else result.stdout.decode("utf-8")
+        return result.stdout.decode("utf-8") if output == "read" else ""
 
     if polling:
         # The enclosing phase reports the deadline and the exact poll that failed.
@@ -161,7 +171,13 @@ def prepare_unit_directories(home: Path) -> None:
 
 def manager(*args: str, label: str, polling: bool = False) -> str:
     return command(
-        SYSTEMCTL, "--user", *args, label=label, timeout=3 if polling else 12, polling=polling
+        SYSTEMCTL,
+        "--user",
+        *args,
+        label=label,
+        output="read" if args[0] in ("show", "list-units", "is-enabled") else "discard",
+        timeout=3 if polling else 12,
+        polling=polling,
     )
 
 
@@ -374,6 +390,7 @@ def stop_disposable_manager(sudo: tuple[str, ...], tag: str) -> None:
                 "--property=Id,ActiveState,SubState",
                 *units,
                 label="END_MANAGER_STATE",
+                output="read",
                 timeout=min(4, max(0.1, left)),
                 polling=True,
             )
@@ -447,34 +464,46 @@ def ephemeral() -> None:
         helper.chmod(0o444)
         stage.chmod(0o711)
         command(*sudo, "/usr/sbin/groupadd", "--gid", str(UID), USER, label="LAB_GROUP")
+        home_id: tuple[int, int] | None = None
+        manager_requested = False
         try:
+            # Exactly one sysusers.d line. No useradd hooks, skeleton copy,
+            # subordinate allocations or per-UID login-record initialization.
             command(
                 *sudo,
-                "/usr/sbin/useradd",
-                "--no-user-group",
-                "--no-log-init",
-                "--uid",
-                str(UID),
-                "--gid",
-                str(UID),
-                "--create-home",
-                "--home-dir",
-                str(HOME_DIR),
-                "--shell",
-                SHELL,
-                "--comment",
-                tag,
-                USER,
+                "/usr/bin/systemd-sysusers",
+                "--inline",
+                f"u {USER} {UID}:{USER} {tag} {HOME_DIR} {SHELL}",
                 label="LAB_ACCOUNT",
             )
+            require(owned(tag) and grp.getgrgid(UID).gr_name == USER, "LAB_ACCOUNT_IDENTITY")
+            require(not os.path.lexists(HOME_DIR), "LAB_HOME_NOT_VACANT")
+            command(*sudo, "/usr/bin/mkdir", "--mode=0700", str(HOME_DIR), label="LAB_HOME_CREATE")
+            before = HOME_DIR.lstat()
             require(
-                owned(tag)
-                and HOME_DIR.is_dir()
-                and not HOME_DIR.is_symlink()
-                and HOME_DIR.stat().st_uid == UID,
-                "LAB_IDENTITY",
+                stat.S_ISDIR(before.st_mode)
+                and before.st_uid == 0
+                and stat.S_IMODE(before.st_mode) == 0o700,
+                "LAB_HOME_NEW_INODE",
             )
-            command(*sudo, "/usr/bin/chmod", "0700", str(HOME_DIR), label="LAB_HOME")
+            home_id = before.st_dev, before.st_ino
+            command(
+                *sudo,
+                "/usr/bin/chown",
+                "--no-dereference",
+                "--from=0",
+                f"{UID}:{UID}",
+                str(HOME_DIR),
+                label="LAB_HOME_OWNER",
+            )
+            after = HOME_DIR.lstat()
+            require(
+                os.path.samestat(before, after)
+                and (after.st_uid, after.st_gid) == (UID, UID)
+                and stat.S_IMODE(after.st_mode) == 0o700,
+                "LAB_HOME_IDENTITY",
+            )
+            manager_requested = True
             command(*sudo, "/usr/bin/loginctl", "enable-linger", USER, label="LAB_LINGER")
             command(*sudo, SYSTEMCTL, "start", f"user@{UID}.service", label="LAB_MANAGER")
             command(
@@ -498,7 +527,7 @@ def ephemeral() -> None:
                 digest,
                 run,
                 tag,
-                publish=True,
+                output="publish",
                 # Outer safety envelope covers installation, rejection, rejoin
                 # and teardown. The real user-manager calls each keep their 15s limit.
                 timeout=120,
@@ -506,10 +535,24 @@ def ephemeral() -> None:
             )
         finally:
             if owned(tag):
-                command(*sudo, "/usr/bin/loginctl", "disable-linger", USER, label="END_LINGER")
-                stop_disposable_manager(sudo, tag)
+                if manager_requested:
+                    command(*sudo, "/usr/bin/loginctl", "disable-linger", USER, label="END_LINGER")
+                    stop_disposable_manager(sudo, tag)
                 require(owned(tag), "END_IDENTITY")
-                command(*sudo, "/usr/sbin/userdel", "--remove", USER, label="END_ACCOUNT")
+                remove_home: tuple[str, ...] = ()
+                if home_id is not None:
+                    info = HOME_DIR.lstat()
+                    require(
+                        stat.S_ISDIR(info.st_mode) and (info.st_dev, info.st_ino) == home_id,
+                        "END_HOME_INODE",
+                    )
+                    if info.st_uid == 0:
+                        # chown did not finish. rmdir can only remove our still-empty inode.
+                        command(*sudo, "/usr/bin/rmdir", str(HOME_DIR), label="END_EMPTY_HOME")
+                    else:
+                        require((info.st_uid, info.st_gid) == (UID, UID), "END_HOME_OWNER")
+                        remove_home = ("--remove",)
+                command(*sudo, "/usr/sbin/userdel", *remove_home, USER, label="END_ACCOUNT")
             try:
                 group = grp.getgrnam(USER)
             except KeyError:
