@@ -79,3 +79,13 @@ La suite conserva tests históricos v1/v2; se actualizan exclusivamente sus
 expectativas del wiring Cutover ya sustituido. Ningún test local prueba deploy.
 CI exact-SHA, release dual nueva y evidencia física siguen pendientes antes
 de aceptación. Esta ADR no afirma que #417/R99 esté resuelto.
+
+## Enmienda R140 — CI reejecutado por el propietario
+
+La exigencia histórica `run_attempt=1` del **CI** se reemplaza por la admisión
+estricta de `run_attempt=1` o de un único reintento `2` del mismo run
+`ci.yml` `push/main` y SHA con último estado SUCCESS,
+suite y checks `filter=latest` autenticados; un reintento exige
+`triggering_actor=mbalbo2023`. Consultar [ADR0228](0228-r140-ci-rerun-provenance.md).
+El intento **del Cutover** debe continuar siendo exactamente 1, único y
+autenticado. Ninguna enmienda supone que la BETA está instalada.

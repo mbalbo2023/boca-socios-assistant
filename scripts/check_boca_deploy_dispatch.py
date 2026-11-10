@@ -122,7 +122,11 @@ def verify_dispatch(env: Mapping[str, str], proof: dict[str, Any]) -> None:
 
 
 def verify_completed_ci(sha: str, ci_pages: Any, check_pages: Any) -> None:
-    """Authenticate one green main push and both required checks in its CI suite."""
+    """Authenticate one green main push and both latest checks in its CI suite.
+
+    An owner-initiated job rerun retains the original push/SHA/check suite.
+    Only this CI source may be retried; the protected Cutover itself is one-shot.
+    """
     ci_runs = _pages(ci_pages, "workflow_runs")
     _require(len(ci_runs) == 1)
     ci = ci_runs[0]
@@ -131,11 +135,16 @@ def verify_completed_ci(sha: str, ci_pages: Any, check_pages: Any) -> None:
         "head_sha": sha,
         "head_branch": "main",
         "path": ".github/workflows/ci.yml",
-        "run_attempt": 1,
         "status": "completed",
         "conclusion": "success",
     }.items():
         _require(ci.get(key) == expected_ci and type(ci.get(key)) is type(expected_ci))
+    attempt = ci.get("run_attempt")
+    # Only the first owner-initiated retry of this exact CI is accepted.
+    _require(type(attempt) is int and attempt in (1, 2))
+    if attempt > 1:
+        triggering_actor = ci.get("triggering_actor")
+        _require(type(triggering_actor) is dict and triggering_actor.get("login") == "mbalbo2023")
     _require(type(ci.get("id")) is int and ci["id"] > 0)
     suite = ci.get("check_suite_id")
     _require(type(suite) is int and suite > 0)
