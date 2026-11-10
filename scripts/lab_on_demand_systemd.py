@@ -16,6 +16,7 @@ import pwd
 import re
 import shutil
 import socket
+import stat
 import struct
 import subprocess
 import sys
@@ -91,6 +92,35 @@ def vacant() -> bool:
     ) and all(
         not os.path.lexists(p) for p in (HOME_DIR, RUNTIME, Path("/var/lib/systemd/linger") / USER)
     )
+
+
+def prepare_unit_directories(home: Path) -> None:
+    # pathlib mkdir(parents=True) applies mode only to the leaf. The runner's
+    # user-private-group umask can otherwise leave writable ancestors. Match
+    # the four observed 0700 directories inside this newly created CI account.
+    directory = home
+    for part, label in (
+        (".config", "CONFIG"),
+        ("systemd", "SYSTEMD"),
+        ("user", "USER"),
+        ("default.target.wants", "WANTS"),
+    ):
+        directory /= part
+        try:
+            directory.mkdir(mode=0o700, exist_ok=True)
+            fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        except OSError:
+            raise LabFailure("LAB_UNIT_" + label + "_OPEN") from None
+        try:
+            info = os.fstat(fd)
+            require((info.st_uid, info.st_gid) == (UID, UID), "LAB_UNIT_" + label + "_OWNER")
+            # A distro skeleton may have created this directory before the lab.
+            # Tighten only the verified inode belonging to the disposable user.
+            if stat.S_IMODE(info.st_mode) != 0o700:
+                os.fchmod(fd, 0o700)
+            require(stat.S_IMODE(os.fstat(fd).st_mode) == 0o700, "LAB_UNIT_" + label + "_MODE")
+        finally:
+            os.close(fd)
 
 
 def manager(*args: str) -> str:
@@ -180,8 +210,7 @@ def exercise(package: Path, digest: str, run: str, tag: str) -> None:
         from boca_socios.host_lifecycle_rootless_adapter import ReviewedInstalledPair
         from boca_socios.host_on_demand_lifecycle import OnDemandInstallation
 
-        unitdir = HOME_DIR / ".config/systemd/user"
-        (unitdir / "default.target.wants").mkdir(mode=0o700, parents=True, exist_ok=True)
+        prepare_unit_directories(HOME_DIR)
         # Validate the *real* systemctl contract for absent units before any creation.
         for name in (SOCKET, SERVICE):
             expected = {
