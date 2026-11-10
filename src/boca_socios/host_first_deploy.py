@@ -3695,6 +3695,17 @@ def _browser_inventory(
         raise PreflightError("dedicated Boca network inventory changed")
 
 
+def _browser_missing_image_result(returncode: int, stdout: bytes, stderr: bytes, ref: str) -> bool:
+    """Match a formatted Docker inspect failure for the caller's reviewed digest."""
+    # Docker's TemplateInspector flushes a single LF when there are no objects.
+    if returncode != 1 or stdout not in (b"", b"\n"):
+        return False
+    return stderr.removesuffix(b"\n") in (
+        f"Error: No such image: {ref}".encode("ascii"),
+        f"Error response from daemon: No such image: {ref}".encode("ascii"),
+    )
+
+
 def _browser_image_absent(image: str, source_sha: str) -> bool:
     """Inspect the *exact digest*; list output cannot prove nonexistence.
 
@@ -3719,26 +3730,18 @@ def _browser_image_absent(image: str, source_sha: str) -> bool:
         result = subprocess.run(  # noqa: S603 - fixed Docker inspect, no shell
             ("docker", "image", "inspect", "--format", "{{json .}}", image),  # noqa: S607 - same rootless Docker CLI as _run
             check=False,
-            text=True,
             capture_output=True,
             timeout=20,
             env=environment,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise PreflightError("browser IPC exact image inventory unavailable") from exc
-    if (
-        result.returncode == 1
-        and result.stdout == ""
-        and result.stderr.strip()
-        in {
-            f"Error: No such image: {image}",
-            f"Error response from daemon: No such image: {image}",
-        }
-    ):
+    stdout, stderr = os.fsencode(result.stdout), os.fsencode(result.stderr)
+    if _browser_missing_image_result(result.returncode, stdout, stderr, image):
         return True
-    if result.returncode != 0 or result.stderr or not 0 < len(result.stdout) <= 65_536:
+    if result.returncode != 0 or stderr or not 0 < len(stdout) <= 65_536:
         raise PreflightError("browser IPC exact image inventory is ambiguous")
-    record = _json_object(result.stdout, "browser IPC exact image")
+    record = _json_object(stdout.decode("utf-8"), "browser IPC exact image")
     digests = record.get("RepoDigests")
     config = record.get("Config")
     labels = config.get("Labels") if isinstance(config, dict) else None

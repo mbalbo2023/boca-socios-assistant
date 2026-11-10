@@ -213,7 +213,7 @@
       "issue": 219,
       "fix_pr": 220,
       "root_cause": "The protected BETA failure branch stopped its controller but retained disposable Compose, container, private network and image artifacts, blocking a clean new-only preflight.",
-      "prevention": "Immediately invoke bounded rootless Boca-only cleanup after a marked failed BETA stage; prove exact identities, preserve persistent volumes, and fail closed on ambiguous partial deletion.",
+      "prevention": "Clean exact rootless Boca objects after a marked failure. Preserve persistent volumes and reject ambiguous deletion. To prove a digest absent, require its exact Docker diagnostic and only empty stdout or one template newline. Verify the final inventory.",
       "regression_tests": [
         "tests/test_host_beta_cleanup.py::test_actions_beta_cleanup_is_immediate_after_bounded_stop",
         "tests/test_host_beta_cleanup.py::test_beta_cleanup_rejects_extra_file_in_private_staging_directory",
@@ -221,7 +221,8 @@
         "tests/test_host_beta_cleanup.py::test_beta_cleanup_detects_volume_inventory_drift_after_mutation",
         "tests/test_host_beta_cleanup.py::test_failed_beta_cleanup_is_idempotent_after_preserving_volumes",
         "tests/test_host_beta_cleanup.py::test_policy_rejects_removing_the_mandatory_beta_failure_hook",
-        "tests/test_host_beta_cleanup.py::test_actions_beta_cleanup_redacts_remote_output_and_preserves_failure"
+        "tests/test_host_beta_cleanup.py::test_actions_beta_cleanup_redacts_remote_output_and_preserves_failure",
+        "tests/test_r138_missing_image.py::test_exact_digest_missing_with_empty_docker_template"
       ]
     },
     {

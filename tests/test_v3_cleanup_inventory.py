@@ -350,7 +350,8 @@ def test_v3_plan_runs_under_existing_reconcile_and_never_removes_docker() -> Non
     assert (
         "if: inputs.operation == 'cutover-a-reconcile' "
         "&& inputs.protected_action_context != '42658939650' "
-        "&& inputs.protected_action_context != '42742150879'\n"
+        "&& inputs.protected_action_context != '42742150879' "
+        "&& inputs.protected_action_context != '42750940352'\n"
     ) in block
     assert "inputs.protected_action_context != '42405706503'" not in block
     assert "inputs.protected_action_context != '42426260583'" not in block

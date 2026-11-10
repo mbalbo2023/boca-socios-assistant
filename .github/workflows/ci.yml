@@ -190,6 +190,12 @@ jobs:
               assert absent.stdout.strip() == ""
           print("BOCA_WORKER_RECOVERY_DOCKER state=PASS removed=EXACT_CID post=ABSENT runner=EPHEMERAL")
           PY
+      - name: Verify image identity and missing-image evidence on runner Docker
+        timeout-minutes: 3
+        env:
+          PYTHONPATH: src
+          BOCA_LAB_RUNNER: ${{ runner.environment }}
+        run: python3 -m scripts.lab_image_recovery_916
       - name: Measure one offline Chromium startup under resource caps
         run: >-
           docker run --rm --init --network none --cgroupns=private --read-only

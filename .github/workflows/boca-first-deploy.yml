@@ -1,5 +1,5 @@
 name: Boca first deploy
-run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-stage-recover' && format('BOCA-V3-STAGE-RECOVER-{0}', inputs.protected_action_context) || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-apply' && 'BOCA-SIMULATION-DEPLOY-V3' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-stage-recover-844' && 'BOCA-R96-STAGE-844-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-834' && 'BOCA-R94-WORKER-834-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-827' && 'BOCA-R91-WORKER-827-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-819' && 'BOCA-R87-WORKER-819-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-preflight' && 'BOCA-R84-WORKER-PREFLIGHT-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-807' && 'BOCA-R82-WORKER-807-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R80-WORKER-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42375050546' && 'BOCA-R93-WORKER-834-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42368541950' && 'BOCA-R90-WORKER-827-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42353468231' && 'BOCA-R86-WORKER-819-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42341290485' && 'BOCA-R81-WORKER-807-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-reconcile' && inputs.protected_action_context == '42742150879' && 'BOCA-R137-904-RECOVERY-INVENTORY' || 'Boca first deploy' }}
+run-name: ${{ github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-stage-recover' && format('BOCA-V3-STAGE-RECOVER-{0}', inputs.protected_action_context) || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-apply' && 'BOCA-SIMULATION-DEPLOY-V3' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-stage-recover-844' && 'BOCA-R96-STAGE-844-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-834' && 'BOCA-R94-WORKER-834-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-827' && 'BOCA-R91-WORKER-827-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-819' && 'BOCA-R87-WORKER-819-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-preflight' && 'BOCA-R84-WORKER-PREFLIGHT-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover-807' && 'BOCA-R82-WORKER-807-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-recover' && 'BOCA-R80-WORKER-RECOVER-ONCE' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42375050546' && 'BOCA-R93-WORKER-834-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42368541950' && 'BOCA-R90-WORKER-827-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42353468231' && 'BOCA-R86-WORKER-819-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-worker-inspect' && inputs.protected_action_context == '42341290485' && 'BOCA-R81-WORKER-807-READONLY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-reconcile' && inputs.protected_action_context == '42742150879' && 'BOCA-R137-904-RECOVERY-INVENTORY' || github.event_name == 'workflow_dispatch' && inputs.operation == 'cutover-a-reconcile' && inputs.protected_action_context == '42750940352' && 'BOCA-R138-916-IMAGE-PLAN' || 'Boca first deploy' }}
 
 on:
   pull_request:
@@ -798,7 +798,7 @@ jobs:
       BOCA_SOURCE_SHA: ${{ (inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'cutover-a-reconcile' || inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-stage-recover-844' || inputs.operation == 'cutover-a-image-retire' || inputs.operation == 'cutover-a-worker-inspect' || inputs.operation == 'cutover-a-worker-events-r112' || inputs.operation == 'cutover-a-worker-recover' || inputs.operation == 'cutover-a-worker-recover-807' || inputs.operation == 'cutover-a-worker-recover-819' || inputs.operation == 'cutover-a-worker-recover-827' || inputs.operation == 'cutover-a-worker-recover-834') && github.sha || inputs.source_sha }}
       BOCA_SOURCE_SHA_SUBMITTED: ${{ inputs.source_sha }}
       BOCA_SERVICE: ${{ inputs.service }}
-      BOCA_BUDGET: ${{ (inputs.operation == 'cutover-a-apply' || ((inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-reconcile') && inputs.protected_action_context == '42742150879')) && '1.5cpu-1024m-192pids' || inputs.resource_budget }}
+      BOCA_BUDGET: ${{ (inputs.operation == 'cutover-a-apply' || ((inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-reconcile') && (inputs.protected_action_context == '42742150879' || inputs.protected_action_context == '42750940352'))) && '1.5cpu-1024m-192pids' || inputs.resource_budget }}
       BOCA_RELEASE_RUN_ID: ${{ inputs.release_run_id }}
       BOCA_OWNER_CAPABILITY_SHA256: ${{ inputs.owner_capability_sha256 }}
       BOCA_FAILED_TELEGRAM_RUN_ID: ${{ inputs.failed_telegram_run_id }}
@@ -939,10 +939,13 @@ jobs:
             if [[ "$BOCA_OPERATION" != cutover-a-reconcile && "$BOCA_OPERATION" != cutover-a-stage-recover && "$BOCA_OPERATION" != cutover-a-stage-recover-844 && "$BOCA_OPERATION" != cutover-a-image-retire ]]; then test -z "$BOCA_LEGACY_RELEASE_RUN_ID"; fi
             test -z "$BOCA_LEGACY_CONTROLLER_ID"
           fi
+          if [[ "$BOCA_PROTECTED_ACTION_CONTEXT" = 42750940352 ]]; then
+            [[ "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover ]]
+          fi
           if [[ "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-stage-recover-844 || "$BOCA_OPERATION" = cutover-a-image-retire ]]; then
             [[ "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^[1-9][0-9]{0,19}$ ]]
-            if [[ "$BOCA_OPERATION" = cutover-a-stage-recover || ( "$BOCA_OPERATION" = cutover-a-reconcile && "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^(42405706503|42426260583|42658939650|42742150879)$ ) ]]; then
-              # These exact V3 incidents have no independent PREPARE; never fabricate one.
+            if [[ "$BOCA_OPERATION" = cutover-a-stage-recover || ( "$BOCA_OPERATION" = cutover-a-reconcile && ( "$BOCA_PROTECTED_ACTION_CONTEXT" = 42750940352 || "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^(42405706503|42426260583|42658939650|42742150879)$ ) ) ]]; then
+              # These reviewed incidents use their original provenance without a separate PREPARE.
               test -z "$BOCA_INCIDENT_PREPARE_RUN_ID"
             else
               [[ "$BOCA_INCIDENT_PREPARE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
@@ -1010,7 +1013,7 @@ jobs:
               test -z "$BOCA_RELEASE_RUN_ID"
               test -z "$BOCA_LEGACY_SOURCE_SHA"
               test -z "$BOCA_LEGACY_IMAGE_REF"
-              if [[ "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^(42405706503|42426260583|42658939650|42742150879)$ ]]; then
+              if [[ ( "$BOCA_PROTECTED_ACTION_CONTEXT" = 42750940352 || "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^(42405706503|42426260583|42658939650|42742150879)$ ) ]]; then
                 test -z "$BOCA_LEGACY_RELEASE_RUN_ID"
               else
                 test "$BOCA_LEGACY_RELEASE_RUN_ID" = "$BOCA_INCIDENT_PREPARE_RUN_ID"
@@ -2397,7 +2400,7 @@ jobs:
                 " contents=READ_ONLY host_writes=0")
           PY
       - name: Reconcile exact failed Cutover A attempt on Boca host READ_ONLY
-        if: inputs.operation == 'cutover-a-reconcile'
+        if: inputs.operation == 'cutover-a-reconcile' && inputs.protected_action_context != '42750940352'
         run: |
           set -euo pipefail
           # V3 #853, #878, #893 and #904 have no separate PREPARE. Authenticate SHA via
@@ -2465,7 +2468,7 @@ jobs:
         # V3 binds source SHA to the authenticated GitHub incident above;
         # neither protocol can supply a caller-selected legacy CID. Incident
         # #893 and #904 permit inventory only. Never select a cleanup target for either.
-        if: inputs.operation == 'cutover-a-reconcile' && inputs.protected_action_context != '42658939650' && inputs.protected_action_context != '42742150879'
+        if: inputs.operation == 'cutover-a-reconcile' && inputs.protected_action_context != '42658939650' && inputs.protected_action_context != '42742150879' && inputs.protected_action_context != '42750940352'
         run: |
           set -euo pipefail
           # Reuse the existing protected, exact-incident reconciliation. Never
@@ -2620,22 +2623,28 @@ jobs:
           PY
           fi
       - name: Build deterministic reviewed Boca stage recovery memfd package
-        if: inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-stage-recover-844'
+        if: inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-stage-recover-844' || (inputs.operation == 'cutover-a-reconcile' && inputs.protected_action_context == '42750940352')
         run: |
           set -euo pipefail
           python3 scripts/build_protected_boca_bundle.py . \
             "$RUNNER_TEMP/boca-stage-recovery-reviewed.pyz"
           test -s "$RUNNER_TEMP/boca-stage-recovery-reviewed.pyz"
-      - name: Authenticate V3 incident and one per-incident recovery before SSH
+      - name: Read complete Boca stage recovery dispatch history
         if: inputs.operation == 'cutover-a-stage-recover'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/boca-first-deploy.yml/runs?event=workflow_dispatch&per_page=100" --paginate \
+            --jq '{total_count:.total_count,fetched_count:(.workflow_runs|length),run_ids:(.workflow_runs|map(.id)),workflow_runs:[.workflow_runs[]|select((.display_title|startswith("BOCA-V3-STAGE-RECOVER-")) or .display_title=="BOCA-R137-904-RECOVERY-INVENTORY" or .display_title=="BOCA-R138-916-IMAGE-PLAN")|{id,display_title,event,head_sha,head_branch,run_attempt,run_number,status,conclusion,path,actor:{login:.actor.login},triggering_actor:{login:.triggering_actor.login},repository:{full_name:.repository.full_name}}]}' > "$RUNNER_TEMP/v3-stage-history.json"
+      - name: Authenticate V3 incident and one per-incident recovery before SSH
+        if: inputs.operation == 'cutover-a-stage-recover' && inputs.protected_action_context != '42750940352'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONPATH: src:.
         run: |
           set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BOCA_PROTECTED_ACTION_CONTEXT" > "$RUNNER_TEMP/v3-stage-incident.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/boca-first-deploy.yml/runs?event=workflow_dispatch&per_page=100" --paginate \
-            --jq '{total_count:.total_count,fetched_count:(.workflow_runs|length),run_ids:(.workflow_runs|map(.id)),workflow_runs:[.workflow_runs[]|select((.display_title|startswith("BOCA-V3-STAGE-RECOVER-")) or .display_title=="BOCA-R137-904-RECOVERY-INVENTORY")|{id,display_title,event,head_sha,head_branch,run_attempt,run_number,status,conclusion,path,actor:{login:.actor.login},triggering_actor:{login:.triggering_actor.login},repository:{full_name:.repository.full_name}}]}' > "$RUNNER_TEMP/v3-stage-history.json"
           gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=1" > "$RUNNER_TEMP/v3-stage-prs.json"
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/v3-stage-main.json"
           python3 scripts/check_main_ref.py "$RUNNER_TEMP/v3-stage-main.json" "$GITHUB_SHA"
@@ -2644,8 +2653,9 @@ jobs:
             "$GITHUB_SHA" "$GITHUB_RUN_ID" "$BOCA_PROTECTED_ACTION_CONTEXT")"
           [[ "$incident_source" =~ ^[0-9a-f]{40}$ ]]
           printf 'BOCA_V3_STAGE_INCIDENT_SOURCE=%s\n' "$incident_source" >> "$GITHUB_ENV"
-      - name: Authenticate both historical runs and the latest pinned inventory
-        if: inputs.operation == 'cutover-a-stage-recover' && inputs.protected_action_context == '42742150879'
+      - name: Authenticate the Boca incident and its GitHub evidence
+        id: incident_dispatch_proof
+        if: (inputs.operation == 'cutover-a-stage-recover' && inputs.protected_action_context == '42742150879') || ((inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-reconcile') && inputs.protected_action_context == '42750940352')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONPATH: src:.
@@ -2655,31 +2665,79 @@ jobs:
           proof="$RUNNER_TEMP/boca-904-recovery-proof"
           mkdir -m 700 "$proof"
           history="$RUNNER_TEMP/v3-stage-history.json"
-          inventory_run="$(python3 -m scripts.check_904_recovery_dispatch inventory-run "$history" "$GITHUB_SHA" "$GITHUB_RUN_NUMBER")"
-          [[ "$inventory_run" =~ ^[1-9][0-9]{0,18}$ ]]
+          if [[ "$BOCA_PROTECTED_ACTION_CONTEXT" = 42750940352 ]]; then
+            reason=HISTORICAL_RUNS
+            trap 'printf "refused_at=%s\n" "$reason" >> "$GITHUB_OUTPUT"' ERR
+          fi
           runs="repos/$GITHUB_REPOSITORY/actions/runs"
           gh api "$runs/$GITHUB_RUN_ID" > "$proof/run.json"
-          gh api "$runs/42745950217" > "$proof/historical.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/jobs/129597962453" > "$proof/historical_job.json"
-          gh api "$runs/$inventory_run" > "$proof/inventory.json"
-          gh api "$runs/$inventory_run/attempts/1/jobs?per_page=100" --jq '{total_count,jobs:[.jobs[]|{id,run_id,run_attempt,head_sha,name,status,conclusion,steps:[.steps[]?|{name,status,conclusion}]}]}' > "$proof/jobs.json"
+          if [[ "$BOCA_PROTECTED_ACTION_CONTEXT" = 42750940352 ]]; then
+            # #916 is the already-completed recovery of #904. Preserve its exact provenance.
+            ids=(42750716605 42750940352 42751222045)
+            jobs=(129613417052 129614147059 129615059001)
+            for i in 0 1 2; do
+              n=$((915 + i))
+              gh api "$runs/${ids[i]}" > "$proof/run$n.json"
+              gh api "repos/$GITHUB_REPOSITORY/actions/jobs/${jobs[i]}" > "$proof/job$n.json"
+            done
+            selector=plan-run-916
+          else
+            gh api "$runs/42745950217" > "$proof/historical.json"
+            gh api "repos/$GITHUB_REPOSITORY/actions/jobs/129597962453" > "$proof/historical_job.json"
+            selector=inventory-run
+          fi
+          if [[ "$BOCA_OPERATION" = cutover-a-stage-recover ]]; then
+            reason=LATEST_INVENTORY
+            inventory_run="$(python3 -m scripts.check_904_recovery_dispatch "$selector" "$history" "$GITHUB_SHA" "$GITHUB_RUN_NUMBER")"
+            [[ "$inventory_run" =~ ^[1-9][0-9]{0,18}$ ]]
+            gh api "$runs/$inventory_run" > "$proof/inventory.json"
+            gh api "$runs/$inventory_run/attempts/1/jobs?per_page=100" --jq '{total_count,jobs:[.jobs[]|{id,run_id,run_attempt,head_sha,name,status,conclusion,steps:[.steps[]?|{name,status,conclusion}]}]}' > "$proof/jobs.json"
+          fi
+          reason=CURRENT_MAIN_CI
           gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=100" > "$proof/ci.json"
           gh api --paginate "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/check-runs?per_page=100" > "$proof/checks.json"
           gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=1" > "$proof/pulls.json"
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$proof/main.json"
-          python3 -m scripts.check_904_recovery_dispatch authorize "$proof" \
-            "$RUNNER_TEMP/v3-stage-incident.json" "$history"
-          printf 'BOCA_904_ADMITTED=%s\n' "$GITHUB_RUN_ID" >> "$GITHUB_ENV"
+          if [[ "$BOCA_PROTECTED_ACTION_CONTEXT" = 42750940352 ]]; then
+            reason=GITHUB_PROVENANCE
+            python3 -m scripts.check_904_recovery_dispatch authorize-916 "$proof" "$history"
+            if [[ "$BOCA_OPERATION" = cutover-a-stage-recover ]]; then
+              mkdir -m 700 "$proof/plan"
+              reason=PLAN_ARTIFACT
+              gh run download "$inventory_run" --repo "$GITHUB_REPOSITORY" --name boca-916-image-plan --dir "$proof/plan"
+              reason=PLAN_RECEIPT
+              plan_sha="$(python3 -m scripts.check_904_recovery_dispatch plan-digest-916 "$proof/plan/boca-916-plan.json" "$inventory_run" "$GITHUB_SHA")"
+              [[ "$plan_sha" =~ ^[a-f0-9]{64}$ ]]
+              printf 'BOCA_916_PLAN_RUN=%s\nBOCA_916_PLAN_SHA=%s\n' "$inventory_run" "$plan_sha" >> "$GITHUB_ENV"
+            fi
+            printf 'BOCA_916_ADMITTED=%s\n' "$GITHUB_RUN_ID" >> "$GITHUB_ENV"
+          else
+            python3 -m scripts.check_904_recovery_dispatch authorize "$proof" \
+              "$RUNNER_TEMP/v3-stage-incident.json" "$history"
+            printf 'BOCA_904_ADMITTED=%s\n' "$GITHUB_RUN_ID" >> "$GITHUB_ENV"
+          fi
       - name: Remove only authenticated uncommitted Cutover stage or recover Boca incident 904 under lease
         id: cutover_stage_recovery_host
-        if: inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-stage-recover-844'
+        if: inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-stage-recover-844' || (inputs.operation == 'cutover-a-reconcile' && inputs.protected_action_context == '42750940352')
         run: |
           set -euo pipefail
           umask 077
           reviewed="$RUNNER_TEMP/boca-stage-recovery-reviewed.pyz"
           digest="$(sha256sum "$reviewed" | cut -d' ' -f1)"
           deadline=180s
-          if [[ "$BOCA_OPERATION" = cutover-a-stage-recover && "$BOCA_PROTECTED_ACTION_CONTEXT" = 42742150879 ]]; then
+          if [[ "$BOCA_PROTECTED_ACTION_CONTEXT" = 42750940352 ]]; then
+            test "${BOCA_916_ADMITTED:-}" = "$GITHUB_RUN_ID"
+            coordinates=(42750940352 3c7dd8ae08bc5372a01a25701b6c5524ec9b3386 42751222045 "$GITHUB_RUN_ID" "$GITHUB_SHA")
+            case "$BOCA_OPERATION" in
+              cutover-a-reconcile) mode=cutover-image-plan-916 ;;
+              cutover-a-stage-recover)
+                [[ "$BOCA_916_PLAN_RUN" =~ ^[1-9][0-9]{0,18}$ && "$BOCA_916_PLAN_SHA" =~ ^[a-f0-9]{64}$ ]]
+                coordinates+=("$BOCA_916_PLAN_RUN" "$BOCA_916_PLAN_SHA")
+                mode=cutover-image-finish-916 ;;
+              *) exit 1 ;;
+            esac
+            deadline=900s
+          elif [[ "$BOCA_OPERATION" = cutover-a-stage-recover && "$BOCA_PROTECTED_ACTION_CONTEXT" = 42742150879 ]]; then
             test "${BOCA_904_ADMITTED:-}" = "$GITHUB_RUN_ID"
             mode=cutover-stage-recover-904
             coordinates=("$BOCA_PROTECTED_ACTION_CONTEXT" "$BOCA_V3_STAGE_INCIDENT_SOURCE" 42745950217 "$GITHUB_RUN_ID" "$GITHUB_SHA")
@@ -2703,7 +2761,7 @@ jobs:
           # A lost terminal reply never authorizes another physical attempt.
           ssh_rc=0
           (
-            if [[ "$mode" = cutover-stage-recover-904 ]]; then ulimit -f 8 || exit 99; fi
+            if [[ "$mode" = cutover-stage-recover-904 || "$mode" = cutover-image-plan-916 || "$mode" = cutover-image-finish-916 ]]; then ulimit -f 8 || exit 99; fi
             timeout --signal=TERM --kill-after=5s "$deadline" ssh \
               -F "$RUNNER_TEMP/boca-ssh/config" \
               -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
@@ -2711,25 +2769,62 @@ jobs:
           ) > "$RUNNER_TEMP/boca-stage-recovery.receipt" 2>/dev/null || ssh_rc=$?
           printf 'ssh_rc=%s\n' "$ssh_rc" >> "$GITHUB_OUTPUT"
           exit "$ssh_rc"
-      - name: Verify physical outcome and failed subphase of Boca recovery 904
-        if: ${{ always() && inputs.operation == 'cutover-a-stage-recover' && inputs.protected_action_context == '42742150879' }}
+      - name: Verify physical Boca incident receipt
+        id: verified_incident_receipt
+        if: ${{ always() && ((inputs.operation == 'cutover-a-stage-recover' && inputs.protected_action_context == '42742150879') || (inputs.protected_action_context == '42750940352' && (inputs.operation == 'cutover-a-reconcile' || inputs.operation == 'cutover-a-stage-recover'))) }}
         env:
           PYTHONPATH: src:.
           HOST_OUTCOME: ${{ steps.cutover_stage_recovery_host.outcome }}
           HOST_RC: ${{ steps.cutover_stage_recovery_host.outputs.ssh_rc }}
+          GATE_REASON: ${{ steps.incident_dispatch_proof.outputs.refused_at }}
         run: |
           set -euo pipefail
+          umask 077
+          if [[ "$BOCA_PROTECTED_ACTION_CONTEXT" = 42742150879 ]]; then
+            label=BOCA_904_RECOVERY
+            next=READ_ONLY_904_AND_EXACT_LEGACY_HEALTH
+            effects=effects=UNKNOWN
+            mode=verify
+            coordinates=(42742150879 "${BOCA_V3_STAGE_INCIDENT_SOURCE:-}" 42745950217 "$GITHUB_RUN_ID" "$GITHUB_SHA")
+          else
+            label=BOCA_916
+            next=READ_ONLY_916
+            coordinates=(42750940352 3c7dd8ae08bc5372a01a25701b6c5524ec9b3386 42751222045 "$GITHUB_RUN_ID" "$GITHUB_SHA")
+            if [[ "$BOCA_OPERATION" = cutover-a-reconcile ]]; then
+              mode=verify-observe-916
+              effects=observer_writes=0
+            else
+              mode=verify-finish-916
+              effects=effects=UNKNOWN
+              coordinates+=("${BOCA_916_PLAN_RUN:-}" "${BOCA_916_PLAN_SHA:-}")
+            fi
+          fi
           if [[ "$HOST_OUTCOME" = skipped ]]; then
-            printf 'BOCA_904_RECOVERY state=NO_GO step=RUNNER_GATE host_attempted=false\n' >> "$GITHUB_STEP_SUMMARY"
+            case "${GATE_REASON:-}" in
+              HISTORICAL_RUNS|LATEST_INVENTORY|CURRENT_MAIN_CI|GITHUB_PROVENANCE|PLAN_ARTIFACT|PLAN_RECEIPT) reason="$GATE_REASON" ;;
+              *) reason=PREREQUISITES ;;
+            esac
+            printf '%s state=NO_GO step=RUNNER_GATE host_attempted=false reason=%s\n' "$label" "$reason" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           receipt="$RUNNER_TEMP/boca-stage-recovery.receipt"
           if [[ -s "$receipt" && -f "$receipt" && ! -L "$receipt" ]]; then
             rc=0
-            summary="$(python3 -m scripts.host_cutover_904_recovery verify "$BOCA_PROTECTED_ACTION_CONTEXT" \
-              "${BOCA_V3_STAGE_INCIDENT_SOURCE:-}" 42745950217 "$GITHUB_RUN_ID" "$GITHUB_SHA" < "$receipt")" || rc=$?
+            summary="$(python3 -m scripts.host_cutover_904_recovery "$mode" "${coordinates[@]}" < "$receipt")" || rc=$?
             if [[ "$rc" = 0 && "$HOST_RC" = 0 && "$HOST_OUTCOME" = success && -n "$summary" ]]; then
+              if [[ "$mode" = verify-finish-916 ]]; then
+                plan="$RUNNER_TEMP/boca-904-recovery-proof/plan/boca-916-plan.json"
+                if ! python3 -m scripts.check_904_recovery_dispatch match-finish-916 "$plan" "$receipt" \
+                  "$GITHUB_RUN_ID" "$GITHUB_SHA" "$BOCA_916_PLAN_RUN" "$BOCA_916_PLAN_SHA"; then
+                  printf 'BOCA_916_FINISH state=NO_GO step=ACK_PLAN_MISMATCH effects=UNKNOWN retry=NO_GO next=READ_ONLY_916\n' >> "$GITHUB_STEP_SUMMARY"
+                  exit 1
+                fi
+              fi
               printf '%s\n' "$summary" >> "$GITHUB_STEP_SUMMARY"
+              if [[ "$mode" = verify-observe-916 ]]; then
+                cp "$receipt" "$RUNNER_TEMP/boca-916-plan.json"
+                printf 'publish_plan=true\n' >> "$GITHUB_OUTPUT"
+              fi
               exit 0
             fi
             if [[ "$rc" = 3 && -n "$summary" ]]; then
@@ -2737,10 +2832,18 @@ jobs:
               exit 1
             fi
           fi
-          printf 'BOCA_904_RECOVERY state=NO_GO step=PHYSICAL_ACK_UNVERIFIED effects=UNKNOWN retry=NO_GO next=READ_ONLY_904_AND_EXACT_LEGACY_HEALTH\n' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s state=NO_GO step=PHYSICAL_ACK_UNVERIFIED %s retry=NO_GO next=%s\n' "$label" "$effects" "$next" >> "$GITHUB_STEP_SUMMARY"
           exit 1
+      - name: Publish verified Boca 916 image plan
+        if: inputs.operation == 'cutover-a-reconcile' && inputs.protected_action_context == '42750940352' && steps.verified_incident_receipt.outputs.publish_plan == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boca-916-image-plan
+          path: ${{ runner.temp }}/boca-916-plan.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Require verified physical ACK for one exact stage directory
-        if: ${{ always() && ((inputs.operation == 'cutover-a-stage-recover' && inputs.protected_action_context != '42742150879') || inputs.operation == 'cutover-a-stage-recover-844') }}
+        if: ${{ always() && ((inputs.operation == 'cutover-a-stage-recover' && inputs.protected_action_context != '42742150879' && inputs.protected_action_context != '42750940352') || inputs.operation == 'cutover-a-stage-recover-844') }}
         env:
           # This script imports the reviewed src-layout package and scripts package.
           # Direct `python3 scripts/...` without these roots masked a genuine host
