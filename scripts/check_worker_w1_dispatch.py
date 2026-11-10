@@ -7,11 +7,14 @@ import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TypeGuard
 
 _RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _OWNER = "mbalbo2023"
-_WORKFLOW = "Boca first deploy"
+_WORKFLOW_ID = 400115324
+_WORKFLOW_PATH = ".github/workflows/boca-first-deploy.yml"
+_REPOSITORY = "mbalbo2023/boca-socios-assistant"
 _INSTALL = 42806447101
 _INSTALL_SHA = "03df9a14bdd78cf768386a865876fed9d5656911"
 
@@ -20,10 +23,16 @@ class DispatchUnavailable(ValueError):
     """Immutable GitHub REST evidence cannot authorize W1 host access."""
 
 
-def _identity(document: object) -> bool:
+def _identity(document: object) -> TypeGuard[dict[str, object]]:
     return (
         type(document) is dict
-        and document.get("name") == _WORKFLOW
+        # The `name` field can be overridden by the workflow's dynamic `run-name`.
+        # GitHub #926 is really named BOCA-SIMULATION-DEPLOY-V3; authenticate
+        # its immutable workflow ID, source path and repository instead.
+        and document.get("workflow_id") == _WORKFLOW_ID
+        and document.get("path") == _WORKFLOW_PATH
+        and type(document.get("repository")) is dict
+        and document["repository"].get("full_name") == _REPOSITORY
         and document.get("event") == "workflow_dispatch"
         and document.get("head_branch") == "main"
         and type(document.get("run_attempt")) is int

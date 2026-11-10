@@ -1955,7 +1955,7 @@ jobs:
           # from the installed source. Every manual run on this SHA counts.
           gh api --paginate \
             "repos/$GITHUB_REPOSITORY/actions/workflows/boca-first-deploy.yml/runs?event=workflow_dispatch&created=%3E%3D2026-11-10&per_page=100" \
-            --jq '.workflow_runs[] | {id,name,event,head_sha,head_branch,run_attempt,actor:{login:.actor.login}} | @json' \
+            --jq '.workflow_runs[] | {id,workflow_id,path,repository:{full_name:.repository.full_name},event,head_sha,head_branch,run_attempt,actor:{login:.actor.login}} | @json' \
             > "$RUNNER_TEMP/boca-w1-dispatch-history.jsonl"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/42806447101" \
             > "$RUNNER_TEMP/boca-w1-installed-926.json"

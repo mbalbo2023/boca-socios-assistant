@@ -21,6 +21,9 @@ def _history():
         {
             "id": 42900000001,
             "name": "Boca first deploy",
+            "workflow_id": 400115324,
+            "path": ".github/workflows/boca-first-deploy.yml",
+            "repository": {"full_name": "mbalbo2023/boca-socios-assistant"},
             "event": "workflow_dispatch",
             "head_sha": SHA,
             "head_branch": "main",
@@ -29,7 +32,10 @@ def _history():
         },
         {
             "id": 42806447101,
-            "name": "Boca first deploy",
+            "name": "BOCA-SIMULATION-DEPLOY-V3",
+            "workflow_id": 400115324,
+            "path": ".github/workflows/boca-first-deploy.yml",
+            "repository": {"full_name": "mbalbo2023/boca-socios-assistant"},
             "event": "workflow_dispatch",
             "head_sha": "03df9a14bdd78cf768386a865876fed9d5656911",
             "head_branch": "main",
@@ -42,7 +48,10 @@ def _history():
 def _installed():
     return {
         "id": 42806447101,
-        "name": "Boca first deploy",
+        "name": "BOCA-SIMULATION-DEPLOY-V3",
+        "workflow_id": 400115324,
+        "path": ".github/workflows/boca-first-deploy.yml",
+        "repository": {"full_name": "mbalbo2023/boca-socios-assistant"},
         "event": "workflow_dispatch",
         "head_sha": "03df9a14bdd78cf768386a865876fed9d5656911",
         "head_branch": "main",
@@ -54,7 +63,14 @@ def _installed():
 
 
 def test_one_proven_current_dispatch_with_exact_historical_install_is_admitted():
+    """Historical #926 has a dynamic run name, not the workflow's UI label."""
     gate.validate(_history(), _installed(), RUN, SHA)
+
+
+def test_current_run_name_is_not_an_authority_for_workflow_identity():
+    history = _history()
+    history[0]["name"] = "BOCA-WORKER-DIAGNOSE-ONCE"
+    gate.validate(history, _installed(), RUN, SHA)
 
 
 @pytest.mark.parametrize(
@@ -67,7 +83,9 @@ def test_one_proven_current_dispatch_with_exact_historical_install_is_admitted()
         "other-branch",
         "installed-failed",
         "installed-source-drift",
-        "wrong-workflow",
+        "wrong-workflow-path",
+        "wrong-workflow-id",
+        "wrong-repository",
     ],
 )
 def test_second_attempt_or_mismatched_provenance_fails_pre_ssh(mutation):
@@ -89,8 +107,12 @@ def test_second_attempt_or_mismatched_provenance_fails_pre_ssh(mutation):
         installed["conclusion"] = "failure"
     elif mutation == "installed-source-drift":
         installed["head_sha"] = "a" * 40
-    elif mutation == "wrong-workflow":
-        history[0]["name"] = "Other workflow"
+    elif mutation == "wrong-workflow-path":
+        history[0]["path"] = ".github/workflows/other.yml"
+    elif mutation == "wrong-workflow-id":
+        installed["workflow_id"] = 42
+    elif mutation == "wrong-repository":
+        history[0]["repository"] = {"full_name": "someone-else/unrelated"}
     with pytest.raises(gate.DispatchUnavailable):
         gate.validate(history, installed, RUN, SHA)
 

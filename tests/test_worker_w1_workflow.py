@@ -38,6 +38,14 @@ def test_w1_checks_out_source_before_calling_github_or_host() -> None:
     )
 
 
+def test_w1_history_projects_stable_workflow_identity_not_dynamic_run_name() -> None:
+    history = _step(
+        "Prove single W1 owner dispatch and exact successful installed Cutover before SSH"
+    )
+    assert "{id,workflow_id,path,repository:{full_name:.repository.full_name}" in history
+    assert "{id,name,event," not in history
+
+
 def test_w1_can_only_run_bounded_host_only_payload_and_sanitize_receipt() -> None:
     step = _step("W1 one exact installed worker start, prearmed private capture and verified stop")
     assert "steps.w1_single_dispatch.outcome == 'success'" in step
