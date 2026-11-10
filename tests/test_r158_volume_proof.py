@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 from boca_socios import host_worker_physical as physical
 
-
 RUN = "42899999999"
 CID = "f" * 64
 IPC_DESTINATION = "/run/boca-browser-ipc"
@@ -215,7 +214,7 @@ class VolumeContractTests(unittest.TestCase):
                 "CapAdd": ["SYS_CHROOT"],
                 "Binds": None,
                 "Tmpfs": {
-                    "/tmp": "rw,noexec,nosuid,size=32m",
+                    "/tmp": "rw,noexec,nosuid,size=32m",  # noqa: S108
                     "/home/boca-browser": "rw,noexec,nosuid,size=16m",
                 },
                 "Mounts": [
