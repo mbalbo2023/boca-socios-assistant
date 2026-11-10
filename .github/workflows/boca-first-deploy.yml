@@ -164,7 +164,7 @@ jobs:
           uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
       - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
         run: |
-          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py tests/test_r82_exact_worker_807_recovery.py tests/test_r82_recovery_bundle.py tests/test_r82_recovery_dispatch.py tests/test_r82_recovery_workflow.py tests/test_r83_primary_phase.py tests/test_r83_cleanup_stages.py tests/test_r83_preflight_workflow.py tests/test_r83_bundle_caps.py tests/test_r84_worker_storage_admission.py tests/test_r84_worker_preflight_dispatch.py tests/test_r85_cutover_observe_provenance.py tests/test_r87_exact_worker_819_recovery.py tests/test_r87_recovery_bundle.py tests/test_r87_recovery_dispatch.py tests/test_r87_recovery_workflow.py tests/test_r88_preflight_capture.py tests/test_r88_stop_diagnostics.py tests/test_r89_preflight_input_descriptions.py
+          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_cutover_candidate_receipt.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py tests/test_r82_exact_worker_807_recovery.py tests/test_r82_recovery_bundle.py tests/test_r82_recovery_dispatch.py tests/test_r82_recovery_workflow.py tests/test_r83_primary_phase.py tests/test_r83_cleanup_stages.py tests/test_r83_preflight_workflow.py tests/test_r83_bundle_caps.py tests/test_r84_worker_storage_admission.py tests/test_r84_worker_preflight_dispatch.py tests/test_r85_cutover_observe_provenance.py tests/test_r87_exact_worker_819_recovery.py tests/test_r87_recovery_bundle.py tests/test_r87_recovery_dispatch.py tests/test_r87_recovery_workflow.py tests/test_r88_preflight_capture.py tests/test_r88_stop_diagnostics.py tests/test_r89_preflight_input_descriptions.py
           uv run pytest -q tests/test_r86_exact_worker_819_observer.py tests/test_r90_exact_worker_827_observer.py tests/test_r93_exact_worker_834_observer.py
           uv run pytest -q tests/test_r91_worker_827_recovery.py tests/test_r91_worker_827_dispatch.py tests/test_r91_worker_827_workflow.py tests/test_r92_stop_ack_evidence.py tests/test_r92_preflight_receipt.py tests/test_r95_stop_short_alias.py
           uv run pytest -q tests/test_r94_worker_834_recovery.py tests/test_r94_worker_834_dispatch.py tests/test_r94_worker_834_workflow.py
@@ -2874,14 +2874,14 @@ jobs:
             < "$RUNNER_TEMP/boca-cutover-a-review.pyz" \
             > "$RUNNER_TEMP/boca-cutover-a-host.receipt" 2>/dev/null || host_ssh_rc=$?
           if [[ "$host_ssh_rc" -ne 0 ]]; then
-            printf 'capture_readback=true\n' >> "$GITHUB_OUTPUT" || true
+            printf 'failure_readback=true\n' >> "$GITHUB_OUTPUT" || true
             if ! BOCA_CUTOVER_A_SSH_RC="$host_ssh_rc" python scripts/check_cutover_a_go.py --report-host-failure | tee -a "$GITHUB_STEP_SUMMARY"; then
               printf 'BOCA_CUTOVER_A_SSH_DIAGNOSTIC state=NO_GO diagnostic=UNVERIFIED host=UNVERIFIED no_retry=true\n' >> "$GITHUB_STEP_SUMMARY"
             fi
             exit "$host_ssh_rc"
           fi
-      - name: Read the same failed worker capture from its immutable Boca marker
-        if: ${{ failure() && !cancelled() && inputs.operation == 'cutover-a-apply' && steps.cutover_go_preflight.outcome == 'success' && steps.cutover_host_apply.outcome == 'failure' && steps.cutover_host_apply.outputs.capture_readback == 'true' }}
+      - name: Read the same failed Cutover from its immutable Boca markers
+        if: ${{ failure() && !cancelled() && inputs.operation == 'cutover-a-apply' && steps.cutover_go_preflight.outcome == 'success' && steps.cutover_host_apply.outcome == 'failure' && steps.cutover_host_apply.outputs.failure_readback == 'true' }}
         env:
           PYTHONPATH: src:scripts
         run: |
@@ -2893,7 +2893,7 @@ jobs:
                  -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=5 -o ServerAliveCountMax=2 \
                  boca-target "$remote_command" < "$RUNNER_TEMP/boca-cutover-a-review.pyz" 2>/dev/null \
                  | python3 -m boca_socios.host_cutover_capture_readback verify)"; then
-            printf 'BOCA_WORKER_CAPTURE_READBACK state=NO_GO receipt=UNVERIFIED cleanup=UNVERIFIED retry=NO_GO\n' | tee -a "$GITHUB_STEP_SUMMARY"
+            printf 'BOCA_CUTOVER_FAILURE_READBACK state=NO_GO receipt=UNVERIFIED cleanup=UNVERIFIED retry=NO_GO\n' | tee -a "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           printf '%s\n' "$evidence" | tee -a "$GITHUB_STEP_SUMMARY"

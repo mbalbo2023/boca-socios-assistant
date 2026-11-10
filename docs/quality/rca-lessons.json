@@ -598,7 +598,9 @@
         "tests/test_on_demand_end_to_end.py::test_authenticated_clicks_reach_exact_worker_and_publish_durable_ack",
         "tests/test_on_demand_end_to_end.py::test_owner_stop_while_start_is_claimed_never_enables_the_engine",
         "tests/test_on_demand_end_to_end.py::test_worker_failure_keeps_owner_session_and_panel_after_recreation",
-        "tests/test_host_on_demand_lifecycle.py::test_capture_arm_precedes_docker_and_classifies_exit_inside_attach"
+        "tests/test_host_on_demand_lifecycle.py::test_capture_arm_precedes_docker_and_classifies_exit_inside_attach",
+        "tests/test_cutover_candidate_receipt.py::test_failed_cold_acceptance_survives_compensation_and_lost_first_stdout",
+        "tests/test_cutover_candidate_compensation.py::test_compensate_restarted_pinned_candidate_after_stable_inspect"
       ]
     }
   ]

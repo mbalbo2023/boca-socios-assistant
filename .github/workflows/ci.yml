@@ -79,6 +79,8 @@ jobs:
         # No Docker access, host SSH, outside socket or Boca/Telegram traffic.
         # Local sandbox cannot create AF_UNIX; this exact-SHA runner proof is required.
         run: uv run python scripts/check_engine_socket_linux.py
+      - name: Verify socket activation in a disposable systemd user manager
+        run: python3 scripts/lab_on_demand_systemd.py
       - name: Enforce accepted RCA lessons against executed regressions
         run: uv run python scripts/check_rca_lessons.py "$RUNNER_TEMP/rca-tests.xml"
       - name: Repository isolation gate

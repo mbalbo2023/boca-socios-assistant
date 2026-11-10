@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from boca_socios import host_boca_cutover as cutover
 from boca_socios import host_on_demand_service as service
 from boca_socios.host_boca_cleanup import BocaJobLease
 from boca_socios.host_lifecycle_rootless_adapter import ReviewedInstalledPair
@@ -198,9 +199,10 @@ def test_prepared_only_and_unowned_files_are_preserved(host):
     assert not path.exists()
     service.prepare_control_directory(ATTEMPT, lease)
     (unit / SOCKET).write_bytes(b"foreign")
-    with pytest.raises(service.ControlRefused):
+    with pytest.raises(cutover.CandidateAcceptanceFailure) as caught:
         service.install_control(installation(home), lease)
     service.remove_control(ATTEMPT, lease)
+    assert caught.value.check == "CONTROL_UNIT_PREFLIGHT"
     assert (unit / SOCKET).read_bytes() == b"foreign"
     assert manager.effects == []
 
@@ -209,8 +211,9 @@ def test_compensation_preserves_drift_and_foreign_fragment(host):
     home, unit, manager, lease = host
     service.prepare_control_directory(ATTEMPT, lease)
     manager.foreign = True
-    with pytest.raises(service.ControlRefused):
+    with pytest.raises(cutover.CandidateAcceptanceFailure) as caught:
         service.install_control(installation(home), lease)
+    assert caught.value.check == "CONTROL_UNIT_PREFLIGHT"
     assert not manager.effects
     manager.foreign = False
     service.install_control(installation(home), lease)
@@ -318,8 +321,9 @@ def test_failed_start_can_be_compensated_without_a_listener(host, monkeypatch):
         return manager(home, *args)
 
     monkeypatch.setattr(service, "_systemctl", failed_start)
-    with pytest.raises(service.ControlRefused):
+    with pytest.raises(cutover.CandidateAcceptanceFailure) as caught:
         service.install_control(installation(home), lease)
+    assert caught.value.check == "CONTROL_LISTENER_START"
     service.remove_control(ATTEMPT, lease)
     assert not (home / ".boca-on-demand").exists()
     assert not (unit / SOCKET).exists() and not (unit / UNIT).exists()
@@ -365,3 +369,81 @@ def test_cut_during_unit_reload_after_unlink_can_resume(host, monkeypatch):
     monkeypatch.setattr(service, "_systemctl", manager)
     service.remove_control(ATTEMPT, lease)
     assert not (home / ".boca-on-demand").exists() and not manager.known
+
+
+@pytest.mark.parametrize(
+    ("operation", "expected"),
+    [
+        ("_home", "CONTROL_HOME_UNITS"),
+        ("_bundle", "CONTROL_ARCHIVE_BINDING"),
+        ("_inspect", "CONTROL_UNIT_PREFLIGHT"),
+        ("_new", "CONTROL_PUBLISH"),
+        ("daemon-reload", "CONTROL_MANAGER_RELOAD"),
+        ("start", "CONTROL_LISTENER_START"),
+        ("verify_control", "CONTROL_LISTENER_VERIFY"),
+    ],
+)
+def test_install_reports_innermost_safe_substep(host, monkeypatch, operation, expected):
+    home, _, manager, lease = host
+    service.prepare_control_directory(ATTEMPT, lease)
+    item = installation(home)
+
+    def unreachable(*args, **kwargs):
+        raise PermissionError("fixture-private-value")
+
+    if operation in ("daemon-reload", "start"):
+
+        def manager_failure(home, *args):
+            if args[0] == operation:
+                unreachable()
+            return manager(home, *args)
+
+        monkeypatch.setattr(service, "_systemctl", manager_failure)
+    else:
+        monkeypatch.setattr(service, operation, unreachable)
+
+    with (
+        pytest.raises(cutover.CandidateAcceptanceFailure) as caught,
+        cutover.candidate_check("CONTROL_INSTALL"),
+    ):
+        service.install_control(item, lease)
+    assert (caught.value.check, caught.value.result) == (expected, "PERMISSION_DENIED")
+    assert "fixture-private-value" not in str(caught.value)
+
+
+def test_interrupted_remove_is_unavailable_even_while_manager_still_listens(host):
+    home, _, manager, lease = host
+    service.prepare_control_directory(ATTEMPT, lease)
+    item = installation(home)
+    service.install_control(item, lease)
+    root = home / ".boca-on-demand"
+    proof = hashlib.sha256((root / "binding.json").read_bytes()).hexdigest().encode("ascii")
+    # remove_control durably publishes this exact marker before asking systemd to stop.
+    service._new(root / "removing", proof)
+    assert manager.active
+    with pytest.raises(service.ControlRefused):
+        service.verify_control(item, lease)
+    with pytest.raises(service.ControlRefused):
+        service.read_installed_binding(lease)
+    service.remove_control(ATTEMPT, lease)
+    assert not (home / ".boca-on-demand").exists() and not manager.active
+
+
+def test_actual_manager_failure_category_discards_its_output(tmp_path, monkeypatch):
+    import subprocess
+
+    def systemctl_error(argv, **kwargs):
+        assert kwargs["stderr"] == subprocess.DEVNULL
+        return subprocess.CompletedProcess(argv, 1, b"private-diagnostic", None)
+
+    monkeypatch.setattr(subprocess, "run", systemctl_error)
+    with (
+        pytest.raises(cutover.CandidateAcceptanceFailure) as failure,
+        cutover.candidate_check("CONTROL_LISTENER_START"),
+    ):
+        service._systemctl(tmp_path, "start", SOCKET)
+    assert (failure.value.check, failure.value.result) == (
+        "CONTROL_LISTENER_START",
+        "COMMAND_FAILED",
+    )
+    assert "private-diagnostic" not in str(failure.value)

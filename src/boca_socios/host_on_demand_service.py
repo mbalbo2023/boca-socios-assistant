@@ -367,7 +367,11 @@ def _systemctl(home: Path, *args: str) -> str:
         timeout=15,
         check=False,
     )
-    if proc.returncode not in ((0, 4) if args[0] == "show" else (0,)) or len(proc.stdout) > 4096:
+    if proc.returncode not in ((0, 4) if args[0] == "show" else (0,)):
+        # Preserve the exit category for the protected installer without piping
+        # the manager's diagnostics, process output or argument vector into a receipt.
+        raise _refuse() from subprocess.CalledProcessError(proc.returncode, "Boca user manager")
+    if len(proc.stdout) > 4096:
         raise _refuse()
     return proc.stdout.decode("ascii")
 
@@ -466,43 +470,55 @@ def install_control(
     installation: OnDemandInstallation, lease: BocaJobLease, *, bundle_sha256: str | None = None
 ) -> None:
     """Publish only a prepared attempt, pin both CIDs, then verify a listening unit."""
-    run = installation.installation_run_id
-    _verify_lease(lease, run)
-    home = _home()
-    root = _owned(home, run)
-    _directory(root / "socket", mode=0o711)
-    if _present(root / _REMOVING):
-        raise _refuse()
-    directory = _unit_dir(home)
-    archive = _bundle(bundle_sha256)
-    digest = _sha(archive)
-    plan = _plan(home, installation, digest)
-    units = _units(digest, _sha(plan))
-    active, ready = _inspect(home, root, units)
-    for name, data in ((_BINDING, plan), (_ARCHIVE, archive), *units.items()):
-        path = root / name
-        if _present(path):
-            if _read(path, len(data), links=(1, 2) if name in units else (1,)) != data:
-                raise _refuse()
-        else:
-            _new(path, data)
-    for name in units:
-        if not _matches(root / name, directory / name):
-            os.link(root / name, directory / name, follow_symlinks=False)
-    _sync(directory)
-    if not _enabled(directory, True):
-        enable = directory / "default.target.wants"
-        os.symlink("../" + _SOCKET, enable / _SOCKET)
-        _sync(enable)
-    if not ready:
-        _systemctl(home, "daemon-reload")
-    if not active:
-        # Verify again after daemon-reload, including owner fragment and drop-ins, before start.
-        _, ready = _inspect(home, root, units)
-        if not ready:
+    # Only the protected installer reports Cutover stages. The installed
+    # handler ZIP intentionally excludes the general deployment dispatcher.
+    from boca_socios.host_boca_cutover import candidate_check
+
+    with candidate_check("CONTROL_HOME_UNITS"):
+        run = installation.installation_run_id
+        _verify_lease(lease, run)
+        home = _home()
+        root = _owned(home, run)
+        _directory(root / "socket", mode=0o711)
+        if _present(root / _REMOVING):
             raise _refuse()
-        _systemctl(home, "start", _SOCKET)
-    verify_control(installation, lease)
+        directory = _unit_dir(home)
+    with candidate_check("CONTROL_ARCHIVE_BINDING"):
+        archive = _bundle(bundle_sha256)
+        digest = _sha(archive)
+        plan = _plan(home, installation, digest)
+        units = _units(digest, _sha(plan))
+    with candidate_check("CONTROL_UNIT_PREFLIGHT"):
+        active, ready = _inspect(home, root, units)
+    with candidate_check("CONTROL_PUBLISH"):
+        for name, data in ((_BINDING, plan), (_ARCHIVE, archive), *units.items()):
+            path = root / name
+            if _present(path):
+                if _read(path, len(data), links=(1, 2) if name in units else (1,)) != data:
+                    raise _refuse()
+            else:
+                _new(path, data)
+        for name in units:
+            if not _matches(root / name, directory / name):
+                os.link(root / name, directory / name, follow_symlinks=False)
+        _sync(directory)
+        if not _enabled(directory, True):
+            enable = directory / "default.target.wants"
+            os.symlink("../" + _SOCKET, enable / _SOCKET)
+            _sync(enable)
+    with candidate_check("CONTROL_MANAGER_RELOAD"):
+        if not ready:
+            _systemctl(home, "daemon-reload")
+        if not active:
+            # Verify owner fragments and drop-ins in the reloaded manager before starting.
+            _, ready = _inspect(home, root, units)
+            if not ready:
+                raise _refuse()
+    if not active:
+        with candidate_check("CONTROL_LISTENER_START"):
+            _systemctl(home, "start", _SOCKET)
+    with candidate_check("CONTROL_LISTENER_VERIFY"):
+        verify_control(installation, lease)
 
 
 def verify_control(installation: OnDemandInstallation, lease: BocaJobLease) -> None:
@@ -520,6 +536,10 @@ def read_installed_binding(lease: BocaJobLease) -> OnDemandInstallation:
 def _verified_installation(home: Path) -> OnDemandInstallation:
     root = home / _ROOT
     _directory(root, mode=0o700)
+    if _present(root / _REMOVING):
+        # The handler rejects every new connection after this durable boundary,
+        # even if interruption left the manager reporting an active listener.
+        raise _refuse()
     raw = _read(root / _BINDING, _MAX_PLAN)
     item, digest = _decode(home, raw)
     _owned(home, item.installation_run_id)

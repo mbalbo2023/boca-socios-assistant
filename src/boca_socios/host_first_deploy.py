@@ -3754,11 +3754,28 @@ def _browser_image_absent(image: str, source_sha: str) -> bool:
     return False
 
 
-def _browser_port_free() -> None:
-    """A bind/close, no contact with the host listener or other ports."""
+def _browser_port_free(*, after_candidate_removal: bool = False) -> None:
+    """Prove an exclusive IPv4 loopback bind; Docker must still publish it after this probe."""
+    deadline = monotonic() + 65 if after_candidate_removal else None
+    endpoint = ("127.0.0.1", 8443)
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-            listener.bind(("127.0.0.1", 8443))
+        while True:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                try:
+                    probe.bind(endpoint)
+                    return
+                except OSError as exc:
+                    if deadline is None or exc.errno != errno.EADDRINUSE:
+                        raise
+                # The removed proxy may have closed first, leaving Linux TCP in
+                # TIME_WAIT for ~60 s. A reusable bind only permits waiting: it can
+                # coexist with a live bound-but-not-listening socket.
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                probe.bind(endpoint)
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise PreflightError("private Boca localhost:8443 did not become exclusively free")
+            sleep(min(1, remaining))
     except OSError as exc:
         raise PreflightError("private Boca localhost:8443 is not free") from exc
 
@@ -4734,6 +4751,7 @@ def _browser_check_service_labels(
     running: bool = True,
     verify_runtime: bool = True,
     restart_policy: str = "no",
+    expected_restart_count: int = 0,
 ) -> tuple[dict[str, object], dict[str, object]]:
     config, host = _browser_config_and_host(record)
     state = record.get("State")
@@ -4757,7 +4775,7 @@ def _browser_check_service_labels(
             not isinstance(state.get("Health"), dict) or state["Health"].get("Status") != "healthy"
         )
         or type(record.get("RestartCount")) is not int
-        or record["RestartCount"] != 0
+        or record["RestartCount"] != expected_restart_count
         or not isinstance(restart, dict)
         or restart.get("Name") != restart_policy
         or restart.get("MaximumRetryCount") != 0
@@ -5910,6 +5928,7 @@ def _cutover_candidate_postflight(
     *,
     verify_runtime: bool = True,
     control_directory: Path | None = None,
+    compensating: bool = False,
 ) -> bool:
     """Authenticate candidate's exact ID including reviewed Compose hash."""
     if re.fullmatch(r"[0-9a-f]{64}", container_id) is None or not DIGEST_PATTERN.fullmatch(
@@ -5939,6 +5958,7 @@ def _cutover_candidate_postflight(
         running=running,
         verify_runtime=running and verify_runtime,
         control_directory=control_directory,
+        compensating=compensating,
     )
     return running
 
@@ -5962,6 +5982,8 @@ def _cutover_compensate_candidate(
     if expected_candidate is not None and candidate_id != expected_candidate:
         raise PreflightError("cutover A cleanup candidate CID changed")
     if candidate_id is not None:
+        if control_directory is not None and expected_candidate is None:
+            raise PreflightError("cutover A cleanup lacks pinned candidate CID")
         if candidate_id == original_id:
             raise PreflightError("cutover A candidate name points at original ID")
         if _cutover_candidate_postflight(
@@ -5974,6 +5996,7 @@ def _cutover_compensate_candidate(
             config_hash,
             verify_runtime=False,
             control_directory=control_directory,
+            compensating=control_directory is not None,
         ):
             if _run("docker", "stop", "--time", "8", candidate_id, timeout=30) != candidate_id:
                 raise PreflightError("cutover A candidate stop receipt uncertain")
@@ -5987,13 +6010,28 @@ def _cutover_compensate_candidate(
                 config_hash,
                 verify_runtime=False,
                 control_directory=control_directory,
+                compensating=control_directory is not None,
             ):
                 raise PreflightError("cutover A candidate still running after stop")
         if _run("docker", "rm", candidate_id, timeout=20) != candidate_id:
             raise PreflightError("cutover A candidate selective delete receipt uncertain")
         if _cutover_candidate_name_id() is not None:
             raise PreflightError("cutover A candidate remained after selective removal")
-    _browser_port_free()
+    if expected_candidate is not None:
+        if _run(
+            "docker",
+            "ps",
+            "-a",
+            "-q",
+            "--no-trunc",
+            "--filter",
+            f"id={expected_candidate}",
+            timeout=15,
+        ):
+            raise PreflightError("cutover A candidate CID remained after selective removal")
+        _browser_port_free(after_candidate_removal=True)
+    else:
+        _browser_port_free()
     _cutover_restore_original(original_id, legacy_image, legacy_sha, attempt_id)
 
 
@@ -6355,8 +6393,30 @@ def _browser_controller_postflight(
     running: bool = True,
     verify_runtime: bool = True,
     control_directory: Path | None = None,
+    compensating: bool = False,
 ) -> None:
     record = _browser_inspect_record(container)
+    expected_restart_count = 0
+    if compensating:
+        # An automatic restart disqualifies promotion. Once the exact reviewed
+        # CID is pinned, a stable process or stopped container can be discarded.
+        state = record.get("State")
+        count = record.get("RestartCount")
+        pid = state.get("Pid") if isinstance(state, dict) else None
+        if (
+            control_directory is None
+            or verify_runtime
+            or not isinstance(state, dict)
+            or state.get("Status") not in (("running",) if running else ("created", "exited"))
+            or state.get("Paused") is not False
+            or state.get("Dead") is not False
+            or type(pid) is not int
+            or (pid <= 0 if running else pid != 0)
+            or type(count) is not int
+            or count < 0
+        ):
+            raise PreflightError("cutover A cleanup candidate process state unproven")
+        expected_restart_count = count
     config, host = _browser_check_service_labels(
         record,
         container=container,
@@ -6368,6 +6428,7 @@ def _browser_controller_postflight(
         running=running,
         verify_runtime=verify_runtime,
         restart_policy="unless-stopped" if control_directory is not None else "no",
+        expected_restart_count=expected_restart_count,
     )
     environment = config.get("Env")
     if not isinstance(environment, list) or any(type(item) is not str for item in environment):

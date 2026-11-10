@@ -17,6 +17,7 @@ import stat
 import sys
 import zipfile
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -25,9 +26,11 @@ from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_cutover_stage as stage
 from boca_socios import host_first_deploy as host
 from boca_socios.host_boca_cutover import (
+    CandidateMismatch,
     CutoverError,
     CutoverPlan,
     CutoverReceipt,
+    candidate_check,
     run_cutover_a,
 )
 
@@ -606,40 +609,46 @@ class RootlessCutoverBackend:
     ) -> None:
         from boca_socios.host_cutover_ipc_probe import verify_controller_peer
 
-        self._guard(plan, lease, "CANDIDATE")
         if self.on_demand:
-            from boca_socios.host_lifecycle_rootless_adapter import ReviewedInstalledPair
-            from boca_socios.host_on_demand_lifecycle import OnDemandInstallation
-            from boca_socios.host_on_demand_service import install_control
+            with candidate_check("COORDINATES"):
+                self._guard(plan, lease, "CANDIDATE")
+                from boca_socios.host_lifecycle_rootless_adapter import ReviewedInstalledPair
+                from boca_socios.host_on_demand_lifecycle import OnDemandInstallation
+                from boca_socios.host_on_demand_service import install_control
 
-            if not self.worker_hash or not self.controller_hash or self.database_path is None:
-                raise CutoverError("on-demand verified installation coordinates missing")
+                if not self.worker_hash or not self.controller_hash or self.database_path is None:
+                    raise CutoverError("on-demand verified installation coordinates missing")
             self._verify_cold_pair(plan, candidate_id, worker_id)
-            host._cutover_compose_pair(
-                candidate_id,
-                worker_id,
-                plan.target_image,
-                plan.browser_image,
-                plan.origin,
-                plan.owner_subject,
-                plan.attempt_id,
-                _stage_path(plan),
-                control_directory=self.control_directory,
-                parked_original=plan.legacy_id,
-            )
-            self.installation = OnDemandInstallation(
-                installation_run_id=plan.attempt_id,
-                source_sha=plan.target_sha,
-                controller_id=candidate_id,
-                controller_image=plan.target_image,
-                worker_id=worker_id,
-                worker_image=plan.browser_image,
-                database_path=self.database_path,
-                pair=ReviewedInstalledPair(plan.attempt_id, self.controller_hash, self.worker_hash),
-            )
-            install_control(self.installation, lease)
+            with candidate_check("COMPOSE_PAIR"):
+                host._cutover_compose_pair(
+                    candidate_id,
+                    worker_id,
+                    plan.target_image,
+                    plan.browser_image,
+                    plan.origin,
+                    plan.owner_subject,
+                    plan.attempt_id,
+                    _stage_path(plan),
+                    control_directory=self.control_directory,
+                    parked_original=plan.legacy_id,
+                )
+            with candidate_check("CONTROL_INSTALL"):
+                self.installation = OnDemandInstallation(
+                    installation_run_id=plan.attempt_id,
+                    source_sha=plan.target_sha,
+                    controller_id=candidate_id,
+                    controller_image=plan.target_image,
+                    worker_id=worker_id,
+                    worker_image=plan.browser_image,
+                    database_path=self.database_path,
+                    pair=ReviewedInstalledPair(
+                        plan.attempt_id, self.controller_hash, self.worker_hash
+                    ),
+                )
+                install_control(self.installation, lease)
             self._cycle_idle_panel(plan, candidate_id, worker_id, lease)
         else:
+            self._guard(plan, lease, "CANDIDATE")
             if not self.controller_hash:
                 raise CutoverError("cutover candidate resolved Compose hash missing")
             if not host._cutover_candidate_postflight(
@@ -662,77 +671,93 @@ class RootlessCutoverBackend:
                 staged_seccomp=self.sources.seccomp,
             )
             host._beta_loopback_health(candidate_id, plan.origin)
-        legacy_record = host._cutover_legacy_record(
-            plan.legacy_id,
-            plan.legacy_image,
-            plan.legacy_sha,
-            name=f"boca-socios-controller-legacy-{plan.attempt_id}",
-            running=False,
-            restart_policy="no",
-        )
-        self.legacy_image_proof, self.retained_image_proof = _precommit_legacy_image_cleanup(
-            plan, legacy_record, candidate_id, worker_id
-        )
+        with candidate_check("PARKED_AFTER") if self.on_demand else nullcontext():
+            legacy_record = host._cutover_legacy_record(
+                plan.legacy_id,
+                plan.legacy_image,
+                plan.legacy_sha,
+                name=f"boca-socios-controller-legacy-{plan.attempt_id}",
+                running=False,
+                restart_policy="no",
+            )
+        with candidate_check("PRECOMMIT_IMAGES") if self.on_demand else nullcontext():
+            self.legacy_image_proof, self.retained_image_proof = _precommit_legacy_image_cleanup(
+                plan, legacy_record, candidate_id, worker_id
+            )
         self.state = "ACCEPTED"
 
-    def _verify_cold_pair(self, plan: CutoverPlan, candidate: str, worker: str) -> None:
+    def _verify_cold_pair(
+        self,
+        plan: CutoverPlan,
+        candidate: str,
+        worker: str,
+        *,
+        visit: Literal["INITIAL", "RESTART"] = "INITIAL",
+    ) -> None:
         from boca_socios.host_lifecycle_rootless_adapter import ProductionRootlessDockerIO
 
-        if (
-            candidate != self.candidate_id
-            or worker != self.worker_id
-            or self.control_directory is None
-            or not self.worker_hash
-            or not self.controller_hash
-            or not host._cutover_candidate_postflight(
-                candidate,
-                plan.target_image,
+        with candidate_check(visit + "_CONTROLLER"):
+            if (
+                candidate != self.candidate_id
+                or worker != self.worker_id
+                or self.control_directory is None
+                or not self.worker_hash
+                or not self.controller_hash
+                or not host._cutover_candidate_postflight(
+                    candidate,
+                    plan.target_image,
+                    plan.target_sha,
+                    plan.attempt_id,
+                    plan.origin,
+                    plan.owner_subject,
+                    self.controller_hash,
+                    control_directory=self.control_directory,
+                )
+            ):
+                raise CandidateMismatch("on-demand controller identity or health unverified")
+        with candidate_check(visit + "_WORKER_IDLE"):
+            host._cutover_idle_worker(
+                worker,
+                plan.browser_image,
                 plan.target_sha,
                 plan.attempt_id,
-                plan.origin,
-                plan.owner_subject,
-                self.controller_hash,
-                control_directory=self.control_directory,
+                plan.seccomp_sha,
+                self.sources.seccomp,
+                self.worker_hash,
             )
-        ):
-            raise CutoverError("on-demand controller identity or health unverified")
-        host._cutover_idle_worker(
-            worker,
-            plan.browser_image,
-            plan.target_sha,
-            plan.attempt_id,
-            plan.seccomp_sha,
-            self.sources.seccomp,
-            self.worker_hash,
-        )
-        host._beta_loopback_health(candidate, plan.origin)
-        engine = ProductionRootlessDockerIO().engine_request(candidate, "status")
-        if (
-            engine.state != "STOPPED"
-            or engine.changed
-            or type(engine.pid) is not int
-            or engine.pid <= 0
-        ):
-            raise CutoverError("on-demand controller engine did not confirm STOPPED")
-
-        if _controller_database_identity(candidate) != self.database_identity or (
-            host._run(
-                "docker",
-                "exec",
-                "--user",
-                "10001:10001",
-                candidate,
-                "/app/.venv/bin/python",
-                "-I",
-                "-B",
-                "-m",
-                "boca_socios.host_on_demand_lifecycle",
-                "ready",
-                timeout=8,
-            )
-            != "BOCA_LEDGER_READY"
-        ):
-            raise CutoverError("on-demand candidate ledger identity/schema unverified")
+        with candidate_check(visit + "_LOOPBACK"):
+            host._beta_loopback_health(candidate, plan.origin)
+        with candidate_check(visit + "_ENGINE_STOPPED"):
+            engine = ProductionRootlessDockerIO().engine_request(candidate, "status")
+            if (
+                engine.state != "STOPPED"
+                or engine.changed
+                or type(engine.pid) is not int
+                or engine.pid <= 0
+            ):
+                raise CandidateMismatch("on-demand controller engine did not confirm STOPPED")
+        with candidate_check(visit + "_DATABASE"):
+            if _controller_database_identity(candidate) != self.database_identity:
+                raise CandidateMismatch("on-demand database identity changed")
+        with candidate_check(visit + "_LEDGER"):
+            if (
+                host._run(
+                    "docker",
+                    "exec",
+                    "--user",
+                    "10001:10001",
+                    candidate,
+                    "/app/.venv/bin/python",
+                    "-I",
+                    "-B",
+                    "-m",
+                    "boca_socios.host_on_demand_lifecycle",
+                    "ready",
+                    timeout=8,
+                )
+                != "BOCA_LEDGER_READY"
+            ):
+                raise CandidateMismatch("on-demand candidate ledger schema unverified")
 
     def _cycle_idle_panel(
         self,
@@ -744,46 +769,57 @@ class RootlessCutoverBackend:
         """Exercise one panel cold boot while rollback to the parked original is possible."""
         from boca_socios.host_on_demand_service import verify_control
 
-        self._guard(plan, lease, "CANDIDATE")
-        if (
-            candidate != self.candidate_id
-            or worker != self.worker_id
-            or self.control_directory is None
-            or self.installation is None
-        ):
-            raise CutoverError("on-demand panel restart coordinates unavailable")
-        socket_identity = _verify_mounted_control(candidate, self.control_directory)
-        host._cutover_legacy_record(
-            plan.legacy_id,
-            plan.legacy_image,
-            plan.legacy_sha,
-            name=f"boca-socios-controller-legacy-{plan.attempt_id}",
-            running=False,
-            restart_policy="no",
-        )
-        if host._run("docker", "stop", "--time", "8", candidate, timeout=30) != candidate:
-            raise CutoverError("on-demand panel stop receipt unverified")
-        stopped = host._run(
-            "docker",
-            "inspect",
-            "--type",
-            "container",
-            "--format",
-            "{{.Id}} {{.State.Status}} {{.State.Pid}} {{.State.Running}} "
-            "{{.State.Restarting}} {{.State.Dead}}",
-            candidate,
-            timeout=8,
-        )
-        if stopped != f"{candidate} exited 0 false false false":
-            raise CutoverError("on-demand panel did not reach exited with zero processes")
-        self._guard(plan, lease, "CANDIDATE")
-        if host._run("docker", "start", candidate, timeout=30) != candidate:
-            raise CutoverError("on-demand panel restart receipt unverified")
-        host._browser_wait_healthy(candidate)
-        self._verify_cold_pair(plan, candidate, worker)
-        verify_control(self.installation, lease)
-        if _verify_mounted_control(candidate, self.control_directory) != socket_identity:
-            raise CutoverError("on-demand control socket was replaced during panel restart")
+        with candidate_check("CYCLE_GUARD"):
+            self._guard(plan, lease, "CANDIDATE")
+            if (
+                candidate != self.candidate_id
+                or worker != self.worker_id
+                or self.control_directory is None
+                or self.installation is None
+            ):
+                raise CandidateMismatch("on-demand panel restart coordinates unavailable")
+        with candidate_check("SOCKET_BEFORE"):
+            socket_identity = _verify_mounted_control(candidate, self.control_directory)
+        with candidate_check("PARKED_BEFORE"):
+            host._cutover_legacy_record(
+                plan.legacy_id,
+                plan.legacy_image,
+                plan.legacy_sha,
+                name=f"boca-socios-controller-legacy-{plan.attempt_id}",
+                running=False,
+                restart_policy="no",
+            )
+        with candidate_check("PANEL_STOP_ACK"):
+            if host._run("docker", "stop", "--time", "8", candidate, timeout=30) != candidate:
+                raise CandidateMismatch("on-demand panel stop receipt unverified")
+        with candidate_check("PANEL_STOPPED"):
+            stopped = host._run(
+                "docker",
+                "inspect",
+                "--type",
+                "container",
+                "--format",
+                "{{.Id}} {{.State.Status}} {{.State.Pid}} {{.State.Running}} "
+                "{{.State.Restarting}} {{.State.Dead}}",
+                candidate,
+                timeout=8,
+            )
+            if stopped != f"{candidate} exited 0 false false false":
+                raise CandidateMismatch("on-demand panel did not reach exited with zero processes")
+        with candidate_check("PANEL_START_ACK"):
+            self._guard(plan, lease, "CANDIDATE")
+            if host._run("docker", "start", candidate, timeout=30) != candidate:
+                raise CandidateMismatch("on-demand panel restart receipt unverified")
+        with candidate_check("PANEL_HEALTH"):
+            host._browser_wait_healthy(candidate)
+        self._verify_cold_pair(plan, candidate, worker, visit="RESTART")
+        with candidate_check("RESTART_CONTROL"):
+            verify_control(self.installation, lease)
+        with candidate_check("SOCKET_AFTER"):
+            if _verify_mounted_control(candidate, self.control_directory) != socket_identity:
+                raise CandidateMismatch(
+                    "on-demand control socket was replaced during panel restart"
+                )
 
     def _disable_control(self, plan: CutoverPlan, lease: cleanup.BocaJobLease) -> None:
         if self.control_prepared:

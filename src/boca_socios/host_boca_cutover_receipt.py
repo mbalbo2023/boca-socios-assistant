@@ -26,6 +26,8 @@ from boca_socios import host_boca_cleanup as cleanup
 from boca_socios.host_boca_cutover import (
     WORKER_COMPENSATION_STATES,
     WORKER_PRIMARY_PHASES,
+    CandidateEvidence,
+    CutoverError,
     CutoverPlan,
     CutoverReceipt,
     valid_worker_exit_evidence,
@@ -39,6 +41,7 @@ VERSION_V3 = "boca-cutover-a-terminal-v3"
 VERSION_V4 = "boca-cutover-a-terminal-v4"
 VERSION_V5 = "boca-cutover-a-terminal-v5"
 VERSION_V6 = "boca-cutover-a-terminal-v6"
+VERSION_V7 = "boca-cutover-a-terminal-v7"
 INTENT_VERSION = "boca-cutover-a-intent-v1"
 RECEIPT_DIR_NAME = ".boca-socios-cutover-receipts"
 MAX_RECEIPT_BYTES = 2048
@@ -74,10 +77,54 @@ class TerminalRecord:
     worker_exit_signature: str | None = None
     worker_stderr_observation: str | None = None
     idle_installed: bool = False
+    candidate_check: str | None = None
+    candidate_result: str | None = None
+
+    def candidate_evidence(self) -> CandidateEvidence | None:
+        if self.candidate_check is None and self.candidate_result is None:
+            return None
+        if (
+            type(self.candidate_check) is not str
+            or type(self.candidate_result) is not str
+            or self.irreversible_commit_started
+            or self.idle_installed
+            or any(
+                type(cid) is not str or not re.fullmatch(r"[0-9a-f]{64}", cid)
+                for cid in (self.legacy_id, self.candidate_id, self.worker_id)
+            )
+            or len({self.legacy_id, self.candidate_id, self.worker_id}) != 3
+            or (self.worker_primary_phase, self.worker_compensation) != ("NONE", "NONE")
+            or any(
+                item is not None
+                for item in (
+                    self.worker_exit_code,
+                    self.worker_oom_killed,
+                    self.worker_exit_signature,
+                    self.worker_stderr_observation,
+                )
+            )
+        ):
+            raise TerminalReceiptError("incompatible Boca candidate failure record")
+        evidence = CandidateEvidence(
+            self.candidate_check,
+            self.candidate_result,
+            self.original_restored,
+            self.cleanup,
+            self.state,
+        )
+        try:
+            evidence.wire()
+        except CutoverError:
+            raise TerminalReceiptError("invalid Boca acceptance check or result") from None
+        return evidence
 
     @classmethod
     def from_receipt(cls, plan: CutoverPlan, receipt: CutoverReceipt) -> TerminalRecord:
         plan.validate()
+        if (
+            receipt.candidate_check is not None or receipt.candidate_result is not None
+        ) and receipt.failed_phase != "ACCEPT_CANDIDATE":
+            raise TerminalReceiptError("Boca candidate evidence outside acceptance")
         if receipt.attempt_id != plan.attempt_id:
             raise TerminalReceiptError("cutover terminal result run mismatch")
         if (
@@ -114,6 +161,8 @@ class TerminalRecord:
             receipt.worker_exit_signature if receipt.failed_phase == "PREPARE_WORKER" else None,
             receipt.worker_stderr_observation if receipt.failed_phase == "PREPARE_WORKER" else None,
             receipt.idle_installed,
+            receipt.candidate_check,
+            receipt.candidate_result,
         )
 
     def serialized(self) -> bytes:
@@ -206,6 +255,11 @@ class TerminalRecord:
         if self.idle_installed:
             payload["version"] = VERSION_V6
             payload["idle_installed"] = True
+        candidate = self.candidate_evidence()
+        if candidate is not None:
+            payload["version"] = VERSION_V7
+            payload["candidate_check"] = candidate.check
+            payload["candidate_result"] = candidate.result
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode(
             "ascii"
         )
@@ -520,7 +574,7 @@ def write_once(record: TerminalRecord, *, plan: CutoverPlan, lease: cleanup.Boca
 Reconciliation = Literal["INTENT_ONLY_NO_GO", "RECORD_PRESENT_RUNTIME_UNVERIFIED"]
 
 
-def reconcile_persisted(plan: CutoverPlan) -> Reconciliation:
+def read_persisted_record(plan: CutoverPlan) -> TerminalRecord | None:
     """Read-only post-reboot reconciliation; NEVER grants runtime GO or deletion.
 
     A result can prove what an earlier process durably claimed, but cannot
@@ -534,14 +588,17 @@ def reconcile_persisted(plan: CutoverPlan) -> Reconciliation:
         try:
             os.stat(_name(plan.attempt_id), dir_fd=folder, follow_symlinks=False)
         except FileNotFoundError:
-            return "INTENT_ONLY_NO_GO"
+            return None
         raw = _read_marker(folder, _name(plan.attempt_id))
         try:
             payload = json.loads(raw.decode("ascii"), object_pairs_hook=_unique_fields)
             if not isinstance(payload, dict):
                 raise TerminalReceiptError("cutover stored terminal result schema invalid")
             version = payload.pop("version", None)
-            fields = set(TerminalRecord.__dataclass_fields__) - {"idle_installed"}
+            candidate_fields = {"candidate_check", "candidate_result"}
+            fields = (
+                set(TerminalRecord.__dataclass_fields__) - {"idle_installed"} - candidate_fields
+            )
             v3_fields = {"worker_exit_code", "worker_oom_killed"}
             v4_fields = {"worker_exit_signature"}
             v5_fields = {"worker_stderr_observation"}
@@ -554,6 +611,8 @@ def reconcile_persisted(plan: CutoverPlan) -> Reconciliation:
                 VERSION_V5: fields,
                 VERSION_V6: fields - v2_fields - v3_fields - v4_fields - v5_fields
                 | {"idle_installed"},
+                VERSION_V7: fields - v2_fields - v3_fields - v4_fields - v5_fields
+                | candidate_fields,
             }.get(version)
             if expected is None or set(payload) != expected:
                 raise TerminalReceiptError("cutover stored terminal result fields untrusted")
@@ -570,9 +629,17 @@ def reconcile_persisted(plan: CutoverPlan) -> Reconciliation:
             _check_worker_marker(folder, plan, intent, result)
         except (UnicodeError, json.JSONDecodeError, TypeError) as exc:
             raise TerminalReceiptError("cutover stored terminal result malformed") from exc
-        return "RECORD_PRESENT_RUNTIME_UNVERIFIED"
+        return result
     finally:
         os.close(folder)
+
+
+def reconcile_persisted(plan: CutoverPlan) -> Reconciliation:
+    return (
+        "INTENT_ONLY_NO_GO"
+        if read_persisted_record(plan) is None
+        else "RECORD_PRESENT_RUNTIME_UNVERIFIED"
+    )
 
 
 def verify_persisted_exact(plan: CutoverPlan, receipt: CutoverReceipt) -> None:

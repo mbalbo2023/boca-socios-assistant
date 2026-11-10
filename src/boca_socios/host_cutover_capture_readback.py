@@ -1,4 +1,4 @@
-"""Read only the current dispatch's immutable, pre-compensation observation."""
+"""Read the current dispatch's terminal or early worker capture without Docker effects."""
 
 from __future__ import annotations
 
@@ -11,13 +11,15 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from boca_socios import host_boca_cutover_cli as cli
+from boca_socios import host_boca_cutover_receipt as terminal
 from boca_socios import worker_start_receipt as custody
+from boca_socios.host_boca_cutover import CandidateEvidence
 from boca_socios.worker_start_capture import is_capture_result
 
 _READ_MODE = "cutover-a-capture-readback-v3"
 _APPLY_MODE = "cutover-a-dispatch-v3"
 _BINDING = "BOCA_CUTOVER_A_DISPATCH_BINDING_SHA256"
-_MAX_LINE = 192
+_MAX_LINE = 320
 _REPO = "https://github.com/mbalbo2023/boca-socios-assistant"
 
 
@@ -39,9 +41,26 @@ def _prefix(run: str, sha: str) -> str:
 
 
 def run_host(encoded: str, *, approved_go_binding_sha256: str) -> int:
-    """Memfd readback: inspect the exact private marker even if the worker was removed."""
+    """Read only existing same-attempt markers, without consulting Docker or executing work."""
     try:
         plan = _bound(encoded, approved_go_binding_sha256, cli._bundle_digest()).plan
+        # Read the same immutable terminal first, even if APPLY's stdout was lost.
+        record = terminal.read_persisted_record(plan)
+        if record is not None:
+            candidate = record.candidate_evidence()
+            if candidate is not None:
+                print(
+                    f"BOCA_CANDIDATE_FAILURE_V1 run={plan.attempt_id} sha={plan.target_sha} "
+                    + candidate.wire()
+                )
+                return 0
+            if record.worker_stderr_observation is not None:
+                # The canonical reader already checked the pre-compensation worker marker.
+                print(_prefix(plan.attempt_id, plan.target_sha) + record.worker_stderr_observation)
+                return 0
+            if record.candidate_id is not None or record.state == "ACCEPTED":
+                return 3  # No worker-start capture belongs to a later candidate acceptance.
+        # A worker exit can leave a valid capture before its final typed receipt exists.
         cid, observation = custody.read_before_cleanup(plan)
         if (
             type(cid) is not str
@@ -61,7 +80,17 @@ def run_host(encoded: str, *, approved_go_binding_sha256: str) -> int:
 def verify(raw: bytes, run: str, sha: str) -> str:
     """Rebuild the public line only from a closed category and the runner's coordinates."""
     prefix = _prefix(run, sha).encode("ascii")
-    if not 0 < len(raw) <= _MAX_LINE or not raw.startswith(prefix) or not raw.endswith(b"\n"):
+    if not 0 < len(raw) <= _MAX_LINE or not raw.endswith(b"\n"):
+        raise ValueError("invalid observation envelope")
+    candidate_prefix = f"BOCA_CANDIDATE_FAILURE_V1 run={run} sha={sha} ".encode("ascii")
+    if raw.startswith(candidate_prefix):
+        candidate = CandidateEvidence.parse(raw[len(candidate_prefix) : -1].decode("ascii"))
+        return (
+            f"BOCA_CUTOVER_CANDIDATE_READBACK state=NO_GO receipt=VERIFIED "
+            f"phase=ACCEPT_CANDIDATE {candidate.wire()} runtime=UNVERIFIED retry=NO_GO "
+            f"[run {run}]({_REPO}/actions/runs/{run}) [commit {sha}]({_REPO}/commit/{sha})"
+        )
+    if not raw.startswith(prefix):
         raise ValueError("invalid observation envelope")
     try:
         observation = raw[len(prefix) : -1].decode("ascii")

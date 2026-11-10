@@ -10,7 +10,9 @@ Actions authorization before making it callable on a real host.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+import subprocess
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Literal, Protocol, get_args
 
@@ -87,6 +89,122 @@ class CutoverError(ValueError):
     """Cutover has no acceptable positive evidence for an effect."""
 
 
+_COLD_CHECKS = ("CONTROLLER", "WORKER_IDLE", "LOOPBACK", "ENGINE_STOPPED", "DATABASE", "LEDGER")
+CANDIDATE_CHECKS = frozenset(
+    {f"{visit}_{check}" for visit in ("INITIAL", "RESTART") for check in _COLD_CHECKS}
+    | {
+        "COORDINATES",
+        "COMPOSE_PAIR",
+        "CONTROL_INSTALL",
+        "CONTROL_HOME_UNITS",
+        "CONTROL_ARCHIVE_BINDING",
+        "CONTROL_UNIT_PREFLIGHT",
+        "CONTROL_PUBLISH",
+        "CONTROL_MANAGER_RELOAD",
+        "CONTROL_LISTENER_START",
+        "CONTROL_LISTENER_VERIFY",
+        "CYCLE_GUARD",
+        "SOCKET_BEFORE",
+        "PARKED_BEFORE",
+        "PANEL_STOP_ACK",
+        "PANEL_STOPPED",
+        "PANEL_START_ACK",
+        "PANEL_HEALTH",
+        "RESTART_CONTROL",
+        "SOCKET_AFTER",
+        "PARKED_AFTER",
+        "PRECOMMIT_IMAGES",
+    }
+)
+CANDIDATE_RESULTS = frozenset(
+    {"MISMATCH", "TIMEOUT", "PERMISSION_DENIED", "COMMAND_FAILED", "UNVERIFIED"}
+)
+
+
+class CandidateAcceptanceFailure(CutoverError):
+    """Fixed diagnostic coordinates only, never a command, path or stderr."""
+
+    def __init__(self, check: str, result: str) -> None:
+        if check not in CANDIDATE_CHECKS or result not in CANDIDATE_RESULTS:
+            raise CutoverError("invalid Boca candidate diagnostic")
+        self.check = check
+        self.result = result
+        super().__init__("Boca candidate acceptance unverified")
+
+
+class CandidateMismatch(CutoverError):
+    """A completed read disagreed with the exact expected value."""
+
+
+@contextmanager
+def candidate_check(check: str) -> Iterator[None]:
+    """Mark the check BEFORE entering it; preserve an inner check on failure."""
+    if check not in CANDIDATE_CHECKS:
+        raise CutoverError("invalid Boca candidate check")
+    try:
+        yield
+    except CandidateAcceptanceFailure:
+        raise
+    except Exception as error:
+        # The public host command may wrap subprocess errors. Read only types.
+        observed = (error, error.__cause__)
+        if isinstance(error, CandidateMismatch):
+            result = "MISMATCH"
+        elif any(isinstance(exc, (TimeoutError, subprocess.TimeoutExpired)) for exc in observed):
+            result = "TIMEOUT"
+        elif any(isinstance(exc, PermissionError) for exc in observed):
+            result = "PERMISSION_DENIED"
+        elif any(isinstance(exc, subprocess.CalledProcessError) for exc in observed):
+            result = "COMMAND_FAILED"
+        else:
+            result = "UNVERIFIED"
+        raise CandidateAcceptanceFailure(check, result) from None
+
+
+@dataclass(frozen=True)
+class CandidateEvidence:
+    check: str
+    result: str
+    original_restored: bool
+    cleanup: str
+    terminal: str
+
+    def wire(self) -> str:
+        if (
+            type(self.check) is not str
+            or self.check not in CANDIDATE_CHECKS
+            or type(self.result) is not str
+            or self.result not in CANDIDATE_RESULTS
+            or type(self.original_restored) is not bool
+            or self.cleanup not in ("ACCEPT", "INDETERMINATE", "NO_GO")
+            or self.terminal not in ("RECOVERED", "NO_GO")
+            or (self.terminal == "RECOVERED")
+            != (self.original_restored and self.cleanup == "ACCEPT")
+        ):
+            raise CutoverError("invalid Boca candidate failure record")
+        restored = "VERIFIED" if self.original_restored else "UNVERIFIED"
+        return (
+            f"candidate_check={self.check} candidate_result={self.result} "
+            f"original_restored={restored} cleanup={self.cleanup} terminal_state={self.terminal}"
+        )
+
+    @classmethod
+    def parse(cls, wire: str) -> CandidateEvidence:
+        match = re.fullmatch(
+            r"candidate_check=([A-Z_]{2,32}) candidate_result=([A-Z_]{2,24}) "
+            r"original_restored=(VERIFIED|UNVERIFIED) cleanup=(ACCEPT|NO_GO|INDETERMINATE) "
+            r"terminal_state=(RECOVERED|NO_GO)",
+            wire,
+        )
+        if match is None:
+            raise CutoverError("invalid Boca candidate failure projection")
+        check, result, restored, cleanup, terminal = match.groups()
+        evidence = cls(check, result, restored == "VERIFIED", cleanup, terminal)
+        if evidence.wire() != wire:
+            raise CutoverError("noncanonical Boca candidate failure projection")
+        return evidence
+
+
 @dataclass(frozen=True)
 class CutoverPlan:
     attempt_id: str
@@ -153,6 +271,8 @@ class CutoverReceipt:
     worker_exit_signature: str | None = None
     worker_stderr_observation: str | None = None
     idle_installed: bool = False
+    candidate_check: str | None = None
+    candidate_result: str | None = None
 
     @property
     def accepted(self) -> bool:
@@ -266,6 +386,7 @@ def run_cutover_a(
         worker_oom_killed: bool | Literal["UNKNOWN"] | None = None
         worker_exit_signature: str | None = None
         worker_stderr_observation: str | None = None
+        candidate_failure: CandidateAcceptanceFailure | None = None
         try:
             backend.attest_original(plan, lease)
             # PREPARE consumption is durable under the SAME flock, strictly
@@ -301,6 +422,8 @@ def run_cutover_a(
             failed_phase = phase
             # Fixed enum-only diagnostic. Exception messages and Docker output
             # must never enter persistent receipts or Actions stdout.
+            if phase == "ACCEPT_CANDIDATE" and isinstance(exc, CandidateAcceptanceFailure):
+                candidate_failure = exc
             if phase == "PREPARE_WORKER":
                 primary = getattr(exc, "primary", None)
                 compensation = getattr(exc, "compensation", None)
@@ -396,6 +519,8 @@ def run_cutover_a(
             worker_exit_signature if state != "ACCEPTED" else None,
             worker_stderr_observation if state != "ACCEPTED" else None,
             state == "ACCEPTED" and getattr(backend, "idle_installed", False) is True,
+            candidate_failure.check if candidate_failure else None,
+            candidate_failure.result if candidate_failure else None,
         )
         # O_EXCL result must be persisted *before releasing the SAME flock*.
         # Callers cannot safely write it after run_cutover_a returns. Missing
