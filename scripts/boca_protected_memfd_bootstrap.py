@@ -39,6 +39,7 @@ EXPECTED_ENTRIES = frozenset(
         "scripts/__init__.py",
         "scripts/host_cutover_postapply_reconcile.py",
         "scripts/host_cutover_stage_recovery.py",
+        "scripts/host_cutover_904_recovery.py",
         "boca_socios/host_lifecycle_actions.py",
         "boca_socios/host_lifecycle_observe.py",
         "boca_socios/host_cutover_inventory_observe.py",
@@ -95,7 +96,7 @@ PREFLIGHT_ENTRIES = frozenset(
 )
 MAX_ZIP = 512_000
 # R135 source bounds match the builder. Each variant checks its own entry set and digest.
-MAX_UNCOMPRESSED = 1_100_000
+MAX_UNCOMPRESSED = 1_120_000
 RECOVERY_MAX_ZIP = 128_000
 RECOVERY_MAX_UNCOMPRESSED = 256_000
 PREFLIGHT_MAX_ZIP = 128_000
@@ -164,6 +165,8 @@ def main() -> int:
             "cutover-worker-834-recover",
         }
         worker_preflight = sys.argv[2] == "cutover-worker-preflight"
+        if sys.argv[2] == "cutover-stage-recover-904" and len(sys.argv) != 8:
+            raise ValueError("incident 904 recovery requires five exact coordinates")
         if recovery and len(sys.argv) != 3:
             raise ValueError("stopped worker recovery accepts no user coordinates")
         if worker_preflight and len(sys.argv) != 10:

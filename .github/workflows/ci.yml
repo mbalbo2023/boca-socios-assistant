@@ -141,6 +141,7 @@ jobs:
           import subprocess
           import sys
 
+          from scripts import host_cutover_postapply_reconcile as reconcile
           from scripts import host_cutover_worker_inspect as observer
 
           cid = sys.argv[1]
@@ -152,6 +153,22 @@ jobs:
           assert record["id"] == cid and record["health"] is None
           assert record["project"] == "boca-socios"
           assert record["attempt"] == "42329475083"
+          def inspect_projection(template):
+              result = subprocess.run(
+                  ("docker", "inspect", "--format", template, cid),
+                  check=True, capture_output=True, text=True, timeout=12,
+              )
+              return json.loads(result.stdout)
+
+          item = inspect_projection(reconcile.INSPECT_FORMAT)
+          assert item["id"] == cid and item["health"] is None and item["running"] is False
+          runtime = inspect_projection(reconcile.PINNED_RUNTIME_FORMAT)
+          assert runtime[:6] == [cid, "boca-socios", "created", 0, None, 0]
+          config = inspect_projection(reconcile.PINNED_CONFIG_FORMAT)
+          assert config[:4] == [
+              cid, "boca-socios", "/" + os.environ["BOCA_DOCKER_FIXTURE_NAME"],
+              os.environ["BOCA_BROWSER_TAG"],
+          ]
           size = subprocess.run(
               ("docker", "inspect", "--format", observer.INSPECT_FULL_JSON_LENGTH, cid),
               check=True, capture_output=True, text=True, timeout=12,

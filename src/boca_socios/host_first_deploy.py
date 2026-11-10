@@ -5306,6 +5306,13 @@ def _cutover_restore_original(
             restart_policy="no",
         )
         _run("docker", "rename", original_id, CUTOVER_LEGACY_NAME, timeout=20)
+    _cutover_start_canonical_original(original_id, legacy_image, legacy_sha)
+    _cutover_rearm_original(original_id, legacy_image, legacy_sha)
+
+
+def _cutover_start_canonical_original(
+    original_id: str, legacy_image: str, legacy_sha: str, *, after_candidate_removal: bool = False
+) -> None:
     _cutover_legacy_record(
         original_id,
         legacy_image,
@@ -5314,10 +5321,16 @@ def _cutover_restore_original(
         running=False,
         restart_policy="no",
     )
-    _browser_port_free()
+    if after_candidate_removal:
+        _browser_port_free(after_candidate_removal=True)
+    else:
+        _browser_port_free()
     if _run("docker", "start", original_id, timeout=30) != original_id:
         raise PreflightError("cutover A exact original start receipt unverified")
     _browser_wait_healthy(original_id)
+
+
+def _cutover_rearm_original(original_id: str, legacy_image: str, legacy_sha: str) -> None:
     _cutover_legacy_record(
         original_id,
         legacy_image,
@@ -5715,6 +5728,22 @@ def _cutover_verify_worker_for_profile(
         )
 
 
+def _cutover_worker_never_started(worker: str) -> None:
+    if not DIGEST_PATTERN.fullmatch(worker):
+        raise PreflightError("cutover A cold recovery worker ID invalid")
+    observed = _run(
+        "docker",
+        "inspect",
+        "--format",
+        "{{.State.Status}} {{.State.Pid}} {{.State.Running}} {{.State.Restarting}} "
+        "{{.State.Dead}} {{.State.Paused}} {{.RestartCount}} {{.State.StartedAt}} {{.State.FinishedAt}}",
+        worker,
+        timeout=8,
+    )
+    if observed != "created 0 false false false false 0 0001-01-01T00:00:00Z 0001-01-01T00:00:00Z":
+        raise PreflightError("cutover A cold recovery worker has a process history")
+
+
 def _cutover_compensate_worker(
     browser_image: str,
     target_sha: str,
@@ -5722,10 +5751,14 @@ def _cutover_compensate_worker(
     seccomp_sha: str,
     staged_seccomp: bytes,
     expected_worker: str | None = None,
+    *,
+    idle_config_hash: str | None = None,
 ) -> None:
     """No broad prune. Remove only positively authenticated attempt resources."""
     worker = _cutover_worker_name_id()
-    if expected_worker is not None and worker != expected_worker:
+    if (expected_worker is not None and worker != expected_worker) or (
+        idle_config_hash is not None and (worker is None or worker != expected_worker)
+    ):
         raise PreflightError("cutover A cleanup worker CID changed")
     if worker is not None:
         record = _browser_inspect_record(worker)
@@ -5733,6 +5766,12 @@ def _cutover_compensate_worker(
         if not isinstance(state, dict) or type(state.get("Running")) is not bool:
             raise PreflightError("cutover A worker stop state unknown")
         running = state["Running"]
+        if idle_config_hash is not None:
+            if running:
+                raise PreflightError("cutover A cold recovery cannot stop an active worker")
+            _cutover_capture_preflight(
+                worker, browser_image, target_sha, attempt_id, idle_config_hash, on_demand=True
+            )
         _browser_worker_postflight(
             worker,
             browser_image,
@@ -5756,6 +5795,8 @@ def _cutover_compensate_worker(
                 verify_runtime=False,
                 staged_seccomp=staged_seccomp,
             )
+        if idle_config_hash is not None:
+            _cutover_worker_never_started(worker)
         if _run("docker", "rm", worker, timeout=20) != worker:
             raise PreflightError("cutover A worker selective removal receipt unverified")
         if (
@@ -5763,6 +5804,10 @@ def _cutover_compensate_worker(
             or _cutover_worker_name_id() is not None
         ):
             raise PreflightError("cutover A worker remained after selective removal")
+    _cutover_compensate_ipc(attempt_id)
+
+
+def _cutover_compensate_ipc(attempt_id: str) -> None:
     ipc = _names("volume", f"name=^{BROWSER_IPC_VOLUME}$")
     if ipc:
         if ipc != {BROWSER_IPC_VOLUME}:

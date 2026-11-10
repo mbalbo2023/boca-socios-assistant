@@ -118,7 +118,7 @@ R136_INCIDENT_OBSERVER_FULL_CUTOVER_SHA = (
 )
 # R137 preserves the precise panel check and verified compensation across SSH loss.
 R137_CANDIDATE_ACCEPTANCE_FULL_CUTOVER_SHA = (
-    "aa8b2e03aaf04f53ec1d1ddb68ae0ba6d4d4ac29305a851599606c9502655a26"
+    "6720a9330f3e59905a008d7c7c3505ffc75d6a4a1df2561970fc48e18d2071a1"
 )
 
 

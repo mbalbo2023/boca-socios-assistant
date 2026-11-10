@@ -181,6 +181,112 @@ def manager(*args: str, label: str, polling: bool = False) -> str:
     )
 
 
+def project_user_unit(home: Path, unit: str, raw: str) -> None:
+    """Print classified properties from this fixture only, before production validates them."""
+    name = SOCKET if unit == SOCKET else SERVICE
+    keys = {"LoadState", "FragmentPath", "DropInPaths", "ActiveState", "SubState"}
+    rows = [line.partition("=") for line in raw.splitlines()]
+    data = {key: value for key, equals, value in rows if equals and key in keys}
+    shape = "EXACT" if len(rows) == len(keys) and set(data) == keys else "OTHER"
+
+    def enum(key: str, values: tuple[str, ...]) -> str:
+        value = data.get(key)
+        return "MISSING" if value is None else value if value in values else "OTHER"
+
+    fragment = data.get("FragmentPath")
+    expected = str(home / ".config/systemd/user" / name)
+    frag = (
+        "MISSING"
+        if fragment is None
+        else "EMPTY"
+        if not fragment
+        else "EXPECTED"
+        if fragment == expected
+        else "OTHER"
+    )
+    drop = data.get("DropInPaths")
+    print(
+        PREFIX,
+        "role=fixture event=STATE",
+        "unit=SOCKET" if unit == SOCKET else "unit=TEMPLATE",
+        f"shape={shape}",
+        "load="
+        + enum("LoadState", ("loaded", "not-found", "masked", "error", "bad-setting", "stub")),
+        "active="
+        + enum(
+            "ActiveState",
+            ("active", "inactive", "activating", "deactivating", "failed", "reloading"),
+        ),
+        "sub="
+        + enum(
+            "SubState",
+            (
+                "dead",
+                "listening",
+                "running",
+                "failed",
+                "start-pre",
+                "start-post",
+                "stop-pre",
+                "stop-post",
+                "stop-sigterm",
+                "stop-sigkill",
+            ),
+        ),
+        f"fragment={frag}",
+        "drop=" + ("MISSING" if drop is None else "EMPTY" if not drop else "PRESENT"),
+        flush=True,
+    )
+    if unit != SOCKET or data.get("LoadState") != "loaded":
+        return
+    folder = home / ".boca-on-demand/socket"
+    for label, path in (("DIR", folder), ("NODE", folder / "control.sock")):
+        try:
+            meta = path.lstat()
+        except FileNotFoundError:
+            print(PREFIX, "role=fixture event=FS", f"path={label}", "kind=ABSENT", flush=True)
+            break
+        except OSError:
+            print(PREFIX, "role=fixture event=FS", f"path={label}", "kind=UNAVAILABLE", flush=True)
+            break
+        kind = (
+            "DIR"
+            if stat.S_ISDIR(meta.st_mode)
+            else "SOCKET"
+            if stat.S_ISSOCK(meta.st_mode)
+            else "LINK"
+            if stat.S_ISLNK(meta.st_mode)
+            else "OTHER"
+        )
+        uid = str(meta.st_uid) if meta.st_uid in (0, UID) else "OTHER"
+        gid = str(meta.st_gid) if meta.st_gid in (0, UID) else "OTHER"
+        nlink = str(meta.st_nlink) if meta.st_nlink < 10 else "MANY"
+        print(
+            PREFIX,
+            "role=fixture event=FS",
+            f"path={label}",
+            f"kind={kind}",
+            f"mode={stat.S_IMODE(meta.st_mode):04o}",
+            f"uid={uid}",
+            f"gid={gid}",
+            f"nlink={nlink}",
+            flush=True,
+        )
+        if label == "DIR":
+            if kind != "DIR" or meta.st_uid != UID:
+                break
+            try:
+                with os.scandir(path) as entries:
+                    extra = any(e.name != "control.sock" for e in entries)
+            except OSError:
+                contents = "UNAVAILABLE"
+            else:
+                contents = "EXTRA" if extra else "NO_EXTRA"
+            print(
+                PREFIX, "role=fixture event=FS", "path=DIR", f"other_entries={contents}", flush=True
+            )
+
+
 def trace_user_manager(real: Callable[..., str]) -> Callable[..., str]:
     # Observe only. Every result and exception still comes from the actual
     # production systemctl runner; never print its argv, stdout or stderr.
@@ -192,7 +298,10 @@ def trace_user_manager(real: Callable[..., str]) -> Callable[..., str]:
             "stop": "STOP_SOCKET",
         }[args[0]]
         with phase("USER_" + label, translate_timeout=False):
-            return real(home, *args)
+            raw = real(home, *args)
+            if args[0] == "show":
+                project_user_unit(home, args[-1], raw)
+            return raw
 
     return traced
 
