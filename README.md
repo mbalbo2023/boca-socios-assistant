@@ -7,6 +7,11 @@ dinámica `SITE_URL`, actividad Chromium y Cutover rootless están reunidas en
 el [PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478).
 Cinco workflows de GitHub Actions pasaron en el primer HEAD del PR;
 correcciones posteriores requieren los **cinco checks por SHA exacto**.
+En el segundo HEAD `05ca4703`, la calidad Python y el panel pasaron, pero
+cuatro builds de la imagen Chromium quedaron ROJOS por DNS de los repositorios
+Ubuntu en runners (también en el único reintento); no se relajaron pins ni
+se afirmó GREEN. El siguiente lote añade un censo rootless Boca-only de
+solo lectura y un smoke de la imagen final antes de publicarla.
 Los cuatro PR Dependabot #474–#477 se clasificaron y cerraron individualmente,
 sin merge ni eliminación de ramas, según el [consenso de tres disciplinas en
 #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6797512465).
@@ -14,7 +19,9 @@ sin merge ni eliminación de ramas, según el [consenso de tres disciplinas en
 El entrypoint de imagen es `ipc_server`, no el orquestador legacy
 `ipc_worker.py`. **No se ejecutan reservas reales**: el servidor de producción
 rechaza trabajo no aprobado y el nuevo simulador DOM ficticio se prueba sólo
-en contenedor offline separado. El panel conserva la URL en un volumen
+en contenedor offline separado. Si el cierre ficticio de Chromium no puede
+verificarse, el listener IPC se cierra; el panel distingue START de simulación
+y URL almacenada de navegación. El panel conserva la URL en un volumen
 exclusivo, impide START sin sincronización y no vuelve a usar valores por
 defecto; un verificador host independiente exigirá la URL verificada antes de arrancar
 el worker. La instalación V3 deja al navegador creado pero apagado, y no

@@ -129,6 +129,45 @@ def test_default_adapter_rejects_work_without_importing_navigation(controller_ui
     asyncio.run(exercise())
 
 
+def test_unverified_fixture_teardown_poison_closes_admission_and_never_leaks_details(
+    controller_uid: int,
+) -> None:
+    class FailedTeardownExecutor(FakeExecutor):
+        async def simulate_general_reservation(self) -> SimulationOutcome:
+            self.calls += 1
+            raise SyntheticIPCError("offline_fixture_teardown_unverified")
+
+    class TestListener:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+        async def wait_closed(self) -> None:
+            return
+
+    async def exercise() -> None:
+        fake = FailedTeardownExecutor()
+        server = server_module.UnixSyntheticWorker(fake, boundary_check=lambda: None)
+        listener = TestListener()
+        server._server = cast("asyncio.AbstractServer", listener)
+        first_record, first_writer = wire_writer(controller_uid)
+        await server._handle(request_reader(), first_writer)
+        assert bytes(first_record.data) == framed(NO_GO)
+        assert server._poisoned.is_set()
+        assert listener.closed
+
+        second_record, second_writer = wire_writer(controller_uid)
+        await server._handle(request_reader(), second_writer)
+        assert second_record.closed
+        assert bytes(second_record.data) == b""
+        assert fake.calls == 1
+        await server.close()
+        assert fake.closed
+
+    asyncio.run(exercise())
+
+
 def test_injected_offline_executor_returns_only_fixed_simulator_result(controller_uid: int) -> None:
     async def exercise() -> None:
         fake = FakeExecutor()

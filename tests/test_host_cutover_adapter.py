@@ -1337,6 +1337,8 @@ def test_workflow_cutover_v3_requires_dispatch_and_legacy_release_proof() -> Non
         "cutover-a-stage-recover-844",
         "cutover-a-image-retire",
         "cutover-a-observe",
+        # R173 current Boca-rootless census is read-only; it cannot issue Cutover GO.
+        "cutover-a-census",
         # R76 one exact failed preflight metadata-only inspection, no GO.
         "cutover-a-worker-inspect",
         # R112 exact failed-cutover Docker events forensic; READ_ONLY, no retry GO.

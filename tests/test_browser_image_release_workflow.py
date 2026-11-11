@@ -47,7 +47,7 @@ def test_browser_pr_validates_real_offline_chromium_under_worker_isolation() -> 
     marker = "      - name: Verify isolated Chromium launch offline without owner modules\n"
     assert preview.count(marker) == 1
     offline = preview.split(marker, 1)[1].split("      - name:", 1)[0]
-    assert "run: |" in offline
+    assert "run: &boca_offline_chromium_smoke |" in offline
     assert "set -euo pipefail" in offline
     assert "timeout 60s docker run --rm" in offline
     for boundary in (
@@ -81,7 +81,37 @@ def test_browser_pr_validates_real_offline_chromium_under_worker_isolation() -> 
         < preview.index("Scan browser image before any publication")
     )
     publish = workflow.split("  publish:\n", 1)[1]
-    assert marker not in publish  # No new behavior in protected production release.
+    assert marker not in publish  # The publisher aliases this smoke instead of duplicating it.
+
+
+def test_publish_smokes_its_final_browser_image_with_the_exact_pr_offline_probe() -> None:
+    """PR's local image cannot attest a separately rebuilt protected release image."""
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    preview = workflow.split("  pr-validation:\n", 1)[1].split("  publish:\n", 1)[0]
+    publish = workflow.split("  publish:\n", 1)[1]
+    pr_step = preview.split(
+        "      - name: Verify isolated Chromium launch offline without owner modules\n", 1
+    )[1].split("      - name:", 1)[0]
+    assert "run: &boca_offline_chromium_smoke |" in pr_step
+
+    marker = "      - name: Verify final browser image with the exact offline Chromium smoke\n"
+    assert publish.count(marker) == 1
+    final_step = publish.split(marker, 1)[1].split("      - name:", 1)[0]
+    assert (
+        "IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}"
+        in final_step
+    )
+    assert "run: *boca_offline_chromium_smoke" in final_step
+    assert (
+        publish.index("Verify browser source revision label")
+        < publish.index("Require the reviewed browser IPC worker command")
+        < publish.index(marker)
+        < publish.index("Scan browser image before any publication")
+        < publish.index("Log in only after successful scan")
+        < publish.index("Publish both scanned images and record immutable digests")
+    )
+    assert "docker login" not in final_step
+    assert "docker push" not in final_step
 
 
 def test_offline_chromium_preflight_never_imports_owner_modules_or_public_sites() -> None:

@@ -11,6 +11,15 @@ clasificados, comentados y cerrados **sin merge y sin borrar ramas** por
 consenso documentado en
 [backlog #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6797512465).
 
+**Actualización posterior:** el HEAD `05ca4703` tuvo panel preview SUCCESS y
+calidad Python de CI SUCCESS, pero cuatro builds de la imagen browser quedaron
+FAIL porque `apt-get` no resolvió `azure.archive.ubuntu.com` ni
+`security.ubuntu.com`, tanto en primer intento como en el único rerun. El
+`Dockerfile.browser` permaneció idéntico al SHA previamente certificado:
+[RCA multi-región #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6797945050).
+Los paquetes fijados y NO_GO siguen intactos. El nuevo censo aún no está en
+`main` ni fue ejecutado físicamente.
+
 - **IPC/worker:** el contenedor ahora usa `boca_socios.browser.ipc_server`.
   Nunca convertir observación de token en una reserva. Su ejecutor de
   producción sigue `OfflineNoGoExecutor` (respuesta NO_GO); el módulo nuevo
@@ -34,7 +43,17 @@ consenso documentado en
 - **Actividad:** el worker sólo emite categorías de Chromium, jamás URLs,
   tokens o DOM. Al iniciar IPC puede limpiar únicamente los dos archivos de
   telemetría propios previamente validados; una entrada desconocida o socket
-  residual es NO_GO. La pantalla indica eventos recientes, no salud del host.
+  residual es NO_GO. Si un cierre de Chromium no resulta verificable, el IPC
+  se contamina y cierra el listener. La pantalla indica eventos recientes,
+  no salud del host, y explicita que START no acredita navegación ni reserva.
+- **Release/censo CODE_ONLY pendientes:** el trabajo final de imagen tiene
+  el mismo smoke offline y sin red que PR validation antes de publicar el
+  digest. El nuevo `cutover-a-census` usa únicamente el daemon rootless Boca
+  bajo Actions: antes de cada lectura atesta el `docker info` rootless,
+  cgroup/systemd y el dispositivo/inodo del directorio Docker en el home
+  UID10001. No lista ni inspecciona imágenes; compara dos lecturas estables
+  y cardinalidades `0/1/2_PLUS`, sin lease ni mutaciones. Sólo podrá despacharse tras revisión, merge seguro, CI y
+  gates main/owner; un censo estable NO autoriza Cutover.
 - **Bloqueante físico exacto:** la Action Cutover
   [#42912586832](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42912586832)
   terminó con `BOCA_LEGACY_PREPARE reason=LEGACY_SINGLETON`: el observador

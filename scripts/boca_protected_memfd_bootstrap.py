@@ -82,6 +82,16 @@ RECOVERY_ENTRIES = frozenset(
         "scripts/host_cutover_worker_recovery.py",
     }
 )
+# Strict independent observer program: no Cutover dispatcher, Compose,
+# worker start/recovery program, or mutable host workflow source.
+CENSUS_ENTRIES = frozenset(
+    {
+        "__main__.py",
+        "boca_socios/__init__.py",
+        "boca_socios/host_boca_cleanup.py",
+        "boca_socios/host_boca_census.py",
+    }
+)
 # Seven-entry immutable R83 worker diagnostic, never a Cutover or recovery ZIP.
 PREFLIGHT_ENTRIES = frozenset(
     {
@@ -137,6 +147,8 @@ MAX_ZIP = 512_000
 MAX_UNCOMPRESSED = 1_152_000
 RECOVERY_MAX_ZIP = 128_000
 RECOVERY_MAX_UNCOMPRESSED = 256_000
+CENSUS_MAX_ZIP = 64_000
+CENSUS_MAX_UNCOMPRESSED = 160_000
 PREFLIGHT_MAX_ZIP = 128_000
 PREFLIGHT_MAX_UNCOMPRESSED = 520_000
 W1_MAX_ZIP = 320_000
@@ -153,12 +165,15 @@ def verify(
     worker_preflight: bool = False,
     worker_w1: bool = False,
     worker_physical: bool = False,
+    census: bool = False,
 ) -> None:
     """Verify digest, exact transport variant, file types and separate bounds."""
-    if sum((recovery, worker_preflight, worker_w1, worker_physical)) > 1:
+    if sum((recovery, worker_preflight, worker_w1, worker_physical, census)) > 1:
         raise ValueError("protected Boca bundle modes must be exclusive")
     max_zip = (
-        RECOVERY_MAX_ZIP
+        CENSUS_MAX_ZIP
+        if census
+        else RECOVERY_MAX_ZIP
         if recovery
         else PREFLIGHT_MAX_ZIP
         if worker_preflight
@@ -169,7 +184,9 @@ def verify(
         else MAX_ZIP
     )
     max_uncompressed = (
-        RECOVERY_MAX_UNCOMPRESSED
+        CENSUS_MAX_UNCOMPRESSED
+        if census
+        else RECOVERY_MAX_UNCOMPRESSED
         if recovery
         else PREFLIGHT_MAX_UNCOMPRESSED
         if worker_preflight
@@ -187,7 +204,9 @@ def verify(
         entries = package.infolist()
         names = [entry.filename for entry in entries]
         allowlisted = (
-            (RECOVERY_ENTRIES,)
+            (CENSUS_ENTRIES,)
+            if census
+            else (RECOVERY_ENTRIES,)
             if recovery
             else (PREFLIGHT_ENTRIES,)
             if worker_preflight
@@ -229,6 +248,7 @@ def main() -> int:
         worker_preflight = sys.argv[2] == "cutover-worker-preflight"
         worker_w1 = sys.argv[2] == "worker-diagnose-once"
         worker_physical = sys.argv[2] == "worker-physical-once"
+        census = sys.argv[2] == "cutover-a-census"
         if (
             sys.argv[2] in ("cutover-stage-recover-904", "cutover-image-plan-916")
             and len(sys.argv) != 8
@@ -244,8 +264,12 @@ def main() -> int:
             raise ValueError("W1 requires one GitHub run ID only")
         if worker_physical and len(sys.argv) != 4:
             raise ValueError("Physical Boca probe requires one GitHub run ID only")
+        if census and len(sys.argv) != 4:
+            raise ValueError("Boca census requires one GitHub run ID only")
         bound = (
-            RECOVERY_MAX_ZIP
+            CENSUS_MAX_ZIP
+            if census
+            else RECOVERY_MAX_ZIP
             if recovery
             else PREFLIGHT_MAX_ZIP
             if worker_preflight
@@ -263,6 +287,7 @@ def main() -> int:
             worker_preflight=worker_preflight,
             worker_w1=worker_w1,
             worker_physical=worker_physical,
+            census=census,
         )
         # The memfd is passed to the *same* process via exec. No temporary
         # container, host file or broader Docker resource is ever created.

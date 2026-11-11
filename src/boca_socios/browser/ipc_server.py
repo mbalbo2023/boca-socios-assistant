@@ -214,6 +214,15 @@ class UnixSyntheticWorker:
                 # Only the fixed category crosses this local callback; no raw
                 # tokens, URLs, engine results or private exception strings.
                 self._on_observation(result)
+        except SyntheticIPCError as exc:
+            if str(exc) == "offline_fixture_teardown_unverified":
+                # The executor could not prove that Chromium was closed. The
+                # disposable process must stop accepting work and exit through
+                # serve_until's existing poisoned-worker termination path.
+                self._poisoned.set()
+                if self._server is not None:
+                    self._server.close()
+            return NO_GO
         except (Exception, asyncio.CancelledError):
             return NO_GO
         return NO_GO
