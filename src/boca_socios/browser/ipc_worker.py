@@ -1,6 +1,7 @@
 import asyncio
 import json
-from synthetic import SyntheticBrowserEngine
+import os
+from .synthetic import SyntheticBrowserEngine
 
 class IPCWorkerOrchestrator:
     """
@@ -24,5 +25,8 @@ class IPCWorkerOrchestrator:
         return results
 
 if __name__ == "__main__":
-    orchestrator = IPCWorkerOrchestrator("https://soysocio.bocajuniors.com.ar", 3)
+    site_url = os.environ.get("SITE_URL")
+    if not site_url:
+        raise SystemExit("SITE_URL_REQUIRED")
+    orchestrator = IPCWorkerOrchestrator(site_url, 3)
     asyncio.run(orchestrator.dispatch_job())
