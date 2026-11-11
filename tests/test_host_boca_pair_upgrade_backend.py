@@ -124,6 +124,87 @@ def test_old_container_guard_rejects_wrong_role_and_image_no_mutation(
     assert commands == []
 
 
+@pytest.mark.parametrize("stale", ("egress_network", "site_config_volume", "extra_container"))
+def test_pair_upgrade_rejects_stale_rootless_resources_before_first_pull(
+    monkeypatch: pytest.MonkeyPatch,
+    stale: str,
+) -> None:
+    """A pre-existing Boca resource cannot cause partial new-attempt staging."""
+    plan = _plan()
+    actor = backend.RootlessPairUpgradeBackend(_sources())
+    actor.state = "ATTESTED"
+    actor.root = backend._ROOTLESS_DB
+    monkeypatch.setattr(actor, "_sqlite", lambda: None)
+    monkeypatch.setattr(stage_pair, "prepare", lambda *_: stage.ROOT / "staged")
+    monkeypatch.setattr(host, "_browser_compose_model", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        actor,
+        "_compose_hash",
+        lambda _plan, role: ("1" if role == "controller" else "2") * 64,
+    )
+    operations: list[str] = []
+    monkeypatch.setattr(host, "_browser_pull_both", lambda *_: operations.append("pull"))
+    monkeypatch.setattr(
+        host, "_cutover_create_browser_egress", lambda *_: operations.append("create_network")
+    )
+    monkeypatch.setattr(
+        host,
+        "_browser_create_site_config_volume",
+        lambda *_: operations.append("create_volume"),
+    )
+
+    def exact_names(kind: str, name_filter: str) -> set[str]:
+        if kind == "network":
+            assert name_filter == f"name=^{host.BROWSER_EGRESS_BRIDGE}$"
+            return {host.BROWSER_EGRESS_BRIDGE} if stale == "egress_network" else set()
+        assert kind == "volume"
+        assert name_filter == f"name=^{host.BROWSER_SITE_CONFIG_VOLUME}$"
+        return {host.BROWSER_SITE_CONFIG_VOLUME} if stale == "site_config_volume" else set()
+
+    monkeypatch.setattr(host, "_names", exact_names)
+    expected = {plan.old_controller_id, plan.old_worker_id}
+    if stale == "extra_container":
+        expected.add("f" * 64)
+    monkeypatch.setattr(host, "_browser_docker_ids", lambda: expected)
+
+    with cleanup.protected_boca_job_lease(RUN) as lease:
+        with pytest.raises(backend.PairHostNoGo):
+            actor.stage(plan, lease)
+    assert operations == []
+    assert actor.state == "ATTESTED"
+
+
+@pytest.mark.parametrize("kind", ("network", "volume"))
+def test_attest_refuses_stale_browser_resources_before_observer(
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+) -> None:
+    plan = _plan()
+    actor = backend.RootlessPairUpgradeBackend(_sources())
+    monkeypatch.setattr(host, "_require_dedicated_identity", lambda: None)
+    monkeypatch.setattr(host, "_rootless_socket_secure", lambda: True)
+    monkeypatch.setattr(
+        host,
+        "_browser_docker_ids",
+        lambda: {plan.old_controller_id, plan.old_worker_id},
+    )
+    monkeypatch.setattr(
+        host,
+        "_names",
+        lambda queried, _filter: {"present"} if queried == kind else set(),
+    )
+    observed = []
+    from boca_socios import host_boca_pair_observe as pair_observer
+
+    monkeypatch.setattr(pair_observer, "observe", lambda *_: observed.append("observe"))
+
+    with cleanup.protected_boca_job_lease(RUN) as lease:
+        with pytest.raises(backend.PairHostNoGo):
+            actor.attest(plan, lease)
+    assert observed == []
+    assert actor.state == "NEW"
+
+
 def test_park_never_starts_exited_old_worker_or_removes_any_volume(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

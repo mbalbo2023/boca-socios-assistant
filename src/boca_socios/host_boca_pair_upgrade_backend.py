@@ -291,6 +291,15 @@ class RootlessPairUpgradeBackend:
         ):
             raise _fail()
 
+    def _require_fresh_attempt_resources(self, plan: transaction.PairCoordinates) -> None:
+        """Refuse stale Boca-only resources before any dual-upgrade staging effects."""
+        if (
+            host._browser_docker_ids() != {plan.old_controller_id, plan.old_worker_id}
+            or host._names("network", f"name=^{host.BROWSER_EGRESS_BRIDGE}$")
+            or host._names("volume", f"name=^{host.BROWSER_SITE_CONFIG_VOLUME}$")
+        ):
+            raise _fail()
+
     def _old_exact(self, plan: transaction.PairCoordinates, *, parked: bool) -> None:
         if self.old is None:
             raise _fail()
@@ -335,6 +344,7 @@ class RootlessPairUpgradeBackend:
         host._require_dedicated_identity()
         if not host._rootless_socket_secure():
             raise _fail()
+        self._require_fresh_attempt_resources(plan)
         observed = pair_observer.observe(plan.attempt_id)
         pair_observer.verify(observed, plan.attempt_id)
         raw = json.loads(observed.removeprefix(b"BOCA_INSTALLED_PAIR "))
@@ -411,6 +421,7 @@ class RootlessPairUpgradeBackend:
     def stage(self, plan: transaction.PairCoordinates, lease: BocaJobLease) -> None:
         self._guard(plan, lease, "ATTESTED")
         self._sqlite()
+        self._require_fresh_attempt_resources(plan)
         self.stage_dir = pair_stage.prepare(plan.attempt_id, self.sources)
         host._browser_compose_model(
             plan.controller_ref,
