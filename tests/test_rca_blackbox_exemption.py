@@ -38,7 +38,7 @@ def _fixture(
     manifest = {
         "version": 1,
         "authority_issue": 288,
-        "owner_attestation": "externally_validated_by_owner_2026-11-03",
+        "owner_attestation": GATE["OWNER_BLACKBOX_ATTESTATION"],
         "protected_sha256": {name: value[1] for name, value in hashes.items()},
         "exempt_regression_selectors": sorted(allowed),
     }

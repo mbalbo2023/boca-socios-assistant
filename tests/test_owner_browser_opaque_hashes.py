@@ -13,11 +13,11 @@ _ROOT = Path(__file__).resolve().parents[1]
     [
         (
             "src/boca_socios/browser/synthetic.py",
-            "52cd3996548eb318253aecd11d9ffc5bfa04c609be400fdb1ce4863dba4eeeaa",
+            "f796581efa29ed3c61390ec64e7534294b602b32ef27077dbb033d91edc4b125",
         ),
         (
             "src/boca_socios/browser/ipc_worker.py",
-            "b1286e77b0ff2ee0bc2473b27895bbe1b0f376a4efcf921f5f1c88aabc649ebe",
+            "276a23376928d4c1506f96c17be14d49b582b7fb027a8c869cedaba98f9555ae",
         ),
     ],
 )

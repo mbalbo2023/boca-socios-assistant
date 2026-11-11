@@ -13,6 +13,7 @@ from boca_socios.notify.projection import LocalNoticeView
 from boca_socios.panel.enrollment_form import STYLE
 from boca_socios.panel.lifecycle_intents import LifecycleIntent
 from boca_socios.panel.members import CommandView, MemberView
+from boca_socios.panel.worker_activity import WorkerActivitySnapshot
 
 _LOGIN_SCRIPT = """
 const button = document.getElementById('passkey');
@@ -53,6 +54,76 @@ button.addEventListener('click', async () => {
 });
 """
 
+_ACTIVITY_SCRIPT = """
+const list = document.getElementById('worker-events');
+const summary = document.getElementById('worker-activity-status');
+const telemetry = document.getElementById('chromium-telemetry-status');
+const refreshed = document.getElementById('worker-activity-refreshed');
+const toggle = document.getElementById('worker-activity-toggle');
+const manual = document.getElementById('worker-activity-refresh');
+const labels = {owner: 'Panel', host: 'Ejecutor',
+  simulation: 'Simulación', chromium: 'Chromium'};
+let paused = false;
+let pending = false;
+let lastEvents = '';
+async function updateActivity() {
+  if (pending) return;
+  pending = true;
+  try {
+    const response = await fetch('/control/actividad.json', {
+      credentials: 'same-origin', cache: 'no-store', redirect: 'error'});
+    if (!response.ok) throw new Error('status unavailable');
+    const data = await response.json();
+    if (!Array.isArray(data.events)) throw new Error('invalid activity');
+    const signature = JSON.stringify([data.events, data.chromium_telemetry]);
+    if (lastEvents !== signature) {
+      const children = data.events.map((event) => {
+        const item = document.createElement('li');
+        const time = new Date(event.at);
+        const when = Number.isNaN(time.getTime()) ? 'Hora no disponible' :
+          time.toLocaleString('es-AR', {timeZone: 'America/Argentina/Buenos_Aires'});
+        item.textContent = when + ' · ' + (labels[event.source] || 'Evento') +
+          ' · ' + event.message;
+        return item;
+      });
+      if (children.length === 0) {
+        const item = document.createElement('li');
+        item.textContent = 'Todavía no hay eventos registrados.';
+        children.push(item);
+      }
+      list.replaceChildren(...children);
+      const latest = data.events.at(-1);
+      summary.textContent = latest ? 'Último evento: ' + latest.message :
+        'Sin eventos registrados.';
+      lastEvents = signature;
+    }
+    telemetry.textContent = data.chromium_telemetry === 'available' ?
+      'Etapas de Chromium disponibles (sin texto interno de la página).' :
+      data.chromium_telemetry === 'missing' ?
+      'Chromium todavía no emitió etapas de actividad.' :
+      'Telemetría de Chromium no verificable; consultar estado protegido.';
+    refreshed.textContent = 'Última consulta: ' +
+      new Date(data.observed_at).toLocaleString('es-AR',
+        {timeZone: 'America/Argentina/Buenos_Aires'});
+  } catch (_) {
+    telemetry.textContent = 'No se pudo consultar la actividad. Revise su sesión.';
+  } finally {
+    pending = false;
+  }
+}
+manual.addEventListener('click', updateActivity);
+toggle.addEventListener('click', () => {
+  paused = !paused;
+  toggle.textContent = paused ? 'Reanudar actualizaciones' : 'Pausar actualizaciones';
+  toggle.setAttribute('aria-pressed', String(paused));
+  if (!paused) updateActivity();
+});
+setInterval(() => {
+  if (!paused && !document.hidden) updateActivity();
+}, 5000);
+updateActivity();
+"""
+
 
 def _hash(value: str) -> str:
     return base64.b64encode(hashlib.sha256(value.encode()).digest()).decode("ascii")
@@ -62,7 +133,7 @@ CSP = (
     "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
     "form-action 'self'; connect-src 'self'; "
     f"style-src 'sha256-{_hash(STYLE)}'; "
-    f"script-src 'sha256-{_hash(_LOGIN_SCRIPT)}'"
+    f"script-src 'sha256-{_hash(_LOGIN_SCRIPT)}' 'sha256-{_hash(_ACTIVITY_SCRIPT)}'"
 )
 
 
@@ -73,6 +144,8 @@ def _page(title: str, content: str, *, body_attributes: str = "", script: str = 
 <body{body_attributes}><nav aria-label="Secciones"><a href="/">Inicio</a> ·
 <a href="/socios">Socios</a> · <a href="/comandos">Simulación</a> ·
 <a href="/control">Control</a> ·
+<a href="/control/actividad">Actividad del worker</a> ·
+<a href="/configuracion">Configuración</a> ·
 <a href="/estado">Estado</a> · <a href="/avisos">Avisos</a> ·
 <a href="/avisos-oficiales">Eventos oficiales</a></nav>
 <main>{content}</main>{script}</body></html>""".encode()
@@ -91,6 +164,39 @@ def login(challenge: str, credential_id: str) -> bytes:
         '<p id="result" role="status" aria-live="polite"></p>',
         body_attributes=attributes,
         script=f"<script>{_LOGIN_SCRIPT}</script>",
+    )
+
+
+def site_url_configuration(csrf: str, operation_id: str, site_url: str | None) -> bytes:
+    """Owner-only navigation target; never display tokens, arbitrary env or URLs from logs."""
+    if site_url is None:
+        state = '<p role="status">SITE_URL no configurada. El destino permanece deshabilitado.</p>'
+        value = ""
+    else:
+        state = (
+            '<p role="status">Guardada en el volumen privado de Boca. '
+            "Pendiente de aplicar en el próximo arranque del worker mediante el ejecutor "
+            "protegido del droplet.</p>"
+        )
+        value = escape(site_url, quote=True)
+    return _page(
+        "Configuración",
+        "<h1>Configuración del sitio</h1>"
+        "<p>Cambiá la URL de destino sin editar archivos Python. "
+        "Se admiten URLs públicas o privadas HTTP(S); no se admiten credenciales "
+        "dentro de la URL.</p>"
+        + state
+        + '<form method="post" action="/configuracion">'
+        + f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
+        + f'<input type="hidden" name="operation_id" value="{escape(operation_id, quote=True)}">'
+        + '<label for="site-url">SITE_URL · sitio de pruebas</label>'
+        + f'<input id="site-url" name="SITE_URL" type="url" value="{value}" '
+        + 'placeholder="https://ensayo.boca.internal" inputmode="url" '
+        + 'autocomplete="off" spellcheck="false" maxlength="512" required>'
+        + '<p><button type="submit">Guardar SITE_URL</button></p></form>'
+        + "<p>Guardar no interrumpe un proceso activo. El nuevo destino se usará "
+        + "cuando el ejecutor del droplet haya incorporado la configuración en el "
+        + "próximo arranque. La red del worker sigue aislada.</p>",
     )
 
 
@@ -240,6 +346,48 @@ def bot_control(intent: LifecycleIntent | None, csrf: str, start_id: str, stop_i
     )
 
 
+def worker_activity(snapshot: WorkerActivitySnapshot) -> bytes:
+    """Voice-friendly live view of fixed, redacted events only."""
+    rows = "".join(
+        "<li>"
+        + escape(item.at)
+        + " UTC · "
+        + escape(item.source)
+        + " · "
+        + escape(item.message)
+        + "</li>"
+        for item in snapshot.events
+    )
+    health = {
+        "available": "Etapas reportadas por Chromium disponibles.",
+        "missing": "Chromium todavía no emitió etapas de actividad.",
+        "degraded": "Telemetría de Chromium no verificable; consultar estado protegido.",
+    }[snapshot.chromium_telemetry]
+    return _page(
+        "Actividad del worker y Chromium",
+        "<h1>Actividad del worker y Chromium</h1>"
+        "<p>Eventos comprobables de inicio, ejecución y cierre, actualizados cada cinco segundos "
+        "mientras esta pantalla está visible. No es una consola Docker ni muestra credenciales, "
+        "datos de socios o pasos internos de una web real.</p>"
+        "<p>Los recibos del ejecutor acreditan sólo el momento en que fueron emitidos; "
+        "las etapas de Chromium son señales del proceso aislado, no pruebas de salud del host.</p>"
+        f'<p id="chromium-telemetry-status">{escape(health)}</p>'
+        '<button id="worker-activity-refresh" type="button">Actualizar ahora</button>'
+        '<button id="worker-activity-toggle" type="button" aria-pressed="false">'
+        "Pausar actualizaciones</button>"
+        '<p id="worker-activity-refreshed">Consulta inicial: '
+        + escape(snapshot.observed_at)
+        + " UTC</p>"
+        '<p id="worker-activity-status" role="status" aria-live="polite">'
+        "Actividad cargada.</p>"
+        '<ol id="worker-events" aria-label="Eventos recientes" aria-live="off">'
+        + (rows or "<li>Todavía no hay eventos registrados.</li>")
+        + "</ol><noscript>Actualice esta página para consultar los eventos nuevos.</noscript>"
+        '<p><a href="/control">Volver al control del bot</a></p>',
+        script=f"<script>{_ACTIVITY_SCRIPT}</script>",
+    )
+
+
 def _bot_controls(intent: LifecycleIntent | None, csrf: str, start_id: str, stop_id: str) -> str:
     """Voice-friendly simulation controls. Only a protected receipt establishes outcome."""
     observed = "Todavía no hay un recibo de inicio o detención del bot."
@@ -301,6 +449,7 @@ def _bot_controls(intent: LifecycleIntent | None, csrf: str, start_id: str, stop
         + receipt_id
         + "".join(buttons)
         + '<p><a href="/control">Actualizar estado del bot</a></p>'
+        '<p><a href="/control/actividad">Ver actividad del worker y Chromium en vivo</a></p>'
         '<p><a href="/comandos">Elegir una simulación</a></p>'
     )
 

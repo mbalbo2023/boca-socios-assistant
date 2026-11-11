@@ -19,14 +19,15 @@ OWNER_BLACKBOX_MANIFEST = Path("docs/quality/owner-blackbox-exclusions.json")
 # prefix, similar name, new selector, or newly changed owner bytes.
 OWNER_BLACKBOX_FILES = {
     "src/boca_socios/browser/synthetic.py": (
-        2784,
-        "52cd3996548eb318253aecd11d9ffc5bfa04c609be400fdb1ce4863dba4eeeaa",
+        2848,
+        "f796581efa29ed3c61390ec64e7534294b602b32ef27077dbb033d91edc4b125",
     ),
     "src/boca_socios/browser/ipc_worker.py": (
-        1163,
-        "b1286e77b0ff2ee0bc2473b27895bbe1b0f376a4efcf921f5f1c88aabc649ebe",
+        1254,
+        "276a23376928d4c1506f96c17be14d49b582b7fb027a8c869cedaba98f9555ae",
     ),
 }
+OWNER_BLACKBOX_ATTESTATION = "owner_authorized_wiring_only_2026-11-10_original_logic_retained"
 OWNER_BLACKBOX_SELECTORS = frozenset(
     {
         "tests/test_browser_on_demand.py::test_close_during_stubborn_context_exit_never_returns_late_success",
@@ -190,7 +191,7 @@ def _selector_ran(selector: str, executed: set[str]) -> bool:
 def _owner_blackbox_exemptions(
     root: Path, lessons: dict[str, dict[str, Any]], executed: set[str]
 ) -> frozenset[str]:
-    """Accept only the owner's fixed, byte-identical externally validated scope.
+    """Accept only the owner's fixed, byte-identical authorized opaque scope.
 
     Opaque hashing is the sole operation on the two protected files: no
     imports, parsing, execution, source display or semantic checks.
@@ -214,7 +215,7 @@ def _owner_blackbox_exemptions(
     expected = {
         "version": 1,
         "authority_issue": 288,
-        "owner_attestation": "externally_validated_by_owner_2026-11-03",
+        "owner_attestation": OWNER_BLACKBOX_ATTESTATION,
         "protected_sha256": {
             name: digest for name, (_length, digest) in OWNER_BLACKBOX_FILES.items()
         },

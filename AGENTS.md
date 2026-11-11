@@ -28,10 +28,11 @@ every unrelated service, host configuration and application repository.
 
 The owner has reserved **exclusive programming authority** over
 `src/boca_socios/browser/synthetic.py` and
-`src/boca_socios/browser/ipc_worker.py`. Agents MUST NOT open their contents,
-interpret their behavior, refactor, regenerate, edit or replace their bytes,
-or use their internal logic to propose navigation behavior, unless the owner
-issues a **new, explicit, file-specific authorization**. The two files supplied
+`src/boca_socios/browser/ipc_worker.py`. Except for the narrow 2026-11-10
+authorization below, agents MUST NOT open their contents, interpret their
+behavior, refactor, regenerate, edit or replace their bytes, or use their
+internal logic to propose navigation behavior without a new, explicit,
+file-specific authorization. The two files supplied
 on 2026-11-03 may be copied **byte-for-byte**, identified by SHA-256, and staged
 under [issue #288](https://github.com/mbalbo2023/boca-socios-assistant/issues/288).
 The owner subsequently declared both modules an **externally validated
@@ -41,6 +42,76 @@ This does not waive exact-byte integrity, RCA and controller isolation guards,
 other CI/security gates or physical host readiness. The owner retains exclusive
 responsibility for navigation behavior and any later revisions. See
 `docs/ADR/0121-owner-controlled-browser-navigation.md`.
+
+### Narrow owner-approved integration exception — 2026-11-10
+
+The owner **expressly authorizes** agents to open **both named modules** and
+modify **only their deployment/integration wiring** (imports, paths,
+environment/configuration, IPC connection and bounded, fixed-category
+observability) to connect the V3 worker with the existing controller and
+private `8443` dashboard. Preserve the existing Python navigation/business
+algorithms and behavior: do not rewrite the browser engine or the ticket
+flow. This exception supersedes the earlier *absolute no-read/no-edit* rule
+only to that extent; it does not authorize live Boca/Queue-it traffic,
+credential disclosure, concurrent real sessions or ticket actions.
+
+**Blackbox CI policy remains in force:** keep `synthetic.py` and
+`ipc_worker.py` excluded from automated lint, mypy, synthetic execution and
+code-level behavioral analysis. Review only the small external integration
+boundary and use safe, offline contract tests. Do not loosen any other
+quality or security gate. Record exact changed lines/digests and the owner
+authorization in the issue and PR.
+
+**Sandbox destination setting, 2026-11-10:** both protected entrypoints now
+read the target exclusively from the `SITE_URL` environment variable and
+exit without starting Chromium if it is absent. No provider URL may be
+hard-coded as a fallback. A configured string alone does **not** prove that
+the domain resolves to an internal sandbox or that network access is safe:
+the production worker remains `network_mode: none` pending an exact, Boca-only
+DNS/IP and egress review. Never silently reinterpret `SITE_URL` as permission
+for public-site traffic, Queue-it bypass or real ticket actions.
+
+**Owner-requested URL editor, 2026-11-11:** the `8443` Configuración
+page may display/edit exactly `SITE_URL` under passkey + `simulation:write`,
+same-origin CSRF and one-use operations. Persist it in the private, Boca-only
+data volume. **Owner amendment:** do **not** reject a URL merely because
+its hostname or routable address is public. Keep URL syntax checks and reject
+embedded credentials, query strings, fragments and link-local metadata IPs.
+The browser may consume this setting
+*only after* its transport has been approved and proven within the dedicated
+Boca rootless boundary. Docker `start` does not refresh a container's Env;
+never label a saved setting "applied" merely because the bot was toggled.
+Do not expose Telegram token-bearing API URLs as editable browser destinations.
+
+**Owner networking amendment, 2026-11-11:** Chromium must have outbound
+Internet access when activated. Replace the current `network_mode:none` only
+in a coordinated, verified cutover to a *Boca-only rootless network* with
+outbound connectivity, no published worker ports, no shared networks with
+other apps, no host networking and no privileged Docker socket. Update every
+exact topology/inventory attestor, deployment contract, cleanup boundary and
+tests before installing. No change to the daemon or other Docker projects.
+Allowing a public URL in Configuración is not, by itself, permission to run
+unreviewed live Boca ticket workflows; business/credential protections remain.
+
+**Uploaded V3 ZIP custody:** the 2026-11-10 supplied ZIP contains a plaintext
+Telegram token, a hard-coded public Boca destination, a separate plaintext
+password SQLite class, and base images differing from pinned release images.
+Never commit/expose the token or overwrite the reviewed Dockerfiles, database,
+or Telegram integration with that unreviewed archive. Treat the token as
+compromised and require secret rotation by its owner. Any compatible browser
+destination patch must use `SITE_URL` while preserving business logic and
+must prove it cannot reach real Boca.
+
+**Integration fail-closed gate:** the current `ipc_worker.py` entrypoint
+is not a Unix IPC server: it invokes `SyntheticBrowserEngine` using the
+`SITE_URL` configured at runtime and multiple sessions, and prints result
+payloads. It is
+**not safe to enable it unchanged** as the V3 worker simply by fixing an
+import or `PYTHONPATH`. This observed mismatch must be resolved as an
+explicit, simulation-only IPC adapter without executing the real-site
+orchestrator; if achieving that requires a change to the protected navigation
+logic, stop and obtain a separate exact-scope owner decision. A healthy
+controller alone never certifies the browser worker or Chromium.
 
 Site navigation is **entirely owner-operated**. Agents must not launch or
 automate real Boca/Queue-it navigation in any browser on the droplet or on

@@ -1,4 +1,5 @@
 import asyncio
+import os
 from playwright.async_api import async_playwright, Browser, Playwright
 
 class SyntheticBrowserEngine:
@@ -63,5 +64,7 @@ class SyntheticBrowserEngine:
 
 if __name__ == "__main__":
     engine = SyntheticBrowserEngine(concurrency_limit=3)
-    target = "https://soysocio.bocajuniors.com.ar"
+    target = os.environ.get("SITE_URL")
+    if not target:
+        raise SystemExit("SITE_URL_REQUIRED")
     asyncio.run(engine.orchestrate_swarm(target))

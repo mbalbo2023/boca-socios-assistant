@@ -46,12 +46,19 @@ from boca_socios.panel.owner_session_store import (
 )
 from boca_socios.panel.owner_sessions import OwnerSession, OwnerSessions
 from boca_socios.panel.passkey import PasskeyAssertion, PasskeyOwnerAuthentication
+from boca_socios.panel.site_url_settings import (
+    SiteUrlInvalid,
+    SiteUrlSettingsStore,
+    SiteUrlSettingsUnavailable,
+    require_site_url,
+)
 from boca_socios.panel.telegram_pairing_staging import (
     PairingStageConflict,
     PairingStageReceipt,
     PairingStageRequest,
     PairingStageUnavailable,
 )
+from boca_socios.panel.worker_activity import WorkerActivityUnavailable, read_worker_activity
 from boca_socios.security.enrollment import (
     CredentialUnavailable,
     MemberNotFound,
@@ -181,6 +188,7 @@ class PrivatePanelApplication:
         self._host = parsed.netloc
         self._database_path = database_path
         self._database = Database(database_path)
+        self._site_url_settings = SiteUrlSettingsStore.for_database(database_path)
         self._members = members
         self._directory = MemberDirectory(database_path)
         self._commands = commands
@@ -287,6 +295,8 @@ class PrivatePanelApplication:
         if path == "/control" or (isinstance(path, str) and path.startswith("/control/")):
             if "simulation:write" not in session.permissions:
                 return _error(start, 403, "Permiso insuficiente.")
+        if path == "/configuracion" and "simulation:write" not in session.permissions:
+            return _error(start, 403, "Permiso insuficiente.")
         if path in ("/estado", "/avisos", "/avisos-oficiales", "/avisos-oficiales.json") and (
             "local-status:read" not in session.permissions
         ):
@@ -300,6 +310,8 @@ class PrivatePanelApplication:
                 return _response(start, 200, private_ui.home(session.csrf))
             if path == "/telegram/configurar":
                 return _response(start, 200, telegram_setup_ui.page(), csp=telegram_setup_ui.CSP)
+            if path == "/configuracion":
+                return self._site_url_page(start, session)
             if path == "/telegram/emparejar":
                 if self._telegram_pairing_stager is not None:
                     operation_id = self._sessions.new_operation(session)
@@ -327,6 +339,30 @@ class PrivatePanelApplication:
                 if self._bot_control is not None:
                     return self._bot_page(start, session, home=False)
                 return self._control_page(start, session)
+            if path in ("/control/actividad", "/control/actividad.json"):
+                try:
+                    activity_snapshot = read_worker_activity(
+                        self._database_path, observed_at=self._now()
+                    )
+                except WorkerActivityUnavailable:
+                    if path.endswith(".json"):
+                        return _response(
+                            start,
+                            503,
+                            b'{"message":"Actividad local temporalmente no disponible."}',
+                            html=False,
+                        )
+                    return _error(start, 503, "Actividad local temporalmente no disponible.")
+                if path.endswith(".json"):
+                    return _response(
+                        start,
+                        200,
+                        json.dumps(asdict(activity_snapshot), separators=(",", ":")).encode(
+                            "utf-8"
+                        ),
+                        html=False,
+                    )
+                return _response(start, 200, private_ui.worker_activity(activity_snapshot))
             if path == "/estado":
                 snapshot = read_local_status(self._database_path, observed_at=self._now())
                 data = asdict(snapshot)
@@ -394,6 +430,8 @@ class PrivatePanelApplication:
                 return self._stage_private_telegram_pairing(environ, session, start)
         if path == "/comandos":
             return self._begin(environ, session, start)
+        if path == "/configuracion":
+            return self._save_site_url(environ, session, start)
         if path in ("/control/reanudar", "/control/pausar"):
             if self._bot_control is not None:
                 return _error(start, 404, "Ruta no disponible.")
@@ -413,6 +451,51 @@ class PrivatePanelApplication:
                 return _error(start, 403, "Permiso insuficiente.")
             return self._credential_action(environ, path, session, start)
         return _error(start, 404, "Ruta no disponible.")
+
+    def _site_url_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
+        operation_id = self._sessions.new_operation(session)
+        if operation_id is None:
+            return _error(start, 429, "Espere antes de cambiar la configuración.")
+        try:
+            configured = self._site_url_settings.read()
+        except SiteUrlSettingsUnavailable:
+            return _error(start, 503, "Configuración privada no verificable.")
+        return _response(
+            start,
+            200,
+            private_ui.site_url_configuration(session.csrf, operation_id, configured),
+        )
+
+    def _save_site_url(
+        self, environ: Mapping[str, object], session: OwnerSession, start: StartResponse
+    ) -> list[bytes]:
+        fields = self._form(environ, expected={"csrf", "operation_id", "SITE_URL"})
+        if fields is None or _canonical_uuid(fields["operation_id"]) is None:
+            return _error(start, 400, "Configuración inválida.")
+        try:
+            destination = require_site_url(fields["SITE_URL"])
+        except SiteUrlInvalid:
+            return _error(
+                start, 400, "SITE_URL debe ser una URL HTTP(S) válida y sin credenciales."
+            )
+        result, operation = self._sessions.reserve(
+            session,
+            fields["operation_id"],
+            fields["csrf"],
+            b"site-url-update-v1:" + destination.encode("utf-8"),
+        )
+        if result:
+            if result == 303:
+                return self._redirect(start, "/configuracion")
+            return _error(start, result, "Configuración ya procesada o no autorizada.")
+        assert operation is not None
+        try:
+            self._site_url_settings.save(destination)
+        except SiteUrlSettingsUnavailable:
+            self._sessions.finish(operation, 503)
+            return _error(start, 503, "No se pudo confirmar la configuración privada.")
+        self._sessions.finish(operation, 303)
+        return self._redirect(start, "/configuracion")
 
     def _challenge_private_telegram_pairing(
         self, environ: Mapping[str, object], session: OwnerSession, start: StartResponse

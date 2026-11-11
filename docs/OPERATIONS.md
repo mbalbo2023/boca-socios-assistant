@@ -1,5 +1,45 @@
 # Safe operations — verified evidence and gated procedures
 
+## R170 — Actividad del worker y SITE_URL en Configuración (11/11/2026 ART)
+
+- **Acceso:** sesión privada con passkey en `8443`. `Control → Actividad del
+  worker` muestra recibos de ciclo de vida, trabajos de simulación y etapas
+  concretas de Chromium en una línea de tiempo; se actualiza cada 5 segundos
+  y ofrece pausa y actualización manual. No muestra stdout sin filtrar, URL,
+  DNI, token ni contenido del sitio.
+- **Destino:** `Configuración → SITE_URL` permite guardar una URL HTTP(S),
+  pública o privada, bajo CSRF y permiso `simulation:write`. No filtra
+  dominios públicos; rechaza usuario, contraseña, query, fragmento y direcciones
+  link-local/metadata. La configuración es
+  un JSON de modo `0600` en el volumen dedicado Boca de datos, con escritura
+  atómica y sin cambios al esquema SQLite.
+- **Importante:** `Guardada` no significa `Aplicada`. El controlador sí
+  dispone del archivo persistido; el worker V3 **no lo comparte**. Docker
+  `start` conserva el Env con que fue creado el contenedor. Faltan un canal
+  de configuración verificado en el contrato del ejecutor rootless y la
+  validación de la nueva red de egreso para que el cambio surta efecto al
+  apagar y prender. No montar toda la base de datos ni la carpeta de código
+  en el worker para forzar el cambio.
+- **Cutover:** el `ipc_worker.py` actual todavía no sirve el socket Unix
+  esperado. El import corregido y `SITE_URL` sin valor por defecto no prueban
+  un worker saludable. El driver `none` de Docker no da salida a `docker logs`;
+  la línea de tiempo es telemetría fija, no el traceback crudo.
+- **Archivo de actualización subido:** el ZIP de V3 incluye token de Telegram
+  en texto plano, URL pública de Boca, clase de socios con contraseñas sin
+  cifrar y Dockerfiles que reemplazarían bases/digests auditados. No aplicar
+  esos archivos literalmente al droplet ni a GitHub. Revocar/rotar el token
+  original y reconciliar los módulos con los adaptadores ya existentes.
+- **Cambio solicitado de red:** el `network_mode:none` vigente bloquea toda
+  salida. El titular pidió Internet; el destino es una red bridge nueva,
+  exclusiva de Boca rootless y separada del controller, con egreso y ningún
+  puerto publicado del worker. Su implementación exige modificar juntos
+  Compose, los atestadores de red exactos y el Cutover; cambiar un único
+  campo sin ellos es NO_GO.
+- **Barrera final:** CI selectivo verde, integración de configuración con
+  arranque real, `worker running+healthy` y Chromium observado con egress
+  certificado, sin tocar Porota, PPI Watch, otros Docker ni puertos expuestos
+  adicionales. Hasta entonces declarar `NO_GO` físico.
+
 ## Diagnóstico del worker R132
 
 El [titular autorizó la captura](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6754980250) después del laboratorio [R131](ADR/0221-r131-worker-start-capture-lab.md). El nuevo worker usa `log-driver=none` durante toda su vida. Para revisar una salida temprana, abrir el job del único `cutover-a-apply` y buscar la observación categórica del intento y la lectura independiente del recibo previo a la limpieza. Una categoría ausente o un fallo de transporte deja pendiente la atribución. Para verificar éxito, revisar el recibo físico del candidato y el worker, el loopback y la limpieza. [Diseño y límites de R132](ADR/0222-r132-worker-start-custody.md).

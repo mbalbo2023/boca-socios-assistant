@@ -30,8 +30,9 @@ class SyntheticIPCError(RuntimeError):
     """Fail-closed local transport or worker, with a fixed nonsecret reason."""
 
 
-def validate_socket_directory(path: Path, *, uid: int = WORKER_UID) -> None:
+def validate_socket_directory(path: Path, *, uid: int = WORKER_UID, gid: int | None = None) -> None:
     """Reject symlinked, redirected, broad or foreign IPC mount directories."""
+    expected_gid = uid if gid is None else gid
     if (
         not path.is_absolute()
         or ".." in path.parts
@@ -44,7 +45,7 @@ def validate_socket_directory(path: Path, *, uid: int = WORKER_UID) -> None:
         if (
             not stat.S_ISDIR(metadata.st_mode)
             or metadata.st_uid != uid
-            or metadata.st_gid != uid
+            or metadata.st_gid != expected_gid
             or stat.S_IMODE(metadata.st_mode) != DIRECTORY_MODE
             or path.resolve(strict=True) != path
         ):
