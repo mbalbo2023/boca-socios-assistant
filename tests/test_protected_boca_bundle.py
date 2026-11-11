@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import base64
 import hashlib
 import io
@@ -52,7 +53,10 @@ def test_bounded_source_growth_keeps_archive_digest_and_archive_limit_independen
 ) -> None:
     sources = (*builder.SOURCES, *builder.OPTION_B_SOURCES)
     total = sum((ROOT / item).stat().st_size for item in sources)
-    assert 830_000 < total < builder.MAX_SOURCE_BYTES == 1_152_000
+    # R173: reviewed source is larger than the immutable transport limit;
+    # only comment-token compaction of the full host module earns the space.
+    assert 1_150_000 < total < 1_200_000
+    assert builder.MAX_SOURCE_BYTES == 1_152_000
     assert builder.MAX_ARCHIVE_BYTES == 512_000
     output, digest = _build(tmp_path)
     raw = output.read_bytes()
@@ -63,6 +67,7 @@ def test_bounded_source_growth_keeps_archive_digest_and_archive_limit_independen
     assert bootstrap.MAX_UNCOMPRESSED == builder.MAX_SOURCE_BYTES
     with zipfile.ZipFile(io.BytesIO(raw)) as package:
         total_uncompressed = sum(item.file_size for item in package.infolist())
+    assert total_uncompressed <= builder.MAX_SOURCE_BYTES < total
     monkeypatch.setattr(bootstrap, "MAX_UNCOMPRESSED", total_uncompressed - 1)
     with pytest.raises(ValueError, match="entry allowlist mismatch"):
         bootstrap.verify(raw, digest)
@@ -70,11 +75,29 @@ def test_bounded_source_growth_keeps_archive_digest_and_archive_limit_independen
     with pytest.raises(ValueError, match="SHA/size mismatch"):
         bootstrap.verify(raw, "0" * 64)
     # A one-byte-shorter hard cap must still fail before writing any output.
-    monkeypatch.setattr(builder, "MAX_SOURCE_BYTES", total - 1)
+    monkeypatch.setattr(builder, "MAX_SOURCE_BYTES", total_uncompressed - 1)
     rejected = tmp_path / "rejected.pyz"
     with pytest.raises(ValueError, match="total exceeds bounded contract"):
         builder.build(ROOT, rejected)
     assert not rejected.exists()
+
+
+def test_bounded_host_source_compaction_preserves_ast_without_repacking_other_sources(
+    tmp_path: Path,
+) -> None:
+    output, digest = _build(tmp_path)
+    with zipfile.ZipFile(output) as archive:
+        host_source = (ROOT / "src/boca_socios/host_first_deploy.py").read_bytes()
+        packaged_host = archive.read("boca_socios/host_first_deploy.py")
+        assert len(host_source) - len(packaged_host) > 7_000
+        assert ast.dump(ast.parse(host_source), include_attributes=False) == ast.dump(
+            ast.parse(packaged_host), include_attributes=False
+        )
+        assert (
+            archive.read("boca_socios/host_boca_cleanup.py")
+            == (ROOT / "src/boca_socios/host_boca_cleanup.py").read_bytes()
+        )
+    assert hashlib.sha256(output.read_bytes()).hexdigest() == digest
 
 
 def test_verified_memfd_zip_selftest_never_touches_host(tmp_path: Path) -> None:

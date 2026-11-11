@@ -564,6 +564,7 @@ def _worker_preparation_fake(
 ) -> tuple[list[tuple[str, ...]], dict[str, object], dict[str, object]]:
     calls, legacy = _cutover_calls(monkeypatch)
     worker: dict[str, object] = {"exists": False, "running": False, "volume": False}
+    site_config_created = False
     original_run = host._run
 
     def inspect(identifier: str) -> dict[str, object]:
@@ -609,6 +610,16 @@ def _worker_preparation_fake(
         if fail_at == "volume":
             raise host.PreflightError("synthetic volume init timeout")
 
+    def create_site_config(_image: str, attempt_id: str) -> None:
+        nonlocal site_config_created
+        assert attempt_id == ATTEMPT and not site_config_created
+        site_config_created = True
+
+    def compensate_site_config(attempt_id: str) -> None:
+        nonlocal site_config_created
+        assert attempt_id == ATTEMPT
+        site_config_created = False
+
     def worker_postflight(
         _id: str, _image: str, _sha: str, _attempt: str, _seccomp: str, **kwargs: object
     ) -> None:
@@ -620,6 +631,8 @@ def _worker_preparation_fake(
     monkeypatch.setattr(host, "_run", runner)
     monkeypatch.setattr(host, "_browser_inspect_record", inspect)
     monkeypatch.setattr(host, "_browser_create_ipc_volume", create_volume)
+    monkeypatch.setattr(host, "_browser_create_site_config_volume", create_site_config)
+    monkeypatch.setattr(host, "_cutover_compensate_site_config_volume", compensate_site_config)
     monkeypatch.setattr(host, "_browser_validate_ipc_volume", lambda _id: None)
     monkeypatch.setattr(host, "_cutover_create_browser_egress", lambda _id: None)
     monkeypatch.setattr(host, "_cutover_compensate_browser_egress", lambda _id: None)
@@ -633,11 +646,16 @@ def _worker_preparation_fake(
         return nullcontext(SimpleNamespace(finish=lambda: stream_capture.CaptureResult.EMPTY))
 
     monkeypatch.setattr(stream_capture, "attach_output", attach)
-    monkeypatch.setattr(
-        host,
-        "_names",
-        lambda _kind, _pattern: {host.BROWSER_IPC_VOLUME} if worker["volume"] else set(),
-    )
+
+    def names(kind: str, expression: str) -> set[str]:
+        if kind == "network":
+            return set()
+        assert kind == "volume"
+        if "boca_site_config" in expression:
+            return {host.BROWSER_SITE_CONFIG_VOLUME} if site_config_created else set()
+        return {host.BROWSER_IPC_VOLUME} if worker["volume"] else set()
+
+    monkeypatch.setattr(host, "_names", names)
     return calls, legacy, worker
 
 
@@ -1319,6 +1337,8 @@ def test_workflow_cutover_v3_requires_dispatch_and_legacy_release_proof() -> Non
         "cutover-a-stage-recover-844",
         "cutover-a-image-retire",
         "cutover-a-observe",
+        # R173 current Boca-rootless census is read-only; it cannot issue Cutover GO.
+        "cutover-a-census",
         # R76 one exact failed preflight metadata-only inspection, no GO.
         "cutover-a-worker-inspect",
         # R112 exact failed-cutover Docker events forensic; READ_ONLY, no retry GO.

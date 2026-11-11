@@ -96,17 +96,20 @@ def _container(ident: str, service: str, image_id: str, *, running: bool) -> Con
         labels=_labels(
             service, CONFIG_CONTROLLER if controller else CONFIG_SENDER if sender else CONFIG_WORKER
         ),
-        volumes=(
-            (
-                "boca-socios_boca_browser_ipc",
-                "boca-socios_boca_data",
-                "boca-socios_boca_key",
-                "boca-socios_boca_owner",
+        volumes=tuple(
+            sorted(
+                (
+                    "boca-socios_boca_browser_ipc",
+                    "boca-socios_boca_site_config",
+                    "boca-socios_boca_data",
+                    "boca-socios_boca_key",
+                    "boca-socios_boca_owner",
+                )
+                if controller
+                else ("boca-socios_boca_data", "boca-socios_boca_telegram")
+                if sender
+                else ("boca-socios_boca_browser_ipc", "boca-socios_boca_site_config")
             )
-            if controller
-            else ("boca-socios_boca_data", "boca-socios_boca_telegram")
-            if sender
-            else ("boca-socios_boca_browser_ipc",)
         ),
         networks=(
             ("boca-socios_boca_private",)
@@ -181,6 +184,7 @@ class FakeIO:
                     "boca-socios_boca_key",
                     "boca-socios_boca_owner",
                     "boca-socios_boca_browser_ipc",
+                    "boca-socios_boca_site_config",
                 )
                 + (("boca-socios_boca_telegram",) if sender_running is not None else ())
             ),
@@ -231,7 +235,10 @@ class FakeIO:
                     }
                 }
             self.fields[("container", ident, "Mounts")] = (
-                [_mount("boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", True)]
+                [
+                    _mount("boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", True),
+                    _mount("boca-socios_boca_site_config", "/run/boca-site-config", False),
+                ]
                 if service == "browser-worker"
                 else [
                     _mount("boca-socios_boca_data", "/data", True),
@@ -243,6 +250,7 @@ class FakeIO:
                     _mount("boca-socios_boca_key", "/run/secrets", False),
                     _mount("boca-socios_boca_owner", "/run/owner", False),
                     _mount("boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", False),
+                    _mount("boca-socios_boca_site_config", "/run/boca-site-config", True),
                 ]
             )
         self.set_state(CONTROLLER, True)
@@ -368,6 +376,9 @@ def test_probes_exact_rootless_pair_without_contacting_foreign_work(tmp_path: Pa
         "foreign_network",
         "wrong_host_port",
         "extra_mount",
+        "controller_site_config_readonly",
+        "worker_site_config_writable",
+        "worker_site_config_missing",
         "bad_rootless_uid",
         "missing_worker_health",
         "unexpected_restart_policy",
@@ -455,6 +466,22 @@ def test_rejects_unverified_host_identity_and_boundary(tmp_path: Path, mutation:
         io.fields[("container", WORKER, "Mounts")] = io.fields[("container", WORKER, "Mounts")] + [
             _mount("foreign", "/root", True)
         ]  # type: ignore[operator]
+    elif mutation in (
+        "controller_site_config_readonly",
+        "worker_site_config_writable",
+        "worker_site_config_missing",
+    ):
+        ident = CONTROLLER if mutation == "controller_site_config_readonly" else WORKER
+        current_mounts = io.fields[("container", ident, "Mounts")]
+        assert isinstance(current_mounts, list)
+        io.fields[("container", ident, "Mounts")] = [
+            {**mount, "RW": mutation == "worker_site_config_writable"}
+            if mount["Name"] == "boca-socios_boca_site_config"
+            else mount
+            for mount in current_mounts
+            if mutation != "worker_site_config_missing"
+            or mount["Name"] != "boca-socios_boca_site_config"
+        ]
     elif mutation == "bad_rootless_uid":
         io.uid = 0
     elif mutation == "missing_worker_health":

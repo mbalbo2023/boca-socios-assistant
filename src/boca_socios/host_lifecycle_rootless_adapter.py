@@ -36,8 +36,15 @@ _SOURCE_URL = "https://github.com/mbalbo2023/boca-socios-assistant"
 _PROJECT = "boca-socios"
 _DATA_VOLUME = "boca-socios_boca_data"
 _IPC_VOLUME = "boca-socios_boca_browser_ipc"
+_SITE_CONFIG_VOLUME = "boca-socios_boca_site_config"
 _CONTROLLER_VOLUMES = frozenset(
-    {_DATA_VOLUME, "boca-socios_boca_key", "boca-socios_boca_owner", _IPC_VOLUME}
+    {
+        _DATA_VOLUME,
+        "boca-socios_boca_key",
+        "boca-socios_boca_owner",
+        _IPC_VOLUME,
+        _SITE_CONFIG_VOLUME,
+    }
 )
 _APPROVED_VOLUMES = _CONTROLLER_VOLUMES | {"boca-socios_boca_telegram"}
 _PRIVATE_NETWORK = "boca-socios_boca_private"
@@ -436,7 +443,7 @@ class RootlessLifecycleProbe:
             or worker.running
             and worker.networks != (_BROWSER_EGRESS_NETWORK,)
             or controller.volumes != tuple(sorted(_CONTROLLER_VOLUMES))
-            or worker.volumes != (_IPC_VOLUME,)
+            or worker.volumes != tuple(sorted((_IPC_VOLUME, _SITE_CONFIG_VOLUME)))
             or sender is not None
             and (
                 not sender_network_valid
@@ -539,10 +546,16 @@ class RootlessLifecycleProbe:
                     ("boca-socios_boca_key", "/run/secrets", False),
                     ("boca-socios_boca_owner", "/run/owner", False),
                     (_IPC_VOLUME, "/run/boca-browser-ipc", False),
+                    (_SITE_CONFIG_VOLUME, "/run/boca-site-config", True),
                 }
             )
         elif service == "browser-worker":
-            expected_mounts = frozenset({(_IPC_VOLUME, "/run/boca-browser-ipc", True)})
+            expected_mounts = frozenset(
+                {
+                    (_IPC_VOLUME, "/run/boca-browser-ipc", True),
+                    (_SITE_CONFIG_VOLUME, "/run/boca-site-config", False),
+                }
+            )
         elif service == "telegram":
             expected_mounts = frozenset(
                 {

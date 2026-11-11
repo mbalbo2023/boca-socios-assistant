@@ -24,6 +24,7 @@ BROWSER_IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "b"
 ATTEMPT = "123456"
 SECCOMP = "/srv/boca-socios/seccomp_profile.json"
 IPC_VOLUME = "boca-socios_boca_browser_ipc"
+SITE_CONFIG_VOLUME = "boca-socios_boca_site_config"
 WORKER_HEALTH = (
     "from boca_socios.browser.worker_health import check_worker_health; check_worker_health()"
 )
@@ -45,9 +46,17 @@ def browser_model() -> dict[str, object]:
             "read_only": True,
         }
     )
+    controller["volumes"].append(
+        {
+            "type": "volume",
+            "source": "boca_site_config",
+            "target": "/run/boca-site-config",
+            "read_only": False,
+        }
+    )
     services["browser-worker"] = {
         "image": BROWSER_IMAGE,
-        "command": ["python", "-m", "boca_socios.browser.ipc_worker"],
+        "command": ["python", "-m", "boca_socios.browser.ipc_server"],
         "entrypoint": None,
         "user": "10002:10002",
         "init": True,
@@ -66,7 +75,13 @@ def browser_model() -> dict[str, object]:
                 "source": "boca_browser_ipc",
                 "target": "/run/boca-browser-ipc",
                 "read_only": False,
-            }
+            },
+            {
+                "type": "volume",
+                "source": "boca_site_config",
+                "target": "/run/boca-site-config",
+                "read_only": True,
+            },
         ],
         "networks": {"boca_browser_egress": None},
         "cgroup": "private",
@@ -93,6 +108,10 @@ def browser_model() -> dict[str, object]:
     }
     candidate["volumes"]["boca_browser_ipc"] = {  # type: ignore[index]
         "name": IPC_VOLUME,
+        "external": True,
+    }
+    candidate["volumes"]["boca_site_config"] = {  # type: ignore[index]
+        "name": SITE_CONFIG_VOLUME,
         "external": True,
     }
     candidate["networks"]["boca_browser_egress"] = {  # type: ignore[index]

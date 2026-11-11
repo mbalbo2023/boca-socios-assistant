@@ -55,6 +55,9 @@ PERSISTENT_VOLUMES = frozenset(
         "boca-socios_boca_telegram",
     }
 )
+# New Cutover volume is protected from deletion, while legacy read-only
+# provenance checks retain their historical original-controller topology.
+PROTECTED_VOLUMES = PERSISTENT_VOLUMES | {"boca-socios_boca_site_config"}
 HEX_ID = re.compile(r"(?:sha256:)?[0-9a-f]{64}\Z")
 ATTEMPT_ID = re.compile(r"[1-9][0-9]{0,19}\Z")
 DOCKER_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}\Z")
@@ -276,7 +279,7 @@ class CleanupReceipt:
                     and type(item.ident) is str
                     and DOCKER_NAME.fullmatch(item.ident) is not None
                     and item.ident.startswith("boca-socios_")
-                    and item.ident not in PERSISTENT_VOLUMES
+                    and item.ident not in PROTECTED_VOLUMES
                 )
                 key = (item.kind, item.ident)
                 if not valid or key in seen:
@@ -581,7 +584,7 @@ def plan(
             uncertain.append(f"container:{c.ident}:stopped-not-authorized-for-retirement")
     for volume in inventory.volumes:
         labels = _labels(volume.labels)
-        if volume.name in PERSISTENT_VOLUMES:
+        if volume.name in PROTECTED_VOLUMES:
             continue
         if volume.name.startswith("boca-socios_"):
             if (
@@ -1326,6 +1329,8 @@ def delete_exact(target: Target) -> None:
         raise CleanupError("unsafe Docker deletion ID")
     if target.kind == "volume" and not DOCKER_NAME.fullmatch(target.ident):
         raise CleanupError("unsafe Docker deletion name")
+    if target.kind == "volume" and target.ident in PROTECTED_VOLUMES:
+        raise CleanupError("protected Boca volume cannot be deleted")
     command = {
         "container": ("rm",),
         "image": ("image", "rm"),
@@ -2616,7 +2621,7 @@ def verify_readonly_cleanup_receipt(
                 row["kind"] == "volume"
                 and DOCKER_NAME.fullmatch(row["id"]) is not None
                 and row["id"].startswith("boca-socios_")
-                and row["id"] not in PERSISTENT_VOLUMES
+                and row["id"] not in PROTECTED_VOLUMES
                 or row["kind"] != "volume"
                 and HEX_ID.fullmatch(row["id"]) is not None
             )

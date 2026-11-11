@@ -747,13 +747,20 @@ def test_cleanup_identifies_unhealthy_or_stopped_pair_without_requiring_health_o
     monkeypatch.setattr(host, "_validate_boca_network", lambda *args: network_checks.append(args))
     for name in (
         "_browser_validate_ipc_volume",
+        "_browser_validate_site_config_volume",
         "_validate_owner_volume",
         "_validate_key_volume",
         "_validate_data_volume",
     ):
         monkeypatch.setattr(host, name, lambda *args: None)
     monkeypatch.setattr(host, "_storage_snapshot", safe_storage)
-    volumes = {host.OWNER_VOLUME, host.KEY_VOLUME, host.DATA_VOLUME, host.BROWSER_IPC_VOLUME}
+    volumes = {
+        host.OWNER_VOLUME,
+        host.KEY_VOLUME,
+        host.DATA_VOLUME,
+        host.BROWSER_IPC_VOLUME,
+        host.BROWSER_SITE_CONFIG_VOLUME,
+    }
     monkeypatch.setattr(
         host,
         "_names",

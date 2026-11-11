@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import replace
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -45,6 +46,85 @@ def test_real_docker_boundary_limits_fields_and_accepts_one_cli_newline(monkeypa
             io.field("container", WORKER, field)
     with pytest.raises(adapter.LifecycleAdapterNoGo):
         io.field("container", "other-name", "State.Running")
+
+
+@pytest.mark.parametrize(
+    "reply",
+    ["", "BOCA_SITE_URL_READY", "BOCA_SITE_URL_READY\nEXTRA", "SITE_URL=https://sensitive.test\n"],
+)
+def test_production_start_refuses_missing_or_unverified_site_url_before_worker_effects(
+    monkeypatch, reply
+):
+    """An old on-demand START must not start Chromium before a verified destination exists."""
+    install = demand.OnDemandInstallation(
+        INSTALLED,
+        SOURCE,
+        CONTROLLER,
+        CONTROLLER_REF,
+        WORKER,
+        WORKER_REF,
+        Path("/data/boca.sqlite3"),
+        _binding(),
+    )
+    calls = []
+    monkeypatch.setattr(demand.cleanup, "_docker", lambda *args: calls.append(args) or reply)
+    monkeypatch.setattr(
+        demand.deploy,
+        "_cutover_capture_preflight",
+        lambda *a, **k: pytest.fail("preflight after unverified SITE_URL"),
+    )
+    monkeypatch.setattr(
+        demand, "attach_output", lambda *a, **k: pytest.fail("captured before SITE_URL")
+    )
+    monkeypatch.setattr(demand.deploy, "_run", lambda *a, **k: pytest.fail("Docker start"))
+
+    with pytest.raises(demand.WorkerStartFailure) as failure:
+        demand._RootlessIO(install).start_worker(
+            install, "created", lambda: pytest.fail("consumed START without SITE_URL")
+        )
+
+    assert failure.value.cause == "SITE_URL_UNVERIFIED"
+    assert "sensitive.test" not in failure.value.encode()
+    assert len(calls) == 1
+    assert calls[0] == (
+        "exec",
+        "--user",
+        "10001:10001",
+        CONTROLLER,
+        "/app/.venv/bin/python",
+        "-I",
+        "-B",
+        "-c",
+        "from boca_socios.browser.site_url_runtime import read_site_url; "
+        "read_site_url(); print('BOCA_SITE_URL_READY')",
+    )
+
+
+def test_production_start_refuses_site_url_probe_failure_without_leaking_details(monkeypatch):
+    install = demand.OnDemandInstallation(
+        INSTALLED,
+        SOURCE,
+        CONTROLLER,
+        CONTROLLER_REF,
+        WORKER,
+        WORKER_REF,
+        Path("/data/boca.sqlite3"),
+        _binding(),
+    )
+
+    def failure(*_args):
+        raise RuntimeError("private SITE_URL and site config path must remain secret")
+
+    monkeypatch.setattr(demand.cleanup, "_docker", failure)
+    monkeypatch.setattr(
+        demand.deploy, "_cutover_capture_preflight", lambda *a, **k: pytest.fail("preflight")
+    )
+    with pytest.raises(demand.WorkerStartFailure) as error:
+        demand._RootlessIO(install).start_worker(
+            install, "created", lambda: pytest.fail("unexpected START")
+        )
+    assert error.value.encode() == "SITE_URL_UNVERIFIED|-|-|-"
+    assert "private" not in repr(error.value)
 
 
 class InertDemandIO:
@@ -312,13 +392,28 @@ def test_capture_arm_precedes_docker_and_classifies_exit_inside_attach(
         )
 
     monkeypatch.setattr(demand.deploy, "_cutover_capture_preflight", preflight)
+
+    def config_docker(*args):
+        assert args[:4] == ("exec", "--user", "10001:10001", CONTROLLER)
+        trace.append("config-ready")
+        return "BOCA_SITE_URL_READY\n"
+
+    monkeypatch.setattr(demand.cleanup, "_docker", config_docker)
     monkeypatch.setattr(demand, "attach_output", attach)
     monkeypatch.setattr(demand.deploy, "_run", docker)
     monkeypatch.setattr(demand.deploy, "_browser_wait_healthy", health)
     monkeypatch.setattr(demand._RootlessIO, "worker_state", lambda self, cid: "exited")
     with pytest.raises(demand.WorkerStartFailure) as error:
         demand._RootlessIO(install).start_worker(install, "exited", lambda: trace.append("claimed"))
-    assert trace == ["verified", "attached", "claimed", "start", "exited", "classify"]
+    assert trace == [
+        "config-ready",
+        "verified",
+        "attached",
+        "claimed",
+        "start",
+        "exited",
+        "classify",
+    ]
     assert error.value.encode() == "MODULE_NOT_FOUND_ERROR|1|0|EMPTY.EXITED.EARLY_LT_5S.NOT_RUN"
 
 

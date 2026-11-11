@@ -281,6 +281,22 @@ def _browser_ipc_mount(mount: object, *, readonly: bool, field: str) -> None:
         raise ContractError(f"invalid {field} volume options")
 
 
+def _browser_site_config_mount(mount: object, *, readonly: bool, field: str) -> None:
+    """Only a dedicated destination file volume may cross the worker boundary."""
+    value = _mapping(mount, field)
+    if set(value) - {"type", "source", "target", "read_only", "volume"}:
+        raise ContractError(f"invalid {field} options")
+    for name, expected in {
+        "type": "volume",
+        "source": "boca_site_config",
+        "target": "/run/boca-site-config",
+        "read_only": readonly,
+    }.items():
+        _equal(value.get(name, False if name == "read_only" else None), expected, field)
+    if "volume" in value and _mapping(value["volume"], f"{field} options"):
+        raise ContractError(f"invalid {field} volume options")
+
+
 def _browser_seccomp_path(path: str) -> None:
     """Exact Boca-private host path; SHA/mode/owner need a separate host gate."""
     if type(path) is not str or path != "/srv/boca-socios/seccomp_profile.json":
@@ -335,11 +351,14 @@ def validate_beta_browser_contract(
         "encrypted-only Telegram V2 staging on reviewed IPC controller",
     )
     mounts = _list(controller["volumes"], "browser-ipc-v2 controller mounts")
-    if len(mounts) != (5 if on_demand else 4):
+    if len(mounts) != (6 if on_demand else 5):
         raise ContractError("unexpected number of controller mounts")
     _browser_ipc_mount(mounts[3], readonly=True, field="controller IPC mount")
+    _browser_site_config_mount(
+        mounts[4], readonly=False, field="controller SITE_URL configuration mount"
+    )
     if on_demand:
-        control = _mapping(mounts[4], "Boca control socket directory")
+        control = _mapping(mounts[5], "Boca control socket directory")
         required = {"type", "source", "target", "read_only"}
         if not required <= control.keys() <= required | {"bind"}:
             raise ContractError("unexpected control socket mount options")
@@ -388,7 +407,7 @@ def validate_beta_browser_contract(
     )
     for field, expected in {
         "image": expected_browser_image,
-        "command": ["python", "-m", "boca_socios.browser.ipc_worker"],
+        "command": ["python", "-m", "boca_socios.browser.ipc_server"],
         "entrypoint": None,
         "user": "10002:10002",
         "init": True,
@@ -440,20 +459,27 @@ def validate_beta_browser_contract(
         "browser-ipc-v2 worker attempt",
     )
     worker_mounts = _list(worker["volumes"], "browser-ipc-v2 worker mounts")
-    if len(worker_mounts) != 1:
-        raise ContractError("browser-ipc-v2 worker must have only the IPC mount")
+    if len(worker_mounts) != 2:
+        raise ContractError("browser-ipc-v2 worker must have only IPC and destination mounts")
     _browser_ipc_mount(worker_mounts[0], readonly=False, field="worker IPC mount")
+    _browser_site_config_mount(
+        worker_mounts[1], readonly=True, field="worker SITE_URL configuration mount"
+    )
 
     volumes = _mapping(root["volumes"], "browser-ipc-v2 volumes")
     _keys(
         volumes,
-        {"boca_data", "boca_key", "boca_owner", "boca_browser_ipc"},
+        {"boca_data", "boca_key", "boca_owner", "boca_browser_ipc", "boca_site_config"},
         "browser-ipc-v2 volumes",
     )
     ipc_volume = _mapping(volumes["boca_browser_ipc"], "browser-ipc-v2 volume")
     _keys(ipc_volume, {"name", "external"}, "browser-ipc-v2 volume")
     _equal(ipc_volume["name"], "boca-socios_boca_browser_ipc", "browser-ipc-v2 volume name")
     _equal(ipc_volume["external"], True, "browser-ipc-v2 disposable volume is external")
+    config_volume = _mapping(volumes["boca_site_config"], "browser-ipc-v2 SITE_URL volume")
+    _keys(config_volume, {"name", "external"}, "browser-ipc-v2 SITE_URL volume")
+    _equal(config_volume["name"], "boca-socios_boca_site_config", "SITE_URL volume name")
+    _equal(config_volume["external"], True, "SITE_URL volume is external")
 
     networks = _mapping(root["networks"], "browser-ipc-v2 networks")
     _keys(networks, {"boca_private", "boca_browser_egress"}, "browser-ipc-v2 networks")
@@ -490,6 +516,7 @@ def validate_beta_browser_contract(
     del legacy_services["browser-worker"]
     legacy_volumes = cast(dict[str, object], legacy["volumes"])
     del legacy_volumes["boca_browser_ipc"]
+    del legacy_volumes["boca_site_config"]
     legacy_networks = cast(dict[str, object], legacy["networks"])
     del legacy_networks["boca_browser_egress"]
     validate_beta_contract(legacy, expected_image, expected_origin, expected_owner)

@@ -963,7 +963,7 @@ def worker_record() -> dict[str, object]:
                 "boca.socios.browser-ipc-attempt": ATTEMPT,
                 "org.opencontainers.image.revision": SOURCE,
             },
-            "Cmd": ["python", "-m", "boca_socios.browser.ipc_worker"],
+            "Cmd": ["python", "-m", "boca_socios.browser.ipc_server"],
             "Entrypoint": None,
             "ExposedPorts": None,
             "Env": [
@@ -1009,10 +1009,14 @@ def worker_record() -> dict[str, object]:
             {
                 "Type": "volume",
                 "Driver": "local",
-                "Name": host.BROWSER_IPC_VOLUME,
-                "Destination": "/run/boca-browser-ipc",
-                "RW": True,
+                "Name": source,
+                "Destination": target,
+                "RW": writable,
             }
+            for source, target, writable in (
+                (host.BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", True),
+                (host.BROWSER_SITE_CONFIG_VOLUME, "/run/boca-site-config", False),
+            )
         ],
     }
 
@@ -1154,6 +1158,7 @@ def controller_record() -> dict[str, object]:
                 (host.KEY_VOLUME, "/run/secrets", False),
                 (host.OWNER_VOLUME, "/run/owner", False),
                 (host.BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", False),
+                (host.BROWSER_SITE_CONFIG_VOLUME, "/run/boca-site-config", True),
             )
         ],
     }

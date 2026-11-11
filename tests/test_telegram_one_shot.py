@@ -34,9 +34,9 @@ def _assertion(chat: str) -> str:
 
 
 class _Response:
-    def __init__(self, data: dict[str, object], status: int = 200) -> None:
+    def __init__(self, data: dict[str, object] | bytes, status: int = 200) -> None:
         self.status = status
-        self.data = json.dumps(data).encode()
+        self.data = data if isinstance(data, bytes) else json.dumps(data).encode()
 
     def read(self, length: int) -> bytes:
         return self.data[:length]
@@ -102,6 +102,58 @@ def test_identity_checks_bot_and_exact_owner_private_chat(tmp_path: Path) -> Non
     (tmp_path / "chat_id").chmod(0o400)
     with pytest.raises(TelegramUnconfirmed, match="configuration changed"):
         transport.preflight()
+
+
+@pytest.mark.parametrize(
+    "contradictory_reply",
+    [
+        b'{"ok":false,"ok":true,"result":{"id":12345,"is_bot":true}}',
+        b'{"ok":true,"result":{"id":0,"id":12345,"is_bot":true}}',
+        b'{"ok":true,"result":{"id":12345,"is_bot":false,"is_bot":true}}',
+    ],
+)
+def test_duplicate_provider_identity_fields_rejected_before_second_get(
+    tmp_path: Path, contradictory_reply: bytes
+) -> None:
+    calls: list[tuple[str, str]] = []
+    with pytest.raises(shot.OneShotError, match="identity_unverified"):
+        shot.check_identity(
+            _transport(tmp_path),
+            12345,
+            _assertion(CHAT),
+            connection_factory=lambda **_kwargs: _Connection(_Response(contradictory_reply), calls),
+        )
+    assert len(calls) == 1 and calls[0][1].endswith("/getMe")
+
+
+@pytest.mark.parametrize(
+    "contradictory_reply",
+    [
+        b'{"ok":false,"ok":true,"result":{"id":123456789,"type":"private"}}',
+        b'{"ok":true,"result":{"id":0,"id":123456789,"type":"private"}}',
+        b'{"ok":true,"result":{"id":123456789,"type":"group","type":"private"}}',
+    ],
+)
+def test_duplicate_provider_chat_fields_rejected_after_only_two_gets(
+    tmp_path: Path, contradictory_reply: bytes
+) -> None:
+    calls: list[tuple[str, str]] = []
+    responses = iter(
+        [
+            _Response({"ok": True, "result": {"id": 12345, "is_bot": True}}),
+            _Response(contradictory_reply),
+        ]
+    )
+    with pytest.raises(shot.OneShotError, match="identity_unverified"):
+        shot.check_identity(
+            _transport(tmp_path),
+            12345,
+            _assertion(CHAT),
+            connection_factory=lambda **_kwargs: _Connection(next(responses), calls),
+        )
+    assert len(calls) == 2
+    assert calls[0][1].endswith("/getMe")
+    assert calls[1][1].endswith("/getChat?chat_id=" + CHAT)
 
 
 @pytest.mark.parametrize(

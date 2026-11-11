@@ -1,5 +1,186 @@
 # Safe operations — verified evidence and gated procedures
 
+## R176 — IPC del runner y condiciones para abandonar el último NO_GO
+
+**Evidencia R175 SHA `a829b0022`: 5/6 workflows SUCCESS**: panel,
+Telegram PR contract, seguridad de ambas imágenes, release PR validation
+y first-deploy PR/runtime smoke. El job `image-build` de CI pasó; el
+único FAIL fue `quality-and-tests`, aunque su suite **6819+34**, Ruff,
+mypy, transportes AF_UNIX anteriores y otras comprobaciones pasaron.
+
+El recibo nuevo fue
+`BOCA_WORKER_IPC_LINUX state=NO_GO stage=WORKER_BIND` (~0,2s).
+La sustitución por `/usr/bin/python3` no bastó: sospecha actual,
+**no probada por stderr del hijo**, falta de acceso a
+`/home/runner/work/...` para UID10002. La corrección R176 solo altera
+el harness **del runner desechable**, no el worker de producción:
+
+- Verificar que `/tmp` sea directorio root:root y modo sticky `01777`;
+  crear un nombre temporal Boca privado y root-owned.
+- Copiar once archivos públicos fijos de IPC con identidad byte a byte;
+  sin `synthetic.py`, `ipc_worker.py`, SITE_URL, secretos ni paquetes ajenos.
+  Directorios de código 0555, archivos 0444, PYTHONPATH/entrypoint en
+  esa copia, no bajo el checkout dueño del runner.
+- Conservar los tres procesos UID10001/10002/10003, el socket worker
+  UID10002/mode0622/directorio0711, autenticación SO_PEERCRED, respuesta
+  NO_GO y SIGTERM sobre PID propio. Código fijo de error distingue
+  `WORKER_BIND_CHILD_EXIT`, `WORKER_BIND_INODE`, `WORKER_BIND_TIMEOUT`.
+- Verificar en nuevo SHA de Actions: recibo `BOCA_WORKER_IPC_LINUX
+  state=PASS peer=UID10001_10002 stranger=DENIED result=NO_GO
+  stop=VERIFIED`; sin ese recibo **NO_GO**, nunca ocultar el test.
+
+Con 6/6 Actions exactas GREEN y revisión, promover PR protegido a `main`.
+Solo después el titular puede despachar `cutover-a-census` READ_ONLY Boca
+en su entorno protegido; su resultado `0/1/2_PLUS` no autoriza APPLY.
+Mantener `LEGACY_SINGLETON` como bloqueo físico hasta evidencia. Telegram
+sender OFF, ningún ticket real, Porota/otros contenedores intocables.
+
+## R175 — cierre de los dos stoppers del runner, antes de cualquier host
+
+**Snapshot R174 exacto:** candidato PR #478, SHA `f58aaace9`, seis Actions
+terminadas: panel preview y contrato Telegram SUCCESS; CI, release-image,
+image-security y first-deploy FAILURE. Los cuatro jobs browser fallaron
+al actualizar APT por DNS Ubuntu y después
+`BOCA_APT_FALLBACK state=NO_GO reason=SOURCES_SCHEMA`; no se observó una
+conexión al espejo secundario. En calidad CI, la suite Python 6807 PASS,
+34 subtests, Ruff/mypy y el viejo smoke AF_UNIX aprobaron, pero el **nuevo**
+smoke entre UID reales devolvió `BOCA_WORKER_IPC_LINUX state=NO_GO`, sin
+diagnóstico de fase. El PR preflight Cutover aprobó; no se ejecutó el host.
+
+**Fix-forward R175 exclusivamente en la rama PR:** APT admite campos
+Deb822 benignos y componentes Ubuntu existentes sin añadir ninguno;
+preserva suites, firma exacta y versiones CVE, con razón de rechazo fija
+cuando no reconoce un origen. IPC usa ahora `/usr/bin/python3` solo en
+el runner Linux desechable y registra una de siete etapas fijas cuando
+falla, sin excepciones ni salida de los hijos. No interpretar el fallo
+anterior como error del worker productivo hasta capturar fase/loader,
+ni ampliar permisos del socket. El sandbox local no permite AF_UNIX;
+el nuevo recibo solo será válido en Actions. APT R175 aislado: 6816 PASS,
+**lote R175 integrado: 6819 PASS, 34 subtests**, Ruff y mypy PASS. El
+nuevo ciclo remoto exact-SHA sigue pendiente.
+
+**No reducir estos gates ante el pedido de pragmatismo:** conservar la
+clave de Ubuntu, pins, Trivy, digest de imagen, usuario rootless Boca,
+`SO_PEERCRED`, cero paquetes/sitios de reserva reales, passkey y custodia
+de Telegram. Se puede simplificar el *harness efímero de GitHub* que
+arranca Python para medir IPC; eso no modifica los permisos del droplet.
+Con seis Actions nuevas GREEN y review válido, proceder con PR protegido,
+merge y **solo entonces** `cutover-a-census` de main por GitHub Actions.
+No saltar `LEGACY_SINGLETON`, no borrar recursos a ciegas, no Porota.
+
+## R174 — secuencia de verificación tras resolver CI (11/11/2026; CODE_ONLY)
+
+El [PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478)
+continúa DRAFT/NO_GO. En el HEAD remoto `0ae6bf04`, cuatro workflows
+fallaron al construir Chromium por resolución DNS de mirrors Ubuntu, antes
+de smoke y Trivy browser. Se ensaya exclusivamente en `Dockerfile.browser`
+el fallback al espejo firmado de Linux Kernel Archives
+([ADR0231](ADR/0231-r174-browser-apt-signed-mirror-fallback.md)); ni un
+mirror disponible vía web ni un test local certifican el build remoto.
+Conservar exactos los pins apt/libapt/brotli, el scan obligatorio y la
+ausencia de `--network host`; no relajar seguridad de host por un fallo del
+runner externo.
+
+El candidato suma una prueba real AF_UNIX en el **runner de CI**:
+UID10002 worker, UID10003 rechazado, UID10001 admitido con respuesta
+`worker_no_go`, SIGTERM y socket ausente. No emplea credenciales, Docker,
+`SITE_URL` ni tráfico externo. La suite local solo valida su harness, pues
+este sandbox restringe `AF_UNIX`; no confundir un éxito futuro del runner
+con aceptación del contenedor rootless en el droplet. Telegram también
+rechaza respuestas JSON con claves ambiguas en ambos GET de identidad;
+el sender continúa OFF, sin token rotado.
+
+**Orden físico pendiente**, condicionado a evidencia fresca:
+
+1. Un único SHA final de PR con suite completa, revisión y workflows
+   `quality-and-tests`, `image-build`, release PR, seguridad y smoke
+   reales, sin saltos por incidencias DNS.
+2. Merge seguro a `main` y verificación postmerge; cero PR abiertos
+   antes del release/Cutover.
+3. Action protegida `cutover-a-census` **READ_ONLY, solo Boca**:
+   `operation=cutover-a-census`, `service=controller`,
+   `resource_budget=1.5cpu-1024m-192pids`, desde `main` por el titular,
+   otros parámetros técnicos vacíos, attempt=1. Su recibo discrimina
+   `0/1/2_PLUS` tras `LEGACY_SINGLETON`; no autoriza por sí mismo APPLY.
+4. Rama de resolución exacta por identidad/lease si el censo encuentra
+   residuo o ausencia, y solo después publicación dual por digest, Cutover
+   V3 protegido y aceptación física del panel, socios, SITE_URL, socket,
+   START/STOP, actividad, limpieza, red y Telegram separado.
+
+No ejecutar comandos Docker/SSH manuales contra el droplet ni usar scripts
+del otro proyecto. Cualquier prueba no efectuada se registra como
+`UNVERIFIED/NO_GO`, no se omite ni se denomina GREEN.
+
+## R173 — estado vigente del candidato Boca (11/11/2026 ART; NO_GO físico)
+
+El [PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478)
+reconcilia el parche R172 (28 archivos) y los RCA paralelos de IPC,
+`SITE_URL`, actividad y Cutover. El primer SHA remoto `fee7c7b` pasó cinco
+Actions de validación; cualquier corrección posterior requiere repetir todos
+los checks en **su SHA exacto**. Los cuatro PR Dependabot #474–#477 fueron
+clasificados, comentados y cerrados **sin merge y sin borrar ramas** por
+consenso documentado en
+[backlog #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6797512465).
+
+**Actualización posterior:** el HEAD `05ca4703` tuvo panel preview SUCCESS y
+calidad Python de CI SUCCESS, pero cuatro builds de la imagen browser quedaron
+FAIL porque `apt-get` no resolvió `azure.archive.ubuntu.com` ni
+`security.ubuntu.com`, tanto en primer intento como en el único rerun. El
+`Dockerfile.browser` permaneció idéntico al SHA previamente certificado:
+[RCA multi-región #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6797945050).
+Los paquetes fijados y NO_GO siguen intactos. El nuevo censo aún no está en
+`main` ni fue ejecutado físicamente.
+
+- **IPC/worker:** el contenedor ahora usa `boca_socios.browser.ipc_server`.
+  Nunca convertir observación de token en una reserva. Su ejecutor de
+  producción sigue `OfflineNoGoExecutor` (respuesta NO_GO); el módulo nuevo
+  `offline_fixture.py` comprueba una interacción DOM **ficticia y local** en
+  Chromium únicamente bajo prueba explícita `--smoke` con `--network none`.
+  No usa `SITE_URL` para navegar ni importa los módulos protegidos V3. No
+  declarar el bot funcional hasta certificar el adaptador real sobre el sandbox
+  controlado y el contrato del titular, sin reservas reales.
+- **Configuración y START:** `SITE_URL` se conserva en el volumen privado de
+  datos y se publica atómicamente al volumen de URL **exclusivo del worker**;
+  éste lo monta read-only. El panel responde 503 si falta o difiere la
+  configuración antes de encolar START. El ejecutor host comprueba desde el
+  controlador Boca ya atestado que el archivo del montaje es válido y recibe
+  solamente `BOCA_SITE_URL_READY` antes de ejecutar `docker start`. No hay
+  URL por defecto ni lectura de datos de socios desde el worker.
+- **Volúmenes/limpieza:** `boca-socios_boca_site_config` es persistente y
+  protegido frente a limpieza genérica; Cutover lo crea únicamente tras
+  verificar su ausencia y lo retira **solo** si su identidad pertenece al
+  intento, no está adjunto y la compensación resulta inequívoca. No utilizar
+  `docker prune` ni manipular Porota u otros proyectos.
+- **Actividad:** el worker sólo emite categorías de Chromium, jamás URLs,
+  tokens o DOM. Al iniciar IPC puede limpiar únicamente los dos archivos de
+  telemetría propios previamente validados; una entrada desconocida o socket
+  residual es NO_GO. Si un cierre de Chromium no resulta verificable, el IPC
+  se contamina y cierra el listener. La pantalla indica eventos recientes,
+  no salud del host, y explicita que START no acredita navegación ni reserva.
+- **Release/censo CODE_ONLY pendientes:** el trabajo final de imagen tiene
+  el mismo smoke offline y sin red que PR validation antes de publicar el
+  digest. El nuevo `cutover-a-census` usa únicamente el daemon rootless Boca
+  bajo Actions: antes de cada lectura atesta el `docker info` rootless,
+  cgroup/systemd y el dispositivo/inodo del directorio Docker en el home
+  UID10001. No lista ni inspecciona imágenes; compara dos lecturas estables
+  y cardinalidades `0/1/2_PLUS`, sin lease ni mutaciones. Sólo podrá despacharse tras revisión, merge seguro, CI y
+  gates main/owner; un censo estable NO autoriza Cutover.
+- **Bloqueante físico exacto:** la Action Cutover
+  [#42912586832](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42912586832)
+  terminó con `BOCA_LEGACY_PREPARE reason=LEGACY_SINGLETON`: el observador
+  recibió un número de contenedores que **no era exactamente uno**. No sabemos
+  si eran cero o varios. Se exige un nuevo censo rootless **read-only y solo
+  Boca** antes de otro intento de APPLY, sin borrar ni rearrancar nada.
+- **Telegram:** reusar el outbox existente, sender OFF; el token de ZIP V3
+  se considera comprometido y debe rotarlo el dueño antes de activación.
+
+La ruta V3 de `cutover-a-apply` instala el worker en frío (creado/PID=0,
+motor STOPPED) y prueba el ciclo del panel; las rutas legacy que exigen
+`RESERVED_IN_SIMULATOR` **no forman parte de ese Cutover**. Por tanto un
+Cutover en reposo exitoso nunca equivale a simular una reserva. Todos los
+host checks permanecen pendientes de evidencia física real y del flujo
+protegido; no correr SSH/Docker manual para saltar los gates.
+
 ## R171 — Propuesta de egreso exclusivo de Chromium (11/11/2026 ART)
 
 El dueño exige **Internet saliente** para el worker. El overlay candidato
@@ -52,7 +233,7 @@ pendientes de certificación antes de ejecutar cualquier navegación real.
 **No usar `docker compose up` sin reconciliar el instalador rootless y el
 Cutover con estos invariantes.**
 
-## R170 — Actividad del worker y SITE_URL en Configuración (11/11/2026 ART)
+## Histórico R170 — Actividad del worker y SITE_URL en Configuración (11/11/2026 ART)
 
 - **Acceso:** sesión privada con passkey en `8443`. `Control → Actividad del
   worker` muestra recibos de ciclo de vida, trabajos de simulación y etapas
@@ -65,14 +246,14 @@ Cutover con estos invariantes.**
   link-local/metadata. La configuración es
   un JSON de modo `0600` en el volumen dedicado Boca de datos, con escritura
   atómica y sin cambios al esquema SQLite.
-- **Importante:** `Guardada` no significa `Aplicada`. El controlador sí
+- **Situación histórica antes de R173:** `Guardada` no significa `Aplicada`. El controlador sí
   dispone del archivo persistido; el worker V3 **no lo comparte**. Docker
   `start` conserva el Env con que fue creado el contenedor. Faltan un canal
   de configuración verificado en el contrato del ejecutor rootless y la
   validación de la nueva red de egreso para que el cambio surta efecto al
   apagar y prender. No montar toda la base de datos ni la carpeta de código
   en el worker para forzar el cambio.
-- **Cutover:** el `ipc_worker.py` actual todavía no sirve el socket Unix
+- **RCA histórico:** el `ipc_worker.py` original no servía el socket Unix
   esperado. El import corregido y `SITE_URL` sin valor por defecto no prueban
   un worker saludable. El driver `none` de Docker no da salida a `docker logs`;
   la línea de tiempo es telemetría fija, no el traceback crudo.

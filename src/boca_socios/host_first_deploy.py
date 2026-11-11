@@ -71,6 +71,7 @@ BROWSER_COMPOSE = ROOT / "compose.beta.browser.yaml"
 BROWSER_SECCOMP = ROOT / "seccomp_profile.json"
 BROWSER_MARKER = ROOT / "browser-ipc-attempt.json"
 BROWSER_IPC_VOLUME = "boca-socios_boca_browser_ipc"
+BROWSER_SITE_CONFIG_VOLUME = "boca-socios_boca_site_config"
 BROWSER_BRIDGE = "boca-socios_boca_private"
 BROWSER_EGRESS_BRIDGE = "boca-socios_boca_browser_egress"
 BROWSER_IMAGE_PATTERN = re.compile(
@@ -4357,7 +4358,8 @@ def _browser_compose_model(
         not isinstance(services, dict)
         or set(services) != {"controller", "browser-worker"}
         or not isinstance(volumes, dict)
-        or set(volumes) != {"boca_owner", "boca_key", "boca_data", "boca_browser_ipc"}
+        or set(volumes)
+        != {"boca_owner", "boca_key", "boca_data", "boca_browser_ipc", "boca_site_config"}
         or not isinstance(networks, dict)
         or set(networks) != {"boca_private", "boca_browser_egress"}
     ):
@@ -4397,7 +4399,7 @@ def _browser_compose_model(
         raise PreflightError("browser IPC controller isolation changed")
     expected_worker = {
         "image": browser_image,
-        "command": ["python", "-m", "boca_socios.browser.ipc_worker"],
+        "command": ["python", "-m", "boca_socios.browser.ipc_server"],
         "user": "10002:10002",
         "networks": {"boca_browser_egress": None},
         "restart": "no",
@@ -4457,9 +4459,16 @@ def _browser_compose_model(
                 ("boca_key", "/run/secrets", True),
                 ("boca_owner", "/run/owner", True),
                 ("boca_browser_ipc", "/run/boca-browser-ipc", True),
+                ("boca_site_config", "/run/boca-site-config", False),
             },
         ),
-        (worker, {("boca_browser_ipc", "/run/boca-browser-ipc", False)}),
+        (
+            worker,
+            {
+                ("boca_browser_ipc", "/run/boca-browser-ipc", False),
+                ("boca_site_config", "/run/boca-site-config", True),
+            },
+        ),
     ):
         mounts = service.get("volumes")
         if isinstance(mounts, list) and service is controller and control_directory is not None:
@@ -4495,6 +4504,11 @@ def _browser_compose_model(
         "external": True,
     }:
         raise PreflightError("browser IPC external volume changed")
+    if volumes["boca_site_config"] != {
+        "name": BROWSER_SITE_CONFIG_VOLUME,
+        "external": True,
+    }:
+        raise PreflightError("browser SITE_URL external volume changed")
     egress = networks["boca_browser_egress"]
     # Compose config JSON drops explicit `internal: false` and may add
     # empty IPAM. Both are the same outbound bridge, with no extra options.
@@ -4577,6 +4591,39 @@ def _browser_validate_ipc_volume(attempt_id: str) -> None:
         raise PreflightError("browser IPC volume mountpoint is unavailable") from exc
 
 
+def _browser_validate_site_config_volume(attempt_id: str) -> tuple[int, int]:
+    """Identify the one destination-only volume without exposing the member DB."""
+    volume = _json_object(
+        _run("docker", "volume", "inspect", "--format", "{{json .}}", BROWSER_SITE_CONFIG_VOLUME),
+        "browser SITE_URL volume",
+    )
+    docker_root = _checked_docker_storage_dir()
+    expected = docker_root / "volumes" / BROWSER_SITE_CONFIG_VOLUME / "_data"
+    if (
+        volume.get("Name") != BROWSER_SITE_CONFIG_VOLUME
+        or volume.get("Driver") != "local"
+        or volume.get("Scope") != "local"
+        or volume.get("Options") not in (None, {})
+        or volume.get("Mountpoint") != str(expected)
+        or volume.get("Labels")
+        != {
+            "com.docker.compose.project": PROJECT,
+            "com.docker.compose.volume": "boca_site_config",
+            BROWSER_ATTEMPT_LABEL: attempt_id,
+        }
+    ):
+        raise PreflightError("browser SITE_URL volume is not privately identified")
+    try:
+        if expected.resolve(strict=True) != expected:
+            raise PreflightError("browser SITE_URL mountpoint is redirected")
+    except (OSError, RuntimeError) as exc:
+        raise PreflightError("browser SITE_URL volume mountpoint is unavailable") from exc
+    stat_result = expected.stat(follow_symlinks=False)
+    if not stat.S_ISDIR(stat_result.st_mode):
+        raise PreflightError("browser SITE_URL volume mountpoint is not a directory")
+    return stat_result.st_dev, stat_result.st_ino
+
+
 def _browser_named_probe(phase_name: str, attempt_id: str, command: tuple[str, ...]) -> str:
     """Give every `docker run --rm` a C2b-cleanable positive attempt ID.
 
@@ -4586,6 +4633,7 @@ def _browser_named_probe(phase_name: str, attempt_id: str, command: tuple[str, .
     """
     permitted = {
         "ipc-dir-init",
+        "site-config-init",
         "owner-session",
         "synthetic-ipc",
         "key-init",
@@ -4720,6 +4768,73 @@ def _browser_create_ipc_volume(browser_image: str, attempt_id: str) -> None:
     _browser_validate_ipc_volume(attempt_id)
 
 
+def _browser_create_site_config_volume(browser_image: str, attempt_id: str) -> None:
+    """Preprovision a bounded public-destination-only mount, distinct from data."""
+    created = _run(
+        "docker",
+        "volume",
+        "create",
+        "--driver",
+        "local",
+        "--label",
+        f"com.docker.compose.project={PROJECT}",
+        "--label",
+        "com.docker.compose.volume=boca_site_config",
+        "--label",
+        f"{BROWSER_ATTEMPT_LABEL}={attempt_id}",
+        BROWSER_SITE_CONFIG_VOLUME,
+    )
+    if created != BROWSER_SITE_CONFIG_VOLUME:
+        raise PreflightError("browser SITE_URL volume creation had unexpected identity")
+    _browser_validate_site_config_volume(attempt_id)
+    initializer = (
+        "import os,stat; p='/run/boca-site-config'; "
+        "os.chown(p,10001,10001); os.chmod(p,0o711); "
+        "s=os.stat(p,follow_symlinks=False); "
+        "assert stat.S_ISDIR(s.st_mode) and s.st_uid==10001 and s.st_gid==10001 "
+        "and stat.S_IMODE(s.st_mode)==0o711; print('BOCA_SITE_CONFIG_DIR_PASS')"
+    )
+    receipt = _browser_named_probe(
+        "site-config-init",
+        attempt_id,
+        (
+            "docker",
+            "run",
+            "--rm",
+            "--pull",
+            "never",
+            "--user",
+            "0:0",
+            "--network",
+            "none",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--cap-add",
+            "CHOWN",
+            "--cap-add",
+            "FOWNER",
+            "--security-opt",
+            "no-new-privileges",
+            "--pids-limit",
+            "16",
+            "--memory",
+            "64m",
+            "--cpus",
+            "0.25",
+            "--mount",
+            f"type=volume,source={BROWSER_SITE_CONFIG_VOLUME},target=/run/boca-site-config,volume-nocopy",
+            browser_image,
+            "python",
+            "-c",
+            initializer,
+        ),
+    )
+    if receipt != "BOCA_SITE_CONFIG_DIR_PASS":
+        raise PreflightError("browser SITE_URL directory owner or mode is unverified")
+    _browser_validate_site_config_volume(attempt_id)
+
+
 def _browser_service_id(
     service: str, image: str, origin: str, owner: str, browser_image: str, attempt_id: str
 ) -> str:
@@ -4812,9 +4927,13 @@ def _browser_check_mounts(
             (KEY_VOLUME, "/run/secrets", False),
             (OWNER_VOLUME, "/run/owner", False),
             (BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", False),
+            (BROWSER_SITE_CONFIG_VOLUME, "/run/boca-site-config", True),
         }
         if controller
-        else {(BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", True)}
+        else {
+            (BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", True),
+            (BROWSER_SITE_CONFIG_VOLUME, "/run/boca-site-config", False),
+        }
     )
     if isinstance(mounts, list) and controller and control_directory is not None:
         binds = [m for m in mounts if isinstance(m, dict) and m.get("Type") == "bind"]
@@ -5009,7 +5128,7 @@ def _browser_worker_postflight(
     }
     if (
         {name: value for name, value in variables.items() if name.startswith("BOCA_")} != expected
-        or config.get("Cmd") != ["python", "-m", "boca_socios.browser.ipc_worker"]
+        or config.get("Cmd") != ["python", "-m", "boca_socios.browser.ipc_server"]
         or config.get("Entrypoint") not in (None, [])
         or config.get("ExposedPorts") not in (None, {})
         or host.get("NetworkMode") != BROWSER_EGRESS_BRIDGE
@@ -5450,6 +5569,8 @@ def _cutover_worker_create_argv(
         "BOCA_OBSERVER_STOP=1",
         "--mount",
         f"type=volume,source={BROWSER_IPC_VOLUME},target=/run/boca-browser-ipc,volume-nocopy",
+        "--mount",
+        f"type=volume,source={BROWSER_SITE_CONFIG_VOLUME},target=/run/boca-site-config,readonly,volume-nocopy",
         "--health-cmd",
         _ON_DEMAND_HEALTH_CMD if on_demand else _WORKER_HEALTH_CMD,
         "--health-interval",
@@ -5463,7 +5584,7 @@ def _cutover_worker_create_argv(
         browser_image,
         "python",
         "-m",
-        "boca_socios.browser.ipc_worker",
+        "boca_socios.browser.ipc_server",
     )
 
 
@@ -5562,6 +5683,8 @@ def _cutover_candidate_create_argv(
         f"type=volume,source={OWNER_VOLUME},target=/run/owner,volume-nocopy,readonly",
         "--mount",
         f"type=volume,source={BROWSER_IPC_VOLUME},target=/run/boca-browser-ipc,volume-nocopy,readonly",
+        "--mount",
+        f"type=volume,source={BROWSER_SITE_CONFIG_VOLUME},target=/run/boca-site-config,volume-nocopy",
         *(
             ("--mount", f"type=bind,source={control_directory},target={_CONTROL_MOUNT},readonly")
             if control_directory is not None
@@ -5919,6 +6042,7 @@ def _cutover_compensate_worker(
             or _cutover_worker_name_id() is not None
         ):
             raise PreflightError("cutover A worker remained after selective removal")
+    _cutover_compensate_site_config_volume(attempt_id)
     _cutover_compensate_ipc(attempt_id)
     _cutover_compensate_browser_egress(attempt_id)
 
@@ -5933,6 +6057,26 @@ def _cutover_compensate_ipc(attempt_id: str) -> None:
             raise PreflightError("cutover A IPC volume selective removal unverified")
         if _names("volume", f"name=^{BROWSER_IPC_VOLUME}$"):
             raise PreflightError("cutover A IPC volume survived selective removal")
+
+
+def _cutover_compensate_site_config_volume(attempt_id: str) -> None:
+    """Remove only the unattached, exact attempt-owned SITE_URL volume."""
+    volumes = _names("volume", f"name=^{BROWSER_SITE_CONFIG_VOLUME}$")
+    if not volumes:
+        return
+    if volumes != {BROWSER_SITE_CONFIG_VOLUME}:
+        raise PreflightError("cutover A SITE_URL volume name inventory ambiguous")
+    identity = _browser_validate_site_config_volume(attempt_id)
+    if _run(
+        "docker", "ps", "-a", "-q", "--no-trunc", "--filter", f"volume={BROWSER_SITE_CONFIG_VOLUME}"
+    ):
+        raise PreflightError("cutover A SITE_URL volume is attached or unverified")
+    if _browser_validate_site_config_volume(attempt_id) != identity:
+        raise PreflightError("cutover A SITE_URL volume inode changed before removal")
+    if _run(
+        "docker", "volume", "rm", BROWSER_SITE_CONFIG_VOLUME, timeout=20
+    ) != BROWSER_SITE_CONFIG_VOLUME or _names("volume", f"name=^{BROWSER_SITE_CONFIG_VOLUME}$"):
+        raise PreflightError("cutover A SITE_URL volume selective removal unverified")
 
 
 def _cutover_prepare_worker(
@@ -5970,6 +6114,8 @@ def _cutover_prepare_worker(
         raise PreflightError("cutover A worker already exists before attempt")
     if _names("volume", f"name=^{BROWSER_IPC_VOLUME}$"):
         raise PreflightError("cutover A IPC volume already exists before attempt")
+    if _names("volume", f"name=^{BROWSER_SITE_CONFIG_VOLUME}$"):
+        raise PreflightError("cutover A SITE_URL volume already exists before attempt")
     if _names("network", f"name=^{BROWSER_EGRESS_BRIDGE}$"):
         raise PreflightError("cutover A worker egress already exists before attempt")
     phase = "IPC"
@@ -5982,6 +6128,7 @@ def _cutover_prepare_worker(
     try:
         _cutover_create_browser_egress(attempt_id)
         _browser_create_ipc_volume(browser_image, attempt_id)
+        _browser_create_site_config_volume(browser_image, attempt_id)
         phase = "CREATE"
         created = _run(*worker_create, timeout=60)
         if re.fullmatch(r"[0-9a-f]{64}", created) is None or created == original_id:
@@ -6976,7 +7123,13 @@ def _browser_installed(
     if controller == worker:
         raise PreflightError("installed browser services have duplicate identity")
     volumes = set(_run("docker", "volume", "ls", "-q").splitlines())
-    required = {OWNER_VOLUME, KEY_VOLUME, DATA_VOLUME, BROWSER_IPC_VOLUME}
+    required = {
+        OWNER_VOLUME,
+        KEY_VOLUME,
+        DATA_VOLUME,
+        BROWSER_IPC_VOLUME,
+        BROWSER_SITE_CONFIG_VOLUME,
+    }
     if volumes not in (required, required | {TELEGRAM_VOLUME}):
         raise PreflightError("installed browser volume inventory changed")
     networks = _names("network", "name=^boca-socios_")
@@ -7039,6 +7192,7 @@ def _browser_installed(
         attached = cast(dict[str, dict[str, str]], network["Networks"])
         _validate_boca_network("", attached[BROWSER_BRIDGE]["NetworkID"])
     _browser_validate_ipc_volume(attempt_id)
+    _browser_validate_site_config_volume(attempt_id)
     _validate_owner_volume()
     _validate_key_volume()
     _validate_data_volume()

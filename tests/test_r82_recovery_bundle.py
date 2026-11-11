@@ -133,6 +133,12 @@ R139_PORTABLE_PANEL_STOP_FULL_CUTOVER_SHA = (
 R171_BROWSER_EGRESS_FULL_CUTOVER_SHA = (
     "e6b95d4ff20d97e444f611d616f38653f69cb404f2574dbd38df36253a5fd32e"
 )
+# R173 pins the integrated source including the Boca-only URL pre-START gate,
+# protected-volume cleanup and release wiring. Twice independently rebuilt
+# byte-identically after that host change; older SHA remains only in history.
+R173_SITE_CONFIG_FULL_CUTOVER_SHA = (
+    "c4958187deae82c0732c59861ccc6ce8258274b44d5c96a2e022d46d577beaa7"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -290,7 +296,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R171_BROWSER_EGRESS_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R173_SITE_CONFIG_FULL_CUTOVER_SHA
+    assert digest != R171_BROWSER_EGRESS_FULL_CUTOVER_SHA
     assert digest != R139_PORTABLE_PANEL_STOP_FULL_CUTOVER_SHA
     assert digest != R138_RESTORED_PANEL_FINISH_FULL_CUTOVER_SHA
     assert digest != R137_CANDIDATE_ACCEPTANCE_FULL_CUTOVER_SHA

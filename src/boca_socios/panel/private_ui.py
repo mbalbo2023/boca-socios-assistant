@@ -170,13 +170,16 @@ def login(challenge: str, credential_id: str) -> bytes:
 def site_url_configuration(csrf: str, operation_id: str, site_url: str | None) -> bytes:
     """Owner-only navigation target; never display tokens, arbitrary env or URLs from logs."""
     if site_url is None:
-        state = '<p role="status">SITE_URL no configurada. El destino permanece deshabilitado.</p>'
+        state = (
+            '<p role="status">SITE_URL no configurada. El destino permanece deshabilitado; '
+            "el próximo arranque requiere una configuración verificada.</p>"
+        )
         value = ""
     else:
         state = (
             '<p role="status">Guardada en el volumen privado de Boca. '
-            "Pendiente de aplicar en el próximo arranque del worker mediante el ejecutor "
-            "protegido del droplet.</p>"
+            "El próximo arranque verifica la configuración; no prueba una conexión "
+            "al sitio.</p>"
         )
         value = escape(site_url, quote=True)
     return _page(
@@ -194,9 +197,8 @@ def site_url_configuration(csrf: str, operation_id: str, site_url: str | None) -
         + 'placeholder="https://ensayo.boca.internal" inputmode="url" '
         + 'autocomplete="off" spellcheck="false" maxlength="512" required>'
         + '<p><button type="submit">Guardar SITE_URL</button></p></form>'
-        + "<p>Guardar no interrumpe un proceso activo. El nuevo destino se usará "
-        + "cuando el ejecutor del droplet haya incorporado la configuración en el "
-        + "próximo arranque. La red del worker sigue aislada.</p>",
+        + "<p>Guardar no inicia ni detiene el worker. En la simulación local, "
+        + "SITE_URL no se visita; no hay login, cola ni reserva en Boca.</p>",
     )
 
 
@@ -406,7 +408,8 @@ def _bot_controls(intent: LifecycleIntent | None, csrf: str, start_id: str, stop
         states = {
             "REQUESTED": "Pendiente de ejecución. Puede reenviar el aviso con el mismo botón.",
             "CLAIMED": "En proceso. El ejecutor tomó la solicitud.",
-            "APPLIED": "El ejecutor confirmó la operación.",
+            "APPLIED": "El ejecutor confirmó sólo esta orden de control. "
+            "No acredita una simulación completada ni una reserva.",
             "REFUSED": "El ejecutor rechazó la solicitud antes de aplicar cambios.",
             "FAILED": "Fallo confirmado por el ejecutor.",
             "UNCERTAIN": "Resultado incierto. Hace falta verificar el estado en el servidor.",

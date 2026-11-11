@@ -1,5 +1,132 @@
 # Boca Socios Assistant
 
+## R176 — corrección de acceso cross-UID del runner (11/11/2026; NO_GO físico)
+
+El candidato continúa en el **único** [PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478),
+sin tocar `main`. El HEAD R175 `a829b0022` confirmó **5/6 workflows
+SUCCESS**: panel, contrato Telegram, escaneo Chromium/controlador, release
+PR y primer despliegue de laboratorio. El sexto, CI, aprobó 6819 pruebas
+Python más 34 subpruebas, Ruff/mypy y el socket anterior, pero el nuevo
+ensayo multiusuario registró `BOCA_WORKER_IPC_LINUX state=NO_GO
+stage=WORKER_BIND` en 0,2 segundos. Ningún host fue modificado.
+
+El stopper APT **ya se resolvió con evidencia del runner**: tras fallar
+DNS Ubuntu, el fallback R175 cambió al espejo firmado de Linux Kernel,
+descargó `InRelease` de cuatro pockets Noble, compiló Chromium y pasó
+Trivy. No se relajaron pins, firmas ni escaneo.
+
+R176 trata el único rojo restante: el workspace GitHub pertenece al UID
+del runner y puede no ser legible/traversable para UID10002. El smoke
+descartable prepara un directorio temporal root-owned, copia **exactamente
+11 archivos IPC revisados byte por byte**, con directorios 0555 y archivos
+0444, y ejecuta allí `/usr/bin/python3`. Se excluyen los módulos blackbox,
+credenciales y sitios; no altera los tres UID, el `SO_PEERCRED` ni el
+contrato de STOP. Si falla otra vez, separa CHILD_EXIT/INODE/TIMEOUT.
+
+La rama R176 aislada y el lote integrado aprobaron **6826 tests +34
+subtests**, Ruff, mypy y política. Falta certificar el SHA final en Actions
+antes de merge, censo,
+release instalado o Cutover. [Handoff R176](docs/handoffs/2026-11-11-r176-ipc-runner-fixture.md).
+
+## R175 — dos stoppers físicos confirmados en Actions; fix-forward (11/11/2026)
+
+El candidato continúa **únicamente** en el
+[PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478),
+sin merge ni despliegue. El HEAD R174 real `f58aaace9` terminó con **dos
+workflows aprobados de seis** (panel y contrato Telegram) y cuatro fallidos:
+CI, seguridad de imagen, publicación de imagen y first-deploy. La suite
+Python **6807+34** de ese mismo SHA, lint, formato, tipos, el smoke AF_UNIX
+anterior y el preflight PR de first-deploy sí aprobaron. Ninguna Action
+tocó el droplet ni acreditó un navegador operativo allí.
+
+Dos bloqueantes específicos, documentados en
+[#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6800531294),
+se abordan en ramas aisladas y un único refresh del PR:
+
+- **APT/Chromium:** cuatro runners registraron DNS Ubuntu fallido y el
+  fallback R174 devolvió `SOURCES_SCHEMA`. Se toleran solo variantes
+  preservadoras de fuentes Noble firmadas y se añade un código de rechazo
+  sin datos sensibles; el formato exacto del fallo anterior no puede
+  atribuirse sin una nueva captura física. Mantener pins y Trivy.
+- **IPC entre UID reales:** el smoke nuevo devolvió `BOCA_WORKER_IPC_LINUX
+  state=NO_GO` sin etapa; la librería dinámica del Python de Actions bajo
+  `sudo` y otro UID es una causa probable, **todavía no comprobada**.
+  R175 usa `/usr/bin/python3` solo en el runner, fuera del toolcache, y
+  añade recibos de fase fijos, sin ampliar permisos del worker ni habilitar
+  navegación. Sigue requiriendo confirmación exact-SHA de GitHub.
+
+La suite local con el ajuste APT R175 dio **6816 tests PASS +34 subtests**;
+la suite **combinada APT+IPC R175 dio 6819 PASS +34 subtests** y revisión
+independiente sin hallazgos P0/P1. No heredar resultados a GitHub:
+el candidato final todavía exige nuevas Actions exact-SHA, revisión,
+protección de merge, censo rootless Boca-only y Cutover seguro. El sender
+Telegram sigue OFF y **no hay reservas reales**.
+
+## R174 — desbloqueo del CI, AF_UNIX Linux y Telegram (11/11/2026; NO_GO físico)
+
+El único candidato continúa en el
+[PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478).
+El último HEAD **publicado** antes de esta corrección, `0ae6bf04`,
+registró 1 de 5 workflows SUCCESS: cuatro builds de Chromium fallaron por
+resolución DNS de fuentes Ubuntu antes de ejecutar smoke o escáner.
+El [reporte contemporáneo de los runners](https://github.com/actions/runner-images/issues/15296)
+corrobora el síntoma, sin identificar definitivamente la causa de la ruta DNS
+de BuildKit. El equipo prepara un fallback **solo de build** al espejo
+Ubuntu firmado de Linux Kernel Archives, conservando versiones APT corregidas
+y bloqueo Trivy. Hasta verificarlo en el SHA final, **image-build es NO_GO**.
+Ver [ADR0231](docs/ADR/0231-r174-browser-apt-signed-mirror-fallback.md).
+
+Dos mejoras de alcance independiente fueron integradas **localmente**:
+
+- Telegram rechaza identidades JSON con claves duplicadas en `getMe` y
+  `getChat` usando el parser estricto existente; sender permanece **OFF**
+  hasta rotar la credencial expuesta y comprobar la custodia en el host.
+- Un smoke Linux de Actions comprueba socket AF_UNIX real para UID10002,
+  rechazo UID10003, cliente UID10001 y STOP con cero socket; **no ejecuta
+  navegación ni reservas**. El sandbox local prohíbe AF_UNIX (`EPERM`),
+  de modo que el recibo real del runner sigue pendiente.
+
+El último Cutover protegido falló en `LEGACY_SINGLETON` antes de efectos.
+El `cutover-a-census` solo lectura permanece en el candidato, no en main:
+hasta correrlo en el droplet desconocemos si había cero o más de un
+contenedor original. La BETA integral **no se declara instalada**; no se
+tocaron Porota, otros Docker ni sitios de reservas.
+
+## R173 — candidato único en revisión; CODE_ONLY y NO_GO en el droplet
+
+La recuperación del parche R172 y la integración de IPC, configuración
+dinámica `SITE_URL`, actividad Chromium y Cutover rootless están reunidas en
+el [PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478).
+Cinco workflows de GitHub Actions pasaron en el primer HEAD del PR;
+correcciones posteriores requieren los **cinco checks por SHA exacto**.
+En el segundo HEAD `05ca4703`, la calidad Python y el panel pasaron, pero
+cuatro builds de la imagen Chromium quedaron ROJOS por DNS de los repositorios
+Ubuntu en runners (también en el único reintento); no se relajaron pins ni
+se afirmó GREEN. El siguiente lote añade un censo rootless Boca-only de
+solo lectura y un smoke de la imagen final antes de publicarla.
+Los cuatro PR Dependabot #474–#477 se clasificaron y cerraron individualmente,
+sin merge ni eliminación de ramas, según el [consenso de tres disciplinas en
+#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6797512465).
+
+El entrypoint de imagen es `ipc_server`, no el orquestador legacy
+`ipc_worker.py`. **No se ejecutan reservas reales**: el servidor de producción
+rechaza trabajo no aprobado y el nuevo simulador DOM ficticio se prueba sólo
+en contenedor offline separado. Si el cierre ficticio de Chromium no puede
+verificarse, el listener IPC se cierra; el panel distingue START de simulación
+y URL almacenada de navegación. El panel conserva la URL en un volumen
+exclusivo, impide START sin sincronización y no vuelve a usar valores por
+defecto; un verificador host independiente exigirá la URL verificada antes de arrancar
+el worker. La instalación V3 deja al navegador creado pero apagado, y no
+demuestra navegación ni reserva. El Cutover físico anterior falló con
+`LEGACY_SINGLETON` (inventario rootless sin un único controlador) y necesita
+un censo **solo lectura de Boca** antes de otro APPLY. Sender Telegram OFF
+hasta rotación del token comprometido.
+
+Guía operativa vigente: [R173 en OPERATIONS](docs/OPERATIONS.md) ·
+[RCA y evidencia R173](docs/handoffs/2026-11-11-r173-integration-code-only.md).
+Las secciones R162/R150/R140 siguientes son antecedentes históricos, no el
+estado de despliegue actual.
+
 ## R162 — `krb5-libs` estable para desbloquear la imagen del controlador (CODE_ONLY)
 
 El escaneo de la imagen del controlador del `main=713fb9a...` detectó

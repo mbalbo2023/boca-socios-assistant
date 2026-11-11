@@ -8,9 +8,12 @@ before executing anything. BLACKBOX and other project files are excluded.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
+import io
 import os
 import stat
+import tokenize
 import zipfile
 from pathlib import Path
 
@@ -86,6 +89,20 @@ RECOVERY_SOURCES = (
     "scripts/host_cutover_worker_inspect.py",
     "scripts/host_cutover_worker_recovery.py",
 )
+# Independent zero-effect live Boca inventory census. Never inherit Compose,
+# host Cutover transaction, browser BLACKBOX, leases or recovery entrypoints.
+CENSUS_SOURCES = (
+    "src/boca_socios/__init__.py",
+    "src/boca_socios/host_boca_cleanup.py",
+    "src/boca_socios/host_boca_census.py",
+)
+CENSUS_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 3 or sys.argv[1] != 'cutover-a-census':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_boca_census import main as census\n"
+    "raise SystemExit(census(['host',sys.argv[2]]))\n"
+).encode("ascii")
 # R83: preflight must never inherit the broader Cutover/Option B sources.
 # The SHA-checked independent memfd variant retains only its stdlib closure.
 PREFLIGHT_SOURCES = (
@@ -213,12 +230,43 @@ MAX_SOURCE_BYTES = 1_152_000
 MAX_ARCHIVE_BYTES = 512_000
 RECOVERY_MAX_SOURCE_BYTES = 256_000
 RECOVERY_MAX_ARCHIVE_BYTES = 128_000
+CENSUS_MAX_SOURCE_BYTES = 160_000
+CENSUS_MAX_ARCHIVE_BYTES = 64_000
 PREFLIGHT_MAX_SOURCE_BYTES = 520_000
 PREFLIGHT_MAX_ARCHIVE_BYTES = 128_000
 W1_MAX_SOURCE_BYTES = 900_000
 W1_MAX_ARCHIVE_BYTES = 320_000
 PHYSICAL_MAX_SOURCE_BYTES = 900_000
 PHYSICAL_MAX_ARCHIVE_BYTES = 320_000
+_FULL_ONLY_COMPACT_SOURCE = "src/boca_socios/host_first_deploy.py"
+
+
+def _compact_comment_tokens(source: bytes) -> bytes:
+    """Keep executable Python bytes/line numbers, omit only comment tokens.
+
+    The full Cutover payload shares this large host attestor with small worker
+    variants; only the full ZIP uses this transport transform. The repository
+    retains its commented source, while the SHA-pinned ZIP remains bounded.
+    """
+    decoded = source.decode("utf-8")
+    lines = decoded.splitlines(keepends=True)
+    for token in tokenize.generate_tokens(io.StringIO(decoded).readline):
+        if token.type != tokenize.COMMENT:
+            continue
+        line_index, column = token.start[0] - 1, token.start[1]
+        line = lines[line_index]
+        ending = "\r\n" if line.endswith("\r\n") else "\n" if line.endswith("\n") else ""
+        prefix = line[:column]
+        lines[line_index] = (prefix if prefix.strip() else "") + ending
+    compacted = "".join(lines).encode("utf-8")
+    if (
+        decoded.count("\n") != compacted.count(b"\n")
+        or ast.dump(ast.parse(source)) != ast.dump(ast.parse(compacted))
+        or compile(source, _FULL_ONLY_COMPACT_SOURCE, "exec")
+        != compile(compacted, _FULL_ONLY_COMPACT_SOURCE, "exec")
+    ):
+        raise ValueError("Boca protected source compaction changed executable Python")
+    return compacted
 
 
 def build(
@@ -229,11 +277,17 @@ def build(
     worker_preflight: bool = False,
     worker_w1: bool = False,
     worker_physical: bool = False,
+    census: bool = False,
 ) -> str:
     """Write one deterministic, explicitly allowlisted runner-only archive."""
-    if sum((worker_recovery, worker_preflight, worker_w1, worker_physical)) > 1:
+    if sum((worker_recovery, worker_preflight, worker_w1, worker_physical, census)) > 1:
         raise ValueError("Boca protected bundle modes must be exclusive")
-    if worker_recovery:
+    if census:
+        files: dict[str, bytes] = {"__main__.py": CENSUS_MAIN}
+        sources: tuple[str, ...] = CENSUS_SOURCES
+        max_source = CENSUS_MAX_SOURCE_BYTES
+        max_archive = CENSUS_MAX_ARCHIVE_BYTES
+    elif worker_recovery:
         files: dict[str, bytes] = {"__main__.py": RECOVERY_MAIN}
         sources: tuple[str, ...] = RECOVERY_SOURCES
         max_source = RECOVERY_MAX_SOURCE_BYTES
@@ -264,6 +318,7 @@ def build(
             sources = SOURCES
         max_source = MAX_SOURCE_BYTES
         max_archive = MAX_ARCHIVE_BYTES
+    full_cutover = not any((worker_recovery, worker_preflight, worker_w1, worker_physical, census))
     for rel in sources:
         source = root / rel
         if source.is_symlink():
@@ -281,6 +336,11 @@ def build(
             OPTION_B_STDLIB_BUNDLE_NAME if rel == OPTION_B_SOURCES[0] else rel.removeprefix("src/")
         )
         files[name] = data
+    # Preserve exact test-fixture bytes and future small source sets. Compact
+    # only when the reviewed full Cutover sources actually exceed their cap.
+    if full_cutover and sum(map(len, files.values())) > max_source:
+        host_entry = _FULL_ONLY_COMPACT_SOURCE.removeprefix("src/")
+        files[host_entry] = _compact_comment_tokens(files[host_entry])
     if not 0 < sum(len(item) for item in files.values()) <= max_source:
         raise ValueError("Boca protected package total exceeds bounded contract")
     if target.is_symlink() or target.exists():
@@ -324,12 +384,13 @@ def main() -> int:
     variant.add_argument("--worker-preflight", action="store_true")
     variant.add_argument("--worker-w1", action="store_true")
     variant.add_argument("--worker-physical", action="store_true")
+    variant.add_argument("--census", action="store_true")
     parser.add_argument("repository_root", type=Path)
     parser.add_argument("runner_target", type=Path)
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census)}"
     )
     return 0
 

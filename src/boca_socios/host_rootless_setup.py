@@ -1039,7 +1039,7 @@ def _verified_browser_ipc_image(
         or config.get("Entrypoint") not in (None, [])
         or config.get("Cmd")
         != (
-            ["python", "-m", "boca_socios.browser.ipc_worker"]
+            ["python", "-m", "boca_socios.browser.ipc_server"]
             if worker
             else ["python", "-m", "boca_socios.runtime", "serve-beta"]
         )
@@ -1129,7 +1129,8 @@ def _verified_browser_ipc_image(
     }:
         return False
     expected_mounts = {
-        ("volume", "boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", worker, "local")
+        ("volume", "boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", worker, "local"),
+        ("volume", "boca-socios_boca_site_config", "/run/boca-site-config", not worker, "local"),
     }
     if not worker:
         expected_mounts |= {

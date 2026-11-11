@@ -51,7 +51,10 @@ def context() -> tuple[dict[str, object], dict[str, object]]:
 def record(*, worker: bool, running: bool = True) -> dict[str, object]:
     service = "browser-worker" if worker else "controller"
     image = BROWSER if worker else IMAGE
-    mounts = [("boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", worker)]
+    mounts = [
+        ("boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", worker),
+        ("boca-socios_boca_site_config", "/run/boca-site-config", not worker),
+    ]
     if not worker:
         mounts += [
             ("boca-socios_boca_data", "/data", True),
@@ -65,7 +68,7 @@ def record(*, worker: bool, running: bool = True) -> dict[str, object]:
         "Config": {
             "Image": image,
             "User": "10002:10002" if worker else "10001:10001",
-            "Cmd": ["python", "-m", "boca_socios.browser.ipc_worker"]
+            "Cmd": ["python", "-m", "boca_socios.browser.ipc_server"]
             if worker
             else ["python", "-m", "boca_socios.runtime", "serve-beta"],
             "Entrypoint": None,
@@ -254,6 +257,26 @@ def test_foreign_browser_mount_or_attempt_never_stops_any_container() -> None:
             with pytest.raises(host.SetupError, match="unknown_container_preserved_no_stop"):
                 host._stop_test_containers(HOME)
         assert all(argv[2] != "stop" for argv in calls)
+
+
+@pytest.mark.parametrize("worker,writable", [(False, False), (True, True)])
+def test_site_config_mount_wrong_access_never_stops_containers(
+    worker: bool, writable: bool
+) -> None:
+    records = [record(worker=False), record(worker=True)]
+    service_mounts = records[int(worker)]["Mounts"]
+    site_config = next(
+        mount for mount in service_mounts if mount["Name"] == "boca-socios_boca_site_config"
+    )
+    site_config["RW"] = writable
+    calls: list[tuple[str, ...]] = []
+    with (
+        patch.object(host, "_browser_stop_context", return_value=context()),
+        patch.object(host, "_command", side_effect=fake_command(records, calls)),
+    ):
+        with pytest.raises(host.SetupError, match="unknown_container_preserved_no_stop"):
+            host._stop_test_containers(HOME)
+    assert all(argv[2] != "stop" for argv in calls)
 
 
 def test_controller_cannot_fall_back_to_legacy_when_browser_worker_exists() -> None:

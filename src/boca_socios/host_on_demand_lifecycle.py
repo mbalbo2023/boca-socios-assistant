@@ -60,6 +60,7 @@ _ISSUES = frozenset(
         "CLAIM_INTERRUPTED",
         "NO_STOP_PROOF",
         "PRESTATE",
+        "SITE_URL_UNVERIFIED",
         "WORKER_START",
         "CAPTURE_PREFLIGHT",
         "HEALTH_EXITED",
@@ -420,6 +421,31 @@ class _RootlessIO(adapter.ProductionRootlessDockerIO):
     def start_worker(
         self, installation: OnDemandInstallation, state: Stopped, before_start: Callable[[], None]
     ) -> None:
+        # Read the actual, shared URL-only volume through the already attested
+        # controller UID namespace. Host UID 10001 cannot safely infer the
+        # rootless remapping of the volume inode, and a panel save by itself
+        # is not proof that the worker can read its next-start destination.
+        # The fixed receipt is the ONLY content allowed across this boundary.
+        controller = installation.controller_id
+        if type(controller) is not str or _FINGERPRINT.fullmatch(controller) is None:
+            raise WorkerStartFailure("SITE_URL_UNVERIFIED")
+        try:
+            ready = cleanup._docker(
+                "exec",
+                "--user",
+                "10001:10001",
+                controller,
+                "/app/.venv/bin/python",
+                "-I",
+                "-B",
+                "-c",
+                "from boca_socios.browser.site_url_runtime import read_site_url; "
+                "read_site_url(); print('BOCA_SITE_URL_READY')",
+            )
+        except Exception:
+            raise WorkerStartFailure("SITE_URL_UNVERIFIED") from None
+        if ready != "BOCA_SITE_URL_READY\n":
+            raise WorkerStartFailure("SITE_URL_UNVERIFIED")
         worker = installation.worker_id
         try:
             deploy._cutover_capture_preflight(

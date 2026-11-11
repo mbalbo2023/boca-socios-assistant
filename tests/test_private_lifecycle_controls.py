@@ -8,8 +8,10 @@ from uuid import uuid4
 
 import pytest
 
+from boca_socios.panel import private_http
 from boca_socios.panel.lifecycle_intents import host_marker
 from boca_socios.panel.private_http import PrivatePanelApplication
+from boca_socios.panel.site_url_settings import SiteUrlSettingsStore
 from test_private_beta_panel import (
     ORIGIN,
     FakeHost,
@@ -18,6 +20,18 @@ from test_private_beta_panel import (
     _passkey,
     _request,
 )
+
+
+@pytest.fixture(autouse=True)
+def _configured_synthetic_site_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lifecycle fixtures assume a separately reviewed, already-published URL.
+
+    They exercise scheduling/ack, never site configuration, browser navigation,
+    or the real URL-only mount; its integrity has independent tests.
+    """
+    destination = "https://offline-fixture.invalid/"
+    monkeypatch.setattr(SiteUrlSettingsStore, "read", lambda _self: destination)
+    monkeypatch.setattr(private_http, "read_site_url", lambda _path: destination)
 
 
 def _lifecycle_action(

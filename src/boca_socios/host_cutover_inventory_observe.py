@@ -576,8 +576,19 @@ def _official_observation(io: CutoverInventoryIO, release: ReviewedTargetRelease
         or worker.running
         and worker.networks != ("boca-socios_boca_browser_egress",)
         or controller.volumes
-        != tuple(sorted({_DATA, _KEY, _OWNER, "boca-socios_boca_browser_ipc"}))
-        or worker.volumes != ("boca-socios_boca_browser_ipc",)
+        != tuple(
+            sorted(
+                {
+                    _DATA,
+                    _KEY,
+                    _OWNER,
+                    "boca-socios_boca_browser_ipc",
+                    "boca-socios_boca_site_config",
+                }
+            )
+        )
+        or worker.volumes
+        != tuple(sorted(("boca-socios_boca_browser_ipc", "boca-socios_boca_site_config")))
         or not controller.running
         or io.field("container", controller.ident, "State.Running") is not True
         or io.field("container", controller.ident, "State.Health.Status") != "healthy"
@@ -589,7 +600,13 @@ def _official_observation(io: CutoverInventoryIO, release: ReviewedTargetRelease
     ):
         raise CutoverInventoryNoGo("Boca official dual runtime not verified")
     egress = "boca-socios_boca_telegram_egress"
-    expected_volumes = {_DATA, _KEY, _OWNER, "boca-socios_boca_browser_ipc"}
+    expected_volumes = {
+        _DATA,
+        _KEY,
+        _OWNER,
+        "boca-socios_boca_browser_ipc",
+        "boca-socios_boca_site_config",
+    }
     if sender is not None:
         expected_volumes.add(_TELEGRAM)
         if sender.networks not in ((), (egress,)) or (

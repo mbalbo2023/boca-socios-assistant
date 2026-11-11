@@ -38,3 +38,95 @@ Para comprobar el efecto de un toque, la operación `beta-browser-status` de la 
 La instalación conserva el ejecutor mínimo por digest y valida el binding del controlador. Un pedido anterior a este perfil necesita un nuevo toque autenticado; una operación previa reclamada o incierta mantiene su cuarentena. Al completarse un trabajo simulado, el STOP derivado queda ligado al START original. Si se solicita iniciar sin enviar un trabajo, el bot queda disponible hasta que el titular pulse Detener. La categoría nominal de módulos sólo se amplía para nombres públicos de paquetes y archivos ya declarados. Los demás siguen produciendo la categoría genérica.
 
 El paquete completo de esta revisión reúne 46 entradas con 1.036.397 bytes de fuentes y 257.845 bytes comprimidos. Su SHA-256 es `2a91c7efd38e2d67b32c56838543c043b1d1f576d7da2e6b6784af7f794291eb`. Las variantes reducidas de preflight y recuperación tienen 7 entradas cada una y ocupan 108.367 y 44.922 bytes, respectivamente. La verificación del runner contrasta índice, tipo de archivo, tamaño y digest antes de la ejecución. Los límites comprimidos siguen en 512.000 y 128.000 bytes.
+
+## R174 — prueba real de AF_UNIX en runner descartable (11/11/2026, CODE_ONLY)
+
+El nuevo `scripts/check_worker_ipc_linux.py` se invoca desde el trabajo
+`CI / quality-and-tests` de GitHub-hosted Ubuntu para probar un socket
+**AF_UNIX real sin contenedores**: UID 10002 servidor, UID 10003 rechazado
+por `SO_PEERCRED`, UID 10001 admitido únicamente con respuesta
+`worker_no_go`, y STOP propio con socket eliminado. El harness tiene
+presupuesto máximo de cinco segundos y opera solo procesos/archivos de su
+directorio temporal. `sudo` se limita a ese runner descartable para crear
+las identidades de prueba; no se invoca contra droplet, Docker ni otros
+servicios. Tampoco usa `SITE_URL`, Telegram, navegación o credenciales.
+
+La prueba falla cerrada si el recibo o el cleanup son inesperados. El
+sandbox de desarrollo actual devuelve `EPERM` al crear `AF_UNIX`: los
+tests locales certifican el contrato del harness pero **no el socket físico**.
+El paso real en GitHub Actions, vinculado al SHA final, deberá probar el
+transporte; aun si pasa, **no acredita rootless Docker/egreso del worker en
+el droplet, ni reservas**, y `OfflineNoGoExecutor` sigue el predeterminado.
+
+## R175 — runner IPC: Python de sistema y recibos acotados (CODE_ONLY)
+
+La Action [CI #43052061549](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43052061549)
+sobre PR #478, SHA `f58aaace9dd9d05760efad0797b182453a264c9a`,
+pasó el smoke AF_UNIX genérico y la suite Python, pero el nuevo paso
+multi-UID terminó en **0,09 s** con `BOCA_WORKER_IPC_LINUX state=NO_GO`,
+sin motivo o etapa recuperable. No hay evidencia de que haya creado socket;
+este resultado es **NO_GO**, no error de la instalación en el droplet.
+
+El paso invocaba un intérprete virtual de `actions/setup-python` dentro de
+`sudo env`; la propia Action configura `LD_LIBRARY_PATH` para las bibliotecas
+compartidas de su Python alojado en toolcache. Suprimir ese entorno en los
+subprocesos de UID10001/10002/10003 puede impedirles ejecutar el binario,
+pero **no se ha confirmado causalmente** porque el primer harness descartaba
+la salida de los hijos. Ver
+[setup-python #871](https://github.com/actions/setup-python/issues/871).
+
+R175 propone usar **únicamente para el fixture descartable** el intérprete
+`/usr/bin/python3` de Ubuntu 24.04, cuya biblioteca es del sistema, con
+`PYTHONPATH` limitado a los fuentes Boca (el contrato IPC del smoke importa
+solo biblioteca estándar). El harness comunica exclusivamente la etapa fija
+`SETUP`, `WORKER_SPAWN`, `WORKER_BIND`, `STRANGER`, `CONTROLLER`, `STOP`,
+`CLEANUP` o `UNKNOWN` cuando falla, nunca stderr, rutas, URLs, secretos
+ni excepciones de hijos. Conserva UID10001/10002/10003, `SO_PEERCRED`,
+modo socket 0622, devolución `NO_GO` y limpieza propia.
+
+**Validación pendiente:** Actions del nuevo SHA deben probar cada UID,
+transporte AF_UNIX, rechazo del tercero y STOP; ni la prueba local del parser
+ni la revisión de código equivalen a este recibo real. No se habilita
+navegador, Telegram, Cutover ni reservas.
+
+## R176 — WORKER_BIND en runner: árbol inmutable legible entre UID
+
+Las nuevas Actions R175 sobre SHA
+`a829b0022e4c51d175a4dfd6af2c9be46c595705` corrigieron los
+problemas Chromium de CI: cinco de los seis workflows terminaron SUCCESS,
+incluida la seguridad de las imágenes. La única falla restante es
+[CI #43054438126](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43054438126),
+paso IPC multiusuario: `BOCA_WORKER_IPC_LINUX state=NO_GO
+stage=WORKER_BIND`, a los ~0,2 s. Ejecutó `/usr/bin/python3`, de modo
+que el loader de `setup-python` no basta para explicar la falla. El
+recibo **no identifica** si el proceso salió por importación o por una
+invariante del socket; en ambos casos sigue NO_GO.
+
+Los usuarios de fixture UID10001/10002/10003 no son dueños del checkout
+en `/home/runner/work`; GitHub puede conservar ancestros o `TMPDIR`
+que impiden atravesar el origen, aun con un Python del sistema. Como
+fix-forward acotado R176, el harness root del runner comprueba que
+`/tmp` sea un directorio root:root con sticky bit 01777, crea allí su
+directorio único mediante `TemporaryDirectory`, y **copia únicamente
+11 archivos de Python explícitamente revisados** desde el checkout:
+el propio harness y 10 módulos/imports IPC y dominio de biblioteca
+estándar. Nunca copia `synthetic.py`, `ipc_worker.py`, bases, credenciales,
+URLs, configuraciones ni otros paquetes. Comprueba igualdad de bytes,
+restringe archivos a 0444 y directorios de código a 0555, bajo propiedad
+del root del runner. Los tres procesos descartables ejecutan la misma
+versión del código con `PYTHONPATH` limitado a esta copia; la carpeta
+de socket permanece UID10002, 0711, y la credencial de par `SO_PEERCRED`
+permanece activa. La copia de prueba no es imagen distribuible ni altera
+el worker real.
+
+Para un nuevo fallo, el recibo distingue además
+`WORKER_BIND_CHILD_EXIT`, `WORKER_BIND_INODE` y
+`WORKER_BIND_TIMEOUT`, nunca stderr de hijos ni rutas privadas.
+Solo se retiran el proceso hijo creado por este harness y el directorio
+temporal del intento, sin Docker ni acciones de host. En caso de
+violación de permisos, origen no reconocido o copia distinta, se cierra
+con NO_GO antes de levantar un listener.
+
+**Criterio físico:** ejecutar el smoke en Actions exact-SHA, comprobar
+rejección UID10003, respuesta NO_GO a UID10001, STOP UID10002 y ausencia
+del socket; no confundir con Cutover, navegador funcional ni reservas.

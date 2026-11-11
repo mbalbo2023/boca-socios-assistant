@@ -139,7 +139,13 @@ def test_stream_returns_only_its_terminal_category(
         peer.sendall(UPGRADE)
         with attach_output(SOCKET, CID) as reader:
             if stream:
-                peer.sendall(stream)
+                try:
+                    peer.sendall(stream)
+                except BrokenPipeError:
+                    # Quota enforcement may close the reader while the test
+                    # writer is still sending. It is expected only for LIMIT;
+                    # the terminal capture category is still asserted below.
+                    assert expected == "LIMIT"
             peer.shutdown(socket.SHUT_WR)
             assert reader.finish().value == expected
             assert client.fileno() == -1
