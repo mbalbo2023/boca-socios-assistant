@@ -31,6 +31,16 @@ comparaba literalmente con la forma YAML y rechazó los checks `CI` y
 únicamente ambas representaciones equivalentes, siempre con nombre/driver
 exactos, IPAM vacío, sin flags desconocidos ni `internal:true`.
 
+**RCA preflight host R171 (hallazgo de QA/Infra antes del merge):** aunque
+el contrato de Actions ya aceptaba el JSON normalizado, el validador del
+*host* `host_first_deploy._browser_compose_model` todavía exigía igualdad
+literal con `internal:false`. La ruta `CutoverBackend.stage()` invoca ese
+validador antes de `PREPARE_WORKER` y habría detenido un Cutover legítimo.
+Se reprodujo `PreflightError` con dos modelos canónicos y se corrigió esa
+única incompatibilidad, con tests que permiten IPAM vacío y rechazan
+`internal:true`, IPAM no vacío y campos adicionales. Es una corrección de
+código y pruebas; **no constituye prueba de egreso real en el droplet**.
+
 **Ruta histórica deshabilitada:** `beta-browser-install` continúa como opción
 heredada, pero GitHub Actions la detiene antes de alterar el host por falta de
 finalizador del mismo lease. Su rutina `--browser-ipc-v2` conserva reglas de

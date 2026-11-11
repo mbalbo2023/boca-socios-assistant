@@ -535,6 +535,51 @@ def test_host_compose_model_accepts_only_resolved_versioned_offline_contract(
     ]
 
 
+@pytest.mark.parametrize(
+    "egress",
+    [
+        {
+            "name": "boca-socios_boca_browser_egress",
+            "driver": "bridge",
+            "ipam": {},
+        },
+        {
+            "name": "boca-socios_boca_browser_egress",
+            "driver": "bridge",
+            "internal": False,
+            "ipam": {},
+        },
+    ],
+)
+def test_host_compose_model_accepts_canonical_compose_egress(
+    monkeypatch: pytest.MonkeyPatch, egress: dict[str, object]
+) -> None:
+    model = browser_model()
+    model["networks"]["boca_browser_egress"] = egress
+    raw = json.dumps(model)
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: raw)
+    assert host._browser_compose_model(IMAGE, ORIGIN, OWNER, BROWSER_IMAGE, ATTEMPT) == raw
+
+
+@pytest.mark.parametrize(
+    "egress_mutation",
+    [
+        {"internal": True},
+        {"ipam": {"driver": "default"}},
+        {"external": True},
+        {"attachable": True},
+    ],
+)
+def test_host_compose_model_rejects_egress_boundary_relaxations(
+    monkeypatch: pytest.MonkeyPatch, egress_mutation: dict[str, object]
+) -> None:
+    model = browser_model()
+    model["networks"]["boca_browser_egress"].update(egress_mutation)
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: json.dumps(model))
+    with pytest.raises(PreflightError, match="browser worker egress"):
+        host._browser_compose_model(IMAGE, ORIGIN, OWNER, BROWSER_IMAGE, ATTEMPT)
+
+
 def test_host_compose_model_cutover_uses_verified_stage_paths_without_global_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

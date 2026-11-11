@@ -131,7 +131,7 @@ R139_PORTABLE_PANEL_STOP_FULL_CUTOVER_SHA = (
 # R171 adds one dedicated rootless browser egress bridge and pins the updated
 # host-side validator bytes; it does not authorize a physical cutover.
 R171_BROWSER_EGRESS_FULL_CUTOVER_SHA = (
-    "b04bf9065778c89fbe21d9eab2462679f2f9717f75b99f610502109fec3ff3f0"
+    "e6b95d4ff20d97e444f611d616f38653f69cb404f2574dbd38df36253a5fd32e"
 )
 
 

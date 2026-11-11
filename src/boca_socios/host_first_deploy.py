@@ -4495,11 +4495,17 @@ def _browser_compose_model(
         "external": True,
     }:
         raise PreflightError("browser IPC external volume changed")
-    if networks["boca_browser_egress"] != {
-        "name": BROWSER_EGRESS_BRIDGE,
-        "driver": "bridge",
-        "internal": False,
-    }:
+    egress = networks["boca_browser_egress"]
+    # Compose config JSON drops explicit `internal: false` and may add
+    # empty IPAM. Both are the same outbound bridge, with no extra options.
+    if (
+        not isinstance(egress, dict)
+        or set(egress) - {"name", "driver", "internal", "ipam"}
+        or egress.get("name") != BROWSER_EGRESS_BRIDGE
+        or egress.get("driver") != "bridge"
+        or egress.get("internal", False) is not False
+        or egress.get("ipam", {}) != {}
+    ):
         raise PreflightError("browser worker egress must be one Boca-only bridge")
     return raw
 
