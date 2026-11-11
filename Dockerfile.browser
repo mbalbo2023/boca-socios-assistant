@@ -108,4 +108,4 @@ USER 10002:10002
 # The worker must prove cgroups, UID10002 and Boca-only network/IPC before activation.
 # With no specifically prepared IPC mount it refuses startup; no IP listener.
 # Offline CI smoke overrides CMD with its explicit measurement command.
-CMD ["python", "-m", "boca_socios.browser.ipc_worker"]
+CMD ["python", "-m", "boca_socios.browser.ipc_server"]

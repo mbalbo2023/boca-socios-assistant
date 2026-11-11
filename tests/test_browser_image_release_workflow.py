@@ -6,9 +6,10 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/release-image.yml"
 
 
-def test_release_candidate_contains_the_merged_ipc_worker_entrypoint() -> None:
+def test_release_candidate_contains_safe_ipc_server_entrypoint() -> None:
     dockerfile = (ROOT / "Dockerfile.browser").read_text(encoding="utf-8")
-    assert 'CMD ["python", "-m", "boca_socios.browser.ipc_worker"]' in dockerfile
+    assert 'CMD ["python", "-m", "boca_socios.browser.ipc_server"]' in dockerfile
+    assert 'CMD ["python", "-m", "boca_socios.browser.ipc_worker"]' not in dockerfile
     assert 'CMD ["python", "scripts/verify_chromium_worker.py"]' not in dockerfile
 
 
@@ -25,7 +26,8 @@ def test_browser_pr_validation_builds_scans_but_never_publishes() -> None:
     assert "Verify browser source revision label" in preview
     assert "org.opencontainers.image.revision=$SOURCE_SHA" in preview
     assert "Require the reviewed browser IPC worker command" in preview
-    assert '["python","-m","boca_socios.browser.ipc_worker"]' in preview
+    assert '["python","-m","boca_socios.browser.ipc_server"]' in preview
+    assert '["python","-m","boca_socios.browser.ipc_worker"]' not in preview
     assert (
         preview.index("Verify browser source revision label")
         < preview.index("Require the reviewed browser IPC worker command")
@@ -117,7 +119,8 @@ def test_protected_main_release_scans_both_before_any_ghcr_auth_or_push() -> Non
     assert "Verify browser source revision label" in publish
     assert "org.opencontainers.image.revision=$SOURCE_SHA" in publish
     assert "Require the reviewed browser IPC worker command" in publish
-    assert '["python","-m","boca_socios.browser.ipc_worker"]' in publish
+    assert '["python","-m","boca_socios.browser.ipc_server"]' in publish
+    assert '["python","-m","boca_socios.browser.ipc_worker"]' not in publish
     assert (
         publish.index("Verify browser source revision label")
         < publish.index("Require the reviewed browser IPC worker command")

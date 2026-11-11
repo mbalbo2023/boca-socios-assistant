@@ -89,7 +89,7 @@ def inspection_summary(record: dict, *, service: str) -> dict:
         "network_names": sorted(network.get("Networks", {})),
         "entrypoint_absent": config.get("Entrypoint") in (None, []),
         "worker_command_matches": config.get("Cmd")
-        == ["python", "-m", "boca_socios.browser.ipc_worker"],
+        == ["python", "-m", "boca_socios.browser.ipc_server"],
         "boca_environment_keys": sorted(key for key in environment if key.startswith("BOCA_")),
         "required_environment_matches": all(
             environment.get(key) == value

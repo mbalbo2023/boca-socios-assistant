@@ -7,65 +7,20 @@ transport the reviewed setting to the isolated worker at its next activation.
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import os
-import re
 import secrets
 import stat
 from pathlib import Path
-from urllib.parse import urlsplit
+
+from boca_socios.browser.site_url_runtime import SiteUrlInvalid, require_site_url
 
 _BASENAME = "boca-site-url.json"
-_MAX_URL = 512
 _MAX_FILE = 2048
-
-
-class SiteUrlInvalid(ValueError):
-    """The destination is not a well-formed credential-free HTTP URL."""
 
 
 class SiteUrlSettingsUnavailable(RuntimeError):
     """The Boca-owned configuration file is absent in an unsafe form."""
-
-
-def require_site_url(value: str) -> str:
-    """Validate syntax, not public/private host class or DNS resolution."""
-    if (
-        not isinstance(value, str)
-        or not 1 <= len(value) <= _MAX_URL
-        or value != value.strip()
-        or any(ord(character) <= 32 or ord(character) == 127 for character in value)
-    ):
-        raise SiteUrlInvalid("SITE_URL debe ser una URL HTTP(S) válida.")
-    try:
-        parsed = urlsplit(value)
-        hostname = parsed.hostname
-        port = parsed.port
-    except ValueError:
-        raise SiteUrlInvalid("SITE_URL debe ser una URL HTTP(S) válida.") from None
-    if (
-        parsed.scheme not in {"http", "https"}
-        or not hostname
-        or not parsed.netloc
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.query
-        or parsed.fragment
-        or (port is not None and port < 1)
-    ):
-        raise SiteUrlInvalid("SITE_URL debe ser una URL HTTP(S) sin credenciales.")
-    try:
-        address = ipaddress.ip_address(hostname)
-    except ValueError:
-        if not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", hostname):
-            raise SiteUrlInvalid("El nombre del sitio no es válido.") from None
-    else:
-        # The user removed the public-address filter. Preserve only the
-        # unrelated dangerous-address guard (e.g. host metadata endpoints).
-        if address.is_link_local or address.is_multicast or address.is_unspecified:
-            raise SiteUrlInvalid("La dirección del sitio no es utilizable.")
-    return value
 
 
 class SiteUrlSettingsStore:

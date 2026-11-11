@@ -29,7 +29,8 @@ def test_cutover_worker_confidential_create() -> None:
     assert argv.count("--log-driver") == 1
     assert argv[argv.index("--log-driver") + 1] == "none"
     assert argv[argv.index("--health-cmd") + 1].endswith(" >/dev/null 2>&1")
-    assert argv[-4:] == (WORKER_IMAGE, "python", "-m", "boca_socios.browser.ipc_worker")
+    assert argv[-4:] == (WORKER_IMAGE, "python", "-m", "boca_socios.browser.ipc_server")
+    assert "boca_socios.browser.ipc_worker" not in argv
     assert not {"--interactive", "--tty", "--attach"}.intersection(argv)
 
 

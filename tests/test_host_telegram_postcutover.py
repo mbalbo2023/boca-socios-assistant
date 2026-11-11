@@ -108,6 +108,7 @@ def _fake(tmp_path: Path, *, stopped_sender: bool = False) -> FakeIO:
                 "boca-socios_boca_key",
                 "boca-socios_boca_owner",
                 "boca-socios_boca_browser_ipc",
+                "boca-socios_boca_site_config",
                 _TG,
             )
         ),
@@ -244,6 +245,32 @@ def test_missing_recipient_volume_denied(tmp_path: Path) -> None:
         volumes=tuple(volume for volume in io.inventory_value.volumes if volume.name != _TG),
     )
     with pytest.raises(host.TelegramHostNoGo):
+        host.observe_telegram_host(_pins(), lease=_lease(), io=io)
+
+
+def test_site_config_volume_is_required_for_reviewed_browser_topology(tmp_path: Path) -> None:
+    io = _fake(tmp_path)
+    io.inventory_value = replace(
+        io.inventory_value,
+        volumes=tuple(
+            volume
+            for volume in io.inventory_value.volumes
+            if volume.name != "boca-socios_boca_site_config"
+        ),
+    )
+    with pytest.raises(host.TelegramHostNoGo, match="volume_inventory_unverified"):
+        host.observe_telegram_host(_pins(), lease=_lease(), io=io)
+
+
+def test_controller_site_config_mount_must_not_be_readonly(tmp_path: Path) -> None:
+    io = _fake(tmp_path)
+    mounts = io.fields[("container", CONTROLLER, "Mounts")]
+    assert isinstance(mounts, list)
+    io.fields[("container", CONTROLLER, "Mounts")] = [
+        {**mount, "RW": False} if mount.get("Name") == "boca-socios_boca_site_config" else mount
+        for mount in mounts
+    ]
+    with pytest.raises(host.TelegramHostNoGo, match="stopped_controller_boundary_unverified"):
         host.observe_telegram_host(_pins(), lease=_lease(), io=io)
 
 

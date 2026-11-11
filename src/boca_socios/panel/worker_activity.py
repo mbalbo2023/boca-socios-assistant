@@ -198,6 +198,15 @@ def read_worker_activity(path: Path, *, observed_at: datetime) -> WorkerActivity
         for stage in chromium.events:
             level, message = _CHROMIUM_STAGE_LABELS[stage.code]
             entries.append(WorkerActivityEvent(stage.at, "chromium", level, message))
+        if chromium.stale:
+            entries.append(
+                WorkerActivityEvent(
+                    observed_at.astimezone(UTC).isoformat(),
+                    "chromium",
+                    "warning",
+                    "Chromium: sólo hay telemetría antigua; no confirma un proceso activo.",
+                )
+            )
         return WorkerActivitySnapshot(
             observed_at=observed_at.astimezone(UTC).isoformat(),
             browser_detail="fixed_stages_only",

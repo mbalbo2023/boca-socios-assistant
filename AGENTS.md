@@ -126,6 +126,22 @@ orchestrator; if achieving that requires a change to the protected navigation
 logic, stop and obtain a separate exact-scope owner decision. A healthy
 controller alone never certifies the browser worker or Chromium.
 
+**R172 owner amendment (2026-11-11, supersedes only the earlier code-change
+prohibition):** the owner explicitly authorizes reading, adapting, correcting,
+testing and wiring `synthetic.py` and `ipc_worker.py` when needed to resolve
+their actual startup/IPC contract; they are no longer categorically exempt
+from relevant quality checks. Prefer a separate bounded adapter when it
+preserves working code; never assert the blackbox's token observation equals
+`RESERVED_IN_SIMULATOR` or imply a confirmed booking. Runtime `SITE_URL` is
+controlled from the passkey-protected 8443 configuration page and transported
+through a dedicated, URL-only read-only worker volume (no keys/DB), applied
+on next worker start. Public/private URL *class* is not a rejection criterion;
+credentialed URLs, metadata destinations, malformed URLs and unauthorized
+navigation remain rejected. The worker may have outbound Internet only on
+its independently attested Boca rootless bridge; no extra published ports or
+foreign Docker effects. This authorization does not turn on real tickets,
+payments or reservations; no physical claim until tested on the exact droplet.
+
 Site navigation is **entirely owner-operated**. Agents must not launch or
 automate real Boca/Queue-it navigation in any browser on the droplet or on
 another surface, or dispatch diagnostics that navigate the site. The Boca

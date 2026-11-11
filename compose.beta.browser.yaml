@@ -18,6 +18,8 @@ services:
       boca.socios.browser-ipc-attempt: ${BOCA_BROWSER_ATTEMPT_ID:?single_reviewed_GitHub_run_required}
     volumes:
       - boca_browser_ipc:/run/boca-browser-ipc:ro
+      # Minimal destination-only configuration; never mount the member DB in worker.
+      - boca_site_config:/run/boca-site-config
       - type: bind
         source: ${BOCA_CONTROL_DIR:?reviewed_Boca_socket_directory_required}
         target: /run/boca-bot-control
@@ -27,7 +29,7 @@ services:
 
   browser-worker:
     image: ${BOCA_BROWSER_IMAGE:?reviewed_browser_digest_required}
-    command: ["python", "-m", "boca_socios.browser.ipc_worker"]
+    command: ["python", "-m", "boca_socios.browser.ipc_server"]
     user: "10002:10002"
     init: true
     restart: "no"
@@ -42,6 +44,7 @@ services:
       boca.socios.browser-ipc-attempt: ${BOCA_BROWSER_ATTEMPT_ID:?single_reviewed_GitHub_run_required}
     volumes:
       - boca_browser_ipc:/run/boca-browser-ipc
+      - boca_site_config:/run/boca-site-config:ro
     networks:
       - boca_browser_egress
     cgroup: private
@@ -78,6 +81,10 @@ volumes:
   boca_browser_ipc:
     external: true
     name: boca-socios_boca_browser_ipc
+  # Preprovisioned by the dedicated Boca-only host operation, UID10001.
+  boca_site_config:
+    external: true
+    name: boca-socios_boca_site_config
 
 networks:
   # External Internet is required by the owner. Keep the worker on its OWN

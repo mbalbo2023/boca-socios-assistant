@@ -133,6 +133,12 @@ R139_PORTABLE_PANEL_STOP_FULL_CUTOVER_SHA = (
 R171_BROWSER_EGRESS_FULL_CUTOVER_SHA = (
     "e6b95d4ff20d97e444f611d616f38653f69cb404f2574dbd38df36253a5fd32e"
 )
+# R173 pins the final integrated source, including the selective protected-volume
+# cleanup and release wiring fixes. Twice independently rebuilt byte-identically;
+# the intermediate Cutover-only SHA is not a release candidate.
+R173_SITE_CONFIG_FULL_CUTOVER_SHA = (
+    "b1f6630f4e6deeff9af31f403bc7ceac1c15c6ef150af216d66783be2f8032ee"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -290,7 +296,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R171_BROWSER_EGRESS_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R173_SITE_CONFIG_FULL_CUTOVER_SHA
+    assert digest != R171_BROWSER_EGRESS_FULL_CUTOVER_SHA
     assert digest != R139_PORTABLE_PANEL_STOP_FULL_CUTOVER_SHA
     assert digest != R138_RESTORED_PANEL_FINISH_FULL_CUTOVER_SHA
     assert digest != R137_CANDIDATE_ACCEPTANCE_FULL_CUTOVER_SHA

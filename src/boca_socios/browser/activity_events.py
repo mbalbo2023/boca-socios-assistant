@@ -27,6 +27,9 @@ ACTIVITY_PATH = SOCKET_PATH.with_name("chromium-events.jsonl")
 MAX_ACTIVITY_BYTES = 32 * 1024
 _FILE_MODE = 0o644
 _MAX_LINE_BYTES = 128
+# Browser steps finish within the bounded on-demand command; old files must
+# not be mistaken for telemetry from a worker that might no longer exist.
+_MAX_FRESH_AGE = timedelta(minutes=5)
 _STAGES = frozenset(
     {
         "launch_requested",
@@ -51,6 +54,7 @@ class ChromiumStage:
 class ChromiumActivity:
     state: Literal["available", "missing", "degraded"]
     events: tuple[ChromiumStage, ...] = ()
+    stale: bool = False
 
 
 def _file_valid(metadata: os.stat_result, owner_uid: int, owner_gid: int) -> bool:
@@ -162,7 +166,11 @@ def read_chromium_events(
         # A reader can race an append; ignore only the unfinished last line.
         complete = data.rsplit(b"\n", 1)[0] if not data.endswith(b"\n") else data[:-1]
         lines = complete.split(b"\n") if complete else []
+        if not lines:
+            return ChromiumActivity("degraded")
         stages = []
+        oldest_fresh_at = observed_at.astimezone(UTC) - _MAX_FRESH_AGE
+        stale_events_found = False
         for line in lines:
             if not 1 <= len(line) <= _MAX_LINE_BYTES:
                 return ChromiumActivity("degraded")
@@ -186,7 +194,12 @@ def read_chromium_events(
                 or at > observed_at.astimezone(UTC) + timedelta(minutes=1)
             ):
                 return ChromiumActivity("degraded")
-            stages.append(ChromiumStage(at=at.astimezone(UTC).isoformat(), code=entry["e"]))
+            if at < oldest_fresh_at:
+                stale_events_found = True
+            else:
+                stages.append(ChromiumStage(at=at.astimezone(UTC).isoformat(), code=entry["e"]))
+        if stale_events_found and not stages:
+            return ChromiumActivity("degraded", stale=True)
         return ChromiumActivity("available", tuple(stages[-32:]))
     except (OSError, SyntheticIPCError, ValueError, TypeError, UnicodeDecodeError):
         return ChromiumActivity("degraded")

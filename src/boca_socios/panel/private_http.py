@@ -23,6 +23,14 @@ from urllib.parse import parse_qsl, urlsplit
 from uuid import UUID, uuid4
 
 from boca_socios import telegram_bootstrap
+from boca_socios.browser.site_url_runtime import (
+    RUNTIME_SITE_URL_PATH,
+    RuntimeSiteUrlUnavailable,
+    SiteUrlInvalid,
+    publish_site_url,
+    read_site_url,
+    require_site_url,
+)
 from boca_socios.events.official_catalog import (
     OfficialCatalogError,
     OfficialNotice,
@@ -47,10 +55,8 @@ from boca_socios.panel.owner_session_store import (
 from boca_socios.panel.owner_sessions import OwnerSession, OwnerSessions
 from boca_socios.panel.passkey import PasskeyAssertion, PasskeyOwnerAuthentication
 from boca_socios.panel.site_url_settings import (
-    SiteUrlInvalid,
     SiteUrlSettingsStore,
     SiteUrlSettingsUnavailable,
-    require_site_url,
 )
 from boca_socios.panel.telegram_pairing_staging import (
     PairingStageConflict,
@@ -491,9 +497,13 @@ class PrivatePanelApplication:
         assert operation is not None
         try:
             self._site_url_settings.save(destination)
-        except SiteUrlSettingsUnavailable:
+            # Keep the private source of truth, then atomically publish the
+            # URL-only read boundary for the cold, unprivileged browser worker.
+            # No worker process is started by configuration changes.
+            publish_site_url(RUNTIME_SITE_URL_PATH, destination)
+        except (SiteUrlSettingsUnavailable, RuntimeSiteUrlUnavailable):
             self._sessions.finish(operation, 503)
-            return _error(start, 503, "No se pudo confirmar la configuración privada.")
+            return _error(start, 503, "Configuración privada del bot no verificable.")
         self._sessions.finish(operation, 303)
         return self._redirect(start, "/configuracion")
 
@@ -855,6 +865,22 @@ class PrivatePanelApplication:
                 return _error(start, 503, _WAKE_LOST)
             return _error(start, result, "Solicitud ya procesada o no autorizada.")
         assert operation is not None
+        if self._bot_control is not None and component == "bot" and target == "start":
+            # Two separate volumes cannot be committed in one filesystem
+            # transaction. If a prior save succeeded but the URL-only mirror
+            # publication failed, do not request a START using the old URL.
+            # A not-yet-configured destination is rejected by the worker's own
+            # cold-start gate; the panel must not infer physical readiness.
+            try:
+                saved_site_url = self._site_url_settings.read()
+                if (
+                    saved_site_url is not None
+                    and read_site_url(RUNTIME_SITE_URL_PATH) != saved_site_url
+                ):
+                    raise RuntimeSiteUrlUnavailable("Boca SITE_URL mirror differs")
+            except (SiteUrlSettingsUnavailable, RuntimeSiteUrlUnavailable):
+                self._sessions.finish(operation, 503)
+                return _error(start, 503, "URL del worker no verificable. Revise Configuración.")
         try:
             if operation.lifecycle_id is not None:
                 intent = self._lifecycle.current()

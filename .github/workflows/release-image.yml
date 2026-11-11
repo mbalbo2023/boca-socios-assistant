@@ -99,7 +99,7 @@ jobs:
           IMAGE: boca-browser-release-validation:${{ github.sha }}
         run: >-
           test "$(docker image inspect --format '{{json .Config.Cmd}}' "$IMAGE")"
-          = '["python","-m","boca_socios.browser.ipc_worker"]'
+          = '["python","-m","boca_socios.browser.ipc_server"]'
       - name: Verify isolated Chromium launch offline without owner modules
         env:
           IMAGE: boca-browser-release-validation:${{ github.sha }}
@@ -196,7 +196,7 @@ jobs:
           IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}
         run: >-
           test "$(docker image inspect --format '{{json .Config.Cmd}}' "$IMAGE")"
-          = '["python","-m","boca_socios.browser.ipc_worker"]'
+          = '["python","-m","boca_socios.browser.ipc_server"]'
       - name: Scan the image that will be published
         run: bash scripts/trivy_scan_image.sh "ghcr.io/mbalbo2023/boca-socios-assistant:sha-$GITHUB_SHA"
       - name: Scan browser image before any publication

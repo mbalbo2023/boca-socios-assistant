@@ -7,13 +7,14 @@ from pathlib import Path
 
 import pytest
 
+from boca_socios.panel import private_http
 from boca_socios.panel.site_url_settings import (
     SiteUrlInvalid,
     SiteUrlSettingsStore,
     SiteUrlSettingsUnavailable,
     require_site_url,
 )
-from test_private_beta_panel import _app, _login, _passkey, _request
+from test_private_beta_panel import FakeHost, _app, _login, _passkey, _request
 
 
 def _owner(tmp_path: Path):
@@ -44,7 +45,16 @@ def test_site_url_configuration_is_owner_only_and_discoverable(tmp_path: Path) -
     assert "form-action 'self'" in headers["Content-Security-Policy"]
 
 
-def test_owner_saves_site_url_and_it_survives_reloading_store(tmp_path: Path) -> None:
+def test_owner_saves_site_url_and_it_survives_reloading_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    published: list[tuple[Path, str]] = []
+    monkeypatch.setattr(
+        private_http,
+        "publish_site_url",
+        lambda path, destination: published.append((path, destination)),
+        raising=False,
+    )
     app, cookie, database = _owner(tmp_path)
     fields = _form_fields(app, cookie)
     status, headers, _ = _request(
@@ -55,6 +65,7 @@ def test_owner_saves_site_url_and_it_survives_reloading_store(tmp_path: Path) ->
         payload={**fields, "SITE_URL": "https://ensayo.boca.internal/ruta"},
     )
     assert status == 303 and headers["Location"] == "/configuracion"
+    assert published == [(private_http.RUNTIME_SITE_URL_PATH, "https://ensayo.boca.internal/ruta")]
     store = SiteUrlSettingsStore.for_database(database)
     assert store.read() == "https://ensayo.boca.internal/ruta"
     assert store.path.stat().st_mode & 0o777 == 0o600
@@ -73,6 +84,16 @@ def test_owner_saves_site_url_and_it_survives_reloading_store(tmp_path: Path) ->
         "http://localhost:99999/",
         "https://sandbox.test/\nInjected:1",
         "https://169.254.169.254/latest/meta-data",
+        "http://2852039166/latest/meta-data",  # Chromium: 169.254.169.254
+        "http://0xa9fea9fe/latest/meta-data",  # Chromium: 169.254.169.254
+        "http://169.254.43518/latest/meta-data",  # Short IPv4 notation
+        "https://sandbox.test:/",  # Empty port is not a destination port
+        "https://sandbox..test/",  # Empty DNS label
+        "https://-sandbox.test/",  # Invalid DNS label
+        "https://sandbox.test?",  # Empty query delimiter remains a query
+        "https://sandbox.test#",  # Empty fragment delimiter remains a fragment
+        "https://api.telegram.org/bot12345:TEST_TOKEN/getUpdates",
+        "https://api.telegram.org/%62ot12345%3ATEST_TOKEN/getUpdates",
     ],
 )
 def test_malformed_and_credential_bearing_urls_are_rejected(url: str) -> None:
@@ -119,7 +140,16 @@ def test_bad_csrf_or_origin_cannot_change_destination(tmp_path: Path) -> None:
     assert SiteUrlSettingsStore.for_database(database).read() is None
 
 
-def test_owner_can_store_public_destination_without_launching_worker(tmp_path: Path) -> None:
+def test_owner_can_store_public_destination_without_launching_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    published: list[str] = []
+    monkeypatch.setattr(
+        private_http,
+        "publish_site_url",
+        lambda _path, destination: published.append(destination),
+        raising=False,
+    )
     app, cookie, database = _owner(tmp_path)
     code, _, page = _request(
         app,
@@ -132,10 +162,78 @@ def test_owner_can_store_public_destination_without_launching_worker(tmp_path: P
         },
     )
     assert code == 303
+    assert published == ["https://soysocio.bocajuniors.com.ar/"]
     assert b"sandbox" not in page
     assert (
         SiteUrlSettingsStore.for_database(database).read() == "https://soysocio.bocajuniors.com.ar/"
     )
+
+
+def test_site_url_publication_failure_fails_closed_without_starting_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from boca_socios.browser.site_url_runtime import RuntimeSiteUrlUnavailable
+
+    def unavailable(_path: Path, _destination: str) -> None:
+        raise RuntimeSiteUrlUnavailable("runtime mirror unavailable")
+
+    monkeypatch.setattr(private_http, "publish_site_url", unavailable, raising=False)
+    app, cookie, _ = _owner(tmp_path)
+    code, _, body = _request(
+        app,
+        "/configuracion",
+        cookie=cookie,
+        method="POST",
+        payload={
+            **_form_fields(app, cookie),
+            "SITE_URL": "https://sandbox.example.com/",
+        },
+    )
+    assert code == 503
+    assert b"Configuraci" in body
+
+
+def test_diverged_persistent_and_worker_url_cannot_submit_bot_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent: list[str] = []
+    provider, key, credential_id = _passkey([0.0])
+    database = tmp_path / "boca.sqlite3"
+    app, db = _app(database, provider, FakeHost(), bot_control=sent.append)
+    cookie = _login(app, key, credential_id)
+    SiteUrlSettingsStore.for_database(database).save("https://new.example.test/")
+    monkeypatch.setattr(
+        private_http,
+        "read_site_url",
+        lambda _path: "https://previous.example.test/",
+        raising=False,
+    )
+    code, _, page = _request(app, "/control", cookie=cookie)
+    assert code == 200
+    form = re.search(rb'<form method="post" action="/control/bot/iniciar">(.*?)</form>', page)
+    assert form is not None
+    fields = {
+        name: re.search(rb'name="' + name.encode() + rb'" value="([^"]+)"', form.group(1))
+        .group(1)
+        .decode()
+        for name in ("csrf", "operation_id")
+    }
+
+    code, _, body = _request(
+        app,
+        "/control/bot/iniciar",
+        cookie=cookie,
+        method="POST",
+        payload=fields,
+    )
+
+    assert code == 503
+    assert b"URL" in body
+    assert sent == []
+    with db.connection() as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM audit_events WHERE action='owner_lifecycle_v1_request_bot_start'"
+        ).fetchone() == (0,)
 
 
 def test_url_settings_fail_closed_on_symlink(tmp_path: Path) -> None:
@@ -148,3 +246,17 @@ def test_url_settings_fail_closed_on_symlink(tmp_path: Path) -> None:
     with pytest.raises(SiteUrlSettingsUnavailable):
         store.save("https://ensayo.test/")
     assert outside.read_text().startswith('{"version":1,')
+
+
+def test_unicode_url_size_limit_does_not_corrupt_persisted_settings(tmp_path: Path) -> None:
+    store = SiteUrlSettingsStore.for_database(tmp_path / "boca.sqlite3")
+    previous = "https://ensayo.test/"
+    store.save(previous)
+    # <512 Unicode characters, but JSON escaping would exceed the 2 KiB
+    # durable settings and URL-only worker-file bounds.
+    too_large = previous + "🚀" * 210
+
+    with pytest.raises(SiteUrlInvalid):
+        store.save(too_large)
+
+    assert store.read() == previous

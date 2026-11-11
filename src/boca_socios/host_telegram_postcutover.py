@@ -38,11 +38,12 @@ _SOURCE = "https://github.com/mbalbo2023/boca-socios-assistant"
 _PROJECT = "boca-socios"
 _DATA = "boca-socios_boca_data"
 _IPC = "boca-socios_boca_browser_ipc"
+_SITE_CONFIG = "boca-socios_boca_site_config"
 _TELEGRAM = "boca-socios_boca_telegram"
 _PRIVATE = "boca-socios_boca_private"
 _BROWSER_EGRESS = "boca-socios_boca_browser_egress"
 _EGRESS = "boca-socios_boca_telegram_egress"
-_VOLUMES = {_DATA, _IPC, _TELEGRAM, "boca-socios_boca_key", "boca-socios_boca_owner"}
+_VOLUMES = {_DATA, _IPC, _SITE_CONFIG, _TELEGRAM, "boca-socios_boca_key", "boca-socios_boca_owner"}
 _ATTEMPT = "boca.socios.browser-ipc-attempt"
 _REVISION = "org.opencontainers.image.revision"
 _CONFIG = "com.docker.compose.config-hash"
@@ -206,6 +207,7 @@ def _stopped_controller_boundary(reader: LifecycleDockerIO, pins: TelegramHostPi
             ("boca-socios_boca_key", "/run/secrets", False),
             ("boca-socios_boca_owner", "/run/owner", False),
             (_IPC, "/run/boca-browser-ipc", False),
+            (_SITE_CONFIG, "/run/boca-site-config", True),
         }
     )
     if (
@@ -285,8 +287,12 @@ def observe_telegram_host(
         )
         if (
             controller.volumes
-            != tuple(sorted({_DATA, _IPC, "boca-socios_boca_key", "boca-socios_boca_owner"}))
-            or worker.volumes != (_IPC,)
+            != tuple(
+                sorted(
+                    {_DATA, _IPC, _SITE_CONFIG, "boca-socios_boca_key", "boca-socios_boca_owner"}
+                )
+            )
+            or worker.volumes != tuple(sorted({_IPC, _SITE_CONFIG}))
             or controller.networks not in ((), (_PRIVATE,))
             or worker.networks not in ((), (_BROWSER_EGRESS,))
             or worker.running
