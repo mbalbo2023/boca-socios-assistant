@@ -1,5 +1,35 @@
 # Boca Socios Assistant
 
+## R174 — desbloqueo del CI, AF_UNIX Linux y Telegram (11/11/2026; NO_GO físico)
+
+El único candidato continúa en el
+[PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478).
+El último HEAD **publicado** antes de esta corrección, `0ae6bf04`,
+registró 1 de 5 workflows SUCCESS: cuatro builds de Chromium fallaron por
+resolución DNS de fuentes Ubuntu antes de ejecutar smoke o escáner.
+El [reporte contemporáneo de los runners](https://github.com/actions/runner-images/issues/15296)
+corrobora el síntoma, sin identificar definitivamente la causa de la ruta DNS
+de BuildKit. El equipo prepara un fallback **solo de build** al espejo
+Ubuntu firmado de Linux Kernel Archives, conservando versiones APT corregidas
+y bloqueo Trivy. Hasta verificarlo en el SHA final, **image-build es NO_GO**.
+Ver [ADR0231](docs/ADR/0231-r174-browser-apt-signed-mirror-fallback.md).
+
+Dos mejoras de alcance independiente fueron integradas **localmente**:
+
+- Telegram rechaza identidades JSON con claves duplicadas en `getMe` y
+  `getChat` usando el parser estricto existente; sender permanece **OFF**
+  hasta rotar la credencial expuesta y comprobar la custodia en el host.
+- Un smoke Linux de Actions comprueba socket AF_UNIX real para UID10002,
+  rechazo UID10003, cliente UID10001 y STOP con cero socket; **no ejecuta
+  navegación ni reservas**. El sandbox local prohíbe AF_UNIX (`EPERM`),
+  de modo que el recibo real del runner sigue pendiente.
+
+El último Cutover protegido falló en `LEGACY_SINGLETON` antes de efectos.
+El `cutover-a-census` solo lectura permanece en el candidato, no en main:
+hasta correrlo en el droplet desconocemos si había cero o más de un
+contenedor original. La BETA integral **no se declara instalada**; no se
+tocaron Porota, otros Docker ni sitios de reservas.
+
 ## R173 — candidato único en revisión; CODE_ONLY y NO_GO en el droplet
 
 La recuperación del parche R172 y la integración de IPC, configuración

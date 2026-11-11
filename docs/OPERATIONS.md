@@ -1,5 +1,48 @@
 # Safe operations — verified evidence and gated procedures
 
+## R174 — secuencia de verificación tras resolver CI (11/11/2026; CODE_ONLY)
+
+El [PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478)
+continúa DRAFT/NO_GO. En el HEAD remoto `0ae6bf04`, cuatro workflows
+fallaron al construir Chromium por resolución DNS de mirrors Ubuntu, antes
+de smoke y Trivy browser. Se ensaya exclusivamente en `Dockerfile.browser`
+el fallback al espejo firmado de Linux Kernel Archives
+([ADR0231](ADR/0231-r174-browser-apt-signed-mirror-fallback.md)); ni un
+mirror disponible vía web ni un test local certifican el build remoto.
+Conservar exactos los pins apt/libapt/brotli, el scan obligatorio y la
+ausencia de `--network host`; no relajar seguridad de host por un fallo del
+runner externo.
+
+El candidato suma una prueba real AF_UNIX en el **runner de CI**:
+UID10002 worker, UID10003 rechazado, UID10001 admitido con respuesta
+`worker_no_go`, SIGTERM y socket ausente. No emplea credenciales, Docker,
+`SITE_URL` ni tráfico externo. La suite local solo valida su harness, pues
+este sandbox restringe `AF_UNIX`; no confundir un éxito futuro del runner
+con aceptación del contenedor rootless en el droplet. Telegram también
+rechaza respuestas JSON con claves ambiguas en ambos GET de identidad;
+el sender continúa OFF, sin token rotado.
+
+**Orden físico pendiente**, condicionado a evidencia fresca:
+
+1. Un único SHA final de PR con suite completa, revisión y workflows
+   `quality-and-tests`, `image-build`, release PR, seguridad y smoke
+   reales, sin saltos por incidencias DNS.
+2. Merge seguro a `main` y verificación postmerge; cero PR abiertos
+   antes del release/Cutover.
+3. Action protegida `cutover-a-census` **READ_ONLY, solo Boca**:
+   `operation=cutover-a-census`, `service=controller`,
+   `resource_budget=1.5cpu-1024m-192pids`, desde `main` por el titular,
+   otros parámetros técnicos vacíos, attempt=1. Su recibo discrimina
+   `0/1/2_PLUS` tras `LEGACY_SINGLETON`; no autoriza por sí mismo APPLY.
+4. Rama de resolución exacta por identidad/lease si el censo encuentra
+   residuo o ausencia, y solo después publicación dual por digest, Cutover
+   V3 protegido y aceptación física del panel, socios, SITE_URL, socket,
+   START/STOP, actividad, limpieza, red y Telegram separado.
+
+No ejecutar comandos Docker/SSH manuales contra el droplet ni usar scripts
+del otro proyecto. Cualquier prueba no efectuada se registra como
+`UNVERIFIED/NO_GO`, no se omite ni se denomina GREEN.
+
 ## R173 — estado vigente del candidato Boca (11/11/2026 ART; NO_GO físico)
 
 El [PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478)

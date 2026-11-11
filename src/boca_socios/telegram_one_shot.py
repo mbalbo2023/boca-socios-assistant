@@ -28,7 +28,11 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from boca_socios.notify.outbox import DeliveryState, NoticeKind, NotificationRequest
 from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
 from boca_socios.notify.telegram_delivery import TelegramDeliveryCoordinator
-from boca_socios.notify.telegram_transport import TelegramSender, TelegramTransport
+from boca_socios.notify.telegram_transport import (
+    TelegramSender,
+    TelegramTransport,
+    _unique_json_object,
+)
 from boca_socios.runtime_probe import CGROUP_ROOT, SELF_CGROUP, _read_ascii
 from boca_socios.telegram_bootstrap import verify as verify_custody
 from boca_socios.telegram_storage_gate import verify as verify_storage
@@ -97,7 +101,7 @@ def _request(
         raw = response.read(4097)
         if response.status != 200 or len(raw) > 4096:
             raise OneShotError("identity_unverified")
-        payload = json.loads(raw)
+        payload = json.loads(raw, object_pairs_hook=_unique_json_object)
         if not isinstance(payload, dict) or payload.get("ok") is not True:
             raise OneShotError("identity_unverified")
         result = payload.get("result")

@@ -38,3 +38,22 @@ Para comprobar el efecto de un toque, la operación `beta-browser-status` de la 
 La instalación conserva el ejecutor mínimo por digest y valida el binding del controlador. Un pedido anterior a este perfil necesita un nuevo toque autenticado; una operación previa reclamada o incierta mantiene su cuarentena. Al completarse un trabajo simulado, el STOP derivado queda ligado al START original. Si se solicita iniciar sin enviar un trabajo, el bot queda disponible hasta que el titular pulse Detener. La categoría nominal de módulos sólo se amplía para nombres públicos de paquetes y archivos ya declarados. Los demás siguen produciendo la categoría genérica.
 
 El paquete completo de esta revisión reúne 46 entradas con 1.036.397 bytes de fuentes y 257.845 bytes comprimidos. Su SHA-256 es `2a91c7efd38e2d67b32c56838543c043b1d1f576d7da2e6b6784af7f794291eb`. Las variantes reducidas de preflight y recuperación tienen 7 entradas cada una y ocupan 108.367 y 44.922 bytes, respectivamente. La verificación del runner contrasta índice, tipo de archivo, tamaño y digest antes de la ejecución. Los límites comprimidos siguen en 512.000 y 128.000 bytes.
+
+## R174 — prueba real de AF_UNIX en runner descartable (11/11/2026, CODE_ONLY)
+
+El nuevo `scripts/check_worker_ipc_linux.py` se invoca desde el trabajo
+`CI / quality-and-tests` de GitHub-hosted Ubuntu para probar un socket
+**AF_UNIX real sin contenedores**: UID 10002 servidor, UID 10003 rechazado
+por `SO_PEERCRED`, UID 10001 admitido únicamente con respuesta
+`worker_no_go`, y STOP propio con socket eliminado. El harness tiene
+presupuesto máximo de cinco segundos y opera solo procesos/archivos de su
+directorio temporal. `sudo` se limita a ese runner descartable para crear
+las identidades de prueba; no se invoca contra droplet, Docker ni otros
+servicios. Tampoco usa `SITE_URL`, Telegram, navegación o credenciales.
+
+La prueba falla cerrada si el recibo o el cleanup son inesperados. El
+sandbox de desarrollo actual devuelve `EPERM` al crear `AF_UNIX`: los
+tests locales certifican el contrato del harness pero **no el socket físico**.
+El paso real en GitHub Actions, vinculado al SHA final, deberá probar el
+transporte; aun si pasa, **no acredita rootless Docker/egreso del worker en
+el droplet, ni reservas**, y `OfflineNoGoExecutor` sigue el predeterminado.
