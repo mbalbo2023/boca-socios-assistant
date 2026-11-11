@@ -25,6 +25,11 @@ REQUEST = b"BOCA_SYNTHETIC_V1_RUN"
 # these frames distinct from REQUEST/SUCCESS even during a simulation.
 PROBE_FIXTURE = b"BOCA_SYNTHETIC_V1_PROBE_FIXTURE"
 FIXTURE_OBSERVED = b"BOCA_SYNTHETIC_V1_FIXTURE_OBSERVED"
+# A separately opted-in single-document HTTP(S) observation is not a
+# transaction.  No status, URL, identity or response body crosses this frame.
+PROBE_SITE = b"BOCA_SYNTHETIC_V1_PROBE_SITE"
+SITE_HTTP_OK = b"BOCA_SYNTHETIC_V1_SITE_HTTP_OK"
+SITE_HTTP_NON_OK = b"BOCA_SYNTHETIC_V1_SITE_HTTP_NON_OK"
 SUCCESS = b"BOCA_SYNTHETIC_V1_RESERVED_IN_SIMULATOR"
 BUSY = b"BOCA_SYNTHETIC_V1_BUSY"
 NO_GO = b"BOCA_SYNTHETIC_V1_NO_GO"
@@ -102,6 +107,9 @@ def framed(payload: bytes) -> bytes:
             REQUEST,
             PROBE_FIXTURE,
             FIXTURE_OBSERVED,
+            PROBE_SITE,
+            SITE_HTTP_OK,
+            SITE_HTTP_NON_OK,
             SUCCESS,
             BUSY,
             NO_GO,

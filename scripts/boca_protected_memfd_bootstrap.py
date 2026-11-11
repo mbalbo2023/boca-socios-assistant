@@ -155,6 +155,23 @@ BINDING_ENTRIES = (
         "boca_socios/host_boca_binding_observe.py",
     }
 )
+# R179 requires *different* SHA-pinned transports: a read-only SQLite witness
+# and a separately admitted transaction. Neither inherits browser code.
+SQLITE_OBSERVE_ENTRIES = BINDING_ENTRIES | {
+    "boca_socios/host_boca_sqlite_identity.py",
+    "boca_socios/host_boca_pair_upgrade_cli.py",
+}
+PAIR_UPGRADE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
+    "compose.beta.yaml",
+    "compose.beta.browser.yaml",
+    "docker/seccomp_profile.json",
+    "boca_socios/host_cutover_stage.py",
+    "boca_socios/host_boca_pair_upgrade_plan.py",
+    "boca_socios/host_boca_pair_upgrade.py",
+    "boca_socios/host_on_demand_replace.py",
+    "boca_socios/host_boca_pair_stage.py",
+    "boca_socios/host_boca_pair_upgrade_backend.py",
+}
 MAX_ZIP = 512_000
 # R138 source bounds match the builder. Each variant checks its own entry set and digest.
 MAX_UNCOMPRESSED = 1_156_096
@@ -166,6 +183,10 @@ PAIR_MAX_ZIP = 64_000
 PAIR_MAX_UNCOMPRESSED = 192_000
 BINDING_MAX_ZIP = 320_000
 BINDING_MAX_UNCOMPRESSED = 900_000
+SQLITE_OBSERVE_MAX_ZIP = 340_000
+SQLITE_OBSERVE_MAX_UNCOMPRESSED = 950_000
+PAIR_UPGRADE_MAX_ZIP = 480_000
+PAIR_UPGRADE_MAX_UNCOMPRESSED = 1_300_000
 PREFLIGHT_MAX_ZIP = 128_000
 PREFLIGHT_MAX_UNCOMPRESSED = 520_000
 W1_MAX_ZIP = 320_000
@@ -185,6 +206,8 @@ def verify(
     census: bool = False,
     pair_observe: bool = False,
     binding_observe: bool = False,
+    sqlite_observe: bool = False,
+    pair_upgrade: bool = False,
 ) -> None:
     """Verify digest, exact transport variant, file types and separate bounds."""
     if (
@@ -197,13 +220,19 @@ def verify(
                 census,
                 pair_observe,
                 binding_observe,
+                sqlite_observe,
+                pair_upgrade,
             )
         )
         > 1
     ):
         raise ValueError("protected Boca bundle modes must be exclusive")
     max_zip = (
-        BINDING_MAX_ZIP
+        PAIR_UPGRADE_MAX_ZIP
+        if pair_upgrade
+        else SQLITE_OBSERVE_MAX_ZIP
+        if sqlite_observe
+        else BINDING_MAX_ZIP
         if binding_observe
         else PAIR_MAX_ZIP
         if pair_observe
@@ -220,7 +249,11 @@ def verify(
         else MAX_ZIP
     )
     max_uncompressed = (
-        BINDING_MAX_UNCOMPRESSED
+        PAIR_UPGRADE_MAX_UNCOMPRESSED
+        if pair_upgrade
+        else SQLITE_OBSERVE_MAX_UNCOMPRESSED
+        if sqlite_observe
+        else BINDING_MAX_UNCOMPRESSED
         if binding_observe
         else PAIR_MAX_UNCOMPRESSED
         if pair_observe
@@ -244,7 +277,11 @@ def verify(
         entries = package.infolist()
         names = [entry.filename for entry in entries]
         allowlisted = (
-            (BINDING_ENTRIES,)
+            (PAIR_UPGRADE_ENTRIES,)
+            if pair_upgrade
+            else (SQLITE_OBSERVE_ENTRIES,)
+            if sqlite_observe
+            else (BINDING_ENTRIES,)
             if binding_observe
             else (PAIR_ENTRIES,)
             if pair_observe
@@ -295,6 +332,8 @@ def main() -> int:
         census = sys.argv[2] == "cutover-a-census"
         pair_observe = sys.argv[2] == "boca-pair-observe"
         binding_observe = sys.argv[2] == "boca-binding-observe"
+        sqlite_observe = sys.argv[2] == "boca-sqlite-inode-observe"
+        pair_upgrade = sys.argv[2] == "boca-pair-upgrade-apply"
         if (
             sys.argv[2] in ("cutover-stage-recover-904", "cutover-image-plan-916")
             and len(sys.argv) != 8
@@ -316,8 +355,16 @@ def main() -> int:
             raise ValueError("Boca pair observer requires one GitHub run ID only")
         if binding_observe and len(sys.argv) != 4:
             raise ValueError("Boca binding observer requires one GitHub run ID only")
+        if sqlite_observe and len(sys.argv) != 4:
+            raise ValueError("Boca SQLite witness requires one GitHub run ID only")
+        if pair_upgrade and len(sys.argv) != 8:
+            raise ValueError("Boca pair upgrade requires run and four reviewed release pins")
         bound = (
-            BINDING_MAX_ZIP
+            PAIR_UPGRADE_MAX_ZIP
+            if pair_upgrade
+            else SQLITE_OBSERVE_MAX_ZIP
+            if sqlite_observe
+            else BINDING_MAX_ZIP
             if binding_observe
             else PAIR_MAX_ZIP
             if pair_observe
@@ -344,6 +391,8 @@ def main() -> int:
             census=census,
             pair_observe=pair_observe,
             binding_observe=binding_observe,
+            sqlite_observe=sqlite_observe,
+            pair_upgrade=pair_upgrade,
         )
         # The memfd is passed to the *same* process via exec. No temporary
         # container, host file or broader Docker resource is ever created.

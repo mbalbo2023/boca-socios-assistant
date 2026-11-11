@@ -852,15 +852,38 @@ class PrivatePanelApplication:
                 session, form_scope=b"owner-lifecycle-v1:bot:stop"
             )
             if start_id is not None and stop_id is not None:
+                site_url_ready = self._site_url_ready()
                 if home:
-                    body = private_ui.home(session.csrf, bot=(lifecycle, start_id, stop_id))
+                    body = private_ui.home(
+                        session.csrf,
+                        bot=(lifecycle, start_id, stop_id),
+                        site_url_ready=site_url_ready,
+                    )
                 else:
-                    body = private_ui.bot_control(lifecycle, session.csrf, start_id, stop_id)
+                    body = private_ui.bot_control(
+                        lifecycle,
+                        session.csrf,
+                        start_id,
+                        stop_id,
+                        site_url_ready=site_url_ready,
+                    )
                 return _response(start, 200, body)
             status, reason = 429, "Demasiados formularios abiertos. Vuelva a ingresar."
         if home:
             return _response(start, 200, private_ui.home(session.csrf, bot_unavailable=True))
         return _error(start, status, reason)
+
+    def _site_url_ready(self) -> bool:
+        """Use the exact START precondition for an advisory panel state.
+
+        A matching controller file and URL-only worker mirror permit a request;
+        they never certify that a worker is running or using this destination.
+        """
+        try:
+            configured = self._site_url_settings.read()
+            return configured is not None and read_site_url(RUNTIME_SITE_URL_PATH) == configured
+        except (SiteUrlSettingsUnavailable, RuntimeSiteUrlUnavailable):
+            return False
 
     def _control_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
         operation_id = self._sessions.new_operation(session)
@@ -919,11 +942,7 @@ class PrivatePanelApplication:
             # transaction. If a prior save succeeded but the URL-only mirror
             # publication failed, do not request a START using the old URL.
             # Also refuse an unconfigured first START before waking the host.
-            try:
-                saved_site_url = self._site_url_settings.read()
-                if saved_site_url is None or read_site_url(RUNTIME_SITE_URL_PATH) != saved_site_url:
-                    raise RuntimeSiteUrlUnavailable("Boca SITE_URL not ready")
-            except (SiteUrlSettingsUnavailable, RuntimeSiteUrlUnavailable):
+            if not self._site_url_ready():
                 self._sessions.finish(operation, 503)
                 return _error(start, 503, "URL del worker no verificable. Revise Configuración.")
         try:

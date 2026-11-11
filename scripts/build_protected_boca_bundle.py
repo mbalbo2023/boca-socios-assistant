@@ -185,6 +185,47 @@ BINDING_MAIN = (
     "from boca_socios.host_boca_binding_observe import main as binding\n"
     "raise SystemExit(binding(['host',sys.argv[2]]))\n"
 ).encode("ascii")
+# R179: separate no-effect SQLite witness and effectful two-CID upgrade.
+# Neither is permitted to reinterpret an R178 bundle or execute browser code.
+SQLITE_OBSERVE_SOURCES = tuple(
+    dict.fromkeys(
+        (
+            *BINDING_SOURCES,
+            "src/boca_socios/host_boca_sqlite_identity.py",
+            "src/boca_socios/host_boca_pair_upgrade_cli.py",
+        )
+    )
+)
+SQLITE_OBSERVE_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 3 or sys.argv[1] != 'boca-sqlite-inode-observe':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_boca_pair_upgrade_cli import main as cli\n"
+    "raise SystemExit(cli(['observe-sqlite',sys.argv[2]]))\n"
+).encode("ascii")
+PAIR_UPGRADE_SOURCES = tuple(
+    dict.fromkeys(
+        (
+            *SQLITE_OBSERVE_SOURCES,
+            "compose.beta.yaml",
+            "compose.beta.browser.yaml",
+            "docker/seccomp_profile.json",
+            "src/boca_socios/host_cutover_stage.py",
+            "src/boca_socios/host_boca_pair_upgrade_plan.py",
+            "src/boca_socios/host_boca_pair_upgrade.py",
+            "src/boca_socios/host_on_demand_replace.py",
+            "src/boca_socios/host_boca_pair_stage.py",
+            "src/boca_socios/host_boca_pair_upgrade_backend.py",
+        )
+    )
+)
+PAIR_UPGRADE_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 7 or sys.argv[1] != 'boca-pair-upgrade-apply':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_boca_pair_upgrade_cli import main as cli\n"
+    "raise SystemExit(cli(['apply',*sys.argv[2:]]))\n"
+).encode("ascii")
 PREFLIGHT_MAIN = (
     "import sys\n"
     "if len(sys.argv) != 9 or sys.argv[1] != 'cutover-worker-preflight':\n"
@@ -271,6 +312,10 @@ PAIR_MAX_SOURCE_BYTES = 192_000
 PAIR_MAX_ARCHIVE_BYTES = 64_000
 BINDING_MAX_SOURCE_BYTES = 900_000
 BINDING_MAX_ARCHIVE_BYTES = 320_000
+SQLITE_OBSERVE_MAX_SOURCE_BYTES = 950_000
+SQLITE_OBSERVE_MAX_ARCHIVE_BYTES = 340_000
+PAIR_UPGRADE_MAX_SOURCE_BYTES = 1_300_000
+PAIR_UPGRADE_MAX_ARCHIVE_BYTES = 480_000
 PREFLIGHT_MAX_SOURCE_BYTES = 520_000
 PREFLIGHT_MAX_ARCHIVE_BYTES = 128_000
 W1_MAX_SOURCE_BYTES = 900_000
@@ -319,6 +364,8 @@ def build(
     census: bool = False,
     pair_observe: bool = False,
     binding_observe: bool = False,
+    sqlite_observe: bool = False,
+    pair_upgrade: bool = False,
 ) -> str:
     """Write one deterministic, explicitly allowlisted runner-only archive."""
     if (
@@ -331,12 +378,24 @@ def build(
                 census,
                 pair_observe,
                 binding_observe,
+                sqlite_observe,
+                pair_upgrade,
             )
         )
         > 1
     ):
         raise ValueError("Boca protected bundle modes must be exclusive")
-    if binding_observe:
+    if pair_upgrade:
+        files: dict[str, bytes] = {"__main__.py": PAIR_UPGRADE_MAIN, **HOST_ONLY_INIT}
+        sources: tuple[str, ...] = PAIR_UPGRADE_SOURCES
+        max_source = PAIR_UPGRADE_MAX_SOURCE_BYTES
+        max_archive = PAIR_UPGRADE_MAX_ARCHIVE_BYTES
+    elif sqlite_observe:
+        files = {"__main__.py": SQLITE_OBSERVE_MAIN, **HOST_ONLY_INIT}
+        sources = SQLITE_OBSERVE_SOURCES
+        max_source = SQLITE_OBSERVE_MAX_SOURCE_BYTES
+        max_archive = SQLITE_OBSERVE_MAX_ARCHIVE_BYTES
+    elif binding_observe:
         files: dict[str, bytes] = {"__main__.py": BINDING_MAIN, **HOST_ONLY_INIT}
         sources: tuple[str, ...] = BINDING_SOURCES
         max_source = BINDING_MAX_SOURCE_BYTES
@@ -391,6 +450,8 @@ def build(
             census,
             pair_observe,
             binding_observe,
+            sqlite_observe,
+            pair_upgrade,
         )
     )
     for rel in sources:
@@ -461,12 +522,14 @@ def main() -> int:
     variant.add_argument("--census", action="store_true")
     variant.add_argument("--pair-observe", action="store_true")
     variant.add_argument("--binding-observe", action="store_true")
+    variant.add_argument("--sqlite-observe", action="store_true")
+    variant.add_argument("--pair-upgrade", action="store_true")
     parser.add_argument("repository_root", type=Path)
     parser.add_argument("runner_target", type=Path)
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, binding_observe=args.binding_observe)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade)}"
     )
     return 0
 

@@ -21,7 +21,10 @@ from boca_socios.browser.ipc_protocol import (
     MAX_FRAME_BYTES,
     NO_GO,
     PROBE_FIXTURE,
+    PROBE_SITE,
     REQUEST,
+    SITE_HTTP_NON_OK,
+    SITE_HTTP_OK,
     SOCKET_PATH,
     SUCCESS,
     WORKER_UID,
@@ -78,7 +81,16 @@ class UnixSyntheticBrowser:
         await self._exchange(PROBE_FIXTURE, FIXTURE_OBSERVED)
         return "fixture_observed"
 
-    async def _exchange(self, request: bytes, expected: bytes) -> None:
+    async def probe_site_readonly(self) -> str:
+        """Explicit, status-only GET observation; never a ticket confirmation.
+
+        Site navigation is opt-in in the worker, not in this controller client.
+        Its response carries no URL, HTTP body, cookie or Queue-it token.
+        """
+        result = await self._exchange(PROBE_SITE, frozenset({SITE_HTTP_OK, SITE_HTTP_NON_OK}))
+        return "site_http_ok" if result == SITE_HTTP_OK else "site_http_non_ok"
+
+    async def _exchange(self, request: bytes, expected: bytes | frozenset[bytes]) -> bytes:
         active = asyncio.current_task()
         if active is None:
             raise SyntheticIPCError("client_loop_unavailable")
@@ -90,7 +102,7 @@ class UnixSyntheticBrowser:
             self._active = active
         deadline = monotonic() + self._timeout
         writer: asyncio.StreamWriter | None = None
-        success = False
+        accepted: bytes | None = None
         try:
             _check_controller_identity()
             original = socket_identity(self._path, uid=WORKER_UID)
@@ -110,8 +122,9 @@ class UnixSyntheticBrowser:
                     reply = await read_frame(reader)
                     if await reader.read(1) != b"":
                         raise SyntheticIPCError("ipc_response_unverified")
-                    if reply == expected:
-                        success = True
+                    allowed = frozenset({expected}) if isinstance(expected, bytes) else expected
+                    if reply in allowed:
+                        accepted = reply
                     elif reply == BUSY:
                         raise SyntheticIPCError("worker_busy")
                     elif reply == NO_GO:
@@ -141,9 +154,9 @@ class UnixSyntheticBrowser:
         # No further await after this final gate. Even a swallowed task
         # cancellation or timeout cannot authorize a late synthetic success.
         with self._gate:
-            if not success or self._closed or active.cancelling() or monotonic() >= deadline:
+            if accepted is None or self._closed or active.cancelling() or monotonic() >= deadline:
                 raise SyntheticIPCError("client_closed_or_expired")
-            return
+            return accepted
 
     async def close(self) -> None:
         """Fence results and bound cancellation; never launch or stop containers."""
