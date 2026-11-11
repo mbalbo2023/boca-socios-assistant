@@ -1,5 +1,40 @@
 # Safe operations — verified evidence and gated procedures
 
+## R176 — IPC del runner y condiciones para abandonar el último NO_GO
+
+**Evidencia R175 SHA `a829b0022`: 5/6 workflows SUCCESS**: panel,
+Telegram PR contract, seguridad de ambas imágenes, release PR validation
+y first-deploy PR/runtime smoke. El job `image-build` de CI pasó; el
+único FAIL fue `quality-and-tests`, aunque su suite **6819+34**, Ruff,
+mypy, transportes AF_UNIX anteriores y otras comprobaciones pasaron.
+
+El recibo nuevo fue
+`BOCA_WORKER_IPC_LINUX state=NO_GO stage=WORKER_BIND` (~0,2s).
+La sustitución por `/usr/bin/python3` no bastó: sospecha actual,
+**no probada por stderr del hijo**, falta de acceso a
+`/home/runner/work/...` para UID10002. La corrección R176 solo altera
+el harness **del runner desechable**, no el worker de producción:
+
+- Verificar que `/tmp` sea directorio root:root y modo sticky `01777`;
+  crear un nombre temporal Boca privado y root-owned.
+- Copiar once archivos públicos fijos de IPC con identidad byte a byte;
+  sin `synthetic.py`, `ipc_worker.py`, SITE_URL, secretos ni paquetes ajenos.
+  Directorios de código 0555, archivos 0444, PYTHONPATH/entrypoint en
+  esa copia, no bajo el checkout dueño del runner.
+- Conservar los tres procesos UID10001/10002/10003, el socket worker
+  UID10002/mode0622/directorio0711, autenticación SO_PEERCRED, respuesta
+  NO_GO y SIGTERM sobre PID propio. Código fijo de error distingue
+  `WORKER_BIND_CHILD_EXIT`, `WORKER_BIND_INODE`, `WORKER_BIND_TIMEOUT`.
+- Verificar en nuevo SHA de Actions: recibo `BOCA_WORKER_IPC_LINUX
+  state=PASS peer=UID10001_10002 stranger=DENIED result=NO_GO
+  stop=VERIFIED`; sin ese recibo **NO_GO**, nunca ocultar el test.
+
+Con 6/6 Actions exactas GREEN y revisión, promover PR protegido a `main`.
+Solo después el titular puede despachar `cutover-a-census` READ_ONLY Boca
+en su entorno protegido; su resultado `0/1/2_PLUS` no autoriza APPLY.
+Mantener `LEGACY_SINGLETON` como bloqueo físico hasta evidencia. Telegram
+sender OFF, ningún ticket real, Porota/otros contenedores intocables.
+
 ## R175 — cierre de los dos stoppers del runner, antes de cualquier host
 
 **Snapshot R174 exacto:** candidato PR #478, SHA `f58aaace9`, seis Actions

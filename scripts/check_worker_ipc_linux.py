@@ -33,10 +33,39 @@ CONTROLLER_UID = 10001
 STRANGER_UID = 10003
 TIMEOUT_SECONDS = 5.0
 
+# This runner-only fixture includes the byte-identical transport and its
+# stdlib-only imports. No owner navigation modules, credentials or site data.
+# GitHub may use a non-traversable /home/runner/work ancestor after UID drop;
+# child processes execute only this root-owned, readonly /tmp copy.
+_FIXTURE_FILES = (
+    "scripts/check_worker_ipc_linux.py",
+    "src/boca_socios/__init__.py",
+    "src/boca_socios/browser/__init__.py",
+    "src/boca_socios/browser/ipc_client.py",
+    "src/boca_socios/browser/ipc_protocol.py",
+    "src/boca_socios/browser/ipc_server.py",
+    "src/boca_socios/browser/activity_events.py",
+    "src/boca_socios/browser/contracts.py",
+    "src/boca_socios/browser/worker_health.py",
+    "src/boca_socios/domain/__init__.py",
+    "src/boca_socios/domain/policy.py",
+)
+
 # Public runner-only failure receipts; none contains a URL, path, PID, token,
 # user-provided exception or the dropped-UID child's captured stderr.
 _STAGES = frozenset(
-    {"SETUP", "WORKER_SPAWN", "WORKER_BIND", "STRANGER", "CONTROLLER", "STOP", "CLEANUP"}
+    {
+        "SETUP",
+        "WORKER_SPAWN",
+        "WORKER_BIND",
+        "WORKER_BIND_CHILD_EXIT",
+        "WORKER_BIND_INODE",
+        "WORKER_BIND_TIMEOUT",
+        "STRANGER",
+        "CONTROLLER",
+        "STOP",
+        "CLEANUP",
+    }
 )
 
 _RECEIPTS = {
@@ -167,27 +196,88 @@ def _remaining(deadline: float) -> float:
     return seconds
 
 
-def _spawn_args(mode: str, path: Path) -> list[str]:
-    return [sys.executable, str(Path(__file__).resolve()), mode, str(path)]
+def _safe_temp_base() -> Path:
+    """Require GitHub's root-owned sticky shared temp mount for UID drops."""
+    base = Path("/tmp")  # noqa: S108 - attest root-owned 01777 before mkdtemp
+    info = base.lstat()
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or info.st_uid != 0
+        or info.st_gid != 0
+        or stat.S_IMODE(info.st_mode) != 0o1777
+    ):
+        raise SmokeFailure("untrusted runner temporary mount")
+    return base
 
 
-def _child_env() -> dict[str, str]:
+def _stage_fixture(root: Path) -> Path:
+    """Copy only immutable, fixed Boca IPC modules for separate Linux UIDs."""
+    if root.is_symlink() or not root.is_dir():
+        raise SmokeFailure("unreviewed fixture directory")
+    root.chmod(0o755)
+    trusted_root = Path(__file__).resolve().parents[1]
+    created_dirs: set[Path] = set()
+    for relative in _FIXTURE_FILES:
+        source = trusted_root / relative
+        if source.is_symlink() or not source.is_file() or source.stat().st_size > 200_000:
+            raise SmokeFailure("unreviewed fixture source")
+        destination = root / relative
+        destination.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+        created_dirs.add(destination.parent)
+        data = source.read_bytes()
+        destination.write_bytes(data)
+        destination.chmod(0o444)
+        if destination.read_bytes() != data:
+            raise SmokeFailure("fixture copy not verified")
+    # UID10001/2/3 can traverse but cannot mutate the code being measured.
+    for directory in sorted(created_dirs, key=lambda item: len(item.parts), reverse=True):
+        directory.chmod(0o555)
+        for parent in directory.parents:
+            if parent == root:
+                break
+            if root in parent.parents:
+                parent.chmod(0o555)
+    return root / _FIXTURE_FILES[0]
+
+
+def _spawn_args(mode: str, path: Path, script: Path | None = None) -> list[str]:
+    return [
+        sys.executable,
+        str(Path(__file__).resolve() if script is None else script),
+        mode,
+        str(path),
+    ]
+
+
+def _child_env(source_directory: Path | None = None) -> dict[str, str]:
     """Intentionally do not propagate Actions secrets, proxies or tokens."""
     return {
         "PATH": "/usr/bin:/bin",
-        "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+        "PYTHONPATH": str(
+            Path(__file__).resolve().parents[1] / "src"
+            if source_directory is None
+            else source_directory
+        ),
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONUNBUFFERED": "1",
         "LC_ALL": "C.UTF-8",
     }
 
 
-def _run_child(mode: str, path: Path, uid: int, deadline: float) -> None:
+def _run_child(
+    mode: str,
+    path: Path,
+    uid: int,
+    deadline: float,
+    *,
+    script: Path | None = None,
+    source_directory: Path | None = None,
+) -> None:
     result = subprocess.run(  # noqa: S603 - fixed Python binary and child role
-        _spawn_args(mode, path),
+        _spawn_args(mode, path, script),
         stdin=subprocess.DEVNULL,
         capture_output=True,
-        env=_child_env(),
+        env=_child_env(source_directory),
         user=uid,
         group=uid,
         extra_groups=(),
@@ -205,9 +295,14 @@ def _run_harness() -> None:
     deadline = time.monotonic() + TIMEOUT_SECONDS
     stage = "SETUP"
     try:
-        with tempfile.TemporaryDirectory(prefix="boca-worker-ipc-ci-") as temporary:
+        with tempfile.TemporaryDirectory(
+            prefix="boca-worker-ipc-ci-", dir=_safe_temp_base()
+        ) as temporary:
             root = Path(temporary)
-            root.chmod(0o755)
+            # A reviewed immutable fixture avoids relying on checkout access
+            # under a dropped UID while preserving byte-identical Boca IPC.
+            script = _stage_fixture(root)
+            source_directory = root / "src"
             ipc_directory = root / "ipc"
             ipc_directory.mkdir(mode=0o711)
             os.chown(ipc_directory, WORKER_UID, WORKER_UID)
@@ -217,24 +312,50 @@ def _run_harness() -> None:
             try:
                 stage = "WORKER_SPAWN"
                 worker = subprocess.Popen(  # noqa: S603 - fixed Python worker entrypoint
-                    _spawn_args("--worker", path),
+                    _spawn_args("--worker", path, script),
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    env=_child_env(),
+                    env=_child_env(source_directory),
                     user=WORKER_UID,
                     group=WORKER_UID,
                     extra_groups=(),
                 )
                 stage = "WORKER_BIND"
-                while not socket_ready(path):
+                while True:
+                    try:
+                        ready = socket_ready(path)
+                    except SmokeFailure:
+                        stage = "WORKER_BIND_INODE"
+                        raise
+                    if ready:
+                        break
                     if worker.poll() is not None:
+                        stage = "WORKER_BIND_CHILD_EXIT"
                         raise SmokeFailure("offline IPC listener exited before bind")
-                    time.sleep(min(0.02, _remaining(deadline)))
+                    try:
+                        time.sleep(min(0.02, _remaining(deadline)))
+                    except SmokeFailure:
+                        stage = "WORKER_BIND_TIMEOUT"
+                        raise
                 stage = "STRANGER"
-                _run_child("--stranger", path, STRANGER_UID, deadline)
+                _run_child(
+                    "--stranger",
+                    path,
+                    STRANGER_UID,
+                    deadline,
+                    script=script,
+                    source_directory=source_directory,
+                )
                 stage = "CONTROLLER"
-                _run_child("--controller", path, CONTROLLER_UID, deadline)
+                _run_child(
+                    "--controller",
+                    path,
+                    CONTROLLER_UID,
+                    deadline,
+                    script=script,
+                    source_directory=source_directory,
+                )
                 stage = "STOP"
                 if worker.poll() is not None:
                     raise SmokeFailure("offline IPC worker exited before STOP")

@@ -1,5 +1,33 @@
 # Boca Socios Assistant
 
+## R176 — corrección de acceso cross-UID del runner (11/11/2026; NO_GO físico)
+
+El candidato continúa en el **único** [PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478),
+sin tocar `main`. El HEAD R175 `a829b0022` confirmó **5/6 workflows
+SUCCESS**: panel, contrato Telegram, escaneo Chromium/controlador, release
+PR y primer despliegue de laboratorio. El sexto, CI, aprobó 6819 pruebas
+Python más 34 subpruebas, Ruff/mypy y el socket anterior, pero el nuevo
+ensayo multiusuario registró `BOCA_WORKER_IPC_LINUX state=NO_GO
+stage=WORKER_BIND` en 0,2 segundos. Ningún host fue modificado.
+
+El stopper APT **ya se resolvió con evidencia del runner**: tras fallar
+DNS Ubuntu, el fallback R175 cambió al espejo firmado de Linux Kernel,
+descargó `InRelease` de cuatro pockets Noble, compiló Chromium y pasó
+Trivy. No se relajaron pins, firmas ni escaneo.
+
+R176 trata el único rojo restante: el workspace GitHub pertenece al UID
+del runner y puede no ser legible/traversable para UID10002. El smoke
+descartable prepara un directorio temporal root-owned, copia **exactamente
+11 archivos IPC revisados byte por byte**, con directorios 0555 y archivos
+0444, y ejecuta allí `/usr/bin/python3`. Se excluyen los módulos blackbox,
+credenciales y sitios; no altera los tres UID, el `SO_PEERCRED` ni el
+contrato de STOP. Si falla otra vez, separa CHILD_EXIT/INODE/TIMEOUT.
+
+La rama R176 aislada y el lote integrado aprobaron **6826 tests +34
+subtests**, Ruff, mypy y política. Falta certificar el SHA final en Actions
+antes de merge, censo,
+release instalado o Cutover. [Handoff R176](docs/handoffs/2026-11-11-r176-ipc-runner-fixture.md).
+
 ## R175 — dos stoppers físicos confirmados en Actions; fix-forward (11/11/2026)
 
 El candidato continúa **únicamente** en el

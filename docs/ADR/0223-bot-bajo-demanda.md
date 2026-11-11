@@ -88,3 +88,45 @@ modo socket 0622, devolución `NO_GO` y limpieza propia.
 transporte AF_UNIX, rechazo del tercero y STOP; ni la prueba local del parser
 ni la revisión de código equivalen a este recibo real. No se habilita
 navegador, Telegram, Cutover ni reservas.
+
+## R176 — WORKER_BIND en runner: árbol inmutable legible entre UID
+
+Las nuevas Actions R175 sobre SHA
+`a829b0022e4c51d175a4dfd6af2c9be46c595705` corrigieron los
+problemas Chromium de CI: cinco de los seis workflows terminaron SUCCESS,
+incluida la seguridad de las imágenes. La única falla restante es
+[CI #43054438126](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43054438126),
+paso IPC multiusuario: `BOCA_WORKER_IPC_LINUX state=NO_GO
+stage=WORKER_BIND`, a los ~0,2 s. Ejecutó `/usr/bin/python3`, de modo
+que el loader de `setup-python` no basta para explicar la falla. El
+recibo **no identifica** si el proceso salió por importación o por una
+invariante del socket; en ambos casos sigue NO_GO.
+
+Los usuarios de fixture UID10001/10002/10003 no son dueños del checkout
+en `/home/runner/work`; GitHub puede conservar ancestros o `TMPDIR`
+que impiden atravesar el origen, aun con un Python del sistema. Como
+fix-forward acotado R176, el harness root del runner comprueba que
+`/tmp` sea un directorio root:root con sticky bit 01777, crea allí su
+directorio único mediante `TemporaryDirectory`, y **copia únicamente
+11 archivos de Python explícitamente revisados** desde el checkout:
+el propio harness y 10 módulos/imports IPC y dominio de biblioteca
+estándar. Nunca copia `synthetic.py`, `ipc_worker.py`, bases, credenciales,
+URLs, configuraciones ni otros paquetes. Comprueba igualdad de bytes,
+restringe archivos a 0444 y directorios de código a 0555, bajo propiedad
+del root del runner. Los tres procesos descartables ejecutan la misma
+versión del código con `PYTHONPATH` limitado a esta copia; la carpeta
+de socket permanece UID10002, 0711, y la credencial de par `SO_PEERCRED`
+permanece activa. La copia de prueba no es imagen distribuible ni altera
+el worker real.
+
+Para un nuevo fallo, el recibo distingue además
+`WORKER_BIND_CHILD_EXIT`, `WORKER_BIND_INODE` y
+`WORKER_BIND_TIMEOUT`, nunca stderr de hijos ni rutas privadas.
+Solo se retiran el proceso hijo creado por este harness y el directorio
+temporal del intento, sin Docker ni acciones de host. En caso de
+violación de permisos, origen no reconocido o copia distinta, se cierra
+con NO_GO antes de levantar un listener.
+
+**Criterio físico:** ejecutar el smoke en Actions exact-SHA, comprobar
+rejección UID10003, respuesta NO_GO a UID10001, STOP UID10002 y ausencia
+del socket; no confundir con Cutover, navegador funcional ni reservas.
