@@ -1,0 +1,2565 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 0c4737d..7d47948 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -126,6 +126,22 @@ orchestrator; if achieving that requires a change to the protected navigation
+ logic, stop and obtain a separate exact-scope owner decision. A healthy
+ controller alone never certifies the browser worker or Chromium.
+ 
++**R172 owner amendment (2026-11-11, supersedes only the earlier code-change
++prohibition):** the owner explicitly authorizes reading, adapting, correcting,
++testing and wiring `synthetic.py` and `ipc_worker.py` when needed to resolve
++their actual startup/IPC contract; they are no longer categorically exempt
++from relevant quality checks. Prefer a separate bounded adapter when it
++preserves working code; never assert the blackbox's token observation equals
++`RESERVED_IN_SIMULATOR` or imply a confirmed booking. Runtime `SITE_URL` is
++controlled from the passkey-protected 8443 configuration page and transported
++through a dedicated, URL-only read-only worker volume (no keys/DB), applied
++on next worker start. Public/private URL *class* is not a rejection criterion;
++credentialed URLs, metadata destinations, malformed URLs and unauthorized
++navigation remain rejected. The worker may have outbound Internet only on
++its independently attested Boca rootless bridge; no extra published ports or
++foreign Docker effects. This authorization does not turn on real tickets,
++payments or reservations; no physical claim until tested on the exact droplet.
++
+ Site navigation is **entirely owner-operated**. Agents must not launch or
+ automate real Boca/Queue-it navigation in any browser on the droplet or on
+ another surface, or dispatch diagnostics that navigate the site. The Boca
+diff --git a/Dockerfile.browser b/Dockerfile.browser
+index 786305e..2365675 100644
+--- a/Dockerfile.browser
++++ b/Dockerfile.browser
+@@ -108,4 +108,4 @@ USER 10002:10002
+ # The worker must prove cgroups, UID10002 and Boca-only network/IPC before activation.
+ # With no specifically prepared IPC mount it refuses startup; no IP listener.
+ # Offline CI smoke overrides CMD with its explicit measurement command.
+-CMD ["python", "-m", "boca_socios.browser.ipc_worker"]
++CMD ["python", "-m", "boca_socios.browser.ipc_server"]
+diff --git a/compose.beta.browser.yaml b/compose.beta.browser.yaml
+index 625b244..70aaa00 100644
+--- a/compose.beta.browser.yaml
++++ b/compose.beta.browser.yaml
+@@ -18,6 +18,8 @@ services:
+       boca.socios.browser-ipc-attempt: ${BOCA_BROWSER_ATTEMPT_ID:?single_reviewed_GitHub_run_required}
+     volumes:
+       - boca_browser_ipc:/run/boca-browser-ipc:ro
++      # Minimal destination-only configuration; never mount the member DB in worker.
++      - boca_site_config:/run/boca-site-config
+       - type: bind
+         source: ${BOCA_CONTROL_DIR:?reviewed_Boca_socket_directory_required}
+         target: /run/boca-bot-control
+@@ -27,7 +29,7 @@ services:
+ 
+   browser-worker:
+     image: ${BOCA_BROWSER_IMAGE:?reviewed_browser_digest_required}
+-    command: ["python", "-m", "boca_socios.browser.ipc_worker"]
++    command: ["python", "-m", "boca_socios.browser.ipc_server"]
+     user: "10002:10002"
+     init: true
+     restart: "no"
+@@ -42,6 +44,7 @@ services:
+       boca.socios.browser-ipc-attempt: ${BOCA_BROWSER_ATTEMPT_ID:?single_reviewed_GitHub_run_required}
+     volumes:
+       - boca_browser_ipc:/run/boca-browser-ipc
++      - boca_site_config:/run/boca-site-config:ro
+     networks:
+       - boca_browser_egress
+     cgroup: private
+@@ -78,6 +81,10 @@ volumes:
+   boca_browser_ipc:
+     external: true
+     name: boca-socios_boca_browser_ipc
++  # Preprovisioned by the dedicated Boca-only host operation, UID10001.
++  boca_site_config:
++    external: true
++    name: boca-socios_boca_site_config
+ 
+ networks:
+   # External Internet is required by the owner. Keep the worker on its OWN
+diff --git a/docs/quality/2026-11-11-r172-db-telegram-reuse-audit.md b/docs/quality/2026-11-11-r172-db-telegram-reuse-audit.md
+new file mode 100644
+index 0000000..3e68a0a
+--- /dev/null
++++ b/docs/quality/2026-11-11-r172-db-telegram-reuse-audit.md
+@@ -0,0 +1,114 @@
++# R172 — Reutilización de SQLite de socios y Telegram (CODE_ONLY)
++
++**Fecha:** 2026-11-11 ART.
++
++**Referencia auditada:** `origin/main=361e3ff42c44e1b8699d7a3e2d158c9a367b2f86` (R171).
++**Alcance:** lectura de contratos de código y políticas; ningún host, GitHub
++Actions, base real, token, credencial, sitio Boca ni API de Telegram fue
++consultado. Este informe no acredita el estado físico presente del droplet.
++
++## Veredicto contra duplicación
++
++La base de socios **ya existe** en el código revisado. **No** importar el
++adaptador SQLite/contraseñas en claro del ZIP V3 ni desarrollar un segundo
++repositorio de usuarios. Tampoco corresponde crear otro transporte Telegram:
++hay una cadena explícita de emparejamiento cifrado, outbox durable,
++coordinación de entrega, transporte y worker opt-in. El ZIP V3 suministrado
++contiene un **token Telegram expuesto** según `AGENTS.md`; su dueño debe
++**revocarlo y rotarlo** antes de cualquier futura activación. No inspeccionar,
++repetir, registrar ni distribuir su valor.
++
++| Capacidad existente | Rutas concretas | Estado demostrable |
++|---|---|---|
++| Esquema de socios y una intención por socio/evento | `storage/migrations/0001_initial.sql`, `storage/database.py` | Código SQLite con claves y unicidad; no inventario host |
++| Bóveda AES-256-GCM, nonce individual, AAD por `member_id`, clave externa | `security/credential_vault.py`, `security/key_custody.py` | Código; no lectura de claves |
++| Alta, rotación y revocación atómicas, con auditoría | `security/enrollment.py`, `integration/operational.py` | Integración del servicio ya presente |
++| Panel privado: alta/listado/detalle de socios, acciones sobre credencial | `panel/enrollment_http.py`, `panel/private_http.py`, `panel/private_ui.py`, `panel/members.py` | Rutas y renderizado implementados; aceptación física nueva pendiente |
++| Outbox y aviso generado por simulación | `storage/migrations/0002_notification_outbox.sql`, `notify/sqlite_outbox.py`, `integration/offline.py`, `integration/beta.py` | Código durable compartido; avisos sin datos personales |
++| Setup privado y stage Telegram cifrado con firma passkey | `panel/telegram_setup_ui.py`, `panel/telegram_pairing_staging.py`, `panel/private_http.py`, `runtime._configured_telegram_pairing_stager` | Etapa opt-in con resultado `STAGED_PENDING_PROTECTED_CUTOVER`; **no activa sender** |
++| Entrega Telegram con cerca previa, resultado ambiguo sin reenvío | `storage/migrations/0007_telegram_delivery.sql`, `notify/telegram_delivery.py`, `notify/telegram_transport.py`, `notify/telegram_worker.py` | Sender explícito independiente del controller, limitado a textos sintéticos; **no hay recibo físico de envío** |
++| One-shot/host protegidos | `telegram_one_shot.py`, `host_telegram_postcutover.py`, `host_telegram_owner_stage.py`, `host_telegram_active_helper_topology.py` | Abstracciones de custodia/atestación; no son instalación ni aprobación |
++
++El runtime ya construye `MemberEnrollmentService`, conserva su ruta de
++clave externa, y el controlador usa `MemberDirectory` en `GET /socios`.
++El coordinador de simulación incorpora `StaticOutboxAdapter` para encolar
++avisos; `notify/telegram_delivery.py` puede consumir **ese mismo** outbox
++mediante el proceso optativo separado. No hace falta reimplementar ninguna
++de estas tres piezas para integrar el bot bajo demanda.
++
++## Bloqueantes concretos y propietarios
++
++1. **IPC/Chromium — dueño de integración worker:** `AGENTS.md` registra que
++   el entrypoint protegido `ipc_worker.py` no proporciona el servidor Unix IPC
++   esperado. Corregir `MISSING_BARE_SYNTHETIC` únicamente resuelve un import:
++   no basta para arrancar el protocolo ni justifica navegar el sitio real.
++   Se requiere adaptación de transporte limitada a simulación, sin tocar
++   algoritmos de navegación ni ensayar con Boca/Queue-it. Este worker **no
++   es** `notify/telegram_worker.py`.
++2. **Datos — dueño de persistencia/infra Boca:** el destino lógico es
++   `/data/boca.sqlite3` en el volumen Boca y la clave está fuera de la DB.
++   Deben verificarse *físicamente* identidad, esquema, montajes y custodia
++   mediante el flujo protegido antes de cualquier migración o aceptación;
++   código y tests offline no acreditan su existencia actual.
++3. **Telegram — dueño de integración/custodia:** el workflow existente
++   `.github/workflows/boca-first-deploy.yml`, operación `telegram-activate`,
++   publica `BOCA_TELEGRAM_POSTCUTOVER state=NO_GO ... sender=OFF` y ejecuta
++   `exit 1` deliberado. Falta cerrar el enlace físico protegido *same lease*,
++   destino verificado, custodia privada, egress, pruebas de API y recibo
++   humano. No suprimir la barrera para conseguir un verde aparente.
++4. **Secreto Telegram — titular:** el token del ZIP V3 debe rotarse antes de
++   configurar la identidad efectiva del bot; el stage cifrado no demuestra
++   rotación y el correo, GitHub, CI y los logs nunca deben recibir el token.
++5. **Operación — arquitectura/QA:** el proceso `telegram_worker.py` es un
++   despachador periódico **separado** de la operación `bot` START/STOP del
++   panel. Si se exige emisión estrictamente bajo demanda, evaluar el enlace
++   con el lifecycle existente o el mecanismo `telegram_one_shot.py` antes
++   de habilitar un proceso permanente. No crear otro worker por defecto.
++
++## Regresión incorporada en R172
++
++`tests/test_r172_db_telegram_reuse_contract.py` comprueba **solo el código**:
++
++- El esquema revisado de `credentials` contiene identificador, versión de
++  clave, nonce y ciphertext, sin columna de contraseña en claro; el alta
++  llama a la bóveda AES-GCM y persiste únicamente el sobre sellado.
++- El runtime conserva el stage privado opt-in, y el coordinador y el sender
++  siguen compartiendo la cola durable de avisos sintéticos sin importar el
++  emisor directamente al controlador.
++- `telegram-activate` conserva `NO_GO`, `host=untouched`, `sender=OFF` y el
++  `exit 1`; `AGENTS.md` mantiene la obligación de rotar el token comprometido;
++  el panel no convierte `STAGED` en `connected=true`.
++
++**Límites del test:** inspección selectiva del esquema, AST y contratos de
++fuente; no pretende escanear secretos fuera del repositorio, verificar
++rotación efectiva, demostrar que todos los adaptadores futuros son seguros,
++ejecutar la Action ni validar Telegram, Docker o la base real.
++
++**Verificación local de este trabajo:** `test_r172_db_telegram_reuse_contract.py`
++obtuvo **3 PASS**; baseline focal de alta/Telegram **35 PASS +5 subtests**;
++`ruff check .`, `ruff format --check .` (809 archivos), `mypy src` (150
++archivos) y `scripts/check_repo_policy.py` quedaron **PASS**. El full suite
++`uv run pytest -q` registró **6630 PASS +34 subtests y 1 FAIL**;
++`uv run pytest -q -n 4` reprodujo **exactamente el mismo FAIL** con
++**6630 PASS +34 subtests**. Es
++`tests/test_worker_start_capture.py::test_stream_returns_only_its_terminal_category[total-quota]`,
++que recibió `BrokenPipeError` al enviar el bloque grande al socket durante
++la prueba. Su repetición individual obtuvo **1 PASS**. La intermitencia
++depende del contexto de ejecución, pero este informe **no atribuye una causa
++raíz definitiva**; se deriva a ownership de captura/IPC y no se debilita ni
++se edita ese test desde R172. El full suite permanece **NO_GREEN**.
++
++**Evidencia base leída:** `AGENTS.md`, `README.md`,
++`docs/DEVELOPMENT_POLICY.md`,
++`docs/ADR/0147-private-telegram-v2-encrypted-staging.md`,
++`docs/ADR/0212-r116-cutover-ipc-telegram-stage-parity.md` y
++`docs/ADR/0223-bot-bajo-demanda.md`. Las pruebas existentes de referencia
++incluyen `test_member_enrollment.py`, `test_credential_vault.py`,
++`test_database_migration_preflight.py`, `test_telegram_delivery.py`,
++`test_telegram_pairing_panel_handoff.py` y `test_telegram_owner_lease_e2e.py`.
++
++**Regla 84:** esta rama R172 sólo incorpora documentación y regresión
++estática. No modifica infraestructura, red, Docker, artefactos, secretos,
++blackboxes ni producción; no constituye un GO, release, instalación, alta
++física ni envío real. El dueño de integración debe reconciliar su commit
++y las pruebas del SHA definitivo en el checkpoint canónico #45/#417.
+diff --git a/docs/superpowers/plans/2026-11-11-r172-boca-worker-ipc-url-activity.md b/docs/superpowers/plans/2026-11-11-r172-boca-worker-ipc-url-activity.md
+new file mode 100644
+index 0000000..c9276ab
+--- /dev/null
++++ b/docs/superpowers/plans/2026-11-11-r172-boca-worker-ipc-url-activity.md
+@@ -0,0 +1,37 @@
++# Plan R172 — Integración única bajo demanda Boca
++
++**Goal:** conectar el worker navegador por AF_UNIX al panel privado, propagar `SITE_URL` al siguiente arranque y mostrar actividad vigente; evitar duplicar datos/Telegram. **Scope:** sólo Boca Socios Assistant, simulación, CI primero; ningún deploy sin evidencia.
++
++**Architecture:** un listener protegido por UID 10002 usa el protocolo IPC existente; la configuración URL permanece separada del socket y de los datos sensibles; el panel reutiliza su visor. Véase [diseño](../specs/2026-11-11-r172-boca-worker-ipc-url-activity-design.md).
++
++## T1 — IPC (owner exclusivo: browser/integración)
++
++- Archivos: nuevo `src/boca_socios/browser/ipc_server.py`, `Dockerfile.browser`, `compose.beta.browser.yaml`, tests nuevos focalizados.
++- RED: demostrar que el entrypoint actual no levanta `synthetic.sock`, y tests de servidor falso, identidad/framing/STOP.
++- GREEN: adaptador AF_UNIX de simulación con executor offline inyectable y listener bajo demanda; nunca ejecutar las cajas negras en pruebas.
++- Verificar que los archivos privados no cambian sin autorización expresa y huellas en checklist.
++
++## T2 — Configuración `SITE_URL` (owner exclusivo: transporte y panel)
++
++- Archivos a precisar después de inventario: `site_url_settings`, almacenamiento de configuración mínima, creación/custodia de mounts y arranque protegido.
++- RED: cambiar URL en 8443 y comprobar que el siguiente START la ve sin reconstrucción, sin acceder a DB/clave/token.
++- GREEN: transporte persistente y atestado al worker UID 10002, validación de entrada acotada; sin vetos generales de URL pública/privada.
++- Reconciliar especificación de Compose y atestadores host antes de tocar despliegue.
++
++## T3 — Actividad vigente (owner exclusivo: panel/telemetría)
++
++- Archivos: `browser/activity_events.py`, `panel/worker_activity.py`, pruebas asociadas.
++- RED: un archivo de Chromium de una sesión antigua no puede figurar como actual.
++- GREEN: correlación temporal o identificador opaco verificable, estados `stale`/`unverified` no confundibles con éxito; conservar categorías fijas y sin secretos.
++
++## T4 — Datos y Telegram (owner exclusivo: revisión)
++
++- Confirmar rutas existentes para socios, cifrado, outbox y emisor; agregar sólo pruebas/documentación faltantes, sin nuevo modelo de datos ni duplicación.
++- Mantener Telegram OFF hasta rotación del token comprometido y aceptación de custodia/acuse privado.
++
++## Integración y cierre
++
++- Consolidar **un solo candidato** de las tareas independientes desde `origin/main` exacto; cotejar duplicaciones y hashes BLACKBOX.
++- `uv sync --frozen`; `ruff check`, `ruff format --check`, `mypy src`, `pytest` focal y general, `scripts/check_repo_policy.py`; documentar RED/GREEN y SHA.
++- Revisar AGENTS/README/OPERATIONS/ADR, quality RCA y #417/#45 (Regla84), auditar PR abiertos y exact-SHA CI.
++- La publicación, Cutover V3 y prueba física por Boca Actions necesitan diagnóstico fresco y release dual atestada; no afirmar instalación con solo CI.
+diff --git a/docs/superpowers/specs/2026-11-11-r172-boca-worker-ipc-url-activity-design.md b/docs/superpowers/specs/2026-11-11-r172-boca-worker-ipc-url-activity-design.md
+new file mode 100644
+index 0000000..d24f2cb
+--- /dev/null
++++ b/docs/superpowers/specs/2026-11-11-r172-boca-worker-ipc-url-activity-design.md
+@@ -0,0 +1,32 @@
++# R172 — Browser worker bajo demanda: IPC, SITE_URL y actividad
++
++Fecha: 2026-11-11 ART. Propietario: #417; continuidad: #45. Estado: diseño CODE_ONLY.
++
++## Evidencia y problema
++
++- `main=361e3ff42c44e1b8699d7a3e2d158c9a367b2f86`, PR #472/#473 integrados.
++- El último intento físico W1 #934 registró `MISSING_BARE_SYNTHETIC`, `ExitCode=1`, `OOM=false`; su corrección de `PYTHONPATH` no cuenta con prueba física posterior.
++- `ipc_client.py` exige un servidor AF_UNIX en `synthetic.sock`, frames constantes y peer UID/GID 10002; `ipc_worker.py` del dueño es un orquestador puntual de tres sesiones que no abre ese socket.
++- `SITE_URL` se almacena en `/data/boca-site-url.json` del controlador, pero el contenedor navegador no monta ese volumen ni recibe cambios con `docker start`.
++- `/control/actividad` ya está implementado, aunque la telemetría del Chromium integrado no ha sido acreditada y puede mostrar eventos históricos como si fueran actuales.
++
++## Diseño elegido
++
++1. Mantener los módulos `synthetic.py` y `ipc_worker.py` protegidos: no alterar navegación, sesión, autenticación, reservas ni salida estructurada; respetar excepciones explícitas del dueño para wiring/imports/env/IPC/eventos de categorías fijas.
++2. Recuperar la *infraestructura de protocolo*, no el motor antiguo, desde Git histórico en un nuevo `browser/ipc_server.py` no protegido. Comprobar identidad, permisos, framing acotado, concurrencia, STOP y cancelación. Arrancar el listener únicamente cuando el dueño solicite **Iniciar**. Para CI, usar un executor offline inyectable; no importar ni ejecutar los módulos protegidos.
++3. Separar disponibilidad IPC y ejecución del orquestador del titular. Un contrato de simulación verificado nunca deberá afirmar navegación o reserva real. Para cualquier integración futura al ejecutor del titular se requiere el mismo perfil de simulación y prueba aislada, sin login/Queue-it.
++4. `SITE_URL` será la única fuente de destino de prueba, editable desde configuración privada del 8443, persistente entre STOP/START, sin requerir rebuild por cambio de valor. Transportarlo por una superficie de configuración mínima y Boca-only, atestada, de sólo lectura para UID10002. No exponer el volumen de socios, claves, credenciales, token de Telegram o sockets del daemon al worker. Revalidar límites de URL y rechazar credenciales embebidas y destinos de metadatos; no imponer un veto general a URL pública/privada por clasificación.
++5. Reutilizar `activity_events.py` y el visor actual; distinguir eventos históricos de un START vigente con correlación opaca o caducidad. No registrar URLs, tokens, cookies, DOM, PII ni stderr crudo. Probar vista y API con estado de engine detenido, fallo de arranque y archivo antiguo.
++6. No rehacer SQLite de socios ni Telegram. Mantener `sender=OFF` y exigir rotación del token comprometido antes de una activación independiente. No tocar otras aplicaciones, Porota ni PPI Watch.
++
++## Alternativas descartadas
++
++- Volver a usar directamente `ipc_worker.py` como servicio: no implementa AF_UNIX y termina tras una ejecución, de modo que no cumple el healthcheck.
++- Reemplazar el módulo privado por el `UnixSyntheticWorker` histórico: sobrescribiría el código aportado por el dueño.
++- Compartir con el navegador todo `/data`: expondría SQLite y credenciales sin necesidad.
++- Añadir URLs al frame IPC: rompería el protocolo constante autenticado y mezclaría configuración con órdenes.
++- Crear otro dashboard, otra DB o otro emisor Telegram: ya existen implementaciones integradas.
++
++## Aceptación
++
++Pruebas RED→GREEN en runner descartable para socket/peer/framing, arranque-demanda y STOP, URL persistida/cold-start y seguridad de los mounts, frescura de actividad, QA de controller, imagen exacta, dependencias y red exclusiva. CI GREEN no demuestra droplet. Sólo una operación específica y protegida Boca Actions con recibos físicos puede probar el worker, su socket, la salida Internet del bridge Boca, Chromium simulado, panel 8443 y limpieza selectiva. No ejecutar navegación real ni reservas.
+diff --git a/src/boca_socios/browser/activity_events.py b/src/boca_socios/browser/activity_events.py
+index abc41d9..6c49e6d 100644
+--- a/src/boca_socios/browser/activity_events.py
++++ b/src/boca_socios/browser/activity_events.py
+@@ -27,6 +27,9 @@ ACTIVITY_PATH = SOCKET_PATH.with_name("chromium-events.jsonl")
+ MAX_ACTIVITY_BYTES = 32 * 1024
+ _FILE_MODE = 0o644
+ _MAX_LINE_BYTES = 128
++# Browser steps finish within the bounded on-demand command; old files must
++# not be mistaken for telemetry from a worker that might no longer exist.
++_MAX_FRESH_AGE = timedelta(minutes=5)
+ _STAGES = frozenset(
+     {
+         "launch_requested",
+@@ -51,6 +54,7 @@ class ChromiumStage:
+ class ChromiumActivity:
+     state: Literal["available", "missing", "degraded"]
+     events: tuple[ChromiumStage, ...] = ()
++    stale: bool = False
+ 
+ 
+ def _file_valid(metadata: os.stat_result, owner_uid: int, owner_gid: int) -> bool:
+@@ -163,6 +167,8 @@ def read_chromium_events(
+         complete = data.rsplit(b"\n", 1)[0] if not data.endswith(b"\n") else data[:-1]
+         lines = complete.split(b"\n") if complete else []
+         stages = []
++        oldest_fresh_at = observed_at.astimezone(UTC) - _MAX_FRESH_AGE
++        stale_events_found = False
+         for line in lines:
+             if not 1 <= len(line) <= _MAX_LINE_BYTES:
+                 return ChromiumActivity("degraded")
+@@ -186,7 +192,12 @@ def read_chromium_events(
+                 or at > observed_at.astimezone(UTC) + timedelta(minutes=1)
+             ):
+                 return ChromiumActivity("degraded")
+-            stages.append(ChromiumStage(at=at.astimezone(UTC).isoformat(), code=entry["e"]))
++            if at < oldest_fresh_at:
++                stale_events_found = True
++            else:
++                stages.append(ChromiumStage(at=at.astimezone(UTC).isoformat(), code=entry["e"]))
++        if stale_events_found and not stages:
++            return ChromiumActivity("degraded", stale=True)
+         return ChromiumActivity("available", tuple(stages[-32:]))
+     except (OSError, SyntheticIPCError, ValueError, TypeError, UnicodeDecodeError):
+         return ChromiumActivity("degraded")
+diff --git a/src/boca_socios/browser/ipc_server.py b/src/boca_socios/browser/ipc_server.py
+new file mode 100644
+index 0000000..acc6286
+--- /dev/null
++++ b/src/boca_socios/browser/ipc_server.py
+@@ -0,0 +1,339 @@
++"""Bounded AF_UNIX adapter for a disposable Boca *simulation* worker.
++
++This integration boundary never imports the two owner-controlled navigation
++modules and cannot navigate a website by default. A reviewed offline executor
++can be injected to prove the controller's fixed IPC contract. The default
++entrypoint serves the health/peer transport but rejects all work with NO_GO.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import os
++import signal
++import socket
++import sys
++from collections.abc import Callable
++from importlib import import_module
++from math import isfinite
++from pathlib import Path
++from time import monotonic
++from typing import Protocol
++
++from boca_socios.browser.contracts import SimulationOutcome
++from boca_socios.browser.ipc_protocol import (
++    BUSY,
++    CONTROLLER_UID,
++    MAX_FRAME_BYTES,
++    NO_GO,
++    REQUEST,
++    SOCKET_PATH,
++    SUCCESS,
++    WORKER_UID,
++    SyntheticIPCError,
++    framed,
++    read_frame,
++    socket_identity,
++    validate_socket_directory,
++    verify_peer,
++)
++from boca_socios.browser.worker_health import WorkerBoundaryError, validate_worker_boundary
++
++
++class SyntheticExecutor(Protocol):
++    """Small dependency-injection boundary; no URL or ticket data cross IPC."""
++
++    async def simulate_general_reservation(self) -> SimulationOutcome: ...
++
++    async def close(self) -> None: ...
++
++
++class OfflineNoGoExecutor:
++    """Safe default: a healthy listener does not mean navigation is enabled."""
++
++    async def simulate_general_reservation(self) -> SimulationOutcome:
++        raise SyntheticIPCError("worker_executor_not_configured")
++
++    async def close(self) -> None:
++        return
++
++
++def _check_worker_boundary() -> None:
++    """Require the Boca worker identity, limits and isolated egress interface set."""
++    validate_worker_boundary()
++    try:
++        interfaces = socket.if_nameindex()
++    except OSError:
++        raise SyntheticIPCError("worker_network_unverified") from None
++    if len(interfaces) != 2 or {name for index, name in interfaces if index > 0} != {
++        "lo",
++        "eth0",
++    }:
++        raise SyntheticIPCError("worker_network_unverified")
++
++
++def _seconds(value: float, maximum: float) -> float:
++    if type(value) not in (int, float) or not isfinite(value) or not 0 < value <= maximum:
++        raise ValueError("IPC deadline must be finite and bounded")
++    return float(value)
++
++
++class UnixSyntheticWorker:
++    """One authenticated synthetic command at a time with bounded STOP.
++
++    Socket ownership and peer credentials are kernel-checked, not trusted from
++    payloads. An uncooperative executor permanently poisons this disposable
++    worker so the protected host lifecycle can terminate its exact container.
++    """
++
++    def __init__(
++        self,
++        executor: SyntheticExecutor | None = None,
++        *,
++        socket_path: Path = SOCKET_PATH,
++        boundary_check: Callable[[], None] = _check_worker_boundary,
++        request_seconds: float = 2.0,
++        operation_seconds: float = 20.0,
++        teardown_seconds: float = 5.0,
++    ) -> None:
++        self._executor = OfflineNoGoExecutor() if executor is None else executor
++        self._path = socket_path
++        self._boundary_check = boundary_check
++        self._request_seconds = _seconds(request_seconds, 2.0)
++        self._operation_seconds = _seconds(operation_seconds, 20.0)
++        self._teardown_seconds = _seconds(teardown_seconds, 5.0)
++        self._server: asyncio.AbstractServer | None = None
++        self._owned_socket: tuple[int, int] | None = None
++        self._active: asyncio.Task[SimulationOutcome] | None = None
++        self._busy = False
++        self._closed = False
++        self._poisoned = asyncio.Event()
++
++    async def start(self) -> None:
++        """Bind only inside a verified, empty worker-owned directory."""
++        if self._closed or self._server is not None:
++            raise SyntheticIPCError("worker_lifecycle_unverified")
++        self._boundary_check()
++        if self._path.name != SOCKET_PATH.name:
++            raise SyntheticIPCError("ipc_path_unverified")
++        validate_socket_directory(self._path.parent, uid=WORKER_UID)
++        try:
++            if os.listdir(self._path.parent):
++                raise SyntheticIPCError("ipc_mount_not_empty")
++        except OSError:
++            raise SyntheticIPCError("ipc_mount_unverified") from None
++
++        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
++        listener.setblocking(False)
++        try:
++            previous = os.umask(0o155)  # 0777 & ~0155 = 0622 for Unix sockets.
++            try:
++                listener.bind(str(self._path))
++            finally:
++                os.umask(previous)
++            self._owned_socket = socket_identity(self._path, uid=WORKER_UID)
++            listener.listen(1)
++            self._server = await asyncio.start_unix_server(
++                self._handle, sock=listener, start_serving=False, limit=MAX_FRAME_BYTES
++            )
++            await self._server.start_serving()
++        except BaseException:
++            listener.close()
++            # Preserve any uncertain socket inode for selective host cleanup.
++            self._closed = True
++            raise
++
++    @staticmethod
++    async def _respond(writer: asyncio.StreamWriter, payload: bytes) -> None:
++        writer.write(framed(payload))
++        await asyncio.wait_for(writer.drain(), timeout=1.0)
++
++    async def _read_request(self, reader: asyncio.StreamReader) -> None:
++        async with asyncio.timeout(self._request_seconds):
++            if await read_frame(reader) != REQUEST or await reader.read(1) != b"":
++                raise SyntheticIPCError("ipc_request_unverified")
++
++    @staticmethod
++    def _consume(task: asyncio.Task[SimulationOutcome]) -> None:
++        # No exception text, navigation output or late result is logged.
++        try:
++            task.result()
++        except (Exception, asyncio.CancelledError):
++            return
++
++    async def _run_synthetic(self) -> bytes:
++        self._boundary_check()
++        active = asyncio.create_task(self._executor.simulate_general_reservation())
++        self._active = active
++        active.add_done_callback(self._consume)
++        completed, pending = await asyncio.wait({active}, timeout=self._operation_seconds)
++        if pending:
++            active.cancel()
++            completed, pending = await asyncio.wait({active}, timeout=self._teardown_seconds)
++            if pending:
++                self._poisoned.set()
++                if self._server is not None:
++                    self._server.close()
++            return NO_GO
++        try:
++            if completed and active.result() is SimulationOutcome.RESERVED_IN_SIMULATOR:
++                return SUCCESS
++        except (Exception, asyncio.CancelledError):
++            return NO_GO
++        return NO_GO
++
++    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
++        accepted = False
++        try:
++            verify_peer(writer, uid=CONTROLLER_UID, gid=CONTROLLER_UID)
++            if self._closed or self._poisoned.is_set():
++                return
++            if self._busy:
++                # Drain one bounded request before replying; unread stream data
++                # can reset the Unix peer before BUSY is delivered.
++                try:
++                    await self._read_request(reader)
++                except (SyntheticIPCError, OSError, TimeoutError):
++                    await self._respond(writer, NO_GO)
++                else:
++                    await self._respond(writer, BUSY)
++                return
++            self._busy = True
++            accepted = True
++            try:
++                await self._read_request(reader)
++                # STOP may occur during partial-frame I/O. Never start a job
++                # after that await if this server has already been closed.
++                if self._closed or self._poisoned.is_set():
++                    raise SyntheticIPCError("worker_closed")
++                deadline = monotonic() + self._operation_seconds
++                response = await self._run_synthetic()
++                task = asyncio.current_task()
++                if response == SUCCESS and (
++                    self._closed
++                    or self._poisoned.is_set()
++                    or monotonic() >= deadline
++                    or task is None
++                    or task.cancelling()
++                ):
++                    response = NO_GO
++            except (SyntheticIPCError, WorkerBoundaryError, OSError, TimeoutError, ValueError):
++                response = NO_GO
++            await self._respond(writer, response)
++        except (SyntheticIPCError, OSError, TimeoutError, ConnectionError):
++            return
++        finally:
++            if accepted:
++                self._busy = False
++            writer.close()
++            try:
++                await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
++            except (OSError, TimeoutError):
++                pass
++
++    async def close(self) -> None:
++        """Close only the owned socket; poison on uncooperative teardown."""
++        self._closed = True
++        deadline = monotonic() + self._teardown_seconds
++        if self._server is not None:
++            self._server.close()
++        active = self._active
++        if active is not None and not active.done():
++            active.cancel()
++            _, still_running = await asyncio.wait(
++                {active}, timeout=max(0.0, deadline - monotonic())
++            )
++            if still_running:
++                self._poisoned.set()
++                raise SyntheticIPCError("worker_teardown_unverified")
++        if self._server is not None:
++            closed_server = asyncio.create_task(self._server.wait_closed())
++            _, unfinished_server = await asyncio.wait(
++                {closed_server}, timeout=max(0.0, deadline - monotonic())
++            )
++            if unfinished_server:
++                closed_server.cancel()
++                self._poisoned.set()
++                raise SyntheticIPCError("worker_teardown_unverified")
++            closed_server.result()
++            self._server = None
++        closing = asyncio.create_task(self._executor.close())
++        completed, unfinished_close = await asyncio.wait(
++            {closing}, timeout=max(0.0, deadline - monotonic())
++        )
++        if unfinished_close:
++            closing.cancel()
++            self._poisoned.set()
++            raise SyntheticIPCError("worker_teardown_unverified")
++        try:
++            if completed:
++                closing.result()
++        except (Exception, asyncio.CancelledError):
++            self._poisoned.set()
++            raise SyntheticIPCError("worker_teardown_unverified") from None
++        if self._owned_socket is not None:
++            if socket_identity(self._path, uid=WORKER_UID) != self._owned_socket:
++                raise SyntheticIPCError("ipc_socket_changed")
++            os.unlink(self._path)
++            self._owned_socket = None
++
++    async def serve_until(self, stopping: asyncio.Event) -> None:
++        await self.start()
++        stopped = asyncio.create_task(stopping.wait())
++        poisoned = asyncio.create_task(self._poisoned.wait())
++        try:
++            done, pending = await asyncio.wait(
++                {stopped, poisoned}, return_when=asyncio.FIRST_COMPLETED
++            )
++            for task in pending:
++                task.cancel()
++            if poisoned in done:
++                raise SyntheticIPCError("worker_teardown_unverified")
++        finally:
++            await self.close()
++
++
++def _read_worker_site_url() -> str:
++    """Read only the destination-only verified mount before accepting work."""
++    runtime = import_module("boca_socios.browser.site_url_runtime")
++    try:
++        return runtime.read_site_url(runtime.RUNTIME_SITE_URL_PATH)
++    except (OSError, ValueError, RuntimeError):
++        # Do not include URL, file contents, or underlying error in a log.
++        raise SyntheticIPCError("site_url_not_ready") from None
++
++
++async def _run_server(
++    executor_factory: Callable[[str], SyntheticExecutor] | None = None,
++) -> None:
++    site_url = _read_worker_site_url()
++    stopping = asyncio.Event()
++    loop = asyncio.get_running_loop()
++    loop.add_signal_handler(signal.SIGTERM, stopping.set)
++    loop.add_signal_handler(signal.SIGINT, stopping.set)
++    # The default remains transport-only. A reviewed offline factory may be
++    # injected for simulation tests; the legacy browser orchestrator is not
++    # silently treated as a reservation simulator.
++    executor = OfflineNoGoExecutor() if executor_factory is None else executor_factory(site_url)
++    worker = UnixSyntheticWorker(executor)
++    try:
++        await worker.serve_until(stopping)
++    except SyntheticIPCError as exc:
++        if str(exc) == "worker_teardown_unverified":
++            # Only the disposable UID10002 worker itself; no other process.
++            os._exit(70)
++        raise
++
++
++def main() -> int:
++    try:
++        asyncio.run(_run_server())
++    except (SyntheticIPCError, WorkerBoundaryError, OSError):
++        print("BOCA_SYNTHETIC_IPC state=NO_GO", file=sys.stderr)
++        return 1
++    print("BOCA_SYNTHETIC_IPC state=STOPPED")
++    return 0
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/src/boca_socios/browser/site_url_runtime.py b/src/boca_socios/browser/site_url_runtime.py
+new file mode 100644
+index 0000000..a186973
+--- /dev/null
++++ b/src/boca_socios/browser/site_url_runtime.py
+@@ -0,0 +1,225 @@
++"""Boca-only, config-file transport between the dashboard and cold browser worker.
++
++The controller owns the sole writable mount; the browser worker receives a
++read-only mount containing this one URL, never the controller's database,
++passkey, credential or Telegram volumes. No function here starts navigation.
++"""
++
++from __future__ import annotations
++
++import hashlib
++import ipaddress
++import json
++import os
++import re
++import secrets
++import stat
++from pathlib import Path
++from urllib.parse import urlsplit
++
++RUNTIME_SITE_URL_PATH = Path("/run/boca-site-config/boca-site-url.runtime.json")
++_BASENAME = RUNTIME_SITE_URL_PATH.name
++_MAX_URL = 512
++_MAX_FILE = 2048
++_FILE_MODE = 0o644  # Worker UID 10002 needs read access to this URL-only file.
++_DIRECTORY_MODE = 0o711  # Worker may traverse, never list the Boca config volume.
++
++
++class SiteUrlInvalid(ValueError):
++    """A URL is not credential-free, syntactically safe HTTP(S)."""
++
++
++class RuntimeSiteUrlUnavailable(RuntimeError):
++    """A runtime URL has no verified, exact Boca-only file representation."""
++
++
++def require_site_url(value: str) -> str:
++    """Validate syntax, not public/private class or DNS resolution.
++
++    The owner intentionally allows public and private destinations. No network
++    request is performed by this validator or any runtime-config operation.
++    """
++    if (
++        not isinstance(value, str)
++        or not 1 <= len(value) <= _MAX_URL
++        or value != value.strip()
++        or any(ord(character) <= 32 or ord(character) == 127 for character in value)
++    ):
++        raise SiteUrlInvalid("SITE_URL debe ser una URL HTTP(S) válida.")
++    try:
++        parsed = urlsplit(value)
++        hostname = parsed.hostname
++        port = parsed.port
++    except ValueError:
++        raise SiteUrlInvalid("SITE_URL debe ser una URL HTTP(S) válida.") from None
++    if (
++        parsed.scheme not in {"http", "https"}
++        or not hostname
++        or not parsed.netloc
++        or parsed.username is not None
++        or parsed.password is not None
++        or parsed.query
++        or parsed.fragment
++        or (port is not None and port < 1)
++    ):
++        raise SiteUrlInvalid("SITE_URL debe ser una URL HTTP(S) sin credenciales.")
++    try:
++        address = ipaddress.ip_address(hostname)
++    except ValueError:
++        if not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", hostname):
++            raise SiteUrlInvalid("El nombre del sitio no es válido.") from None
++    else:
++        # This is not a public URL restriction: reject only addresses that can
++        # reach metadata/link-local or unusable network destinations.
++        if address.is_link_local or address.is_multicast or address.is_unspecified:
++            raise SiteUrlInvalid("La dirección del sitio no es utilizable.")
++    return value
++
++
++def site_url_fingerprint(site_url: str) -> str:
++    """Stable revision witness, not a signature or permission to navigate."""
++    return hashlib.sha256(b"BOCA_SITE_URL_V1\0" + require_site_url(site_url).encode()).hexdigest()
++
++
++def _path(path: Path) -> None:
++    if not isinstance(path, Path) or not path.is_absolute() or path.name != _BASENAME:
++        raise RuntimeSiteUrlUnavailable("Boca runtime SITE_URL path unverified")
++
++
++def _directory(path: Path, *, owner_uid: int, owner_gid: int, readonly: bool) -> int:
++    # O_PATH is crucial: UID 10002 only has execute/search, not read/list,
++    # permission on this 0711 directory, yet may open the fixed child by name.
++    flags = os.O_PATH if readonly else os.O_RDONLY
++    try:
++        descriptor = os.open(
++            path.parent, flags | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
++        )
++        info = os.fstat(descriptor)
++        if (
++            not stat.S_ISDIR(info.st_mode)
++            or (info.st_uid, info.st_gid) != (owner_uid, owner_gid)
++            or stat.S_IMODE(info.st_mode) != _DIRECTORY_MODE
++        ):
++            raise OSError("unverified Boca runtime directory")
++        return descriptor
++    except OSError:
++        if "descriptor" in locals():
++            os.close(descriptor)
++        raise RuntimeSiteUrlUnavailable("Boca runtime SITE_URL directory unverified") from None
++
++
++def _read_from(directory: int, *, owner_uid: int, owner_gid: int) -> str | None:
++    try:
++        descriptor = os.open(
++            _BASENAME, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=directory
++        )
++    except FileNotFoundError:
++        return None
++    except OSError:
++        raise RuntimeSiteUrlUnavailable("Boca runtime SITE_URL inode unverified") from None
++    try:
++        info = os.fstat(descriptor)
++        if (
++            not stat.S_ISREG(info.st_mode)
++            or (info.st_uid, info.st_gid) != (owner_uid, owner_gid)
++            or stat.S_IMODE(info.st_mode) != _FILE_MODE
++            or info.st_nlink != 1
++            or not 0 < info.st_size <= _MAX_FILE
++        ):
++            raise RuntimeSiteUrlUnavailable("Boca runtime SITE_URL file unverified")
++        data = os.read(descriptor, _MAX_FILE + 1)
++        after = os.fstat(descriptor)
++        if (
++            len(data) != info.st_size
++            or (after.st_dev, after.st_ino, after.st_mtime_ns, after.st_size)
++            != (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size)
++        ):
++            raise RuntimeSiteUrlUnavailable("Boca runtime SITE_URL read changed")
++        document = json.loads(data)
++        if (
++            not isinstance(document, dict)
++            or set(document) != {"version", "SITE_URL", "sha256"}
++            or type(document["version"]) is not int
++            or document["version"] != 1
++            or type(document["SITE_URL"]) is not str
++            or type(document["sha256"]) is not str
++        ):
++            raise RuntimeSiteUrlUnavailable("Boca runtime SITE_URL schema unverified")
++        destination = require_site_url(document["SITE_URL"])
++        if document["sha256"] != site_url_fingerprint(destination):
++            raise RuntimeSiteUrlUnavailable("Boca runtime SITE_URL revision unverified")
++        return destination
++    except (OSError, ValueError, TypeError, UnicodeError):
++        raise RuntimeSiteUrlUnavailable("Boca runtime SITE_URL invalid") from None
++    finally:
++        os.close(descriptor)
++
++
++def read_site_url(
++    path: Path = RUNTIME_SITE_URL_PATH,
++    *,
++    owner_uid: int = 10001,
++    owner_gid: int = 10001,
++) -> str:
++    """Read only the newest inode on each worker START; no implicit fallback."""
++    _path(path)
++    directory = _directory(path, owner_uid=owner_uid, owner_gid=owner_gid, readonly=True)
++    try:
++        destination = _read_from(directory, owner_uid=owner_uid, owner_gid=owner_gid)
++        if destination is None:
++            raise RuntimeSiteUrlUnavailable("Boca runtime SITE_URL not configured")
++        return destination
++    finally:
++        os.close(directory)
++
++
++def publish_site_url(
++    path: Path,
++    site_url: str,
++    *,
++    owner_uid: int = 10001,
++    owner_gid: int = 10001,
++) -> str:
++    """Atomically publish one URL into a preprovisioned Boca config-only mount.
++
++    A missing directory, unexpected owner, malformed existing inode or write
++    failure is NO_GO. In particular, this never repairs or mounts host paths.
++    """
++    destination = require_site_url(site_url)
++    _path(path)
++    if (os.geteuid(), os.getegid()) != (owner_uid, owner_gid):
++        raise RuntimeSiteUrlUnavailable("Boca runtime SITE_URL writer identity unverified")
++    directory = _directory(path, owner_uid=owner_uid, owner_gid=owner_gid, readonly=False)
++    temp_name = ".boca-site-url-" + secrets.token_hex(8)
++    fingerprint = site_url_fingerprint(destination)
++    try:
++        _read_from(directory, owner_uid=owner_uid, owner_gid=owner_gid)
++        descriptor = os.open(
++            temp_name,
++            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
++            0o600,
++            dir_fd=directory,
++        )
++        try:
++            content = json.dumps(
++                {"version": 1, "SITE_URL": destination, "sha256": fingerprint},
++                separators=(",", ":"),
++                ensure_ascii=True,
++            ).encode("ascii")
++            if len(content) > _MAX_FILE or os.write(descriptor, content) != len(content):
++                raise OSError("Boca runtime SITE_URL short write")
++            os.fchmod(descriptor, _FILE_MODE)
++            os.fsync(descriptor)
++        finally:
++            os.close(descriptor)
++        os.replace(temp_name, _BASENAME, src_dir_fd=directory, dst_dir_fd=directory)
++        os.fsync(directory)
++        return fingerprint
++    except OSError:
++        raise RuntimeSiteUrlUnavailable("Boca runtime SITE_URL publication failed") from None
++    finally:
++        try:
++            os.unlink(temp_name, dir_fd=directory)
++        except FileNotFoundError:
++            pass
++        os.close(directory)
+diff --git a/src/boca_socios/deploy_contract.py b/src/boca_socios/deploy_contract.py
+index abe172c..ef32f2d 100644
+--- a/src/boca_socios/deploy_contract.py
++++ b/src/boca_socios/deploy_contract.py
+@@ -281,6 +281,22 @@ def _browser_ipc_mount(mount: object, *, readonly: bool, field: str) -> None:
+         raise ContractError(f"invalid {field} volume options")
+ 
+ 
++def _browser_site_config_mount(mount: object, *, readonly: bool, field: str) -> None:
++    """Only a dedicated destination file volume may cross the worker boundary."""
++    value = _mapping(mount, field)
++    if set(value) - {"type", "source", "target", "read_only", "volume"}:
++        raise ContractError(f"invalid {field} options")
++    for name, expected in {
++        "type": "volume",
++        "source": "boca_site_config",
++        "target": "/run/boca-site-config",
++        "read_only": readonly,
++    }.items():
++        _equal(value.get(name, False if name == "read_only" else None), expected, field)
++    if "volume" in value and _mapping(value["volume"], f"{field} options"):
++        raise ContractError(f"invalid {field} volume options")
++
++
+ def _browser_seccomp_path(path: str) -> None:
+     """Exact Boca-private host path; SHA/mode/owner need a separate host gate."""
+     if type(path) is not str or path != "/srv/boca-socios/seccomp_profile.json":
+@@ -335,11 +351,14 @@ def validate_beta_browser_contract(
+         "encrypted-only Telegram V2 staging on reviewed IPC controller",
+     )
+     mounts = _list(controller["volumes"], "browser-ipc-v2 controller mounts")
+-    if len(mounts) != (5 if on_demand else 4):
++    if len(mounts) != (6 if on_demand else 5):
+         raise ContractError("unexpected number of controller mounts")
+     _browser_ipc_mount(mounts[3], readonly=True, field="controller IPC mount")
++    _browser_site_config_mount(
++        mounts[4], readonly=False, field="controller SITE_URL configuration mount"
++    )
+     if on_demand:
+-        control = _mapping(mounts[4], "Boca control socket directory")
++        control = _mapping(mounts[5], "Boca control socket directory")
+         required = {"type", "source", "target", "read_only"}
+         if not required <= control.keys() <= required | {"bind"}:
+             raise ContractError("unexpected control socket mount options")
+@@ -388,7 +407,7 @@ def validate_beta_browser_contract(
+     )
+     for field, expected in {
+         "image": expected_browser_image,
+-        "command": ["python", "-m", "boca_socios.browser.ipc_worker"],
++        "command": ["python", "-m", "boca_socios.browser.ipc_server"],
+         "entrypoint": None,
+         "user": "10002:10002",
+         "init": True,
+@@ -440,20 +459,27 @@ def validate_beta_browser_contract(
+         "browser-ipc-v2 worker attempt",
+     )
+     worker_mounts = _list(worker["volumes"], "browser-ipc-v2 worker mounts")
+-    if len(worker_mounts) != 1:
+-        raise ContractError("browser-ipc-v2 worker must have only the IPC mount")
++    if len(worker_mounts) != 2:
++        raise ContractError("browser-ipc-v2 worker must have only IPC and destination mounts")
+     _browser_ipc_mount(worker_mounts[0], readonly=False, field="worker IPC mount")
++    _browser_site_config_mount(
++        worker_mounts[1], readonly=True, field="worker SITE_URL configuration mount"
++    )
+ 
+     volumes = _mapping(root["volumes"], "browser-ipc-v2 volumes")
+     _keys(
+         volumes,
+-        {"boca_data", "boca_key", "boca_owner", "boca_browser_ipc"},
++        {"boca_data", "boca_key", "boca_owner", "boca_browser_ipc", "boca_site_config"},
+         "browser-ipc-v2 volumes",
+     )
+     ipc_volume = _mapping(volumes["boca_browser_ipc"], "browser-ipc-v2 volume")
+     _keys(ipc_volume, {"name", "external"}, "browser-ipc-v2 volume")
+     _equal(ipc_volume["name"], "boca-socios_boca_browser_ipc", "browser-ipc-v2 volume name")
+     _equal(ipc_volume["external"], True, "browser-ipc-v2 disposable volume is external")
++    config_volume = _mapping(volumes["boca_site_config"], "browser-ipc-v2 SITE_URL volume")
++    _keys(config_volume, {"name", "external"}, "browser-ipc-v2 SITE_URL volume")
++    _equal(config_volume["name"], "boca-socios_boca_site_config", "SITE_URL volume name")
++    _equal(config_volume["external"], True, "SITE_URL volume is external")
+ 
+     networks = _mapping(root["networks"], "browser-ipc-v2 networks")
+     _keys(networks, {"boca_private", "boca_browser_egress"}, "browser-ipc-v2 networks")
+@@ -490,6 +516,7 @@ def validate_beta_browser_contract(
+     del legacy_services["browser-worker"]
+     legacy_volumes = cast(dict[str, object], legacy["volumes"])
+     del legacy_volumes["boca_browser_ipc"]
++    del legacy_volumes["boca_site_config"]
+     legacy_networks = cast(dict[str, object], legacy["networks"])
+     del legacy_networks["boca_browser_egress"]
+     validate_beta_contract(legacy, expected_image, expected_origin, expected_owner)
+diff --git a/src/boca_socios/host_cutover_inventory_observe.py b/src/boca_socios/host_cutover_inventory_observe.py
+index 0534565..cd4594c 100644
+--- a/src/boca_socios/host_cutover_inventory_observe.py
++++ b/src/boca_socios/host_cutover_inventory_observe.py
+@@ -576,8 +576,8 @@ def _official_observation(io: CutoverInventoryIO, release: ReviewedTargetRelease
+         or worker.running
+         and worker.networks != ("boca-socios_boca_browser_egress",)
+         or controller.volumes
+-        != tuple(sorted({_DATA, _KEY, _OWNER, "boca-socios_boca_browser_ipc"}))
+-        or worker.volumes != ("boca-socios_boca_browser_ipc",)
++        != tuple(sorted({_DATA, _KEY, _OWNER, "boca-socios_boca_browser_ipc", "boca-socios_boca_site_config"}))
++        or worker.volumes != tuple(sorted(("boca-socios_boca_browser_ipc", "boca-socios_boca_site_config")))
+         or not controller.running
+         or io.field("container", controller.ident, "State.Running") is not True
+         or io.field("container", controller.ident, "State.Health.Status") != "healthy"
+@@ -589,7 +589,7 @@ def _official_observation(io: CutoverInventoryIO, release: ReviewedTargetRelease
+     ):
+         raise CutoverInventoryNoGo("Boca official dual runtime not verified")
+     egress = "boca-socios_boca_telegram_egress"
+-    expected_volumes = {_DATA, _KEY, _OWNER, "boca-socios_boca_browser_ipc"}
++    expected_volumes = {_DATA, _KEY, _OWNER, "boca-socios_boca_browser_ipc", "boca-socios_boca_site_config"}
+     if sender is not None:
+         expected_volumes.add(_TELEGRAM)
+         if sender.networks not in ((), (egress,)) or (
+diff --git a/src/boca_socios/host_first_deploy.py b/src/boca_socios/host_first_deploy.py
+index 3b40238..4540eb8 100644
+--- a/src/boca_socios/host_first_deploy.py
++++ b/src/boca_socios/host_first_deploy.py
+@@ -71,6 +71,7 @@ BROWSER_COMPOSE = ROOT / "compose.beta.browser.yaml"
+ BROWSER_SECCOMP = ROOT / "seccomp_profile.json"
+ BROWSER_MARKER = ROOT / "browser-ipc-attempt.json"
+ BROWSER_IPC_VOLUME = "boca-socios_boca_browser_ipc"
++BROWSER_SITE_CONFIG_VOLUME = "boca-socios_boca_site_config"
+ BROWSER_BRIDGE = "boca-socios_boca_private"
+ BROWSER_EGRESS_BRIDGE = "boca-socios_boca_browser_egress"
+ BROWSER_IMAGE_PATTERN = re.compile(
+@@ -4357,7 +4358,8 @@ def _browser_compose_model(
+         not isinstance(services, dict)
+         or set(services) != {"controller", "browser-worker"}
+         or not isinstance(volumes, dict)
+-        or set(volumes) != {"boca_owner", "boca_key", "boca_data", "boca_browser_ipc"}
++        or set(volumes)
++        != {"boca_owner", "boca_key", "boca_data", "boca_browser_ipc", "boca_site_config"}
+         or not isinstance(networks, dict)
+         or set(networks) != {"boca_private", "boca_browser_egress"}
+     ):
+@@ -4397,7 +4399,7 @@ def _browser_compose_model(
+         raise PreflightError("browser IPC controller isolation changed")
+     expected_worker = {
+         "image": browser_image,
+-        "command": ["python", "-m", "boca_socios.browser.ipc_worker"],
++        "command": ["python", "-m", "boca_socios.browser.ipc_server"],
+         "user": "10002:10002",
+         "networks": {"boca_browser_egress": None},
+         "restart": "no",
+@@ -4457,9 +4459,16 @@ def _browser_compose_model(
+                 ("boca_key", "/run/secrets", True),
+                 ("boca_owner", "/run/owner", True),
+                 ("boca_browser_ipc", "/run/boca-browser-ipc", True),
++                ("boca_site_config", "/run/boca-site-config", False),
++            },
++        ),
++        (
++            worker,
++            {
++                ("boca_browser_ipc", "/run/boca-browser-ipc", False),
++                ("boca_site_config", "/run/boca-site-config", True),
+             },
+         ),
+-        (worker, {("boca_browser_ipc", "/run/boca-browser-ipc", False)}),
+     ):
+         mounts = service.get("volumes")
+         if isinstance(mounts, list) and service is controller and control_directory is not None:
+@@ -4495,6 +4504,11 @@ def _browser_compose_model(
+         "external": True,
+     }:
+         raise PreflightError("browser IPC external volume changed")
++    if volumes["boca_site_config"] != {
++        "name": BROWSER_SITE_CONFIG_VOLUME,
++        "external": True,
++    }:
++        raise PreflightError("browser SITE_URL external volume changed")
+     egress = networks["boca_browser_egress"]
+     # Compose config JSON drops explicit `internal: false` and may add
+     # empty IPAM. Both are the same outbound bridge, with no extra options.
+@@ -4577,6 +4591,35 @@ def _browser_validate_ipc_volume(attempt_id: str) -> None:
+         raise PreflightError("browser IPC volume mountpoint is unavailable") from exc
+ 
+ 
++def _browser_validate_site_config_volume(attempt_id: str) -> None:
++    """Identify the one destination-only volume without exposing the member DB."""
++    volume = _json_object(
++        _run("docker", "volume", "inspect", "--format", "{{json .}}", BROWSER_SITE_CONFIG_VOLUME),
++        "browser SITE_URL volume",
++    )
++    docker_root = _checked_docker_storage_dir()
++    expected = docker_root / "volumes" / BROWSER_SITE_CONFIG_VOLUME / "_data"
++    if (
++        volume.get("Name") != BROWSER_SITE_CONFIG_VOLUME
++        or volume.get("Driver") != "local"
++        or volume.get("Scope") != "local"
++        or volume.get("Options") not in (None, {})
++        or volume.get("Mountpoint") != str(expected)
++        or volume.get("Labels")
++        != {
++            "com.docker.compose.project": PROJECT,
++            "com.docker.compose.volume": "boca_site_config",
++            BROWSER_ATTEMPT_LABEL: attempt_id,
++        }
++    ):
++        raise PreflightError("browser SITE_URL volume is not privately identified")
++    try:
++        if expected.resolve(strict=True) != expected:
++            raise PreflightError("browser SITE_URL mountpoint is redirected")
++    except (OSError, RuntimeError) as exc:
++        raise PreflightError("browser SITE_URL volume mountpoint is unavailable") from exc
++
++
+ def _browser_named_probe(phase_name: str, attempt_id: str, command: tuple[str, ...]) -> str:
+     """Give every `docker run --rm` a C2b-cleanable positive attempt ID.
+ 
+@@ -4586,6 +4629,7 @@ def _browser_named_probe(phase_name: str, attempt_id: str, command: tuple[str, .
+     """
+     permitted = {
+         "ipc-dir-init",
++        "site-config-init",
+         "owner-session",
+         "synthetic-ipc",
+         "key-init",
+@@ -4720,6 +4764,73 @@ def _browser_create_ipc_volume(browser_image: str, attempt_id: str) -> None:
+     _browser_validate_ipc_volume(attempt_id)
+ 
+ 
++def _browser_create_site_config_volume(browser_image: str, attempt_id: str) -> None:
++    """Preprovision a bounded public-destination-only mount, distinct from data."""
++    created = _run(
++        "docker",
++        "volume",
++        "create",
++        "--driver",
++        "local",
++        "--label",
++        f"com.docker.compose.project={PROJECT}",
++        "--label",
++        "com.docker.compose.volume=boca_site_config",
++        "--label",
++        f"{BROWSER_ATTEMPT_LABEL}={attempt_id}",
++        BROWSER_SITE_CONFIG_VOLUME,
++    )
++    if created != BROWSER_SITE_CONFIG_VOLUME:
++        raise PreflightError("browser SITE_URL volume creation had unexpected identity")
++    _browser_validate_site_config_volume(attempt_id)
++    initializer = (
++        "import os,stat; p='/run/boca-site-config'; "
++        "os.chown(p,10001,10001); os.chmod(p,0o711); "
++        "s=os.stat(p,follow_symlinks=False); "
++        "assert stat.S_ISDIR(s.st_mode) and s.st_uid==10001 and s.st_gid==10001 "
++        "and stat.S_IMODE(s.st_mode)==0o711; print('BOCA_SITE_CONFIG_DIR_PASS')"
++    )
++    receipt = _browser_named_probe(
++        "site-config-init",
++        attempt_id,
++        (
++            "docker",
++            "run",
++            "--rm",
++            "--pull",
++            "never",
++            "--user",
++            "0:0",
++            "--network",
++            "none",
++            "--read-only",
++            "--cap-drop",
++            "ALL",
++            "--cap-add",
++            "CHOWN",
++            "--cap-add",
++            "FOWNER",
++            "--security-opt",
++            "no-new-privileges",
++            "--pids-limit",
++            "16",
++            "--memory",
++            "64m",
++            "--cpus",
++            "0.25",
++            "--mount",
++            f"type=volume,source={BROWSER_SITE_CONFIG_VOLUME},target=/run/boca-site-config,volume-nocopy",
++            browser_image,
++            "python",
++            "-c",
++            initializer,
++        ),
++    )
++    if receipt != "BOCA_SITE_CONFIG_DIR_PASS":
++        raise PreflightError("browser SITE_URL directory owner or mode is unverified")
++    _browser_validate_site_config_volume(attempt_id)
++
++
+ def _browser_service_id(
+     service: str, image: str, origin: str, owner: str, browser_image: str, attempt_id: str
+ ) -> str:
+@@ -4812,9 +4923,13 @@ def _browser_check_mounts(
+             (KEY_VOLUME, "/run/secrets", False),
+             (OWNER_VOLUME, "/run/owner", False),
+             (BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", False),
++            (BROWSER_SITE_CONFIG_VOLUME, "/run/boca-site-config", True),
+         }
+         if controller
+-        else {(BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", True)}
++        else {
++            (BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", True),
++            (BROWSER_SITE_CONFIG_VOLUME, "/run/boca-site-config", False),
++        }
+     )
+     if isinstance(mounts, list) and controller and control_directory is not None:
+         binds = [m for m in mounts if isinstance(m, dict) and m.get("Type") == "bind"]
+@@ -5009,7 +5124,7 @@ def _browser_worker_postflight(
+     }
+     if (
+         {name: value for name, value in variables.items() if name.startswith("BOCA_")} != expected
+-        or config.get("Cmd") != ["python", "-m", "boca_socios.browser.ipc_worker"]
++        or config.get("Cmd") != ["python", "-m", "boca_socios.browser.ipc_server"]
+         or config.get("Entrypoint") not in (None, [])
+         or config.get("ExposedPorts") not in (None, {})
+         or host.get("NetworkMode") != BROWSER_EGRESS_BRIDGE
+@@ -5450,6 +5565,8 @@ def _cutover_worker_create_argv(
+         "BOCA_OBSERVER_STOP=1",
+         "--mount",
+         f"type=volume,source={BROWSER_IPC_VOLUME},target=/run/boca-browser-ipc,volume-nocopy",
++        "--mount",
++        f"type=volume,source={BROWSER_SITE_CONFIG_VOLUME},target=/run/boca-site-config,readonly,volume-nocopy",
+         "--health-cmd",
+         _ON_DEMAND_HEALTH_CMD if on_demand else _WORKER_HEALTH_CMD,
+         "--health-interval",
+@@ -5463,7 +5580,7 @@ def _cutover_worker_create_argv(
+         browser_image,
+         "python",
+         "-m",
+-        "boca_socios.browser.ipc_worker",
++        "boca_socios.browser.ipc_server",
+     )
+ 
+ 
+@@ -5562,6 +5679,8 @@ def _cutover_candidate_create_argv(
+         f"type=volume,source={OWNER_VOLUME},target=/run/owner,volume-nocopy,readonly",
+         "--mount",
+         f"type=volume,source={BROWSER_IPC_VOLUME},target=/run/boca-browser-ipc,volume-nocopy,readonly",
++        "--mount",
++        f"type=volume,source={BROWSER_SITE_CONFIG_VOLUME},target=/run/boca-site-config,volume-nocopy",
+         *(
+             ("--mount", f"type=bind,source={control_directory},target={_CONTROL_MOUNT},readonly")
+             if control_directory is not None
+diff --git a/src/boca_socios/host_lifecycle_rootless_adapter.py b/src/boca_socios/host_lifecycle_rootless_adapter.py
+index ec7679f..70bade4 100644
+--- a/src/boca_socios/host_lifecycle_rootless_adapter.py
++++ b/src/boca_socios/host_lifecycle_rootless_adapter.py
+@@ -36,8 +36,10 @@ _SOURCE_URL = "https://github.com/mbalbo2023/boca-socios-assistant"
+ _PROJECT = "boca-socios"
+ _DATA_VOLUME = "boca-socios_boca_data"
+ _IPC_VOLUME = "boca-socios_boca_browser_ipc"
++_SITE_CONFIG_VOLUME = "boca-socios_boca_site_config"
+ _CONTROLLER_VOLUMES = frozenset(
+-    {_DATA_VOLUME, "boca-socios_boca_key", "boca-socios_boca_owner", _IPC_VOLUME}
++    {_DATA_VOLUME, "boca-socios_boca_key", "boca-socios_boca_owner", _IPC_VOLUME,
++     _SITE_CONFIG_VOLUME}
+ )
+ _APPROVED_VOLUMES = _CONTROLLER_VOLUMES | {"boca-socios_boca_telegram"}
+ _PRIVATE_NETWORK = "boca-socios_boca_private"
+@@ -436,7 +438,7 @@ class RootlessLifecycleProbe:
+             or worker.running
+             and worker.networks != (_BROWSER_EGRESS_NETWORK,)
+             or controller.volumes != tuple(sorted(_CONTROLLER_VOLUMES))
+-            or worker.volumes != (_IPC_VOLUME,)
++            or worker.volumes != tuple(sorted((_IPC_VOLUME, _SITE_CONFIG_VOLUME)))
+             or sender is not None
+             and (
+                 not sender_network_valid
+@@ -539,10 +541,14 @@ class RootlessLifecycleProbe:
+                     ("boca-socios_boca_key", "/run/secrets", False),
+                     ("boca-socios_boca_owner", "/run/owner", False),
+                     (_IPC_VOLUME, "/run/boca-browser-ipc", False),
++                    (_SITE_CONFIG_VOLUME, "/run/boca-site-config", True),
+                 }
+             )
+         elif service == "browser-worker":
+-            expected_mounts = frozenset({(_IPC_VOLUME, "/run/boca-browser-ipc", True)})
++            expected_mounts = frozenset(
++                {(_IPC_VOLUME, "/run/boca-browser-ipc", True),
++                 (_SITE_CONFIG_VOLUME, "/run/boca-site-config", False)}
++            )
+         elif service == "telegram":
+             expected_mounts = frozenset(
+                 {
+diff --git a/src/boca_socios/host_rootless_setup.py b/src/boca_socios/host_rootless_setup.py
+index 1e2723c..5772e54 100644
+--- a/src/boca_socios/host_rootless_setup.py
++++ b/src/boca_socios/host_rootless_setup.py
+@@ -1039,7 +1039,7 @@ def _verified_browser_ipc_image(
+         or config.get("Entrypoint") not in (None, [])
+         or config.get("Cmd")
+         != (
+-            ["python", "-m", "boca_socios.browser.ipc_worker"]
++            ["python", "-m", "boca_socios.browser.ipc_server"]
+             if worker
+             else ["python", "-m", "boca_socios.runtime", "serve-beta"]
+         )
+@@ -1129,7 +1129,8 @@ def _verified_browser_ipc_image(
+     }:
+         return False
+     expected_mounts = {
+-        ("volume", "boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", worker, "local")
++        ("volume", "boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", worker, "local"),
++        ("volume", "boca-socios_boca_site_config", "/run/boca-site-config", not worker, "local"),
+     }
+     if not worker:
+         expected_mounts |= {
+diff --git a/src/boca_socios/panel/private_http.py b/src/boca_socios/panel/private_http.py
+index ce6e79b..a5bd0e7 100644
+--- a/src/boca_socios/panel/private_http.py
++++ b/src/boca_socios/panel/private_http.py
+@@ -23,6 +23,11 @@ from urllib.parse import parse_qsl, urlsplit
+ from uuid import UUID, uuid4
+ 
+ from boca_socios import telegram_bootstrap
++from boca_socios.browser.site_url_runtime import (
++    RUNTIME_SITE_URL_PATH,
++    RuntimeSiteUrlUnavailable,
++    publish_site_url,
++)
+ from boca_socios.events.official_catalog import (
+     OfficialCatalogError,
+     OfficialNotice,
+@@ -491,9 +496,13 @@ class PrivatePanelApplication:
+         assert operation is not None
+         try:
+             self._site_url_settings.save(destination)
+-        except SiteUrlSettingsUnavailable:
++            # Keep the private source of truth, then atomically publish the
++            # URL-only read boundary for the cold, unprivileged browser worker.
++            # No worker process is started by configuration changes.
++            publish_site_url(RUNTIME_SITE_URL_PATH, destination)
++        except (SiteUrlSettingsUnavailable, RuntimeSiteUrlUnavailable):
+             self._sessions.finish(operation, 503)
+-            return _error(start, 503, "No se pudo confirmar la configuración privada.")
++            return _error(start, 503, "Configuración privada del bot no verificable.")
+         self._sessions.finish(operation, 303)
+         return self._redirect(start, "/configuracion")
+ 
+diff --git a/src/boca_socios/panel/site_url_settings.py b/src/boca_socios/panel/site_url_settings.py
+index 404a279..83ec622 100644
+--- a/src/boca_socios/panel/site_url_settings.py
++++ b/src/boca_socios/panel/site_url_settings.py
+@@ -7,67 +7,22 @@ transport the reviewed setting to the isolated worker at its next activation.
+ 
+ from __future__ import annotations
+ 
+-import ipaddress
+ import json
+ import os
+-import re
+ import secrets
+ import stat
+ from pathlib import Path
+-from urllib.parse import urlsplit
++
++from boca_socios.browser.site_url_runtime import SiteUrlInvalid, require_site_url
+ 
+ _BASENAME = "boca-site-url.json"
+-_MAX_URL = 512
+ _MAX_FILE = 2048
+ 
+ 
+-class SiteUrlInvalid(ValueError):
+-    """The destination is not a well-formed credential-free HTTP URL."""
+-
+-
+ class SiteUrlSettingsUnavailable(RuntimeError):
+     """The Boca-owned configuration file is absent in an unsafe form."""
+ 
+ 
+-def require_site_url(value: str) -> str:
+-    """Validate syntax, not public/private host class or DNS resolution."""
+-    if (
+-        not isinstance(value, str)
+-        or not 1 <= len(value) <= _MAX_URL
+-        or value != value.strip()
+-        or any(ord(character) <= 32 or ord(character) == 127 for character in value)
+-    ):
+-        raise SiteUrlInvalid("SITE_URL debe ser una URL HTTP(S) válida.")
+-    try:
+-        parsed = urlsplit(value)
+-        hostname = parsed.hostname
+-        port = parsed.port
+-    except ValueError:
+-        raise SiteUrlInvalid("SITE_URL debe ser una URL HTTP(S) válida.") from None
+-    if (
+-        parsed.scheme not in {"http", "https"}
+-        or not hostname
+-        or not parsed.netloc
+-        or parsed.username is not None
+-        or parsed.password is not None
+-        or parsed.query
+-        or parsed.fragment
+-        or (port is not None and port < 1)
+-    ):
+-        raise SiteUrlInvalid("SITE_URL debe ser una URL HTTP(S) sin credenciales.")
+-    try:
+-        address = ipaddress.ip_address(hostname)
+-    except ValueError:
+-        if not re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", hostname):
+-            raise SiteUrlInvalid("El nombre del sitio no es válido.") from None
+-    else:
+-        # The user removed the public-address filter. Preserve only the
+-        # unrelated dangerous-address guard (e.g. host metadata endpoints).
+-        if address.is_link_local or address.is_multicast or address.is_unspecified:
+-            raise SiteUrlInvalid("La dirección del sitio no es utilizable.")
+-    return value
+-
+-
+ class SiteUrlSettingsStore:
+     """Small atomic, no-symlink file in the existing *Boca-only* data volume."""
+ 
+diff --git a/src/boca_socios/panel/worker_activity.py b/src/boca_socios/panel/worker_activity.py
+index 74e8a9c..4eb56ad 100644
+--- a/src/boca_socios/panel/worker_activity.py
++++ b/src/boca_socios/panel/worker_activity.py
+@@ -198,6 +198,15 @@ def read_worker_activity(path: Path, *, observed_at: datetime) -> WorkerActivity
+         for stage in chromium.events:
+             level, message = _CHROMIUM_STAGE_LABELS[stage.code]
+             entries.append(WorkerActivityEvent(stage.at, "chromium", level, message))
++        if chromium.stale:
++            entries.append(
++                WorkerActivityEvent(
++                    observed_at.astimezone(UTC).isoformat(),
++                    "chromium",
++                    "warning",
++                    "Chromium: sólo hay telemetría antigua; no confirma un proceso activo.",
++                )
++            )
+         return WorkerActivitySnapshot(
+             observed_at=observed_at.astimezone(UTC).isoformat(),
+             browser_detail="fixed_stages_only",
+diff --git a/tests/test_beta_browser_deploy_contract.py b/tests/test_beta_browser_deploy_contract.py
+index cbb5555..05356cc 100644
+--- a/tests/test_beta_browser_deploy_contract.py
++++ b/tests/test_beta_browser_deploy_contract.py
+@@ -24,6 +24,7 @@ BROWSER_IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "b"
+ ATTEMPT = "123456"
+ SECCOMP = "/srv/boca-socios/seccomp_profile.json"
+ IPC_VOLUME = "boca-socios_boca_browser_ipc"
++SITE_CONFIG_VOLUME = "boca-socios_boca_site_config"
+ WORKER_HEALTH = (
+     "from boca_socios.browser.worker_health import check_worker_health; check_worker_health()"
+ )
+@@ -45,9 +46,17 @@ def browser_model() -> dict[str, object]:
+             "read_only": True,
+         }
+     )
++    controller["volumes"].append(
++        {
++            "type": "volume",
++            "source": "boca_site_config",
++            "target": "/run/boca-site-config",
++            "read_only": False,
++        }
++    )
+     services["browser-worker"] = {
+         "image": BROWSER_IMAGE,
+-        "command": ["python", "-m", "boca_socios.browser.ipc_worker"],
++        "command": ["python", "-m", "boca_socios.browser.ipc_server"],
+         "entrypoint": None,
+         "user": "10002:10002",
+         "init": True,
+@@ -66,7 +75,13 @@ def browser_model() -> dict[str, object]:
+                 "source": "boca_browser_ipc",
+                 "target": "/run/boca-browser-ipc",
+                 "read_only": False,
+-            }
++            },
++            {
++                "type": "volume",
++                "source": "boca_site_config",
++                "target": "/run/boca-site-config",
++                "read_only": True,
++            },
+         ],
+         "networks": {"boca_browser_egress": None},
+         "cgroup": "private",
+@@ -95,6 +110,10 @@ def browser_model() -> dict[str, object]:
+         "name": IPC_VOLUME,
+         "external": True,
+     }
++    candidate["volumes"]["boca_site_config"] = {  # type: ignore[index]
++        "name": SITE_CONFIG_VOLUME,
++        "external": True,
++    }
+     candidate["networks"]["boca_browser_egress"] = {  # type: ignore[index]
+         "name": "boca-socios_boca_browser_egress",
+         "driver": "bridge",
+diff --git a/tests/test_chromium_activity_freshness.py b/tests/test_chromium_activity_freshness.py
+new file mode 100644
+index 0000000..089c9e2
+--- /dev/null
++++ b/tests/test_chromium_activity_freshness.py
+@@ -0,0 +1,99 @@
++"""Old fixed-category Chromium evidence cannot masquerade as live activity."""
++
++from __future__ import annotations
++
++import json
++import os
++from collections.abc import Iterator
++from datetime import UTC, datetime
++from functools import partial
++from pathlib import Path
++from tempfile import TemporaryDirectory
++
++import pytest
++
++from boca_socios.browser.activity_events import read_chromium_events
++from boca_socios.panel.worker_activity import read_worker_activity
++from test_worker_live_activity import _private_app
++
++
++@pytest.fixture
++def chromium_events_path() -> Iterator[Path]:
++    with TemporaryDirectory(prefix="boca-ipc-fresh-") as temporary:
++        directory = Path(temporary) / "ipc"
++        directory.mkdir(mode=0o711)
++        yield directory / "chromium-events.jsonl"
++
++
++def _record_stages(path: Path, *entries: tuple[str, str]) -> None:
++    path.write_text(
++        "".join(
++            json.dumps({"v": 1, "e": code, "t": at}, separators=(",", ":")) + "\n"
++            for at, code in entries
++        ),
++        encoding="ascii",
++    )
++    path.chmod(0o644)
++
++
++def _read(path: Path, observed_at: datetime):
++    return read_chromium_events(
++        path=path,
++        owner_uid=os.geteuid(),
++        owner_gid=os.getegid(),
++        observed_at=observed_at,
++    )
++
++
++def test_old_chromium_events_do_not_count_as_current(chromium_events_path: Path) -> None:
++    _record_stages(
++        chromium_events_path,
++        ("2026-11-11T11:40:00+00:00", "launch_requested"),
++        ("2026-11-11T11:41:00+00:00", "launched"),
++    )
++
++    snapshot = _read(chromium_events_path, datetime(2026, 11, 11, 12, tzinfo=UTC))
++
++    assert snapshot.state == "degraded"
++    assert snapshot.events == ()
++    assert snapshot.stale is True
++
++
++def test_new_events_exclude_old_history_from_same_file(chromium_events_path: Path) -> None:
++    _record_stages(
++        chromium_events_path,
++        ("2026-11-11T11:40:00+00:00", "browser_closed"),
++        ("2026-11-11T11:55:00+00:00", "launch_requested"),
++        ("2026-11-11T11:59:00+00:00", "launched"),
++    )
++
++    snapshot = _read(chromium_events_path, datetime(2026, 11, 11, 12, tzinfo=UTC))
++
++    assert snapshot.state == "available"
++    assert [event.code for event in snapshot.events] == ["launch_requested", "launched"]
++    assert snapshot.stale is False
++
++
++def test_private_projection_explains_stale_source_without_replaying_old_stages(
++    chromium_events_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    observed_at = datetime(2026, 11, 11, 12, tzinfo=UTC)
++    _record_stages(chromium_events_path, ("2026-11-11T11:30:00+00:00", "page_ready"))
++    _app, _db, _cookie = _private_app(tmp_path)
++    monkeypatch.setattr(
++        "boca_socios.panel.worker_activity.read_chromium_events",
++        partial(
++            read_chromium_events,
++            path=chromium_events_path,
++            owner_uid=os.geteuid(),
++            owner_gid=os.getegid(),
++        ),
++    )
++
++    snapshot = read_worker_activity(tmp_path / "boca.sqlite3", observed_at=observed_at)
++
++    assert snapshot.chromium_telemetry == "degraded"
++    assert [event.message for event in snapshot.events if event.source == "chromium"] == [
++        "Chromium: sólo hay telemetría antigua; no confirma un proceso activo."
++    ]
++    assert snapshot.events[-1].level == "warning"
+diff --git a/tests/test_host_browser_ipc_install.py b/tests/test_host_browser_ipc_install.py
+index 49e5fe5..2ce79bb 100644
+--- a/tests/test_host_browser_ipc_install.py
++++ b/tests/test_host_browser_ipc_install.py
+@@ -963,7 +963,7 @@ def worker_record() -> dict[str, object]:
+                 "boca.socios.browser-ipc-attempt": ATTEMPT,
+                 "org.opencontainers.image.revision": SOURCE,
+             },
+-            "Cmd": ["python", "-m", "boca_socios.browser.ipc_worker"],
++            "Cmd": ["python", "-m", "boca_socios.browser.ipc_server"],
+             "Entrypoint": None,
+             "ExposedPorts": None,
+             "Env": [
+@@ -1009,10 +1009,14 @@ def worker_record() -> dict[str, object]:
+             {
+                 "Type": "volume",
+                 "Driver": "local",
+-                "Name": host.BROWSER_IPC_VOLUME,
+-                "Destination": "/run/boca-browser-ipc",
+-                "RW": True,
++                "Name": source,
++                "Destination": target,
++                "RW": writable,
+             }
++            for source, target, writable in (
++                (host.BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", True),
++                (host.BROWSER_SITE_CONFIG_VOLUME, "/run/boca-site-config", False),
++            )
+         ],
+     }
+ 
+@@ -1154,6 +1158,7 @@ def controller_record() -> dict[str, object]:
+                 (host.KEY_VOLUME, "/run/secrets", False),
+                 (host.OWNER_VOLUME, "/run/owner", False),
+                 (host.BROWSER_IPC_VOLUME, "/run/boca-browser-ipc", False),
++                (host.BROWSER_SITE_CONFIG_VOLUME, "/run/boca-site-config", True),
+             )
+         ],
+     }
+diff --git a/tests/test_host_browser_lifecycle.py b/tests/test_host_browser_lifecycle.py
+index 83570a8..60af3e0 100644
+--- a/tests/test_host_browser_lifecycle.py
++++ b/tests/test_host_browser_lifecycle.py
+@@ -51,7 +51,10 @@ def context() -> tuple[dict[str, object], dict[str, object]]:
+ def record(*, worker: bool, running: bool = True) -> dict[str, object]:
+     service = "browser-worker" if worker else "controller"
+     image = BROWSER if worker else IMAGE
+-    mounts = [("boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", worker)]
++    mounts = [
++        ("boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", worker),
++        ("boca-socios_boca_site_config", "/run/boca-site-config", not worker),
++    ]
+     if not worker:
+         mounts += [
+             ("boca-socios_boca_data", "/data", True),
+@@ -65,7 +68,7 @@ def record(*, worker: bool, running: bool = True) -> dict[str, object]:
+         "Config": {
+             "Image": image,
+             "User": "10002:10002" if worker else "10001:10001",
+-            "Cmd": ["python", "-m", "boca_socios.browser.ipc_worker"]
++            "Cmd": ["python", "-m", "boca_socios.browser.ipc_server"]
+             if worker
+             else ["python", "-m", "boca_socios.runtime", "serve-beta"],
+             "Entrypoint": None,
+@@ -256,6 +259,26 @@ def test_foreign_browser_mount_or_attempt_never_stops_any_container() -> None:
+         assert all(argv[2] != "stop" for argv in calls)
+ 
+ 
++@pytest.mark.parametrize("worker,writable", [(False, False), (True, True)])
++def test_site_config_mount_wrong_access_never_stops_containers(
++    worker: bool, writable: bool
++) -> None:
++    records = [record(worker=False), record(worker=True)]
++    service_mounts = records[int(worker)]["Mounts"]
++    site_config = next(
++        mount for mount in service_mounts if mount["Name"] == "boca-socios_boca_site_config"
++    )
++    site_config["RW"] = writable
++    calls: list[tuple[str, ...]] = []
++    with (
++        patch.object(host, "_browser_stop_context", return_value=context()),
++        patch.object(host, "_command", side_effect=fake_command(records, calls)),
++    ):
++        with pytest.raises(host.SetupError, match="unknown_container_preserved_no_stop"):
++            host._stop_test_containers(HOME)
++    assert all(argv[2] != "stop" for argv in calls)
++
++
+ def test_controller_cannot_fall_back_to_legacy_when_browser_worker_exists() -> None:
+     records = [record(worker=False), record(worker=True)]
+     del records[0]["Config"]["Labels"]["boca.socios.browser-ipc-attempt"]
+diff --git a/tests/test_host_browser_runtime_lifecycle.py b/tests/test_host_browser_runtime_lifecycle.py
+index cc97bab..a39d9d8 100644
+--- a/tests/test_host_browser_runtime_lifecycle.py
++++ b/tests/test_host_browser_runtime_lifecycle.py
+@@ -747,13 +747,20 @@ def test_cleanup_identifies_unhealthy_or_stopped_pair_without_requiring_health_o
+     monkeypatch.setattr(host, "_validate_boca_network", lambda *args: network_checks.append(args))
+     for name in (
+         "_browser_validate_ipc_volume",
++        "_browser_validate_site_config_volume",
+         "_validate_owner_volume",
+         "_validate_key_volume",
+         "_validate_data_volume",
+     ):
+         monkeypatch.setattr(host, name, lambda *args: None)
+     monkeypatch.setattr(host, "_storage_snapshot", safe_storage)
+-    volumes = {host.OWNER_VOLUME, host.KEY_VOLUME, host.DATA_VOLUME, host.BROWSER_IPC_VOLUME}
++    volumes = {
++        host.OWNER_VOLUME,
++        host.KEY_VOLUME,
++        host.DATA_VOLUME,
++        host.BROWSER_IPC_VOLUME,
++        host.BROWSER_SITE_CONFIG_VOLUME,
++    }
+     monkeypatch.setattr(
+         host,
+         "_names",
+diff --git a/tests/test_host_lifecycle_rootless_adapter.py b/tests/test_host_lifecycle_rootless_adapter.py
+index 483ca7c..819f10f 100644
+--- a/tests/test_host_lifecycle_rootless_adapter.py
++++ b/tests/test_host_lifecycle_rootless_adapter.py
+@@ -96,9 +96,10 @@ def _container(ident: str, service: str, image_id: str, *, running: bool) -> Con
+         labels=_labels(
+             service, CONFIG_CONTROLLER if controller else CONFIG_SENDER if sender else CONFIG_WORKER
+         ),
+-        volumes=(
++        volumes=tuple(sorted(
+             (
+                 "boca-socios_boca_browser_ipc",
++                "boca-socios_boca_site_config",
+                 "boca-socios_boca_data",
+                 "boca-socios_boca_key",
+                 "boca-socios_boca_owner",
+@@ -106,8 +107,8 @@ def _container(ident: str, service: str, image_id: str, *, running: bool) -> Con
+             if controller
+             else ("boca-socios_boca_data", "boca-socios_boca_telegram")
+             if sender
+-            else ("boca-socios_boca_browser_ipc",)
+-        ),
++            else ("boca-socios_boca_browser_ipc", "boca-socios_boca_site_config")
++        )),
+         networks=(
+             ("boca-socios_boca_private",)
+             if controller
+@@ -181,6 +182,7 @@ class FakeIO:
+                     "boca-socios_boca_key",
+                     "boca-socios_boca_owner",
+                     "boca-socios_boca_browser_ipc",
++                    "boca-socios_boca_site_config",
+                 )
+                 + (("boca-socios_boca_telegram",) if sender_running is not None else ())
+             ),
+@@ -231,7 +233,10 @@ class FakeIO:
+                     }
+                 }
+             self.fields[("container", ident, "Mounts")] = (
+-                [_mount("boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", True)]
++                [
++                    _mount("boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", True),
++                    _mount("boca-socios_boca_site_config", "/run/boca-site-config", False),
++                ]
+                 if service == "browser-worker"
+                 else [
+                     _mount("boca-socios_boca_data", "/data", True),
+@@ -243,6 +248,7 @@ class FakeIO:
+                     _mount("boca-socios_boca_key", "/run/secrets", False),
+                     _mount("boca-socios_boca_owner", "/run/owner", False),
+                     _mount("boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", False),
++                    _mount("boca-socios_boca_site_config", "/run/boca-site-config", True),
+                 ]
+             )
+         self.set_state(CONTROLLER, True)
+@@ -368,6 +374,9 @@ def test_probes_exact_rootless_pair_without_contacting_foreign_work(tmp_path: Pa
+         "foreign_network",
+         "wrong_host_port",
+         "extra_mount",
++        "controller_site_config_readonly",
++        "worker_site_config_writable",
++        "worker_site_config_missing",
+         "bad_rootless_uid",
+         "missing_worker_health",
+         "unexpected_restart_policy",
+@@ -455,6 +464,22 @@ def test_rejects_unverified_host_identity_and_boundary(tmp_path: Path, mutation:
+         io.fields[("container", WORKER, "Mounts")] = io.fields[("container", WORKER, "Mounts")] + [
+             _mount("foreign", "/root", True)
+         ]  # type: ignore[operator]
++    elif mutation in (
++        "controller_site_config_readonly",
++        "worker_site_config_writable",
++        "worker_site_config_missing",
++    ):
++        ident = CONTROLLER if mutation == "controller_site_config_readonly" else WORKER
++        current_mounts = io.fields[("container", ident, "Mounts")]
++        assert isinstance(current_mounts, list)
++        io.fields[("container", ident, "Mounts")] = [
++            {**mount, "RW": mutation == "worker_site_config_writable"}
++            if mount["Name"] == "boca-socios_boca_site_config"
++            else mount
++            for mount in current_mounts
++            if mutation != "worker_site_config_missing"
++            or mount["Name"] != "boca-socios_boca_site_config"
++        ]
+     elif mutation == "bad_rootless_uid":
+         io.uid = 0
+     elif mutation == "missing_worker_health":
+diff --git a/tests/test_ipc_server_adapter.py b/tests/test_ipc_server_adapter.py
+new file mode 100644
+index 0000000..7a9a5be
+--- /dev/null
++++ b/tests/test_ipc_server_adapter.py
+@@ -0,0 +1,276 @@
++"""R172 fake-stream IPC contract tests; no sockets, browser, or HTTP traffic.
++
++Real cross-container AF_UNIX / SO_PEERCRED and socket inode acceptance remains
++a separate protected Cutover gate, not something a fake stream can certify.
++"""
++
++from __future__ import annotations
++
++import asyncio
++import os
++import struct
++import sys
++from pathlib import Path
++from types import ModuleType
++from typing import cast
++
++import pytest
++
++from boca_socios.browser import ipc_server as server_module
++from boca_socios.browser.contracts import SimulationOutcome
++from boca_socios.browser.ipc_protocol import NO_GO, REQUEST, SUCCESS, SyntheticIPCError, framed
++
++
++class FakePeer:
++    def __init__(self, uid: int) -> None:
++        self.uid = uid
++
++    def getsockopt(self, level: int, option: int, size: int) -> bytes:
++        return struct.pack("3i", 321, self.uid, self.uid)
++
++
++class RecordingWriter:
++    def __init__(self, uid: int) -> None:
++        self.peer = FakePeer(uid)
++        self.data = bytearray()
++        self.closed = False
++
++    def get_extra_info(self, name: str) -> FakePeer:
++        assert name == "socket"
++        return self.peer
++
++    def write(self, data: bytes) -> None:
++        self.data.extend(data)
++
++    async def drain(self) -> None:
++        return
++
++    def close(self) -> None:
++        self.closed = True
++
++    async def wait_closed(self) -> None:
++        return
++
++
++class FakeExecutor:
++    def __init__(self) -> None:
++        self.started = asyncio.Event()
++        self.release = asyncio.Event()
++        self.release.set()
++        self.calls = 0
++        self.cancelled = False
++        self.closed = False
++        self.swallow_cancel = False
++
++    async def simulate_general_reservation(self) -> SimulationOutcome:
++        self.calls += 1
++        self.started.set()
++        try:
++            await self.release.wait()
++        except asyncio.CancelledError:
++            self.cancelled = True
++            if not self.swallow_cancel:
++                raise
++        return SimulationOutcome.RESERVED_IN_SIMULATOR
++
++    async def close(self) -> None:
++        self.closed = True
++
++
++@pytest.fixture
++def controller_uid(monkeypatch: pytest.MonkeyPatch) -> int:
++    uid = os.geteuid()
++    assert uid == os.getegid()
++    monkeypatch.setattr(server_module, "CONTROLLER_UID", uid)
++    return uid
++
++
++def request_reader(
++    payload: bytes = framed(REQUEST), *, complete: bool = True
++) -> asyncio.StreamReader:
++    reader = asyncio.StreamReader()
++    reader.feed_data(payload)
++    if complete:
++        reader.feed_eof()
++    return reader
++
++
++def wire_writer(uid: int) -> tuple[RecordingWriter, asyncio.StreamWriter]:
++    writer = RecordingWriter(uid)
++    return writer, cast("asyncio.StreamWriter", writer)
++
++
++def test_default_adapter_rejects_work_without_importing_navigation(controller_uid: int) -> None:
++    async def exercise() -> None:
++        server = server_module.UnixSyntheticWorker(boundary_check=lambda: None)
++        for _ in range(2):
++            record, writer = wire_writer(controller_uid)
++            await server._handle(request_reader(), writer)
++            assert record.closed
++            assert bytes(record.data) == b"\x00\x17BOCA_SYNTHETIC_V1_NO_GO"
++        await server.close()
++
++    asyncio.run(exercise())
++
++
++def test_injected_offline_executor_returns_only_fixed_simulator_result(controller_uid: int) -> None:
++    async def exercise() -> None:
++        fake = FakeExecutor()
++        server = server_module.UnixSyntheticWorker(fake, boundary_check=lambda: None)
++        record, writer = wire_writer(controller_uid)
++        await server._handle(request_reader(), writer)
++        assert bytes(record.data) == framed(SUCCESS)
++        assert fake.calls == 1
++        await server.close()
++        assert fake.closed
++
++    asyncio.run(exercise())
++
++
++def test_busy_does_not_dispatch_second_simulation(controller_uid: int) -> None:
++    async def exercise() -> None:
++        fake = FakeExecutor()
++        fake.release.clear()
++        server = server_module.UnixSyntheticWorker(fake, boundary_check=lambda: None)
++        first_record, first_writer = wire_writer(controller_uid)
++        first = asyncio.create_task(server._handle(request_reader(), first_writer))
++        await asyncio.wait_for(fake.started.wait(), timeout=2)
++        busy_record, busy_writer = wire_writer(controller_uid)
++        await server._handle(request_reader(), busy_writer)
++        assert bytes(busy_record.data) == b"\x00\x16BOCA_SYNTHETIC_V1_BUSY"
++        assert fake.calls == 1
++        fake.release.set()
++        await asyncio.wait_for(first, timeout=2)
++        assert bytes(first_record.data) == framed(SUCCESS)
++        await server.close()
++
++    asyncio.run(exercise())
++
++
++def test_malformed_frame_returns_no_go_without_running_executor(controller_uid: int) -> None:
++    async def exercise() -> None:
++        fake = FakeExecutor()
++        server = server_module.UnixSyntheticWorker(fake, boundary_check=lambda: None)
++        record, writer = wire_writer(controller_uid)
++        await server._handle(request_reader(b"\x00\x01X"), writer)
++        assert bytes(record.data) == framed(NO_GO)
++        assert fake.calls == 0
++        await server.close()
++
++    asyncio.run(exercise())
++
++
++def test_unverified_peer_is_rejected_before_request_or_executor(controller_uid: int) -> None:
++    async def exercise() -> None:
++        fake = FakeExecutor()
++        server = server_module.UnixSyntheticWorker(fake, boundary_check=lambda: None)
++        record, writer = wire_writer(controller_uid + 1)
++        await server._handle(request_reader(), writer)
++        assert bytes(record.data) == b""
++        assert record.closed and fake.calls == 0
++        await server.close()
++
++    asyncio.run(exercise())
++
++
++def test_stop_during_partial_request_never_starts_job(controller_uid: int) -> None:
++    async def exercise() -> None:
++        fake = FakeExecutor()
++        server = server_module.UnixSyntheticWorker(fake, boundary_check=lambda: None)
++        reader = request_reader(b"\x00\x15", complete=False)
++        record, writer = wire_writer(controller_uid)
++        active = asyncio.create_task(server._handle(reader, writer))
++        await asyncio.sleep(0)
++        await server.close()
++        reader.feed_data(REQUEST)
++        reader.feed_eof()
++        await asyncio.wait_for(active, timeout=2)
++        assert bytes(record.data) == framed(NO_GO)
++        assert fake.calls == 0
++
++    asyncio.run(exercise())
++
++
++@pytest.mark.parametrize("swallow_cancel", [False, True])
++def test_stop_does_not_upgrade_cancelled_or_late_fake_success(
++    controller_uid: int, swallow_cancel: bool
++) -> None:
++    async def exercise() -> None:
++        fake = FakeExecutor()
++        fake.release.clear()
++        fake.swallow_cancel = swallow_cancel
++        server = server_module.UnixSyntheticWorker(fake, boundary_check=lambda: None)
++        record, writer = wire_writer(controller_uid)
++        active = asyncio.create_task(server._handle(request_reader(), writer))
++        await asyncio.wait_for(fake.started.wait(), timeout=2)
++        await asyncio.wait_for(server.close(), timeout=2)
++        await asyncio.wait_for(active, timeout=2)
++        assert bytes(record.data) == framed(NO_GO)
++        assert fake.cancelled and fake.closed
++
++    asyncio.run(exercise())
++
++
++def test_cold_start_reads_verified_site_url_without_exposing_it(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    runtime = ModuleType("boca_socios.browser.site_url_runtime")
++    destination = "https://ensayo.boca.internal/prueba"
++    runtime_path = Path("/run/boca-site-config/boca-site-url.runtime.json")
++    runtime.RUNTIME_SITE_URL_PATH = runtime_path  # type: ignore[attr-defined]
++
++    def read_site_url(path: Path) -> str:
++        assert path == runtime_path
++        return destination
++
++    runtime.read_site_url = read_site_url  # type: ignore[attr-defined]
++    runtime.RuntimeSiteUrlUnavailable = RuntimeError  # type: ignore[attr-defined]
++    runtime.SiteUrlInvalid = ValueError  # type: ignore[attr-defined]
++    monkeypatch.setitem(sys.modules, runtime.__name__, runtime)
++    assert server_module._read_worker_site_url() == destination
++
++
++def test_absent_runtime_config_is_fail_closed_without_browser(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    runtime = ModuleType("boca_socios.browser.site_url_runtime")
++    runtime.RUNTIME_SITE_URL_PATH = Path(  # type: ignore[attr-defined]
++        "/run/boca-site-config/boca-site-url.runtime.json"
++    )
++
++    def unavailable(path: Path) -> str:
++        raise RuntimeError("discard this private detail")
++
++    runtime.read_site_url = unavailable  # type: ignore[attr-defined]
++    runtime.RuntimeSiteUrlUnavailable = RuntimeError  # type: ignore[attr-defined]
++    runtime.SiteUrlInvalid = ValueError  # type: ignore[attr-defined]
++    monkeypatch.setitem(sys.modules, runtime.__name__, runtime)
++    with pytest.raises(SyntheticIPCError, match="^site_url_not_ready$"):
++        server_module._read_worker_site_url()
++
++
++def test_cold_start_injects_only_the_verified_url_into_explicit_offline_factory(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    async def exercise() -> None:
++        destination = "https://ensayo.boca.internal/prueba"
++        monkeypatch.setattr(server_module, "_read_worker_site_url", lambda: destination)
++        fake = FakeExecutor()
++        received: list[str] = []
++
++        def factory(site_url: str) -> FakeExecutor:
++            received.append(site_url)
++            return fake
++
++        async def fake_serve(
++            self: server_module.UnixSyntheticWorker, stop: asyncio.Event
++        ) -> None:
++            assert self._executor is fake
++            assert not stop.is_set()
++
++        monkeypatch.setattr(server_module.UnixSyntheticWorker, "serve_until", fake_serve)
++        await server_module._run_server(factory)
++        assert received == [destination]
++        assert fake.calls == 0
++
++    asyncio.run(exercise())
+diff --git a/tests/test_r172_db_telegram_reuse_contract.py b/tests/test_r172_db_telegram_reuse_contract.py
+new file mode 100644
+index 0000000..35b308c
+--- /dev/null
++++ b/tests/test_r172_db_telegram_reuse_contract.py
+@@ -0,0 +1,135 @@
++"""R172 code-only guard against duplicating reviewed member/Telegram boundaries.
++
++These static contracts do not inspect the protected browser modules, read
++runtime credentials, access an installed database or contact Telegram/Boca.
++"""
++
++from __future__ import annotations
++
++import ast
++import re
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++
++
++def _read(relative: str) -> str:
++    return (ROOT / relative).read_text(encoding="utf-8")
++
++
++def _method(module: str, class_name: str, method_name: str) -> ast.FunctionDef:
++    tree = ast.parse(_read(module))
++    owner = next(
++        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == class_name
++    )
++    return next(
++        node
++        for node in owner.body
++        if isinstance(node, ast.FunctionDef) and node.name == method_name
++    )
++
++
++def _called_attribute(node: ast.AST, name: str) -> bool:
++    return any(
++        isinstance(item, ast.Call)
++        and isinstance(item.func, ast.Attribute)
++        and item.func.attr == name
++        for item in ast.walk(node)
++    )
++
++
++def test_existing_member_enrollment_keeps_credentials_sealed_only() -> None:
++    schema = _read("src/boca_socios/storage/migrations/0001_initial.sql")
++    table = re.search(r"(?is)CREATE TABLE IF NOT EXISTS credentials\s*\((.*?)\);", schema)
++    assert table is not None
++    columns = set(re.findall(r"(?m)^\s{2}([a-z_]+)\s+(?:TEXT|BLOB)\b", table.group(1)))
++    assert {"member_id", "key_id", "nonce", "ciphertext", "updated_at"} <= columns
++    assert not ({"password", "plaintext", "cleartext", "raw_password"} & columns)
++
++    vault = _method("src/boca_socios/security/credential_vault.py", "CredentialVault", "seal")
++    assert _called_attribute(vault, "encrypt")
++    assert _called_attribute(vault, "_aad")
++    assert any(
++        isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "AESGCM"
++        for node in ast.walk(vault)
++    )
++
++    enrollment = _method(
++        "src/boca_socios/security/enrollment.py", "MemberEnrollmentService", "enroll"
++    )
++    assert _called_attribute(enrollment, "seal")
++    sql_literals = [
++        node.value
++        for node in ast.walk(enrollment)
++        if isinstance(node, ast.Constant) and isinstance(node.value, str)
++    ]
++    assert any(
++        re.search(
++            r"INSERT\s+INTO\s+credentials\s*\(\s*member_id\s*,\s*key_id\s*,\s*nonce\s*,\s*ciphertext\s*\)",
++            statement,
++            re.IGNORECASE,
++        )
++        for statement in sql_literals
++    )
++
++
++def test_telegram_staging_and_synthetic_outbox_reuse_existing_wiring() -> None:
++    runtime = ast.parse(_read("src/boca_socios/runtime.py"))
++    stager = next(
++        node
++        for node in runtime.body
++        if isinstance(node, ast.FunctionDef) and node.name == "_configured_telegram_pairing_stager"
++    )
++    assert _called_attribute(stager, "validate_beta")
++    assert any(
++        isinstance(node, ast.Name) and node.id == "stage_private_telegram_pairing"
++        for node in ast.walk(stager)
++    )
++    assert any(
++        isinstance(node, ast.Constant) and node.value == "encrypted-only"
++        for node in ast.walk(stager)
++    )
++
++    # The controller publishes safe synthetic notices to SQLite. Telegram's
++    # independent, opt-in sender consumes the same reviewed outbox.
++    beta = _read("src/boca_socios/integration/beta.py")
++    delivery = _read("src/boca_socios/notify/telegram_delivery.py")
++    worker = _read("src/boca_socios/notify/telegram_worker.py")
++    assert "StaticOutboxAdapter(self._outbox" in beta
++    assert "SqliteNotificationOutbox" in delivery
++    assert "SqliteNotificationOutbox(database)" in worker
++    assert "BOCA_TELEGRAM_DISPATCH_MODE" in worker
++    assert '"explicit"' in worker
++    assert "boca_socios.notify.telegram_worker" not in _read("src/boca_socios/runtime.py")
++
++
++def test_telegram_activation_stays_explicitly_no_go_and_token_requires_rotation() -> None:
++    workflow = _read(".github/workflows/boca-first-deploy.yml")
++    step = re.search(
++        r"(?ms)^      - name: Prove Telegram dual-source release ancestry CODE_ONLY then reject physical activation\n"
++        r"(.*?)(?=^      - name:|\Z)",
++        workflow,
++    )
++    assert step is not None
++    body = step.group(1)
++    assert "if: inputs.operation == 'telegram-activate'" in body
++    assert "BOCA_TELEGRAM_POSTCUTOVER state=NO_GO" in body
++    assert "host=untouched sender=OFF" in body
++    assert re.search(r"(?m)^\s+exit 1\s*$", body)
++
++    # A source gate cannot establish secret rotation. Preserve the documented
++    # requirement instead of treating ciphertext staging as sender activation.
++    agents = _read("AGENTS.md")
++    assert re.search(
++        r"Treat the token as\s+compromised and require secret rotation by its owner", agents
++    )
++    panel = ast.parse(_read("src/boca_socios/panel/private_http.py"))
++    binary_fragments = [
++        node.value
++        for node in ast.walk(panel)
++        if isinstance(node, ast.Constant) and isinstance(node.value, bytes)
++    ]
++    assert any(b'"state":"STAGED_PENDING_PROTECTED_CUTOVER"' in part for part in binary_fragments)
++    assert any(
++        b'"sender":"OFF","notification_receipt":"UNVERIFIED"' in part for part in binary_fragments
++    )
+diff --git a/tests/test_r172_worker_cutover_wiring.py b/tests/test_r172_worker_cutover_wiring.py
+new file mode 100644
+index 0000000..44e0c4b
+--- /dev/null
++++ b/tests/test_r172_worker_cutover_wiring.py
+@@ -0,0 +1,97 @@
++"""R172 reviewed worker entrypoint and smallest dedicated URL-config mount.
++
++These are code/argv contracts only; never start Docker or the owner blackboxes.
++"""
++
++from __future__ import annotations
++
++from pathlib import Path
++
++import pytest
++
++from boca_socios import host_first_deploy as host
++
++
++WORKER_IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "b" * 64
++CONTROLLER_IMAGE = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "a" * 64
++
++
++def _mounts(argv: tuple[str, ...]) -> tuple[str, ...]:
++    return tuple(argv[index + 1] for index, arg in enumerate(argv[:-1]) if arg == "--mount")
++
++
++def test_browser_worker_has_ipc_server_entrypoint_and_readonly_url_config() -> None:
++    argv = host._cutover_worker_create_argv(WORKER_IMAGE, "a" * 40, "123456", "c" * 64)
++    assert argv[-3:] == ("python", "-m", "boca_socios.browser.ipc_server")
++    assert _mounts(argv) == (
++        "type=volume,source=boca-socios_boca_browser_ipc,target=/run/boca-browser-ipc,volume-nocopy",
++        "type=volume,source=boca-socios_boca_site_config,target=/run/boca-site-config,readonly,volume-nocopy",
++    )
++    assert not any("boca_data" in value or "boca_key" in value for value in _mounts(argv))
++
++
++def test_candidate_controller_writes_only_dedicated_url_config_volume() -> None:
++    argv = host._cutover_candidate_create_argv(
++        CONTROLLER_IMAGE,
++        "a" * 40,
++        "123456",
++        "http://localhost:8443",
++        "owner",
++        "c" * 64,
++        control_directory=Path("/home/boca-deploy/.boca-on-demand/socket"),
++    )
++    assert (
++        "type=volume,source=boca-socios_boca_site_config,target=/run/boca-site-config,volume-nocopy"
++        in _mounts(argv)
++    )
++
++
++def test_overlay_declares_exact_url_volume_and_ipc_server() -> None:
++    overlay = Path(__file__).resolve().parents[1] / "compose.beta.browser.yaml"
++    source = overlay.read_text(encoding="utf-8")
++    assert 'command: ["python", "-m", "boca_socios.browser.ipc_server"]' in source
++    assert "boca_site_config:/run/boca-site-config:ro" in source
++    assert "boca_site_config:/run/boca-site-config" in source
++    assert "name: boca-socios_boca_site_config" in source
++
++
++def test_site_config_volume_is_created_with_boca_only_custody(
++    monkeypatch: pytest.MonkeyPatch,
++) -> None:
++    created: list[tuple[str, ...]] = []
++
++    def run(*argv: str, **_kwargs: object) -> str:
++        created.append(argv)
++        return host.BROWSER_SITE_CONFIG_VOLUME
++
++    monkeypatch.setattr(host, "_run", run)
++    monkeypatch.setattr(
++        host,
++        "_browser_validate_site_config_volume",
++        lambda attempt: created.append(("validated", attempt)),
++        raising=False,
++    )
++
++    def probe(phase: str, attempt: str, argv: tuple[str, ...]) -> str:
++        assert phase == "site-config-init" and attempt == "123456"
++        assert "--network" in argv and argv[argv.index("--network") + 1] == "none"
++        assert "--mount" in argv
++        assert (
++            "type=volume,source=boca-socios_boca_site_config,target=/run/boca-site-config,volume-nocopy"
++            in argv
++        )
++        assert "CHOWN" in argv and "FOWNER" in argv
++        return "BOCA_SITE_CONFIG_DIR_PASS"
++
++    monkeypatch.setattr(host, "_browser_named_probe", probe)
++    host._browser_create_site_config_volume(WORKER_IMAGE, "123456")
++    assert created == [
++        (
++            "docker", "volume", "create", "--driver", "local", "--label",
++            "com.docker.compose.project=boca-socios", "--label",
++            "com.docker.compose.volume=boca_site_config", "--label",
++            "boca.socios.browser-ipc-attempt=123456", "boca-socios_boca_site_config",
++        ),
++        ("validated", "123456"),
++        ("validated", "123456"),
++    ]
+diff --git a/tests/test_site_url_configuration.py b/tests/test_site_url_configuration.py
+index a8a40b4..da10007 100644
+--- a/tests/test_site_url_configuration.py
++++ b/tests/test_site_url_configuration.py
+@@ -7,6 +7,7 @@ from pathlib import Path
+ 
+ import pytest
+ 
++from boca_socios.panel import private_http
+ from boca_socios.panel.site_url_settings import (
+     SiteUrlInvalid,
+     SiteUrlSettingsStore,
+@@ -44,7 +45,16 @@ def test_site_url_configuration_is_owner_only_and_discoverable(tmp_path: Path) -
+     assert "form-action 'self'" in headers["Content-Security-Policy"]
+ 
+ 
+-def test_owner_saves_site_url_and_it_survives_reloading_store(tmp_path: Path) -> None:
++def test_owner_saves_site_url_and_it_survives_reloading_store(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    published: list[tuple[Path, str]] = []
++    monkeypatch.setattr(
++        private_http,
++        "publish_site_url",
++        lambda path, destination: published.append((path, destination)),
++        raising=False,
++    )
+     app, cookie, database = _owner(tmp_path)
+     fields = _form_fields(app, cookie)
+     status, headers, _ = _request(
+@@ -55,6 +65,9 @@ def test_owner_saves_site_url_and_it_survives_reloading_store(tmp_path: Path) ->
+         payload={**fields, "SITE_URL": "https://ensayo.boca.internal/ruta"},
+     )
+     assert status == 303 and headers["Location"] == "/configuracion"
++    assert published == [
++        (private_http.RUNTIME_SITE_URL_PATH, "https://ensayo.boca.internal/ruta")
++    ]
+     store = SiteUrlSettingsStore.for_database(database)
+     assert store.read() == "https://ensayo.boca.internal/ruta"
+     assert store.path.stat().st_mode & 0o777 == 0o600
+@@ -119,7 +132,16 @@ def test_bad_csrf_or_origin_cannot_change_destination(tmp_path: Path) -> None:
+     assert SiteUrlSettingsStore.for_database(database).read() is None
+ 
+ 
+-def test_owner_can_store_public_destination_without_launching_worker(tmp_path: Path) -> None:
++def test_owner_can_store_public_destination_without_launching_worker(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    published: list[str] = []
++    monkeypatch.setattr(
++        private_http,
++        "publish_site_url",
++        lambda _path, destination: published.append(destination),
++        raising=False,
++    )
+     app, cookie, database = _owner(tmp_path)
+     code, _, page = _request(
+         app,
+@@ -132,12 +154,37 @@ def test_owner_can_store_public_destination_without_launching_worker(tmp_path: P
+         },
+     )
+     assert code == 303
++    assert published == ["https://soysocio.bocajuniors.com.ar/"]
+     assert b"sandbox" not in page
+     assert (
+         SiteUrlSettingsStore.for_database(database).read() == "https://soysocio.bocajuniors.com.ar/"
+     )
+ 
+ 
++def test_site_url_publication_failure_fails_closed_without_starting_worker(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    from boca_socios.browser.site_url_runtime import RuntimeSiteUrlUnavailable
++
++    def unavailable(_path: Path, _destination: str) -> None:
++        raise RuntimeSiteUrlUnavailable("runtime mirror unavailable")
++
++    monkeypatch.setattr(private_http, "publish_site_url", unavailable, raising=False)
++    app, cookie, _ = _owner(tmp_path)
++    code, _, body = _request(
++        app,
++        "/configuracion",
++        cookie=cookie,
++        method="POST",
++        payload={
++            **_form_fields(app, cookie),
++            "SITE_URL": "https://sandbox.example.com/",
++        },
++    )
++    assert code == 503
++    assert b"Configuraci" in body
++
++
+ def test_url_settings_fail_closed_on_symlink(tmp_path: Path) -> None:
+     store = SiteUrlSettingsStore.for_database(tmp_path / "boca.sqlite3")
+     outside = tmp_path / "outside.json"
+diff --git a/tests/test_site_url_runtime.py b/tests/test_site_url_runtime.py
+new file mode 100644
+index 0000000..771d90d
+--- /dev/null
++++ b/tests/test_site_url_runtime.py
+@@ -0,0 +1,134 @@
++"""Config-only Boca controller -> cold worker boundary, without navigation."""
++
++from __future__ import annotations
++
++import importlib
++import json
++import os
++import stat
++from pathlib import Path
++
++import pytest
++
++
++def _runtime():
++    return importlib.import_module("boca_socios.browser.site_url_runtime")
++
++
++def _prepared(tmp_path: Path) -> tuple[Path, dict[str, int]]:
++    directory = tmp_path / "boca-site-config"
++    directory.mkdir(mode=0o711)
++    directory.chmod(0o711)
++    return directory / "boca-site-url.runtime.json", {
++        "owner_uid": os.geteuid(),
++        "owner_gid": os.getegid(),
++    }
++
++
++def test_config_only_volume_applies_latest_url_on_each_cold_read(tmp_path: Path) -> None:
++    runtime = _runtime()
++    path, owner = _prepared(tmp_path)
++    first = "http://boca.sandbox.internal:8443/test"
++    second = "https://soysocio.bocajuniors.com.ar/"
++
++    fingerprint = runtime.publish_site_url(path, first, **owner)
++    assert fingerprint == runtime.site_url_fingerprint(first)
++    assert runtime.read_site_url(path, **owner) == first
++    assert stat.S_IMODE(path.stat().st_mode) == 0o644
++    assert set(json.loads(path.read_text())) == {"version", "SITE_URL", "sha256"}
++
++    first_inode = path.stat().st_ino
++    assert runtime.publish_site_url(path, second, **owner) != fingerprint
++    assert path.stat().st_ino != first_inode
++    assert runtime.read_site_url(path, **owner) == second
++
++
++def test_missing_or_insecure_runtime_configuration_is_no_go(tmp_path: Path) -> None:
++    runtime = _runtime()
++    path, owner = _prepared(tmp_path)
++    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
++        runtime.read_site_url(path, **owner)
++
++    runtime.publish_site_url(path, "https://sandbox.internal/", **owner)
++    path.chmod(0o666)
++    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
++        runtime.read_site_url(path, **owner)
++    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
++        runtime.publish_site_url(path, "https://next.test/", **owner)
++
++
++def test_runtime_file_symlink_and_hardlink_are_rejected(tmp_path: Path) -> None:
++    runtime = _runtime()
++    path, owner = _prepared(tmp_path)
++    outside = tmp_path / "outside.txt"
++    outside.write_text("untouched")
++    path.symlink_to(outside)
++    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
++        runtime.read_site_url(path, **owner)
++    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
++        runtime.publish_site_url(path, "https://sandbox.internal/", **owner)
++    assert outside.read_text() == "untouched"
++
++    path.unlink()
++    runtime.publish_site_url(path, "https://sandbox.internal/", **owner)
++    outside_link = tmp_path / "second-link"
++    os.link(path, outside_link)
++    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
++        runtime.read_site_url(path, **owner)
++    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
++        runtime.publish_site_url(path, "https://next.test/", **owner)
++
++
++def test_runtime_rejects_tampered_hash_schema_and_unsafe_owner(tmp_path: Path) -> None:
++    runtime = _runtime()
++    path, owner = _prepared(tmp_path)
++    runtime.publish_site_url(path, "https://sandbox.internal/", **owner)
++    data = json.loads(path.read_text())
++    data["SITE_URL"] = "https://other.internal/"
++    path.write_text(json.dumps(data))
++    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
++        runtime.read_site_url(path, **owner)
++
++    path.write_text('{"version":1,"SITE_URL":"https://sandbox.internal/","sha256":1}')
++    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
++        runtime.read_site_url(path, **owner)
++
++    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
++        runtime.read_site_url(path, owner_uid=10001, owner_gid=owner["owner_gid"])
++    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
++        runtime.publish_site_url(
++            path, "https://sandbox.internal/", owner_uid=10001, owner_gid=owner["owner_gid"]
++        )
++
++
++def test_runtime_requires_preprovisioned_exact_directory_and_no_secrets(tmp_path: Path) -> None:
++    runtime = _runtime()
++    path, owner = _prepared(tmp_path)
++    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
++        runtime.publish_site_url(path.with_name("wrong-name.json"), "https://site.test/", **owner)
++
++    nonexistent = tmp_path / "missing" / path.name
++    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
++        runtime.publish_site_url(nonexistent, "https://site.test/", **owner)
++    assert not nonexistent.parent.exists()
++
++    path.parent.chmod(0o777)
++    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
++        runtime.publish_site_url(path, "https://site.test/", **owner)
++
++
++@pytest.mark.parametrize(
++    "invalid",
++    [
++        "https://user:secret@site.test/",
++        "https://site.test/path?token=abc",
++        "https://169.254.169.254/latest/meta-data/",
++        "file:///etc/passwd",
++    ],
++)
++def test_runtime_rejects_credential_or_metadata_destination(tmp_path: Path, invalid: str) -> None:
++    runtime = _runtime()
++    path, owner = _prepared(tmp_path)
++    with pytest.raises(runtime.SiteUrlInvalid):
++        runtime.publish_site_url(path, invalid, **owner)
++    assert not path.exists()
