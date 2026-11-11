@@ -53,18 +53,22 @@ class ChromiumActivity:
     events: tuple[ChromiumStage, ...] = ()
 
 
-def _file_valid(metadata: os.stat_result, owner_uid: int) -> bool:
+def _file_valid(metadata: os.stat_result, owner_uid: int, owner_gid: int) -> bool:
     return (
         stat.S_ISREG(metadata.st_mode)
         and metadata.st_uid == owner_uid
-        and metadata.st_gid == owner_uid
+        and metadata.st_gid == owner_gid
         and stat.S_IMODE(metadata.st_mode) == _FILE_MODE
         and metadata.st_nlink == 1
     )
 
 
 def emit_chromium_event(
-    stage: str, *, path: Path = ACTIVITY_PATH, owner_uid: int = WORKER_UID
+    stage: str,
+    *,
+    path: Path = ACTIVITY_PATH,
+    owner_uid: int = WORKER_UID,
+    owner_gid: int | None = None,
 ) -> None:
     """Best-effort signal; no telemetry failure can alter browser behavior."""
     if stage not in _STAGES:
@@ -78,15 +82,16 @@ def emit_chromium_event(
     )
     if len(data) > _MAX_LINE_BYTES:
         return
+    expected_gid = owner_uid if owner_gid is None else owner_gid
     try:
         with _WRITE_LOCK:
-            validate_socket_directory(path.parent, uid=owner_uid)
+            validate_socket_directory(path.parent, uid=owner_uid, gid=expected_gid)
             try:
                 existing = path.lstat()
             except FileNotFoundError:
                 existing = None
             if existing is not None:
-                if not _file_valid(existing, owner_uid):
+                if not _file_valid(existing, owner_uid, expected_gid):
                     return
                 if existing.st_size + len(data) > MAX_ACTIVITY_BYTES:
                     # Rotate only this dedicated Boca telemetry file. The IPC
@@ -100,14 +105,17 @@ def emit_chromium_event(
                     existing is None
                     and stat.S_ISREG(metadata.st_mode)
                     and metadata.st_uid == owner_uid
-                    and metadata.st_gid == owner_uid
+                    and metadata.st_gid == expected_gid
                     and metadata.st_nlink == 1
                 ):
                     # A strict container umask must not hide fixed codes from
                     # the read-only UID10001 controller mount.
                     os.fchmod(descriptor, _FILE_MODE)
                     metadata = os.fstat(descriptor)
-                if _file_valid(metadata, owner_uid) and metadata.st_size <= MAX_ACTIVITY_BYTES:
+                if (
+                    _file_valid(metadata, owner_uid, expected_gid)
+                    and metadata.st_size <= MAX_ACTIVITY_BYTES
+                ):
                     os.write(descriptor, data)
             finally:
                 os.close(descriptor)
@@ -120,23 +128,31 @@ def read_chromium_events(
     *,
     path: Path = ACTIVITY_PATH,
     owner_uid: int = WORKER_UID,
+    owner_gid: int | None = None,
     observed_at: datetime,
 ) -> ChromiumActivity:
     """Read bounded worker-written codes without following links or rendering text."""
     if observed_at.tzinfo is None or observed_at.utcoffset() is None:
         raise ValueError("observed_at requires timezone")
+    expected_gid = owner_uid if owner_gid is None else owner_gid
     try:
-        validate_socket_directory(path.parent, uid=owner_uid)
+        validate_socket_directory(path.parent, uid=owner_uid, gid=expected_gid)
         try:
             existing = path.lstat()
         except FileNotFoundError:
             return ChromiumActivity("missing")
-        if not _file_valid(existing, owner_uid) or existing.st_size > MAX_ACTIVITY_BYTES:
+        if (
+            not _file_valid(existing, owner_uid, expected_gid)
+            or existing.st_size > MAX_ACTIVITY_BYTES
+        ):
             return ChromiumActivity("degraded")
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
         try:
             metadata = os.fstat(descriptor)
-            if not _file_valid(metadata, owner_uid) or metadata.st_size > MAX_ACTIVITY_BYTES:
+            if (
+                not _file_valid(metadata, owner_uid, expected_gid)
+                or metadata.st_size > MAX_ACTIVITY_BYTES
+            ):
                 return ChromiumActivity("degraded")
             data = os.read(descriptor, MAX_ACTIVITY_BYTES + 1)
         finally:

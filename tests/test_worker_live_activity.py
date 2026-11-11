@@ -145,12 +145,19 @@ def test_chromium_events_emit_fixed_codes_only_and_read_on_shared_directory(tmp_
     ipc = tmp_path / "boca-browser-ipc"
     ipc.mkdir(mode=0o711)
     target = ipc / "chromium-events.jsonl"
-    emit_chromium_event("launch_requested", path=target, owner_uid=os.geteuid())
-    emit_chromium_event("launched", path=target, owner_uid=os.geteuid())
+    emit_chromium_event(
+        "launch_requested", path=target, owner_uid=os.geteuid(), owner_gid=os.getegid()
+    )
+    emit_chromium_event("launched", path=target, owner_uid=os.geteuid(), owner_gid=os.getegid())
     with pytest.raises(ValueError):
-        emit_chromium_event("token=secret", path=target, owner_uid=os.geteuid())
+        emit_chromium_event(
+            "token=secret", path=target, owner_uid=os.geteuid(), owner_gid=os.getegid()
+        )
     observed = read_chromium_events(
-        path=target, owner_uid=os.geteuid(), observed_at=datetime.now(UTC)
+        path=target,
+        owner_uid=os.geteuid(),
+        owner_gid=os.getegid(),
+        observed_at=datetime.now(UTC),
     )
     assert observed.state == "available"
     assert [item.code for item in observed.events] == ["launch_requested", "launched"]
@@ -165,14 +172,18 @@ def test_chromium_activity_rejects_malformed_and_untrusted_files(tmp_path: Path)
     ipc.mkdir(mode=0o711)
     path = ipc / "chromium-events.jsonl"
     now = datetime.now(UTC)
-    assert read_chromium_events(path=path, owner_uid=os.geteuid(), observed_at=now).state == (
-        "missing"
-    )
+    assert read_chromium_events(
+        path=path, owner_uid=os.geteuid(), owner_gid=os.getegid(), observed_at=now
+    ).state == ("missing")
     path.write_text('{"v":1,"e":"password=secret","t":0}\n', encoding="utf-8")
     path.chmod(0o644)
-    result = read_chromium_events(path=path, owner_uid=os.geteuid(), observed_at=now)
+    result = read_chromium_events(
+        path=path, owner_uid=os.geteuid(), owner_gid=os.getegid(), observed_at=now
+    )
     assert result.state == "degraded" and not result.events
     path.unlink()
     path.symlink_to(tmp_path / "private_file")
-    result = read_chromium_events(path=path, owner_uid=os.geteuid(), observed_at=now)
+    result = read_chromium_events(
+        path=path, owner_uid=os.geteuid(), owner_gid=os.getegid(), observed_at=now
+    )
     assert result.state == "degraded" and not result.events
