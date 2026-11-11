@@ -1,4 +1,4 @@
-"""Inert UID10001 client adapter for one fixed offline Chromium command.
+"""Inert UID10001 client adapter for fixed offline Chromium IPC commands.
 
 Inject ``UnixSyntheticBrowser`` explicitly as the existing SyntheticBrowserPort.
 Importing it opens no socket, starts no worker and changes no BETA defaults.
@@ -17,8 +17,10 @@ from boca_socios.browser.contracts import SimulationOutcome
 from boca_socios.browser.ipc_protocol import (
     BUSY,
     CONTROLLER_UID,
+    FIXTURE_OBSERVED,
     MAX_FRAME_BYTES,
     NO_GO,
+    PROBE_FIXTURE,
     REQUEST,
     SOCKET_PATH,
     SUCCESS,
@@ -39,7 +41,8 @@ def _check_controller_identity() -> None:
 class UnixSyntheticBrowser:
     """One local synthetic call at a time; the coordinator retains durable ownership.
 
-    The only command is a constant without member/event identifiers or URLs.
+    Commands are fixed constants without member/event identifiers or URLs.
+    Fixture observation is an explicit, separate opt-in from reservations.
     SO_PEERCRED and socket metadata are checked before trusting the response.
     An interrupted invocation is never turned into simulated success.
     """
@@ -60,9 +63,22 @@ class UnixSyntheticBrowser:
         self._timeout = float(timeout_seconds)
         self._gate = Lock()
         self._closed = False
-        self._active: asyncio.Task[SimulationOutcome] | None = None
+        self._active: asyncio.Task[object] | None = None
 
     async def simulate_general_reservation(self) -> SimulationOutcome:
+        await self._exchange(REQUEST, SUCCESS)
+        return SimulationOutcome.RESERVED_IN_SIMULATOR
+
+    async def probe_offline_fixture(self) -> str:
+        """Return only a fixed observation marker for an opt-in local HTML fixture.
+
+        This cannot create a ticket, reservation, URL request or real-world action.
+        Normal synthetic reservation calls never select this IPC command.
+        """
+        await self._exchange(PROBE_FIXTURE, FIXTURE_OBSERVED)
+        return "fixture_observed"
+
+    async def _exchange(self, request: bytes, expected: bytes) -> None:
         active = asyncio.current_task()
         if active is None:
             raise SyntheticIPCError("client_loop_unavailable")
@@ -86,7 +102,7 @@ class UnixSyntheticBrowser:
                     verify_peer(writer, uid=WORKER_UID, gid=WORKER_UID)
                     if socket_identity(self._path, uid=WORKER_UID) != original:
                         raise SyntheticIPCError("ipc_socket_changed")
-                    writer.write(framed(REQUEST))
+                    writer.write(framed(request))
                     await writer.drain()
                     if not writer.can_write_eof():
                         raise SyntheticIPCError("ipc_half_close_unavailable")
@@ -94,7 +110,7 @@ class UnixSyntheticBrowser:
                     reply = await read_frame(reader)
                     if await reader.read(1) != b"":
                         raise SyntheticIPCError("ipc_response_unverified")
-                    if reply == SUCCESS:
+                    if reply == expected:
                         success = True
                     elif reply == BUSY:
                         raise SyntheticIPCError("worker_busy")
@@ -127,7 +143,7 @@ class UnixSyntheticBrowser:
         with self._gate:
             if not success or self._closed or active.cancelling() or monotonic() >= deadline:
                 raise SyntheticIPCError("client_closed_or_expired")
-            return SimulationOutcome.RESERVED_IN_SIMULATOR
+            return
 
     async def close(self) -> None:
         """Fence results and bound cancellation; never launch or stop containers."""

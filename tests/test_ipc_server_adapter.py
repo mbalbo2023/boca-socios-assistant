@@ -18,7 +18,15 @@ import pytest
 
 from boca_socios.browser import ipc_server as server_module
 from boca_socios.browser.contracts import SimulationOutcome
-from boca_socios.browser.ipc_protocol import NO_GO, REQUEST, SUCCESS, SyntheticIPCError, framed
+from boca_socios.browser.ipc_protocol import (
+    FIXTURE_OBSERVED,
+    NO_GO,
+    PROBE_FIXTURE,
+    REQUEST,
+    SUCCESS,
+    SyntheticIPCError,
+    framed,
+)
 
 
 class FakePeer:
@@ -114,6 +122,62 @@ def request_reader(
 def wire_writer(uid: int) -> tuple[RecordingWriter, asyncio.StreamWriter]:
     writer = RecordingWriter(uid)
     return writer, cast("asyncio.StreamWriter", writer)
+
+
+def test_fixture_probe_is_separate_from_transactional_request(controller_uid: int) -> None:
+    """A fixture-only worker never treats normal RUN as permission to launch Chromium."""
+
+    async def exercise() -> None:
+        fake = FakeExecutor()
+        worker = server_module.UnixSyntheticWorker(
+            fake, fixture_only=True, boundary_check=lambda: None
+        )
+        normal_record, normal_writer = wire_writer(controller_uid)
+        await worker._handle(request_reader(), normal_writer)
+        assert bytes(normal_record.data) == framed(NO_GO)
+        assert fake.calls == 0
+
+        probe_record, probe_writer = wire_writer(controller_uid)
+        await worker._handle(request_reader(framed(PROBE_FIXTURE)), probe_writer)
+        assert bytes(probe_record.data) == framed(FIXTURE_OBSERVED)
+        assert fake.calls == 1
+        await worker.close()
+        assert fake.closed
+
+    asyncio.run(exercise())
+
+
+def test_default_worker_rejects_fixture_probe_without_running_executor(
+    controller_uid: int,
+) -> None:
+    async def exercise() -> None:
+        fake = FakeExecutor()
+        worker = server_module.UnixSyntheticWorker(fake, boundary_check=lambda: None)
+        record, writer = wire_writer(controller_uid)
+        await worker._handle(request_reader(framed(PROBE_FIXTURE)), writer)
+        assert bytes(record.data) == framed(NO_GO)
+        assert fake.calls == 0
+        await worker.close()
+
+    asyncio.run(exercise())
+
+
+def test_stopping_fixture_probe_cannot_emit_late_observed_result(controller_uid: int) -> None:
+    async def exercise() -> None:
+        fake = FakeExecutor()
+        fake.release.clear()
+        worker = server_module.UnixSyntheticWorker(
+            fake, fixture_only=True, boundary_check=lambda: None
+        )
+        record, writer = wire_writer(controller_uid)
+        active = asyncio.create_task(worker._handle(request_reader(framed(PROBE_FIXTURE)), writer))
+        await asyncio.wait_for(fake.started.wait(), timeout=2)
+        await asyncio.wait_for(worker.close(), timeout=2)
+        await asyncio.wait_for(active, timeout=2)
+        assert bytes(record.data) == framed(NO_GO)
+        assert fake.cancelled and fake.closed
+
+    asyncio.run(exercise())
 
 
 def test_default_adapter_rejects_work_without_importing_navigation(controller_uid: int) -> None:
@@ -530,5 +594,52 @@ def test_default_cold_start_is_transport_only_and_does_not_load_owner_engine(
         assert invoked
         assert "boca_socios.browser.synthetic" not in sys.modules
         assert "boca_socios.browser.ipc_worker" not in sys.modules
+
+    asyncio.run(exercise())
+
+
+def test_fixture_probe_is_enabled_only_by_explicit_offline_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setenv("BOCA_BROWSER_OBSERVE_MODE", "offline-fixture")
+        monkeypatch.setattr(
+            server_module, "_read_worker_site_url", lambda: "https://sandbox.invalid"
+        )
+        started = False
+
+        async def fake_serve(self: server_module.UnixSyntheticWorker, stop: asyncio.Event) -> None:
+            nonlocal started
+            started = True
+            assert self._fixture_only is True
+            assert type(self._executor).__name__ == "OfflineFixtureExecutor"
+            assert not stop.is_set()
+
+        monkeypatch.setattr(server_module.UnixSyntheticWorker, "serve_until", fake_serve)
+        await server_module._run_server()
+        assert started
+        assert "boca_socios.browser.ipc_worker" not in sys.modules
+
+    asyncio.run(exercise())
+
+
+def test_unknown_observation_mode_refuses_cold_start_without_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def exercise() -> None:
+        monkeypatch.setenv("BOCA_BROWSER_OBSERVE_MODE", "site-observe")
+        monkeypatch.setattr(
+            server_module, "_read_worker_site_url", lambda: "https://sandbox.invalid"
+        )
+        started = False
+
+        async def fake_serve(self: server_module.UnixSyntheticWorker, stop: asyncio.Event) -> None:
+            nonlocal started
+            started = True
+
+        monkeypatch.setattr(server_module.UnixSyntheticWorker, "serve_until", fake_serve)
+        with pytest.raises(SyntheticIPCError, match="^worker_observe_mode_unverified$"):
+            await server_module._run_server()
+        assert not started
 
     asyncio.run(exercise())

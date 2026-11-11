@@ -21,6 +21,10 @@ DIRECTORY_MODE = 0o711  # owner rwx, clients traverse only; no directory listing
 SOCKET_MODE = 0o622  # other users can connect; SO_PEERCRED authorizes UID/GID
 MAX_FRAME_BYTES = 64
 REQUEST = b"BOCA_SYNTHETIC_V1_RUN"
+# An opt-in Chromium fixture observation is not a reservation request.  Keep
+# these frames distinct from REQUEST/SUCCESS even during a simulation.
+PROBE_FIXTURE = b"BOCA_SYNTHETIC_V1_PROBE_FIXTURE"
+FIXTURE_OBSERVED = b"BOCA_SYNTHETIC_V1_FIXTURE_OBSERVED"
 SUCCESS = b"BOCA_SYNTHETIC_V1_RESERVED_IN_SIMULATOR"
 BUSY = b"BOCA_SYNTHETIC_V1_BUSY"
 NO_GO = b"BOCA_SYNTHETIC_V1_NO_GO"
@@ -92,7 +96,18 @@ def verify_peer(writer: asyncio.StreamWriter, *, uid: int, gid: int) -> None:
 
 
 def framed(payload: bytes) -> bytes:
-    if payload not in {REQUEST, SUCCESS, BUSY, NO_GO} or len(payload) > MAX_FRAME_BYTES:
+    if (
+        payload
+        not in {
+            REQUEST,
+            PROBE_FIXTURE,
+            FIXTURE_OBSERVED,
+            SUCCESS,
+            BUSY,
+            NO_GO,
+        }
+        or len(payload) > MAX_FRAME_BYTES
+    ):
         raise SyntheticIPCError("ipc_frame_unverified")
     return len(payload).to_bytes(2, "big") + payload
 

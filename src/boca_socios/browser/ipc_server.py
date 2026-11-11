@@ -26,8 +26,10 @@ from boca_socios.browser.contracts import SimulationOutcome
 from boca_socios.browser.ipc_protocol import (
     BUSY,
     CONTROLLER_UID,
+    FIXTURE_OBSERVED,
     MAX_FRAME_BYTES,
     NO_GO,
+    PROBE_FIXTURE,
     REQUEST,
     SOCKET_PATH,
     SUCCESS,
@@ -111,8 +113,12 @@ class UnixSyntheticWorker:
         operation_seconds: float = 20.0,
         teardown_seconds: float = 5.0,
         on_observation: Callable[[ObservationStatus], None] | None = None,
+        fixture_only: bool = False,
     ) -> None:
+        if type(fixture_only) is not bool:
+            raise ValueError("fixture-only opt-in must be explicit")
         self._executor = OfflineNoGoExecutor() if executor is None else executor
+        self._fixture_only = fixture_only
         self._on_observation = on_observation
         self._path = socket_path
         self._boundary_check = boundary_check
@@ -177,10 +183,12 @@ class UnixSyntheticWorker:
         writer.write(framed(payload))
         await asyncio.wait_for(writer.drain(), timeout=1.0)
 
-    async def _read_request(self, reader: asyncio.StreamReader) -> None:
+    async def _read_request(self, reader: asyncio.StreamReader) -> bytes:
         async with asyncio.timeout(self._request_seconds):
-            if await read_frame(reader) != REQUEST or await reader.read(1) != b"":
+            request = await read_frame(reader)
+            if request not in {REQUEST, PROBE_FIXTURE} or await reader.read(1) != b"":
                 raise SyntheticIPCError("ipc_request_unverified")
+            return request
 
     @staticmethod
     def _consume(task: asyncio.Task[SimulationOutcome | ObservationStatus]) -> None:
@@ -190,7 +198,7 @@ class UnixSyntheticWorker:
         except (Exception, asyncio.CancelledError):
             return
 
-    async def _run_synthetic(self) -> bytes:
+    async def _run_synthetic(self, *, fixture_probe: bool = False) -> bytes:
         self._boundary_check()
         active = asyncio.create_task(self._executor.simulate_general_reservation())
         self._active = active
@@ -209,7 +217,9 @@ class UnixSyntheticWorker:
             if self._stopping() or active.cancelling():
                 return NO_GO
             if result is SimulationOutcome.RESERVED_IN_SIMULATOR:
-                return SUCCESS
+                # An invented offline DOM probe can acknowledge only its own
+                # fixture, never a synthetic reservation or ticket outcome.
+                return FIXTURE_OBSERVED if fixture_probe else SUCCESS
             if isinstance(result, ObservationStatus) and self._on_observation is not None:
                 # Only the fixed category crosses this local callback; no raw
                 # tokens, URLs, engine results or private exception strings.
@@ -246,15 +256,18 @@ class UnixSyntheticWorker:
             self._busy = True
             accepted = True
             try:
-                await self._read_request(reader)
+                request = await self._read_request(reader)
                 # STOP may occur during partial-frame I/O. Never start a job
                 # after that await if this server has already been closed.
                 if self._stopping():
                     raise SyntheticIPCError("worker_closed")
                 deadline = monotonic() + self._operation_seconds
-                response = await self._run_synthetic()
+                if (request == PROBE_FIXTURE) != self._fixture_only:
+                    response = NO_GO
+                else:
+                    response = await self._run_synthetic(fixture_probe=request == PROBE_FIXTURE)
                 task = asyncio.current_task()
-                if response == SUCCESS and (
+                if response in {SUCCESS, FIXTURE_OBSERVED} and (
                     self._stopping() or monotonic() >= deadline or task is None or task.cancelling()
                 ):
                     response = NO_GO
@@ -357,6 +370,11 @@ async def _run_server(
     executor_factory: Callable[[str], SyntheticExecutor] | None = None,
 ) -> None:
     site_url = _read_worker_site_url()
+    observe_mode = os.environ.get("BOCA_BROWSER_OBSERVE_MODE", "off")
+    if observe_mode not in {"off", "offline-fixture"} or (
+        executor_factory is not None and observe_mode != "off"
+    ):
+        raise SyntheticIPCError("worker_observe_mode_unverified")
     stopping = asyncio.Event()
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGTERM, stopping.set)
@@ -364,8 +382,16 @@ async def _run_server(
     # The default remains transport-only. A reviewed offline factory may be
     # injected for simulation tests; the legacy browser orchestrator is not
     # silently treated as a reservation simulator.
-    executor = OfflineNoGoExecutor() if executor_factory is None else executor_factory(site_url)
-    worker = UnixSyntheticWorker(executor)
+    fixture_only = observe_mode == "offline-fixture"
+    if fixture_only:
+        # Never import the owner-controlled navigation modules: this opt-in
+        # drives only literal HTML with every external request aborted.
+        from boca_socios.browser.offline_fixture import OfflineFixtureExecutor
+
+        executor: SyntheticExecutor = OfflineFixtureExecutor()
+    else:
+        executor = OfflineNoGoExecutor() if executor_factory is None else executor_factory(site_url)
+    worker = UnixSyntheticWorker(executor, fixture_only=fixture_only)
     try:
         await worker.serve_until(stopping)
     except SyntheticIPCError as exc:
