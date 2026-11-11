@@ -31,6 +31,7 @@ from boca_socios.browser.site_url_runtime import (
     read_site_url,
     require_site_url,
 )
+from boca_socios.domain.sector_preferences import SectorMode
 from boca_socios.events.official_catalog import (
     OfficialCatalogError,
     OfficialNotice,
@@ -47,6 +48,10 @@ from boca_socios.panel.lifecycle_intents import (
     LifecycleStorageUnavailable,
 )
 from boca_socios.panel.local_status import read_local_status
+from boca_socios.panel.member_sector_store import (
+    MemberSectorStorageUnavailable,
+    MemberSectorStore,
+)
 from boca_socios.panel.members import MemberDirectory
 from boca_socios.panel.owner_session_store import (
     OwnerBrowserSessionStore,
@@ -195,6 +200,7 @@ class PrivatePanelApplication:
         self._database_path = database_path
         self._database = Database(database_path)
         self._site_url_settings = SiteUrlSettingsStore.for_database(database_path)
+        self._sector_store = MemberSectorStore.for_database(database_path)
         self._members = members
         self._directory = MemberDirectory(database_path)
         self._commands = commands
@@ -455,6 +461,8 @@ class PrivatePanelApplication:
         if isinstance(path, str) and path.startswith("/socios/"):
             if "members:write" not in session.permissions:
                 return _error(start, 403, "Permiso insuficiente.")
+            if re.fullmatch(r"/socios/[0-9a-f-]{36}/sectores", path):
+                return self._save_member_sectors(environ, path, session, start)
             return self._credential_action(environ, path, session, start)
         return _error(start, 404, "Ruta no disponible.")
 
@@ -728,9 +736,66 @@ class PrivatePanelApplication:
         revoke_id = self._sessions.new_operation(session)
         if rotate_id is None or revoke_id is None:
             return _error(start, 429, "Demasiados formularios abiertos. Vuelva a ingresar.")
+        try:
+            defaults = self._sector_store.load(member_id)
+        except MemberSectorStorageUnavailable:
+            return _error(start, 503, "Las preferencias locales del socio no son verificables.")
         return _response(
-            start, 200, private_ui.member_detail(item, session.csrf, rotate_id, revoke_id)
+            start,
+            200,
+            private_ui.member_detail(
+                item,
+                session.csrf,
+                rotate_id,
+                revoke_id,
+                revoke_id,  # Reuse the existing one-time nonce; owner refreshes after POST.
+                defaults,
+                sector_storage_ready=self._sector_store.path.exists(),
+            ),
         )
+
+    def _save_member_sectors(
+        self, environ: Mapping[str, object], path: str, session: OwnerSession, start: StartResponse
+    ) -> list[bytes]:
+        match = re.fullmatch(r"/socios/([0-9a-f-]{36})/sectores", path)
+        if match is None or _canonical_uuid(match.group(1)) is None:
+            return _error(start, 404, "Socio no encontrado.")
+        member_id = match.group(1)
+        fields = self._form(environ, expected={"csrf", "operation_id", "mode", "sector_ids"})
+        if fields is None or _canonical_uuid(fields["operation_id"]) is None:
+            return _error(start, 400, "Formulario de sectores inválido.")
+        try:
+            mode = SectorMode(fields["mode"])
+            raw = fields["sector_ids"]
+            if len(raw) > 2000:
+                raise ValueError("too many characters")
+            sectors = () if mode is SectorMode.ALL else tuple(
+                item.strip() for item in raw.split(",")
+            )
+        except ValueError:
+            return _error(start, 422, "Selección de sectores inválida.")
+        fingerprint = (path + "\0" + json.dumps(fields, sort_keys=True)).encode()
+        replay, operation = self._sessions.reserve(
+            session, fields["operation_id"], fields["csrf"], fingerprint
+        )
+        if replay:
+            if replay == 200 and operation is not None:
+                return self._redirect(start, f"/socios/{member_id}")
+            return _error(start, replay, "Operación ya utilizada o no autorizada.")
+        assert operation is not None
+        try:
+            self._sector_store.save(member_id, mode, sectors, self._now())
+        except ValueError:
+            self._sessions.finish(operation, 422)
+            return _error(start, 422, "Prioridades inválidas o duplicadas.")
+        except LookupError:
+            self._sessions.finish(operation, 404)
+            return _error(start, 404, "Socio no encontrado.")
+        except MemberSectorStorageUnavailable:
+            self._sessions.finish(operation, 503)
+            return _error(start, 503, "Preferencias locales no disponibles.")
+        self._sessions.finish(operation, 200)
+        return self._redirect(start, f"/socios/{member_id}")
 
     def _credential_action(
         self, environ: Mapping[str, object], path: str, session: OwnerSession, start: StartResponse

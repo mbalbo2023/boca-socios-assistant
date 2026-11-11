@@ -21,6 +21,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from boca_socios.domain.policy import TicketIntent
+from boca_socios.domain.sector_preferences import SectorMode
 from boca_socios.events.official_catalog import (
     OfficialCatalogError,
     OfficialNotice,
@@ -29,6 +30,7 @@ from boca_socios.events.official_catalog import (
 from boca_socios.integration.command_store import CommandStore
 from boca_socios.notify.outbox import NoticeKind, NotificationRequest
 from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
+from boca_socios.panel.member_sector_store import MemberSectorStore
 from boca_socios.panel.owner_session_store import OwnerBrowserSessionStore
 from boca_socios.panel.passkey import PasskeyAssertion, PasskeyOwnerAuthentication
 from boca_socios.panel.private_http import PrivatePanelApplication
@@ -871,3 +873,101 @@ def test_credential_rotation_and_revocation_are_local_idempotent_and_redacted() 
         status, _, page = _request(app, "/socios", cookie=cookie)
         assert status == 200 and b"Credencial revocada" in page
         assert b"member@example.test" not in page and b"initial-test-only" not in page
+
+
+def test_member_sector_preferences_in_existing_profile() -> None:
+    clock = [0.0]
+    provider, key, credential_id = _passkey(clock)
+    with TemporaryDirectory() as directory:
+        database_path = Path(directory) / "boca.sqlite3"
+        db = Database(database_path)
+        db.migrate()
+        CommandStore(db).migrate()
+        OwnerBrowserSessionStore(db, owner_subject="owner").migrate()
+        preferences = MemberSectorStore.for_database(database_path)
+        preferences.migrate()
+        vault = CredentialVault(os.urandom(32))
+        service = MemberEnrollmentService(db, vault)
+        member_id = service.enroll(
+            email="existing@example.test",
+            password="once-only-test-password",
+            consent_recorded_at=datetime.now(UTC),
+            display_name="Socio ya registrado",
+        )
+        app = PrivatePanelApplication(
+            origin=ORIGIN,
+            database_path=database_path,
+            owner_subject="owner",
+            passkey=provider,
+            members=service,
+            commands=None,
+            events={},
+        )
+        cookie = _login(app, key, credential_id)
+        status, _, detail = _request(app, f"/socios/{member_id}", cookie=cookie)
+        assert status == 200
+        assert b"Socio ya registrado" in detail
+        assert b"Preferencias de sectores" in detail
+        assert b'name="mode"' in detail
+        assert b'name="sector_ids"' in detail
+        assert b"once-only-test-password" not in detail
+        csrf = re.search(rb'name="csrf" value="([^"]+)"', detail).group(1).decode()
+        operations = re.findall(rb'name="operation_id" value="([^"]+)"', detail)
+        sector_operation = operations[-1].decode()
+        # Adding this section must not exhaust the existing 16-operation cap
+        # during ordinary profile refreshes sooner than the original two forms.
+        for _ in range(5):
+            assert _request(app, f"/socios/{member_id}", cookie=cookie)[0] == 200
+        payload = {
+            "csrf": csrf,
+            "operation_id": sector_operation,
+            "mode": SectorMode.ORDERED_ALLOWLIST.value,
+            "sector_ids": "fictional_sur,fictional_norte",
+        }
+        assert _request(
+            app,
+            f"/socios/{member_id}/sectores",
+            cookie=cookie,
+            method="POST",
+            payload={**payload, "csrf": "incorrect-csrf"},
+        )[0] == 403
+        assert (
+            _request(
+                app,
+                f"/socios/{member_id}/sectores",
+                cookie=cookie,
+                method="POST",
+                payload=payload,
+                origin="https://attacker.example.test",
+            )[0]
+            == 403
+        )
+        assert preferences.load(member_id) is None
+        saved = _request(
+            app, f"/socios/{member_id}/sectores", cookie=cookie, method="POST", payload=payload
+        )
+        assert saved[0] == 303
+        assert _request(
+            app, f"/socios/{member_id}/sectores", cookie=cookie, method="POST", payload=payload
+        )[0] == 303
+        persisted = preferences.load(member_id)
+        assert persisted is not None
+        assert persisted.mode is SectorMode.ORDERED_ALLOWLIST
+        assert persisted.sector_ids == ("fictional_sur", "fictional_norte")
+        assert persisted.version == 1  # Replay did not write twice.
+        status, _, refreshed = _request(app, f"/socios/{member_id}", cookie=cookie)
+        assert status == 200
+        assert refreshed.find(b"fictional_sur") < refreshed.find(b"fictional_norte")
+        new_operation = re.findall(rb'name="operation_id" value="([^"]+)"', refreshed)[-1]
+        invalid = {
+            **payload,
+            "operation_id": new_operation.decode(),
+            "sector_ids": "fictional_sur,fictional_sur",
+        }
+        sleep(1.05)  # Existing owner-session one-write-per-second guard.
+        assert _request(
+            app, f"/socios/{member_id}/sectores", cookie=cookie, method="POST", payload=invalid
+        )[0] == 422
+        assert preferences.load(member_id) == persisted
+        with db.connection() as connection:
+            assert connection.execute("SELECT COUNT(*) FROM members").fetchone() == (1,)

@@ -12,6 +12,7 @@ from boca_socios.events.official_presentation import render_observed_catalog_htm
 from boca_socios.notify.projection import LocalNoticeView
 from boca_socios.panel.enrollment_form import STYLE
 from boca_socios.panel.lifecycle_intents import LifecycleIntent
+from boca_socios.panel.member_sector_store import MemberSectorDefaults
 from boca_socios.panel.members import CommandView, MemberView
 from boca_socios.panel.worker_activity import WorkerActivitySnapshot
 
@@ -483,8 +484,50 @@ def members(items: tuple[MemberView, ...]) -> bytes:
     )
 
 
-def member_detail(item: MemberView, csrf: str, rotate_id: str, revoke_id: str) -> bytes:
+def member_detail(
+    item: MemberView,
+    csrf: str,
+    rotate_id: str,
+    revoke_id: str,
+    sector_operation_id: str,
+    sector_defaults: MemberSectorDefaults | None,
+    *,
+    sector_storage_ready: bool,
+) -> bytes:
     identifier = escape(item.member_id, quote=True)
+    all_selected = sector_defaults is None or sector_defaults.mode.value == "ALL"
+    sector_values = ",".join(sector_defaults.sector_ids) if sector_defaults else ""
+    status = (
+        "Almacenamiento local pendiente de habilitación."
+        if not sector_storage_ready
+        else "Configuración general para las simulaciones futuras de este socio."
+    )
+    disabled = " disabled" if not sector_storage_ready else ""
+    sector_form = (
+        '<section aria-labelledby="sector-preferences-heading">'
+        '<h2 id="sector-preferences-heading">Preferencias de sectores</h2>'
+        '<p>Se guardan en el mismo perfil de socio, sin repetir el alta. '
+        'Solo se usan en simulaciones locales: no reservan entradas.</p>'
+        f'<p role="status">{escape(status)}</p>'
+        f'<form method="post" action="/socios/{identifier}/sectores">'
+        f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
+        f'<input type="hidden" name="operation_id" '
+        f'value="{escape(sector_operation_id, quote=True)}">'
+        f'<fieldset{disabled}><legend>Selección de sectores</legend>'
+        '<label><input type="radio" name="mode" value="ALL"'
+        + (" checked" if all_selected else "")
+        + '>Todos los sectores disponibles de la simulación</label>'
+        '<label><input type="radio" name="mode" value="ORDERED_ALLOWLIST"'
+        + ("" if all_selected else " checked")
+        + '>Solo mis sectores preferidos, en orden</label>'
+        '<label for="member-sector-ids">Sectores ficticios por prioridad, separados por coma</label>'
+        '<textarea id="member-sector-ids" name="sector_ids" rows="3" maxlength="2000">'
+        + escape(sector_values)
+        + '</textarea><p>Ejemplo: sector_sur, sector_norte. '
+        'El orden es el de prioridad cuando se elige la segunda opción.</p>'
+        '<button type="submit">Guardar preferencias de este socio</button>'
+        '</fieldset></form></section>'
+    )
     return _page(
         "Socio local",
         "<h1>Socio local</h1><p>"
@@ -504,7 +547,8 @@ def member_detail(item: MemberView, csrf: str, rotate_id: str, revoke_id: str) -
         f'<form method="post" action="/socios/{identifier}/revocar">'
         f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
         f'<input type="hidden" name="operation_id" value="{escape(revoke_id, quote=True)}">'
-        '<button type="submit">Revocar credencial local</button></form>',
+        '<button type="submit">Revocar credencial local</button></form>'
+        + sector_form,
     )
 
 
