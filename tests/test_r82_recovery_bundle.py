@@ -133,11 +133,11 @@ R139_PORTABLE_PANEL_STOP_FULL_CUTOVER_SHA = (
 R171_BROWSER_EGRESS_FULL_CUTOVER_SHA = (
     "e6b95d4ff20d97e444f611d616f38653f69cb404f2574dbd38df36253a5fd32e"
 )
-# R173 pins the final integrated source, including the selective protected-volume
-# cleanup and release wiring fixes. Twice independently rebuilt byte-identically;
-# the intermediate Cutover-only SHA is not a release candidate.
+# R173 pins the integrated source including the Boca-only URL pre-START gate,
+# protected-volume cleanup and release wiring. Twice independently rebuilt
+# byte-identically after that host change; older SHA remains only in history.
 R173_SITE_CONFIG_FULL_CUTOVER_SHA = (
-    "b1f6630f4e6deeff9af31f403bc7ceac1c15c6ef150af216d66783be2f8032ee"
+    "c4958187deae82c0732c59861ccc6ce8258274b44d5c96a2e022d46d577beaa7"
 )
 
 

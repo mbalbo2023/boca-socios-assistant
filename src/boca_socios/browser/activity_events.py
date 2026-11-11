@@ -42,6 +42,7 @@ _STAGES = frozenset(
     }
 )
 _WRITE_LOCK = Lock()
+_RESTART_FILES = frozenset({ACTIVITY_PATH.name, "chromium-events.previous"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +66,51 @@ def _file_valid(metadata: os.stat_result, owner_uid: int, owner_gid: int) -> boo
         and stat.S_IMODE(metadata.st_mode) == _FILE_MODE
         and metadata.st_nlink == 1
     )
+
+
+def reset_chromium_activity(
+    *,
+    path: Path = ACTIVITY_PATH,
+    owner_uid: int = WORKER_UID,
+    owner_gid: int | None = None,
+) -> None:
+    """At cold IPC START, retire only exact verified worker telemetry files.
+
+    The socket itself and every unknown or unsafe inode are **never** removed.
+    An old category-only log must not make a new worker appear active.
+    """
+    if not isinstance(path, Path) or path.name != ACTIVITY_PATH.name:
+        raise SyntheticIPCError("ipc_activity_path_unverified")
+    expected_gid = owner_uid if owner_gid is None else owner_gid
+    with _WRITE_LOCK:
+        validate_socket_directory(path.parent, uid=owner_uid, gid=expected_gid)
+        try:
+            names = os.listdir(path.parent)
+            if not set(names) <= _RESTART_FILES:
+                raise SyntheticIPCError("ipc_mount_not_empty")
+            snapshots: dict[str, tuple[int, int, int, int]] = {}
+            for name in names:
+                info = (path.parent / name).lstat()
+                if (
+                    not _file_valid(info, owner_uid, expected_gid)
+                    or info.st_size > MAX_ACTIVITY_BYTES
+                ):
+                    raise SyntheticIPCError("ipc_activity_inode_unverified")
+                snapshots[name] = (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size)
+            # Validate the whole inventory before deleting even one file.
+            for name in names:
+                item = path.parent / name
+                info = item.lstat()
+                if (
+                    not _file_valid(info, owner_uid, expected_gid)
+                    or (info.st_dev, info.st_ino, info.st_mtime_ns, info.st_size) != snapshots[name]
+                ):
+                    raise SyntheticIPCError("ipc_activity_inode_changed")
+                item.unlink()
+            if os.listdir(path.parent):
+                raise SyntheticIPCError("ipc_mount_not_empty")
+        except OSError:
+            raise SyntheticIPCError("ipc_activity_reset_unverified") from None
 
 
 def emit_chromium_event(

@@ -1,5 +1,56 @@
 # Safe operations — verified evidence and gated procedures
 
+## R173 — estado vigente del candidato Boca (11/11/2026 ART; NO_GO físico)
+
+El [PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478)
+reconcilia el parche R172 (28 archivos) y los RCA paralelos de IPC,
+`SITE_URL`, actividad y Cutover. El primer SHA remoto `fee7c7b` pasó cinco
+Actions de validación; cualquier corrección posterior requiere repetir todos
+los checks en **su SHA exacto**. Los cuatro PR Dependabot #474–#477 fueron
+clasificados, comentados y cerrados **sin merge y sin borrar ramas** por
+consenso documentado en
+[backlog #45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6797512465).
+
+- **IPC/worker:** el contenedor ahora usa `boca_socios.browser.ipc_server`.
+  Nunca convertir observación de token en una reserva. Su ejecutor de
+  producción sigue `OfflineNoGoExecutor` (respuesta NO_GO); el módulo nuevo
+  `offline_fixture.py` comprueba una interacción DOM **ficticia y local** en
+  Chromium únicamente bajo prueba explícita `--smoke` con `--network none`.
+  No usa `SITE_URL` para navegar ni importa los módulos protegidos V3. No
+  declarar el bot funcional hasta certificar el adaptador real sobre el sandbox
+  controlado y el contrato del titular, sin reservas reales.
+- **Configuración y START:** `SITE_URL` se conserva en el volumen privado de
+  datos y se publica atómicamente al volumen de URL **exclusivo del worker**;
+  éste lo monta read-only. El panel responde 503 si falta o difiere la
+  configuración antes de encolar START. El ejecutor host comprueba desde el
+  controlador Boca ya atestado que el archivo del montaje es válido y recibe
+  solamente `BOCA_SITE_URL_READY` antes de ejecutar `docker start`. No hay
+  URL por defecto ni lectura de datos de socios desde el worker.
+- **Volúmenes/limpieza:** `boca-socios_boca_site_config` es persistente y
+  protegido frente a limpieza genérica; Cutover lo crea únicamente tras
+  verificar su ausencia y lo retira **solo** si su identidad pertenece al
+  intento, no está adjunto y la compensación resulta inequívoca. No utilizar
+  `docker prune` ni manipular Porota u otros proyectos.
+- **Actividad:** el worker sólo emite categorías de Chromium, jamás URLs,
+  tokens o DOM. Al iniciar IPC puede limpiar únicamente los dos archivos de
+  telemetría propios previamente validados; una entrada desconocida o socket
+  residual es NO_GO. La pantalla indica eventos recientes, no salud del host.
+- **Bloqueante físico exacto:** la Action Cutover
+  [#42912586832](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42912586832)
+  terminó con `BOCA_LEGACY_PREPARE reason=LEGACY_SINGLETON`: el observador
+  recibió un número de contenedores que **no era exactamente uno**. No sabemos
+  si eran cero o varios. Se exige un nuevo censo rootless **read-only y solo
+  Boca** antes de otro intento de APPLY, sin borrar ni rearrancar nada.
+- **Telegram:** reusar el outbox existente, sender OFF; el token de ZIP V3
+  se considera comprometido y debe rotarlo el dueño antes de activación.
+
+La ruta V3 de `cutover-a-apply` instala el worker en frío (creado/PID=0,
+motor STOPPED) y prueba el ciclo del panel; las rutas legacy que exigen
+`RESERVED_IN_SIMULATOR` **no forman parte de ese Cutover**. Por tanto un
+Cutover en reposo exitoso nunca equivale a simular una reserva. Todos los
+host checks permanecen pendientes de evidencia física real y del flujo
+protegido; no correr SSH/Docker manual para saltar los gates.
+
 ## R171 — Propuesta de egreso exclusivo de Chromium (11/11/2026 ART)
 
 El dueño exige **Internet saliente** para el worker. El overlay candidato
@@ -52,7 +103,7 @@ pendientes de certificación antes de ejecutar cualquier navegación real.
 **No usar `docker compose up` sin reconciliar el instalador rootless y el
 Cutover con estos invariantes.**
 
-## R170 — Actividad del worker y SITE_URL en Configuración (11/11/2026 ART)
+## Histórico R170 — Actividad del worker y SITE_URL en Configuración (11/11/2026 ART)
 
 - **Acceso:** sesión privada con passkey en `8443`. `Control → Actividad del
   worker` muestra recibos de ciclo de vida, trabajos de simulación y etapas
@@ -65,14 +116,14 @@ Cutover con estos invariantes.**
   link-local/metadata. La configuración es
   un JSON de modo `0600` en el volumen dedicado Boca de datos, con escritura
   atómica y sin cambios al esquema SQLite.
-- **Importante:** `Guardada` no significa `Aplicada`. El controlador sí
+- **Situación histórica antes de R173:** `Guardada` no significa `Aplicada`. El controlador sí
   dispone del archivo persistido; el worker V3 **no lo comparte**. Docker
   `start` conserva el Env con que fue creado el contenedor. Faltan un canal
   de configuración verificado en el contrato del ejecutor rootless y la
   validación de la nueva red de egreso para que el cambio surta efecto al
   apagar y prender. No montar toda la base de datos ni la carpeta de código
   en el worker para forzar el cambio.
-- **Cutover:** el `ipc_worker.py` actual todavía no sirve el socket Unix
+- **RCA histórico:** el `ipc_worker.py` original no servía el socket Unix
   esperado. El import corregido y `SITE_URL` sin valor por defecto no prueban
   un worker saludable. El driver `none` de Docker no da salida a `docker logs`;
   la línea de tiempo es telemetría fija, no el traceback crudo.

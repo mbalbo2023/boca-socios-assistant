@@ -193,6 +193,44 @@ def test_site_url_publication_failure_fails_closed_without_starting_worker(
     assert b"Configuraci" in body
 
 
+@pytest.mark.parametrize("saved_url", [None, "https://ensayo.example.test/"])
+def test_absent_site_url_setting_or_worker_mirror_cannot_submit_bot_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, saved_url: str | None
+) -> None:
+    from boca_socios.browser.site_url_runtime import RuntimeSiteUrlUnavailable
+    from test_private_lifecycle_controls import _bot_fields
+
+    wakes: list[str] = []
+    provider, key, credential_id = _passkey([0.0])
+    database = tmp_path / "boca.sqlite3"
+    app, db = _app(database, provider, FakeHost(), bot_control=wakes.append)
+    cookie = _login(app, key, credential_id)
+    if saved_url is not None:
+        SiteUrlSettingsStore.for_database(database).save(saved_url)
+
+    def absent_mirror(_path: Path) -> str:
+        raise RuntimeSiteUrlUnavailable("no published worker destination")
+
+    monkeypatch.setattr(private_http, "read_site_url", absent_mirror)
+    code, _, control_page = _request(app, "/control", cookie=cookie)
+    assert code == 200
+    code, _, body = _request(
+        app,
+        "/control/bot/iniciar",
+        cookie=cookie,
+        method="POST",
+        payload=_bot_fields(control_page, "iniciar"),
+    )
+
+    assert code == 503
+    assert b"Configuraci" in body
+    assert wakes == []
+    with db.connection() as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM audit_events WHERE action='owner_lifecycle_v1_request_bot_start'"
+        ).fetchone() == (0,)
+
+
 def test_diverged_persistent_and_worker_url_cannot_submit_bot_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

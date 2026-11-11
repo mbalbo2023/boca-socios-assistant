@@ -61,10 +61,16 @@ def test_browser_pr_validates_real_offline_chromium_under_worker_isolation() -> 
         "--pids-limit 128 --memory 768m --cpus 1.0 --shm-size 64m",
         "--tmpfs /tmp:rw,noexec,nosuid,size=32m",
         "--tmpfs /home/boca-browser:rw,noexec,nosuid,size=16m",
-        '--entrypoint python "$IMAGE" scripts/verify_chromium_worker.py',
+        '--entrypoint python "$IMAGE" "$@"',
     ):
         assert boundary in offline
-    # The preflight is the only executed module; no owner-controlled navigation.
+    # Both offline preflights must remain within disposable network-none
+    # containers; the new fixture simulates an invented DOM without blackboxes.
+    assert "run_offline_browser() {" in offline
+    assert "run_offline_browser scripts/verify_chromium_worker.py" in offline
+    assert "run_offline_browser -m boca_socios.browser.offline_fixture --smoke" in offline
+    assert offline.count("--network none") == 1
+    assert offline.count("timeout 60s docker run --rm") == 1
     assert "python -m boca_socios.browser.ipc_worker" not in offline
     assert "synthetic.py" in offline  # Only a prohibition in the explanatory comment.
     assert "--privileged" not in offline

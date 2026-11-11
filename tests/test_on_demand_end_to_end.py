@@ -27,8 +27,12 @@ from boca_socios.panel.lifecycle_intents import LifecycleIntentStore
 from boca_socios.panel.private_http import PrivatePanelApplication
 from boca_socios.security.credential_vault import CredentialVault
 from boca_socios.security.enrollment import MemberEnrollmentService
-from test_private_lifecycle_controls import _bot_fields
+from test_private_lifecycle_controls import _bot_fields, _configured_synthetic_site_url  # noqa: F401
 from test_worker_start_lab import lab
+
+# Import the one synthetic, previously-published SITE_URL fixture used by the
+# adjacent lifecycle tests. These journeys test IPC/intent ordering, not URLs.
+pytestmark = pytest.mark.usefixtures("_configured_synthetic_site_url")
 
 
 class WorkerFixture(docker_fixture.FakeIO):

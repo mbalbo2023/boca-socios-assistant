@@ -869,15 +869,11 @@ class PrivatePanelApplication:
             # Two separate volumes cannot be committed in one filesystem
             # transaction. If a prior save succeeded but the URL-only mirror
             # publication failed, do not request a START using the old URL.
-            # A not-yet-configured destination is rejected by the worker's own
-            # cold-start gate; the panel must not infer physical readiness.
+            # Also refuse an unconfigured first START before waking the host.
             try:
                 saved_site_url = self._site_url_settings.read()
-                if (
-                    saved_site_url is not None
-                    and read_site_url(RUNTIME_SITE_URL_PATH) != saved_site_url
-                ):
-                    raise RuntimeSiteUrlUnavailable("Boca SITE_URL mirror differs")
+                if saved_site_url is None or read_site_url(RUNTIME_SITE_URL_PATH) != saved_site_url:
+                    raise RuntimeSiteUrlUnavailable("Boca SITE_URL not ready")
             except (SiteUrlSettingsUnavailable, RuntimeSiteUrlUnavailable):
                 self._sessions.finish(operation, 503)
                 return _error(start, 503, "URL del worker no verificable. Revise Configuración.")

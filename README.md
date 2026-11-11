@@ -1,5 +1,33 @@
 # Boca Socios Assistant
 
+## R173 — candidato único en revisión; CODE_ONLY y NO_GO en el droplet
+
+La recuperación del parche R172 y la integración de IPC, configuración
+dinámica `SITE_URL`, actividad Chromium y Cutover rootless están reunidas en
+el [PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478).
+Cinco workflows de GitHub Actions pasaron en el primer HEAD del PR;
+correcciones posteriores requieren los **cinco checks por SHA exacto**.
+Los cuatro PR Dependabot #474–#477 se clasificaron y cerraron individualmente,
+sin merge ni eliminación de ramas, según el [consenso de tres disciplinas en
+#45](https://github.com/mbalbo2023/boca-socios-assistant/issues/45#issuecomment-6797512465).
+
+El entrypoint de imagen es `ipc_server`, no el orquestador legacy
+`ipc_worker.py`. **No se ejecutan reservas reales**: el servidor de producción
+rechaza trabajo no aprobado y el nuevo simulador DOM ficticio se prueba sólo
+en contenedor offline separado. El panel conserva la URL en un volumen
+exclusivo, impide START sin sincronización y no vuelve a usar valores por
+defecto; un verificador host independiente exigirá la URL verificada antes de arrancar
+el worker. La instalación V3 deja al navegador creado pero apagado, y no
+demuestra navegación ni reserva. El Cutover físico anterior falló con
+`LEGACY_SINGLETON` (inventario rootless sin un único controlador) y necesita
+un censo **solo lectura de Boca** antes de otro APPLY. Sender Telegram OFF
+hasta rotación del token comprometido.
+
+Guía operativa vigente: [R173 en OPERATIONS](docs/OPERATIONS.md) ·
+[RCA y evidencia R173](docs/handoffs/2026-11-11-r173-integration-code-only.md).
+Las secciones R162/R150/R140 siguientes son antecedentes históricos, no el
+estado de despliegue actual.
+
 ## R162 — `krb5-libs` estable para desbloquear la imagen del controlador (CODE_ONLY)
 
 El escaneo de la imagen del controlador del `main=713fb9a...` detectó

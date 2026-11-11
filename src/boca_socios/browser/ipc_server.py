@@ -21,6 +21,7 @@ from pathlib import Path
 from time import monotonic
 from typing import Protocol
 
+from boca_socios.browser.activity_events import reset_chromium_activity
 from boca_socios.browser.contracts import SimulationOutcome
 from boca_socios.browser.ipc_protocol import (
     BUSY,
@@ -141,6 +142,10 @@ class UnixSyntheticWorker:
         if self._path.name != SOCKET_PATH.name:
             raise SyntheticIPCError("ipc_path_unverified")
         validate_socket_directory(self._path.parent, uid=WORKER_UID)
+        # A previous worker may have left fixed-category activity records in
+        # the persistent IPC volume. Retire only verified telemetry inodes;
+        # any unknown file or stale socket still fails closed before bind.
+        reset_chromium_activity(path=self._path.with_name("chromium-events.jsonl"))
         try:
             if os.listdir(self._path.parent):
                 raise SyntheticIPCError("ipc_mount_not_empty")
