@@ -1,5 +1,63 @@
 # Safe operations — verified evidence and gated procedures
 
+## R181.2 — Secuencia de release y PAIR_UPGRADE protegido (11/11/2026 ART; NO_GO físico hasta recibos)
+
+La evidencia de CI del código R181 `1e702669245d5ff2509902d63724aae36ac900d2`
+es 4/4 workflows de PR SUCCESS, 7052 PASS +34 subtests, cero SKIP y
+`RCA_GATE_PASS`; **un nuevo HEAD documental no hereda esos checks**.
+El PR único [#483](https://github.com/mbalbo2023/boca-socios-assistant/pull/483)
+debe pasar revisión, READY, merge squash y PR0. Verificar main/CI/seguridad
+postmerge antes de utilizar el release. El antiguo controlador 8443 fue
+restaurado después del fallo R180 `REPLACE_BINDING`; el antiguo worker
+sigue EXIT1, y no se produjo otro APPLY.
+
+1. En GitHub Actions ejecutar `release-image.yml` por
+   `workflow_dispatch` desde el **nuevo main**, sin inputs. Comprobar un
+   solo intento, actor autorizado, SUCCESS, manifiestos controller/browser
+   del mismo run, SHA exacto y dos digests GHCR inmutables. La release R180
+   #43084982791 corresponde al main anterior y no debe reutilizarse.
+2. Despachar en `boca-first-deploy.yml`, desde main y por separado,
+   `cutover-a-census`, `boca-pair-observe`,
+   `boca-binding-observe`, `boca-sqlite-inode-observe`.
+   En cada formulario: `service=controller`,
+   `resource_budget=1.5cpu-1024m-192pids`, todos los otros campos vacíos.
+   Exigir censo de un par exacto sin otros Boca, old controller sano,
+   worker antiguo EXIT1/PID0, binding y SQLite estables, red/volumen nuevos
+   ausentes y cero escrituras/efectos extranjeros. No usar evidencia vieja
+   como prueba de estado presente.
+3. Tras GO de los cuatro observadores y sin PR nuevos, despachar
+   **una sola vez** `operation=boca-pair-upgrade-apply` en el mismo workflow
+   con `source_sha` = main completo; `image_ref` y
+   `browser_image_ref` = digests de los manifiestos del mismo nuevo
+   `release_run_id`; `service=controller` y
+   `resource_budget=1.5cpu-1024m-192pids`. Todos los campos restantes
+   van vacíos, incluyendo `protected_action_context`, `legacy_*`,
+   Telegram y envelopes. **No usar `cutover-a-apply` V3 ni sus pins
+   implícitos** para actualizar un par ya instalado.
+4. Aceptación del APPLY: `BOCA_PAIR_UPGRADE` canónico con
+   `state=ACCEPTED`, `cleanup=ACCEPT`, `old_restored=false`,
+   `commit_started=true`, `failed_phase=NONE`, CIDs nuevos de 64 hex
+   y `attempt_id` igual al run; remoto exit 0. `COMMIT_MARKER` es una
+   fase durable, no el valor del estado terminal. `RECOVERED`, `NO_GO`,
+   falta de ACK, SSH/cleanup ambiguos o Action FAILURE significan
+   **NO_GO sin reintento ciego** y obligan a RCA + observadores READ_ONLY.
+5. Tras ACCEPTED repetir observadores del par, binding, SQLite, red/volúmenes
+   y luego sesión real del titular en `http://localhost:8443` con passkey
+   y CSRF de origen exacto. Confirmar `SITE_URL` persistida y trasladada
+   al volumen URL-only, perfil socio ficticio/una intención por evento,
+   actividad, START/STOP **solo en panel**, PID/IPC mediante
+   `beta-browser-status` y DNS IPv4/HTTPS HEAD a example.com mediante
+   `beta-browser-egress-readonly` **únicamente con worker running**.
+   Esta última prueba no certifica navegación a SITE_URL. Telegram sender
+   OFF hasta token rotado y aceptación independiente; ninguna reserva real.
+
+Frontera absoluta: Actions Boca exclusivamente, daemon rootless UID10001,
+sin Docker global, sin Porota ni servicios ajenos; limpieza Boca de identidad
+positiva, conservando volúmenes y evidencia. El issue
+[#417 R181](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6805649939)
+contiene RCA/handoff y recibos; completar allí cada resultado real.
+Las secciones R176 y anteriores de este documento son **históricas**.
+
 ## R176 — IPC del runner y condiciones para abandonar el último NO_GO
 
 **Evidencia R175 SHA `a829b0022`: 5/6 workflows SUCCESS**: panel,
