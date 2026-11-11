@@ -25,6 +25,8 @@ _NO_GO = b"BOCA_CURRENT_CENSUS state=NO_GO reason=UNVERIFIED observer_writes=0\n
 _MAX_RECEIPT_BYTES = 512
 _COUNT_CATEGORIES = frozenset(("0", "1", "2_PLUS"))
 _LEGACY_CATEGORIES = frozenset(("ABSENT", "APPEARS_RUNNING", "APPEARS_STOPPED"))
+_EGRESS_NAME = "boca-socios_boca_browser_egress"
+_SITE_CONFIG_NAME = "boca-socios_boca_site_config"
 _RECEIPT_FIELDS = frozenset(
     {
         "schema",
@@ -38,6 +40,8 @@ _RECEIPT_FIELDS = frozenset(
         "observer_writes",
         "foreign_resources_touched",
         "cutover_authorized",
+        "egress_absent",
+        "site_config_absent",
     }
 )
 
@@ -60,6 +64,8 @@ class CensusSnapshot:
     network_ids: frozenset[str]
     volume_names: frozenset[str]
     docker_root_identity: tuple[int, int]
+    egress_absent: bool = True
+    site_config_absent: bool = True
 
 
 def capture_container_census() -> CensusSnapshot:
@@ -91,6 +97,17 @@ def capture_container_census() -> CensusSnapshot:
     )
     if global_networks - builtin_networks != boca_networks:
         raise CensusNoGo("foreign network in dedicated rootless daemon")
+
+    # Only after proving that every custom network is Boca-owned, ask Docker
+    # for the fixed exact-name pre-APPLY network. Never inspect foreign IDs.
+    target_egress = set(
+        cleanup._ids("network", "ls", "-q", "--no-trunc", "--filter", f"name=^{_EGRESS_NAME}$")
+    )
+    if len(target_egress) > 1 or not target_egress <= boca_networks:
+        raise CensusNoGo("Boca egress name is ambiguous or unowned")
+    for ident in target_egress:
+        if cleanup._inspect_field("network", ident, "Name") != _EGRESS_NAME:
+            raise CensusNoGo("Boca egress name differs from exact target")
 
     global_volumes = set(cleanup._names("volume", "ls", "-q"))
     boca_volumes = set(cleanup._names("volume", "ls", "-q", "--filter", project_filter))
@@ -125,6 +142,8 @@ def capture_container_census() -> CensusSnapshot:
         frozenset(global_networks),
         frozenset(global_volumes),
         (docker_device, docker_inode),
+        not target_egress,
+        _SITE_CONFIG_NAME not in global_volumes,
     )
 
 
@@ -146,6 +165,8 @@ def _topology(inventory: CensusSnapshot) -> tuple[object, ...]:
         or not isinstance(inventory.docker_root_identity, tuple)
         or len(inventory.docker_root_identity) != 2
         or any(type(value) is not int or value < 0 for value in inventory.docker_root_identity)
+        or type(inventory.egress_absent) is not bool
+        or type(inventory.site_config_absent) is not bool
     ):
         raise CensusNoGo("census object count unverified")
     for container in inventory.containers:
@@ -166,6 +187,8 @@ def _topology(inventory: CensusSnapshot) -> tuple[object, ...]:
         inventory.network_ids,
         inventory.volume_names,
         inventory.docker_root_identity,
+        inventory.egress_absent,
+        inventory.site_config_absent,
     )
 
 
@@ -207,6 +230,8 @@ def _classify(inventory: CensusSnapshot, run_id: str) -> dict[str, object]:
         "observer_writes": 0,
         "foreign_resources_touched": 0,
         "cutover_authorized": False,
+        "egress_absent": inventory.egress_absent,
+        "site_config_absent": inventory.site_config_absent,
     }
 
 
@@ -278,6 +303,8 @@ def verify(receipt: bytes, run_id: str) -> bytes:
         or type(payload["foreign_resources_touched"]) is not int
         or payload["foreign_resources_touched"] != 0
         or payload["cutover_authorized"] is not False
+        or type(payload["egress_absent"]) is not bool
+        or type(payload["site_config_absent"]) is not bool
         or type(payload["legacy_shape"]) is not str
         or payload["legacy_shape"] not in _LEGACY_CATEGORIES
         or any(

@@ -98,7 +98,69 @@ def test_current_census_distinguishes_empty_legacy_and_ambiguous_boca_topology(
         "observer_writes": 0,
         "foreign_resources_touched": 0,
         "cutover_authorized": False,
+        "egress_absent": True,
+        "site_config_absent": True,
     }
+
+
+def test_current_census_reports_pre_apply_stale_gate_without_granting_go():
+    base = _inventory()
+    blocked = _census().CensusSnapshot(
+        base.containers,
+        base.network_ids,
+        base.volume_names,
+        base.docker_root_identity,
+        False,
+        False,
+    )
+    result = _observe(blocked, blocked)
+    assert result["state"] == "READY"  # census, not a deploy authorization
+    assert result["egress_absent"] is False
+    assert result["site_config_absent"] is False
+    assert result["cutover_authorized"] is False
+    with pytest.raises(_census().CensusNoGo, match="unstable"):
+        _observe(blocked, base)
+
+
+def test_current_census_physical_lists_detect_two_exact_stale_boca_names(monkeypatch):
+    network_id = "c" * 64
+    network = "boca-socios_boca_browser_egress"
+    volume = "boca-socios_boca_site_config"
+    calls = []
+
+    def docker(*args):
+        calls.append(args)
+        if args[0] == "network":
+            return "" if "type=builtin" in args else network_id + "\n"
+        if args[0] == "volume":
+            return volume + "\n"
+        return ""
+
+    def inspect(kind, ident, field):
+        assert (kind, ident, field) == ("network", network_id, "Name")
+        return network
+
+    monkeypatch.setattr(cleanup, "_docker", docker)
+    monkeypatch.setattr(cleanup, "_inspect_field", inspect)
+    result = _observe_via_default_reader(monkeypatch)
+    assert result["egress_absent"] is False
+    assert result["site_config_absent"] is False
+    assert result["cutover_authorized"] is False
+    assert len([item for item in calls if item[0] == "network" and "name=^" in " ".join(item)]) == 2
+
+
+def test_current_census_refuses_spoofed_target_network_before_inspect(monkeypatch):
+    network_id = "c" * 64
+
+    def docker(*args):
+        if "name=^boca-socios_boca_browser_egress$" in args:
+            return network_id + "\n"
+        return ""
+
+    monkeypatch.setattr(cleanup, "_docker", docker)
+    monkeypatch.setattr(cleanup, "_inspect_field", lambda *_: pytest.fail("foreign inspected"))
+    with pytest.raises(_census().CensusNoGo, match="unowned"):
+        _observe_via_default_reader(monkeypatch)
 
 
 def test_current_census_requires_two_identical_snapshots_and_no_implicit_retry():
@@ -129,7 +191,7 @@ def test_current_census_real_empty_inventory_issues_only_readonly_docker_verbs(m
     monkeypatch.setattr(cleanup, "_disk_inodes", lambda: pytest.fail("storage reader invoked"))
     result = _observe_via_default_reader(monkeypatch)
     assert result["total"] == "0"
-    assert len(calls) == 2 * 7  # seven graph ID/name listing reads per snapshot
+    assert len(calls) == 2 * 8  # plus exact Boca egress network name lookup
     assert {args[0] for args in calls} == {"ps", "network", "volume"}
     assert all(args[1] == "ls" for args in calls if args[0] in {"network", "volume"})
 
@@ -144,9 +206,9 @@ def test_current_census_attests_private_rootless_daemon_before_each_resource_lis
     monkeypatch.setattr(cleanup, "_docker", lambda *args: calls.append(args) or "")
     result = _observe_via_default_reader(monkeypatch, rootless_attestor=attest)
     assert result["total"] == "0"
-    assert len(calls) == 2 * 8
-    assert calls[0] == calls[8] == ("rootless_attest",)
-    assert calls[1] == calls[9] == ("ps", "-a", "-q", "--no-trunc")
+    assert len(calls) == 2 * 9
+    assert calls[0] == calls[9] == ("rootless_attest",)
+    assert calls[1] == calls[10] == ("ps", "-a", "-q", "--no-trunc")
     assert {args[0] for args in calls if args[0] != "rootless_attest"} == {
         "ps",
         "network",
@@ -368,6 +430,8 @@ def test_current_census_runner_rejects_wrong_run_or_noncanonical_host_receipt():
         b"{" + b"X" * 1000,
         raw.replace(b'"legacy_shape":"ABSENT"', b'"legacy_shape":[]'),
         raw.replace(b'"controllers":"0"', b'"controllers":[]'),
+        raw.replace(b'"egress_absent":true', b'"egress_absent":"true"'),
+        raw.replace(b'"site_config_absent":true', b'"site_config_absent":1'),
     ):
         with pytest.raises(_census().CensusNoGo):
             _census().verify(corrupt, "42912586832")
