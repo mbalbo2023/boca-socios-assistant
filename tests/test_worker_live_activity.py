@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from uuid import uuid4
 
 import pytest
@@ -21,6 +23,17 @@ def _private_app(tmp_path: Path):
     provider, key, credential_id = _passkey([0.0])
     app, db = _app(tmp_path / "boca.sqlite3", provider, FakeHost(), bot_control=lambda _: None)
     return app, db, _login(app, key, credential_id)
+
+
+@pytest.fixture
+def isolated_ipc_directory() -> Iterator[Path]:
+    # AF_UNIX paths have a kernel byte limit. A pytest-xdist runner's nested
+    # tmp_path may exceed it even though this event file is a regular file.
+    # Test against a short, genuine directory, keeping exact IPC custody.
+    with TemporaryDirectory(prefix="boca-ipc-") as temporary:
+        directory = Path(temporary) / "ipc"
+        directory.mkdir(mode=0o711)
+        yield directory
 
 
 def test_private_live_activity_returns_only_known_verified_lifecycle_stages(tmp_path: Path) -> None:
@@ -136,15 +149,15 @@ def test_panel_merges_only_allowlisted_chromium_and_command_states(
     assert command_id.encode() not in data
 
 
-def test_chromium_events_emit_fixed_codes_only_and_read_on_shared_directory(tmp_path: Path) -> None:
+def test_chromium_events_emit_fixed_codes_only_and_read_on_shared_directory(
+    isolated_ipc_directory: Path,
+) -> None:
     from boca_socios.browser.activity_events import (
         emit_chromium_event,
         read_chromium_events,
     )
 
-    ipc = tmp_path / "boca-browser-ipc"
-    ipc.mkdir(mode=0o711)
-    target = ipc / "chromium-events.jsonl"
+    target = isolated_ipc_directory / "chromium-events.jsonl"
     emit_chromium_event(
         "launch_requested", path=target, owner_uid=os.geteuid(), owner_gid=os.getegid()
     )
@@ -165,12 +178,12 @@ def test_chromium_events_emit_fixed_codes_only_and_read_on_shared_directory(tmp_
     assert target.stat().st_mode & 0o777 == 0o644
 
 
-def test_chromium_activity_rejects_malformed_and_untrusted_files(tmp_path: Path) -> None:
+def test_chromium_activity_rejects_malformed_and_untrusted_files(
+    isolated_ipc_directory: Path,
+) -> None:
     from boca_socios.browser.activity_events import read_chromium_events
 
-    ipc = tmp_path / "boca-browser-ipc"
-    ipc.mkdir(mode=0o711)
-    path = ipc / "chromium-events.jsonl"
+    path = isolated_ipc_directory / "chromium-events.jsonl"
     now = datetime.now(UTC)
     assert read_chromium_events(
         path=path, owner_uid=os.geteuid(), owner_gid=os.getegid(), observed_at=now
@@ -182,7 +195,7 @@ def test_chromium_activity_rejects_malformed_and_untrusted_files(tmp_path: Path)
     )
     assert result.state == "degraded" and not result.events
     path.unlink()
-    path.symlink_to(tmp_path / "private_file")
+    path.symlink_to(isolated_ipc_directory.parent / "private_file")
     result = read_chromium_events(
         path=path, owner_uid=os.geteuid(), owner_gid=os.getegid(), observed_at=now
     )
