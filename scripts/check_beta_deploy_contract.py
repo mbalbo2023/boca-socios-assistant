@@ -44,12 +44,28 @@ def main() -> int:
         if not re.fullmatch(r"invalid [A-Za-z0-9 _.-]{1,100}", field):
             field = "reviewed isolated model mismatch"
         print(f"BETA_COMPOSE_NO_GO: {field}", file=sys.stderr)
+        if field == "invalid browser-ipc-v2 worker egress must be one dedicated Boca bridge":
+            networks = model.get("networks") if isinstance(model, dict) else None
+            egress = networks.get("boca_browser_egress") if isinstance(networks, dict) else None
+            if isinstance(egress, dict):
+                known = {"name", "driver", "internal", "ipam"}
+                print(
+                    "EGRESS_MODEL_SHAPE: "
+                    f"name_ok={egress.get('name') == 'boca-socios_boca_browser_egress'} "
+                    f"driver_ok={egress.get('driver') == 'bridge'} "
+                    f"internal_false={egress.get('internal') is False} "
+                    f"ipam_present={'ipam' in egress} ipam_empty={egress.get('ipam') == {}} "
+                    f"other_field_count={len(set(egress) - known)}",
+                    file=sys.stderr,
+                )
         return 1
     except (OSError, ValueError, TypeError):
         print("BETA_COMPOSE_NO_GO: reviewed isolated model mismatch", file=sys.stderr)
         return 1
     if browser_ipc_v2:
-        print("BETA_BROWSER_COMPOSE_PASS: Boca-only IPC worker; dedicated egress, no public worker port")
+        print(
+            "BETA_BROWSER_COMPOSE_PASS: Boca-only IPC worker; dedicated egress, no public worker port"
+        )
     else:
         print("BETA_COMPOSE_PASS: Boca-only served package on host loopback")
     return 0
