@@ -1,7 +1,8 @@
 # Optional browser-ipc-v2 overlay. NEVER selected by legacy beta-install.
 # The protected V3 installer prepares an idle worker and the controller-only
 # socket. A request from the authenticated panel can then start that worker.
-# No browser IP networking, published port, owner/key/data mount or live provider.
+# Dedicated outbound-only Boca worker bridge; no published worker port,
+# owner/key/data mount, host networking, or shared application network.
 name: boca-socios
 
 services:
@@ -41,7 +42,8 @@ services:
       boca.socios.browser-ipc-attempt: ${BOCA_BROWSER_ATTEMPT_ID:?single_reviewed_GitHub_run_required}
     volumes:
       - boca_browser_ipc:/run/boca-browser-ipc
-    network_mode: "none"
+    networks:
+      - boca_browser_egress
     cgroup: private
     ipc: private
     read_only: true
@@ -76,3 +78,11 @@ volumes:
   boca_browser_ipc:
     external: true
     name: boca-socios_boca_browser_ipc
+
+networks:
+  # External Internet is required by the owner. Keep the worker on its OWN
+  # rootless Boca bridge, never on the controller or Porota networks.
+  boca_browser_egress:
+    name: boca-socios_boca_browser_egress
+    driver: bridge
+    internal: false

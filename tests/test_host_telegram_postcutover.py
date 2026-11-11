@@ -74,16 +74,16 @@ def _volume(name: str) -> Volume:
 
 
 def _network(name: str, *, attached: tuple[str, ...] = ()) -> Network:
+    suffix = name.removeprefix("boca-socios_")
+    if suffix == "boca_telegram_egress":
+        suffix = "telegram_egress"
     return Network(
         name,
-        "2" * 64 if name.endswith("boca_private") else "3" * 64,
+        ("2" if suffix == "boca_private" else "4" if suffix == "boca_browser_egress" else "3") * 64,
         attached,
         (
             ("com.docker.compose.project", "boca-socios"),
-            (
-                "com.docker.compose.network",
-                "boca_private" if name.endswith("boca_private") else "telegram_egress",
-            ),
+            ("com.docker.compose.network", suffix),
         ),
     )
 
@@ -114,6 +114,7 @@ def _fake(tmp_path: Path, *, stopped_sender: bool = False) -> FakeIO:
         networks=(
             _network("boca-socios_boca_private"),
             _network("boca-socios_boca_telegram_egress"),
+            _network("boca-socios_boca_browser_egress"),
         ),
     )
     io.fields[("volume", _TG, "Mountpoint")] = str(tmp_path)
@@ -213,6 +214,15 @@ def test_egress_with_competing_pollers_is_no_go(tmp_path: Path) -> None:
     networks[1] = replace(networks[1], attached_ids=(SENDER,))
     io.inventory_value = replace(io.inventory_value, networks=tuple(networks))
     with pytest.raises(host.TelegramHostNoGo, match="competing_poller"):
+        host.observe_telegram_host(_pins(), lease=_lease(), io=io)
+
+
+def test_browser_egress_with_competing_peer_is_no_go(tmp_path: Path) -> None:
+    io = _fake(tmp_path)
+    networks = list(io.inventory_value.networks)
+    networks[2] = replace(networks[2], attached_ids=(SENDER,))
+    io.inventory_value = replace(io.inventory_value, networks=tuple(networks))
+    with pytest.raises(host.TelegramHostNoGo, match="unexpected_browser_egress_peer"):
         host.observe_telegram_host(_pins(), lease=_lease(), io=io)
 
 

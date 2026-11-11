@@ -40,6 +40,7 @@ _DATA = "boca-socios_boca_data"
 _IPC = "boca-socios_boca_browser_ipc"
 _TELEGRAM = "boca-socios_boca_telegram"
 _PRIVATE = "boca-socios_boca_private"
+_BROWSER_EGRESS = "boca-socios_boca_browser_egress"
 _EGRESS = "boca-socios_boca_telegram_egress"
 _VOLUMES = {_DATA, _IPC, _TELEGRAM, "boca-socios_boca_key", "boca-socios_boca_owner"}
 _ATTEMPT = "boca.socios.browser-ipc-attempt"
@@ -287,7 +288,9 @@ def observe_telegram_host(
             != tuple(sorted({_DATA, _IPC, "boca-socios_boca_key", "boca-socios_boca_owner"}))
             or worker.volumes != (_IPC,)
             or controller.networks not in ((), (_PRIVATE,))
-            or worker.networks
+            or worker.networks not in ((), (_BROWSER_EGRESS,))
+            or worker.running
+            and worker.networks != (_BROWSER_EGRESS,)
         ):
             raise TelegramHostNoGo("boca_telegram_controller_isolation_unverified")
         if pins.sender_expected_state == "stopped":
@@ -318,11 +321,17 @@ def observe_telegram_host(
             if labels.get("com.docker.compose.volume") != volume.name.removeprefix("boca-socios_"):
                 raise TelegramHostNoGo("boca_telegram_volume_ownership_unverified")
         networks = {item.name: item for item in inventory.networks}
-        if set(networks) != {_PRIVATE, _EGRESS} or len(inventory.networks) != 2:
+        if set(networks) != {_PRIVATE, _BROWSER_EGRESS, _EGRESS} or len(inventory.networks) != 3:
             raise TelegramHostNoGo("boca_telegram_network_inventory_unverified")
         if networks[_EGRESS].attached_ids:
             raise TelegramHostNoGo("boca_telegram_competing_poller_unverified")
-        for name, suffix in ((_PRIVATE, "boca_private"), (_EGRESS, "telegram_egress")):
+        if networks[_BROWSER_EGRESS].attached_ids:
+            raise TelegramHostNoGo("boca_telegram_unexpected_browser_egress_peer")
+        for name, suffix in (
+            (_PRIVATE, "boca_private"),
+            (_BROWSER_EGRESS, "boca_browser_egress"),
+            (_EGRESS, "telegram_egress"),
+        ):
             labels = _labels(networks[name].labels)
             if (
                 labels.get("com.docker.compose.project") != _PROJECT

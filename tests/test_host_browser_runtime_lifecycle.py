@@ -143,6 +143,8 @@ def test_stopped_service_checks_keep_isolation_without_claiming_kernel_health(
     record["State"] = {"Running": False, "Restarting": False}
     if service == "controller":
         record["NetworkSettings"]["Ports"] = {}  # type: ignore[index]
+    else:
+        record["NetworkSettings"]["Networks"][host.BROWSER_EGRESS_BRIDGE]["IPAddress"] = ""  # type: ignore[index]
     monkeypatch.setattr(host, "_browser_inspect_record", lambda _: record)
     monkeypatch.setattr(host, "_browser_effective_seccomp_options", lambda *args: None)
     monkeypatch.setattr(host, "_browser_worker_probe", lambda _: pytest.fail("stopped worker exec"))
@@ -725,6 +727,8 @@ def test_cleanup_identifies_unhealthy_or_stopped_pair_without_requiring_health_o
     }
     if not controller_running:
         controller["NetworkSettings"]["Ports"] = None
+    if not worker_running:
+        worker["NetworkSettings"]["Networks"][host.BROWSER_EGRESS_BRIDGE]["IPAddress"] = ""  # type: ignore[index]
     records = {CONTROLLER_ID: controller, WORKER_ID: worker}
     monkeypatch.setattr(host, "_browser_engine_version", lambda: None)
     monkeypatch.setattr(host, "_browser_read_marker", lambda *args: marker())
@@ -751,7 +755,11 @@ def test_cleanup_identifies_unhealthy_or_stopped_pair_without_requiring_health_o
     monkeypatch.setattr(host, "_storage_snapshot", safe_storage)
     volumes = {host.OWNER_VOLUME, host.KEY_VOLUME, host.DATA_VOLUME, host.BROWSER_IPC_VOLUME}
     monkeypatch.setattr(
-        host, "_names", lambda kind, *_: volumes if kind == "volume" else {host.BROWSER_BRIDGE}
+        host,
+        "_names",
+        lambda kind, *_: (
+            volumes if kind == "volume" else {host.BROWSER_BRIDGE, host.BROWSER_EGRESS_BRIDGE}
+        ),
     )
     monkeypatch.setattr(host, "_browser_docker_ids", lambda: set(records))
     commands = []
@@ -763,7 +771,27 @@ def test_cleanup_identifies_unhealthy_or_stopped_pair_without_requiring_health_o
         if args[:3] == ("docker", "volume", "ls"):
             return "\n".join(volumes)
         if args[:3] == ("docker", "network", "ls"):
-            return "\n".join({"bridge", "host", "none", host.BROWSER_BRIDGE})
+            return "\n".join(
+                {"bridge", "host", "none", host.BROWSER_BRIDGE, host.BROWSER_EGRESS_BRIDGE}
+            )
+        if args[:3] == ("docker", "network", "inspect"):
+            assert args[-1] == host.BROWSER_EGRESS_BRIDGE
+            return json.dumps(
+                {
+                    "Name": host.BROWSER_EGRESS_BRIDGE,
+                    "Driver": "bridge",
+                    "Scope": "local",
+                    "Internal": False,
+                    "Attachable": False,
+                    "Ingress": False,
+                    "Containers": {WORKER_ID: {}} if worker_running else {},
+                    "Labels": {
+                        "com.docker.compose.project": host.PROJECT,
+                        "com.docker.compose.network": "boca_browser_egress",
+                        host.BROWSER_ATTEMPT_LABEL: ATTEMPT,
+                    },
+                }
+            )
         if args[:3] == ("docker", "ps", "-a"):
             if args[-1] == "name=^/boca-socios-controller-1$":
                 return CONTROLLER_ID

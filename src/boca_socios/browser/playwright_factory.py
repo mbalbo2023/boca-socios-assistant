@@ -1,8 +1,8 @@
 """Opt-in Chromium page factory strictly for the embedded fake DOM journey.
 
 Importing this module does not start Playwright or Chromium. Call it only from
-an independently isolated UID 10002, network-none, capped browser container;
-it is never a substitute for OS-level no-egress enforcement. Nothing here
+an independently isolated UID 10002, Boca-only-egress, capped browser container;
+it is never a substitute for OS-level Boca network isolation. Nothing here
 accepts a URL, account, cookie, live queue position or payment instruction.
 """
 

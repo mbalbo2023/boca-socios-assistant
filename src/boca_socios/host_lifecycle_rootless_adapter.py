@@ -42,6 +42,7 @@ _CONTROLLER_VOLUMES = frozenset(
 _APPROVED_VOLUMES = _CONTROLLER_VOLUMES | {"boca-socios_boca_telegram"}
 _PRIVATE_NETWORK = "boca-socios_boca_private"
 _TELEGRAM_NETWORK = "boca-socios_boca_telegram_egress"
+_BROWSER_EGRESS_NETWORK = "boca-socios_boca_browser_egress"
 _ATTEMPT_LABEL = "boca.socios.browser-ipc-attempt"
 _CONFIG_HASH_LABEL = "com.docker.compose.config-hash"
 _REVISION_LABEL = "org.opencontainers.image.revision"
@@ -406,6 +407,12 @@ class RootlessLifecycleProbe:
                 raise LifecycleAdapterNoGo("Boca installed Compose/image identity changed")
             self._service_boundary(item.ident, service, digest)
         egresses = [network for network in inventory.networks if network.name == _TELEGRAM_NETWORK]
+        browser_egresses = [
+            network for network in inventory.networks if network.name == _BROWSER_EGRESS_NETWORK
+        ]
+        browser_egress_valid = len(browser_egresses) == 1 and browser_egresses[0].attached_ids == (
+            (worker.ident,) if worker.running else ()
+        )
         egress_valid = (
             len(egresses) == 1
             and egresses[0].attached_ids
@@ -424,7 +431,10 @@ class RootlessLifecycleProbe:
             sender_network_valid = sender.networks in ((), (_TELEGRAM_NETWORK,))
         if (
             controller.networks != (_PRIVATE_NETWORK,)
-            or worker.networks not in ((), ("none",))
+            or not browser_egress_valid
+            or worker.networks not in ((), (_BROWSER_EGRESS_NETWORK,))
+            or worker.running
+            and worker.networks != (_BROWSER_EGRESS_NETWORK,)
             or controller.volumes != tuple(sorted(_CONTROLLER_VOLUMES))
             or worker.volumes != (_IPC_VOLUME,)
             or sender is not None
@@ -436,7 +446,10 @@ class RootlessLifecycleProbe:
             or {v.name for v in inventory.volumes} < _CONTROLLER_VOLUMES
             or sender is not None
             and "boca-socios_boca_telegram" not in {v.name for v in inventory.volumes}
-            or any(n.name not in (_PRIVATE_NETWORK, _TELEGRAM_NETWORK) for n in inventory.networks)
+            or any(
+                n.name not in (_PRIVATE_NETWORK, _TELEGRAM_NETWORK, _BROWSER_EGRESS_NETWORK)
+                for n in inventory.networks
+            )
             or not any(
                 n.name == _PRIVATE_NETWORK and n.attached_ids == (coordinates.controller_id,)
                 for n in inventory.networks
@@ -508,7 +521,7 @@ class RootlessLifecycleProbe:
             worker_running=worker_running,
             worker_healthy=worker_healthy,
             bot_engine_running=engine.state == "RUNNING",
-            worker_network_mode="none",
+            worker_network_mode=_BROWSER_EGRESS_NETWORK,
             published_controller_port="127.0.0.1:8443",
             rootless_uid=10001,
             controller_data_volume=_DATA_VOLUME,
@@ -541,7 +554,7 @@ class RootlessLifecycleProbe:
             raise LifecycleAdapterNoGo("Boca service not authorized")
         expected_user = "10002:10002" if service == "browser-worker" else "10001:10001"
         expected_network = (
-            "none"
+            _BROWSER_EGRESS_NETWORK
             if service == "browser-worker"
             else _TELEGRAM_NETWORK
             if service == "telegram"
@@ -556,10 +569,11 @@ class RootlessLifecycleProbe:
         restart_count = self._io.field("container", ident, "RestartCount")
         ports = self._io.field("container", ident, "NetworkSettings.Ports")
         if self._on_demand and service == "browser-worker":
-            from boca_socios.host_first_deploy import _browser_worker_none_network
+            from boca_socios.host_first_deploy import _browser_worker_egress_network
 
-            _browser_worker_none_network(
-                self._io.field("container", ident, "NetworkSettings.Networks")
+            _browser_worker_egress_network(
+                self._io.field("container", ident, "NetworkSettings.Networks"),
+                running=_typed_bool(self._io.field("container", ident, "State.Running"), "worker"),
             )
             if self._io.field("container", ident, "HostConfig.PortBindings") not in ({}, None):
                 raise LifecycleAdapterNoGo("Boca worker gained host ports")

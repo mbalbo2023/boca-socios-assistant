@@ -1,4 +1,4 @@
-"""The opt-in IPC overlay cannot weaken legacy BETA or permit worker egress."""
+"""The opt-in IPC overlay permits only dedicated Boca worker egress."""
 
 from __future__ import annotations
 
@@ -25,10 +25,7 @@ ATTEMPT = "123456"
 SECCOMP = "/srv/boca-socios/seccomp_profile.json"
 IPC_VOLUME = "boca-socios_boca_browser_ipc"
 WORKER_HEALTH = (
-    "from boca_socios.browser.on_demand import validate_worker_boundary; "
-    "from boca_socios.browser.ipc_worker import validate_no_egress_namespace; "
-    "from boca_socios.browser.ipc_protocol import SOCKET_PATH, socket_identity; "
-    "validate_worker_boundary(); validate_no_egress_namespace(); socket_identity(SOCKET_PATH)"
+    "from boca_socios.browser.worker_health import check_worker_health; check_worker_health()"
 )
 
 
@@ -71,7 +68,7 @@ def browser_model() -> dict[str, object]:
                 "read_only": False,
             }
         ],
-        "network_mode": "none",
+        "networks": {"boca_browser_egress": None},
         "cgroup": "private",
         "ipc": "private",
         "read_only": True,
@@ -97,6 +94,11 @@ def browser_model() -> dict[str, object]:
     candidate["volumes"]["boca_browser_ipc"] = {  # type: ignore[index]
         "name": IPC_VOLUME,
         "external": True,
+    }
+    candidate["networks"]["boca_browser_egress"] = {  # type: ignore[index]
+        "name": "boca-socios_boca_browser_egress",
+        "driver": "bridge",
+        "internal": False,
     }
     return candidate
 
@@ -194,6 +196,8 @@ def test_compose_normalizes_one_cpu_to_json_integer_not_float() -> None:
         ("stop_grace_period", "60s"),
         ("network_mode", "bridge"),
         ("network_mode", "host"),
+        ("networks", {"boca_private": None}),
+        ("networks", {"boca_browser_egress": None, "boca_private": None}),
         ("cgroup", "host"),
         ("ipc", "host"),
         ("read_only", False),
@@ -279,6 +283,47 @@ def test_controller_socket_must_be_readonly_and_only_one_new_mount() -> None:
 def test_no_extra_service_network_or_volume(section: str, field: str, value: object) -> None:
     candidate = browser_model()
     candidate[section][field] = value  # type: ignore[index]
+    with pytest.raises(ContractError):
+        valid(candidate)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {"name": "boca-socios_boca_private", "driver": "bridge", "internal": False},
+        {"name": "boca-socios_boca_browser_egress", "driver": "bridge", "internal": True},
+        {"name": "boca-socios_boca_browser_egress", "driver": "host", "internal": False},
+        {"name": "shared-egress", "driver": "bridge", "internal": False},
+    ],
+)
+def test_worker_egress_must_be_dedicated_boca_bridge(value: object) -> None:
+    candidate = browser_model()
+    candidate["networks"]["boca_browser_egress"] = value  # type: ignore[index]
+    with pytest.raises(ContractError):
+        valid(candidate)
+
+
+def test_compose_normalized_egress_defaults_are_equivalent_and_still_outbound() -> None:
+    candidate = browser_model()
+    candidate["networks"]["boca_browser_egress"] = {  # type: ignore[index]
+        "name": "boca-socios_boca_browser_egress",
+        "driver": "bridge",
+        "ipam": {},
+    }
+    valid(candidate)
+
+
+@pytest.mark.parametrize(
+    "field,value", [("internal", True), ("ipam", {"driver": "custom"}), ("attachable", True)]
+)
+def test_compose_normalized_egress_rejects_nondefault_fields(field: str, value: object) -> None:
+    candidate = browser_model()
+    candidate["networks"]["boca_browser_egress"] = {  # type: ignore[index]
+        "name": "boca-socios_boca_browser_egress",
+        "driver": "bridge",
+        "ipam": {},
+        field: value,
+    }
     with pytest.raises(ContractError):
         valid(candidate)
 

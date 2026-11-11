@@ -60,7 +60,7 @@ def _snapshot(
         worker_running=worker,
         worker_healthy=worker,
         bot_engine_running=engine,
-        worker_network_mode="none",
+        worker_network_mode="boca-socios_boca_browser_egress",
         published_controller_port="127.0.0.1:8443",
         rootless_uid=10001,
         controller_data_volume="boca-socios_boca_data",

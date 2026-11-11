@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import re
 from contextlib import nullcontext
 from pathlib import Path
@@ -388,11 +389,11 @@ def test_compensation_restart_policy_restore_failure_is_indeterminate(
     assert state["HostConfig"]["RestartPolicy"]["Name"] == "no"
 
 
-def test_worker_create_argv_is_single_service_no_egress_and_no_restart() -> None:
+def test_worker_create_argv_has_only_boca_egress_and_no_restart() -> None:
     argv = host._cutover_worker_create_argv(WORKER_IMAGE, TARGET_SHA, ATTEMPT, CONFIG_HASH)
     assert argv[:5] == ("docker", "create", "--pull", "never", "--name")
     assert argv[5] == host.CUTOVER_WORKER_NAME
-    assert argv[argv.index("--network") + 1] == "none"
+    assert argv[argv.index("--network") + 1] == host.BROWSER_EGRESS_BRIDGE
     assert argv[argv.index("--restart") + 1] == "no"
     assert argv[argv.index("--user") + 1] == "10002:10002"
     assert argv[argv.index("--security-opt") + 1] == "no-new-privileges:true"
@@ -407,6 +408,123 @@ def test_worker_create_argv_is_single_service_no_egress_and_no_restart() -> None
     assert f"com.docker.compose.config-hash={CONFIG_HASH}" in argv
     assert "--rm" not in argv and "--privileged" not in argv
     assert "docker compose" not in " ".join(argv)
+
+
+def test_cutover_egress_is_created_and_compensated_by_boca_identity_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    name = host.BROWSER_EGRESS_BRIDGE
+    ident = "8" * 64
+    present = False
+    calls: list[tuple[str, ...]] = []
+    record: dict[str, object] = {
+        "Id": ident,
+        "Name": name,
+        "Driver": "bridge",
+        "Scope": "local",
+        "Internal": False,
+        "Attachable": False,
+        "Ingress": False,
+        "Containers": {},
+        "Labels": {
+            "com.docker.compose.project": host.PROJECT,
+            "com.docker.compose.network": "boca_browser_egress",
+            host.BROWSER_ATTEMPT_LABEL: ATTEMPT,
+        },
+    }
+
+    def names(kind: str, pattern: str) -> set[str]:
+        assert kind == "network" and pattern == f"name=^{name}$"
+        return {name} if present else set()
+
+    def run(*argv: str, **_kwargs: object) -> str:
+        nonlocal present
+        calls.append(argv)
+        if argv[:3] == ("docker", "network", "create"):
+            assert not present and argv[-1] == name
+            assert "--driver" in argv and argv[argv.index("--driver") + 1] == "bridge"
+            assert f"{host.BROWSER_ATTEMPT_LABEL}={ATTEMPT}" in argv
+            present = True
+            return ident
+        if argv[:3] == ("docker", "network", "inspect"):
+            assert present and argv[-1] == name
+            return json.dumps(record)
+        if argv[:3] == ("docker", "network", "rm"):
+            assert present and argv[-1] == name
+            present = False
+            return name
+        pytest.fail(f"unexpected command {argv!r}")
+
+    monkeypatch.setattr(host, "_names", names)
+    monkeypatch.setattr(host, "_run", run)
+    host._cutover_create_browser_egress(ATTEMPT)
+    assert present
+    host._cutover_compensate_browser_egress(ATTEMPT)
+    assert not present
+    assert len([argv for argv in calls if argv[:3] == ("docker", "network", "rm")]) == 1
+    assert all(argv[:2] == ("docker", "network") for argv in calls)
+
+
+def test_cutover_egress_compensation_refuses_foreign_peers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host, "_names", lambda _kind, _pattern: {host.BROWSER_EGRESS_BRIDGE})
+
+    def run(*argv: str, **_kwargs: object) -> str:
+        if argv[:3] == ("docker", "network", "inspect"):
+            return json.dumps(
+                {
+                    "Id": "8" * 64,
+                    "Name": host.BROWSER_EGRESS_BRIDGE,
+                    "Driver": "bridge",
+                    "Scope": "local",
+                    "Internal": False,
+                    "Attachable": False,
+                    "Ingress": False,
+                    "Containers": {"7" * 64: {"Name": "foreign"}},
+                    "Labels": {
+                        "com.docker.compose.project": host.PROJECT,
+                        "com.docker.compose.network": "boca_browser_egress",
+                        host.BROWSER_ATTEMPT_LABEL: ATTEMPT,
+                    },
+                }
+            )
+        pytest.fail(f"unexpected effect {argv!r}")
+
+    monkeypatch.setattr(host, "_run", run)
+    with pytest.raises(host.PreflightError, match="identity/peers"):
+        host._cutover_compensate_browser_egress(ATTEMPT)
+
+
+@pytest.mark.parametrize("drift", ["internal", "foreign", "label"])
+def test_installed_worker_egress_requires_outbound_owned_single_peer(
+    monkeypatch: pytest.MonkeyPatch, drift: str
+) -> None:
+    observed: dict[str, object] = {
+        "Name": host.BROWSER_EGRESS_BRIDGE,
+        "Driver": "bridge",
+        "Scope": "local",
+        "Internal": False,
+        "Attachable": False,
+        "Ingress": False,
+        "Containers": {WORKER_ID: {}},
+        "Labels": {
+            "com.docker.compose.project": host.PROJECT,
+            "com.docker.compose.network": "boca_browser_egress",
+            host.BROWSER_ATTEMPT_LABEL: ATTEMPT,
+        },
+    }
+    monkeypatch.setattr(host, "_run", lambda *_argv, **_kwargs: json.dumps(observed))
+    host._browser_installed_egress_network(WORKER_ID, running=True, attempt_id=ATTEMPT)
+    if drift == "internal":
+        observed["Internal"] = True
+    elif drift == "foreign":
+        observed["Containers"] = {"6" * 64: {}}
+    else:
+        assert isinstance(observed["Labels"], dict)
+        observed["Labels"][host.BROWSER_ATTEMPT_LABEL] = "different"  # type: ignore[index]
+    with pytest.raises(host.PreflightError, match="connectivity unverified"):
+        host._browser_installed_egress_network(WORKER_ID, running=True, attempt_id=ATTEMPT)
 
 
 def test_candidate_argv_reuses_exact_volume_names_no_invisible_restart() -> None:
@@ -503,6 +621,9 @@ def _worker_preparation_fake(
     monkeypatch.setattr(host, "_browser_inspect_record", inspect)
     monkeypatch.setattr(host, "_browser_create_ipc_volume", create_volume)
     monkeypatch.setattr(host, "_browser_validate_ipc_volume", lambda _id: None)
+    monkeypatch.setattr(host, "_cutover_create_browser_egress", lambda _id: None)
+    monkeypatch.setattr(host, "_cutover_compensate_browser_egress", lambda _id: None)
+    monkeypatch.setattr(host, "_cutover_browser_egress", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(host, "_browser_worker_postflight", worker_postflight)
     monkeypatch.setattr(host, "_cutover_capture_preflight", lambda *_args: None)
 
@@ -535,7 +656,7 @@ def _prepare_worker() -> str:
     )
 
 
-def test_worker_prepare_is_one_identity_stays_no_egress_and_preserves_live_legacy(
+def test_worker_prepare_is_one_identity_stays_boca_egress_and_preserves_live_legacy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls, legacy, worker = _worker_preparation_fake(monkeypatch)
@@ -544,7 +665,7 @@ def test_worker_prepare_is_one_identity_stays_no_egress_and_preserves_live_legac
     assert legacy["State"]["Running"] is True
     assert all(command[:2] not in (("docker", "stop"), ("docker", "compose")) for command in calls)
     create = next(command for command in calls if command[:2] == ("docker", "create"))
-    assert create[create.index("--network") + 1] == "none"
+    assert create[create.index("--network") + 1] == host.BROWSER_EGRESS_BRIDGE
     assert "--publish" not in create
     assert "BOCA_OBSERVER_STOP=1" in create
 

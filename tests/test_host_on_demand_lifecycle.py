@@ -400,16 +400,16 @@ def test_on_demand_topology_only_controller_survives_reboot(tmp_path, monkeypatc
     io.fields[("container", WORKER, "HostConfig.PortBindings")] = {}
     io.fields[("container", WORKER, "NetworkSettings.Ports")] = None
     io.fields[("container", WORKER, "NetworkSettings.Networks")] = {
-        "none": {"IPAddress": "", "GlobalIPv6Address": ""}
+        "boca-socios_boca_browser_egress": {"IPAddress": "", "GlobalIPv6Address": ""}
     }
     if mutation == "control_rw":
         mount["RW"] = True
     elif mutation == "other_source":
         mount["Source"] = "/other/socket"
     elif mutation == "worker_ip":
-        io.fields[("container", WORKER, "NetworkSettings.Networks")]["none"]["IPAddress"] = (
-            "192.0.2.1"
-        )
+        io.fields[("container", WORKER, "NetworkSettings.Networks")][
+            "boca-socios_boca_browser_egress"
+        ]["IPAddress"] = "192.0.2.1"
     elif mutation == "worker_restart":
         io.fields[("container", WORKER, "HostConfig.RestartPolicy")]["Name"] = "always"
     elif mutation == "wrong_controller_restart":

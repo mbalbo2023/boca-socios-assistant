@@ -93,6 +93,19 @@ tests before installing. No change to the daemon or other Docker projects.
 Allowing a public URL in Configuración is not, by itself, permission to run
 unreviewed live Boca ticket workflows; business/credential protections remain.
 
+**R171 source candidate:** the revised optional Compose overlay names exactly
+`boca-socios_boca_browser_egress` as the browser's single outbound bridge,
+distinct from `boca_private` and Telegram. Its host/CI checks prohibit extra
+peers, host/foreign networks and published worker ports. This source change
+does **not** mean the installed worker has Internet: only a separate positive
+rootless droplet probe and fully reviewed Cutover may mark that ready.
+Cutover A creates only the identified Boca egress bridge, and its compensator
+removes only that verified empty attempt bridge. The `beta-browser-install`
+legacy workflow is explicitly NO_GO before host effects and its older
+`--browser-ipc-v2` cleanup is **not** a substitute for Cutover A compensation.
+Keep short-lived `network none` Docker inspection probes separate from the
+actual Internet-enabled Chromium worker.
+
 **Uploaded V3 ZIP custody:** the 2026-11-10 supplied ZIP contains a plaintext
 Telegram token, a hard-coded public Boca destination, a separate plaintext
 password SQLite class, and base images differing from pinned release images.

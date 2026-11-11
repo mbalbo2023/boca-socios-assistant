@@ -572,7 +572,9 @@ def _official_observation(io: CutoverInventoryIO, release: ReviewedTargetRelease
         probe._service_boundary(container.ident, service, reference)  # noqa: SLF001
     if (
         controller.networks != (_BRIDGE,)
-        or worker.networks
+        or worker.networks not in ((), ("boca-socios_boca_browser_egress",))
+        or worker.running
+        and worker.networks != ("boca-socios_boca_browser_egress",)
         or controller.volumes
         != tuple(sorted({_DATA, _KEY, _OWNER, "boca-socios_boca_browser_ipc"}))
         or worker.volumes != ("boca-socios_boca_browser_ipc",)
@@ -603,13 +605,16 @@ def _official_observation(io: CutoverInventoryIO, release: ReviewedTargetRelease
             or labels.get("com.docker.compose.project") != _PROJECT
         ):
             raise CutoverInventoryNoGo("Boca official volume label provenance unavailable")
-    if any(network.name not in (_BRIDGE, egress) for network in inventory.networks):
+    browser_egress = "boca-socios_boca_browser_egress"
+    if any(network.name not in (_BRIDGE, browser_egress, egress) for network in inventory.networks):
         raise CutoverInventoryNoGo("Boca official network outside project")
     by_name = {network.name: network for network in inventory.networks}
     if (
         len(by_name) != len(inventory.networks)
         or _BRIDGE not in by_name
         or by_name[_BRIDGE].attached_ids != (controller.ident,)
+        or browser_egress not in by_name
+        or by_name[browser_egress].attached_ids != ((worker.ident,) if worker.running else ())
         or sender is not None
         and sender.running
         and egress not in by_name

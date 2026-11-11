@@ -535,6 +535,51 @@ def test_host_compose_model_accepts_only_resolved_versioned_offline_contract(
     ]
 
 
+@pytest.mark.parametrize(
+    "egress",
+    [
+        {
+            "name": "boca-socios_boca_browser_egress",
+            "driver": "bridge",
+            "ipam": {},
+        },
+        {
+            "name": "boca-socios_boca_browser_egress",
+            "driver": "bridge",
+            "internal": False,
+            "ipam": {},
+        },
+    ],
+)
+def test_host_compose_model_accepts_canonical_compose_egress(
+    monkeypatch: pytest.MonkeyPatch, egress: dict[str, object]
+) -> None:
+    model = browser_model()
+    model["networks"]["boca_browser_egress"] = egress
+    raw = json.dumps(model)
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: raw)
+    assert host._browser_compose_model(IMAGE, ORIGIN, OWNER, BROWSER_IMAGE, ATTEMPT) == raw
+
+
+@pytest.mark.parametrize(
+    "egress_mutation",
+    [
+        {"internal": True},
+        {"ipam": {"driver": "default"}},
+        {"external": True},
+        {"attachable": True},
+    ],
+)
+def test_host_compose_model_rejects_egress_boundary_relaxations(
+    monkeypatch: pytest.MonkeyPatch, egress_mutation: dict[str, object]
+) -> None:
+    model = browser_model()
+    model["networks"]["boca_browser_egress"].update(egress_mutation)
+    monkeypatch.setattr(host, "_run", lambda *args, **kwargs: json.dumps(model))
+    with pytest.raises(PreflightError, match="browser worker egress"):
+        host._browser_compose_model(IMAGE, ORIGIN, OWNER, BROWSER_IMAGE, ATTEMPT)
+
+
 def test_host_compose_model_cutover_uses_verified_stage_paths_without_global_override(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -878,7 +923,7 @@ def test_browser_inventory_rejects_foreign_container_volume_and_bridge(
         ("seccomp", 0),
         ("filters", 0),
         ("no_new_privs", 0),
-        ("interfaces", ["lo", "eth0"]),
+        ("interfaces", ["eth1", "lo"]),
     ],
 )
 def test_worker_kernel_probe_must_prove_effective_isolation(
@@ -894,7 +939,7 @@ def test_worker_kernel_probe_must_prove_effective_isolation(
         "seccomp": 2,
         "filters": 1,
         "no_new_privs": 1,
-        "interfaces": ["lo"],
+        "interfaces": ["eth0", "lo"],
     }
     monkeypatch.setattr(host, "_run", lambda *args, **kwargs: json.dumps(receipt))
     host._browser_worker_probe(WORKER_ID)
@@ -935,7 +980,7 @@ def worker_record() -> dict[str, object]:
             "Privileged": False,
             "PublishAllPorts": False,
             "Init": True,
-            "NetworkMode": "none",
+            "NetworkMode": host.BROWSER_EGRESS_BRIDGE,
             "IpcMode": "private",
             "CgroupnsMode": "private",
             "NanoCpus": 1_000_000_000,
@@ -953,7 +998,12 @@ def worker_record() -> dict[str, object]:
         },
         "NetworkSettings": {
             "Ports": {},
-            "Networks": {"none": {"IPAddress": "", "GlobalIPv6Address": ""}},
+            "Networks": {
+                host.BROWSER_EGRESS_BRIDGE: {
+                    "IPAddress": "172.27.0.2",
+                    "GlobalIPv6Address": "",
+                }
+            },
         },
         "Mounts": [
             {
@@ -965,6 +1015,42 @@ def worker_record() -> dict[str, object]:
             }
         ],
     }
+
+
+@pytest.mark.parametrize(
+    "mutation", ["none", "foreign_peer", "internal", "wrong_label", "host_driver"]
+)
+def test_worker_egress_inventory_requires_one_reviewed_boca_bridge(
+    monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    reviewed = {
+        "Name": host.BROWSER_EGRESS_BRIDGE,
+        "Driver": "bridge",
+        "Scope": "local",
+        "Internal": False,
+        "Attachable": False,
+        "Ingress": False,
+        "Labels": {
+            "com.docker.compose.project": "boca-socios",
+            "com.docker.compose.network": "boca_browser_egress",
+        },
+        "Containers": {WORKER_ID: {}},
+    }
+    if mutation == "foreign_peer":
+        reviewed["Containers"]["f" * 64] = {}  # type: ignore[index]
+    elif mutation == "internal":
+        reviewed["Internal"] = True
+    elif mutation == "wrong_label":
+        reviewed["Labels"]["com.docker.compose.network"] = "boca_private"  # type: ignore[index]
+    elif mutation == "host_driver":
+        reviewed["Driver"] = "host"
+    monkeypatch.setattr(host, "_names", lambda *_args: {host.BROWSER_EGRESS_BRIDGE})
+    monkeypatch.setattr(host, "_run", lambda *_args, **_kwargs: json.dumps(reviewed))
+    if mutation == "none":
+        assert host._browser_worker_network_inventory() == {host.BROWSER_EGRESS_BRIDGE}
+    else:
+        with pytest.raises(PreflightError, match="egress bridge"):
+            host._browser_worker_network_inventory()
 
 
 @pytest.mark.parametrize(

@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
-from boca_socios.deploy_contract import validate_beta_browser_contract, validate_beta_contract
+from boca_socios.deploy_contract import (
+    ContractError,
+    validate_beta_browser_contract,
+    validate_beta_contract,
+)
 
 
 def main() -> int:
@@ -32,11 +37,21 @@ def main() -> int:
                 os.environ.get("BOCA_BROWSER_SECCOMP_PATH", ""),
                 os.environ.get("BOCA_BROWSER_ATTEMPT_ID", ""),
             )
+    except ContractError as exc:
+        # Only a fixed field label may reach Actions. Never print Compose values,
+        # actual URLs, owner identifiers, credentials or arbitrary map keys.
+        field = str(exc).split(" keys (", 1)[0]
+        if not re.fullmatch(r"invalid [A-Za-z0-9 _.-]{1,100}", field):
+            field = "reviewed isolated model mismatch"
+        print(f"BETA_COMPOSE_NO_GO: {field}", file=sys.stderr)
+        return 1
     except (OSError, ValueError, TypeError):
         print("BETA_COMPOSE_NO_GO: reviewed isolated model mismatch", file=sys.stderr)
         return 1
     if browser_ipc_v2:
-        print("BETA_BROWSER_COMPOSE_PASS: Boca-only IPC worker; no worker network or host port")
+        print(
+            "BETA_BROWSER_COMPOSE_PASS: Boca-only IPC worker; dedicated egress, no public worker port"
+        )
     else:
         print("BETA_COMPOSE_PASS: Boca-only served package on host loopback")
     return 0

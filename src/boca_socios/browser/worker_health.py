@@ -43,8 +43,8 @@ def validate_worker_boundary(
 ) -> None:
     """Check effective isolated-worker identity and bounded cgroup v2 limits.
 
-    The host deployment gate must separately enforce Docker ``--network none``.
-    A cgroup check does not prove network isolation or start a container.
+    The host deployment gate separately enforces a Boca-only egress bridge.
+    A cgroup check does not prove network ownership or start a container.
     """
     effective_uid = os.geteuid() if uid is None else uid
     effective_gid = os.getegid() if gid is None else gid
@@ -73,7 +73,7 @@ def check_worker_health(*, root: Path = CGROUP) -> None:
     """Check kernel metadata only; connecting to the socket could dispatch work."""
     validate_worker_boundary(root=root)
     interfaces = socket.if_nameindex()
-    if len(interfaces) != 1 or interfaces[0][0] < 1 or interfaces[0][1] != "lo":
+    if len(interfaces) != 2 or {name for index, name in interfaces if index > 0} != {"lo", "eth0"}:
         raise WorkerBoundaryError("worker_network_unverified")
     socket_identity(SOCKET_PATH)
 

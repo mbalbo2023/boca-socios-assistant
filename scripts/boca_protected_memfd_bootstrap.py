@@ -134,7 +134,7 @@ PHYSICAL_ENTRIES = (W1_ENTRIES - {"boca_socios/host_worker_w1.py"}) | {
 }
 MAX_ZIP = 512_000
 # R138 source bounds match the builder. Each variant checks its own entry set and digest.
-MAX_UNCOMPRESSED = 1_147_000
+MAX_UNCOMPRESSED = 1_152_000
 RECOVERY_MAX_ZIP = 128_000
 RECOVERY_MAX_UNCOMPRESSED = 256_000
 PREFLIGHT_MAX_ZIP = 128_000
