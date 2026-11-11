@@ -103,6 +103,20 @@ CENSUS_MAIN = (
     "from boca_socios.host_boca_census import main as census\n"
     "raise SystemExit(census(['host',sys.argv[2]]))\n"
 ).encode("ascii")
+# R177 installed dual-service inventory: extend ONLY the inert census closure,
+# never inherit the broad Cutover dispatcher, Compose or browser runtime.
+PAIR_SOURCES = (
+    *CENSUS_SOURCES,
+    "src/boca_socios/host_cutover_inventory_observe.py",
+    "src/boca_socios/host_boca_pair_observe.py",
+)
+PAIR_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 3 or sys.argv[1] != 'boca-pair-observe':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_boca_pair_observe import main as pair\n"
+    "raise SystemExit(pair(['host',sys.argv[2]]))\n"
+).encode("ascii")
 # R83: preflight must never inherit the broader Cutover/Option B sources.
 # The SHA-checked independent memfd variant retains only its stdlib closure.
 PREFLIGHT_SOURCES = (
@@ -232,6 +246,8 @@ RECOVERY_MAX_SOURCE_BYTES = 256_000
 RECOVERY_MAX_ARCHIVE_BYTES = 128_000
 CENSUS_MAX_SOURCE_BYTES = 160_000
 CENSUS_MAX_ARCHIVE_BYTES = 64_000
+PAIR_MAX_SOURCE_BYTES = 192_000
+PAIR_MAX_ARCHIVE_BYTES = 64_000
 PREFLIGHT_MAX_SOURCE_BYTES = 520_000
 PREFLIGHT_MAX_ARCHIVE_BYTES = 128_000
 W1_MAX_SOURCE_BYTES = 900_000
@@ -278,11 +294,20 @@ def build(
     worker_w1: bool = False,
     worker_physical: bool = False,
     census: bool = False,
+    pair_observe: bool = False,
 ) -> str:
     """Write one deterministic, explicitly allowlisted runner-only archive."""
-    if sum((worker_recovery, worker_preflight, worker_w1, worker_physical, census)) > 1:
+    if (
+        sum((worker_recovery, worker_preflight, worker_w1, worker_physical, census, pair_observe))
+        > 1
+    ):
         raise ValueError("Boca protected bundle modes must be exclusive")
-    if census:
+    if pair_observe:
+        files: dict[str, bytes] = {"__main__.py": PAIR_MAIN}
+        sources: tuple[str, ...] = PAIR_SOURCES
+        max_source = PAIR_MAX_SOURCE_BYTES
+        max_archive = PAIR_MAX_ARCHIVE_BYTES
+    elif census:
         files: dict[str, bytes] = {"__main__.py": CENSUS_MAIN}
         sources: tuple[str, ...] = CENSUS_SOURCES
         max_source = CENSUS_MAX_SOURCE_BYTES
@@ -318,7 +343,9 @@ def build(
             sources = SOURCES
         max_source = MAX_SOURCE_BYTES
         max_archive = MAX_ARCHIVE_BYTES
-    full_cutover = not any((worker_recovery, worker_preflight, worker_w1, worker_physical, census))
+    full_cutover = not any(
+        (worker_recovery, worker_preflight, worker_w1, worker_physical, census, pair_observe)
+    )
     for rel in sources:
         source = root / rel
         if source.is_symlink():
@@ -385,12 +412,13 @@ def main() -> int:
     variant.add_argument("--worker-w1", action="store_true")
     variant.add_argument("--worker-physical", action="store_true")
     variant.add_argument("--census", action="store_true")
+    variant.add_argument("--pair-observe", action="store_true")
     parser.add_argument("repository_root", type=Path)
     parser.add_argument("runner_target", type=Path)
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe)}"
     )
     return 0
 
