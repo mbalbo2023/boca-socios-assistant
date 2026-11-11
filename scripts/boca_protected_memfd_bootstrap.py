@@ -148,15 +148,24 @@ PHYSICAL_ENTRIES = (W1_ENTRIES - {"boca_socios/host_worker_w1.py"}) | {
     "boca_socios/host_worker_physical.py",
     "docker/seccomp_profile.json",
 }
+BINDING_ENTRIES = (
+    (W1_ENTRIES - {"boca_socios/host_worker_w1.py"})
+    | PAIR_ENTRIES
+    | {
+        "boca_socios/host_boca_binding_observe.py",
+    }
+)
 MAX_ZIP = 512_000
 # R138 source bounds match the builder. Each variant checks its own entry set and digest.
-MAX_UNCOMPRESSED = 1_152_000
+MAX_UNCOMPRESSED = 1_156_096
 RECOVERY_MAX_ZIP = 128_000
 RECOVERY_MAX_UNCOMPRESSED = 256_000
 CENSUS_MAX_ZIP = 64_000
 CENSUS_MAX_UNCOMPRESSED = 160_000
 PAIR_MAX_ZIP = 64_000
 PAIR_MAX_UNCOMPRESSED = 192_000
+BINDING_MAX_ZIP = 320_000
+BINDING_MAX_UNCOMPRESSED = 900_000
 PREFLIGHT_MAX_ZIP = 128_000
 PREFLIGHT_MAX_UNCOMPRESSED = 520_000
 W1_MAX_ZIP = 320_000
@@ -175,12 +184,28 @@ def verify(
     worker_physical: bool = False,
     census: bool = False,
     pair_observe: bool = False,
+    binding_observe: bool = False,
 ) -> None:
     """Verify digest, exact transport variant, file types and separate bounds."""
-    if sum((recovery, worker_preflight, worker_w1, worker_physical, census, pair_observe)) > 1:
+    if (
+        sum(
+            (
+                recovery,
+                worker_preflight,
+                worker_w1,
+                worker_physical,
+                census,
+                pair_observe,
+                binding_observe,
+            )
+        )
+        > 1
+    ):
         raise ValueError("protected Boca bundle modes must be exclusive")
     max_zip = (
-        PAIR_MAX_ZIP
+        BINDING_MAX_ZIP
+        if binding_observe
+        else PAIR_MAX_ZIP
         if pair_observe
         else CENSUS_MAX_ZIP
         if census
@@ -195,7 +220,9 @@ def verify(
         else MAX_ZIP
     )
     max_uncompressed = (
-        PAIR_MAX_UNCOMPRESSED
+        BINDING_MAX_UNCOMPRESSED
+        if binding_observe
+        else PAIR_MAX_UNCOMPRESSED
         if pair_observe
         else CENSUS_MAX_UNCOMPRESSED
         if census
@@ -217,7 +244,9 @@ def verify(
         entries = package.infolist()
         names = [entry.filename for entry in entries]
         allowlisted = (
-            (PAIR_ENTRIES,)
+            (BINDING_ENTRIES,)
+            if binding_observe
+            else (PAIR_ENTRIES,)
             if pair_observe
             else (CENSUS_ENTRIES,)
             if census
@@ -265,6 +294,7 @@ def main() -> int:
         worker_physical = sys.argv[2] == "worker-physical-once"
         census = sys.argv[2] == "cutover-a-census"
         pair_observe = sys.argv[2] == "boca-pair-observe"
+        binding_observe = sys.argv[2] == "boca-binding-observe"
         if (
             sys.argv[2] in ("cutover-stage-recover-904", "cutover-image-plan-916")
             and len(sys.argv) != 8
@@ -284,8 +314,12 @@ def main() -> int:
             raise ValueError("Boca census requires one GitHub run ID only")
         if pair_observe and len(sys.argv) != 4:
             raise ValueError("Boca pair observer requires one GitHub run ID only")
+        if binding_observe and len(sys.argv) != 4:
+            raise ValueError("Boca binding observer requires one GitHub run ID only")
         bound = (
-            PAIR_MAX_ZIP
+            BINDING_MAX_ZIP
+            if binding_observe
+            else PAIR_MAX_ZIP
             if pair_observe
             else CENSUS_MAX_ZIP
             if census
@@ -309,6 +343,7 @@ def main() -> int:
             worker_physical=worker_physical,
             census=census,
             pair_observe=pair_observe,
+            binding_observe=binding_observe,
         )
         # The memfd is passed to the *same* process via exec. No temporary
         # container, host file or broader Docker resource is ever created.

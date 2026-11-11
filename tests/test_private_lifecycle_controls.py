@@ -123,6 +123,59 @@ def test_lifecycle_routes_require_owner_passkey_origin_csrf_and_exact_post() -> 
         )
 
 
+@pytest.mark.parametrize(
+    ("received_origin", "category"),
+    [
+        (None, "MISSING"),
+        ("", "MISSING"),
+        ("http://boca.example.test", "SCHEME"),
+        ("https://other.example.test", "HOST"),
+        ("https://boca.example.test/unexpected", "MALFORMED"),
+        ("https://boca.example.test:invalid", "MALFORMED"),
+        ("https://user:password@boca.example.test", "MALFORMED"),
+        ("http://other.example.test", "UNTRUSTED"),
+    ],
+)
+def test_denied_bot_start_exposes_only_fixed_origin_diagnostic(
+    tmp_path: Path, received_origin: str | None, category: str
+) -> None:
+    provider, key, credential_id = _passkey([0.0])
+    wakes: list[str] = []
+    app, db = _app(tmp_path / "boca.sqlite3", provider, FakeHost(), bot_control=wakes.append)
+    cookie = _login(app, key, credential_id)
+    page = _request(app, "/control", cookie=cookie)[2]
+    status, _, body = _request(
+        app,
+        "/control/bot/iniciar",
+        cookie=cookie,
+        method="POST",
+        payload=_bot_fields(page, "iniciar"),
+        origin=received_origin or "",
+        extra={"HTTP_ORIGIN": received_origin},
+    )
+
+    assert status == 403
+    assert b"Origen no autorizado." in body
+    assert f"BOCA_ORIGIN_DIAG_{category}".encode() in body
+    if received_origin:
+        assert received_origin.encode() not in body
+    assert wakes == []
+    with db.connection() as connection:
+        assert connection.execute(
+            "SELECT count(*) FROM audit_events WHERE action='owner_lifecycle_v1_request_bot_start'"
+        ).fetchone() == (0,)
+
+
+def test_other_owner_post_keeps_generic_origin_failure_without_diagnostics(tmp_path: Path) -> None:
+    provider, key, credential_id = _passkey([0.0])
+    app, _ = _app(tmp_path / "boca.sqlite3", provider, FakeHost())
+    cookie = _login(app, key, credential_id)
+    status, _, body = _request(app, "/salir", cookie=cookie, method="POST", origin="")
+    assert status == 403
+    assert b"Origen no autorizado." in body
+    assert b"BOCA_ORIGIN_DIAG_" not in body
+
+
 def test_persistent_host_ack_is_visible_only_after_exact_claim_and_receipt() -> None:
     provider, key, credential_id = _passkey([0.0])
     with TemporaryDirectory() as directory:

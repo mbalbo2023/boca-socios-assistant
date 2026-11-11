@@ -139,6 +139,11 @@ R171_BROWSER_EGRESS_FULL_CUTOVER_SHA = (
 R173_SITE_CONFIG_FULL_CUTOVER_SHA = (
     "c4958187deae82c0732c59861ccc6ce8258274b44d5c96a2e022d46d577beaa7"
 )
+# R178 adds a narrow read-only DNS/TLS/HTTPS attestor to the existing
+# run-pinned Boca host bundle. The former R173 digest is preserved above.
+R178_WORKER_EGRESS_READONLY_FULL_CUTOVER_SHA = (
+    "80c458fbe314eadbd47e474dbdefa9d2f055f2e70137ef28110cc9ad241568fb"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -296,7 +301,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R173_SITE_CONFIG_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R178_WORKER_EGRESS_READONLY_FULL_CUTOVER_SHA
+    assert digest != R173_SITE_CONFIG_FULL_CUTOVER_SHA
     assert digest != R171_BROWSER_EGRESS_FULL_CUTOVER_SHA
     assert digest != R139_PORTABLE_PANEL_STOP_FULL_CUTOVER_SHA
     assert digest != R138_RESTORED_PANEL_FINISH_FULL_CUTOVER_SHA

@@ -153,6 +153,46 @@ def _unique_pairs(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
+def _origin_rejection_category(received: object, expected: str) -> str:
+    """Classify one rejected Origin without retaining or reflecting its value.
+
+    This is diagnostic only; the exact same-origin check remains authoritative.
+    An adversary controls the supplied header and thus the resulting label.
+    """
+    if received is None or received == "":
+        return "MISSING"
+    if (
+        not isinstance(received, str)
+        or len(received) > 512
+        or any(ord(char) < 33 or ord(char) > 126 for char in received)
+    ):
+        return "MALFORMED"
+    try:
+        supplied = urlsplit(received)
+        configured = urlsplit(expected)
+        # Access .port to reject nonnumeric/out-of-range ports, which urlsplit
+        # otherwise leaves as an apparently valid authority.
+        valid_port = supplied.port is not None or not supplied.netloc.endswith(":")
+        if (
+            not supplied.scheme
+            or not supplied.netloc
+            or supplied.path
+            or supplied.query
+            or supplied.fragment
+            or supplied.username is not None
+            or supplied.password is not None
+            or not valid_port
+        ):
+            return "MALFORMED"
+    except ValueError:
+        return "MALFORMED"
+    if supplied.scheme != configured.scheme and supplied.netloc == configured.netloc:
+        return "SCHEME"
+    if supplied.scheme == configured.scheme and supplied.netloc != configured.netloc:
+        return "HOST"
+    return "UNTRUSTED"
+
+
 class PrivatePanelApplication:
     """Bounded owner UI, with no listener or implicit storage initialization."""
 
@@ -414,6 +454,15 @@ class PrivatePanelApplication:
         if method != "POST":
             return _error(start, 405, "Método no permitido.")
         if environ.get("HTTP_ORIGIN") != self._origin:
+            if path == "/control/bot/iniciar":
+                category = _origin_rejection_category(environ.get("HTTP_ORIGIN"), self._origin)
+                return _error(
+                    start,
+                    403,
+                    "Origen no autorizado. Código: BOCA_ORIGIN_DIAG_"
+                    + category
+                    + ". No se ejecutó la orden.",
+                )
             return _error(start, 403, "Origen no autorizado.")
         if path == "/salir":
             fields = self._form(environ, expected={"csrf"})
