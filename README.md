@@ -1,5 +1,43 @@
 # Boca Socios Assistant
 
+## R181.2 — Cierre de imports protegidos y ruta BETA (11/11/2026 ART; corte premerge)
+
+El [PR #483](https://github.com/mbalbo2023/boca-socios-assistant/pull/483)
+corrige exclusivamente el empaquetado `PAIR_UPGRADE` tras el único intento
+físico R180 [#43085794885](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43085794885),
+que terminó `RECOVERED` en `REPLACE_BINDING`. El código técnico R181
+`1e702669245d5ff2509902d63724aae36ac900d2` añadió cuatro dependencias
+canónicas al ZIP sin modificar Cutover original ni navegación. En ese SHA,
+los cuatro workflows de PR fueron SUCCESS: 7052 tests y 34 subtests
+PASS, cero SKIP, RCA gate y ensayos offline IPC/systemd PASS.
+**Cualquier commit documental posterior requiere sus propios checks exact-SHA**.
+
+La [recuperación del par original](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6805276340)
+fue observada por cuatro Actions READ_ONLY: controlador previo healthy en
+`127.0.0.1:8443`, worker previo `EXIT1/PID0`, binding y SQLite
+verificados; **no es aceptación de la nueva BETA**. Antes de desplegar:
+PR READY/merge protegido, PR0 y CI/seguridad postmerge, release dual manual
+nueva del main fusionado, cuatro observadores físicos frescos y una sola
+`boca-pair-upgrade-apply` con SHAs/digests/release exactos. La ruta de
+upgrade de par ya existente es distinta del histórico `cutover-a-apply`.
+El recibo final de éxito del nuevo par exige `state=ACCEPTED`,
+`cleanup=ACCEPT`, `commit_started=true` y postflight; no equivale a
+`state=COMMITTED`. El [RCA y plan actual](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6805649939)
+manda ante cualquier divergencia.
+
+La aceptación real sigue pendiente hasta comprobar panel con passkey,
+`SITE_URL` persistente y aplicación al worker al iniciar, controles
+START/STOP del titular, IPC/PID/actividad, DNS+HTTPS del worker en red
+rootless Boca aislada, socios sintéticos y SQLite. El motor no reserva
+entradas reales ni ejecuta navegación del sitio; Telegram sender queda OFF
+hasta rotar/custodiar el token. Multisesión por perfil corresponde a otro
+scope/autor, no se duplica aquí. Ningún recurso Porota ni Docker ajeno
+forma parte del despliegue.
+
+**Las secciones R176 y anteriores que siguen son cortes históricos de
+ingeniería**, no el estado actual del PR, main o droplet; verificar siempre
+GitHub Actions y el issue #417 antes de cualquier efecto.
+
 ## R176 — corrección de acceso cross-UID del runner (11/11/2026; NO_GO físico)
 
 El candidato continúa en el **único** [PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478),

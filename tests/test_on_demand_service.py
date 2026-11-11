@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import socket
@@ -18,6 +19,8 @@ from boca_socios import host_boca_cutover as cutover
 from boca_socios import host_on_demand_service as service
 from boca_socios.host_boca_cleanup import BocaJobLease
 from boca_socios.host_lifecycle_rootless_adapter import ReviewedInstalledPair
+
+_REAL_BUNDLE = service._bundle
 
 ATTEMPT = "622"
 OP = "2a9f2a37-7e72-5ac2-b58d-517330c57d1c"
@@ -191,6 +194,34 @@ def test_install_repeat_committed_binding_then_remove(host):
     service.remove_control(ATTEMPT, lease)
     service.remove_control(ATTEMPT, lease)
     assert not root.exists() and not (unit / UNIT).exists() and not manager.active
+
+
+def test_install_control_derives_archive_from_exact_memfd_without_host_effects(
+    host, monkeypatch, tmp_path: Path
+):
+    """Exercise the real installer/archive contract with a fake systemd manager."""
+    builder_path = Path(__file__).resolve().parents[1] / "scripts/build_protected_boca_bundle.py"
+    spec = importlib.util.spec_from_file_location("boca_bundle_test_builder", builder_path)
+    assert spec is not None and spec.loader is not None
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+    source = tmp_path / "pair-upgrade.pyz"
+    digest = builder.build(Path(__file__).resolve().parents[1], source, pair_upgrade=True)
+    bundle = source.read_bytes()
+    fd = os.memfd_create("boca-binding-offline-test", 0)
+    try:
+        assert os.write(fd, bundle) == len(bundle)
+        monkeypatch.setattr(sys, "argv", [f"/proc/self/fd/{fd}"])
+        monkeypatch.setattr(service, "_bundle", _REAL_BUNDLE)
+        home, _, manager, lease = host
+        item = installation(home)
+        service.prepare_control_directory(ATTEMPT, lease)
+        service.install_control(item, lease)
+        service.verify_control(item, lease)
+        assert hashlib.sha256(bundle).hexdigest() == digest
+        assert manager.active and manager.effects.count(("start", SOCKET)) == 1
+    finally:
+        os.close(fd)
 
 
 def test_prepared_only_and_unowned_files_are_preserved(host):

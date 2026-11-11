@@ -96,3 +96,65 @@ def test_r179_verified_memfd_zip_actually_imports_entrypoint(tmp_path: Path, var
     assert runner.stdout.endswith(b"\n") and runner.stdout.count(b"\n") == 1
     assert b'"state":"NO_GO"' in runner.stdout
     assert not runner.stderr
+
+
+def test_pair_upgrade_zip_can_import_late_systemd_binding_dependency(tmp_path: Path) -> None:
+    """Exercise the dependency imported only after both candidates are accepted."""
+    target = tmp_path / "pair-upgrade.pyz"
+    builder.build(ROOT, target, pair_upgrade=True)
+    code = (
+        "import sys\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from boca_socios.host_boca_cutover import candidate_check\n"
+        "assert callable(candidate_check)\n"
+    )
+    result = subprocess.run(  # noqa: S603 - isolated reviewed Python ZIP, no host effects
+        [sys.executable, "-I", "-B", "-c", code, str(target)],
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    assert (result.returncode, result.stdout, result.stderr) == (0, b"", b"")
+
+
+def test_pair_upgrade_zip_derives_systemd_runtime_archive_from_its_memfd(
+    tmp_path: Path,
+) -> None:
+    """An on-demand binding must not require the omitted effectful Cutover CLI."""
+    target = tmp_path / "pair-upgrade.pyz"
+    digest = builder.build(ROOT, target, pair_upgrade=True)
+    code = (
+        "import hashlib,io,os,sys,zipfile\n"
+        "from pathlib import Path\n"
+        "sys.path.insert(0, sys.argv[1])\n"
+        "from boca_socios import host_on_demand_service as service\n"
+        "raw=Path(sys.argv[1]).read_bytes()\n"
+        "fd=os.memfd_create('boca-offline-binding-test', 0)\n"
+        "assert os.write(fd,raw)==len(raw)\n"
+        "sys.argv[0]=f'/proc/self/fd/{fd}'\n"
+        "runtime=service._bundle(None)\n"
+        "assert runtime==service._bundle(hashlib.sha256(raw).hexdigest())\n"
+        "with zipfile.ZipFile(io.BytesIO(runtime)) as zip_source:\n"
+        "    assert set(zip_source.namelist())=={*service._RUNTIME_FILES,'__main__.py'}\n"
+        "try:\n"
+        "    service._bundle('0'*64)\n"
+        "except ValueError:\n"
+        "    pass\n"
+        "else:\n"
+        "    raise AssertionError('incorrect bundle digest admitted')\n"
+        "sys.argv[0]=sys.argv[1]\n"
+        "try:\n"
+        "    service._bundle(None)\n"
+        "except ValueError:\n"
+        "    pass\n"
+        "else:\n"
+        "    raise AssertionError('untrusted non-memfd source admitted')\n"
+    )
+    result = subprocess.run(  # noqa: S603 - isolated in-memory ZIP transformation only
+        [sys.executable, "-I", "-B", "-c", code, str(target)],
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    assert digest == hashlib.sha256(target.read_bytes()).hexdigest()
+    assert (result.returncode, result.stdout, result.stderr) == (0, b"", b"")
