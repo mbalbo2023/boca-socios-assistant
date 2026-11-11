@@ -163,7 +163,7 @@ class LifecycleHostSnapshot:
             or self.worker_service != "browser-worker"
             or self.worker_image != coordinates.worker_image
             or self.worker_sha != coordinates.source_sha
-            or self.worker_network_mode != "none"
+            or self.worker_network_mode != "boca-socios_boca_browser_egress"
             or self.published_controller_port != "127.0.0.1:8443"
             or type(self.rootless_uid) is not int
             or self.rootless_uid != 10001

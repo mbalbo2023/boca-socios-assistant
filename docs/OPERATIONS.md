@@ -1,5 +1,40 @@
 # Safe operations — verified evidence and gated procedures
 
+## R171 — Propuesta de egreso exclusivo de Chromium (11/11/2026 ART)
+
+El dueño exige **Internet saliente** para el worker. El overlay candidato
+`compose.beta.browser.yaml` usa únicamente la red rootless
+`boca-socios_boca_browser_egress` (bridge, no `internal`) para el proceso
+Chromium, con **cero puertos publicados**, UID/GID 10002, capacidades y
+seccomp invariantes y un volumen IPC exclusivamente Boca. Controller conserva
+`boca_private` y `127.0.0.1:8443`; Telegram conserva su propia red. El
+worker no comparte bridge con controller ni con Porota.
+
+Los contratos de Compose, attestación del host, salud del worker y adaptador
+de ciclo de vida deben reconocer *exactamente* ese nombre, `eth0`+`lo` y
+únicamente el worker como peer del bridge. Una red `host`, `bridge` genérica,
+una red compartida, un puerto expuesto o un segundo peer son **NO_GO**. Una
+prueba positiva de estructura NO prueba DNS/TLS hasta medir el egreso real
+desde el worker en un droplet Boca; documentar ese recibo por separado.
+
+**Cutover A:** su creación del worker usa la nueva red Boca y crea el bridge
+con etiquetas exactas de proyecto e intento antes de levantar el contenedor.
+La compensación verifica y retira solamente el worker y sus recursos de intento,
+incluido el bridge vacío. Los verificadores de infraestructura, Telegram y
+estado instalado ya deben aceptar únicamente esa topología. Los breves
+contenedores de inspección sin acceso a Internet siguen usando `network none`.
+
+**Ruta histórica deshabilitada:** `beta-browser-install` continúa como opción
+heredada, pero GitHub Actions la detiene antes de alterar el host por falta de
+finalizador del mismo lease. Su rutina `--browser-ipc-v2` conserva reglas de
+limpieza propias y no se reutiliza para la nueva red. No invocar manualmente
+este instalador para intentar evitar la barrera; la ruta vigente es Cutover A.
+
+El worker V3 de entrada y el transporte dinámico del `SITE_URL` siguen
+pendientes de certificación antes de ejecutar cualquier navegación real.
+**No usar `docker compose up` sin reconciliar el instalador rootless y el
+Cutover con estos invariantes.**
+
 ## R170 — Actividad del worker y SITE_URL en Configuración (11/11/2026 ART)
 
 - **Acceso:** sesión privada con passkey en `8443`. `Control → Actividad del

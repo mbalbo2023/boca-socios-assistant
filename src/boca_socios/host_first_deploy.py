@@ -12,6 +12,7 @@ import binascii
 import errno
 import hashlib
 import http.client
+import ipaddress
 import json
 import math
 import os
@@ -71,6 +72,7 @@ BROWSER_SECCOMP = ROOT / "seccomp_profile.json"
 BROWSER_MARKER = ROOT / "browser-ipc-attempt.json"
 BROWSER_IPC_VOLUME = "boca-socios_boca_browser_ipc"
 BROWSER_BRIDGE = "boca-socios_boca_private"
+BROWSER_EGRESS_BRIDGE = "boca-socios_boca_browser_egress"
 BROWSER_IMAGE_PATTERN = re.compile(
     r"ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}\Z"
 )
@@ -78,10 +80,7 @@ BROWSER_ATTEMPT_PATTERN = re.compile(r"[1-9][0-9]{0,19}\Z")
 BROWSER_MARKER_VERSION = "browser-ipc-new-only-v2"
 BROWSER_ATTEMPT_LABEL = "boca.socios.browser-ipc-attempt"
 _WORKER_HEALTH_PROGRAM = (
-    "from boca_socios.browser.on_demand import validate_worker_boundary; "
-    "from boca_socios.browser.ipc_worker import validate_no_egress_namespace; "
-    "from boca_socios.browser.ipc_protocol import SOCKET_PATH, socket_identity; "
-    "validate_worker_boundary(); validate_no_egress_namespace(); socket_identity(SOCKET_PATH)"
+    "from boca_socios.browser.worker_health import check_worker_health; check_worker_health()"
 )
 # Health is evaluated by status alone. Its ordinary process streams must not
 # become a second, persistent source of output in Docker's State.Health.Log.
@@ -4360,7 +4359,7 @@ def _browser_compose_model(
         or not isinstance(volumes, dict)
         or set(volumes) != {"boca_owner", "boca_key", "boca_data", "boca_browser_ipc"}
         or not isinstance(networks, dict)
-        or set(networks) != {"boca_private"}
+        or set(networks) != {"boca_private", "boca_browser_egress"}
     ):
         raise PreflightError("browser IPC services or named resources changed")
     controller = services["controller"]
@@ -4400,7 +4399,7 @@ def _browser_compose_model(
         "image": browser_image,
         "command": ["python", "-m", "boca_socios.browser.ipc_worker"],
         "user": "10002:10002",
-        "network_mode": "none",
+        "networks": {"boca_browser_egress": None},
         "restart": "no",
         "logging": {"driver": "none"},
         "healthcheck": {
@@ -4438,7 +4437,7 @@ def _browser_compose_model(
             for key, value in expected_worker.items()
         )
         or "ports" in worker
-        or "networks" in worker
+        or "network_mode" in worker
         or worker.get("privileged") is not None
         or worker.get("init") is not True
         or worker.get("shm_size") != "67108864"
@@ -4496,6 +4495,12 @@ def _browser_compose_model(
         "external": True,
     }:
         raise PreflightError("browser IPC external volume changed")
+    if networks["boca_browser_egress"] != {
+        "name": BROWSER_EGRESS_BRIDGE,
+        "driver": "bridge",
+        "internal": False,
+    }:
+        raise PreflightError("browser worker egress must be one Boca-only bridge")
     return raw
 
 
@@ -4834,7 +4839,7 @@ def _browser_check_mounts(
 
 
 def _browser_worker_probe(container: str) -> None:
-    """Kernel-observed cgroup/no-egress/seccomp, not only a seccomp path string."""
+    """Kernel-observed cgroup/egress-interface/seccomp, not just a seccomp path."""
     code = (
         "import json,os,pathlib; p=pathlib.Path; "
         "c=p('/sys/fs/cgroup'); "
@@ -4887,9 +4892,9 @@ def _browser_worker_probe(container: str) -> None:
         or evidence["seccomp"] != 2
         or cast(int, evidence["filters"]) < 1
         or evidence["no_new_privs"] != 1
-        or evidence["interfaces"] != ["lo"]
+        or evidence["interfaces"] != ["eth0", "lo"]
     ):
-        raise PreflightError("worker effective UID/cgroup/seccomp/no-egress unproven")
+        raise PreflightError("worker effective UID/cgroup/seccomp/egress interface unproven")
 
 
 def _browser_effective_seccomp_options(
@@ -4937,17 +4942,23 @@ def _browser_effective_seccomp_options(
         raise PreflightError("worker did not load exact reviewed effective seccomp JSON")
 
 
-def _browser_worker_none_network(attached: object) -> None:
-    """Accept only the recorded Docker 'none' network and empty IPv4/IPv6 at any state."""
-    if not isinstance(attached, dict) or not set(attached) <= {"none"}:
-        raise PreflightError("browser worker has an IP network attachment")
-    for endpoint in attached.values():
-        if (
-            not isinstance(endpoint, dict)
-            or endpoint.get("IPAddress") not in (None, "")
-            or endpoint.get("GlobalIPv6Address") not in (None, "")
-        ):
-            raise PreflightError("browser worker received an IP address")
+def _browser_worker_egress_network(attached: object, *, running: bool = True) -> None:
+    """Worker gets one named Boca-only bridge, never host/Porota/controller LAN."""
+    if not isinstance(attached, dict) or set(attached) != {BROWSER_EGRESS_BRIDGE}:
+        raise PreflightError("browser worker egress bridge identity changed")
+    endpoint = attached[BROWSER_EGRESS_BRIDGE]
+    if not isinstance(endpoint, dict) or endpoint.get("GlobalIPv6Address") not in (None, ""):
+        raise PreflightError("browser worker has an unexpected IPv6 route")
+    address = endpoint.get("IPAddress")
+    if running:
+        try:
+            value = ipaddress.IPv4Address(address)
+        except (ipaddress.AddressValueError, TypeError):
+            raise PreflightError("browser worker egress IPv4 unverified") from None
+        if value.is_unspecified or value.is_loopback or value.is_link_local or value.is_multicast:
+            raise PreflightError("browser worker egress IPv4 is unsafe")
+    elif address not in (None, ""):
+        raise PreflightError("stopped worker unexpectedly retains egress IPv4")
 
 
 def _browser_worker_postflight(
@@ -4995,7 +5006,7 @@ def _browser_worker_postflight(
         or config.get("Cmd") != ["python", "-m", "boca_socios.browser.ipc_worker"]
         or config.get("Entrypoint") not in (None, [])
         or config.get("ExposedPorts") not in (None, {})
-        or host.get("NetworkMode") != "none"
+        or host.get("NetworkMode") != BROWSER_EGRESS_BRIDGE
         or host.get("IpcMode") != "private"
         or host.get("CgroupnsMode") != "private"
         or host.get("NanoCpus") != 1_000_000_000
@@ -5023,7 +5034,7 @@ def _browser_worker_postflight(
     networks = record.get("NetworkSettings")
     if not isinstance(networks, dict) or networks.get("Ports") not in (None, {}):
         raise PreflightError("browser worker has unexpected IP ports")
-    _browser_worker_none_network(networks.get("Networks"))
+    _browser_worker_egress_network(networks.get("Networks"), running=running)
     _browser_check_mounts(record, controller=False)
     if running and verify_runtime:
         _browser_worker_probe(container)
@@ -5397,7 +5408,7 @@ def _cutover_worker_create_argv(
         "none",
         "--init",
         "--network",
-        "none",
+        BROWSER_EGRESS_BRIDGE,
         "--ipc",
         "private",
         "--cgroupns",
@@ -5747,6 +5758,101 @@ def _cutover_worker_never_started(worker: str) -> None:
         raise PreflightError("cutover A cold recovery worker has a process history")
 
 
+def _cutover_browser_egress(
+    attempt_id: str, *, expect_empty: bool, expected_peer: str | None = None
+) -> str:
+    """Attest the single Boca rootless bridge and its unshared attempt provenance."""
+    if not BROWSER_ATTEMPT_PATTERN.fullmatch(attempt_id):
+        raise PreflightError("cutover A browser egress attempt is invalid")
+    if _names("network", f"name=^{BROWSER_EGRESS_BRIDGE}$") != {BROWSER_EGRESS_BRIDGE}:
+        raise PreflightError("cutover A browser egress network is absent or ambiguous")
+    record = _json_object(
+        _run("docker", "network", "inspect", "--format", "{{json .}}", BROWSER_EGRESS_BRIDGE),
+        "cutover A browser egress",
+    )
+    labels = record.get("Labels")
+    peers = record.get("Containers")
+    ident = record.get("Id")
+    if (
+        type(ident) is not str
+        or DIGEST_PATTERN.fullmatch(ident) is None
+        or record.get("Name") != BROWSER_EGRESS_BRIDGE
+        or record.get("Driver") != "bridge"
+        or record.get("Scope") != "local"
+        or record.get("Internal") is not False
+        or record.get("Attachable") is not False
+        or record.get("Ingress") is not False
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.network") != "boca_browser_egress"
+        or labels.get(BROWSER_ATTEMPT_LABEL) != attempt_id
+        or not isinstance(peers, dict)
+        or expect_empty
+        and peers
+        or expected_peer is not None
+        and set(peers) != {expected_peer}
+    ):
+        raise PreflightError("cutover A browser egress network identity/peers changed")
+    return ident
+
+
+def _browser_installed_egress_network(worker_id: str, *, running: bool, attempt_id: str) -> None:
+    """Attest installed worker outbound topology without requiring a live connection."""
+    record = _json_object(
+        _run("docker", "network", "inspect", "--format", "{{json .}}", BROWSER_EGRESS_BRIDGE),
+        "installed browser egress",
+    )
+    labels, peers = record.get("Labels"), record.get("Containers")
+    if (
+        record.get("Name") != BROWSER_EGRESS_BRIDGE
+        or record.get("Driver") != "bridge"
+        or record.get("Scope") != "local"
+        or record.get("Internal") is not False
+        or record.get("Attachable") is not False
+        or record.get("Ingress") is not False
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.network") != "boca_browser_egress"
+        or labels.get(BROWSER_ATTEMPT_LABEL) != attempt_id
+        or not isinstance(peers, dict)
+        or set(peers) != ({worker_id} if running else set())
+    ):
+        raise PreflightError("installed browser egress identity/connectivity unverified")
+
+
+def _cutover_create_browser_egress(attempt_id: str) -> None:
+    """Create the one Boca network locally, never global Docker or host networking."""
+    if _names("network", f"name=^{BROWSER_EGRESS_BRIDGE}$"):
+        raise PreflightError("cutover A browser egress existed before attempt")
+    created = _run(
+        "docker",
+        "network",
+        "create",
+        "--driver",
+        "bridge",
+        "--label",
+        f"com.docker.compose.project={PROJECT}",
+        "--label",
+        "com.docker.compose.network=boca_browser_egress",
+        "--label",
+        f"{BROWSER_ATTEMPT_LABEL}={attempt_id}",
+        BROWSER_EGRESS_BRIDGE,
+        timeout=30,
+    )
+    if created != _cutover_browser_egress(attempt_id, expect_empty=True):
+        raise PreflightError("cutover A browser egress creation unverified")
+
+
+def _cutover_compensate_browser_egress(attempt_id: str) -> None:
+    if not _names("network", f"name=^{BROWSER_EGRESS_BRIDGE}$"):
+        return
+    _cutover_browser_egress(attempt_id, expect_empty=True)
+    if _run(
+        "docker", "network", "rm", BROWSER_EGRESS_BRIDGE, timeout=30
+    ) != BROWSER_EGRESS_BRIDGE or _names("network", f"name=^{BROWSER_EGRESS_BRIDGE}$"):
+        raise PreflightError("cutover A browser egress selective removal unverified")
+
+
 def _cutover_compensate_worker(
     browser_image: str,
     target_sha: str,
@@ -5808,6 +5914,7 @@ def _cutover_compensate_worker(
         ):
             raise PreflightError("cutover A worker remained after selective removal")
     _cutover_compensate_ipc(attempt_id)
+    _cutover_compensate_browser_egress(attempt_id)
 
 
 def _cutover_compensate_ipc(attempt_id: str) -> None:
@@ -5857,6 +5964,8 @@ def _cutover_prepare_worker(
         raise PreflightError("cutover A worker already exists before attempt")
     if _names("volume", f"name=^{BROWSER_IPC_VOLUME}$"):
         raise PreflightError("cutover A IPC volume already exists before attempt")
+    if _names("network", f"name=^{BROWSER_EGRESS_BRIDGE}$"):
+        raise PreflightError("cutover A worker egress already exists before attempt")
     phase = "IPC"
     exit_code: int | Literal["UNKNOWN"] | None = None
     oom_killed: bool | Literal["UNKNOWN"] | None = None
@@ -5865,6 +5974,7 @@ def _cutover_prepare_worker(
     capture_result: str | None = None
     capture_recorded = False
     try:
+        _cutover_create_browser_egress(attempt_id)
         _browser_create_ipc_volume(browser_image, attempt_id)
         phase = "CREATE"
         created = _run(*worker_create, timeout=60)
@@ -5882,6 +5992,7 @@ def _cutover_prepare_worker(
                 staged_seccomp,
                 worker_config_hash,
             )
+            _cutover_browser_egress(attempt_id, expect_empty=True)
             _cutover_legacy_record(
                 original_id, legacy_image, legacy_sha, name=CUTOVER_LEGACY_NAME, running=True
             )
@@ -5938,6 +6049,7 @@ def _cutover_prepare_worker(
             seccomp_sha,
             staged_seccomp=staged_seccomp,
         )
+        _cutover_browser_egress(attempt_id, expect_empty=False, expected_peer=created)
         _cutover_legacy_record(
             original_id, legacy_image, legacy_sha, name=CUTOVER_LEGACY_NAME, running=True
         )
@@ -6352,11 +6464,14 @@ def _cutover_retire_accepted_original(
 
 
 def _browser_worker_network_inventory() -> set[str]:
-    """Compose may precreate Boca's bridge when starting a network-none worker."""
+    """Prove only Boca's new browser-egress bridge and optional idle controller bridge."""
     boca = _names("network", "name=^boca-socios_")
-    if boca not in (set(), {BROWSER_BRIDGE}):
+    if BROWSER_EGRESS_BRIDGE not in boca or not boca <= {
+        BROWSER_BRIDGE,
+        BROWSER_EGRESS_BRIDGE,
+    }:
         raise PreflightError("browser IPC worker created an unexpected network")
-    if boca:
+    if BROWSER_BRIDGE in boca:
         record = _json_object(
             _run("docker", "network", "inspect", "--format", "{{json .}}", BROWSER_BRIDGE),
             "browser IPC staged bridge",
@@ -6375,6 +6490,27 @@ def _browser_worker_network_inventory() -> set[str]:
             or record.get("Containers") not in (None, {})
         ):
             raise PreflightError("browser IPC pre-controller bridge is unsafe")
+    egress = _json_object(
+        _run("docker", "network", "inspect", "--format", "{{json .}}", BROWSER_EGRESS_BRIDGE),
+        "browser IPC worker egress bridge",
+    )
+    labels = egress.get("Labels")
+    endpoints = egress.get("Containers")
+    if (
+        egress.get("Name") != BROWSER_EGRESS_BRIDGE
+        or egress.get("Driver") != "bridge"
+        or egress.get("Scope") != "local"
+        or egress.get("Internal") is not False
+        or egress.get("Attachable") is not False
+        or egress.get("Ingress") is not False
+        or not isinstance(labels, dict)
+        or labels.get("com.docker.compose.project") != PROJECT
+        or labels.get("com.docker.compose.network") != "boca_browser_egress"
+        or not isinstance(endpoints, dict)
+        or len(endpoints) != 1
+        or any(re.fullmatch(r"[0-9a-f]{64}", name) is None for name in endpoints)
+    ):
+        raise PreflightError("browser IPC egress bridge provenance/peers changed")
     return boca
 
 
@@ -6715,7 +6851,7 @@ def _browser_apply(
     _browser_inventory(
         containers={worker, controller},
         volumes={OWNER_VOLUME, BROWSER_IPC_VOLUME, KEY_VOLUME, DATA_VOLUME},
-        bridges={BROWSER_BRIDGE},
+        bridges={BROWSER_BRIDGE, BROWSER_EGRESS_BRIDGE},
     )
     _browser_worker_postflight(worker, browser_image, source_sha, attempt_id, seccomp_sha)
     _browser_controller_postflight(controller, image, source_sha, attempt_id, origin, owner)
@@ -6737,7 +6873,7 @@ def _browser_apply(
     print(
         f"BOCA_BROWSER_IPC_INSTALL_PASS attempt={attempt_id} source_sha={source_sha}"
         " services=controller,browser-worker host=127.0.0.1:8443"
-        " worker_network=none ipc=synthetic owner=preserved engine=off"
+        " worker_network=boca-only-egress ipc=synthetic owner=preserved engine=off"
     )
 
 
@@ -6838,7 +6974,10 @@ def _browser_installed(
     if volumes not in (required, required | {TELEGRAM_VOLUME}):
         raise PreflightError("installed browser volume inventory changed")
     networks = _names("network", "name=^boca-socios_")
-    if networks not in ({BROWSER_BRIDGE}, {BROWSER_BRIDGE, TELEGRAM_NETWORK}):
+    if networks not in (
+        {BROWSER_BRIDGE, BROWSER_EGRESS_BRIDGE},
+        {BROWSER_BRIDGE, BROWSER_EGRESS_BRIDGE, TELEGRAM_NETWORK},
+    ):
         raise PreflightError("installed browser network inventory changed")
     expected_ids = {controller, worker}
     actual_ids = _browser_docker_ids()
@@ -6877,6 +7016,7 @@ def _browser_installed(
         running=worker_running,
         verify_runtime=not allow_service_failed,
     )
+    _browser_installed_egress_network(worker, running=worker_running, attempt_id=attempt_id)
     _browser_controller_postflight(
         controller,
         image,

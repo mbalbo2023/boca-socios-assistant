@@ -1087,7 +1087,8 @@ def _verified_browser_ipc_image(
         or host.get("PublishAllPorts") is not False
         or host.get("Init") is not True
         or host.get("RestartPolicy", {}).get("Name") != "no"
-        or host.get("NetworkMode") != ("none" if worker else "boca-socios_boca_private")
+        or host.get("NetworkMode")
+        != ("boca-socios_boca_browser_egress" if worker else "boca-socios_boca_private")
         or host.get("PidMode") not in ("", "private")
         or host.get("IpcMode") != "private"
         or host.get("CgroupnsMode") != "private"
@@ -1120,7 +1121,11 @@ def _verified_browser_ipc_image(
         return False
     attached = network.get("Networks")
     if not isinstance(attached, dict) or not set(attached) <= {
-        "none" if worker else "boca-socios_boca_private"
+        "boca-socios_boca_browser_egress" if worker else "boca-socios_boca_private"
+    }:
+        return False
+    if state["Running"] and set(attached) != {
+        "boca-socios_boca_browser_egress" if worker else "boca-socios_boca_private"
     }:
         return False
     expected_mounts = {

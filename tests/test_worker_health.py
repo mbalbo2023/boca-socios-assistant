@@ -22,7 +22,7 @@ def health_boundary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         (tmp_path / name).write_text(value)
     monkeypatch.setattr(worker_health.os, "geteuid", lambda: 10002)
     monkeypatch.setattr(worker_health.os, "getegid", lambda: 10002)
-    monkeypatch.setattr(socket, "if_nameindex", lambda: [(1, "lo")])
+    monkeypatch.setattr(socket, "if_nameindex", lambda: [(1, "lo"), (2, "eth0")])
     return worker_health, tmp_path
 
 
@@ -63,8 +63,19 @@ def test_worker_health_rejects_unbounded_cgroups(health_boundary, name: str, val
         health.check_worker_health(root=cgroup)
 
 
-@pytest.mark.parametrize("interfaces", [[], [(0, "lo")], [(1, "lo"), (2, "eth0")], [(1, "eth0")]])
-def test_worker_health_requires_loopback_only(health_boundary, monkeypatch, interfaces):
+@pytest.mark.parametrize(
+    "interfaces",
+    [
+        [],
+        [(0, "lo"), (2, "eth0")],
+        [(1, "lo")],
+        [(1, "eth0")],
+        [(1, "lo"), (2, "eth0"), (3, "eth1")],
+    ],
+)
+def test_worker_health_requires_exactly_loopback_and_one_egress(
+    health_boundary, monkeypatch, interfaces
+):
     health, cgroup = health_boundary
     monkeypatch.setattr(socket, "if_nameindex", lambda: interfaces)
     with pytest.raises(health.WorkerBoundaryError):

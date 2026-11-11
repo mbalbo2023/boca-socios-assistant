@@ -65,6 +65,19 @@ def test_competing_poller_refused_even_if_expected_helper_present(tmp_path: Path
         _observe(reader)
 
 
+def test_browser_egress_must_remain_empty_during_telegram_inspection(tmp_path: Path) -> None:
+    reader = _attested_reader(tmp_path)
+    networks = tuple(
+        replace(network, attached_ids=("c" * 64,))
+        if network.name == "boca-socios_boca_browser_egress"
+        else network
+        for network in reader.inventory_value.networks
+    )
+    reader.inventory_value = replace(reader.inventory_value, networks=networks)
+    with pytest.raises(helper.TelegramPhysicalNoGo):
+        _observe(reader)
+
+
 def test_unreviewed_container_not_hidden_by_projection(tmp_path: Path) -> None:
     reader = _attested_reader(tmp_path)
     foreign = Container("9" * 64, "/foreign", "sha256:" + "8" * 64, False, ())

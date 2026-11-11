@@ -113,6 +113,8 @@ def _container(ident: str, service: str, image_id: str, *, running: bool) -> Con
             if controller
             else ("boca-socios_boca_telegram_egress",)
             if sender
+            else ("boca-socios_boca_browser_egress",)
+            if running
             else ()
         ),
     )
@@ -151,7 +153,15 @@ class FakeIO:
                 Image(CI, (CONTROLLER_REF,), "https://github.com/mbalbo2023/boca-socios-assistant"),
                 Image(WI, (WORKER_REF,), "https://github.com/mbalbo2023/boca-socios-assistant"),
             ),
-            networks=(Network("boca-socios_boca_private", "2" * 64, (CONTROLLER,), ()),)
+            networks=(
+                Network("boca-socios_boca_private", "2" * 64, (CONTROLLER,), ()),
+                Network(
+                    "boca-socios_boca_browser_egress",
+                    "4" * 64,
+                    (WORKER,) if worker_running else (),
+                    (),
+                ),
+            )
             + (
                 (
                     Network(
@@ -202,7 +212,7 @@ class FakeIO:
             self.fields[("container", ident, "HostConfig.PublishAllPorts")] = False
             self.fields[("container", ident, "RestartCount")] = 0
             self.fields[("container", ident, "HostConfig.NetworkMode")] = (
-                "none"
+                "boca-socios_boca_browser_egress"
                 if service == "browser-worker"
                 else "boca-socios_boca_telegram_egress"
                 if service == "telegram"
@@ -213,6 +223,13 @@ class FakeIO:
                 if service != "controller"
                 else {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
             )
+            if service == "browser-worker":
+                self.fields[("container", ident, "NetworkSettings.Networks")] = {
+                    "boca-socios_boca_browser_egress": {
+                        "IPAddress": "172.28.0.2" if worker_running else "",
+                        "GlobalIPv6Address": "",
+                    }
+                }
             self.fields[("container", ident, "Mounts")] = (
                 [_mount("boca-socios_boca_browser_ipc", "/run/boca-browser-ipc", True)]
                 if service == "browser-worker"
@@ -240,10 +257,31 @@ class FakeIO:
         self.inventory_value = replace(
             self.inventory_value,
             containers=tuple(
-                replace(c, running=running) if c.ident == ident else c
+                replace(
+                    c,
+                    running=running,
+                    networks=("boca-socios_boca_browser_egress",) if running else (),
+                )
+                if c.ident == ident and ident == WORKER
+                else replace(c, running=running)
+                if c.ident == ident
+                else c
                 for c in self.inventory_value.containers
             ),
+            networks=tuple(
+                replace(n, attached_ids=(WORKER,) if running else ())
+                if ident == WORKER and n.name == "boca-socios_boca_browser_egress"
+                else n
+                for n in self.inventory_value.networks
+            ),
         )
+        if ident == WORKER:
+            self.fields[("container", ident, "NetworkSettings.Networks")] = {
+                "boca-socios_boca_browser_egress": {
+                    "IPAddress": "172.28.0.2" if running else "",
+                    "GlobalIPv6Address": "",
+                }
+            }
 
     def inventory(self) -> Inventory:
         return self.inventory_value

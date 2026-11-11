@@ -209,7 +209,7 @@ MAIN = (
 ).encode("ascii")
 # The R138 full bundle includes the #916 observer and receipt verifier.
 # Bound the full payload separately from the two reduced worker archives.
-MAX_SOURCE_BYTES = 1_147_000
+MAX_SOURCE_BYTES = 1_152_000
 MAX_ARCHIVE_BYTES = 512_000
 RECOVERY_MAX_SOURCE_BYTES = 256_000
 RECOVERY_MAX_ARCHIVE_BYTES = 128_000

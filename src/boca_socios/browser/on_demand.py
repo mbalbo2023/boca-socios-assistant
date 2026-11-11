@@ -2,7 +2,7 @@
 
 This adapter is inert until ``simulate_general_reservation`` is called. The
 trusted page factory must run inside the *separate* UID 10002 browser worker
-with a verified no-egress Docker network, and must close its Chromium context
+with a verified Boca-only outbound Docker bridge, and must close its Chromium context
 on cancellation. This module neither starts Docker nor visits a URL. A
 different approved host/Compose contract is required to connect that worker
 to the BETA controller; importing this module does not activate Chromium.

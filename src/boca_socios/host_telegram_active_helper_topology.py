@@ -99,8 +99,9 @@ def _project_only_attested_helper(
         or actual != expected
         or helper_id in {pins.controller_id, pins.worker_id, pins.sender_id}
         or len(networks) != len(original.networks)
-        or set(networks) != {"boca-socios_boca_private", _EGRESS}
+        or set(networks) != {"boca-socios_boca_private", "boca-socios_boca_browser_egress", _EGRESS}
         or networks[_EGRESS].attached_ids != (helper_id,)
+        or networks["boca-socios_boca_browser_egress"].attached_ids
     ):
         raise TelegramActiveTopologyNoGo("telegram_active_topology_competing_object_unverified")
     projected = replace(

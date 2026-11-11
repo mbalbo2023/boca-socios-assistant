@@ -89,7 +89,9 @@ def record(*, worker: bool, running: bool = True) -> dict[str, object]:
             "PublishAllPorts": False,
             "RestartPolicy": {"Name": "no"},
             "Init": True,
-            "NetworkMode": "none" if worker else "boca-socios_boca_private",
+            "NetworkMode": "boca-socios_boca_browser_egress"
+            if worker
+            else "boca-socios_boca_private",
             "PidMode": "",
             "IpcMode": "private",
             "CgroupnsMode": "private",
@@ -120,7 +122,9 @@ def record(*, worker: bool, running: bool = True) -> dict[str, object]:
         ],
         "NetworkSettings": {
             "Ports": {} if worker else {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]},
-            "Networks": {"none" if worker else "boca-socios_boca_private": {}},
+            "Networks": {
+                "boca-socios_boca_browser_egress" if worker else "boca-socios_boca_private": {}
+            },
         },
         "State": {"Running": running},
     }
@@ -777,13 +781,15 @@ def test_real_docker_diagnostic_does_not_serialize_private_configuration() -> No
     candidate["Config"]["Env"].append("SECRET=private-environment-value")
     candidate["HostConfig"]["Binds"] = ["private-bind-value"]
     candidate["Mounts"] = [{"Source": "private-mount-value"}]
-    candidate["NetworkSettings"]["Networks"]["none"] = {"IPAddress": "private-address-value"}
+    candidate["NetworkSettings"]["Networks"]["boca-socios_boca_browser_egress"] = {
+        "IPAddress": "private-address-value"
+    }
     summary = module.inspection_summary(candidate, service="browser-worker")
     assert summary["isolation"]["CapAdd"] == ["SYS_CHROOT"]
     assert summary["worker_command_matches"] is False
     assert summary["entrypoint_absent"] is False
     assert "BOCA_TELEGRAM_TOKEN" in summary["boca_environment_keys"]
-    assert summary["network_names"] == ["none"]
+    assert summary["network_names"] == ["boca-socios_boca_browser_egress"]
     assert "private-" not in json.dumps(summary)
 
 

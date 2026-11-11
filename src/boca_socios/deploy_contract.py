@@ -22,10 +22,7 @@ _BROWSER_IMAGE = re.compile(
 _BROWSER_ATTEMPT = re.compile(r"[1-9][0-9]{0,19}\Z")
 _BROWSER_ATTEMPT_LABEL = "boca.socios.browser-ipc-attempt"
 _BROWSER_HEALTH = (
-    "from boca_socios.browser.on_demand import validate_worker_boundary; "
-    "from boca_socios.browser.ipc_worker import validate_no_egress_namespace; "
-    "from boca_socios.browser.ipc_protocol import SOCKET_PATH, socket_identity; "
-    "validate_worker_boundary(); validate_no_egress_namespace(); socket_identity(SOCKET_PATH)"
+    "from boca_socios.browser.worker_health import check_worker_health; check_worker_health()"
 )
 _SERVICE_FIELDS = {
     "image",
@@ -373,7 +370,7 @@ def validate_beta_browser_contract(
             "environment",
             "labels",
             "volumes",
-            "network_mode",
+            "networks",
             "cgroup",
             "ipc",
             "read_only",
@@ -398,7 +395,7 @@ def validate_beta_browser_contract(
         "restart": "no",
         "stop_grace_period": "8s",
         "logging": {"driver": "none"},
-        "network_mode": "none",
+        "networks": {"boca_browser_egress": None},
         "cgroup": "private",
         "ipc": "private",
         "read_only": True,
@@ -458,6 +455,14 @@ def validate_beta_browser_contract(
     _equal(ipc_volume["name"], "boca-socios_boca_browser_ipc", "browser-ipc-v2 volume name")
     _equal(ipc_volume["external"], True, "browser-ipc-v2 disposable volume is external")
 
+    networks = _mapping(root["networks"], "browser-ipc-v2 networks")
+    _keys(networks, {"boca_private", "boca_browser_egress"}, "browser-ipc-v2 networks")
+    _equal(
+        networks["boca_browser_egress"],
+        {"name": "boca-socios_boca_browser_egress", "driver": "bridge", "internal": False},
+        "browser-ipc-v2 worker egress must be one dedicated Boca bridge",
+    )
+
     # Restore *only* reviewed v2 additions and ask the legacy singleton
     # validator to prove every remaining field, port, network and mount.
     legacy = deepcopy(root)
@@ -475,4 +480,6 @@ def validate_beta_browser_contract(
     del legacy_services["browser-worker"]
     legacy_volumes = cast(dict[str, object], legacy["volumes"])
     del legacy_volumes["boca_browser_ipc"]
+    legacy_networks = cast(dict[str, object], legacy["networks"])
+    del legacy_networks["boca_browser_egress"]
     validate_beta_contract(legacy, expected_image, expected_origin, expected_owner)

@@ -128,6 +128,11 @@ R138_RESTORED_PANEL_FINISH_FULL_CUTOVER_SHA = (
 R139_PORTABLE_PANEL_STOP_FULL_CUTOVER_SHA = (
     "bef701b7719e370790f9d6e6afe01a7e7e77dc490485e998ba77314c78c11aeb"
 )
+# R171 adds one dedicated rootless browser egress bridge and pins the updated
+# host-side validator bytes; it does not authorize a physical cutover.
+R171_BROWSER_EGRESS_FULL_CUTOVER_SHA = (
+    "b04bf9065778c89fbe21d9eab2462679f2f9717f75b99f610502109fec3ff3f0"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -285,7 +290,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R139_PORTABLE_PANEL_STOP_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R171_BROWSER_EGRESS_FULL_CUTOVER_SHA
+    assert digest != R139_PORTABLE_PANEL_STOP_FULL_CUTOVER_SHA
     assert digest != R138_RESTORED_PANEL_FINISH_FULL_CUTOVER_SHA
     assert digest != R137_CANDIDATE_ACCEPTANCE_FULL_CUTOVER_SHA
     assert digest != R136_INCIDENT_OBSERVER_FULL_CUTOVER_SHA

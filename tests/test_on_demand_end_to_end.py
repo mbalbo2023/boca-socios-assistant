@@ -56,7 +56,7 @@ class WorkerFixture(docker_fixture.FakeIO):
         )
         self.fields["container", docker_fixture.WORKER, "HostConfig.PortBindings"] = {}
         self.fields["container", docker_fixture.WORKER, "NetworkSettings.Networks"] = {
-            "none": {"IPAddress": "", "GlobalIPv6Address": ""}
+            "boca-socios_boca_browser_egress": {"IPAddress": "", "GlobalIPv6Address": ""}
         }
         self.probe = adapter.RootlessLifecycleProbe(docker_fixture._binding(), self, on_demand=True)
 

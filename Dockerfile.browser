@@ -1,6 +1,6 @@
-# Optional, offline UID10002 synthetic worker image. Building or importing it
-# cannot activate a BETA sidecar; a separate protected, approved host contract
-# must supply network-none, cgroups, socket-only IPC and cleanup.
+# Optional UID10002 synthetic worker image. Building or importing it cannot
+# activate a BETA sidecar; an approved Boca rootless Cutover contract must
+# supply dedicated outbound egress, cgroups, socket-only IPC and cleanup.
 FROM mcr.microsoft.com/playwright/python:v1.64.1-noble@sha256:330d401ae23c905896a0c26c66c36fc971b621519e7b11b435a8328d7bf6e031
 
 ENV PYTHONUNBUFFERED=1 \
@@ -105,7 +105,7 @@ ENV HOME=/home/boca-browser \
     XDG_CONFIG_HOME=/tmp/browser-config
 USER 10002:10002
 
-# The worker must prove cgroups, UID10002 and no-egress before binding IPC.
+# The worker must prove cgroups, UID10002 and Boca-only network/IPC before activation.
 # With no specifically prepared IPC mount it refuses startup; no IP listener.
 # Offline CI smoke overrides CMD with its explicit measurement command.
 CMD ["python", "-m", "boca_socios.browser.ipc_worker"]
