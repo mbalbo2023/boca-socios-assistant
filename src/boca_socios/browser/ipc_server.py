@@ -30,7 +30,10 @@ from boca_socios.browser.ipc_protocol import (
     MAX_FRAME_BYTES,
     NO_GO,
     PROBE_FIXTURE,
+    PROBE_SITE,
     REQUEST,
+    SITE_HTTP_NON_OK,
+    SITE_HTTP_OK,
     SOCKET_PATH,
     SUCCESS,
     WORKER_UID,
@@ -55,6 +58,21 @@ class ObservationStatus(StrEnum):
     TOKEN_OBSERVED = "token_observed"  # noqa: S105 - fixed category, never token contents
     TOKEN_ABSENT = "token_absent"  # noqa: S105 - fixed category, never token contents
     OBSERVATION_FAILED = "observation_failed"
+
+
+class SiteObservationStatus(StrEnum):
+    """An HTTP status category, not a session, queue or reservation result."""
+
+    HTTP_OK = "http_ok"
+    HTTP_NON_OK = "http_non_ok"
+
+
+class SiteObservationExecutor(Protocol):
+    """A deliberately separate nontransactional browser operation."""
+
+    async def observe_site(self) -> SiteObservationStatus: ...
+
+    async def close(self) -> None: ...
 
 
 class SyntheticExecutor(Protocol):
@@ -114,11 +132,15 @@ class UnixSyntheticWorker:
         teardown_seconds: float = 5.0,
         on_observation: Callable[[ObservationStatus], None] | None = None,
         fixture_only: bool = False,
+        site_observer: SiteObservationExecutor | None = None,
     ) -> None:
-        if type(fixture_only) is not bool:
-            raise ValueError("fixture-only opt-in must be explicit")
+        if type(fixture_only) is not bool or (
+            site_observer is not None and (fixture_only or executor is not None)
+        ):
+            raise ValueError("browser observer modes must be exclusive")
         self._executor = OfflineNoGoExecutor() if executor is None else executor
         self._fixture_only = fixture_only
+        self._site_observer = site_observer
         self._on_observation = on_observation
         self._path = socket_path
         self._boundary_check = boundary_check
@@ -127,7 +149,7 @@ class UnixSyntheticWorker:
         self._teardown_seconds = _seconds(teardown_seconds, 5.0)
         self._server: asyncio.AbstractServer | None = None
         self._owned_socket: tuple[int, int] | None = None
-        self._active: asyncio.Task[SimulationOutcome | ObservationStatus] | None = None
+        self._active: asyncio.Task[object] | None = None
         self._busy = False
         self._closed = False
         self._poisoned = asyncio.Event()
@@ -186,21 +208,28 @@ class UnixSyntheticWorker:
     async def _read_request(self, reader: asyncio.StreamReader) -> bytes:
         async with asyncio.timeout(self._request_seconds):
             request = await read_frame(reader)
-            if request not in {REQUEST, PROBE_FIXTURE} or await reader.read(1) != b"":
+            if request not in {REQUEST, PROBE_FIXTURE, PROBE_SITE} or await reader.read(1) != b"":
                 raise SyntheticIPCError("ipc_request_unverified")
             return request
 
     @staticmethod
-    def _consume(task: asyncio.Task[SimulationOutcome | ObservationStatus]) -> None:
+    def _consume(task: asyncio.Task[object]) -> None:
         # No exception text, navigation output or late result is logged.
         try:
             task.result()
         except (Exception, asyncio.CancelledError):
             return
 
-    async def _run_synthetic(self, *, fixture_probe: bool = False) -> bytes:
+    async def _run_synthetic(
+        self, *, fixture_probe: bool = False, site_probe: bool = False
+    ) -> bytes:
         self._boundary_check()
-        active = asyncio.create_task(self._executor.simulate_general_reservation())
+        if site_probe:
+            if self._site_observer is None:
+                return NO_GO
+            active: asyncio.Task[object] = asyncio.create_task(self._site_observer.observe_site())
+        else:
+            active = asyncio.create_task(self._executor.simulate_general_reservation())
         self._active = active
         active.add_done_callback(self._consume)
         completed, pending = await asyncio.wait({active}, timeout=self._operation_seconds)
@@ -216,6 +245,12 @@ class UnixSyntheticWorker:
             result = active.result()
             if self._stopping() or active.cancelling():
                 return NO_GO
+            if site_probe:
+                if result is SiteObservationStatus.HTTP_OK:
+                    return SITE_HTTP_OK
+                if result is SiteObservationStatus.HTTP_NON_OK:
+                    return SITE_HTTP_NON_OK
+                return NO_GO
             if result is SimulationOutcome.RESERVED_IN_SIMULATOR:
                 # An invented offline DOM probe can acknowledge only its own
                 # fixture, never a synthetic reservation or ticket outcome.
@@ -225,7 +260,10 @@ class UnixSyntheticWorker:
                 # tokens, URLs, engine results or private exception strings.
                 self._on_observation(result)
         except SyntheticIPCError as exc:
-            if str(exc) == "offline_fixture_teardown_unverified":
+            if str(exc) in {
+                "offline_fixture_teardown_unverified",
+                "site_observer_teardown_unverified",
+            }:
                 # The executor could not prove that Chromium was closed. The
                 # disposable process must stop accepting work and exit through
                 # serve_until's existing poisoned-worker termination path.
@@ -262,7 +300,13 @@ class UnixSyntheticWorker:
                 if self._stopping():
                     raise SyntheticIPCError("worker_closed")
                 deadline = monotonic() + self._operation_seconds
-                if (request == PROBE_FIXTURE) != self._fixture_only:
+                if request == PROBE_SITE and self._site_observer is not None:
+                    response = await self._run_synthetic(site_probe=True)
+                elif (
+                    request == PROBE_SITE
+                    or self._site_observer is not None
+                    or ((request == PROBE_FIXTURE) != self._fixture_only)
+                ):
                     response = NO_GO
                 else:
                     response = await self._run_synthetic(fixture_probe=request == PROBE_FIXTURE)
@@ -311,7 +355,11 @@ class UnixSyntheticWorker:
                 raise SyntheticIPCError("worker_teardown_unverified")
             closed_server.result()
             self._server = None
-        closing = asyncio.create_task(self._executor.close())
+        closing = asyncio.create_task(
+            self._site_observer.close()
+            if self._site_observer is not None
+            else self._executor.close()
+        )
         completed, unfinished_close = await asyncio.wait(
             {closing}, timeout=max(0.0, deadline - monotonic())
         )
@@ -371,7 +419,7 @@ async def _run_server(
 ) -> None:
     site_url = _read_worker_site_url()
     observe_mode = os.environ.get("BOCA_BROWSER_OBSERVE_MODE", "off")
-    if observe_mode not in {"off", "offline-fixture"} or (
+    if observe_mode not in {"off", "offline-fixture", "site-readonly"} or (
         executor_factory is not None and observe_mode != "off"
     ):
         raise SyntheticIPCError("worker_observe_mode_unverified")
@@ -383,15 +431,25 @@ async def _run_server(
     # injected for simulation tests; the legacy browser orchestrator is not
     # silently treated as a reservation simulator.
     fixture_only = observe_mode == "offline-fixture"
+    site_observer: SiteObservationExecutor | None = None
     if fixture_only:
         # Never import the owner-controlled navigation modules: this opt-in
         # drives only literal HTML with every external request aborted.
         from boca_socios.browser.offline_fixture import OfflineFixtureExecutor
 
         executor: SyntheticExecutor = OfflineFixtureExecutor()
+    elif observe_mode == "site-readonly":
+        from boca_socios.browser.site_observer import SiteReadOnlyExecutor
+
+        site_observer = SiteReadOnlyExecutor(site_url)
+        executor = OfflineNoGoExecutor()
     else:
         executor = OfflineNoGoExecutor() if executor_factory is None else executor_factory(site_url)
-    worker = UnixSyntheticWorker(executor, fixture_only=fixture_only)
+    worker = UnixSyntheticWorker(
+        None if site_observer is not None else executor,
+        fixture_only=fixture_only,
+        site_observer=site_observer,
+    )
     try:
         await worker.serve_until(stopping)
     except SyntheticIPCError as exc:

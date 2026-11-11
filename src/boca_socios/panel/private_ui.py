@@ -107,6 +107,11 @@ async function updateActivity() {
         {timeZone: 'America/Argentina/Buenos_Aires'});
   } catch (_) {
     telemetry.textContent = 'No se pudo consultar la actividad. Revise su sesión.';
+    summary.textContent = 'Estado actual no verificable; los eventos anteriores son históricos.';
+    refreshed.textContent = 'Última consulta fallida; no se confirma actividad reciente.';
+    // A later successful fetch must replace the stale summary even when the
+    // worker's event list is byte-for-byte the same as before the failure.
+    lastEvents = '';
   } finally {
     pending = false;
   }
@@ -207,10 +212,13 @@ def home(
     *,
     bot: tuple[LifecycleIntent | None, str, str] | None = None,
     bot_unavailable: bool = False,
+    site_url_ready: bool | None = None,
 ) -> bytes:
     if bot is not None:
         intent, start_id, stop_id = bot
-        controls = "<h2>Control del bot</h2>" + _bot_controls(intent, csrf, start_id, stop_id)
+        controls = "<h2>Control del bot</h2>" + _bot_controls(
+            intent, csrf, start_id, stop_id, site_url_ready=site_url_ready
+        )
     elif bot_unavailable:
         controls = '<p role="status">Control del bot no disponible. <a href="/control">Consultar estado</a></p>'
     else:
@@ -341,10 +349,18 @@ def _lifecycle_controls(intent: LifecycleIntent | None, csrf: str, operation_id:
     )
 
 
-def bot_control(intent: LifecycleIntent | None, csrf: str, start_id: str, stop_id: str) -> bytes:
+def bot_control(
+    intent: LifecycleIntent | None,
+    csrf: str,
+    start_id: str,
+    stop_id: str,
+    *,
+    site_url_ready: bool | None = None,
+) -> bytes:
     return _page(
         "Control del bot",
-        "<h1>Control del bot</h1>" + _bot_controls(intent, csrf, start_id, stop_id),
+        "<h1>Control del bot</h1>"
+        + _bot_controls(intent, csrf, start_id, stop_id, site_url_ready=site_url_ready),
     )
 
 
@@ -390,7 +406,14 @@ def worker_activity(snapshot: WorkerActivitySnapshot) -> bytes:
     )
 
 
-def _bot_controls(intent: LifecycleIntent | None, csrf: str, start_id: str, stop_id: str) -> str:
+def _bot_controls(
+    intent: LifecycleIntent | None,
+    csrf: str,
+    start_id: str,
+    stop_id: str,
+    *,
+    site_url_ready: bool | None = None,
+) -> str:
     """Voice-friendly simulation controls. Only a protected receipt establishes outcome."""
     observed = "Todavía no hay un recibo de inicio o detención del bot."
     available = {"start", "stop"}
@@ -433,6 +456,19 @@ def _bot_controls(intent: LifecycleIntent | None, csrf: str, start_id: str, stop
                 available.add("stop")
         elif intent.component == "bot" and intent.status == "APPLIED":
             available.discard(intent.target)
+    site_status = ""
+    if site_url_ready is True:
+        site_status = (
+            '<p role="status">SITE_URL lista para solicitar un inicio. '
+            "No acredita actividad del worker ni acceso a un sitio.</p>"
+        )
+    elif site_url_ready is False:
+        available.discard("start")
+        site_status = (
+            '<p role="status">SITE_URL no verificable para iniciar. '
+            'Revisá <a href="/configuracion">Configuración</a> antes de volver a intentar. '
+            "No acredita actividad del worker ni acceso a un sitio.</p>"
+        )
     buttons = []
     for target, path, title, operation_id in (
         ("start", "iniciar", "Iniciar bot", start_id),
@@ -449,6 +485,7 @@ def _bot_controls(intent: LifecycleIntent | None, csrf: str, start_id: str, stop
         '<p role="status" aria-live="polite">'
         + escape(observed)
         + "</p>"
+        + site_status
         + receipt_id
         + "".join(buttons)
         + '<p><a href="/control">Actualizar estado del bot</a></p>'

@@ -45,6 +45,40 @@ def test_site_url_configuration_is_owner_only_and_discoverable(tmp_path: Path) -
     assert "form-action 'self'" in headers["Content-Security-Policy"]
 
 
+@pytest.mark.parametrize("state", ["missing", "diverged", "matched"])
+def test_on_demand_home_and_control_show_actual_site_url_readiness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
+) -> None:
+    destination = "https://offline-fixture.invalid/"
+    provider, key, credential_id = _passkey([0.0])
+    wakes: list[str] = []
+    app, _ = _app(tmp_path / "boca.sqlite3", provider, FakeHost(), bot_control=wakes.append)
+    cookie = _login(app, key, credential_id)
+    if state != "missing":
+        SiteUrlSettingsStore.for_database(tmp_path / "boca.sqlite3").save(destination)
+    if state == "diverged":
+        monkeypatch.setattr(private_http, "read_site_url", lambda _path: "https://old.test/")
+    elif state == "matched":
+        monkeypatch.setattr(private_http, "read_site_url", lambda _path: destination)
+
+    for path in ("/", "/control"):
+        code, _headers, page = _request(app, path, cookie=cookie)
+        assert code == 200
+        start = re.search(rb'<form method="post" action="/control/bot/iniciar">(.*?)</form>', page)
+        stop = re.search(rb'<form method="post" action="/control/bot/detener">(.*?)</form>', page)
+        assert start is not None and stop is not None
+        if state == "matched":
+            assert b"SITE_URL lista para solicitar un inicio" in page
+            assert b"disabled" not in start.group(1)
+        else:
+            assert b"SITE_URL no verificable para iniciar" in page
+            assert b"disabled" in start.group(1)
+            assert b'href="/configuracion"' in page
+        assert b"disabled" not in stop.group(1)
+        assert b"No acredita actividad del worker" in page
+    assert wakes == []
+
+
 def test_owner_saves_site_url_and_it_survives_reloading_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
