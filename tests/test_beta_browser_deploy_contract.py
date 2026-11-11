@@ -303,6 +303,31 @@ def test_worker_egress_must_be_dedicated_boca_bridge(value: object) -> None:
         valid(candidate)
 
 
+def test_compose_normalized_egress_defaults_are_equivalent_and_still_outbound() -> None:
+    candidate = browser_model()
+    candidate["networks"]["boca_browser_egress"] = {  # type: ignore[index]
+        "name": "boca-socios_boca_browser_egress",
+        "driver": "bridge",
+        "ipam": {},
+    }
+    valid(candidate)
+
+
+@pytest.mark.parametrize(
+    "field,value", [("internal", True), ("ipam", {"driver": "custom"}), ("attachable", True)]
+)
+def test_compose_normalized_egress_rejects_nondefault_fields(field: str, value: object) -> None:
+    candidate = browser_model()
+    candidate["networks"]["boca_browser_egress"] = {  # type: ignore[index]
+        "name": "boca-socios_boca_browser_egress",
+        "driver": "bridge",
+        "ipam": {},
+        field: value,
+    }
+    with pytest.raises(ContractError):
+        valid(candidate)
+
+
 def test_ipc_volume_must_be_external_and_private_to_boca() -> None:
     for value in ({"name": IPC_VOLUME, "external": False}, {"name": "shared", "external": True}):
         candidate = browser_model()

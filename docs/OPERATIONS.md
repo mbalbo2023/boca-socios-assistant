@@ -24,6 +24,13 @@ incluido el bridge vacío. Los verificadores de infraestructura, Telegram y
 estado instalado ya deben aceptar únicamente esa topología. Los breves
 contenedores de inspección sin acceso a Internet siguen usando `network none`.
 
+**RCA CI #473:** el runner Compose normalizó el modelo de la red omitiendo
+`internal:false` explícito y agregando `ipam:{}`. El verificador previo
+comparaba literalmente con la forma YAML y rechazó los checks `CI` y
+`first-deploy-pr-validation` sin tocar el host. El contrato ahora acepta
+únicamente ambas representaciones equivalentes, siempre con nombre/driver
+exactos, IPAM vacío, sin flags desconocidos ni `internal:true`.
+
 **Ruta histórica deshabilitada:** `beta-browser-install` continúa como opción
 heredada, pero GitHub Actions la detiene antes de alterar el host por falta de
 finalizador del mismo lease. Su rutina `--browser-ipc-v2` conserva reglas de

@@ -457,11 +457,21 @@ def validate_beta_browser_contract(
 
     networks = _mapping(root["networks"], "browser-ipc-v2 networks")
     _keys(networks, {"boca_private", "boca_browser_egress"}, "browser-ipc-v2 networks")
-    _equal(
-        networks["boca_browser_egress"],
-        {"name": "boca-socios_boca_browser_egress", "driver": "bridge", "internal": False},
-        "browser-ipc-v2 worker egress must be one dedicated Boca bridge",
-    )
+    egress = _mapping(networks["boca_browser_egress"], "browser-ipc-v2 worker egress")
+    # Docker Compose's canonical JSON drops explicit `internal: false` and
+    # supplies an empty IPAM object. Both encode the same outbound bridge;
+    # reject every non-default flag and unexpected field.
+    if not {"name", "driver"} <= set(egress) or set(egress) - {
+        "name",
+        "driver",
+        "internal",
+        "ipam",
+    }:
+        raise ContractError("invalid browser-ipc-v2 worker egress fields")
+    _equal(egress["name"], "boca-socios_boca_browser_egress", "browser-ipc-v2 egress name")
+    _equal(egress["driver"], "bridge", "browser-ipc-v2 egress driver")
+    _equal(egress.get("internal", False), False, "browser-ipc-v2 egress outbound flag")
+    _equal(egress.get("ipam", {}), {}, "browser-ipc-v2 egress IPAM")
 
     # Restore *only* reviewed v2 additions and ask the legacy singleton
     # validator to prove every remaining field, port, network and mount.
