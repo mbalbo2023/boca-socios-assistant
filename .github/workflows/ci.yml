@@ -83,8 +83,11 @@ jobs:
         # Local executor denies AF_UNIX; GitHub-hosted runner uses sudo only to
         # create three disposable, distinct-UID fixture processes. No Docker,
         # SITE_URL, Chromium, IP traffic, secrets, host SSH or deployment.
+        # Use Ubuntu's root-owned Python 3.12: setup-python's virtualenv can
+        # link toolcache libpython and lose its private loader path after sudo
+        # and Popen(user=UID10002). This harness imports stdlib-only IPC code.
         timeout-minutes: 1
-        run: sudo --non-interactive env PYTHONPATH="$GITHUB_WORKSPACE/src" "$GITHUB_WORKSPACE/.venv/bin/python" "$GITHUB_WORKSPACE/scripts/check_worker_ipc_linux.py"
+        run: sudo --non-interactive env PYTHONPATH="$GITHUB_WORKSPACE/src" /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/check_worker_ipc_linux.py"
       - name: Verify socket activation in a disposable systemd user manager
         run: python3 scripts/lab_on_demand_systemd.py
       - name: Enforce accepted RCA lessons against executed regressions

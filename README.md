@@ -1,5 +1,39 @@
 # Boca Socios Assistant
 
+## R175 — dos stoppers físicos confirmados en Actions; fix-forward (11/11/2026)
+
+El candidato continúa **únicamente** en el
+[PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478),
+sin merge ni despliegue. El HEAD R174 real `f58aaace9` terminó con **dos
+workflows aprobados de seis** (panel y contrato Telegram) y cuatro fallidos:
+CI, seguridad de imagen, publicación de imagen y first-deploy. La suite
+Python **6807+34** de ese mismo SHA, lint, formato, tipos, el smoke AF_UNIX
+anterior y el preflight PR de first-deploy sí aprobaron. Ninguna Action
+tocó el droplet ni acreditó un navegador operativo allí.
+
+Dos bloqueantes específicos, documentados en
+[#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6800531294),
+se abordan en ramas aisladas y un único refresh del PR:
+
+- **APT/Chromium:** cuatro runners registraron DNS Ubuntu fallido y el
+  fallback R174 devolvió `SOURCES_SCHEMA`. Se toleran solo variantes
+  preservadoras de fuentes Noble firmadas y se añade un código de rechazo
+  sin datos sensibles; el formato exacto del fallo anterior no puede
+  atribuirse sin una nueva captura física. Mantener pins y Trivy.
+- **IPC entre UID reales:** el smoke nuevo devolvió `BOCA_WORKER_IPC_LINUX
+  state=NO_GO` sin etapa; la librería dinámica del Python de Actions bajo
+  `sudo` y otro UID es una causa probable, **todavía no comprobada**.
+  R175 usa `/usr/bin/python3` solo en el runner, fuera del toolcache, y
+  añade recibos de fase fijos, sin ampliar permisos del worker ni habilitar
+  navegación. Sigue requiriendo confirmación exact-SHA de GitHub.
+
+La suite local con el ajuste APT R175 dio **6816 tests PASS +34 subtests**;
+la suite **combinada APT+IPC R175 dio 6819 PASS +34 subtests** y revisión
+independiente sin hallazgos P0/P1. No heredar resultados a GitHub:
+el candidato final todavía exige nuevas Actions exact-SHA, revisión,
+protección de merge, censo rootless Boca-only y Cutover seguro. El sender
+Telegram sigue OFF y **no hay reservas reales**.
+
 ## R174 — desbloqueo del CI, AF_UNIX Linux y Telegram (11/11/2026; NO_GO físico)
 
 El único candidato continúa en el

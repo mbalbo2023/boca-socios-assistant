@@ -23,6 +23,41 @@ smoke = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(smoke)
 
 
+def test_hosted_runner_uses_root_owned_ubuntu_python_without_toolcache_loader_env() -> None:
+    """Dropped UIDs must not depend on setup-python's stripped LD_LIBRARY_PATH."""
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert (
+        'sudo --non-interactive env PYTHONPATH="$GITHUB_WORKSPACE/src" '
+        '/usr/bin/python3 "$GITHUB_WORKSPACE/scripts/check_worker_ipc_linux.py"'
+    ) in workflow
+
+
+def test_runner_failure_reports_only_fixed_stage_without_leaking_exception(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def unavailable() -> None:
+        raise smoke.SmokeFailure("WORKER_SPAWN")
+
+    monkeypatch.setattr(smoke, "_run_harness", unavailable)
+    assert smoke.main([]) == 1
+    emitted = capsys.readouterr()
+    assert emitted.out == ""
+    assert emitted.err == "BOCA_WORKER_IPC_LINUX state=NO_GO stage=WORKER_SPAWN\n"
+
+
+def test_runner_unexpected_exception_is_generic_and_never_logged(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def unavailable() -> None:
+        raise RuntimeError("SENSITIVE_URL=https://not-for-logs.invalid/token")
+
+    monkeypatch.setattr(smoke, "_run_harness", unavailable)
+    assert smoke.main([]) == 1
+    emitted = capsys.readouterr()
+    assert emitted.out == ""
+    assert emitted.err == "BOCA_WORKER_IPC_LINUX state=NO_GO stage=UNKNOWN\n"
+
+
 @pytest.mark.parametrize(
     ("role", "receipt"),
     [

@@ -1,5 +1,38 @@
 # Safe operations — verified evidence and gated procedures
 
+## R175 — cierre de los dos stoppers del runner, antes de cualquier host
+
+**Snapshot R174 exacto:** candidato PR #478, SHA `f58aaace9`, seis Actions
+terminadas: panel preview y contrato Telegram SUCCESS; CI, release-image,
+image-security y first-deploy FAILURE. Los cuatro jobs browser fallaron
+al actualizar APT por DNS Ubuntu y después
+`BOCA_APT_FALLBACK state=NO_GO reason=SOURCES_SCHEMA`; no se observó una
+conexión al espejo secundario. En calidad CI, la suite Python 6807 PASS,
+34 subtests, Ruff/mypy y el viejo smoke AF_UNIX aprobaron, pero el **nuevo**
+smoke entre UID reales devolvió `BOCA_WORKER_IPC_LINUX state=NO_GO`, sin
+diagnóstico de fase. El PR preflight Cutover aprobó; no se ejecutó el host.
+
+**Fix-forward R175 exclusivamente en la rama PR:** APT admite campos
+Deb822 benignos y componentes Ubuntu existentes sin añadir ninguno;
+preserva suites, firma exacta y versiones CVE, con razón de rechazo fija
+cuando no reconoce un origen. IPC usa ahora `/usr/bin/python3` solo en
+el runner Linux desechable y registra una de siete etapas fijas cuando
+falla, sin excepciones ni salida de los hijos. No interpretar el fallo
+anterior como error del worker productivo hasta capturar fase/loader,
+ni ampliar permisos del socket. El sandbox local no permite AF_UNIX;
+el nuevo recibo solo será válido en Actions. APT R175 aislado: 6816 PASS,
+**lote R175 integrado: 6819 PASS, 34 subtests**, Ruff y mypy PASS. El
+nuevo ciclo remoto exact-SHA sigue pendiente.
+
+**No reducir estos gates ante el pedido de pragmatismo:** conservar la
+clave de Ubuntu, pins, Trivy, digest de imagen, usuario rootless Boca,
+`SO_PEERCRED`, cero paquetes/sitios de reserva reales, passkey y custodia
+de Telegram. Se puede simplificar el *harness efímero de GitHub* que
+arranca Python para medir IPC; eso no modifica los permisos del droplet.
+Con seis Actions nuevas GREEN y review válido, proceder con PR protegido,
+merge y **solo entonces** `cutover-a-census` de main por GitHub Actions.
+No saltar `LEGACY_SINGLETON`, no borrar recursos a ciegas, no Porota.
+
 ## R174 — secuencia de verificación tras resolver CI (11/11/2026; CODE_ONLY)
 
 El [PR #478](https://github.com/mbalbo2023/boca-socios-assistant/pull/478)

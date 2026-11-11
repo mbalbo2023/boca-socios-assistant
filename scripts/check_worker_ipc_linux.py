@@ -33,6 +33,12 @@ CONTROLLER_UID = 10001
 STRANGER_UID = 10003
 TIMEOUT_SECONDS = 5.0
 
+# Public runner-only failure receipts; none contains a URL, path, PID, token,
+# user-provided exception or the dropped-UID child's captured stderr.
+_STAGES = frozenset(
+    {"SETUP", "WORKER_SPAWN", "WORKER_BIND", "STRANGER", "CONTROLLER", "STOP", "CLEANUP"}
+)
+
 _RECEIPTS = {
     "worker": b"BOCA_WORKER_IPC_WORKER state=STOPPED\n",
     "controller": b"BOCA_WORKER_IPC_CONTROLLER state=NO_GO\n",
@@ -197,43 +203,55 @@ def _run_harness() -> None:
     if os.name != "posix" or sys.platform != "linux" or os.geteuid() != 0:
         raise SmokeFailure("requires disposable Linux runner root harness")
     deadline = time.monotonic() + TIMEOUT_SECONDS
-    with tempfile.TemporaryDirectory(prefix="boca-worker-ipc-ci-") as temporary:
-        root = Path(temporary)
-        root.chmod(0o755)
-        ipc_directory = root / "ipc"
-        ipc_directory.mkdir(mode=0o711)
-        os.chown(ipc_directory, WORKER_UID, WORKER_UID)
-        ipc_directory.chmod(0o711)
-        path = ipc_directory / "synthetic.sock"
-        worker: subprocess.Popen[bytes] | None = None
-        try:
-            worker = subprocess.Popen(  # noqa: S603 - fixed Python worker entrypoint
-                _spawn_args("--worker", path),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=_child_env(),
-                user=WORKER_UID,
-                group=WORKER_UID,
-                extra_groups=(),
-            )
-            while not socket_ready(path):
+    stage = "SETUP"
+    try:
+        with tempfile.TemporaryDirectory(prefix="boca-worker-ipc-ci-") as temporary:
+            root = Path(temporary)
+            root.chmod(0o755)
+            ipc_directory = root / "ipc"
+            ipc_directory.mkdir(mode=0o711)
+            os.chown(ipc_directory, WORKER_UID, WORKER_UID)
+            ipc_directory.chmod(0o711)
+            path = ipc_directory / "synthetic.sock"
+            worker: subprocess.Popen[bytes] | None = None
+            try:
+                stage = "WORKER_SPAWN"
+                worker = subprocess.Popen(  # noqa: S603 - fixed Python worker entrypoint
+                    _spawn_args("--worker", path),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=_child_env(),
+                    user=WORKER_UID,
+                    group=WORKER_UID,
+                    extra_groups=(),
+                )
+                stage = "WORKER_BIND"
+                while not socket_ready(path):
+                    if worker.poll() is not None:
+                        raise SmokeFailure("offline IPC listener exited before bind")
+                    time.sleep(min(0.02, _remaining(deadline)))
+                stage = "STRANGER"
+                _run_child("--stranger", path, STRANGER_UID, deadline)
+                stage = "CONTROLLER"
+                _run_child("--controller", path, CONTROLLER_UID, deadline)
+                stage = "STOP"
                 if worker.poll() is not None:
-                    raise SmokeFailure("offline IPC listener exited before bind")
-                time.sleep(min(0.02, _remaining(deadline)))
-            _run_child("--stranger", path, STRANGER_UID, deadline)
-            _run_child("--controller", path, CONTROLLER_UID, deadline)
-            if worker.poll() is not None:
-                raise SmokeFailure("offline IPC worker exited before STOP")
-            output, error = stop_owned_child(worker, timeout=_remaining(deadline))
-            if worker.returncode != 0:
-                raise SmokeFailure("offline IPC STOP exited nonzero")
-            require_fixed_receipt("worker", output, error)
-            if path.exists() or path.is_symlink():
-                raise SmokeFailure("offline IPC socket survived STOP")
-        finally:
-            if worker is not None and worker.poll() is None:
-                stop_owned_child(worker, timeout=0.5)
+                    raise SmokeFailure("offline IPC worker exited before STOP")
+                output, error = stop_owned_child(worker, timeout=_remaining(deadline))
+                if worker.returncode != 0:
+                    raise SmokeFailure("offline IPC STOP exited nonzero")
+                require_fixed_receipt("worker", output, error)
+                stage = "CLEANUP"
+                if path.exists() or path.is_symlink():
+                    raise SmokeFailure("offline IPC socket survived STOP")
+            finally:
+                if worker is not None and worker.poll() is None:
+                    stop_owned_child(worker, timeout=0.5)
+    except (SmokeFailure, SyntheticIPCError, OSError, RuntimeError, subprocess.TimeoutExpired):
+        # Discard every private exception/child stderr; retain only the exact
+        # phase that needs independent RCA on a hosted disposable runner.
+        raise SmokeFailure(stage) from None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -245,8 +263,15 @@ def main(argv: list[str] | None = None) -> int:
         if args:
             return _child(args[0], _child_path(args[1]))
         _run_harness()
-    except (SmokeFailure, SyntheticIPCError, OSError, RuntimeError, subprocess.TimeoutExpired):
-        print("BOCA_WORKER_IPC_LINUX state=NO_GO", file=sys.stderr)
+    except (
+        SmokeFailure,
+        SyntheticIPCError,
+        OSError,
+        RuntimeError,
+        subprocess.TimeoutExpired,
+    ) as exc:
+        stage = str(exc) if isinstance(exc, SmokeFailure) and str(exc) in _STAGES else "UNKNOWN"
+        print(f"BOCA_WORKER_IPC_LINUX state=NO_GO stage={stage}", file=sys.stderr)
         return 1
     print(
         "BOCA_WORKER_IPC_LINUX state=PASS peer=UID10001_10002 stranger=DENIED result=NO_GO stop=VERIFIED"

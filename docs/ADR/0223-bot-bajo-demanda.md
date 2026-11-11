@@ -57,3 +57,34 @@ tests locales certifican el contrato del harness pero **no el socket físico**.
 El paso real en GitHub Actions, vinculado al SHA final, deberá probar el
 transporte; aun si pasa, **no acredita rootless Docker/egreso del worker en
 el droplet, ni reservas**, y `OfflineNoGoExecutor` sigue el predeterminado.
+
+## R175 — runner IPC: Python de sistema y recibos acotados (CODE_ONLY)
+
+La Action [CI #43052061549](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43052061549)
+sobre PR #478, SHA `f58aaace9dd9d05760efad0797b182453a264c9a`,
+pasó el smoke AF_UNIX genérico y la suite Python, pero el nuevo paso
+multi-UID terminó en **0,09 s** con `BOCA_WORKER_IPC_LINUX state=NO_GO`,
+sin motivo o etapa recuperable. No hay evidencia de que haya creado socket;
+este resultado es **NO_GO**, no error de la instalación en el droplet.
+
+El paso invocaba un intérprete virtual de `actions/setup-python` dentro de
+`sudo env`; la propia Action configura `LD_LIBRARY_PATH` para las bibliotecas
+compartidas de su Python alojado en toolcache. Suprimir ese entorno en los
+subprocesos de UID10001/10002/10003 puede impedirles ejecutar el binario,
+pero **no se ha confirmado causalmente** porque el primer harness descartaba
+la salida de los hijos. Ver
+[setup-python #871](https://github.com/actions/setup-python/issues/871).
+
+R175 propone usar **únicamente para el fixture descartable** el intérprete
+`/usr/bin/python3` de Ubuntu 24.04, cuya biblioteca es del sistema, con
+`PYTHONPATH` limitado a los fuentes Boca (el contrato IPC del smoke importa
+solo biblioteca estándar). El harness comunica exclusivamente la etapa fija
+`SETUP`, `WORKER_SPAWN`, `WORKER_BIND`, `STRANGER`, `CONTROLLER`, `STOP`,
+`CLEANUP` o `UNKNOWN` cuando falla, nunca stderr, rutas, URLs, secretos
+ni excepciones de hijos. Conserva UID10001/10002/10003, `SO_PEERCRED`,
+modo socket 0622, devolución `NO_GO` y limpieza propia.
+
+**Validación pendiente:** Actions del nuevo SHA deben probar cada UID,
+transporte AF_UNIX, rechazo del tercero y STOP; ni la prueba local del parser
+ni la revisión de código equivalen a este recibo real. No se habilita
+navegador, Telegram, Cutover ni reservas.

@@ -75,6 +75,80 @@ def test_accepts_canonical_noble_component_order_and_uri_without_slash(tmp_path:
     assert actual.count(f"Signed-By: {KEY}") == 2
 
 
+@pytest.mark.parametrize("components", ["main", "main universe", "main universe restricted"])
+def test_preserves_ubuntu_base_component_subset_without_expanding_repository_trust(
+    tmp_path: Path, components: str
+) -> None:
+    source = tmp_path / "sources.list.d" / "ubuntu.sources"
+    source.parent.mkdir()
+    upstream = _deb822().replace("main restricted universe multiverse", components)
+    source.write_text(upstream, encoding="utf-8")
+
+    result = _run_tool(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert source.read_text(encoding="utf-8") == upstream.replace(ARCHIVE, MIRROR).replace(
+        SECURITY, MIRROR
+    )
+
+
+def test_accepts_ubuntu_base_comments_without_changing_them(tmp_path: Path) -> None:
+    source = tmp_path / "sources.list.d" / "ubuntu.sources"
+    source.parent.mkdir()
+    upstream = "# ubuntu OCI source\n" + _deb822().replace(
+        "Signed-By:", "# Ubuntu release packages\nSigned-By:"
+    )
+    source.write_text(upstream, encoding="utf-8")
+
+    result = _run_tool(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert source.read_text(encoding="utf-8") == upstream.replace(ARCHIVE, MIRROR).replace(
+        SECURITY, MIRROR
+    )
+
+
+def test_preserves_ubuntu_base_architecture_restriction(tmp_path: Path) -> None:
+    source = tmp_path / "sources.list.d" / "ubuntu.sources"
+    source.parent.mkdir()
+    upstream = _deb822().replace("Signed-By:", "Architectures: amd64\nSigned-By:")
+    source.write_text(upstream, encoding="utf-8")
+
+    result = _run_tool(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert source.read_text(encoding="utf-8") == upstream.replace(ARCHIVE, MIRROR).replace(
+        SECURITY, MIRROR
+    )
+
+
+@pytest.mark.parametrize("field", ["Architectures: arm64 amd64", "Trusted: yes", "Enabled: no"])
+def test_rejects_unreviewed_source_fields(tmp_path: Path, field: str) -> None:
+    source = tmp_path / "sources.list.d" / "ubuntu.sources"
+    source.parent.mkdir()
+    upstream = _deb822().replace("Signed-By:", f"{field}\nSigned-By:", 1)
+    source.write_text(upstream, encoding="utf-8")
+
+    result = _run_tool(tmp_path)
+
+    assert result.returncode != 0
+    assert source.read_text(encoding="utf-8") == upstream
+
+
+def test_rejects_inconsistent_components_between_signed_pockets(tmp_path: Path) -> None:
+    source = tmp_path / "sources.list.d" / "ubuntu.sources"
+    source.parent.mkdir()
+    upstream = _deb822().replace(
+        "Components: main restricted universe multiverse", "Components: main", 1
+    )
+    source.write_text(upstream, encoding="utf-8")
+
+    result = _run_tool(tmp_path)
+
+    assert result.returncode != 0
+    assert source.read_text(encoding="utf-8") == upstream
+
+
 def test_rejects_non_ubuntu_component(tmp_path: Path) -> None:
     source = tmp_path / "sources.list.d" / "ubuntu.sources"
     source.parent.mkdir()

@@ -69,3 +69,31 @@ para el worker instalado ni implica navegación a ningún sitio.
   permanecen aparte.
 
 **Hasta esos recibos el estado continúa NO_GO de imagen, merge y deploy.**
+
+## Enmienda R175 — evidencia posterior de `SOURCES_SCHEMA`
+
+En el HEAD R174 real `f58aaace9dd9d05760efad0797b182453a264c9a`,
+cuatro trabajos independientes volvieron a registrar fallo DNS de
+`azure.archive.ubuntu.com` y `security.ubuntu.com`. El helper de fallback
+alcanzó `BOCA_APT_FALLBACK state=NO_GO reason=SOURCES_SCHEMA` antes de
+reintentar contra Linux Kernel Archives. Por tanto el fallback inicial
+**no** funcionó: no se pudo observar si el DNS del espejo alternativo pasa.
+El recibo no reveló cuál condición de esquema rechazó; atribuir el problema
+a un campo concreto sigue siendo una hipótesis, no un hecho.
+
+R175 aplica únicamente tres compatibilidades de **lectura de fuentes Ubuntu**:
+
+- `Components` puede ser un subconjunto conocido de main/restricted/universe/
+  multiverse con `main` presente; ambos repositorios firmados deben conservar
+  **el mismo conjunto**. La sustitución de URI nunca añade componentes.
+- Comentarios completos en `ubuntu.sources` se ignoran para comprobar campos,
+  pero se conservan íntegros al reescribir las URI.
+- `Architectures: amd64` se admite solo si aparece idéntico en ambos pockets.
+  Se rechazan valores múltiples, otras arquitecturas, campos de confianza
+  adicionales y cambios de suite/firma/URI origen.
+
+Las causas de rechazo de esquema se registran ahora como códigos fijos
+`detail=<ENUM>` sin contenido de los archivos ni secretos, para un RCA
+definitivo si el nuevo SHA vuelve a fallar. No se cambia la firma Ubuntu,
+el `Dockerfile` ni un pin CVE; no se emplea red host, ni host Docker del
+droplet. Esta enmienda es **CODE_ONLY** hasta nuevas Actions exact-SHA.
