@@ -8,7 +8,9 @@ import sys
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, fields, replace
 
+from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_lifecycle as host
+from boca_socios import host_first_deploy as deploy
 from boca_socios.host_boca_cleanup import BocaJobLease, protected_boca_job_lease
 from boca_socios.host_lifecycle_rootless_adapter import (
     ProductionRootlessDockerIO,
@@ -24,7 +26,12 @@ from boca_socios.host_on_demand_service import read_installed_binding
 
 PREFIX = "BOCA_ON_DEMAND_STATUS "
 NO_GO = PREFIX + "result=NO_GO"
+EGRESS_PREFIX = "BOCA_ON_DEMAND_EGRESS "
 _LIMIT = 2048
+_WORKER_EGRESS_OK_LINE = "BOCA_WORKER_EGRESS state=PASS dns=PASS https=PASS\n"
+_EGRESS_STAGES = frozenset(
+    {"worker_stopped", "network_unverified", "dns", "tls", "https", "state_changed"}
+)
 # The shared attestor requires syntactically complete coordinates. Its fixed read-only
 # placeholder is never presented to the ledger, sent on a socket or published as an intent.
 _PROBE_ID = "00000000-0000-4000-8000-000000000001"
@@ -164,14 +171,92 @@ def _checked(document: object, pins: _Pins) -> str:
     return PREFIX + json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n"
 
 
+def _egress_line(pins: _Pins, stage: str) -> str:
+    """One category-only, run-bound attestation; no remote output forwarded."""
+    prefix = EGRESS_PREFIX + f"run={pins.observation_run_id} source={pins.source_sha} "
+    if stage == "none":
+        return prefix + "state=PASS dns=PASS https=PASS\n"
+    if stage not in _EGRESS_STAGES:
+        raise StatusUnavailable
+    return prefix + f"state=NO_GO stage={stage}\n"
+
+
+def _egress_observe(pins: _Pins) -> str:
+    """Use only an already-running, attested Boca worker; do not start Docker."""
+    with protected_boca_job_lease(pins.observation_run_id) as lease:
+        installed = read_installed_binding(lease)
+        if (installed.source_sha, installed.controller_image, installed.worker_image) != (
+            pins.source_sha,
+            pins.controller_image,
+            pins.worker_image,
+        ):
+            raise StatusUnavailable
+        coordinates = replace(installed.coordinates(_PROBE_ID), attempt_id=pins.observation_run_id)
+        before = _physical(installed, coordinates, lease)
+        if before[0] != "running" or before[1] <= 0 or not before[2]:
+            return _egress_line(pins, "worker_stopped")
+        io = ProductionRootlessDockerIO()
+        network = io.field("container", installed.worker_id, "NetworkSettings.Networks")
+        try:
+            deploy._browser_worker_egress_network(network)
+        except deploy.PreflightError:
+            return _egress_line(pins, "network_unverified")
+        panel = read_panel_status(installed)
+        # cleanup._docker pins /run/user/10001/docker.sock and sanitizes all
+        # daemon environment variables.  The attested CID is used directly;
+        # never search by name, pull an image, start/stop or mount anything.
+        raw = cleanup._docker(
+            "exec",
+            "--user",
+            "10002:10002",
+            installed.worker_id,
+            "python",
+            "-m",
+            "boca_socios.browser.egress_probe",
+            "--once",
+        )
+        if raw == _WORKER_EGRESS_OK_LINE:
+            stage = "none"
+        else:
+            matches = [
+                candidate
+                for candidate in ("dns", "tls", "https")
+                if raw == f"BOCA_WORKER_EGRESS state=NO_GO stage={candidate}\n"
+            ]
+            if len(matches) != 1:
+                raise StatusUnavailable
+            stage = matches[0]
+        if (
+            _physical(installed, coordinates, lease) != before
+            or io.field("container", installed.worker_id, "NetworkSettings.Networks") != network
+            or read_panel_status(installed) != panel
+        ):
+            return _egress_line(pins, "state_changed")
+        return _egress_line(pins, stage)
+
+
+def _egress_checked(raw: bytes, pins: _Pins) -> str:
+    if len(raw) > 256:
+        raise StatusUnavailable
+    for stage in ("none", *sorted(_EGRESS_STAGES)):
+        expected = _egress_line(pins, stage)
+        if raw == expected.encode("ascii"):
+            return expected
+    raise StatusUnavailable
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     try:
-        if len(args) != 5 or args[0] not in ("host", "verify"):
+        if len(args) != 5 or args[0] not in ("host", "verify", "host-egress", "verify-egress"):
             raise StatusUnavailable
         pins = _Pins(*args[1:])
         pins.validate()
-        if args[0] == "host":
+        if args[0] == "host-egress":
+            line = _egress_observe(pins)
+        elif args[0] == "verify-egress":
+            line = _egress_checked(sys.stdin.buffer.read(257), pins)
+        elif args[0] == "host":
             line = _checked(_observe(pins), pins)
         else:
             raw = sys.stdin.buffer.read(_LIMIT + 1)

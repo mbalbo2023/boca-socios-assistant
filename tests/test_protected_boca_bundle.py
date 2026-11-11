@@ -56,7 +56,7 @@ def test_bounded_source_growth_keeps_archive_digest_and_archive_limit_independen
     # R173: reviewed source is larger than the immutable transport limit;
     # only comment-token compaction of the full host module earns the space.
     assert 1_150_000 < total < 1_200_000
-    assert builder.MAX_SOURCE_BYTES == 1_152_000
+    assert builder.MAX_SOURCE_BYTES == 1_156_096
     assert builder.MAX_ARCHIVE_BYTES == 512_000
     output, digest = _build(tmp_path)
     raw = output.read_bytes()

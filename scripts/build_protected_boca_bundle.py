@@ -169,6 +169,22 @@ W1_MAIN = (
     "from boca_socios.host_worker_w1 import main as w1\n"
     "raise SystemExit(w1(['host',sys.argv[2]]))\n"
 ).encode("ascii")
+BINDING_SOURCES = tuple(
+    dict.fromkeys(
+        (
+            *(name for name in W1_SOURCES if name != "src/boca_socios/host_worker_w1.py"),
+            *PAIR_SOURCES,
+            "src/boca_socios/host_boca_binding_observe.py",
+        )
+    )
+)
+BINDING_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 3 or sys.argv[1] != 'boca-binding-observe':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_boca_binding_observe import main as binding\n"
+    "raise SystemExit(binding(['host',sys.argv[2]]))\n"
+).encode("ascii")
 PREFLIGHT_MAIN = (
     "import sys\n"
     "if len(sys.argv) != 9 or sys.argv[1] != 'cutover-worker-preflight':\n"
@@ -212,6 +228,9 @@ MAIN = (
     "if len(sys.argv) == 6 and sys.argv[1] == 'on-demand-status':\n"
     "    from boca_socios.host_on_demand_status import main as status\n"
     "    raise SystemExit(status(['host', *sys.argv[2:]]))\n"
+    "if len(sys.argv) == 6 and sys.argv[1] == 'on-demand-egress':\n"
+    "    from boca_socios.host_on_demand_status import main as status\n"
+    "    raise SystemExit(status(['host-egress', *sys.argv[2:]]))\n"
     "if len(sys.argv) == 3 and sys.argv[1] == 'on-demand-serve':\n"
     "    from boca_socios.host_on_demand_service import socket_main\n"
     "    raise SystemExit(socket_main(sys.argv[2]))\n"
@@ -240,7 +259,9 @@ MAIN = (
 ).encode("ascii")
 # The R138 full bundle includes the #916 observer and receipt verifier.
 # Bound the full payload separately from the two reduced worker archives.
-MAX_SOURCE_BYTES = 1_152_000
+# R178 adds only the source-pinned, run-bound Boca worker egress attestor.
+# +4 KiB preserves independent smaller bundles and the exact file allowlist.
+MAX_SOURCE_BYTES = 1_156_096
 MAX_ARCHIVE_BYTES = 512_000
 RECOVERY_MAX_SOURCE_BYTES = 256_000
 RECOVERY_MAX_ARCHIVE_BYTES = 128_000
@@ -248,6 +269,8 @@ CENSUS_MAX_SOURCE_BYTES = 160_000
 CENSUS_MAX_ARCHIVE_BYTES = 64_000
 PAIR_MAX_SOURCE_BYTES = 192_000
 PAIR_MAX_ARCHIVE_BYTES = 64_000
+BINDING_MAX_SOURCE_BYTES = 900_000
+BINDING_MAX_ARCHIVE_BYTES = 320_000
 PREFLIGHT_MAX_SOURCE_BYTES = 520_000
 PREFLIGHT_MAX_ARCHIVE_BYTES = 128_000
 W1_MAX_SOURCE_BYTES = 900_000
@@ -295,14 +318,30 @@ def build(
     worker_physical: bool = False,
     census: bool = False,
     pair_observe: bool = False,
+    binding_observe: bool = False,
 ) -> str:
     """Write one deterministic, explicitly allowlisted runner-only archive."""
     if (
-        sum((worker_recovery, worker_preflight, worker_w1, worker_physical, census, pair_observe))
+        sum(
+            (
+                worker_recovery,
+                worker_preflight,
+                worker_w1,
+                worker_physical,
+                census,
+                pair_observe,
+                binding_observe,
+            )
+        )
         > 1
     ):
         raise ValueError("Boca protected bundle modes must be exclusive")
-    if pair_observe:
+    if binding_observe:
+        files: dict[str, bytes] = {"__main__.py": BINDING_MAIN, **HOST_ONLY_INIT}
+        sources: tuple[str, ...] = BINDING_SOURCES
+        max_source = BINDING_MAX_SOURCE_BYTES
+        max_archive = BINDING_MAX_ARCHIVE_BYTES
+    elif pair_observe:
         files: dict[str, bytes] = {"__main__.py": PAIR_MAIN}
         sources: tuple[str, ...] = PAIR_SOURCES
         max_source = PAIR_MAX_SOURCE_BYTES
@@ -344,7 +383,15 @@ def build(
         max_source = MAX_SOURCE_BYTES
         max_archive = MAX_ARCHIVE_BYTES
     full_cutover = not any(
-        (worker_recovery, worker_preflight, worker_w1, worker_physical, census, pair_observe)
+        (
+            worker_recovery,
+            worker_preflight,
+            worker_w1,
+            worker_physical,
+            census,
+            pair_observe,
+            binding_observe,
+        )
     )
     for rel in sources:
         source = root / rel
@@ -413,12 +460,13 @@ def main() -> int:
     variant.add_argument("--worker-physical", action="store_true")
     variant.add_argument("--census", action="store_true")
     variant.add_argument("--pair-observe", action="store_true")
+    variant.add_argument("--binding-observe", action="store_true")
     parser.add_argument("repository_root", type=Path)
     parser.add_argument("runner_target", type=Path)
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, binding_observe=args.binding_observe)}"
     )
     return 0
 
