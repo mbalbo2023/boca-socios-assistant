@@ -118,6 +118,15 @@ PAIR_MAIN = (
     "raise SystemExit(pair(['host',sys.argv[2]]))\n"
 ).encode("ascii")
 POSTCOMMIT_SOURCES = (*PAIR_SOURCES, "src/boca_socios/host_boca_pair_postcommit.py")
+RETAINED_SOURCES = (*POSTCOMMIT_SOURCES, "src/boca_socios/host_boca_retained_resources.py")
+RETAINED_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 3 or sys.argv[1] != 'boca-retained-resource-observe':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_boca_retained_resources import main\n"
+    "sys.argv[1] = 'host'\n"
+    "raise SystemExit(main())\n"
+).encode("ascii")
 POSTCOMMIT_MAIN = (
     "import sys\n"
     "if len(sys.argv) != 3 or sys.argv[1] != 'boca-postcommit-observe':\n"
@@ -400,6 +409,7 @@ def build(
     census: bool = False,
     pair_observe: bool = False,
     postcommit_observe: bool = False,
+    retained_observe: bool = False,
     binding_observe: bool = False,
     sqlite_observe: bool = False,
     pair_upgrade: bool = False,
@@ -416,6 +426,7 @@ def build(
                 census,
                 pair_observe,
                 postcommit_observe,
+                retained_observe,
                 binding_observe,
                 sqlite_observe,
                 pair_upgrade,
@@ -445,6 +456,11 @@ def build(
         sources: tuple[str, ...] = BINDING_SOURCES
         max_source = BINDING_MAX_SOURCE_BYTES
         max_archive = BINDING_MAX_ARCHIVE_BYTES
+    elif retained_observe:
+        files = {"__main__.py": RETAINED_MAIN}
+        sources = RETAINED_SOURCES
+        max_source = 240_000
+        max_archive = 80_000
     elif postcommit_observe:
         files = {"__main__.py": POSTCOMMIT_MAIN}
         sources = POSTCOMMIT_SOURCES
@@ -500,6 +516,7 @@ def build(
             census,
             pair_observe,
             postcommit_observe,
+            retained_observe,
             binding_observe,
             sqlite_observe,
             pair_upgrade,
@@ -574,6 +591,7 @@ def main() -> int:
     variant.add_argument("--census", action="store_true")
     variant.add_argument("--pair-observe", action="store_true")
     variant.add_argument("--postcommit-observe", action="store_true")
+    variant.add_argument("--retained-observe", action="store_true")
     variant.add_argument("--binding-observe", action="store_true")
     variant.add_argument("--sqlite-observe", action="store_true")
     variant.add_argument("--pair-upgrade", action="store_true")
@@ -583,7 +601,7 @@ def main() -> int:
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, postcommit_finalize=args.postcommit_finalize)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, retained_observe=args.retained_observe, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, postcommit_finalize=args.postcommit_finalize)}"
     )
     return 0
 
