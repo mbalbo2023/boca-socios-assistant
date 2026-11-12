@@ -10,10 +10,14 @@ from html import escape
 from boca_socios.events.official_catalog import OfficialNotice
 from boca_socios.events.official_presentation import render_observed_catalog_html
 from boca_socios.notify.projection import LocalNoticeView
+from boca_socios.panel import private_token_view
 from boca_socios.panel.enrollment_form import STYLE
 from boca_socios.panel.lifecycle_intents import LifecycleIntent
+from boca_socios.panel.member_sector_store import MemberSectorDefaults
 from boca_socios.panel.members import CommandView, MemberView
 from boca_socios.panel.worker_activity import WorkerActivitySnapshot
+from boca_socios.queue.pass_observation import QueuePassSummary
+from boca_socios.security.member_auth_contract import BocaAuthSummary
 
 _LOGIN_SCRIPT = """
 const button = document.getElementById('passkey');
@@ -138,7 +142,8 @@ CSP = (
     "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
     "form-action 'self'; connect-src 'self'; "
     f"style-src 'sha256-{_hash(STYLE)}'; "
-    f"script-src 'sha256-{_hash(_LOGIN_SCRIPT)}' 'sha256-{_hash(_ACTIVITY_SCRIPT)}'"
+    f"script-src 'sha256-{_hash(_LOGIN_SCRIPT)}' 'sha256-{_hash(_ACTIVITY_SCRIPT)}' "
+    f"'sha256-{_hash(private_token_view.COPY_SCRIPT)}'"
 )
 
 
@@ -150,6 +155,7 @@ def _page(title: str, content: str, *, body_attributes: str = "", script: str = 
 <a href="/socios">Socios</a> · <a href="/comandos">Simulación</a> ·
 <a href="/control">Control</a> ·
 <a href="/control/actividad">Actividad del worker</a> ·
+<a href="/monitor/tokens">Monitor de tokens</a> ·
 <a href="/configuracion">Configuración</a> ·
 <a href="/estado">Estado</a> · <a href="/avisos">Avisos</a> ·
 <a href="/avisos-oficiales">Eventos oficiales</a></nav>
@@ -169,6 +175,38 @@ def login(challenge: str, credential_id: str) -> bytes:
         '<p id="result" role="status" aria-live="polite"></p>',
         body_attributes=attributes,
         script=f"<script>{_LOGIN_SCRIPT}</script>",
+    )
+
+
+def token_monitor(
+    queue: tuple[QueuePassSummary, ...],
+    auth: tuple[BocaAuthSummary, ...],
+    *,
+    csrf: str,
+    operation_id: str | None,
+    can_reveal: bool,
+) -> bytes:
+    return _page(
+        "Monitor de tokens",
+        private_token_view.overview(
+            queue, auth, csrf=csrf, operation_id=operation_id, can_reveal=can_reveal
+        ),
+    )
+
+
+def queue_token_reveal(token: str, url: str | None) -> bytes:
+    return _page(
+        "Queue-it · token privado",
+        private_token_view.queue_reveal(token, url),
+        script=f"<script>{private_token_view.COPY_SCRIPT}</script>",
+    )
+
+
+def boca_token_reveal(token: str, refresh_token: str) -> bytes:
+    return _page(
+        "Boca · token privado",
+        private_token_view.boca_reveal(token, refresh_token),
+        script=f"<script>{private_token_view.COPY_SCRIPT}</script>",
     )
 
 
@@ -520,8 +558,50 @@ def members(items: tuple[MemberView, ...]) -> bytes:
     )
 
 
-def member_detail(item: MemberView, csrf: str, rotate_id: str, revoke_id: str) -> bytes:
+def member_detail(
+    item: MemberView,
+    csrf: str,
+    rotate_id: str,
+    revoke_id: str,
+    sector_operation_id: str,
+    sector_defaults: MemberSectorDefaults | None,
+    *,
+    sector_storage_ready: bool,
+) -> bytes:
     identifier = escape(item.member_id, quote=True)
+    all_selected = sector_defaults is None or sector_defaults.mode.value == "ALL"
+    sector_values = ",".join(sector_defaults.sector_ids) if sector_defaults else ""
+    status = (
+        "Almacenamiento local pendiente de habilitación."
+        if not sector_storage_ready
+        else "Configuración general para las simulaciones futuras de este socio."
+    )
+    disabled = " disabled" if not sector_storage_ready else ""
+    sector_form = (
+        '<section aria-labelledby="sector-preferences-heading">'
+        '<h2 id="sector-preferences-heading">Preferencias de sectores</h2>'
+        "<p>Se guardan en el mismo perfil de socio, sin repetir el alta. "
+        "Solo se usan en simulaciones locales: no reservan entradas.</p>"
+        f'<p role="status">{escape(status)}</p>'
+        f'<form method="post" action="/socios/{identifier}/sectores">'
+        f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
+        f'<input type="hidden" name="operation_id" '
+        f'value="{escape(sector_operation_id, quote=True)}">'
+        f"<fieldset{disabled}><legend>Selección de sectores</legend>"
+        '<label><input type="radio" name="mode" value="ALL"'
+        + (" checked" if all_selected else "")
+        + ">Todos los sectores disponibles de la simulación</label>"
+        '<label><input type="radio" name="mode" value="ORDERED_ALLOWLIST"'
+        + ("" if all_selected else " checked")
+        + ">Solo mis sectores preferidos, en orden</label>"
+        '<label for="member-sector-ids">Sectores ficticios por prioridad, separados por coma</label>'
+        '<textarea id="member-sector-ids" name="sector_ids" rows="3" maxlength="2000">'
+        + escape(sector_values)
+        + "</textarea><p>Ejemplo: sector_sur, sector_norte. "
+        "El orden es el de prioridad cuando se elige la segunda opción.</p>"
+        '<button type="submit">Guardar preferencias de este socio</button>'
+        "</fieldset></form></section>"
+    )
     return _page(
         "Socio local",
         "<h1>Socio local</h1><p>"
@@ -541,7 +621,7 @@ def member_detail(item: MemberView, csrf: str, rotate_id: str, revoke_id: str) -
         f'<form method="post" action="/socios/{identifier}/revocar">'
         f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
         f'<input type="hidden" name="operation_id" value="{escape(revoke_id, quote=True)}">'
-        '<button type="submit">Revocar credencial local</button></form>',
+        '<button type="submit">Revocar credencial local</button></form>' + sector_form,
     )
 
 

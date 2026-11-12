@@ -1,5 +1,66 @@
 # Boca Socios Assistant
 
+## Transferencia de ownership y despliegue único — 12/11/2026 ART
+
+Tincho asignó al agente activo la integración conjunta de #12 y #417,
+debido al bloqueo del chat anterior. [AGENTS.md](AGENTS.md) y
+[política de desarrollo](docs/DEVELOPMENT_POLICY.md) registran que el
+PR funcional [#484](https://github.com/mbalbo2023/boca-socios-assistant/pull/484)
+puede integrarse y desplegarse en una **única BETA con reservas
+SIMULATION_ONLY** sin esperar disponibilidad real de Queue-it, un endpoint
+de login Boca o validación de tokens. Por aclaración posterior del titular,
+los dos flujos
+reales de tokens **se incluyen y no se bloquean por falta de fuente ni por
+una aprobación adicional de activación**; sin productor/transporte configurado
+mostrarán su indisponibilidad y no podrán acreditar resultados reales;
+el lateral de sectores requiere activación SQLite explícita posterior.
+
+**Esta enmienda documental no es un merge ni un despliegue.** El run de release
+[#43094715916](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43094715916)
+falló al finalizar el artefacto y no acreditó el segundo manifest; el
+siguiente paso exige revisar
+#484, fusionar un solo SHA, certificar CI postmerge, construir una release
+dual nueva y validar el host Boca mediante la única Action protegida con
+limpieza selectiva. No se toca Porota ni se ejecutan reservas reales.
+
+## Issue #12 — desarrollo funcional aislado (12/11/2026; CODE_ONLY, NO_GO externo)
+
+Se recuperaron los contratos previos de **perfil/sectores del socio** y
+**observación privada de Queue-it** de las ramas de #12, sin volver a incorporar
+infraestructura ya presente en `main`. Esta rama agrega dos circuitos
+independientes al panel privado en `/monitor/tokens`:
+
+- **Queue-it:** observa únicamente una URL completa ya obtenida por una fuente
+  autorizada, con un único parámetro genuinamente suministrado `queueittoken`;
+  permite copiar el token y la URL exacta de forma privada. **No consulta,
+  valida ni utiliza** la URL o el token.
+- **Boca:** un contrato de autenticación bajo demanda lee las credenciales
+  cifradas de un socio existente en SQLite, las descifra mediante el vault
+  original y admite exclusivamente la respuesta `token`/`refreshToken`
+  devuelta por un transporte explícito. **No existe endpoint inventado,
+  transporte por defecto ni sesión real acreditada**.
+
+La vista requiere passkey, permisos, origen y CSRF, presenta inicialmente solo
+metadatos sin valores secretos y exige una revelación privada de un solo uso
+antes de copiar. Es independiente de la navegación legacy: **no inicia el bot,
+  Chromium, fila ni reserva**. Los monitores son volátiles y no guardan tokens
+en SQLite. Las pruebas utilizan solamente respuestas ficticias offline.
+
+**Stoppers de activación real — no del deploy SIMULATION_ONLY (enmienda R182):**
+no hay fuente Queue-it real conectada ni
+transporte/respuesta de Boca certificado; el servicio externo está indisponible
+para validaciones. El perfil de sectores requiere provisión separada de su
+SQLite auxiliar. Esta rama **no modifica Docker, workflows ni despliegue**.
+La integración y certificación física quedan ahora bajo el mismo agente
+responsable de [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417)
+por transferencia expresa del dueño el 12/11 (sección R182 anterior);
+no se exige que las fuentes reales estén disponibles para instalar la BETA
+ni para incorporar y habilitar su código.
+
+[Diseño funcional](docs/superpowers/specs/2026-11-12-issue12-functional-token-flows-design.md)
+· [plan TDD](docs/superpowers/plans/2026-11-12-issue12-functional-token-flows.md)
+· [handoff técnico](docs/handoffs/2026-11-12-issue12-functional-code-only.md).
+
 ## R181.2 — Cierre de imports protegidos y ruta BETA (11/11/2026 ART; corte premerge)
 
 El [PR #483](https://github.com/mbalbo2023/boca-socios-assistant/pull/483)

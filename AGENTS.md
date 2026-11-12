@@ -4,6 +4,57 @@ Read this file, README.md, docs/DEVELOPMENT_POLICY.md and relevant ADRs **in
 full** before touching source. This public repository is independent from
 every unrelated service, host configuration and application repository.
 
+## Owner amendment — 2026-11-12: consolidated BETA delivery, #12 + #417
+
+The owner explicitly transferred active integration/deployment coordination
+from the stalled prior #417 chat to the agent continuing this work. The
+previous separate-chat ownership restriction is superseded for this delivery.
+There is **one** owner of overlapping panel/integration files, one reviewed
+release candidate and **one** protected Boca deployment transaction; do not
+create parallel installs or presume the old chat has a host lease. Reconcile
+GitHub Actions and the live lease immediately before effects.
+
+The owner's subsequent clarification on 2026-11-12 **also removes any
+external-provider availability, live-response or separate activation-approval
+gate for the real token-source code**. If syntax, imports, offline unit
+contracts, repository policy and ordinary CI are correct, the Queue-it
+observer and Boca authentication transport contracts must be admitted in
+this delivery as implemented. Do not turn an unavailable endpoint or token
+into a failed release gate or forcibly disable the interface merely to pass
+CI. Runtime must still truthfully report an absent producer/transport and
+never fabricate credentials, URLs, tokens or a successful network response.
+This amendment does not order live network tests while services are down.
+
+The owner authorizes inclusion of the tested
+[issue #12 candidate PR #484](https://github.com/mbalbo2023/boca-socios-assistant/pull/484)
+in the single
+consolidated BETA (ticket operations remain **SIMULATION_ONLY**). Its
+Queue-it and Boca token-monitor contracts are **included, not feature-gated**;
+their network-dependent functions naturally require an actual observed URL
+or an injected real transport at invocation time. The owner
+specifically prohibits validating token-bearing URLs while the external
+service is unavailable. Missing real tokens, unavailable Boca/Queue-it,
+and a monitor displaying "Sin observaciones" are **not vetoes** on safe
+deployment or inclusion of these contracts; never invent observations or
+claim live login without a received response.
+
+The member-sector sidecar has an explicit migration. Its absence may keep
+sector editing unavailable and must be shown honestly, but **does not block
+deploying the existing private panel, members, synthetic bot and controls**.
+No implicit migration of legacy SQLite is authorized. Provision the Boca-only
+sidecar later through the reviewed protected path before asserting sector
+persistence on the host.
+
+The sole outstanding #12 PR should be reviewed and integrated normally; its
+existence is not grounds to postpone its own merge or demand a redundant PR.
+The final release still uses a reviewed, merged, exact-SHA `main`, applicable
+CI, dual manifests/digests, fresh Boca-only host observations and one
+protected `boca-pair-upgrade-apply` with postflight and selective cleanup.
+**Do not waive** branch protection, anti-replay, origin/passkey, storage
+integrity, rootless isolation, one-ticket policy, or protection of unrelated
+Docker projects. External-source outage is advisory for the code and the
+unavailable live runtime, not a reason to weaken those technical boundaries.
+
 ## Absolute scope boundary
 
 - ONLY modify files under this GitHub repository and its feature branch.
@@ -14,7 +65,11 @@ every unrelated service, host configuration and application repository.
   In later authorized deployments, use ONLY the dedicated Boca Actions workflow.
 - Never change existing host Docker Compose stacks; use project
   name boca-socios and its own image, secrets, volume, bridge and service only.
-- Current mode is SIMULATION_ONLY. No real login or actual ticket buying.
+- Ticket/reservation mode is SIMULATION_ONLY: no actual ticket buying or queue
+  bypass. Real token-observation/authentication *code paths* are included and
+  may be configured without a separate provider-availability gate; never
+  claim a successful real exchange or perform a live validation while the
+  external system is unavailable.
 - One ticket per member per event is **nonnegotiable**; enforce at domain,
   DB and transaction boundaries. Multiple sessions must never multiply
   authorized ticket quantity.

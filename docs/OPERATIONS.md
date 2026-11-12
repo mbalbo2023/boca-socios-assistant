@@ -1,5 +1,80 @@
 # Safe operations — verified evidence and gated procedures
 
+## 12/11/2026 — takeover #12/#417 y secuencia BETA consolidada
+
+La instrucción actual del dueño transfiere a este frente el ownership de la
+integración y despliegue #417. La **ausencia de Boca/Queue-it reales** y del
+SQLite lateral opcional de preferencias **no detiene** la BETA; por aclaración
+posterior del dueño, **tampoco detiene la inclusión/habilitación de los dos
+flujos de tokens reales en el código**. Se comprueban sintaxis, contratos
+offline y CI antes de entregar; sin una fuente configurada el monitor informa
+que no hay observaciones y la autenticación no puede inventar una respuesta.
+No consultar ni validar URLs que contengan tokens mientras el servicio esté
+indisponible; incluir el código de login no significa disparar intentos
+reales sin transporte/servicio disponible. Navegación y reservas reales OFF.
+
+Secuencia obligatoria, **sin efectos de host antes de reunir evidencia**:
+
+1. Reconciliar único PR #484, revisión técnica, checks exactos y decisiones
+   sobre archivos superpuestos; fusionar por proceso protegido, no por push.
+2. Certificar CI + seguridad del nuevo `main`, comprobar cero PR abiertos y
+   crear **release dual nueva**: ambos manifests verificables de controller y
+   browser, mismo run/SHA y dos digests inmutables. El run de release fallido
+   [#43094715916](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43094715916)
+   (finalización de artefacto/segundo manifest ausente) no es reutilizable.
+3. Ejecutar cuatro observadores READ_ONLY frescos en Actions Boca: censo,
+   par, binding y SQLite. Cualquier ambigüedad, fallo de startup o drift
+   detiene efectos; ningún resultado viejo basta.
+4. Solo con todos los gates positivos, un único `boca-pair-upgrade-apply`
+   bajo el workflow/manual Environment protegido. Exigir recibo terminal
+   `state=ACCEPTED`, limpieza Boca-only, postflight y ausencia de efectos
+   sobre Porota u otros servicios.
+5. Verificar panel privado 8443/passkey, socios, comandos sintéticos,
+   on-demand START/STOP, identidad de SQLite y observadores postinstall;
+   sectores solo se declaran activos tras su migración lateral explícita.
+
+La autorización de continuidad no deroga ningún contrato host/API, token,
+anti-replay o limpieza; únicamente evita usar la caída de servicios externos
+y la falta de características optativas como veto del despliegue simulado.
+
+## #12 — Monitor privado observado de Queue-it/Boca (CODE_ONLY; 12/11/2026)
+
+La nueva ruta `/monitor/tokens` forma parte del **mismo panel 8443**,
+pero sus dos fuentes están desacopladas del navegador y entre sí.
+
+1. Con passkey del titular y `local-status:read`, la pantalla muestra estados
+   y referencias de socio/evento/sesión, **sin tokens, URL ni credenciales**.
+   Sin fuentes inyectadas muestra `Sin observaciones` (comportamiento normal).
+2. Solo con permiso adicional `simulation:write`, una acción consciente
+   `Mostrar completo` puede emitir un POST de origen exacto con CSRF y
+   operación de un solo uso. La página `no-store` permite copiar la URL y el
+   `queueittoken` originalmente observados **o**, en otro flujo, los campos
+   `token`/`refreshToken` genuinamente recibidos. Nunca se mezclan.
+3. La URL de Queue-it se **analiza exclusivamente en memoria**, para extraer
+   un parámetro ya suministrado; no se solicita, valida, envía ni navega.
+   El usuario ordenó expresamente esperar a que el sistema vuelva a estar
+   disponible antes de cualquier validación de URL/token.
+4. Para autenticación Boca, `BocaMemberAuthService` exige un socio ya
+   enrolado con contraseña sellada en SQLite, la clave correcta del vault y
+   un transporte externo autorizado **inyectado por código**. Sin dicho
+   transporte falla antes de abrir SQLite. Nunca genera un token ni asume un
+   endpoint. No hay botón que haga login real desde el panel.
+5. No iniciar el bot/Chromium ni cambiar la navegación legacy para probar
+   este monitor. No habilitar `verify=False`, TLS sin verificación ni salto
+   de fila. Las pruebas negativas #12 son únicamente offline y no prueban
+   tráfico, admisión o autenticación con el proveedor.
+
+**Pendiente para acreditar resultados reales externos (sin bloquear el código,
+su activación ni el despliegue R182):** revisión y evidencia de la
+procedencia del observador Queue-it, contrato/endpoint auténtico de Boca y
+respuestas reales, aprobación operativa y pruebas nuevas cuando el sitio esté
+disponible. La BD lateral `boca_sector_preferences.sqlite3` requiere migración
+protegida explícita; este PR no la ejecuta. El agente actual asume también
+el único deploy en [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417),
+por transferencia expresa del dueño; ningún chat anterior conserva un lease
+de host vigente sin evidencia nueva.
+Ver [handoff #12](handoffs/2026-11-12-issue12-functional-code-only.md).
+
 ## R181.2 — Secuencia de release y PAIR_UPGRADE protegido (11/11/2026 ART; NO_GO físico hasta recibos)
 
 La evidencia de CI del código R181 `1e702669245d5ff2509902d63724aae36ac900d2`
