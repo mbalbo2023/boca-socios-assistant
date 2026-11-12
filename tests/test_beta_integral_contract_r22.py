@@ -253,8 +253,13 @@ def test_selective_cleanup_both_outcomes_preserve_foreign_and_boca_state(
         delete_exact=delete_exact,
     )
     assert receipt.status == "ACCEPT" and receipt.known_residue == ()
-    assert {target.kind for target in touched} == {"container", "image", "network", "volume"}
+    # R244: IPC is a retained cross-upgrade resource, even when an old
+    # synthetic cleanup attempt originally owned its creation label. It may
+    # never be reclassified as disposable by current-attempt coincidence.
+    assert {target.kind for target in touched} == {"container", "image", "network"}
+    assert all(target.kind != "volume" for target in touched)
     after = probe()
     assert {container.ident for container in after.containers} == {ACTIVE_ID, FOREIGN_ID}
     assert {image.ident for image in after.images} == {ACTIVE_IMAGE, FOREIGN_IMAGE}
     assert "boca-socios_boca_data" in {volume.name for volume in after.volumes}
+    assert "boca-socios_boca_browser_ipc" in {volume.name for volume in after.volumes}

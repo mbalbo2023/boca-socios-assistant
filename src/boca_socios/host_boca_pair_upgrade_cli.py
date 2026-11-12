@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import zipfile
 from collections.abc import Sequence
 from dataclasses import asdict
 from typing import TYPE_CHECKING, get_args
@@ -50,6 +51,43 @@ _UPGRADE_FIELDS = frozenset(
 
 class PairUpgradeCliError(ValueError):
     """An untrusted or contaminated protected runner receipt."""
+
+
+class SuccessorPreflightIneligible(PairUpgradeCliError):
+    """No host operation has begun; successor adapter remains interlocked."""
+
+
+def _successor_preflight(
+    run: str, source: str, controller: str, worker: str, release_run: str
+) -> None:
+    """Validate the protected runner payload, never retry historical R179.
+
+    Activation requires a future reviewed wiring of protected same-lease
+    witness/cleanup V2. This route is intentionally PRE-EFFECT NO_GO even with
+    genuine release manifests, until those contracts can be proven end to end.
+    """
+    from boca_socios.host_boca_pair_upgrade_plan import CandidateRelease
+    from boca_socios.host_boca_upgrade_release_bridge import verify_bundled_release
+
+    if not _run_id(run) or not re.fullmatch(r"/proc/self/fd/[1-9][0-9]*", sys.argv[0]):
+        raise SuccessorPreflightIneligible("Boca successor protected memfd missing")
+    try:
+        with zipfile.ZipFile(sys.argv[0]) as archive:
+            proof = archive.read("release/runner-proof.json")
+            controller_manifest = archive.read("release/boca-release-manifest.json")
+            paired_manifest = archive.read("release/boca-browser-release-manifest.json")
+        verify_bundled_release(
+            proof,
+            controller_manifest,
+            paired_manifest,
+            CandidateRelease(source, release_run, controller, worker),
+        )
+    except Exception:
+        raise SuccessorPreflightIneligible("Boca successor release transport unverified") from None
+    # Neither a verified release nor a historical R189 summary supplies
+    # an installed-pair graph, an authenticated observation run, or an
+    # effectful stage/archive/R108 cleanup with same-lease durable receipt.
+    raise SuccessorPreflightIneligible("Boca successor transaction remains ineligible")
 
 
 def _run_id(value: object) -> bool:
@@ -211,17 +249,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0 if state == "VERIFIED_STABLE" else 3
     if len(args) == 6 and args[0] == "apply" and _run_id(args[1]):
-        # This branch is the only potential effectful entrypoint. Import its
-        # adapter lazily AFTER the runner independently pins same-main release.
+        # Existing single protected APPLY selector now goes exclusively to
+        # the successor preflight; the historical one-shot EXIT1 backend is
+        # never executed again, even when four form pins look plausible.
         from boca_socios import host_boca_pair_upgrade as upgrade
-        from boca_socios import host_boca_pair_upgrade_backend as backend
 
         try:
-            receipt = backend.apply(args[1], args[2], args[3], args[4], args[5])
-            raw = encode_upgrade(receipt)
+            _successor_preflight(args[1], args[2], args[3], args[4], args[5])
+            raise SuccessorPreflightIneligible("Boca successor lacks activated cleanup receipt")
+        except SuccessorPreflightIneligible:
+            raw = encode_upgrade(
+                upgrade.PairUpgradeReceipt(
+                    attempt_id=args[1],
+                    state="NO_GO",
+                    cleanup="INDETERMINATE",
+                    old_restored=False,
+                    commit_started=False,
+                    controller_id=None,
+                    worker_id=None,
+                    failed_phase="ATTEST",
+                )
+            )
         except Exception:
-            # The call may have reached the irreversible marker before losing
-            # SSH/FSYNC/terminal ACK. Never falsely advertise precommit.
+            # Any unknown exception remains indeterminate, never ACCEPT.
+            # Future activation must preserve post-marker uncertainty here.
             refused = upgrade.PairUpgradeReceipt(
                 attempt_id=args[1],
                 state="NO_GO",

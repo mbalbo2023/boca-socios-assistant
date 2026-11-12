@@ -116,7 +116,9 @@ def _zip_of_exact_size(size: int) -> bytes:
 
 
 def test_transport_caps_are_separate_from_full_cutover_and_recovery() -> None:
-    assert builder.MAX_SOURCE_BYTES == bootstrap.MAX_UNCOMPRESSED == 1_156_096
+    # R244 narrowly admits the new protected same-lease cleanup source only;
+    # worker preflight and historical recovery budgets remain independent.
+    assert builder.MAX_SOURCE_BYTES == bootstrap.MAX_UNCOMPRESSED == 1_158_144
     assert builder.MAX_ARCHIVE_BYTES == bootstrap.MAX_ZIP == 512_000
     assert builder.RECOVERY_MAX_SOURCE_BYTES == bootstrap.RECOVERY_MAX_UNCOMPRESSED == 256_000
     assert builder.RECOVERY_MAX_ARCHIVE_BYTES == bootstrap.RECOVERY_MAX_ZIP == 128_000

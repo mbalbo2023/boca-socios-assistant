@@ -102,6 +102,29 @@ def test_cli_refuses_extra_args_and_invalid_runs_without_any_host_call() -> None
     assert cli.main(["apply", RUN]) != 0
 
 
+def test_existing_apply_selector_cannot_reenter_historical_r179_migration(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from boca_socios import host_boca_pair_upgrade_backend as historical
+
+    monkeypatch.setattr(
+        historical,
+        "apply",
+        lambda *_args: pytest.fail("historical one-shot worker EXIT1 migration invoked"),
+    )
+    source = "a" * 40
+    controller = "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "1" * 64
+    worker = "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "2" * 64
+    assert cli.main(["apply", RUN, source, controller, worker, "44000000002"]) == 3
+    raw = capsys.readouterr().out.encode()
+    assert cli.verify_upgrade(raw, RUN) == raw
+    value = json.loads(raw.removeprefix(b"BOCA_PAIR_UPGRADE "))
+    assert value["state"] == "NO_GO"
+    assert value["commit_started"] is False
+    assert value["failed_phase"] == "ATTEST"
+    assert value["cleanup"] == "INDETERMINATE"
+
+
 @pytest.mark.parametrize("mode", ["verify-sqlite", "verify-upgrade"])
 def test_cli_runner_verifier_reads_exact_one_bounded_line(
     mode: str, monkeypatch: pytest.MonkeyPatch

@@ -11,6 +11,7 @@ import argparse
 import ast
 import hashlib
 import io
+import json
 import os
 import stat
 import tokenize
@@ -237,9 +238,24 @@ PAIR_UPGRADE_SOURCES = tuple(
             "src/boca_socios/host_on_demand_replace.py",
             "src/boca_socios/host_boca_pair_stage.py",
             "src/boca_socios/host_boca_pair_upgrade_backend.py",
+            "src/boca_socios/host_boca_pair_upgrade_reusable.py",
+            "src/boca_socios/host_boca_repeatable_journal.py",
+            "src/boca_socios/host_boca_upgrade_adapters.py",
+            "src/boca_socios/host_boca_upgrade_release_auth.py",
+            "src/boca_socios/host_boca_upgrade_release_bridge.py",
+            "src/boca_socios/host_boca_retained_resources.py",
+            "src/boca_socios/release_manifest.py",
+            "src/boca_socios/browser_release_manifest.py",
+            "src/boca_socios/release_run.py",
         )
     )
 )
+PAIR_UPGRADE_RELEASE_NAMES = (
+    "boca-release-manifest.json",
+    "boca-browser-release-manifest.json",
+    "runner-proof.json",
+)
+PAIR_UPGRADE_RELEASE_PLACEHOLDER = b'{"state":"NO_GO"}\n'
 PAIR_UPGRADE_MAIN = (
     "import sys\n"
     "if len(sys.argv) != 7 or sys.argv[1] != 'boca-pair-upgrade-apply':\n"
@@ -343,7 +359,11 @@ MAIN = (
 # Bound the full payload separately from the two reduced worker archives.
 # R178 adds only the source-pinned, run-bound Boca worker egress attestor.
 # +4 KiB preserves independent smaller bundles and the exact file allowlist.
-MAX_SOURCE_BYTES = 1_156_096
+# R244 protected same-lease cleanup API adds 2,767 source bytes. The already
+# reviewed full-Cutover comment-token compaction now yields 1,157,003 bytes;
+# this 1,158,144 cap leaves only 1,141 bytes' headroom. Other mode limits and
+# each entry allowlist remain unchanged (no new host capability or import).
+MAX_SOURCE_BYTES = 1_158_144
 MAX_ARCHIVE_BYTES = 512_000
 RECOVERY_MAX_SOURCE_BYTES = 256_000
 RECOVERY_MAX_ARCHIVE_BYTES = 128_000
@@ -413,6 +433,7 @@ def build(
     binding_observe: bool = False,
     sqlite_observe: bool = False,
     pair_upgrade: bool = False,
+    pair_upgrade_release_dir: Path | None = None,
     postcommit_finalize: bool = False,
 ) -> str:
     """Write one deterministic, explicitly allowlisted runner-only archive."""
@@ -434,6 +455,8 @@ def build(
             )
         )
         > 1
+        or pair_upgrade_release_dir is not None
+        and not pair_upgrade
     ):
         raise ValueError("Boca protected bundle modes must be exclusive")
     if postcommit_finalize:
@@ -443,6 +466,50 @@ def build(
         max_archive = POSTCOMMIT_FINALIZE_MAX_ARCHIVE_BYTES
     elif pair_upgrade:
         files: dict[str, bytes] = {"__main__.py": PAIR_UPGRADE_MAIN, **HOST_ONLY_INIT}
+        if pair_upgrade_release_dir is None:
+            # Offline/backward-compatible builds remain *ineligible*. They
+            # include no Github-authenticated artifact or transport proof.
+            release_files = {
+                name: PAIR_UPGRADE_RELEASE_PLACEHOLDER for name in PAIR_UPGRADE_RELEASE_NAMES
+            }
+        else:
+            from boca_socios.host_boca_pair_upgrade_plan import CandidateRelease
+            from boca_socios.host_boca_upgrade_release_bridge import (
+                _runner_input,
+                verify_bundled_release,
+            )
+
+            folder = pair_upgrade_release_dir
+            if folder.is_symlink() or set(item.name for item in folder.iterdir()) != set(
+                PAIR_UPGRADE_RELEASE_NAMES
+            ):
+                raise ValueError("Boca release evidence directory is not exact")
+            try:
+                release_files = {
+                    name: _runner_input(str(folder / name)) for name in PAIR_UPGRADE_RELEASE_NAMES
+                }
+            except Exception:
+                raise ValueError("Boca runner release files are not safe") from None
+            # The builder never upgrades a bare, form-derived digest to a
+            # privileged proof: this checks only local source-to-proof bytes.
+            # The runner's prior R242 REST authentication is mandatory.
+            try:
+                coordinates = json.loads(release_files["runner-proof.json"])
+                candidate = CandidateRelease(
+                    coordinates["source_sha"],
+                    coordinates["release_run_id"],
+                    coordinates["controller_ref"],
+                    coordinates["worker_ref"],
+                )
+                verify_bundled_release(
+                    release_files["runner-proof.json"],
+                    release_files["boca-release-manifest.json"],
+                    release_files["boca-browser-release-manifest.json"],
+                    candidate,
+                )
+            except Exception:
+                raise ValueError("Boca runner release evidence mismatch") from None
+        files.update({f"release/{name}": data for name, data in release_files.items()})
         sources: tuple[str, ...] = PAIR_UPGRADE_SOURCES
         max_source = PAIR_UPGRADE_MAX_SOURCE_BYTES
         max_archive = PAIR_UPGRADE_MAX_ARCHIVE_BYTES
@@ -595,13 +662,14 @@ def main() -> int:
     variant.add_argument("--binding-observe", action="store_true")
     variant.add_argument("--sqlite-observe", action="store_true")
     variant.add_argument("--pair-upgrade", action="store_true")
+    parser.add_argument("--pair-upgrade-release-dir", type=Path)
     variant.add_argument("--postcommit-finalize", action="store_true")
     parser.add_argument("repository_root", type=Path)
     parser.add_argument("runner_target", type=Path)
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, retained_observe=args.retained_observe, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, postcommit_finalize=args.postcommit_finalize)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, retained_observe=args.retained_observe, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, pair_upgrade_release_dir=args.pair_upgrade_release_dir, postcommit_finalize=args.postcommit_finalize)}"
     )
     return 0
 

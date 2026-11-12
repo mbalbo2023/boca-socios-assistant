@@ -143,7 +143,8 @@ CSP = (
     "form-action 'self'; connect-src 'self'; "
     f"style-src 'sha256-{_hash(STYLE)}'; "
     f"script-src 'sha256-{_hash(_LOGIN_SCRIPT)}' 'sha256-{_hash(_ACTIVITY_SCRIPT)}' "
-    f"'sha256-{_hash(private_token_view.COPY_SCRIPT)}'"
+    f"'sha256-{_hash(private_token_view.COPY_SCRIPT)}' "
+    f"'sha256-{_hash(private_token_view.LIVE_SCRIPT)}'"
 )
 
 
@@ -185,12 +186,21 @@ def token_monitor(
     csrf: str,
     operation_id: str | None,
     can_reveal: bool,
+    queue_connected: bool,
+    boca_connected: bool,
 ) -> bytes:
     return _page(
         "Monitor de tokens",
         private_token_view.overview(
-            queue, auth, csrf=csrf, operation_id=operation_id, can_reveal=can_reveal
+            queue,
+            auth,
+            csrf=csrf,
+            operation_id=operation_id,
+            can_reveal=can_reveal,
+            queue_connected=queue_connected,
+            boca_connected=boca_connected,
         ),
+        script=f"<script>{private_token_view.LIVE_SCRIPT}</script>",
     )
 
 

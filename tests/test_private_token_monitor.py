@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from html import unescape
 from pathlib import Path
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 from boca_socios.queue.pass_observation import QueuePassObservation
 from boca_socios.queue.private_pass_monitor import PrivateQueuePassMonitor
@@ -236,3 +238,192 @@ def test_monitor_refreshes_do_not_exhaust_the_owner_operation_budget(tmp_path: P
         code, _, page = _request(app, "/monitor/tokens", cookie=cookie)
         assert code == 200
         assert _form(page, "queue")["operation_id"] == first["operation_id"]
+
+
+def test_owner_token_live_snapshot_contains_metadata_but_no_bearer_material(
+    tmp_path: Path,
+) -> None:
+    queue, auth = _observations()
+    provider, key, credential = _passkey([0.0])
+    host = FakeHost()
+    app, _ = _app(tmp_path / "boca.sqlite3", provider, host, queue_monitor=queue, auth_monitor=auth)
+    app._now = lambda: AT
+    assert _request(app, "/monitor/tokens.json")[0] == 401
+    cookie = _login(app, key, credential)
+
+    code, headers, body = _request(app, "/monitor/tokens.json", cookie=cookie)
+    assert code == 200
+    assert headers["Content-Type"] == "application/json"
+    assert headers["Cache-Control"] == "no-store"
+    assert b"private" not in body and b"queueittoken" not in body
+    assert b"refreshToken" not in body and b"sandbox.invalid" not in body
+    snapshot = json.loads(body)
+    assert snapshot == {
+        "version": 1,
+        "queue_source": "IN_MEMORY",
+        "boca_source": "IN_MEMORY",
+        "queue_observations": 1,
+        "boca_observations": 1,
+        "last_observed_at": AT.isoformat(),
+        "observed_at": AT.isoformat(),
+    }
+    assert host.calls == []
+
+
+def test_unwired_token_monitor_is_honest_and_has_accessible_refresh_controls(
+    tmp_path: Path,
+) -> None:
+    provider, key, credential = _passkey([0.0])
+    app, _ = _app(tmp_path / "boca.sqlite3", provider, FakeHost())
+    cookie = _login(app, key, credential)
+
+    code, _, body = _request(app, "/monitor/tokens", cookie=cookie)
+    assert code == 200
+    assert b"Fuente Queue-it no conectada" in body
+    assert b"Fuente Boca no conectada" in body
+    assert b'id="token-monitor-refresh"' in body
+    assert b'id="token-monitor-live"' in body
+    assert b"/monitor/tokens.json" in body
+    assert b"5000" in body
+
+    code, _, raw = _request(app, "/monitor/tokens.json", cookie=cookie)
+    assert code == 200
+    snapshot = json.loads(raw)
+    assert snapshot["queue_source"] == "NOT_CONNECTED"
+    assert snapshot["boca_source"] == "NOT_CONNECTED"
+    assert snapshot["queue_observations"] == 0
+    assert snapshot["boca_observations"] == 0
+    assert snapshot["last_observed_at"] is None
+
+
+def test_live_monitor_reports_observation_and_check_times_in_utc(
+    tmp_path: Path,
+) -> None:
+    """A source's non-UTC offset must not become a misleading 'UTC' timestamp."""
+    queue = PrivateQueuePassMonitor()
+    queue.observe(
+        QueuePassObservation.observed(
+            member_id=MEMBER,
+            event_id=EVENT,
+            session_id=SESSION,
+            token="synthetic-queue-token",
+            target_url=None,
+            observed_at=datetime(2026, 11, 12, 12, tzinfo=timezone(timedelta(hours=2))),
+        )
+    )
+    auth = PrivateBocaAuthMonitor()
+    auth.observe(
+        BocaAuthObservation.from_provider_response(
+            member_id=MEMBER,
+            provider_payload=b'{"token":"synthetic-access","refreshToken":"synthetic-refresh"}',
+            observed_at=datetime(2026, 11, 12, 11, tzinfo=timezone(timedelta(hours=3))),
+        )
+    )
+    provider, key, credential = _passkey([0.0])
+    app, _ = _app(
+        tmp_path / "boca.sqlite3", provider, FakeHost(), queue_monitor=queue, auth_monitor=auth
+    )
+    app._now = lambda: datetime(2026, 11, 12, 8, tzinfo=timezone(-timedelta(hours=3)))
+    cookie = _login(app, key, credential)
+
+    code, _, body = _request(app, "/monitor/tokens.json", cookie=cookie)
+
+    assert code == 200
+    snapshot = json.loads(body)
+    assert snapshot["last_observed_at"] == "2026-11-12T10:00:00+00:00"
+    assert snapshot["observed_at"] == "2026-11-12T11:00:00+00:00"
+    assert b"synthetic-queue-token" not in body
+    assert b"synthetic-access" not in body
+
+
+def test_live_monitor_orders_dst_fold_by_actual_utc_instant(tmp_path: Path) -> None:
+    """Repeated wall-clock hours must not hide the chronologically newest event."""
+    tz = ZoneInfo("America/New_York")
+    queue = PrivateQueuePassMonitor()
+    queue.observe(
+        QueuePassObservation.observed(
+            member_id=MEMBER,
+            event_id=EVENT,
+            session_id=SESSION,
+            token="synthetic-queue-token",
+            target_url=None,
+            observed_at=datetime(2026, 11, 1, 1, 45, tzinfo=tz, fold=0),
+        )
+    )
+    auth = PrivateBocaAuthMonitor()
+    auth.observe(
+        BocaAuthObservation.from_provider_response(
+            member_id=MEMBER,
+            provider_payload=b'{"token":"synthetic-access","refreshToken":"synthetic-refresh"}',
+            observed_at=datetime(2026, 11, 1, 1, 30, tzinfo=tz, fold=1),
+        )
+    )
+    provider, key, credential = _passkey([0.0])
+    app, _ = _app(
+        tmp_path / "boca.sqlite3", provider, FakeHost(), queue_monitor=queue, auth_monitor=auth
+    )
+    cookie = _login(app, key, credential)
+
+    code, _, body = _request(app, "/monitor/tokens.json", cookie=cookie)
+
+    assert code == 200
+    assert json.loads(body)["last_observed_at"] == "2026-11-01T06:30:00+00:00"
+
+
+def test_each_token_reveal_button_has_a_distinct_voice_friendly_name(tmp_path: Path) -> None:
+    """Multiple identical 'Mostrar completo' buttons cannot be selected by voice."""
+    queue, auth = _observations()
+    queue.observe(
+        QueuePassObservation.observed(
+            member_id=MEMBER,
+            event_id=EVENT,
+            session_id="00000000-0000-0000-0000-000000000104",
+            token="second-synthetic-token",
+            target_url=None,
+            observed_at=AT,
+        )
+    )
+    provider, key, credential = _passkey([0.0])
+    app, _ = _app(
+        tmp_path / "boca.sqlite3", provider, FakeHost(), queue_monitor=queue, auth_monitor=auth
+    )
+    cookie = _login(app, key, credential)
+
+    code, _, page = _request(app, "/monitor/tokens", cookie=cookie)
+
+    assert code == 200
+    buttons = re.findall(rb'<button type="submit">([^<]+)</button>', page)
+    assert buttons == [
+        b"Mostrar completo: Queue-it 1",
+        b"Mostrar completo: Queue-it 2",
+        b"Mostrar completo: Boca 1",
+    ]
+    assert b"second-synthetic-token" not in page
+
+
+def test_zero_observations_do_not_claim_an_injected_source_is_disconnected(
+    tmp_path: Path,
+) -> None:
+    """A connected in-memory view may have zero records without losing its source."""
+    provider, key, credential = _passkey([0.0])
+    app, _ = _app(
+        tmp_path / "boca.sqlite3",
+        provider,
+        FakeHost(),
+        queue_monitor=PrivateQueuePassMonitor(),
+        auth_monitor=PrivateBocaAuthMonitor(),
+    )
+    cookie = _login(app, key, credential)
+
+    code, _, page = _request(app, "/monitor/tokens", cookie=cookie)
+    assert code == 200
+    assert b"Vista Queue-it en memoria disponible" in page
+    assert b"Vista Boca en memoria disponible" in page
+    assert b"Sin observaciones indica cero registros en esta vista" in page
+    assert b"no hay un origen aut" not in page
+
+    code, _, raw = _request(app, "/monitor/tokens.json", cookie=cookie)
+    assert code == 200
+    snapshot = json.loads(raw)
+    assert snapshot["queue_source"] == snapshot["boca_source"] == "IN_MEMORY"
+    assert snapshot["queue_observations"] == snapshot["boca_observations"] == 0
