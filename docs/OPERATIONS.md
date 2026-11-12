@@ -1,5 +1,28 @@
 # Safe operations — verified evidence and gated procedures
 
+## 12/11/2026 — RCA R185 postcommit, sin repetir upgrade
+
+El APPLY consolidado [#43217075287](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43217075287)
+sigue `NO_GO/RETIRE_OLD/INDETERMINATE`. El diagnóstico R183
+[#43224539079](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43224539079)
+encontró los dos CIDs nuevos y respaldo intacto; R184
+[#43227066989](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43227066989)
+identificó exactamente `WORKER_HEALTH_UNAVAILABLE`. No significa que el
+worker se haya iniciado o caído: está CREATED/PID0 y un contenedor creado
+puede carecer del objeto Docker `State.Health`.
+
+La corrección code-only R185 emplea un template que entrega `null` si
+`State.Health` no existe, sin debilitar los demás controles del observador
+de par. [RCA y secuencia](handoffs/2026-11-12-r185-created-worker-health-fix.md).
+Tras revisión, CI y merge del SHA exacto, ejecutar **una sola**
+`boca-postcommit-observe` READ_ONLY desde `main`, con
+`resource_budget=1.5cpu-1024m-192pids` y demás pins vacíos. Exigir
+`pair=PASS` con ambos CIDs, imágenes y estados inmutables antes de diseñar
+un finalizador postcommit separado y Boca-only. El archivo histórico
+NO_GO permanece, y no se repite `boca-pair-upgrade-apply` ni se limpia
+ningún Docker global. Los contratos Queue-it/Boca de #12 quedan incluidos
+sin validar ahora URLs con token ni activar reservas reales.
+
 ## 12/11/2026 — takeover #12/#417 y secuencia BETA consolidada
 
 La instrucción actual del dueño transfiere a este frente el ownership de la

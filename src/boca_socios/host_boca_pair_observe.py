@@ -132,6 +132,23 @@ def _fields_from_proven_boca(ident: str, field: str) -> object:
     """Only exact allowlisted public coordinates of an already-proven Boca ID."""
     if not _HEX.fullmatch(ident) or field not in _FIELDS:
         raise PairNoGo("unapproved Boca field")
+    if field == "State.Health.Status":
+        # An intentionally unstarted CREATED worker has no State.Health
+        # object yet. Docker's unguarded Go template would fail *before*
+        # the pair verifier can represent that state as `health=none`.
+        # This exact nullable projection is already used by the separate
+        # Boca worker inspector and never fetches other Docker fields.
+        try:
+            return json.loads(
+                cleanup._docker(
+                    "inspect",
+                    "--format",
+                    "{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}",
+                    ident,
+                )
+            )
+        except (ValueError, TypeError):
+            raise PairNoGo("Docker health unverified") from None
     if field in ("Image", "NetworkSettings.Networks", "Mounts"):
         return cleanup._inspect_field("container", ident, field)
     if field in ("State.Status", "State.Pid", "State.ExitCode"):
