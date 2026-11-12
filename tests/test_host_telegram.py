@@ -425,7 +425,8 @@ def test_workflow_requires_release_owner_marker_and_same_job_stop() -> None:
     )
     assert 'test "$BOCA_TELEGRAM_OWNER_READY" = ready' in workflow
     assert "telegram-test) pattern='^BOCA_TELEGRAM_TEST state=API_ACCEPTED" in workflow
-    assert "sys.stdout.write(_telegram_envelope(sys.argv[1]))" in workflow
+    runner = Path(".github/workflows/ci.yml").read_text()
+    assert "sys.stdout.write(_telegram_envelope(sys.argv[1]))" in runner
     assert "Mark Telegram host attempt before starting existing Boca daemon" in workflow
     assert "always() && startsWith(inputs.operation, 'telegram-')" in workflow
     assert (

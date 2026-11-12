@@ -14,9 +14,9 @@ BINDING = bytes.fromhex("b3" * 32)
 
 
 def test_disposable_first_deploy_initializes_owner_session_schema_with_owner_scope() -> None:
-    workflow = (
-        Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
-    ).read_text(encoding="utf-8")
+    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml").read_text(
+        encoding="utf-8"
+    )
     step = workflow.split(
         "- name: Prepare synthetic owner bundle and new-only BETA database on disposable runner",
         1,

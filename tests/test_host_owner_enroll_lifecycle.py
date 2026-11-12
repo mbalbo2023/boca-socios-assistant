@@ -333,9 +333,10 @@ def test_lifecycle_workflow_enforces_same_job_cleanup_before_daemon_stop() -> No
     assert "owner_capability_sha256:" in workflow
     assert "BOCA_OWNER_CAPABILITY_SHA256" in workflow
     assert "if: always() && inputs.operation == 'owner-enroll'" in workflow
-    assert "com.docker.network.bridge.enable_ip_masquerade=false" in workflow
-    assert "com.docker.network.bridge.enable_icc=true" in workflow
-    assert "com.docker.network.bridge.host_binding_ipv4=127.0.0.1" in workflow
+    runner = (Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml").read_text()
+    assert "com.docker.network.bridge.enable_ip_masquerade=false" in runner
+    assert "com.docker.network.bridge.enable_icc=true" in runner
+    assert "com.docker.network.bridge.host_binding_ipv4=127.0.0.1" in runner
     start = workflow.index("Start disposable owner enrollment only on Boca loopback 8443")
     wait = workflow.index("Wait only for one-use Chrome proof to reach offline staging")
     final_gate = workflow.index("Recheck current main after Chrome proof")

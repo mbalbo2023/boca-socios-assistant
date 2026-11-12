@@ -4,6 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/release-image.yml"
+CI = ROOT / ".github/workflows/ci.yml"
 
 
 def test_release_candidate_contains_safe_ipc_server_entrypoint() -> None:
@@ -15,13 +16,14 @@ def test_release_candidate_contains_safe_ipc_server_entrypoint() -> None:
 
 def test_browser_pr_validation_builds_scans_but_never_publishes() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert "on:\n  pull_request:\n  workflow_dispatch:" in workflow
+    assert "on:\n  workflow_dispatch:" in workflow
+    assert "  pull_request:" not in workflow
     assert "  push:" not in workflow
     assert "permissions:\n  contents: read" in workflow
-    preview = workflow.split("  pr-validation:\n", 1)[1].split("  publish:\n", 1)[0]
-    assert "github.event_name == 'pull_request'" in preview
-    assert "Build one local controller image" in preview
-    assert "Build one local browser worker image" in preview
+    preview = CI.read_text(encoding="utf-8").split("  image:\n", 1)[1]
+    assert "  pull_request:" in CI.read_text(encoding="utf-8")
+    assert "Build isolated image without deploying" in preview
+    assert "Build isolated Chromium worker without deploying" in preview
     assert "docker build --file Dockerfile.browser" in preview
     assert "Verify browser source revision label" in preview
     assert "org.opencontainers.image.revision=$SOURCE_SHA" in preview
@@ -43,11 +45,11 @@ def test_browser_pr_validation_builds_scans_but_never_publishes() -> None:
 def test_browser_pr_validates_real_offline_chromium_under_worker_isolation() -> None:
     """An image build is not proof Chromium launches under the reviewed worker cgroups."""
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    preview = workflow.split("  pr-validation:\n", 1)[1].split("  publish:\n", 1)[0]
+    preview = CI.read_text(encoding="utf-8").split("  image:\n", 1)[1]
     marker = "      - name: Verify isolated Chromium launch offline without owner modules\n"
     assert preview.count(marker) == 1
     offline = preview.split(marker, 1)[1].split("      - name:", 1)[0]
-    assert "run: &boca_offline_chromium_smoke |" in offline
+    assert "run: |" in offline
     assert "set -euo pipefail" in offline
     assert "timeout 60s docker run --rm" in offline
     for boundary in (
@@ -87,12 +89,12 @@ def test_browser_pr_validates_real_offline_chromium_under_worker_isolation() -> 
 def test_publish_smokes_its_final_browser_image_with_the_exact_pr_offline_probe() -> None:
     """PR's local image cannot attest a separately rebuilt protected release image."""
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    preview = workflow.split("  pr-validation:\n", 1)[1].split("  publish:\n", 1)[0]
+    preview = CI.read_text(encoding="utf-8").split("  image:\n", 1)[1]
     publish = workflow.split("  publish:\n", 1)[1]
     pr_step = preview.split(
         "      - name: Verify isolated Chromium launch offline without owner modules\n", 1
     )[1].split("      - name:", 1)[0]
-    assert "run: &boca_offline_chromium_smoke |" in pr_step
+    assert "run: |" in pr_step
 
     marker = "      - name: Verify final browser image with the exact offline Chromium smoke\n"
     assert publish.count(marker) == 1
@@ -101,7 +103,10 @@ def test_publish_smokes_its_final_browser_image_with_the_exact_pr_offline_probe(
         "IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}"
         in final_step
     )
-    assert "run: *boca_offline_chromium_smoke" in final_step
+    assert (
+        final_step.split("        run: |", 1)[1].strip()
+        == pr_step.split("        run: |", 1)[1].strip()
+    )
     assert (
         publish.index("Verify browser source revision label")
         < publish.index("Require the reviewed browser IPC worker command")
@@ -193,7 +198,7 @@ def test_controller_v1_manifest_preserved_and_browser_companion_uploaded_only_af
 
 def test_every_release_image_scan_blocks_high_critical_vulnerabilities() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    preview = workflow.split("  pr-validation:\n", 1)[1].split("  publish:\n", 1)[0]
+    preview = CI.read_text(encoding="utf-8").split("  image:\n", 1)[1]
     publish = workflow.split("  publish:\n", 1)[1]
     for section, controller_name in (
         (preview, "Scan before any image publication"),

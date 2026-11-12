@@ -12,13 +12,6 @@ on:
           - http-status
           - chromium-one-get
           - chromium-capture-25
-  pull_request:
-    paths:
-      - .github/workflows/boca-source-status.yml
-      - scripts/observe_public_home.py
-      - scripts/public_observer_*.py
-      - scripts/run_public_observer_isolated.sh
-      - tests/test_public_observer*.py
 
 permissions:
   contents: read
@@ -70,7 +63,7 @@ jobs:
 
   browser-isolation:
     name: public-browser-isolation
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.mode == 'chromium-one-get' || inputs.mode == 'chromium-capture-25') && github.ref == 'refs/heads/main' && github.repository == 'mbalbo2023/boca-socios-assistant' && github.actor == 'mbalbo2023')
+    if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'chromium-one-get' || inputs.mode == 'chromium-capture-25') && github.ref == 'refs/heads/main' && github.repository == 'mbalbo2023/boca-socios-assistant' && github.actor == 'mbalbo2023'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -84,11 +77,6 @@ jobs:
         env:
           BOCA_OBSERVER_IMAGE: boca-observer:${{ github.sha }}
         run: docker build --file Dockerfile.browser --label "org.boca.public-image=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --tag "$BOCA_OBSERVER_IMAGE" .
-      - name: Verify OS denial and Chromium sandbox without a public request
-        if: github.event_name == 'pull_request'
-        env:
-          BOCA_OBSERVER_IMAGE: boca-observer:${{ github.sha }}
-        run: timeout --signal=TERM --kill-after=10s 120s bash scripts/run_public_observer_isolated.sh --offline-check
       - name: Observe one initial public document after OS denial probes
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'chromium-one-get'
         env:

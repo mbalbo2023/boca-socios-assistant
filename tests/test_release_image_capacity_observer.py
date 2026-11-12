@@ -6,12 +6,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/release-image.yml"
+CI = WORKFLOW.with_name("ci.yml")
 DIAGNOSTIC = ROOT / ".github/workflows/boca-playwright-offline-diagnostic.yml"
 
 
 def _measurement_step() -> str:
-    workflow = WORKFLOW.read_text(encoding="utf-8")
-    preview = workflow.split("  pr-validation:\n", 1)[1].split("  publish:\n", 1)[0]
+    preview = CI.read_text(encoding="utf-8").split("  image:\n", 1)[1]
     marker = "      - name: Measure disposable dual-image logical and archive bytes\n"
     assert preview.count(marker) == 1
     assert preview.index("Verify browser source revision label") < preview.index(marker)
@@ -21,8 +21,8 @@ def _measurement_step() -> str:
 
 def test_pr_only_size_step_reads_exact_local_images_with_no_host_or_publish() -> None:
     step = _measurement_step()
-    assert "CONTROLLER_IMAGE: boca-release-validation:${{ github.sha }}" in step
-    assert "BROWSER_IMAGE: boca-browser-release-validation:${{ github.sha }}" in step
+    assert "CONTROLLER_IMAGE: boca-socios-ci:${{ github.sha }}" in step
+    assert "BROWSER_IMAGE: boca-browser-ci:${{ github.sha }}" in step
     assert "docker image inspect --format '{{.Size}}' \"$CONTROLLER_IMAGE\"" in step
     assert "docker image inspect --format '{{.Size}}' \"$BROWSER_IMAGE\"" in step
     assert 'docker image save "$CONTROLLER_IMAGE" "$BROWSER_IMAGE"' in step
@@ -55,7 +55,7 @@ def test_size_step_remains_outside_protected_publisher() -> None:
 
 def test_full_browser_image_proves_chromium_firefox_webkit_without_blackbox() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    preview = workflow.split("  pr-validation:\n", 1)[1].split("  publish:\n", 1)[0]
+    preview = CI.read_text(encoding="utf-8").split("  image:\n", 1)[1]
     marker = "      - name: Verify all full Playwright browser bundles without blackbox execution\n"
     assert preview.count(marker) == 1
     verify = preview.split(marker, 1)[1].split("      - name:", 1)[0]
@@ -134,8 +134,8 @@ def test_three_engine_launches_are_independent_opt_in_offline_containers() -> No
 def test_diagnostic_is_not_a_release_or_cutover_gate() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     assert "Probe each Playwright engine in a separate offline process" not in workflow
-    assert "Verify isolated Chromium launch offline" in workflow
-    assert "Verify all full Playwright browser bundles" in workflow
+    assert "Verify isolated Chromium launch offline" in CI.read_text(encoding="utf-8")
+    assert "Verify all full Playwright browser bundles" in CI.read_text(encoding="utf-8")
     assert "publish-reviewed-image" in workflow
     diagnostic = DIAGNOSTIC.read_text(encoding="utf-8")
     assert "--tmpfs /home/boca-browser:rw,noexec,nosuid,size=16m,uid=10002,gid=10002,mode=0700" in (

@@ -1,7 +1,6 @@
 name: Boca image release
 
 on:
-  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -12,124 +11,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  pr-validation:
-    if: github.event_name == 'pull_request'
-    name: release-image-pr-validation
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    steps:
-      - name: Checkout merge candidate without persisted credentials
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Build one local controller image
-        env:
-          SOURCE_SHA: ${{ github.sha }}
-          IMAGE: boca-release-validation:${{ github.sha }}
-        run: |
-          docker build \
-            --label "org.opencontainers.image.source=https://github.com/mbalbo2023/boca-socios-assistant" \
-            --label "org.opencontainers.image.revision=$SOURCE_SHA" \
-            --tag "$IMAGE" .
-      - name: Verify source revision label
-        env:
-          SOURCE_SHA: ${{ github.sha }}
-          IMAGE: boca-release-validation:${{ github.sha }}
-        run: |
-          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
-          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' "$IMAGE")" = "https://github.com/mbalbo2023/boca-socios-assistant"
-      - name: Build one local browser worker image
-        env:
-          SOURCE_SHA: ${{ github.sha }}
-          IMAGE: boca-browser-release-validation:${{ github.sha }}
-        run: |
-          docker build --file Dockerfile.browser \
-            --label "org.opencontainers.image.source=https://github.com/mbalbo2023/boca-socios-assistant" \
-            --label "org.opencontainers.image.revision=$SOURCE_SHA" \
-            --tag "$IMAGE" .
-      - name: Verify browser source revision label
-        env:
-          SOURCE_SHA: ${{ github.sha }}
-          IMAGE: boca-browser-release-validation:${{ github.sha }}
-        run: |
-          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
-          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' "$IMAGE")" = "https://github.com/mbalbo2023/boca-socios-assistant"
-      - name: Measure disposable dual-image logical and archive bytes
-        env:
-          CONTROLLER_IMAGE: boca-release-validation:${{ github.sha }}
-          BROWSER_IMAGE: boca-browser-release-validation:${{ github.sha }}
-        run: |
-          set -euo pipefail
-          # Disposable PR runner only. Size is Docker's logical image size;
-          # the shared tar is uncompressed. Neither is a droplet pull delta.
-          controller_size="$(docker image inspect --format '{{.Size}}' "$CONTROLLER_IMAGE")"
-          browser_size="$(docker image inspect --format '{{.Size}}' "$BROWSER_IMAGE")"
-          [[ "$controller_size" =~ ^[1-9][0-9]{0,18}$ ]]
-          [[ "$browser_size" =~ ^[1-9][0-9]{0,18}$ ]]
-          total_logical_bytes=$((controller_size + browser_size))
-          test "$total_logical_bytes" -gt "$controller_size"
-          pair_tar_bytes="$(docker image save "$CONTROLLER_IMAGE" "$BROWSER_IMAGE" | wc -c)"
-          pair_tar_bytes="${pair_tar_bytes//[[:space:]]/}"
-          [[ "$pair_tar_bytes" =~ ^[1-9][0-9]{0,18}$ ]]
-          printf 'BOCA_PR_DUAL_IMAGE_CAPACITY source_sha=%s controller_logical_bytes=%s browser_logical_bytes=%s total_logical_bytes=%s pair_tar_bytes=%s runner=DISPOSABLE host_delta=UNVERIFIED\n' \
-            "$GITHUB_SHA" "$controller_size" "$browser_size" "$total_logical_bytes" "$pair_tar_bytes" \
-            | tee -a "$GITHUB_STEP_SUMMARY"
-      - name: Verify all full Playwright browser bundles without blackbox execution
-        env:
-          IMAGE: boca-browser-release-validation:${{ github.sha }}
-        run: |
-          set -euo pipefail
-          timeout 45s docker run --rm --network none \
-            --user 10002:10002 --read-only \
-            --cap-drop ALL --security-opt no-new-privileges:true \
-            --security-opt "seccomp=$GITHUB_WORKSPACE/docker/seccomp_profile.json" \
-            --cgroupns private --ipc private --pids-limit 64 --memory 256m --cpus 0.5 \
-            --tmpfs /tmp:rw,noexec,nosuid,size=32m \
-            --entrypoint python "$IMAGE" -c '
-          from pathlib import Path
-          from playwright.sync_api import sync_playwright
-          with sync_playwright() as api:
-              for name in ("chromium", "firefox", "webkit"):
-                  if not Path(getattr(api, name).executable_path).is_file():
-                      raise SystemExit(f"missing_browser_{name}")
-          print("BOCA_FULL_PLAYWRIGHT_BUNDLES chromium=PRESENT firefox=PRESENT webkit=PRESENT offline=true blackbox=UNTOUCHED")
-          '
-      - name: Require the reviewed browser IPC worker command
-        env:
-          IMAGE: boca-browser-release-validation:${{ github.sha }}
-        run: >-
-          test "$(docker image inspect --format '{{json .Config.Cmd}}' "$IMAGE")"
-          = '["python","-m","boca_socios.browser.ipc_server"]'
-      - name: Verify isolated Chromium launch offline without owner modules
-        env:
-          IMAGE: boca-browser-release-validation:${{ github.sha }}
-        run: &boca_offline_chromium_smoke |
-          set -euo pipefail
-          # Both probes run with the exact same disposable network-none/cgroup
-          # boundary. The second exercises invented about:blank DOM only;
-          # neither imports owner synthetic.py/ipc_worker.py BLACKBOX modules
-          # nor contacts a live site.
-          run_offline_browser() {
-            timeout 60s docker run --rm \
-              --network none \
-              --user 10002:10002 \
-              --read-only \
-              --cap-drop ALL --cap-add SYS_CHROOT \
-              --security-opt no-new-privileges:true \
-              --security-opt "seccomp=$GITHUB_WORKSPACE/docker/seccomp_profile.json" \
-              --cgroupns private --ipc private \
-              --pids-limit 128 --memory 768m --cpus 1.0 --shm-size 64m \
-              --tmpfs /tmp:rw,noexec,nosuid,size=32m \
-              --tmpfs /home/boca-browser:rw,noexec,nosuid,size=16m \
-              --entrypoint python "$IMAGE" "$@"
-          }
-          run_offline_browser scripts/verify_chromium_worker.py
-          run_offline_browser -m boca_socios.browser.offline_fixture --smoke
-      - name: Scan before any image publication
-        run: bash scripts/trivy_scan_image.sh "boca-release-validation:$GITHUB_SHA"
-      - name: Scan browser image before any publication
-        run: bash scripts/trivy_scan_image.sh "boca-browser-release-validation:$GITHUB_SHA"
-
   publish:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'mbalbo2023/boca-socios-assistant' && github.actor == 'mbalbo2023'
     name: publish-reviewed-image
@@ -206,7 +87,28 @@ jobs:
       - name: Verify final browser image with the exact offline Chromium smoke
         env:
           IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}
-        run: *boca_offline_chromium_smoke
+        run: |
+          set -euo pipefail
+          # Both probes run with the exact same disposable network-none/cgroup
+          # boundary. The second exercises invented about:blank DOM only;
+          # neither imports owner synthetic.py/ipc_worker.py BLACKBOX modules
+          # nor contacts a live site.
+          run_offline_browser() {
+            timeout 60s docker run --rm \
+              --network none \
+              --user 10002:10002 \
+              --read-only \
+              --cap-drop ALL --cap-add SYS_CHROOT \
+              --security-opt no-new-privileges:true \
+              --security-opt "seccomp=$GITHUB_WORKSPACE/docker/seccomp_profile.json" \
+              --cgroupns private --ipc private \
+              --pids-limit 128 --memory 768m --cpus 1.0 --shm-size 64m \
+              --tmpfs /tmp:rw,noexec,nosuid,size=32m \
+              --tmpfs /home/boca-browser:rw,noexec,nosuid,size=16m \
+              --entrypoint python "$IMAGE" "$@"
+          }
+          run_offline_browser scripts/verify_chromium_worker.py
+          run_offline_browser -m boca_socios.browser.offline_fixture --smoke
       - name: Scan the image that will be published
         run: bash scripts/trivy_scan_image.sh "ghcr.io/mbalbo2023/boca-socios-assistant:sha-$GITHUB_SHA"
       - name: Scan browser image before any publication

@@ -19,7 +19,8 @@ def _workflow() -> str:
 
 
 def _step(name: str) -> str:
-    return _workflow().split(f"      - name: {name}\n", 1)[1].split("      - name:", 1)[0]
+    source = _workflow() + WORKFLOW.with_name("ci.yml").read_text(encoding="utf-8")
+    return source.split(f"      - name: {name}\n", 1)[1].split("      - name:", 1)[0]
 
 
 def test_browser_option_is_separately_gated_without_weakening_legacy_operations() -> None:
@@ -354,7 +355,7 @@ def test_failed_browser_cleanup_script_attempts_one_bounded_ssh_only(
 
 def test_browser_ci_covers_new_gate_and_legacy_contract_separately() -> None:
     workflow = _workflow()
-    validation = workflow.split("  pr-validation:\n", 1)[1].split("  pr-runtime-smoke:\n", 1)[0]
+    validation = workflow.split("  pr-validation:\n", 1)[1].split("  deploy:\n", 1)[0]
     assert "tests/test_browser_ipc_workflow.py" in validation
     assert "tests/test_beta_browser_deploy_contract.py" in validation
     assert "tests/test_host_browser_ipc_file_stage.py" in validation
@@ -370,13 +371,12 @@ def test_browser_ci_covers_new_gate_and_legacy_contract_separately() -> None:
 
 
 def test_pr_runner_disposable_docker_probe_checks_real_inspect_defaults() -> None:
-    workflow = _workflow()
     smoke = _step("Verify disposable browser IPC one-shot Docker inspect and auto-remove defaults")
-    runner = workflow.split("  pr-runtime-smoke:\n", 1)[1].split("  deploy:\n", 1)[0]
+    runner = WORKFLOW.with_name("ci.yml").read_text(encoding="utf-8").split("  image:\n", 1)[1]
     assert (
         "Verify disposable browser IPC one-shot Docker inspect and auto-remove defaults" in runner
     )
-    assert runner.index("Build local simulation image only") < runner.index(
+    assert runner.index("Build isolated image without deploying") < runner.index(
         "Verify disposable browser IPC one-shot Docker inspect"
     )
     for proof in (

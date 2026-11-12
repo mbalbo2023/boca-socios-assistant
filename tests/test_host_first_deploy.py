@@ -1460,10 +1460,8 @@ def test_only_exact_boca_network_id_is_inspected(
 
 
 def test_runner_smoke_probes_effective_runtime_in_disposable_container() -> None:
-    workflow = (
-        Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
-    ).read_text()
-    smoke = workflow.split("  pr-runtime-smoke:\n", 1)[1].split("  deploy:\n", 1)[0]
+    workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml").read_text()
+    smoke = workflow.split("  image:\n", 1)[1]
     assert "docker inspect --format '{{json .NetworkSettings}}' \"$container\"" in smoke
     assert "docker network inspect --format '{{json .}}' \"$network_id\"" in smoke
     assert 'n["Id"] == nid' in smoke

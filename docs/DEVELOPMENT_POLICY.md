@@ -147,6 +147,22 @@ Do not confuse remote GO wait, dispatch latency and container startup time.
 
 ## Branch protection contract
 
+### Single-pair CI execution (ADR0239)
+
+The image-dependent PR checks execute together in `CI / image-build`, using
+one locally built controller/browser pair. This includes both Trivy scans,
+source/revision labels, offline Chromium, image-size evidence and disposable
+deployment/lifecycle smoke. The existing required quality and image contexts
+are unchanged; no docs-only filter is introduced. The superseded release,
+image-security, first-deploy-runtime-smoke and public-browser-isolation PR contexts are retired, not
+replaced with green placeholders. Verify and record the actual branch rules
+before merging this migration. The protected manual release still independently
+builds, verifies and scans both published images; it consumes no PR artifacts
+or caches. Source checks do not prove hosted Docker success or physical deploy.
+The public-observer isolation probe remains PR-only and offline in the shared
+image job. Only its offline PR mode permits attempt 2; manual public observation
+and protected release/deployment keep their first-attempt restrictions.
+
 - Default branch: main; no direct pushes, branch deletion or force-pushes.
 - Require a PR and a recorded agent technical review; no human approving
   review or code-owner approval is required by the ruleset. This does not
