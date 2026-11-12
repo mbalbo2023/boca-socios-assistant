@@ -17,6 +17,7 @@ from boca_socios.host_on_demand_lifecycle import OnDemandInstallation
 
 OLD = "42806447101"
 NEW = "43080012345"
+RECOVERY = "43299999123"
 
 
 @pytest.fixture
@@ -303,3 +304,54 @@ def test_commit_requires_new_pair_evidence_before_deleting_old_archive(
         replace.commit_binding(original, successor, NEW, lease)
         assert not parked.exists()
         assert systemd["active"] is False
+
+
+def test_postcommit_binding_uses_fresh_recovery_lease_not_failed_incident(
+    installation: tuple[OnDemandInstallation, Path, dict[str, object]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A new protected run must not impersonate the original APPLY lease."""
+    from dataclasses import replace as dataclass_replace
+
+    original, home, _ = installation
+    successor = dataclass_replace(
+        original,
+        installation_run_id=NEW,
+        source_sha="a" * 40,
+        controller_id="3" * 64,
+        worker_id="4" * 64,
+        pair=ReviewedInstalledPair(NEW, "5" * 64, "6" * 64),
+    )
+    with cleanup.protected_boca_job_lease(NEW) as original_lease:
+        parked = replace.park_binding(original, NEW, original_lease)
+    new_root = home / ".boca-on-demand"
+    new_root.mkdir(mode=0o700)
+    (new_root / "attempt").write_text(NEW + "\n")
+    (new_root / "attempt").chmod(0o600)
+    monkeypatch.setattr(service, "_verified_installation", lambda h: successor)
+    monkeypatch.setattr(replace, "_new_pair_only", lambda item: None)
+
+    with cleanup.protected_boca_job_lease(RECOVERY) as recovery_lease:
+        with pytest.raises(cleanup.CleanupError):
+            replace.commit_binding(original, successor, NEW, recovery_lease)
+        assert (parked / "handler.pyz").exists()
+        replace.commit_binding_postcommit(original, successor, NEW, RECOVERY, recovery_lease)
+    assert not parked.exists()
+    assert not (home / f".boca-on-demand-upgrade-{NEW}").exists()
+
+
+def test_postcommit_binding_rejects_same_run_or_other_lease_before_unlink(
+    installation: tuple[OnDemandInstallation, Path, dict[str, object]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unfenced recovery run cannot retire even known Boca archived files."""
+    original, home, _ = installation
+    with cleanup.protected_boca_job_lease(NEW) as old_lease:
+        parked = replace.park_binding(original, NEW, old_lease)
+        with pytest.raises((cleanup.CleanupError, service.ControlRefused)):
+            replace.commit_binding_postcommit(original, original, NEW, NEW, old_lease)
+        assert (parked / "handler.pyz").exists()
+    with cleanup.protected_boca_job_lease(RECOVERY) as fresh_lease:
+        with pytest.raises((cleanup.CleanupError, service.ControlRefused)):
+            replace.commit_binding_postcommit(original, original, NEW, "9999999999", fresh_lease)
+        assert (parked / "handler.pyz").exists()

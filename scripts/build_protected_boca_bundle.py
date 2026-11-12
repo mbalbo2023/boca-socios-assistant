@@ -238,6 +238,26 @@ PAIR_UPGRADE_MAIN = (
     "from boca_socios.host_boca_pair_upgrade_cli import main as cli\n"
     "raise SystemExit(cli(['apply',*sys.argv[2:]]))\n"
 ).encode("ascii")
+POSTCOMMIT_FINALIZE_SOURCES = tuple(
+    dict.fromkeys(
+        (
+            *SQLITE_OBSERVE_SOURCES,
+            "src/boca_socios/host_boca_pair_postcommit.py",
+            "src/boca_socios/host_boca_pair_postcommit_finalize.py",
+            "src/boca_socios/host_on_demand_replace.py",
+            "src/boca_socios/host_cutover_stage.py",
+            "src/boca_socios/host_boca_pair_upgrade.py",
+            "src/boca_socios/host_boca_pair_upgrade_plan.py",
+        )
+    )
+)
+POSTCOMMIT_FINALIZE_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 3 or sys.argv[1] != 'boca-postcommit-finalize':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_boca_pair_postcommit_finalize import main as finalize\n"
+    "raise SystemExit(finalize(['host',sys.argv[2]]))\n"
+).encode("ascii")
 PREFLIGHT_MAIN = (
     "import sys\n"
     "if len(sys.argv) != 9 or sys.argv[1] != 'cutover-worker-preflight':\n"
@@ -330,6 +350,8 @@ SQLITE_OBSERVE_MAX_SOURCE_BYTES = 950_000
 SQLITE_OBSERVE_MAX_ARCHIVE_BYTES = 340_000
 PAIR_UPGRADE_MAX_SOURCE_BYTES = 1_300_000
 PAIR_UPGRADE_MAX_ARCHIVE_BYTES = 480_000
+POSTCOMMIT_FINALIZE_MAX_SOURCE_BYTES = 1_100_000
+POSTCOMMIT_FINALIZE_MAX_ARCHIVE_BYTES = 400_000
 PREFLIGHT_MAX_SOURCE_BYTES = 520_000
 PREFLIGHT_MAX_ARCHIVE_BYTES = 128_000
 W1_MAX_SOURCE_BYTES = 900_000
@@ -381,6 +403,7 @@ def build(
     binding_observe: bool = False,
     sqlite_observe: bool = False,
     pair_upgrade: bool = False,
+    postcommit_finalize: bool = False,
 ) -> str:
     """Write one deterministic, explicitly allowlisted runner-only archive."""
     if (
@@ -396,12 +419,18 @@ def build(
                 binding_observe,
                 sqlite_observe,
                 pair_upgrade,
+                postcommit_finalize,
             )
         )
         > 1
     ):
         raise ValueError("Boca protected bundle modes must be exclusive")
-    if pair_upgrade:
+    if postcommit_finalize:
+        files: dict[str, bytes] = {"__main__.py": POSTCOMMIT_FINALIZE_MAIN, **HOST_ONLY_INIT}
+        sources: tuple[str, ...] = POSTCOMMIT_FINALIZE_SOURCES
+        max_source = POSTCOMMIT_FINALIZE_MAX_SOURCE_BYTES
+        max_archive = POSTCOMMIT_FINALIZE_MAX_ARCHIVE_BYTES
+    elif pair_upgrade:
         files: dict[str, bytes] = {"__main__.py": PAIR_UPGRADE_MAIN, **HOST_ONLY_INIT}
         sources: tuple[str, ...] = PAIR_UPGRADE_SOURCES
         max_source = PAIR_UPGRADE_MAX_SOURCE_BYTES
@@ -474,6 +503,7 @@ def build(
             binding_observe,
             sqlite_observe,
             pair_upgrade,
+            postcommit_finalize,
         )
     )
     for rel in sources:
@@ -547,12 +577,13 @@ def main() -> int:
     variant.add_argument("--binding-observe", action="store_true")
     variant.add_argument("--sqlite-observe", action="store_true")
     variant.add_argument("--pair-upgrade", action="store_true")
+    variant.add_argument("--postcommit-finalize", action="store_true")
     parser.add_argument("repository_root", type=Path)
     parser.add_argument("runner_target", type=Path)
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, postcommit_finalize=args.postcommit_finalize)}"
     )
     return 0
 

@@ -241,13 +241,39 @@ def commit_binding(
 ) -> None:
     """After BOTH old CIDs are durably retired, discard parked Boca-only bytes."""
     _verify_lease(lease, new_attempt)
+    _commit_binding_verified(old, new, new_attempt)
+
+
+def commit_binding_postcommit(
+    old: OnDemandInstallation,
+    new: OnDemandInstallation,
+    incident_attempt: str,
+    recovery_run_id: str,
+    lease: BocaJobLease,
+) -> None:
+    """Retire a proven historical archive under a *new* authenticated job lease.
+
+    The fixed-incident owner must establish an O_EXCL one-shot recovery claim
+    and verify the original journal before invoking this narrow primitive.
+    Never forge the old lease or substitute the recovery run for the incident.
+    """
+    if recovery_run_id == incident_attempt:
+        raise service._refuse()
+    _verify_lease(lease, recovery_run_id)
+    _commit_binding_verified(old, new, incident_attempt)
+
+
+def _commit_binding_verified(
+    old: OnDemandInstallation, new: OnDemandInstallation, incident_attempt: str
+) -> None:
+    """Shared exact-file retired binding proof; caller verifies its own lease."""
     home = service._home()
-    parked, marker = _intended(home, old, new_attempt)
+    parked, marker = _intended(home, old, incident_attempt)
     if not service._present(parked):
         raise service._refuse()
     units = _historic(parked, home, old)
-    service._owned(home, new_attempt)
-    if new.installation_run_id != new_attempt or service._verified_installation(home) != new:
+    service._owned(home, incident_attempt)
+    if new.installation_run_id != incident_attempt or service._verified_installation(home) != new:
         raise service._refuse()
     _new_pair_only(new)
     if service._present(parked / "socket" / service._SOCKET_NAME):

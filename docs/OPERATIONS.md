@@ -1,5 +1,29 @@
 # Safe operations — verified evidence and gated procedures
 
+## 12/11/2026 — R186: finalización postcommit sin segundo upgrade
+
+Los observadores [#43229793525](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43229793525),
+[#43230025523](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43230025523)
+y [#43230212167](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43230212167)
+certifican par, binding/systemd e inode SQLite tras R185. El APPLY original
+[#43217075287](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43217075287)
+sigue `NO_GO/RETIRE_OLD/INDETERMINATE`, y jamás debe repetirse ni revertirse.
+
+El cierre R186 usa **el workflow protegido existente** `Boca first deploy`,
+opción manual `boca-postcommit-finalize`, sin pins, con
+`service=controller` y presupuesto normal. Primero CI exact-SHA, PR técnico,
+merge, cero PR abiertos y comprobación del run de aplicación y las tres
+lecturas de solo observación. Luego **un solo despacho** de esa opción,
+que prueba journal, par/binding/SQLite y archivo, crea claim irreversible,
+retira exclusivamente los archivos históricos Boca, realiza postflight y
+publica `BOCA_POSTCOMMIT_FINALIZE`. Un fallo o ACK incierto implica RCA
+READ_ONLY sin repetir ni forzar borrado. [Detalle R186](handoffs/2026-11-12-r186-postcommit-finalizer.md).
+
+Para declarar instalación BETA se necesita además aceptación del panel
+privado/passkey, control bajo demanda e IPC. Queue-it/Boca con URL/token
+real no se prueba todavía; la indisponibilidad externa no bloquea el
+código #12. Ticket/legacy continúan `SIMULATION_ONLY` y detenidos.
+
 ## 12/11/2026 — RCA R185 postcommit, sin repetir upgrade
 
 El APPLY consolidado [#43217075287](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43217075287)

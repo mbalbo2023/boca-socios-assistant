@@ -6,6 +6,19 @@ every unrelated service, host configuration and application repository.
 
 ## Owner amendment — 2026-11-12: consolidated BETA delivery, #12 + #417
 
+**R186 postcommit clarification (12/11):** the already-authorized first
+dual-pair APPLY [#43217075287](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43217075287)
+crossed the irreversible marker and installed the two new containers.
+Its terminal result is `NO_GO/RETIRE_OLD/INDETERMINATE`. **Do not dispatch
+another pair upgrade or rollback.** After R185 and three independent
+READ_ONLY host attestations, complete only the historical Boca binding
+retirement through the added `boca-postcommit-finalize` option on the
+**existing** one protected manual Action, under a fresh lease and durable
+one-shot claim. Validate postflight before installation acceptance. The
+old APPLY's NO_GO journal must never be rewritten to ACCEPTED. This R186
+fix is about files in the dedicated Boca user namespace only, not external
+token URLs, Docker, systemd changes, legacy navigation or Porota.
+
 The owner explicitly transferred active integration/deployment coordination
 from the stalled prior #417 chat to the agent continuing this work. The
 previous separate-chat ownership restriction is superseded for this delivery.
