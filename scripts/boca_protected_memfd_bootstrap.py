@@ -186,6 +186,9 @@ POSTCOMMIT_FINALIZE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
     "boca_socios/host_boca_pair_upgrade_plan.py",
 }
 MAX_ZIP = 512_000
+RETAINED_ENTRIES = POSTCOMMIT_ENTRIES | {"boca_socios/host_boca_retained_resources.py"}
+RETAINED_MAX_ZIP = 80_000
+RETAINED_MAX_UNCOMPRESSED = 240_000
 # R138 source bounds match the builder. Each variant checks its own entry set and digest.
 MAX_UNCOMPRESSED = 1_156_096
 RECOVERY_MAX_ZIP = 128_000
@@ -223,6 +226,7 @@ def verify(
     census: bool = False,
     pair_observe: bool = False,
     postcommit_observe: bool = False,
+    retained_observe: bool = False,
     binding_observe: bool = False,
     sqlite_observe: bool = False,
     pair_upgrade: bool = False,
@@ -239,6 +243,7 @@ def verify(
                 census,
                 pair_observe,
                 postcommit_observe,
+                retained_observe,
                 binding_observe,
                 sqlite_observe,
                 pair_upgrade,
@@ -249,7 +254,9 @@ def verify(
     ):
         raise ValueError("protected Boca bundle modes must be exclusive")
     max_zip = (
-        POSTCOMMIT_FINALIZE_MAX_ZIP
+        RETAINED_MAX_ZIP
+        if retained_observe
+        else POSTCOMMIT_FINALIZE_MAX_ZIP
         if postcommit_finalize
         else PAIR_UPGRADE_MAX_ZIP
         if pair_upgrade
@@ -274,7 +281,9 @@ def verify(
         else MAX_ZIP
     )
     max_uncompressed = (
-        POSTCOMMIT_FINALIZE_MAX_UNCOMPRESSED
+        RETAINED_MAX_UNCOMPRESSED
+        if retained_observe
+        else POSTCOMMIT_FINALIZE_MAX_UNCOMPRESSED
         if postcommit_finalize
         else PAIR_UPGRADE_MAX_UNCOMPRESSED
         if pair_upgrade
@@ -306,7 +315,9 @@ def verify(
         entries = package.infolist()
         names = [entry.filename for entry in entries]
         allowlisted = (
-            (POSTCOMMIT_FINALIZE_ENTRIES,)
+            (RETAINED_ENTRIES,)
+            if retained_observe
+            else (POSTCOMMIT_FINALIZE_ENTRIES,)
             if postcommit_finalize
             else (PAIR_UPGRADE_ENTRIES,)
             if pair_upgrade
@@ -365,6 +376,7 @@ def main() -> int:
         census = sys.argv[2] == "cutover-a-census"
         pair_observe = sys.argv[2] == "boca-pair-observe"
         postcommit_observe = sys.argv[2] == "boca-postcommit-observe"
+        retained_observe = sys.argv[2] == "boca-retained-resource-observe"
         binding_observe = sys.argv[2] == "boca-binding-observe"
         sqlite_observe = sys.argv[2] == "boca-sqlite-inode-observe"
         pair_upgrade = sys.argv[2] == "boca-pair-upgrade-apply"
@@ -390,6 +402,8 @@ def main() -> int:
             raise ValueError("Boca pair observer requires one GitHub run ID only")
         if postcommit_observe and len(sys.argv) != 4:
             raise ValueError("Boca postcommit observer requires one GitHub run ID only")
+        if retained_observe and len(sys.argv) != 4:
+            raise ValueError("Boca retained observer requires one GitHub run ID only")
         if binding_observe and len(sys.argv) != 4:
             raise ValueError("Boca binding observer requires one GitHub run ID only")
         if sqlite_observe and len(sys.argv) != 4:
@@ -399,7 +413,9 @@ def main() -> int:
         if postcommit_finalize and len(sys.argv) != 4:
             raise ValueError("postcommit finalizer requires only fresh authenticated run ID")
         bound = (
-            POSTCOMMIT_FINALIZE_MAX_ZIP
+            RETAINED_MAX_ZIP
+            if retained_observe
+            else POSTCOMMIT_FINALIZE_MAX_ZIP
             if postcommit_finalize
             else PAIR_UPGRADE_MAX_ZIP
             if pair_upgrade
@@ -434,6 +450,7 @@ def main() -> int:
             census=census,
             pair_observe=pair_observe,
             postcommit_observe=postcommit_observe,
+            retained_observe=retained_observe,
             binding_observe=binding_observe,
             sqlite_observe=sqlite_observe,
             pair_upgrade=pair_upgrade,
