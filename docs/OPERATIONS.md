@@ -1,5 +1,40 @@
 # Safe operations — verified evidence and gated procedures
 
+## #12 — Monitor privado observado de Queue-it/Boca (CODE_ONLY; 12/11/2026)
+
+La nueva ruta `/monitor/tokens` forma parte del **mismo panel 8443**,
+pero sus dos fuentes están desacopladas del navegador y entre sí.
+
+1. Con passkey del titular y `local-status:read`, la pantalla muestra estados
+   y referencias de socio/evento/sesión, **sin tokens, URL ni credenciales**.
+   Sin fuentes inyectadas muestra `Sin observaciones` (comportamiento normal).
+2. Solo con permiso adicional `simulation:write`, una acción consciente
+   `Mostrar completo` puede emitir un POST de origen exacto con CSRF y
+   operación de un solo uso. La página `no-store` permite copiar la URL y el
+   `queueittoken` originalmente observados **o**, en otro flujo, los campos
+   `token`/`refreshToken` genuinamente recibidos. Nunca se mezclan.
+3. La URL de Queue-it se **analiza exclusivamente en memoria**, para extraer
+   un parámetro ya suministrado; no se solicita, valida, envía ni navega.
+   El usuario ordenó expresamente esperar a que el sistema vuelva a estar
+   disponible antes de cualquier validación de URL/token.
+4. Para autenticación Boca, `BocaMemberAuthService` exige un socio ya
+   enrolado con contraseña sellada en SQLite, la clave correcta del vault y
+   un transporte externo autorizado **inyectado por código**. Sin dicho
+   transporte falla antes de abrir SQLite. Nunca genera un token ni asume un
+   endpoint. No hay botón que haga login real desde el panel.
+5. No iniciar el bot/Chromium ni cambiar la navegación legacy para probar
+   este monitor. No habilitar `verify=False`, TLS sin verificación ni salto
+   de fila. Las pruebas negativas #12 son únicamente offline y no prueban
+   tráfico, admisión o autenticación con el proveedor.
+
+**Pendiente antes de habilitar fuentes reales:** revisión y evidencia de la
+procedencia del observador Queue-it, contrato/endpoint auténtico de Boca y
+respuestas reales, aprobación operativa y pruebas nuevas cuando el sitio esté
+disponible. La BD lateral `boca_sector_preferences.sqlite3` requiere migración
+protegida explícita; este PR no la ejecuta. El responsable del único deploy
+mantiene exclusividad en [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+Ver [handoff #12](handoffs/2026-11-12-issue12-functional-code-only.md).
+
 ## R181.2 — Secuencia de release y PAIR_UPGRADE protegido (11/11/2026 ART; NO_GO físico hasta recibos)
 
 La evidencia de CI del código R181 `1e702669245d5ff2509902d63724aae36ac900d2`

@@ -31,6 +31,7 @@ from boca_socios.browser.site_url_runtime import (
     read_site_url,
     require_site_url,
 )
+from boca_socios.domain.sector_preferences import SectorMode
 from boca_socios.events.official_catalog import (
     OfficialCatalogError,
     OfficialNotice,
@@ -47,6 +48,10 @@ from boca_socios.panel.lifecycle_intents import (
     LifecycleStorageUnavailable,
 )
 from boca_socios.panel.local_status import read_local_status
+from boca_socios.panel.member_sector_store import (
+    MemberSectorStorageUnavailable,
+    MemberSectorStore,
+)
 from boca_socios.panel.members import MemberDirectory
 from boca_socios.panel.owner_session_store import (
     OwnerBrowserSessionStore,
@@ -65,10 +70,12 @@ from boca_socios.panel.telegram_pairing_staging import (
     PairingStageUnavailable,
 )
 from boca_socios.panel.worker_activity import WorkerActivityUnavailable, read_worker_activity
+from boca_socios.queue.private_pass_monitor import PrivateQueuePassMonitor
 from boca_socios.security.enrollment import (
     CredentialUnavailable,
     MemberNotFound,
 )
+from boca_socios.security.member_auth_contract import PrivateBocaAuthMonitor
 from boca_socios.storage.database import Database
 from boca_socios.telegram_owner_webauthn import (
     TelegramOwnerWitnessError,
@@ -81,6 +88,7 @@ StartResponse = Callable[[str, list[tuple[str, str]]], object]
 _UUID_PATH = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _INTAKE_PAUSED = "owner_simulation_intake_paused"
 _INTAKE_RESUMED = "owner_simulation_intake_resumed"
+_TOKEN_REVEAL_SCOPE = b"issue12-owner-token-reveal-v1"
 _WAKE_LOST = (
     "Solicitud guardada. Abra Control y vuelva a pulsar el mismo botón para reenviar el aviso."
 )
@@ -210,6 +218,8 @@ class PrivatePanelApplication:
         official_notices_loader: Callable[[], Iterable[OfficialNotice]] | None = None,
         telegram_pairing_stager: Callable[[PairingStageRequest], PairingStageReceipt] | None = None,
         bot_control: Callable[[str], None] | None = None,
+        queue_monitor: PrivateQueuePassMonitor | None = None,
+        auth_monitor: PrivateBocaAuthMonitor | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         parsed = urlsplit(origin)
@@ -235,6 +245,7 @@ class PrivatePanelApplication:
         self._database_path = database_path
         self._database = Database(database_path)
         self._site_url_settings = SiteUrlSettingsStore.for_database(database_path)
+        self._sector_store = MemberSectorStore.for_database(database_path)
         self._members = members
         self._directory = MemberDirectory(database_path)
         self._commands = commands
@@ -255,6 +266,8 @@ class PrivatePanelApplication:
         if bot_control is not None and not callable(bot_control):
             raise ValueError("bot control requires a local wake callback")
         self._bot_control = bot_control
+        self._queue_monitor = queue_monitor
+        self._auth_monitor = auth_monitor
         self._passkey = passkey
         self._owner_browser_store = OwnerBrowserSessionStore(
             self._database, owner_subject=owner_subject
@@ -343,6 +356,10 @@ class PrivatePanelApplication:
                 return _error(start, 403, "Permiso insuficiente.")
         if path == "/configuracion" and "simulation:write" not in session.permissions:
             return _error(start, 403, "Permiso insuficiente.")
+        if path in ("/monitor/tokens", "/monitor/tokens/revelar") and (
+            "local-status:read" not in session.permissions
+        ):
+            return _error(start, 403, "Permiso insuficiente.")
         if path in ("/estado", "/avisos", "/avisos-oficiales", "/avisos-oficiales.json") and (
             "local-status:read" not in session.permissions
         ):
@@ -358,6 +375,8 @@ class PrivatePanelApplication:
                 return _response(start, 200, telegram_setup_ui.page(), csp=telegram_setup_ui.CSP)
             if path == "/configuracion":
                 return self._site_url_page(start, session)
+            if path == "/monitor/tokens":
+                return self._token_monitor_page(start, session)
             if path == "/telegram/emparejar":
                 if self._telegram_pairing_stager is not None:
                     operation_id = self._sessions.new_operation(session)
@@ -487,6 +506,10 @@ class PrivatePanelApplication:
             return self._begin(environ, session, start)
         if path == "/configuracion":
             return self._save_site_url(environ, session, start)
+        if path == "/monitor/tokens/revelar":
+            if "simulation:write" not in session.permissions:
+                return _error(start, 403, "Permiso insuficiente.")
+            return self._reveal_observed_token(environ, session, start)
         if path in ("/control/reanudar", "/control/pausar"):
             if self._bot_control is not None:
                 return _error(start, 404, "Ruta no disponible.")
@@ -504,8 +527,107 @@ class PrivatePanelApplication:
         if isinstance(path, str) and path.startswith("/socios/"):
             if "members:write" not in session.permissions:
                 return _error(start, 403, "Permiso insuficiente.")
+            if re.fullmatch(r"/socios/[0-9a-f-]{36}/sectores", path):
+                return self._save_member_sectors(environ, path, session, start)
             return self._credential_action(environ, path, session, start)
         return _error(start, 404, "Ruta no disponible.")
+
+    def _token_monitor_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
+        queue = (
+            self._queue_monitor.list_summaries(at=self._now())
+            if self._queue_monitor is not None
+            else ()
+        )
+        auth = self._auth_monitor.list_summaries() if self._auth_monitor is not None else ()
+        can_reveal = "simulation:write" in session.permissions
+        operation_id = (
+            self._sessions.new_operation(session, form_scope=_TOKEN_REVEAL_SCOPE)
+            if can_reveal and (queue or auth)
+            else None
+        )
+        if can_reveal and (queue or auth) and operation_id is None:
+            return _error(start, 429, "Espere antes de revelar otra observación privada.")
+        return _response(
+            start,
+            200,
+            private_ui.token_monitor(
+                queue,
+                auth,
+                csrf=session.csrf,
+                operation_id=operation_id,
+                can_reveal=can_reveal,
+            ),
+        )
+
+    def _reveal_observed_token(
+        self, environ: Mapping[str, object], session: OwnerSession, start: StartResponse
+    ) -> list[bytes]:
+        fields = self._form(
+            environ,
+            expected={"csrf", "operation_id", "kind", "member_id", "event_id", "session_id"},
+        )
+        if (
+            fields is None
+            or _canonical_uuid(fields["operation_id"]) is None
+            or _canonical_uuid(fields["member_id"]) is None
+            or fields["kind"] not in ("queue", "boca")
+            or (
+                fields["kind"] == "queue"
+                and (
+                    _canonical_uuid(fields["event_id"]) is None
+                    or _canonical_uuid(fields["session_id"]) is None
+                )
+            )
+            or (fields["kind"] == "boca" and (fields["event_id"] or fields["session_id"]))
+        ):
+            return _error(start, 400, "Solicitud de revelación inválida.")
+        # The page intentionally offers either observed flow with one shared
+        # owner-initiated reveal. A fixed form scope lets repeated GETs reuse
+        # their unused nonce instead of exhausting the 16-operation budget;
+        # reserve() still enforces the session, CSRF, Origin, one-use state and
+        # the existing 1-second protected-action throttle.
+        replay, operation = self._sessions.reserve(
+            session, fields["operation_id"], fields["csrf"], _TOKEN_REVEAL_SCOPE
+        )
+        if replay:
+            # Unlike an idempotent durable write, re-revealing a bearer secret
+            # by replay never returns the old successful response.
+            return _error(
+                start, 409 if replay == 200 else replay, "Revelación ya usada o denegada."
+            )
+        assert operation is not None
+        body: bytes | None = None
+        if fields["kind"] == "queue" and self._queue_monitor is not None:
+            details = self._queue_monitor.owner_details(
+                fields["member_id"],
+                fields["event_id"],
+                fields["session_id"],
+                at=self._now(),
+                owner_authenticated=True,
+            )
+            if details is not None:
+                try:
+                    token = details.copy_full_token()
+                except ValueError:
+                    body = None
+                else:
+                    try:
+                        target_url = details.copy_full_target_url()
+                    except ValueError:
+                        target_url = None
+                    body = private_ui.queue_token_reveal(token, target_url)
+        if fields["kind"] == "boca" and self._auth_monitor is not None:
+            received = self._auth_monitor.owner_details(
+                fields["member_id"], owner_authenticated=True
+            )
+            if received is not None:
+                body = private_ui.boca_token_reveal(
+                    received.copy_full_token(), received.copy_full_refresh_token()
+                )
+        self._sessions.finish(operation, 200 if body is not None else 404)
+        if body is None:
+            return _error(start, 404, "Observación privada no disponible.")
+        return _response(start, 200, body)
 
     def _site_url_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
         operation_id = self._sessions.new_operation(session)
@@ -777,9 +899,66 @@ class PrivatePanelApplication:
         revoke_id = self._sessions.new_operation(session)
         if rotate_id is None or revoke_id is None:
             return _error(start, 429, "Demasiados formularios abiertos. Vuelva a ingresar.")
+        try:
+            defaults = self._sector_store.load(member_id)
+        except MemberSectorStorageUnavailable:
+            return _error(start, 503, "Las preferencias locales del socio no son verificables.")
         return _response(
-            start, 200, private_ui.member_detail(item, session.csrf, rotate_id, revoke_id)
+            start,
+            200,
+            private_ui.member_detail(
+                item,
+                session.csrf,
+                rotate_id,
+                revoke_id,
+                revoke_id,  # Reuse the existing one-time nonce; owner refreshes after POST.
+                defaults,
+                sector_storage_ready=self._sector_store.path.exists(),
+            ),
         )
+
+    def _save_member_sectors(
+        self, environ: Mapping[str, object], path: str, session: OwnerSession, start: StartResponse
+    ) -> list[bytes]:
+        match = re.fullmatch(r"/socios/([0-9a-f-]{36})/sectores", path)
+        if match is None or _canonical_uuid(match.group(1)) is None:
+            return _error(start, 404, "Socio no encontrado.")
+        member_id = match.group(1)
+        fields = self._form(environ, expected={"csrf", "operation_id", "mode", "sector_ids"})
+        if fields is None or _canonical_uuid(fields["operation_id"]) is None:
+            return _error(start, 400, "Formulario de sectores inválido.")
+        try:
+            mode = SectorMode(fields["mode"])
+            raw = fields["sector_ids"]
+            if len(raw) > 2000:
+                raise ValueError("too many characters")
+            sectors = (
+                () if mode is SectorMode.ALL else tuple(item.strip() for item in raw.split(","))
+            )
+        except ValueError:
+            return _error(start, 422, "Selección de sectores inválida.")
+        fingerprint = (path + "\0" + json.dumps(fields, sort_keys=True)).encode()
+        replay, operation = self._sessions.reserve(
+            session, fields["operation_id"], fields["csrf"], fingerprint
+        )
+        if replay:
+            if replay == 200 and operation is not None:
+                return self._redirect(start, f"/socios/{member_id}")
+            return _error(start, replay, "Operación ya utilizada o no autorizada.")
+        assert operation is not None
+        try:
+            self._sector_store.save(member_id, mode, sectors, self._now())
+        except ValueError:
+            self._sessions.finish(operation, 422)
+            return _error(start, 422, "Prioridades inválidas o duplicadas.")
+        except LookupError:
+            self._sessions.finish(operation, 404)
+            return _error(start, 404, "Socio no encontrado.")
+        except MemberSectorStorageUnavailable:
+            self._sessions.finish(operation, 503)
+            return _error(start, 503, "Preferencias locales no disponibles.")
+        self._sessions.finish(operation, 200)
+        return self._redirect(start, f"/socios/{member_id}")
 
     def _credential_action(
         self, environ: Mapping[str, object], path: str, session: OwnerSession, start: StartResponse

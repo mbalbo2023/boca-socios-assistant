@@ -1,5 +1,40 @@
 # Boca Socios Assistant
 
+## Issue #12 — desarrollo funcional aislado (12/11/2026; CODE_ONLY, NO_GO externo)
+
+Se recuperaron los contratos previos de **perfil/sectores del socio** y
+**observación privada de Queue-it** de las ramas de #12, sin volver a incorporar
+infraestructura ya presente en `main`. Esta rama agrega dos circuitos
+independientes al panel privado en `/monitor/tokens`:
+
+- **Queue-it:** observa únicamente una URL completa ya obtenida por una fuente
+  autorizada, con un único parámetro genuinamente suministrado `queueittoken`;
+  permite copiar el token y la URL exacta de forma privada. **No consulta,
+  valida ni utiliza** la URL o el token.
+- **Boca:** un contrato de autenticación bajo demanda lee las credenciales
+  cifradas de un socio existente en SQLite, las descifra mediante el vault
+  original y admite exclusivamente la respuesta `token`/`refreshToken`
+  devuelta por un transporte explícito. **No existe endpoint inventado,
+  transporte por defecto ni sesión real acreditada**.
+
+La vista requiere passkey, permisos, origen y CSRF, presenta inicialmente solo
+metadatos sin valores secretos y exige una revelación privada de un solo uso
+antes de copiar. Es independiente de la navegación legacy: **no inicia el bot,
+  Chromium, fila ni reserva**. Los monitores son volátiles y no guardan tokens
+en SQLite. Las pruebas utilizan solamente respuestas ficticias offline.
+
+**Stoppers de integración:** no hay fuente Queue-it real conectada ni
+transporte/respuesta de Boca certificado; el servicio externo está indisponible
+para validaciones. El perfil de sectores requiere provisión separada de su
+SQLite auxiliar. Esta rama **no modifica Docker, workflows ni despliegue**.
+La instalación y certificación física se coordinan únicamente con el
+responsable de [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417)
+después de la revisión del PR de #12.
+
+[Diseño funcional](docs/superpowers/specs/2026-11-12-issue12-functional-token-flows-design.md)
+· [plan TDD](docs/superpowers/plans/2026-11-12-issue12-functional-token-flows.md)
+· [handoff técnico](docs/handoffs/2026-11-12-issue12-functional-code-only.md).
+
 ## R181.2 — Cierre de imports protegidos y ruta BETA (11/11/2026 ART; corte premerge)
 
 El [PR #483](https://github.com/mbalbo2023/boca-socios-assistant/pull/483)
