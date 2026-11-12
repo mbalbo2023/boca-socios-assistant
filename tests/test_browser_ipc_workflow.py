@@ -376,7 +376,7 @@ def test_pr_runner_disposable_docker_probe_checks_real_inspect_defaults() -> Non
     assert (
         "Verify disposable browser IPC one-shot Docker inspect and auto-remove defaults" in runner
     )
-    assert runner.index("Build both isolated images concurrently without deploying") < runner.index(
+    assert runner.index("Build isolated Chromium worker without deploying") < runner.index(
         "Verify disposable browser IPC one-shot Docker inspect"
     )
     for proof in (

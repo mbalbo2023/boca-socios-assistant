@@ -94,3 +94,35 @@ revert this experiment before merge; do not dress up a nominal 14-second
 upper bound as proven acceleration. Do not dispatch redundant CI runs
 solely for benchmarking. Review of the change is not authorization to
 publish or operate the Boca droplet or any other host workload.
+
+## Resultado de GitHub Actions y decisión de no promoción
+
+El PR consolidado [#493](https://github.com/mbalbo2023/boca-socios-assistant/pull/493)
+ejecutó [CI #43307951183](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43307951183)
+en runner real: **quality-and-tests SUCCESS**, **image-build SUCCESS**,
+dos builds exact-SHA, ambas Trivy y laboratorios/cleanup sin fallos.
+Los recibos de la etapa fueron:
+
+```text
+BOCA_CI_BUILD role=controller result=PASS seconds=19
+BOCA_CI_BUILD role=browser result=PASS seconds=47
+BOCA_CI_BUILD_PAIR result=PASS wall_seconds=47
+```
+
+Los logs del job abarcaron ~**313 s** (21:12:37–21:17:50 UTC), frente a
+~**250–254 s** de main #43281076127 (18:33:37–18:37:47 UTC). La pareja
+secuencial antigua tardó ~**50 s**: la concurrencia sólo ahorró ~**3 s** en
+esa etapa y **no** mejoró el camino crítico total de la ejecución. La mayor
+diferencia se observa en laboratorios posteriores a Trivy; el código
+funcional también cambió y los runners son variables, por lo que **no** se
+atribuye causalmente el aumento total a la concurrencia ni se infiere p95.
+
+**Decisión R244:** aplicar el gate de aceptación original de este ADR:
+retirar antes del merge el experimento concurrente y sus fixtures específicos.
+Permanecen las dos compilaciones originales, los dos Trivy y la suite de
+laboratorios. No lanzar reintentos adicionales sólo para obtener un benchmark
+favorable. R240 8→6 continúa excluido; investigar BuildKit cache y triggers
+con evidencia de procedencia y costo antes de cualquier otra promoción.
+Validación local posterior al retiro: **7 689 PASS, 1 SKIP por AF_UNIX EPERM
+del sandbox y 34 subtests PASS**, Ruff, formato, mypy 187 y política del
+repositorio PASS. Los dos builds y escaneos históricos permanecen en YAML.

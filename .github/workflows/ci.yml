@@ -124,66 +124,25 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build both isolated images concurrently without deploying
+      - name: Build isolated image without deploying
         env:
           SOURCE_SHA: ${{ github.sha }}
-          CONTROLLER_IMAGE: boca-socios-ci:${{ github.sha }}
-          BROWSER_IMAGE: boca-browser-ci:${{ github.sha }}
+          IMAGE: boca-socios-ci:${{ github.sha }}
         run: |
-          set -euo pipefail
-          # Two distinct Dockerfiles and tags; one ephemeral daemon and no
-          # exported cache/artifact. A failed build must not hide its sibling's
-          # result or let any later scan/probe start.
-          controller_log="$RUNNER_TEMP/boca-ci-controller-build.log"
-          browser_log="$RUNNER_TEMP/boca-ci-browser-build.log"
-          build_controller() {
-            local started=$SECONDS status
-            if docker build \
-              --label "org.opencontainers.image.source=https://github.com/mbalbo2023/boca-socios-assistant" \
-              --label "org.opencontainers.image.revision=$SOURCE_SHA" \
-              --tag "$CONTROLLER_IMAGE" --tag "boca-release-validation:$SOURCE_SHA" .; then
-              printf 'BOCA_CI_BUILD role=controller result=PASS seconds=%s\n' "$((SECONDS - started))"
-            else
-              status=$?
-              printf 'BOCA_CI_BUILD role=controller result=NO_GO exit_code=%s seconds=%s\n' "$status" "$((SECONDS - started))"
-              return "$status"
-            fi
-          }
-          build_browser() {
-            local started=$SECONDS status
-            if docker build --file Dockerfile.browser \
-              --label "org.opencontainers.image.source=https://github.com/mbalbo2023/boca-socios-assistant" \
-              --label "org.opencontainers.image.revision=$SOURCE_SHA" \
-              --label "org.boca.public-image=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
-              --tag "$BROWSER_IMAGE" --tag "boca-browser-release-validation:$SOURCE_SHA" --tag "boca-observer:$SOURCE_SHA" .; then
-              printf 'BOCA_CI_BUILD role=browser result=PASS seconds=%s\n' "$((SECONDS - started))"
-            else
-              status=$?
-              printf 'BOCA_CI_BUILD role=browser result=NO_GO exit_code=%s seconds=%s\n' "$status" "$((SECONDS - started))"
-              return "$status"
-            fi
-          }
-          pair_started=$SECONDS
-          build_controller > "$controller_log" 2>&1 &
-          controller_pid=$!
-          build_browser > "$browser_log" 2>&1 &
-          browser_pid=$!
-          controller_exit=0
-          browser_exit=0
-          wait "$controller_pid" || controller_exit=$?
-          wait "$browser_pid" || browser_exit=$?
-          # Measure the build barrier, not the time to replay both logs into
-          # GitHub Actions (which is runner/network dependent).
-          pair_wall=$((SECONDS - pair_started))
-          cat "$controller_log" "$browser_log"
-          if (( controller_exit != 0 || browser_exit != 0 )); then
-            printf 'BOCA_CI_BUILD_PAIR result=NO_GO source_sha=%s controller_exit=%s browser_exit=%s wall_seconds=%s\n' \
-              "$SOURCE_SHA" "$controller_exit" "$browser_exit" "$pair_wall" \
-              | tee -a "$GITHUB_STEP_SUMMARY" >&2
-            exit 1
-          fi
-          printf 'BOCA_CI_BUILD_PAIR result=PASS source_sha=%s wall_seconds=%s\n' \
-            "$SOURCE_SHA" "$pair_wall" | tee -a "$GITHUB_STEP_SUMMARY"
+          docker build \
+            --label "org.opencontainers.image.source=https://github.com/mbalbo2023/boca-socios-assistant" \
+            --label "org.opencontainers.image.revision=$SOURCE_SHA" \
+            --tag "$IMAGE" --tag "boca-release-validation:$SOURCE_SHA" .
+      - name: Build isolated Chromium worker without deploying
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          IMAGE: boca-browser-ci:${{ github.sha }}
+        run: |
+          docker build --file Dockerfile.browser \
+            --label "org.opencontainers.image.source=https://github.com/mbalbo2023/boca-socios-assistant" \
+            --label "org.opencontainers.image.revision=$SOURCE_SHA" \
+            --label "org.boca.public-image=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --tag "$IMAGE" --tag "boca-browser-release-validation:$SOURCE_SHA" --tag "boca-observer:$SOURCE_SHA" .
       - name: Capture an immediate fixture exit before removal on runner Docker
         timeout-minutes: 2
         env:

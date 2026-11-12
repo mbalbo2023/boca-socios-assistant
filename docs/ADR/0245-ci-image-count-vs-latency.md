@@ -1,7 +1,8 @@
 # ADR 0245 — Boca R244: image count is not release latency
 
-**Status:** measured baseline; R244 concurrent-build experiment proposed,
-not yet promoted on hosted CI. See [ADR0246](0246-r244-concurrent-ci-builds-experiment.md).
+**Status:** measured baseline; R244 concurrent-build experiment tested on
+hosted CI #43307951183 and **not promoted** due to absent critical-path gain.
+See [ADR0246](0246-r244-concurrent-ci-builds-experiment.md).
 **Scope:** Boca-only GitHub Actions and its disposable runner Docker; no droplet effect.
 
 ## Evidence (2026-11-12)

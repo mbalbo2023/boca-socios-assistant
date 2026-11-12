@@ -59,3 +59,15 @@ Supersede solamente el párrafo histórico de artifact manual en
 [ADR0013](0013-accessible-simulation-panel.md), no su renderer ni el
 producto de simulación. Regla 84: informar al dueño del candidato y
 reconciliar el checkpoint #417 al integrar el PR único.
+
+## Evidencia real en el PR R244
+
+[Actions #43307951109](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43307951109)
+terminó **SUCCESS** desde la rama interna del [PR #493](https://github.com/mbalbo2023/boca-socios-assistant/pull/493).
+La subida concluyó y GitHub registró artifact **13985245354**, 1 888 bytes,
+`boca-panel-synthetic-preview-b6a0403d58296f24f0119ca64a079ed5fc056005`,
+digest ZIP `sha256:3751d0f551ae7373b1579b2d404ecbf99fddc64c7d90d83e9b4b9d77c38c932b`,
+retención hasta 19-NOV-2026. Head PR
+`c49b1ba83b6d528e22bc556f9596439dc9c787f8`; el nombre usa el SHA de
+merge sintético del run, no un SHA de release. Esta disponibilidad rápida
+no demuestra el funcionamiento del dashboard físico del droplet.
