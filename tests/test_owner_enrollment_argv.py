@@ -66,7 +66,7 @@ def _shell_arguments(command: str, executable: str) -> list[str]:
 
 
 def _smoke_enrollment_arguments() -> list[str]:
-    workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
     marker = workflow.index('"$BOCA_IMAGE" python -m boca_socios.owner_enrollment')
     start = workflow.rindex("          docker run ", 0, marker)
     end = workflow.index('\n          state="', marker)
@@ -135,7 +135,7 @@ def test_each_smoke_bootstrap_call_keeps_dash_owner_as_data(
 ) -> None:
     lines = [
         line
-        for line in (ROOT / ".github/workflows/boca-first-deploy.yml").read_text().splitlines()
+        for line in (ROOT / ".github/workflows/ci.yml").read_text().splitlines()
         if '"$BOCA_IMAGE" python -m boca_socios.owner_bootstrap' in line
     ]
     assert len(lines) == 6

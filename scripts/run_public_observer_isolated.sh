@@ -2,7 +2,12 @@
 # Disposable GitHub runner only. Never accepts SSH, host, credentials or target URL.
 set -euo pipefail
 case "${1:-}" in --offline-check|--one-get|--capture-25) mode="$1" ;; *) exit 2 ;; esac
-[[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ && "${GITHUB_RUN_ATTEMPT:-}" == 1 ]]
+[[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ ]]
+# CI may repeat its offline-only PR gate once. Public/manual modes remain
+# first-attempt-only; do not rewrite attempt identity or reuse prior evidence.
+if [[ "${GITHUB_RUN_ATTEMPT:-}" != 1 ]]; then
+  [[ "$mode" == --offline-check && "${GITHUB_EVENT_NAME:-}" == pull_request && "${GITHUB_RUN_ATTEMPT:-}" == 2 ]]
+fi
 [[ "${GITHUB_SHA:-}" =~ ^[0-9a-f]{40}$ ]]
 [[ "${BOCA_OBSERVER_IMAGE:-}" == "boca-observer:${GITHUB_SHA}" ]]
 printf '{"mode":"public_observation_source","source_sha":"%s","operation":"%s"}\n' "$GITHUB_SHA" "$mode"

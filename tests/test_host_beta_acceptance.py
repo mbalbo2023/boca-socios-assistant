@@ -253,15 +253,14 @@ def test_installed_headroom_is_advisory_but_invalid_metadata_and_network_are_rej
 
 def test_protected_workflow_runs_probe_then_boca_only_stop_in_one_job() -> None:
     workflow = Path(".github/workflows/boca-first-deploy.yml").read_text(encoding="utf-8")
+    runner = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert (
-        workflow.index("Serve BETA on runner loopback with exact image")
-        < workflow.index(
-            "Run synthetic loopback HTTP acceptance inside capped disposable controller"
-        )
-        < workflow.index("Remove only synthetic Boca resources from disposable runner")
+        runner.index("Serve BETA on runner loopback with exact image")
+        < runner.index("Run synthetic loopback HTTP acceptance inside capped disposable controller")
+        < runner.index("Remove only synthetic Boca resources from disposable runner")
     )
-    assert 'docker exec --user 10001:10001 "$container"' in workflow
-    assert 'scripts/check_browser_lifecycle_runtime.py acceptance "$container"' in workflow
+    assert 'docker exec --user 10001:10001 "$container"' in runner
+    assert 'scripts/check_browser_lifecycle_runtime.py acceptance "$container"' in runner
     assert "beta-acceptance" in workflow
     assert 'test "$BOCA_BETA_ENV_READY" = ready' in workflow
     assert "python scripts/check_release_run.py" in workflow

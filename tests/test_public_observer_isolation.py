@@ -106,8 +106,11 @@ def test_manual_modes_are_exclusive_and_pr_job_cannot_call_public_observer() -> 
     assert (
         "github.event_name == 'workflow_dispatch' && inputs.mode == 'chromium-one-get'" in workflow
     )
-    assert "if: github.event_name == 'pull_request'" in workflow
-    assert "scripts/run_public_observer_isolated.sh --offline-check" in workflow
+    ci = (ROOT / ".github/workflows/ci.yml").read_text()
+    assert "  pull_request:" not in workflow
+    assert "if: github.event_name == 'pull_request'" in ci
+    assert "scripts/run_public_observer_isolated.sh --offline-check" in ci
+    assert "scripts/run_public_observer_isolated.sh --offline-check" not in workflow
     assert "scripts/run_public_observer_isolated.sh --one-get" in workflow
     assert "secrets." not in workflow and "ssh " not in workflow
     assert "format('boca-source-status-pr-{0}', github.event.pull_request.number)" in workflow

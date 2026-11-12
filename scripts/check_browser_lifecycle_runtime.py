@@ -476,14 +476,31 @@ def main() -> None:
         return
     assert os.environ.get("GITHUB_ACTIONS") == "true"
     assert os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted"
-    assert os.environ.get("GITHUB_EVENT_NAME") == "pull_request"
+    assert os.environ.get("GITHUB_REPOSITORY") == "mbalbo2023/boca-socios-assistant"
+    event = os.environ.get("GITHUB_EVENT_NAME")
+    assert event in {"pull_request", "push", "workflow_dispatch"}
+    if event == "pull_request":
+        payload = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+        assert payload["repository"]["full_name"] == "mbalbo2023/boca-socios-assistant"
+        assert (
+            payload["pull_request"]["head"]["repo"]["full_name"]
+            == "mbalbo2023/boca-socios-assistant"
+        )
+    else:
+        assert os.environ.get("GITHUB_REF") == "refs/heads/main"
+        # Protected main push may be emitted by the reviewed merge integration.
+        # Manual execution still requires the owner, never a different actor.
+        if event == "workflow_dispatch":
+            assert os.environ.get("GITHUB_ACTOR") == "mbalbo2023"
     source, attempt = os.environ["GITHUB_SHA"], os.environ["GITHUB_RUN_ID"]
     assert re.fullmatch(r"[0-9a-f]{40}", source)
     assert re.fullmatch(r"[1-9][0-9]{0,19}", attempt)
     controller_image = os.environ["BOCA_IMAGE"]
     browser_image = os.environ["BOCA_BROWSER_IMAGE"]
-    assert controller_image == f"boca-first-install-smoke:{source}"
-    assert browser_image == f"boca-browser-lifecycle-smoke:{source}"
+    assert (controller_image, browser_image) in {
+        (f"boca-first-install-smoke:{source}", f"boca-browser-lifecycle-smoke:{source}"),
+        (f"boca-socios-ci:{source}", f"boca-browser-ci:{source}"),
+    }
 
     from boca_socios import host_first_deploy as deploy
     from boca_socios import host_rootless_setup as rootless

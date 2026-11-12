@@ -1374,10 +1374,11 @@ def test_workflow_cutover_v3_requires_dispatch_and_legacy_release_proof() -> Non
     assert '"$BOCA_LEGACY_RELEASE_RUN_ID"' in text
     assert "boca-cutover-legacy-compose.sha" in text
     assert "original=RUNNING worker=absent effects=none" in text
-    assert "config --hash controller" in text
-    assert "config --hash browser-worker" in text
-    assert "com.docker.compose.config-hash=$candidate_hash" in text
-    assert "com.docker.compose.config-hash=$worker_hash" in text
+    runner = (PROJECT_ROOT / ".github/workflows/ci.yml").read_text()
+    assert "config --hash controller" in runner
+    assert "config --hash browser-worker" in runner
+    assert "com.docker.compose.config-hash=$candidate_hash" in runner
+    assert "com.docker.compose.config-hash=$worker_hash" in runner
     assert (
         "docker compose up"
         not in text[

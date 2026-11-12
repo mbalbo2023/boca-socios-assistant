@@ -384,7 +384,9 @@ def test_pull_request_cannot_enter_protected_deploy_or_issue_host_receipt() -> N
     text = _workflow()
     assert "  deploy:\n    if: github.event_name == 'workflow_dispatch'" in text
     assert "  pr-validation:\n    if: github.event_name == 'pull_request'" in text
-    assert "  pr-runtime-smoke:\n    if: github.event_name == 'pull_request'" in text
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "  image:\n    name: image-build" in ci
+    assert "Run synthetic loopback HTTP acceptance inside capped disposable controller" in ci
     assert "Assert PR cannot produce host cutover or cleanup receipt" in text
     pr_workflow = text.split("  deploy:\n", 1)[0]
     assert f"      - name: {GATE_STEP}\n" not in pr_workflow

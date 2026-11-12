@@ -43,7 +43,7 @@ def test_owner_enrollment_changes_only_its_private_docker_network() -> None:
 
 def test_owner_enrollment_smoke_matches_real_private_network() -> None:
     root = Path(__file__).resolve().parents[1]
-    workflow = (root / ".github/workflows/boca-first-deploy.yml").read_text(encoding="utf-8")
+    workflow = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     segment = workflow.split("Smoke disposable Chrome listener and offline staged owner import", 1)[
         1
     ].split("Exercise sealed Telegram custody", 1)[0]

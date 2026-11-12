@@ -148,6 +148,7 @@ def test_icc_true_probe_and_real_owner_use_only_private_boca_bridges() -> None:
     assert "BOCA_NETWORK_PROBE result=" in workflow
     assert host.ENROLL_NETWORK_OPTIONS["com.docker.network.bridge.enable_icc"] == "false"
     assert "com.docker.network.bridge.enable_icc=true" in source  # owner start
-    assert "com.docker.network.bridge.enable_icc=true" in workflow  # owner smoke
+    runner = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "com.docker.network.bridge.enable_icc=true" in runner  # owner smoke
     assert "--network=host" not in workflow
     assert "docker system prune" not in workflow

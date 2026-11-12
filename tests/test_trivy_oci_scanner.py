@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCAN = (ROOT / "scripts/trivy_scan_image.sh").read_text(encoding="utf-8")
 SECURITY = (ROOT / ".github/workflows/image-security.yml").read_text(encoding="utf-8")
+CI = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 RELEASE = (ROOT / ".github/workflows/release-image.yml").read_text(encoding="utf-8")
 
 
@@ -44,10 +45,11 @@ def test_all_six_trivy_gates_keep_exact_local_sha_and_high_critical_fail_closed(
         "ghcr.io/mbalbo2023/boca-socios-assistant:sha-$GITHUB_SHA",
         "ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-$GITHUB_SHA",
     ):
-        assert f'bash scripts/trivy_scan_image.sh "{ref}"' in RELEASE
+        assert f'bash scripts/trivy_scan_image.sh "{ref}"' in RELEASE + CI
 
     assert SECURITY.count("bash scripts/trivy_scan_image.sh") == 2
-    assert RELEASE.count("bash scripts/trivy_scan_image.sh") == 4
+    assert RELEASE.count("bash scripts/trivy_scan_image.sh") == 2
+    assert CI.count("bash scripts/trivy_scan_image.sh") == 2
     for required in (
         "--scanners vuln",
         "--vuln-type os,library",

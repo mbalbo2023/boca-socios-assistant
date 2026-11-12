@@ -129,14 +129,15 @@ def test_beta_workflow_has_separate_marker_release_and_main_gates() -> None:
     )
     assert "BOCA_SITE_ENVELOPE" in workflow
     assert "BOCA_BETA_TOKEN" not in workflow
-    owner_step = workflow.index("python -m boca_socios.runtime check-beta-owner)")
-    config_step = workflow.index("python -m boca_socios.runtime check-beta-config)")
-    data_step = workflow.index(
+    runner = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    owner_step = runner.index("python -m boca_socios.runtime check-beta-owner)")
+    config_step = runner.index("python -m boca_socios.runtime check-beta-config)")
+    data_step = runner.index(
         "--label com.docker.compose.volume=boca_data boca-socios_boca_data", owner_step
     )
     assert owner_step < config_step < data_step
-    assert "--resolve localhost:8443:127.0.0.1" in workflow
-    assert "chown 10001:10001 /run/owner'" in workflow
+    assert "--resolve localhost:8443:127.0.0.1" in runner
+    assert "chown 10001:10001 /run/owner'" in runner
 
 
 def test_dormant_and_site_phases_cannot_take_beta_context_before_host_probe(

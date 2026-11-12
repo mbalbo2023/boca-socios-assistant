@@ -77,8 +77,8 @@ def test_linters_types_and_local_tests_exclude_only_owner_blackbox_modules() -> 
 
 
 def test_first_deploy_pr_smoke_keeps_controller_but_never_starts_owner_worker() -> None:
-    workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text(encoding="utf-8")
-    runner = workflow.split("  pr-runtime-smoke:\n", 1)[1].split("  deploy:\n", 1)[0]
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    runner = workflow.split("  image:\n", 1)[1]
     assert "Run synthetic loopback HTTP acceptance inside capped disposable controller" in runner
     assert "Verify offline sender readiness and never-started production network inspect" in runner
     assert "Verify actual dual-service inspect and retained-container restart" not in runner
