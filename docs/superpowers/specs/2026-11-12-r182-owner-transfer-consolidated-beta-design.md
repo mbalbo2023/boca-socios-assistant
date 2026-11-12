@@ -11,21 +11,25 @@ separate approval round for this already authorized simulation milestone.
 
 1. **Wait for real Boca/Queue-it before any deployment:** rejected by owner;
    these providers are unavailable and the simulation does not require them.
-2. **Merge the dormant #12 contracts and perform one reviewed Boca PAIR
+2. **Merge the included #12 contracts and perform one reviewed Boca PAIR
    upgrade:** selected; one code/release SHA, existing protected workflow,
-   no real login, no validation of token URLs, all unrelated workloads safe.
+   no external availability gate or token URL validation before shipping,
+   all unrelated workloads safe.
 3. **Relax CI/host/secret/identity gates to move faster:** rejected; those
    protect the existing 8443 session, data volume and other Docker projects.
 
 ## Functional contract
 
 - The private `/monitor/tokens` exists without claiming a token was observed;
-  both Queue-it and Boca channels remain OFF absent vetted producers.
+  both Queue-it and Boca code paths are included and not activation-gated by
+  external availability; absent observed producers/transport means an honest
+  empty/unavailable result, not a deploy failure.
 - Missing sector-preferences sidecar is a visible disabled optional feature;
   the existing member profile and BETA controller remain usable. A separate,
   explicit protected migration is required before sector editing is accepted.
 - Browser/worker starts only under the owner-controlled existing mechanism.
-  No reservations or real login; zero foreign Docker mutations.
+  No real ticket reservations, no fabricated login result, no provider probes
+  while unavailable; zero foreign Docker mutations.
 
 ## Release and physical gate
 

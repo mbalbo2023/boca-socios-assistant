@@ -4,10 +4,14 @@
 
 La instrucción actual del dueño transfiere a este frente el ownership de la
 integración y despliegue #417. La **ausencia de Boca/Queue-it reales** y del
-SQLite lateral opcional de preferencias **no detiene** un controlador
-SIMULATION_ONLY que mantenga estos flujos OFF y reporte su indisponibilidad.
+SQLite lateral opcional de preferencias **no detiene** la BETA; por aclaración
+posterior del dueño, **tampoco detiene la inclusión/habilitación de los dos
+flujos de tokens reales en el código**. Se comprueban sintaxis, contratos
+offline y CI antes de entregar; sin una fuente configurada el monitor informa
+que no hay observaciones y la autenticación no puede inventar una respuesta.
 No consultar ni validar URLs que contengan tokens mientras el servicio esté
-indisponible; tampoco habilitar login, navegación ni reservas reales.
+indisponible; incluir el código de login no significa disparar intentos
+reales sin transporte/servicio disponible. Navegación y reservas reales OFF.
 
 Secuencia obligatoria, **sin efectos de host antes de reunir evidencia**:
 
@@ -60,8 +64,8 @@ pero sus dos fuentes están desacopladas del navegador y entre sí.
    de fila. Las pruebas negativas #12 son únicamente offline y no prueban
    tráfico, admisión o autenticación con el proveedor.
 
-**Pendiente para activar fuentes reales, no para desplegar la BETA
-SIMULATION_ONLY (R182):** revisión y evidencia de la
+**Pendiente para acreditar resultados reales externos (sin bloquear el código,
+su activación ni el despliegue R182):** revisión y evidencia de la
 procedencia del observador Queue-it, contrato/endpoint auténtico de Boca y
 respuestas reales, aprobación operativa y pruebas nuevas cuando el sitio esté
 disponible. La BD lateral `boca_sector_preferences.sqlite3` requiere migración

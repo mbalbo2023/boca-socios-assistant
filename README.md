@@ -6,9 +6,13 @@ Tincho asignó al agente activo la integración conjunta de #12 y #417,
 debido al bloqueo del chat anterior. [AGENTS.md](AGENTS.md) y
 [política de desarrollo](docs/DEVELOPMENT_POLICY.md) registran que el
 PR funcional [#484](https://github.com/mbalbo2023/boca-socios-assistant/pull/484)
-puede integrarse y desplegarse en una **única BETA SIMULATION_ONLY** sin
-esperar disponibilidad real de Queue-it, un endpoint de login Boca ni
-validación de tokens. Los monitores continúan inactivos sin fuente auténtica;
+puede integrarse y desplegarse en una **única BETA con reservas
+SIMULATION_ONLY** sin esperar disponibilidad real de Queue-it, un endpoint
+de login Boca o validación de tokens. Por aclaración posterior del titular,
+los dos flujos
+reales de tokens **se incluyen y no se bloquean por falta de fuente ni por
+una aprobación adicional de activación**; sin productor/transporte configurado
+mostrarán su indisponibilidad y no podrán acreditar resultados reales;
 el lateral de sectores requiere activación SQLite explícita posterior.
 
 **Esta enmienda documental no es un merge ni un despliegue.** El run de release
@@ -50,7 +54,8 @@ SQLite auxiliar. Esta rama **no modifica Docker, workflows ni despliegue**.
 La integración y certificación física quedan ahora bajo el mismo agente
 responsable de [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417)
 por transferencia expresa del dueño el 12/11 (sección R182 anterior);
-no se exige que las fuentes reales estén disponibles para instalar la BETA.
+no se exige que las fuentes reales estén disponibles para instalar la BETA
+ni para incorporar y habilitar su código.
 
 [Diseño funcional](docs/superpowers/specs/2026-11-12-issue12-functional-token-flows-design.md)
 · [plan TDD](docs/superpowers/plans/2026-11-12-issue12-functional-token-flows.md)

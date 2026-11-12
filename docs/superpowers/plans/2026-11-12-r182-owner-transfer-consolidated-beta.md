@@ -10,7 +10,7 @@ or Queue-it to be live.
 
 ## Task 1 — Policy and factual handoff
 
-- [x] Record owner transfer and nonblocking dormant-source classification in
+- [x] Record owner transfer and nonblocking external-source classification in
   `AGENTS.md`, `docs/DEVELOPMENT_POLICY.md`, README and OPERATIONS.
 - [x] Verify no changed Docker, Compose, protected workflows or browser
   blackboxes; run policy and whitespace checks.
@@ -47,9 +47,11 @@ or Queue-it to be live.
   fresh postflight and passkey owner verification of panel and synthetic bot.
 - [ ] Verify `SITE_URL` saved/applied after START, worker IPC and PID,
   DNS IPv4/HTTPS egress within Boca rootless, and Telegram sender OFF.
-- [ ] Preserve NO_GO for real login/tokens and sidecar until separate honest
-  physical evidence; update #417/#12 and release documentation with SHA and
-  actual runtime observations, then report completion or exact blocker.
+- [ ] Include and permit activation of real token-flow code when locally
+  verified, with no extra external-availability gate. Distinguish an
+  unavailable actual provider/transport, unprovisioned sector sidecar and
+  unproven live token/login results from an actual deployment blocker; update
+  #417/#12 and release documentation with SHA and runtime observations.
 
 ## Review focus
 

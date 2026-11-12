@@ -11,9 +11,16 @@ The accepted #12 code-only candidate (#484) may be merged into the single
 release once exact-SHA checks and technical review are satisfied. Unavailable
 live Queue-it URL/token validation, a missing genuine Boca login endpoint,
 and a missing optional sector-preferences SQLite sidecar **do not block a
-controller-only SIMULATION_ONLY deployment**. The two token feeds remain
-disabled and the sector page must be honest about unprovisioned storage.
-Do not attempt real auth/navigation, invent responses or validate token URLs.
+controller BETA deployment with included Queue-it and Boca contracts**.
+By the owner's later clarification on 2026-11-12, **do not require an
+additional live-provider test, separately reviewed endpoint or activation
+approval to ship/enable those code paths**: syntax, imports, offline TDD,
+ordinary CI and contractual repository checks are the release bar. An
+unconfigured producer/transport must report unavailable at runtime, without
+turning that fact into a deployment veto or inventing a token or response.
+The sector page must be honest about unprovisioned storage. Do not conduct
+live URL/token checks while the external services are unavailable; ticket
+reservation/navigation stays SIMULATION_ONLY and queue bypass forbidden.
 
 This is **not** a waiver of required protected workflows, final PR/merge
 provenance, dual release integrity, positive-identity Boca-only host checks,
