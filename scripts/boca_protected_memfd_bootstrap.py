@@ -181,6 +181,7 @@ PAIR_UPGRADE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
     "boca_socios/host_boca_upgrade_postflight.py",
     "boca_socios/host_boca_upgrade_postflight_runtime.py",
     "boca_socios/host_boca_upgrade_cleanup_runtime.py",
+    "boca_socios/host_boca_upgrade_successor_runtime.py",
     "boca_socios/host_boca_cleanup_v2.py",
     "boca_socios/host_boca_pair_postcommit.py",
     "boca_socios/host_cutover_inventory_observe.py",

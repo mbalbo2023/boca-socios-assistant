@@ -67,7 +67,7 @@ on:
         required: false
         type: string
       official_news_run_id:
-        description: Official notice only; reviewed successful PR-only public news source workflow run ID
+        description: Official notice - reviewed PR-only news run ID; pair-upgrade APPLY - independent R188 retained-resource READ_ONLY run ID. Both require exact provenance.
         required: false
         type: string
       official_news_source_sha:
@@ -96,10 +96,6 @@ on:
         type: string
       protected_action_context:
         description: cutover-a-apply V3 REQUIRES blank; Leave blank for Boca READ_ONLY PREPARE (official/lifecycle only); cutover-a-worker-preflight is EFFECTFUL (NOT READ_ONLY) yet REQUIRES blank; official/lifecycle APPLY uses only prior PREPARE run ID; never JSON/PIN/secret.
-        required: false
-        type: string
-      retained_observation_run_id:
-        description: Boca pair-upgrade APPLY only - exact independent second protected READ_ONLY resource observation run ID; no host effects or inferred evidence.
         required: false
         type: string
       service:
@@ -239,7 +235,7 @@ jobs:
     env:
       BOCA_OPERATION: ${{ inputs.operation }}
       BOCA_PROTECTED_ACTION_CONTEXT: ${{ inputs.protected_action_context }}
-      BOCA_RETAINED_OBSERVATION_RUN_ID: ${{ inputs.retained_observation_run_id }}
+      BOCA_RETAINED_OBSERVATION_RUN_ID: ${{ inputs.operation == 'boca-pair-upgrade-apply' && inputs.official_news_run_id || '' }}
       BOCA_INCIDENT_PREPARE_RUN_ID: ${{ inputs.legacy_release_run_id }}
       BOCA_IMAGE_REF: ${{ inputs.image_ref }}
       BOCA_BROWSER_IMAGE_REF: ${{ inputs.browser_image_ref }}
@@ -255,7 +251,7 @@ jobs:
       BOCA_LEGACY_RELEASE_RUN_ID: ${{ inputs.legacy_release_run_id }}
       BOCA_LEGACY_CONTROLLER_ID: ${{ inputs.legacy_controller_id }}
       BOCA_OFFICIAL_CONTROLLER_ID: ${{ inputs.official_controller_id }}
-      BOCA_OFFICIAL_NEWS_RUN_ID: ${{ inputs.official_news_run_id }}
+      BOCA_OFFICIAL_NEWS_RUN_ID: ${{ inputs.operation != 'boca-pair-upgrade-apply' && inputs.official_news_run_id || '' }}
       BOCA_OFFICIAL_NEWS_SOURCE_SHA: ${{ inputs.official_news_source_sha }}
       BOCA_OFFICIAL_NEWS_ARTIFACT_ID: ${{ inputs.official_news_artifact_id }}
       BOCA_OFFICIAL_NEWS_ZIP_SHA256: ${{ inputs.official_news_zip_sha256 }}
@@ -348,7 +344,7 @@ jobs:
         run: |
           test "$GITHUB_RUN_ATTEMPT" = 1
           if [[ "$BOCA_OPERATION" != boca-pair-upgrade-apply ]]; then
-            test -z "$BOCA_RETAINED_OBSERVATION_RUN_ID"
+            test -z "${BOCA_RETAINED_OBSERVATION_RUN_ID:-}"
           fi
           if [[ "$BOCA_OPERATION" = telegram-activate ]]; then
             # Telegram alone may use a previously released, exact OCI pair

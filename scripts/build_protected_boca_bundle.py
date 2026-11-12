@@ -243,6 +243,7 @@ PAIR_UPGRADE_SOURCES = tuple(
             "src/boca_socios/host_boca_upgrade_postflight.py",
             "src/boca_socios/host_boca_upgrade_postflight_runtime.py",
             "src/boca_socios/host_boca_upgrade_cleanup_runtime.py",
+            "src/boca_socios/host_boca_upgrade_successor_runtime.py",
             "src/boca_socios/host_boca_cleanup_v2.py",
             "src/boca_socios/host_boca_pair_postcommit.py",
             "src/boca_socios/host_cutover_inventory_observe.py",

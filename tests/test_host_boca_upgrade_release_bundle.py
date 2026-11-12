@@ -59,6 +59,7 @@ def test_bundle_carries_authenticated_dual_artifacts_and_bootstrap_checks_allowl
             "boca_socios/host_boca_cleanup_v2.py",
             "boca_socios/host_boca_upgrade_postflight_runtime.py",
             "boca_socios/host_boca_upgrade_cleanup_runtime.py",
+            "boca_socios/host_boca_upgrade_successor_runtime.py",
         ):
             assert module in archive.namelist()
         assert (
@@ -102,7 +103,8 @@ def test_bundle_carries_authenticated_dual_artifacts_and_bootstrap_checks_allowl
             "-c",
             "import sys; sys.path.insert(0, sys.argv[1]); "
             "from boca_socios import host_boca_upgrade_same_lease, host_boca_upgrade_postflight; "
-            "from boca_socios import host_boca_upgrade_postflight_runtime, host_boca_upgrade_cleanup_runtime",
+            "from boca_socios import host_boca_upgrade_postflight_runtime, host_boca_upgrade_cleanup_runtime; "
+            "from boca_socios import host_boca_upgrade_successor_runtime",
             str(target),
         ],
         capture_output=True,

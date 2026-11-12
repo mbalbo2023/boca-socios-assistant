@@ -62,8 +62,16 @@ def test_two_readonly_observers_are_authenticated_in_memory_before_any_host_zip(
     assert "retained-proof.json" in body
     assert "BOCA_RETAINED_AUTH state=VERIFIED host_authorized=false" in body
     assert '"$BOCA_RETAINED_OBSERVATION_RUN_ID"' in body
-    assert "retained_observation_run_id:" in FLOW
-    assert "BOCA_RETAINED_OBSERVATION_RUN_ID: ${{ inputs.retained_observation_run_id }}" in FLOW
+    assert "retained_observation_run_id:" not in FLOW
+    assert (
+        "BOCA_RETAINED_OBSERVATION_RUN_ID: ${{ inputs.operation == 'boca-pair-upgrade-apply' "
+        "&& inputs.official_news_run_id || '' }}"
+    ) in FLOW
+    assert (
+        "BOCA_OFFICIAL_NEWS_RUN_ID: ${{ inputs.operation != 'boca-pair-upgrade-apply' "
+        "&& inputs.official_news_run_id || '' }}"
+    ) in FLOW
+    assert 'test -z "${BOCA_RETAINED_OBSERVATION_RUN_ID:-}"' in FLOW
     admission = FLOW.split("            boca-pair-upgrade-apply)\n", 1)[1].split(
         "              ;;", 1
     )[0]

@@ -108,9 +108,40 @@ físico; el trabajo continúa sin utilizar el host.
 La incorporación posterior de los dos adaptadores productivos **inertes hasta
 que el runner aporte I/O autenticada** (`host_boca_upgrade_postflight_runtime`
 y `host_boca_upgrade_cleanup_runtime`) no importó `host_first_deploy.py` ni
-amplió los topes. Nueva medición del ZIP inelegible: **1 215 970 bytes**
-de fuentes / 1 300 000 y **312 289 bytes** de ZIP / 480 000. El test de
+amplió los topes. Nueva medición reproducible del ZIP inelegible:
+**1 216 421 bytes** contados (fuentes, `__main__` y recibos placeholder)
+frente al tope de 1 300 000; los archivos fuente solos suman 1 215 990.
+ZIP físico **312 279 bytes** frente al tope de 480 000. El test de
 importación aislada y la allowlist exacta cubren también ambos módulos.
+
+El contrato posterior `host_boca_upgrade_successor_runtime` se agregó a la
+misma allowlist sin crear otro actor: `OneShotFinalCleanupBridge` vincula la
+única ejecución del cleanup V2 con su recibo tipado, mientras
+`PostflightGatedSuccessorBackend.finalize` impide devolver `ACCEPT` sin
+postflight durable bajo la misma lease. El interlock de APPLY continúa
+**False/NO_GO**. Medición del ZIP inelegible con los 68 miembros exactos:
+**1 231 333 bytes** contados / 1 300 000 y **316 631 bytes** ZIP / 480 000.
+La integración effectful del runner/host y la passkey física aún no existen.
+
+### Regresión real de los 25 inputs de Actions y corrección R244
+
+La primera corrida **conjunta** de la suite integrada halló 7 fallos pese a
+7 688 pruebas aprobadas: tres contratos detectaron 26 entradas de
+`workflow_dispatch` (límite de GitHub: **25**), y cuatro fixtures históricos
+ejecutaron Bash con `set -u` sin la variable nueva de observación. No es un
+problema de Docker ni justifica una reconstrucción o un APPLY de diagnóstico.
+
+Se eliminó el input extra `retained_observation_run_id` y se reutiliza, **sólo
+para `boca-pair-upgrade-apply`**, el input existente `official_news_run_id`
+para el ID decimal autenticado R188 de observación retenida. Las dos variables
+internas son excluyentes: `BOCA_RETAINED_OBSERVATION_RUN_ID` sólo recibe ese
+valor en pair-upgrade; `BOCA_OFFICIAL_NEWS_RUN_ID` sólo lo recibe en operaciones
+ajenas a pair-upgrade. El importador histórico conserva sin cambios la
+semántica oficial de noticias; los campos no pertinentes continúan rechazados.
+La admisión Bash histórica usa expansión `${BOCA_RETAINED_OBSERVATION_RUN_ID:-}`
+para probar ausencia sin alterar `set -u`. Los 166 tests focales de esos ocho
+archivos resultaron PASS tras un primer TDD RED. El chequeo integral y el CI
+en runner GitHub deben confirmar la promoción; **NO_GO físico permanece**.
 
 ## R244 — Presupuesto de bundle tras la API de cleanup protegida
 
