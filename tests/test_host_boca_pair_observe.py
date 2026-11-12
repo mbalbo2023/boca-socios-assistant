@@ -193,6 +193,53 @@ def test_pair_receipt_contains_exact_proven_ids_and_no_sensitive_mount_or_env_va
     assert b"Config.Env" not in raw and b"Source" not in raw
 
 
+def test_created_worker_missing_health_is_a_bounded_none_not_docker_template_error(
+    monkeypatch,
+):
+    from boca_socios import host_boca_cleanup as cleanup
+
+    calls = []
+
+    def docker(*args):
+        calls.append(args)
+        if "{{if .State.Health}}" not in args[2]:
+            raise cleanup.CleanupError("PRIVATE_NIL_HEALTH_FIELD")
+        return "null\n"
+
+    monkeypatch.setattr(cleanup, "_docker", docker)
+    result = _pair()._fields_from_proven_boca(WORKER_ID, "State.Health.Status")
+    assert result is None
+    assert calls == [
+        (
+            "inspect",
+            "--format",
+            "{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}",
+            WORKER_ID,
+        )
+    ]
+
+
+def test_pair_created_worker_none_health_remains_unstarted_and_unverified():
+    fields = _fields()
+    fields[(WORKER_ID, "State.Health.Status")] = None
+    raw = _run(fields=fields)
+    assert _pair().verify(raw, RUN_ID) == raw
+    worker = json.loads(raw.removeprefix(b"BOCA_INSTALLED_PAIR "))["services"][1]
+    assert worker["health"] == "none"
+    assert worker["status"] == "created"
+    assert worker["pid"] == 0
+    assert worker["running"] is False
+
+
+def test_pair_health_probe_malformed_json_does_not_expose_host_bytes(monkeypatch):
+    from boca_socios import host_boca_cleanup as cleanup
+
+    monkeypatch.setattr(cleanup, "_docker", lambda *_args: "PRIVATE_HEALTH_VALUE")
+    with pytest.raises(_pair().PairNoGo, match="Docker health unverified") as failure:
+        _pair()._fields_from_proven_boca(WORKER_ID, "State.Health.Status")
+    assert "PRIVATE_HEALTH_VALUE" not in str(failure.value)
+
+
 def test_pair_double_reads_metadata_as_well_as_census():
     fields = _fields()
     calls = []

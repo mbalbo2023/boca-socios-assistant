@@ -24,9 +24,15 @@ publicó ambos manifiestos. El primer APPLY físico autorizado
 alcanzó el commit y falló en `RETIRE_OLD`, con limpieza INDETERMINATE.
 El nuevo controlador tiene panel HEALTHY, y el nuevo worker permanece
 CREATED/STOPPED sin motor, pero **no existe aceptación final del upgrade**.
-Se investiga primero mediante un observador R183 independiente READ_ONLY:
-[RCA y alcance](docs/handoffs/2026-11-12-r183-postcommit-readonly.md).
-No se reintenta APPLY ni se toca Porota o Docker ajeno.
+Los diagnósticos READ_ONLY [R183 #43224539079](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43224539079)
+y [R184 #43227066989](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43227066989)
+aislaron el bloqueante a **`WORKER_HEALTH_UNAVAILABLE`**: lectura del
+estado Docker `Health` de un worker en `CREATED/PID0`, donde el estado puede
+no existir aún. Ambos CIDs nuevos están, los antiguos no, y el respaldo
+histórico conserva sus archivos. La [reparación R185](docs/handoffs/2026-11-12-r185-created-worker-health-fix.md)
+propone una lectura nula segura y pruebas regresivas; **todavía falta su
+verificación física y el finalizador postcommit**, sin reintentar APPLY ni
+tocar Porota o Docker ajeno.
 
 ## Issue #12 — desarrollo funcional aislado (12/11/2026; CODE_ONLY, NO_GO externo)
 
