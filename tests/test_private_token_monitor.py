@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, datetime
 from html import unescape
@@ -236,3 +237,59 @@ def test_monitor_refreshes_do_not_exhaust_the_owner_operation_budget(tmp_path: P
         code, _, page = _request(app, "/monitor/tokens", cookie=cookie)
         assert code == 200
         assert _form(page, "queue")["operation_id"] == first["operation_id"]
+
+
+def test_owner_token_live_snapshot_contains_metadata_but_no_bearer_material(
+    tmp_path: Path,
+) -> None:
+    queue, auth = _observations()
+    provider, key, credential = _passkey([0.0])
+    host = FakeHost()
+    app, _ = _app(tmp_path / "boca.sqlite3", provider, host, queue_monitor=queue, auth_monitor=auth)
+    app._now = lambda: AT
+    assert _request(app, "/monitor/tokens.json")[0] == 401
+    cookie = _login(app, key, credential)
+
+    code, headers, body = _request(app, "/monitor/tokens.json", cookie=cookie)
+    assert code == 200
+    assert headers["Content-Type"] == "application/json"
+    assert headers["Cache-Control"] == "no-store"
+    assert b"private" not in body and b"queueittoken" not in body
+    assert b"refreshToken" not in body and b"sandbox.invalid" not in body
+    snapshot = json.loads(body)
+    assert snapshot == {
+        "version": 1,
+        "queue_source": "IN_MEMORY",
+        "boca_source": "IN_MEMORY",
+        "queue_observations": 1,
+        "boca_observations": 1,
+        "last_observed_at": AT.isoformat(),
+        "observed_at": AT.isoformat(),
+    }
+    assert host.calls == []
+
+
+def test_unwired_token_monitor_is_honest_and_has_accessible_refresh_controls(
+    tmp_path: Path,
+) -> None:
+    provider, key, credential = _passkey([0.0])
+    app, _ = _app(tmp_path / "boca.sqlite3", provider, FakeHost())
+    cookie = _login(app, key, credential)
+
+    code, _, body = _request(app, "/monitor/tokens", cookie=cookie)
+    assert code == 200
+    assert b"Fuente Queue-it no conectada" in body
+    assert b"Fuente Boca no conectada" in body
+    assert b'id="token-monitor-refresh"' in body
+    assert b'id="token-monitor-live"' in body
+    assert b"/monitor/tokens.json" in body
+    assert b"5000" in body
+
+    code, _, raw = _request(app, "/monitor/tokens.json", cookie=cookie)
+    assert code == 200
+    snapshot = json.loads(raw)
+    assert snapshot["queue_source"] == "NOT_CONNECTED"
+    assert snapshot["boca_source"] == "NOT_CONNECTED"
+    assert snapshot["queue_observations"] == 0
+    assert snapshot["boca_observations"] == 0
+    assert snapshot["last_observed_at"] is None

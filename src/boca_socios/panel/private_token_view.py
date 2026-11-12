@@ -28,6 +28,62 @@ for (const button of document.querySelectorAll('[data-copy-target]')) {
 }
 """
 
+LIVE_SCRIPT = """
+const state = document.getElementById('token-monitor-live');
+const checked = document.getElementById('token-monitor-checked');
+const refresh = document.getElementById('token-monitor-refresh');
+let lastSignature = null;
+let pending = false;
+async function updateTokenMonitor() {
+  if (pending) return;
+  pending = true;
+  try {
+    const response = await fetch('/monitor/tokens.json', {
+      credentials: 'same-origin', cache: 'no-store', redirect: 'error'});
+    if (!response.ok) throw new Error('snapshot unavailable');
+    const data = await response.json();
+    if (data.version !== 1 ||
+        !['IN_MEMORY', 'NOT_CONNECTED'].includes(data.queue_source) ||
+        !['IN_MEMORY', 'NOT_CONNECTED'].includes(data.boca_source) ||
+        !Number.isInteger(data.queue_observations) || data.queue_observations < 0 ||
+        !Number.isInteger(data.boca_observations) || data.boca_observations < 0 ||
+        !(data.last_observed_at === null || typeof data.last_observed_at === 'string')) {
+      throw new Error('invalid snapshot');
+    }
+    const signature = JSON.stringify([
+      data.queue_source, data.boca_source, data.queue_observations,
+      data.boca_observations, data.last_observed_at]);
+    if (signature !== lastSignature) {
+      state.textContent =
+        'Queue-it: ' + data.queue_observations + ' observaciones (' +
+        (data.queue_source === 'IN_MEMORY' ?
+          'vista local disponible; conexión externa no acreditada' :
+          'fuente no conectada') +
+        '). Boca: ' + data.boca_observations + ' observaciones (' +
+        (data.boca_source === 'IN_MEMORY' ?
+          'vista local disponible; conexión externa no acreditada' :
+          'fuente no conectada') +
+        '). Para ver detalles nuevos, pulse Actualizar listado.';
+      lastSignature = signature;
+    }
+    const when = new Date(data.observed_at);
+    checked.textContent = Number.isNaN(when.getTime()) ?
+      'Última consulta: hora no verificable.' :
+      'Última consulta: ' + when.toLocaleString('es-AR',
+        {timeZone: 'America/Argentina/Buenos_Aires'});
+  } catch (_) {
+    state.textContent = 'Monitor temporalmente no verificable. No confirma tokens nuevos.';
+    checked.textContent = 'Última consulta fallida.';
+    lastSignature = null;
+  } finally {
+    pending = false;
+  }
+}
+refresh.addEventListener('click', updateTokenMonitor);
+setInterval(() => { if (!document.hidden) updateTokenMonitor(); }, 5000);
+updateTokenMonitor();
+"""
+
 
 def _hidden(name: str, value: str) -> str:
     return f'<input type="hidden" name="{name}" value="{escape(value, quote=True)}">'
@@ -61,6 +117,8 @@ def overview(
     csrf: str,
     operation_id: str | None,
     can_reveal: bool,
+    queue_connected: bool,
+    boca_connected: bool,
 ) -> str:
     """Safe overview: only IDs, time and state, never bearer values or URL."""
     queue_rows = []
@@ -120,6 +178,25 @@ def overview(
         "<h1>Monitor privado de tokens</h1>"
         "<p>Observaciones independientes. No se valida ninguna URL ni token; "
         "nunca se inicia el navegador o una reserva desde este monitor.</p>"
+        '<section aria-labelledby="monitor-live-title"><h2 id="monitor-live-title">'
+        "Estado en tiempo real</h2>"
+        '<p id="token-monitor-live" role="status" aria-live="polite">'
+        + (
+            "Vista Queue-it en memoria disponible; origen externo no acreditado. "
+            if queue_connected
+            else "Fuente Queue-it no conectada. "
+        )
+        + (
+            "Vista Boca en memoria disponible; origen externo no acreditado."
+            if boca_connected
+            else "Fuente Boca no conectada."
+        )
+        + '</p><p id="token-monitor-checked">Aún no hay consulta reciente.</p>'
+        '<button id="token-monitor-refresh" type="button">Actualizar ahora</button>'
+        '<p><a href="/monitor/tokens">Actualizar listado de observaciones</a></p>'
+        "<p>Se actualizan solo cantidades y horas cada cinco segundos. Los tokens y sus "
+        "URLs nunca se transmiten en esta consulta. Si aparecen nuevas observaciones, "
+        "actualizá el listado para elegir cuál revelar.</p></section>"
         '<section aria-labelledby="queue-observations"><h2 id="queue-observations">'
         "Queue-it · URL y queueittoken observados</h2>"
         + (
