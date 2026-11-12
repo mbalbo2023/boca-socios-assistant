@@ -1,5 +1,20 @@
 # Development and merge policy
 
+## 2026-11-12 — compatibilidad de formularios móviles en el panel 8443
+
+Por autorización específica del titular para resolver `Origen no autorizado`
+en Configuración, el panel privado admite `Referrer-Policy: same-origin` en
+sus formularios HTML nativos. No se relajan la autenticación passkey, el
+origen exacto exigido en el POST, CSRF, permisos ni la protección anti-replay.
+La política evita divulgar el `Referer` a sitios externos. Las páginas
+Telegram sin formulario nativo permanecen `no-referrer`. La recepción física
+en Chrome requiere evidencia separada de las pruebas offline. ADR 0237.
+
+La solicitud del dueño de acelerar cambios pequeños **no** autoriza por sí
+misma saltar los checks requeridos ni modificar el workflow de producción:
+se auditará el tiempo real para proponer una ruta selectiva con contexto CI
+estable, fuente exacta y promoción manual consolidada.
+
 ## 2026-11-12 owner direction — consolidate #12 and #417 without source gates
 
 **R186 operational continuation:** the single physical dual-pair APPLY

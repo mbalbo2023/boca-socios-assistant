@@ -4,6 +4,19 @@ Read this file, README.md, docs/DEVELOPMENT_POLICY.md and relevant ADRs **in
 full** before touching source. This public repository is independent from
 every unrelated service, host configuration and application repository.
 
+## Owner-approved mobile form compatibility — 2026-11-12, #417
+
+The owner reported `Origen no autorizado` on the private `SITE_URL` form
+and explicitly authorized relaxing the **response referrer policy** to make
+ordinary browser forms work. The private panel may send
+`Referrer-Policy: same-origin` for native owner POST forms; this still sends
+no referrer to a different origin and avoids inducing `Origin: null` under
+`no-referrer`. Telegram setup/pairing pages without native forms retain
+`no-referrer`. **Do not remove the exact Origin comparison**, host/scheme,
+passkey, CSRF, one-use operation, or protected workflow checks. A passing
+offline test is not physical Chrome/Samsung acceptance; do not claim that
+the actual browser's header has been captured. See ADR 0237.
+
 ## Owner amendment — 2026-11-12: consolidated BETA delivery, #12 + #417
 
 **R186 postcommit clarification (12/11):** the already-authorized first
