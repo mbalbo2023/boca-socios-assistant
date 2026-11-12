@@ -64,6 +64,7 @@ def _successor_preflight(
     worker: str,
     release_run: str,
     observation_run: str | None,
+    retained_observation_run: str | None,
 ) -> None:
     """Validate the protected runner payload, never retry historical R179.
 
@@ -74,11 +75,14 @@ def _successor_preflight(
     from boca_socios.host_boca_pair_upgrade_plan import CandidateRelease
     from boca_socios.host_boca_upgrade_observation_bridge import verify_bundled_observation
     from boca_socios.host_boca_upgrade_release_bridge import verify_bundled_release
+    from boca_socios.host_boca_upgrade_retained_bridge import verify_bundled_retained
 
     if (
         not _run_id(run)
         or observation_run is None
         or not _run_id(observation_run)
+        or retained_observation_run is None
+        or not _run_id(retained_observation_run)
         or not re.fullmatch(r"/proc/self/fd/[1-9][0-9]*", sys.argv[0])
     ):
         raise SuccessorPreflightIneligible("Boca successor protected memfd missing")
@@ -89,6 +93,8 @@ def _successor_preflight(
             paired_manifest = archive.read("release/boca-browser-release-manifest.json")
             observation_proof = archive.read("release/observation-proof.json")
             observation_receipt = archive.read("release/boca-pair-observation.receipt")
+            retained_proof = archive.read("release/retained-proof.json")
+            retained_receipt = archive.read("release/boca-retained-observation.receipt")
         verify_bundled_release(
             proof,
             controller_manifest,
@@ -99,6 +105,17 @@ def _successor_preflight(
             observation_proof,
             observation_receipt,
             source,
+            observation_run,
+            run,
+            release_run,
+        )
+        verify_bundled_retained(
+            retained_proof,
+            retained_receipt,
+            observation_proof,
+            observation_receipt,
+            source,
+            retained_observation_run,
             observation_run,
             run,
             release_run,
@@ -269,7 +286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             encode_sqlite(args[1], state).decode("ascii"), end=""
         )
         return 0 if state == "VERIFIED_STABLE" else 3
-    if len(args) in (6, 7) and args[0] == "apply" and _run_id(args[1]):
+    if len(args) in (6, 7, 8) and args[0] == "apply" and _run_id(args[1]):
         # Existing single protected APPLY selector now goes exclusively to
         # the successor preflight; the historical one-shot EXIT1 backend is
         # never executed again, even when four form pins look plausible.
@@ -277,7 +294,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         try:
             _successor_preflight(
-                args[1], args[2], args[3], args[4], args[5], args[6] if len(args) == 7 else None
+                args[1],
+                args[2],
+                args[3],
+                args[4],
+                args[5],
+                args[6] if len(args) >= 7 else None,
+                args[7] if len(args) == 8 else None,
             )
             raise SuccessorPreflightIneligible("Boca successor lacks activated cleanup receipt")
         except SuccessorPreflightIneligible:

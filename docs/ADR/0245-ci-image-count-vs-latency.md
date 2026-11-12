@@ -50,7 +50,10 @@ speedup or remove final image scans. Existing Trivy gates remain unchanged.
   download cache; use exact `uv.lock` and Python/runtime key, no broad
   untrusted PR restore prefix, run `uv sync --frozen` and tests on every hit.
   Quality currently finishes before image-build, so this alone cannot reduce
-  the measured critical path.
+  the measured critical path. In measured main #43281076127, quality's `uv
+  sync --frozen` took ~0.9 s, Docker lab's `uv sync --frozen --no-dev
+  --no-install-project` ~0.25 s, while installing the pinned uv executable
+  took ~5.9 s. Do not confuse this with a costly dependency download cache.
 - **Docker/BuildKit:** enable explicit `buildx` only with a separate,
   provenance-scoped GitHub Actions cache for controller and worker, capacity
   and hit-rate measured, unchanged `--load` semantics for disposable labs and
@@ -58,7 +61,12 @@ speedup or remove final image scans. Existing Trivy gates remain unchanged.
   installation because its Dockerfile copies `src/` before `uv sync`.
   Moving locked dependency installation before project source is useful
   *only after* cache persistence and `--offline` backend provisioning are
-  proved in hosted CI.
+  proved in hosted CI. The measured two builds together cost ~49.6 s of the
+  254-second image job, so even **zero-time** builds would save no more than
+  19.5% of that job; ~171.7 s of unrelated Docker labs/setup and ~32.7 s
+  of required Trivy scans remain. A `type=gha` cold miss may instead add
+  large cache export/import traffic. Validate containerd image store versus
+  the `docker-container` Buildx driver before proposing `--load` behavior.
 - **Labs:** time each offline Docker test before restructuring; some jobs
   share the owner volume and cannot safely run concurrently. The long
   runner Docker lab sequence dominates critical-path time (~171 seconds).

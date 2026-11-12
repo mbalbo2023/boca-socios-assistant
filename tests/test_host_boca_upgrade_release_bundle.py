@@ -13,16 +13,11 @@ import pytest
 
 from boca_socios import host_boca_upgrade_observation_bridge as observation
 from boca_socios import host_boca_upgrade_release_bridge as bridge
+from boca_socios import host_boca_upgrade_retained_bridge as retained
 from boca_socios.host_boca_pair_upgrade_plan import CandidateRelease
-from test_host_boca_upgrade_observation_bridge import (
-    APPLY_RUN,
-    NOW,
-    OBS_RUN,
-)
-from test_host_boca_upgrade_observation_bridge import (
-    FakeGitHub as FakeObservation,
-)
+from test_host_boca_upgrade_observation_bridge import APPLY_RUN
 from test_host_boca_upgrade_release_auth import BROWSER, CONTROLLER, RUN, SOURCE, FakeGitHub
+from test_host_boca_upgrade_retained_bridge import PAIR_RUN, RETAINED_RUN, _auth
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -41,12 +36,11 @@ def _authenticated_directory(tmp_path: Path) -> Path:
     (folder / "boca-release-manifest.json").write_bytes(ctrl)
     (folder / "boca-browser-release-manifest.json").write_bytes(browser)
     (folder / "runner-proof.json").write_bytes(proof)
-    observed = FakeObservation()
-    observation_proof = observation.authenticate_runner_observation(
-        SOURCE, OBS_RUN, APPLY_RUN, RUN, observed.receipt, observed, now=NOW
-    )
-    (folder / "boca-pair-observation.receipt").write_bytes(observed.receipt)
-    (folder / "observation-proof.json").write_bytes(observation_proof)
+    retained_proof, retained_raw, pair_proof, pair_raw = _auth()
+    (folder / "boca-pair-observation.receipt").write_bytes(pair_raw)
+    (folder / "observation-proof.json").write_bytes(pair_proof)
+    (folder / "boca-retained-observation.receipt").write_bytes(retained_raw)
+    (folder / "retained-proof.json").write_bytes(retained_proof)
     return folder
 
 
@@ -59,6 +53,14 @@ def test_bundle_carries_authenticated_dual_artifacts_and_bootstrap_checks_allowl
     bootstrap.verify(target.read_bytes(), digest, pair_upgrade=True)
     with zipfile.ZipFile(io.BytesIO(target.read_bytes())) as archive:
         assert set(archive.namelist()) == bootstrap.PAIR_UPGRADE_ENTRIES
+        for module in (
+            "boca_socios/host_boca_upgrade_same_lease.py",
+            "boca_socios/host_boca_upgrade_postflight.py",
+            "boca_socios/host_boca_cleanup_v2.py",
+            "boca_socios/host_boca_upgrade_postflight_runtime.py",
+            "boca_socios/host_boca_upgrade_cleanup_runtime.py",
+        ):
+            assert module in archive.namelist()
         assert (
             archive.read("release/runner-proof.json")
             == (evidence / "runner-proof.json").read_bytes()
@@ -73,16 +75,56 @@ def test_bundle_carries_authenticated_dual_artifacts_and_bootstrap_checks_allowl
             archive.read("release/observation-proof.json"),
             archive.read("release/boca-pair-observation.receipt"),
             SOURCE,
-            OBS_RUN,
+            PAIR_RUN,
             APPLY_RUN,
             RUN,
         )["old_attempt_id"]
+        assert (
+            retained.verify_bundled_retained(
+                archive.read("release/retained-proof.json"),
+                archive.read("release/boca-retained-observation.receipt"),
+                archive.read("release/observation-proof.json"),
+                archive.read("release/boca-pair-observation.receipt"),
+                SOURCE,
+                RETAINED_RUN,
+                PAIR_RUN,
+                APPLY_RUN,
+                RUN,
+            ).control_directory_inode_sha256
+            == "3" * 64
+        )
         assert not any("token" in name or name.endswith(".env") for name in archive.namelist())
+    imported = subprocess.run(  # noqa: S603 - fixed local Python, checked ZIP
+        [
+            sys.executable,
+            "-I",
+            "-B",
+            "-c",
+            "import sys; sys.path.insert(0, sys.argv[1]); "
+            "from boca_socios import host_boca_upgrade_same_lease, host_boca_upgrade_postflight; "
+            "from boca_socios import host_boca_upgrade_postflight_runtime, host_boca_upgrade_cleanup_runtime",
+            str(target),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=12,
+        check=False,
+    )
+    assert imported.returncode == 0, imported.stderr
 
 
 @pytest.mark.parametrize(
     "change",
-    ["contaminated", "extra", "symlink", "mismatch", "observation_tamper", "observation_symlink"],
+    [
+        "contaminated",
+        "extra",
+        "symlink",
+        "mismatch",
+        "observation_tamper",
+        "observation_symlink",
+        "retained_tamper",
+        "retained_symlink",
+    ],
 )
 def test_bundle_rejects_untrusted_release_folder_before_writing_zip(
     tmp_path: Path, change: str
@@ -102,6 +144,12 @@ def test_bundle_rejects_untrusted_release_folder_before_writing_zip(
         path = evidence / "observation-proof.json"
         path.unlink()
         path.symlink_to(evidence / "boca-release-manifest.json")
+    elif change == "retained_tamper":
+        (evidence / "boca-retained-observation.receipt").write_bytes(b'{"forged":true}\n')
+    elif change == "retained_symlink":
+        path = evidence / "retained-proof.json"
+        path.unlink()
+        path.symlink_to(evidence / "observation-proof.json")
     else:
         (evidence / "runner-proof.json").write_bytes(
             (evidence / "runner-proof.json")
@@ -121,6 +169,7 @@ def test_ineligible_bundle_never_recovers_legacy_one_shot_upgrade(tmp_path: Path
     with zipfile.ZipFile(io.BytesIO(target.read_bytes())) as archive:
         assert b'"state":"NO_GO"' in archive.read("release/runner-proof.json")
         assert b'"state":"NO_GO"' in archive.read("release/observation-proof.json")
+        assert b'"state":"NO_GO"' in archive.read("release/retained-proof.json")
     result = subprocess.run(  # noqa: S603 - checked fixture ZIP + fixed offline interpreter
         [
             sys.executable,
@@ -135,7 +184,8 @@ def test_ineligible_bundle_never_recovers_legacy_one_shot_upgrade(tmp_path: Path
             CONTROLLER,
             BROWSER,
             RUN,
-            OBS_RUN,
+            PAIR_RUN,
+            RETAINED_RUN,
         ],
         input=target.read_bytes(),
         capture_output=True,

@@ -98,6 +98,10 @@ on:
         description: cutover-a-apply V3 REQUIRES blank; Leave blank for Boca READ_ONLY PREPARE (official/lifecycle only); cutover-a-worker-preflight is EFFECTFUL (NOT READ_ONLY) yet REQUIRES blank; official/lifecycle APPLY uses only prior PREPARE run ID; never JSON/PIN/secret.
         required: false
         type: string
+      retained_observation_run_id:
+        description: Boca pair-upgrade APPLY only - exact independent second protected READ_ONLY resource observation run ID; no host effects or inferred evidence.
+        required: false
+        type: string
       service:
         description: Fixed Boca-only service
         required: true
@@ -235,6 +239,7 @@ jobs:
     env:
       BOCA_OPERATION: ${{ inputs.operation }}
       BOCA_PROTECTED_ACTION_CONTEXT: ${{ inputs.protected_action_context }}
+      BOCA_RETAINED_OBSERVATION_RUN_ID: ${{ inputs.retained_observation_run_id }}
       BOCA_INCIDENT_PREPARE_RUN_ID: ${{ inputs.legacy_release_run_id }}
       BOCA_IMAGE_REF: ${{ inputs.image_ref }}
       BOCA_BROWSER_IMAGE_REF: ${{ inputs.browser_image_ref }}
@@ -342,6 +347,9 @@ jobs:
           BOCA_OWNER_ENVELOPE: ${{ inputs.owner_envelope }}
         run: |
           test "$GITHUB_RUN_ATTEMPT" = 1
+          if [[ "$BOCA_OPERATION" != boca-pair-upgrade-apply ]]; then
+            test -z "$BOCA_RETAINED_OBSERVATION_RUN_ID"
+          fi
           if [[ "$BOCA_OPERATION" = telegram-activate ]]; then
             # Telegram alone may use a previously released, exact OCI pair
             # after a workflow-only fix. GitHub main HEAD and the immutable
@@ -629,6 +637,10 @@ jobs:
               [[ "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^[1-9][0-9]{0,19}$ ]]
               test "$BOCA_PROTECTED_ACTION_CONTEXT" != "$GITHUB_RUN_ID"
               test "$BOCA_PROTECTED_ACTION_CONTEXT" != "$BOCA_RELEASE_RUN_ID"
+              [[ "$BOCA_RETAINED_OBSERVATION_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+              test "$BOCA_RETAINED_OBSERVATION_RUN_ID" != "$GITHUB_RUN_ID"
+              test "$BOCA_RETAINED_OBSERVATION_RUN_ID" != "$BOCA_RELEASE_RUN_ID"
+              test "$BOCA_RETAINED_OBSERVATION_RUN_ID" != "$BOCA_PROTECTED_ACTION_CONTEXT"
               for unexpected in \
                 "$BOCA_LEGACY_SOURCE_SHA" \
                 "$BOCA_LEGACY_IMAGE_REF" "$BOCA_LEGACY_RELEASE_RUN_ID" \
@@ -2293,6 +2305,50 @@ jobs:
           fi
           printf '%s\n' "$verified" >> "$GITHUB_STEP_SUMMARY"
           printf 'BOCA_RETAINED_RESOURCES scope=BOCA_ROOTLESS resources_double_read=STABLE observer_writes=0 cutover=NO_GO\n' >> "$GITHUB_STEP_SUMMARY"
+          # Export only the already-verified canonical read-only receipt.
+          # No additional SSH/Docker invocation, state mutation or retries.
+          python3 - "$receipt_dir/receipt" "$RUNNER_TEMP/boca-retained-observation.receipt" "$GITHUB_RUN_ID" <<'PY'
+          import os
+          import stat
+          import sys
+
+          from boca_socios import host_boca_retained_resources as retained
+
+          fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+          try:
+              item = os.fstat(fd)
+              if not (stat.S_ISREG(item.st_mode) and item.st_uid == os.geteuid()
+                      and item.st_nlink == 1 and 0 < item.st_size <= 48_000):
+                  raise SystemExit(3)
+              raw = os.read(fd, 48_001)
+              if len(raw) != item.st_size:
+                  raise SystemExit(3)
+              retained.verify(raw, sys.argv[3])
+          finally:
+              os.close(fd)
+          fd = os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                       | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+          try:
+              if os.write(fd, raw) != len(raw):
+                  raise SystemExit(3)
+              os.fsync(fd)
+          finally:
+              os.close(fd)
+          parent = os.open(os.path.dirname(sys.argv[2]), os.O_DIRECTORY | os.O_RDONLY)
+          try:
+              os.fsync(parent)
+          finally:
+              os.close(parent)
+          PY
+      - name: Upload authenticated candidate for retained Boca resources READ_ONLY
+        if: inputs.operation == 'boca-retained-resource-observe'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: boca-retained-resources-observation
+          path: ${{ runner.temp }}/boca-retained-observation.receipt
+          if-no-files-found: error
+          retention-days: 2
+          compression-level: 0
       - name: Observe exact R182 postcommit Boca state READ_ONLY
         if: inputs.operation == 'boca-postcommit-observe'
         env:
@@ -2554,21 +2610,30 @@ jobs:
           # their canonical digest witness enter the SHA-pinned host bundle.
           umask 077
           release_dir="$(mktemp -d "$RUNNER_TEMP/boca-upgrade-release.XXXXXXXX")"
-          trap 'rm -f -- "$release_dir/boca-release-manifest.json" "$release_dir/boca-browser-release-manifest.json" "$release_dir/runner-proof.json" "$release_dir/boca-pair-observation.receipt" "$release_dir/observation-proof.json"; rmdir -- "$release_dir"' EXIT
+          trap 'rm -f -- "$release_dir/boca-release-manifest.json" "$release_dir/boca-browser-release-manifest.json" "$release_dir/runner-proof.json" "$release_dir/boca-pair-observation.receipt" "$release_dir/observation-proof.json" "$release_dir/boca-retained-observation.receipt" "$release_dir/retained-proof.json"; rmdir -- "$release_dir"' EXIT
           gh run download "$BOCA_RELEASE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name boca-release-manifest --dir "$release_dir"
           gh run download "$BOCA_RELEASE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name boca-browser-release-manifest --dir "$release_dir"
           # Earlier, independently protected READ_ONLY dispatch: exact run,
           # current main, deploy job/steps, ZIP archive digest and sole receipt.
-          gh run download "$BOCA_PROTECTED_ACTION_CONTEXT" --repo "$GITHUB_REPOSITORY" \
-            --name boca-installed-pair-observation --dir "$release_dir"
+          # No gh extraction of observer ZIPs before REST run/job/digest trust.
+          # The Python verifier reads ZIP in memory, validates one member and
+          # writes only verified canonical bytes O_EXCL+fsync.
           observation_state="$(python3 -m boca_socios.host_boca_upgrade_observation_bridge \
             "$BOCA_SOURCE_SHA" "$BOCA_PROTECTED_ACTION_CONTEXT" \
             "$GITHUB_RUN_ID" "$BOCA_RELEASE_RUN_ID" \
             "$release_dir/boca-pair-observation.receipt" \
             "$release_dir/observation-proof.json")"
           test "$observation_state" = 'BOCA_OBSERVATION_AUTH state=VERIFIED host_authorized=false'
+          retained_state="$(python3 -m boca_socios.host_boca_upgrade_retained_bridge \
+            "$BOCA_SOURCE_SHA" "$BOCA_RETAINED_OBSERVATION_RUN_ID" \
+            "$BOCA_PROTECTED_ACTION_CONTEXT" "$GITHUB_RUN_ID" "$BOCA_RELEASE_RUN_ID" \
+            "$release_dir/boca-pair-observation.receipt" \
+            "$release_dir/observation-proof.json" \
+            "$release_dir/boca-retained-observation.receipt" \
+            "$release_dir/retained-proof.json")"
+          test "$retained_state" = 'BOCA_RETAINED_AUTH state=VERIFIED host_authorized=false'
           auth_state="$(python3 -m boca_socios.host_boca_upgrade_release_bridge \
             "$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID" \
             "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" \
@@ -2583,7 +2648,7 @@ jobs:
           [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
           remote_command="$(python3 - "$digest" "$GITHUB_RUN_ID" "$BOCA_SOURCE_SHA" \
             "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" "$BOCA_RELEASE_RUN_ID" \
-            "$BOCA_PROTECTED_ACTION_CONTEXT" <<'PY'
+            "$BOCA_PROTECTED_ACTION_CONTEXT" "$BOCA_RETAINED_OBSERVATION_RUN_ID" <<'PY'
           import shlex
           import sys
           from pathlib import Path
@@ -2594,7 +2659,7 @@ jobs:
           )"
           umask 077
           receipt_dir="$(mktemp -d "$RUNNER_TEMP/boca-pair-upgrade.XXXXXXXX")"
-          trap 'rm -f -- "$receipt_dir/receipt" "$release_dir/boca-release-manifest.json" "$release_dir/boca-browser-release-manifest.json" "$release_dir/runner-proof.json" "$release_dir/boca-pair-observation.receipt" "$release_dir/observation-proof.json"; rmdir -- "$receipt_dir" "$release_dir"' EXIT
+          trap 'rm -f -- "$receipt_dir/receipt" "$release_dir/boca-release-manifest.json" "$release_dir/boca-browser-release-manifest.json" "$release_dir/runner-proof.json" "$release_dir/boca-pair-observation.receipt" "$release_dir/observation-proof.json" "$release_dir/boca-retained-observation.receipt" "$release_dir/retained-proof.json"; rmdir -- "$receipt_dir" "$release_dir"' EXIT
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
             > "$RUNNER_TEMP/boca-pair-upgrade-main.json"
           python3 scripts/check_main_ref.py "$RUNNER_TEMP/boca-pair-upgrade-main.json" "$BOCA_SOURCE_SHA"

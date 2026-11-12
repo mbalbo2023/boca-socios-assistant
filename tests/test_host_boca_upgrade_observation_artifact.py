@@ -49,3 +49,22 @@ def test_observer_does_not_include_untrusted_workflow_form_coordinates() -> None
         "boca_user",
     ):
         assert forbidden not in observe
+
+
+def test_existing_retained_observer_can_export_verified_bytes_without_extra_host_calls() -> None:
+    observe = _step("Observe retained Boca resource provenance READ_ONLY")
+    upload = _step("Upload authenticated candidate for retained Boca resources READ_ONLY")
+    assert "if: inputs.operation == 'boca-retained-resource-observe'" in observe
+    assert "if: inputs.operation == 'boca-retained-resource-observe'" in upload
+    assert "boca_socios.host_boca_retained_resources report" in observe
+    assert observe.index("boca_socios.host_boca_retained_resources report") < observe.index(
+        "boca-retained-observation.receipt"
+    )
+    assert "O_EXCL" in observe and "O_NOFOLLOW" in observe
+    assert "os.fsync" in observe
+    assert "retained.verify(raw, sys.argv[3])" in observe
+    assert "name: boca-retained-resources-observation" in upload
+    assert "${{ runner.temp }}/boca-retained-observation.receipt" in upload
+    assert "if-no-files-found: error" in upload and "retention-days: 2" in upload
+    for forbidden in ("docker", "ssh", "sudo", "curl", "gh run download", "GITHUB_TOKEN"):
+        assert forbidden not in upload

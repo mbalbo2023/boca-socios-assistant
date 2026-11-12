@@ -203,7 +203,12 @@ def _verify_run(client: GitHubEvidenceTransport, main_sha: str, run_id: str, now
         raise _fail()
 
 
-def _verify_job(client: GitHubEvidenceTransport, main_sha: str, run_id: str) -> None:
+def _verify_job(
+    client: GitHubEvidenceTransport,
+    main_sha: str,
+    run_id: str,
+    required_steps: frozenset[str] = _STEPS,
+) -> None:
     record = client.get_json(f"actions/runs/{run_id}/jobs?per_page=100")
     if not isinstance(record, dict):
         raise _fail()
@@ -237,7 +242,7 @@ def _verify_job(client: GitHubEvidenceTransport, main_sha: str, run_id: str) -> 
     ):
         raise _fail()
     steps = job.get("steps")
-    if not isinstance(steps, list) or len(steps) < len(_STEPS):
+    if not isinstance(steps, list) or len(steps) < len(required_steps):
         raise _fail()
     names: set[str] = set()
     for step in steps:
@@ -247,17 +252,25 @@ def _verify_job(client: GitHubEvidenceTransport, main_sha: str, run_id: str) -> 
         if name in names:
             raise _fail()
         names.add(name)
-        if name in _STEPS and (
+        if name in required_steps and (
             step.get("status") != "completed" or step.get("conclusion") != "success"
         ):
             raise _fail()
-    if not _STEPS <= names:
+    if not required_steps <= names:
         raise _fail()
 
 
-def _verify_artifact(
-    client: GitHubEvidenceTransport, main_sha: str, run_id: str, raw: bytes
-) -> None:
+def _download_artifact(
+    client: GitHubEvidenceTransport,
+    main_sha: str,
+    run_id: str,
+    *,
+    artifact_name: str = _ARTIFACT,
+    member_name: str = _MEMBER,
+    member_limit: int = 4096,
+    archive_limit: int = 16_384,
+) -> bytes:
+    """Inspect GitHub's ZIP *in memory* before any local extraction or write."""
     listing = client.get_json(f"actions/runs/{run_id}/artifacts?per_page=100")
     if not isinstance(listing, dict) or listing.get("total_count") != 1:
         raise _fail()
@@ -270,11 +283,11 @@ def _verify_artifact(
         type(ident) is not int
         or ident <= 0
         or type(size) is not int
-        or not 0 < size <= 16_384
+        or not 0 < size <= archive_limit
         or type(digest) is not str
         or not digest.startswith("sha256:")
         or _HASH.fullmatch(digest.removeprefix("sha256:")) is None
-        or artifact.get("name") != _ARTIFACT
+        or artifact.get("name") != artifact_name
         or artifact.get("expired") is not False
         or artifact.get("archive_download_url") != _API + f"actions/artifacts/{ident}/zip"
     ):
@@ -298,18 +311,49 @@ def _verify_artifact(
             raise _fail()
         member = members[0]
         if (
-            member.filename != _MEMBER
+            member.filename != member_name
             or member.is_dir()
-            or not 0 < member.file_size <= 4096
+            or not 0 < member.file_size <= member_limit
             or member.flag_bits & 1
             or member.compress_type not in (zipfile.ZIP_DEFLATED, zipfile.ZIP_STORED)
             or (member.external_attr >> 16) & 0o170000 == 0o120000
         ):
             raise _fail()
         with archive.open(member) as stream:
-            contents = stream.read(4097)
-    if contents != raw or len(contents) != member.file_size:
+            contents = stream.read(member_limit + 1)
+    if len(contents) != member.file_size:
         raise _fail()
+    return contents
+
+
+def _authenticate_and_download(
+    main_sha: str,
+    observation_run: str,
+    apply_run: str,
+    release_run: str,
+    supplied: bytes | None,
+    client: GitHubEvidenceTransport,
+    *,
+    now: datetime | None = None,
+) -> tuple[bytes, bytes]:
+    observed_now = datetime.now(timezone.utc) if now is None else now  # noqa: UP017 - host py3.10
+    if observed_now.tzinfo is None or client is None:
+        raise _fail()
+    _main_is_exact(client, main_sha)
+    _verify_run(client, main_sha, observation_run, observed_now)
+    _verify_job(client, main_sha, observation_run)
+    raw = _download_artifact(client, main_sha, observation_run)
+    if supplied is not None and raw != supplied:
+        raise _fail()
+    expected = _pair_projection(raw, observation_run, main_sha)
+    _runs_are_distinct(expected, apply_run, release_run)
+    expected.update({"apply_attempt_id": apply_run, "release_run_id": release_run})
+    # Recheck attempt after job/artifact listing to detect Action rerun races.
+    _verify_run(client, main_sha, observation_run, observed_now)
+    _main_is_exact(client, main_sha)
+    proof = _canonical(expected)
+    verify_bundled_observation(proof, raw, main_sha, observation_run, apply_run, release_run)
+    return proof, raw
 
 
 def authenticate_runner_observation(
@@ -324,25 +368,14 @@ def authenticate_runner_observation(
 ) -> bytes:
     """Runner-only real Actions artifact authentication; never host capability."""
     try:
-        observed_now = datetime.now(timezone.utc) if now is None else now  # noqa: UP017 - host py3.10
-        if observed_now.tzinfo is None or client is None:
-            raise _fail()
-        expected = _pair_projection(raw, observation_run, main_sha)
-        _runs_are_distinct(expected, apply_run, release_run)
-        expected.update({"apply_attempt_id": apply_run, "release_run_id": release_run})
-        _main_is_exact(client, main_sha)
-        _verify_run(client, main_sha, observation_run, observed_now)
-        _verify_job(client, main_sha, observation_run)
-        _verify_artifact(client, main_sha, observation_run, raw)
-        _main_is_exact(client, main_sha)
-        proof = _canonical(expected)
-        verify_bundled_observation(proof, raw, main_sha, observation_run, apply_run, release_run)
-        return proof
+        return _authenticate_and_download(
+            main_sha, observation_run, apply_run, release_run, raw, client, now=now
+        )[0]
     except Exception:
         raise _fail() from None
 
 
-def _runner_input(path: str) -> bytes:
+def _runner_input(path: str, *, limit: int = 4096) -> bytes:
     folder = Path(path).parent
     metadata = folder.lstat()
     if (
@@ -358,10 +391,10 @@ def _runner_input(path: str) -> bytes:
             not stat.S_ISREG(item.st_mode)
             or item.st_uid != os.geteuid()
             or item.st_nlink != 1
-            or not 0 < item.st_size <= 4096
+            or not 0 < item.st_size <= limit
         ):
             raise _fail()
-        raw = os.read(fd, 4097)
+        raw = os.read(fd, limit + 1)
         if len(raw) != item.st_size:
             raise _fail()
         return raw
@@ -376,16 +409,17 @@ def runner_main(args: Sequence[str], *, now: datetime | None = None) -> int:
         main, observation, apply, release, source, destination = args
         if Path(source).parent != Path(destination).parent:
             raise _fail()
-        raw = _runner_input(source)
-        proof = authenticate_runner_observation(
+        proof, raw = _authenticate_and_download(
             main,
             observation,
             apply,
             release,
-            raw,
+            None,
             GitHubRestTransport(os.environ["GH_TOKEN"]),
             now=now,
         )
+        # Never decompress/download into the runner workspace before auth.
+        _runner_write_proof(source, raw)
         _runner_write_proof(destination, proof)
     except Exception:
         print("BOCA_OBSERVATION_AUTH state=NO_GO host_authorized=false")

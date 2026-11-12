@@ -85,6 +85,33 @@ exacto deben registrarse al integrar este commit con Cleanup V2/UI/CI.
 No hubo SSH al droplet, dispatch de GitHub Action, publicación de release,
 push, navegación de Boca ni cambios de datos del host durante este trabajo.
 
+## R244 — Closure adicional del sucesor sin activación
+
+Tras autenticar un segundo observador independiente de recursos R188 y agregar
+los contratos de captura *same-lease* y postflight, la allowlist cerrada del
+bundle sucesor incorporó `host_boca_upgrade_same_lease`,
+`host_boca_upgrade_postflight`, `host_boca_cleanup_v2` y sus dependencias
+estáticas `host_boca_pair_postcommit`, `host_cutover_inventory_observe` y
+`deploy_inputs`. La prueba TDD falló primero por ausencia de módulos,
+posteriormente por importación transitiva desde un ZIP aislado; ambas
+condiciones se resolvieron sin relajar el verificador de entradas exactas.
+
+Medición con placeholder de release deliberadamente inelegible: **1 190 690
+bytes** de fuentes frente al presupuesto fijo de **1 300 000** y ZIP
+**304 965 bytes** frente al tope fijo de **480 000**. No se aumentaron cuotas
+ni se modificó el `PAIR_UPGRADE_MAIN` de salida `NO_GO`. La importación de
+ambos contratos desde `python -I` sobre el ZIP, las dos firmas autenticadas
+simuladas y el bootstrap estricto quedaron cubiertos por pruebas focales.
+Estos tamaños no son medición de un nuevo artefacto instalado ni de release
+físico; el trabajo continúa sin utilizar el host.
+
+La incorporación posterior de los dos adaptadores productivos **inertes hasta
+que el runner aporte I/O autenticada** (`host_boca_upgrade_postflight_runtime`
+y `host_boca_upgrade_cleanup_runtime`) no importó `host_first_deploy.py` ni
+amplió los topes. Nueva medición del ZIP inelegible: **1 215 970 bytes**
+de fuentes / 1 300 000 y **312 289 bytes** de ZIP / 480 000. El test de
+importación aislada y la allowlist exacta cubren también ambos módulos.
+
 ## R244 — Presupuesto de bundle tras la API de cleanup protegida
 
 `execute_protected_with_inventories` incrementó `host_boca_cleanup.py` de

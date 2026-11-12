@@ -156,7 +156,9 @@ class GitHubRestTransport:
             raise _fail()
         url = _API_BASE + f"actions/artifacts/{ident}/zip"
         try:
-            return self._read(url, authenticated=True, bound=32_768)
+            # R244 retains a verified public receipt up to 48 KiB. Per-kind
+            # ZIP limits remain narrower inside the authenticated consumer.
+            return self._read(url, authenticated=True, bound=65_536)
         except urllib.error.HTTPError as redirect:
             if redirect.code not in (302, 303, 307, 308):
                 raise _fail() from None
@@ -181,7 +183,7 @@ class GitHubRestTransport:
                 raise _fail() from None
             try:
                 # The signed URL is not a GitHub API endpoint: no bearer header.
-                return self._read(signed, authenticated=False, bound=32_768)
+                return self._read(signed, authenticated=False, bound=65_536)
             except Exception:
                 raise _fail() from None
         except Exception:

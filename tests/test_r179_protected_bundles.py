@@ -81,6 +81,7 @@ def test_r179_verified_memfd_zip_actually_imports_entrypoint(tmp_path: Path, var
             "invalid-ref",
             "1",
             "2",  # Explicit prior observer run; never default or reuse APPLY.
+            "3",  # Independent retained-resource observer run, not pair provenance.
         ]
     )
     runner = subprocess.run(  # noqa: S603 - constant Python interpreter/checked ZIP

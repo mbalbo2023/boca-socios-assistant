@@ -137,6 +137,18 @@ def test_authentic_artifact_binds_old_pair_and_is_never_apply_authority() -> Non
     assert gh.main_reads == 2
 
 
+def test_run_attempt_cannot_change_between_job_artifact_and_final_runner_proof() -> None:
+    class MutatingGitHub(FakeGitHub):
+        def get_json(self, path: str) -> object:
+            if path == f"actions/runs/{OBS_RUN}/jobs?per_page=100":
+                self.run["run_attempt"] = 2
+            return super().get_json(path)
+
+    gh = MutatingGitHub()
+    with pytest.raises(bridge.UpgradeObservationNoGo):
+        authenticate(gh)
+
+
 @pytest.mark.parametrize(
     "mutation",
     (
@@ -208,12 +220,12 @@ def test_runner_reads_private_receipt_and_writes_exclusive_proof_without_token(
     directory.mkdir(mode=0o700)
     receipt = directory / "boca-pair-observation.receipt"
     proof = directory / "observation-proof.json"
-    receipt.write_bytes(FakeGitHub().receipt)
     monkeypatch.setenv("GH_TOKEN", "never-forward-this-secret")
     monkeypatch.setattr(bridge, "GitHubRestTransport", lambda _token: FakeGitHub())
     args = [MAIN, OBS_RUN, APPLY_RUN, RELEASE_RUN, str(receipt), str(proof)]
     assert bridge.runner_main(args, now=NOW) == 0
     assert capsys.readouterr().out == "BOCA_OBSERVATION_AUTH state=VERIFIED host_authorized=false\n"
+    assert receipt.read_bytes() == FakeGitHub().receipt
     assert proof.stat().st_mode & 0o777 == 0o600
     assert b"never-forward-this-secret" not in proof.read_bytes()
     assert bridge.runner_main(args, now=NOW) == 3  # O_EXCL prevents replay.

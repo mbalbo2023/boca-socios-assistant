@@ -239,11 +239,20 @@ PAIR_UPGRADE_SOURCES = tuple(
             "src/boca_socios/host_boca_pair_stage.py",
             "src/boca_socios/host_boca_pair_upgrade_backend.py",
             "src/boca_socios/host_boca_pair_upgrade_reusable.py",
+            "src/boca_socios/host_boca_upgrade_same_lease.py",
+            "src/boca_socios/host_boca_upgrade_postflight.py",
+            "src/boca_socios/host_boca_upgrade_postflight_runtime.py",
+            "src/boca_socios/host_boca_upgrade_cleanup_runtime.py",
+            "src/boca_socios/host_boca_cleanup_v2.py",
+            "src/boca_socios/host_boca_pair_postcommit.py",
+            "src/boca_socios/host_cutover_inventory_observe.py",
+            "src/boca_socios/deploy_inputs.py",
             "src/boca_socios/host_boca_repeatable_journal.py",
             "src/boca_socios/host_boca_upgrade_adapters.py",
             "src/boca_socios/host_boca_upgrade_release_auth.py",
             "src/boca_socios/host_boca_upgrade_release_bridge.py",
             "src/boca_socios/host_boca_upgrade_observation_bridge.py",
+            "src/boca_socios/host_boca_upgrade_retained_bridge.py",
             "src/boca_socios/host_boca_retained_resources.py",
             "src/boca_socios/release_manifest.py",
             "src/boca_socios/browser_release_manifest.py",
@@ -257,11 +266,13 @@ PAIR_UPGRADE_RELEASE_NAMES = (
     "runner-proof.json",
     "boca-pair-observation.receipt",
     "observation-proof.json",
+    "boca-retained-observation.receipt",
+    "retained-proof.json",
 )
 PAIR_UPGRADE_RELEASE_PLACEHOLDER = b'{"state":"NO_GO"}\n'
 PAIR_UPGRADE_MAIN = (
     "import sys\n"
-    "if len(sys.argv) != 8 or sys.argv[1] != 'boca-pair-upgrade-apply':\n"
+    "if len(sys.argv) != 9 or sys.argv[1] != 'boca-pair-upgrade-apply':\n"
     "    raise SystemExit(3)\n"
     "from boca_socios.host_boca_pair_upgrade_cli import main as cli\n"
     "raise SystemExit(cli(['apply',*sys.argv[2:]]))\n"
@@ -487,6 +498,9 @@ def build(
                 _runner_input,
                 verify_bundled_release,
             )
+            from boca_socios.host_boca_upgrade_retained_bridge import (
+                verify_bundled_retained,
+            )
 
             folder = pair_upgrade_release_dir
             if folder.is_symlink() or set(item.name for item in folder.iterdir()) != set(
@@ -496,8 +510,17 @@ def build(
             try:
                 release_files = {
                     name: (
-                        observation_input(str(folder / name))
-                        if name == "boca-pair-observation.receipt"
+                        observation_input(
+                            str(folder / name),
+                            limit=48_000 if name == "boca-retained-observation.receipt" else 4096,
+                        )
+                        if name
+                        in (
+                            "boca-pair-observation.receipt",
+                            "observation-proof.json",
+                            "boca-retained-observation.receipt",
+                            "retained-proof.json",
+                        )
                         else _runner_input(str(folder / name))
                     )
                     for name in PAIR_UPGRADE_RELEASE_NAMES
@@ -526,6 +549,18 @@ def build(
                     release_files["observation-proof.json"],
                     release_files["boca-pair-observation.receipt"],
                     candidate.source_sha,
+                    observation["observer_run_id"],
+                    observation["apply_attempt_id"],
+                    candidate.release_run_id,
+                )
+                retained = json.loads(release_files["retained-proof.json"])
+                verify_bundled_retained(
+                    release_files["retained-proof.json"],
+                    release_files["boca-retained-observation.receipt"],
+                    release_files["observation-proof.json"],
+                    release_files["boca-pair-observation.receipt"],
+                    candidate.source_sha,
+                    retained["observer_run_id"],
                     observation["observer_run_id"],
                     observation["apply_attempt_id"],
                     candidate.release_run_id,
