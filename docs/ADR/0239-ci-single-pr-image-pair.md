@@ -78,3 +78,46 @@ all former probe bodies retained; no publish/deploy on PR or main push;
 protected release unchanged; named required checks retained; failing scan or
 probe remains blocking; full suite/RCA/format/lint/types/policy; exact-SHA hosted
 CI before merge. Release and physical deployment remain independently gated.
+
+## Hosted fix-forward — PR #491
+
+Hosted CI `43276192395` passed the two image builds, both vulnerability scans
+and preceding probes, then rejected the disposable HTTP acceptance harness:
+`check_browser_lifecycle_runtime.py` still required the two historical image
+tag names. Its Docker records actually identify the consolidated CI tags.
+This is a harness integration defect, not a host failure or permission to
+waive the acceptance gate. Source review also found its PR-only event guard
+would reject the consolidated postmerge main CI before inspecting images.
+
+The bounded correction accepts exactly two **coherent pairs**, each tied to
+the complete lowercase 40-hex source SHA: historical first-install/browser-
+lifecycle smoke, or controller/browser CI tags. Mixed families, wrong roles,
+foreign registries, digests, floating tags, extra suffixes and wrong SHAs
+remain rejected. Docker Config.Image, immutable image IDs, revision labels,
+UID/project/service/command/health and the entire actual acceptance probe
+remain unchanged. No runtime tag is rewritten to hide an identity mismatch.
+
+Execution is still GitHub-hosted Actions in the canonical repository. PR
+metadata must prove both base repository and head repository are canonical
+(no fork); unrelated events and self-hosted execution are refused. Push must
+be exact canonical `refs/heads/main`; its actor can be the reviewed merge
+integration because protected main, not the pusher's display name, is that
+trust boundary. Manual CI dispatch additionally requires the owner. This
+does not change protected release/deploy or authorize public navigation.
+
+Current standalone callers are only CI acceptance/sender and in-container
+`seed-sender`; the latter's separate synthetic seeding path is unchanged.
+Historical first-deploy PR callers remain compatible with their original
+image pair and standard Actions PR metadata. Tests execute the real harness
+through inspect and acceptance boundaries, including Config.Image/ID/revision
+substitution, not just source-string matching. Actual Docker acceptance must
+still pass in hosted CI after this fix-forward; local fixtures are not proof
+that the hosted failing stage has completed.
+
+Fix-forward local evidence: 40 new image/context/acceptance identity cases and
+177 focal tests passed. The final full two-worker suite reports 7293 passed,
+34 subtests passed, zero failures, with the unchanged AF_UNIX EPERM skip.
+RCA correctly rejects that skipped local report; no exclusion or gate was
+relaxed. Ruff, formatting, strict source types and repository policy passed.
+Protected workflows/backend are untouched. A fresh exact-SHA hosted run must
+still prove the real Docker HTTP acceptance and subsequent sender stage.
