@@ -80,10 +80,13 @@ class RepeatableUpgradeIntegrations(Protocol):
     no unknown containers or mounts, without requiring exactly two CIDs in
     the temporary four-CID interval. Old control inode belongs to pre-park;
     the replacement control mount must be separately verified before commit.
-    final_cleanup must independently inventory and prove its own deletion
-    candidates, even when earlier pair proofs failed. Unknown identities are
-    retained. ACCEPT requires a durable detailed receipt with before/after
-    disk/inodes and exact removals; preserve all retained pins.
+    final_cleanup is the reviewed SUCCESS-only bridge: call it exclusively
+    after the committed new pair and retained pins have been verified. A
+    failed/unverified replacement must retain unknown resources and return
+    NO_GO/INDETERMINATE until a distinct same-lease FAILURE cleanup bridge
+    independently inventories and proves safe removal candidates. ACCEPT
+    requires a durable detailed receipt with before/after disk/inodes and
+    exact removals; preserve all retained pins.
     """
 
     def verify_release(
@@ -317,19 +320,28 @@ class ReusablePairUpgradeBackend(historical.RootlessPairUpgradeBackend):
         lease: BocaJobLease,
     ) -> str:
         verify_protected_boca_job_lease(lease, plan.attempt_id)
-        verified_before_cleanup = False
+        # The only reviewed durable V2 cleanup adapter currently proves a
+        # SUCCESS topology and protects the *new* pair. A recovered old pair
+        # is not that topology: its failure-specific cleanup needs a separate
+        # same-lease receipt before it may remove anything. Preserve residue.
+        if not commit_started:
+            try:
+                self._sqlite()
+                self.verify_retained(plan, lease)
+                self._verify_final_pair(plan, False, lease)
+                return "NO_GO"
+            except Exception:
+                return "INDETERMINATE"
         try:
             self._sqlite()
             self.verify_retained(plan, lease)
-            self._verify_final_pair(plan, commit_started, lease)
-            verified_before_cleanup = True
+            self._verify_final_pair(plan, True, lease)
         except Exception:
-            # Cleanup still independently inventories; uncertain resources stay retained.
-            verified_before_cleanup = False
+            # A forged/partial pair cannot be passed to the success-only
+            # executor even if that executor independently inventories.
+            return "INDETERMINATE"
         try:
             result = self._integrations().final_cleanup(plan, lease)
-            if not verified_before_cleanup:
-                return "INDETERMINATE"
             self.verify_retained(plan, lease)
             self._sqlite()
             # Cleanup is an effectful boundary, not the last word on the pair.

@@ -15,6 +15,7 @@ import re
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -50,6 +51,17 @@ _MIRRORED_URL_PROBE = (
     "print('BOCA_SITE_URL_SHA256 '+site_url_fingerprint(read_site_url()))"
 )
 _WORKER_COMMAND = ["python", "-m", "boca_socios.browser.ipc_server"]
+_MONITOR_FIELDS = frozenset(
+    (
+        "version",
+        "queue_source",
+        "boca_source",
+        "queue_observations",
+        "boca_observations",
+        "last_observed_at",
+        "observed_at",
+    )
+)
 
 
 class PostflightRuntimeNoGo(ValueError):
@@ -106,6 +118,10 @@ class ProductionSiteUrlWitness:
             match = _SITE_FRAME.fullmatch(observed)
             if match is None or match.group(1) != self.expected.site_url_fingerprint:
                 raise _fail()
+            # A separate owner lifecycle request may start the worker outside
+            # the deployment lease; never attest a stopped worker from the
+            # pre-command observation alone.
+            self._pair()
             cleanup.verify_protected_boca_job_lease(self.lease, self.expected.plan.attempt_id)
             return match.group(1)
         except Exception:
@@ -131,6 +147,7 @@ class ProductionSiteUrlWitness:
                 or not all(type(value) is str for value in command)
             ):
                 raise _fail()
+            self._pair()
             cleanup.verify_protected_boca_job_lease(self.lease, self.expected.plan.attempt_id)
             # Code+image provenance is checked separately by the authenticated
             # release and R177; this says only what the next START will invoke.
@@ -281,13 +298,122 @@ class ProductionPrivateStorageReader:
     """
 
     volume_attestor: Callable[[], None] | None = None
+    expected: postflight.PostflightExpected | None = None
+    lease: cleanup.BocaJobLease | None = None
 
     def __call__(self) -> PostflightStorage:
         try:
-            if self.volume_attestor is None or not callable(self.volume_attestor):
+            if (
+                self.volume_attestor is None
+                or not callable(self.volume_attestor)
+                or self.expected is None
+                or self.lease is None
+            ):
+                raise _fail()
+            _attest_live_pair(self.expected, self.lease)
+            if _read_rootless_identity() != (cleanup.EXPECTED_UID, cleanup.EXPECTED_GID):
                 raise _fail()
             self.volume_attestor()
-            return capture_storage_fingerprints()
+            captured = capture_storage_fingerprints()
+            # Require the trusted mount/volume proof AGAIN after inode capture.
+            # A replaced SQLite/key/session file or mounted foreign volume is
+            # refused by R245's before/after fingerprint equality.
+            self.volume_attestor()
+            _attest_live_pair(self.expected, self.lease)
+            return captured
+        except Exception:
+            raise _fail() from None
+
+
+def _unique_monitor_fields(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    values: dict[str, object] = {}
+    for key, value in pairs:
+        if key in values:
+            raise _fail()
+        values[key] = value
+    return values
+
+
+def _monitor_time(value: object) -> datetime:
+    if type(value) is not str or not 25 <= len(value) <= 35:
+        raise _fail()
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        raise _fail() from None
+    if parsed.utcoffset() != timedelta(0):
+        raise _fail()
+    return parsed
+
+
+def parse_private_monitor_metadata(raw: bytes) -> tuple[str, int]:
+    """Project only safe owner-authenticated, read-only *metadata*.
+
+    Accept exactly the existing private `/monitor/tokens.json` schema; never
+    deserialize an extra token, URL, member ID, bearer or cookie field. This
+    parser DOES NOT authenticate the owner or create an HTTP session, and is
+    not an independent production witness without its protected producer.
+    """
+    try:
+        if type(raw) is not bytes or not 0 < len(raw) <= 1024:
+            raise _fail()
+        document = json.loads(raw.decode("ascii"), object_pairs_hook=_unique_monitor_fields)
+        if type(document) is not dict or document.keys() != _MONITOR_FIELDS:
+            raise _fail()
+        if type(document["version"]) is not int or document["version"] != 1:
+            raise _fail()
+        total = 0
+        connected = False
+        for prefix in ("queue", "boca"):
+            source, count = document[f"{prefix}_source"], document[f"{prefix}_observations"]
+            if source not in ("NOT_CONNECTED", "IN_MEMORY") or type(source) is not str:
+                raise _fail()
+            if type(count) is not int or not 0 <= count <= 64:
+                raise _fail()
+            if source == "NOT_CONNECTED" and count:
+                raise _fail()
+            connected |= source == "IN_MEMORY"
+            total += count
+        observed_at = _monitor_time(document["observed_at"])
+        last = document["last_observed_at"]
+        if last is not None and _monitor_time(last) > observed_at:
+            raise _fail()
+        if total == 0 and last is not None:
+            raise _fail()
+        return ("IN_MEMORY" if connected else "NOT_CONNECTED", total)
+    except Exception:
+        raise _fail() from None
+
+
+@dataclass(frozen=True, slots=True)
+class ProductionPrivateMonitorMetadataWitness:
+    """Fail-closed projection of separately authenticated owner metadata.
+
+    No unauthenticated GET, passkey bypass, Chrome cookie or fabricated empty
+    monitor is available here. The protected caller must supply a genuinely
+    owner-authenticated, independently witnessed snapshot producer. A normal
+    `/monitor/tokens.json` GET may renew a session cookie, so IT CANNOT be
+    characterized as wholly mutation-free by this module. This never proves
+    passkey LOGIN_HTTP_200 or token extraction.
+    """
+
+    expected: postflight.PostflightExpected
+    lease: cleanup.BocaJobLease
+    read_owner_authenticated_metadata: Callable[[], bytes] | None = None
+
+    def __call__(self) -> tuple[str, int]:
+        try:
+            if self.read_owner_authenticated_metadata is None or not callable(
+                self.read_owner_authenticated_metadata
+            ):
+                raise _fail()
+            _attest_live_pair(self.expected, self.lease)
+            first = parse_private_monitor_metadata(self.read_owner_authenticated_metadata())
+            second = parse_private_monitor_metadata(self.read_owner_authenticated_metadata())
+            if first != second:
+                raise _fail()
+            _attest_live_pair(self.expected, self.lease)
+            return first
         except Exception:
             raise _fail() from None
 
