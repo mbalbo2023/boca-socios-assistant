@@ -825,7 +825,10 @@ def test_protected_evidence_uses_first_and_last_internal_probes_without_extra_re
     assert evidence.after is snapshots[2]
     assert evidence.receipt.before == snapshots[0].disk
     assert evidence.receipt.after == snapshots[2].disk
-    assert reads == snapshots and lease_attempts == [ATTEMPT]
+    assert reads == snapshots  # No post-hoc or extra Docker inventory.
+    # Entry, each of the three same-execution probes, and terminal handoff
+    # independently prove the still-held canonical lease (R245 hardening).
+    assert lease_attempts == [ATTEMPT] * 5
     body = v2.verify_cleanup_v2_receipt(
         v2.canonical_cleanup_v2_receipt(
             evidence.receipt,
@@ -1025,3 +1028,82 @@ def test_protected_evidence_lease_denial_prevents_all_docker_reads(
             lease=gc.BocaJobLease(ATTEMPT, 0, 0, True),
         )
     assert calls == 0
+
+
+@pytest.mark.parametrize("lose_lease_after_probe", [1, 2])
+def test_protected_evidence_lost_lease_cannot_delete_exact_id(
+    lose_lease_after_probe: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lease lost during inventory must block the next exact-ID Docker write.
+
+    The preflight, inventory and delete all belong to one held flock.  A
+    successful initial lease check cannot authorize a later removal.
+    """
+    lease = gc.BocaJobLease(ATTEMPT, 0, 0, True)
+    snapshot = _inventory(with_stale=True)
+    reads = 0
+    deleted: list[gc.Target] = []
+
+    def check_lease(current: gc.BocaJobLease, _attempt: str) -> None:
+        if not current.active:
+            raise gc.CleanupError("Boca protected lease lost")
+
+    def capture(**_kwargs: object) -> gc.Inventory:
+        nonlocal reads
+        reads += 1
+        if reads == lose_lease_after_probe:
+            lease.active = False
+        return snapshot
+
+    monkeypatch.setattr(gc, "verify_protected_boca_job_lease", check_lease)
+    monkeypatch.setattr(gc, "capture_inventory", capture)
+    monkeypatch.setattr(gc, "delete_exact", deleted.append)
+
+    with pytest.raises(gc.CleanupError, match="Boca protected lease lost"):
+        gc.execute_protected_with_inventories(
+            "SUCCESS",
+            ATTEMPT,
+            preserve_images=frozenset({CONTROLLER_IMAGE, WORKER_IMAGE}),
+            preserve_containers=frozenset({CONTROLLER, WORKER}),
+            retire_containers=frozenset(),
+            lease=lease,
+        )
+    assert deleted == []
+    assert reads == lose_lease_after_probe
+
+
+@pytest.mark.parametrize("lose_lease_after_probe", [1, 3])
+def test_protected_evidence_lost_lease_without_deletion_cannot_accept(
+    lose_lease_after_probe: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The final inventory must still be under the same lease on a no-op cleanup."""
+    lease = gc.BocaJobLease(ATTEMPT, 0, 0, True)
+    snapshot = _inventory(with_stale=False)
+    reads = 0
+
+    def check_lease(current: gc.BocaJobLease, _attempt: str) -> None:
+        if not current.active:
+            raise gc.CleanupError("Boca protected lease lost")
+
+    def capture(**_kwargs: object) -> gc.Inventory:
+        nonlocal reads
+        reads += 1
+        if reads == lose_lease_after_probe:
+            lease.active = False
+        return snapshot
+
+    monkeypatch.setattr(gc, "verify_protected_boca_job_lease", check_lease)
+    monkeypatch.setattr(gc, "capture_inventory", capture)
+    monkeypatch.setattr(gc, "delete_exact", lambda _target: pytest.fail("unexpected deletion"))
+
+    with pytest.raises(gc.CleanupError, match="Boca protected lease lost"):
+        gc.execute_protected_with_inventories(
+            "SUCCESS",
+            ATTEMPT,
+            preserve_images=frozenset({CONTROLLER_IMAGE, WORKER_IMAGE}),
+            preserve_containers=frozenset({CONTROLLER, WORKER}),
+            retire_containers=frozenset(),
+            lease=lease,
+        )
+    assert reads == lose_lease_after_probe

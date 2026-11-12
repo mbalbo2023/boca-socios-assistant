@@ -152,6 +152,12 @@ R178_WORKER_EGRESS_READONLY_FULL_CUTOVER_SHA = (
 R244_SAME_LEASE_CLEANUP_FULL_CUTOVER_SHA = (
     "487b55b5989ca7fd96ed09884ff5284697518b368b43fe61c23ae8ed51c7d20b"
 )
+# R245 strengthens lease checks inside the existing cleanup runtime. Keep the
+# R244 pin as immutable history; this is the new reviewed source composition,
+# not permission to re-run historical R186 Cutover or deploy this candidate.
+R245_GUARDED_CLEANUP_FULL_CUTOVER_SHA = (
+    "1fa860223310087e592fac249e7a16cf01ec1dd642b1a3121469bd137fc74048"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -305,11 +311,12 @@ def test_both_recovery_modes_reject_modified_bytes_and_injected_entries(
 
 
 def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) -> None:
-    """R244 source evolution does not modify the isolated R83 recovery modes."""
+    """R245 source evolution does not modify the isolated R83 recovery modes."""
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R244_SAME_LEASE_CLEANUP_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R245_GUARDED_CLEANUP_FULL_CUTOVER_SHA
+    assert digest != R244_SAME_LEASE_CLEANUP_FULL_CUTOVER_SHA
     assert digest != R178_WORKER_EGRESS_READONLY_FULL_CUTOVER_SHA
     assert digest != R173_SITE_CONFIG_FULL_CUTOVER_SHA
     assert digest != R171_BROWSER_EGRESS_FULL_CUTOVER_SHA

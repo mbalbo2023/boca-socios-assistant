@@ -124,7 +124,96 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2
+      - name: Classify exact internal PR Markdown-only changes
+        id: docs_pr_scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          # Fail closed to the complete build on any missing event/git evidence.
+          # This consumes the exact GitHub synthetic merge tree, not PR text.
+          docs_only="$(python3 - <<'PY'
+          import os
+          import re
+          import subprocess
+
+          SHA = re.compile(r'[0-9a-f]{40}\Z')
+          PR_REF = re.compile(r'refs/pull/[1-9][0-9]*/merge\Z')
+          REPO = 'mbalbo2023/boca-socios-assistant'
+
+          def git(*args: str) -> bytes:
+              return subprocess.run(('git', *args), check=True,
+                                    capture_output=True, timeout=5).stdout
+
+          def docs_only() -> bool:
+              env = os.environ
+              if not (
+                  env.get('GITHUB_ACTIONS') == 'true'
+                  and env.get('GITHUB_EVENT_NAME') == 'pull_request'
+                  and env.get('GITHUB_REPOSITORY') == REPO
+                  and env.get('PR_HEAD_REPO') == REPO
+                  and env.get('PR_BASE_REF') == 'main'
+                  and PR_REF.fullmatch(env.get('GITHUB_REF', ''))
+              ):
+                  return False
+              merge, base, head = (env.get(k, '') for k in
+                                   ('GITHUB_SHA', 'PR_BASE_SHA', 'PR_HEAD_SHA'))
+              if not all(SHA.fullmatch(value) for value in (merge, base, head)):
+                  return False
+              if git('rev-parse', '--verify', 'HEAD').decode().strip() != merge:
+                  return False
+              # A PR checkout must be the exact two-parent merge reported
+              # by GitHub. A stale base, shallow clone or detached PR head
+              # always takes the full CI route.
+              parents = git('rev-list', '--parents', '-n', '1', 'HEAD').decode().split()
+              if parents != [merge, base, head]:
+                  return False
+              if git('merge-base', base, merge).decode().strip() != base:
+                  return False
+              raw = git('diff', '--raw', '-z', '--no-renames', '--no-ext-diff',
+                        '--no-textconv', base, merge, '--')
+              if not raw or not raw.endswith(b'\0'):
+                  return False
+              records = raw[:-1].split(b'\0')
+              if len(records) % 2:
+                  return False
+              for metadata, encoded_path in zip(records[::2], records[1::2]):
+                  fields = metadata.split()
+                  if len(fields) != 5:
+                      return False
+                  before, after, _old_id, _new_id, status = fields
+                  if (before, after, status) not in (
+                      (b':000000', b'100644', b'A'),
+                      (b':100644', b'100644', b'M'),
+                      (b':100644', b'000000', b'D'),
+                  ):
+                      return False
+                  path = encoded_path.decode('utf-8', 'strict')
+                  if (not path.endswith('.md')
+                      or not path.startswith(('docs/ADR/', 'docs/handoffs/'))
+                      or any(ord(char) < 32 or ord(char) == 127 for char in path)):
+                      return False
+              return True
+
+          try:
+              print('true' if docs_only() else 'false')
+          except Exception:
+              print('false')
+          PY
+          )" || docs_only=false
+          [[ "$docs_only" == true ]] || docs_only=false
+          printf 'docs_only=%s\n' "$docs_only" >> "$GITHUB_OUTPUT"
+          if [[ "$docs_only" == true ]]; then
+            echo 'BOCA_CI_SCOPE mode=DOCS_ONLY images=NOT_REQUIRED security=UNCHANGED event=INTERNAL_PR'
+          else
+            echo 'BOCA_CI_SCOPE mode=FULL images=REQUIRED scans=REQUIRED labs=REQUIRED'
+          fi
       - name: Build isolated image without deploying
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           SOURCE_SHA: ${{ github.sha }}
           IMAGE: boca-socios-ci:${{ github.sha }}
@@ -134,6 +223,7 @@ jobs:
             --label "org.opencontainers.image.revision=$SOURCE_SHA" \
             --tag "$IMAGE" --tag "boca-release-validation:$SOURCE_SHA" .
       - name: Build isolated Chromium worker without deploying
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           SOURCE_SHA: ${{ github.sha }}
           IMAGE: boca-browser-ci:${{ github.sha }}
@@ -144,11 +234,13 @@ jobs:
             --label "org.boca.public-image=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --tag "$IMAGE" --tag "boca-browser-release-validation:$SOURCE_SHA" --tag "boca-observer:$SOURCE_SHA" .
       - name: Capture an immediate fixture exit before removal on runner Docker
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         timeout-minutes: 2
         env:
           PYTHONPATH: src
         run: python3 -m scripts.check_worker_start_capture
       - name: Prove healthless worker inspect formats on disposable runner Docker
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           BOCA_BROWSER_TAG: boca-browser-ci:${{ github.sha }}
           BOCA_DOCKER_FIXTURE_NAME: boca-r78-inspect-${{ github.run_id }}-${{ github.run_attempt }}
@@ -225,26 +317,31 @@ jobs:
           print("BOCA_WORKER_RECOVERY_DOCKER state=PASS removed=EXACT_CID post=ABSENT runner=EPHEMERAL")
           PY
       - name: Set up Python for the host-side Docker labs
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Install locked runtime dependencies for the Docker labs
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           python -m pip install --disable-pip-version-check uv==0.13.4
           uv sync --frozen --no-dev --no-install-project
       - name: Verify image identity and missing-image evidence on runner Docker
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         timeout-minutes: 3
         env:
           PYTHONPATH: src
           BOCA_LAB_RUNNER: ${{ runner.environment }}
         run: uv run --no-sync python -m scripts.lab_image_recovery_916
       - name: Measure panel stop acknowledgements and cold restart on runner Docker
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         timeout-minutes: 3
         env:
           PYTHONPATH: src
           BOCA_LAB_RUNNER: ${{ runner.environment }}
         run: uv run --no-sync python -m scripts.lab_panel_restart_921
       - name: Measure one offline Chromium startup under resource caps
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: >-
           docker run --rm --init --network none --cgroupns=private --read-only
           --tmpfs /tmp:rw,nosuid,nodev,size=128m,mode=1777
@@ -257,6 +354,7 @@ jobs:
       # No synthetic Chromium DOM journey is run against owner-locked browser
       # modules. Their external validation is owner-managed (ADR0123).
       - name: Run public-login structural fixtures in offline Chromium
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           BOCA_BROWSER_TAG: boca-browser-ci:${{ github.sha }}
           BOCA_PUBLIC_BROWSER_NAME: boca-browser-public-dom-${{ github.run_id }}-${{ github.run_attempt }}
@@ -288,6 +386,7 @@ jobs:
           print(f"BOCA_PUBLIC_DOM_OFFLINE state=PASS cases={receipt['cases']} network=none")
           PY
       - name: Verify private Telegram setup in offline Chromium and existing decryptor
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           BOCA_BROWSER_TAG: boca-browser-ci:${{ github.sha }}
           BOCA_CONTROLLER_TAG: boca-socios-ci:${{ github.sha }}
@@ -318,6 +417,7 @@ jobs:
             "$BOCA_CONTROLLER_TAG" python /tmp/verify.py --verify-receipt \
             < "$RUNNER_TEMP/boca-telegram-ui.receipt"
       - name: Verify source revision label
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           SOURCE_SHA: ${{ github.sha }}
           IMAGE: boca-socios-ci:${{ github.sha }}
@@ -325,6 +425,7 @@ jobs:
           test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
           test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' "$IMAGE")" = "https://github.com/mbalbo2023/boca-socios-assistant"
       - name: Verify browser source revision label
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           SOURCE_SHA: ${{ github.sha }}
           IMAGE: boca-browser-ci:${{ github.sha }}
@@ -332,6 +433,7 @@ jobs:
           test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$SOURCE_SHA"
           test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.source" }}' "$IMAGE")" = "https://github.com/mbalbo2023/boca-socios-assistant"
       - name: Measure disposable dual-image logical and archive bytes
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           CONTROLLER_IMAGE: boca-socios-ci:${{ github.sha }}
           BROWSER_IMAGE: boca-browser-ci:${{ github.sha }}
@@ -352,6 +454,7 @@ jobs:
             "$GITHUB_SHA" "$controller_size" "$browser_size" "$total_logical_bytes" "$pair_tar_bytes" \
             | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Verify all full Playwright browser bundles without blackbox execution
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           IMAGE: boca-browser-ci:${{ github.sha }}
         run: |
@@ -372,12 +475,14 @@ jobs:
           print("BOCA_FULL_PLAYWRIGHT_BUNDLES chromium=PRESENT firefox=PRESENT webkit=PRESENT offline=true blackbox=UNTOUCHED")
           '
       - name: Require the reviewed browser IPC worker command
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           IMAGE: boca-browser-ci:${{ github.sha }}
         run: >-
           test "$(docker image inspect --format '{{json .Config.Cmd}}' "$IMAGE")"
           = '["python","-m","boca_socios.browser.ipc_server"]'
       - name: Verify isolated Chromium launch offline without owner modules
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           IMAGE: boca-browser-ci:${{ github.sha }}
         run: |
@@ -403,6 +508,7 @@ jobs:
           run_offline_browser scripts/verify_chromium_worker.py
           run_offline_browser -m boca_socios.browser.offline_fixture --smoke
       - name: Require scan aliases to identify the exact built pair
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           set -euo pipefail
           controller_id="$(docker image inspect --format '{{.Id}}' "$BOCA_IMAGE")"
@@ -415,17 +521,20 @@ jobs:
           printf 'BOCA_CI_PAIR source_sha=%s controller_image_id=%s browser_image_id=%s aliases=VERIFIED registry_digest=NOT_PUBLISHED\n' \
             "$GITHUB_SHA" "$controller_id" "$browser_id" >> "$GITHUB_STEP_SUMMARY"
       - name: Scan before any image publication
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: bash scripts/trivy_scan_image.sh "boca-release-validation:$GITHUB_SHA"
       - name: Scan browser image before any publication
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: bash scripts/trivy_scan_image.sh "boca-browser-release-validation:$GITHUB_SHA"
 
       - name: Verify OS denial and Chromium sandbox without a public request
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           BOCA_OBSERVER_IMAGE: boca-observer:${{ github.sha }}
         run: timeout --signal=TERM --kill-after=10s 120s bash scripts/run_public_observer_isolated.sh --offline-check
 
       - name: Prove Docker-created service labels are discoverable by Compose on disposable runner
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           set -euo pipefail
           # Pure label/topology probe. Never starts controller/worker, never
@@ -479,6 +588,7 @@ jobs:
           test "$(docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml ps -a -q browser-worker)" = "$worker_id"
           printf 'BOCA_CUTOVER_A_RUNNER state=LABEL_TOPOLOGY_PASS original=retired candidate=created_only worker=created_only starts=0 contacts=0\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Verify disposable browser IPC one-shot Docker inspect and auto-remove defaults
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           set -euo pipefail
           # A disposable GitHub runner ONLY: no droplet, external image, host
@@ -538,6 +648,7 @@ jobs:
           test "$removed" = yes
           probe_id=''
       - name: Exercise sealed Site intake in a disposable Boca owner volume
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           set -euo pipefail
           docker volume create --driver local \
@@ -570,6 +681,7 @@ jobs:
             "BOCA_SITE_BOOTSTRAP state=VERIFIED fingerprint=$fingerprint"
           docker volume rm boca-socios_boca_owner
       - name: Exercise sealed HTTP owner passkey custody in a disposable Boca volume
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           set -euo pipefail
           fixture="$RUNNER_TEMP/boca-owner-custody-fixture"
@@ -616,6 +728,7 @@ jobs:
           docker volume rm boca-socios_boca_owner
           rm -rf "$fixture"
       - name: Smoke disposable Chrome listener and offline staged owner import
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           set -euo pipefail
           stage=boca-socios_owner_enroll_staging
@@ -721,6 +834,7 @@ jobs:
             "BOCA_OWNER_BOOTSTRAP state=VERIFIED fingerprint=$fingerprint"
           printf 'BOCA_ENROLL_SMOKE state=PASSED listener=127.0.0.1:8443 owner_mount=offline_only\n'
       - name: Exercise sealed Telegram custody in a disposable offline Boca volume
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           set -euo pipefail
           docker volume create --driver local \
@@ -757,6 +871,7 @@ jobs:
             "BOCA_TELEGRAM_BOOTSTRAP state=VERIFIED fingerprint=$fingerprint"
           docker volume rm boca-socios_boca_telegram
       - name: Provision separate owner-only key volume on disposable runner
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           docker volume create --driver local \
             --label com.docker.compose.project=boca-socios \
@@ -779,6 +894,7 @@ jobs:
             --mount type=volume,source=boca-socios_boca_key,target=/run/secrets,volume-nocopy,readonly \
             "$BOCA_IMAGE" python -m boca_socios.security.key_custody verify
       - name: Start isolated Compose controller and verify health without third-party traffic
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           docker compose -p boca-socios -f compose.yaml up --no-build --no-deps --wait --wait-timeout 90 -d controller
           container="$(docker compose -p boca-socios -f compose.yaml ps -q controller)"
@@ -794,6 +910,7 @@ jobs:
           docker inspect --format '{{json .Mounts}}' "$container" | python3 -c 'import json,sys; m=json.load(sys.stdin); assert {(x["Type"], x["Name"], x["Destination"], x["RW"]) for x in m} == {("volume", "boca-socios_boca_data", "/data", True), ("volume", "boca-socios_boca_key", "/run/secrets", False)}'
           docker logs "$container" | python3 -c 'import json,sys; rows=[json.loads(x) for x in sys.stdin if x.strip()]; assert rows == [{"event": "started", "mode": "simulation", "engine": "off", "site_calls": 0}]'
       - name: Prepare synthetic owner bundle and new-only BETA database on disposable runner
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           docker compose -p boca-socios -f compose.yaml stop controller
           docker compose -p boca-socios -f compose.yaml rm -sf controller
@@ -856,6 +973,7 @@ jobs:
             --mount type=volume,source=boca-socios_boca_key,target=/run/secrets,readonly \
             "$BOCA_IMAGE" python -m boca_socios.runtime init-beta
       - name: Inspect real disposable one-shot Docker isolation without Bot API traffic
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           set -euo pipefail
           docker volume create --driver local \
@@ -907,6 +1025,7 @@ jobs:
           docker volume rm boca-socios_boca_telegram
           [[ "$(docker network ls --format '{{.Name}}')" != *boca-socios_telegram_egress* ]]
       - name: Serve BETA on runner loopback with exact image, HTTP and isolation
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           docker compose -p boca-socios -f compose.beta.yaml up --no-build --no-deps --wait --wait-timeout 90 -d controller
           container="$(docker compose -p boca-socios -f compose.beta.yaml ps -q controller)"
@@ -922,6 +1041,7 @@ jobs:
             http://localhost:8443/healthz > "$RUNNER_TEMP/boca-beta-health.receipt"
           test "$(cat "$RUNNER_TEMP/boca-beta-health.receipt")" = BOCA_BETA_READY
       - name: Run synthetic loopback HTTP acceptance inside capped disposable controller
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           container="$(docker compose -p boca-socios -f compose.beta.yaml ps -q controller)"
           [[ "$container" =~ ^[0-9a-f]{64}$ ]]
@@ -930,6 +1050,7 @@ jobs:
       # PR runner tests never start/import its implementation. Controller-only
       # HTTP acceptance above and Telegram offline checks below remain gated.
       - name: Verify offline sender readiness and never-started production network inspect
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           set -euo pipefail
           docker volume create --driver local --label "boca.ci.lifecycle-attempt=$GITHUB_RUN_ID" \
@@ -948,7 +1069,7 @@ jobs:
             "$BOCA_IMAGE" python - seed-sender "$GITHUB_SHA" < scripts/check_browser_lifecycle_runtime.py
           PYTHONPATH=src python3 scripts/check_browser_lifecycle_runtime.py sender
       - name: Remove only new lifecycle resources from disposable runner
-        if: always()
+        if: always() && steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           set -euo pipefail
           for name in boca-socios-browser-worker-1 boca-socios-telegram-1 "boca-ci-telegram-offline-$GITHUB_RUN_ID"; do
@@ -973,7 +1094,7 @@ jobs:
           fi
           if docker image inspect "$BOCA_BROWSER_IMAGE" >/dev/null 2>&1; then docker image rm "$BOCA_BROWSER_IMAGE" >/dev/null; fi
       - name: Remove only synthetic Boca resources from disposable runner
-        if: always()
+        if: always() && steps.docs_pr_scope.outputs.docs_only != 'true'
         run: |
           docker compose -p boca-socios -f compose.beta.yaml stop controller || true
           docker compose -p boca-socios -f compose.beta.yaml rm -sf controller || true
@@ -988,7 +1109,7 @@ jobs:
           docker network rm boca-socios_boca_private || true
 
       - name: Clean disposable browser runner resources
-        if: always()
+        if: always() && steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           BOCA_PUBLIC_BROWSER_NAME: boca-browser-public-dom-${{ github.run_id }}-${{ github.run_attempt }}
           BOCA_TELEGRAM_UI_NAME: boca-browser-telegram-ui-${{ github.run_id }}-${{ github.run_attempt }}

@@ -2,6 +2,12 @@
 
 Fecha: 2026-11-12 (ART). Issue #417. Estado: **CODE_ONLY / NO_GO / NO HOST APPLY**.
 
+**Actualización R245:** esta ADR documenta el transporte tal como existía en
+R244. R245 elimina, sólo para el selector sucesor, la extracción inicial de
+ambos ZIP por `gh run download` y autentica íntegramente sus bytes en memoria
+antes de crear archivos privados. R186 sigue prohibido y el interlock sucesor
+permanece NO_GO. Ver [ADR 0248](0248-r245-consolidated-gates-and-followup.md).
+
 ## Decisión de seguridad
 
 El selector protegido existente `boca-pair-upgrade-apply` **ya no invoca**

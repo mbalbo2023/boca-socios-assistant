@@ -84,36 +84,6 @@ class _LiveGitHubCustodyAuthenticator:
         return self.client.get_json(f"actions/runs/{request.run_id}")
 
 
-class _BundledCustodyAuthenticator:
-    """Transport-only integrity, conditional on caller's verified host memfd."""
-
-    def __init__(self, main_sha: str, run_id: str, receipt: bytes) -> None:
-        self.expected = adapters.AuthenticationRequest(
-            "retained-resource-observe",
-            run_id,
-            main_sha,
-            ".github/workflows/boca-first-deploy.yml",
-            hashlib.sha256(receipt).hexdigest(),
-        )
-
-    def authenticate(self, request: adapters.AuthenticationRequest) -> object:
-        if request != self.expected:
-            raise _fail()
-        return {
-            "id": int(self.expected.run_id),
-            "run_attempt": 1,
-            "name": "Boca first deploy",
-            "event": "workflow_dispatch",
-            "head_sha": self.expected.source_sha,
-            "head_branch": "main",
-            "status": "completed",
-            "conclusion": "success",
-            "path": self.expected.workflow_path,
-            "actor": {"login": "mbalbo2023"},
-            "repository": {"full_name": "mbalbo2023/boca-socios-assistant"},
-        }
-
-
 def _coordinates(
     custody: adapters.CustodyEvidence,
     pair_proof: bytes,
@@ -174,12 +144,7 @@ def verify_bundled_retained(
     try:
         if type(proof) is not bytes or not 0 < len(proof) <= 4096:
             raise _fail()
-        custody = adapters.verify_custody_seed(
-            raw,
-            observation_run_id=retained_run,
-            observer_source_sha=main_sha,
-            authenticator=_BundledCustodyAuthenticator(main_sha, retained_run, raw),
-        )
+        custody = adapters.parse_custody_integrity(raw, observation_run_id=retained_run)
         _coordinates(
             custody,
             pair_proof,

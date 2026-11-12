@@ -1392,6 +1392,8 @@ def _execute_protected_evidence(
             raise CleanupError("historical quarantine proof outside exact Cutover allowlist")
 
     def protected_probe() -> Inventory:
+        # Re-prove lease before every Docker/R108 inventory.
+        verify_protected_boca_job_lease(lease, attempt_id)
         snapshot = (
             capture_inventory()
             if historical_legacy is None
@@ -1417,6 +1419,10 @@ def _execute_protected_evidence(
         last = snapshot
         return snapshot
 
+    def protected_delete(target: Target) -> None:
+        verify_protected_boca_job_lease(lease, attempt_id)
+        delete_exact(target)
+
     receipt = execute(
         outcome,
         attempt_id,
@@ -1429,7 +1435,7 @@ def _execute_protected_evidence(
         preserve_containers=preserve_containers,
         retire_containers=retire_containers,
         probe=recorded_probe,
-        delete_exact=delete_exact,
+        delete_exact=protected_delete,
     )
     final_receipt = (
         replace(receipt, retained_attested=(historical_retained,))
@@ -1438,6 +1444,7 @@ def _execute_protected_evidence(
     )
     if first is None or last is None or receipt.before != first.disk or receipt.after != last.disk:
         raise CleanupError("Boca cleanup same-execution before/after inventories unavailable")
+    verify_protected_boca_job_lease(lease, attempt_id)
     return ProtectedCleanupEvidence(final_receipt, first, last)
 
 

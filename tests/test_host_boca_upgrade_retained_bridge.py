@@ -114,6 +114,31 @@ def test_second_artifact_binds_immutable_retained_resources_to_same_old_pair() -
     assert b"authorized" not in proof
 
 
+def test_host_transport_verification_does_not_forge_github_authentication(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runner checked GitHub; host checks proof/bytes, not a synthetic run."""
+    proof, raw, pair_proof, pair_raw = _auth()
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        pytest.fail("host must not construct a fake successful GitHub run")
+
+    monkeypatch.setattr(bridge.adapters, "verify_custody_seed", forbidden)
+    custody = bridge.verify_bundled_retained(
+        proof,
+        raw,
+        pair_proof,
+        pair_raw,
+        MAIN,
+        RETAINED_RUN,
+        PAIR_RUN,
+        APPLY_RUN,
+        RELEASE_RUN,
+    )
+    assert custody.apply_authorized is False
+    assert custody.observation_run_id == RETAINED_RUN
+
+
 def test_retained_run_attempt_mutating_during_job_listing_is_rejected() -> None:
     class MutatingRetainedGitHub(FakeRetainedGitHub):
         def get_json(self, path: str) -> object:

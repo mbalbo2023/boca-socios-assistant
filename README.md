@@ -1,5 +1,27 @@
 # Boca Socios Assistant
 
+## R245 — consolidación BETA, release y aceleración CI (12/11/2026)
+
+El candidato R245 reúne las pruebas de aceptación del panel privado, la
+autenticación previa a extraer los **dos** artefactos de release, controles
+*same-lease* y limpieza selectiva exclusiva de Boca. El trabajo de velocidad
+mantiene los dos contextos CI requeridos y sólo permite una ruta rápida para
+PR de documentación estrictamente clasificados; un cambio de código, workflow
+o `main` continúa recorriendo el pipeline completo. **Un menor número de
+builds no prueba menor latencia** y la release protegida sigue construyendo
+sus dos imágenes desde el SHA exacto, sin reutilizar material no autenticado.
+
+El `main` inicial de esta revisión era `3e0d6e6adbf372316aa07685575a3ed3cf3c1a98`
+con cero PR abiertos; sus CI y escaneos fueron exitosos. La **última
+instalación atestiguada** es `b61ca3e58d4f8ce69cd6d7575f2a8e1ce59bda72`
+(intento protegido `43217075287`); el estado físico actual exige una nueva
+observación. No se considera instalada la BETA R245.
+El CLI sucesor **continúa NO_GO** por falta de conexión effectful y evidencia
+física durable, y el observador de recursos R188 todavía fija la instalación
+histórica R186; hace falta versionarlo antes de poder afirmar despliegues
+sucesivos repetibles. No disparar el APPLY antiguo R186, no tocar Porota y no
+declarar GREEN por una prueba sintética. [RCA y puertas físicas](docs/ADR/0248-r245-consolidated-gates-and-followup.md).
+
 ## R187 — compatibilidad de POST desde el panel privado (12/11/2026)
 
 Tras el reporte físico de `Origen no autorizado` al guardar `SITE_URL`, el

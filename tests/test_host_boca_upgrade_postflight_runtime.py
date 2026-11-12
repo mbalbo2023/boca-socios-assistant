@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from boca_socios import host_boca_cleanup as cleanup
+from boca_socios import host_boca_pair_observe as pair
 from boca_socios import host_boca_upgrade_postflight as postflight
 from boca_socios import host_boca_upgrade_postflight_runtime as runtime
 from boca_socios.host_lifecycle_rootless_adapter import ReviewedInstalledPair
@@ -200,3 +201,128 @@ def test_live_reader_rejects_site_mirror_drift() -> None:
     sources = replace(_sources(expected, events), site_mirror_reader=lambda: "f" * 64)
     with pytest.raises(runtime.PostflightRuntimeNoGo):
         _reader(expected, sources, events)(lease)
+
+
+def test_production_site_url_witness_reads_only_hashes_from_pinned_controller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _expected()
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", lambda *_: None)
+    monkeypatch.setattr(pair, "observe", lambda _: _pair_bytes())
+    monkeypatch.setattr(
+        runtime.service, "read_installed_binding", lambda _: _installed_binding(expected)
+    )
+
+    def docker(*args: str) -> str:
+        calls.append(args)
+        if args[:2] == ("inspect", "--format"):
+            return '["python","-m","boca_socios.browser.ipc_server"]\n'
+        assert args[:4] == ("exec", "--user", "10001:10001", expected.controller_id)
+        return "BOCA_SITE_URL_SHA256 " + expected.site_url_fingerprint + "\n"
+
+    monkeypatch.setattr(cleanup, "_docker", docker)
+    witness = runtime.ProductionSiteUrlWitness(expected, lease)
+    assert witness.saved_fingerprint() == expected.site_url_fingerprint
+    assert witness.mirror_fingerprint() == expected.site_url_fingerprint
+    assert witness.worker_startup() == "READ_FRESH_FILE_AT_NEXT_START"
+    assert len(calls) == 3
+    assert all("https://" not in " ".join(cmd) for cmd in calls)
+    assert all("--network" not in cmd for cmd in calls)
+
+
+def test_production_site_url_witness_rejects_bad_worker_command_and_leaked_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _expected()
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", lambda *_: None)
+    monkeypatch.setattr(pair, "observe", lambda _: _pair_bytes())
+    monkeypatch.setattr(
+        runtime.service, "read_installed_binding", lambda _: _installed_binding(expected)
+    )
+    witness = runtime.ProductionSiteUrlWitness(expected, lease)
+    monkeypatch.setattr(cleanup, "_docker", lambda *_: "BOCA_SITE_URL_SHA256 " + "f" * 64 + "\n")
+    with pytest.raises(runtime.PostflightRuntimeNoGo):
+        witness.saved_fingerprint()
+    monkeypatch.setattr(cleanup, "_docker", lambda *_: '["python","-m","foreign.module"]\n')
+    with pytest.raises(runtime.PostflightRuntimeNoGo):
+        witness.worker_startup()
+
+
+def test_private_8443_readonly_health_probe_is_not_a_passkey_login(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _expected()
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    called: list[object] = []
+    monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", lambda *_: None)
+    monkeypatch.setattr(pair, "observe", lambda _: _pair_bytes())
+    monkeypatch.setattr(
+        runtime.service, "read_installed_binding", lambda _: _installed_binding(expected)
+    )
+
+    class Reply:
+        status = 200
+
+        def getheader(self, name: str) -> str | None:
+            return {"Content-Length": "15", "Content-Type": "text/plain; charset=utf-8"}.get(name)
+
+        def read(self, limit: int) -> bytes:
+            assert limit == 65
+            return b"BOCA_BETA_READY"
+
+    class Connection:
+        def __init__(self, host: str, port: int, *, timeout: float) -> None:
+            called.append((host, port, timeout))
+
+        def request(self, method: str, path: str, *, headers: dict[str, str]) -> None:
+            called.append((method, path, headers))
+
+        def getresponse(self) -> Reply:
+            return Reply()
+
+        def close(self) -> None:
+            called.append("close")
+
+    monkeypatch.setattr(runtime.http.client, "HTTPConnection", Connection)
+    assert runtime.ProductionPrivatePanelHealthWitness(expected, lease)() == "HEALTH_HTTP_200"
+    assert called == [
+        ("127.0.0.1", 8443, 2.0),
+        ("GET", "/healthz", {"Host": "localhost:8443", "Connection": "close"}),
+        "close",
+    ]
+    assert "LOGIN_HTTP_200" not in called
+
+
+def test_panel_health_probe_rejects_redirect_or_unexpected_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _expected()
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", lambda *_: None)
+    monkeypatch.setattr(pair, "observe", lambda _: _pair_bytes())
+    monkeypatch.setattr(
+        runtime.service, "read_installed_binding", lambda _: _installed_binding(expected)
+    )
+
+    class Connection:
+        def __init__(self, *_: object, **__: object) -> None: ...
+        def request(self, *_: object, **__: object) -> None: ...
+        def getresponse(self) -> object:
+            return type(
+                "Redirect",
+                (),
+                {
+                    "status": 302,
+                    "getheader": lambda *_: "15",
+                    "read": lambda *_: b"BOCA_BETA_READY",
+                },
+            )()
+
+        def close(self) -> None: ...
+
+    monkeypatch.setattr(runtime.http.client, "HTTPConnection", Connection)
+    with pytest.raises(runtime.PostflightRuntimeNoGo):
+        runtime.ProductionPrivatePanelHealthWitness(expected, lease)()
