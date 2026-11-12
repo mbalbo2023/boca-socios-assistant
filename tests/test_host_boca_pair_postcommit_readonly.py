@@ -13,6 +13,7 @@ import pytest
 from boca_socios import host_boca_census as census
 from boca_socios import host_boca_pair_observe as pair
 from boca_socios import host_boca_pair_postcommit as post
+from boca_socios.host_cutover_inventory_observe import CutoverInventoryNoGo
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -116,6 +117,11 @@ def test_postcommit_reason_is_redacted_and_always_non_authorizing():
     assert data["parked"] == "DIRECTORY"
     assert data["intent"] == "FILE"
     assert data["old_ids_absent"] is True
+    assert data["parked_marker"] == "FILE"
+    assert data["parked_binding"] == "FILE"
+    assert data["parked_archive"] == "FILE"
+    assert data["parked_unit_socket"] == "FILE"
+    assert data["parked_unit_service"] == "FILE"
     assert data["observer_writes"] == data["foreign_resources_touched"] == 0
     assert data["cutover_authorized"] is False
     assert b"/home" not in receipt and b"token" not in receipt
@@ -129,6 +135,53 @@ def test_postcommit_catches_unexpected_exception_without_leaking_secret():
     data = json.loads(receipt.removeprefix(post.PREFIX))
     assert data["pair_reason"] == "OTHER_UNVERIFIED"
     assert b"PRIVATE_PASSWORD" not in receipt
+
+
+def test_postcommit_classifies_worker_health_field_failure_without_leaking_exception(
+    monkeypatch,
+):
+    def failed_pair(_run, **readers):
+        return readers["container_field_reader"](post.WORKER_ID, "State.Health.Status")
+
+    def bad_health(_ident, _field):
+        raise CutoverInventoryNoGo("PRIVATE_WORKER_HOST_DETAIL")
+
+    monkeypatch.setattr(post.pair, "observe", failed_pair)
+    monkeypatch.setattr(post.pair, "_fields_from_proven_boca", bad_health)
+    raw = _observe(pair_reader=post._observe_pair_with_failure_stage)
+    data = json.loads(raw.removeprefix(post.PREFIX))
+    assert data["pair"] == "NO_GO"
+    assert data["pair_reason"] == "WORKER_HEALTH_UNAVAILABLE"
+    assert b"PRIVATE_WORKER_HOST_DETAIL" not in raw
+
+
+def test_postcommit_classifies_census_exception_without_exposing_message(monkeypatch):
+    def failed_pair(_run, **readers):
+        return readers["inventory_reader"]()
+
+    monkeypatch.setattr(post.pair, "observe", failed_pair)
+    monkeypatch.setattr(
+        post.census,
+        "capture_container_census",
+        lambda: (_ for _ in ()).throw(RuntimeError("PRIVATE_DOCKER_HOST")),
+    )
+    raw = _observe(pair_reader=post._observe_pair_with_failure_stage)
+    data = json.loads(raw.removeprefix(post.PREFIX))
+    assert data["pair_reason"] == "CENSUS_EXCEPTION"
+    assert b"PRIVATE_DOCKER_HOST" not in raw
+
+
+def test_postcommit_does_not_mislabel_pair_internal_failure_as_last_good_field(monkeypatch):
+    def failed_pair(_run, **readers):
+        assert readers["container_field_reader"](post.WORKER_ID, "State.Health.Status") == "none"
+        raise RuntimeError("PRIVATE_INTERNAL_FAILURE")
+
+    monkeypatch.setattr(post.pair, "observe", failed_pair)
+    monkeypatch.setattr(post.pair, "_fields_from_proven_boca", lambda _id, _field: "none")
+    raw = _observe(pair_reader=post._observe_pair_with_failure_stage)
+    data = json.loads(raw.removeprefix(post.PREFIX))
+    assert data["pair_reason"] == "PAIR_INTERNAL_EXCEPTION"
+    assert b"PRIVATE_INTERNAL_FAILURE" not in raw
 
 
 def test_postcommit_refuses_drift_and_foreign_rootless_identity():
@@ -162,6 +215,24 @@ def test_postcommit_does_not_read_socket_contents_and_rejects_unknown_file_type(
     data = json.loads(receipt.removeprefix(post.PREFIX))
     assert data["socket_node"] == "UNSAFE"
     assert data["state"] == "OBSERVED"
+
+
+@pytest.mark.parametrize(
+    "field",
+    (
+        "parked_marker",
+        "parked_binding",
+        "parked_archive",
+        "parked_unit_socket",
+        "parked_unit_service",
+    ),
+)
+def test_postcommit_rejects_tampered_extended_parked_file_types(field):
+    original = _observe()
+    payload = json.loads(original.removeprefix(post.PREFIX))
+    payload[field] = "PRIVATE_SECRET"
+    with pytest.raises(post.PostcommitNoGo):
+        post.verify(post._canonical(payload), "43219000000")
 
 
 def test_postcommit_kind_never_follows_any_symlinked_parent(tmp_path, monkeypatch):

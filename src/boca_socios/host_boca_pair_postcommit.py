@@ -18,7 +18,9 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from boca_socios import host_boca_census as census
+from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_pair_observe as pair
+from boca_socios.host_cutover_inventory_observe import CutoverInventoryNoGo
 
 FAILED_ATTEMPT = "43217075287"
 SOURCE_SHA = "b61ca3e58d4f8ce69cd6d7575f2a8e1ce59bda72"
@@ -37,8 +39,40 @@ _RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
 _OWNER = Path("/home/boca-deploy")
 _PARKED = _OWNER / f".boca-on-demand-parked-{FAILED_ATTEMPT}"
 _INTENT = _OWNER / f".boca-on-demand-upgrade-{FAILED_ATTEMPT}"
-_PATHS = (_PARKED, _INTENT, _PARKED / "socket", _PARKED / "socket" / "control.sock")
+_PATHS = (
+    _PARKED,
+    _INTENT,
+    _PARKED / "socket",
+    _PARKED / "socket" / "control.sock",
+    _PARKED / "attempt",
+    _PARKED / "binding.json",
+    _PARKED / "handler.pyz",
+    _PARKED / "boca-bot-control.socket",
+    _PARKED / "boca-bot-control@.service",
+)
 _KINDS = frozenset({"ABSENT", "DIRECTORY", "FILE", "SOCKET", "UNSAFE"})
+_FIELD_STAGES = {
+    "Image": "IMAGE_ID",
+    "Config.Image": "IMAGE_REF",
+    "State.Health.Status": "HEALTH",
+    "State.Status": "STATUS",
+    "State.Pid": "PID",
+    "State.ExitCode": "EXIT",
+    "HostConfig.PortBindings": "PORT",
+    "NetworkSettings.Networks": "NETWORK",
+    "Mounts": "MOUNTS",
+}
+_PROBE_STAGES = frozenset(
+    {"CENSUS"}
+    | {
+        f"{role}_{field}"
+        for role in ("CONTROLLER", "WORKER")
+        for field in (*_FIELD_STAGES.values(), "OCI_LABEL")
+    }
+)
+_PROBE_REASONS = frozenset(
+    f"{stage}_{failure}" for stage in _PROBE_STAGES for failure in ("UNAVAILABLE", "EXCEPTION")
+) | {"PAIR_INTERNAL_EXCEPTION"}
 _REASONS = {
     "unapproved Boca field": "INSPECT_FIELD",
     "Boca process state field unavailable": "PROCESS_FIELD",
@@ -79,8 +113,9 @@ _REASONS = {
     "observation run ID unverified": "RUN_ID",
     "unknown pair observer mode": "OBSERVER_MODE",
 }
-_PAIR_REASONS = frozenset(
-    (*_REASONS.values(), "PAIR_IDENTITY_MISMATCH", "OTHER_UNVERIFIED", "NONE")
+_PAIR_REASONS = (
+    frozenset((*_REASONS.values(), "PAIR_IDENTITY_MISMATCH", "OTHER_UNVERIFIED", "NONE"))
+    | _PROBE_REASONS
 )
 _FIELDS = frozenset(
     {
@@ -96,6 +131,11 @@ _FIELDS = frozenset(
         "intent",
         "socket_directory",
         "socket_node",
+        "parked_marker",
+        "parked_binding",
+        "parked_archive",
+        "parked_unit_socket",
+        "parked_unit_service",
         "observer_writes",
         "foreign_resources_touched",
         "cutover_authorized",
@@ -106,6 +146,70 @@ _LIMIT = 768
 
 class PostcommitNoGo(ValueError):
     """The bounded incident proof cannot be trusted."""
+
+
+class _PairReadFailure(Exception):
+    """Only a fixed enumerated stage, never a Docker exception/message."""
+
+    def __init__(self, code: str):
+        if code not in _PROBE_REASONS:
+            raise PostcommitNoGo("non-allowlisted diagnostic stage")
+        self.code = code
+        super().__init__("redacted pair field failure")
+
+
+def _observe_pair_with_failure_stage(run_id: str) -> bytes:
+    """Use the same exact pair attestation with bounded provenance on failure.
+
+    The callbacks delegate unchanged to the existing narrow readers. The
+    diagnostic publishes only the role/field and coarse exception family,
+    never the raw field, failure string, Docker stderr or secret data.
+    """
+    role = "CONTROLLER"
+
+    def read_census() -> census.CensusSnapshot:
+        try:
+            return census.capture_container_census()
+        except (cleanup.CleanupError, CutoverInventoryNoGo):
+            raise _PairReadFailure("CENSUS_UNAVAILABLE") from None
+        except Exception:
+            raise _PairReadFailure("CENSUS_EXCEPTION") from None
+
+    def read_field(ident: str, field: str) -> object:
+        nonlocal role
+        role = "CONTROLLER" if ident == CONTROLLER_ID else "WORKER" if ident == WORKER_ID else ""
+        if not role or field not in _FIELD_STAGES:
+            raise pair.PairNoGo("unapproved Boca field")
+        stage = f"{role}_{_FIELD_STAGES[field]}"
+        try:
+            return pair._fields_from_proven_boca(ident, field)
+        except (cleanup.CleanupError, CutoverInventoryNoGo):
+            raise _PairReadFailure(f"{stage}_UNAVAILABLE") from None
+        except pair.PairNoGo:
+            raise
+        except Exception:
+            raise _PairReadFailure(f"{stage}_EXCEPTION") from None
+
+    def read_oci_label(ident: str, field: str) -> str | None:
+        stage = f"{role}_OCI_LABEL"
+        try:
+            return cleanup._inspect_image_public_oci_label(ident, field)
+        except cleanup.CleanupError:
+            raise _PairReadFailure(f"{stage}_UNAVAILABLE") from None
+        except Exception:
+            raise _PairReadFailure(f"{stage}_EXCEPTION") from None
+
+    try:
+        return pair.observe(
+            run_id,
+            inventory_reader=read_census,
+            container_field_reader=read_field,
+            image_label_reader=read_oci_label,
+        )
+    except (pair.PairNoGo, _PairReadFailure):
+        raise
+    except Exception:
+        raise _PairReadFailure("PAIR_INTERNAL_EXCEPTION") from None
 
 
 def _kind(path: Path) -> str:
@@ -197,7 +301,7 @@ def observe(
     read_inventory = (
         census.capture_container_census if inventory_reader is None else inventory_reader
     )
-    read_pair = pair.observe if pair_reader is None else pair_reader
+    read_pair = _observe_pair_with_failure_stage if pair_reader is None else pair_reader
     read_path = _kind if path_reader is None else path_reader
     first = read_inventory()
     census._topology(first)
@@ -211,6 +315,9 @@ def observe(
         if not _expected_pair(validated):
             reason = "PAIR_IDENTITY_MISMATCH"
             pair_state = "NO_GO"
+    except _PairReadFailure as exc:
+        reason = exc.code
+        pair_state = "NO_GO"
     except pair.PairNoGo as exc:
         reason = _REASONS.get(str(exc), "OTHER_UNVERIFIED")
         pair_state = "NO_GO"
@@ -239,6 +346,11 @@ def observe(
         "intent": second_paths[1],
         "socket_directory": second_paths[2],
         "socket_node": second_paths[3],
+        "parked_marker": second_paths[4],
+        "parked_binding": second_paths[5],
+        "parked_archive": second_paths[6],
+        "parked_unit_socket": second_paths[7],
+        "parked_unit_service": second_paths[8],
         "observer_writes": 0,
         "foreign_resources_touched": 0,
         "cutover_authorized": False,
@@ -288,7 +400,17 @@ def verify(raw: bytes, run_id: str) -> bytes:
         or (item["pair"] == "PASS") != (item["pair_reason"] == "NONE")
         or any(
             item[key] not in _KINDS
-            for key in ("parked", "intent", "socket_directory", "socket_node")
+            for key in (
+                "parked",
+                "intent",
+                "socket_directory",
+                "socket_node",
+                "parked_marker",
+                "parked_binding",
+                "parked_archive",
+                "parked_unit_socket",
+                "parked_unit_service",
+            )
         )
         or type(item["observer_writes"]) is not int
         or item["observer_writes"] != 0
