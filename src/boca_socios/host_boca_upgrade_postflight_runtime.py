@@ -8,8 +8,10 @@ or third-party endpoint is opened; file custody uses O_PATH metadata only.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
+import re
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -34,6 +36,20 @@ _FILES = (
     ("boca-socios_boca_key", "boca_master_key"),
     ("boca-socios_boca_owner", "boca_owner_session.sqlite3"),
 )
+_SITE_FRAME = re.compile(r"BOCA_SITE_URL_SHA256 ([a-f0-9]{64})\n\Z")
+_SAVED_URL_PROBE = (
+    "from pathlib import Path;"
+    "from boca_socios.panel.site_url_settings import SiteUrlSettingsStore;"
+    "from boca_socios.browser.site_url_runtime import site_url_fingerprint;"
+    "url=SiteUrlSettingsStore.for_database(Path('/data/boca.sqlite3')).read();"
+    "print('BOCA_SITE_URL_SHA256 '+site_url_fingerprint(url) "
+    "if url is not None else 'BOCA_SITE_URL_UNVERIFIED')"
+)
+_MIRRORED_URL_PROBE = (
+    "from boca_socios.browser.site_url_runtime import read_site_url,site_url_fingerprint;"
+    "print('BOCA_SITE_URL_SHA256 '+site_url_fingerprint(read_site_url()))"
+)
+_WORKER_COMMAND = ["python", "-m", "boca_socios.browser.ipc_server"]
 
 
 class PostflightRuntimeNoGo(ValueError):
@@ -42,6 +58,125 @@ class PostflightRuntimeNoGo(ValueError):
 
 def _fail() -> PostflightRuntimeNoGo:
     return PostflightRuntimeNoGo("Boca postflight physical evidence unverified")
+
+
+def _attest_live_pair(expected: postflight.PostflightExpected, lease: cleanup.BocaJobLease) -> None:
+    postflight._validate_expected(expected)
+    plan = expected.plan
+    cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+    raw = pair.observe(plan.attempt_id)
+    postflight._pair_payload(expected, raw)
+    installed = service.read_installed_binding(lease)
+    binding._attest(plan.attempt_id, raw, installed)
+
+
+@dataclass(frozen=True, slots=True)
+class ProductionSiteUrlWitness:
+    """Read the real controller's saved URL and worker mirror as digests only.
+
+    Rootless volume files may be owned by remapped subuids and are not safe to
+    infer from the host user's filesystem. After fresh pair/binding attestation
+    we run two fixed, bounded, **read-only** commands as the controller's
+    already-configured UID10001. Neither the URL nor credentials cross Docker
+    stdout; any extra output or changed digest refuses the witness. No worker
+    START, browser, Internet or ticket operation occurs. This is still not a
+    physical passkey login or proof the CREATED worker has run the URL.
+    """
+
+    expected: postflight.PostflightExpected
+    lease: cleanup.BocaJobLease
+
+    def _pair(self) -> None:
+        _attest_live_pair(self.expected, self.lease)
+
+    def _fingerprint(self, script: str) -> str:
+        try:
+            self._pair()
+            observed = cleanup._docker(
+                "exec",
+                "--user",
+                "10001:10001",
+                self.expected.controller_id,
+                "/app/.venv/bin/python",
+                "-I",
+                "-B",
+                "-c",
+                script,
+            )
+            match = _SITE_FRAME.fullmatch(observed)
+            if match is None or match.group(1) != self.expected.site_url_fingerprint:
+                raise _fail()
+            cleanup.verify_protected_boca_job_lease(self.lease, self.expected.plan.attempt_id)
+            return match.group(1)
+        except Exception:
+            raise _fail() from None
+
+    def saved_fingerprint(self) -> str:
+        return self._fingerprint(_SAVED_URL_PROBE)
+
+    def mirror_fingerprint(self) -> str:
+        return self._fingerprint(_MIRRORED_URL_PROBE)
+
+    def worker_startup(self) -> str:
+        """Verify cold worker's reviewed IPC entrypoint; do not start it."""
+        try:
+            self._pair()
+            raw = cleanup._docker(
+                "inspect", "--format", "{{json .Config.Cmd}}", self.expected.worker_id
+            )
+            command = json.loads(raw)
+            if (
+                type(command) is not list
+                or command != _WORKER_COMMAND
+                or not all(type(value) is str for value in command)
+            ):
+                raise _fail()
+            cleanup.verify_protected_boca_job_lease(self.lease, self.expected.plan.attempt_id)
+            # Code+image provenance is checked separately by the authenticated
+            # release and R177; this says only what the next START will invoke.
+            return "READ_FRESH_FILE_AT_NEXT_START"
+        except Exception:
+            raise _fail() from None
+
+
+@dataclass(frozen=True, slots=True)
+class ProductionPrivatePanelHealthWitness:
+    """Bounded 8443 GET-only HEALTH, never a fabricated passkey login.
+
+    `/healthz` verifies the running controller, the synthetic SQLite event
+    and owner-session schema. `/ingresar` creates an owner challenge, so this
+    read-only probe deliberately never opens that path and cannot satisfy
+    `PostflightSnapshot.panel_loopback_probe=LOGIN_HTTP_200`. Actual owner
+    passkey acceptance must be recorded by a separate authenticated action.
+    """
+
+    expected: postflight.PostflightExpected
+    lease: cleanup.BocaJobLease
+
+    def __call__(self) -> str:
+        connection: http.client.HTTPConnection | None = None
+        try:
+            _attest_live_pair(self.expected, self.lease)
+            connection = http.client.HTTPConnection("127.0.0.1", 8443, timeout=2.0)
+            connection.request(
+                "GET", "/healthz", headers={"Host": "localhost:8443", "Connection": "close"}
+            )
+            response = connection.getresponse()
+            if (
+                type(response.status) is not int
+                or response.status != 200
+                or response.getheader("Content-Length") != "15"
+                or response.getheader("Content-Type") != "text/plain; charset=utf-8"
+                or response.read(65) != b"BOCA_BETA_READY"
+            ):
+                raise _fail()
+            cleanup.verify_protected_boca_job_lease(self.lease, self.expected.plan.attempt_id)
+            return "HEALTH_HTTP_200"
+        except Exception:
+            raise _fail() from None
+        finally:
+            if connection is not None:
+                connection.close()
 
 
 def _file_inode_sha256(root: Path, volume: str, name: str) -> str:

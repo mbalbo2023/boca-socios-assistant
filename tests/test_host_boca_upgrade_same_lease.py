@@ -30,6 +30,21 @@ from test_host_boca_pair_observe import (
     _run,
 )
 from test_host_boca_upgrade_adapters import RetainedIO, seed
+from test_host_boca_upgrade_retained_bridge import (
+    MAIN as AUTH_MAIN,
+)
+from test_host_boca_upgrade_retained_bridge import (
+    PAIR_RUN as AUTH_PAIR_RUN,
+)
+from test_host_boca_upgrade_retained_bridge import (
+    RELEASE_RUN as AUTH_RELEASE_RUN,
+)
+from test_host_boca_upgrade_retained_bridge import (
+    RETAINED_RUN as AUTH_RETAINED_RUN,
+)
+from test_host_boca_upgrade_retained_bridge import (
+    _auth as authenticated_artifacts,
+)
 
 OLD_RUN = "44000000001"
 NEW_RUN = "44000000003"
@@ -343,19 +358,17 @@ def test_production_resource_io_uses_only_existing_readonly_narrow_readers(
 
     def docker(*args: str) -> str:
         calls.append(args)
+        if args[:2] == ("inspect", "--format"):
+            return {
+                "{{json .State.Status}}": '"created"',
+                "{{json .State.Running}}": "false",
+                "{{json .State.Pid}}": "0",
+                "{{json .State.ExitCode}}": "0",
+                "{{json .Mounts}}": "[]",
+            }[args[2]]
         return '"/home/boca-deploy/.local/share/docker"'
 
-    def inspect(kind: str, ident: str, field: str) -> object:
-        calls.append((kind, ident, field))
-        return {
-            "State.Running": False,
-            "State.Status": "created",
-            "State.Pid": 0,
-            "State.ExitCode": 0,
-        }.get(field, [])
-
     monkeypatch.setattr(capture.cleanup, "_docker", docker)
-    monkeypatch.setattr(capture.cleanup, "_inspect_field", inspect)
     monkeypatch.setattr(capture.cleanup, "_rootless_docker_disk_inodes", lambda: (0, 0, 1, 1))
     monkeypatch.setattr(capture.cleanup, "capture_inventory", lambda: "sentinel")
     monkeypatch.setattr(capture.retained, "_identity", lambda _: "1" * 64)
@@ -376,9 +389,81 @@ def test_production_resource_io_uses_only_existing_readonly_narrow_readers(
         "ExitCode": 0,
     }
     assert io.mounts("a" * 64) == []
+    for forbidden in ("State.Status", "State.Pid", "State.ExitCode"):
+        with pytest.raises(cleanup.CleanupError, match="allowlist"):
+            cleanup._inspect_field("container", "b" * 64, forbidden)
     assert all("Config.Env" not in str(item) for item in calls)
     assert all(
         item[0] not in {"stop", "rm", "prune", "start", "run", "create"}
         for item in calls
         if isinstance(item, tuple)
     )
+
+
+def test_authenticated_host_capture_requires_two_canonical_bundled_proofs(
+    monkeypatch: pytest.MonkeyPatch, lease: cleanup.BocaJobLease
+) -> None:
+    with monkeypatch.context() as original_host:
+        original_host.setattr(cleanup, "EXPECTED_UID", 10001)
+        retained_proof, retained_raw, pair_proof, pair_raw = authenticated_artifacts()
+    physical_calls: list[tuple[object, object, object]] = []
+
+    def physical(
+        self: capture.ProductionSameLeaseCapture,
+        p: transaction.PairCoordinates,
+        held: cleanup.BocaJobLease,
+    ) -> str:
+        physical_calls.append((self, p, held))
+        return "physical-capture-invoked"
+
+    monkeypatch.setattr(capture.ProductionSameLeaseCapture, "__call__", physical)
+    current = replace(plan(), observation_run_id=AUTH_PAIR_RUN, release_run_id=AUTH_RELEASE_RUN)
+    bridge = capture.AuthenticatedProductionSameLeaseCapture(
+        AUTH_MAIN,
+        AUTH_RETAINED_RUN,
+        pair_proof,
+        pair_raw,
+        retained_proof,
+        retained_raw,
+    )
+    assert bridge(current, lease) == "physical-capture-invoked"
+    assert len(physical_calls) == 1
+    physical_reader, observed_plan, observed_lease = physical_calls[0]
+    assert observed_plan is current and observed_lease is lease
+    assert isinstance(physical_reader, capture.ProductionSameLeaseCapture)
+    assert physical_reader.observation_receipt == pair_raw
+    assert physical_reader.custody is not None
+    assert physical_reader.custody.observation_run_id == AUTH_RETAINED_RUN
+    assert isinstance(physical_reader.retained_io, capture.ProductionRetainedResourceIO)
+    assert physical_reader.pair_reader is pair.observe
+    assert physical_reader.binding_reader is capture.service.read_installed_binding
+    assert physical_reader.control_identity_reader is capture.retained._identity
+
+
+def test_authenticated_capture_never_reaches_physical_readers_with_bad_proof(
+    monkeypatch: pytest.MonkeyPatch, lease: cleanup.BocaJobLease
+) -> None:
+    with monkeypatch.context() as original_host:
+        original_host.setattr(cleanup, "EXPECTED_UID", 10001)
+        retained_proof, retained_raw, pair_proof, pair_raw = authenticated_artifacts()
+    monkeypatch.setattr(
+        capture.ProductionSameLeaseCapture,
+        "__call__",
+        lambda *_args: pytest.fail("untrusted artifact reached live host I/O"),
+    )
+    current = replace(plan(), observation_run_id=AUTH_PAIR_RUN, release_run_id=AUTH_RELEASE_RUN)
+    for pair_bytes, retained_bytes, claimed_source in (
+        (pair_proof + b"{}", retained_proof, AUTH_MAIN),
+        (pair_proof, retained_proof + b"{}", AUTH_MAIN),
+        (pair_proof, retained_proof, "f" * 40),
+    ):
+        bridge = capture.AuthenticatedProductionSameLeaseCapture(
+            claimed_source,
+            AUTH_RETAINED_RUN,
+            pair_bytes,
+            pair_raw,
+            retained_bytes,
+            retained_raw,
+        )
+        with pytest.raises(capture.SameLeaseCaptureNoGo):
+            bridge(current, lease)

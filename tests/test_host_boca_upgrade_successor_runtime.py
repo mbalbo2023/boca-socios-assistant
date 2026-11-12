@@ -10,11 +10,14 @@ from typing import Any
 import pytest
 
 from boca_socios import host_boca_cleanup as cleanup
+from boca_socios import host_boca_pair_observe as pair
 from boca_socios import host_boca_pair_upgrade_reusable as reusable
 from boca_socios import host_boca_upgrade_successor_runtime as successor
+from boca_socios import host_on_demand_service as on_demand
 from boca_socios.host_boca_upgrade_cleanup_runtime import DurableFinalCleanupReceipt
 from test_host_boca_pair_upgrade_reusable import _pins, _sources
-from test_host_boca_upgrade_postflight import _expected, _snapshot
+from test_host_boca_upgrade_postflight import _expected, _pair_bytes, _snapshot
+from test_host_boca_upgrade_postflight_runtime import _installed_binding
 
 
 def _receipt() -> DurableFinalCleanupReceipt:
@@ -69,6 +72,146 @@ def _cleanup_coordinates(tmp_path: Path) -> successor.FinalCleanupCoordinates:
             cleanup.HISTORICAL_RETIRE_REVISION,
         ),
     )
+
+
+def _physical_inventory() -> cleanup.Inventory:
+    expected = _expected()
+    controller_volumes = (
+        "boca-socios_boca_data",
+        "boca-socios_boca_key",
+        "boca-socios_boca_owner",
+        "boca-socios_boca_browser_ipc",
+        "boca-socios_boca_site_config",
+    )
+    worker_volumes = ("boca-socios_boca_browser_ipc", "boca-socios_boca_site_config")
+    roles = (
+        ("controller", expected.controller_id, expected.controller_image_id, True),
+        ("browser-worker", expected.worker_id, expected.worker_image_id, False),
+    )
+    containers = tuple(
+        cleanup.Container(
+            ident,
+            f"/boca-socios-{role}-1",
+            image_id,
+            running,
+            (("com.docker.compose.project", "boca-socios"), ("com.docker.compose.service", role)),
+            tuple(sorted(controller_volumes if role == "controller" else worker_volumes)),
+            ("boca-socios_boca_private",) if role == "controller" else (),
+        )
+        for role, ident, image_id, running in roles
+    )
+    images = (
+        cleanup.Image(
+            expected.controller_image_id, (expected.plan.controller_ref,), cleanup.BOCA_SOURCE
+        ),
+        cleanup.Image(expected.worker_image_id, (expected.plan.worker_ref,), cleanup.BOCA_SOURCE),
+        cleanup.Image(cleanup.HISTORICAL_RETIRE_TARGET, (), None),
+    )
+    return cleanup.Inventory(
+        containers=containers,
+        images=images,
+        networks=(
+            cleanup.Network(
+                "boca-socios_boca_private",
+                "a" * 64,
+                (expected.controller_id,),
+                (("com.docker.compose.project", "boca-socios"),),
+            ),
+            cleanup.Network(
+                "boca-socios_boca_browser_egress",
+                "b" * 64,
+                (),
+                (("com.docker.compose.project", "boca-socios"),),
+            ),
+        ),
+        volumes=tuple(
+            cleanup.Volume(name, (("com.docker.compose.project", "boca-socios"),))
+            for name in (*controller_volumes,)
+        ),
+        disk=cleanup.DiskInodes(2_000_000, 100_000),
+        global_image_ids=frozenset(image.ident for image in images),
+    )
+
+
+def test_production_cleanup_coordinates_read_exact_pair_binding_and_r108_under_lease(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    events: list[str] = []
+    physical = _physical_inventory()
+    monkeypatch.setattr(successor.stage, "ROOT", tmp_path)
+    monkeypatch.setattr(pair, "observe", lambda attempt: events.append("pair") or _pair_bytes())
+    monkeypatch.setattr(
+        on_demand,
+        "read_installed_binding",
+        lambda lease: events.append("binding") or _installed_binding(_expected()),
+    )
+    monkeypatch.setattr(
+        cleanup, "capture_inventory", lambda: events.append("inventory") or physical
+    )
+    monkeypatch.setattr(
+        cleanup,
+        "attest_historical_retained_image",
+        lambda inventory: (
+            events.append("r108") or _cleanup_coordinates(tmp_path).historical_retained
+        ),
+    )
+    monkeypatch.setattr(
+        cleanup,
+        "verify_protected_boca_job_lease",
+        lambda lease, attempt: events.append("lease") or _assert_lease(lease, attempt),
+    )
+    coords = successor.ProductionFinalCleanupCoordinatesReader()(_expected().plan, _lease())
+    assert coords.controller_id == _expected().controller_id
+    assert coords.worker_id == _expected().worker_id
+    assert coords.receipt_dir == tmp_path
+    assert events.count("pair") == 2
+    assert events.count("binding") == 2
+    assert events.count("r108") == 2
+    assert events.count("inventory") == 2
+    assert events[0] == events[-1] == "lease"
+
+
+def test_production_cleanup_coordinates_reject_foreign_or_changed_image_before_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    physical = _physical_inventory()
+    monkeypatch.setattr(successor.stage, "ROOT", tmp_path)
+    monkeypatch.setattr(pair, "observe", lambda attempt: _pair_bytes())
+    monkeypatch.setattr(
+        on_demand, "read_installed_binding", lambda lease: _installed_binding(_expected())
+    )
+    monkeypatch.setattr(
+        cleanup,
+        "attest_historical_retained_image",
+        lambda _: _cleanup_coordinates(tmp_path).historical_retained,
+    )
+    monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", _assert_lease)
+    for polluted in (
+        replace(
+            physical,
+            containers=physical.containers + (replace(physical.containers[0], ident="9" * 64),),
+        ),
+        replace(
+            physical,
+            containers=(replace(physical.containers[0], image_id="sha256:" + "f" * 64),)
+            + physical.containers[1:],
+        ),
+        replace(
+            physical,
+            images=physical.images[:2],
+            global_image_ids=frozenset(image.ident for image in physical.images[:2]),
+        ),
+        replace(
+            physical,
+            containers=(replace(physical.containers[0], volumes=("boca-socios_boca_data",)),)
+            + physical.containers[1:],
+        ),
+    ):
+        monkeypatch.setattr(cleanup, "capture_inventory", lambda current=polluted: current)
+        with pytest.raises(successor.SuccessorFinalizationNoGo):
+            successor.ProductionFinalCleanupCoordinatesReader()(_expected().plan, _lease())
 
 
 def test_postflight_gate_rejects_unwired_capture_without_making_accepted_receipt(

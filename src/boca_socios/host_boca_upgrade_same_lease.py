@@ -28,6 +28,8 @@ from boca_socios import host_boca_pair_upgrade as transaction
 from boca_socios import host_boca_repeatable_journal as journal
 from boca_socios import host_boca_retained_resources as retained
 from boca_socios import host_boca_upgrade_adapters as adapters
+from boca_socios import host_boca_upgrade_observation_bridge as observation_bridge
+from boca_socios import host_boca_upgrade_retained_bridge as retained_bridge
 from boca_socios import host_on_demand_service as service
 from boca_socios.host_on_demand_lifecycle import OnDemandInstallation
 
@@ -81,12 +83,25 @@ class ProductionRetainedResourceIO:
     def worker_state(self, ident: str) -> object:
         if type(ident) is not str or _HASH.fullmatch(ident) is None:
             raise _fail()
-        return {
-            "Status": cleanup._inspect_field("container", ident, "State.Status"),
+        observed = {
+            # The cleanup inventory allowlist intentionally excludes process
+            # state. Reuse R177's exact-ID, exact-field READ_ONLY projection
+            # without broadening that cleanup interface or reading Config.Env.
+            "Status": pair._fields_from_proven_boca(ident, "State.Status"),
             "Running": cleanup._inspect_field("container", ident, "State.Running"),
-            "Pid": cleanup._inspect_field("container", ident, "State.Pid"),
-            "ExitCode": cleanup._inspect_field("container", ident, "State.ExitCode"),
+            "Pid": pair._fields_from_proven_boca(ident, "State.Pid"),
+            "ExitCode": pair._fields_from_proven_boca(ident, "State.ExitCode"),
         }
+        if (
+            observed["Status"] != "created"
+            or observed["Running"] is not False
+            or type(observed["Pid"]) is not int
+            or observed["Pid"] != 0
+            or type(observed["ExitCode"]) is not int
+            or observed["ExitCode"] != 0
+        ):
+            raise _fail()
+        return observed
 
     def mounts(self, ident: str) -> object:
         if type(ident) is not str or _HASH.fullmatch(ident) is None:
@@ -317,5 +332,65 @@ class ProductionSameLeaseCapture:
             )
             result.validate(plan, self.custody.resources)
             return result
+        except Exception:
+            raise _fail() from None
+
+
+@dataclass(frozen=True, slots=True)
+class AuthenticatedProductionSameLeaseCapture:
+    """Protected-bundle entry to the physical witness, with no caller I/O.
+
+    The runner has independently verified each GitHub artifact archive and
+    published these exact bytes through the SHA-checked memfd bundle. Here
+    both proofs are rechecked *before* any Docker or filesystem read. Unlike
+    the testable low-level bridge, the production entry cannot substitute
+    fake pair, binding, retained-resource or inode callbacks. The SHA-pinned
+    bundle and protected Actions caller remain mandatory trust boundaries.
+    """
+
+    observer_main_sha: str
+    retained_observation_run_id: str
+    pair_proof: bytes
+    pair_receipt: bytes
+    retained_proof: bytes
+    retained_receipt: bytes
+
+    def __call__(
+        self, plan: transaction.PairCoordinates, lease: cleanup.BocaJobLease
+    ) -> journal.FreshPairWitness:
+        try:
+            if type(plan) is not transaction.PairCoordinates:
+                raise _fail()
+            plan.validate()
+            cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+            observation_bridge.verify_bundled_observation(
+                self.pair_proof,
+                self.pair_receipt,
+                self.observer_main_sha,
+                plan.observation_run_id,
+                plan.attempt_id,
+                plan.release_run_id,
+            )
+            custody = retained_bridge.verify_bundled_retained(
+                self.retained_proof,
+                self.retained_receipt,
+                self.pair_proof,
+                self.pair_receipt,
+                self.observer_main_sha,
+                self.retained_observation_run_id,
+                plan.observation_run_id,
+                plan.attempt_id,
+                plan.release_run_id,
+            )
+            # The default source readers below really inspect the rootless
+            # Boca daemon, canonical systemd binding and filesystem identities.
+            return ProductionSameLeaseCapture(
+                observation_receipt=self.pair_receipt,
+                custody=custody,
+                retained_io=ProductionRetainedResourceIO(),
+                pair_reader=pair.observe,
+                binding_reader=service.read_installed_binding,
+                control_identity_reader=retained._identity,
+            )(plan, lease)
         except Exception:
             raise _fail() from None

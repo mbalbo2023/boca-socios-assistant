@@ -1070,7 +1070,7 @@ jobs:
           PYTHONPATH: src
         run: python scripts/check_deploy_inputs.py --infrastructure-preflight "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_SERVICE" "$BOCA_BUDGET" "$BOCA_RELEASE_RUN_ID"
       - name: Validate immutable inputs and successful matching release
-        if: inputs.operation == 'first-install' || inputs.operation == 'diagnostic' || inputs.operation == 'site-prepare' || inputs.operation == 'site-install' || inputs.operation == 'site-verify' || startsWith(inputs.operation, 'owner-') || inputs.operation == 'beta-install' || inputs.operation == 'beta-start' || startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'beta-acceptance' || startsWith(inputs.operation, 'telegram-') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-worker-preflight' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'boca-pair-upgrade-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
+        if: (inputs.operation == 'first-install' || inputs.operation == 'diagnostic' || inputs.operation == 'site-prepare' || inputs.operation == 'site-install' || inputs.operation == 'site-verify' || startsWith(inputs.operation, 'owner-') || inputs.operation == 'beta-install' || inputs.operation == 'beta-start' || startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'beta-acceptance' || startsWith(inputs.operation, 'telegram-') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-worker-preflight' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'boca-pair-upgrade-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply') && inputs.operation != 'boca-pair-upgrade-apply'
         env:
           PYTHONPATH: src
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1091,7 +1091,7 @@ jobs:
             "$RUNNER_TEMP/boca-release-manifest/boca-release-manifest.json" \
             "$BOCA_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID"
       - name: Require same-run immutable browser companion release manifest
-        if: startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-worker-preflight' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'boca-pair-upgrade-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply'
+        if: (startsWith(inputs.operation, 'beta-browser-') || (startsWith(inputs.operation, 'telegram-') && inputs.browser_image_ref != '') || inputs.operation == 'cutover-a-observe' || inputs.operation == 'cutover-a-worker-preflight' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'boca-pair-upgrade-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'protected-go-prepare' || inputs.operation == 'lifecycle-apply') && inputs.operation != 'boca-pair-upgrade-apply'
         env:
           PYTHONPATH: src
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -2600,17 +2600,15 @@ jobs:
           # Original CIDs and volume identity come from the *host* attestors.
           [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           test "$GITHUB_RUN_ATTEMPT" = 1
-          # R242: authenticate BOTH genuine protected release ZIPs, each
-          # against current main twice, release run/job/steps/artifact digest.
+          # Authenticate BOTH genuine release ZIPs in bounded REST memory
+          # before materializing any local member; no CLI extraction route
+          # for this selector, including the earlier shared release gates.
+          # Each role checks main twice, run/attempt/job/steps/ZIP digest.
           # GH_TOKEN stays on this runner; only reviewed manifest bytes and
           # their canonical digest witness enter the SHA-pinned host bundle.
           umask 077
           release_dir="$(mktemp -d "$RUNNER_TEMP/boca-upgrade-release.XXXXXXXX")"
           trap 'rm -f -- "$release_dir/boca-release-manifest.json" "$release_dir/boca-browser-release-manifest.json" "$release_dir/runner-proof.json" "$release_dir/boca-pair-observation.receipt" "$release_dir/observation-proof.json" "$release_dir/boca-retained-observation.receipt" "$release_dir/retained-proof.json"; rmdir -- "$release_dir"' EXIT
-          gh run download "$BOCA_RELEASE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-            --name boca-release-manifest --dir "$release_dir"
-          gh run download "$BOCA_RELEASE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
-            --name boca-browser-release-manifest --dir "$release_dir"
           # Earlier, independently protected READ_ONLY dispatch: exact run,
           # current main, deploy job/steps, ZIP archive digest and sole receipt.
           # No gh extraction of observer ZIPs before REST run/job/digest trust.
@@ -2633,9 +2631,7 @@ jobs:
           auth_state="$(python3 -m boca_socios.host_boca_upgrade_release_bridge \
             "$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID" \
             "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" \
-            "$release_dir/boca-release-manifest.json" \
-            "$release_dir/boca-browser-release-manifest.json" \
-            "$release_dir/runner-proof.json")"
+            "$release_dir")"
           test "$auth_state" = 'BOCA_RELEASE_AUTH state=VERIFIED host_authorized=false'
           python3 scripts/build_protected_boca_bundle.py --pair-upgrade \
             --pair-upgrade-release-dir "$release_dir" \

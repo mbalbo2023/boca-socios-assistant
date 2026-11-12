@@ -49,8 +49,35 @@ def _r108() -> gc.HistoricalRetainedImageProof:
 def _evidence() -> gc.ProtectedCleanupEvidence:
     receipt, before, after = _completed()
     extra = gc.Volume("boca-socios_boca_browser_ipc", BOCA_LABEL)
-    before = replace(_historical(before), volumes=(*before.volumes, extra))
-    after = replace(_historical(after), volumes=(*after.volumes, extra))
+    controller_mounts = tuple(
+        sorted(
+            (
+                "boca-socios_boca_data",
+                "boca-socios_boca_key",
+                "boca-socios_boca_owner",
+                "boca-socios_boca_site_config",
+                "boca-socios_boca_browser_ipc",
+            )
+        )
+    )
+    worker_mounts = (
+        "boca-socios_boca_browser_ipc",
+        "boca-socios_boca_site_config",
+    )
+
+    def complete_mounts(snapshot: gc.Inventory) -> gc.Inventory:
+        controller, worker = snapshot.containers
+        return replace(
+            _historical(snapshot),
+            containers=(
+                replace(controller, volumes=controller_mounts),
+                replace(worker, volumes=worker_mounts),
+            ),
+            volumes=(*snapshot.volumes, extra),
+        )
+
+    before = complete_mounts(before)
+    after = complete_mounts(after)
     return gc.ProtectedCleanupEvidence(
         replace(receipt, attempt_id=_plan().attempt_id, retained_attested=(_r108(),)),
         before,
@@ -251,4 +278,67 @@ def test_lost_lease_after_engine_never_writes_terminal(
         _run(lease, destination)
     assert was_run
     assert (destination / runtime.INTENT_FILENAME).exists()
+    assert not (destination / runtime.RECEIPT_FILENAME).exists()
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "controller_missing_ipc",
+        "controller_missing_owner_sqlite_custody",
+        "worker_missing_ipc",
+        "worker_mounts_controller_data",
+        "duplicate_worker_site_mount",
+    ],
+)
+def test_durable_cleanup_rejects_protected_volume_disconnected_from_pair(
+    case: str, monkeypatch: pytest.MonkeyPatch, lease: gc.BocaJobLease, tmp_path: Path
+) -> None:
+    """Existing volume names do not prove active SQLite/Chrome/IPC mounts.
+
+    Both snapshots are mutated equally: the ordinary V2 before/after delta
+    check cannot substitute the positive role-specific mount topology gate.
+    """
+    evidence = _evidence()
+
+    def remove_mount(names: tuple[str, ...], name: str) -> tuple[str, ...]:
+        return tuple(item for item in names if item != name)
+
+    def corrupt(snapshot: gc.Inventory) -> gc.Inventory:
+        controller, worker = snapshot.containers
+        if case == "controller_missing_ipc":
+            controller = replace(
+                controller,
+                volumes=remove_mount(controller.volumes, "boca-socios_boca_browser_ipc"),
+            )
+        elif case == "controller_missing_owner_sqlite_custody":
+            controller = replace(
+                controller,
+                volumes=remove_mount(controller.volumes, "boca-socios_boca_owner"),
+            )
+        elif case == "worker_missing_ipc":
+            worker = replace(
+                worker,
+                volumes=remove_mount(worker.volumes, "boca-socios_boca_browser_ipc"),
+            )
+        elif case == "worker_mounts_controller_data":
+            worker = replace(worker, volumes=(*worker.volumes, "boca-socios_boca_data"))
+        else:
+            worker = replace(worker, volumes=(*worker.volumes, "boca-socios_boca_site_config"))
+        return replace(snapshot, containers=(controller, worker))
+
+    evidence = replace(evidence, before=corrupt(evidence.before), after=corrupt(evidence.after))
+    calls = 0
+
+    def fake_engine(*_args: object, **_kwargs: object) -> gc.ProtectedCleanupEvidence:
+        nonlocal calls
+        calls += 1
+        return evidence
+
+    monkeypatch.setattr(gc, "execute_protected_with_inventories", fake_engine)
+    destination = _receipt_dir(tmp_path)
+    with pytest.raises(runtime.FinalCleanupNoGo):
+        _run(lease, destination)
+    assert calls == 1
+    assert (destination / runtime.INTENT_FILENAME).is_file()
     assert not (destination / runtime.RECEIPT_FILENAME).exists()

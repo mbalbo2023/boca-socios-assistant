@@ -11,9 +11,13 @@ Telegram sin formulario nativo permanecen `no-referrer`. La recepción física
 en Chrome requiere evidencia separada de las pruebas offline. ADR 0237.
 
 La solicitud del dueño de acelerar cambios pequeños **no** autoriza por sí
-misma saltar los checks requeridos ni modificar el workflow de producción:
-se auditará el tiempo real para proponer una ruta selectiva con contexto CI
-estable, fuente exacta y promoción manual consolidada.
+misma saltar los checks requeridos ni modificar el workflow de producción.
+La ruta selectiva R245 reconoce únicamente PR enteramente documentales de
+paths explícitamente permitidos, conservando ambos *jobs* requeridos con
+conclusión exitosa sólo tras clasificación positiva. Push a `main`, workflows,
+Docker, tests, scripts y mezclas desconocidas ejecutan la ruta completa.
+El clasificador se verifica con fixtures Git sintéticos; la ganancia temporal
+requiere medición alojada y no se extrapola de los tests locales.
 
 ## 2026-11-12 owner direction — consolidate #12 and #417 without source gates
 
@@ -150,10 +154,13 @@ Do not confuse remote GO wait, dispatch latency and container startup time.
 ### Single-pair CI execution (ADR0239)
 
 The image-dependent PR checks execute together in `CI / image-build`, using
-one locally built controller/browser pair. This includes both Trivy scans,
-source/revision labels, offline Chromium, image-size evidence and disposable
-deployment/lifecycle smoke. The existing required quality and image contexts
-are unchanged; no docs-only filter is introduced. The superseded release,
+one locally built controller/browser pair for code-bearing changes. This
+includes both Trivy scans, source/revision labels, offline Chromium,
+image-size evidence and disposable deployment/lifecycle smoke. R245 adds a
+strict docs-only PR classification *inside* the required `CI / image-build`
+job, not a
+workflow-level `paths` filter: an unclassified or mixed change takes the full
+path and both required contexts always report honestly. The superseded release,
 image-security, first-deploy-runtime-smoke and public-browser-isolation PR contexts are retired, not
 replaced with green placeholders. Verify and record the actual branch rules
 before merging this migration. The protected manual release still independently

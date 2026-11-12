@@ -17,6 +17,7 @@ from test_host_boca_upgrade_release_auth import (
     RUN,
     SOURCE,
     FakeGitHub,
+    _archive,
 )
 
 
@@ -107,19 +108,25 @@ def test_host_integrity_projection_does_not_claim_github_authority() -> None:
     assert "apply_authorized" not in invented
 
 
-def test_runner_entrypoint_writes_exclusive_nonsecret_proof_only_after_auth(
+def test_runner_fetches_both_zip_members_then_writes_exclusive_nonsecret_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     github = FakeGitHub()
     monkeypatch.setattr(bridge, "GitHubRestTransport", lambda token: github)
     monkeypatch.setenv("GH_TOKEN", "fixture-bearer-NOT-TO-TRANSFER")
-    first, second, target = (tmp_path / name for name in ("controller", "browser", "proof"))
-    first.write_bytes(github.payloads["controller-release"])
-    second.write_bytes(github.payloads["paired-release"])
-    args = [SOURCE, RUN, CONTROLLER, BROWSER, str(first), str(second), str(target)]
+    private = tmp_path / "release"
+    private.mkdir(mode=0o700)
+    first = private / "boca-release-manifest.json"
+    second = private / "boca-browser-release-manifest.json"
+    target = private / "runner-proof.json"
+    args = [SOURCE, RUN, CONTROLLER, BROWSER, str(private)]
     assert bridge.runner_main(args) == 0
     assert capsys.readouterr().out == "BOCA_RELEASE_AUTH state=VERIFIED host_authorized=false\n"
+    assert first.read_bytes() == github.payloads["controller-release"]
+    assert second.read_bytes() == github.payloads["paired-release"]
     assert target.stat().st_mode & 0o777 == 0o600
+    assert first.stat().st_mode & 0o777 == 0o600
+    assert second.stat().st_mode & 0o777 == 0o600
     assert b"fixture-bearer" not in target.read_bytes()
     assert bridge.verify_bundled_release(
         target.read_bytes(), first.read_bytes(), second.read_bytes(), _candidate()
@@ -128,8 +135,19 @@ def test_runner_entrypoint_writes_exclusive_nonsecret_proof_only_after_auth(
     assert target.read_bytes().count(b"schema") == 1
 
 
-@pytest.mark.parametrize("bad", ["symlink", "no_token", "wrong_sha"])
-def test_runner_refuses_untrusted_inputs_without_creating_proof(
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "symlink",
+        "no_token",
+        "wrong_sha",
+        "second_zip",
+        "first_zip",
+        "signed_wrong_pair",
+        "world_readable_dir",
+    ],
+)
+def test_runner_refuses_untrusted_archives_without_extracting_either_member(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -138,20 +156,46 @@ def test_runner_refuses_untrusted_inputs_without_creating_proof(
     github = FakeGitHub()
     monkeypatch.setattr(bridge, "GitHubRestTransport", lambda token: github)
     monkeypatch.setenv("GH_TOKEN", "fixture-bearer")
-    first, second, target = (tmp_path / name for name in ("controller", "browser", "proof"))
-    first.write_bytes(github.payloads["controller-release"])
-    second.write_bytes(github.payloads["paired-release"])
+    private = tmp_path / "release"
+    private.mkdir(mode=0o700)
+    first = private / "boca-release-manifest.json"
+    second = private / "boca-browser-release-manifest.json"
+    target = private / "runner-proof.json"
     source = SOURCE
     if bad == "symlink":
-        second.unlink()
         second.symlink_to(first)
     elif bad == "no_token":
         monkeypatch.delenv("GH_TOKEN")
-    else:
+    elif bad == "wrong_sha":
         source = "f" * 40
-    assert (
-        bridge.runner_main([source, RUN, CONTROLLER, BROWSER, str(first), str(second), str(target)])
-        == 3
-    )
+    elif bad == "second_zip":
+        github.archive_bytes[82] = b"attacker-controlled ZIP data"
+    elif bad == "first_zip":
+        github.archive_bytes[81] = b"attacker-controlled ZIP data"
+    elif bad == "signed_wrong_pair":
+        forged = github.payloads["paired-release"].replace(BROWSER.encode(), b"d" * 64)
+        github.archive_bytes[82] = _archive("boca-browser-release-manifest.json", forged)
+        github.artifacts["artifacts"][1] = github._artifact(82, "boca-browser-release-manifest")
+    elif bad == "world_readable_dir":
+        private.chmod(0o755)
+    assert bridge.runner_main([source, RUN, CONTROLLER, BROWSER, str(private)]) == 3
     assert capsys.readouterr().out == "BOCA_RELEASE_AUTH state=NO_GO host_authorized=false\n"
+    assert not first.exists()
+    if bad != "symlink":
+        assert not second.exists()
     assert not target.exists()
+
+
+def test_runner_rejects_preextracted_manifest_files_even_when_they_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gh = FakeGitHub()
+    monkeypatch.setattr(bridge, "GitHubRestTransport", lambda token: gh)
+    monkeypatch.setenv("GH_TOKEN", "fixture-bearer")
+    folder = tmp_path / "release"
+    folder.mkdir(mode=0o700)
+    existing = folder / "boca-release-manifest.json"
+    existing.write_bytes(gh.payloads["controller-release"])
+    assert bridge.runner_main([SOURCE, RUN, CONTROLLER, BROWSER, str(folder)]) == 3
+    assert existing.read_bytes() == gh.payloads["controller-release"]
+    assert not (folder / "runner-proof.json").exists()

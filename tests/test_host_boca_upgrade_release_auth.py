@@ -5,11 +5,13 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import stat
 import zipfile
 from dataclasses import dataclass
 
 import pytest
 
+from boca_socios import host_boca_upgrade_release_auth as release_auth
 from boca_socios.host_boca_upgrade_release_auth import (
     GitHubActionsEvidenceAuthenticator,
     ReleaseAuthenticationNoGo,
@@ -164,6 +166,57 @@ def test_authenticates_exact_release_archive_and_current_main(kind: str) -> None
     run = GitHubActionsEvidenceAuthenticator(gh).authenticate(_request(kind, gh))
     assert run == gh.run
     assert gh.main_reads == 2
+
+
+@pytest.mark.parametrize("kind", ["controller-release", "paired-release"])
+def test_downloads_exact_authenticated_manifest_in_memory_without_a_prior_file(kind: str) -> None:
+    gh = FakeGitHub()
+    assert release_auth.download_authenticated_release(gh, RUN, SOURCE, kind) == gh.payloads[kind]
+    assert gh.main_reads == 2
+
+
+def test_download_rechecks_first_attempt_after_archive_fetch() -> None:
+    class MutatingRun(FakeGitHub):
+        def get_artifact_zip(self, ident: int) -> bytes:
+            payload = super().get_artifact_zip(ident)
+            self.run["run_attempt"] = 2
+            return payload
+
+    with pytest.raises(ReleaseAuthenticationNoGo):
+        release_auth.download_authenticated_release(
+            MutatingRun(), RUN, SOURCE, "controller-release"
+        )
+
+
+@pytest.mark.parametrize(
+    "alteration", ["digest", "member", "size", "zip", "symlink_member", "oversized_archive"]
+)
+def test_download_never_returns_an_unverified_archive_member(alteration: str) -> None:
+    gh = FakeGitHub()
+    artifact = gh.artifacts["artifacts"][0]
+    if alteration == "digest":
+        artifact["digest"] = "sha256:" + "0" * 64
+    elif alteration == "member":
+        gh.archive_bytes[81] = _archive("unreviewed.json", gh.payloads["controller-release"])
+        gh.artifacts["artifacts"][0] = gh._artifact(81, "boca-release-manifest")
+    elif alteration == "size":
+        artifact["size_in_bytes"] += 1
+    elif alteration == "symlink_member":
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            entry = zipfile.ZipInfo("boca-release-manifest.json")
+            entry.create_system = 3
+            entry.external_attr = (stat.S_IFLNK | 0o777) << 16
+            archive.writestr(entry, gh.payloads["controller-release"])
+        gh.archive_bytes[81] = buffer.getvalue()
+        gh.artifacts["artifacts"][0] = gh._artifact(81, "boca-release-manifest")
+    elif alteration == "oversized_archive":
+        artifact["size_in_bytes"] = 32_769
+    else:
+        gh.archive_bytes[81] = b"not-a-ZIP"
+        gh.artifacts["artifacts"][0] = gh._artifact(81, "boca-release-manifest")
+    with pytest.raises(ReleaseAuthenticationNoGo):
+        release_auth.download_authenticated_release(gh, RUN, SOURCE, "controller-release")
 
 
 def test_rejects_retained_summary_without_downloadable_payload_authentication() -> None:

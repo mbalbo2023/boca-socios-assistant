@@ -240,7 +240,7 @@ def _verify_release_job(client: GitHubEvidenceTransport, run_id: str, sha: str) 
         raise _fail()
 
 
-def _verify_zip(raw: bytes, filename: str, expected: str) -> None:
+def _verified_zip_member(raw: bytes, filename: str) -> bytes:
     if type(raw) is not bytes or not 0 < len(raw) <= 32_768:
         raise _fail()
     try:
@@ -260,15 +260,14 @@ def _verify_zip(raw: bytes, filename: str, expected: str) -> None:
                 raise _fail()
             with archive.open(member) as stream:
                 payload = stream.read(1025)
-        if len(payload) != member.file_size or hashlib.sha256(payload).hexdigest() != expected:
+        if len(payload) != member.file_size:
             raise _fail()
+        return payload
     except Exception:
         raise _fail() from None
 
 
-def _release_artifact(
-    client: GitHubEvidenceTransport, run_id: str, sha: str, kind: str, payload_sha256: str
-) -> None:
+def _release_artifact(client: GitHubEvidenceTransport, run_id: str, sha: str, kind: str) -> bytes:
     record = client.get_json(f"actions/runs/{run_id}/artifacts?per_page=100")
     if not isinstance(record, dict) or record.get("total_count") != 2:
         raise _fail()
@@ -315,7 +314,40 @@ def _release_artifact(
     raw = client.get_artifact_zip(ident)
     if len(raw) != size or hashlib.sha256(raw).hexdigest() != digest.removeprefix("sha256:"):
         raise _fail()
-    _verify_zip(raw, filename, payload_sha256)
+    return _verified_zip_member(raw, filename)
+
+
+def download_authenticated_release(
+    client: GitHubEvidenceTransport, run_id: str, source_sha: str, kind: str
+) -> bytes:
+    """Authenticate a genuine release ZIP in memory; return only its checked member.
+
+    No local extraction occurs here. The caller must validate BOTH manifest
+    payloads and issue the bound proof before materializing either one.
+    """
+    try:
+        if (
+            client is None
+            or type(kind) is not str
+            or kind not in _ARTIFACTS
+            or type(run_id) is not str
+            or _RUN.fullmatch(run_id) is None
+            or type(source_sha) is not str
+            or _SHA.fullmatch(source_sha) is None
+        ):
+            raise _fail()
+        _main_is_exact(client, source_sha)
+        run = client.get_json(f"actions/runs/{run_id}")
+        validate_release_run(run, source_sha, run_id)
+        _verify_release_job(client, run_id, source_sha)
+        member = _release_artifact(client, run_id, source_sha, kind)
+        # The artifact listing belongs to a run ID, not an attempt. Catch
+        # an in-flight rerun after the ZIP GET before accepting its member.
+        validate_release_run(client.get_json(f"actions/runs/{run_id}"), source_sha, run_id)
+        _main_is_exact(client, source_sha)
+        return member
+    except Exception:
+        raise _fail() from None
 
 
 @dataclass(frozen=True, slots=True)
@@ -347,12 +379,11 @@ class GitHubActionsEvidenceAuthenticator:
                 or not _DIGEST.fullmatch(payload_sha256)
             ):
                 raise _fail()
-            _main_is_exact(self.client, source_sha)
+            member = download_authenticated_release(self.client, run_id, source_sha, kind)
+            if hashlib.sha256(member).hexdigest() != payload_sha256:
+                raise _fail()
             run = self.client.get_json(f"actions/runs/{run_id}")
             validate_release_run(run, source_sha, run_id)
-            _verify_release_job(self.client, run_id, source_sha)
-            _release_artifact(self.client, run_id, source_sha, kind, payload_sha256)
-            _main_is_exact(self.client, source_sha)
             return run
         except Exception:
             raise _fail() from None

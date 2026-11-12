@@ -258,6 +258,21 @@ def verify_custody_seed(
             or repository.get("full_name") != "mbalbo2023/boca-socios-assistant"
         ):
             raise _fail()
+        return parse_custody_integrity(raw, observation_run_id=observation_run_id)
+    except Exception:
+        raise _fail() from None
+
+
+def parse_custody_integrity(raw: bytes, *, observation_run_id: str) -> CustodyEvidence:
+    """Check R188 canonical bytes without claiming GitHub authentication.
+
+    Use only *after* a trusted runner has verified the actual Actions ZIP and
+    transported its canonical proof through the SHA-pinned protected bundle.
+    In contrast, ``verify_custody_seed`` independently authenticates GitHub
+    metadata on the runner. This parser never invents an Action run record.
+    """
+    try:
+        retained.verify(raw, observation_run_id)
         value = _json(raw.removeprefix(b"BOCA_RETAINED_RESOURCES "), 48_000)
         if not isinstance(value, dict) or value["expected_resource_provenance"] is not True:
             raise _fail()
@@ -274,12 +289,12 @@ def verify_custody_seed(
         )
         pins.validate()
         return CustodyEvidence(
-            str(value["source_sha"]),
-            str(value["installation_attempt"]),
+            value["source_sha"],
+            value["installation_attempt"],
             observation_run_id,
-            request.payload_sha256,
+            hashlib.sha256(raw).hexdigest(),
             pins,
-            str(value["control_socket_directory_inode_sha256"]),
+            value["control_socket_directory_inode_sha256"],
         )
     except Exception:
         raise _fail() from None

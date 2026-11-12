@@ -23,6 +23,7 @@ from boca_socios.host_boca_upgrade_release_auth import (
     GitHubActionsEvidenceAuthenticator,
     GitHubEvidenceTransport,
     GitHubRestTransport,
+    download_authenticated_release,
 )
 from boca_socios.release_manifest import validate_manifest
 
@@ -82,6 +83,41 @@ def authenticate_runner_release(
             raise _fail()
         verify_bundled_release(result, controller_manifest, paired_manifest, candidate)
         return result
+    except Exception:
+        raise _fail() from None
+
+
+def download_runner_release(
+    candidate: CandidateRelease, client: GitHubEvidenceTransport
+) -> tuple[bytes, bytes, bytes]:
+    """Download both REST ZIPs, authenticate bytes, then prepare a local proof.
+
+    No caller-provided manifests and no filesystem writes until both ZIP
+    digests, member allowlists, attempts, main and manifest identities pass.
+    """
+    try:
+        if type(candidate) is not CandidateRelease or client is None:
+            raise _fail()
+        candidate.validate()
+        controller = download_authenticated_release(
+            client, candidate.release_run_id, candidate.source_sha, "controller-release"
+        )
+        worker = download_authenticated_release(
+            client, candidate.release_run_id, candidate.source_sha, "paired-release"
+        )
+        proof = _canonical(
+            {
+                "schema": 1,
+                "source_sha": candidate.source_sha,
+                "release_run_id": candidate.release_run_id,
+                "controller_ref": candidate.controller_image_ref,
+                "worker_ref": candidate.worker_image_ref,
+                "controller_manifest_sha256": hashlib.sha256(controller).hexdigest(),
+                "paired_manifest_sha256": hashlib.sha256(worker).hexdigest(),
+            }
+        )
+        verify_bundled_release(proof, controller, worker, candidate)
+        return controller, worker, proof
     except Exception:
         raise _fail() from None
 
@@ -154,7 +190,11 @@ def verify_bundled_release(
 
 
 def _runner_input(path: str) -> bytes:
-    """Read a runner-private manifest with no-follow and exact size."""
+    """Read a verified runner-private manifest without following links.
+
+    The bundle builder consumes only files previously authenticated and
+    written by the REST runner bridge, not untrusted CLI-extracted archives.
+    """
     folder = Path(path).parent
     parent = folder.lstat()
     if (
@@ -205,22 +245,38 @@ def _runner_write_proof(path: str, proof: bytes) -> None:
 
 
 def runner_main(args: Sequence[str]) -> int:
-    """Seven fixed runner-only args, GH_TOKEN env, no credential in outputs."""
+    """Five runner-only coordinates, no untrusted local manifest input."""
     try:
-        if len(args) != 7:
+        if len(args) != 5:
             raise _fail()
-        source, run, controller_ref, worker_ref, controller_file, worker_file, target = args
+        source, run, controller_ref, worker_ref, folder_arg = args
         candidate = CandidateRelease(source, run, controller_ref, worker_ref)
         candidate.validate()
         token = os.environ.get("GH_TOKEN", "")
-        if not token:
+        folder = Path(folder_arg)
+        if not token or not folder.is_absolute():
             raise _fail()
-        controller = _runner_input(controller_file)
-        worker = _runner_input(worker_file)
-        proof = authenticate_runner_release(
-            candidate, controller, worker, GitHubRestTransport(token)
+        parent = folder.lstat()
+        if (
+            not stat.S_ISDIR(parent.st_mode)
+            or parent.st_uid != os.geteuid()
+            or stat.S_IMODE(parent.st_mode) != 0o700
+        ):
+            raise _fail()
+        destinations = (
+            folder / "boca-release-manifest.json",
+            folder / "boca-browser-release-manifest.json",
+            folder / "runner-proof.json",
         )
-        _runner_write_proof(target, proof)
+        for path in destinations:
+            try:
+                path.lstat()
+            except FileNotFoundError:
+                continue
+            raise _fail()
+        controller, worker, proof = download_runner_release(candidate, GitHubRestTransport(token))
+        for path, raw in zip(destinations, (controller, worker, proof), strict=True):
+            _runner_write_proof(str(path), raw)
     except Exception:
         print("BOCA_RELEASE_AUTH state=NO_GO host_authorized=false")
         return 3

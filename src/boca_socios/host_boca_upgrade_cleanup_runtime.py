@@ -38,6 +38,7 @@ _REQUIRED_VOLUMES = frozenset(
         "boca-socios_boca_browser_ipc",
     }
 )
+_WORKER_VOLUMES = frozenset({"boca-socios_boca_site_config", "boca-socios_boca_browser_ipc"})
 _PRIVATE_DIRECTORY_MODE = 0o700
 _PRIVATE_FILE_MODE = 0o600
 
@@ -217,6 +218,15 @@ def _require_protected_volumes(
         or r108 not in evidence.after.global_image_ids
     ):
         raise _fail()
+    # Name presence is insufficient: the verified pair must still have its
+    # exact SQLite/owner/key, SITE and Chrome IPC mounts in BOTH snapshots.
+    # This matches upgrade_adapters._observed_graph without new Docker reads.
+    for snapshot in (evidence.before, evidence.after):
+        mounts_by_id = {container.ident: container.volumes for container in snapshot.containers}
+        if tuple(sorted(mounts_by_id.get(controller_id, ()))) != tuple(
+            sorted(_REQUIRED_VOLUMES)
+        ) or tuple(sorted(mounts_by_id.get(worker_id, ()))) != tuple(sorted(_WORKER_VOLUMES)):
+            raise _fail()
     raw = counted.canonical_cleanup_v2_receipt(
         evidence.receipt,
         before=evidence.before,

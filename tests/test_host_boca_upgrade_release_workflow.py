@@ -13,18 +13,36 @@ def _apply() -> str:
 
 def test_existing_apply_authenticates_dual_release_before_any_remote_command() -> None:
     body = _apply()
-    assert body.count("gh run download") == 2  # Dual release only; observations via REST ZIP.
+    assert "gh run download" not in body  # All dual/observer ZIPs authenticated in memory.
     auth = body.index("python3 -m boca_socios.host_boca_upgrade_release_bridge")
-    first = body.index("--name boca-release-manifest")
-    second = body.index("--name boca-browser-release-manifest")
+    assert '"$release_dir")"' in body
     build = body.index("scripts/build_protected_boca_bundle.py --pair-upgrade")
     remote = body.index("timeout --signal=TERM")
-    assert first < second < auth < build < remote
+    assert auth < build < remote
     assert '--pair-upgrade-release-dir "$release_dir"' in body
     assert '"$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID"' in body
     assert '"$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF"' in body
     assert "BOCA_RELEASE_AUTH state=VERIFIED host_authorized=false" in body
     assert "GITHUB_RUN_ATTEMPT" in body
+
+
+def test_pair_upgrade_never_inherits_earlier_unverified_gh_zip_extraction() -> None:
+    first = FLOW.split(
+        "      - name: Validate immutable inputs and successful matching release\n", 1
+    )[1]
+    first = first.split(
+        "      - name: Require same-run immutable browser companion release manifest\n", 1
+    )[0]
+    second = FLOW.split(
+        "      - name: Require same-run immutable browser companion release manifest\n", 1
+    )[1]
+    second = second.split("      - name:", 1)[0]
+    for step in (first, second):
+        condition = step.splitlines()[0].strip()
+        assert condition.startswith("if: (")
+        assert condition.endswith(") && inputs.operation != 'boca-pair-upgrade-apply'")
+    assert "gh run download" in first  # Other operations retain existing independent gates.
+    assert "gh run download" in second
 
 
 def test_observation_is_a_separate_authenticated_run_before_memfd_or_ssh() -> None:
