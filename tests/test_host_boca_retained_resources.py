@@ -270,7 +270,7 @@ def test_inode_witness_uses_metadata_only_and_detects_replacement(tmp_path: Path
         observer.cleanup,
         "_docker",
         lambda *args: (
-            str(observer._ROOT)
+            json.dumps(str(observer._ROOT)) + "\n"
             if args[0] == "info"
             else json.dumps(
                 {
@@ -301,7 +301,7 @@ def test_inode_witness_rejects_symlink_ancestors(tmp_path: Path, monkeypatch):
         observer.cleanup,
         "_docker",
         lambda *args: (
-            str(observer._ROOT)
+            json.dumps(str(observer._ROOT)) + "\n"
             if args[0] == "info"
             else json.dumps(
                 {
@@ -327,7 +327,7 @@ def test_volume_mountpoint_must_identify_the_directory_being_statted(tmp_path: P
         observer.cleanup,
         "_docker",
         lambda *args: (
-            str(observer._ROOT)
+            json.dumps(str(observer._ROOT)) + "\n"
             if args[0] == "info"
             else json.dumps(
                 {

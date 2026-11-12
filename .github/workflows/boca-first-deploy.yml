@@ -179,7 +179,7 @@ jobs:
         run: |
           uv run pytest -q tests/test_host_boca_pair_observe.py tests/test_host_boca_pair_bundle.py tests/test_host_boca_pair_workflow.py
           uv run pytest -q tests/test_host_boca_pair_postcommit_readonly.py
-          uv run pytest -q tests/test_host_boca_pair_upgrade_plan.py tests/test_host_boca_pair_upgrade_workflow.py tests/test_host_boca_retained_resources.py tests/test_host_boca_retained_resource_transport.py
+          uv run pytest -q tests/test_host_boca_pair_upgrade_plan.py tests/test_host_boca_pair_upgrade_workflow.py tests/test_host_boca_retained_resources.py tests/test_host_boca_retained_resource_transport.py tests/test_host_boca_retained_resource_failures.py
           uv run mypy src/boca_socios/host_boca_pair_observe.py
           uv run mypy src/boca_socios/host_boca_pair_postcommit.py
           uv run mypy src/boca_socios/host_boca_pair_upgrade_plan.py
@@ -2207,7 +2207,7 @@ jobs:
           )"
           umask 077
           receipt_dir="$(mktemp -d "$RUNNER_TEMP/boca-retained-resource.XXXXXXXX")"
-          trap 'rm -f -- "$receipt_dir/receipt"; rmdir -- "$receipt_dir"' EXIT
+          trap 'rm -f -- "$receipt_dir/receipt" "$receipt_dir/stderr"; rmdir -- "$receipt_dir"' EXIT
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
             > "$RUNNER_TEMP/boca-retained-resource-main.json"
           python3 scripts/check_main_ref.py "$RUNNER_TEMP/boca-retained-resource-main.json" "$BOCA_SOURCE_SHA"
@@ -2219,16 +2219,23 @@ jobs:
               -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
               boca-target "$remote_command" \
               < "$RUNNER_TEMP/boca-retained-resource.pyz" \
-              > "$receipt_dir/receipt" 2>/dev/null
+              > "$receipt_dir/receipt" 2> "$receipt_dir/stderr"
           ) || remote_rc=$?
-          if [[ "$remote_rc" -ne 0 ]]; then
-            printf 'BOCA_RETAINED_RESOURCES state=NO_GO reason=HOST_UNVERIFIED observer_writes=0 cutover=NO_GO\n' >> "$GITHUB_STEP_SUMMARY"
+          verification_rc=0
+          # R189 publishes only canonical allowlisted status, never raw host
+          # stdout/stderr. Nonzero SSH status remains failure even with a
+          # syntactically valid success receipt. No host retry or fallback.
+          verified="$(python3 -m boca_socios.host_boca_retained_resources report "$GITHUB_RUN_ID" \
+            "$remote_rc" "$receipt_dir/receipt" "$receipt_dir/stderr" 2>/dev/null)" || verification_rc=$?
+          if [[ "$verification_rc" -ne 0 || "$remote_rc" -ne 0 ]]; then
+            if [[ "$verified" =~ ^BOCA_RETAINED_RESOURCES_FAILURE\  ]]; then
+              printf '%s\n' "$verified" >> "$GITHUB_STEP_SUMMARY"
+            else
+              printf 'BOCA_RETAINED_RESOURCES state=NO_GO reason=REPORT_UNVERIFIED observer_writes=0 cutover=NO_GO\n' >> "$GITHUB_STEP_SUMMARY"
+            fi
             exit 1
           fi
-          verification_rc=0
-          verified="$(python3 -m boca_socios.host_boca_retained_resources verify "$GITHUB_RUN_ID" \
-            < "$receipt_dir/receipt" 2>/dev/null)" || verification_rc=$?
-          if [[ "$verification_rc" -ne 0 || ! "$verified" =~ ^BOCA_RETAINED_RESOURCES\  ]]; then
+          if [[ ! "$verified" =~ ^BOCA_RETAINED_RESOURCES\  ]]; then
             printf 'BOCA_RETAINED_RESOURCES state=NO_GO reason=RECEIPT_UNVERIFIED observer_writes=0 cutover=NO_GO\n' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
