@@ -68,3 +68,10 @@ El código funcional #12 de Queue-it/Boca sigue incluido en BETA, sin gate
 de disponibilidad del proveedor ni validación de URLs con token.
 Navegación/reserva real, Telegram y worker bajo demanda continúan bajo
 sus contratos independientes; ninguna prueba aquí los activó.
+
+**Lección de registro:** `docs/quality/rca-lessons.json` impone la identidad
+única `RCA-{issue}`; ya existe `RCA-417` para el incidente R84/R85 de PR
+#426. El RCA nuevo R185 de PR #487 se conserva en este handoff y en el
+issue #417: no se crea un segundo ID inválido ni se altera el historial de
+`fix_pr=426`. Este límite del registro fue detectado por la suite completa
+(dos fallos de fixture/esquema) y corregido antes de la aceptación.

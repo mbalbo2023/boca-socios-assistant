@@ -606,18 +606,6 @@
         "tests/test_cutover_candidate_receipt.py::test_failed_cold_acceptance_survives_compensation_and_lost_first_stdout",
         "tests/test_cutover_candidate_compensation.py::test_compensate_restarted_pinned_candidate_after_stable_inspect"
       ]
-    },
-    {
-      "id": "RCA-417-R185",
-      "issue": 417,
-      "fix_pr": 487,
-      "root_cause": "The postcommit pair verifier read a CREATED, PID0 Boca worker Health.Status through an unguarded Docker Go template. State.Health was absent before manual start, so Docker failed the projection and incorrectly blocked the otherwise valid idle pair proof.",
-      "prevention": "Project only an already proven Boca CID's State.Health.Status using a guarded nullable Docker Go template. Treat null as none, never healthy, and preserve exact CID, controller health, stopped worker and transport-failure checks. Certify the fix with one independent READ_ONLY host observation; do not rerun full APPLY.",
-      "regression_tests": [
-        "tests/test_host_boca_pair_observe.py::test_created_worker_missing_health_is_a_bounded_none_not_docker_template_error",
-        "tests/test_host_boca_pair_observe.py::test_pair_created_worker_none_health_remains_unstarted_and_unverified",
-        "tests/test_host_boca_pair_observe.py::test_pair_health_probe_malformed_json_does_not_expose_host_bytes"
-      ]
     }
   ]
 }
