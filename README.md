@@ -1,5 +1,24 @@
 # Boca Socios Assistant
 
+## Transferencia de ownership y despliegue único — 12/11/2026 ART
+
+Tincho asignó al agente activo la integración conjunta de #12 y #417,
+debido al bloqueo del chat anterior. [AGENTS.md](AGENTS.md) y
+[política de desarrollo](docs/DEVELOPMENT_POLICY.md) registran que el
+PR funcional [#484](https://github.com/mbalbo2023/boca-socios-assistant/pull/484)
+puede integrarse y desplegarse en una **única BETA SIMULATION_ONLY** sin
+esperar disponibilidad real de Queue-it, un endpoint de login Boca ni
+validación de tokens. Los monitores continúan inactivos sin fuente auténtica;
+el lateral de sectores requiere activación SQLite explícita posterior.
+
+**Esta enmienda documental no es un merge ni un despliegue.** El run de release
+[#43094715916](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43094715916)
+falló al finalizar el artefacto y no acreditó el segundo manifest; el
+siguiente paso exige revisar
+#484, fusionar un solo SHA, certificar CI postmerge, construir una release
+dual nueva y validar el host Boca mediante la única Action protegida con
+limpieza selectiva. No se toca Porota ni se ejecutan reservas reales.
+
 ## Issue #12 — desarrollo funcional aislado (12/11/2026; CODE_ONLY, NO_GO externo)
 
 Se recuperaron los contratos previos de **perfil/sectores del socio** y
@@ -23,13 +42,15 @@ antes de copiar. Es independiente de la navegación legacy: **no inicia el bot,
   Chromium, fila ni reserva**. Los monitores son volátiles y no guardan tokens
 en SQLite. Las pruebas utilizan solamente respuestas ficticias offline.
 
-**Stoppers de integración:** no hay fuente Queue-it real conectada ni
+**Stoppers de activación real — no del deploy SIMULATION_ONLY (enmienda R182):**
+no hay fuente Queue-it real conectada ni
 transporte/respuesta de Boca certificado; el servicio externo está indisponible
 para validaciones. El perfil de sectores requiere provisión separada de su
 SQLite auxiliar. Esta rama **no modifica Docker, workflows ni despliegue**.
-La instalación y certificación física se coordinan únicamente con el
+La integración y certificación física quedan ahora bajo el mismo agente
 responsable de [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417)
-después de la revisión del PR de #12.
+por transferencia expresa del dueño el 12/11 (sección R182 anterior);
+no se exige que las fuentes reales estén disponibles para instalar la BETA.
 
 [Diseño funcional](docs/superpowers/specs/2026-11-12-issue12-functional-token-flows-design.md)
 · [plan TDD](docs/superpowers/plans/2026-11-12-issue12-functional-token-flows.md)

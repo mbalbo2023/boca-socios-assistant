@@ -4,6 +4,44 @@ Read this file, README.md, docs/DEVELOPMENT_POLICY.md and relevant ADRs **in
 full** before touching source. This public repository is independent from
 every unrelated service, host configuration and application repository.
 
+## Owner amendment — 2026-11-12: consolidated BETA delivery, #12 + #417
+
+The owner explicitly transferred active integration/deployment coordination
+from the stalled prior #417 chat to the agent continuing this work. The
+previous separate-chat ownership restriction is superseded for this delivery.
+There is **one** owner of overlapping panel/integration files, one reviewed
+release candidate and **one** protected Boca deployment transaction; do not
+create parallel installs or presume the old chat has a host lease. Reconcile
+GitHub Actions and the live lease immediately before effects.
+
+The owner authorizes inclusion of the tested
+[issue #12 candidate PR #484](https://github.com/mbalbo2023/boca-socios-assistant/pull/484)
+in the single
+consolidated **SIMULATION_ONLY** BETA. Its Queue-it and Boca token-monitor
+contracts are **optional, dormant** until a genuinely observed external
+source and reviewed login transport are separately available. The owner
+specifically prohibits validating token-bearing URLs while the external
+service is unavailable. Missing real tokens, unavailable Boca/Queue-it,
+and a monitor displaying "Sin observaciones" are **not vetoes** on safe
+controller-only deployment; never invent observations or claim live login.
+
+The member-sector sidecar has an explicit migration. Its absence may keep
+sector editing unavailable and must be shown honestly, but **does not block
+deploying the existing private panel, members, synthetic bot and controls**.
+No implicit migration of legacy SQLite is authorized. Provision the Boca-only
+sidecar later through the reviewed protected path before asserting sector
+persistence on the host.
+
+The sole outstanding #12 PR should be reviewed and integrated normally; its
+existence is not grounds to postpone its own merge or demand a redundant PR.
+The final release still uses a reviewed, merged, exact-SHA `main`, applicable
+CI, dual manifests/digests, fresh Boca-only host observations and one
+protected `boca-pair-upgrade-apply` with postflight and selective cleanup.
+**Do not waive** branch protection, anti-replay, origin/passkey, storage
+integrity, rootless isolation, one-ticket policy, or protection of unrelated
+Docker projects. External-source outage is advisory for dormant simulation,
+not a reason to weaken those technical boundaries.
+
 ## Absolute scope boundary
 
 - ONLY modify files under this GitHub repository and its feature branch.

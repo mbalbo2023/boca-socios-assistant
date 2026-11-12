@@ -1,5 +1,27 @@
 # Development and merge policy
 
+## 2026-11-12 owner direction — consolidate #12 and #417 without source gates
+
+The owner assigned the active agent responsibility for completing the **one**
+Boca simulation BETA deployment because the previous #417 chat stalled.
+This explicitly supersedes the historical separate-chat ownership boundary;
+no parallel writers, merges or host Actions may run against a shared scope.
+
+The accepted #12 code-only candidate (#484) may be merged into the single
+release once exact-SHA checks and technical review are satisfied. Unavailable
+live Queue-it URL/token validation, a missing genuine Boca login endpoint,
+and a missing optional sector-preferences SQLite sidecar **do not block a
+controller-only SIMULATION_ONLY deployment**. The two token feeds remain
+disabled and the sector page must be honest about unprovisioned storage.
+Do not attempt real auth/navigation, invent responses or validate token URLs.
+
+This is **not** a waiver of required protected workflows, final PR/merge
+provenance, dual release integrity, positive-identity Boca-only host checks,
+passkey/CSRF, one-ticket restriction, cleanup or postflight. The stalled
+release with incomplete artifacts is still unusable; create and verify a
+fresh single release from the final merged main, then perform one controlled
+pair upgrade through the dedicated Action.
+
 ## Why this exists
 
 Past incident classes include accidental deploy on documentation changes,
