@@ -244,6 +244,8 @@ PAIR_UPGRADE_SOURCES = tuple(
             "src/boca_socios/host_boca_upgrade_postflight_runtime.py",
             "src/boca_socios/host_boca_upgrade_cleanup_runtime.py",
             "src/boca_socios/host_boca_upgrade_successor_runtime.py",
+            "src/boca_socios/host_boca_upgrade_failure_cleanup_v2.py",
+            "src/boca_socios/host_boca_successor_physical_v2.py",
             "src/boca_socios/host_boca_cleanup_v2.py",
             "src/boca_socios/host_boca_pair_postcommit.py",
             "src/boca_socios/host_cutover_inventory_observe.py",
@@ -254,6 +256,8 @@ PAIR_UPGRADE_SOURCES = tuple(
             "src/boca_socios/host_boca_upgrade_release_bridge.py",
             "src/boca_socios/host_boca_upgrade_observation_bridge.py",
             "src/boca_socios/host_boca_upgrade_retained_bridge.py",
+            "src/boca_socios/host_boca_current_pair_v2.py",
+            "src/boca_socios/host_boca_successor_integrations.py",
             "src/boca_socios/host_boca_retained_resources.py",
             "src/boca_socios/release_manifest.py",
             "src/boca_socios/browser_release_manifest.py",
@@ -269,6 +273,7 @@ PAIR_UPGRADE_RELEASE_NAMES = (
     "observation-proof.json",
     "boca-retained-observation.receipt",
     "retained-proof.json",
+    "current-pair-v2.receipt",
 )
 PAIR_UPGRADE_RELEASE_PLACEHOLDER = b'{"state":"NO_GO"}\n'
 PAIR_UPGRADE_MAIN = (
@@ -405,12 +410,12 @@ PHYSICAL_MAX_ARCHIVE_BYTES = 320_000
 _FULL_ONLY_COMPACT_SOURCE = "src/boca_socios/host_first_deploy.py"
 
 
-def _compact_comment_tokens(source: bytes) -> bytes:
+def _compact_comment_tokens(source: bytes, *, filename: str = _FULL_ONLY_COMPACT_SOURCE) -> bytes:
     """Keep executable Python bytes/line numbers, omit only comment tokens.
 
-    The full Cutover payload shares this large host attestor with small worker
-    variants; only the full ZIP uses this transport transform. The repository
-    retains its commented source, while the SHA-pinned ZIP remains bounded.
+    The full Cutover and an oversized successor pair can use this identical
+    transport-only transform. The repository retains the original comments;
+    the SHA-pinned ZIP changes only after checked code-object equivalence.
     """
     decoded = source.decode("utf-8")
     lines = decoded.splitlines(keepends=True)
@@ -426,8 +431,7 @@ def _compact_comment_tokens(source: bytes) -> bytes:
     if (
         decoded.count("\n") != compacted.count(b"\n")
         or ast.dump(ast.parse(source)) != ast.dump(ast.parse(compacted))
-        or compile(source, _FULL_ONLY_COMPACT_SOURCE, "exec")
-        != compile(compacted, _FULL_ONLY_COMPACT_SOURCE, "exec")
+        or compile(source, filename, "exec") != compile(compacted, filename, "exec")
     ):
         raise ValueError("Boca protected source compaction changed executable Python")
     return compacted
@@ -474,13 +478,17 @@ def build(
         and not pair_upgrade
     ):
         raise ValueError("Boca protected bundle modes must be exclusive")
+    # Mode branches assign these exactly once at runtime; a single annotation
+    # avoids mypy no-redef errors from annotations repeated in each branch.
+    files: dict[str, bytes]
+    sources: tuple[str, ...]
     if postcommit_finalize:
-        files: dict[str, bytes] = {"__main__.py": POSTCOMMIT_FINALIZE_MAIN, **HOST_ONLY_INIT}
-        sources: tuple[str, ...] = POSTCOMMIT_FINALIZE_SOURCES
+        files = {"__main__.py": POSTCOMMIT_FINALIZE_MAIN, **HOST_ONLY_INIT}
+        sources = POSTCOMMIT_FINALIZE_SOURCES
         max_source = POSTCOMMIT_FINALIZE_MAX_SOURCE_BYTES
         max_archive = POSTCOMMIT_FINALIZE_MAX_ARCHIVE_BYTES
     elif pair_upgrade:
-        files: dict[str, bytes] = {"__main__.py": PAIR_UPGRADE_MAIN, **HOST_ONLY_INIT}
+        files = {"__main__.py": PAIR_UPGRADE_MAIN, **HOST_ONLY_INIT}
         if pair_upgrade_release_dir is None:
             # Offline/backward-compatible builds remain *ineligible*. They
             # include no Github-authenticated artifact or transport proof.
@@ -488,6 +496,8 @@ def build(
                 name: PAIR_UPGRADE_RELEASE_PLACEHOLDER for name in PAIR_UPGRADE_RELEASE_NAMES
             }
         else:
+            from boca_socios import host_boca_current_pair_v2 as current
+            from boca_socios import host_boca_upgrade_adapters as adapters
             from boca_socios.host_boca_pair_upgrade_plan import CandidateRelease
             from boca_socios.host_boca_upgrade_observation_bridge import (
                 _runner_input as observation_input,
@@ -498,9 +508,6 @@ def build(
             from boca_socios.host_boca_upgrade_release_bridge import (
                 _runner_input,
                 verify_bundled_release,
-            )
-            from boca_socios.host_boca_upgrade_retained_bridge import (
-                verify_bundled_retained,
             )
 
             folder = pair_upgrade_release_dir
@@ -521,6 +528,7 @@ def build(
                             "observation-proof.json",
                             "boca-retained-observation.receipt",
                             "retained-proof.json",
+                            "current-pair-v2.receipt",
                         )
                         else _runner_input(str(folder / name))
                     )
@@ -554,22 +562,48 @@ def build(
                     observation["apply_attempt_id"],
                     candidate.release_run_id,
                 )
-                retained = json.loads(release_files["retained-proof.json"])
-                verify_bundled_retained(
-                    release_files["retained-proof.json"],
+                # R188 V1 is an immutable *creator* observation, not a live
+                # source/attempt proof after B→C. V2 was GH-authenticated by
+                # the runner and remains read-only, never same-lease GO.
+                if release_files["retained-proof.json"] != PAIR_UPGRADE_RELEASE_PLACEHOLDER:
+                    raise ValueError("Boca legacy retained proof must remain NO_GO")
+                v2 = current.verify_current_pair_v2(release_files["current-pair-v2.receipt"])
+                history = v2["historical_resource_custody"]
+                if not isinstance(history, dict):
+                    raise ValueError("Boca missing historical resources")
+                custody = adapters.parse_custody_integrity(
                     release_files["boca-retained-observation.receipt"],
-                    release_files["observation-proof.json"],
-                    release_files["boca-pair-observation.receipt"],
-                    candidate.source_sha,
-                    retained["observer_run_id"],
-                    observation["observer_run_id"],
-                    observation["apply_attempt_id"],
-                    candidate.release_run_id,
+                    observation_run_id=history["original_observation_run"],
                 )
+                if (
+                    history != current._history(custody)
+                    or v2["observed_pair_sha256"]
+                    != hashlib.sha256(release_files["boca-pair-observation.receipt"]).hexdigest()
+                    or v2["observation_proof_sha256"]
+                    != hashlib.sha256(release_files["observation-proof.json"]).hexdigest()
+                    or v2["target_main_sha"] != candidate.source_sha
+                    or v2["target_release_run"] != candidate.release_run_id
+                    or v2["observation_run"] != observation["observer_run_id"]
+                    or v2["apply_attempt"] != observation["apply_attempt_id"]
+                    or any(
+                        v2[stored] != observation[observed]
+                        for stored, observed in (
+                            ("previous_pair_source_sha", "old_source_sha"),
+                            ("previous_pair_attempt", "old_attempt_id"),
+                            ("previous_controller_id", "controller_id"),
+                            ("previous_worker_id", "worker_id"),
+                            ("previous_controller_image_id", "controller_image_id"),
+                            ("previous_worker_image_id", "worker_image_id"),
+                            ("previous_controller_ref", "controller_ref"),
+                            ("previous_worker_ref", "worker_ref"),
+                        )
+                    )
+                ):
+                    raise ValueError("Boca current-pair source/creator mismatch")
             except Exception:
                 raise ValueError("Boca runner release evidence mismatch") from None
         files.update({f"release/{name}": data for name, data in release_files.items()})
-        sources: tuple[str, ...] = PAIR_UPGRADE_SOURCES
+        sources = PAIR_UPGRADE_SOURCES
         max_source = PAIR_UPGRADE_MAX_SOURCE_BYTES
         max_archive = PAIR_UPGRADE_MAX_ARCHIVE_BYTES
     elif sqlite_observe:
@@ -578,8 +612,8 @@ def build(
         max_source = SQLITE_OBSERVE_MAX_SOURCE_BYTES
         max_archive = SQLITE_OBSERVE_MAX_ARCHIVE_BYTES
     elif binding_observe:
-        files: dict[str, bytes] = {"__main__.py": BINDING_MAIN, **HOST_ONLY_INIT}
-        sources: tuple[str, ...] = BINDING_SOURCES
+        files = {"__main__.py": BINDING_MAIN, **HOST_ONLY_INIT}
+        sources = BINDING_SOURCES
         max_source = BINDING_MAX_SOURCE_BYTES
         max_archive = BINDING_MAX_ARCHIVE_BYTES
     elif retained_observe:
@@ -593,18 +627,18 @@ def build(
         max_source = POSTCOMMIT_MAX_SOURCE_BYTES
         max_archive = POSTCOMMIT_MAX_ARCHIVE_BYTES
     elif pair_observe:
-        files: dict[str, bytes] = {"__main__.py": PAIR_MAIN}
-        sources: tuple[str, ...] = PAIR_SOURCES
+        files = {"__main__.py": PAIR_MAIN}
+        sources = PAIR_SOURCES
         max_source = PAIR_MAX_SOURCE_BYTES
         max_archive = PAIR_MAX_ARCHIVE_BYTES
     elif census:
-        files: dict[str, bytes] = {"__main__.py": CENSUS_MAIN}
-        sources: tuple[str, ...] = CENSUS_SOURCES
+        files = {"__main__.py": CENSUS_MAIN}
+        sources = CENSUS_SOURCES
         max_source = CENSUS_MAX_SOURCE_BYTES
         max_archive = CENSUS_MAX_ARCHIVE_BYTES
     elif worker_recovery:
-        files: dict[str, bytes] = {"__main__.py": RECOVERY_MAIN}
-        sources: tuple[str, ...] = RECOVERY_SOURCES
+        files = {"__main__.py": RECOVERY_MAIN}
+        sources = RECOVERY_SOURCES
         max_source = RECOVERY_MAX_SOURCE_BYTES
         max_archive = RECOVERY_MAX_ARCHIVE_BYTES
     elif worker_preflight:
@@ -667,10 +701,20 @@ def build(
         )
         files[name] = data
     # Preserve exact test-fixture bytes and future small source sets. Compact
-    # only when the reviewed full Cutover sources actually exceed their cap.
+    # only when a reviewed complete source set actually exceeds its bounded
+    # total; never raise that cap to compensate for unused comment bytes.
     if full_cutover and sum(map(len, files.values())) > max_source:
         host_entry = _FULL_ONLY_COMPACT_SOURCE.removeprefix("src/")
         files[host_entry] = _compact_comment_tokens(files[host_entry])
+    if pair_upgrade and sum(map(len, files.values())) > max_source:
+        # Compact the *whole* reviewed pair source closure, not just enough
+        # files to scrape beneath the ceiling for one fixture: genuine
+        # authenticated observation receipts vary in size between attempts.
+        # The AST/compiled-bytecode/line checks reject semantic changes.
+        for rel in PAIR_UPGRADE_SOURCES:
+            if rel.endswith(".py"):
+                bundle_name = rel.removeprefix("src/")
+                files[bundle_name] = _compact_comment_tokens(files[bundle_name], filename=rel)
     if not 0 < sum(len(item) for item in files.values()) <= max_source:
         raise ValueError("Boca protected package total exceeds bounded contract")
     if target.is_symlink() or target.exists():

@@ -125,6 +125,56 @@ def test_existing_apply_selector_cannot_reenter_historical_r179_migration(
     assert value["cleanup"] == "INDETERMINATE"
 
 
+def test_r247_successor_preflight_requires_current_pair_v2_and_retains_no_go(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid GH-bound V2 must be checked, never treated as APPLY authority."""
+    from test_host_boca_successor_integrations import _inputs_with_proofs
+    from test_host_boca_upgrade_adapters import WITNESS_RUN
+
+    value = _inputs_with_proofs()
+    mappings = {
+        "runner-proof.json": value["release_proof"],
+        "boca-release-manifest.json": value["controller_manifest"],
+        "boca-browser-release-manifest.json": value["paired_manifest"],
+        "observation-proof.json": value["observation_proof"],
+        "boca-pair-observation.receipt": value["observation_receipt"],
+        "boca-retained-observation.receipt": value["retained_receipt"],
+        "current-pair-v2.receipt": value["current_pair_v2"],
+        "retained-proof.json": b'{"state":"NO_GO"}\n',
+    }
+
+    class Archive:
+        def __enter__(self) -> Archive:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, member: str) -> bytes:
+            return mappings[member.removeprefix("release/")]
+
+    monkeypatch.setattr(cli.sys, "argv", ["/proc/self/fd/19"])
+    monkeypatch.setattr(cli.zipfile, "ZipFile", lambda *_args: Archive())
+    args = tuple(
+        value[key]
+        for key in (
+            "attempt_id",
+            "source_sha",
+            "controller_ref",
+            "worker_ref",
+            "release_run_id",
+            "observation_run_id",
+        )
+    )
+    with pytest.raises(cli.SuccessorPreflightIneligible, match="transaction remains ineligible"):
+        cli._successor_preflight(*args, WITNESS_RUN)
+
+    del mappings["current-pair-v2.receipt"]
+    with pytest.raises(cli.SuccessorPreflightIneligible, match="transport unverified"):
+        cli._successor_preflight(*args, WITNESS_RUN)
+
+
 @pytest.mark.parametrize("mode", ["verify-sqlite", "verify-upgrade"])
 def test_cli_runner_verifier_reads_exact_one_bounded_line(
     mode: str, monkeypatch: pytest.MonkeyPatch

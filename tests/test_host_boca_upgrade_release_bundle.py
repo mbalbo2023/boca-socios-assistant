@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import subprocess
 import sys
 import zipfile
@@ -11,13 +12,13 @@ from pathlib import Path
 
 import pytest
 
+from boca_socios import host_boca_current_pair_v2 as current
 from boca_socios import host_boca_upgrade_observation_bridge as observation
 from boca_socios import host_boca_upgrade_release_bridge as bridge
-from boca_socios import host_boca_upgrade_retained_bridge as retained
 from boca_socios.host_boca_pair_upgrade_plan import CandidateRelease
-from test_host_boca_upgrade_observation_bridge import APPLY_RUN
-from test_host_boca_upgrade_release_auth import BROWSER, CONTROLLER, RUN, SOURCE, FakeGitHub
-from test_host_boca_upgrade_retained_bridge import PAIR_RUN, RETAINED_RUN, _auth
+from test_host_boca_upgrade_release_auth import BROWSER, CONTROLLER, RUN, SOURCE
+from test_host_boca_upgrade_retained_bridge import PAIR_RUN, RETAINED_RUN
+from test_r247_runner_current_pair_v2 import NOW, _inputs_for_runner, runner
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -26,21 +27,8 @@ import build_protected_boca_bundle as builder  # noqa: E402
 
 
 def _authenticated_directory(tmp_path: Path) -> Path:
-    github = FakeGitHub()
-    candidate = CandidateRelease(SOURCE, RUN, CONTROLLER, BROWSER)
-    ctrl = github.payloads["controller-release"]
-    browser = github.payloads["paired-release"]
-    proof = bridge.authenticate_runner_release(candidate, ctrl, browser, github)
-    folder = tmp_path / "release"
-    folder.mkdir(mode=0o700)
-    (folder / "boca-release-manifest.json").write_bytes(ctrl)
-    (folder / "boca-browser-release-manifest.json").write_bytes(browser)
-    (folder / "runner-proof.json").write_bytes(proof)
-    retained_proof, retained_raw, pair_proof, pair_raw = _auth()
-    (folder / "boca-pair-observation.receipt").write_bytes(pair_raw)
-    (folder / "observation-proof.json").write_bytes(pair_proof)
-    (folder / "boca-retained-observation.receipt").write_bytes(retained_raw)
-    (folder / "retained-proof.json").write_bytes(retained_proof)
+    github, catalog, args, folder = _inputs_for_runner(tmp_path)
+    runner.attest_runner(*args, github=github, release_catalog=catalog, now=NOW)
     return folder
 
 
@@ -66,34 +54,32 @@ def test_bundle_carries_authenticated_dual_artifacts_and_bootstrap_checks_allowl
             archive.read("release/runner-proof.json")
             == (evidence / "runner-proof.json").read_bytes()
         )
+        coords = json.loads(archive.read("release/runner-proof.json"))
         assert bridge.verify_bundled_release(
             archive.read("release/runner-proof.json"),
             archive.read("release/boca-release-manifest.json"),
             archive.read("release/boca-browser-release-manifest.json"),
-            CandidateRelease(SOURCE, RUN, CONTROLLER, BROWSER),
+            CandidateRelease(
+                coords["source_sha"],
+                coords["release_run_id"],
+                coords["controller_ref"],
+                coords["worker_ref"],
+            ),
         )
+        pair_proof = json.loads(archive.read("release/observation-proof.json"))
         assert observation.verify_bundled_observation(
             archive.read("release/observation-proof.json"),
             archive.read("release/boca-pair-observation.receipt"),
-            SOURCE,
-            PAIR_RUN,
-            APPLY_RUN,
-            RUN,
+            coords["source_sha"],
+            pair_proof["observer_run_id"],
+            pair_proof["apply_attempt_id"],
+            coords["release_run_id"],
         )["old_attempt_id"]
-        assert (
-            retained.verify_bundled_retained(
-                archive.read("release/retained-proof.json"),
-                archive.read("release/boca-retained-observation.receipt"),
-                archive.read("release/observation-proof.json"),
-                archive.read("release/boca-pair-observation.receipt"),
-                SOURCE,
-                RETAINED_RUN,
-                PAIR_RUN,
-                APPLY_RUN,
-                RUN,
-            ).control_directory_inode_sha256
-            == "3" * 64
-        )
+        assert archive.read("release/retained-proof.json") == b'{"state":"NO_GO"}\n'
+        v2 = current.verify_current_pair_v2(archive.read("release/current-pair-v2.receipt"))
+        assert v2["apply_authorized"] is False
+        assert v2["previous_pair_source_sha"] == pair_proof["old_source_sha"]
+        assert v2["historical_resource_custody"]["original_observation_run"]
         assert not any("token" in name or name.endswith(".env") for name in archive.namelist())
     imported = subprocess.run(  # noqa: S603 - fixed local Python, checked ZIP
         [
@@ -153,10 +139,11 @@ def test_bundle_rejects_untrusted_release_folder_before_writing_zip(
         path.unlink()
         path.symlink_to(evidence / "observation-proof.json")
     else:
+        source = json.loads((evidence / "runner-proof.json").read_bytes())["source_sha"]
         (evidence / "runner-proof.json").write_bytes(
             (evidence / "runner-proof.json")
             .read_bytes()
-            .replace(SOURCE.encode(), ("f" * 40).encode())
+            .replace(source.encode(), ("f" * 40).encode())
         )
     target = tmp_path / "not-authorized.pyz"
     with pytest.raises(ValueError):

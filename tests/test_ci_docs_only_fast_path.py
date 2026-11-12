@@ -196,7 +196,7 @@ def test_required_image_context_and_all_real_probes_are_preserved_on_full_path()
     workflow = WORKFLOW.read_text(encoding="utf-8")
     assert "  pull_request:" in workflow and "  push:\n    branches: [main]" in workflow
     assert "    name: image-build" in workflow
-    assert workflow.count("docker build") == 2
+    assert workflow.count("docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83") == 2
     assert workflow.count("run: bash scripts/trivy_scan_image.sh") == 2
     image = workflow.split("  image:\n", 1)[1]
     steps = image.split("      - name: ")[1:]

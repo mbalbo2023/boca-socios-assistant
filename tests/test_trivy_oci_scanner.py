@@ -72,11 +72,21 @@ def test_controller_and_browser_security_scans_are_parallel_and_both_required() 
 
     assert "name: image-security-controller-scan" in controller
     assert "name: image-security-browser-scan" in browser
-    assert controller.count("docker build") == browser.count("docker build") == 1
+    assert (
+        controller.count("docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83")
+        == browser.count("docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83")
+        == 1
+    )
     assert controller.count("bash scripts/trivy_scan_image.sh") == 1
     assert browser.count("bash scripts/trivy_scan_image.sh") == 1
     assert "needs:" not in controller + browser  # No serial cross-image dependency.
-    assert "continue-on-error" not in controller + browser
+    # Cached builders may fall back to the original cold build, but both
+    # independent scanner steps remain mandatory and fail-closed.
+    for body, role in ((controller, "controller"), (browser, "browser")):
+        assert body.count("continue-on-error: true") == 2  # setup and build only
+        assert f"steps.cached_{role}_build.outcome == 'failure'" in body
+        scan = body.split("      - name: Scan ", 1)[1]
+        assert "continue-on-error" not in scan
     assert "name: image-security-scan" in gate  # Existing named check remains.
     assert "needs: [controller-scan, browser-scan]" in gate
     assert "if: always()" in gate  # Report failure even when one scan fails/skips.
@@ -94,7 +104,13 @@ def test_trivy_failure_cannot_skip_release_login_or_report_success() -> None:
     )
     assert "set -euo pipefail" in SCAN
     assert "|| true" not in SCAN
-    assert "continue-on-error" not in SECURITY + RELEASE
+    assert "continue-on-error" not in RELEASE
+    for name in (
+        "Scan OS and library vulnerabilities",
+        "Scan browser OS and library vulnerabilities",
+    ):
+        scan = SECURITY.split(f"      - name: {name}\n", 1)[1].split("      - name:", 1)[0]
+        assert "continue-on-error" not in scan
 
 
 def test_trivy_cli_refuses_unreviewed_image_without_running_docker(tmp_path: Path) -> None:

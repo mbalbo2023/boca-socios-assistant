@@ -16,6 +16,8 @@ jobs:
     name: publish-reviewed-image
     environment: boca-image-release
     runs-on: ubuntu-24.04
+    # Cache is not origin authentication. The protected release still builds
+    # fresh from the reviewed exact main SHA and independently scans both.
     timeout-minutes: 30
     permissions:
       contents: read
