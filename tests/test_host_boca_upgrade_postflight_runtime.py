@@ -326,3 +326,199 @@ def test_panel_health_probe_rejects_redirect_or_unexpected_body(
     monkeypatch.setattr(runtime.http.client, "HTTPConnection", Connection)
     with pytest.raises(runtime.PostflightRuntimeNoGo):
         runtime.ProductionPrivatePanelHealthWitness(expected, lease)()
+
+
+def test_site_url_readback_reattests_real_created_worker_after_each_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _expected()
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    snapshots: list[str] = []
+    monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", lambda *_: None)
+    monkeypatch.setattr(
+        pair,
+        "observe",
+        lambda _: snapshots.append("pair") or _pair_bytes(),
+    )
+    monkeypatch.setattr(
+        runtime.service, "read_installed_binding", lambda _: _installed_binding(expected)
+    )
+
+    def docker(*args: str) -> str:
+        snapshots.append("docker")
+        if args[0] == "inspect":
+            return '["python","-m","boca_socios.browser.ipc_server"]\n'
+        return f"BOCA_SITE_URL_SHA256 {expected.site_url_fingerprint}\n"
+
+    monkeypatch.setattr(cleanup, "_docker", docker)
+    witness = runtime.ProductionSiteUrlWitness(expected, lease)
+    assert witness.saved_fingerprint() == expected.site_url_fingerprint
+    assert witness.mirror_fingerprint() == expected.site_url_fingerprint
+    assert witness.worker_startup() == "READ_FRESH_FILE_AT_NEXT_START"
+    assert snapshots == ["pair", "docker", "pair"] * 3
+
+
+def test_site_url_readback_refuses_worker_change_during_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _expected()
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    calls = 0
+    monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", lambda *_: None)
+
+    def observe(_: str) -> bytes:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ValueError("worker started while read was in flight")
+        return _pair_bytes()
+
+    monkeypatch.setattr(pair, "observe", observe)
+    monkeypatch.setattr(
+        runtime.service, "read_installed_binding", lambda _: _installed_binding(expected)
+    )
+    monkeypatch.setattr(
+        cleanup,
+        "_docker",
+        lambda *_: f"BOCA_SITE_URL_SHA256 {expected.site_url_fingerprint}\n",
+    )
+    with pytest.raises(runtime.PostflightRuntimeNoGo):
+        runtime.ProductionSiteUrlWitness(expected, lease).saved_fingerprint()
+    assert calls == 2
+
+
+def test_production_storage_requires_live_lease_exact_rootless_owner_and_twice_attests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _expected()
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    events: list[str] = []
+    monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", lambda *_: None)
+    monkeypatch.setattr(pair, "observe", lambda _: events.append("pair") or _pair_bytes())
+    monkeypatch.setattr(
+        runtime.service, "read_installed_binding", lambda _: _installed_binding(expected)
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_read_rootless_identity",
+        lambda: (cleanup.EXPECTED_UID, cleanup.EXPECTED_GID),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "capture_storage_fingerprints",
+        lambda: events.append("storage") or expected.storage_before,
+    )
+
+    def volume_attestor() -> None:
+        events.append("volume")
+
+    witness = runtime.ProductionPrivateStorageReader(
+        volume_attestor=volume_attestor, expected=expected, lease=lease
+    )
+    assert witness() == expected.storage_before
+    assert events == ["pair", "volume", "storage", "volume", "pair"]
+
+    monkeypatch.setattr(runtime, "_read_rootless_identity", lambda: (0, 0))
+    events.clear()
+    with pytest.raises(runtime.PostflightRuntimeNoGo):
+        witness()
+    assert events == ["pair"]
+
+
+def test_private_monitor_metadata_rejects_credentials_or_unsafe_provenance() -> None:
+    valid = (
+        b'{"version":1,"queue_source":"NOT_CONNECTED","boca_source":"IN_MEMORY",'
+        b'"queue_observations":0,"boca_observations":2,'
+        b'"last_observed_at":"2026-11-12T13:00:00+00:00",'
+        b'"observed_at":"2026-11-12T13:01:00+00:00"}'
+    )
+    assert runtime.parse_private_monitor_metadata(valid) == ("IN_MEMORY", 2)
+    for invalid in (
+        valid[:-1] + b',"token":"secret"}',
+        valid.replace(b'"queue_observations":0', b'"queue_observations":true'),
+        valid.replace(b'"queue_observations":0', b'"queue_observations":1'),
+        valid.replace(b'"boca_observations":2', b'"boca_observations":-1'),
+        valid.replace(b'"observed_at":"2026-11-12T13:01:00+00:00"', b'"observed_at":"bad"'),
+        valid.replace(b'"version":1', b'"version":1,"version":1'),
+    ):
+        with pytest.raises(runtime.PostflightRuntimeNoGo):
+            runtime.parse_private_monitor_metadata(invalid)
+
+
+def test_monitor_metadata_witness_has_no_unauthenticated_or_synthetic_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _expected()
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    with pytest.raises(runtime.PostflightRuntimeNoGo):
+        runtime.ProductionPrivateMonitorMetadataWitness(expected, lease)()
+    monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", lambda *_: None)
+    monkeypatch.setattr(pair, "observe", lambda _: _pair_bytes())
+    monkeypatch.setattr(
+        runtime.service, "read_installed_binding", lambda _: _installed_binding(expected)
+    )
+    with pytest.raises(runtime.PostflightRuntimeNoGo):
+        runtime.ProductionPrivateMonitorMetadataWitness(
+            expected, lease, read_owner_authenticated_metadata=lambda: b"{}"
+        )()
+
+
+def test_monitor_metadata_witness_requires_stable_authenticated_readback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _expected()
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    samples = iter(
+        (
+            b'{"version":1,"queue_source":"NOT_CONNECTED","boca_source":"NOT_CONNECTED",'
+            b'"queue_observations":0,"boca_observations":0,'
+            b'"last_observed_at":null,"observed_at":"2026-11-12T13:00:00+00:00"}',
+            b'{"version":1,"queue_source":"NOT_CONNECTED","boca_source":"IN_MEMORY",'
+            b'"queue_observations":0,"boca_observations":0,'
+            b'"last_observed_at":null,"observed_at":"2026-11-12T13:00:01+00:00"}',
+        )
+    )
+    monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", lambda *_: None)
+    monkeypatch.setattr(pair, "observe", lambda _: _pair_bytes())
+    monkeypatch.setattr(
+        runtime.service, "read_installed_binding", lambda _: _installed_binding(expected)
+    )
+    with pytest.raises(runtime.PostflightRuntimeNoGo):
+        runtime.ProductionPrivateMonitorMetadataWitness(
+            expected, lease, read_owner_authenticated_metadata=lambda: next(samples)
+        )()
+
+
+def test_storage_witness_refuses_mount_drift_after_inode_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _expected()
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    calls = 0
+    monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", lambda *_: None)
+    monkeypatch.setattr(pair, "observe", lambda _: _pair_bytes())
+    monkeypatch.setattr(
+        runtime.service, "read_installed_binding", lambda _: _installed_binding(expected)
+    )
+    monkeypatch.setattr(
+        runtime,
+        "_read_rootless_identity",
+        lambda: (cleanup.EXPECTED_UID, cleanup.EXPECTED_GID),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "capture_storage_fingerprints",
+        lambda: expected.storage_before,
+    )
+
+    def volume_attestor() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("mount changed after read")
+
+    with pytest.raises(runtime.PostflightRuntimeNoGo):
+        runtime.ProductionPrivateStorageReader(
+            volume_attestor=volume_attestor, expected=expected, lease=lease
+        )()
+    assert calls == 2

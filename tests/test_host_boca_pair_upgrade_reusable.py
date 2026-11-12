@@ -315,18 +315,18 @@ def test_release_refusal_happens_before_stage_files_or_image_pulls(
             actor.stage(_plan(), lease)
 
 
-def test_unverifiable_final_state_still_attempts_bounded_cleanup(
+def test_unverifiable_final_state_preserves_resources_without_success_cleanup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     integrations = Integrations()
     actor = _actor(integrations)
     calls: list[str] = []
 
-    def inventory_only(_plan: Any, _lease: Any) -> str:
-        calls.append("bounded_cleanup_attempt")
+    def success_only_cleanup(_plan: Any, _lease: Any) -> str:
+        calls.append("unsafe_success_cleanup_attempt")
         return "INDETERMINATE"
 
-    integrations.final_cleanup = inventory_only
+    integrations.final_cleanup = success_only_cleanup
     monkeypatch.setattr(actor, "_sqlite", lambda: None)
     with cleanup.protected_boca_job_lease(RUN) as lease:
         result = actor.finalize(
@@ -337,7 +337,72 @@ def test_unverifiable_final_state_still_attempts_bounded_cleanup(
             lease=lease,
         )
     assert result == "INDETERMINATE"
-    assert calls == ["bounded_cleanup_attempt"]
+    assert calls == []
+
+
+def test_precommit_restored_old_pair_cannot_invoke_success_cleanup_bridge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catch an unsafe SUCCESS cleanup after a failed/precommit upgrade."""
+    from boca_socios import host_on_demand_service as service
+
+    integrations = Integrations()
+    effects: list[str] = []
+
+    def potentially_destructive_success_cleanup(_plan: Any, _lease: Any) -> str:
+        effects.append("success_cleanup_entered")
+        return "ACCEPT"
+
+    integrations.final_cleanup = potentially_destructive_success_cleanup
+    actor = _actor(integrations)
+    actor.state = "RESTORED"
+    actor.old = object()
+    monkeypatch.setattr(actor, "_sqlite", lambda: None)
+    monkeypatch.setattr(actor, "_old_exact", lambda *_a, **_k: None)
+    monkeypatch.setattr(service, "read_installed_binding", lambda _lease: actor.old)
+
+    with cleanup.protected_boca_job_lease(RUN) as lease:
+        result = actor.finalize(
+            _plan(),
+            commit_started=False,
+            controller_id=None,
+            worker_id=None,
+            lease=lease,
+        )
+    assert result == "NO_GO"
+    assert effects == []
+
+
+def test_postcommit_unverified_pair_cannot_invoke_success_cleanup_bridge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Catch deletes attempted while serving-pair identity is unknown."""
+    from boca_socios import host_on_demand_service as service
+
+    integrations = Integrations()
+    effects: list[str] = []
+
+    def potentially_destructive_success_cleanup(_plan: Any, _lease: Any) -> str:
+        effects.append("success_cleanup_entered")
+        return "ACCEPT"
+
+    integrations.final_cleanup = potentially_destructive_success_cleanup
+    actor = _actor(integrations)
+    actor.state = "RETIRED"
+    actor.new = object()
+    monkeypatch.setattr(actor, "_sqlite", lambda: None)
+    monkeypatch.setattr(service, "read_installed_binding", lambda _lease: object())
+
+    with cleanup.protected_boca_job_lease(RUN) as lease:
+        result = actor.finalize(
+            _plan(),
+            commit_started=True,
+            controller_id="1" * 64,
+            worker_id="2" * 64,
+            lease=lease,
+        )
+    assert result == "INDETERMINATE"
+    assert effects == []
 
 
 def test_retained_drift_blocks_every_noninitial_effect_boundary() -> None:

@@ -6,7 +6,11 @@ FROM python:3.12.15-alpine3.24@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2
 WORKDIR /app
 RUN python -m pip install --disable-pip-version-check --no-cache-dir uv==0.13.4
 COPY pyproject.toml uv.lock README.md ./
+# Install only the locked third-party graph before copying application code.
+# A source-only edit must not invalidate this comparatively stable layer.
+RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
+# The final pass still installs the non-editable Boca application itself.
 RUN uv sync --locked --no-dev --no-editable
 
 FROM python:3.12.15-alpine3.24@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d AS runtime
