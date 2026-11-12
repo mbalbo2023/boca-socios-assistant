@@ -45,6 +45,17 @@ def test_site_url_configuration_is_owner_only_and_discoverable(tmp_path: Path) -
     assert "form-action 'self'" in headers["Content-Security-Policy"]
 
 
+@pytest.mark.parametrize("path", ["/", "/control", "/configuracion"])
+def test_private_owner_form_page_preserves_same_origin_for_native_post(
+    tmp_path: Path, path: str
+) -> None:
+    """An HTML form POST must not inherit a policy that makes Origin null."""
+    app, cookie, _ = _owner(tmp_path)
+    status, headers, _ = _request(app, path, cookie=cookie)
+    assert status == 200
+    assert headers["Referrer-Policy"] == "same-origin"
+
+
 @pytest.mark.parametrize("state", ["missing", "diverged", "matched"])
 def test_on_demand_home_and_control_show_actual_site_url_readiness(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str

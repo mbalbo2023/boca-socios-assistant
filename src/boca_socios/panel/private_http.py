@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from pathlib import Path
 from threading import Lock
-from typing import Protocol
+from typing import Literal, Protocol
 from urllib.parse import parse_qsl, urlsplit
 from uuid import UUID, uuid4
 
@@ -123,6 +123,7 @@ def _response(
     extra: tuple[str, str] | None = None,
     html: bool = True,
     csp: str = private_ui.CSP,
+    referrer_policy: Literal["no-referrer", "same-origin"] = "same-origin",
 ) -> list[bytes]:
     headers = [
         ("Content-Type", "text/html; charset=utf-8" if html else "application/json"),
@@ -130,7 +131,9 @@ def _response(
         ("Cache-Control", "no-store"),
         ("Content-Security-Policy", csp),
         ("X-Content-Type-Options", "nosniff"),
-        ("Referrer-Policy", "no-referrer"),
+        # Native form POSTs can send Origin: null under no-referrer, even when
+        # submitted from this private page. Keep cross-site referrers absent.
+        ("Referrer-Policy", referrer_policy),
         ("X-Frame-Options", "DENY"),
     ]
     if extra is not None:
@@ -372,7 +375,13 @@ class PrivatePanelApplication:
                     return self._bot_page(start, session, home=True)
                 return _response(start, 200, private_ui.home(session.csrf))
             if path == "/telegram/configurar":
-                return _response(start, 200, telegram_setup_ui.page(), csp=telegram_setup_ui.CSP)
+                return _response(
+                    start,
+                    200,
+                    telegram_setup_ui.page(),
+                    csp=telegram_setup_ui.CSP,
+                    referrer_policy="no-referrer",
+                )
             if path == "/configuracion":
                 return self._site_url_page(start, session)
             if path == "/monitor/tokens":
@@ -389,12 +398,14 @@ class PrivatePanelApplication:
                             csrf=session.csrf, operation_id=operation_id
                         ),
                         csp=telegram_setup_ui.PAIRING_STAGING_CSP,
+                        referrer_policy="no-referrer",
                     )
                 return _response(
                     start,
                     200,
                     telegram_setup_ui.pairing_page(),
                     csp=telegram_setup_ui.PAIRING_CSP,
+                    referrer_policy="no-referrer",
                 )
             if path == "/socios":
                 return _response(start, 200, private_ui.members(self._directory.list_members()))

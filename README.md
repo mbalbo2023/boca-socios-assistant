@@ -1,5 +1,20 @@
 # Boca Socios Assistant
 
+## R187 — compatibilidad de POST desde el panel privado (12/11/2026)
+
+Tras el reporte físico de `Origen no autorizado` al guardar `SITE_URL`, el
+panel corrige la interacción entre su encabezado `Referrer-Policy` y los
+formularios HTML nativos. El código candidato emplea `same-origin` para
+las páginas privadas con controles, conserva `no-referrer` en la configuración
+de Telegram sin formulario nativo y **no** elimina la comprobación de origen,
+passkey, CSRF ni operaciones de un uso. Un envío autorizado sigue guardando la
+URL sin navegarla y redirige a `/configuracion`. La aplicación efectiva y el
+resultado en Chrome permanecen **pendientes de prueba física**; no confundir
+TDD local con un despliegue. [RCA y decisión: ADR 0237](docs/ADR/0237-r187-mobile-origin-post-compatibility.md).
+
+El análisis separado para acelerar CI/CD de cambios pequeños no altera aún
+la promoción protegida ni la evidencia requerida para una nueva imagen.
+
 ## R186 — Cierre de instalación postcommit, 12/11/2026
 
 Tras la reparación R185 [PR #487](https://github.com/mbalbo2023/boca-socios-assistant/pull/487),
