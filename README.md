@@ -15,13 +15,18 @@ una aprobación adicional de activación**; sin productor/transporte configurado
 mostrarán su indisponibilidad y no podrán acreditar resultados reales;
 el lateral de sectores requiere activación SQLite explícita posterior.
 
-**Esta enmienda documental no es un merge ni un despliegue.** El run de release
-[#43094715916](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43094715916)
-falló al finalizar el artefacto y no acreditó el segundo manifest; el
-siguiente paso exige revisar
-#484, fusionar un solo SHA, certificar CI postmerge, construir una release
-dual nueva y validar el host Boca mediante la única Action protegida con
-limpieza selectiva. No se toca Porota ni se ejecutan reservas reales.
+**Actualización física R183:** #484 ya fue fusionado a
+`b61ca3e58d4f8ce69cd6d7575f2a8e1ce59bda72`; CI y seguridad de ese
+commit están aprobados y la release dual
+[#43215180354](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43215180354)
+publicó ambos manifiestos. El primer APPLY físico autorizado
+[#43217075287](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43217075287)
+alcanzó el commit y falló en `RETIRE_OLD`, con limpieza INDETERMINATE.
+El nuevo controlador tiene panel HEALTHY, y el nuevo worker permanece
+CREATED/STOPPED sin motor, pero **no existe aceptación final del upgrade**.
+Se investiga primero mediante un observador R183 independiente READ_ONLY:
+[RCA y alcance](docs/handoffs/2026-11-12-r183-postcommit-readonly.md).
+No se reintenta APPLY ni se toca Porota o Docker ajeno.
 
 ## Issue #12 — desarrollo funcional aislado (12/11/2026; CODE_ONLY, NO_GO externo)
 

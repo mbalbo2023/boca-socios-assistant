@@ -98,6 +98,7 @@ PAIR_ENTRIES = CENSUS_ENTRIES | {
     "boca_socios/host_cutover_inventory_observe.py",
     "boca_socios/host_boca_pair_observe.py",
 }
+POSTCOMMIT_ENTRIES = PAIR_ENTRIES | {"boca_socios/host_boca_pair_postcommit.py"}
 # Seven-entry immutable R83 worker diagnostic, never a Cutover or recovery ZIP.
 PREFLIGHT_ENTRIES = frozenset(
     {
@@ -185,6 +186,8 @@ CENSUS_MAX_ZIP = 64_000
 CENSUS_MAX_UNCOMPRESSED = 160_000
 PAIR_MAX_ZIP = 64_000
 PAIR_MAX_UNCOMPRESSED = 192_000
+POSTCOMMIT_MAX_ZIP = 72_000
+POSTCOMMIT_MAX_UNCOMPRESSED = 208_000
 BINDING_MAX_ZIP = 320_000
 BINDING_MAX_UNCOMPRESSED = 900_000
 SQLITE_OBSERVE_MAX_ZIP = 340_000
@@ -209,6 +212,7 @@ def verify(
     worker_physical: bool = False,
     census: bool = False,
     pair_observe: bool = False,
+    postcommit_observe: bool = False,
     binding_observe: bool = False,
     sqlite_observe: bool = False,
     pair_upgrade: bool = False,
@@ -223,6 +227,7 @@ def verify(
                 worker_physical,
                 census,
                 pair_observe,
+                postcommit_observe,
                 binding_observe,
                 sqlite_observe,
                 pair_upgrade,
@@ -240,6 +245,8 @@ def verify(
         if binding_observe
         else PAIR_MAX_ZIP
         if pair_observe
+        else POSTCOMMIT_MAX_ZIP
+        if postcommit_observe
         else CENSUS_MAX_ZIP
         if census
         else RECOVERY_MAX_ZIP
@@ -261,6 +268,8 @@ def verify(
         if binding_observe
         else PAIR_MAX_UNCOMPRESSED
         if pair_observe
+        else POSTCOMMIT_MAX_UNCOMPRESSED
+        if postcommit_observe
         else CENSUS_MAX_UNCOMPRESSED
         if census
         else RECOVERY_MAX_UNCOMPRESSED
@@ -289,6 +298,8 @@ def verify(
             if binding_observe
             else (PAIR_ENTRIES,)
             if pair_observe
+            else (POSTCOMMIT_ENTRIES,)
+            if postcommit_observe
             else (CENSUS_ENTRIES,)
             if census
             else (RECOVERY_ENTRIES,)
@@ -335,6 +346,7 @@ def main() -> int:
         worker_physical = sys.argv[2] == "worker-physical-once"
         census = sys.argv[2] == "cutover-a-census"
         pair_observe = sys.argv[2] == "boca-pair-observe"
+        postcommit_observe = sys.argv[2] == "boca-postcommit-observe"
         binding_observe = sys.argv[2] == "boca-binding-observe"
         sqlite_observe = sys.argv[2] == "boca-sqlite-inode-observe"
         pair_upgrade = sys.argv[2] == "boca-pair-upgrade-apply"
@@ -357,6 +369,8 @@ def main() -> int:
             raise ValueError("Boca census requires one GitHub run ID only")
         if pair_observe and len(sys.argv) != 4:
             raise ValueError("Boca pair observer requires one GitHub run ID only")
+        if postcommit_observe and len(sys.argv) != 4:
+            raise ValueError("Boca postcommit observer requires one GitHub run ID only")
         if binding_observe and len(sys.argv) != 4:
             raise ValueError("Boca binding observer requires one GitHub run ID only")
         if sqlite_observe and len(sys.argv) != 4:
@@ -372,6 +386,8 @@ def main() -> int:
             if binding_observe
             else PAIR_MAX_ZIP
             if pair_observe
+            else POSTCOMMIT_MAX_ZIP
+            if postcommit_observe
             else CENSUS_MAX_ZIP
             if census
             else RECOVERY_MAX_ZIP
@@ -394,6 +410,7 @@ def main() -> int:
             worker_physical=worker_physical,
             census=census,
             pair_observe=pair_observe,
+            postcommit_observe=postcommit_observe,
             binding_observe=binding_observe,
             sqlite_observe=sqlite_observe,
             pair_upgrade=pair_upgrade,
