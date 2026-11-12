@@ -11,8 +11,17 @@ from pathlib import Path
 
 import pytest
 
+from boca_socios import host_boca_upgrade_observation_bridge as observation
 from boca_socios import host_boca_upgrade_release_bridge as bridge
 from boca_socios.host_boca_pair_upgrade_plan import CandidateRelease
+from test_host_boca_upgrade_observation_bridge import (
+    APPLY_RUN,
+    NOW,
+    OBS_RUN,
+)
+from test_host_boca_upgrade_observation_bridge import (
+    FakeGitHub as FakeObservation,
+)
 from test_host_boca_upgrade_release_auth import BROWSER, CONTROLLER, RUN, SOURCE, FakeGitHub
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +41,12 @@ def _authenticated_directory(tmp_path: Path) -> Path:
     (folder / "boca-release-manifest.json").write_bytes(ctrl)
     (folder / "boca-browser-release-manifest.json").write_bytes(browser)
     (folder / "runner-proof.json").write_bytes(proof)
+    observed = FakeObservation()
+    observation_proof = observation.authenticate_runner_observation(
+        SOURCE, OBS_RUN, APPLY_RUN, RUN, observed.receipt, observed, now=NOW
+    )
+    (folder / "boca-pair-observation.receipt").write_bytes(observed.receipt)
+    (folder / "observation-proof.json").write_bytes(observation_proof)
     return folder
 
 
@@ -54,10 +69,21 @@ def test_bundle_carries_authenticated_dual_artifacts_and_bootstrap_checks_allowl
             archive.read("release/boca-browser-release-manifest.json"),
             CandidateRelease(SOURCE, RUN, CONTROLLER, BROWSER),
         )
+        assert observation.verify_bundled_observation(
+            archive.read("release/observation-proof.json"),
+            archive.read("release/boca-pair-observation.receipt"),
+            SOURCE,
+            OBS_RUN,
+            APPLY_RUN,
+            RUN,
+        )["old_attempt_id"]
         assert not any("token" in name or name.endswith(".env") for name in archive.namelist())
 
 
-@pytest.mark.parametrize("change", ["contaminated", "extra", "symlink", "mismatch"])
+@pytest.mark.parametrize(
+    "change",
+    ["contaminated", "extra", "symlink", "mismatch", "observation_tamper", "observation_symlink"],
+)
 def test_bundle_rejects_untrusted_release_folder_before_writing_zip(
     tmp_path: Path, change: str
 ) -> None:
@@ -68,6 +94,12 @@ def test_bundle_rejects_untrusted_release_folder_before_writing_zip(
         (evidence / "untrusted-token.env").write_text("never bundle")
     elif change == "symlink":
         path = evidence / "runner-proof.json"
+        path.unlink()
+        path.symlink_to(evidence / "boca-release-manifest.json")
+    elif change == "observation_tamper":
+        (evidence / "boca-pair-observation.receipt").write_bytes(b'{"state":"forged"}\n')
+    elif change == "observation_symlink":
+        path = evidence / "observation-proof.json"
         path.unlink()
         path.symlink_to(evidence / "boca-release-manifest.json")
     else:
@@ -88,6 +120,7 @@ def test_ineligible_bundle_never_recovers_legacy_one_shot_upgrade(tmp_path: Path
     bootstrap.verify(target.read_bytes(), digest, pair_upgrade=True)
     with zipfile.ZipFile(io.BytesIO(target.read_bytes())) as archive:
         assert b'"state":"NO_GO"' in archive.read("release/runner-proof.json")
+        assert b'"state":"NO_GO"' in archive.read("release/observation-proof.json")
     result = subprocess.run(  # noqa: S603 - checked fixture ZIP + fixed offline interpreter
         [
             sys.executable,
@@ -102,6 +135,7 @@ def test_ineligible_bundle_never_recovers_legacy_one_shot_upgrade(tmp_path: Path
             CONTROLLER,
             BROWSER,
             RUN,
+            OBS_RUN,
         ],
         input=target.read_bytes(),
         capture_output=True,

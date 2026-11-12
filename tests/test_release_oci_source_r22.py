@@ -37,9 +37,7 @@ def test_both_roles_are_labeled_in_pr_and_publish_builds() -> None:
     steps = _all_steps()
     expected = {
         "Build one local controller image": 1,
-        "Build isolated image without deploying": 1,
         "Build one local browser worker image": 1,
-        "Build isolated Chromium worker without deploying": 1,
     }
     for step_name, count in expected.items():
         matches = [body for name, body in steps if name == step_name]
@@ -53,6 +51,19 @@ def test_both_roles_are_labeled_in_pr_and_publish_builds() -> None:
                 assert "--file Dockerfile.browser" in body
             else:
                 assert "--file Dockerfile.browser" not in body
+    ci_pair = [
+        body
+        for name, body in steps
+        if name == "Build both isolated images concurrently without deploying"
+    ]
+    assert len(ci_pair) == 1
+    body = ci_pair[0]
+    assert body.count("docker build") == 2
+    assert body.count(f'--label "org.opencontainers.image.source={CANONICAL_SOURCE}"') == 2
+    assert body.count('--label "org.opencontainers.image.revision=$SOURCE_SHA"') == 2
+    assert body.count("--file Dockerfile.browser") == 1
+    assert '--tag "$CONTROLLER_IMAGE" --tag "boca-release-validation:$SOURCE_SHA"' in body
+    assert '--tag "$BROWSER_IMAGE" --tag "boca-browser-release-validation:$SOURCE_SHA"' in body
     labels = SOURCE_BUILD_LABEL.findall(WORKFLOW.read_text() + CI.read_text())
     assert labels == [CANONICAL_SOURCE] * 4
 

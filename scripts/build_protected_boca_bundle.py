@@ -243,6 +243,7 @@ PAIR_UPGRADE_SOURCES = tuple(
             "src/boca_socios/host_boca_upgrade_adapters.py",
             "src/boca_socios/host_boca_upgrade_release_auth.py",
             "src/boca_socios/host_boca_upgrade_release_bridge.py",
+            "src/boca_socios/host_boca_upgrade_observation_bridge.py",
             "src/boca_socios/host_boca_retained_resources.py",
             "src/boca_socios/release_manifest.py",
             "src/boca_socios/browser_release_manifest.py",
@@ -254,11 +255,13 @@ PAIR_UPGRADE_RELEASE_NAMES = (
     "boca-release-manifest.json",
     "boca-browser-release-manifest.json",
     "runner-proof.json",
+    "boca-pair-observation.receipt",
+    "observation-proof.json",
 )
 PAIR_UPGRADE_RELEASE_PLACEHOLDER = b'{"state":"NO_GO"}\n'
 PAIR_UPGRADE_MAIN = (
     "import sys\n"
-    "if len(sys.argv) != 7 or sys.argv[1] != 'boca-pair-upgrade-apply':\n"
+    "if len(sys.argv) != 8 or sys.argv[1] != 'boca-pair-upgrade-apply':\n"
     "    raise SystemExit(3)\n"
     "from boca_socios.host_boca_pair_upgrade_cli import main as cli\n"
     "raise SystemExit(cli(['apply',*sys.argv[2:]]))\n"
@@ -474,6 +477,12 @@ def build(
             }
         else:
             from boca_socios.host_boca_pair_upgrade_plan import CandidateRelease
+            from boca_socios.host_boca_upgrade_observation_bridge import (
+                _runner_input as observation_input,
+            )
+            from boca_socios.host_boca_upgrade_observation_bridge import (
+                verify_bundled_observation,
+            )
             from boca_socios.host_boca_upgrade_release_bridge import (
                 _runner_input,
                 verify_bundled_release,
@@ -486,7 +495,12 @@ def build(
                 raise ValueError("Boca release evidence directory is not exact")
             try:
                 release_files = {
-                    name: _runner_input(str(folder / name)) for name in PAIR_UPGRADE_RELEASE_NAMES
+                    name: (
+                        observation_input(str(folder / name))
+                        if name == "boca-pair-observation.receipt"
+                        else _runner_input(str(folder / name))
+                    )
+                    for name in PAIR_UPGRADE_RELEASE_NAMES
                 }
             except Exception:
                 raise ValueError("Boca runner release files are not safe") from None
@@ -506,6 +520,15 @@ def build(
                     release_files["boca-release-manifest.json"],
                     release_files["boca-browser-release-manifest.json"],
                     candidate,
+                )
+                observation = json.loads(release_files["observation-proof.json"])
+                verify_bundled_observation(
+                    release_files["observation-proof.json"],
+                    release_files["boca-pair-observation.receipt"],
+                    candidate.source_sha,
+                    observation["observer_run_id"],
+                    observation["apply_attempt_id"],
+                    candidate.release_run_id,
                 )
             except Exception:
                 raise ValueError("Boca runner release evidence mismatch") from None

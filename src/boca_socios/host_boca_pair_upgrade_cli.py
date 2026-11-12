@@ -58,7 +58,12 @@ class SuccessorPreflightIneligible(PairUpgradeCliError):
 
 
 def _successor_preflight(
-    run: str, source: str, controller: str, worker: str, release_run: str
+    run: str,
+    source: str,
+    controller: str,
+    worker: str,
+    release_run: str,
+    observation_run: str | None,
 ) -> None:
     """Validate the protected runner payload, never retry historical R179.
 
@@ -67,20 +72,36 @@ def _successor_preflight(
     genuine release manifests, until those contracts can be proven end to end.
     """
     from boca_socios.host_boca_pair_upgrade_plan import CandidateRelease
+    from boca_socios.host_boca_upgrade_observation_bridge import verify_bundled_observation
     from boca_socios.host_boca_upgrade_release_bridge import verify_bundled_release
 
-    if not _run_id(run) or not re.fullmatch(r"/proc/self/fd/[1-9][0-9]*", sys.argv[0]):
+    if (
+        not _run_id(run)
+        or observation_run is None
+        or not _run_id(observation_run)
+        or not re.fullmatch(r"/proc/self/fd/[1-9][0-9]*", sys.argv[0])
+    ):
         raise SuccessorPreflightIneligible("Boca successor protected memfd missing")
     try:
         with zipfile.ZipFile(sys.argv[0]) as archive:
             proof = archive.read("release/runner-proof.json")
             controller_manifest = archive.read("release/boca-release-manifest.json")
             paired_manifest = archive.read("release/boca-browser-release-manifest.json")
+            observation_proof = archive.read("release/observation-proof.json")
+            observation_receipt = archive.read("release/boca-pair-observation.receipt")
         verify_bundled_release(
             proof,
             controller_manifest,
             paired_manifest,
             CandidateRelease(source, release_run, controller, worker),
+        )
+        verify_bundled_observation(
+            observation_proof,
+            observation_receipt,
+            source,
+            observation_run,
+            run,
+            release_run,
         )
     except Exception:
         raise SuccessorPreflightIneligible("Boca successor release transport unverified") from None
@@ -248,14 +269,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             encode_sqlite(args[1], state).decode("ascii"), end=""
         )
         return 0 if state == "VERIFIED_STABLE" else 3
-    if len(args) == 6 and args[0] == "apply" and _run_id(args[1]):
+    if len(args) in (6, 7) and args[0] == "apply" and _run_id(args[1]):
         # Existing single protected APPLY selector now goes exclusively to
         # the successor preflight; the historical one-shot EXIT1 backend is
         # never executed again, even when four form pins look plausible.
         from boca_socios import host_boca_pair_upgrade as upgrade
 
         try:
-            _successor_preflight(args[1], args[2], args[3], args[4], args[5])
+            _successor_preflight(
+                args[1], args[2], args[3], args[4], args[5], args[6] if len(args) == 7 else None
+            )
             raise SuccessorPreflightIneligible("Boca successor lacks activated cleanup receipt")
         except SuccessorPreflightIneligible:
             raw = encode_upgrade(

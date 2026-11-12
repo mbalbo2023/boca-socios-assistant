@@ -1,6 +1,7 @@
 # ADR 0245 — Boca R244: image count is not release latency
 
-**Status:** measured, no CI behavior change in R244.
+**Status:** measured baseline; R244 concurrent-build experiment proposed,
+not yet promoted on hosted CI. See [ADR0246](0246-r244-concurrent-ci-builds-experiment.md).
 **Scope:** Boca-only GitHub Actions and its disposable runner Docker; no droplet effect.
 
 ## Evidence (2026-11-12)
@@ -71,9 +72,13 @@ speedup or remove final image scans. Existing Trivy gates remain unchanged.
 
 ## Decision
 
-Preserve existing eight-build workflow for this functional candidate and
-record measurements. An optimization PR may be admitted independently only
-when a hosted A/B benchmark shows lower critical-path latency **and** no
-regression in scan evidence, rootless isolation, runner minutes, branch
-protection or protected release lineage. Do not block functional Boca BETA
-on this non-critical performance work.
+Preserve the existing eight-build lifecycle accounting and record measurements.
+The consolidated R244 candidate includes only an experiment to overlap the
+**same two** builds already performed in required `CI / image-build`, without
+removing image-security jobs, publishing additional images or enabling a
+cross-run cache. A final-SHA hosted CI run must verify both build outcomes,
+all scan and offline lab gates, and measured critical-path improvement before
+this optimization is promoted to main. If the measured path becomes slower,
+remove this experiment before merge. Future build-count/cache redesign still
+requires separate reviewed provenance and A/B evidence; do not block functional
+Boca BETA on those optional steps.

@@ -178,6 +178,7 @@ jobs:
       - name: Validate Boca installed pair observer offline only
         run: |
           uv run pytest -q tests/test_host_boca_pair_observe.py tests/test_host_boca_pair_bundle.py tests/test_host_boca_pair_workflow.py
+          uv run pytest -q tests/test_host_boca_upgrade_observation_artifact.py tests/test_host_boca_upgrade_observation_bridge.py tests/test_host_boca_upgrade_release_bridge.py tests/test_host_boca_upgrade_release_bundle.py tests/test_host_boca_upgrade_release_workflow.py
           uv run pytest -q tests/test_host_boca_pair_postcommit_readonly.py
           uv run pytest -q tests/test_host_boca_pair_upgrade_plan.py tests/test_host_boca_pair_upgrade_workflow.py tests/test_host_boca_retained_resources.py tests/test_host_boca_retained_resource_transport.py tests/test_host_boca_retained_resource_failures.py
           uv run mypy src/boca_socios/host_boca_pair_observe.py
@@ -623,8 +624,13 @@ jobs:
               [[ "$BOCA_BROWSER_IMAGE_REF" =~ ^ghcr\.io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}$ ]]
               [[ "$BOCA_RELEASE_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
               test "$BOCA_RELEASE_RUN_ID" != "$GITHUB_RUN_ID"
+              # An earlier READ_ONLY observation run is only a candidate
+              # coordinate; the APPLY runner authenticates its genuine ZIP.
+              [[ "$BOCA_PROTECTED_ACTION_CONTEXT" =~ ^[1-9][0-9]{0,19}$ ]]
+              test "$BOCA_PROTECTED_ACTION_CONTEXT" != "$GITHUB_RUN_ID"
+              test "$BOCA_PROTECTED_ACTION_CONTEXT" != "$BOCA_RELEASE_RUN_ID"
               for unexpected in \
-                "$BOCA_PROTECTED_ACTION_CONTEXT" "$BOCA_LEGACY_SOURCE_SHA" \
+                "$BOCA_LEGACY_SOURCE_SHA" \
                 "$BOCA_LEGACY_IMAGE_REF" "$BOCA_LEGACY_RELEASE_RUN_ID" \
                 "$BOCA_LEGACY_CONTROLLER_ID" "$BOCA_SITE_ENVELOPE" \
                 "$BOCA_TELEGRAM_ENVELOPE" "$BOCA_OWNER_ENVELOPE" \
@@ -2548,11 +2554,21 @@ jobs:
           # their canonical digest witness enter the SHA-pinned host bundle.
           umask 077
           release_dir="$(mktemp -d "$RUNNER_TEMP/boca-upgrade-release.XXXXXXXX")"
-          trap 'rm -f -- "$release_dir/boca-release-manifest.json" "$release_dir/boca-browser-release-manifest.json" "$release_dir/runner-proof.json"; rmdir -- "$release_dir"' EXIT
+          trap 'rm -f -- "$release_dir/boca-release-manifest.json" "$release_dir/boca-browser-release-manifest.json" "$release_dir/runner-proof.json" "$release_dir/boca-pair-observation.receipt" "$release_dir/observation-proof.json"; rmdir -- "$release_dir"' EXIT
           gh run download "$BOCA_RELEASE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name boca-release-manifest --dir "$release_dir"
           gh run download "$BOCA_RELEASE_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name boca-browser-release-manifest --dir "$release_dir"
+          # Earlier, independently protected READ_ONLY dispatch: exact run,
+          # current main, deploy job/steps, ZIP archive digest and sole receipt.
+          gh run download "$BOCA_PROTECTED_ACTION_CONTEXT" --repo "$GITHUB_REPOSITORY" \
+            --name boca-installed-pair-observation --dir "$release_dir"
+          observation_state="$(python3 -m boca_socios.host_boca_upgrade_observation_bridge \
+            "$BOCA_SOURCE_SHA" "$BOCA_PROTECTED_ACTION_CONTEXT" \
+            "$GITHUB_RUN_ID" "$BOCA_RELEASE_RUN_ID" \
+            "$release_dir/boca-pair-observation.receipt" \
+            "$release_dir/observation-proof.json")"
+          test "$observation_state" = 'BOCA_OBSERVATION_AUTH state=VERIFIED host_authorized=false'
           auth_state="$(python3 -m boca_socios.host_boca_upgrade_release_bridge \
             "$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID" \
             "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" \
@@ -2566,7 +2582,8 @@ jobs:
           digest="$(sha256sum "$RUNNER_TEMP/boca-pair-upgrade.pyz" | cut -d' ' -f1)"
           [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
           remote_command="$(python3 - "$digest" "$GITHUB_RUN_ID" "$BOCA_SOURCE_SHA" \
-            "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" "$BOCA_RELEASE_RUN_ID" <<'PY'
+            "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" "$BOCA_RELEASE_RUN_ID" \
+            "$BOCA_PROTECTED_ACTION_CONTEXT" <<'PY'
           import shlex
           import sys
           from pathlib import Path
@@ -2577,7 +2594,7 @@ jobs:
           )"
           umask 077
           receipt_dir="$(mktemp -d "$RUNNER_TEMP/boca-pair-upgrade.XXXXXXXX")"
-          trap 'rm -f -- "$receipt_dir/receipt" "$release_dir/boca-release-manifest.json" "$release_dir/boca-browser-release-manifest.json" "$release_dir/runner-proof.json"; rmdir -- "$receipt_dir" "$release_dir"' EXIT
+          trap 'rm -f -- "$receipt_dir/receipt" "$release_dir/boca-release-manifest.json" "$release_dir/boca-browser-release-manifest.json" "$release_dir/runner-proof.json" "$release_dir/boca-pair-observation.receipt" "$release_dir/observation-proof.json"; rmdir -- "$receipt_dir" "$release_dir"' EXIT
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
             > "$RUNNER_TEMP/boca-pair-upgrade-main.json"
           python3 scripts/check_main_ref.py "$RUNNER_TEMP/boca-pair-upgrade-main.json" "$BOCA_SOURCE_SHA"
