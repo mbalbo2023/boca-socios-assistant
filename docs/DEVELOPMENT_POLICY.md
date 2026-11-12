@@ -2,6 +2,19 @@
 
 ## 2026-11-12 owner direction — consolidate #12 and #417 without source gates
 
+**R186 operational continuation:** the single physical dual-pair APPLY
+occurred in [#43217075287](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43217075287).
+It passed its irreversible commit and left `RETIRE_OLD/INDETERMINATE`:
+another full upgrade or rollback is forbidden. R185 corrected the stopped
+worker Health observer, and three subsequent READ_ONLY runs verified the
+new pair, systemd binding and SQLite inode. R186 may add **only** one
+postcommit archival finalizer operation inside the existing protected Boca
+workflow (same mutex and SSH identity), with new lease, O_EXCL claim,
+exact-file retirement and postflight. No separate SSH workflow is permitted.
+Its code inclusion is governed by syntax/TDD/CI/PR, independent of Queue-it
+and Boca provider availability; installation acceptance still needs a
+genuine host receipt and private panel acceptance.
+
 The owner assigned the active agent responsibility for completing the **one**
 Boca simulation BETA deployment because the previous #417 chat stalled.
 This explicitly supersedes the historical separate-chat ownership boundary;

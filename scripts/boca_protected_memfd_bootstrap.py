@@ -177,6 +177,14 @@ PAIR_UPGRADE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
     "boca_socios/host_boca_pair_stage.py",
     "boca_socios/host_boca_pair_upgrade_backend.py",
 }
+POSTCOMMIT_FINALIZE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
+    "boca_socios/host_boca_pair_postcommit.py",
+    "boca_socios/host_boca_pair_postcommit_finalize.py",
+    "boca_socios/host_on_demand_replace.py",
+    "boca_socios/host_cutover_stage.py",
+    "boca_socios/host_boca_pair_upgrade.py",
+    "boca_socios/host_boca_pair_upgrade_plan.py",
+}
 MAX_ZIP = 512_000
 # R138 source bounds match the builder. Each variant checks its own entry set and digest.
 MAX_UNCOMPRESSED = 1_156_096
@@ -194,6 +202,8 @@ SQLITE_OBSERVE_MAX_ZIP = 340_000
 SQLITE_OBSERVE_MAX_UNCOMPRESSED = 950_000
 PAIR_UPGRADE_MAX_ZIP = 480_000
 PAIR_UPGRADE_MAX_UNCOMPRESSED = 1_300_000
+POSTCOMMIT_FINALIZE_MAX_ZIP = 400_000
+POSTCOMMIT_FINALIZE_MAX_UNCOMPRESSED = 1_100_000
 PREFLIGHT_MAX_ZIP = 128_000
 PREFLIGHT_MAX_UNCOMPRESSED = 520_000
 W1_MAX_ZIP = 320_000
@@ -216,6 +226,7 @@ def verify(
     binding_observe: bool = False,
     sqlite_observe: bool = False,
     pair_upgrade: bool = False,
+    postcommit_finalize: bool = False,
 ) -> None:
     """Verify digest, exact transport variant, file types and separate bounds."""
     if (
@@ -231,13 +242,16 @@ def verify(
                 binding_observe,
                 sqlite_observe,
                 pair_upgrade,
+                postcommit_finalize,
             )
         )
         > 1
     ):
         raise ValueError("protected Boca bundle modes must be exclusive")
     max_zip = (
-        PAIR_UPGRADE_MAX_ZIP
+        POSTCOMMIT_FINALIZE_MAX_ZIP
+        if postcommit_finalize
+        else PAIR_UPGRADE_MAX_ZIP
         if pair_upgrade
         else SQLITE_OBSERVE_MAX_ZIP
         if sqlite_observe
@@ -260,7 +274,9 @@ def verify(
         else MAX_ZIP
     )
     max_uncompressed = (
-        PAIR_UPGRADE_MAX_UNCOMPRESSED
+        POSTCOMMIT_FINALIZE_MAX_UNCOMPRESSED
+        if postcommit_finalize
+        else PAIR_UPGRADE_MAX_UNCOMPRESSED
         if pair_upgrade
         else SQLITE_OBSERVE_MAX_UNCOMPRESSED
         if sqlite_observe
@@ -290,7 +306,9 @@ def verify(
         entries = package.infolist()
         names = [entry.filename for entry in entries]
         allowlisted = (
-            (PAIR_UPGRADE_ENTRIES,)
+            (POSTCOMMIT_FINALIZE_ENTRIES,)
+            if postcommit_finalize
+            else (PAIR_UPGRADE_ENTRIES,)
             if pair_upgrade
             else (SQLITE_OBSERVE_ENTRIES,)
             if sqlite_observe
@@ -350,6 +368,7 @@ def main() -> int:
         binding_observe = sys.argv[2] == "boca-binding-observe"
         sqlite_observe = sys.argv[2] == "boca-sqlite-inode-observe"
         pair_upgrade = sys.argv[2] == "boca-pair-upgrade-apply"
+        postcommit_finalize = sys.argv[2] == "boca-postcommit-finalize"
         if (
             sys.argv[2] in ("cutover-stage-recover-904", "cutover-image-plan-916")
             and len(sys.argv) != 8
@@ -377,8 +396,12 @@ def main() -> int:
             raise ValueError("Boca SQLite witness requires one GitHub run ID only")
         if pair_upgrade and len(sys.argv) != 8:
             raise ValueError("Boca pair upgrade requires run and four reviewed release pins")
+        if postcommit_finalize and len(sys.argv) != 4:
+            raise ValueError("postcommit finalizer requires only fresh authenticated run ID")
         bound = (
-            PAIR_UPGRADE_MAX_ZIP
+            POSTCOMMIT_FINALIZE_MAX_ZIP
+            if postcommit_finalize
+            else PAIR_UPGRADE_MAX_ZIP
             if pair_upgrade
             else SQLITE_OBSERVE_MAX_ZIP
             if sqlite_observe
@@ -414,6 +437,7 @@ def main() -> int:
             binding_observe=binding_observe,
             sqlite_observe=sqlite_observe,
             pair_upgrade=pair_upgrade,
+            postcommit_finalize=postcommit_finalize,
         )
         # The memfd is passed to the *same* process via exec. No temporary
         # container, host file or broader Docker resource is ever created.

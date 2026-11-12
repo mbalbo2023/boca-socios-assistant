@@ -1,5 +1,21 @@
 # Boca Socios Assistant
 
+## R186 — Cierre de instalación postcommit, 12/11/2026
+
+Tras la reparación R185 [PR #487](https://github.com/mbalbo2023/boca-socios-assistant/pull/487),
+las lecturas físicas [par #43229793525](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43229793525),
+[binding #43230025523](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43230025523)
+y [SQLite #43230212167](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43230212167)
+certificaron el par instalado, pero el APPLY original continúa
+`NO_GO/RETIRE_OLD/INDETERMINATE` con su respaldo histórico. **No repetir
+el upgrade.** R186 agrega la opción manual `boca-postcommit-finalize` a la
+Action Boca ya aprobada: lease nueva, journal original probado, claim de
+un solo uso y eliminación exclusiva del respaldo antiguo con postflight.
+[RCA y handoff detallado](docs/handoffs/2026-11-12-r186-postcommit-finalizer.md).
+No hay declaración GREEN de instalación antes de CI, Action real y pruebas
+del panel/passkey. El código de tokens #12 se incluye sin validar sus URL
+externas por ahora.
+
 ## Transferencia de ownership y despliegue único — 12/11/2026 ART
 
 Tincho asignó al agente activo la integración conjunta de #12 y #417,
