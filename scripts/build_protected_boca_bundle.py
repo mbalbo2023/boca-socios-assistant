@@ -117,6 +117,14 @@ PAIR_MAIN = (
     "from boca_socios.host_boca_pair_observe import main as pair\n"
     "raise SystemExit(pair(['host',sys.argv[2]]))\n"
 ).encode("ascii")
+POSTCOMMIT_SOURCES = (*PAIR_SOURCES, "src/boca_socios/host_boca_pair_postcommit.py")
+POSTCOMMIT_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 3 or sys.argv[1] != 'boca-postcommit-observe':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_boca_pair_postcommit import main as observe\n"
+    "raise SystemExit(observe(['host',sys.argv[2]]))\n"
+).encode("ascii")
 # R83: preflight must never inherit the broader Cutover/Option B sources.
 # The SHA-checked independent memfd variant retains only its stdlib closure.
 PREFLIGHT_SOURCES = (
@@ -314,6 +322,8 @@ CENSUS_MAX_SOURCE_BYTES = 160_000
 CENSUS_MAX_ARCHIVE_BYTES = 64_000
 PAIR_MAX_SOURCE_BYTES = 192_000
 PAIR_MAX_ARCHIVE_BYTES = 64_000
+POSTCOMMIT_MAX_SOURCE_BYTES = 208_000
+POSTCOMMIT_MAX_ARCHIVE_BYTES = 72_000
 BINDING_MAX_SOURCE_BYTES = 900_000
 BINDING_MAX_ARCHIVE_BYTES = 320_000
 SQLITE_OBSERVE_MAX_SOURCE_BYTES = 950_000
@@ -367,6 +377,7 @@ def build(
     worker_physical: bool = False,
     census: bool = False,
     pair_observe: bool = False,
+    postcommit_observe: bool = False,
     binding_observe: bool = False,
     sqlite_observe: bool = False,
     pair_upgrade: bool = False,
@@ -381,6 +392,7 @@ def build(
                 worker_physical,
                 census,
                 pair_observe,
+                postcommit_observe,
                 binding_observe,
                 sqlite_observe,
                 pair_upgrade,
@@ -404,6 +416,11 @@ def build(
         sources: tuple[str, ...] = BINDING_SOURCES
         max_source = BINDING_MAX_SOURCE_BYTES
         max_archive = BINDING_MAX_ARCHIVE_BYTES
+    elif postcommit_observe:
+        files = {"__main__.py": POSTCOMMIT_MAIN}
+        sources = POSTCOMMIT_SOURCES
+        max_source = POSTCOMMIT_MAX_SOURCE_BYTES
+        max_archive = POSTCOMMIT_MAX_ARCHIVE_BYTES
     elif pair_observe:
         files: dict[str, bytes] = {"__main__.py": PAIR_MAIN}
         sources: tuple[str, ...] = PAIR_SOURCES
@@ -453,6 +470,7 @@ def build(
             worker_physical,
             census,
             pair_observe,
+            postcommit_observe,
             binding_observe,
             sqlite_observe,
             pair_upgrade,
@@ -525,6 +543,7 @@ def main() -> int:
     variant.add_argument("--worker-physical", action="store_true")
     variant.add_argument("--census", action="store_true")
     variant.add_argument("--pair-observe", action="store_true")
+    variant.add_argument("--postcommit-observe", action="store_true")
     variant.add_argument("--binding-observe", action="store_true")
     variant.add_argument("--sqlite-observe", action="store_true")
     variant.add_argument("--pair-upgrade", action="store_true")
@@ -533,7 +552,7 @@ def main() -> int:
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade)}"
     )
     return 0
 
