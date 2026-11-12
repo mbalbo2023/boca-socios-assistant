@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: image-security-${{ github.ref }}
@@ -22,9 +23,17 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Authenticate completed main CI controller image scan
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: python scripts/verify_main_ci_image_scan.py controller
       - name: Build local controller image without publishing
+        if: github.event_name == 'workflow_dispatch'
         run: docker build --tag boca-socios-scan:${{ github.sha }} .
       - name: Scan OS and library vulnerabilities
+        if: github.event_name == 'workflow_dispatch'
         run: bash scripts/trivy_scan_image.sh "boca-socios-scan:$GITHUB_SHA"
 
   browser-scan:
@@ -36,9 +45,17 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Authenticate completed main CI browser image scan
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: python scripts/verify_main_ci_image_scan.py browser
       - name: Build local isolated browser worker image without publishing
+        if: github.event_name == 'workflow_dispatch'
         run: docker build --file Dockerfile.browser --tag boca-browser-scan:${{ github.sha }} .
       - name: Scan browser OS and library vulnerabilities
+        if: github.event_name == 'workflow_dispatch'
         run: bash scripts/trivy_scan_image.sh "boca-browser-scan:$GITHUB_SHA"
 
   scan:

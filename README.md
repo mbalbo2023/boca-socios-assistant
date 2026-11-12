@@ -1,5 +1,16 @@
 # Boca Socios Assistant
 
+## CI/CD R240 — reducción de imágenes repetidas (candidato, 12/11/2026)
+
+El flujo ya valida en un único par de imágenes de CI por PR; el candidato
+[ADR 0240](docs/ADR/0240-main-image-scan-attestation.md) elimina únicamente
+los dos builds duplicados de seguridad después de cada merge a `main`,
+autenticando los escaneos Trivy efectivamente realizados en CI. La publicación
+protegida sigue reconstruyendo, escaneando y verificando sus dos imágenes.
+El objetivo es pasar de 8 a **6 builds por ciclo completo**, aún **sin
+prueba alojada ni instalación física**; las cuatro imágenes y una ruta
+especial para archivos UI puramente estáticos se investigan por separado.
+
 ## R187 — compatibilidad de POST desde el panel privado (12/11/2026)
 
 Tras el reporte físico de `Origen no autorizado` al guardar `SITE_URL`, el

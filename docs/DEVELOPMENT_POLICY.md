@@ -163,6 +163,19 @@ The public-observer isolation probe remains PR-only and offline in the shared
 image job. Only its offline PR mode permits attempt 2; manual public observation
 and protected release/deployment keep their first-attempt restrictions.
 
+### Main-push duplicate scan reduction (ADR0240, CODE_ONLY candidate)
+
+The image builds and physical controller/browser Trivy scans in `CI / image-build`
+remain mandatory for PR and main. For a genuine main push, the independent
+`Image security` workflow may prove the exact GitHub Actions push/main CI run,
+its image job, verified alias-ID step and both individually successful Trivy
+steps via a bounded read-only API attestor, without building the exact same
+two images again. Its original manual dispatch still builds/scans both
+independently. This candidate preserves the named security checks, separate
+protected dual release and current physical action admission; missing evidence
+fails closed. Until hosted exact-SHA verification and technical review, do not
+claim a deployed reduction. See [ADR0240](ADR/0240-main-image-scan-attestation.md).
+
 - Default branch: main; no direct pushes, branch deletion or force-pushes.
 - Require a PR and a recorded agent technical review; no human approving
   review or code-owner approval is required by the ruleset. This does not
