@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 import zipfile
@@ -42,6 +43,36 @@ def test_retained_resource_bundle_is_small_inert_and_imports_in_isolated_python(
     )
     assert result.returncode == 0, result.stderr.decode()[:300]
     assert result.stdout == raw
+
+
+def test_protected_validation_collects_retained_failure_regressions():
+    workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
+    step = workflow.split("      - name: Validate Boca installed pair observer offline only\n", 1)[
+        1
+    ].split("      - name:", 1)[0]
+    command = next(
+        shlex.split(line.strip())
+        for line in step.splitlines()
+        if "tests/test_host_boca_retained_resources.py" in line
+    )
+    assert command[:4] == ["uv", "run", "pytest", "-q"]
+    result = subprocess.run(  # noqa: S603 - collect the reviewed workflow's test catalog only
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", *command[4:]],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (
+        "tests/test_host_boca_retained_resource_failures.py::test_docker_root_json_with_real_cli_newline_allows_exact_metadata"
+        in result.stdout
+    )
+    assert (
+        "tests/test_host_boca_retained_resource_failures.py::test_workflow_preserves_typed_host_failure_in_summary"
+        in result.stdout
+    )
 
 
 @pytest.mark.parametrize(
@@ -114,6 +145,6 @@ def test_workflow_dispatch_keeps_default_and_executes_readonly_empty_input_gate(
         "      - name:", 1
     )[0]
     assert "--retained-observe" in step
-    assert "host_boca_retained_resources verify" in step
+    assert "host_boca_retained_resources report" in step
     assert "check_main_ref.py" in step
     assert "boca-target" in step and "docker " not in step

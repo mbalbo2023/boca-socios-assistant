@@ -15,6 +15,7 @@ import re
 import stat
 import sys
 from collections.abc import Callable
+from enum import Enum
 from pathlib import Path
 
 from boca_socios import host_boca_cleanup as cleanup
@@ -37,14 +38,39 @@ _IMAGE = re.compile(r"sha256:[a-f0-9]{64}\Z")
 _RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
 _PREFIX = b"BOCA_RETAINED_RESOURCES "
 _BOUND = 48_000
+_FAILURE_PREFIX = b"BOCA_RETAINED_RESOURCES_FAILURE "
+_FAILURE_BOUND = 512
+_STDERR_BOUND = 1024
+
+
+class Phase(str, Enum):  # noqa: UP042 - protected host also supports Python 3.10
+    """Closed public vocabulary, never derived from host exception text."""
+
+    UNVERIFIED = "UNVERIFIED"
+    INVENTORY = "INVENTORY"
+    PAIR = "PAIR"
+    IPC_IDENTITY = "IPC_IDENTITY"
+    SITE_IDENTITY = "SITE_IDENTITY"
+    EGRESS = "EGRESS"
+    IMAGE_PROVENANCE = "IMAGE_PROVENANCE"
+    CONTROL_IDENTITY = "CONTROL_IDENTITY"
+    SNAPSHOT_VALIDATION = "SNAPSHOT_VALIDATION"
+    DRIFT = "DRIFT"
+    BUNDLE_UNVERIFIED = "BUNDLE_UNVERIFIED"
+    TRANSPORT_UNVERIFIED = "TRANSPORT_UNVERIFIED"
+    RECEIPT_UNVERIFIED = "RECEIPT_UNVERIFIED"
 
 
 class ResourceNoGo(ValueError):
     """Only a fixed error category may cross the protected host boundary."""
 
+    def __init__(self, phase: Phase = Phase.UNVERIFIED) -> None:
+        self.phase = phase if isinstance(phase, Phase) else Phase.UNVERIFIED
+        super().__init__("retained Boca resource evidence unverified")
 
-def _fail() -> ResourceNoGo:
-    return ResourceNoGo("retained Boca resource evidence unverified")
+
+def _fail(phase: Phase = Phase.UNVERIFIED) -> ResourceNoGo:
+    return ResourceNoGo(phase)
 
 
 def _matches(pattern: re.Pattern[str], value: object) -> bool:
@@ -57,9 +83,13 @@ def _canonical(value: object) -> bytes:
 
 def _identity(name: str) -> str:
     """O_PATH/fstat only, no-follow at every ancestor; never open file data."""
-    if name not in _PATHS or cleanup._docker("info", "--format", "{{.DockerRootDir}}") != str(
-        _ROOT
-    ):
+    if name not in _PATHS:
+        raise _fail()
+    try:
+        root = json.loads(cleanup._docker("info", "--format", "{{json .DockerRootDir}}"))
+    except (TypeError, ValueError):
+        raise _fail() from None
+    if root != str(_ROOT):
         raise _fail()
     path = _PATHS[name]
     if name in (_IPC, _SITE):
@@ -145,8 +175,10 @@ def snapshot(
     """Capture only a positively identified fixed Boca pair and retained graph."""
     if not _matches(_RUN, run_id):
         raise _fail()
+    phase = Phase.INVENTORY
     try:
         inventory = inventory_reader()  # Foreign presence fails before detailed reads.
+        phase = Phase.PAIR
         raw = pair_reader(run_id)
         pair.verify(raw, run_id)
         observed = json.loads(raw.removeprefix(b"BOCA_INSTALLED_PAIR "))
@@ -174,6 +206,7 @@ def snapshot(
             raise _fail()
         volumes = []
         for name, role in ((_IPC, "boca_browser_ipc"), (_SITE, "boca_site_config")):
+            phase = Phase.IPC_IDENTITY if name == _IPC else Phase.SITE_IDENTITY
             selected = [v for v in inventory.volumes if v.name == name]
             if len(selected) != 1:
                 raise _fail()
@@ -187,6 +220,7 @@ def snapshot(
                     "container_references": sum(name in c.volumes for c in inventory.containers),
                 }
             )
+        phase = Phase.EGRESS
         networks = [n for n in inventory.networks if n.name == _EGRESS]
         if len(networks) != 1 or networks[0].attached_ids:
             raise _fail()
@@ -201,11 +235,20 @@ def snapshot(
                 network.labels, "com.docker.compose.network", "boca_browser_egress"
             ),
         }
+        phase = Phase.IMAGE_PROVENANCE
         images = []
         for image in sorted(inventory.images, key=lambda i: i.ident):
             proven = image.source == cleanup.BOCA_SOURCE
             # Boca-like tags or historical unproven images are not promoted by name.
             refs = list(image.references) if proven else []
+            if any(
+                not (
+                    _matches(cleanup.BOCA_PUBLIC_DIGEST, ref)
+                    or _matches(cleanup.BOCA_PUBLIC_SHA_TAG, ref)
+                )
+                for ref in refs
+            ):
+                raise _fail()
             revision = revision_reader(image.ident) if proven else None
             active = [s for s in services if s["image_id"] == image.ident]
             if active and (
@@ -225,6 +268,8 @@ def snapshot(
                     ),
                 }
             )
+        phase = Phase.CONTROL_IDENTITY
+        control_identity = identity_reader("control_socket_directory")
         result: dict[str, object] = {
             "schema": 1,
             "state": "READ_ONLY",
@@ -237,7 +282,7 @@ def snapshot(
             "unclassified_image_count": len(
                 inventory.global_image_ids - {i.ident for i in inventory.images}
             ),
-            "control_socket_directory_inode_sha256": identity_reader("control_socket_directory"),
+            "control_socket_directory_inode_sha256": control_identity,
             "bind_mounts": "PAIR_VERIFIED_EXACT",
             "expected_resource_provenance": volumes[0]["creator_attempt"] == "42806447101"
             and volumes[1]["creator_attempt"] == installed.FAILED_ATTEMPT
@@ -245,10 +290,11 @@ def snapshot(
             "observer_writes": 0,
             "successor_apply_authorized": False,
         }
+        phase = Phase.SNAPSHOT_VALIDATION
         _validate(result, run_id)
         return result
     except Exception:
-        raise _fail() from None
+        raise _fail(phase) from None
 
 
 def _validate(value: object, run_id: str) -> None:
@@ -369,11 +415,15 @@ def observe(
         _validate(first, run_id)
         _validate(second, run_id)
         if first != second:
-            raise _fail()
+            raise _fail(Phase.DRIFT)
         raw = _PREFIX + _canonical(first) + b"\n"
         return verify(raw, run_id)
+    except ResourceNoGo as exc:
+        if exc.phase != Phase.UNVERIFIED:
+            raise
+        raise _fail(Phase.SNAPSHOT_VALIDATION) from None
     except Exception:
-        raise _fail() from None
+        raise _fail(Phase.SNAPSHOT_VALIDATION) from None
 
 
 def verify(raw: bytes, run_id: str) -> bytes:
@@ -404,8 +454,86 @@ def verify(raw: bytes, run_id: str) -> bytes:
         raise _fail() from None
 
 
+def _failure(run_id: str, phase: Phase) -> bytes:
+    if not _matches(_RUN, run_id) or not isinstance(phase, Phase):
+        raise _fail()
+    return (
+        _FAILURE_PREFIX
+        + _canonical(
+            {
+                "schema": 1,
+                "state": "NO_GO",
+                "observation_run_id": run_id,
+                "phase": phase.value,
+                "observer_writes": 0,
+                "successor_apply_authorized": False,
+            }
+        )
+        + b"\n"
+    )
+
+
+def _verify_failure(raw: bytes, run_id: str) -> bytes:
+    """Exact canonical frame rejects duplicates, extensions and free-form errors."""
+    try:
+        if not 0 < len(raw) <= _FAILURE_BOUND or not raw.startswith(_FAILURE_PREFIX):
+            raise _fail()
+        value = json.loads(raw[len(_FAILURE_PREFIX) :])
+        expected = _failure(run_id, Phase(value["phase"]))
+        if raw != expected:
+            raise _fail()
+        return expected
+    except Exception:
+        raise _fail() from None
+
+
+def report(run_id: str, remote_rc: int, stdout: bytes, stderr: bytes) -> tuple[bytes, int]:
+    """Runner-only classifier: a remote failure can never authorize success."""
+    if not _matches(_RUN, run_id):
+        raise _fail()
+    if remote_rc == 0:
+        try:
+            if stderr:
+                raise _fail()
+            return verify(stdout, run_id), 0
+        except Exception:
+            return _failure(run_id, Phase.RECEIPT_UNVERIFIED), 1
+    if remote_rc == 3 and not stderr:
+        try:
+            return _verify_failure(stdout, run_id), 1
+        except ResourceNoGo:
+            pass
+    if (
+        remote_rc == 1
+        and not stdout
+        and stderr == b"BOCA_BUNDLE state=NO_GO reason=hash_or_host_runtime\n"
+    ):
+        return _failure(run_id, Phase.BUNDLE_UNVERIFIED), 1
+    return _failure(run_id, Phase.TRANSPORT_UNVERIFIED), 1
+
+
 def main() -> int:
-    if len(sys.argv) != 3 or sys.argv[1] not in ("host", "verify"):
+    if len(sys.argv) == 6 and sys.argv[1] == "report":
+        try:
+            # Runner-private files only. Never read more than the public bounds.
+            with Path(sys.argv[4]).open("rb") as receipt, Path(sys.argv[5]).open("rb") as error:
+                raw, status = report(
+                    sys.argv[2],
+                    int(sys.argv[3]),
+                    receipt.read(_BOUND + 1),
+                    error.read(_STDERR_BOUND + 1),
+                )
+        except Exception:
+            if not _matches(_RUN, sys.argv[2]):
+                return 3
+            raw, status = _failure(sys.argv[2], Phase.TRANSPORT_UNVERIFIED), 1
+        sys.stdout.buffer.write(raw)
+        return status
+    if (
+        len(sys.argv) != 3
+        or sys.argv[1] not in ("host", "verify")
+        or not _matches(_RUN, sys.argv[2])
+    ):
         return 3
     try:
         raw = (
@@ -413,8 +541,11 @@ def main() -> int:
             if sys.argv[1] == "host"
             else verify(sys.stdin.buffer.read(_BOUND + 1), sys.argv[2])
         )
+    except ResourceNoGo as exc:
+        sys.stdout.buffer.write(_failure(sys.argv[2], exc.phase))
+        return 3
     except Exception:
-        print("BOCA_RETAINED_RESOURCES state=NO_GO reason=UNVERIFIED observer_writes=0")
+        sys.stdout.buffer.write(_failure(sys.argv[2], Phase.UNVERIFIED))
         return 3
     sys.stdout.buffer.write(raw)
     return 0
