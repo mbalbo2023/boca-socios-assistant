@@ -2764,7 +2764,7 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$verified" >> "$GITHUB_STEP_SUMMARY"
-          printf 'BOCA_POSTCOMMIT_OBSERVE scope=BOCA_ROOTLESS double_read=STABLE observer_writes=0 cutover=NO_GO\n' >> "$GITHUB_STEP_SUMMARY"
+          printf 'BOCA_POSTCOMMIT_OBSERVE scope=BOCA_ROOTLESS census_paths_double_read=STABLE observer_writes=0 cutover=NO_GO\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Observe installed Boca owner systemd binding READ_ONLY
         if: inputs.operation == 'boca-binding-observe'
         env:

@@ -24,6 +24,14 @@ FAILED_ATTEMPT = "43217075287"
 SOURCE_SHA = "b61ca3e58d4f8ce69cd6d7575f2a8e1ce59bda72"
 CONTROLLER_ID = "85316ccec82b11fe2832b6f86473ac2e88167533dda82b5ab86bbe46d7bbf7c2"
 WORKER_ID = "8fc47f7981b71a33ae836d6ae36253292c9ef915e463d6c83e2e4451b8cf7def"
+CONTROLLER_IMAGE = (
+    "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:"
+    "b13d08fae35ca48799cbd3134b32bbcb94098f6616692ef86820f81544d5a256"
+)
+WORKER_IMAGE = (
+    "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
+    "fa40e8f0e3937c42082be5854ab3fcfc0e83218fb1313a310402f7d54a628d98"
+)
 PREFIX = b"BOCA_POSTCOMMIT_OBSERVE "
 _RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
 _OWNER = Path("/home/boca-deploy")
@@ -71,7 +79,9 @@ _REASONS = {
     "observation run ID unverified": "RUN_ID",
     "unknown pair observer mode": "OBSERVER_MODE",
 }
-_PAIR_REASONS = frozenset((*_REASONS.values(), "OTHER_UNVERIFIED", "NONE"))
+_PAIR_REASONS = frozenset(
+    (*_REASONS.values(), "PAIR_IDENTITY_MISMATCH", "OTHER_UNVERIFIED", "NONE")
+)
 _FIELDS = frozenset(
     {
         "schema",
@@ -99,15 +109,25 @@ class PostcommitNoGo(ValueError):
 
 
 def _kind(path: Path) -> str:
-    """Read only lstat type of a hard-coded owner path; never follow the node."""
-    if path not in _PATHS:
+    """Read only lstat type with an O_NOFOLLOW fd for *every* parent."""
+    if path not in _PATHS or not path.is_absolute() or ".." in path.parts:
         raise PostcommitNoGo("path escapes exact Boca incident")
+    directory: int | None = None
     try:
-        mode = path.lstat().st_mode
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        directory = os.open("/", flags)
+        for part in path.parts[1:-1]:
+            child = os.open(part, flags, dir_fd=directory)
+            os.close(directory)
+            directory = child
+        mode = os.stat(path.name, dir_fd=directory, follow_symlinks=False).st_mode
     except FileNotFoundError:
         return "ABSENT"
     except OSError:
         return "UNSAFE"
+    finally:
+        if directory is not None:
+            os.close(directory)
     if stat.S_ISDIR(mode):
         return "DIRECTORY"
     if stat.S_ISREG(mode):
@@ -121,6 +141,36 @@ def _pair_only(snapshot: census.CensusSnapshot) -> bool:
     """Only these exact two known Boca CIDs, never a match inferred by name."""
     ids = {item.ident for item in snapshot.containers}
     return len(snapshot.containers) == 2 and ids == {CONTROLLER_ID, WORKER_ID}
+
+
+def _expected_pair(raw: bytes) -> bool:
+    """The generic pair observer must identify *this* failed upgrade exactly."""
+    try:
+        observed = json.loads(raw.removeprefix(b"BOCA_INSTALLED_PAIR "))
+    except (ValueError, TypeError, UnicodeError):
+        return False
+    if not isinstance(observed, dict):
+        return False
+    services = observed.get("services")
+    if not isinstance(services, list) or len(services) != 2:
+        return False
+    controller, worker = services
+    return bool(
+        observed.get("source_sha") == SOURCE_SHA
+        and observed.get("attempt_id") == FAILED_ATTEMPT
+        and isinstance(controller, dict)
+        and isinstance(worker, dict)
+        and controller.get("container_id") == CONTROLLER_ID
+        and worker.get("container_id") == WORKER_ID
+        and controller.get("image_ref") == CONTROLLER_IMAGE
+        and worker.get("image_ref") == WORKER_IMAGE
+        and controller.get("running") is True
+        and controller.get("health") == "healthy"
+        and controller.get("port_8443") == "LOOPBACK"
+        and worker.get("status") == "created"
+        and type(worker.get("pid")) is int
+        and worker["pid"] == 0
+    )
 
 
 def _canonical(result: dict[str, object]) -> bytes:
@@ -157,7 +207,10 @@ def observe(
     reason = "NONE"
     pair_state = "PASS"
     try:
-        pair.verify(read_pair(run_id), run_id)
+        validated = pair.verify(read_pair(run_id), run_id)
+        if not _expected_pair(validated):
+            reason = "PAIR_IDENTITY_MISMATCH"
+            pair_state = "NO_GO"
     except pair.PairNoGo as exc:
         reason = _REASONS.get(str(exc), "OTHER_UNVERIFIED")
         pair_state = "NO_GO"
@@ -170,6 +223,9 @@ def observe(
     if first != second or first_paths != second_paths or any(k not in _KINDS for k in second_paths):
         raise PostcommitNoGo("forensic read changed between samples")
     pair_only = _pair_only(second)
+    if not pair_only and pair_state == "PASS":
+        reason = "PAIR_IDENTITY_MISMATCH"
+        pair_state = "NO_GO"
     result: dict[str, object] = {
         "schema": 1,
         "state": "OBSERVED",
@@ -227,6 +283,7 @@ def verify(raw: bytes, run_id: str) -> bytes:
         or type(item["new_pair_only"]) is not bool
         or item["old_ids_absent"] is not item["new_pair_only"]
         or item["pair"] not in ("PASS", "NO_GO")
+        or (item["pair"] == "PASS" and item["new_pair_only"] is not True)
         or item["pair_reason"] not in _PAIR_REASONS
         or (item["pair"] == "PASS") != (item["pair_reason"] == "NONE")
         or any(

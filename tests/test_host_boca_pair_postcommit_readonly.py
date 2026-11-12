@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import io
 import json
-import stat
 import sys
 import zipfile
 from pathlib import Path
@@ -76,6 +75,36 @@ def _observe(*, pair_reader=None, inventory_reader=None, path_reader=None):
     )
 
 
+def _genuine_pair_receipt() -> bytes:
+    return (
+        b"BOCA_INSTALLED_PAIR "
+        + json.dumps(
+            {
+                "source_sha": post.SOURCE_SHA,
+                "attempt_id": post.FAILED_ATTEMPT,
+                "services": [
+                    {
+                        "container_id": post.CONTROLLER_ID,
+                        "image_ref": post.CONTROLLER_IMAGE,
+                        "running": True,
+                        "health": "healthy",
+                        "port_8443": "LOOPBACK",
+                    },
+                    {
+                        "container_id": post.WORKER_ID,
+                        "image_ref": post.WORKER_IMAGE,
+                        "status": "created",
+                        "pid": 0,
+                    },
+                ],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        + b"\n"
+    )
+
+
 def test_postcommit_reason_is_redacted_and_always_non_authorizing():
     receipt = _observe()
     verified = post.verify(receipt, "43219000000")
@@ -112,7 +141,7 @@ def test_postcommit_refuses_drift_and_foreign_rootless_identity():
 
 def test_postcommit_requires_exact_receipt_and_pair_pass(monkeypatch):
     monkeypatch.setattr(post.pair, "verify", lambda raw, _run: raw)
-    receipt = _observe(pair_reader=lambda _run: b"BOCA_INSTALLED_PAIR {}\n")
+    receipt = _observe(pair_reader=lambda _run: _genuine_pair_receipt())
     data = json.loads(receipt.removeprefix(post.PREFIX))
     assert data["pair"] == "PASS"
     assert data["pair_reason"] == "NONE"
@@ -120,6 +149,9 @@ def test_postcommit_requires_exact_receipt_and_pair_pass(monkeypatch):
         post.verify(receipt, "43219000001")
     with pytest.raises(post.PostcommitNoGo):
         post.verify(receipt.replace(b'"observer_writes":0', b'"observer_writes":1'), "43219000000")
+    mismatched = dict(data, new_pair_only=False, old_ids_absent=False)
+    with pytest.raises(post.PostcommitNoGo):
+        post.verify(post._canonical(mismatched), "43219000000")
 
 
 def test_postcommit_does_not_read_socket_contents_and_rejects_unknown_file_type():
@@ -130,7 +162,58 @@ def test_postcommit_does_not_read_socket_contents_and_rejects_unknown_file_type(
     data = json.loads(receipt.removeprefix(post.PREFIX))
     assert data["socket_node"] == "UNSAFE"
     assert data["state"] == "OBSERVED"
-    assert stat.S_ISLNK(0o120777)  # Negative symlink scenario is represented, never followed.
+
+
+def test_postcommit_kind_never_follows_any_symlinked_parent(tmp_path, monkeypatch):
+    owned = tmp_path / "owned"
+    owned.mkdir()
+    outside = tmp_path / "foreign"
+    outside.mkdir()
+    (outside / "socket").mkdir()
+    parked = owned / "parked"
+    parked.symlink_to(outside, target_is_directory=True)
+    nested = parked / "socket"
+    monkeypatch.setattr(post, "_PATHS", (parked, nested))
+    assert post._kind(parked) == "UNSAFE"
+    assert post._kind(nested) == "UNSAFE"
+
+
+@pytest.mark.parametrize(
+    "needle,replacement",
+    [
+        (post.SOURCE_SHA, "0" * 40),
+        (post.FAILED_ATTEMPT, "43217075288"),
+        (post.WORKER_ID, "e" * 64),
+        (post.WORKER_IMAGE, "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "f" * 64),
+        ('"health":"healthy"', '"health":"unhealthy"'),
+    ],
+)
+def test_postcommit_never_calls_wrong_new_pair_a_verified_match(monkeypatch, needle, replacement):
+    monkeypatch.setattr(post.pair, "verify", lambda raw, _run: raw)
+    wrong = _genuine_pair_receipt().replace(needle.encode(), replacement.encode())
+    receipt = _observe(pair_reader=lambda _run: wrong)
+    data = json.loads(receipt.removeprefix(post.PREFIX))
+    assert data["pair"] == "NO_GO"
+    assert data["pair_reason"] == "PAIR_IDENTITY_MISMATCH"
+
+
+def test_postcommit_pair_pass_cannot_override_census_mismatch(monkeypatch):
+    monkeypatch.setattr(post.pair, "verify", lambda raw, _run: raw)
+    wrong = _census()
+    replaced = census.CensusSnapshot(
+        (_container("f" * 64, "controller"), wrong.containers[1]),
+        wrong.network_ids,
+        wrong.volume_names,
+        wrong.docker_root_identity,
+    )
+    receipt = _observe(
+        pair_reader=lambda _run: _genuine_pair_receipt(),
+        inventory_reader=lambda: replaced,
+    )
+    data = json.loads(receipt.removeprefix(post.PREFIX))
+    assert data["pair"] == "NO_GO"
+    assert data["pair_reason"] == "PAIR_IDENTITY_MISMATCH"
+    assert data["new_pair_only"] is False
 
 
 def test_postcommit_is_a_separate_read_only_sha_checked_memfd_variant(tmp_path):
@@ -164,4 +247,5 @@ def test_postcommit_diagnostic_is_the_only_new_host_workflow_operation():
     assert "boca_socios.host_boca_pair_postcommit verify" in step
     assert "scripts/check_main_ref.py" in step
     assert "observer_writes=0" in step
+    assert "census_paths_double_read=STABLE" in step
     assert "docker rm" not in step and "docker start" not in step and "systemctl" not in step

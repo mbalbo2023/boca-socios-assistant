@@ -52,12 +52,16 @@ Nuevo `workflow_dispatch` `boca-postcommit-observe`:
    `boca-deploy`, Python fuente transportada por ZIP allowlisted y memfd
    con hash, sin ejecución de comandos arbitrarios.
 2. Doble snapshot de censo Boca y reconocimiento de los **dos CID exactos**
-   de #43217075287 (sin inventarios globales). El mismo observador de par
+   de #43217075287 (guardas globales de ID/nombre únicamente, sin inspección
+   de objetos ajenos). El mismo observador de par
    se invoca bajo excepción controlada y traduce a **categorías limitadas**
-   como `MOUNT_PROFILE`, `NETWORK_PROFILE`, `HEALTH_FIELD`, etc. Ningún
-   error/valor/credencial de Docker sale al runner.
+   como `MOUNT_PROFILE`, `NETWORK_PROFILE`, `HEALTH_FIELD`, etc. Una aprobación
+   genérica solo se declara `pair=PASS` si también coinciden el SHA, el run
+   del intento fallido, ambos CIDs/digests, controlador healthy y worker
+   CREATED/PID0. Ningún error/valor/credencial de Docker sale al runner.
 3. `lstat` **de tipo exclusivamente**, nunca contenido, de cuatro rutas
-   Boca de ese intento: raíz apartada, marcador, su directorio `socket`
+   Boca de ese intento, anclado mediante `openat(O_NOFOLLOW)` en cada padre:
+   raíz apartada, marcador, su directorio `socket`
    y su nodo `control.sock`. Doble lectura debe coincidir.
 4. Recibo acotado a 768 bytes, en categorías, con
    `observer_writes=0`, `foreign_resources_touched=0` y
@@ -75,10 +79,12 @@ servicio externo esté indisponible. Reservas reales prohibidas.
 - Si `pair=NO_GO`, resolver la categoría que reporte el host, añadir TDD
   del perfil instalado y validar con un PR exclusivo antes de cualquier
   limpieza acotada. No relajar perfil arbitrariamente ni falsificar PASS.
-- Si `pair=PASS`, inspeccionar exclusivamente la ruta de binding/archivos
-  apartados de este intento; diferenciar precondición, `control.sock`,
-  unlink o rmdir. Eliminar únicamente bytes que puedan identificarse
-  inequívocamente como Boca de este intento, con compensación explícita.
+- Si `pair=PASS`, eso solo demuestra el par **actual**; no prueba lo que
+  `RETIRE_OLD` vio durante el APPLY ni identifica por sí solo su RCA.
+  Contrastar la ruta de binding/archivos apartados y el journal causal del
+  intento; diferenciar precondición, `control.sock`, unlink o rmdir.
+  Cualquier posterior limpieza requerirá prueba de propiedad de los bytes
+  inequívocamente Boca de este intento y compensación explícita.
 - En todos los casos comprobar SQLite inode, owner/passkey, worker on-demand,
   panel 8443 y pruebas BETA **sin navegar a proveedor**. Entregar
   `BOCA_PAIR_UPGRADE state=ACCEPTED cleanup=ACCEPT` o `NO_GO` evidenciado;
