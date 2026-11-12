@@ -176,6 +176,33 @@ PAIR_UPGRADE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
     "boca_socios/host_on_demand_replace.py",
     "boca_socios/host_boca_pair_stage.py",
     "boca_socios/host_boca_pair_upgrade_backend.py",
+    "boca_socios/host_boca_pair_upgrade_reusable.py",
+    "boca_socios/host_boca_upgrade_same_lease.py",
+    "boca_socios/host_boca_upgrade_postflight.py",
+    "boca_socios/host_boca_upgrade_postflight_runtime.py",
+    "boca_socios/host_boca_upgrade_cleanup_runtime.py",
+    "boca_socios/host_boca_upgrade_successor_runtime.py",
+    "boca_socios/host_boca_cleanup_v2.py",
+    "boca_socios/host_boca_pair_postcommit.py",
+    "boca_socios/host_cutover_inventory_observe.py",
+    "boca_socios/deploy_inputs.py",
+    "boca_socios/host_boca_repeatable_journal.py",
+    "boca_socios/host_boca_upgrade_adapters.py",
+    "boca_socios/host_boca_upgrade_release_auth.py",
+    "boca_socios/host_boca_upgrade_release_bridge.py",
+    "boca_socios/host_boca_upgrade_observation_bridge.py",
+    "boca_socios/host_boca_upgrade_retained_bridge.py",
+    "boca_socios/host_boca_retained_resources.py",
+    "boca_socios/release_manifest.py",
+    "boca_socios/browser_release_manifest.py",
+    "boca_socios/release_run.py",
+    "release/boca-release-manifest.json",
+    "release/boca-browser-release-manifest.json",
+    "release/runner-proof.json",
+    "release/boca-pair-observation.receipt",
+    "release/observation-proof.json",
+    "release/boca-retained-observation.receipt",
+    "release/retained-proof.json",
 }
 POSTCOMMIT_FINALIZE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
     "boca_socios/host_boca_pair_postcommit.py",
@@ -190,7 +217,7 @@ RETAINED_ENTRIES = POSTCOMMIT_ENTRIES | {"boca_socios/host_boca_retained_resourc
 RETAINED_MAX_ZIP = 80_000
 RETAINED_MAX_UNCOMPRESSED = 240_000
 # R138 source bounds match the builder. Each variant checks its own entry set and digest.
-MAX_UNCOMPRESSED = 1_156_096
+MAX_UNCOMPRESSED = 1_158_144
 RECOVERY_MAX_ZIP = 128_000
 RECOVERY_MAX_UNCOMPRESSED = 256_000
 CENSUS_MAX_ZIP = 64_000
@@ -408,8 +435,10 @@ def main() -> int:
             raise ValueError("Boca binding observer requires one GitHub run ID only")
         if sqlite_observe and len(sys.argv) != 4:
             raise ValueError("Boca SQLite witness requires one GitHub run ID only")
-        if pair_upgrade and len(sys.argv) != 8:
-            raise ValueError("Boca pair upgrade requires run and four reviewed release pins")
+        if pair_upgrade and len(sys.argv) != 10:
+            raise ValueError(
+                "Boca pair upgrade requires run and six reviewed release/observation pins"
+            )
         if postcommit_finalize and len(sys.argv) != 4:
             raise ValueError("postcommit finalizer requires only fresh authenticated run ID")
         bound = (

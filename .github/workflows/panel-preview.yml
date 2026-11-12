@@ -20,7 +20,9 @@ jobs:
   synthetic-preview:
     if: >-
       (github.event_name == 'pull_request' &&
-       github.event.pull_request.head.repo.full_name == github.repository) ||
+       github.repository == 'mbalbo2023/boca-socios-assistant' &&
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.pull_request.base.ref == 'main') ||
       (github.event_name == 'workflow_dispatch' &&
        github.ref == 'refs/heads/main' &&
        github.repository == 'mbalbo2023/boca-socios-assistant' &&
@@ -39,12 +41,67 @@ jobs:
       - name: Render fixed synthetic statuses
         run: |
           mkdir -p "$RUNNER_TEMP/panel-preview"
-          PYTHONPATH=src python scripts/generate_panel_preview.py > "$RUNNER_TEMP/panel-preview/index.html"
+          # No inherited runner token/environment is needed to build fixed
+          # status fixtures. Preview remains independent of the live panel.
+          env -i PATH="$PATH" PYTHONPATH=src python scripts/generate_panel_preview.py \
+            > "$RUNNER_TEMP/panel-preview/index.html"
+      - name: Verify generated preview contains only public synthetic data
+        run: |
+          python - "$RUNNER_TEMP/panel-preview/index.html" <<'PY'
+          import os
+          import re
+          import stat
+          import sys
+
+          fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+          try:
+              details = os.fstat(fd)
+              if not stat.S_ISREG(details.st_mode) or not 0 < details.st_size <= 64_000:
+                  raise SystemExit(3)
+              raw = os.read(fd, 64_001)
+              if len(raw) != details.st_size:
+                  raise SystemExit(3)
+          finally:
+              os.close(fd)
+          html = raw.decode('utf-8', errors='strict')
+          for required in ('lang="es-AR"', 'SIMULACIÓN SIN RESERVAS REALES',
+                           'Esta vista usa datos ficticios', '4 registros visibles'):
+              if required not in html:
+                  raise SystemExit(3)
+          if re.search(r'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}', html):
+              raise SystemExit(3)
+          if re.search(r'<\s*(?:form|iframe|img|link)\b', html, flags=re.I):
+              raise SystemExit(3)
+          if re.search(r'<\s*script\b[^>]*\bsrc\s*=', html, flags=re.I):
+              raise SystemExit(3)
+          if re.search(r'\bon[a-z]+\s*=', html, flags=re.I):
+              raise SystemExit(3)
+          if any(word in html.casefold() for word in (
+                  'http://', 'https://', 'fetch(', 'xmlhttprequest',
+                  'type="password"', 'sample-member-', 'sample-match-',
+                  'authorization:', 'bearer ', 'javascript:')):
+              raise SystemExit(3)
+          print('BOCA_PANEL_PREVIEW source=FIXED_SYNTHETIC privacy=PASS host=UNTOUCHED')
+          PY
       - name: Upload tablet preview
-        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+        id: preview_upload
+        if: >-
+          (github.event_name == 'pull_request' &&
+           github.repository == 'mbalbo2023/boca-socios-assistant' &&
+           github.event.pull_request.head.repo.full_name == github.repository &&
+           github.event.pull_request.base.ref == 'main') ||
+          (github.event_name == 'workflow_dispatch' &&
+           github.ref == 'refs/heads/main' && github.actor == 'mbalbo2023')
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boca-panel-synthetic-preview-${{ github.sha }}
           path: ${{ runner.temp }}/panel-preview/index.html
           if-no-files-found: error
           retention-days: 7
+      - name: Link synthetic preview in Actions summary
+        if: steps.preview_upload.outcome == 'success'
+        env:
+          PREVIEW_ARTIFACT_URL: ${{ steps.preview_upload.outputs.artifact-url }}
+        run: |
+          printf 'Vista previa **sintética** (no es el panel del droplet): [Descargar HTML](%s).\n' \
+            "$PREVIEW_ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"

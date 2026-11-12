@@ -57,7 +57,10 @@ PERSISTENT_VOLUMES = frozenset(
 )
 # New Cutover volume is protected from deletion, while legacy read-only
 # provenance checks retain their historical original-controller topology.
-PROTECTED_VOLUMES = PERSISTENT_VOLUMES | {"boca-socios_boca_site_config"}
+PROTECTED_VOLUMES = PERSISTENT_VOLUMES | {
+    "boca-socios_boca_site_config",
+    "boca-socios_boca_browser_ipc",
+}
 HEX_ID = re.compile(r"(?:sha256:)?[0-9a-f]{64}\Z")
 ATTEMPT_ID = re.compile(r"[1-9][0-9]{0,19}\Z")
 DOCKER_NAME = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}\Z")
@@ -1340,7 +1343,21 @@ def delete_exact(target: Target) -> None:
     _docker(*command, target.ident)
 
 
-def execute_protected(
+@dataclass(frozen=True)
+class ProtectedCleanupEvidence:
+    """Same-lease first/terminal inventory, captured by one cleanup execution.
+
+    This evidence is never reconstructed from an independent post-hoc probe.
+    The caller must still serialize and validate its V2 receipt while holding
+    the original protected Boca job lease.
+    """
+
+    receipt: CleanupReceipt
+    before: Inventory
+    after: Inventory
+
+
+def _execute_protected_evidence(
     outcome: OUTCOME,
     attempt_id: str,
     *,
@@ -1350,8 +1367,8 @@ def execute_protected(
     lease: BocaJobLease,
     historical_legacy: LegacyImageProof | None = None,
     historical_retained: HistoricalRetainedImageProof | None = None,
-) -> CleanupReceipt:
-    """Future *unwired* generic finalizer for first/beta/cutover install.
+) -> ProtectedCleanupEvidence:
+    """Future *unwired* generic finalizer with same-execution inventory proof.
 
     This callable is NOT exposed by any CLI/workflow and refuses to proceed
     without the active exclusive Boca-only flock from the protected job.
@@ -1389,6 +1406,17 @@ def execute_protected(
 
     if historical_retained is not None:
         protected_probe()  # Prove physical identity before any possible deletion.
+    first: Inventory | None = None
+    last: Inventory | None = None
+
+    def recorded_probe() -> Inventory:
+        nonlocal first, last
+        snapshot = protected_probe()
+        if first is None:
+            first = snapshot
+        last = snapshot
+        return snapshot
+
     receipt = execute(
         outcome,
         attempt_id,
@@ -1400,13 +1428,68 @@ def execute_protected(
         ),
         preserve_containers=preserve_containers,
         retire_containers=retire_containers,
-        probe=protected_probe,
+        probe=recorded_probe,
         delete_exact=delete_exact,
     )
-    return (
+    final_receipt = (
         replace(receipt, retained_attested=(historical_retained,))
         if historical_retained is not None
         else receipt
+    )
+    if first is None or last is None or receipt.before != first.disk or receipt.after != last.disk:
+        raise CleanupError("Boca cleanup same-execution before/after inventories unavailable")
+    return ProtectedCleanupEvidence(final_receipt, first, last)
+
+
+def execute_protected(
+    outcome: OUTCOME,
+    attempt_id: str,
+    *,
+    preserve_images: frozenset[str],
+    preserve_containers: frozenset[str],
+    retire_containers: frozenset[str],
+    lease: BocaJobLease,
+    historical_legacy: LegacyImageProof | None = None,
+    historical_retained: HistoricalRetainedImageProof | None = None,
+) -> CleanupReceipt:
+    """Unchanged public cleanup API for existing Cutover/install callers."""
+    return _execute_protected_evidence(
+        outcome,
+        attempt_id,
+        preserve_images=preserve_images,
+        preserve_containers=preserve_containers,
+        retire_containers=retire_containers,
+        lease=lease,
+        historical_legacy=historical_legacy,
+        historical_retained=historical_retained,
+    ).receipt
+
+
+def execute_protected_with_inventories(
+    outcome: OUTCOME,
+    attempt_id: str,
+    *,
+    preserve_images: frozenset[str],
+    preserve_containers: frozenset[str],
+    retire_containers: frozenset[str],
+    lease: BocaJobLease,
+    historical_legacy: LegacyImageProof | None = None,
+    historical_retained: HistoricalRetainedImageProof | None = None,
+) -> ProtectedCleanupEvidence:
+    """Opt-in V2 receipt evidence with no extra Docker probes or removals.
+
+    Keep the same Boca flock held through the consuming V2 serialization.
+    A failed or missing terminal probe raises: no substitute snapshot/retry.
+    """
+    return _execute_protected_evidence(
+        outcome,
+        attempt_id,
+        preserve_images=preserve_images,
+        preserve_containers=preserve_containers,
+        retire_containers=retire_containers,
+        lease=lease,
+        historical_legacy=historical_legacy,
+        historical_retained=historical_retained,
     )
 
 

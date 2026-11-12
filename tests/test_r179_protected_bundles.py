@@ -73,7 +73,16 @@ def test_r179_verified_memfd_zip_actually_imports_entrypoint(tmp_path: Path, var
     args = (
         ["boca-sqlite-inode-observe", "999999"]
         if variant == "sqlite_observe"
-        else ["boca-pair-upgrade-apply", "999999", "invalid-sha", "invalid-ref", "invalid-ref", "1"]
+        else [
+            "boca-pair-upgrade-apply",
+            "999999",
+            "invalid-sha",
+            "invalid-ref",
+            "invalid-ref",
+            "1",
+            "2",  # Explicit prior observer run; never default or reuse APPLY.
+            "3",  # Independent retained-resource observer run, not pair provenance.
+        ]
     )
     runner = subprocess.run(  # noqa: S603 - constant Python interpreter/checked ZIP
         [

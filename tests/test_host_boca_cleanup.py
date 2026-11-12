@@ -1425,12 +1425,16 @@ def test_always_cleanup_selectively_and_prove_zero_obsolete_images(outcome: str)
     assert receipt.status == "ACCEPT"
     assert receipt.known_residue == ()
     assert receipt.removed == tuple(deleted)
-    assert {x.kind for x in deleted} == {"container", "image", "network", "volume"}
-    assert {x.ident for x in deleted} == {OLD_ID, OLD_IMAGE, STALE_NET, IPC}
+    # ADR0094 / R244 custody correction: shared IPC is a durable bridge for
+    # controller+worker, not disposable attempt staging even if unreferenced.
+    assert {x.kind for x in deleted} == {"container", "image", "network"}
+    assert {x.ident for x in deleted} == {OLD_ID, OLD_IMAGE, STALE_NET}
+    assert gc.Target("volume", IPC) not in deleted
     after = probe()
     assert {c.ident for c in after.containers} == {ACTIVE_ID, FOREIGN_ID}
     assert {i.ident for i in after.images} == {ACTIVE_IMAGE, FOREIGN_IMAGE}
     assert DATA in {v.name for v in after.volumes}
+    assert IPC in {v.name for v in after.volumes}
     assert receipt.after.bytes_free > receipt.before.bytes_free
     assert receipt.after.inodes_free > receipt.before.inodes_free
 
@@ -1448,7 +1452,9 @@ def test_known_obsolete_image_survives_delete_failure_and_is_no_go() -> None:
         delete_exact=remove,
     )
     assert receipt.status == "NO_GO"
-    assert gc.Target("volume", IPC) in receipt.known_residue
+    # R244: an unsuccessful selective cleanup also preserves the IPC inode.
+    assert gc.Target("volume", IPC) not in receipt.known_residue
+    assert IPC in {v.name for v in probe().volumes}
     assert gc.Target("image", OLD_IMAGE) in receipt.known_residue
     assert deleted == []
     assert ACTIVE_IMAGE in {i.ident for i in probe().images}
@@ -1600,9 +1606,20 @@ def test_image_remove_that_only_untags_does_not_pass_exact_id_postflight() -> No
 def test_noop_delete_with_changed_eligibility_cannot_claim_absent_id(kind: str) -> None:
     """Without ID-presence assertion, all three mutations falsely returned ACCEPT."""
     source = _inventory()
+    # ADR0094/R244: test the generic disposable-volume path with an actual
+    # attempt volume, never the permanently retained Boca IPC volume.
+    disposable_volume = "boca-socios_disposable_attempt_volume"
+    if kind == "volume":
+        source = replace(
+            source,
+            volumes=tuple(
+                replace(volume, name=disposable_volume) if volume.name == IPC else volume
+                for volume in source.volumes
+            ),
+        )
     selected = gc.Target(
         kind,
-        {"container": OLD_ID, "network": STALE_NET, "volume": IPC}[kind],
+        {"container": OLD_ID, "network": STALE_NET, "volume": disposable_volume}[kind],
     )
     snapshot = [
         replace(
@@ -1636,10 +1653,10 @@ def test_noop_delete_with_changed_eligibility_cannot_claim_absent_id(kind: str) 
                 networks=(old.networks[0], replace(old.networks[1], attached_ids=(ACTIVE_ID,))),
             )
         else:
-            # Same IPC volume becomes referenced; the volume itself survives.
+            # Same disposable volume becomes referenced; ID remains present.
             snapshot[0] = replace(
                 old,
-                containers=(replace(old.containers[0], volumes=(DATA, IPC)),),
+                containers=(replace(old.containers[0], volumes=(DATA, disposable_volume)),),
             )
 
     receipt = gc.execute(

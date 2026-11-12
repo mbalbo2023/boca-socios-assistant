@@ -56,7 +56,7 @@ def test_bounded_source_growth_keeps_archive_digest_and_archive_limit_independen
     # R173: reviewed source is larger than the immutable transport limit;
     # only comment-token compaction of the full host module earns the space.
     assert 1_150_000 < total < 1_200_000
-    assert builder.MAX_SOURCE_BYTES == 1_156_096
+    assert builder.MAX_SOURCE_BYTES == 1_158_144
     assert builder.MAX_ARCHIVE_BYTES == 512_000
     output, digest = _build(tmp_path)
     raw = output.read_bytes()
@@ -67,7 +67,10 @@ def test_bounded_source_growth_keeps_archive_digest_and_archive_limit_independen
     assert bootstrap.MAX_UNCOMPRESSED == builder.MAX_SOURCE_BYTES
     with zipfile.ZipFile(io.BytesIO(raw)) as package:
         total_uncompressed = sum(item.file_size for item in package.infolist())
-    assert total_uncompressed <= builder.MAX_SOURCE_BYTES < total
+    # R244 exact source delta is budgeted narrowly; a future large module
+    # addition must get its own reviewed cap rather than inheriting slack.
+    assert 0 < builder.MAX_SOURCE_BYTES - total_uncompressed <= 2_048
+    assert builder.MAX_SOURCE_BYTES < total
     monkeypatch.setattr(bootstrap, "MAX_UNCOMPRESSED", total_uncompressed - 1)
     with pytest.raises(ValueError, match="entry allowlist mismatch"):
         bootstrap.verify(raw, digest)

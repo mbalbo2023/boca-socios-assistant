@@ -359,7 +359,7 @@ class PrivatePanelApplication:
                 return _error(start, 403, "Permiso insuficiente.")
         if path == "/configuracion" and "simulation:write" not in session.permissions:
             return _error(start, 403, "Permiso insuficiente.")
-        if path in ("/monitor/tokens", "/monitor/tokens/revelar") and (
+        if path in ("/monitor/tokens", "/monitor/tokens.json", "/monitor/tokens/revelar") and (
             "local-status:read" not in session.permissions
         ):
             return _error(start, 403, "Permiso insuficiente.")
@@ -386,6 +386,8 @@ class PrivatePanelApplication:
                 return self._site_url_page(start, session)
             if path == "/monitor/tokens":
                 return self._token_monitor_page(start, session)
+            if path == "/monitor/tokens.json":
+                return self._token_monitor_snapshot(start)
             if path == "/telegram/emparejar":
                 if self._telegram_pairing_stager is not None:
                     operation_id = self._sessions.new_operation(session)
@@ -567,7 +569,38 @@ class PrivatePanelApplication:
                 csrf=session.csrf,
                 operation_id=operation_id,
                 can_reveal=can_reveal,
+                queue_connected=self._queue_monitor is not None,
+                boca_connected=self._auth_monitor is not None,
             ),
+        )
+
+    def _token_monitor_snapshot(self, start: StartResponse) -> list[bytes]:
+        """Owner-only live *metadata*, never a bearer token or target URL.
+
+        The source readiness is independent of the observation count. This
+        snapshot cannot create a provider transport or launch a worker.
+        """
+        now = self._now()
+        queue = self._queue_monitor.list_summaries(at=now) if self._queue_monitor else ()
+        auth = self._auth_monitor.list_summaries() if self._auth_monitor else ()
+        timestamps = tuple(
+            value for item in queue for value in (item.observed_at,) if value is not None
+        ) + tuple(item.observed_at for item in auth)
+        data = {
+            "version": 1,
+            "queue_source": "IN_MEMORY" if self._queue_monitor is not None else "NOT_CONNECTED",
+            "boca_source": "IN_MEMORY" if self._auth_monitor is not None else "NOT_CONNECTED",
+            "queue_observations": len(queue),
+            "boca_observations": len(auth),
+            "last_observed_at": (
+                max(value.astimezone(UTC) for value in timestamps).isoformat()
+                if timestamps
+                else None
+            ),
+            "observed_at": now.astimezone(UTC).isoformat(),
+        }
+        return _response(
+            start, 200, json.dumps(data, separators=(",", ":")).encode("utf-8"), html=False
         )
 
     def _reveal_observed_token(

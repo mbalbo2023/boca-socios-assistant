@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import zipfile
 from collections.abc import Sequence
 from dataclasses import asdict
 from typing import TYPE_CHECKING, get_args
@@ -50,6 +51,81 @@ _UPGRADE_FIELDS = frozenset(
 
 class PairUpgradeCliError(ValueError):
     """An untrusted or contaminated protected runner receipt."""
+
+
+class SuccessorPreflightIneligible(PairUpgradeCliError):
+    """No host operation has begun; successor adapter remains interlocked."""
+
+
+def _successor_preflight(
+    run: str,
+    source: str,
+    controller: str,
+    worker: str,
+    release_run: str,
+    observation_run: str | None,
+    retained_observation_run: str | None,
+) -> None:
+    """Validate the protected runner payload, never retry historical R179.
+
+    Activation requires a future reviewed wiring of protected same-lease
+    witness/cleanup V2. This route is intentionally PRE-EFFECT NO_GO even with
+    genuine release manifests, until those contracts can be proven end to end.
+    """
+    from boca_socios.host_boca_pair_upgrade_plan import CandidateRelease
+    from boca_socios.host_boca_upgrade_observation_bridge import verify_bundled_observation
+    from boca_socios.host_boca_upgrade_release_bridge import verify_bundled_release
+    from boca_socios.host_boca_upgrade_retained_bridge import verify_bundled_retained
+
+    if (
+        not _run_id(run)
+        or observation_run is None
+        or not _run_id(observation_run)
+        or retained_observation_run is None
+        or not _run_id(retained_observation_run)
+        or not re.fullmatch(r"/proc/self/fd/[1-9][0-9]*", sys.argv[0])
+    ):
+        raise SuccessorPreflightIneligible("Boca successor protected memfd missing")
+    try:
+        with zipfile.ZipFile(sys.argv[0]) as archive:
+            proof = archive.read("release/runner-proof.json")
+            controller_manifest = archive.read("release/boca-release-manifest.json")
+            paired_manifest = archive.read("release/boca-browser-release-manifest.json")
+            observation_proof = archive.read("release/observation-proof.json")
+            observation_receipt = archive.read("release/boca-pair-observation.receipt")
+            retained_proof = archive.read("release/retained-proof.json")
+            retained_receipt = archive.read("release/boca-retained-observation.receipt")
+        verify_bundled_release(
+            proof,
+            controller_manifest,
+            paired_manifest,
+            CandidateRelease(source, release_run, controller, worker),
+        )
+        verify_bundled_observation(
+            observation_proof,
+            observation_receipt,
+            source,
+            observation_run,
+            run,
+            release_run,
+        )
+        verify_bundled_retained(
+            retained_proof,
+            retained_receipt,
+            observation_proof,
+            observation_receipt,
+            source,
+            retained_observation_run,
+            observation_run,
+            run,
+            release_run,
+        )
+    except Exception:
+        raise SuccessorPreflightIneligible("Boca successor release transport unverified") from None
+    # Neither a verified release nor a historical R189 summary supplies
+    # an installed-pair graph, an authenticated observation run, or an
+    # effectful stage/archive/R108 cleanup with same-lease durable receipt.
+    raise SuccessorPreflightIneligible("Boca successor transaction remains ineligible")
 
 
 def _run_id(value: object) -> bool:
@@ -210,18 +286,39 @@ def main(argv: Sequence[str] | None = None) -> int:
             encode_sqlite(args[1], state).decode("ascii"), end=""
         )
         return 0 if state == "VERIFIED_STABLE" else 3
-    if len(args) == 6 and args[0] == "apply" and _run_id(args[1]):
-        # This branch is the only potential effectful entrypoint. Import its
-        # adapter lazily AFTER the runner independently pins same-main release.
+    if len(args) in (6, 7, 8) and args[0] == "apply" and _run_id(args[1]):
+        # Existing single protected APPLY selector now goes exclusively to
+        # the successor preflight; the historical one-shot EXIT1 backend is
+        # never executed again, even when four form pins look plausible.
         from boca_socios import host_boca_pair_upgrade as upgrade
-        from boca_socios import host_boca_pair_upgrade_backend as backend
 
         try:
-            receipt = backend.apply(args[1], args[2], args[3], args[4], args[5])
-            raw = encode_upgrade(receipt)
+            _successor_preflight(
+                args[1],
+                args[2],
+                args[3],
+                args[4],
+                args[5],
+                args[6] if len(args) >= 7 else None,
+                args[7] if len(args) == 8 else None,
+            )
+            raise SuccessorPreflightIneligible("Boca successor lacks activated cleanup receipt")
+        except SuccessorPreflightIneligible:
+            raw = encode_upgrade(
+                upgrade.PairUpgradeReceipt(
+                    attempt_id=args[1],
+                    state="NO_GO",
+                    cleanup="INDETERMINATE",
+                    old_restored=False,
+                    commit_started=False,
+                    controller_id=None,
+                    worker_id=None,
+                    failed_phase="ATTEST",
+                )
+            )
         except Exception:
-            # The call may have reached the irreversible marker before losing
-            # SSH/FSYNC/terminal ACK. Never falsely advertise precommit.
+            # Any unknown exception remains indeterminate, never ACCEPT.
+            # Future activation must preserve post-marker uncertainty here.
             refused = upgrade.PairUpgradeReceipt(
                 attempt_id=args[1],
                 state="NO_GO",
