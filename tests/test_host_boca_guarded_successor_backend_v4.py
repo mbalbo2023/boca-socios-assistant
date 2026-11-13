@@ -171,6 +171,36 @@ def test_failed_prepark_cannot_restore_unmodified_old_pair_or_mutate(context, mo
     assert backend.restore_old(graph.plan, lease) is False
 
 
+def test_typed_but_unproduced_prepark_seed_cannot_start_an_effect(context, monkeypatch):
+    graph, lease, witness, _ = context
+    backend = guarded.GuardedTechnicalSuccessorBackend(graph, witness, lease)
+    # An arbitrary caller can instantiate this public dataclass.  Its type
+    # and plan equality do not prove that `backend.attest` captured anything.
+    backend.prepark_seed = physical_seed(graph, lease)
+    monkeypatch.setattr(
+        graph.success.backend,
+        "stage",
+        lambda *_: pytest.fail("unproduced physical seed reached STAGE"),
+    )
+    with pytest.raises(guarded.GuardedSuccessorNoGo):
+        backend.stage(graph.plan, lease)
+
+
+def test_prepark_attest_may_not_be_replayed_after_first_probe(context, monkeypatch):
+    graph, lease, witness, checks = context
+    backend = guarded.GuardedTechnicalSuccessorBackend(graph, witness, lease)
+    monkeypatch.setattr(graph.success.backend, "attest", lambda *_: checks.append("attest"))
+    monkeypatch.setattr(
+        prepark,
+        "capture_prepark_expected_seed",
+        lambda *_: physical_seed(graph, lease),
+    )
+    backend.attest(graph.plan, lease)
+    with pytest.raises(guarded.GuardedSuccessorNoGo):
+        backend.attest(graph.plan, lease)
+    assert checks.count("attest") == 1
+
+
 def test_precommit_site_mirror_is_read_only_attested_after_binding_before_marker(
     context, monkeypatch
 ):
@@ -200,8 +230,21 @@ def test_precommit_site_mirror_is_read_only_attested_after_binding_before_marker
         ),
         raising=False,
     )
+
+    def storage_reader(checked_plan, candidate_controller_id, candidate_worker_id, held_lease):
+        assert checked_plan is graph.plan and held_lease is lease
+        assert candidate_controller_id == "a" * 64 and candidate_worker_id == "b" * 64
+        checks.append("precommit_storage")
+        return backend.prepark_seed.storage_before
+
+    monkeypatch.setattr(prepark, "_candidate_storage", storage_reader, raising=False)
     backend.replace_binding(graph.plan, "a" * 64, "b" * 64, lease)
-    assert checks.index("candidate_bound_and_restarted") < checks.index("precommit_double_site")
+    assert (
+        checks.index("candidate_bound_and_restarted")
+        < checks.index("precommit_double_site")
+        < checks.index("precommit_storage")
+    )
+    assert checks.count("precommit_storage") == 2
 
 
 def test_precommit_site_veto_prevents_engine_commit_marker(context, monkeypatch):
@@ -221,6 +264,71 @@ def test_precommit_site_veto_prevents_engine_commit_marker(context, monkeypatch)
     )
     with pytest.raises(guarded.GuardedSuccessorNoGo):
         backend.replace_binding(graph.plan, "a" * 64, "b" * 64, lease)
+
+
+@pytest.mark.parametrize("drift", ("changed_inode", "second_capture", "unavailable"))
+def test_precommit_storage_drift_is_no_go_before_irreversible_marker(context, monkeypatch, drift):
+    graph, lease, witness, checks = context
+    backend = guarded.GuardedTechnicalSuccessorBackend(graph, witness, lease)
+    monkeypatch.setattr(graph.success.backend, "attest", lambda *_: None)
+    monkeypatch.setattr(
+        prepark, "capture_prepark_expected_seed", lambda *_: physical_seed(graph, lease)
+    )
+    backend.attest(graph.plan, lease)
+    monkeypatch.setattr(
+        graph.success.backend, "replace_binding", lambda *_: checks.append("new_pair_bound")
+    )
+    monkeypatch.setattr(
+        prepark,
+        "attest_precommit_candidate_site_state",
+        lambda *_: checks.append("site_verified"),
+    )
+    storage = backend.prepark_seed.storage_before
+    captures = [0]
+
+    def storage_reader(checked_plan, candidate_controller_id, candidate_worker_id, held_lease):
+        assert checked_plan is graph.plan and held_lease is lease
+        assert candidate_controller_id == "a" * 64 and candidate_worker_id == "b" * 64
+        captures[0] += 1
+        checks.append("structural_storage")
+        if drift == "unavailable":
+            raise prepark.PreParkExpectedNoGo("unmapped rootless inode")
+        if drift == "changed_inode" or captures[0] == 2:
+            return replace(storage, key_inode_sha256="0" * 64)
+        return storage
+
+    monkeypatch.setattr(prepark, "_candidate_storage", storage_reader, raising=False)
+    monkeypatch.setattr(
+        graph.journal,
+        "commit",
+        lambda *_: pytest.fail("unverified storage crossed COMMIT_MARKER"),
+    )
+    with pytest.raises(guarded.GuardedSuccessorNoGo):
+        backend.replace_binding(graph.plan, "a" * 64, "b" * 64, lease)
+    assert checks.index("new_pair_bound") < checks.index("site_verified")
+    assert captures[0] <= 2
+
+
+def test_reviewed_helper_rejects_accepted_without_durable_success_terminal(
+    frozen_proof, monkeypatch
+):
+    preflight, _ = frozen_proof
+    monkeypatch.setattr(
+        transaction,
+        "run_pair_upgrade",
+        lambda plan, **_kw: transaction.PairUpgradeReceipt(
+            plan.attempt_id,
+            "ACCEPTED",
+            "ACCEPT",
+            False,
+            True,
+            "a" * 64,
+            "b" * 64,
+            "NONE",
+        ),
+    )
+    with pytest.raises(cli.SuccessorPreflightIneligible):
+        cli._execute_reviewed_successor(preflight)
 
 
 def test_finalization_accepts_only_genuine_cleanup_then_technical_terminal(context, monkeypatch):

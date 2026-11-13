@@ -5,9 +5,10 @@ and the saved SITE_URL state/digest *while the old controller still runs*, befor
 PARK. After a separately completed, official SUCCESS cleanup, derive new CIDs
 and image IDs from the actual R177 pair and systemd binding. No user/form CID
 is accepted. This module cannot invoke APPLY, park a pair, create a container,
-write an owner receipt or attest a passkey/monitor. It is not in the protected
-pair ZIP, and the strict host-UID structural V2 reader may NO_GO on remapped
-rootless volumes until an independent physical subuid acceptance is reviewed.
+write an owner receipt or attest a passkey/monitor. Inclusion in the protected
+pair ZIP does not authorize APPLY. The structural V2 reader requires a live
+pidfd/namespace-bound mapped-owner proof and fails closed without one; actual
+rootless custody still requires independent physical evidence.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_pair_observe as pair
 from boca_socios import host_boca_pair_upgrade as transaction
 from boca_socios import host_boca_postflight_sources_v2 as sources_v2
+from boca_socios import host_boca_rootless_mapped_custody as mapped
 from boca_socios import host_boca_successor_integrations as integration
 from boca_socios import host_boca_successor_physical_v2 as physical
 from boca_socios import host_boca_upgrade_cleanup_runtime as cleanup_runtime
@@ -80,27 +82,98 @@ def _old_site_custody(plan: transaction.PairCoordinates) -> tuple[SiteUrlState, 
         raise _fail() from None
 
 
-def _before_park_storage() -> postflight.PostflightStorage:
-    """Use all three existing exact volume attestors before metadata capture.
+def _storage_for_live_controller(
+    plan: transaction.PairCoordinates,
+    controller_id: str,
+    lease: cleanup.BocaJobLease,
+) -> postflight.PostflightStorage:
+    """Read structural Boca inodes under a live controller's kernel owner map.
 
     The structural V2 reader excludes mutable SQLite size/times to permit
     ordinary transactions while requiring exact device/inode/owner/mode.
-    Its strict owner UID remains a potential rootless subuid NO_GO: a
-    separate positive physical mapping proof is mandatory before wiring.
+    The owner is derived from the live container's kernel uid_map/gid_map,
+    never assumed to be host UID 10001. A positive physical mapping proof
+    remains mandatory before a protected operation may be enabled.
     """
     try:
-        if runtime._read_rootless_identity() != (cleanup.EXPECTED_UID, cleanup.EXPECTED_GID):
+        if (
+            type(controller_id) is not str
+            or _CID.fullmatch(controller_id) is None
+            or runtime._read_rootless_identity() != (cleanup.EXPECTED_UID, cleanup.EXPECTED_GID)
+        ):
             raise _fail()
+        cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+        first_owner = mapped.read_container_mapped_owner(controller_id)
         host._validate_data_volume()
         host._validate_key_volume()
         host._validate_owner_volume()
         if host._checked_docker_storage_dir() != runtime._ROOT:
             raise _fail()
-        item = sources_v2.capture_structural_storage_fingerprints()
+        item = sources_v2.capture_structural_storage_fingerprints(mapped_owner=first_owner)
+        host._validate_data_volume()
+        host._validate_key_volume()
+        host._validate_owner_volume()
+        if mapped.read_container_mapped_owner(controller_id) != first_owner:
+            raise _fail()
+        cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
         if type(item) is not postflight.PostflightStorage:
             raise _fail()
         item.validate()
         return item
+    except Exception:
+        raise _fail() from None
+
+
+def _before_park_storage(
+    plan: transaction.PairCoordinates, lease: cleanup.BocaJobLease
+) -> postflight.PostflightStorage:
+    """The old controller is still running at this precise pre-PARK stage."""
+    return _storage_for_live_controller(plan, plan.old_controller_id, lease)
+
+
+def _candidate_storage(
+    plan: transaction.PairCoordinates,
+    new_controller_id: str,
+    new_worker_id: str,
+    lease: cleanup.BocaJobLease,
+) -> postflight.PostflightStorage:
+    """After PARK, bind the structural read to the *new* live controller.
+
+    Only a controller already installed by the same held lease and immutable
+    release coordinates may attest these retained Boca volumes. The old PID
+    was deliberately stopped and can no longer provide a pidfd witness.
+    """
+    try:
+        if (
+            type(plan) is not transaction.PairCoordinates
+            or type(new_controller_id) is not str
+            or _CID.fullmatch(new_controller_id) is None
+            or type(new_worker_id) is not str
+            or _CID.fullmatch(new_worker_id) is None
+            or len({plan.old_controller_id, plan.old_worker_id, new_controller_id, new_worker_id})
+            != 4
+        ):
+            raise _fail()
+
+        def require_binding() -> None:
+            cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+            current = service.read_installed_binding(lease)
+            if (
+                current.installation_run_id != plan.attempt_id
+                or current.source_sha != plan.new_source_sha
+                or current.controller_id != new_controller_id
+                or current.worker_id != new_worker_id
+                or current.controller_image != plan.controller_ref
+                or current.worker_image != plan.worker_ref
+                or current.pair.sender_id
+            ):
+                raise _fail()
+            cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+
+        require_binding()
+        captured = _storage_for_live_controller(plan, new_controller_id, lease)
+        require_binding()
+        return captured
     except Exception:
         raise _fail() from None
 
@@ -243,10 +316,10 @@ def capture_prepark_expected_seed(
         if type(witness_one) is not FreshPairWitness:
             raise _fail()
         witness_one.validate(plan, inputs.custody.resources)
-        storage_one = _before_park_storage()
+        storage_one = _before_park_storage(plan, lease)
         site_one = _old_site_custody(plan)
         cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
-        storage_two = _before_park_storage()
+        storage_two = _before_park_storage(plan, lease)
         site_two = _old_site_custody(plan)
         witness_two = capture(plan, lease)
         if (

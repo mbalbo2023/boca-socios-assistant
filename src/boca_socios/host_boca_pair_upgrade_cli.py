@@ -234,7 +234,24 @@ def _execute_reviewed_successor(preflight: BoundSuccessorPreflight) -> upgrade.P
             or outcome.attempt_id != graph.plan.attempt_id
         ):
             raise SuccessorPreflightIneligible("Boca successor terminal unverified")
-        encode_upgrade(outcome)
+        encoded = encode_upgrade(outcome)
+        # A future protected caller must never report an engine-level
+        # ACCEPTED without the exact independently re-read O_EXCL SUCCESS
+        # terminal. An in-memory receipt or cleanup text is insufficient.
+        technical = witness.technical_terminal
+        if outcome.accepted:
+            if (
+                type(technical) is not terminal.TechnicalTerminalEvidence
+                or technical.attempt_id != graph.plan.attempt_id
+                or technical.raw != encoded
+                or technical.sha256 != hashlib.sha256(encoded).hexdigest()
+                or technical.terminal_state != "TECHNICAL_ACCEPTED_OWNER_PENDING"
+                or technical.beta_deploy != "NO_GO"
+                or technical.passkey_attested is not False
+            ):
+                raise SuccessorPreflightIneligible("Boca successor durable terminal missing")
+        elif technical is not None:
+            raise SuccessorPreflightIneligible("Boca successor contradictory terminal")
         return outcome
     except Exception:
         raise SuccessorPreflightIneligible("Boca successor same-lease proof incomplete") from None

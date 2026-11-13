@@ -12,6 +12,7 @@ import pytest
 
 from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_postflight_sources_v2 as sources_v2
+from boca_socios import host_boca_rootless_mapped_custody as mapped
 from boca_socios import host_boca_upgrade_postflight as postflight
 from boca_socios import host_boca_upgrade_postflight_runtime as runtime
 from boca_socios.host_boca_upgrade_cleanup_runtime import (
@@ -230,12 +231,17 @@ def test_storage_source_requires_exact_rootless_and_double_boundary_check(
     monkeypatch.setattr(
         sources_v2,
         "capture_structural_storage_fingerprints",
-        lambda: events.append("storage") or expected.storage_before,
+        lambda *, mapped_owner: events.append("storage") or expected.storage_before,
+    )
+    monkeypatch.setattr(
+        mapped,
+        "read_controller_mapped_owner",
+        lambda *_: events.append("map") or mapped.MappedOwner(241072, 306608),
     )
     result = _build(tmp_path, volume_attestor=lambda: events.append("volume"))
     assert result.storage_reader is not None
     assert result.storage_reader() == expected.storage_before
-    assert events == ["pair", "volume", "storage", "volume", "pair"]
+    assert events == ["pair", "volume", "map", "storage", "volume", "map", "pair"]
 
     monkeypatch.setattr(runtime, "_read_rootless_identity", lambda: (0, 0))
     events.clear()
@@ -392,3 +398,64 @@ def test_structural_identity_refuses_wrong_effective_owner(
     monkeypatch.setattr(sources_v2.os, "geteuid", lambda: actual_uid + 1)
     with pytest.raises(sources_v2.PostflightSourcesNoGo):
         sources_v2.capture_structural_storage_fingerprints(tmp_path, trusted_root=tmp_path)
+
+
+def test_structural_storage_accepts_only_explicit_proven_file_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _storage_tree(tmp_path)
+    true_owner = mapped.MappedOwner(os.geteuid(), os.getegid())
+    actual = sources_v2.capture_structural_storage_fingerprints(
+        tmp_path, trusted_root=tmp_path, mapped_owner=true_owner
+    )
+    assert actual == sources_v2.capture_structural_storage_fingerprints(
+        tmp_path, trusted_root=tmp_path
+    )
+    # Key V1 must retain the stronger time/size domain; no secret bytes are read.
+    assert actual.key_inode_sha256 == runtime._file_inode_sha256(
+        tmp_path, "boca-socios_boca_key", "boca_master_key"
+    )
+    with pytest.raises(sources_v2.PostflightSourcesNoGo):
+        sources_v2.capture_structural_storage_fingerprints(
+            tmp_path,
+            trusted_root=tmp_path,
+            mapped_owner=mapped.MappedOwner(os.geteuid() + 1, os.getegid()),
+        )
+    monkeypatch.setattr(sources_v2.runtime, "_ROOT", tmp_path)
+    with pytest.raises(sources_v2.PostflightSourcesNoGo):
+        sources_v2.capture_structural_storage_fingerprints(tmp_path, trusted_root=tmp_path)
+
+
+def test_production_structural_reader_binds_two_real_mappings_to_same_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = _expected()
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    events: list[str] = []
+    owner = mapped.MappedOwner(241072, 306608)
+    monkeypatch.setattr(runtime, "_attest_live_pair", lambda *_: events.append("pair"))
+    monkeypatch.setattr(runtime, "_read_rootless_identity", lambda: (10001, 10001))
+    monkeypatch.setattr(
+        mapped, "read_controller_mapped_owner", lambda *_: events.append("map") or owner
+    )
+    monkeypatch.setattr(
+        sources_v2,
+        "capture_structural_storage_fingerprints",
+        lambda *, mapped_owner: (
+            events.append("storage") or expected.storage_before
+            if mapped_owner == owner
+            else pytest.fail("unproven host ownership")
+        ),
+    )
+    reader = sources_v2.ProductionStructuralStorageReader(
+        expected, lease, lambda: events.append("volume")
+    )
+    assert reader() == expected.storage_before
+    assert events == ["pair", "volume", "map", "storage", "volume", "map", "pair"]
+
+    first = mapped.MappedOwner(241072, 306608)
+    second = mapped.MappedOwner(241073, 306608)
+    snapshots = iter((first, second))
+    monkeypatch.setattr(mapped, "read_controller_mapped_owner", lambda *_: next(snapshots))
+    with pytest.raises(sources_v2.PostflightSourcesNoGo):
+        reader()

@@ -1,5 +1,39 @@
 # Boca Socios Assistant
 
+## R265 — rootless, diagnóstico por fase y terminal bajo lease (13/11/2026; CODE_ONLY)
+
+Después de fusionar #502, #504 y #506 en `main ecdf30a0bc890c7c8f03e6f0ecd350405b0df1f3`,
+se consolidaron tres alcances independientes: custodia rootless de UID/GID
+**remapeados** con PIDFD y namespace de usuario real ([ADR0290](docs/ADR/0290-r262-rootless-pidfd-and-structural-file-custody.md));
+observación exact-origin 8443 con categorías de fallo acotadas y sin
+publicar stdout/SSH ([ADR0287](docs/ADR/0287-r263-exact-origin-failure-taxonomy-code-only.md));
+y backend guarded con seed producido una sola vez y doble captura
+estructural antes del COMMIT ([ADR0291](docs/ADR/0291-r264-guarded-lease-precommit-storage-and-terminal.md)).
+
+La integración detectó y corrigió una incompatibilidad de ciclo de vida:
+antes del PARK se atesta el propietario mapeado del **controlador antiguo
+vivo**; después de vincular el sucesor se atesta el del **controlador nuevo
+vivo**, con CIDs e imágenes exactos y lease persistente. Jamás se exige
+PID del antiguo ya detenido, ni se acepta un worker distinto del par
+autenticado ([ADR0289](docs/ADR/0289-r265-postpark-new-controller-uid-proof.md)).
+El CLI APPLY sigue hard NO_GO y ambos observadores sólo diagnostican;
+ni release ni deploy BETA quedan autorizados por estas pruebas de código.
+SITE_URL permanece vacía hasta que la configure Tincho.
+La observación física de #504
+[#43364745527](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43364745527)
+rechazó la validación en la fase acotada `INODES`; no revela aún el inodo,
+propietario o mapeo causante. Exige nueva evidencia READ_ONLY sobre el SHA
+fusionado de R265. #506 agrega categorías finitas de rechazo de inodos
+([ADR0288](docs/ADR/0288-r263-rootless-inode-refusal-categories.md)) que R265
+conserva sin filtrar rutas, nombres ni propietarios concretos. Ninguno autoriza
+mutaciones del host.
+La integración cruzada descubrió que el context manager de lease de #506
+interceptaba excepciones producidas **después** de `yield`, impidiendo que las
+subcategorías `INODES_*` llegaran al runner. La captura de errores ahora se limita
+a la adquisición de flock/lease; las anomalías del cuerpo llegan al clasificador
+acotado y siempre terminan NO_GO. Un test con flock real (fichero temporal
+aislado) verifica propagación y liberación, sin datos del droplet.
+
 ## R261 — reconciliación de PR #502 sobre el nuevo main (13/11/2026; CODE_ONLY)
 
 El PR #503 se fusionó mientras #502 completaba su CI. Ambos alteran el
@@ -18,11 +52,13 @@ físicas. No repetir el incidente R186.
 
 La Action READ_ONLY [#43360372904](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43360372904)
 falló después de `BOCA_MAIN_REF_PASS` con recibo no verificado. La causa física
-concreta continúa **UNKNOWN**. La corrección candidata conserva idéntico el
+concreta de ese run continúa **UNKNOWN**. La corrección fusionada por #504 conserva idéntico el
 recibo positivo schema1; sólo los rechazos usan schema2 y categoría de fase
 fija, verificada por el runner antes de mostrarla. No publica rutas, datos
-privados ni excepciones. Debe fusionarse, pasar CI y repetirse como nueva
-observación READ_ONLY antes de cualquier APPLY. **DEPLOY NO_GO**.
+privados ni excepciones. Se fusionó tras CI; la nueva observación
+[#43364745527](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43364745527)
+devolvió `failure_boundary=INODES`, todavía sin RCA del archivo concreto.
+**DEPLOY NO_GO**.
 [ADR0286](docs/ADR/0286-r261-rootless-readonly-failure-boundary.md).
 
 ## R259 — consolidación CODE_ONLY y diagnósticos (12/11/2026 ART; 13/11 UTC)

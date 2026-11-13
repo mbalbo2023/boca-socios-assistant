@@ -27,6 +27,7 @@ from pathlib import Path
 
 from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_cleanup_v2 as counted
+from boca_socios import host_boca_rootless_mapped_custody as mapped
 from boca_socios import host_boca_upgrade_cleanup_runtime as cleanup_runtime
 from boca_socios import host_boca_upgrade_postflight as postflight
 from boca_socios import host_boca_upgrade_postflight_runtime as runtime
@@ -47,7 +48,14 @@ def _fail() -> PostflightSourcesNoGo:
     return PostflightSourcesNoGo("BOCA_POSTFLIGHT_SOURCES_V2 NO_GO")
 
 
-def _structural_file_inode_sha256(root: Path, volume: str, name: str) -> str:
+def _structural_file_inode_sha256(
+    root: Path,
+    volume: str,
+    name: str,
+    owner: mapped.MappedOwner,
+    *,
+    strict_key: bool = False,
+) -> str:
     """Hash stable inode custody, not SQLite/session content or write times.
 
     Descriptor-relative O_PATH/O_NOFOLLOW is used for every ancestor and the
@@ -86,15 +94,13 @@ def _structural_file_inode_sha256(root: Path, volume: str, name: str) -> str:
             or opened.st_nlink != 1
             or named.st_nlink != 1
             or stat.S_IMODE(opened.st_mode) not in (0o400, 0o600)
-            or opened.st_uid != os.geteuid()
-            or opened.st_gid != os.getegid()
+            or opened.st_uid != owner.uid
+            or opened.st_gid != owner.gid
             or opened.st_dev < 0
             or opened.st_ino <= 0
         ):
             raise _fail()
-        identity = (
-            volume,
-            name,
+        identity: tuple[object, ...] = (
             opened.st_dev,
             opened.st_ino,
             opened.st_uid,
@@ -102,8 +108,16 @@ def _structural_file_inode_sha256(root: Path, volume: str, name: str) -> str:
             stat.S_IMODE(opened.st_mode),
             opened.st_nlink,
         )
+        if strict_key:
+            identity += (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns)
+        else:
+            identity = (volume, name, *identity)
         return hashlib.sha256(
-            b"BOCA_POSTFLIGHT_INODE_STRUCTURE_V2\0"
+            (
+                b"BOCA_POSTFLIGHT_STORAGE_V1\0"
+                if strict_key
+                else b"BOCA_POSTFLIGHT_INODE_STRUCTURE_V2\0"
+            )
             + json.dumps(identity, separators=(",", ":")).encode("ascii")
         ).hexdigest()
     except Exception:
@@ -114,7 +128,10 @@ def _structural_file_inode_sha256(root: Path, volume: str, name: str) -> str:
 
 
 def capture_structural_storage_fingerprints(
-    rootless_docker_root: Path = runtime._ROOT, *, trusted_root: Path = runtime._ROOT
+    rootless_docker_root: Path = runtime._ROOT,
+    *,
+    trusted_root: Path = runtime._ROOT,
+    mapped_owner: mapped.MappedOwner | None = None,
 ) -> postflight.PostflightStorage:
     """Stable SQLite/session inode identities and strict key metadata custody.
 
@@ -131,15 +148,29 @@ def capture_structural_storage_fingerprints(
             or not rootless_docker_root.is_absolute()
             or rootless_docker_root != trusted_root
             or rootless_docker_root == Path("/")
+            or mapped_owner is None
+            and rootless_docker_root == runtime._ROOT
         ):
+            raise _fail()
+        if mapped_owner is None:
+            # Scratch fixtures can explicitly bind their own trusted root;
+            # production never infers a remapped owner from host geteuid().
+            mapped_owner = mapped.MappedOwner(os.geteuid(), os.getegid())
+        if type(mapped_owner) is not mapped.MappedOwner:
             raise _fail()
         data_volume, data_name = _STRUCTURAL_FILES[0]
         owner_volume, owner_name = _STRUCTURAL_FILES[1]
         key_volume, key_name = _KEY_FILE
         result = postflight.PostflightStorage(
-            _structural_file_inode_sha256(rootless_docker_root, data_volume, data_name),
-            runtime._file_inode_sha256(rootless_docker_root, key_volume, key_name),
-            _structural_file_inode_sha256(rootless_docker_root, owner_volume, owner_name),
+            _structural_file_inode_sha256(
+                rootless_docker_root, data_volume, data_name, mapped_owner
+            ),
+            _structural_file_inode_sha256(
+                rootless_docker_root, key_volume, key_name, mapped_owner, strict_key=True
+            ),
+            _structural_file_inode_sha256(
+                rootless_docker_root, owner_volume, owner_name, mapped_owner
+            ),
         )
         result.validate()
         return result
@@ -166,8 +197,11 @@ class ProductionStructuralStorageReader:
             ):
                 raise _fail()
             self.volume_attestor()
-            captured = capture_structural_storage_fingerprints()
+            first_owner = mapped.read_controller_mapped_owner(self.expected, self.lease)
+            captured = capture_structural_storage_fingerprints(mapped_owner=first_owner)
             self.volume_attestor()
+            if mapped.read_controller_mapped_owner(self.expected, self.lease) != first_owner:
+                raise _fail()
             runtime._attest_live_pair(self.expected, self.lease)
             return captured
         except Exception:

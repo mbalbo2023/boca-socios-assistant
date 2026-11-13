@@ -164,27 +164,96 @@ def test_inode_changes_during_observation_never_produce_verified_mapped(
     assert custody.observe_boca_mapped_file_custody(expected, lease, volume_attestor) == "NO_GO"
 
 
-def test_controller_pid_read_must_be_proven_twice_and_never_mutates_docker(
+def test_controller_mapping_must_be_bounded_by_two_live_pair_and_lease_proofs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    calls: list[tuple[str, ...]] = []
+    calls: list[str] = []
     expected = SimpleNamespace(plan=SimpleNamespace(attempt_id="555"), controller_id="a" * 64)
     lease = cleanup.BocaJobLease("555", -1, os.getpid(), True)
-    monkeypatch.setattr(custody.runtime, "_attest_live_pair", lambda *_: None)
-    monkeypatch.setattr(custody.cleanup, "verify_protected_boca_job_lease", lambda *_: None)
+    monkeypatch.setattr(custody.runtime, "_attest_live_pair", lambda *_: calls.append("pair"))
     monkeypatch.setattr(
-        custody, "read_proc_mapped_owner", lambda pid: custody.MappedOwner(241072, 306608)
+        custody.cleanup, "verify_protected_boca_job_lease", lambda *_: calls.append("lease")
     )
-
-    def docker(*args: str) -> str:
-        calls.append(args)
-        return "12345\n"
-
-    monkeypatch.setattr(custody.cleanup, "_docker", docker)
+    monkeypatch.setattr(
+        custody,
+        "read_container_mapped_owner",
+        lambda cid: calls.append("kernel") or custody.MappedOwner(241072, 306608),
+    )
     assert custody.read_controller_mapped_owner(expected, lease) == custody.MappedOwner(
         241072, 306608
     )
-    assert calls == [
-        ("inspect", "--format", "{{json .State.Pid}}", "a" * 64),
-        ("inspect", "--format", "{{json .State.Pid}}", "a" * 64),
-    ]
+    assert calls == ["pair", "lease", "kernel", "pair", "lease"]
+
+
+def test_production_pins_controller_pidfd_and_kernel_user_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cid = "b" * 64
+    events: list[str] = []
+    alive_read, alive_write = os.pipe()
+    try:
+        monkeypatch.setattr(custody.os, "pidfd_open", lambda pid: os.dup(alive_read))
+        monkeypatch.setattr(
+            custody,
+            "_namespace_identity",
+            lambda pid: (
+                events.append("self_ns" if pid == os.getpid() else "container_ns")
+                or ((4, 7) if pid == os.getpid() else (4, 8))
+            ),
+        )
+        monkeypatch.setattr(
+            custody,
+            "read_proc_mapped_owner",
+            lambda pid: events.append("map") or custody.MappedOwner(241072, 306608),
+        )
+        monkeypatch.setattr(
+            cleanup,
+            "_docker",
+            lambda *args: events.append("docker_pid") or "12345\n",
+        )
+        assert custody.read_container_mapped_owner(cid) == custody.MappedOwner(241072, 306608)
+        assert events.count("container_ns") >= 2
+        assert events.count("map") >= 2
+        assert events.count("docker_pid") == 2
+    finally:
+        os.close(alive_read)
+        os.close(alive_write)
+
+
+@pytest.mark.parametrize("fault", ["namespace_drift", "same_host_namespace", "exited_pid"])
+def test_production_rejects_namespace_swap_host_namespace_or_exited_pid(
+    monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    alive_read, alive_write = os.pipe()
+    calls = 0
+    try:
+        monkeypatch.setattr(custody.os, "pidfd_open", lambda pid: os.dup(alive_read))
+
+        def namespace(pid: int) -> tuple[int, int]:
+            nonlocal calls
+            if pid == os.getpid():
+                return (4, 7)
+            calls += 1
+            if fault == "same_host_namespace":
+                return (4, 7)
+            return (4, 8 + (calls == 2 if fault == "namespace_drift" else 0))
+
+        monkeypatch.setattr(custody, "_namespace_identity", namespace)
+        monkeypatch.setattr(
+            custody, "read_proc_mapped_owner", lambda *_: custody.MappedOwner(241072, 306608)
+        )
+        monkeypatch.setattr(cleanup, "_docker", lambda *_: "12345\n")
+        if fault == "exited_pid":
+            os.close(alive_write)
+            alive_write = -1
+        with pytest.raises(custody.MappedCustodyNoGo):
+            custody.read_container_mapped_owner("b" * 64)
+    finally:
+        os.close(alive_read)
+        if alive_write >= 0:
+            os.close(alive_write)
+
+
+def test_kernel_user_namespace_identity_is_nonzero_and_procfs_only() -> None:
+    device, inode = custody._namespace_identity(os.getpid())
+    assert device > 0 and inode > 0

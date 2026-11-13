@@ -69,6 +69,8 @@ class GuardedTechnicalSuccessorBackend:
         self.terminal = technical_terminal
         self.lease = lease
         self.prepark_seed: prepark.PreParkExpectedSeed | None = None
+        self._attest_started = False
+        self._attested_seed: prepark.PreParkExpectedSeed | None = None
         self._finalized = False
 
     @property
@@ -87,6 +89,11 @@ class GuardedTechnicalSuccessorBackend:
             raise _fail() from None
 
     def attest(self, plan: upgrade.PairCoordinates, lease: cleanup.BocaJobLease) -> None:
+        if self._attest_started:
+            raise _fail()
+        # Even an interrupted read-side attestation cannot be replayed to
+        # install a different typed seed into the same transaction actor.
+        self._attest_started = True
         self._check(plan, lease)
         try:
             self.graph.success.backend.attest(plan, lease)
@@ -116,6 +123,7 @@ class GuardedTechnicalSuccessorBackend:
             seed.old_pair_witness.validate(plan, seed.inputs.custody.resources)
             self._check(plan, lease)
             self.prepark_seed = seed
+            self._attested_seed = seed
         except Exception:
             raise _fail() from None
 
@@ -127,6 +135,7 @@ class GuardedTechnicalSuccessorBackend:
         self._check(plan, lease)
         if (
             type(self.prepark_seed) is not prepark.PreParkExpectedSeed
+            or self._attested_seed is not self.prepark_seed
             or self.prepark_seed.inputs is not self.graph.preflight.inputs
             or self.prepark_seed.lease is not lease
         ):
@@ -175,6 +184,21 @@ class GuardedTechnicalSuccessorBackend:
             prepark.attest_precommit_candidate_site_state(
                 plan, controller_id, worker_id, lease, seed
             )
+            # Before the irreversible marker, the same structural V2 proof
+            # captured with the old pair must still identify all three
+            # retained Boca data/key/owner inodes. Recheck twice so a missing
+            # rootless mapping or changed key cannot become a post-retirement
+            # surprise that the engine is forbidden to roll back.
+            self._check_effect(plan, lease)
+            first = prepark._candidate_storage(plan, controller_id, worker_id, lease)
+            second = prepark._candidate_storage(plan, controller_id, worker_id, lease)
+            if (
+                type(first) is not postflight.PostflightStorage
+                or type(second) is not postflight.PostflightStorage
+                or first != seed.storage_before
+                or second != first
+            ):
+                raise _fail()
             self._check_effect(plan, lease)
         except Exception:
             raise _fail() from None
