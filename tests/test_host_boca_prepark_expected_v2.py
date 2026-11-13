@@ -17,6 +17,7 @@ from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_pair_observe as pair
 from boca_socios import host_boca_postflight_sources_v2 as sources_v2
 from boca_socios import host_boca_prepark_expected_v2 as prepark
+from boca_socios import host_boca_rootless_mapped_custody as mapped
 from boca_socios import host_boca_successor_integrations as integrations
 from boca_socios import host_boca_successor_physical_v2 as physical
 from boca_socios import host_boca_upgrade_postflight_runtime as runtime
@@ -71,7 +72,20 @@ def context(
     monkeypatch.setattr(
         sources_v2,
         "capture_structural_storage_fingerprints",
-        lambda: operations.append("storage") or reference.storage_before,
+        lambda *, mapped_owner: (
+            operations.append("storage") or reference.storage_before
+            if mapped_owner == mapped.MappedOwner(241072, 306608)
+            else pytest.fail("unverified mapped owner")
+        ),
+    )
+    monkeypatch.setattr(
+        mapped,
+        "read_container_mapped_owner",
+        lambda cid: (
+            operations.append("mapping") or mapped.MappedOwner(241072, 306608)
+            if cid == bound.plan.old_controller_id
+            else pytest.fail("foreign CID")
+        ),
     )
     monkeypatch.setattr(
         runtime,
@@ -104,12 +118,62 @@ def test_prepark_real_reader_paths_are_double_attested_before_any_park(
     assert seed.terminal_accept_authorized is False
     assert operations.count("old_pair") == 2
     assert operations.count("storage") == 2
+    assert operations.count("mapping") == 4
     assert operations.count("site") == 2
-    assert operations.count("_validate_data_volume") == 2
-    assert operations.count("_validate_key_volume") == 2
-    assert operations.count("_validate_owner_volume") == 2
+    assert operations.count("_validate_data_volume") == 4
+    assert operations.count("_validate_key_volume") == 4
+    assert operations.count("_validate_owner_volume") == 4
     assert operations.index("old_pair") < operations.index("site")
     assert operations[-1] == "lease"
+
+
+@pytest.mark.parametrize("binding_variant", ("valid", "foreign_controller", "foreign_worker"))
+def test_postpark_structural_capture_uses_live_new_controller_pid_not_stopped_old(
+    context: tuple[integrations.BoundSuccessorInputs, cleanup.BocaJobLease, list[str]],
+    monkeypatch: pytest.MonkeyPatch,
+    binding_variant: str,
+) -> None:
+    bound, lease, operations = context
+    expected = _expected()
+    new_id = expected.controller_id
+    installed = _installed_binding(expected)
+    if binding_variant == "foreign_controller":
+        installed = replace(installed, controller_id=bound.plan.old_controller_id)
+    elif binding_variant == "foreign_worker":
+        installed = replace(installed, worker_id=bound.plan.old_worker_id)
+    monkeypatch.setattr(
+        service, "read_installed_binding", lambda held: installed if held is lease else None
+    )
+
+    def new_owner(cid: str) -> mapped.MappedOwner:
+        assert cid == new_id, "old controller is PARKed and cannot supply a pidfd"
+        operations.append("new_pidfd")
+        return mapped.MappedOwner(241072, 306608)
+
+    monkeypatch.setattr(mapped, "read_container_mapped_owner", new_owner)
+    if binding_variant != "valid":
+        with pytest.raises(prepark.PreParkExpectedNoGo):
+            prepark._candidate_storage(bound.plan, new_id, expected.worker_id, lease)
+        assert "new_pidfd" not in operations
+    else:
+        assert (
+            prepark._candidate_storage(bound.plan, new_id, expected.worker_id, lease)
+            == expected.storage_before
+        )
+        assert operations.count("new_pidfd") == 2
+        assert operations.count("storage") == 1
+
+
+def test_prepark_refuses_rootless_owner_drift_even_with_identical_inodes(
+    context: tuple[integrations.BoundSuccessorInputs, cleanup.BocaJobLease, list[str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bound, lease, operations = context
+    mappings = iter((mapped.MappedOwner(241072, 306608), mapped.MappedOwner(241073, 306608)))
+    monkeypatch.setattr(mapped, "read_container_mapped_owner", lambda *_: next(mappings))
+    with pytest.raises(prepark.PreParkExpectedNoGo):
+        prepark.capture_prepark_expected_seed(bound, lease)
+    assert "storage" in operations
 
 
 @pytest.mark.parametrize("fault", ("unsafe_url_output", "storage_drift", "old_pair_drift"))

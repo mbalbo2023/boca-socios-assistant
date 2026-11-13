@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _PREFIX = b"BOCA_PANEL_ORIGIN_READONLY_V1 "
+_FAILURE_PREFIX = b"BOCA_PANEL_ORIGIN_FAILURE_V1 "
 _ROOT = Path("/home/boca-deploy/.local/share/docker")
 _DIR = os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 _FILE = os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC
@@ -28,6 +29,17 @@ _RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
 _HEALTH = frozenset(("HEALTH_HTTP_200", "HEALTH_NON_200", "HEALTH_UNAVAILABLE"))
 _SITE = frozenset(("BOTH_FILES_ABSENT", "PRESENT_UNVERIFIED"))
 _UID = frozenset(("UID_EQUALS_HOST", "UID_DIFFERS_FROM_HOST", "UID_UNVERIFIED"))
+_HOST_FAILURES = frozenset(
+    (
+        "HOST_INPUT_UNVERIFIED",
+        "HOST_SCRIPT_VALIDATION_UNVERIFIED",
+        "HOST_UID_UNVERIFIED",
+        "HOST_SITE_METADATA_UNVERIFIED",
+        "HOST_STORAGE_METADATA_UNVERIFIED",
+        "HOST_METADATA_DRIFT_UNVERIFIED",
+        "HOST_HEALTH_DRIFT_UNVERIFIED",
+    )
+)
 _SITE_FILES = (
     ("boca-socios_boca_data", "boca-site-url.json", (0o600,)),
     ("boca-socios_boca_site_config", "boca-site-url.runtime.json", (0o644,)),
@@ -41,6 +53,14 @@ _STORAGE_FILES = (
 
 class ReadonlyWitnessError(ValueError):
     """Fixed redacted NO_GO without paths, URL, identities or host bytes."""
+
+
+class HostPhaseError(ReadonlyWitnessError):
+    """A bounded, advisory failure phase; never a host-acceptance receipt."""
+
+    def __init__(self, phase: str) -> None:
+        super().__init__("BOCA_PANEL_DIAG NO_GO")
+        self.phase = phase
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,12 +197,18 @@ def probe_storage_uid(root: Path = _ROOT) -> str:
     return _storage_uid_category(snapshot_storage_files(root))
 
 
+def _valid_coordinates(run_id: str, sha: str) -> bool:
+    return (
+        type(run_id) is str
+        and _RUN.fullmatch(run_id) is not None
+        and type(sha) is str
+        and _HEX40.fullmatch(sha) is not None
+    )
+
+
 def make_receipt(run_id: str, sha: str, health: str, site: str, uid: str) -> bytes:
     if (
-        type(run_id) is not str
-        or _RUN.fullmatch(run_id) is None
-        or type(sha) is not str
-        or _HEX40.fullmatch(sha) is None
+        not _valid_coordinates(run_id, sha)
         or health not in _HEALTH
         or site not in _SITE
         or uid not in _UID
@@ -204,7 +230,50 @@ def make_receipt(run_id: str, sha: str, health: str, site: str, uid: str) -> byt
     return _PREFIX + json.dumps(data, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n"
 
 
-def verify_receipt(raw: bytes, run_id: str) -> bytes:
+def make_host_failure_marker(run_id: str, sha: str, phase: str) -> bytes:
+    """An advisory, run-bound marker with no private paths or host bytes."""
+    if not _valid_coordinates(run_id, sha) or phase not in _HOST_FAILURES:
+        raise ReadonlyWitnessError("BOCA_PANEL_DIAG NO_GO")
+    return _FAILURE_PREFIX + f"{run_id} {sha} {phase}\n".encode("ascii")
+
+
+def _no_go(reason: str) -> bytes:
+    return (
+        f"BOCA_PANEL_ORIGIN_READONLY state=NO_GO reason={reason} observer_writes=0 deploy=NO_GO\n"
+    ).encode("ascii")
+
+
+def classify_remote_observation(
+    raw: bytes, remote_rc: int, run_id: str, sha: str
+) -> tuple[bytes, bool]:
+    """Project untrusted SSH output to a finite reason; success remains strict."""
+    if (
+        type(raw) is not bytes
+        or type(remote_rc) is not int
+        or not 0 <= remote_rc <= 255
+        or not _valid_coordinates(run_id, sha)
+    ):
+        raise ReadonlyWitnessError("BOCA_PANEL_DIAG NO_GO")
+    # OpenSSH 255 and timeout-generated codes are not host-script findings.
+    if remote_rc in (124, 137, 143, 255):
+        return _no_go("SSH_TRANSPORT_UNVERIFIED"), False
+    if remote_rc == 3:
+        for phase in _HOST_FAILURES:
+            if raw == make_host_failure_marker(run_id, sha, phase):
+                return _no_go(phase), False
+    if remote_rc != 0 and remote_rc != 3:
+        return _no_go("REMOTE_EXECUTION_UNVERIFIED"), False
+    if not raw:
+        return _no_go("RECEIPT_MISSING" if remote_rc == 0 else "REMOTE_EXECUTION_UNVERIFIED"), False
+    if remote_rc != 0:
+        return _no_go("RECEIPT_MALFORMED"), False
+    try:
+        return verify_receipt(raw, run_id, expected_sha=sha), True
+    except ReadonlyWitnessError:
+        return _no_go("RECEIPT_MALFORMED"), False
+
+
+def verify_receipt(raw: bytes, run_id: str, *, expected_sha: str | None = None) -> bytes:
     """Bounded canonical projection; no extra host text may enter the summary."""
     try:
         if type(raw) is not bytes or not 0 < len(raw) <= 512 or not raw.startswith(_PREFIX):
@@ -242,6 +311,7 @@ def verify_receipt(raw: bytes, run_id: str) -> bytes:
             )
             != raw
             or body["run_id"] != run_id
+            or (expected_sha is not None and body["source_sha"] != expected_sha)
         ):
             raise ReadonlyWitnessError("BOCA_PANEL_DIAG NO_GO")
         return raw
@@ -250,22 +320,35 @@ def verify_receipt(raw: bytes, run_id: str) -> bytes:
 
 
 def capture(run_id: str, sha: str) -> bytes:
+    if not _valid_coordinates(run_id, sha):
+        raise HostPhaseError("HOST_INPUT_UNVERIFIED")
     if (os.geteuid(), os.getegid()) != (10001, 10001):
-        raise ReadonlyWitnessError("BOCA_PANEL_DIAG NO_GO")
-    first_health, first_site, first_storage = (
-        probe_health(),
-        snapshot_site_files(),
-        snapshot_storage_files(),
-    )
-    second_health, second_site, second_storage = (
-        probe_health(),
-        snapshot_site_files(),
-        snapshot_storage_files(),
-    )
-    require_stable(first_site, second_site)
-    require_stable(first_storage, second_storage)
+        raise HostPhaseError("HOST_UID_UNVERIFIED")
+    first_health = probe_health()
+    try:
+        first_site = snapshot_site_files()
+    except ReadonlyWitnessError:
+        raise HostPhaseError("HOST_SITE_METADATA_UNVERIFIED") from None
+    try:
+        first_storage = snapshot_storage_files()
+    except ReadonlyWitnessError:
+        raise HostPhaseError("HOST_STORAGE_METADATA_UNVERIFIED") from None
+    second_health = probe_health()
+    try:
+        second_site = snapshot_site_files()
+    except ReadonlyWitnessError:
+        raise HostPhaseError("HOST_SITE_METADATA_UNVERIFIED") from None
+    try:
+        second_storage = snapshot_storage_files()
+    except ReadonlyWitnessError:
+        raise HostPhaseError("HOST_STORAGE_METADATA_UNVERIFIED") from None
+    try:
+        require_stable(first_site, second_site)
+        require_stable(first_storage, second_storage)
+    except ReadonlyWitnessError:
+        raise HostPhaseError("HOST_METADATA_DRIFT_UNVERIFIED") from None
     if first_health != second_health:
-        raise ReadonlyWitnessError("BOCA_PANEL_DIAG NO_GO")
+        raise HostPhaseError("HOST_HEALTH_DRIFT_UNVERIFIED")
     return make_receipt(
         run_id,
         sha,
@@ -279,9 +362,26 @@ def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     try:
         if len(args) == 3 and args[0] == "host":
-            receipt = capture(args[1], args[2])
+            try:
+                receipt = capture(args[1], args[2])
+            except HostPhaseError as exc:
+                sys.stdout.buffer.write(make_host_failure_marker(args[1], args[2], exc.phase))
+                return 3
+            except ReadonlyWitnessError:
+                sys.stdout.buffer.write(
+                    make_host_failure_marker(args[1], args[2], "HOST_SCRIPT_VALIDATION_UNVERIFIED")
+                )
+                return 3
             sys.stdout.buffer.write(receipt)
             return 0
+        if len(args) == 4 and args[0] == "classify":
+            if re.fullmatch(r"0|[1-9][0-9]{0,2}", args[1]) is None:
+                raise ReadonlyWitnessError("BOCA_PANEL_DIAG NO_GO")
+            receipt, accepted = classify_remote_observation(
+                sys.stdin.buffer.read(513), int(args[1]), args[2], args[3]
+            )
+            sys.stdout.buffer.write(receipt)
+            return 0 if accepted else 3
         if len(args) == 2 and args[0] == "verify":
             receipt = verify_receipt(sys.stdin.buffer.read(513), args[1])
             sys.stdout.buffer.write(receipt)

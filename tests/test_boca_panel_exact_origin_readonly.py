@@ -5,7 +5,10 @@ from __future__ import annotations
 import http.server
 import os
 import stat
+import subprocess
+import sys
 import tempfile
+import textwrap
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -13,6 +16,9 @@ from pathlib import Path
 import pytest
 
 from boca_socios import host_boca_panel_exact_origin_readonly as observer
+
+_RUN_ID = "43362853913"
+_SHA = "a" * 40
 
 
 class _Panel(http.server.BaseHTTPRequestHandler):
@@ -184,3 +190,203 @@ def test_exact_origin_probe_is_only_an_existing_protected_readonly_dispatch():
         assert value in step
     for forbidden in ("docker start", "docker stop", "docker exec", "docker rm", "sudo", "prune"):
         assert forbidden not in step
+
+
+@pytest.mark.parametrize(
+    ("remote_rc", "raw", "reason"),
+    [
+        (0, b"", "RECEIPT_MISSING"),
+        (0, b"secret-url=https://private.example.invalid", "RECEIPT_MALFORMED"),
+        (255, b"", "SSH_TRANSPORT_UNVERIFIED"),
+        (124, b"", "SSH_TRANSPORT_UNVERIFIED"),
+        (3, b"", "REMOTE_EXECUTION_UNVERIFIED"),
+        (3, b"private-host-output", "RECEIPT_MALFORMED"),
+    ],
+)
+def test_failure_classification_exposes_only_fixed_categories(
+    remote_rc: int, raw: bytes, reason: str
+):
+    output, accepted = observer.classify_remote_observation(raw, remote_rc, _RUN_ID, _SHA)
+    assert not accepted
+    assert (
+        output
+        == (
+            f"BOCA_PANEL_ORIGIN_READONLY state=NO_GO reason={reason} "
+            "observer_writes=0 deploy=NO_GO\n"
+        ).encode()
+    )
+    assert b"private" not in output
+
+
+def test_canonical_success_requires_remote_exit_zero_and_exact_run_binding():
+    valid = observer.make_receipt(
+        _RUN_ID, _SHA, "HEALTH_HTTP_200", "BOTH_FILES_ABSENT", "UID_UNVERIFIED"
+    )
+    assert observer.classify_remote_observation(valid, 0, _RUN_ID, _SHA) == (valid, True)
+    output, accepted = observer.classify_remote_observation(valid, 3, _RUN_ID, _SHA)
+    assert not accepted
+    assert b"state=NO_GO" in output
+    output, accepted = observer.classify_remote_observation(valid, 0, "43362853914", _SHA)
+    assert not accepted
+    assert b"reason=RECEIPT_MALFORMED" in output
+
+    # The same run is insufficient: the host could return a different source tree.
+    other_sha = "b" * 40
+    wrong_source = observer.make_receipt(
+        _RUN_ID, other_sha, "HEALTH_HTTP_200", "BOTH_FILES_ABSENT", "UID_UNVERIFIED"
+    )
+    output, accepted = observer.classify_remote_observation(wrong_source, 0, _RUN_ID, _SHA)
+    assert not accepted
+    assert b"reason=RECEIPT_MALFORMED" in output
+
+
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "HOST_SCRIPT_VALIDATION_UNVERIFIED",
+        "HOST_UID_UNVERIFIED",
+        "HOST_SITE_METADATA_UNVERIFIED",
+        "HOST_STORAGE_METADATA_UNVERIFIED",
+        "HOST_METADATA_DRIFT_UNVERIFIED",
+        "HOST_HEALTH_DRIFT_UNVERIFIED",
+    ],
+)
+def test_host_failure_marker_is_exact_run_bound_and_only_advisory(phase: str):
+    marker = observer.make_host_failure_marker(_RUN_ID, _SHA, phase)
+    output, accepted = observer.classify_remote_observation(marker, 3, _RUN_ID, _SHA)
+    assert not accepted
+    assert f"reason={phase}".encode() in output
+    assert b"state=NO_GO" in output
+    output, accepted = observer.classify_remote_observation(marker, 3, "43362853914", _SHA)
+    assert not accepted
+    assert b"reason=RECEIPT_MALFORMED" in output
+    output, accepted = observer.classify_remote_observation(marker, 0, _RUN_ID, _SHA)
+    assert not accepted
+    assert b"reason=RECEIPT_MALFORMED" in output
+
+
+def test_host_uid_failure_emits_bounded_marker_not_internal_exception(monkeypatch, capfd):
+    monkeypatch.setattr(observer.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(observer.os, "getegid", lambda: 1000)
+    assert observer.main(["host", _RUN_ID, _SHA]) == 3
+    out, err = capfd.readouterr()
+    assert err == ""
+    assert out == observer.make_host_failure_marker(_RUN_ID, _SHA, "HOST_UID_UNVERIFIED").decode()
+
+
+def test_host_site_metadata_failure_identifies_stage_without_path(monkeypatch, capfd):
+    monkeypatch.setattr(observer.os, "geteuid", lambda: 10001)
+    monkeypatch.setattr(observer.os, "getegid", lambda: 10001)
+    monkeypatch.setattr(observer, "probe_health", lambda: "HEALTH_HTTP_200")
+
+    def reject_site():
+        raise observer.ReadonlyWitnessError("must-not-appear-in-output")
+
+    monkeypatch.setattr(observer, "snapshot_site_files", reject_site)
+    assert observer.main(["host", _RUN_ID, _SHA]) == 3
+    out, err = capfd.readouterr()
+    assert err == ""
+    assert "reason=" not in out
+    assert "must-not-appear" not in out
+    assert (
+        out
+        == observer.make_host_failure_marker(
+            _RUN_ID, _SHA, "HOST_SITE_METADATA_UNVERIFIED"
+        ).decode()
+    )
+
+
+def test_host_storage_metadata_failure_stays_separate_from_site_absence(monkeypatch, capfd):
+    monkeypatch.setattr(observer.os, "geteuid", lambda: 10001)
+    monkeypatch.setattr(observer.os, "getegid", lambda: 10001)
+    monkeypatch.setattr(observer, "probe_health", lambda: "HEALTH_HTTP_200")
+    monkeypatch.setattr(observer, "snapshot_site_files", lambda: (None, None))
+
+    def reject_storage():
+        raise observer.ReadonlyWitnessError("sensitive-storage-path")
+
+    monkeypatch.setattr(observer, "snapshot_storage_files", reject_storage)
+    assert observer.main(["host", _RUN_ID, _SHA]) == 3
+    out, err = capfd.readouterr()
+    assert err == ""
+    assert (
+        out
+        == observer.make_host_failure_marker(
+            _RUN_ID, _SHA, "HOST_STORAGE_METADATA_UNVERIFIED"
+        ).decode()
+    )
+    assert "sensitive-storage-path" not in out
+
+
+def test_host_invalid_health_proof_yields_validation_not_a_raw_traceback(monkeypatch, capfd):
+    monkeypatch.setattr(observer.os, "geteuid", lambda: 10001)
+    monkeypatch.setattr(observer.os, "getegid", lambda: 10001)
+    monkeypatch.setattr(observer, "probe_health", lambda: "BOGUS_PRIVATE_RESPONSE")
+    monkeypatch.setattr(observer, "snapshot_site_files", lambda: (None, None))
+    monkeypatch.setattr(observer, "snapshot_storage_files", lambda: (None, None, None))
+    assert observer.main(["host", _RUN_ID, _SHA]) == 3
+    out, err = capfd.readouterr()
+    assert err == ""
+    assert (
+        out
+        == observer.make_host_failure_marker(
+            _RUN_ID, _SHA, "HOST_SCRIPT_VALIDATION_UNVERIFIED"
+        ).decode()
+    )
+    assert "BOGUS" not in out
+
+
+def test_classifier_cli_never_echoes_raw_host_or_ssh_output():
+    result = subprocess.run(  # noqa: S603 - fixed local module invocation
+        [
+            sys.executable,
+            "-m",
+            "boca_socios.host_boca_panel_exact_origin_readonly",
+            "classify",
+            "0",
+            _RUN_ID,
+            _SHA,
+        ],
+        input=b"https://secret.example.invalid/private?token=SECRET",
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+    assert result.returncode == 3
+    assert result.stderr == b""
+    assert result.stdout == (
+        b"BOCA_PANEL_ORIGIN_READONLY state=NO_GO reason=RECEIPT_MALFORMED "
+        b"observer_writes=0 deploy=NO_GO\n"
+    )
+
+
+def test_protected_observer_workflow_classifies_pre_ssh_and_remote_failure():
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
+    ).read_text()
+    name = "      - name: Observe Boca exact-origin health and site inode presence READ_ONLY\n"
+    step = workflow.split(name, 1)[1].split("      - name:", 1)[0]
+    script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+    check = subprocess.run(  # noqa: S603 - Bash parses an offline workflow fixture only
+        ["/bin/bash", "-n"], input=script.encode(), capture_output=True, check=False
+    )
+    assert check.returncode == 0, check.stderr.decode()
+    assert 'classify "$remote_rc" "$GITHUB_RUN_ID" "$BOCA_SOURCE_SHA"' in step
+    assert "PRE_SSH_MAIN_REF_UNVERIFIED" in step
+    assert "RECEIPT_MALFORMED" in step
+    assert "2>/dev/null" in step
+    assert 'printf \'%s\\n\' "$classified" >> "$GITHUB_STEP_SUMMARY"' in step
+    assert '< "$observation_dir/receipt"' in step
+    assert 'cat "$observation_dir/receipt"' not in step
+
+
+def test_prior_auth_or_setup_failure_gets_no_go_without_ssh():
+    workflow = (
+        Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
+    ).read_text()
+    name = "      - name: Classify exact-origin pre-SSH protected gate failure\n"
+    assert name in workflow
+    step = workflow.split(name, 1)[1].split("      - name:", 1)[0]
+    assert "failure() && inputs.operation == 'boca-panel-exact-origin-observe'" in step
+    assert "PRE_SSH_AUTH_OR_SETUP_UNVERIFIED" in step
+    assert "boca-panel-origin.started" in step

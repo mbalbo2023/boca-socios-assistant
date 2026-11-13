@@ -60,6 +60,12 @@ def _stage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, list[
     def volume() -> None:
         events.append("volume")
 
+    def mapped_owner(cid: str) -> custody.MappedOwner:
+        if cid != CONTROLLER_ID:
+            pytest.fail("foreign CID must not be opened")
+        events.append("kernel_identity")
+        return custody.MappedOwner(os.geteuid(), os.getegid())
+
     monkeypatch.setattr(bridge.cleanup, "verify_protected_boca_job_lease", verify)
     monkeypatch.setattr(bridge.pair, "observe", pair)
     monkeypatch.setattr(bridge.service, "read_installed_binding", binding)
@@ -69,11 +75,7 @@ def _stage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, list[
     monkeypatch.setattr(bridge.host, "_validate_key_volume", volume)
     monkeypatch.setattr(bridge.host, "_validate_owner_volume", volume)
     monkeypatch.setattr(bridge.custody, "_DOCKER_ROOT", root)
-    monkeypatch.setattr(
-        bridge.custody,
-        "read_proc_mapped_owner",
-        lambda pid: custody.MappedOwner(os.geteuid(), os.getegid()) if pid == 1133025 else None,
-    )
+    monkeypatch.setattr(bridge.custody, "read_container_mapped_owner", mapped_owner)
     return root, events
 
 
@@ -97,6 +99,7 @@ def test_predeploy_genuine_pair_binding_pid_three_private_inodes_and_same_lease(
     assert events.count("pair") >= 2
     assert events.count("binding") >= 2
     assert events.count("pid") == 4
+    assert events.count("kernel_identity") == 2
     assert events.count("volume") == 9
     assert b"10001" not in raw and b"sqlite" not in raw and b"/home" not in raw
     assert b"VERIFIED_FINAL" not in raw
@@ -121,8 +124,8 @@ def test_mismatched_docker_pid_never_reads_foreign_proc(
     monkeypatch.setattr(bridge.cleanup, "_docker", lambda *_: "333333\n")
     monkeypatch.setattr(
         bridge.custody,
-        "read_proc_mapped_owner",
-        lambda _: pytest.fail("foreign proc PID must not be opened"),
+        "read_container_mapped_owner",
+        lambda _: pytest.fail("foreign CID namespace must not be opened"),
     )
     with pytest.raises(bridge.MappingBridgeNoGo):
         bridge.observe_predeploy(RUN)
@@ -146,9 +149,26 @@ def test_changed_mapped_subuid_between_reads_refused(
     _stage(monkeypatch, tmp_path)
     first = custody.MappedOwner(os.geteuid(), os.getegid())
     iterator = iter((first, replace(first, uid=first.uid + 1)))
-    monkeypatch.setattr(bridge.custody, "read_proc_mapped_owner", lambda _: next(iterator))
+    monkeypatch.setattr(bridge.custody, "read_container_mapped_owner", lambda _: next(iterator))
     with pytest.raises(bridge.MappingBridgeNoGo):
         bridge.observe_predeploy(RUN)
+
+
+def test_changed_pidfd_or_user_namespace_fails_closed_before_preliminary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _root, events = _stage(monkeypatch, tmp_path)
+
+    def denied(cid: str) -> custody.MappedOwner:
+        assert cid == CONTROLLER_ID
+        events.append("kernel_denied")
+        raise custody.MappedCustodyNoGo("private namespace drift")
+
+    monkeypatch.setattr(bridge.custody, "read_container_mapped_owner", denied)
+    with pytest.raises(bridge.MappingBridgeNoGo) as exc:
+        bridge.observe_predeploy(RUN)
+    assert "namespace drift" not in str(exc.value)
+    assert events.count("kernel_denied") == 1
 
 
 @pytest.mark.parametrize(

@@ -2629,10 +2629,28 @@ jobs:
           # only O_PATH inode metadata for fixed Boca private volumes.
           # This intentionally cannot prove Docker volume provenance, rootless
           # namespace mapping, the owner's passkey, worker START or deploy.
+          # The runner emits only fixed NO_GO phases; host stdout/stderr is
+          # never copied to Actions logs or summaries.
+          phase=PRE_SSH_MAIN_REF_UNVERIFIED
+          classified_written=0
+          observation_dir=''
+          on_origin_exit() {
+            status=$?
+            if [[ "$status" -ne 0 && "$classified_written" -eq 0 ]]; then
+              printf 'BOCA_PANEL_ORIGIN_READONLY state=NO_GO reason=%s observer_writes=0 deploy=NO_GO\n' "$phase" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if [[ -n "$observation_dir" ]]; then
+              rm -f -- "$observation_dir/receipt" >/dev/null 2>&1 || :
+              rmdir -- "$observation_dir" >/dev/null 2>&1 || :
+            fi
+          }
+          trap on_origin_exit EXIT
+          printf 'STARTED\n' > "$RUNNER_TEMP/boca-panel-origin.started"
           [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
-            > "$RUNNER_TEMP/boca-panel-origin-main.json"
-          python3 scripts/check_main_ref.py "$RUNNER_TEMP/boca-panel-origin-main.json" "$BOCA_SOURCE_SHA"
+            > "$RUNNER_TEMP/boca-panel-origin-main.json" 2>/dev/null
+          python3 scripts/check_main_ref.py "$RUNNER_TEMP/boca-panel-origin-main.json" "$BOCA_SOURCE_SHA" >/dev/null 2>&1
+          phase=PRE_SSH_RUNNER_UNVERIFIED
           # The source stream must come only from authenticated exact main;
           # remote interpreter is fixed, isolated and cannot write pycache.
           test "$(git rev-parse HEAD)" = "$BOCA_SOURCE_SHA"
@@ -2645,7 +2663,7 @@ jobs:
           )"
           umask 077
           observation_dir="$(mktemp -d "$RUNNER_TEMP/boca-panel-origin.XXXXXXXX")"
-          trap 'rm -f -- "$observation_dir/receipt"; rmdir -- "$observation_dir"' EXIT
+          phase=SSH_TRANSPORT_UNVERIFIED
           remote_rc=0
           (
             ulimit -f 2 || exit 99
@@ -2656,16 +2674,31 @@ jobs:
               < src/boca_socios/host_boca_panel_exact_origin_readonly.py \
               > "$observation_dir/receipt" 2>/dev/null
           ) || remote_rc=$?
-          verification_rc=0
-          verified="$(python3 -m boca_socios.host_boca_panel_exact_origin_readonly \
-            verify "$GITHUB_RUN_ID" < "$observation_dir/receipt" 2>/dev/null)" \
-            || verification_rc=$?
-          if [[ "$remote_rc" -ne 0 || "$verification_rc" -ne 0 || ! "$verified" =~ ^BOCA_PANEL_ORIGIN_READONLY_V1\  ]]; then
-            printf 'BOCA_PANEL_ORIGIN_READONLY state=NO_GO reason=HOST_OR_RECEIPT_UNVERIFIED observer_writes=0 deploy=NO_GO\n' >> "$GITHUB_STEP_SUMMARY"
+          phase=CLASSIFIER_UNVERIFIED
+          classification_rc=0
+          classified="$(python3 -m boca_socios.host_boca_panel_exact_origin_readonly \
+            classify "$remote_rc" "$GITHUB_RUN_ID" "$BOCA_SOURCE_SHA" \
+            < "$observation_dir/receipt" 2>/dev/null)" || classification_rc=$?
+          if [[ "$classification_rc" -eq 0 && "$remote_rc" -eq 0 && "$classified" =~ ^BOCA_PANEL_ORIGIN_READONLY_V1\  ]]; then
+            printf '%s\n' "$classified" >> "$GITHUB_STEP_SUMMARY"
+            classified_written=1
+            printf 'BOCA_PANEL_ORIGIN_READONLY scope=EXACT_LOOPBACK_AND_METADATA_ONLY observer_writes=0 deploy=NO_GO\n' >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$classification_rc" -eq 3 && "$classified" =~ ^BOCA_PANEL_ORIGIN_READONLY\ state=NO_GO\ reason=(SSH_TRANSPORT_UNVERIFIED|REMOTE_EXECUTION_UNVERIFIED|RECEIPT_MISSING|RECEIPT_MALFORMED|HOST_INPUT_UNVERIFIED|HOST_SCRIPT_VALIDATION_UNVERIFIED|HOST_UID_UNVERIFIED|HOST_SITE_METADATA_UNVERIFIED|HOST_STORAGE_METADATA_UNVERIFIED|HOST_METADATA_DRIFT_UNVERIFIED|HOST_HEALTH_DRIFT_UNVERIFIED)\ observer_writes=0\ deploy=NO_GO$ ]]; then
+            printf '%s\n' "$classified" >> "$GITHUB_STEP_SUMMARY"
+            classified_written=1
+            exit 1
+          else
             exit 1
           fi
-          printf '%s\n' "$verified" >> "$GITHUB_STEP_SUMMARY"
-          printf 'BOCA_PANEL_ORIGIN_READONLY scope=EXACT_LOOPBACK_AND_METADATA_ONLY observer_writes=0 deploy=NO_GO\n' >> "$GITHUB_STEP_SUMMARY"
+      - name: Classify exact-origin pre-SSH protected gate failure
+        if: ${{ failure() && inputs.operation == 'boca-panel-exact-origin-observe' }}
+        run: |
+          set -euo pipefail
+          # If the protected Environment, coordinates or SSH setup failed,
+          # the diagnostic step was skipped. Do not guess the failing gate.
+          if [[ ! -f "$RUNNER_TEMP/boca-panel-origin.started" ]]; then
+            printf 'BOCA_PANEL_ORIGIN_READONLY state=NO_GO reason=PRE_SSH_AUTH_OR_SETUP_UNVERIFIED observer_writes=0 deploy=NO_GO\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Finalize Boca R186 original postcommit archive only, no second APPLY
         if: inputs.operation == 'boca-postcommit-finalize'
         env:

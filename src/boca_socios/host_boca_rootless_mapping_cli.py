@@ -221,7 +221,9 @@ def _mapped_owner(cid: str, pid: int) -> custody.MappedOwner:
         return value
 
     pinned_pid()
-    owner = custody.read_proc_mapped_owner(pid)
+    # Authenticate the PID from R177 on both sides of the kernel pidfd/user
+    # namespace witness. A reused numeric PID or changed namespace is NO_GO.
+    owner = custody.read_container_mapped_owner(cid)
     pinned_pid()
     if type(owner) is not custody.MappedOwner:
         raise _fail()

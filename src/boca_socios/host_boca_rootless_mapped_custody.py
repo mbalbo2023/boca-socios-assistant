@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import select
 import stat
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ _FILES = (
 )
 _MAP_ROW = re.compile(rb"[ \t]*([0-9]+)[ \t]+([0-9]+)[ \t]+([0-9]+)[ \t]*\n\Z")
 _CID = re.compile(r"[a-f0-9]{64}\Z")
+_USER_NS = re.compile(r"user:\[([0-9]{1,20})\]\Z")
 _LIMIT = 1 << 32
 
 
@@ -139,6 +141,80 @@ def read_proc_mapped_owner(pid: int) -> MappedOwner:
             os.close(directory)
 
 
+def _namespace_identity(pid: int) -> tuple[int, int]:
+    """Pin a real kernel ``nsfs`` user namespace, not a guessed subuid range.
+
+    Only this kernel-managed /proc magic link is followed, after its exact
+    ``user:[inode]`` target has been examined. Data and volume ancestors
+    continue to use O_PATH/O_NOFOLLOW exclusively.
+    """
+    proc_fd = -1
+    ns_fd = -1
+    user_fd = -1
+    try:
+        proc_fd = os.open(_PROC_ROOT / str(pid), _DIR)
+        ns_fd = os.open("ns", _DIR, dir_fd=proc_fd)
+        target = os.readlink("user", dir_fd=ns_fd)
+        matched = _USER_NS.fullmatch(target)
+        if matched is None:
+            raise _fail()
+        user_fd = os.open("user", os.O_RDONLY | os.O_CLOEXEC, dir_fd=ns_fd)
+        item = os.fstat(user_fd)
+        if item.st_dev <= 0 or item.st_ino <= 0 or item.st_ino != int(matched.group(1)):
+            raise _fail()
+        return item.st_dev, item.st_ino
+    except Exception:
+        raise _fail() from None
+    finally:
+        for descriptor in (user_fd, ns_fd, proc_fd):
+            if descriptor >= 0:
+                os.close(descriptor)
+
+
+def read_container_mapped_owner(controller_id: str) -> MappedOwner:
+    """Kernel PIDFD+namespace-bound mapper; caller must prove the exact pair.
+
+    The CID is never accepted from a user form. Production callers reattest
+    the exact live Boca pair and held lease immediately before/after this
+    sensor. A missing pidfd or unreadable namespace is NO_GO, not a fallback.
+    """
+    fd = -1
+    try:
+        if type(controller_id) is not str or _CID.fullmatch(controller_id) is None:
+            raise _fail()
+
+        def current_pid() -> int:
+            raw = cleanup._docker("inspect", "--format", "{{json .State.Pid}}", controller_id)
+            value = json.loads(raw)
+            if type(value) is not int or not 1 < value < 2**31:
+                raise _fail()
+            return value
+
+        pid = current_pid()
+        fd = os.pidfd_open(pid)
+        watcher = select.poll()
+        watcher.register(fd, select.POLLIN | select.POLLHUP | select.POLLERR)
+        if watcher.poll(0):
+            raise _fail()
+        first_namespace = _namespace_identity(pid)
+        if first_namespace == _namespace_identity(os.getpid()):
+            raise _fail()
+        first_owner = read_proc_mapped_owner(pid)
+        if (
+            _namespace_identity(pid) != first_namespace
+            or read_proc_mapped_owner(pid) != first_owner
+            or current_pid() != pid
+            or watcher.poll(0)
+        ):
+            raise _fail()
+        return first_owner
+    except Exception:
+        raise _fail() from None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
 def read_controller_mapped_owner(
     expected: postflight.PostflightExpected, lease: cleanup.BocaJobLease
 ) -> MappedOwner:
@@ -152,19 +228,7 @@ def read_controller_mapped_owner(
         runtime._attest_live_pair(expected, lease)
         cleanup.verify_protected_boca_job_lease(lease, expected.plan.attempt_id)
 
-        def current_pid() -> int:
-            raw = cleanup._docker(
-                "inspect", "--format", "{{json .State.Pid}}", expected.controller_id
-            )
-            value = json.loads(raw)
-            if type(value) is not int or not 1 < value < 2**31:
-                raise _fail()
-            return value
-
-        pid = current_pid()
-        mapped = read_proc_mapped_owner(pid)
-        if current_pid() != pid:
-            raise _fail()
+        mapped = read_container_mapped_owner(expected.controller_id)
         runtime._attest_live_pair(expected, lease)
         cleanup.verify_protected_boca_job_lease(lease, expected.plan.attempt_id)
         return mapped
