@@ -2592,8 +2592,25 @@ jobs:
           verification_rc=0
           verified="$(python3 -m boca_socios.host_boca_rootless_mapping_cli verify "$GITHUB_RUN_ID" \
             < "$receipt_dir/receipt" 2>/dev/null)" || verification_rc=$?
+          # A *validated* host refusal may expose only one fixed diagnostic
+          # boundary, never raw stderr, Docker IDs, UIDs or private filenames.
+          failure_boundary=UNVERIFIED
+          if [[ "$remote_rc" -eq 3 && "$verification_rc" -eq 3 && "$verified" == *'"state":"NO_GO"'* ]]; then
+            failure_boundary="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.readline().split(" ",1)[1])["failed_boundary"])' <<< "$verified")" || failure_boundary=UNVERIFIED
+            case "$failure_boundary" in
+              LEASE|PAIR_BINDING|VOLUMES|PID_MAP|INODES|STABILITY|INTERNAL) ;;
+              *) failure_boundary=UNVERIFIED ;;
+            esac
+          fi
+          case "$remote_rc" in
+            0) remote_status=RETURNED ;;
+            3) remote_status=HOST_REFUSED ;;
+            124|137) remote_status=TIMEOUT ;;
+            255) remote_status=SSH_255 ;;
+            *) remote_status=OTHER ;;
+          esac
           if [[ "$remote_rc" -ne 0 || "$verification_rc" -ne 0 || ! "$verified" =~ ^BOCA_ROOTLESS_MAPPING\  || "$verified" != *'"state":"PRELIMINARY_PREDEPLOY"'* || "$verified" != *'"stage":"PREDEPLOY"'* || "$verified" != *'"lease_verified":true'* ]]; then
-            printf 'BOCA_ROOTLESS_MAPPING state=NO_GO reason=HOST_OR_RECEIPT_UNVERIFIED observer_writes=0 cutover=NO_GO postflight=UNVERIFIED\n' >> "$GITHUB_STEP_SUMMARY"
+            printf 'BOCA_ROOTLESS_MAPPING state=NO_GO reason=HOST_OR_RECEIPT_UNVERIFIED failure_boundary=%s remote_status=%s observer_writes=0 cutover=NO_GO postflight=UNVERIFIED\n' "$failure_boundary" "$remote_status" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           # Only verified canonical, fixed-field metadata; no raw host output.
@@ -2616,10 +2633,14 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
             > "$RUNNER_TEMP/boca-panel-origin-main.json"
           python3 scripts/check_main_ref.py "$RUNNER_TEMP/boca-panel-origin-main.json" "$BOCA_SOURCE_SHA"
+          # The source stream must come only from authenticated exact main;
+          # remote interpreter is fixed, isolated and cannot write pycache.
+          test "$(git rev-parse HEAD)" = "$BOCA_SOURCE_SHA"
+          test -f src/boca_socios/host_boca_panel_exact_origin_readonly.py
           remote_command="$(python3 - "$GITHUB_RUN_ID" "$BOCA_SOURCE_SHA" <<'PY'
           import shlex
           import sys
-          print(shlex.join(["python3", "-", "host", *sys.argv[1:]]))
+          print(shlex.join(["/usr/bin/python3", "-I", "-B", "-", "host", *sys.argv[1:]]))
           PY
           )"
           umask 077

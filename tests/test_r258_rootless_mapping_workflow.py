@@ -120,3 +120,18 @@ def test_rootless_mapping_workflow_offline_qa_is_pr_readonly() -> None:
     assert "tests/test_r258_rootless_mapping_workflow.py" in step
     assert "test_host_boca_rootless_mapped_custody.py" in step
     assert "if: inputs.operation" not in step
+
+
+def test_rootless_mapping_failure_reports_only_authenticated_fixed_category() -> None:
+    body = _step("Observe Boca rootless mapped inode custody READ_ONLY")
+    assert '"failed_boundary"' in body
+    assert '"$remote_rc" -eq 3' in body
+    assert '"$verification_rc" -eq 3' in body
+    assert "failure_boundary=%s" in body
+    assert "HOST_OR_RECEIPT_UNVERIFIED" in body
+    assert '"$receipt_dir/receipt" >> "$GITHUB_STEP_SUMMARY"' not in body
+    assert "2>/dev/null" in body
+    assert (
+        '"$verified" >> "$GITHUB_STEP_SUMMARY"'
+        not in body.split('if [[ "$remote_rc" -ne 0', 1)[1].split("canonical_receipt_sha256=", 1)[0]
+    )

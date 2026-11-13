@@ -23,6 +23,11 @@ exacto de main** mediante SSH de usuario fijo `boca-deploy` con host key
 anclada; el runner revalida main inmediatamente antes del SSH y verifica una
 respuesta canónica limitada a 512 bytes. El selector no permite coordenadas
 de host, puerto, URL, CIDs, imágenes ni intentos introducidos por el usuario.
+Tras la revisión R261, se comprueba también que HEAD del checkout coincide
+con el SHA autenticado y que el módulo existe, y el host interpreta el
+stream con `/usr/bin/python3 -I -B -`, sin rutas de importación del cwd ni
+escrituras de bytecode. El streaming sigue ofreciendo menor garantía que
+el ZIP memfd protegido y jamás sustituye su preflight.
 
 1. Se hacen dos GET (uno por captura) exclusivamente a
    `127.0.0.1:8443/healthz`, enviando literalmente

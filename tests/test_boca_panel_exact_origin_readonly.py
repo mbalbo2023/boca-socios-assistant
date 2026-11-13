@@ -156,6 +156,12 @@ def test_exact_origin_probe_is_only_an_existing_protected_readonly_dispatch():
     flow = (
         Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
     ).read_text()
+    checkout = flow.split(
+        "      - name: Checkout exact reviewed main for authenticated artifact discovery\n", 1
+    )[1].split("      - name:", 1)[0]
+    assert "inputs.operation == 'boca-panel-exact-origin-observe'" in checkout
+    budget = next(line for line in flow.splitlines() if line.strip().startswith("BOCA_BUDGET:"))
+    assert "inputs.operation == 'boca-panel-exact-origin-observe'" in budget
     assert (
         "boca-panel-exact-origin-observe"
         in flow.split("      operation:", 1)[1].split("      source_sha:", 1)[0]
@@ -167,6 +173,8 @@ def test_exact_origin_probe_is_only_an_existing_protected_readonly_dispatch():
         "inputs.operation == 'boca-panel-exact-origin-observe'",
         'gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main"',
         "scripts/check_main_ref.py",
+        'test "$(git rev-parse HEAD)" = "$BOCA_SOURCE_SHA"',
+        'shlex.join(["/usr/bin/python3", "-I", "-B", "-", "host", *sys.argv[1:]])',
         '"$RUNNER_TEMP/boca-ssh/config"',
         "host_boca_panel_exact_origin_readonly.py",
         "observer_writes=0",

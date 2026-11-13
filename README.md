@@ -14,6 +14,17 @@ pruebas y el bundle protegido deben aprobar el **nuevo SHA exacto**.
 **APPLY, despliegue y BETA permanecen NO_GO** mientras falten evidencias
 físicas. No repetir el incidente R186.
 
+## R261 — clasificación rootless y RCA físico pendiente (13/11/2026 UTC)
+
+La Action READ_ONLY [#43360372904](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43360372904)
+falló después de `BOCA_MAIN_REF_PASS` con recibo no verificado. La causa física
+concreta continúa **UNKNOWN**. La corrección candidata conserva idéntico el
+recibo positivo schema1; sólo los rechazos usan schema2 y categoría de fase
+fija, verificada por el runner antes de mostrarla. No publica rutas, datos
+privados ni excepciones. Debe fusionarse, pasar CI y repetirse como nueva
+observación READ_ONLY antes de cualquier APPLY. **DEPLOY NO_GO**.
+[ADR0286](docs/ADR/0286-r261-rootless-readonly-failure-boundary.md).
+
 ## R259 — consolidación CODE_ONLY y diagnósticos (12/11/2026 ART; 13/11 UTC)
 
 Base verificada: `main c2b84429fe4c34140f784e3ba78c8b303f0e45af`;
@@ -56,7 +67,6 @@ archivos URL se encuentran genuinamente ausentes: evidencia
 symlink o divergencia continúan NO_GO; el postflight legacy y la aceptación
 Chrome/passkey siguen sin permitir ausencia. Es un cambio de código y tests,
 **no prueba física ni autorización de deploy**. Véase [ADR 0283](docs/ADR/0283-r259-unconfigured-site-url-technical-proof.md).
-
 ## R260 — estado consolidado de integración (13/11/2026; CODE_ONLY)
 
 La rama candidata reúne el pre-PARK R255, el terminal técnico R257, el
