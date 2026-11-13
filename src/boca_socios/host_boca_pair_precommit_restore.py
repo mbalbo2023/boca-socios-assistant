@@ -146,9 +146,7 @@ def _resource_custody(
     host._validate_owner_volume()
     incident._retained_names_present()
     all_volumes = set(incident._docker("volume", "ls", "-q").splitlines())
-    all_networks = set(
-        incident._docker("network", "ls", "--format", "{{.Name}}").splitlines()
-    )
+    all_networks = set(incident._docker("network", "ls", "--format", "{{.Name}}").splitlines())
     if (
         not _VOLUMES <= all_volumes <= (_VOLUMES | {"boca-socios_boca_telegram"})
         or not {_PRIVATE, _EGRESS} <= all_networks
@@ -396,8 +394,7 @@ def _postflight(run_id: str, before: Preflight) -> None:
     if (
         service._verified_installation(home) != old
         or host._browser_docker_ids() != {pins.old_controller_id, pins.old_worker_id}
-        or incident._path_inode(home / service._ROOT / "socket")
-        != pins.control_inode_sha256
+        or incident._path_inode(home / service._ROOT / "socket") != pins.control_inode_sha256
         or service._present(replace._name(home, INCIDENT)[0])
         or service._present(replace._name(home, INCIDENT)[1])
     ):
