@@ -143,6 +143,60 @@ def test_missing_volume_attestation_never_becomes_preliminary(
     assert "private" not in str(exc.value)
 
 
+@pytest.mark.parametrize(
+    ("defect", "boundary"),
+    [
+        ("host_owner", "INODES_OWNER_HOST"),
+        ("partial_owner", "INODES_OWNER_PARTIAL"),
+        ("foreign_owner", "INODES_OWNER_OTHER"),
+        ("missing", "INODES_ABSENT"),
+        ("mode", "INODES_MODE"),
+        ("hardlink", "INODES_LINK"),
+        ("symlink", "INODES_TYPE"),
+    ],
+)
+def test_rootless_inode_refusal_reveals_only_fixed_diagnostic_boundary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, defect: str, boundary: str
+) -> None:
+    root, _ = _stage(monkeypatch, tmp_path)
+    private = root / "volumes" / "boca-socios_boca_data" / "_data" / "boca.sqlite3"
+    uid, gid = os.geteuid(), os.getegid()
+    if defect == "host_owner":
+        observed_owner = custody.MappedOwner(uid + 1, gid + 1)
+        monkeypatch.setattr(bridge.custody, "read_container_mapped_owner", lambda _: observed_owner)
+    elif defect == "partial_owner":
+        observed_owner = custody.MappedOwner(uid, gid + 1)
+        monkeypatch.setattr(bridge.custody, "read_container_mapped_owner", lambda _: observed_owner)
+    elif defect == "foreign_owner":
+        observed_owner = custody.MappedOwner(uid + 2, gid + 2)
+        monkeypatch.setattr(bridge.custody, "read_container_mapped_owner", lambda _: observed_owner)
+        monkeypatch.setattr(bridge.cleanup, "EXPECTED_UID", uid + 3)
+        monkeypatch.setattr(bridge.cleanup, "EXPECTED_GID", gid + 3)
+    elif defect == "missing":
+        private.unlink()
+    elif defect == "mode":
+        private.chmod(0o644)
+    elif defect == "hardlink":
+        os.link(private, private.with_name("other"))
+    else:
+        private.rename(private.with_name("old"))
+        private.symlink_to("old")
+
+    with pytest.raises(bridge.MappingBridgeNoGo) as exc:
+        bridge.observe_predeploy(RUN)
+    assert exc.value.failed_boundary == boundary
+    raw = bridge.encode(RUN, "NO_GO", lease_verified=False, failed_boundary=boundary)
+    assert bridge.verify(raw, RUN) == raw
+    assert b"boca.sqlite3" not in raw and b"/volumes/" not in raw
+    assert b"10001" not in raw and b"old" not in raw
+
+
+def test_rootless_inode_refusal_never_accepts_arbitrary_reason() -> None:
+    for reason in ("INODES_OWNER_10001", "INODES_DATA", "INODES_TRACE_PRIVATE"):
+        with pytest.raises(bridge.MappingBridgeNoGo):
+            bridge.encode(RUN, "NO_GO", lease_verified=False, failed_boundary=reason)
+
+
 def test_changed_mapped_subuid_between_reads_refused(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -263,6 +317,15 @@ def test_readonly_lease_requires_preexisting_file_never_creates(
         assert held.active is True
     assert held.active is False
     assert lock.stat().st_size == 0
+
+    # The generator's yield must not erase a finite inode failure from its
+    # caller; otherwise all #506 INODES_* categories become unreachable.
+    with pytest.raises(custody.MappedCustodyNoGo) as raised:
+        with bridge._readonly_lease(RUN) as held:
+            assert held.active
+            raise custody.MappedCustodyNoGo("OWNER_HOST")
+    assert raised.value.reason == "OWNER_HOST"
+    assert held.active is False
 
 
 def test_cli_observe_redacts_failure_and_verify_copies_only_canonical_receipt(

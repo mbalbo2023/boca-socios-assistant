@@ -1,5 +1,16 @@
 # ADR 0290 — R262: UID mapeado y namespace real en custodia estructural
 
+## Reconciliación con #506 (R265)
+
+El observador de #506 agregó razones públicas finitas `INODES_*`. La revisión
+cruzada demostró por test rojo que el `except Exception` del context manager
+de la lease también absorbía la excepción levantada **dentro** del `with`
+tras el `yield` y borraba esa clasificación. Separamos adquisición (errores
+reducidos a NO_GO) del cuerpo (propaga el error tipado hasta el clasificador)
+y verificamos en un flock temporal real que el descriptor se cierra y la
+lease se invalida incluso al propagarse la anomalía. La salida sigue siendo
+una categoría fija NO_GO, nunca el propietario, inode, ruta o dato privado.
+
 **Fecha:** 13-NOV-2026 UTC. **Issue:** #417. **Estado:** CODE_ONLY / DEPLOY NO_GO.
 
 ## RCA y contrato

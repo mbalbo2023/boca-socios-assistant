@@ -38,14 +38,33 @@ _MAP_ROW = re.compile(rb"[ \t]*([0-9]+)[ \t]+([0-9]+)[ \t]+([0-9]+)[ \t]*\n\Z")
 _CID = re.compile(r"[a-f0-9]{64}\Z")
 _USER_NS = re.compile(r"user:\[([0-9]{1,20})\]\Z")
 _LIMIT = 1 << 32
+_REASONS = frozenset(
+    {
+        "OWNER_HOST",
+        "OWNER_PARTIAL",
+        "OWNER_OTHER",
+        "ABSENT",
+        "ACCESS",
+        "PATH",
+        "TYPE",
+        "DRIFT",
+        "LINK",
+        "MODE",
+        "OTHER",
+    }
+)
 
 
 class MappedCustodyNoGo(ValueError):
     """Public fixed-code refusal: no private mapping or inode details."""
 
+    def __init__(self, reason: str = "OTHER") -> None:
+        self.reason = reason if reason in _REASONS else "OTHER"
+        super().__init__("BOCA_MAPPED_CUSTODY NO_GO")
 
-def _fail() -> MappedCustodyNoGo:
-    return MappedCustodyNoGo("BOCA_MAPPED_CUSTODY NO_GO")
+
+def _fail(reason: str = "OTHER") -> MappedCustodyNoGo:
+    return MappedCustodyNoGo(reason)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -250,25 +269,38 @@ def _file_identity(root: Path, volume: str, name: str, owner: MappedOwner) -> st
             if not stat.S_ISDIR(folder.st_mode) or (
                 index >= root_length and stat.S_IMODE(folder.st_mode) & 0o022
             ):
-                raise _fail()
+                raise _fail("PATH")
         fd = os.open(name, _META, dir_fd=directory)
         try:
             opened = os.fstat(fd)
             named = os.stat(name, dir_fd=directory, follow_symlinks=False)
         finally:
             os.close(fd)
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or (opened.st_dev, opened.st_ino, opened.st_mode, opened.st_uid, opened.st_gid)
-            != (named.st_dev, named.st_ino, named.st_mode, named.st_uid, named.st_gid)
-            or opened.st_nlink != named.st_nlink
-            or opened.st_nlink != 1
-            or stat.S_IMODE(opened.st_mode) not in (0o400, 0o600)
-            or (opened.st_uid, opened.st_gid) != (owner.uid, owner.gid)
-            or opened.st_dev < 0
-            or opened.st_ino <= 0
-        ):
-            raise _fail()
+        if not stat.S_ISREG(opened.st_mode):
+            raise _fail("TYPE")
+        if (opened.st_dev, opened.st_ino, opened.st_mode, opened.st_uid, opened.st_gid) != (
+            named.st_dev,
+            named.st_ino,
+            named.st_mode,
+            named.st_uid,
+            named.st_gid,
+        ) or opened.st_nlink != named.st_nlink:
+            raise _fail("DRIFT")
+        if opened.st_nlink != 1:
+            raise _fail("LINK")
+        if stat.S_IMODE(opened.st_mode) not in (0o400, 0o600):
+            raise _fail("MODE")
+        if (opened.st_uid, opened.st_gid) != (owner.uid, owner.gid):
+            if opened.st_uid == owner.uid or opened.st_gid == owner.gid:
+                raise _fail("OWNER_PARTIAL")
+            if (opened.st_uid, opened.st_gid) == (
+                cleanup.EXPECTED_UID,
+                cleanup.EXPECTED_GID,
+            ):
+                raise _fail("OWNER_HOST")
+            raise _fail("OWNER_OTHER")
+        if opened.st_dev < 0 or opened.st_ino <= 0:
+            raise _fail("OTHER")
         private = (
             volume,
             name,
@@ -282,8 +314,16 @@ def _file_identity(root: Path, volume: str, name: str, owner: MappedOwner) -> st
         return hashlib.sha256(
             b"BOCA_MAPPED_INODE_V1\0" + json.dumps(private, separators=(",", ":")).encode()
         ).hexdigest()
+    except MappedCustodyNoGo:
+        raise
+    except FileNotFoundError:
+        raise _fail("ABSENT") from None
+    except PermissionError:
+        raise _fail("ACCESS") from None
+    except OSError:
+        raise _fail("PATH") from None
     except Exception:
-        raise _fail() from None
+        raise _fail("OTHER") from None
     finally:
         if directory >= 0:
             os.close(directory)
@@ -309,6 +349,8 @@ def capture_mapped_custody(
         return tuple(
             _file_identity(rootless_docker_root, volume, file, owner) for volume, file in _FILES
         )  # type: ignore[return-value]
+    except MappedCustodyNoGo:
+        raise
     except Exception:
         raise _fail() from None
 

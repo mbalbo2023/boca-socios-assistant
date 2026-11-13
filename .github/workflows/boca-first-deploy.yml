@@ -2598,7 +2598,10 @@ jobs:
           if [[ "$remote_rc" -eq 3 && "$verification_rc" -eq 3 && "$verified" == *'"state":"NO_GO"'* ]]; then
             failure_boundary="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.readline().split(" ",1)[1])["failed_boundary"])' <<< "$verified")" || failure_boundary=UNVERIFIED
             case "$failure_boundary" in
-              LEASE|PAIR_BINDING|VOLUMES|PID_MAP|INODES|STABILITY|INTERNAL) ;;
+              LEASE|PAIR_BINDING|VOLUMES|PID_MAP|INODES|STABILITY|INTERNAL|\
+              INODES_OWNER_HOST|INODES_OWNER_PARTIAL|INODES_OWNER_OTHER|\
+              INODES_ABSENT|INODES_ACCESS|INODES_PATH|INODES_TYPE|\
+              INODES_DRIFT|INODES_LINK|INODES_MODE|INODES_OTHER) ;;
               *) failure_boundary=UNVERIFIED ;;
             esac
           fi

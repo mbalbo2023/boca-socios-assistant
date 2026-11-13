@@ -1,7 +1,7 @@
-# ADR 0288 — R264: one-way same-lease successor admission and terminal readback
+# ADR 0291 — R264: one-way same-lease successor admission and terminal readback
 
 **Date:** 13-NOV-2026 UTC. **Issue:** #417. **Base:** `main`
-`4bc94474492943cefc4069cb751ca4b7f89a3202`. **State:** CODE_ONLY;
+`ecdf30a0bc890c7c8f03e6f0ecd350405b0df1f3` (#506 merged). **State:** CODE_ONLY;
 physical `APPLY` and BETA deployment remain **NO_GO**.
 
 ## Evidence-backed root causes

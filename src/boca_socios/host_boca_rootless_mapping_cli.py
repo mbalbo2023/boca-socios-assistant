@@ -43,6 +43,7 @@ _FIELDS = frozenset(
 _FAILURE_FIELDS = _FIELDS | {"failed_boundary"}
 _BOUNDARIES = frozenset(
     {"LEASE", "PAIR_BINDING", "VOLUMES", "PID_MAP", "INODES", "STABILITY", "INTERNAL"}
+    | {f"INODES_{reason}" for reason in custody._REASONS}
 )
 _MAX_BYTES = 1024
 
@@ -146,40 +147,45 @@ def _readonly_lease(run_id: str) -> Iterator[cleanup.BocaJobLease]:
     handle = -1
     lease: cleanup.BocaJobLease | None = None
     try:
-        if (
-            type(run_id) is not str
-            or _RUN.fullmatch(run_id) is None
-            or (os.geteuid(), os.getegid()) != (cleanup.EXPECTED_UID, cleanup.EXPECTED_GID)
-        ):
-            raise _fail()
-        folder = os.open(
-            cleanup.LEASE_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-        )
-        directory = os.fstat(folder)
-        if (
-            not stat.S_ISDIR(directory.st_mode)
-            or (directory.st_uid, directory.st_gid) != (cleanup.EXPECTED_UID, cleanup.EXPECTED_GID)
-            or stat.S_IMODE(directory.st_mode) != 0o700
-        ):
-            raise _fail()
-        handle = os.open(
-            cleanup.LEASE_FILE, os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=folder
-        )
-        item = os.fstat(handle)
-        if (
-            not stat.S_ISREG(item.st_mode)
-            or (item.st_uid, item.st_gid) != (cleanup.EXPECTED_UID, cleanup.EXPECTED_GID)
-            or stat.S_IMODE(item.st_mode) != 0o600
-            or item.st_nlink != 1
-            or item.st_size != 0
-        ):
-            raise _fail()
-        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        lease = cleanup.BocaJobLease(run_id, handle, os.getpid(), True)
-        cleanup.verify_protected_boca_job_lease(lease, run_id)
+        # Only acquisition errors are rewritten. The caller's body (after
+        # yield) must retain MappedCustodyNoGo.reason so the fixed INODES_*
+        # diagnostic survives without publishing private paths or owners.
+        try:
+            if (
+                type(run_id) is not str
+                or _RUN.fullmatch(run_id) is None
+                or (os.geteuid(), os.getegid()) != (cleanup.EXPECTED_UID, cleanup.EXPECTED_GID)
+            ):
+                raise _fail()
+            folder = os.open(
+                cleanup.LEASE_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+            )
+            directory = os.fstat(folder)
+            if (
+                not stat.S_ISDIR(directory.st_mode)
+                or (directory.st_uid, directory.st_gid)
+                != (cleanup.EXPECTED_UID, cleanup.EXPECTED_GID)
+                or stat.S_IMODE(directory.st_mode) != 0o700
+            ):
+                raise _fail()
+            handle = os.open(
+                cleanup.LEASE_FILE, os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=folder
+            )
+            item = os.fstat(handle)
+            if (
+                not stat.S_ISREG(item.st_mode)
+                or (item.st_uid, item.st_gid) != (cleanup.EXPECTED_UID, cleanup.EXPECTED_GID)
+                or stat.S_IMODE(item.st_mode) != 0o600
+                or item.st_nlink != 1
+                or item.st_size != 0
+            ):
+                raise _fail()
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lease = cleanup.BocaJobLease(run_id, handle, os.getpid(), True)
+            cleanup.verify_protected_boca_job_lease(lease, run_id)
+        except Exception:
+            raise _fail() from None
         yield lease
-    except Exception:
-        raise _fail() from None
     finally:
         if lease is not None:
             lease.active = False
@@ -278,6 +284,10 @@ def observe_predeploy(run_id: str) -> bytes:
                 raise _fail()
             cleanup.verify_protected_boca_job_lease(lease, run_id)
         return encode(run_id, "PRELIMINARY_PREDEPLOY", lease_verified=True)
+    except custody.MappedCustodyNoGo as exc:
+        if boundary == "INODES":
+            boundary = f"INODES_{exc.reason}"
+        raise MappingBridgeNoGo(boundary) from None
     except Exception:
         raise MappingBridgeNoGo(boundary) from None
 
