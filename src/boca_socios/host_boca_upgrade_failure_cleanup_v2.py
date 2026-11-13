@@ -478,6 +478,7 @@ def _restored_failure_receipt(
         raise _fail()
     allow, retire_containers, preserve_images = _allowed_failure_targets(plan, initial)
     old = frozenset({plan.old_controller_id, plan.old_worker_id})
+    frozen_images = {item.ident: item for item in initial.images}
     frozen_volumes = {item.name: item for item in initial.volumes}
     frozen_networks = {item.ident: item for item in initial.networks}
     first: cleanup.Inventory | None = None
@@ -510,10 +511,18 @@ def _restored_failure_receipt(
             if container.running or target.ident not in retire_containers:
                 raise cleanup.CleanupError("Boca FAILURE live or non-attempt container retained")
         if target.kind == "image":
-            if target.ident in preserve_images or any(
-                container.image_id == target.ident for container in snapshot.containers
+            current_image = next(
+                (item for item in snapshot.images if item.ident == target.ident), None
+            )
+            if (
+                target.ident in preserve_images
+                or current_image is None
+                or current_image != frozen_images.get(target.ident)
+                or current_image.source != cleanup.BOCA_SOURCE
+                or current_image.references not in ((plan.controller_ref,), (plan.worker_ref,))
+                or any(container.image_id == target.ident for container in snapshot.containers)
             ):
-                raise cleanup.CleanupError("Boca FAILURE referenced or protected image retained")
+                raise cleanup.CleanupError("Boca FAILURE image identity or references changed")
         if target.kind == "volume":
             current_volume = next(
                 (item for item in snapshot.volumes if item.name == target.ident), None

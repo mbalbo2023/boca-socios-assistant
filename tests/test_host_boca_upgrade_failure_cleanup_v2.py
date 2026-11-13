@@ -662,6 +662,51 @@ def test_attempt_target_owner_swap_between_plan_and_delete_must_not_delete(
     assert deletions == []
 
 
+@pytest.mark.parametrize("drift", ["foreign_reference", "missing_source"])
+def test_attempt_image_identity_drift_before_delete_preserves_image(
+    drift: str, monkeypatch: pytest.MonkeyPatch, lease: gc.BocaJobLease
+) -> None:
+    """A candidate image ID alone cannot authorize removal after its identity changes."""
+    _journal(stage.ROOT)
+    current = replace(_inventory(candidate=True), containers=_inventory().containers)
+    observations = 0
+    deletions: list[gc.Target] = []
+
+    def probe() -> gc.Inventory:
+        nonlocal observations
+        observations += 1
+        images = [image for image in current.images if image.ident == NEW_CONTROLLER_IMAGE]
+        if observations < 5 or not images:
+            return current
+        candidate_image = images[0]
+        replacement = (
+            replace(candidate_image, references=("foreign.example/independent-service:live",))
+            if drift == "foreign_reference"
+            else replace(candidate_image, source=None)
+        )
+        return replace(current, images=(*current.images[:-1], replacement))
+
+    def delete(target: gc.Target) -> None:
+        nonlocal current
+        deletions.append(target)
+        if target == gc.Target("image", NEW_CONTROLLER_IMAGE):
+            current = replace(
+                current,
+                images=tuple(i for i in current.images if i.ident != NEW_CONTROLLER_IMAGE),
+                global_image_ids=current.global_image_ids - {NEW_CONTROLLER_IMAGE},
+            )
+        else:
+            pytest.fail("attempt cleanup touched unrelated resource")
+
+    monkeypatch.setattr(service, "read_installed_binding", lambda *_: _installed())
+    monkeypatch.setattr(gc, "capture_inventory", probe)
+    monkeypatch.setattr(gc, "delete_exact", delete)
+    with pytest.raises(failure.FailureCleanupNoGo):
+        _run(lease, restored=True)
+    assert observations >= 5
+    assert deletions == []
+
+
 def test_restored_worker_on_private_bridge_cannot_authorize_any_cleanup(
     monkeypatch: pytest.MonkeyPatch, lease: gc.BocaJobLease
 ) -> None:

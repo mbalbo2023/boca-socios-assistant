@@ -62,6 +62,10 @@ formulario.
    de volumen/red no basta por nombre/ID: congela el objeto íntegro del
    inventario inicial y exige que **etiquetas, propietario del intento,
    nombre/ID y adjuntos** coincidan otra vez justo antes del borrado.
+   Para imágenes por ID inmutable exige además igualdad del objeto `Image`
+   congelado (referencias y fuente), pertenencia actual al par de refs OCI
+   candidatas y ningún contenedor referenciante. Un nuevo alias de otro
+   servicio sobre el mismo ID no autoriza eliminarlo.
    La verificación
    de ausencia se hace por ID exacto. No hay Docker prune, `--force`,
    Compose global, SSH ajeno ni operaciones sobre Porota.
@@ -91,6 +95,13 @@ formulario.
   unido a `boca_private`; el chequeo previo sólo validaba montajes. Se
   conservaron las tres pruebas RED y se añadieron rechazo de testigo físico
   ausente, drift del inode SITE y cambio del ID de egress.
+- La revisión adicional del PR #496 reprodujo otro P1: entre el plan y
+  `delete_exact`, la imagen candidata con el mismo ID recibía una referencia
+  ajena o perdía su procedencia. El SHA anterior `cd3d93e0482a791eb803cc13de3552ea74745e59`
+  intentaba eliminarla y terminaba con `cleanup_status=ACCEPT`. Dos pruebas
+  nuevas (`foreign_reference` y `missing_source`) fallaron RED por ese motivo;
+  luego de comparar identidad completa inmediatamente antes de cada borrado,
+  el módulo pasó 23/23 pruebas locales. Esta evidencia sigue siendo CODE_ONLY.
 - Validación completa local tras revisión P1: `PYTHONPATH=src pytest -q -n 4`
   = 7774 PASS, 1 SKIP
   (AF_UNIX restringido por kernel del sandbox) y 34 subtests PASS. Ruff,
