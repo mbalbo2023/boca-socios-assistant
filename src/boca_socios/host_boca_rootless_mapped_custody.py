@@ -45,6 +45,9 @@ _REASONS = frozenset(
         "OWNER_OTHER",
         "ABSENT",
         "ACCESS",
+        "ACCESS_TRAVERSE",
+        "ACCESS_FINAL_OPEN",
+        "ACCESS_FINAL_STAT",
         "PATH",
         "TYPE",
         "DRIFT",
@@ -262,7 +265,10 @@ def _file_identity(root: Path, volume: str, name: str, owner: MappedOwner) -> st
         directory = os.open("/", _DIR)
         root_length = len(root.parts) - 1
         for index, part in enumerate((*root.parts[1:], "volumes", volume, "_data")):
-            child = os.open(part, _DIR, dir_fd=directory)
+            try:
+                child = os.open(part, _DIR, dir_fd=directory)
+            except PermissionError:
+                raise _fail("ACCESS_TRAVERSE") from None
             os.close(directory)
             directory = child
             folder = os.fstat(directory)
@@ -270,10 +276,16 @@ def _file_identity(root: Path, volume: str, name: str, owner: MappedOwner) -> st
                 index >= root_length and stat.S_IMODE(folder.st_mode) & 0o022
             ):
                 raise _fail("PATH")
-        fd = os.open(name, _META, dir_fd=directory)
+        try:
+            fd = os.open(name, _META, dir_fd=directory)
+        except PermissionError:
+            raise _fail("ACCESS_FINAL_OPEN") from None
         try:
             opened = os.fstat(fd)
-            named = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            try:
+                named = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            except PermissionError:
+                raise _fail("ACCESS_FINAL_STAT") from None
         finally:
             os.close(fd)
         if not stat.S_ISREG(opened.st_mode):

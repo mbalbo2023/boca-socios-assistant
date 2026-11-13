@@ -70,3 +70,45 @@ El resultado de ese futuro diagnóstico definirá **una** corrección
 fix-forward documentada para la causa concreta; no se modifica owner,
 permisos, Docker ni host a partir de conjeturas. Porota y recursos externos
 quedan fuera del alcance.
+
+
+## R267 — Permiso denegado en la custodia física (13-NOV-2026 UTC)
+
+El primer diagnóstico después de #505, [run #43368857248](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43368857248),
+ejecutó `main=021eb87f72f1bf5ed044b8217c584308a93c7fff`
+y emitió rechazo de host **canónico y verificado**
+`failure_boundary=INODES_ACCESS`, `remote_status=HOST_REFUSED`,
+`observer_writes=0`, `postflight=UNVERIFIED`. La nueva frontera
+`_readonly_lease` mantuvo el subtipo: `PermissionError` dentro de
+`_file_identity` durante lectura de metadatos de los tres volúmenes Boca.
+La captura llegó después de validaciones previas de lease, par, volúmenes y
+mapeo PIDFD/UID/GID; no certifica la segunda captura ni los archivos.
+
+La semántica de Linux permite O_PATH sobre el objeto final sin permiso de
+lectura de su contenido, pero requiere permiso de búsqueda en directorios
+antecesores. **Hipótesis no confirmada:** un directorio `_data` del
+namespace rootless, propiedad de un UID subordinado y sin búsqueda para
+el usuario host, podría producir EACCES. El recibo no identifica cuál
+syscall, directorio, volumen o inodo falló; está prohibido deducir un chown.
+
+Una nueva regresión TDD primero exige tres motivos literales:
+`INODES_ACCESS_TRAVERSE`, `INODES_ACCESS_FINAL_OPEN` e
+`INODES_ACCESS_FINAL_STAT`. La única modificación de producción requerida
+es tipificar PermissionError de la apertura de un componente del prefijo,
+de la apertura O_PATH del nombre final, o de la segunda os.stat sin seguir
+enlaces, respectivamente. Las excepciones de metadatos no clasificadas
+siguen `INODES_ACCESS`, siempre NO_GO. El bridge mantiene exclusivamente
+los motivos enumerados, sin campos extra; Actions sólo publica la categoría
+tras SSH exit 3 y un recibo NO_GO schema2 validado por el runner.
+No se publica nombre de volumen, archivo, ruta, permisos concretos, UID/GID,
+PID/CID, contenido ni trace. No se ejecuta Docker exec, cambia TLS, se abren
+archivos para lectura ni se modifican credenciales/volúmenes.
+
+El primer commit de [PR #507](https://github.com/mbalbo2023/boca-socios-assistant/pull/507)
+contiene solamente las regresiones que deben fallar contra la versión
+anterior. La implementación, el bundle protegido, Ruff, mypy, política y
+CI hosted exact-head son requisitos obligatorios para su integración.
+Aun si el diagnóstico posterior confirma un bloqueo de acceso al archivo,
+la decisión de infraestructura (atestación autenticada dentro del namespace
+o permisos de búsqueda mínimos y auditables) exige revisión y autorización
+concreta antes de tocar el host. `DEPLOY/APPLY/BETA NO_GO`.
