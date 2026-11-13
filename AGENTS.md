@@ -1,5 +1,28 @@
 # Binding instructions for every coding agent
 
+## RCA R275 — una sola cronología de los recibos físicos (13-NOV-2026)
+
+El APPLY protegido [#1081](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43473805164)
+falló con `exit 3` **antes de SSH**: las observaciones READ_ONLY
+[#1079](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43472874879)
+(par instalado, `b61ca3e`, controlador healthy, worker Created, puerto 8443
+loopback) y [#1080](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43473379911)
+(recursos retenidos, `observer_writes=0`) eran genuinas. **No** se instaló
+`85e66546` en ese pase. El guard inicial de
+`scripts/attest_current_pair_v2.py` todavía exigía
+`retained < pair < apply`, en conflicto con el bridge R274 que exige
+`pair < retained < apply`. El replay offline con los ZIP reales de GitHub
+reprodujo el defecto y pasó luego de corregir esa única comparación.
+
+**Obligatorio antes de cualquier siguiente upgrade:** probar la cronología
+`original_attempt < pair_observe < retained_observe < apply` en **todos** los
+módulos y en el test integrado del runner usando recibos inmutables;
+comparar `MAIN_SHA`, `RELEASE_SHA` e `INSTALLED_SHA`. No reejecutar R186,
+no recrear perfiles, no duplicar imágenes de una misma fuente, no permitir
+reservas reales, no afectar Porota ni PPI Watch. Si el runner falla antes
+de SSH: RCA antes de otro intento. Si alcanza el host: recuperar journal y
+observación física, jamás retry ciego. Véase ADR 0294 e issue #417.
+
 ## RCA R274 — primero probar la procedencia histórica, después publicar (13-NOV-2026)
 
 Los pases protegidos 43466413414 (#1074) y 43467640849 (#1076) fallaron

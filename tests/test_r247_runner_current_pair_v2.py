@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from boca_socios import host_boca_current_pair_v2 as current
+from boca_socios import host_boca_retained_resources as retained_resources
 from boca_socios import host_boca_upgrade_observation_bridge as observed
 from boca_socios import host_boca_upgrade_release_bridge as release_bridge
 from boca_socios import host_boca_upgrade_retained_bridge as retained_bridge
@@ -24,13 +25,20 @@ from test_host_boca_current_pair_v2 import (
     _run_record,
     _zip,
 )
-from test_host_boca_upgrade_adapters import OBSERVER_SOURCE, WITNESS_RUN
+from test_host_boca_upgrade_adapters import OBSERVER_SOURCE
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import attest_current_pair_v2 as runner  # noqa: E402
 
 HISTORICAL_STEPS = retained_bridge._STEPS
+
+
+def _retained_receipt(run_id: str) -> bytes:
+    """Rebind real resource-creator evidence to a *later* READ_ONLY run."""
+    value = json.loads(HISTORICAL_SEED.removeprefix(b"BOCA_RETAINED_RESOURCES "))
+    value["observation_run_id"] = run_id
+    return retained_resources.observe(run_id, snapshot_reader=lambda _run: value)
 
 
 @dataclass
@@ -51,12 +59,17 @@ class CompleteGitHub(FakeGitHub):
     def __init__(self, step: int = 1) -> None:
         plan, previous, pair, original = _inputs(step=step)
         super().__init__(plan, previous, pair)
-        self.runs[WITNESS_RUN] = _run_record(WITNESS_RUN, OBSERVER_SOURCE, release=False)
-        self.jobs[WITNESS_RUN] = {
+        self.retained_run = str(int(plan.observation_run_id) + 2)
+        assert int(plan.observation_run_id) < int(self.retained_run) < int(plan.attempt_id)
+        self.retained_raw = _retained_receipt(self.retained_run)
+        self.runs[self.retained_run] = _run_record(
+            self.retained_run, OBSERVER_SOURCE, release=False
+        )
+        self.jobs[self.retained_run] = {
             "total_count": 1,
             "jobs": [
                 {
-                    "run_id": int(WITNESS_RUN),
+                    "run_id": int(self.retained_run),
                     "name": "approved-boca-manual-operation",
                     "head_sha": OBSERVER_SOURCE,
                     "status": "completed",
@@ -68,16 +81,16 @@ class CompleteGitHub(FakeGitHub):
                 }
             ],
         }
-        archive = _zip("boca-retained-observation.receipt", HISTORICAL_SEED)
+        archive = _zip("boca-retained-observation.receipt", self.retained_raw)
         self.archives[34] = archive
         self.retained_artifact = _artifact(
-            "boca-retained-resources-observation", 34, WITNESS_RUN, OBSERVER_SOURCE, archive
+            "boca-retained-resources-observation", 34, self.retained_run, OBSERVER_SOURCE, archive
         )
         self._previous = previous
         self._pair = pair
 
     def get_json(self, path: str) -> object:
-        if path == f"actions/runs/{WITNESS_RUN}/artifacts?per_page=100":
+        if path == f"actions/runs/{self.retained_run}/artifacts?per_page=100":
             return {"total_count": 1, "artifacts": [self.retained_artifact]}
         return super().get_json(path)
 
@@ -147,7 +160,7 @@ def _inputs_for_runner(tmp_path: Path, *, step: int = 1):
         plan.observation_run_id,
         plan.attempt_id,
         plan.release_run_id,
-        WITNESS_RUN,
+        github.retained_run,
         plan.controller_ref,
         plan.worker_ref,
         str(folder),
@@ -163,13 +176,13 @@ def test_runner_produces_historical_seed_and_current_pair_v2_without_host_go(
     github, catalog, argv, folder = _inputs_for_runner(tmp_path, step=step)
     runner.attest_runner(*argv, github=github, release_catalog=catalog, now=NOW)
     assert catalog.reads == 2
-    assert (folder / "boca-retained-observation.receipt").read_bytes() == HISTORICAL_SEED
+    assert (folder / "boca-retained-observation.receipt").read_bytes() == github.retained_raw
     assert (folder / "retained-proof.json").read_bytes() == b'{"state":"NO_GO"}\n'
     v2 = current.verify_current_pair_v2((folder / "current-pair-v2.receipt").read_bytes())
     assert v2["target_main_sha"] == github.plan.new_source_sha
     assert v2["previous_release_run"] == github._previous
     assert v2["apply_authorized"] is False
-    assert v2["historical_resource_custody"]["original_observation_run"] == WITNESS_RUN
+    assert v2["historical_resource_custody"]["original_observation_run"] == github.retained_run
     assert all(
         (folder / name).stat().st_mode & 0o777 == 0o600
         for name in (
@@ -197,11 +210,11 @@ def test_runner_failclosed_without_writing_any_proof(tmp_path: Path, tamper: str
     if tamper == "historical_artifact":
         github.retained_artifact["expired"] = True
     elif tamper == "historical_actor":
-        github.runs[WITNESS_RUN]["actor"] = {"login": "someone-else"}
+        github.runs[github.retained_run]["actor"] = {"login": "someone-else"}
     elif tamper == "historical_job":
-        github.jobs[WITNESS_RUN]["jobs"][0]["steps"][0]["conclusion"] = "failure"
+        github.jobs[github.retained_run]["jobs"][0]["steps"][0]["conclusion"] = "failure"
     elif tamper == "historical_rerun":
-        github.runs[WITNESS_RUN]["run_attempt"] = 2
+        github.runs[github.retained_run]["run_attempt"] = 2
     elif tamper == "previous_run":
         github.runs[github._previous]["conclusion"] = "failure"
     elif tamper == "previous_manifest":
@@ -229,6 +242,29 @@ def test_runner_preexisting_output_does_not_leave_partially_attested_files(
     assert not (folder / "boca-retained-observation.receipt").exists()
     assert not (folder / "retained-proof.json").exists()
     assert (folder / "current-pair-v2.receipt").read_bytes() == b"FORGED"
+
+
+@pytest.mark.parametrize("retained_offset", [-1, 0, 1])
+def test_runner_rejects_retained_observation_out_of_order_before_github_or_writes(
+    tmp_path: Path, retained_offset: int
+) -> None:
+    github, catalog, argv, folder = _inputs_for_runner(tmp_path)
+    submitted = list(argv)
+    submitted[4] = str(
+        int(submitted[1]) + retained_offset
+        if retained_offset <= 0
+        else int(submitted[2]) + retained_offset
+    )
+    with pytest.raises(runner.RunnerCurrentPairNoGo):
+        runner.attest_runner(*submitted, github=github, release_catalog=catalog, now=NOW)
+    assert catalog.reads == 0
+    assert set(p.name for p in folder.iterdir()) == {
+        "boca-release-manifest.json",
+        "boca-browser-release-manifest.json",
+        "runner-proof.json",
+        "boca-pair-observation.receipt",
+        "observation-proof.json",
+    }
 
 
 def test_release_catalog_accepts_exact_github_run_then_fails_on_second_result() -> None:
