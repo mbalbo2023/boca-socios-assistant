@@ -429,17 +429,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             )
         except Exception:
-            # Any unknown exception remains indeterminate, never ACCEPT.
-            # Future activation must preserve post-marker uncertainty here.
+            # This branch only covers the read-only preflight, before a lease
+            # or commit marker. Do not invent an irreversible host effect.
             refused = upgrade.PairUpgradeReceipt(
                 attempt_id=args[1],
                 state="NO_GO",
                 cleanup="INDETERMINATE",
                 old_restored=False,
-                commit_started=True,
+                commit_started=False,
                 controller_id=None,
                 worker_id=None,
-                failed_phase="COMMIT_MARKER",
+                failed_phase="ATTEST",
             )
             raw = encode_upgrade(refused)
         sys.stdout.buffer.write(raw) if argv is None else print(raw.decode("ascii"), end="")

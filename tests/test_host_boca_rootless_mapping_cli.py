@@ -272,3 +272,70 @@ def test_cli_observe_redacts_failure_and_verify_copies_only_canonical_receipt(
     assert b'"state":"NO_GO"' in no_go
     assert b'"lease_verified":false' in no_go
     assert b"secret" not in no_go
+
+
+def test_failed_boundary_is_fixed_and_does_not_publish_private_host_exception(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _stage(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        bridge.host,
+        "_validate_key_volume",
+        lambda: (_ for _ in ()).throw(OSError("private/key/path:175536")),
+    )
+    sink = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", type("Sink", (), {"buffer": sink})())
+    assert bridge.main(["observe", RUN]) == 3
+    receipt = bridge.verify(sink.getvalue(), RUN)
+    payload = json.loads(receipt.split(b" ", 1)[1])
+    assert payload["failed_boundary"] == "VOLUMES"
+    assert payload["schema"] == 2
+    assert b"private" not in receipt and b"175536" not in receipt
+
+
+def test_missing_host_lease_diagnoses_lease_without_private_data(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _stage(monkeypatch, tmp_path)
+
+    @contextmanager
+    def missing(_run: str) -> Iterator[cleanup.BocaJobLease]:
+        raise OSError("private runtime path")
+        yield cleanup.BocaJobLease(_run, -1, os.getpid(), False)  # pragma: no cover
+
+    monkeypatch.setattr(bridge, "_readonly_lease", missing)
+    sink = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", type("Sink", (), {"buffer": sink})())
+    assert bridge.main(["observe", RUN]) == 3
+    receipt = bridge.verify(sink.getvalue(), RUN)
+    assert json.loads(receipt.split(b" ", 1)[1])["failed_boundary"] == "LEASE"
+    assert b"private" not in receipt
+
+
+def test_verify_cli_forwards_only_valid_refusal_and_rejects_malformed_without_recoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    valid = bridge.encode(RUN, "NO_GO", lease_verified=False, failed_boundary="PID_MAP")
+    for candidate, expected_rc, expected_stdout in (
+        (valid, 3, valid),
+        (valid + b"secret", 4, b""),
+        (b"untrusted raw details\n", 4, b""),
+    ):
+        sink = io.BytesIO()
+        monkeypatch.setattr(sys, "stdin", type("Input", (), {"buffer": io.BytesIO(candidate)})())
+        monkeypatch.setattr(sys, "stdout", type("Sink", (), {"buffer": sink})())
+        assert bridge.main(["verify", RUN]) == expected_rc
+        assert sink.getvalue() == expected_stdout
+
+
+def test_rejects_schema_downgrade_of_diagnostic_refusal() -> None:
+    valid = bridge.encode(RUN, "NO_GO", lease_verified=False, failed_boundary="PID_MAP")
+    assert b'"schema":2' in valid
+    with pytest.raises(bridge.MappingBridgeNoGo):
+        bridge.verify(valid.replace(b'"schema":2', b'"schema":1'), RUN)
+
+
+@pytest.mark.parametrize("boundary", ["/private/path", "KEY_10001", "UNVERIFIED"])
+def test_failure_boundary_rejects_unspecified_private_or_unknown_categories(boundary: str) -> None:
+    with pytest.raises(bridge.MappingBridgeNoGo):
+        bridge.encode(RUN, "NO_GO", lease_verified=False, failed_boundary=boundary)

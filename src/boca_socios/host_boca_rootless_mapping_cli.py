@@ -40,11 +40,19 @@ _FIELDS = frozenset(
         "lease_verified",
     }
 )
+_FAILURE_FIELDS = _FIELDS | {"failed_boundary"}
+_BOUNDARIES = frozenset(
+    {"LEASE", "PAIR_BINDING", "VOLUMES", "PID_MAP", "INODES", "STABILITY", "INTERNAL"}
+)
 _MAX_BYTES = 1024
 
 
 class MappingBridgeNoGo(ValueError):
     """Public refusal never carries Docker, /proc, volume or private data."""
+
+    def __init__(self, failed_boundary: str = "INTERNAL") -> None:
+        super().__init__("BOCA_ROOTLESS_MAPPING NO_GO")
+        self.failed_boundary = failed_boundary if failed_boundary in _BOUNDARIES else "INTERNAL"
 
 
 def _fail() -> MappingBridgeNoGo:
@@ -60,16 +68,23 @@ def _unique(items: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-def encode(run_id: str, state: str, *, lease_verified: bool) -> bytes:
+def encode(
+    run_id: str, state: str, *, lease_verified: bool, failed_boundary: str = "NONE"
+) -> bytes:
     if (
         type(run_id) is not str
         or _RUN.fullmatch(run_id) is None
         or type(lease_verified) is not bool
         or (state, lease_verified) not in (("PRELIMINARY_PREDEPLOY", True), ("NO_GO", False))
+        or (
+            failed_boundary != "NONE"
+            if state == "PRELIMINARY_PREDEPLOY"
+            else failed_boundary not in _BOUNDARIES
+        )
     ):
         raise _fail()
     payload = {
-        "schema": 1,
+        "schema": 1 if state == "PRELIMINARY_PREDEPLOY" else 2,
         "attempt_id": run_id,
         "stage": "PREDEPLOY",
         "state": state,
@@ -78,6 +93,8 @@ def encode(run_id: str, state: str, *, lease_verified: bool) -> bytes:
         "cutover_authorized": False,
         "lease_verified": lease_verified,
     }
+    if state == "NO_GO":
+        payload["failed_boundary"] = failed_boundary
     return _PREFIX + json.dumps(payload, sort_keys=True, separators=(",", ":")).encode() + b"\n"
 
 
@@ -94,9 +111,10 @@ def verify(raw: bytes, run_id: str) -> bytes:
         value = json.loads(raw[len(_PREFIX) :], object_pairs_hook=_unique)
         if (
             type(value) is not dict
-            or value.keys() != _FIELDS
+            or value.keys()
+            != (_FIELDS if value.get("state") == "PRELIMINARY_PREDEPLOY" else _FAILURE_FIELDS)
             or type(value["schema"]) is not int
-            or value["schema"] != 1
+            or value["schema"] != (1 if value.get("state") == "PRELIMINARY_PREDEPLOY" else 2)
             or value["attempt_id"] != run_id
             or value["stage"] != "PREDEPLOY"
             or type(value["observer_writes"]) is not int
@@ -107,7 +125,13 @@ def verify(raw: bytes, run_id: str) -> bytes:
             or (value["state"], value["lease_verified"])
             not in (("PRELIMINARY_PREDEPLOY", True), ("NO_GO", False))
             or type(value["lease_verified"]) is not bool
-            or encode(run_id, value["state"], lease_verified=value["lease_verified"]) != raw
+            or encode(
+                run_id,
+                value["state"],
+                lease_verified=value["lease_verified"],
+                failed_boundary=value.get("failed_boundary", "NONE"),
+            )
+            != raw
         ):
             raise _fail()
         return raw
@@ -215,22 +239,34 @@ def _volumes() -> None:
 
 def observe_predeploy(run_id: str) -> bytes:
     """No host writes, no external probes, no final postflight/upgrade GO."""
+    boundary = "LEASE"
     try:
         with _readonly_lease(run_id) as lease:
+            boundary = "PAIR_BINDING"
             first = _pair_and_archive(run_id, lease)
+            boundary = "VOLUMES"
             _volumes()
+            boundary = "PID_MAP"
             first_owner = _mapped_owner(first[2], first[3])
+            boundary = "INODES"
             first_files = custody.capture_mapped_custody(
                 custody._DOCKER_ROOT, first_owner, trusted_root=custody._DOCKER_ROOT
             )
+            boundary = "VOLUMES"
             _volumes()
+            boundary = "PAIR_BINDING"
             second = _pair_and_archive(run_id, lease)
+            boundary = "PID_MAP"
             second_owner = _mapped_owner(second[2], second[3])
+            boundary = "INODES"
             second_files = custody.capture_mapped_custody(
                 custody._DOCKER_ROOT, second_owner, trusted_root=custody._DOCKER_ROOT
             )
+            boundary = "VOLUMES"
             _volumes()
+            boundary = "PAIR_BINDING"
             third = _pair_and_archive(run_id, lease)
+            boundary = "STABILITY"
             if (
                 first != second
                 or second != third
@@ -241,23 +277,28 @@ def observe_predeploy(run_id: str) -> bytes:
             cleanup.verify_protected_boca_job_lease(lease, run_id)
         return encode(run_id, "PRELIMINARY_PREDEPLOY", lease_verified=True)
     except Exception:
-        raise _fail() from None
+        raise MappingBridgeNoGo(boundary) from None
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 2 or args[0] not in ("observe", "verify") or _RUN.fullmatch(args[1]) is None:
         return 3
-    try:
-        raw = (
-            observe_predeploy(args[1])
-            if args[0] == "observe"
-            else verify(sys.stdin.buffer.read(_MAX_BYTES + 1), args[1])
-        )
-        state = json.loads(raw[len(_PREFIX) :])["state"]
-    except Exception:
-        raw = encode(args[1], "NO_GO", lease_verified=False)
-        state = "NO_GO"
+    if args[0] == "verify":
+        try:
+            raw = verify(sys.stdin.buffer.read(_MAX_BYTES + 1), args[1])
+        except Exception:
+            return 4  # Never convert malformed/forged host bytes into authenticated NO_GO.
+    else:
+        try:
+            raw = observe_predeploy(args[1])
+        except MappingBridgeNoGo as exc:
+            raw = encode(
+                args[1], "NO_GO", lease_verified=False, failed_boundary=exc.failed_boundary
+            )
+        except Exception:
+            raw = encode(args[1], "NO_GO", lease_verified=False, failed_boundary="INTERNAL")
+    state = json.loads(raw[len(_PREFIX) :])["state"]
     sys.stdout.buffer.write(raw)
     return 0 if state == "PRELIMINARY_PREDEPLOY" else 3
 

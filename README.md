@@ -1,5 +1,35 @@
 # Boca Socios Assistant
 
+## R261 — diagnóstico de 8443 y preflight fiel, sólo código (13/11/2026)
+
+El selector manual `boca-panel-exact-origin-observe` incorpora una lectura
+acotada de `/healthz` en `127.0.0.1:8443`, con `Host: localhost:8443`, y
+metadatos sin contenido de los dos archivos SITE_URL y tres archivos Boca.
+Se ejecutará sólo desde un checkout del SHA auténtico de `main`, como usuario
+Boca; su transporte por SSH de fuente fija es **READ_ONLY y de menor
+confianza** que el paquete memfd protegido. No demuestra mapeo subuid,
+procedencia Docker, passkey ni BETA: siempre produce `OBSERVED_NO_GO` y
+`DEPLOY NO_GO`. Además, los errores de preflight del CLI anteriores a lease
+ya no se atribuyen falsamente a un commit irreversible. No se incorporan
+las variantes alternativas de SITE_URL ni los ADR en conflicto de PR #502.
+[ADR0283](docs/ADR/0283-r261-exact-origin-8443-readonly-and-prelease-classification.md).
+
+## R261 — RCA del observador rootless, propuesta CODE_ONLY (13/11/2026 UTC)
+
+El primer `boca-rootless-mapping-observe` de `main=32bb9546f0962b3615f2b9cb84c9c84d4a72d758`,
+[Actions #43360372904](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43360372904),
+terminó **FAILURE** después de `BOCA_MAIN_REF_PASS`: el paso host/recibo
+devolvió un rechazo genérico y no acreditó `PRELIMINARY_PREDEPLOY`.
+Como el workflow antiguo descarta stderr, código SSH y subfase del CLI,
+**la causa física concreta permanece UNKNOWN**; no se infiere que sea
+la lease, subuid, SQLite, una ruta o la conexión. No hubo instalación.
+Este candidato conserva idéntico el recibo de éxito y propone una categoría
+de fallo enumerada, validada por su forma canónica y publicada sólo tras
+un rechazo remoto canónico. Un recibo malformado no se reescribe como
+evidencia. La próxima comprobación exige PR, CI exacto y nuevo dispatch
+READ_ONLY, sin repetir el intento anterior ni ejecutar APPLY. **DEPLOY NO_GO**.
+[ADR0285](docs/ADR/0285-r261-rootless-readonly-failure-boundary.md).
+
 ## R260 — estado consolidado de integración (13/11/2026; CODE_ONLY)
 
 La rama candidata reúne el pre-PARK R255, el terminal técnico R257, el
