@@ -114,9 +114,9 @@ def _successor_preflight(
 ) -> BoundSuccessorPreflight:
     """Bind the protected runner payload, never retry historical R179.
 
-    Returning inert proof and exact stage bytes is not APPLY eligibility.
-    The caller remains PRE-EFFECT NO_GO until reviewed same-lease witness,
-    cleanup V2 and owner-independent technical postflight are fully wired.
+    Returning typed transport and exact stage bytes alone grants no effect.
+    The protected CLI must still enter the reviewed same-lease graph, which
+    alone can attest physical identities, cleanup V2 and durable postflight.
     """
     from boca_socios.host_boca_successor_integrations import verify_runner_bound_host_inputs
     from boca_socios.host_boca_upgrade_retained_bridge import verify_bundled_retained
@@ -189,13 +189,13 @@ def _successor_preflight(
 
 
 def _execute_reviewed_successor(preflight: BoundSuccessorPreflight) -> upgrade.PairUpgradeReceipt:
-    """Prepare a single-lease successor graph, but DO NOT expose an APPLY route.
+    """Execute the reviewed successor under exactly one protected lease.
 
-    This helper is unreferenced by ``main apply`` until the separate cold-URL,
-    rootless subuid, protected ZIP and final host-action integration are
-    certified. When activated by the reviewed CLI, ``run_pair_upgrade`` owns
-    the one protected lease and invokes ``backend_factory`` only after durable
-    journal intent. No historical R179 actor is constructed here.
+    The caller must have authenticated the cold-URL, rootless subuid and
+    protected ZIP preflight. ``run_pair_upgrade`` owns the lease and invokes
+    ``backend_factory`` only after durable journal intent. No historical
+    R179 actor is constructed here. Exceptions from this function may follow
+    irreversible effects and must never be called a pre-effect refusal.
     """
     from boca_socios import host_boca_cleanup as cleanup
     from boca_socios import host_boca_guarded_successor_backend_v4 as guarded
@@ -416,13 +416,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0 if state == "VERIFIED_STABLE" else 3
     if len(args) in (6, 7, 8) and args[0] == "apply" and _run_id(args[1]):
-        # Existing single protected APPLY selector now goes exclusively to
-        # the successor preflight; the historical one-shot EXIT1 backend is
-        # never executed again, even when four form pins look plausible.
+        # The historical one-shot R179 actor is never entered again. The
+        # read-only preflight and the potentially effectful successor have
+        # separate error boundaries: after entry, commit may be irreversible.
         from boca_socios import host_boca_pair_upgrade as upgrade
 
         try:
-            _successor_preflight(
+            preflight = _successor_preflight(
                 args[1],
                 args[2],
                 args[3],
@@ -431,8 +431,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args[6] if len(args) >= 7 else None,
                 args[7] if len(args) == 8 else None,
             )
-            raise SuccessorPreflightIneligible("Boca successor lacks activated cleanup receipt")
-        except SuccessorPreflightIneligible:
+            if type(preflight) is not BoundSuccessorPreflight:
+                raise SuccessorPreflightIneligible("Boca successor transport not typed")
+            preflight.__post_init__()
+        except Exception:
+            # ONLY errors preceding the actor/lease can prove no host effect.
             raw = encode_upgrade(
                 upgrade.PairUpgradeReceipt(
                     attempt_id=args[1],
@@ -445,22 +448,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                     failed_phase="ATTEST",
                 )
             )
-        except Exception:
-            # This branch only covers the read-only preflight, before a lease
-            # or commit marker. Do not invent an irreversible host effect.
-            refused = upgrade.PairUpgradeReceipt(
-                attempt_id=args[1],
-                state="NO_GO",
-                cleanup="INDETERMINATE",
-                old_restored=False,
-                commit_started=False,
-                controller_id=None,
-                worker_id=None,
-                failed_phase="ATTEST",
+            sys.stdout.buffer.write(raw) if argv is None else print(raw.decode("ascii"), end="")
+            return 3
+        try:
+            outcome = _execute_reviewed_successor(preflight)
+            if type(outcome) is not upgrade.PairUpgradeReceipt or outcome.attempt_id != args[1]:
+                raise SuccessorPreflightIneligible("Boca successor outcome not bound")
+            raw = encode_upgrade(outcome)
+        except BaseException:
+            # An exception can occur after STAGE, PARK, COMMIT, retirement,
+            # durable terminal write or lease release. No synthetic canonical
+            # NO_GO with commit_started=False is truthful at this point.
+            uncertain = (
+                b"BOCA_PAIR_UPGRADE state=INDETERMINATE reason=POST_ENTRY_UNVERIFIED "
+                b"action=READ_ONLY_RCA_NO_AUTOMATIC_RETRY\n"
             )
-            raw = encode_upgrade(refused)
+            sys.stdout.buffer.write(uncertain) if argv is None else print(
+                uncertain.decode("ascii"), end=""
+            )
+            return 3
         sys.stdout.buffer.write(raw) if argv is None else print(raw.decode("ascii"), end="")
-        return 0 if b'"state":"ACCEPTED"' in raw else 3
+        return 0 if outcome.accepted else 3
     return 3
 
 

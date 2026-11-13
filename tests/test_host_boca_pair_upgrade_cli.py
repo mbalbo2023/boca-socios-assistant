@@ -13,7 +13,22 @@ from boca_socios import host_boca_pair_upgrade as upgrade
 from boca_socios import host_boca_pair_upgrade_cli as cli
 from boca_socios import host_boca_sqlite_identity as sqlite
 
+pytest_plugins = ("test_host_boca_success_cleanup_bridge_v2",)
+
 RUN = "43080012345"
+
+
+def _protected_apply_args(attempt: str) -> list[str]:
+    return [
+        "apply",
+        attempt,
+        "a" * 40,
+        "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "1" * 64,
+        "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "2" * 64,
+        "44000000002",
+        "44000000003",
+        "44000000004",
+    ]
 
 
 def test_sqlite_observer_positive_and_negative_are_bounded_and_secret_free(
@@ -126,6 +141,84 @@ def test_existing_apply_selector_cannot_reenter_historical_r179_migration(
     assert value["cleanup"] == "INDETERMINATE"
 
 
+@pytest.mark.parametrize("accepted", [True, False])
+def test_protected_apply_preserves_reviewed_successor_terminal_state(
+    accepted: bool,
+    frozen_proof: tuple[cli.BoundSuccessorPreflight, object],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An actual successor result, including postcommit failure, cannot become ATTEST NO_GO."""
+    preflight, _ = frozen_proof
+    attempt = preflight.inputs.plan.attempt_id
+    phase = "NONE" if accepted else "RETIRE_OLD"
+    outcome = upgrade.PairUpgradeReceipt(
+        attempt_id=attempt,
+        state="ACCEPTED" if accepted else "NO_GO",
+        cleanup="ACCEPT" if accepted else "INDETERMINATE",
+        old_restored=False,
+        commit_started=True,
+        controller_id="3" * 64,
+        worker_id="4" * 64,
+        failed_phase=phase,
+    )
+    monkeypatch.setattr(cli, "_successor_preflight", lambda *_args: preflight)
+    observed: list[cli.BoundSuccessorPreflight] = []
+
+    def genuine_reviewed_path(value: cli.BoundSuccessorPreflight) -> upgrade.PairUpgradeReceipt:
+        observed.append(value)
+        return outcome
+
+    monkeypatch.setattr(cli, "_execute_reviewed_successor", genuine_reviewed_path)
+    assert cli.main(_protected_apply_args(attempt)) == (0 if accepted else 3)
+    raw = capsys.readouterr().out.encode("ascii")
+    assert cli.verify_upgrade(raw, attempt) == raw
+    payload = json.loads(raw.removeprefix(b"BOCA_PAIR_UPGRADE "))
+    assert payload["state"] == ("ACCEPTED" if accepted else "NO_GO")
+    assert payload["commit_started"] is True
+    assert payload["failed_phase"] == phase
+    assert observed == [preflight]
+
+
+def test_postentry_failure_cannot_masquerade_as_preeffect_attest_no_go(
+    frozen_proof: tuple[cli.BoundSuccessorPreflight, object],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The lease and marker might have been crossed; a canonical pre-effect lie is forbidden."""
+    preflight, _ = frozen_proof
+    monkeypatch.setattr(cli, "_successor_preflight", lambda *_args: preflight)
+
+    def uncertain_after_entry(_value: cli.BoundSuccessorPreflight) -> None:
+        raise RuntimeError("private host path and secret must never escape")
+
+    monkeypatch.setattr(cli, "_execute_reviewed_successor", uncertain_after_entry)
+    assert cli.main(_protected_apply_args(preflight.inputs.plan.attempt_id)) == 3
+    raw = capsys.readouterr().out.encode("ascii")
+    assert raw == (
+        b"BOCA_PAIR_UPGRADE state=INDETERMINATE reason=POST_ENTRY_UNVERIFIED "
+        b"action=READ_ONLY_RCA_NO_AUTOMATIC_RETRY\n"
+    )
+    assert b"private host path" not in raw
+    with pytest.raises(cli.PairUpgradeCliError):
+        cli.verify_upgrade(raw, preflight.inputs.plan.attempt_id)
+
+
+def test_apply_must_not_enter_successor_on_untyped_preflight(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "_successor_preflight", lambda *_args: object())
+    monkeypatch.setattr(
+        cli,
+        "_execute_reviewed_successor",
+        lambda *_args: pytest.fail("untrusted transport reached host actor"),
+    )
+    assert cli.main(_protected_apply_args(RUN)) == 3
+    raw = capsys.readouterr().out.encode("ascii")
+    assert cli.verify_upgrade(raw, RUN) == raw
+    assert b'"state":"NO_GO"' in raw and b'"commit_started":false' in raw
+
+
 def test_unexpected_preflight_error_cannot_claim_irreversible_commit_before_lease(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -161,7 +254,7 @@ def test_unexpected_preflight_error_cannot_claim_irreversible_commit_before_leas
 
 
 def test_r251_successor_preflight_returns_inert_typed_sources_and_bound_current_pair(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Return only sealed transport, never an effect/host authorization."""
     from dataclasses import replace
@@ -223,18 +316,16 @@ def test_r251_successor_preflight_returns_inert_typed_sources_and_bound_current_
     with pytest.raises(cli.SuccessorPreflightIneligible):
         replace(result, base_sha="0" * 64)
 
-    # This is a genuine typed preflight, not a mocked optimistic value.
-    # The public apply selector still refuses before any host actor/lease.
+    # The preflight alone remains read-only even when the reviewed APPLY
+    # selector later consumes its typed result under the protected runner.
     monkeypatch.setattr(
         transaction,
         "run_pair_upgrade",
         lambda *_args, **_kwargs: pytest.fail("inert R251 cannot acquire a Boca lease"),
     )
-    assert cli.main(["apply", *args, WITNESS_RUN]) == 3
-    raw = capsys.readouterr().out.encode("ascii")
-    assert cli.verify_upgrade(raw, value["attempt_id"]) == raw
-    assert b'"commit_started":false' in raw
-    assert b'"state":"NO_GO"' in raw
+    second = cli._successor_preflight(*args, WITNESS_RUN)
+    assert second.apply_authorized is False
+    assert second.inputs.plan == result.inputs.plan
 
     del mappings["current-pair-v2.receipt"]
     with pytest.raises(cli.SuccessorPreflightIneligible, match="transport unverified"):

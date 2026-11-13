@@ -1,5 +1,20 @@
 # Binding instructions for every coding agent
 
+## Estado vigente R273 — no repetir instalación ni R186 (13-NOV-2026 ART)
+
+La recuperación R186 descrita más abajo **ya se ejecutó** y terminó
+`ACCEPTED/ARCHIVED_BINDING_ONLY` en la Action 43237528968. Su APPLY original
+43217075287 permanece NO_GO histórico, no modificable. Prohibido volver a
+ejecutar tanto el APPLY como el finalizador R186. El par físico existente
+estaba en `b61ca3e` según Action 43455761226; el código posterior de `main`
+`e1b35fc` no estaba desplegado al corte. No afirmar una nueva instalación
+por una prueba READ_ONLY ni por CI/release GREEN; registrar por separado
+INSTALLED_SHA, MAIN_SHA y BETA_OWNER_ACCEPTED. Las actualizaciones futuras
+usan solamente `boca-pair-upgrade-apply` protegido, una vez que su selector
+CODE_ONLY, tests, release exacta, permisos y terminal son verificables.
+Un error después de iniciar el sucesor es INDETERMINATE, no un NO_GO
+falsamente atribuido al preflight. Véase ADR 0292 e issue #417.
+
 Read this file, README.md, docs/DEVELOPMENT_POLICY.md and relevant ADRs **in
 full** before touching source. This public repository is independent from
 every unrelated service, host configuration and application repository.
