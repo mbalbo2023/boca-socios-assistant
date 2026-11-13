@@ -138,6 +138,28 @@ def test_same_category_with_changed_site_inode_is_refused(safe_site_root: Path):
         observer.require_stable(first, second)
 
 
+def test_storage_metadata_uses_data_session_not_private_passkey_volume(
+    safe_site_root: Path,
+) -> None:
+    _volumes(safe_site_root)
+    owner_dir = safe_site_root / "volumes/boca-socios_boca_owner/_data"
+    key_dir = safe_site_root / "volumes/boca-socios_boca_key/_data"
+    owner_dir.mkdir(parents=True, mode=0o700)
+    key_dir.mkdir(parents=True, mode=0o700)
+    for volume, name, mode in (
+        ("boca-socios_boca_data", "boca.sqlite3", 0o600),
+        ("boca-socios_boca_key", "boca_master_key", 0o400),
+        ("boca-socios_boca_data", "boca_owner_session.sqlite3", 0o600),
+    ):
+        private = safe_site_root / "volumes" / volume / "_data" / name
+        private.write_bytes(b"private test fixture; metadata only")
+        private.chmod(mode)
+    assert not (owner_dir / "boca_owner_session.sqlite3").exists()
+    first = observer.snapshot_storage_files(safe_site_root)
+    assert len(first) == 3 and all(item is not None for item in first)
+    assert observer.probe_storage_uid(safe_site_root) == "UID_EQUALS_HOST"
+
+
 def test_receipt_schema_never_accepts_private_strings_or_extra_fields():
     receipt = observer.make_receipt(
         "43360000001", "a" * 40, "HEALTH_HTTP_200", "BOTH_FILES_ABSENT", "UID_UNVERIFIED"

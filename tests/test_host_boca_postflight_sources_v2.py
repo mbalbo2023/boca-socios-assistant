@@ -320,10 +320,13 @@ def test_sqlite_and_owner_session_normal_writes_preserve_structural_identity(
     tmp_path: Path,
 ) -> None:
     _storage_tree(tmp_path)
+    assert not (
+        tmp_path / "volumes/boca-socios_boca_owner/_data/boca_owner_session.sqlite3"
+    ).exists()
     before = sources_v2.capture_structural_storage_fingerprints(tmp_path, trusted_root=tmp_path)
     legacy_before = runtime.capture_storage_fingerprints(tmp_path, trusted_root=tmp_path)
     sqlite = tmp_path / "volumes/boca-socios_boca_data/_data/boca.sqlite3"
-    session = tmp_path / "volumes/boca-socios_boca_owner/_data/boca_owner_session.sqlite3"
+    session = tmp_path / "volumes/boca-socios_boca_data/_data/boca_owner_session.sqlite3"
     for index, target in enumerate((sqlite, session)):
         with target.open("ab") as file:
             file.write(b"legitimate private sqlite update")
@@ -374,7 +377,7 @@ def test_structural_identity_refuses_hardlink_permission_and_mount_redirect(
     tmp_path: Path,
 ) -> None:
     _storage_tree(tmp_path)
-    session = tmp_path / "volumes/boca-socios_boca_owner/_data/boca_owner_session.sqlite3"
+    session = tmp_path / "volumes/boca-socios_boca_data/_data/boca_owner_session.sqlite3"
     duplicate = session.with_name("duplicate-owner-session")
     os.link(session, duplicate)
     with pytest.raises(sources_v2.PostflightSourcesNoGo):

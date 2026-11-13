@@ -35,7 +35,7 @@ from boca_socios import host_boca_upgrade_postflight_runtime as runtime
 _DIGEST = re.compile(r"[a-f0-9]{64}\Z")
 _STRUCTURAL_FILES = (
     ("boca-socios_boca_data", "boca.sqlite3"),
-    ("boca-socios_boca_owner", "boca_owner_session.sqlite3"),
+    ("boca-socios_boca_data", "boca_owner_session.sqlite3"),
 )
 _KEY_FILE = ("boca-socios_boca_key", "boca_master_key")
 
@@ -159,7 +159,7 @@ def capture_structural_storage_fingerprints(
         if type(mapped_owner) is not mapped.MappedOwner:
             raise _fail()
         data_volume, data_name = _STRUCTURAL_FILES[0]
-        owner_volume, owner_name = _STRUCTURAL_FILES[1]
+        session_volume, session_name = _STRUCTURAL_FILES[1]
         key_volume, key_name = _KEY_FILE
         result = postflight.PostflightStorage(
             _structural_file_inode_sha256(
@@ -169,7 +169,7 @@ def capture_structural_storage_fingerprints(
                 rootless_docker_root, key_volume, key_name, mapped_owner, strict_key=True
             ),
             _structural_file_inode_sha256(
-                rootless_docker_root, owner_volume, owner_name, mapped_owner
+                rootless_docker_root, session_volume, session_name, mapped_owner
             ),
         )
         result.validate()

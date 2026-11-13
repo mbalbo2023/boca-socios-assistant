@@ -19,14 +19,11 @@ from boca_socios.panel.site_url_settings import SiteUrlSettingsStore, SiteUrlSet
 from test_host_boca_upgrade_postflight import _expected, _pair_bytes
 
 
-def _storage_tree(root: Path, *, session_in_data: bool = False) -> None:
-    # The default retains the independent R247 reader's legacy test contract
-    # until that reader is corrected in its own authorized scope.
-    session_volume = "boca-socios_boca_data" if session_in_data else "boca-socios_boca_owner"
+def _storage_tree(root: Path) -> None:
     for volume, filename in (
         ("boca-socios_boca_data", "boca.sqlite3"),
         ("boca-socios_boca_key", "boca_master_key"),
-        (session_volume, "boca_owner_session.sqlite3"),
+        ("boca-socios_boca_data", "boca_owner_session.sqlite3"),
     ):
         directory = root / "volumes" / volume / "_data"
         directory.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -39,7 +36,7 @@ def _storage_tree(root: Path, *, session_in_data: bool = False) -> None:
 
 
 def test_session_fingerprint_reads_data_volume_not_private_owner_volume(tmp_path: Path) -> None:
-    _storage_tree(tmp_path, session_in_data=True)
+    _storage_tree(tmp_path)
     assert (tmp_path / "volumes/boca-socios_boca_data/_data/boca_owner_session.sqlite3").exists()
     assert not (
         tmp_path / "volumes/boca-socios_boca_owner/_data/boca_owner_session.sqlite3"
@@ -49,7 +46,7 @@ def test_session_fingerprint_reads_data_volume_not_private_owner_volume(tmp_path
 
 
 def test_storage_capture_uses_inode_metadata_without_opening_file_contents(tmp_path: Path) -> None:
-    _storage_tree(tmp_path, session_in_data=True)
+    _storage_tree(tmp_path)
     first = runtime.capture_storage_fingerprints(tmp_path, trusted_root=tmp_path)
     assert len(first.sqlite_inode_sha256) == 64
     assert len(first.key_inode_sha256) == 64
@@ -62,7 +59,7 @@ def test_storage_capture_uses_inode_metadata_without_opening_file_contents(tmp_p
 
 
 def test_storage_capture_rejects_symlink_hardlink_and_missing_file(tmp_path: Path) -> None:
-    _storage_tree(tmp_path, session_in_data=True)
+    _storage_tree(tmp_path)
     filename = tmp_path / "volumes/boca-socios_boca_key/_data/boca_master_key"
     original = tmp_path / "original-key"
     filename.rename(original)
@@ -79,7 +76,7 @@ def test_storage_capture_rejects_symlink_hardlink_and_missing_file(tmp_path: Pat
 
 
 def test_storage_capture_rejects_untrusted_root_and_ancestor_redirect(tmp_path: Path) -> None:
-    _storage_tree(tmp_path, session_in_data=True)
+    _storage_tree(tmp_path)
     with pytest.raises(runtime.PostflightRuntimeNoGo):
         runtime.capture_storage_fingerprints(tmp_path, trusted_root=tmp_path / "other")
     moved = tmp_path / "volumes-real"
@@ -90,7 +87,7 @@ def test_storage_capture_rejects_untrusted_root_and_ancestor_redirect(tmp_path: 
 
 
 def test_storage_capture_detects_identity_replacement_without_reading_bytes(tmp_path: Path) -> None:
-    _storage_tree(tmp_path, session_in_data=True)
+    _storage_tree(tmp_path)
     before = runtime.capture_storage_fingerprints(tmp_path, trusted_root=tmp_path)
     filename = tmp_path / "volumes/boca-socios_boca_data/_data/boca_owner_session.sqlite3"
     filename.rename(filename.with_suffix(".old"))
