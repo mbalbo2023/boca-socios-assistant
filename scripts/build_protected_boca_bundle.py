@@ -242,6 +242,8 @@ PAIR_UPGRADE_SOURCES = tuple(
             "src/boca_socios/host_boca_upgrade_same_lease.py",
             "src/boca_socios/host_boca_upgrade_postflight.py",
             "src/boca_socios/host_boca_upgrade_postflight_runtime.py",
+            "src/boca_socios/host_boca_postflight_sources_v2.py",
+            "src/boca_socios/host_boca_success_bridge_v2.py",
             "src/boca_socios/host_boca_upgrade_cleanup_runtime.py",
             "src/boca_socios/host_boca_upgrade_successor_runtime.py",
             "src/boca_socios/host_boca_upgrade_failure_cleanup_v2.py",
@@ -397,7 +399,10 @@ BINDING_MAX_SOURCE_BYTES = 900_000
 BINDING_MAX_ARCHIVE_BYTES = 320_000
 SQLITE_OBSERVE_MAX_SOURCE_BYTES = 950_000
 SQLITE_OBSERVE_MAX_ARCHIVE_BYTES = 340_000
-PAIR_UPGRADE_MAX_SOURCE_BYTES = 1_300_000
+# R252's reviewed genuine V2 postflight reader extends the SAME fixed ZIP
+# closure, without executable rewriting or a second host transport. Bound
+# both builder and memfd verifier to 1.4 MB; keep compressed cap unchanged.
+PAIR_UPGRADE_MAX_SOURCE_BYTES = 1_400_000
 PAIR_UPGRADE_MAX_ARCHIVE_BYTES = 480_000
 POSTCOMMIT_FINALIZE_MAX_SOURCE_BYTES = 1_100_000
 POSTCOMMIT_FINALIZE_MAX_ARCHIVE_BYTES = 400_000

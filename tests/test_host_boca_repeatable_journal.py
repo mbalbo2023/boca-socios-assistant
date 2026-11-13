@@ -139,6 +139,24 @@ def test_same_lease_two_observations_create_immutable_evidence_intent_and_termin
             journal().intent(current, lease)
 
 
+def test_active_intent_rechecked_from_disk_before_any_cleanup_effect() -> None:
+    current = plan()
+    record = journal()
+    with cleanup.protected_boca_job_lease(ATTEMPT) as lease:
+        with pytest.raises(repeatable.SuccessorJournalNoGo):
+            record.attest_active_intent(current, lease)
+        record.intent(current, lease)
+        record.attest_active_intent(current, lease)
+        with pytest.raises(repeatable.SuccessorJournalNoGo):
+            journal().attest_active_intent(current, lease)
+        with pytest.raises(repeatable.SuccessorJournalNoGo):
+            record.attest_active_intent(replace(current, old_controller_id="9" * 64), lease)
+        name = stage.ROOT / f".boca-pair-upgrade-{ATTEMPT}.intent"
+        name.write_bytes(b"corrupted-intent")
+        with pytest.raises(repeatable.SuccessorJournalNoGo):
+            record.attest_active_intent(current, lease)
+
+
 @pytest.mark.parametrize(
     "bad",
     ("source", "run", "controller", "worker", "image", "creator", "inode", "control", "release"),

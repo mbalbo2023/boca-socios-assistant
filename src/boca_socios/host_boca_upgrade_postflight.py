@@ -5,10 +5,11 @@ read-only host snapshots *after* cleanup, under the SAME still-held Boca job
 lease. No production reader, lease acquisition, Docker, browser, SQLite read,
 network request, secret access, journal write, or deploy entrypoint lives here.
 
-`TECHNICAL_ACCEPT` is not owner/passkey acceptance: the worker must remain
+Neither legacy `TECHNICAL_ACCEPT` nor the isolated R252 schema-2
+`TECHNICAL_PROOF_ONLY` is owner/passkey acceptance: the worker must remain
 CREATED/PID0/Exit0, so its URL mirror is armed for its NEXT explicit start,
 not proven consumed. Real Chrome passkey verification and live monitor producer
-connectivity cannot be inferred from this receipt; BETA remains NO_GO.
+connectivity cannot be inferred from either receipt; BETA remains NO_GO.
 
 Trust boundaries: `release` must come from the authenticated dual R242 runner;
 `read_snapshot` must reuse the existing Boca-only R177/R188/SQLite/control
@@ -36,6 +37,7 @@ from boca_socios import host_boca_upgrade_adapters as adapters
 from boca_socios.host_boca_pair_upgrade import PairCoordinates
 
 _PREFIX = b"BOCA_PAIR_POSTFLIGHT "
+_TECHNICAL_PREFIX = b"BOCA_PAIR_POSTFLIGHT_TECHNICAL_V2 "
 _BOUND = 8192
 _HEX = re.compile(r"[a-f0-9]{64}\Z")
 _IMAGE = re.compile(r"sha256:[a-f0-9]{64}\Z")
@@ -43,6 +45,7 @@ _PAIR_PREFIX = b"BOCA_INSTALLED_PAIR "
 _SAFE_MONITOR = frozenset(("NOT_CONNECTED", "IN_MEMORY"))
 _STARTUP = "READ_FRESH_FILE_AT_NEXT_START"
 _PANEL = "LOGIN_HTTP_200"
+_TECHNICAL_PANEL = "HEALTH_HTTP_200"
 _R108 = "RETAINED_ATTESTED"
 
 
@@ -146,9 +149,9 @@ def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-def _canonical(value: object) -> bytes:
+def _canonical(value: object, *, prefix: bytes = _PREFIX) -> bytes:
     return (
-        _PREFIX
+        prefix
         + json.dumps(
             value, ensure_ascii=True, sort_keys=True, separators=(",", ":"), allow_nan=False
         ).encode("ascii")
@@ -275,10 +278,14 @@ def _pair_payload(expected: PostflightExpected, raw: bytes) -> dict[str, object]
 
 
 def _validate_snapshot(
-    expected: PostflightExpected, snapshot: PostflightSnapshot
+    expected: PostflightExpected,
+    snapshot: PostflightSnapshot,
+    *,
+    technical_only: bool = False,
 ) -> dict[str, object]:
     if (
-        type(snapshot) is not PostflightSnapshot
+        type(technical_only) is not bool
+        or type(snapshot) is not PostflightSnapshot
         or type(snapshot.binding) is not PostflightBinding
         or type(snapshot.storage_after) is not PostflightStorage
         or type(snapshot.retained) is not adapters.ResourcePins
@@ -311,18 +318,31 @@ def _validate_snapshot(
         or not 0 <= snapshot.monitor_observation_count <= 100_000
         or snapshot.monitor_source == "NOT_CONNECTED"
         and snapshot.monitor_observation_count != 0
-        or snapshot.panel_loopback_probe != _PANEL
+        or technical_only
+        and (snapshot.monitor_source != "NOT_CONNECTED" or snapshot.monitor_observation_count != 0)
+        or snapshot.panel_loopback_probe != (_TECHNICAL_PANEL if technical_only else _PANEL)
         or snapshot.cleanup_receipt_sha256 != hashlib.sha256(expected.cleanup_receipt).hexdigest()
     ):
         raise _fail()
     return pair_data
 
 
-def _receipt(expected: PostflightExpected, snapshot: PostflightSnapshot) -> bytes:
-    pair_data = _validate_snapshot(expected, snapshot)
+def _receipt(
+    expected: PostflightExpected,
+    snapshot: PostflightSnapshot,
+    *,
+    technical_only: bool = False,
+) -> bytes:
+    pair_data = _validate_snapshot(expected, snapshot, technical_only=technical_only)
+    panel_info = {"origin": "http://localhost:8443", "probe": snapshot.panel_loopback_probe}
+    monitor_info: dict[str, object] = {
+        "source": snapshot.monitor_source,
+        "observations": snapshot.monitor_observation_count,
+        "provider_attested": False,
+    }
     body = {
-        "schema": 1,
-        "state": "TECHNICAL_ACCEPT",
+        "schema": 2 if technical_only else 1,
+        "state": "TECHNICAL_PROOF_ONLY" if technical_only else "TECHNICAL_ACCEPT",
         "attempt_id": expected.plan.attempt_id,
         "source_sha": expected.plan.new_source_sha,
         "release_run_id": expected.plan.release_run_id,
@@ -334,17 +354,13 @@ def _receipt(expected: PostflightExpected, snapshot: PostflightSnapshot) -> byte
         "retained": asdict(snapshot.retained),
         "rootless_uid": snapshot.rootless_uid,
         "rootless_gid": snapshot.rootless_gid,
-        "panel": {"origin": "http://localhost:8443", "probe": snapshot.panel_loopback_probe},
+        "panel": panel_info,
         "site_url": {
             "fingerprint": snapshot.site_url_saved_fingerprint,
             "mirror": snapshot.site_url_worker_mirror_fingerprint,
             "startup": snapshot.worker_site_url_startup,
         },
-        "monitor": {
-            "source": snapshot.monitor_source,
-            "observations": snapshot.monitor_observation_count,
-            "provider_attested": False,
-        },
+        "monitor": monitor_info,
         "cleanup": {
             "status": "ACCEPT",
             "sha256": snapshot.cleanup_receipt_sha256,
@@ -355,7 +371,13 @@ def _receipt(expected: PostflightExpected, snapshot: PostflightSnapshot) -> byte
         "observer_writes": 0,
         "foreign_resources_touched": 0,
     }
-    return _canonical(body)
+    if technical_only:
+        # These fields do not claim a monitored token count. Zero observations
+        # means this observer deliberately never opened an owner session.
+        panel_info["scope"] = "LOOPBACK_HEALTH_ONLY"
+        monitor_info["owner_monitor"] = "NOT_ATTESTED"
+        monitor_info["semantics"] = "NO_MONITOR_SESSION_OBSERVED"
+    return _canonical(body, prefix=_TECHNICAL_PREFIX if technical_only else _PREFIX)
 
 
 def capture_postflight(
@@ -371,6 +393,45 @@ def capture_postflight(
     observer. No callbacks default to host commands. This function does not
     persist; the protected caller must durable-fsync/readback returned bytes.
     """
+    return _capture_postflight(
+        expected,
+        lease,
+        read_snapshot=read_snapshot,
+        verify_lease=verify_lease,
+        technical_only=False,
+    )
+
+
+def capture_technical_postflight(
+    expected: PostflightExpected,
+    lease: cleanup.BocaJobLease,
+    *,
+    read_snapshot: SnapshotReader | None,
+    verify_lease: LeaseVerifier | None,
+) -> bytes:
+    """Versioned technical health proof; never owner/BETA acceptance.
+
+    The read-only producer must supply true loopback /healthz evidence and
+    intentionally must not open a monitor or owner authentication session.
+    Protected caller remains responsible for durable, same-lease persistence.
+    """
+    return _capture_postflight(
+        expected,
+        lease,
+        read_snapshot=read_snapshot,
+        verify_lease=verify_lease,
+        technical_only=True,
+    )
+
+
+def _capture_postflight(
+    expected: PostflightExpected,
+    lease: cleanup.BocaJobLease,
+    *,
+    read_snapshot: SnapshotReader | None,
+    verify_lease: LeaseVerifier | None,
+    technical_only: bool,
+) -> bytes:
     try:
         if (
             type(lease) is not cleanup.BocaJobLease
@@ -383,17 +444,20 @@ def capture_postflight(
         _validate_expected(expected)
         verify_lease(lease, expected.plan.attempt_id)
         first = read_snapshot(lease)
-        _validate_snapshot(expected, first)
+        _validate_snapshot(expected, first, technical_only=technical_only)
         verify_lease(lease, expected.plan.attempt_id)
         second = read_snapshot(lease)
-        _validate_snapshot(expected, second)
+        _validate_snapshot(expected, second, technical_only=technical_only)
         verify_lease(lease, expected.plan.attempt_id)
         if first != second:
             raise _fail()
-        result = _receipt(expected, second)
+        result = _receipt(expected, second, technical_only=technical_only)
         if not 0 < len(result) <= _BOUND:
             raise _fail()
-        verify_postflight(result, expected)
+        if technical_only:
+            verify_technical_postflight(result, expected)
+        else:
+            verify_postflight(result, expected)
         return result
     except Exception:
         raise _fail() from None
@@ -406,17 +470,27 @@ def verify_postflight(raw: bytes, expected: PostflightExpected) -> bytes:
     durable final CLEANUP receipt supplied by the protected workflow. It is
     integrity validation, NOT independent evidence of a real host capture.
     """
+    return _verify_postflight(raw, expected, technical_only=False)
+
+
+def verify_technical_postflight(raw: bytes, expected: PostflightExpected) -> bytes:
+    """Validate schema-v2 technical-only receipt; cannot authorize BETA GO."""
+    return _verify_postflight(raw, expected, technical_only=True)
+
+
+def _verify_postflight(raw: bytes, expected: PostflightExpected, *, technical_only: bool) -> bytes:
     try:
         _validate_expected(expected)
+        prefix = _TECHNICAL_PREFIX if technical_only else _PREFIX
         if (
             type(raw) is not bytes
             or not 0 < len(raw) <= _BOUND
-            or not raw.startswith(_PREFIX)
+            or not raw.startswith(prefix)
             or not raw.endswith(b"\n")
             or raw.count(b"\n") != 1
         ):
             raise _fail()
-        value = json.loads(raw[len(_PREFIX) :], object_pairs_hook=_unique)
+        value = json.loads(raw[len(prefix) :], object_pairs_hook=_unique)
         if not isinstance(value, dict):
             raise _fail()
         binding = PostflightBinding(**value["binding"])
@@ -449,7 +523,7 @@ def verify_postflight(raw: bytes, expected: PostflightExpected) -> bytes:
             panel_loopback_probe=panel["probe"],
             cleanup_receipt_sha256=cleanup_info["sha256"],
         )
-        if _receipt(expected, snapshot) != raw:
+        if _receipt(expected, snapshot, technical_only=technical_only) != raw:
             raise _fail()
         return raw
     except Exception:

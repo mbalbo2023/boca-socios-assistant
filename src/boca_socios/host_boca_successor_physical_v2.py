@@ -338,10 +338,21 @@ class PhysicalSuccessorIntegrations:
         self.backend: successor.PostflightGatedSuccessorBackend | None = None
 
     def bind_backend(self, backend: successor.PostflightGatedSuccessorBackend) -> None:
+        # SUCCESS finalization is delegated through ONE exact immutable
+        # one-shot V2 bridge. It must wrap THIS physical read-side adapter;
+        # an arbitrary foreign wrapper or extra backend is not admissible.
+        wrapper = (
+            backend.integrations
+            if isinstance(backend, successor.PostflightGatedSuccessorBackend)
+            else None
+        )
+        linked = wrapper is self or (
+            type(wrapper) is successor.OneShotFinalCleanupBridge and wrapper._delegate is self
+        )
         if (
             self.backend is not None
             or not isinstance(backend, successor.PostflightGatedSuccessorBackend)
-            or backend.integrations is not self
+            or not linked
         ):
             raise _fail()
         self.backend = backend
