@@ -1,4 +1,4 @@
-# ADR 0265 — R254: plazo acotado para los dos artefactos del release
+# ADR 0272 — R254: plazo acotado para los dos artefactos del release
 
 **Fecha:** 2026-11-13 ART. **Ámbito:** publicación protegida de imágenes
 controller/browser de Boca (#417). **Estado:** fix-forward CODE_ONLY en

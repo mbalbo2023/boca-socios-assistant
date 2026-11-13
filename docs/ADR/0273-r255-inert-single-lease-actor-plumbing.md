@@ -1,4 +1,4 @@
-# ADR 0267 — R255 inert same-lease actor plumbing
+# ADR 0273 — R255 inert same-lease actor plumbing
 
 **Date:** 2026-11-13 UTC. **Issue:** #417. **Base:** exact remote main
 `786b06d65c54e2b345730b7cd0e909760db86861`. **Status:** CODE_ONLY,
