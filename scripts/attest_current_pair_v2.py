@@ -149,7 +149,9 @@ def attest_runner(
             )
             or type(main_sha) is not str
             or _SHA.fullmatch(main_sha) is None
-            or not int(historical_run) < int(pair_run) < int(apply_run)
+            # The protected retained-resource read MUST follow the paired
+            # read; R274 already enforced this order at the adjacent bridge.
+            or not int(pair_run) < int(historical_run) < int(apply_run)
         ):
             raise _fail()
         # Before any materialization, reject an interrupted predecessor or
