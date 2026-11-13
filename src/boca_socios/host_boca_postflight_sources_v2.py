@@ -7,10 +7,11 @@ content query. The real Boca rootless host and exact CIDs are reattested by
 the underlying R177 pair/binding witness at observation time.
 
 Missing independent owner passkey and truly mutation-free authenticated
-monitor producers stay None, so ProductionPostflightSnapshotReader refuses
-the snapshot. In particular GET /healthz is NOT LOGIN_HTTP_200, and GET of an
-authenticated /monitor/tokens.json may renew a cookie. No fabricated
-"accepted" strings or empty monitor snapshots are admissible here.
+monitor producers stay None, so the legacy login-required postflight
+refuses the snapshot. Explicit R252 technical capture may use genuine
+local GET /healthz (not LOGIN_HTTP_200), while making NO claim about an
+authenticated monitor or live tokens. No fabricated owner or authenticated
+monitor results are admissible here.
 """
 
 from __future__ import annotations
@@ -271,6 +272,7 @@ def build_protected_postflight_sources(
             site_saved_reader=site.saved_fingerprint,
             site_mirror_reader=site.mirror_fingerprint,
             worker_startup_reader=site.worker_startup,
+            panel_health_reader=runtime.ProductionPrivatePanelHealthWitness(expected, lease),
             # A closed worker and healthy /healthz do NOT prove owner passkey.
             panel_login_reader=None,
             # An in-memory monitor with no genuine owner source is not proof.

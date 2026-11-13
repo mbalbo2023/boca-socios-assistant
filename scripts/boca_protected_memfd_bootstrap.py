@@ -180,6 +180,8 @@ PAIR_UPGRADE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
     "boca_socios/host_boca_upgrade_same_lease.py",
     "boca_socios/host_boca_upgrade_postflight.py",
     "boca_socios/host_boca_upgrade_postflight_runtime.py",
+    "boca_socios/host_boca_postflight_sources_v2.py",
+    "boca_socios/host_boca_success_bridge_v2.py",
     "boca_socios/host_boca_upgrade_cleanup_runtime.py",
     "boca_socios/host_boca_upgrade_successor_runtime.py",
     "boca_socios/host_boca_upgrade_failure_cleanup_v2.py",
@@ -236,7 +238,7 @@ BINDING_MAX_UNCOMPRESSED = 900_000
 SQLITE_OBSERVE_MAX_ZIP = 340_000
 SQLITE_OBSERVE_MAX_UNCOMPRESSED = 950_000
 PAIR_UPGRADE_MAX_ZIP = 480_000
-PAIR_UPGRADE_MAX_UNCOMPRESSED = 1_300_000
+PAIR_UPGRADE_MAX_UNCOMPRESSED = 1_400_000
 POSTCOMMIT_FINALIZE_MAX_ZIP = 400_000
 POSTCOMMIT_FINALIZE_MAX_UNCOMPRESSED = 1_100_000
 PREFLIGHT_MAX_ZIP = 128_000

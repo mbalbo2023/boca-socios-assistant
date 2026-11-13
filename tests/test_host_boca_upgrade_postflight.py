@@ -20,7 +20,9 @@ from boca_socios.host_boca_upgrade_postflight import (
     PostflightSnapshot,
     PostflightStorage,
     capture_postflight,
+    capture_technical_postflight,
     verify_postflight,
+    verify_technical_postflight,
 )
 
 _ATTEMPT = "98765"
@@ -232,6 +234,131 @@ def _capture(
         capture_postflight(current, lease, read_snapshot=read_snapshot, verify_lease=verify_lease),
         checks,
     )
+
+
+def _technical_capture(
+    snapshot: PostflightSnapshot | None = None,
+    *,
+    second: PostflightSnapshot | None = None,
+) -> tuple[bytes, list[str]]:
+    first = snapshot or _snapshot(panel_loopback_probe="HEALTH_HTTP_200")
+    reads = iter((first, second or first))
+    evidence: list[str] = []
+    lease = cleanup.BocaJobLease(_ATTEMPT, -1, -1, True)
+
+    def verify_lease(found: cleanup.BocaJobLease, attempt: str) -> None:
+        assert found is lease and attempt == _ATTEMPT
+        evidence.append("lease")
+
+    def read_snapshot(found: cleanup.BocaJobLease) -> PostflightSnapshot:
+        assert found is lease
+        evidence.append("read")
+        return next(reads)
+
+    return capture_technical_postflight(
+        _expected(), lease, read_snapshot=read_snapshot, verify_lease=verify_lease
+    ), evidence
+
+
+def test_r252_technical_health_is_separate_versioned_non_promoting_receipt() -> None:
+    raw, evidence = _technical_capture()
+    assert evidence == ["lease", "read", "lease", "read", "lease"]
+    assert len(raw) <= 8192
+    assert raw.startswith(b"BOCA_PAIR_POSTFLIGHT_TECHNICAL_V2 ")
+    body = json.loads(raw.split(b" ", 1)[1])
+    assert body["schema"] == 2
+    assert body["state"] == "TECHNICAL_PROOF_ONLY"
+    assert body["panel"] == {
+        "origin": "http://localhost:8443",
+        "probe": "HEALTH_HTTP_200",
+        "scope": "LOOPBACK_HEALTH_ONLY",
+    }
+    assert body["monitor"] == {
+        "source": "NOT_CONNECTED",
+        "observations": 0,
+        "provider_attested": False,
+        "owner_monitor": "NOT_ATTESTED",
+        "semantics": "NO_MONITOR_SESSION_OBSERVED",
+    }
+    assert body["passkey_chrome"] == "NOT_ATTESTED"
+    assert body["beta_deploy"] == "NO_GO"
+    assert body["observer_writes"] == 0 and body["foreign_resources_touched"] == 0
+    assert verify_technical_postflight(raw, _expected()) == raw
+    with pytest.raises(PostflightNoGo):
+        verify_postflight(raw, _expected())
+
+
+@pytest.mark.parametrize(
+    "change",
+    (
+        {"panel_loopback_probe": "LOGIN_HTTP_200"},
+        {"panel_loopback_probe": "HEALTH_HTTP_302"},
+        {"monitor_source": "IN_MEMORY", "monitor_observation_count": 0},
+        {"monitor_source": "NOT_CONNECTED", "monitor_observation_count": 2},
+        {"site_url_saved_fingerprint": "f" * 64},
+        {"rootless_uid": 0},
+    ),
+)
+def test_r252_technical_refuses_login_substitution_tokens_and_other_drift(
+    change: dict[str, Any],
+) -> None:
+    with pytest.raises(PostflightNoGo, match="NO_GO"):
+        _technical_capture(replace(_snapshot(panel_loopback_probe="HEALTH_HTTP_200"), **change))
+
+
+def test_r252_technical_verifier_refuses_tamper_and_legacy_replay() -> None:
+    raw, _ = _technical_capture()
+    body = json.loads(raw.split(b" ", 1)[1])
+    for path, replacement in (
+        (("passkey_chrome",), "VERIFIED"),
+        (("beta_deploy",), "GO"),
+        (("monitor", "owner_monitor"), "ATTESTED"),
+        (("monitor", "source"), "IN_MEMORY"),
+        (("panel", "scope"), "OWNER_AUTHENTICATED"),
+        (("state",), "ACCEPTED"),
+        (("schema",), 1),
+    ):
+        forged = json.loads(json.dumps(body))
+        current = forged
+        for key in path[:-1]:
+            current = current[key]
+        current[path[-1]] = replacement
+        altered = b"BOCA_PAIR_POSTFLIGHT_TECHNICAL_V2 " + _json(forged) + b"\n"
+        with pytest.raises(PostflightNoGo):
+            verify_technical_postflight(altered, _expected())
+    with pytest.raises(PostflightNoGo):
+        verify_technical_postflight(
+            raw.replace(b'"schema":2', b'"schema":2,"schema":2'), _expected()
+        )
+    legacy, _ = _capture()
+    with pytest.raises(PostflightNoGo):
+        verify_technical_postflight(legacy, _expected())
+
+
+def test_r252_technical_requires_fresh_identical_witnesses_and_live_lease() -> None:
+    with pytest.raises(PostflightNoGo):
+        _technical_capture(
+            second=_snapshot(
+                panel_loopback_probe="HEALTH_HTTP_200",
+                site_url_saved_fingerprint="f" * 64,
+            )
+        )
+    lease = cleanup.BocaJobLease(_ATTEMPT, -1, -1, True)
+    calls = 0
+
+    def lost(_lease: cleanup.BocaJobLease, _attempt: str) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("lost lease")
+
+    with pytest.raises(PostflightNoGo):
+        capture_technical_postflight(
+            _expected(),
+            lease,
+            read_snapshot=lambda _: _snapshot(panel_loopback_probe="HEALTH_HTTP_200"),
+            verify_lease=lost,
+        )
 
 
 def test_postflight_technical_receipt_is_bounded_canonical_and_never_claims_physical_passkey() -> (

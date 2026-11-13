@@ -11,13 +11,14 @@ import pytest
 
 from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_postflight_sources_v2 as sources_v2
+from boca_socios import host_boca_upgrade_postflight as postflight
 from boca_socios import host_boca_upgrade_postflight_runtime as runtime
 from boca_socios.host_boca_upgrade_cleanup_runtime import (
     RECEIPT_FILENAME,
     DurableFinalCleanupReceipt,
 )
-from test_host_boca_upgrade_postflight import _expected
-from test_host_boca_upgrade_postflight_runtime import _storage_tree
+from test_host_boca_upgrade_postflight import _expected, _pair_bytes
+from test_host_boca_upgrade_postflight_runtime import _installed_binding, _storage_tree
 
 
 def _cleanup_receipt() -> DurableFinalCleanupReceipt:
@@ -65,6 +66,7 @@ def test_builder_supplies_exact_real_source_adapters_but_never_fakes_owner_login
     assert callable(result.site_mirror_reader)
     assert callable(result.worker_startup_reader)
     assert callable(result.cleanup_readback)
+    assert callable(result.panel_health_reader)
     assert result.panel_login_reader is None
     assert result.monitor_reader is None
 
@@ -84,6 +86,81 @@ def test_full_postflight_refuses_missing_actual_chrome_login_before_reading_host
     lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
     with pytest.raises(runtime.PostflightRuntimeNoGo):
         runtime.ProductionPostflightSnapshotReader(expected, result)(lease)
+
+
+def test_r252_technical_builder_and_reader_capture_only_health_without_owner_or_monitor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected, receipt = _expected(), _cleanup_receipt()
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    events: list[object] = []
+    monkeypatch.setattr(runtime, "_attest_live_pair", lambda *_: events.append("pair"))
+    monkeypatch.setattr(
+        cleanup, "verify_protected_boca_job_lease", lambda *_: events.append("lease")
+    )
+    monkeypatch.setattr(
+        runtime, "_read_rootless_identity", lambda: (cleanup.EXPECTED_UID, cleanup.EXPECTED_GID)
+    )
+
+    class Reply:
+        status = 200
+
+        def getheader(self, name: str) -> str | None:
+            return {"Content-Length": "15", "Content-Type": "text/plain; charset=utf-8"}.get(name)
+
+        def read(self, limit: int) -> bytes:
+            assert limit == 65
+            return b"BOCA_BETA_READY"
+
+    class Connection:
+        def __init__(self, host: str, port: int, *, timeout: float) -> None:
+            events.append((host, port, timeout))
+
+        def request(self, method: str, path: str, *, headers: dict[str, str]) -> None:
+            events.append((method, path, headers))
+
+        def getresponse(self) -> Reply:
+            return Reply()
+
+        def close(self) -> None:
+            events.append("close")
+
+    monkeypatch.setattr(runtime.http.client, "HTTPConnection", Connection)
+    source = sources_v2.build_protected_postflight_sources(
+        expected,
+        lease,
+        receipt,
+        receipt_directory=_receipt_dir(tmp_path, receipt),
+        volume_attestor=lambda: None,
+    )
+    source = replace(
+        source,
+        pair_reader=lambda _: _pair_bytes(),
+        binding_reader=lambda _: _installed_binding(expected),
+        retained_reader=lambda pins, *_: pins,
+        storage_reader=lambda: expected.storage_before,
+        rootless_identity_reader=lambda: (cleanup.EXPECTED_UID, cleanup.EXPECTED_GID),
+        site_saved_reader=lambda: expected.site_url_fingerprint,
+        site_mirror_reader=lambda: expected.site_url_fingerprint,
+        worker_startup_reader=lambda: "READ_FRESH_FILE_AT_NEXT_START",
+    )
+    reader = runtime.ProductionPostflightSnapshotReader(
+        expected,
+        source,
+        verify_lease=cleanup.verify_protected_boca_job_lease,
+        technical_only=True,
+    )
+    raw = postflight.capture_technical_postflight(
+        expected,
+        lease,
+        read_snapshot=reader,
+        verify_lease=cleanup.verify_protected_boca_job_lease,
+    )
+    assert postflight.verify_technical_postflight(raw, expected) == raw
+    methods_and_paths = [event[:2] for event in events if isinstance(event, tuple)]
+    assert methods_and_paths.count(("GET", "/healthz")) == 2
+    assert not any(path in ("/ingresar", "/monitor/tokens.json") for _, path in methods_and_paths)
+    assert source.panel_login_reader is None and source.monitor_reader is None
 
 
 def test_actual_durable_cleanup_readback_has_nofollow_mode_and_same_lease(

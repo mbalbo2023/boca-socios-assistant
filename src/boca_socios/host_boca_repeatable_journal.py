@@ -166,6 +166,71 @@ class SuccessorPairJournal(historical.PairUpgradeJournal):
         except Exception:
             raise _fail() from None
 
+    def attest_active_intent(
+        self, plan: transaction.PairCoordinates, lease: cleanup.BocaJobLease
+    ) -> None:
+        """Read back the SAME journal's durable intent before terminal effects.
+
+        Having an object with the right class or an in-memory intent is not
+        proof that this attempt successfully persisted its original intent.
+        Its evidence member must also still match the anchored digest.
+        """
+        try:
+            cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+            if (
+                type(plan) is not transaction.PairCoordinates
+                or self._lease is not lease
+                or type(self._intent) is not bytes
+                or not 0 < len(self._intent) <= 1024
+            ):
+                raise _fail()
+            plan.validate()
+            intent = json.loads(self._intent)
+            if (
+                type(intent) is not dict
+                or intent.keys()
+                != {
+                    "attempt",
+                    "evidence_sha256",
+                    "old_controller",
+                    "old_worker",
+                    "old_source",
+                    "new_source",
+                    "release",
+                }
+                or intent["attempt"] != plan.attempt_id
+                or intent["old_controller"] != plan.old_controller_id
+                or intent["old_worker"] != plan.old_worker_id
+                or intent["old_source"] != plan.old_source_sha
+                or intent["new_source"] != plan.new_source_sha
+                or intent["release"] != plan.release_run_id
+                or type(intent["evidence_sha256"]) is not str
+                or _HEX.fullmatch(intent["evidence_sha256"]) is None
+            ):
+                raise _fail()
+            root = stage._root_fd()
+            try:
+                prefix = f"{_PREFIX}{plan.attempt_id}."
+                actual, _ = stage._read_file(
+                    root,
+                    prefix + "intent",
+                    hashlib.sha256(self._intent).hexdigest(),
+                    limit=1024,
+                )
+                evidence, _ = stage._read_file(
+                    root,
+                    prefix + "evidence",
+                    intent["evidence_sha256"],
+                    limit=_MAX_EVIDENCE,
+                )
+                if actual != self._intent or not evidence:
+                    raise _fail()
+            finally:
+                os.close(root)
+            cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+        except Exception:
+            raise _fail() from None
+
     def intent(self, plan: transaction.PairCoordinates, lease: cleanup.BocaJobLease) -> None:
         """Create evidence *before* original intent; neither file can replay."""
         witness = self._verified_witness(plan, lease)

@@ -16,21 +16,30 @@ owner/passkey acceptance are connected and independently reviewed.
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from dataclasses import dataclass
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
+from boca_socios import host_boca_cleanup as cleanup
+from boca_socios import host_boca_cleanup_v2 as counted
 from boca_socios import host_boca_current_pair_v2 as current
 from boca_socios import host_boca_pair_upgrade as transaction
 from boca_socios import host_boca_pair_upgrade_reusable as reusable
 from boca_socios import host_boca_repeatable_journal as journal
 from boca_socios import host_boca_successor_physical_v2 as physical
 from boca_socios import host_boca_upgrade_adapters as adapters
+from boca_socios import host_boca_upgrade_failure_cleanup_v2 as failure_cleanup
 from boca_socios import host_boca_upgrade_observation_bridge as observation
 from boca_socios import host_boca_upgrade_release_bridge as release_bridge
+from boca_socios import host_boca_upgrade_same_lease as same_lease
 from boca_socios import host_boca_upgrade_successor_runtime as successor_runtime
+from boca_socios import host_cutover_stage as stage
 from boca_socios.host_boca_pair_stage import PairSources
 from boca_socios.host_boca_pair_upgrade_plan import CandidateRelease
+
+if TYPE_CHECKING:
+    from boca_socios.host_boca_pair_upgrade_cli import BoundSuccessorPreflight
 
 _RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
 _SHA = re.compile(r"[a-f0-9]{40}\Z")
@@ -58,6 +67,211 @@ class BoundSuccessorInputs:
     @property
     def apply_authorized(self) -> Literal[False]:
         return False
+
+
+@dataclass(frozen=True, slots=True)
+class CurrentBaseOnlyStageCustody:
+    """Read actual unchanged root Compose twice in the journal's SAME lease.
+
+    This intentionally supports only the current no-base-Compose-change
+    upgrade. A future changed-base upgrade requires a separately authenticated
+    historical source digest, not the old R186 singleton constant.
+    No Docker effect, lease acquisition or journal write during assembly.
+    """
+
+    preflight: BoundSuccessorPreflight
+    journal: journal.SuccessorPairJournal
+
+    def __post_init__(self) -> None:
+        from boca_socios.host_boca_pair_upgrade_cli import BoundSuccessorPreflight
+
+        if (
+            type(self.preflight) is not BoundSuccessorPreflight
+            or self.preflight.apply_authorized is not False
+            or type(self.journal) is not journal.SuccessorPairJournal
+        ):
+            raise _fail()
+        self.preflight.inputs.plan.validate()
+        self.sources().validate()
+
+    def sources(self) -> PairSources:
+        """Freeze target bytes; original digest becomes a strict equality gate.
+
+        Only `intent` can attest that the physical old root actually has this
+        SHA. Mere construction does NOT prove the old Compose identity.
+        """
+        try:
+            proof = self.preflight
+            sources = PairSources(
+                proof.base,
+                proof.overlay,
+                proof.seccomp,
+                original_compose_sha=proof.base_sha,
+                base_sha=proof.base_sha,
+                overlay_sha=proof.overlay_sha,
+                seccomp_sha=proof.seccomp_sha,
+            )
+            sources.validate()
+            return sources
+        except Exception:
+            raise _fail() from None
+
+    def intent(self, plan: transaction.PairCoordinates, lease: cleanup.BocaJobLease) -> None:
+        """Attest exact physical Compose before O_EXCL journal intent.
+
+        The existing stage.prepare rechecks the same unchanged root inode
+        both before and after its own attempt-scoped stage write.
+        """
+        try:
+            if type(plan) is not transaction.PairCoordinates or plan != self.preflight.inputs.plan:
+                raise _fail()
+            cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+            sources = self.sources()
+            root = stage._root_fd()
+            try:
+                first, first_inode = stage._read_file(
+                    root,
+                    "compose.beta.yaml",
+                    sources.original_compose_sha,
+                    limit=stage.MAX_FILE,
+                    historical_compose=True,
+                )
+                second, second_inode = stage._read_file(
+                    root,
+                    "compose.beta.yaml",
+                    sources.original_compose_sha,
+                    limit=stage.MAX_FILE,
+                    historical_compose=True,
+                )
+                if (
+                    first != sources.base
+                    or second != sources.base
+                    or not stage._same_inode(first_inode, second_inode)
+                ):
+                    raise _fail()
+            finally:
+                os.close(root)
+            cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+            self.journal.intent(plan, lease)
+        except Exception:
+            raise _fail() from None
+
+
+class OneShotFailureTerminalSink:
+    """Compose official FAILURE V2 and the original journal terminal once.
+
+    This is an inert, unwired future terminal callback. It does not acquire a
+    lease, dispatch Docker, retry an effect or grant an installed-pair GO.
+    A failed precommit attempt may clean exact Boca resources only through
+    the existing durable V2 executor. After a possible commit, never restore
+    or perform FAILURE cleanup; retain the original uncertainty.
+    """
+
+    def __init__(
+        self,
+        plan: transaction.PairCoordinates,
+        durable: journal.SuccessorPairJournal,
+        *,
+        retained_io: adapters.RetainedResourceIO | None = None,
+    ) -> None:
+        if (
+            type(plan) is not transaction.PairCoordinates
+            or type(durable) is not journal.SuccessorPairJournal
+            or (
+                retained_io is not None
+                and type(retained_io) is not same_lease.ProductionRetainedResourceIO
+            )
+        ):
+            raise _fail()
+        plan.validate()
+        self.plan = plan
+        self.journal = durable
+        self.retained_io = retained_io
+        self._started = False
+
+    def __call__(
+        self,
+        plan: transaction.PairCoordinates,
+        receipt: transaction.PairUpgradeReceipt,
+        lease: cleanup.BocaJobLease,
+    ) -> None:
+        if self._started:
+            raise _fail()
+        # One-way boundary before a callback may write O_EXCL intent or delete
+        # an exact Boca resource. Even an uncertain exception cannot retry.
+        self._started = True
+        try:
+            if (
+                type(plan) is not transaction.PairCoordinates
+                or plan != self.plan
+                or type(receipt) is not transaction.PairUpgradeReceipt
+                or receipt.attempt_id != plan.attempt_id
+                or type(receipt.commit_started) is not bool
+                or type(receipt.old_restored) is not bool
+                or receipt.state not in ("ACCEPTED", "RECOVERED", "NO_GO")
+                or receipt.cleanup not in ("ACCEPT", "NO_GO", "INDETERMINATE")
+            ):
+                raise _fail()
+            plan.validate()
+            cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+            # No physical cleanup may precede this exact journal's durable
+            # same-lease intent and witness evidence. A stray journal object
+            # must not be able to consume a new terminal attempt.
+            self.journal.attest_active_intent(plan, lease)
+            if receipt.commit_started:
+                if (
+                    receipt.old_restored
+                    # The current bridge has no completed SUCCESS V2 receipt
+                    # nor independent owner/monitor postflight source. Never
+                    # persist ACCEPTED from only the engine's textual result.
+                    or receipt.state == "ACCEPTED"
+                    or receipt.state == "RECOVERED"
+                ):
+                    raise _fail()
+                # Post-marker uncertainty cannot authorize any rollback,
+                # FAILURE cleanup or a second cleanup after SUCCESS intent.
+                self.journal.terminal(plan, receipt, lease)
+                return
+            if receipt.state == "RECOVERED":
+                if not receipt.old_restored or receipt.cleanup != "ACCEPT":
+                    raise _fail()
+            elif receipt.state != "NO_GO" or receipt.cleanup == "ACCEPT":
+                raise _fail()
+            if receipt.old_restored and self.retained_io is None:
+                raise _fail()
+            proof = failure_cleanup.execute_durable_failure_cleanup(
+                plan,
+                lease,
+                restored=receipt.old_restored,
+                receipt_dir=stage.ROOT,
+                historical_retained=failure_cleanup._EXPECTED_R108,
+                retained_io=self.retained_io if receipt.old_restored else None,
+            )
+            if (
+                type(proof) is not failure_cleanup.DurableFailureCleanupReceipt
+                or proof.attempt_id != plan.attempt_id
+                or proof.state != "NO_GO"
+                or proof.apply_authorized is not False
+                or proof.cleanup_status not in ("ACCEPT", "NO_GO", "INDETERMINATE")
+                or type(proof.raw) is not bytes
+                or type(proof.sha256) is not str
+                or type(proof.intent_sha256) is not str
+                or hashlib.sha256(proof.raw).hexdigest() != proof.sha256
+                or not re.fullmatch(r"[0-9a-f]{64}", proof.sha256)
+                or not re.fullmatch(r"[0-9a-f]{64}", proof.intent_sha256)
+            ):
+                raise _fail()
+            body = counted.verify_cleanup_v2_receipt(
+                proof.raw, plan.attempt_id, require_install_success=False
+            )
+            if body["outcome"] != "FAILURE" or body["status"] != proof.cleanup_status:
+                raise _fail()
+            cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+            # FAILURE cleanup ACCEPT does not install the new release. Keep
+            # the engine's original NO_GO or legitimate RECOVERED receipt.
+            self.journal.terminal(plan, receipt, lease)
+        except Exception:
+            raise _fail() from None
 
 
 def verify_runner_bound_host_inputs(

@@ -103,6 +103,7 @@ def _sources(
         worker_startup_reader=lambda: events.append("startup") or "READ_FRESH_FILE_AT_NEXT_START",
         monitor_reader=lambda: events.append("monitor") or ("NOT_CONNECTED", 0),
         panel_login_reader=lambda: events.append("panel") or "LOGIN_HTTP_200",
+        panel_health_reader=lambda: events.append("health") or "HEALTH_HTTP_200",
         cleanup_readback=lambda: events.append("cleanup") or expected.cleanup_receipt,
     )
 
@@ -162,6 +163,51 @@ def test_live_reader_reuses_existing_pair_binding_and_resource_graph_under_lease
         "monitor",
         "lease",
     ]
+
+
+def test_r252_technical_reader_proves_health_without_owner_login_or_monitor() -> None:
+    expected = _expected()
+    events: list[str] = []
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, -1, True)
+    reader = runtime.ProductionPostflightSnapshotReader(
+        expected,
+        _sources(expected, events),
+        verify_lease=lambda *_: events.append("lease"),
+        technical_only=True,
+    )
+    found = reader(lease)
+    assert found.panel_loopback_probe == "HEALTH_HTTP_200"
+    assert found.monitor_source == "NOT_CONNECTED"
+    assert found.monitor_observation_count == 0
+    assert "health" in events
+    assert "panel" not in events
+    assert "monitor" not in events
+    assert events[-1] == "lease"
+
+
+def test_r252_technical_missing_real_health_is_nogo_before_host_reads() -> None:
+    expected = _expected()
+    events: list[str] = []
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, -1, True)
+    source = replace(_sources(expected, events), panel_health_reader=None)
+    with pytest.raises(runtime.PostflightRuntimeNoGo):
+        runtime.ProductionPostflightSnapshotReader(expected, source, technical_only=True)(lease)
+    assert events == []
+
+
+def test_r252_technical_rejects_bad_health_even_with_owner_login_source() -> None:
+    expected = _expected()
+    events: list[str] = []
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, -1, True)
+    source = replace(_sources(expected, events), panel_health_reader=lambda: "LOGIN_HTTP_200")
+    with pytest.raises(runtime.PostflightRuntimeNoGo):
+        runtime.ProductionPostflightSnapshotReader(
+            expected,
+            source,
+            verify_lease=lambda *_: None,
+            technical_only=True,
+        )(lease)
+    assert "panel" not in events and "monitor" not in events
 
 
 @pytest.mark.parametrize(

@@ -431,12 +431,14 @@ def _read_retained_graph(
 
 @dataclass(frozen=True, slots=True)
 class PostflightReadSources:
-    """Host boundary. Missing site/monitor/login/readback producer is NO_GO.
+    """Host boundary; missing required producers fail closed per profile.
 
     These producers are not empty-value defaults. They must come from the
-    protected Boca-only run, with independently attested read-only I/O; in
-    particular GET `/ingresar` creates a passkey challenge and does not count
-    as a mutation-free login probe. No API here supplies that false witness.
+    protected Boca-only run, with independently attested read-only I/O.
+    Default legacy postflight needs owner login and monitor readers; explicit
+    technical-only postflight needs genuine health but never calls either.
+    GET `/ingresar` creates a passkey challenge and does not count as a
+    mutation-free login probe. No API here supplies that false witness.
     """
 
     pair_reader: Callable[[str], bytes] = pair.observe
@@ -452,6 +454,7 @@ class PostflightReadSources:
     site_saved_reader: Callable[[], str] | None = None
     site_mirror_reader: Callable[[], str] | None = None
     worker_startup_reader: Callable[[], str] | None = None
+    panel_health_reader: Callable[[], str] | None = None
     panel_login_reader: Callable[[], str] | None = None
     monitor_reader: Callable[[], tuple[str, int]] | None = None
     cleanup_readback: Callable[[], bytes] | None = None
@@ -462,9 +465,12 @@ class ProductionPostflightSnapshotReader:
     """One fresh, physical Boca postflight snapshot under the existing lease.
 
     `postflight.capture_postflight` calls this reader twice and compares all
-    values; do not independently acquire or release the lease. It is a
-    deliberately incomplete building block until the host proves the missing
-    site, mirror, monitor, mutation-free login and durable cleanup sources.
+    values; do not independently acquire or release the lease. The default
+    legacy profile still requires independently authenticated owner login and
+    monitor sources. Explicit `technical_only=True` selects the distinct
+    non-promoting health profile for `capture_technical_postflight`: no owner
+    session is opened and zero monitor observations describe this observer's
+    lack of monitoring, not live provider state.
     """
 
     expected: postflight.PostflightExpected
@@ -472,6 +478,7 @@ class ProductionPostflightSnapshotReader:
     verify_lease: Callable[[cleanup.BocaJobLease, str], None] = (
         cleanup.verify_protected_boca_job_lease
     )
+    technical_only: bool = False
 
     def __call__(self, lease: cleanup.BocaJobLease) -> postflight.PostflightSnapshot:
         try:
@@ -479,7 +486,9 @@ class ProductionPostflightSnapshotReader:
             site_saved_reader = sources.site_saved_reader
             site_mirror_reader = sources.site_mirror_reader
             worker_startup_reader = sources.worker_startup_reader
-            panel_login_reader = sources.panel_login_reader
+            panel_reader = (
+                sources.panel_health_reader if self.technical_only else sources.panel_login_reader
+            )
             monitor_reader = sources.monitor_reader
             cleanup_readback = sources.cleanup_readback
             storage_reader = sources.storage_reader
@@ -487,13 +496,15 @@ class ProductionPostflightSnapshotReader:
                 type(self.expected) is not postflight.PostflightExpected
                 or type(sources) is not PostflightReadSources
                 or type(lease) is not cleanup.BocaJobLease
+                or type(self.technical_only) is not bool
                 or not callable(self.verify_lease)
                 or site_saved_reader is None
                 or storage_reader is None
                 or site_mirror_reader is None
                 or worker_startup_reader is None
-                or panel_login_reader is None
-                or monitor_reader is None
+                or panel_reader is None
+                or not self.technical_only
+                and monitor_reader is None
                 or cleanup_readback is None
                 or not all(
                     callable(fn)
@@ -506,9 +517,9 @@ class ProductionPostflightSnapshotReader:
                         sources.site_saved_reader,
                         sources.site_mirror_reader,
                         sources.worker_startup_reader,
-                        sources.panel_login_reader,
-                        sources.monitor_reader,
+                        panel_reader,
                         sources.cleanup_readback,
+                        *(() if self.technical_only else (monitor_reader,)),
                     )
                 )
             ):
@@ -555,8 +566,13 @@ class ProductionPostflightSnapshotReader:
             site_saved = site_saved_reader()
             site_mirror = site_mirror_reader()
             worker_startup = worker_startup_reader()
-            panel_status = panel_login_reader()
-            monitor_source, monitor_count = monitor_reader()
+            panel_status = panel_reader()
+            if self.technical_only:
+                monitor_source, monitor_count = "NOT_CONNECTED", 0
+            else:
+                monitor_source, monitor_count = cast(
+                    Callable[[], tuple[str, int]], monitor_reader
+                )()
             uid, gid = sources.rootless_identity_reader()
             snapshot = postflight.PostflightSnapshot(
                 pair_receipt=pair_raw,
@@ -580,7 +596,9 @@ class ProductionPostflightSnapshotReader:
                 panel_loopback_probe=panel_status,
                 cleanup_receipt_sha256=hashlib.sha256(self.expected.cleanup_receipt).hexdigest(),
             )
-            postflight._validate_snapshot(self.expected, snapshot)
+            postflight._validate_snapshot(
+                self.expected, snapshot, technical_only=self.technical_only
+            )
             self.verify_lease(lease, plan.attempt_id)
             return snapshot
         except Exception:

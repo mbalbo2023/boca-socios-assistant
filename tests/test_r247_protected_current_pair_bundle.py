@@ -59,9 +59,9 @@ def test_builder_and_bootstrap_allow_exact_eight_authenticated_evidence_files(
         assert "boca_socios/host_boca_current_pair_v2.py" in archive.namelist()
         assert "boca_socios/host_boca_upgrade_failure_cleanup_v2.py" in archive.namelist()
         assert "boca_socios/host_boca_successor_physical_v2.py" in archive.namelist()
-        # R249 must fit the existing bound without altering executable code.
-        # Original sources remain untouched; only comments in the transport
-        # may be removed after bytecode/AST/line-count equivalence checks.
+        # R252's measured successor closure may now fit the reviewed 1.4MB
+        # bound without compaction. If it does not, ONLY comment tokens may
+        # disappear, preserving AST, bytecode and exact source line counts.
         compacted = []
         for source in builder.PAIR_UPGRADE_SOURCES:
             if not source.endswith(".py"):
@@ -74,7 +74,12 @@ def test_builder_and_bootstrap_allow_exact_eight_authenticated_evidence_files(
             assert packaged.count(b"\n") == original.count(b"\n")
             if packaged != original:
                 compacted.append(name)
-        assert compacted, "The 1.3MB bound requires measured safe compaction"
+        source_names = {rel.removeprefix("src/") for rel in builder.PAIR_UPGRADE_SOURCES}
+        original_total = sum((ROOT / rel).stat().st_size for rel in builder.PAIR_UPGRADE_SOURCES)
+        original_total += sum(
+            len(archive.read(name)) for name in archive.namelist() if name not in source_names
+        )
+        assert bool(compacted) is (original_total > builder.PAIR_UPGRADE_MAX_SOURCE_BYTES)
         assert (
             sum(item.file_size for item in archive.infolist())
             <= builder.PAIR_UPGRADE_MAX_SOURCE_BYTES
