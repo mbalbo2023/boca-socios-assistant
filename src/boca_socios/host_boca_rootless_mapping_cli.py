@@ -43,6 +43,7 @@ _FIELDS = frozenset(
 _FAILURE_FIELDS = _FIELDS | {"failed_boundary"}
 _BOUNDARIES = frozenset(
     {"LEASE", "PAIR_BINDING", "VOLUMES", "PID_MAP", "INODES", "STABILITY", "INTERNAL"}
+    | {f"INODES_{reason}" for reason in custody._REASONS}
 )
 _MAX_BYTES = 1024
 
@@ -276,6 +277,10 @@ def observe_predeploy(run_id: str) -> bytes:
                 raise _fail()
             cleanup.verify_protected_boca_job_lease(lease, run_id)
         return encode(run_id, "PRELIMINARY_PREDEPLOY", lease_verified=True)
+    except custody.MappedCustodyNoGo as exc:
+        if boundary == "INODES":
+            boundary = f"INODES_{exc.reason}"
+        raise MappingBridgeNoGo(boundary) from None
     except Exception:
         raise MappingBridgeNoGo(boundary) from None
 
