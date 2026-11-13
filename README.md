@@ -1,5 +1,84 @@
 # Boca Socios Assistant
 
+## R260 — estado consolidado de integración (13/11/2026; CODE_ONLY)
+
+La rama candidata reúne el pre-PARK R255, el terminal técnico R257, el
+backend protegido R259, el perfil `SITE_URL=NOT_CONFIGURED` auténtico, el
+observador rootless READ_ONLY y la custodia WebAuthn host-only. R258 empaqueta
+los módulos técnicos del par y el observador rootless, **no** el WebAuthn
+R260, que sigue sin canal autenticado host↔panel. Sus ZIP tienen **82 miembros PAIR**
+(hasta 1.500.000 B descomprimidos con reserva mínima de 50.000 B) y **62
+miembros rootless READ_ONLY** (límite propio de 1.400.000 B), SHA/allowlist
+exactos y expansión máxima 8:1. Son medidas de fixture local, no de una
+release publicada. El selector `main apply` **permanece NO_GO**; faltan CI
+del SHA integrado, observación física, release dual y postflight
+8443/passkey/SITE_URL/worker/monitor/SQLite. Sin replay R186 ni cambios en
+el host. Los apartados R255–R259 conservan su contexto histórico; este
+estado posterior prevalece sobre los pendientes ya integrados en código.
+
+## R260 — challenge WebAuthn de dueño host-only (13/11/2026, CODE_ONLY)
+
+Se agregó un adapter aislado para una nueva ceremonia ES256/UP+UV posterior
+al deploy: reto generado por el host y guardado **sólo como digest** en
+archivos Boca O_EXCL, vinculado al SHA/intento/CIDs auténticos y 120 segundos
+de frescura. El recibo separado siempre informa `BETA NO_GO`.
+**No existe todavía canal confiable host↔panel para el reto**, ni se ha
+probado acceso de UID10001 a los archivos públicos del volumen owner con
+subuid remapeado; no se habilitó HTTP/CLI/APPLY ni se instaló nada. El login
+viejo o cookie persistente no sustituyen esta nueva passkey.
+[ADR0282](docs/ADR/0282-r260-host-owner-passkey-acceptance-code-only.md).
+
+## R259 — backend técnico protegido, candidato CODE_ONLY (13/11/2026)
+
+Un nuevo adapter tipado del par sucesor une el único grafo R253 a la
+`BocaJobLease` efectiva, captura la identidad pre-PARK R255 y sólo devuelve
+`ACCEPT` técnico tras limpieza SUCCESS V2 auténtica, CIDs nuevos observados,
+atestador de volúmenes y recibo duradero R257. Rechaza etapas effectful sin
+fuente pre-PARK y consume finalize una sola vez. El helper interno del CLI
+prepara `backend_factory` solamente después del intent durable, pero **el
+selector `main apply` permanece NO_GO**: aún falta verificar remapeo subuid en
+droplet, ausencia real de `SITE_URL` en el perfil frío, release dual y
+aceptación física passkey/worker/monitor/SQLite. El empaquetado de código
+quedó incorporado en R258, sin instalarlo. No repetir R186.
+[ADR0280](docs/ADR/0280-r259-one-held-lease-guarded-technical-backend-code-only.md).
+
+## R259 — preflight subuid rootless READ_ONLY (13/11/2026; CODE_ONLY)
+
+El puente `host_boca_rootless_mapping_cli` observa sólo metadatos del par
+Boca actualmente instalado bajo un **flock ya existente**, sin crearlo. Une
+la observación R177 y el binding systemd verificado con el PID exacto del
+controller, mapas reales `uid_map/gid_map`, volúmenes Boca y tres inodes
+privados con doble captura. Su único éxito es `PRELIMINARY_PREDEPLOY`:
+no contiene IDs privados ni autoriza `APPLY`, cleanup o aceptación BETA.
+**DEPLOY NO_GO**, sin observación física todavía. [ADR0279](docs/ADR/0279-r259-rootless-mapping-predeploy-readonly.md).
+
+## R257 — terminal técnico same-lease, sólo código (13/11/2026)
+
+Un puente inerte vincula la limpieza SUCCESS V2 genuina, el postflight
+técnico R253 persistido O_EXCL y el terminal del journal en una misma lease
+Boca; el fracaso sigue delegado al sink FAILURE V2 sin reintentos. Un
+`TECHNICAL_ACCEPTED_OWNER_PENDING` **no acredita passkey, monitor ni BETA GO**.
+La CLI/APPLY sigue deshabilitada y este código no ha sido instalado.
+**Bloqueante físico:** el motor retira el par viejo antes del
+postflight/terminal; el veto precommit R259 reduce riesgo, pero sigue faltando
+UID remapeado, release y aceptación física. No repetir R186 ni tocar Porota.
+[ADR0274](docs/ADR/0274-r257-technical-terminal-same-lease-code-only.md).
+
+## R255 — expectativa postflight en dos fases (13/11/2026; CODE_ONLY)
+
+El productor R255 captura de forma doble y sólo lectura el par Boca instalado,
+los tres volúmenes privados y las huellas de almacenamiento/SITE_URL **antes
+de aparcar** el controlador original. Después de una limpieza SUCCESS real,
+podrá derivar los CIDs e imágenes nuevos del observador físico y de systemd,
+sin aceptar datos del formulario. Si la URL no está guardada en la versión
+anterior, registra `NOT_CONFIGURED` sin inventar su huella: el futuro upgrade
+técnico podrá mantener el worker apagado, pero **la aceptación BETA exige**
+guardar y comprobar SITE_URL en el panel actualizado. Desde R258/R259
+está incluido en el ZIP protegido y enlazado al backend técnico, pero
+**no autoriza el selector CLI APPLY**; la posible titularidad `subuid`,
+el postflight físico y la passkey real requieren evidencia aparte.
+**DEPLOY NO_GO**. [ADR0271](docs/ADR/0271-r255-two-phase-prepark-postflight-expected.md).
+
 ## R258 — reconciliación de #501 con #500 (12/11/2026 ART; 13/11 UTC; CODE_ONLY)
 
 El candidato [PR #501](https://github.com/mbalbo2023/boca-socios-assistant/pull/501)

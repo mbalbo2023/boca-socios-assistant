@@ -32,7 +32,7 @@ def test_r252_pair_archive_includes_exact_postflight_v2_module_and_imports_offli
         assert "boca_socios/host_boca_upgrade_postflight_runtime.py" in names
         assert not any("synthetic.py" in item or "ipc_worker.py" in item for item in names)
         assert len(raw) <= 480_000
-        assert sum(info.file_size for info in archive.infolist()) <= 1_400_000
+        assert sum(info.file_size for info in archive.infolist()) <= 1_500_000
 
     check = subprocess.run(  # noqa: S603 - exact local Python interpreter and reviewed ZIP
         [
@@ -58,7 +58,7 @@ def test_r252_pair_archive_includes_exact_postflight_v2_module_and_imports_offli
 
 def test_r252_pair_source_cap_is_strict_and_runner_host_match(tmp_path: Path) -> None:
     assert builder.PAIR_UPGRADE_MAX_SOURCE_BYTES == bootstrap.PAIR_UPGRADE_MAX_UNCOMPRESSED
-    assert builder.PAIR_UPGRADE_MAX_SOURCE_BYTES == 1_400_000
+    assert builder.PAIR_UPGRADE_MAX_SOURCE_BYTES == 1_500_000
     assert builder.PAIR_UPGRADE_MAX_ARCHIVE_BYTES == bootstrap.PAIR_UPGRADE_MAX_ZIP == 480_000
 
     original = tmp_path / "original.pyz"
@@ -82,19 +82,33 @@ def test_r252_pair_source_cap_is_strict_and_runner_host_match(tmp_path: Path) ->
 def test_r252_pair_compacts_only_comments_when_forced_over_a_tighter_bound(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    first = tmp_path / "uncompacted.pyz"
+    first = tmp_path / "original-cap.pyz"
     builder.build(ROOT, first, pair_upgrade=True)
     with zipfile.ZipFile(first) as archive:
-        raw_total = sum(item.file_size for item in archive.infolist())
-        assert all(
-            archive.read(rel.removeprefix("src/")) == (ROOT / rel).read_bytes()
+        first_total = sum(item.file_size for item in archive.infolist())
+        original_total = first_total + sum(
+            len((ROOT / rel).read_bytes()) - len(archive.read(rel.removeprefix("src/")))
             for rel in builder.PAIR_UPGRADE_SOURCES
         )
+    assert original_total >= first_total
 
-    monkeypatch.setattr(builder, "PAIR_UPGRADE_MAX_SOURCE_BYTES", raw_total - 1)
-    second = tmp_path / "compacted.pyz"
-    builder.build(ROOT, second, pair_upgrade=True)
-    with zipfile.ZipFile(second) as archive:
+    # A future allowlist may trigger comment compaction at the bounded gate.
+    # When the first archive is raw, force the fallback
+    # with a one-byte-tighter bound; otherwise inspect the already compacted
+    # payload and its executable equivalence instead of requiring raw bytes.
+    if original_total == first_total:
+        # The source cap can be tightened while retaining a separate 50k
+        # evidence reserve after comment-only compaction.
+        monkeypatch.setattr(
+            builder,
+            "PAIR_UPGRADE_MAX_SOURCE_BYTES",
+            first_total + builder.PAIR_UPGRADE_MIN_SOURCE_RESERVE - 1,
+        )
+        selected = tmp_path / "compacted.pyz"
+        builder.build(ROOT, selected, pair_upgrade=True)
+    else:
+        selected = first
+    with zipfile.ZipFile(selected) as archive:
         changed = []
         for rel in builder.PAIR_UPGRADE_SOURCES:
             if not rel.endswith(".py"):
@@ -106,4 +120,7 @@ def test_r252_pair_compacts_only_comments_when_forced_over_a_tighter_bound(
             if packaged != original:
                 changed.append(rel)
         assert changed, "Fallback must actually strip comments without changing execution"
-        assert sum(item.file_size for item in archive.infolist()) <= raw_total - 1
+        assert (
+            sum(item.file_size for item in archive.infolist())
+            <= builder.PAIR_UPGRADE_MAX_SOURCE_BYTES
+        )

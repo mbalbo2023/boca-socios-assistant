@@ -247,6 +247,12 @@ PAIR_UPGRADE_SOURCES = tuple(
             "src/boca_socios/host_boca_durable_technical_postflight_v2.py",
             "src/boca_socios/host_boca_postflight_volume_attestor_v2.py",
             "src/boca_socios/host_boca_successor_assembly_v3.py",
+            # R255/R257 reviewed read-only producers; packaging is inert.
+            # No new __main__ entrypoint, APPLY wiring or host privilege.
+            "src/boca_socios/host_boca_prepark_expected_v2.py",
+            "src/boca_socios/host_boca_rootless_mapped_custody.py",
+            "src/boca_socios/host_boca_technical_terminal_bridge_v3.py",
+            "src/boca_socios/host_boca_guarded_successor_backend_v4.py",
             "src/boca_socios/host_boca_upgrade_cleanup_runtime.py",
             "src/boca_socios/host_boca_upgrade_successor_runtime.py",
             "src/boca_socios/host_boca_upgrade_failure_cleanup_v2.py",
@@ -287,6 +293,28 @@ PAIR_UPGRADE_MAIN = (
     "    raise SystemExit(3)\n"
     "from boca_socios.host_boca_pair_upgrade_cli import main as cli\n"
     "raise SystemExit(cli(['apply',*sys.argv[2:]]))\n"
+).encode("ascii")
+# The predeploy UID/subuid witness is a distinct READ_ONLY command, not a
+# second interpretation of a pair APPLY ZIP. Reuse reviewed host modules but
+# exclude all release/Compose payloads and the pre/post terminal producers.
+_ROOTLESS_MAPPED_ONLY_OMIT = frozenset(
+    (
+        "src/boca_socios/host_boca_prepark_expected_v2.py",
+        "src/boca_socios/host_boca_technical_terminal_bridge_v3.py",
+        "src/boca_socios/host_boca_guarded_successor_backend_v4.py",
+    )
+)
+ROOTLESS_MAPPED_SOURCES = tuple(
+    rel
+    for rel in PAIR_UPGRADE_SOURCES
+    if rel.endswith(".py") and rel not in _ROOTLESS_MAPPED_ONLY_OMIT
+) + ("src/boca_socios/host_boca_rootless_mapping_cli.py",)
+ROOTLESS_MAPPED_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 3 or sys.argv[1] != 'boca-rootless-mapping-observe':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_boca_rootless_mapping_cli import main as cli\n"
+    "raise SystemExit(cli(['observe',sys.argv[2]]))\n"
 ).encode("ascii")
 POSTCOMMIT_FINALIZE_SOURCES = tuple(
     dict.fromkeys(
@@ -402,11 +430,20 @@ BINDING_MAX_SOURCE_BYTES = 900_000
 BINDING_MAX_ARCHIVE_BYTES = 320_000
 SQLITE_OBSERVE_MAX_SOURCE_BYTES = 950_000
 SQLITE_OBSERVE_MAX_ARCHIVE_BYTES = 340_000
-# R252's reviewed genuine V2 postflight reader extends the SAME fixed ZIP
-# closure, without executable rewriting or a second host transport. Bound
-# both builder and memfd verifier to 1.4 MB; keep compressed cap unchanged.
-PAIR_UPGRADE_MAX_SOURCE_BYTES = 1_400_000
+# R258 reviewed the exact 1.4 MB fixture limit after R255/R257/R259 host
+# sources. A 100 kB bounded uncompressed increase leaves physical evidence
+# headroom; preserve the independent 480 kB compressed ceiling and add a
+# defense-in-depth ratio limit. Never use the expanded limit for other modes.
+PAIR_UPGRADE_MAX_SOURCE_BYTES = 1_500_000
 PAIR_UPGRADE_MAX_ARCHIVE_BYTES = 480_000
+PAIR_UPGRADE_MAX_COMPRESSION_RATIO = 8
+# Preserve enough room for genuine attempt-dependent release receipts.
+# Comment-only compaction is attempted before rejecting this stricter gate.
+PAIR_UPGRADE_MIN_SOURCE_RESERVE = 50_000
+# No expansion beyond the existing physical pair transport's vetted ceilings.
+ROOTLESS_MAPPED_MAX_SOURCE_BYTES = 1_400_000
+ROOTLESS_MAPPED_MAX_ARCHIVE_BYTES = 480_000
+ROOTLESS_MAPPED_MAX_COMPRESSION_RATIO = 8
 POSTCOMMIT_FINALIZE_MAX_SOURCE_BYTES = 1_100_000
 POSTCOMMIT_FINALIZE_MAX_ARCHIVE_BYTES = 400_000
 PREFLIGHT_MAX_SOURCE_BYTES = 520_000
@@ -460,6 +497,7 @@ def build(
     binding_observe: bool = False,
     sqlite_observe: bool = False,
     pair_upgrade: bool = False,
+    rootless_mapped_observe: bool = False,
     pair_upgrade_release_dir: Path | None = None,
     postcommit_finalize: bool = False,
 ) -> str:
@@ -478,6 +516,7 @@ def build(
                 binding_observe,
                 sqlite_observe,
                 pair_upgrade,
+                rootless_mapped_observe,
                 postcommit_finalize,
             )
         )
@@ -614,6 +653,11 @@ def build(
         sources = PAIR_UPGRADE_SOURCES
         max_source = PAIR_UPGRADE_MAX_SOURCE_BYTES
         max_archive = PAIR_UPGRADE_MAX_ARCHIVE_BYTES
+    elif rootless_mapped_observe:
+        files = {"__main__.py": ROOTLESS_MAPPED_MAIN, **HOST_ONLY_INIT}
+        sources = ROOTLESS_MAPPED_SOURCES
+        max_source = ROOTLESS_MAPPED_MAX_SOURCE_BYTES
+        max_archive = ROOTLESS_MAPPED_MAX_ARCHIVE_BYTES
     elif sqlite_observe:
         files = {"__main__.py": SQLITE_OBSERVE_MAIN, **HOST_ONLY_INIT}
         sources = SQLITE_OBSERVE_SOURCES
@@ -688,6 +732,7 @@ def build(
             binding_observe,
             sqlite_observe,
             pair_upgrade,
+            rootless_mapped_observe,
             postcommit_finalize,
         )
     )
@@ -714,17 +759,24 @@ def build(
     if full_cutover and sum(map(len, files.values())) > max_source:
         host_entry = _FULL_ONLY_COMPACT_SOURCE.removeprefix("src/")
         files[host_entry] = _compact_comment_tokens(files[host_entry])
-    if pair_upgrade and sum(map(len, files.values())) > max_source:
+    if (pair_upgrade or rootless_mapped_observe) and sum(map(len, files.values())) > (
+        max_source - PAIR_UPGRADE_MIN_SOURCE_RESERVE if pair_upgrade else max_source
+    ):
         # Compact the *whole* reviewed pair source closure, not just enough
         # files to scrape beneath the ceiling for one fixture: genuine
         # authenticated observation receipts vary in size between attempts.
         # The AST/compiled-bytecode/line checks reject semantic changes.
-        for rel in PAIR_UPGRADE_SOURCES:
+        for rel in PAIR_UPGRADE_SOURCES if pair_upgrade else ROOTLESS_MAPPED_SOURCES:
             if rel.endswith(".py"):
                 bundle_name = rel.removeprefix("src/")
                 files[bundle_name] = _compact_comment_tokens(files[bundle_name], filename=rel)
     if not 0 < sum(len(item) for item in files.values()) <= max_source:
         raise ValueError("Boca protected package total exceeds bounded contract")
+    if (
+        pair_upgrade
+        and sum(map(len, files.values())) > max_source - PAIR_UPGRADE_MIN_SOURCE_RESERVE
+    ):
+        raise ValueError("Boca protected pair package evidence reserve exhausted")
     if target.is_symlink() or target.exists():
         raise ValueError("Boca protected package target must be a fresh artifact")
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -742,6 +794,15 @@ def build(
         raw = target.read_bytes()
         if not 0 < len(raw) <= max_archive:
             raise ValueError("Boca protected package ZIP exceeds bounded contract")
+        if (pair_upgrade or rootless_mapped_observe) and sum(map(len, files.values())) > (
+            len(raw)
+            * (
+                PAIR_UPGRADE_MAX_COMPRESSION_RATIO
+                if pair_upgrade
+                else ROOTLESS_MAPPED_MAX_COMPRESSION_RATIO
+            )
+        ):
+            raise ValueError("Boca protected package compression ratio exceeds bounded contract")
         return hashlib.sha256(raw).hexdigest()
     except Exception:
         # Target was freshly created by us and never shared with other jobs.
@@ -773,6 +834,7 @@ def main() -> int:
     variant.add_argument("--binding-observe", action="store_true")
     variant.add_argument("--sqlite-observe", action="store_true")
     variant.add_argument("--pair-upgrade", action="store_true")
+    variant.add_argument("--rootless-mapped-observe", action="store_true")
     parser.add_argument("--pair-upgrade-release-dir", type=Path)
     variant.add_argument("--postcommit-finalize", action="store_true")
     parser.add_argument("repository_root", type=Path)
@@ -780,7 +842,7 @@ def main() -> int:
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, retained_observe=args.retained_observe, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, pair_upgrade_release_dir=args.pair_upgrade_release_dir, postcommit_finalize=args.postcommit_finalize)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, retained_observe=args.retained_observe, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, rootless_mapped_observe=args.rootless_mapped_observe, pair_upgrade_release_dir=args.pair_upgrade_release_dir, postcommit_finalize=args.postcommit_finalize)}"
     )
     return 0
 

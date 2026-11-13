@@ -185,6 +185,10 @@ PAIR_UPGRADE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
     "boca_socios/host_boca_durable_technical_postflight_v2.py",
     "boca_socios/host_boca_postflight_volume_attestor_v2.py",
     "boca_socios/host_boca_successor_assembly_v3.py",
+    "boca_socios/host_boca_prepark_expected_v2.py",
+    "boca_socios/host_boca_rootless_mapped_custody.py",
+    "boca_socios/host_boca_technical_terminal_bridge_v3.py",
+    "boca_socios/host_boca_guarded_successor_backend_v4.py",
     "boca_socios/host_boca_upgrade_cleanup_runtime.py",
     "boca_socios/host_boca_upgrade_successor_runtime.py",
     "boca_socios/host_boca_upgrade_failure_cleanup_v2.py",
@@ -214,6 +218,19 @@ PAIR_UPGRADE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
     "release/retained-proof.json",
     "release/current-pair-v2.receipt",
 }
+# A separate, never-APPLY rootless metadata probe. Only Python host sources
+# are carried: no release evidence, mutable Compose or browser destination.
+ROOTLESS_MAPPED_ENTRIES = frozenset(
+    name
+    for name in PAIR_UPGRADE_ENTRIES
+    if name.endswith(".py")
+    and name
+    not in (
+        "boca_socios/host_boca_prepark_expected_v2.py",
+        "boca_socios/host_boca_technical_terminal_bridge_v3.py",
+        "boca_socios/host_boca_guarded_successor_backend_v4.py",
+    )
+) | {"boca_socios/host_boca_rootless_mapping_cli.py"}
 POSTCOMMIT_FINALIZE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
     "boca_socios/host_boca_pair_postcommit.py",
     "boca_socios/host_boca_pair_postcommit_finalize.py",
@@ -241,7 +258,12 @@ BINDING_MAX_UNCOMPRESSED = 900_000
 SQLITE_OBSERVE_MAX_ZIP = 340_000
 SQLITE_OBSERVE_MAX_UNCOMPRESSED = 950_000
 PAIR_UPGRADE_MAX_ZIP = 480_000
-PAIR_UPGRADE_MAX_UNCOMPRESSED = 1_400_000
+PAIR_UPGRADE_MAX_UNCOMPRESSED = 1_500_000
+PAIR_UPGRADE_MAX_COMPRESSION_RATIO = 8
+PAIR_UPGRADE_MIN_SOURCE_RESERVE = 50_000
+ROOTLESS_MAPPED_MAX_ZIP = 480_000
+ROOTLESS_MAPPED_MAX_UNCOMPRESSED = 1_400_000
+ROOTLESS_MAPPED_MAX_COMPRESSION_RATIO = 8
 POSTCOMMIT_FINALIZE_MAX_ZIP = 400_000
 POSTCOMMIT_FINALIZE_MAX_UNCOMPRESSED = 1_100_000
 PREFLIGHT_MAX_ZIP = 128_000
@@ -267,6 +289,7 @@ def verify(
     binding_observe: bool = False,
     sqlite_observe: bool = False,
     pair_upgrade: bool = False,
+    rootless_mapped_observe: bool = False,
     postcommit_finalize: bool = False,
 ) -> None:
     """Verify digest, exact transport variant, file types and separate bounds."""
@@ -284,6 +307,7 @@ def verify(
                 binding_observe,
                 sqlite_observe,
                 pair_upgrade,
+                rootless_mapped_observe,
                 postcommit_finalize,
             )
         )
@@ -297,6 +321,8 @@ def verify(
         if postcommit_finalize
         else PAIR_UPGRADE_MAX_ZIP
         if pair_upgrade
+        else ROOTLESS_MAPPED_MAX_ZIP
+        if rootless_mapped_observe
         else SQLITE_OBSERVE_MAX_ZIP
         if sqlite_observe
         else BINDING_MAX_ZIP
@@ -324,6 +350,8 @@ def verify(
         if postcommit_finalize
         else PAIR_UPGRADE_MAX_UNCOMPRESSED
         if pair_upgrade
+        else ROOTLESS_MAPPED_MAX_UNCOMPRESSED
+        if rootless_mapped_observe
         else SQLITE_OBSERVE_MAX_UNCOMPRESSED
         if sqlite_observe
         else BINDING_MAX_UNCOMPRESSED
@@ -358,6 +386,8 @@ def verify(
             if postcommit_finalize
             else (PAIR_UPGRADE_ENTRIES,)
             if pair_upgrade
+            else (ROOTLESS_MAPPED_ENTRIES,)
+            if rootless_mapped_observe
             else (SQLITE_OBSERVE_ENTRIES,)
             if sqlite_observe
             else (BINDING_ENTRIES,)
@@ -385,6 +415,18 @@ def verify(
             or sum(entry.file_size for entry in entries) > max_uncompressed
         ):
             raise ValueError("protected Boca bundle entry allowlist mismatch")
+        if (pair_upgrade or rootless_mapped_observe) and sum(
+            entry.file_size for entry in entries
+        ) > len(raw) * (
+            PAIR_UPGRADE_MAX_COMPRESSION_RATIO
+            if pair_upgrade
+            else ROOTLESS_MAPPED_MAX_COMPRESSION_RATIO
+        ):
+            raise ValueError("protected Boca bundle compression ratio exceeds bounded contract")
+        if pair_upgrade and sum(entry.file_size for entry in entries) > (
+            PAIR_UPGRADE_MAX_UNCOMPRESSED - PAIR_UPGRADE_MIN_SOURCE_RESERVE
+        ):
+            raise ValueError("protected Boca pair bundle evidence reserve exhausted")
         for entry in entries:
             if entry.file_size == 0 or entry.file_size > max_uncompressed:
                 raise ValueError("protected Boca bundle entry size invalid")
@@ -417,6 +459,7 @@ def main() -> int:
         binding_observe = sys.argv[2] == "boca-binding-observe"
         sqlite_observe = sys.argv[2] == "boca-sqlite-inode-observe"
         pair_upgrade = sys.argv[2] == "boca-pair-upgrade-apply"
+        rootless_mapped_observe = sys.argv[2] == "boca-rootless-mapping-observe"
         postcommit_finalize = sys.argv[2] == "boca-postcommit-finalize"
         if (
             sys.argv[2] in ("cutover-stage-recover-904", "cutover-image-plan-916")
@@ -449,6 +492,8 @@ def main() -> int:
             raise ValueError(
                 "Boca pair upgrade requires run and six reviewed release/observation pins"
             )
+        if rootless_mapped_observe and len(sys.argv) != 4:
+            raise ValueError("Boca rootless witness requires only the authenticated run ID")
         if postcommit_finalize and len(sys.argv) != 4:
             raise ValueError("postcommit finalizer requires only fresh authenticated run ID")
         bound = (
@@ -458,6 +503,8 @@ def main() -> int:
             if postcommit_finalize
             else PAIR_UPGRADE_MAX_ZIP
             if pair_upgrade
+            else ROOTLESS_MAPPED_MAX_ZIP
+            if rootless_mapped_observe
             else SQLITE_OBSERVE_MAX_ZIP
             if sqlite_observe
             else BINDING_MAX_ZIP
@@ -493,6 +540,7 @@ def main() -> int:
             binding_observe=binding_observe,
             sqlite_observe=sqlite_observe,
             pair_upgrade=pair_upgrade,
+            rootless_mapped_observe=rootless_mapped_observe,
             postcommit_finalize=postcommit_finalize,
         )
         # The memfd is passed to the *same* process via exec. No temporary

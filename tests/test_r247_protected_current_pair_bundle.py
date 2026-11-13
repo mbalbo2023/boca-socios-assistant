@@ -59,7 +59,7 @@ def test_builder_and_bootstrap_allow_exact_eight_authenticated_evidence_files(
         assert "boca_socios/host_boca_current_pair_v2.py" in archive.namelist()
         assert "boca_socios/host_boca_upgrade_failure_cleanup_v2.py" in archive.namelist()
         assert "boca_socios/host_boca_successor_physical_v2.py" in archive.namelist()
-        # R252's measured successor closure may now fit the reviewed 1.4MB
+        # R258's measured successor closure may now fit the reviewed 1.5MB
         # bound without compaction. If it does not, ONLY comment tokens may
         # disappear, preserving AST, bytecode and exact source line counts.
         compacted = []
@@ -79,7 +79,10 @@ def test_builder_and_bootstrap_allow_exact_eight_authenticated_evidence_files(
         original_total += sum(
             len(archive.read(name)) for name in archive.namelist() if name not in source_names
         )
-        assert bool(compacted) is (original_total > builder.PAIR_UPGRADE_MAX_SOURCE_BYTES)
+        assert bool(compacted) is (
+            original_total
+            > builder.PAIR_UPGRADE_MAX_SOURCE_BYTES - builder.PAIR_UPGRADE_MIN_SOURCE_RESERVE
+        )
         assert (
             sum(item.file_size for item in archive.infolist())
             <= builder.PAIR_UPGRADE_MAX_SOURCE_BYTES

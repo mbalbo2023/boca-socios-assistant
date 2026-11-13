@@ -108,7 +108,9 @@ class PostflightExpected:
     worker_image_id: str
     retained: adapters.ResourcePins
     storage_before: PostflightStorage
-    site_url_fingerprint: str
+    # None means a physical pre-PARK read confirmed no owner configuration.
+    # Only schema-2 technical-only postflight may consume that state.
+    site_url_fingerprint: str | None
     cleanup_receipt: bytes
 
 
@@ -127,8 +129,8 @@ class PostflightSnapshot:
     rootless_gid: int
     storage_after: PostflightStorage
     retained: adapters.ResourcePins
-    site_url_saved_fingerprint: str
-    site_url_worker_mirror_fingerprint: str
+    site_url_saved_fingerprint: str | None
+    site_url_worker_mirror_fingerprint: str | None
     worker_site_url_startup: str
     monitor_source: str
     monitor_observation_count: int
@@ -212,9 +214,15 @@ def _validate_expected(expected: PostflightExpected) -> None:
             for value in (
                 expected.controller_id,
                 expected.worker_id,
-                expected.site_url_fingerprint,
                 expected.release.controller_manifest_sha256,
                 expected.release.paired_manifest_sha256,
+            )
+        )
+        or (
+            expected.site_url_fingerprint is not None
+            and (
+                type(expected.site_url_fingerprint) is not str
+                or _HEX.fullmatch(expected.site_url_fingerprint) is None
             )
         )
         or any(
@@ -310,6 +318,7 @@ def _validate_snapshot(
         or snapshot.rootless_gid != cleanup.EXPECTED_GID
         or snapshot.storage_after != expected.storage_before
         or snapshot.retained != expected.retained
+        or (not technical_only and expected.site_url_fingerprint is None)
         or snapshot.site_url_saved_fingerprint != expected.site_url_fingerprint
         or snapshot.site_url_worker_mirror_fingerprint != expected.site_url_fingerprint
         or snapshot.worker_site_url_startup != _STARTUP
@@ -340,6 +349,14 @@ def _receipt(
         "observations": snapshot.monitor_observation_count,
         "provider_attested": False,
     }
+    site_url: dict[str, object] = {
+        "fingerprint": snapshot.site_url_saved_fingerprint,
+        "mirror": snapshot.site_url_worker_mirror_fingerprint,
+        "startup": snapshot.worker_site_url_startup,
+    }
+    if technical_only and expected.site_url_fingerprint is None:
+        # Null is a real absent value, never a synthetic SHA or a BETA GO.
+        site_url["state"] = "NOT_CONFIGURED"
     body = {
         "schema": 2 if technical_only else 1,
         "state": "TECHNICAL_PROOF_ONLY" if technical_only else "TECHNICAL_ACCEPT",
@@ -355,11 +372,7 @@ def _receipt(
         "rootless_uid": snapshot.rootless_uid,
         "rootless_gid": snapshot.rootless_gid,
         "panel": panel_info,
-        "site_url": {
-            "fingerprint": snapshot.site_url_saved_fingerprint,
-            "mirror": snapshot.site_url_worker_mirror_fingerprint,
-            "startup": snapshot.worker_site_url_startup,
-        },
+        "site_url": site_url,
         "monitor": monitor_info,
         "cleanup": {
             "status": "ACCEPT",
@@ -439,6 +452,7 @@ def _capture_postflight(
             or verify_lease is None
             or not callable(read_snapshot)
             or not callable(verify_lease)
+            or (not technical_only and expected.site_url_fingerprint is None)
         ):
             raise _fail()
         _validate_expected(expected)
@@ -481,6 +495,8 @@ def verify_technical_postflight(raw: bytes, expected: PostflightExpected) -> byt
 def _verify_postflight(raw: bytes, expected: PostflightExpected, *, technical_only: bool) -> bytes:
     try:
         _validate_expected(expected)
+        if not technical_only and expected.site_url_fingerprint is None:
+            raise _fail()
         prefix = _TECHNICAL_PREFIX if technical_only else _PREFIX
         if (
             type(raw) is not bytes

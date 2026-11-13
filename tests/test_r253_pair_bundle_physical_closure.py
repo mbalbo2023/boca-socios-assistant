@@ -35,7 +35,7 @@ def test_r253_pair_bundle_has_only_reviewed_physical_producers(tmp_path: Path) -
         assert set(REQUIRED_R253_MODULES) <= names
         assert not any("synthetic.py" in item or "ipc_worker.py" in item for item in names)
         assert len(raw) <= 480_000
-        assert sum(info.file_size for info in archive.infolist()) <= 1_400_000
+        assert sum(info.file_size for info in archive.infolist()) <= 1_500_000
 
     isolated = subprocess.run(  # noqa: S603 - fixed local Python interpreter, ZIP import only
         [
