@@ -131,6 +131,12 @@ def test_rootless_mapping_failure_reports_only_authenticated_fixed_category() ->
     assert "HOST_OR_RECEIPT_UNVERIFIED" in body
     assert '"$receipt_dir/receipt" >> "$GITHUB_STEP_SUMMARY"' not in body
     assert "2>/dev/null" in body
+    for phase in (
+        "INODES_ACCESS_TRAVERSE",
+        "INODES_ACCESS_FINAL_OPEN",
+        "INODES_ACCESS_FINAL_STAT",
+    ):
+        assert phase in body
     assert (
         '"$verified" >> "$GITHUB_STEP_SUMMARY"'
         not in body.split('if [[ "$remote_rc" -ne 0', 1)[1].split("canonical_receipt_sha256=", 1)[0]

@@ -191,6 +191,45 @@ def test_rootless_inode_refusal_reveals_only_fixed_diagnostic_boundary(
     assert b"10001" not in raw and b"old" not in raw
 
 
+@pytest.mark.parametrize(
+    ("permission_point", "boundary"),
+    [
+        ("traverse", "INODES_ACCESS_TRAVERSE"),
+        ("final_open", "INODES_ACCESS_FINAL_OPEN"),
+        ("stat", "INODES_ACCESS_FINAL_STAT"),
+    ],
+)
+def test_inode_permission_refusal_is_phase_only_and_never_leaks_private_details(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, permission_point: str, boundary: str
+) -> None:
+    """Use real no-follow inode walk; substitute only one denied syscall."""
+    _stage(monkeypatch, tmp_path)
+    original_open = custody.os.open
+    original_stat = custody.os.stat
+
+    def guarded_open(path: object, flags: int, *args: object, **kwargs: object) -> int:
+        if (permission_point == "traverse" and path == "boca-socios_boca_data") or (
+            permission_point == "final_open" and path == "boca.sqlite3"
+        ):
+            raise PermissionError("private inode path uid=123456")
+        return original_open(path, flags, *args, **kwargs)
+
+    def guarded_stat(path: object, *args: object, **kwargs: object) -> os.stat_result:
+        if permission_point == "stat" and path == "boca.sqlite3":
+            raise PermissionError("private inode path uid=123456")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(custody.os, "open", guarded_open)
+    monkeypatch.setattr(custody.os, "stat", guarded_stat)
+    with pytest.raises(bridge.MappingBridgeNoGo) as caught:
+        bridge.observe_predeploy(RUN)
+    assert caught.value.failed_boundary == boundary
+    receipt = bridge.encode(RUN, "NO_GO", lease_verified=False, failed_boundary=boundary)
+    assert bridge.verify(receipt, RUN) == receipt
+    assert b"uid=123456" not in receipt and b"boca.sqlite3" not in receipt
+    assert b"boca-socios_boca_data" not in receipt
+
+
 def test_rootless_inode_refusal_never_accepts_arbitrary_reason() -> None:
     for reason in ("INODES_OWNER_10001", "INODES_DATA", "INODES_TRACE_PRIVATE"):
         with pytest.raises(bridge.MappingBridgeNoGo):
