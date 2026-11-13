@@ -1,6 +1,6 @@
 # ADR0266 — Parallelize two independent disposable CI labs
 
-Date: 2026-11-13 ART. Issue: #417. Status: **CODE_ONLY / MEASUREMENT EXPERIMENT**.
+Date: 2026-11-13 UTC (2026-11-12 ART). Issue: #417. Status: **CODE_ONLY / MEASUREMENT EXPERIMENT**.
 Original base: `b58131292d` (`main` at the start of this independent worktree).
 
 ## Problem and evidence

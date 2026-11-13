@@ -1,5 +1,28 @@
 # Boca Socios Assistant
 
+## R258 — reconciliación de #501 con #500 (12/11/2026 ART; 13/11 UTC; CODE_ONLY)
+
+El candidato [PR #501](https://github.com/mbalbo2023/boca-socios-assistant/pull/501)
+se reconcilia sobre `main=7b19924aea1a25b195da733f95b8f7147df43f1e`
+tras el merge de [#500](https://github.com/mbalbo2023/boca-socios-assistant/pull/500).
+Conserva el único par BuildKit del CI y solapa dos laboratorios descartables;
+acota a cinco minutos cada carga de manifiesto de la release protegida;
+y añade al motor una `backend_factory` invocada **después** del intent durable
+y bajo la misma lease. Los ADR nuevos se identifican como
+[0266](docs/ADR/0266-r254-parallel-disposable-ci-labs.md),
+[0272](docs/ADR/0272-r254-bounded-release-artifact-upload.md) y
+[0273](docs/ADR/0273-r255-inert-single-lease-actor-plumbing.md),
+sin sustituir los ADR de #500.
+
+Validación local del árbol reconciliado: **8015 PASS, 34 subtests PASS y
+1 SKIP AF_UNIX EPERM del sandbox**; Ruff, formato, mypy y política PASS.
+El ZIP `PAIR_UPGRADE` conserva exactamente 78 entradas y mide 361.206 B
+comprimidos / 1.397.022 B descomprimidos (límite 1.400.000 B).
+Las Actions del SHA final, la revisión y la decisión de merge deben quedar
+registradas por separado en #417. Este código **no conecta el CLI APPLY**,
+no publica un nuevo release ni certifica el droplet: **DEPLOY NO_GO**.
+El único upgrade R186 fallido no se repite, y Porota permanece fuera de alcance.
+
 ## R253 — recibos SUCCESS independientes por intento (13/11/2026)
 
 Se corrigió en código el bloqueo por nombres globales del journal de
