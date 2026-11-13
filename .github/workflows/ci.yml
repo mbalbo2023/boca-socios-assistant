@@ -64,6 +64,18 @@ jobs:
       - name: Types
         if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: uv run mypy src
+      - name: Collect exact pytest inventory before Docker builds
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
+        run: |
+          set -euo pipefail
+          # Import and collection closure, without executing the test cases.
+          # Catches missing test-only dependencies before two Docker builds.
+          if uv run pytest --collect-only -q > "$RUNNER_TEMP/boca-pytest-collection.txt" 2>&1; then
+            tail -n 2 "$RUNNER_TEMP/boca-pytest-collection.txt"
+          else
+            tail -n 25 "$RUNNER_TEMP/boca-pytest-collection.txt"
+            exit 1
+          fi
 
   quality:
     name: quality-and-tests

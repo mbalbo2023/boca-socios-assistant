@@ -85,7 +85,14 @@ falló en `Format` cuando `image-build` ya compilaba Chromium; la
 segunda iteración
 [43495124342](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43495124342)
 falló en `Types` mientras `image-build` alcanzaba su escaneo. Ambos
-trabajos de imágenes fueron cancelados tras consumir tiempo. Un CI
+trabajos de imágenes fueron cancelados tras consumir tiempo. La tercera
+iteración
+[43495555858](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43495555858)
+superó las comprobaciones preliminares pero falló después en colección
+de tests por importar `PyYAML` fuera del grafo bloqueado (sin ejecutar
+casos); el PR R281 lo corrigió en la siguiente revisión, SHA
+`665c193d`. Esto demuestra que **pasar formato y tipos todavía no
+alcanza** para comenzar builds pesados. Un CI
 anterior GREEN
 [43488257927](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43488257927)
 registró `quality-and-tests` de 2m43s e `image-build` de 5m30s en
@@ -93,12 +100,15 @@ paralelo. Eso permite medir el desperdicio en la ruta RED y advierte
 que serializar un precheck puede prolongar la ruta GREEN.
 
 Por ello, separar un trabajo `fast-quality` (checkout SHA, mismo
-clasificador estricto, `uv sync --frozen`, Ruff, formato y mypy)
+clasificador estricto, `uv sync --frozen`, Ruff, formato, mypy y
+`pytest --collect-only` de la colección completa **sin ejecutar
+pruebas**)
 de `quality-and-tests` (Compose, tests completos, RCA, AF_UNIX,
 systemd, política y Zizmor). **Cada comprobación de Ruff/formato/mypy
 se ejecuta una sola vez.** Tanto la compilación/escaneo `image-build`
 como `quality-and-tests` dependen del éxito de `fast-quality`.
-Cuando falla el gate rápido, `image-build` no empieza; el job
+Cuando falla el gate rápido por formato, tipos o imports de tests,
+`image-build` no empieza; el job
 **obligatorio** `quality-and-tests` usa `if: always()` y un paso
 inicial que falla explícitamente si `needs.fast_quality.result` es
 distinto de `success`. Así no aparece un required check
@@ -106,7 +116,7 @@ distinto de `success`. Así no aparece un required check
 `fast-quality` y el job `quality` hereda su resultado.
 
 La implementación no presupone ahorro en la ruta GREEN: agrega un
-runner/checkout/uv sync secuencial. Se estima un coste de hasta
+runner/checkout/uv sync/colección secuencial. Se estima un coste de hasta
 ~1–2 minutos según colas y cachés, sujeto a medición exacta en Actions;
 se acepta frente al coste comprobado de repetir builds Chromium
 tras un error trivial. Si la medición demuestra regresión excesiva,
@@ -157,11 +167,13 @@ TDD en `tests/test_r282_ci_quality_docs_only.py` y
 las pruebas originales R245 y R247 en
 `tests/test_ci_docs_only_fast_path.py` y
 `tests/test_r247_buildkit_cache_trust.py`.
-**Resultado local del segundo corte:** 59 PASS para documentación, caché,
+**Resultado local del corte final:** 60 PASS para documentación, caché,
 workflow y gate rápido; un warning ambiental de `pytest`/AnyIO sin
 fallo; Ruff check y formato de los archivos nuevos/modificados;
-parser YAML reconoce los tres trabajos y los tests ejecutaron la
+sin dependencia nueva de PyYAML; los tests ejecutaron la
 propagación de failure/cancelled/skipped del required check.
+La colección local `PYTHONPATH=src pytest --collect-only -q`
+finalizó en **8271 tests recogidos en 10.64 s**, sin ejecutar casos.
 No ejecutar suite histórica completa ni crear imágenes
 para esta comprobación local. La aceptación definitiva requiere PR,
 Actions GREEN de SHA exacto y observación comparativa de tiempos en
