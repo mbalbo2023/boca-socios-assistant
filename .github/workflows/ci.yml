@@ -14,25 +14,105 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  quality:
-    name: quality-and-tests
+  fast_quality:
+    name: fast-quality
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 8
     steps:
       - name: Checkout exactly the requested commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 2
+      - name: Classify exact internal PR Markdown-only changes
+        id: docs_pr_scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          docs_only="$(python3 scripts/classify_exact_internal_pr_docs.py)" || docs_only=false
+          [[ "$docs_only" == true ]] || docs_only=false
+          printf 'docs_only=%s\n' "$docs_only" >> "$GITHUB_OUTPUT"
+          if [[ "$docs_only" == true ]]; then
+            echo 'BOCA_CI_SCOPE mode=DOCS_ONLY fast=MARKDOWN_DIFF_ONLY event=INTERNAL_PR'
+          else
+            echo 'BOCA_CI_SCOPE mode=FULL fast=RUFF_FORMAT_MYPY'
+          fi
+      - name: Verify Markdown-only diff whitespace
+        if: steps.docs_pr_scope.outputs.docs_only == 'true'
+        run: git diff --check HEAD^1 HEAD -- docs/ADR docs/handoffs
       - name: Set up Python
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: Install pinned package manager
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: python -m pip install --disable-pip-version-check uv==0.13.4
       - name: Verify immutable dependency graph
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
+        run: uv sync --frozen
+      - name: Lint
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
+        run: uv run ruff check .
+      - name: Format
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
+        run: uv run ruff format --check .
+      - name: Types
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
+        run: uv run mypy src
+
+  quality:
+    name: quality-and-tests
+    needs: fast_quality
+    # Never leave a required quality context green-by-skip after a red
+    # preflight. GitHub treats skipped jobs differently from failed jobs.
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Require successful fast-quality gate
+        env:
+          FAST_QUALITY_RESULT: ${{ needs.fast_quality.result }}
+        run: test "$FAST_QUALITY_RESULT" = success
+      - name: Checkout exactly the requested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Classify exact internal PR Markdown-only changes
+        id: docs_pr_scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          set -euo pipefail
+          docs_only="$(python3 scripts/classify_exact_internal_pr_docs.py)" || docs_only=false
+          [[ "$docs_only" == true ]] || docs_only=false
+          printf 'docs_only=%s\n' "$docs_only" >> "$GITHUB_OUTPUT"
+          if [[ "$docs_only" == true ]]; then
+            echo 'BOCA_CI_SCOPE mode=DOCS_ONLY quality=MARKDOWN_DIFF_ONLY images=NOT_REQUIRED event=INTERNAL_PR'
+          else
+            echo 'BOCA_CI_SCOPE mode=FULL quality=REQUIRED images=REQUIRED'
+          fi
+      - name: Set up Python
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install pinned package manager
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
+        run: python -m pip install --disable-pip-version-check uv==0.13.4
+      - name: Verify immutable dependency graph
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: uv sync --frozen
       - name: Validate resolved Boca-only Compose model
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           BOCA_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           BOCA_ENVIRONMENT: staging
@@ -40,6 +120,7 @@ jobs:
           docker compose -f compose.yaml config --format json > "$RUNNER_TEMP/boca-compose.json"
           uv run python scripts/check_deploy_contract.py "$RUNNER_TEMP/boca-compose.json" "$BOCA_IMAGE"
       - name: Validate optional dual-service IPC Compose resolution without host access
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           BOCA_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           BOCA_BROWSER_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -53,6 +134,7 @@ jobs:
           docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml config --format json > "$RUNNER_TEMP/boca-ipc-v2-model.json"
           uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-ipc-v2-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
       - name: Validate opt-in Telegram Compose syntax
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
           BOCA_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           BOCA_SOURCE_SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
@@ -61,25 +143,19 @@ jobs:
           BOCA_BROWSER_ATTEMPT_ID: "123456"
           BOCA_TELEGRAM_ATTEMPT_ID: "123457"
         run: docker compose -f compose.telegram.json --profile telegram-opt-in config --format json > "$RUNNER_TEMP/boca-telegram-compose.json"
-      - name: Lint
-        # Ruff excludes only the two owner-controlled blackbox modules in pyproject.toml.
-        run: uv run ruff check .
-      - name: Format
-        # The owner's exact bytes are not formatted or interpreted by this job.
-        run: uv run ruff format --check .
-      - name: Types
-        # Mypy excludes the blackbox paths and skips following imports of those modules.
-        run: uv run mypy src
       - name: Test
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         # Pytest ignores four test modules importing the two owner-locked files;
         # all unrelated tests and RCA selectors remain subject to the gates.
         # Two workers still generate one full JUnit report for the RCA gate.
         run: uv run pytest -q -n 2 --junitxml="$RUNNER_TEMP/rca-tests.xml"
       - name: Prove real AF_UNIX synthetic engine start stop on disposable Linux runner
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         # No Docker access, host SSH, outside socket or Boca/Telegram traffic.
         # Local sandbox cannot create AF_UNIX; this exact-SHA runner proof is required.
         run: uv run python scripts/check_engine_socket_linux.py
       - name: Prove real UID10001/10002 browser IPC refusal and STOP on disposable Linux runner
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         # Local executor denies AF_UNIX; GitHub-hosted runner uses sudo only to
         # create three disposable, distinct-UID fixture processes. No Docker,
         # SITE_URL, Chromium, IP traffic, secrets, host SSH or deployment.
@@ -89,12 +165,16 @@ jobs:
         timeout-minutes: 1
         run: sudo --non-interactive env PYTHONPATH="$GITHUB_WORKSPACE/src" /usr/bin/python3 "$GITHUB_WORKSPACE/scripts/check_worker_ipc_linux.py"
       - name: Verify socket activation in a disposable systemd user manager
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: python3 scripts/lab_on_demand_systemd.py
       - name: Enforce accepted RCA lessons against executed regressions
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: uv run python scripts/check_rca_lessons.py "$RUNNER_TEMP/rca-tests.xml"
       - name: Repository isolation gate
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: uv run python scripts/check_repo_policy.py
       - name: Audit GitHub Actions security (offline)
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
         uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
         with:
           version: "1.31.1"
@@ -107,6 +187,8 @@ jobs:
 
   image:
     name: image-build
+    needs: fast_quality
+    if: needs.fast_quality.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -134,77 +216,9 @@ jobs:
           PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         run: |
           set -euo pipefail
-          # Fail closed to the complete build on any missing event/git evidence.
-          # This consumes the exact GitHub synthetic merge tree, not PR text.
-          docs_only="$(python3 - <<'PY'
-          import os
-          import re
-          import subprocess
-
-          SHA = re.compile(r'[0-9a-f]{40}\Z')
-          PR_REF = re.compile(r'refs/pull/[1-9][0-9]*/merge\Z')
-          REPO = 'mbalbo2023/boca-socios-assistant'
-
-          def git(*args: str) -> bytes:
-              return subprocess.run(('git', *args), check=True,
-                                    capture_output=True, timeout=5).stdout
-
-          def docs_only() -> bool:
-              env = os.environ
-              if not (
-                  env.get('GITHUB_ACTIONS') == 'true'
-                  and env.get('GITHUB_EVENT_NAME') == 'pull_request'
-                  and env.get('GITHUB_REPOSITORY') == REPO
-                  and env.get('PR_HEAD_REPO') == REPO
-                  and env.get('PR_BASE_REF') == 'main'
-                  and PR_REF.fullmatch(env.get('GITHUB_REF', ''))
-              ):
-                  return False
-              merge, base, head = (env.get(k, '') for k in
-                                   ('GITHUB_SHA', 'PR_BASE_SHA', 'PR_HEAD_SHA'))
-              if not all(SHA.fullmatch(value) for value in (merge, base, head)):
-                  return False
-              if git('rev-parse', '--verify', 'HEAD').decode().strip() != merge:
-                  return False
-              # A PR checkout must be the exact two-parent merge reported
-              # by GitHub. A stale base, shallow clone or detached PR head
-              # always takes the full CI route.
-              parents = git('rev-list', '--parents', '-n', '1', 'HEAD').decode().split()
-              if parents != [merge, base, head]:
-                  return False
-              if git('merge-base', base, merge).decode().strip() != base:
-                  return False
-              raw = git('diff', '--raw', '-z', '--no-renames', '--no-ext-diff',
-                        '--no-textconv', base, merge, '--')
-              if not raw or not raw.endswith(b'\0'):
-                  return False
-              records = raw[:-1].split(b'\0')
-              if len(records) % 2:
-                  return False
-              for metadata, encoded_path in zip(records[::2], records[1::2]):
-                  fields = metadata.split()
-                  if len(fields) != 5:
-                      return False
-                  before, after, _old_id, _new_id, status = fields
-                  if (before, after, status) not in (
-                      (b':000000', b'100644', b'A'),
-                      (b':100644', b'100644', b'M'),
-                      (b':100644', b'000000', b'D'),
-                  ):
-                      return False
-                  path = encoded_path.decode('utf-8', 'strict')
-                  if (not path.endswith('.md')
-                      or not path.startswith(('docs/ADR/', 'docs/handoffs/'))
-                      or any(ord(char) < 32 or ord(char) == 127 for char in path)):
-                      return False
-              return True
-
-          try:
-              print('true' if docs_only() else 'false')
-          except Exception:
-              print('false')
-          PY
-          )" || docs_only=false
+          # The same exact-Git classifier is shared by both CI jobs.
+          # A failure, fork, nonmerge, source edit or missing history is FULL.
+          docs_only="$(python3 scripts/classify_exact_internal_pr_docs.py)" || docs_only=false
           [[ "$docs_only" == true ]] || docs_only=false
           printf 'docs_only=%s\n' "$docs_only" >> "$GITHUB_OUTPUT"
           if [[ "$docs_only" == true ]]; then
