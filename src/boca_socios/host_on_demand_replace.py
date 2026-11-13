@@ -189,15 +189,50 @@ def restore_binding(old: OnDemandInstallation, new_attempt: str, lease: BocaJobL
     refuses recovery so the caller records INDETERMINATE, never false GREEN.
     """
     _verify_lease(lease, new_attempt)
+    _restore_binding_verified(old, new_attempt, lease, allow_candidate_compensation=True)
+
+
+def restore_binding_precommit_recovery(
+    old: OnDemandInstallation,
+    incident_attempt: str,
+    recovery_run_id: str,
+    lease: BocaJobLease,
+) -> None:
+    """Recover only an already parked original under a *fresh* Boca lease.
+
+    The caller must have authenticated the exact original precommit terminal,
+    performed double physical snapshots and created its once-ever O_EXCL claim.
+    A new attempt is never allowed to impersonate the failed incident's lease.
+    This path cannot remove a candidate or any canonical control directory.
+    """
+    if incident_attempt == recovery_run_id:
+        raise service._refuse()
+    _verify_lease(lease, recovery_run_id)
     home = service._home()
-    parked, marker = _intended(home, old, new_attempt)
+    parked, _ = _intended(home, old, incident_attempt)
+    if not service._present(parked) or service._present(home / service._ROOT):
+        raise service._refuse()
+    _restore_binding_verified(old, incident_attempt, lease, allow_candidate_compensation=False)
+
+
+def _restore_binding_verified(
+    old: OnDemandInstallation,
+    incident_attempt: str,
+    lease: BocaJobLease,
+    *,
+    allow_candidate_compensation: bool,
+) -> None:
+    home = service._home()
+    parked, marker = _intended(home, old, incident_attempt)
     _old_pair_only(old)
     root = home / service._ROOT
     if service._present(parked):
         _historic(parked, home, old)
         if service._present(root):
-            service._owned(home, new_attempt)
-            service.remove_control(new_attempt, lease)
+            if not allow_candidate_compensation:
+                raise service._refuse()
+            service._owned(home, incident_attempt)
+            service.remove_control(incident_attempt, lease)
         if service._present(root):
             raise service._refuse()
         parked.rename(root)

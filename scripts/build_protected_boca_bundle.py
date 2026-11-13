@@ -336,6 +336,32 @@ POSTCOMMIT_FINALIZE_MAIN = (
     "from boca_socios.host_boca_pair_postcommit_finalize import main as finalize\n"
     "raise SystemExit(finalize(['host',sys.argv[2]]))\n"
 ).encode("ascii")
+PRECOMMIT_RESTORE_SOURCES = tuple(
+    dict.fromkeys(
+        (
+            *BINDING_SOURCES,
+            "src/boca_socios/host_on_demand_replace.py",
+            "src/boca_socios/host_cutover_stage.py",
+            "src/boca_socios/host_boca_pair_postcommit.py",
+            "src/boca_socios/host_boca_pair_upgrade_plan.py",
+            "src/boca_socios/host_boca_retained_resources.py",
+            "src/boca_socios/host_boca_upgrade_adapters.py",
+            "src/boca_socios/host_boca_park_incident_readonly.py",
+            "src/boca_socios/host_boca_pair_precommit_restore.py",
+            "src/boca_socios/browser_release_manifest.py",
+            "src/boca_socios/release_manifest.py",
+            "src/boca_socios/release_run.py",
+            "src/boca_socios/deploy_inputs.py",
+        )
+    )
+)
+PRECOMMIT_RESTORE_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 3 or sys.argv[1] != 'boca-precommit-restore-one-shot':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_boca_pair_precommit_restore import main as restore\n"
+    "raise SystemExit(restore(['host',sys.argv[2]]))\n"
+).encode("ascii")
 PREFLIGHT_MAIN = (
     "import sys\n"
     "if len(sys.argv) != 9 or sys.argv[1] != 'cutover-worker-preflight':\n"
@@ -500,6 +526,7 @@ def build(
     rootless_mapped_observe: bool = False,
     pair_upgrade_release_dir: Path | None = None,
     postcommit_finalize: bool = False,
+    precommit_restore: bool = False,
 ) -> str:
     """Write one deterministic, explicitly allowlisted runner-only archive."""
     if (
@@ -518,6 +545,7 @@ def build(
                 pair_upgrade,
                 rootless_mapped_observe,
                 postcommit_finalize,
+                precommit_restore,
             )
         )
         > 1
@@ -529,7 +557,12 @@ def build(
     # avoids mypy no-redef errors from annotations repeated in each branch.
     files: dict[str, bytes]
     sources: tuple[str, ...]
-    if postcommit_finalize:
+    if precommit_restore:
+        files = {"__main__.py": PRECOMMIT_RESTORE_MAIN, **HOST_ONLY_INIT}
+        sources = PRECOMMIT_RESTORE_SOURCES
+        max_source = POSTCOMMIT_FINALIZE_MAX_SOURCE_BYTES
+        max_archive = POSTCOMMIT_FINALIZE_MAX_ARCHIVE_BYTES
+    elif postcommit_finalize:
         files = {"__main__.py": POSTCOMMIT_FINALIZE_MAIN, **HOST_ONLY_INIT}
         sources = POSTCOMMIT_FINALIZE_SOURCES
         max_source = POSTCOMMIT_FINALIZE_MAX_SOURCE_BYTES
@@ -837,12 +870,13 @@ def main() -> int:
     variant.add_argument("--rootless-mapped-observe", action="store_true")
     parser.add_argument("--pair-upgrade-release-dir", type=Path)
     variant.add_argument("--postcommit-finalize", action="store_true")
+    variant.add_argument("--precommit-restore", action="store_true")
     parser.add_argument("repository_root", type=Path)
     parser.add_argument("runner_target", type=Path)
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, retained_observe=args.retained_observe, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, rootless_mapped_observe=args.rootless_mapped_observe, pair_upgrade_release_dir=args.pair_upgrade_release_dir, postcommit_finalize=args.postcommit_finalize)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, retained_observe=args.retained_observe, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, rootless_mapped_observe=args.rootless_mapped_observe, pair_upgrade_release_dir=args.pair_upgrade_release_dir, postcommit_finalize=args.postcommit_finalize, precommit_restore=args.precommit_restore)}"
     )
     return 0
 
