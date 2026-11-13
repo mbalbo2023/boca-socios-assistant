@@ -191,7 +191,6 @@ def test_rootless_inode_refusal_reveals_only_fixed_diagnostic_boundary(
     assert b"10001" not in raw and b"old" not in raw
 
 
-
 @pytest.mark.parametrize(
     ("permission_point", "boundary"),
     [
