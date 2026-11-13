@@ -268,3 +268,164 @@ def test_bad_coordinates_have_no_lease_or_backend_effects() -> None:
     with pytest.raises(pair.PairUpgradeError):
         pair.run_pair_upgrade(bad, backend=host)
     assert host.events == []
+
+
+def test_factory_runs_once_after_durable_intent_under_the_one_backend_lease() -> None:
+    ordered: list[str] = []
+    held: list[cleanup.BocaJobLease] = []
+
+    class OrderedBackend(Backend):
+        def _call(self, name: str, plan: pair.PairCoordinates, lease: cleanup.BocaJobLease) -> None:
+            assert lease is held[0]
+            ordered.append(name)
+            super()._call(name, plan, lease)
+
+    host = OrderedBackend()
+
+    def intent(plan: pair.PairCoordinates, lease: cleanup.BocaJobLease) -> None:
+        cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+        assert not held
+        held.append(lease)
+        ordered.append("intent")
+
+    def factory(plan: pair.PairCoordinates, lease: cleanup.BocaJobLease) -> Backend:
+        assert lease is held[0]
+        cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+        ordered.append("factory")
+        return host
+
+    def commit(plan: pair.PairCoordinates, lease: cleanup.BocaJobLease) -> None:
+        assert lease is held[0]
+        ordered.append("commit")
+
+    def terminal(
+        plan: pair.PairCoordinates, receipt: pair.PairUpgradeReceipt, lease: cleanup.BocaJobLease
+    ) -> None:
+        assert lease is held[0] and receipt.accepted
+        ordered.append("terminal")
+
+    result = pair.run_pair_upgrade(
+        _coordinates(),
+        backend_factory=factory,
+        terminal_preflight=intent,
+        commit_marker=commit,
+        terminal_sink=terminal,
+    )
+    assert result.state == "ACCEPTED"
+    assert ordered == [
+        "intent",
+        "factory",
+        "attest",
+        "stage",
+        "park",
+        "worker",
+        "controller",
+        "accept",
+        "binding",
+        "commit",
+        "retire",
+        "finalize",
+        "terminal",
+    ]
+
+
+@pytest.mark.parametrize("factory_failure", [RuntimeError, KeyboardInterrupt])
+def test_factory_exception_has_durable_indeterminate_terminal_without_compensation(
+    factory_failure: type[BaseException],
+) -> None:
+    events: list[str] = []
+    terminal_receipts: list[pair.PairUpgradeReceipt] = []
+
+    def factory(plan: pair.PairCoordinates, lease: cleanup.BocaJobLease) -> Backend:
+        cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+        events.append("factory")
+        raise factory_failure("injected factory failure")
+
+    def terminal(
+        plan: pair.PairCoordinates, receipt: pair.PairUpgradeReceipt, lease: cleanup.BocaJobLease
+    ) -> None:
+        cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+        events.append("terminal")
+        terminal_receipts.append(receipt)
+
+    result = pair.run_pair_upgrade(
+        _coordinates(),
+        backend_factory=factory,
+        terminal_preflight=lambda *_: events.append("intent"),
+        commit_marker=lambda *_: pytest.fail("commit after failed factory"),
+        terminal_sink=terminal,
+    )
+    assert events == ["intent", "factory", "terminal"]
+    assert terminal_receipts == [result]
+    assert (result.state, result.cleanup, result.failed_phase) == (
+        "NO_GO",
+        "INDETERMINATE",
+        "ATTEST",
+    )
+    assert not result.old_restored and not result.commit_started and not result.accepted
+    assert result.controller_id is None and result.worker_id is None
+
+
+def test_factory_returning_unapproved_backend_never_reaches_its_methods() -> None:
+    events: list[str] = []
+
+    class DisabledBackend(Backend):
+        requires_persistent_receipt = False
+
+    disabled = DisabledBackend()
+    disabled.requires_persistent_receipt = True  # Instance spoof must not authorize type.
+
+    result = pair.run_pair_upgrade(
+        _coordinates(),
+        backend_factory=lambda *_: disabled,
+        terminal_preflight=lambda *_: events.append("intent"),
+        commit_marker=lambda *_: pytest.fail("commit after disabled factory"),
+        terminal_sink=lambda _p, r, _l: events.append("terminal-" + r.state),
+    )
+    assert events == ["intent", "terminal-NO_GO"]
+    assert disabled.events == []
+    assert not result.accepted and result.cleanup == "INDETERMINATE"
+
+
+@pytest.mark.parametrize("invalid", ["missing", "both", "uncallable"])
+def test_factory_mode_rejects_ambiguous_or_missing_backend_before_lease(
+    invalid: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        pair,
+        "protected_boca_job_lease",
+        lambda *_: pytest.fail("lease acquired for an invalid backend choice"),
+    )
+    options: dict[str, object]
+    if invalid == "missing":
+        options = {}
+    elif invalid == "both":
+        options = {"backend": Backend(), "backend_factory": lambda *_: Backend()}
+    else:
+        options = {"backend_factory": object()}
+    with pytest.raises(pair.PairUpgradeError):
+        pair.run_pair_upgrade(
+            _coordinates(),
+            **options,  # type: ignore[arg-type]
+            terminal_preflight=lambda *_: pytest.fail("intent after invalid backend choice"),
+            commit_marker=lambda *_: pytest.fail("commit after invalid backend choice"),
+            terminal_sink=lambda *_: pytest.fail("terminal after invalid backend choice"),
+        )
+
+
+def test_intent_error_prevents_factory_invocation() -> None:
+    events: list[str] = []
+
+    def intent(*_: object) -> None:
+        events.append("intent")
+        raise OSError("injected durability failure")
+
+    with pytest.raises(cleanup.CleanupError):
+        pair.run_pair_upgrade(
+            _coordinates(),
+            backend_factory=lambda *_: pytest.fail("factory before durable intent"),
+            terminal_preflight=intent,
+            commit_marker=lambda *_: pytest.fail("commit before intent"),
+            terminal_sink=lambda *_: pytest.fail("terminal before intent"),
+        )
+    assert events == ["intent"]
