@@ -81,17 +81,28 @@ def _canonical(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("ascii")
 
 
+def control_identity_path(name: str) -> Path:
+    """Return only a fixed Boca resource path or an exact attempt PARK path."""
+    if name in _PATHS:
+        return _PATHS[name]
+    prefix = "parked_control_socket_directory:"
+    if type(name) is not str or not name.startswith(prefix):
+        raise _fail()
+    attempt = name.removeprefix(prefix)
+    if _RUN.fullmatch(attempt) is None:
+        raise _fail()
+    return Path(f"/home/boca-deploy/.boca-on-demand-parked-{attempt}/socket")
+
+
 def _identity(name: str) -> str:
     """O_PATH/fstat only, no-follow at every ancestor; never open file data."""
-    if name not in _PATHS:
-        raise _fail()
+    path = control_identity_path(name)
     try:
         root = json.loads(cleanup._docker("info", "--format", "{{json .DockerRootDir}}"))
     except (TypeError, ValueError):
         raise _fail() from None
     if root != str(_ROOT):
         raise _fail()
-    path = _PATHS[name]
     if name in (_IPC, _SITE):
         metadata = json.loads(
             cleanup._docker(

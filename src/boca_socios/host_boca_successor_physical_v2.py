@@ -335,6 +335,10 @@ class PhysicalSuccessorIntegrations:
         self.previous_observation = previous_observation
         self.retained_io = retained_io
         self.control_identity_reader = control_identity_reader
+        # A freshly prepared successor control directory must be observed
+        # twice and remain the same across BOUND -> RETIRED. It cannot be
+        # substituted for the historical directory parked under the attempt.
+        self._successor_control_inode_sha256: str | None = None
         self.backend: successor.PostflightGatedSuccessorBackend | None = None
 
     def bind_backend(self, backend: successor.PostflightGatedSuccessorBackend) -> None:
@@ -408,9 +412,42 @@ class PhysicalSuccessorIntegrations:
             pins = observe_transition_resources(
                 plan, self.custody, lease, graph=graph, retained_io=io
             )
-            before = self.control_identity_reader("control_socket_directory")
-            after = self.control_identity_reader("control_socket_directory")
-            if before != after or before != self.custody.control_directory_inode_sha256:
+            phase = backend.state
+
+            def control(name: str) -> str:
+                first = self.control_identity_reader(name)
+                second = self.control_identity_reader(name)
+                if first != second or type(first) is not str or _HASH.fullmatch(first) is None:
+                    raise _fail()
+                return first
+
+            if phase in _PREPARED | _RESTORED:
+                if (
+                    control("control_socket_directory")
+                    != self.custody.control_directory_inode_sha256
+                ):
+                    raise _fail()
+            elif phase in _PARKED | _THREE | _FOUR:
+                parked = f"parked_control_socket_directory:{plan.attempt_id}"
+                if control(parked) != self.custody.control_directory_inode_sha256:
+                    raise _fail()
+                if phase in _FOUR:
+                    successor_inode = control("control_socket_directory")
+                    if successor_inode == self.custody.control_directory_inode_sha256:
+                        raise _fail()
+                    if self._successor_control_inode_sha256 is None:
+                        if phase != "CONTROLLER":
+                            raise _fail()
+                        self._successor_control_inode_sha256 = successor_inode
+                    elif successor_inode != self._successor_control_inode_sha256:
+                        raise _fail()
+            elif phase in _RETIRED:
+                if (
+                    self._successor_control_inode_sha256 is None
+                    or control("control_socket_directory") != self._successor_control_inode_sha256
+                ):
+                    raise _fail()
+            else:
                 raise _fail()
             return reusable.RetainedResourcePins(
                 pins.ipc_creator_attempt,

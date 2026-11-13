@@ -431,7 +431,13 @@ def test_integrations_follow_reused_backend_phase_without_discovering_unknown_na
     backend.state = phase
     backend.worker_id = worker_id
     backend.controller_id = controller_id
-    assert integrator.retained_resources(bound.plan, held_lease) == bound.retained
+    if phase in ("CONTROLLER", "BOUND", "RETIRED"):
+        # A direct jump cannot fabricate the fresh successor control inode;
+        # the real actor must record CONTROLLER before BOUND/RETIRED.
+        with pytest.raises(physical.SuccessorPhysicalNoGo):
+            integrator.retained_resources(bound.plan, held_lease)
+    else:
+        assert integrator.retained_resources(bound.plan, held_lease) == bound.retained
     integrator.verify_release(bound.plan, pair_sources, held_lease)
     with pytest.raises(physical.SuccessorPhysicalNoGo):
         integrator.final_cleanup(bound.plan, held_lease)
