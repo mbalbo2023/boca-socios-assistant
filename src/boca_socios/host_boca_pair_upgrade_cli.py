@@ -72,9 +72,7 @@ def _successor_preflight(
     witness/cleanup V2. This route is intentionally PRE-EFFECT NO_GO even with
     genuine release manifests, until those contracts can be proven end to end.
     """
-    from boca_socios.host_boca_pair_upgrade_plan import CandidateRelease
-    from boca_socios.host_boca_upgrade_observation_bridge import verify_bundled_observation
-    from boca_socios.host_boca_upgrade_release_bridge import verify_bundled_release
+    from boca_socios.host_boca_successor_integrations import verify_runner_bound_host_inputs
     from boca_socios.host_boca_upgrade_retained_bridge import verify_bundled_retained
 
     if (
@@ -95,31 +93,42 @@ def _successor_preflight(
             observation_receipt = archive.read("release/boca-pair-observation.receipt")
             retained_proof = archive.read("release/retained-proof.json")
             retained_receipt = archive.read("release/boca-retained-observation.receipt")
-        verify_bundled_release(
-            proof,
-            controller_manifest,
-            paired_manifest,
-            CandidateRelease(source, release_run, controller, worker),
+            current_v2 = archive.read("release/current-pair-v2.receipt")
+        bound = verify_runner_bound_host_inputs(
+            attempt_id=run,
+            source_sha=source,
+            controller_ref=controller,
+            worker_ref=worker,
+            release_run_id=release_run,
+            observation_run_id=observation_run,
+            release_proof=proof,
+            controller_manifest=controller_manifest,
+            paired_manifest=paired_manifest,
+            observation_proof=observation_proof,
+            observation_receipt=observation_receipt,
+            retained_receipt=retained_receipt,
+            current_pair_v2=current_v2,
         )
-        verify_bundled_observation(
-            observation_proof,
-            observation_receipt,
-            source,
-            observation_run,
-            run,
-            release_run,
-        )
-        verify_bundled_retained(
-            retained_proof,
-            retained_receipt,
-            observation_proof,
-            observation_receipt,
-            source,
-            retained_observation_run,
-            observation_run,
-            run,
-            release_run,
-        )
+        # A V1 proof only applies when R188's installed pair is still the
+        # currently observed one. After a successor B -> C, R188 is purely an
+        # original resource-creator seed, not a proof of the *current* CIDs.
+        # A reviewed runner instead bundles the independently authenticated
+        # current-pair V2 envelope and this exact disabled legacy sentinel.
+        if retained_proof != b'{"state":"NO_GO"}\n':
+            verify_bundled_retained(
+                retained_proof,
+                retained_receipt,
+                observation_proof,
+                observation_receipt,
+                source,
+                retained_observation_run,
+                observation_run,
+                run,
+                release_run,
+            )
+        historical_run = bound.custody.observation_run_id
+        if historical_run != retained_observation_run:
+            raise SuccessorPreflightIneligible("Boca successor R188 seed run mismatched")
     except Exception:
         raise SuccessorPreflightIneligible("Boca successor release transport unverified") from None
     # Neither a verified release nor a historical R189 summary supplies

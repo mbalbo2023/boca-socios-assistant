@@ -182,6 +182,8 @@ PAIR_UPGRADE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
     "boca_socios/host_boca_upgrade_postflight_runtime.py",
     "boca_socios/host_boca_upgrade_cleanup_runtime.py",
     "boca_socios/host_boca_upgrade_successor_runtime.py",
+    "boca_socios/host_boca_upgrade_failure_cleanup_v2.py",
+    "boca_socios/host_boca_successor_physical_v2.py",
     "boca_socios/host_boca_cleanup_v2.py",
     "boca_socios/host_boca_pair_postcommit.py",
     "boca_socios/host_cutover_inventory_observe.py",
@@ -192,6 +194,8 @@ PAIR_UPGRADE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
     "boca_socios/host_boca_upgrade_release_bridge.py",
     "boca_socios/host_boca_upgrade_observation_bridge.py",
     "boca_socios/host_boca_upgrade_retained_bridge.py",
+    "boca_socios/host_boca_current_pair_v2.py",
+    "boca_socios/host_boca_successor_integrations.py",
     "boca_socios/host_boca_retained_resources.py",
     "boca_socios/release_manifest.py",
     "boca_socios/browser_release_manifest.py",
@@ -203,6 +207,7 @@ PAIR_UPGRADE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
     "release/observation-proof.json",
     "release/boca-retained-observation.receipt",
     "release/retained-proof.json",
+    "release/current-pair-v2.receipt",
 }
 POSTCOMMIT_FINALIZE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
     "boca_socios/host_boca_pair_postcommit.py",

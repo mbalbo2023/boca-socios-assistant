@@ -20,7 +20,7 @@ def test_pr_has_only_two_image_builds_and_required_contexts() -> None:
     ci = _source("ci.yml")
     assert "name: quality-and-tests" in ci
     assert "name: image-build" in ci
-    assert ci.count("docker build") == 2
+    assert ci.count("docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83") == 2
     for filename in ("release-image.yml", "image-security.yml"):
         assert "  pull_request:" not in _source(filename)
     deploy = _source("boca-first-deploy.yml")
@@ -41,8 +41,8 @@ def test_path_specific_public_isolation_cannot_add_a_third_pr_build() -> None:
     assert "if: github.event_name == 'pull_request'" in probe
     assert "scripts/run_public_observer_isolated.sh --offline-check" in probe
     assert "--one-get" not in probe and "--capture-25" not in probe
-    assert '--tag "boca-observer:$SOURCE_SHA"' in ci
-    assert '--label "org.boca.public-image=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in ci
+    assert "boca-observer:${{ github.sha }}" in ci
+    assert "org.boca.public-image=${{ github.run_id }}-${{ github.run_attempt }}" in ci
 
 
 @pytest.mark.parametrize(
@@ -90,13 +90,19 @@ def test_public_observer_replay_guard_allows_only_second_offline_pr_attempt(
 
 def test_same_image_pair_is_labeled_scanned_and_exercised_before_cleanup() -> None:
     image = _source("ci.yml").split("  image:\n", 1)[1]
+    # Primary Buildx pair and cold fallback pair are mutually exclusive;
+    # both carry the exact source labels consumed by the scanner.
     assert (
         image.count(
             "org.opencontainers.image.source=https://github.com/mbalbo2023/boca-socios-assistant"
         )
-        == 2
+        == 4
     )
+    assert image.count("org.opencontainers.image.revision=${{ github.sha }}") == 2
     assert image.count('--label "org.opencontainers.image.revision=$SOURCE_SHA"') == 2
+    assert image.count("docker build") == 2  # only guarded failure fallback
+    assert "steps.cached_controller_build.outcome == 'failure'" in image
+    assert "steps.cached_browser_build.outcome == 'failure'" in image
     assert image.count("run: bash scripts/trivy_scan_image.sh") == 2
     for marker in (
         "Verify source revision label",

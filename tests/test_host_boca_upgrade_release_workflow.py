@@ -71,14 +71,18 @@ def test_observation_is_a_separate_authenticated_run_before_memfd_or_ssh() -> No
 def test_two_readonly_observers_are_authenticated_in_memory_before_any_host_zip() -> None:
     body = _apply()
     pair = body.index("python3 -m boca_socios.host_boca_upgrade_observation_bridge")
-    retained = body.index("python3 -m boca_socios.host_boca_upgrade_retained_bridge")
+    release = body.index("python3 -m boca_socios.host_boca_upgrade_release_bridge")
+    retained_and_current_v2 = body.index("python3 scripts/attest_current_pair_v2.py")
     builder = body.index("scripts/build_protected_boca_bundle.py --pair-upgrade")
-    assert pair < retained < builder
+    assert pair < release < retained_and_current_v2 < builder
     assert 'gh run download "$BOCA_PROTECTED_ACTION_CONTEXT"' not in body
     assert 'gh run download "$BOCA_RETAINED_OBSERVATION_RUN_ID"' not in body
     assert "boca-retained-observation.receipt" in body
     assert "retained-proof.json" in body
-    assert "BOCA_RETAINED_AUTH state=VERIFIED host_authorized=false" in body
+    assert "current-pair-v2.receipt" in body
+    assert "BOCA_CURRENT_PAIR_V2_AUTH state=VERIFIED host_authorized=false" in body
+    assert "historical resource creators" in body
+    assert "host_boca_upgrade_retained_bridge" not in body
     assert '"$BOCA_RETAINED_OBSERVATION_RUN_ID"' in body
     assert "retained_observation_run_id:" not in FLOW
     assert (

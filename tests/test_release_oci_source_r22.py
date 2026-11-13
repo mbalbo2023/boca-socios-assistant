@@ -19,7 +19,10 @@ STEP = re.compile(
     r"^      - name: (?P<name>[^\n]+)\n(?P<body>.*?)(?=^      - name: |\Z)",
     re.MULTILINE | re.DOTALL,
 )
-SOURCE_BUILD_LABEL = re.compile(r'--label "org\.opencontainers\.image\.source=([^"]+)"')
+SOURCE_BUILD_LABEL = re.compile(
+    r'(?:--label "|^\s+)org\.opencontainers\.image\.source=([^"\n]+)',
+    re.MULTILINE,
+)
 
 
 def _all_steps() -> list[tuple[str, str]]:
@@ -45,16 +48,28 @@ def test_both_roles_are_labeled_in_pr_and_publish_builds() -> None:
         matches = [body for name, body in steps if name == step_name]
         assert len(matches) == count
         for body in matches:
-            assert "docker build" in body
-            assert f'--label "org.opencontainers.image.source={CANONICAL_SOURCE}"' in body
-            assert '--label "org.opencontainers.image.revision=$SOURCE_SHA"' in body
-            assert '--tag "$IMAGE"' in body
-            if "browser" in step_name or "Chromium" in step_name:
-                assert "--file Dockerfile.browser" in body
+            if "without deploying" in step_name:
+                assert "uses: docker/build-push-action@" in body
+                assert f"org.opencontainers.image.source={CANONICAL_SOURCE}" in body
+                assert "org.opencontainers.image.revision=${{ github.sha }}" in body
+                assert "load: true" in body and "push: false" in body
+                assert "${{ github.sha }}" in body
+                if "Chromium" in step_name:
+                    assert "file: ./Dockerfile.browser" in body
+                else:
+                    assert "file: ./Dockerfile\n" in body
             else:
-                assert "--file Dockerfile.browser" not in body
+                assert "docker build" in body
+                assert f'--label "org.opencontainers.image.source={CANONICAL_SOURCE}"' in body
+                assert '--label "org.opencontainers.image.revision=$SOURCE_SHA"' in body
+                assert '--tag "$IMAGE"' in body
+                if "browser" in step_name:
+                    assert "--file Dockerfile.browser" in body
+                else:
+                    assert "--file Dockerfile.browser" not in body
     labels = SOURCE_BUILD_LABEL.findall(WORKFLOW.read_text() + CI.read_text())
-    assert labels == [CANONICAL_SOURCE] * 4
+    # Release pair + primary PR Buildx pair + cold-fallback PR pair.
+    assert labels == [CANONICAL_SOURCE] * 6
 
 
 def test_both_roles_verify_exact_published_oci_source_label() -> None:
