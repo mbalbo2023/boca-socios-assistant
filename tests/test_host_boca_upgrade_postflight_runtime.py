@@ -313,7 +313,12 @@ def test_production_site_url_witness_only_accepts_exact_physical_absence_on_both
 
 @pytest.mark.parametrize(
     "unsafe_output",
-    ["BOCA_SITE_URL_SHA256 " + "f" * 64 + "\n", "BOCA_SITE_URL_NOT_CONFIGURED\nNO_GO", "", "NO_GO\n"],
+    [
+        "BOCA_SITE_URL_SHA256 " + "f" * 64 + "\n",
+        "BOCA_SITE_URL_NOT_CONFIGURED\nNO_GO",
+        "",
+        "NO_GO\n",
+    ],
 )
 def test_missing_site_witness_rejects_present_malformed_or_partial_probe(
     monkeypatch: pytest.MonkeyPatch, unsafe_output: str
