@@ -206,15 +206,39 @@ def _main_is_exact(client: GitHubEvidenceTransport, source_sha: str) -> None:
 
 def _verify_release_job(client: GitHubEvidenceTransport, run_id: str, sha: str) -> None:
     record = client.get_json(f"actions/runs/{run_id}/jobs?per_page=100")
-    if not isinstance(record, dict) or record.get("total_count") != 1:
+    if not isinstance(record, dict) or type(record.get("total_count")) is not int:
         raise _fail()
     jobs = record.get("jobs")
-    if not isinstance(jobs, list) or len(jobs) != 1:
-        raise _fail()
-    job = jobs[0]
     if (
-        not isinstance(job, dict)
-        or job.get("run_id") != int(run_id)
+        not isinstance(jobs, list)
+        or record["total_count"] != len(jobs)
+        or not 1 <= len(jobs) <= 2
+    ):
+        raise _fail()
+    selected = [
+        item for item in jobs if isinstance(item, dict) and item.get("name") == "publish-reviewed-image"
+    ]
+    if len(selected) != 1:
+        raise _fail()
+    job = selected[0]
+    # Historical genuine releases (e.g. #851) included an inert, skipped
+    # PR-validation job. The current release has only the publish job. Neither
+    # shape permits an extra active job or changes the mandatory publish proof.
+    for other in jobs:
+        if other is job:
+            continue
+        if (
+            not isinstance(other, dict)
+            or other.get("name") != "release-image-pr-validation"
+            or other.get("run_id") != int(run_id)
+            or other.get("head_sha") != sha
+            or other.get("status") != "completed"
+            or other.get("conclusion") != "skipped"
+            or other.get("steps") != []
+        ):
+            raise _fail()
+    if (
+        job.get("run_id") != int(run_id)
         or job.get("name") != "publish-reviewed-image"
         or job.get("head_sha") != sha
         or job.get("status") != "completed"

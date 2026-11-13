@@ -1,5 +1,27 @@
 # Binding instructions for every coding agent
 
+## RCA R274 — primero probar la procedencia histórica, después publicar (13-NOV-2026)
+
+Los pases protegidos 43466413414 (#1074) y 43467640849 (#1076) fallaron
+en el guard local del runner con `exit 3`, **antes de SSH y de cualquier
+modificación de host**. La primera secuencia usó la observación retenida
+43464488963 anterior a la observación del par 43464710404; el verificador
+exige **par observado → recursos retenidos observados → APPLY**. La segunda
+secuencia corrigió el orden con la lectura 43467281965, pero descubrió un
+supuesto incompatible con la release histórica 43215180354 (#851): ese
+workflow legítimo conserva un `publish-reviewed-image` exitoso **y** un
+`release-image-pr-validation` omitido. La autorización histórica debe
+aceptar ambos formatos exactos (1 publish o 1 publish + 1 PR skipped), jamás
+jobs extra activos o distintos. Véase ADR 0293 e issue #417.
+
+**Regla no negociable para cada nuevo sucesor:** antes de generar una
+release costosa, auditar el grafo cronológico de los run IDs y el formato
+real de la release anterior con un fixture de regresión; verificar la
+compatibilidad del autenticador del runner. CI/release GREEN no prueban
+despliegue. No reintentar un fallo que haya alcanzado el host; ante un fallo
+de pre-SSH, probarlo con logs y RCA antes de un nuevo intento. Nunca ejecutar
+otra vez R186 ni borrar los recibos históricos, recursos Boca o ajenos.
+
 ## Estado vigente R273 — no repetir instalación ni R186 (13-NOV-2026 ART)
 
 La recuperación R186 descrita más abajo **ya se ejecutó** y terminó
