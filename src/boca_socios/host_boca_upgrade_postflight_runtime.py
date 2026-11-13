@@ -187,6 +187,9 @@ class ProductionPrivatePanelHealthWitness:
                 or response.read(65) != b"BOCA_BETA_READY"
             ):
                 raise _fail()
+            # The serving pair can change during a healthy HTTP response.
+            # Reprove its exact CIDs and binding before recording health.
+            _attest_live_pair(self.expected, self.lease)
             cleanup.verify_protected_boca_job_lease(self.lease, self.expected.plan.attempt_id)
             return "HEALTH_HTTP_200"
         except Exception:

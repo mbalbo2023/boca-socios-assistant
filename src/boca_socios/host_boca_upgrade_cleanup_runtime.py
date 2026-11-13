@@ -25,8 +25,7 @@ from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_cleanup_v2 as counted
 from boca_socios.host_boca_pair_upgrade import PairCoordinates
 
-INTENT_FILENAME = "boca-final-cleanup-v2.intent"
-RECEIPT_FILENAME = "boca-final-cleanup-v2.receipt"
+_JOURNAL_STEM = "boca-final-cleanup-v2"
 _CID = re.compile(r"[0-9a-f]{64}\Z")
 _IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _REQUIRED_VOLUMES = frozenset(
@@ -52,6 +51,14 @@ class FinalCleanupNoGo(ValueError):
 
 def _fail() -> FinalCleanupNoGo:
     return FinalCleanupNoGo("BOCA_FINAL_CLEANUP state=NO_GO cleanup=INDETERMINATE")
+
+
+def final_cleanup_filenames(attempt_id: str) -> tuple[str, str]:
+    """Distinct exclusive intent/receipt names; a completed attempt is never reused."""
+    if type(attempt_id) is not str or cleanup.ATTEMPT_ID.fullmatch(attempt_id) is None:
+        raise _fail()
+    stem = f"{_JOURNAL_STEM}.{attempt_id}"
+    return stem + ".intent", stem + ".receipt"
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,6 +263,44 @@ def _require_protected_volumes(
     return raw
 
 
+def _revalidate_image_predelete(
+    before: cleanup.Inventory,
+    selected: cleanup.Inventory,
+    fresh: cleanup.Inventory,
+    target: cleanup.Target,
+    *,
+    attempt_id: str,
+    protected_images: frozenset[str],
+    protected_containers: frozenset[str],
+    historical_retained: cleanup.HistoricalRetainedImageProof,
+) -> None:
+    """Never remove a retagged, foreign or newly referenced image by old ID."""
+    original = next((item for item in before.images if item.ident == target.ident), None)
+    planned = next((item for item in selected.images if item.ident == target.ident), None)
+    current = next((item for item in fresh.images if item.ident == target.ident), None)
+    if (
+        target.kind != "image"
+        or original is None
+        or planned != original
+        or current != original
+        or current.source != cleanup.BOCA_SOURCE
+        or current.historical_legacy_attested
+        or target.ident not in fresh.global_image_ids
+        or target.ident in protected_images | {historical_retained.ident}
+        or any(item.image_id == target.ident for item in fresh.containers)
+        or cleanup._storage_topology_changed(before.disk, fresh.disk)
+        or target
+        not in cleanup.plan(
+            fresh,
+            attempt_id,
+            preserve_images=protected_images | {historical_retained.ident},
+            preserve_containers=protected_containers,
+            retire_containers=frozenset(),
+        ).targets
+    ):
+        raise cleanup.CleanupError("Boca SUCCESS image identity or references changed pre-delete")
+
+
 def execute_durable_final_cleanup(
     plan: PairCoordinates,
     lease: cleanup.BocaJobLease,
@@ -284,8 +329,9 @@ def execute_durable_final_cleanup(
         )
         cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
         parent, identity = _private_directory(receipt_dir)
+        intent_name, receipt_name = final_cleanup_filenames(plan.attempt_id)
         try:
-            _require_absent(parent, RECEIPT_FILENAME)
+            _require_absent(parent, receipt_name)
             _directory_unchanged(parent, receipt_dir, identity)
             intent = (
                 json.dumps(
@@ -306,11 +352,29 @@ def execute_durable_final_cleanup(
                 )
                 + "\n"
             ).encode("ascii")
-            _write_once(parent, INTENT_FILENAME, intent)
-            if _read_private(parent, INTENT_FILENAME, bound=2048) != intent:
+            _write_once(parent, intent_name, intent)
+            if _read_private(parent, intent_name, bound=2048) != intent:
                 raise _fail()
             cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
             _directory_unchanged(parent, receipt_dir, identity)
+
+            def image_guard(
+                before: cleanup.Inventory,
+                selected: cleanup.Inventory,
+                fresh: cleanup.Inventory,
+                target: cleanup.Target,
+            ) -> None:
+                _revalidate_image_predelete(
+                    before,
+                    selected,
+                    fresh,
+                    target,
+                    attempt_id=plan.attempt_id,
+                    protected_images=protected_images,
+                    protected_containers=protected_containers,
+                    historical_retained=historical_retained,
+                )
+
             evidence = cleanup.execute_protected_with_inventories(
                 "SUCCESS",
                 plan.attempt_id,
@@ -319,6 +383,7 @@ def execute_durable_final_cleanup(
                 retire_containers=frozenset(),
                 lease=lease,
                 historical_retained=historical_retained,
+                image_predelete_guard=image_guard,
             )
             cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
             _directory_unchanged(parent, receipt_dir, identity)
@@ -331,8 +396,8 @@ def execute_durable_final_cleanup(
                 controller_image_id=controller_image_id,
                 worker_image_id=worker_image_id,
             )
-            _write_once(parent, RECEIPT_FILENAME, raw)
-            if _read_private(parent, RECEIPT_FILENAME, bound=counted.MAX_RECEIPT_BYTES) != raw:
+            _write_once(parent, receipt_name, raw)
+            if _read_private(parent, receipt_name, bound=counted.MAX_RECEIPT_BYTES) != raw:
                 raise _fail()
             counted.verify_cleanup_v2_receipt(raw, plan.attempt_id)
             cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)

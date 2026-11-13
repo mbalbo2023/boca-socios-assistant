@@ -14,11 +14,13 @@ from boca_socios import host_boca_postflight_sources_v2 as sources_v2
 from boca_socios import host_boca_upgrade_postflight as postflight
 from boca_socios import host_boca_upgrade_postflight_runtime as runtime
 from boca_socios.host_boca_upgrade_cleanup_runtime import (
-    RECEIPT_FILENAME,
     DurableFinalCleanupReceipt,
+    final_cleanup_filenames,
 )
 from test_host_boca_upgrade_postflight import _expected, _pair_bytes
 from test_host_boca_upgrade_postflight_runtime import _installed_binding, _storage_tree
+
+RECEIPT_FILE = final_cleanup_filenames(_expected().plan.attempt_id)[1]
 
 
 def _cleanup_receipt() -> DurableFinalCleanupReceipt:
@@ -35,7 +37,7 @@ def _cleanup_receipt() -> DurableFinalCleanupReceipt:
 def _receipt_dir(path: Path, receipt: DurableFinalCleanupReceipt) -> Path:
     directory = path / "private-boca"
     directory.mkdir(mode=0o700)
-    filename = directory / RECEIPT_FILENAME
+    filename = directory / RECEIPT_FILE
     filename.write_bytes(receipt.raw)
     filename.chmod(0o600)
     return directory
@@ -197,7 +199,7 @@ def test_actual_durable_cleanup_readback_has_nofollow_mode_and_same_lease(
     assert result.cleanup_readback() == receipt.raw
     assert events == ["pair", "lease", "lease", "pair"]
 
-    target = directory / RECEIPT_FILENAME
+    target = directory / RECEIPT_FILE
     target.rename(directory / "old-receipt")
     target.symlink_to(directory / "old-receipt")
     with pytest.raises(sources_v2.PostflightSourcesNoGo):
@@ -288,7 +290,7 @@ def test_cleanup_wrong_receipt_identity_or_mode_fails_closed(
     )
     result = _build(tmp_path, volume_attestor=lambda: None)
     assert result.cleanup_readback is not None
-    file = tmp_path / "private-boca" / RECEIPT_FILENAME
+    file = tmp_path / "private-boca" / RECEIPT_FILE
     file.chmod(0o644)
     with pytest.raises(sources_v2.PostflightSourcesNoGo):
         result.cleanup_readback()
