@@ -1,5 +1,18 @@
 # Boca Socios Assistant
 
+## R273 — fuente vigente para instalación vs actualización (13/11/2026; CODE_ONLY)
+
+**No confundir:** la versión `b61ca3e58d4f8ce69cd6d7575f2a8e1ce59bda72`
+estaba **instalada** según el binding exacto de la
+[Action #43455761226](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43455761226).
+El `main=e1b35fc9c78d2f2b3534300bda3ea4da571127d0` tenía CI y seguridad
+GREEN pero **no estaba instalado** al corte. R186 se finalizó previamente en
+[#43237528968](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43237528968):
+no repetirlo. El nuevo candidato R273 conecta el successor CLI con un límite
+de error post-efecto que impide inventar `commit_started=false`; por ahora
+**no hay nueva release, APPLY ni BETA GO**. Fuente RCA y estados separados:
+[ADR 0292](docs/ADR/0292-r273-deployment-state-evidence-and-uncertain-cli.md).
+
 ## R265 — rootless, diagnóstico por fase y terminal bajo lease (13/11/2026; CODE_ONLY)
 
 Después de fusionar #502, #504 y #506 en `main ecdf30a0bc890c7c8f03e6f0ecd350405b0df1f3`,
