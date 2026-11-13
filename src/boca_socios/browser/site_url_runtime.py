@@ -180,6 +180,21 @@ def _read_from(directory: int, *, owner_uid: int, owner_gid: int) -> str | None:
         os.close(descriptor)
 
 
+def read_optional_site_url(
+    path: Path = RUNTIME_SITE_URL_PATH,
+    *,
+    owner_uid: int = 10001,
+    owner_gid: int = 10001,
+) -> str | None:
+    """Report true absence, but never translate unsafe custody into absence."""
+    _path(path)
+    directory = _directory(path, owner_uid=owner_uid, owner_gid=owner_gid, readonly=True)
+    try:
+        return _read_from(directory, owner_uid=owner_uid, owner_gid=owner_gid)
+    finally:
+        os.close(directory)
+
+
 def read_site_url(
     path: Path = RUNTIME_SITE_URL_PATH,
     *,
@@ -187,15 +202,10 @@ def read_site_url(
     owner_gid: int = 10001,
 ) -> str:
     """Read only the newest inode on each worker START; no implicit fallback."""
-    _path(path)
-    directory = _directory(path, owner_uid=owner_uid, owner_gid=owner_gid, readonly=True)
-    try:
-        destination = _read_from(directory, owner_uid=owner_uid, owner_gid=owner_gid)
-        if destination is None:
-            raise RuntimeSiteUrlUnavailable("Boca runtime SITE_URL not configured")
-        return destination
-    finally:
-        os.close(directory)
+    destination = read_optional_site_url(path, owner_uid=owner_uid, owner_gid=owner_gid)
+    if destination is None:
+        raise RuntimeSiteUrlUnavailable("Boca runtime SITE_URL not configured")
+    return destination
 
 
 def publish_site_url(

@@ -215,3 +215,41 @@ def test_failed_capture_never_creates_intent() -> None:
         with pytest.raises(repeatable.SuccessorJournalNoGo, match="Boca successor evidence"):
             journal(capture=crash).intent(plan(), lease)
     assert list(stage.ROOT.iterdir()) == []
+
+
+@pytest.mark.parametrize("tamper", ("bytes", "mode"))
+def test_factory_failure_terminal_cannot_return_with_corrupted_durable_receipt(
+    tamper: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real O_EXCL terminal must be reread under the same lease, not trusted by write ACK."""
+    record = journal()
+    original_write = stage._create_exclusive
+    terminal_name = f".boca-pair-upgrade-{ATTEMPT}.terminal"
+
+    def post_write_tamper(root: int, name: str, payload: bytes) -> None:
+        original_write(root, name, payload)
+        if name == terminal_name:
+            terminal = stage.ROOT / name
+            if tamper == "bytes":
+                terminal.write_bytes(b"BOCA_PAIR_UPGRADE CORRUPTED\n")
+            else:
+                terminal.chmod(0o644)
+
+    monkeypatch.setattr(stage, "_create_exclusive", post_write_tamper)
+
+    def interrupted_factory(
+        current: transaction.PairCoordinates, lease: cleanup.BocaJobLease
+    ) -> transaction.PairUpgradeBackend:
+        cleanup.verify_protected_boca_job_lease(lease, current.attempt_id)
+        raise KeyboardInterrupt("injected before backend effects")
+
+    with pytest.raises(repeatable.SuccessorJournalNoGo):
+        transaction.run_pair_upgrade(
+            plan(),
+            backend_factory=interrupted_factory,
+            terminal_preflight=record.intent,
+            commit_marker=lambda *_: pytest.fail("commit after factory failure"),
+            terminal_sink=record.terminal,
+        )
+    assert (stage.ROOT / terminal_name).exists()  # Inconclusive attempt stays quarantined.
+    assert not (stage.ROOT / f".boca-pair-upgrade-{ATTEMPT}.commit").exists()

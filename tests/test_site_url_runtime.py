@@ -57,6 +57,26 @@ def test_missing_or_insecure_runtime_configuration_is_no_go(tmp_path: Path) -> N
         runtime.publish_site_url(path, "https://next.test/", **owner)
 
 
+def test_optional_site_reader_distinguishes_never_configured_from_corrupted(
+    tmp_path: Path,
+) -> None:
+    runtime = _runtime()
+    path, owner = _prepared(tmp_path)
+    # This read-only observer is permitted to report absence; worker START is not.
+    assert runtime.read_optional_site_url(path, **owner) is None
+    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
+        runtime.read_site_url(path, **owner)
+    runtime.publish_site_url(path, "https://my.sandbox.example/", **owner)
+    assert runtime.read_optional_site_url(path, **owner) == "https://my.sandbox.example/"
+    path.write_text("malformed")
+    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
+        runtime.read_optional_site_url(path, **owner)
+    path.unlink()
+    path.symlink_to(tmp_path / "nonexistent-target")
+    with pytest.raises(runtime.RuntimeSiteUrlUnavailable):
+        runtime.read_optional_site_url(path, **owner)
+
+
 def test_runtime_file_symlink_and_hardlink_are_rejected(tmp_path: Path) -> None:
     runtime = _runtime()
     path, owner = _prepared(tmp_path)

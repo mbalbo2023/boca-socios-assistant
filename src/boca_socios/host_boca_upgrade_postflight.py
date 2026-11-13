@@ -47,6 +47,7 @@ _STARTUP = "READ_FRESH_FILE_AT_NEXT_START"
 _PANEL = "LOGIN_HTTP_200"
 _TECHNICAL_PANEL = "HEALTH_HTTP_200"
 _R108 = "RETAINED_ATTESTED"
+_SITE_UNCONFIGURED = "NOT_CONFIGURED"
 
 
 class PostflightNoGo(ValueError):
@@ -108,8 +109,8 @@ class PostflightExpected:
     worker_image_id: str
     retained: adapters.ResourcePins
     storage_before: PostflightStorage
-    # None means a physical pre-PARK read confirmed no owner configuration.
-    # Only schema-2 technical-only postflight may consume that state.
+    # None is genuine physical absence, never a fabricated SHA-256.
+    # Only technical schema2 may attest this state; legacy remains NO_GO.
     site_url_fingerprint: str | None
     cleanup_receipt: bytes
 
@@ -318,9 +319,10 @@ def _validate_snapshot(
         or snapshot.rootless_gid != cleanup.EXPECTED_GID
         or snapshot.storage_after != expected.storage_before
         or snapshot.retained != expected.retained
-        or (not technical_only and expected.site_url_fingerprint is None)
         or snapshot.site_url_saved_fingerprint != expected.site_url_fingerprint
         or snapshot.site_url_worker_mirror_fingerprint != expected.site_url_fingerprint
+        or not technical_only
+        and expected.site_url_fingerprint is None
         or snapshot.worker_site_url_startup != _STARTUP
         or snapshot.monitor_source not in _SAFE_MONITOR
         or type(snapshot.monitor_observation_count) is not int
@@ -349,14 +351,15 @@ def _receipt(
         "observations": snapshot.monitor_observation_count,
         "provider_attested": False,
     }
-    site_url: dict[str, object] = {
+    site_info: dict[str, object] = {
         "fingerprint": snapshot.site_url_saved_fingerprint,
         "mirror": snapshot.site_url_worker_mirror_fingerprint,
         "startup": snapshot.worker_site_url_startup,
     }
     if technical_only and expected.site_url_fingerprint is None:
-        # Null is a real absent value, never a synthetic SHA or a BETA GO.
-        site_url["state"] = "NOT_CONFIGURED"
+        # Only two independently verified absent files qualify. Never create
+        # a synthetic SHA-256 for a URL the owner has not supplied.
+        site_info.update(state=_SITE_UNCONFIGURED)
     body = {
         "schema": 2 if technical_only else 1,
         "state": "TECHNICAL_PROOF_ONLY" if technical_only else "TECHNICAL_ACCEPT",
@@ -372,7 +375,7 @@ def _receipt(
         "rootless_uid": snapshot.rootless_uid,
         "rootless_gid": snapshot.rootless_gid,
         "panel": panel_info,
-        "site_url": site_url,
+        "site_url": site_info,
         "monitor": monitor_info,
         "cleanup": {
             "status": "ACCEPT",
@@ -456,6 +459,8 @@ def _capture_postflight(
         ):
             raise _fail()
         _validate_expected(expected)
+        if not technical_only and expected.site_url_fingerprint is None:
+            raise _fail()
         verify_lease(lease, expected.plan.attempt_id)
         first = read_snapshot(lease)
         _validate_snapshot(expected, first, technical_only=technical_only)
@@ -523,6 +528,15 @@ def _verify_postflight(raw: bytes, expected: PostflightExpected, *, technical_on
             or not isinstance(cleanup_info, dict)
         ):
             raise _fail()
+        site_saved = site["fingerprint"]
+        site_mirror = site["mirror"]
+        if technical_only and expected.site_url_fingerprint is None:
+            if (
+                site.get("state") != _SITE_UNCONFIGURED
+                or site_saved is not None
+                or site_mirror is not None
+            ):
+                raise _fail()
         pair_body = value["pair"]
         snapshot = PostflightSnapshot(
             pair_receipt=_PAIR_PREFIX + _canonical_pair(pair_body) + b"\n",
@@ -531,8 +545,8 @@ def _verify_postflight(raw: bytes, expected: PostflightExpected, *, technical_on
             rootless_gid=value["rootless_gid"],
             storage_after=storage,
             retained=retained,
-            site_url_saved_fingerprint=site["fingerprint"],
-            site_url_worker_mirror_fingerprint=site["mirror"],
+            site_url_saved_fingerprint=site_saved,
+            site_url_worker_mirror_fingerprint=site_mirror,
             worker_site_url_startup=site["startup"],
             monitor_source=monitor["source"],
             monitor_observation_count=monitor["observations"],

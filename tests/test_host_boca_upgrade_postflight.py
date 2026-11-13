@@ -240,6 +240,7 @@ def _technical_capture(
     snapshot: PostflightSnapshot | None = None,
     *,
     second: PostflightSnapshot | None = None,
+    expected: PostflightExpected | None = None,
 ) -> tuple[bytes, list[str]]:
     first = snapshot or _snapshot(panel_loopback_probe="HEALTH_HTTP_200")
     reads = iter((first, second or first))
@@ -256,70 +257,87 @@ def _technical_capture(
         return next(reads)
 
     return capture_technical_postflight(
-        _expected(), lease, read_snapshot=read_snapshot, verify_lease=verify_lease
+        expected or _expected(), lease, read_snapshot=read_snapshot, verify_lease=verify_lease
     ), evidence
 
 
-def test_technical_missing_site_url_requires_both_absent_and_cannot_promote_beta() -> None:
-    expected = _expected(site_url_fingerprint=None)
-    absent = _snapshot(
-        site_url_saved_fingerprint=None,
-        site_url_worker_mirror_fingerprint=None,
+def test_technical_postflight_proves_blank_site_url_without_fake_fingerprint() -> None:
+    """A new panel can be healthy before the owner configures any destination."""
+    unset = None
+    expected = _expected(site_url_fingerprint=unset)
+    snapshot = _snapshot(
+        site_url_saved_fingerprint=unset,
+        site_url_worker_mirror_fingerprint=unset,
         panel_loopback_probe="HEALTH_HTTP_200",
     )
-    lease = cleanup.BocaJobLease(_ATTEMPT, -1, -1, True)
-    checks: list[str] = []
-
-    def verify(found: cleanup.BocaJobLease, attempt: str) -> None:
-        assert found is lease and attempt == _ATTEMPT
-        checks.append("lease")
-
-    def snapshot(found: cleanup.BocaJobLease) -> PostflightSnapshot:
-        assert found is lease
-        checks.append("read")
-        return absent
-
-    raw = capture_technical_postflight(expected, lease, read_snapshot=snapshot, verify_lease=verify)
-    assert checks == ["lease", "read", "lease", "read", "lease"]
-    body = json.loads(raw.removeprefix(b"BOCA_PAIR_POSTFLIGHT_TECHNICAL_V2 "))
-    assert body["schema"] == 2
+    raw, evidence = _technical_capture(snapshot, expected=expected)
+    assert evidence == ["lease", "read", "lease", "read", "lease"]
+    body = json.loads(raw.split(b" ", 1)[1])
     assert body["site_url"] == {
         "state": "NOT_CONFIGURED",
         "fingerprint": None,
         "mirror": None,
         "startup": "READ_FRESH_FILE_AT_NEXT_START",
     }
-    assert body["beta_deploy"] == "NO_GO"
+    assert body["panel"]["probe"] == "HEALTH_HTTP_200"
     assert body["passkey_chrome"] == "NOT_ATTESTED"
-    assert body["monitor"]["owner_monitor"] == "NOT_ATTESTED"
+    assert body["beta_deploy"] == "NO_GO"
     assert verify_technical_postflight(raw, expected) == raw
     with pytest.raises(PostflightNoGo):
-        capture_postflight(expected, lease, read_snapshot=snapshot, verify_lease=verify)
-    with pytest.raises(PostflightNoGo):
         verify_postflight(raw, expected)
+    with pytest.raises(PostflightNoGo):
+        _capture(snapshot, expected=expected)
+    for replacement in (
+        {"state": "CONFIGURED", "fingerprint": None, "mirror": None},
+        {"state": "NOT_CONFIGURED", "fingerprint": "0" * 64, "mirror": None},
+        {"state": "NOT_CONFIGURED", "fingerprint": None, "mirror": "0" * 64},
+        {"fingerprint": None, "mirror": None},
+    ):
+        forged = json.loads(raw.split(b" ", 1)[1])
+        forged["site_url"].update(replacement)
+        if "state" not in replacement:
+            del forged["site_url"]["state"]
+        with pytest.raises(PostflightNoGo):
+            verify_technical_postflight(
+                b"BOCA_PAIR_POSTFLIGHT_TECHNICAL_V2 " + _json(forged) + b"\n", expected
+            )
 
 
 @pytest.mark.parametrize(
     "saved,mirror",
-    [("a" * 64, None), (None, "a" * 64), ("", None), (None, "")],
+    [
+        (None, "a" * 64),
+        ("a" * 64, None),
+        ("UNVERIFIED", None),
+        ("", None),
+        ("NOT_CONFIGURED", None),
+    ],
 )
-def test_technical_missing_site_url_refuses_any_present_or_unverified_side(
+def test_unconfigured_technical_postflight_requires_two_exact_absent_witnesses(
     saved: str | None, mirror: str | None
 ) -> None:
-    expected = _expected(site_url_fingerprint=None)
-    observation = _snapshot(
-        site_url_saved_fingerprint=saved,
-        site_url_worker_mirror_fingerprint=mirror,
-        panel_loopback_probe="HEALTH_HTTP_200",
-    )
+    with pytest.raises(PostflightNoGo):
+        _technical_capture(
+            _snapshot(
+                site_url_saved_fingerprint=saved,
+                site_url_worker_mirror_fingerprint=mirror,
+                panel_loopback_probe="HEALTH_HTTP_200",
+            ),
+            expected=_expected(site_url_fingerprint=None),
+        )
+
+
+def test_legacy_absent_url_refuses_before_lease_or_host_snapshot_reads() -> None:
+    witness_calls: list[str] = []
     lease = cleanup.BocaJobLease(_ATTEMPT, -1, -1, True)
     with pytest.raises(PostflightNoGo):
-        capture_technical_postflight(
-            expected,
+        capture_postflight(
+            _expected(site_url_fingerprint=None),
             lease,
-            read_snapshot=lambda _: observation,
-            verify_lease=lambda *_: None,
+            read_snapshot=lambda _: witness_calls.append("read") or _snapshot(),
+            verify_lease=lambda *_: witness_calls.append("lease"),
         )
+    assert witness_calls == []
 
 
 def test_r252_technical_health_is_separate_versioned_non_promoting_receipt() -> None:
