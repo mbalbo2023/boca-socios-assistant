@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import textwrap
 from pathlib import Path
@@ -78,7 +79,7 @@ def _merged_pr(
 
 
 def _classifier_body() -> str:
-    workflow = WORKFLOW.read_text(encoding="utf-8")
+    workflow = WORKFLOW.read_text(encoding="utf-8").split("  image:\n", 1)[1]
     marker = "      - name: Classify exact internal PR Markdown-only changes\n"
     assert marker in workflow, "Missing fail-closed image-build path classifier"
     step = workflow.split(marker, 1)[1].split("      - name:", 1)[0]
@@ -87,6 +88,13 @@ def _classifier_body() -> str:
 
 
 def _classify(repo: Path, context: dict[str, str]) -> tuple[bool, str]:
+    # Execute the actual Actions shell in a synthetic Git merge repository,
+    # with the exact classifier file that the workflow will check out.
+    (repo / "scripts").mkdir(exist_ok=True)
+    shutil.copyfile(
+        ROOT / "scripts/classify_exact_internal_pr_docs.py",
+        repo / "scripts/classify_exact_internal_pr_docs.py",
+    )
     output = repo / "output.txt"
     env = os.environ | context | {"GITHUB_OUTPUT": str(output)}
     result = subprocess.run(  # noqa: S603 - checked-in CI shell, synthetic Git repo
