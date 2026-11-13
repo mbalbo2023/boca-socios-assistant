@@ -165,6 +165,37 @@ de Porota/PPI Watch/recursos ajenos.
    `docs/quality/rca-lessons.json`; requiere `fix_pr` real, no
    inventarlo en una rama no fusionada.
 
+### R285 — bloqueo de merge por rama atrasada, no por CI rojo
+
+En la continuación de R280, el SHA `e06aa4c` tenía los jobs
+`quality-and-tests` e `image-build` en SUCCESS (CI #1237, first-deploy
+PR #1098). Sin embargo, GitHub devolvió HTTP 405 con «2 required status
+checks are expected» al solicitar squash de PR #514. La comprobación
+física de la UI aclaró la causa: **«This branch is out-of-date with the
+base branch»**. El ruleset `protect-main` #26163295 exige checks estrictos
+del HEAD **al día con** `main` y protege su integración. No era error SQL,
+imagen Docker fallida, permiso de administrador ni necesidad de borrar
+contenedores. Ver [checkpoint R285](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6864320151).
+
+El operador actualizó la rama una única vez desde GitHub. El merge de
+`main` produjo SHA `fc90aef71ab04bafbd96f4414b34b0d96d580344`;
+los nuevos CI #1238 y first-deploy PR #1099 verifican ese **SHA exacto**.
+De aquí en adelante, el procedimiento previo al merge es:
+
+1. Leer reglas de rama y `base.sha`, `head.sha`, `mergeable`; cotejar si
+   GitHub muestra «out-of-date». No inferir readiness del verde en un
+   commit anterior.
+2. Si está atrasado, incorporar `main` **una sola vez**, esperar las
+   comprobaciones requeridas en el nuevo HEAD y verificar su origen
+   GitHub Actions, sin cambiar el ruleset.
+3. Fusionar solamente tras comprobar el nuevo SHA, sin reintentos ciegos
+   de HTTP 405, y congelar `main` durante una release y un APPLY de
+   riesgo hasta la verificación física de ambos.
+4. Un cambio solamente de CI/documentación se tramita **por separado**,
+   sin crear una release nueva ni desplazar el SHA de la promoción física
+   mientras está en curso. Así no se consumen otro PARK o nuevas imágenes
+   por una mejora de pipeline.
+
 ## Pruebas y aceptación
 
 TDD en `tests/test_r282_ci_quality_docs_only.py` y
