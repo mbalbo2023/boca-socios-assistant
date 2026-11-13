@@ -209,14 +209,12 @@ def _verify_release_job(client: GitHubEvidenceTransport, run_id: str, sha: str) 
     if not isinstance(record, dict) or type(record.get("total_count")) is not int:
         raise _fail()
     jobs = record.get("jobs")
-    if (
-        not isinstance(jobs, list)
-        or record["total_count"] != len(jobs)
-        or not 1 <= len(jobs) <= 2
-    ):
+    if not isinstance(jobs, list) or record["total_count"] != len(jobs) or not 1 <= len(jobs) <= 2:
         raise _fail()
     selected = [
-        item for item in jobs if isinstance(item, dict) and item.get("name") == "publish-reviewed-image"
+        item
+        for item in jobs
+        if isinstance(item, dict) and item.get("name") == "publish-reviewed-image"
     ]
     if len(selected) != 1:
         raise _fail()

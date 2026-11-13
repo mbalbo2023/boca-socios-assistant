@@ -181,9 +181,10 @@ def _historical_release_with_skipped_pr_validation() -> FakeGitHub:
 def test_authenticates_historical_release_with_exact_skipped_pr_validation_job() -> None:
     gh = _historical_release_with_skipped_pr_validation()
     release_auth._verify_release_job(gh, RUN, SOURCE)
-    assert release_auth.download_authenticated_release(gh, RUN, SOURCE, "paired-release") == gh.payloads[
-        "paired-release"
-    ]
+    assert (
+        release_auth.download_authenticated_release(gh, RUN, SOURCE, "paired-release")
+        == gh.payloads["paired-release"]
+    )
 
 
 @pytest.mark.parametrize(
