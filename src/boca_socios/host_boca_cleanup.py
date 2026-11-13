@@ -660,10 +660,8 @@ def execute(
     )
     removed: list[Target] = []
     try:
-        # A stopped attempt container can be the sole remaining reference to
-        # its obsolete image or ephemeral volume. Recompute the complete plan
-        # after each successful exact-ID deletion until no known residue
-        # remains; never assume the initial graph is the final graph.
+        # Replan after each removal: stopped containers may hold the last
+        # image/volume reference; the initial graph is not final.
         for _ in range(MAX_DELETIONS):
             fresh = probe()
             if _storage_topology_changed(before.disk, fresh.disk):
@@ -684,10 +682,8 @@ def execute(
             after_delete = probe()
             if _storage_topology_changed(before.disk, after_delete.disk):
                 raise CleanupError("Boca postdeploy storage topology changed")
-            # An object that merely became ineligible is NOT proof it was
-            # deleted: its labels, live attachments or running status could
-            # have drifted while Docker returned a misleading receipt. Prove
-            # exact absence for *all four kinds* before accepting a deletion.
+            # Docker ACK or ineligibility is not deletion proof: status, labels
+            # or attachments can drift. Require exact absence for all kinds.
             surviving = {
                 "container": {item.ident for item in after_delete.containers},
                 "network": {item.ident for item in after_delete.networks},
@@ -729,9 +725,7 @@ def execute(
                 retire_containers=retire_containers,
             )
         except (CleanupError, ValueError):
-            # A drifted retired ID may no longer pass positive-label policy.
-            # That is itself NO_GO; do not let a second classification error
-            # suppress the stable failure receipt or authorize a new delete.
+            # Drifted retired ID is NO_GO, never new deletion authorization.
             return CleanupReceipt(
                 outcome,
                 attempt_id,
@@ -1367,6 +1361,7 @@ def _execute_protected_evidence(
     lease: BocaJobLease,
     historical_legacy: LegacyImageProof | None = None,
     historical_retained: HistoricalRetainedImageProof | None = None,
+    image_predelete_guard: Callable[[Inventory, Inventory, Inventory, Target], None] | None = None,
 ) -> ProtectedCleanupEvidence:
     """Future *unwired* generic finalizer with same-execution inventory proof.
 
@@ -1421,6 +1416,13 @@ def _execute_protected_evidence(
 
     def protected_delete(target: Target) -> None:
         verify_protected_boca_job_lease(lease, attempt_id)
+        if image_predelete_guard is not None and target.kind == "image":
+            if first is None or last is None:
+                raise CleanupError("Boca image predelete inventories unavailable")
+            # This opt-in callback receives a fresh, R108-attested inventory
+            # after `execute()` planned the exact image and before its removal.
+            image_predelete_guard(first, last, protected_probe(), target)
+            verify_protected_boca_job_lease(lease, attempt_id)
         delete_exact(target)
 
     receipt = execute(
@@ -1482,8 +1484,9 @@ def execute_protected_with_inventories(
     lease: BocaJobLease,
     historical_legacy: LegacyImageProof | None = None,
     historical_retained: HistoricalRetainedImageProof | None = None,
+    image_predelete_guard: Callable[[Inventory, Inventory, Inventory, Target], None] | None = None,
 ) -> ProtectedCleanupEvidence:
-    """Opt-in V2 receipt evidence with no extra Docker probes or removals.
+    """Opt-in V2 evidence; optional same-lease image pre-delete guard.
 
     Keep the same Boca flock held through the consuming V2 serialization.
     A failed or missing terminal probe raises: no substitute snapshot/retry.
@@ -1497,13 +1500,12 @@ def execute_protected_with_inventories(
         lease=lease,
         historical_legacy=historical_legacy,
         historical_retained=historical_retained,
+        image_predelete_guard=image_predelete_guard,
     )
 
 
-# The Cutover A post-APPLY diagnostic intentionally has no relationship to the
-# mutation/lease entrypoint above. Its sole dependency is the already reviewed
-# read-only inventory and pure positive-identity plan; the protected GitHub
-# workflow streams this module by stdin to the Boca-only rootless account.
+# Independent Cutover A post-APPLY READ_ONLY diagnostic: never mutates or leases.
+# GitHub streams this reviewed inventory/plan module to Boca rootless via stdin.
 READONLY_CLEANUP_VERSION = "boca-cutover-cleanup-readonly-v4"
 READONLY_CLEANUP_MAX_JSON = 8192
 READONLY_PROVENANCE_LIMIT = 8
@@ -1513,11 +1515,9 @@ SAFE_RECLAIMABLE_DISPLAY = re.compile(
     r"[0-9]+(?:\.[0-9]+)?\s*(?:B|kB|MB|GB|TB|PB)(?:\s*\([0-9]{1,3}%\))?\Z"
 )
 
-# R46: the current failed APPLY is #42236673419 (PREPARE #42217108000).
-# The *image* is historical and independently attested by release
-# #41559973013 / manifest #13196392925 and current READ_ONLY #42237830418.
-# The operation must be bound to the current incident, never the old R28
-# incident; neither arbitrary image IDs nor moving tags are CLI inputs.
+# R46 historical image: APPLY #42236673419, PREPARE #42217108000; release
+# #41559973013, manifest #13196392925, READ_ONLY #42237830418.
+# Bind this incident only: no R28 replay, arbitrary IDs or moving tags.
 HISTORICAL_RETIRE_INCIDENT = "42236673419"
 HISTORICAL_RETIRE_PREPARE = "42217108000"
 HISTORICAL_RETIRE_CONTAINER = "27ef39ed49d2b258526d4f9d24d1fc50bdb7567279e20f977ef9cd69a0a40793"

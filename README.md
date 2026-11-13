@@ -1,5 +1,16 @@
 # Boca Socios Assistant
 
+## R253 — recibos SUCCESS independientes por intento (13/11/2026)
+
+Se corrigió en código el bloqueo por nombres globales del journal de
+limpieza SUCCESS: cada intento tiene ahora su propio `intent` y `receipt`,
+con `O_EXCL`, fsync, readback y rechazo de reejecución. El postflight V2
+lee únicamente el recibo del mismo intento, manteniendo intacto el esquema 2
+`TECHNICAL_PROOF_ONLY` y la separación de la passkey del propietario.
+No se borran archivos históricos ni se ejecuta Docker desde esta modificación.
+**CODE_ONLY / DEPLOY NO_GO**; falta la instalación física certificada.
+[ADR0263](docs/ADR/0263-r253-per-attempt-success-cleanup-journal.md).
+
 ## R251 — preflight tipado, sin autorización de instalación (13/11/2026)
 
 El `main` **verificado al iniciar R251** es

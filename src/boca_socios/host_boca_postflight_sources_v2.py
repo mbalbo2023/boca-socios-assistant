@@ -243,9 +243,10 @@ def build_protected_postflight_sources(
                     raise _fail()
                 cleanup.verify_protected_boca_job_lease(lease, expected.plan.attempt_id)
                 directory_fd, identity = cleanup_runtime._private_directory(receipt_directory)
+                _, receipt_name = cleanup_runtime.final_cleanup_filenames(expected.plan.attempt_id)
                 raw = cleanup_runtime._read_private(
                     directory_fd,
-                    cleanup_runtime.RECEIPT_FILENAME,
+                    receipt_name,
                     bound=counted.MAX_RECEIPT_BYTES,
                 )
                 cleanup_runtime._directory_unchanged(directory_fd, receipt_directory, identity)

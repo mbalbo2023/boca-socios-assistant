@@ -158,6 +158,12 @@ R244_SAME_LEASE_CLEANUP_FULL_CUTOVER_SHA = (
 R245_GUARDED_CLEANUP_FULL_CUTOVER_SHA = (
     "1fa860223310087e592fac249e7a16cf01ec1dd642b1a3121469bd137fc74048"
 )
+# R252 adds an opt-in SUCCESS V2 OCI pre-delete guard to the common engine.
+# This pin is the deterministic offline full-Cutover ZIP at the reviewed SHA;
+# R245 remains historical, not a release or approval for host execution.
+R252_SUCCESS_IMAGE_PREDELETE_GUARD_FULL_CUTOVER_SHA = (
+    "976e703b51f454a084394cd8877bad5c8c0da8ea46b183f797cea789b854393c"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -311,11 +317,16 @@ def test_both_recovery_modes_reject_modified_bytes_and_injected_entries(
 
 
 def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) -> None:
-    """R245 source evolution does not modify the isolated R83 recovery modes."""
+    """R252 source evolution does not modify the isolated R83 recovery modes."""
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R245_GUARDED_CLEANUP_FULL_CUTOVER_SHA
+    assert (
+        digest
+        == hashlib.sha256(raw).hexdigest()
+        == R252_SUCCESS_IMAGE_PREDELETE_GUARD_FULL_CUTOVER_SHA
+    )
+    assert digest != R245_GUARDED_CLEANUP_FULL_CUTOVER_SHA
     assert digest != R244_SAME_LEASE_CLEANUP_FULL_CUTOVER_SHA
     assert digest != R178_WORKER_EGRESS_READONLY_FULL_CUTOVER_SHA
     assert digest != R173_SITE_CONFIG_FULL_CUTOVER_SHA
@@ -341,6 +352,8 @@ def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) ->
     assert digest != R81_FULL_CUTOVER_SHA
     assert len(raw) <= 512_000
     bootstrap.verify(raw, digest)
+    with pytest.raises(ValueError):
+        bootstrap.verify(raw, R245_GUARDED_CLEANUP_FULL_CUTOVER_SHA)
     with pytest.raises(ValueError):
         bootstrap.verify(raw, digest, recovery=True)
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:

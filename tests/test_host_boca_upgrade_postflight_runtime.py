@@ -374,6 +374,45 @@ def test_panel_health_probe_rejects_redirect_or_unexpected_body(
         runtime.ProductionPrivatePanelHealthWitness(expected, lease)()
 
 
+def test_panel_health_rejects_pair_drift_during_loopback_get(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _expected()
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    observed = _pair_bytes()
+    drifted = observed.replace(expected.controller_id.encode("ascii"), b"f" * 64)
+    assert drifted != observed
+    observations = iter((observed, drifted))
+    monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", lambda *_: None)
+    monkeypatch.setattr(pair, "observe", lambda _: next(observations))
+    monkeypatch.setattr(
+        runtime.service, "read_installed_binding", lambda _: _installed_binding(expected)
+    )
+
+    class Connection:
+        def __init__(self, *_: object, **__: object) -> None: ...
+        def request(self, *_: object, **__: object) -> None: ...
+        def getresponse(self) -> object:
+            return type(
+                "Healthy",
+                (),
+                {
+                    "status": 200,
+                    "getheader": lambda _, name: {
+                        "Content-Length": "15",
+                        "Content-Type": "text/plain; charset=utf-8",
+                    }.get(name),
+                    "read": lambda *_: b"BOCA_BETA_READY",
+                },
+            )()
+
+        def close(self) -> None: ...
+
+    monkeypatch.setattr(runtime.http.client, "HTTPConnection", Connection)
+    with pytest.raises(runtime.PostflightRuntimeNoGo):
+        runtime.ProductionPrivatePanelHealthWitness(expected, lease)()
+
+
 def test_site_url_readback_reattests_real_created_worker_after_each_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
