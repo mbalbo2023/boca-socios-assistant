@@ -63,18 +63,30 @@ def _volume(tmp_path: Path) -> tuple[Path, tuple[tuple[str, str], ...]]:
     entries = (
         ("boca-socios_boca_data", "boca.sqlite3"),
         ("boca-socios_boca_key", "boca_master_key"),
-        ("boca-socios_boca_owner", "boca_owner_session.sqlite3"),
+        ("boca-socios_boca_data", "boca_owner_session.sqlite3"),
     )
     for volume, filename in entries:
         directory = root / "volumes" / volume / "_data"
-        directory.mkdir(parents=True)
+        directory.mkdir(parents=True, exist_ok=True)
         directory.chmod(0o700)
         (directory / filename).write_bytes(b"private, never read by custody")
         (directory / filename).chmod(0o400 if volume.endswith("_key") else 0o600)
         (directory.parent).chmod(0o700)
+    owner_directory = root / "volumes" / "boca-socios_boca_owner" / "_data"
+    owner_directory.mkdir(parents=True)
+    owner_directory.chmod(0o700)
+    owner_directory.parent.chmod(0o700)
     (root / "volumes").chmod(0o700)
     root.chmod(0o700)
     return root, entries
+
+
+def test_session_inode_uses_data_volume_not_private_owner_volume(tmp_path: Path) -> None:
+    root, entries = _volume(tmp_path)
+    assert entries[2] == ("boca-socios_boca_data", "boca_owner_session.sqlite3")
+    assert not (root / "volumes/boca-socios_boca_owner/_data/boca_owner_session.sqlite3").exists()
+    owner = custody.MappedOwner(os.geteuid(), os.getegid())
+    assert len(custody.capture_mapped_custody(root, owner, trusted_root=root)) == 3
 
 
 def test_attests_real_file_inodes_without_reading_contents(tmp_path: Path) -> None:

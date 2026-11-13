@@ -32,7 +32,7 @@ _READ = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK
 _FILES = (
     ("boca-socios_boca_data", "boca.sqlite3"),
     ("boca-socios_boca_key", "boca_master_key"),
-    ("boca-socios_boca_owner", "boca_owner_session.sqlite3"),
+    ("boca-socios_boca_data", "boca_owner_session.sqlite3"),
 )
 _MAP_ROW = re.compile(rb"[ \t]*([0-9]+)[ \t]+([0-9]+)[ \t]+([0-9]+)[ \t]*\n\Z")
 _CID = re.compile(r"[a-f0-9]{64}\Z")

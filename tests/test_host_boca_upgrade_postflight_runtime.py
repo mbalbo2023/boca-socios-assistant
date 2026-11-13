@@ -23,13 +23,26 @@ def _storage_tree(root: Path) -> None:
     for volume, filename in (
         ("boca-socios_boca_data", "boca.sqlite3"),
         ("boca-socios_boca_key", "boca_master_key"),
-        ("boca-socios_boca_owner", "boca_owner_session.sqlite3"),
+        ("boca-socios_boca_data", "boca_owner_session.sqlite3"),
     ):
         directory = root / "volumes" / volume / "_data"
-        directory.mkdir(parents=True, mode=0o700)
+        directory.mkdir(parents=True, mode=0o700, exist_ok=True)
         file = directory / filename
         file.write_bytes(b"private test fixture only")
         file.chmod(0o600)
+    (root / "volumes" / "boca-socios_boca_owner" / "_data").mkdir(
+        parents=True, mode=0o700, exist_ok=True
+    )
+
+
+def test_session_fingerprint_reads_data_volume_not_private_owner_volume(tmp_path: Path) -> None:
+    _storage_tree(tmp_path)
+    assert (tmp_path / "volumes/boca-socios_boca_data/_data/boca_owner_session.sqlite3").exists()
+    assert not (
+        tmp_path / "volumes/boca-socios_boca_owner/_data/boca_owner_session.sqlite3"
+    ).exists()
+    captured = runtime.capture_storage_fingerprints(tmp_path, trusted_root=tmp_path)
+    assert len(captured.owner_session_inode_sha256) == 64
 
 
 def test_storage_capture_uses_inode_metadata_without_opening_file_contents(tmp_path: Path) -> None:
@@ -76,7 +89,7 @@ def test_storage_capture_rejects_untrusted_root_and_ancestor_redirect(tmp_path: 
 def test_storage_capture_detects_identity_replacement_without_reading_bytes(tmp_path: Path) -> None:
     _storage_tree(tmp_path)
     before = runtime.capture_storage_fingerprints(tmp_path, trusted_root=tmp_path)
-    filename = tmp_path / "volumes/boca-socios_boca_owner/_data/boca_owner_session.sqlite3"
+    filename = tmp_path / "volumes/boca-socios_boca_data/_data/boca_owner_session.sqlite3"
     filename.rename(filename.with_suffix(".old"))
     filename.write_bytes(b"synthetic replacement")
     filename.chmod(0o600)

@@ -47,7 +47,7 @@ _SITE_FILES = (
 _STORAGE_FILES = (
     ("boca-socios_boca_data", "boca.sqlite3", (0o600,)),
     ("boca-socios_boca_key", "boca_master_key", (0o400, 0o600)),
-    ("boca-socios_boca_owner", "boca_owner_session.sqlite3", (0o600,)),
+    ("boca-socios_boca_data", "boca_owner_session.sqlite3", (0o600,)),
 )
 
 

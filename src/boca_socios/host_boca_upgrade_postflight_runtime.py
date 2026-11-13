@@ -35,7 +35,7 @@ _FILE_FLAGS = os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC
 _FILES = (
     ("boca-socios_boca_data", "boca.sqlite3"),
     ("boca-socios_boca_key", "boca_master_key"),
-    ("boca-socios_boca_owner", "boca_owner_session.sqlite3"),
+    ("boca-socios_boca_data", "boca_owner_session.sqlite3"),
 )
 _SITE_FRAME = re.compile(r"BOCA_SITE_URL_(?:SHA256 ([a-f0-9]{64})|NOT_CONFIGURED)\n\Z")
 _SAVED_URL_PROBE = (
