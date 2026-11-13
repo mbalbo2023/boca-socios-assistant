@@ -416,13 +416,40 @@ class PhysicalSuccessorIntegrations:
 
             def control(name: str) -> str:
                 first = self.control_identity_reader(name)
-                second = self.control_identity_reader(name)
+                try:
+                    second = self.control_identity_reader(name)
+                except FileNotFoundError:
+                    # A path disappearing between two witnesses is drift,
+                    # not permission to use a different one.
+                    raise _fail() from None
                 if first != second or type(first) is not str or _HASH.fullmatch(first) is None:
                     raise _fail()
                 return first
 
             if phase in _PREPARED | _RESTORED:
-                if (
+                if phase == "STAGED" and backend.binding_park_started:
+                    # park_binding() renames the verified root before the
+                    # actor records PARKED. An exception in that interval
+                    # must allow precommit compensation without pretending
+                    # the old control directory is still canonical. Prove
+                    # *exactly one* original path, retaining the old inode.
+                    witnesses: list[str] = []
+                    selectors = (
+                        "control_socket_directory",
+                        f"parked_control_socket_directory:{plan.attempt_id}",
+                    )
+                    for selector in selectors:
+                        try:
+                            witnesses.append(control(selector))
+                        except FileNotFoundError as exc:
+                            # Only an expected missing Boca path is absence;
+                            # missing Docker/runner dependencies are NO_GO.
+                            expected_parts = retained.control_identity_path(selector).parts
+                            if exc.filename not in expected_parts:
+                                raise _fail() from None
+                    if witnesses != [self.custody.control_directory_inode_sha256]:
+                        raise _fail()
+                elif (
                     control("control_socket_directory")
                     != self.custody.control_directory_inode_sha256
                 ):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 from pathlib import Path
@@ -236,3 +237,74 @@ def test_parked_inode_guard_allows_exact_old_restore_but_never_drift(
     invocations.clear()
     assert backend.restore_old(plan, held_lease) is False
     assert invocations == []
+
+
+@pytest.mark.parametrize(
+    "surviving_path,running_old,accepted",
+    [
+        ("control_socket_directory", True, True),
+        ("parked", False, True),
+        ("both", False, False),
+        ("neither", False, False),
+        ("parked_drift", False, False),
+    ],
+)
+def test_interrupted_park_phase_staged_accepts_exact_one_historical_path_only(
+    held_lease: cleanup.BocaJobLease,
+    surviving_path: str,
+    running_old: bool,
+    accepted: bool,
+) -> None:
+    """A failed PARK must not strand its own compensation on a moved path."""
+    bound = _bound()
+    plan = bound.plan
+    canonical = "control_socket_directory"
+    parked = f"parked_control_socket_directory:{plan.attempt_id}"
+    good = bound.custody.control_directory_inode_sha256
+    seen: list[str] = []
+
+    def read(path: str) -> str:
+        seen.append(path)
+        if (
+            surviving_path == "both"
+            or (surviving_path == "control_socket_directory" and path == canonical)
+            or (surviving_path in ("parked", "parked_drift") and path == parked)
+        ):
+            return "a" * 64 if surviving_path == "parked_drift" else good
+        missing = (
+            ".boca-on-demand" if path == canonical else f".boca-on-demand-parked-{plan.attempt_id}"
+        )
+        raise FileNotFoundError(errno.ENOENT, "No such file or directory", missing)
+
+    source = (b"base", b"overlay", b"seccomp")
+    pairs = PairSources(
+        *source,
+        original_compose_sha="f" * 64,
+        base_sha=hashlib.sha256(source[0]).hexdigest(),
+        overlay_sha=hashlib.sha256(source[1]).hexdigest(),
+        seccomp_sha=hashlib.sha256(source[2]).hexdigest(),
+    )
+    graph = physical.expected_transition_graph(
+        plan, "STAGED", previous_observation=bound.original_pair_receipt
+    )
+    integrator = physical.PhysicalSuccessorIntegrations(
+        plan,
+        bound.release,
+        bound.custody,
+        bound.original_pair_receipt,
+        retained_io=_io_for_graph(graph, plan, running_old=running_old),
+        control_identity_reader=read,
+    )
+    backend = successor.PostflightGatedSuccessorBackend(
+        pairs, bound.retained, integrations=integrator, gate=None
+    )
+    integrator.bind_backend(backend)
+    backend.state = "STAGED"
+    backend.binding_park_started = True
+    if accepted:
+        assert integrator.retained_resources(plan, held_lease) == bound.retained
+    else:
+        with pytest.raises(physical.SuccessorPhysicalNoGo):
+            integrator.retained_resources(plan, held_lease)
+    if surviving_path != "neither":
+        assert canonical in seen and parked in seen

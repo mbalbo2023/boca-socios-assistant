@@ -24,6 +24,21 @@ repetía exactamente el fallo. La causa no es un perfil ni una imagen.
 | RETIRED | Canónico nuevo = inode capturado durante CONTROLLER |
 | RESTORED | Canónico anterior = inode histórico original |
 
+**Fase transitoria adicional (PARK iniciado, actor todavía `STAGED`):**
+`binding_park_started` se fija antes de entrar en `park_binding()`, que
+desenlaza el socket, los units y recién después renombra el root. Una
+excepción intermedia conserva `backend.state=STAGED`; no es válido exigir
+solo el path canónico para compensar. Antes del RESTORE se leen dos veces
+**ambas rutas** del attempt bajo control; se admite exactamente una ruta
+existente cuyo hash coincida con el inode histórico. Ninguna, ambas,
+hash diferente, cambio entre dos lecturas o falta de un binario ajeno al
+path Boca son NO_GO. La prueba de ausencia se limita a un `ENOENT` de los
+componentes del path esperado: un error del Docker/runner no se interpreta
+como `PARK` exitoso. La prueba del grafo Docker/IPC/SITE/EGRESS y la lease
+permanecen obligatorias. Esto habilita la compensación legítima tras un
+`rename` completado pero antes de actualizar `state`; no autoriza otro
+APPLY ni cura automáticamente estados inciertos después de efectos.
+
 El selector estacionado acepta únicamente el attempt numérico validado;
 abre todos los ancestros con `O_PATH|O_NOFOLLOW` y conserva la función de
 hash original. No se desactiva la observación doble de IPC/SITE/EGRESS,
@@ -47,7 +62,9 @@ hash diferente sigue siendo NO_GO.
    la aceptación funcional personal sigue aparte.
 
 **Regresiones:** `tests/test_r280_park_control_identity.py` y
-`tests/test_host_boca_successor_physical_v2.py`, con negativos de drift.
+`tests/test_host_boca_successor_physical_v2.py`, con negativos de drift,
+`PARK` interrumpido, dos paths, ningún path, hash de control distinto y
+runner ausente.
 
 **Estado del ADR:** diseño probado offline, no evidencia de host recuperado
 ni despliegue, `SIMULATION_ONLY`, sin tocar Porota/PPI Watch.
