@@ -7,6 +7,7 @@ temporary directory. No Docker daemon, site or owner credentials are accessed.
 from __future__ import annotations
 
 import copy
+import errno
 import hashlib
 import json
 import os
@@ -365,13 +366,23 @@ def test_restored_old_pair_must_discard_candidate_ids_only_after_physical_absenc
         seccomp_sha=hashlib.sha256(sources[2]).hexdigest(),
     )
     io = _io_for_graph(graph, bound.plan, running_old=True)
+
+    def restored_control(name: str) -> str:
+        if name.startswith("parked_control_socket_directory:"):
+            raise FileNotFoundError(
+                errno.ENOENT,
+                "No such file or directory",
+                f".boca-on-demand-parked-{bound.plan.attempt_id}",
+            )
+        return bound.custody.control_directory_inode_sha256
+
     live = physical.PhysicalSuccessorIntegrations(
         bound.plan,
         bound.release,
         bound.custody,
         bound.original_pair_receipt,
         retained_io=io,
-        control_identity_reader=lambda _name: bound.custody.control_directory_inode_sha256,
+        control_identity_reader=restored_control,
     )
     backend = successor_runtime.PostflightGatedSuccessorBackend(
         validated_sources, bound.retained, integrations=live, gate=None
@@ -416,13 +427,27 @@ def test_integrations_follow_reused_backend_phase_without_discovering_unknown_na
         overlay_sha=hashlib.sha256(source[1]).hexdigest(),
         seccomp_sha=hashlib.sha256(source[2]).hexdigest(),
     )
+
+    def phase_control(name: str) -> str:
+        if name.startswith("parked_control_socket_directory:"):
+            if phase in ("NEW", "RETIRED"):
+                raise FileNotFoundError(
+                    errno.ENOENT,
+                    "No such file or directory",
+                    f".boca-on-demand-parked-{bound.plan.attempt_id}",
+                )
+            return bound.custody.control_directory_inode_sha256
+        if phase in ("PARKED", "WORKER"):
+            raise FileNotFoundError(errno.ENOENT, "No such file or directory", ".boca-on-demand")
+        return bound.custody.control_directory_inode_sha256 if phase == "NEW" else "a" * 64
+
     integrator = physical.PhysicalSuccessorIntegrations(
         bound.plan,
         bound.release,
         bound.custody,
         bound.original_pair_receipt,
         retained_io=io,
-        control_identity_reader=lambda _name: bound.custody.control_directory_inode_sha256,
+        control_identity_reader=phase_control,
     )
     backend = successor_runtime.PostflightGatedSuccessorBackend(
         pair_sources, bound.retained, integrations=integrator, gate=None
@@ -431,7 +456,13 @@ def test_integrations_follow_reused_backend_phase_without_discovering_unknown_na
     backend.state = phase
     backend.worker_id = worker_id
     backend.controller_id = controller_id
-    assert integrator.retained_resources(bound.plan, held_lease) == bound.retained
+    if phase in ("BOUND", "RETIRED"):
+        # A direct jump cannot fabricate the fresh successor control inode;
+        # the real actor must record it at CONTROLLER before BOUND/RETIRED.
+        with pytest.raises(physical.SuccessorPhysicalNoGo):
+            integrator.retained_resources(bound.plan, held_lease)
+    else:
+        assert integrator.retained_resources(bound.plan, held_lease) == bound.retained
     integrator.verify_release(bound.plan, pair_sources, held_lease)
     with pytest.raises(physical.SuccessorPhysicalNoGo):
         integrator.final_cleanup(bound.plan, held_lease)

@@ -1,5 +1,18 @@
 # Boca Socios Assistant
 
+## R280 — guard del inode de control por fase (13/11/2026; CODE_ONLY)
+
+La causa del fallo post-PARK del APPLY #1085 fue la verificación invariante
+de un path que `park_binding()` mueve deliberadamente. El candidato R280
+verifica el mismo inode histórico bajo path canónico antes del PARK,
+estacionado durante PARK, y canónico restaurado después de compensar;
+durante la transición parcial `binding_park_started` con estado todavía
+`STAGED`, exige **exactamente una** de las dos rutas conservando el inode.
+El successor nuevo obtiene su propio testigo de inode al prepararlo. Ningún
+guard general se deshabilita: cambios, duplicados, ausencias o inventario
+Docker ajeno siguen NO_GO. Revisión, promoción y despliegue físico pendientes;
+servicio original aún no certificado como restaurado. [ADR0298](docs/ADR/0298-r280-park-restore-control-inode-guard.md).
+
 ## R273 — fuente vigente para instalación vs actualización (13/11/2026; CODE_ONLY)
 
 **No confundir:** la versión `b61ca3e58d4f8ce69cd6d7575f2a8e1ce59bda72`

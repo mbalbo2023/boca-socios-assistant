@@ -9,9 +9,12 @@ All live readers run only when a reviewed protected caller holds one Boca lease.
 
 from __future__ import annotations
 
+import errno
 import re
+import stat
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import cast
 
 from boca_socios import host_boca_binding_observe as binding
@@ -46,6 +49,44 @@ class SuccessorPhysicalNoGo(ValueError):
 
 def _fail() -> SuccessorPhysicalNoGo:
     return SuccessorPhysicalNoGo("Boca successor physical evidence NO_GO")
+
+
+def _prepared_control_root(attempt_id: str, lease: cleanup.BocaJobLease) -> tuple[object, ...]:
+    """Read only this attempt's partly prepared root; never adopt unknown files.
+
+    A stopped controller creation may have published the exact attempt
+    marker but not yet the socket directory. Both forms can be removed by
+    service.remove_control() during protected precommit compensation.
+    """
+    cleanup.verify_protected_boca_job_lease(lease, attempt_id)
+    home = service._home()
+    root = home / service._ROOT
+    if not service._present(root):
+        return ("ABSENT",)
+    service._owned(home, attempt_id)
+    names = {entry.name for entry in root.iterdir()}
+    if names not in ({service._MARKER}, {service._MARKER, "socket"}):
+        raise _fail()
+
+    def metadata(path: Path) -> tuple[int, ...]:
+        item = path.lstat()
+        return (
+            item.st_dev,
+            item.st_ino,
+            item.st_uid,
+            item.st_gid,
+            stat.S_IMODE(item.st_mode),
+            item.st_nlink,
+        )
+
+    socket_metadata = None
+    if "socket" in names:
+        socket = root / "socket"
+        service._directory(socket, mode=0o711)
+        if any(socket.iterdir()):
+            raise _fail()
+        socket_metadata = metadata(socket)
+    return ("OWNED", metadata(root), metadata(root / service._MARKER), socket_metadata)
 
 
 def _historical_seed(custody: adapters.CustodyEvidence) -> None:
@@ -335,6 +376,10 @@ class PhysicalSuccessorIntegrations:
         self.previous_observation = previous_observation
         self.retained_io = retained_io
         self.control_identity_reader = control_identity_reader
+        # A freshly prepared successor control directory must be observed
+        # twice and remain the same across BOUND -> RETIRED. It cannot be
+        # substituted for the historical directory parked under the attempt.
+        self._successor_control_inode_sha256: str | None = None
         self.backend: successor.PostflightGatedSuccessorBackend | None = None
 
     def bind_backend(self, backend: successor.PostflightGatedSuccessorBackend) -> None:
@@ -408,9 +453,104 @@ class PhysicalSuccessorIntegrations:
             pins = observe_transition_resources(
                 plan, self.custody, lease, graph=graph, retained_io=io
             )
-            before = self.control_identity_reader("control_socket_directory")
-            after = self.control_identity_reader("control_socket_directory")
-            if before != after or before != self.custody.control_directory_inode_sha256:
+            phase = backend.state
+
+            def control(name: str) -> str:
+                first = self.control_identity_reader(name)
+                try:
+                    second = self.control_identity_reader(name)
+                except FileNotFoundError:
+                    # A path disappearing between two witnesses is drift,
+                    # not permission to use a different one.
+                    raise _fail() from None
+                if first != second or type(first) is not str or _HASH.fullmatch(first) is None:
+                    raise _fail()
+                return first
+
+            def missing(name: str, error: FileNotFoundError) -> bool:
+                # Only absence of this attempt's *root* is a normal phase
+                # boundary. Missing /home, Docker, or the socket *inside* a
+                # present root is a corrupt observation, never an absence.
+                root = retained.control_identity_path(name).parent.name
+                return error.errno == errno.ENOENT and error.filename == root
+
+            def require_absent(name: str) -> None:
+                # Prove stable absence twice; a briefly disappearing path or
+                # an unexpected canonical/parked directory is fail-closed.
+                for _ in range(2):
+                    try:
+                        self.control_identity_reader(name)
+                    except FileNotFoundError as exc:
+                        if not missing(name, exc):
+                            raise _fail() from None
+                    else:
+                        raise _fail()
+
+            if phase in _PREPARED | _RESTORED:
+                if phase == "STAGED" and backend.binding_park_started:
+                    # park_binding() renames the verified root before the
+                    # actor records PARKED. An exception in that interval
+                    # must allow precommit compensation without pretending
+                    # the old control directory is still canonical. Prove
+                    # *exactly one* original path, retaining the old inode.
+                    witnesses: list[str] = []
+                    selectors = (
+                        "control_socket_directory",
+                        f"parked_control_socket_directory:{plan.attempt_id}",
+                    )
+                    for selector in selectors:
+                        try:
+                            witnesses.append(control(selector))
+                        except FileNotFoundError as exc:
+                            if not missing(selector, exc):
+                                raise _fail() from None
+                            require_absent(selector)
+                    if witnesses != [self.custody.control_directory_inode_sha256]:
+                        raise _fail()
+                elif (
+                    control("control_socket_directory")
+                    != self.custody.control_directory_inode_sha256
+                ):
+                    raise _fail()
+                else:
+                    require_absent(f"parked_control_socket_directory:{plan.attempt_id}")
+            elif phase in _PARKED | _THREE | _FOUR:
+                parked = f"parked_control_socket_directory:{plan.attempt_id}"
+                if control(parked) != self.custody.control_directory_inode_sha256:
+                    raise _fail()
+                if phase in _PARKED or phase in _THREE and not backend.control_prepare_started:
+                    require_absent("control_socket_directory")
+                elif phase in _THREE:
+                    # create_controller() is still in WORKER until its last
+                    # healthy proof. Its control directory may be partly
+                    # prepared; accept ONLY the exact marker-owned root,
+                    # with optional empty socket/, or stable root absence.
+                    first = _prepared_control_root(plan.attempt_id, lease)
+                    second = _prepared_control_root(plan.attempt_id, lease)
+                    if first != second:
+                        raise _fail()
+                    if first == ("ABSENT",):
+                        require_absent("control_socket_directory")
+                    elif not first or first[0] != "OWNED":
+                        raise _fail()
+                if phase in _FOUR:
+                    successor_inode = control("control_socket_directory")
+                    if successor_inode == self.custody.control_directory_inode_sha256:
+                        raise _fail()
+                    if self._successor_control_inode_sha256 is None:
+                        if phase != "CONTROLLER":
+                            raise _fail()
+                        self._successor_control_inode_sha256 = successor_inode
+                    elif successor_inode != self._successor_control_inode_sha256:
+                        raise _fail()
+            elif phase in _RETIRED:
+                if (
+                    self._successor_control_inode_sha256 is None
+                    or control("control_socket_directory") != self._successor_control_inode_sha256
+                ):
+                    raise _fail()
+                require_absent(f"parked_control_socket_directory:{plan.attempt_id}")
+            else:
                 raise _fail()
             return reusable.RetainedResourcePins(
                 pins.ipc_creator_attempt,
