@@ -73,6 +73,13 @@ def _canonical(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("ascii")
 
 
+def _mapping(value: object) -> dict[str, object]:
+    """Reject unknown Docker JSON shapes before nested identity checks."""
+    if not isinstance(value, dict) or any(type(key) is not str for key in value):
+        raise _fail()
+    return value
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class Preflight:
     pins: incident.JournalPins
@@ -196,10 +203,13 @@ def _resource_custody(
         (pins.old_worker_id, "browser-worker", _WORKER_VOLUMES),
     ):
         record = host._browser_inspect_record(cid)
-        labels = record["Config"]["Labels"]
+        config = _mapping(record.get("Config"))
+        labels = _mapping(config.get("Labels"))
+        host_config = _mapping(record.get("HostConfig"))
+        network_settings = _mapping(record.get("NetworkSettings"))
         expected_ref = old.controller_image if role == "controller" else old.worker_image
         if (
-            record["Config"].get("Image") != expected_ref
+            config.get("Image") != expected_ref
             or record.get("Image")
             != (pins.old_controller_image_id if role == "controller" else pins.old_worker_image_id)
             or labels.get("com.docker.compose.config-hash") is None
@@ -209,7 +219,7 @@ def _resource_custody(
             != sorted(volumes)
         ):
             raise _fail()
-        if role == "controller" and record["HostConfig"].get("PortBindings") != _PORTS:
+        if role == "controller" and host_config.get("PortBindings") != _PORTS:
             raise _fail()
         expected_config_hash = (
             old.pair.controller_config_hash if role == "controller" else old.pair.worker_config_hash
@@ -217,7 +227,7 @@ def _resource_custody(
         if labels["com.docker.compose.config-hash"] != expected_config_hash:
             raise _fail()
         network, _ = pair._safe_network(
-            record["NetworkSettings"]["Networks"],
+            network_settings.get("Networks"),
             service=role,
             known_ids=known_networks,
             historical=False,
@@ -372,7 +382,10 @@ def _restore_docker(old: OnDemandInstallation, pins: incident.JournalPins) -> No
         record = host._browser_inspect_record(cid)
         if record.get("Id") != cid or record.get("Name") != "/" + canonical:
             raise _fail()
-    if host._browser_inspect_record(pins.old_controller_id)["State"]["Running"] is not False:
+    if (
+        _mapping(host._browser_inspect_record(pins.old_controller_id).get("State")).get("Running")
+        is not False
+    ):
         raise _fail()
     if host._run("docker", "start", pins.old_controller_id, timeout=30) != pins.old_controller_id:
         raise _fail()
@@ -400,32 +413,37 @@ def _postflight(run_id: str, before: Preflight) -> None:
     ):
         raise _fail()
     record = host._browser_inspect_record(pins.old_controller_id)
-    state = record["State"]
-    policy = record.get("HostConfig", {}).get("RestartPolicy")
+    state = _mapping(record.get("State"))
+    config = _mapping(record.get("Config"))
+    host_config = _mapping(record.get("HostConfig"))
+    network_settings = _mapping(record.get("NetworkSettings"))
+    health = _mapping(state.get("Health"))
+    policy = host_config.get("RestartPolicy")
     if (
         record.get("Name") != "/boca-socios-controller-1"
         or record.get("Image") != pins.old_controller_image_id
-        or record.get("Config", {}).get("Image") != old.controller_image
-        or record.get("HostConfig", {}).get("PortBindings") != _PORTS
-        or record.get("NetworkSettings", {}).get("Ports") != _PORTS
+        or config.get("Image") != old.controller_image
+        or host_config.get("PortBindings") != _PORTS
+        or network_settings.get("Ports") != _PORTS
         or state.get("Running") is not True
-        or state.get("Health", {}).get("Status") != "healthy"
+        or health.get("Status") != "healthy"
         or policy != {"Name": "unless-stopped", "MaximumRetryCount": 0}
     ):
         raise _fail()
     host._beta_loopback_health(pins.old_controller_id, "http://localhost:8443")
     record = host._browser_inspect_record(pins.old_worker_id)
-    state = record["State"]
+    state = _mapping(record.get("State"))
+    config = _mapping(record.get("Config"))
+    host_config = _mapping(record.get("HostConfig"))
     if (
         record.get("Name") != "/boca-socios-browser-worker-1"
         or record.get("Image") != pins.old_worker_image_id
-        or record.get("Config", {}).get("Image") != old.worker_image
+        or config.get("Image") != old.worker_image
         or state.get("Status") != "created"
         or state.get("Running") is not False
         or state.get("Pid") != 0
         or state.get("ExitCode") != 0
-        or record.get("HostConfig", {}).get("RestartPolicy")
-        != {"Name": "no", "MaximumRetryCount": 0}
+        or host_config.get("RestartPolicy") != {"Name": "no", "MaximumRetryCount": 0}
     ):
         raise _fail()
     if _resource_custody(pins, before.resource_pins, old) != before.protected_inodes:
