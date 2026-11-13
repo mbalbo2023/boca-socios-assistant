@@ -277,6 +277,7 @@ class RootlessPairUpgradeBackend:
         self.worker_id: str | None = None
         self.controller_id: str | None = None
         self.binding_park_started = False
+        self.control_prepare_started = False
 
     def _guard(self, plan: transaction.PairCoordinates, lease: BocaJobLease, state: str) -> None:
         cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
@@ -520,6 +521,10 @@ class RootlessPairUpgradeBackend:
         # Rootless 8443 forwarding can linger briefly after the precisely
         # identified historical controller has stopped and been parked.
         host._browser_port_free(after_candidate_removal=True)
+        # A failure within prepare_control_directory may leave an attempt-
+        # owned marker and optional empty socket/ before state CONTROLLER.
+        # Compensation must distinguish it from an unrelated canonical root.
+        self.control_prepare_started = True
         if service.prepare_control_directory(plan.attempt_id, lease) != service.control_directory():
             raise _fail()
         controller = host._run(

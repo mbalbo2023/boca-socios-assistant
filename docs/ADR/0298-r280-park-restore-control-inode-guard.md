@@ -18,11 +18,12 @@ repetía exactamente el fallo. La causa no es un perfil ni una imagen.
 
 | Fase del actor | Directorio e identidad exigidos |
 |---|---|
-| NEW, ATTESTED, STAGED | Canónico = inode histórico fijado |
-| PARKED, WORKER | Estacionado por attempt = **mismo** inode histórico |
+| NEW, ATTESTED, STAGED (antes de PARK) | Canónico = inode histórico; estacionado del intento ausente |
+| PARKED | Estacionado por attempt = inode histórico; canónico ausente |
+| WORKER | Estacionado = histórico; canónico ausente hasta comenzar `prepare_control_directory`, o root propio del intento con marcador exacto y socket opcional vacío |
 | CONTROLLER, ACCEPTED_COLD, BOUND | Estacionado = histórico; canónico nuevo = otro inode capturado estable |
-| RETIRED | Canónico nuevo = inode capturado durante CONTROLLER |
-| RESTORED | Canónico anterior = inode histórico original |
+| RETIRED | Canónico nuevo = inode capturado durante CONTROLLER; estacionado ausente |
+| RESTORED | Canónico anterior = inode histórico original; estacionado ausente |
 
 **Fase transitoria adicional (PARK iniciado, actor todavía `STAGED`):**
 `binding_park_started` se fija antes de entrar en `park_binding()`, que
@@ -32,8 +33,9 @@ solo el path canónico para compensar. Antes del RESTORE se leen dos veces
 **ambas rutas** del attempt bajo control; se admite exactamente una ruta
 existente cuyo hash coincida con el inode histórico. Ninguna, ambas,
 hash diferente, cambio entre dos lecturas o falta de un binario ajeno al
-path Boca son NO_GO. La prueba de ausencia se limita a un `ENOENT` de los
-componentes del path esperado: un error del Docker/runner no se interpreta
+path Boca son NO_GO. La prueba de ausencia exige dos observaciones `ENOENT`
+del **nombre del root esperado**, no de `socket/`, ancestros ni binarios:
+un error del Docker/runner no se interpreta
 como `PARK` exitoso. La prueba del grafo Docker/IPC/SITE/EGRESS y la lease
 permanecen obligatorias. Esto habilita la compensación legítima tras un
 `rename` completado pero antes de actualizar `state`; no autoriza otro
@@ -47,6 +49,24 @@ directorio nuevo no puede inventarse saltando directamente a BOUND/RETIRED.
 La compensación desde PARKED primero comprueba la identidad bajo parked;
 solo después del RESTORE real vuelve a exigir el canónico original. Un
 hash diferente sigue siendo NO_GO.
+
+**Interrupción al preparar el controlador:** el actor fija
+`control_prepare_started` inmediatamente antes de `prepare_control_directory`
+sin cambiar todavía `state=WORKER`. Si ese paso falla, la compensación
+admite ausencia estable del canónico, o sólo un root canónico del **mismo
+attempt** verificado por `_home`/`_owned`, marcador propietario, modo 0700,
+y como máximo `socket/` 0711 vacío. Los metadatos del root/marker/socket
+deben coincidir entre dos lecturas: ningún binding, unit, archivo desconocido,
+socket activo, otro attempt ni directorio alterado se admite. Antes de
+iniciar la preparación, WORKER sigue exigiendo canónico ausente. El restore
+real conserva sus propias comprobaciones de dos CIDs antiguos, marcador y
+retirada exacta del root nuevo.
+
+**Límite explícito:** si Docker ya creó un controlador y el actor fijó
+`controller_id`, pero falla antes de cambiar `state=CONTROLLER`, el grafo
+WORKER espera aún tres CIDs y rechaza los cuatro como
+`NO_GO/INDETERMINATE`. Este cambio no promueve esa topología parcial,
+no redescubre un CID por nombre y no declara compensación verificada.
 
 ## Orden de operación y aceptación
 
