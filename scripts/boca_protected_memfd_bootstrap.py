@@ -239,6 +239,20 @@ POSTCOMMIT_FINALIZE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
     "boca_socios/host_boca_pair_upgrade.py",
     "boca_socios/host_boca_pair_upgrade_plan.py",
 }
+PRECOMMIT_RESTORE_ENTRIES = BINDING_ENTRIES | {
+    "boca_socios/host_on_demand_replace.py",
+    "boca_socios/host_cutover_stage.py",
+    "boca_socios/host_boca_pair_postcommit.py",
+    "boca_socios/host_boca_pair_upgrade_plan.py",
+    "boca_socios/host_boca_retained_resources.py",
+    "boca_socios/host_boca_upgrade_adapters.py",
+    "boca_socios/host_boca_park_incident_readonly.py",
+    "boca_socios/host_boca_pair_precommit_restore.py",
+    "boca_socios/browser_release_manifest.py",
+    "boca_socios/release_manifest.py",
+    "boca_socios/release_run.py",
+    "boca_socios/deploy_inputs.py",
+}
 MAX_ZIP = 512_000
 RETAINED_ENTRIES = POSTCOMMIT_ENTRIES | {"boca_socios/host_boca_retained_resources.py"}
 RETAINED_MAX_ZIP = 80_000
@@ -291,6 +305,7 @@ def verify(
     pair_upgrade: bool = False,
     rootless_mapped_observe: bool = False,
     postcommit_finalize: bool = False,
+    precommit_restore: bool = False,
 ) -> None:
     """Verify digest, exact transport variant, file types and separate bounds."""
     if (
@@ -309,6 +324,7 @@ def verify(
                 pair_upgrade,
                 rootless_mapped_observe,
                 postcommit_finalize,
+                precommit_restore,
             )
         )
         > 1
@@ -317,6 +333,8 @@ def verify(
     max_zip = (
         RETAINED_MAX_ZIP
         if retained_observe
+        else POSTCOMMIT_FINALIZE_MAX_ZIP
+        if precommit_restore
         else POSTCOMMIT_FINALIZE_MAX_ZIP
         if postcommit_finalize
         else PAIR_UPGRADE_MAX_ZIP
@@ -346,6 +364,8 @@ def verify(
     max_uncompressed = (
         RETAINED_MAX_UNCOMPRESSED
         if retained_observe
+        else POSTCOMMIT_FINALIZE_MAX_UNCOMPRESSED
+        if precommit_restore
         else POSTCOMMIT_FINALIZE_MAX_UNCOMPRESSED
         if postcommit_finalize
         else PAIR_UPGRADE_MAX_UNCOMPRESSED
@@ -382,6 +402,8 @@ def verify(
         allowlisted = (
             (RETAINED_ENTRIES,)
             if retained_observe
+            else (PRECOMMIT_RESTORE_ENTRIES,)
+            if precommit_restore
             else (POSTCOMMIT_FINALIZE_ENTRIES,)
             if postcommit_finalize
             else (PAIR_UPGRADE_ENTRIES,)
@@ -461,6 +483,7 @@ def main() -> int:
         pair_upgrade = sys.argv[2] == "boca-pair-upgrade-apply"
         rootless_mapped_observe = sys.argv[2] == "boca-rootless-mapping-observe"
         postcommit_finalize = sys.argv[2] == "boca-postcommit-finalize"
+        precommit_restore = sys.argv[2] == "boca-precommit-restore-one-shot"
         if (
             sys.argv[2] in ("cutover-stage-recover-904", "cutover-image-plan-916")
             and len(sys.argv) != 8
@@ -496,9 +519,13 @@ def main() -> int:
             raise ValueError("Boca rootless witness requires only the authenticated run ID")
         if postcommit_finalize and len(sys.argv) != 4:
             raise ValueError("postcommit finalizer requires only fresh authenticated run ID")
+        if precommit_restore and len(sys.argv) != 4:
+            raise ValueError("precommit recovery requires only fresh authenticated run ID")
         bound = (
             RETAINED_MAX_ZIP
             if retained_observe
+            else POSTCOMMIT_FINALIZE_MAX_ZIP
+            if precommit_restore
             else POSTCOMMIT_FINALIZE_MAX_ZIP
             if postcommit_finalize
             else PAIR_UPGRADE_MAX_ZIP
@@ -542,6 +569,7 @@ def main() -> int:
             pair_upgrade=pair_upgrade,
             rootless_mapped_observe=rootless_mapped_observe,
             postcommit_finalize=postcommit_finalize,
+            precommit_restore=precommit_restore,
         )
         # The memfd is passed to the *same* process via exec. No temporary
         # container, host file or broader Docker resource is ever created.
