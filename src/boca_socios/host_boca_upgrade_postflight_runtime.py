@@ -47,8 +47,14 @@ _SAVED_URL_PROBE = (
     "if url is not None else 'BOCA_SITE_URL_UNVERIFIED')"
 )
 _MIRRORED_URL_PROBE = (
-    "from boca_socios.browser.site_url_runtime import read_site_url,site_url_fingerprint;"
-    "print('BOCA_SITE_URL_SHA256 '+site_url_fingerprint(read_site_url()))"
+    "import os;"
+    "from boca_socios.browser.site_url_runtime import "
+    "RUNTIME_SITE_URL_PATH,_directory,_read_from,site_url_fingerprint;"
+    "fd=_directory(RUNTIME_SITE_URL_PATH,owner_uid=10001,owner_gid=10001,readonly=True);"
+    "url=_read_from(fd,owner_uid=10001,owner_gid=10001);"
+    "os.close(fd);"
+    "print('BOCA_SITE_URL_SHA256 '+site_url_fingerprint(url) "
+    "if url is not None else 'BOCA_SITE_URL_UNVERIFIED')"
 )
 _WORKER_COMMAND = ["python", "-m", "boca_socios.browser.ipc_server"]
 _MONITOR_FIELDS = frozenset(
@@ -101,7 +107,7 @@ class ProductionSiteUrlWitness:
     def _pair(self) -> None:
         _attest_live_pair(self.expected, self.lease)
 
-    def _fingerprint(self, script: str) -> str:
+    def _fingerprint(self, script: str) -> str | None:
         try:
             self._pair()
             observed = cleanup._docker(
@@ -115,22 +121,31 @@ class ProductionSiteUrlWitness:
                 "-c",
                 script,
             )
-            match = _SITE_FRAME.fullmatch(observed)
-            if match is None or match.group(1) != self.expected.site_url_fingerprint:
-                raise _fail()
+            if self.expected.site_url_fingerprint is None:
+                # The fixed saved/mirror probes emit this sentinel ONLY when
+                # their own safe read returned a genuinely missing file.
+                # Never reinterpret a read error as missing configuration.
+                if observed != "BOCA_SITE_URL_UNVERIFIED\n":
+                    raise _fail()
+                fingerprint = None
+            else:
+                match = _SITE_FRAME.fullmatch(observed)
+                if match is None or match.group(1) != self.expected.site_url_fingerprint:
+                    raise _fail()
+                fingerprint = match.group(1)
             # A separate owner lifecycle request may start the worker outside
             # the deployment lease; never attest a stopped worker from the
             # pre-command observation alone.
             self._pair()
             cleanup.verify_protected_boca_job_lease(self.lease, self.expected.plan.attempt_id)
-            return match.group(1)
+            return fingerprint
         except Exception:
             raise _fail() from None
 
-    def saved_fingerprint(self) -> str:
+    def saved_fingerprint(self) -> str | None:
         return self._fingerprint(_SAVED_URL_PROBE)
 
-    def mirror_fingerprint(self) -> str:
+    def mirror_fingerprint(self) -> str | None:
         return self._fingerprint(_MIRRORED_URL_PROBE)
 
     def worker_startup(self) -> str:
@@ -454,8 +469,8 @@ class PostflightReadSources:
     ] = _read_retained_graph
     storage_reader: Callable[[], PostflightStorage] | None = None
     rootless_identity_reader: Callable[[], tuple[int, int]] = _read_rootless_identity
-    site_saved_reader: Callable[[], str] | None = None
-    site_mirror_reader: Callable[[], str] | None = None
+    site_saved_reader: Callable[[], str | None] | None = None
+    site_mirror_reader: Callable[[], str | None] | None = None
     worker_startup_reader: Callable[[], str] | None = None
     panel_health_reader: Callable[[], str] | None = None
     panel_login_reader: Callable[[], str] | None = None

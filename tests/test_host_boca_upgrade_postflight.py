@@ -260,6 +260,68 @@ def _technical_capture(
     ), evidence
 
 
+def test_technical_missing_site_url_requires_both_absent_and_cannot_promote_beta() -> None:
+    expected = _expected(site_url_fingerprint=None)
+    absent = _snapshot(
+        site_url_saved_fingerprint=None,
+        site_url_worker_mirror_fingerprint=None,
+        panel_loopback_probe="HEALTH_HTTP_200",
+    )
+    lease = cleanup.BocaJobLease(_ATTEMPT, -1, -1, True)
+    checks: list[str] = []
+
+    def verify(found: cleanup.BocaJobLease, attempt: str) -> None:
+        assert found is lease and attempt == _ATTEMPT
+        checks.append("lease")
+
+    def snapshot(found: cleanup.BocaJobLease) -> PostflightSnapshot:
+        assert found is lease
+        checks.append("read")
+        return absent
+
+    raw = capture_technical_postflight(expected, lease, read_snapshot=snapshot, verify_lease=verify)
+    assert checks == ["lease", "read", "lease", "read", "lease"]
+    body = json.loads(raw.removeprefix(b"BOCA_PAIR_POSTFLIGHT_TECHNICAL_V2 "))
+    assert body["schema"] == 2
+    assert body["site_url"] == {
+        "state": "NOT_CONFIGURED",
+        "fingerprint": None,
+        "mirror": None,
+        "startup": "READ_FRESH_FILE_AT_NEXT_START",
+    }
+    assert body["beta_deploy"] == "NO_GO"
+    assert body["passkey_chrome"] == "NOT_ATTESTED"
+    assert body["monitor"]["owner_monitor"] == "NOT_ATTESTED"
+    assert verify_technical_postflight(raw, expected) == raw
+    with pytest.raises(PostflightNoGo):
+        capture_postflight(expected, lease, read_snapshot=snapshot, verify_lease=verify)
+    with pytest.raises(PostflightNoGo):
+        verify_postflight(raw, expected)
+
+
+@pytest.mark.parametrize(
+    "saved,mirror",
+    [("a" * 64, None), (None, "a" * 64), ("", None), (None, "")],
+)
+def test_technical_missing_site_url_refuses_any_present_or_unverified_side(
+    saved: str | None, mirror: str | None
+) -> None:
+    expected = _expected(site_url_fingerprint=None)
+    observation = _snapshot(
+        site_url_saved_fingerprint=saved,
+        site_url_worker_mirror_fingerprint=mirror,
+        panel_loopback_probe="HEALTH_HTTP_200",
+    )
+    lease = cleanup.BocaJobLease(_ATTEMPT, -1, -1, True)
+    with pytest.raises(PostflightNoGo):
+        capture_technical_postflight(
+            expected,
+            lease,
+            read_snapshot=lambda _: observation,
+            verify_lease=lambda *_: None,
+        )
+
+
 def test_r252_technical_health_is_separate_versioned_non_promoting_receipt() -> None:
     raw, evidence = _technical_capture()
     assert evidence == ["lease", "read", "lease", "read", "lease"]
