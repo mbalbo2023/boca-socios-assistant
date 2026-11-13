@@ -1,4 +1,4 @@
-# ADR 0296 — R280: identidad de control según fase PARK/RESTORE/COMMIT
+# ADR 0298 — R280: identidad de control según fase PARK/RESTORE/COMMIT
 
 **Fecha:** 13-NOV-2026 (ART). **Alcance:** corrección CODE_ONLY pendiente de
 revisión/promoción posterior a la recuperación del servicio antiguo.

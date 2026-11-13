@@ -11,7 +11,7 @@ durante la transición parcial `binding_park_started` con estado todavía
 El successor nuevo obtiene su propio testigo de inode al prepararlo. Ningún
 guard general se deshabilita: cambios, duplicados, ausencias o inventario
 Docker ajeno siguen NO_GO. Revisión, promoción y despliegue físico pendientes;
-servicio original aún no certificado como restaurado. [ADR0296](docs/ADR/0296-r280-park-restore-control-inode-guard.md).
+servicio original aún no certificado como restaurado. [ADR0298](docs/ADR/0298-r280-park-restore-control-inode-guard.md).
 
 ## R273 — fuente vigente para instalación vs actualización (13/11/2026; CODE_ONLY)
 
