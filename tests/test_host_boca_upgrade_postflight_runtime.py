@@ -280,6 +280,56 @@ def test_production_site_url_witness_reads_only_hashes_from_pinned_controller(
     assert all("--network" not in cmd for cmd in calls)
 
 
+def test_production_site_url_witness_only_accepts_exact_physical_absence_on_both_sides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _expected(site_url_fingerprint=None)
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", lambda *_: None)
+    monkeypatch.setattr(pair, "observe", lambda _: _pair_bytes())
+    monkeypatch.setattr(
+        runtime.service, "read_installed_binding", lambda _: _installed_binding(expected)
+    )
+
+    def docker(*args: str) -> str:
+        calls.append(args)
+        assert args[:4] == ("exec", "--user", "10001:10001", expected.controller_id)
+        assert args[-2] == "-c"
+        if len(calls) == 1:
+            assert "SiteUrlSettingsStore" in args[-1]
+        elif len(calls) == 2:
+            assert "read_optional_site_url" in args[-1]
+            assert "read_site_url()" not in args[-1]
+        return "BOCA_SITE_URL_NOT_CONFIGURED\n"
+
+    monkeypatch.setattr(cleanup, "_docker", docker)
+    witness = runtime.ProductionSiteUrlWitness(expected, lease)
+    assert witness.saved_fingerprint() is None
+    assert witness.mirror_fingerprint() is None
+    assert len(calls) == 2
+    assert all("https://" not in " ".join(cmd) for cmd in calls)
+
+
+@pytest.mark.parametrize(
+    "unsafe_output",
+    ["BOCA_SITE_URL_SHA256 " + "f" * 64 + "\n", "BOCA_SITE_URL_NOT_CONFIGURED\nNO_GO", "", "NO_GO\n"],
+)
+def test_missing_site_witness_rejects_present_malformed_or_partial_probe(
+    monkeypatch: pytest.MonkeyPatch, unsafe_output: str
+) -> None:
+    expected = _expected(site_url_fingerprint=None)
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", lambda *_: None)
+    monkeypatch.setattr(pair, "observe", lambda _: _pair_bytes())
+    monkeypatch.setattr(
+        runtime.service, "read_installed_binding", lambda _: _installed_binding(expected)
+    )
+    monkeypatch.setattr(cleanup, "_docker", lambda *_: unsafe_output)
+    with pytest.raises(runtime.PostflightRuntimeNoGo):
+        runtime.ProductionSiteUrlWitness(expected, lease).mirror_fingerprint()
+
+
 def test_production_site_url_witness_rejects_bad_worker_command_and_leaked_stdout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -302,7 +352,7 @@ def test_production_site_url_witness_rejects_bad_worker_command_and_leaked_stdou
 def test_production_site_url_witness_reports_exact_missing_files_without_digest(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    expected = _expected(site_url_fingerprint="NOT_CONFIGURED")
+    expected = _expected(site_url_fingerprint=None)
     lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
     monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", lambda *_: None)
     monkeypatch.setattr(pair, "observe", lambda _: _pair_bytes())
@@ -318,8 +368,8 @@ def test_production_site_url_witness_reports_exact_missing_files_without_digest(
 
     monkeypatch.setattr(cleanup, "_docker", docker)
     witness = runtime.ProductionSiteUrlWitness(expected, lease)
-    assert witness.saved_fingerprint() == "NOT_CONFIGURED"
-    assert witness.mirror_fingerprint() == "NOT_CONFIGURED"
+    assert witness.saved_fingerprint() is None
+    assert witness.mirror_fingerprint() is None
     assert len(calls) == 2
     assert all("https://" not in " ".join(call) for call in calls)
     # Missing, malformed and configured responses must remain distinct.

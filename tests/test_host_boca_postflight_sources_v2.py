@@ -91,9 +91,9 @@ def test_full_postflight_refuses_missing_actual_chrome_login_before_reading_host
         runtime.ProductionPostflightSnapshotReader(expected, result)(lease)
 
 
-@pytest.mark.parametrize("site_fingerprint", ("a" * 64, "NOT_CONFIGURED"))
+@pytest.mark.parametrize("site_fingerprint", ("a" * 64, None))
 def test_r252_technical_builder_and_reader_capture_only_health_without_owner_or_monitor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, site_fingerprint: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, site_fingerprint: str | None
 ) -> None:
     expected, receipt = _expected(site_url_fingerprint=site_fingerprint), _cleanup_receipt()
     lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
@@ -162,7 +162,7 @@ def test_r252_technical_builder_and_reader_capture_only_health_without_owner_or_
     )
     assert postflight.verify_technical_postflight(raw, expected) == raw
     site = json.loads(raw.split(b" ", 1)[1])["site_url"]
-    if site_fingerprint == "NOT_CONFIGURED":
+    if site_fingerprint is None:
         assert site["state"] == "NOT_CONFIGURED"
         assert site["fingerprint"] is None and site["mirror"] is None
     else:

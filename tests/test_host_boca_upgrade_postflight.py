@@ -263,7 +263,7 @@ def _technical_capture(
 
 def test_technical_postflight_proves_blank_site_url_without_fake_fingerprint() -> None:
     """A new panel can be healthy before the owner configures any destination."""
-    unset = "NOT_CONFIGURED"
+    unset = None
     expected = _expected(site_url_fingerprint=unset)
     snapshot = _snapshot(
         site_url_saved_fingerprint=unset,
@@ -306,14 +306,15 @@ def test_technical_postflight_proves_blank_site_url_without_fake_fingerprint() -
 @pytest.mark.parametrize(
     "saved,mirror",
     [
-        ("NOT_CONFIGURED", "a" * 64),
-        ("a" * 64, "NOT_CONFIGURED"),
-        ("UNVERIFIED", "NOT_CONFIGURED"),
-        ("", "NOT_CONFIGURED"),
+        (None, "a" * 64),
+        ("a" * 64, None),
+        ("UNVERIFIED", None),
+        ("", None),
+        ("NOT_CONFIGURED", None),
     ],
 )
 def test_unconfigured_technical_postflight_requires_two_exact_absent_witnesses(
-    saved: str, mirror: str
+    saved: str | None, mirror: str | None
 ) -> None:
     with pytest.raises(PostflightNoGo):
         _technical_capture(
@@ -322,7 +323,7 @@ def test_unconfigured_technical_postflight_requires_two_exact_absent_witnesses(
                 site_url_worker_mirror_fingerprint=mirror,
                 panel_loopback_probe="HEALTH_HTTP_200",
             ),
-            expected=_expected(site_url_fingerprint="NOT_CONFIGURED"),
+            expected=_expected(site_url_fingerprint=None),
         )
 
 
@@ -331,7 +332,7 @@ def test_legacy_absent_url_refuses_before_lease_or_host_snapshot_reads() -> None
     lease = cleanup.BocaJobLease(_ATTEMPT, -1, -1, True)
     with pytest.raises(PostflightNoGo):
         capture_postflight(
-            _expected(site_url_fingerprint="NOT_CONFIGURED"),
+            _expected(site_url_fingerprint=None),
             lease,
             read_snapshot=lambda _: witness_calls.append("read") or _snapshot(),
             verify_lease=lambda *_: witness_calls.append("lease"),

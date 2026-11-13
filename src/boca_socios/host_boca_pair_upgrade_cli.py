@@ -188,6 +188,58 @@ def _successor_preflight(
         raise SuccessorPreflightIneligible("Boca successor release transport unverified") from None
 
 
+def _execute_reviewed_successor(preflight: BoundSuccessorPreflight) -> upgrade.PairUpgradeReceipt:
+    """Prepare a single-lease successor graph, but DO NOT expose an APPLY route.
+
+    This helper is unreferenced by ``main apply`` until the separate cold-URL,
+    rootless subuid, protected ZIP and final host-action integration are
+    certified. When activated by the reviewed CLI, ``run_pair_upgrade`` owns
+    the one protected lease and invokes ``backend_factory`` only after durable
+    journal intent. No historical R179 actor is constructed here.
+    """
+    from boca_socios import host_boca_cleanup as cleanup
+    from boca_socios import host_boca_guarded_successor_backend_v4 as guarded
+    from boca_socios import host_boca_pair_upgrade as upgrade
+    from boca_socios import host_boca_successor_assembly_v3 as assembly
+    from boca_socios import host_boca_technical_terminal_bridge_v3 as terminal
+
+    if type(preflight) is not BoundSuccessorPreflight:
+        raise SuccessorPreflightIneligible("Boca reviewed successor preflight missing")
+    try:
+        preflight.__post_init__()
+        graph = assembly.prepare_inert_same_lease(preflight)
+        witness = terminal.OneShotTechnicalTerminalBridge(graph)
+        factory_called = False
+
+        def only_after_intent(
+            plan: upgrade.PairCoordinates, lease: cleanup.BocaJobLease
+        ) -> guarded.GuardedTechnicalSuccessorBackend:
+            nonlocal factory_called
+            if factory_called or plan is not graph.plan:
+                raise SuccessorPreflightIneligible("Boca successor factory replay/mismatch")
+            # The engine calls this with its held lease only after
+            # graph.stage.intent persisted the original evidence O_EXCL.
+            factory_called = True
+            return guarded.GuardedTechnicalSuccessorBackend(graph, witness, lease)
+
+        outcome = upgrade.run_pair_upgrade(
+            graph.plan,
+            backend_factory=only_after_intent,
+            terminal_preflight=graph.stage.intent,
+            commit_marker=graph.journal.commit,
+            terminal_sink=witness,
+        )
+        if (
+            type(outcome) is not upgrade.PairUpgradeReceipt
+            or outcome.attempt_id != graph.plan.attempt_id
+        ):
+            raise SuccessorPreflightIneligible("Boca successor terminal unverified")
+        encode_upgrade(outcome)
+        return outcome
+    except Exception:
+        raise SuccessorPreflightIneligible("Boca successor same-lease proof incomplete") from None
+
+
 def _run_id(value: object) -> bool:
     return type(value) is str and _RUN.fullmatch(value) is not None
 

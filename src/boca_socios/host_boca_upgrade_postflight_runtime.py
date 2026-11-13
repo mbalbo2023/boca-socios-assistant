@@ -103,7 +103,7 @@ class ProductionSiteUrlWitness:
     def _pair(self) -> None:
         _attest_live_pair(self.expected, self.lease)
 
-    def _fingerprint(self, script: str) -> str:
+    def _fingerprint(self, script: str) -> str | None:
         try:
             self._pair()
             observed = cleanup._docker(
@@ -118,8 +118,12 @@ class ProductionSiteUrlWitness:
                 script,
             )
             match = _SITE_FRAME.fullmatch(observed)
-            fingerprint = (match.group(1) or postflight._SITE_UNCONFIGURED) if match else None
-            if fingerprint is None or fingerprint != self.expected.site_url_fingerprint:
+            if match is None:
+                raise _fail()
+            # The precise NOT_CONFIGURED frame has a null group; only a safe
+            # absent-file read may produce it, never a forged digest.
+            fingerprint = match.group(1)
+            if fingerprint != self.expected.site_url_fingerprint:
                 raise _fail()
             # A separate owner lifecycle request may start the worker outside
             # the deployment lease; never attest a stopped worker from the
@@ -130,10 +134,10 @@ class ProductionSiteUrlWitness:
         except Exception:
             raise _fail() from None
 
-    def saved_fingerprint(self) -> str:
+    def saved_fingerprint(self) -> str | None:
         return self._fingerprint(_SAVED_URL_PROBE)
 
-    def mirror_fingerprint(self) -> str:
+    def mirror_fingerprint(self) -> str | None:
         return self._fingerprint(_MIRRORED_URL_PROBE)
 
     def worker_startup(self) -> str:
@@ -457,8 +461,8 @@ class PostflightReadSources:
     ] = _read_retained_graph
     storage_reader: Callable[[], PostflightStorage] | None = None
     rootless_identity_reader: Callable[[], tuple[int, int]] = _read_rootless_identity
-    site_saved_reader: Callable[[], str] | None = None
-    site_mirror_reader: Callable[[], str] | None = None
+    site_saved_reader: Callable[[], str | None] | None = None
+    site_mirror_reader: Callable[[], str | None] | None = None
     worker_startup_reader: Callable[[], str] | None = None
     panel_health_reader: Callable[[], str] | None = None
     panel_login_reader: Callable[[], str] | None = None

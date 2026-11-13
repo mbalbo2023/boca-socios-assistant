@@ -1,4 +1,4 @@
-# ADR 0275 — R259 diagnóstico del origen 8443 y archivos SITE_URL (CODE_ONLY)
+# ADR 0284 — R259 diagnóstico del origen 8443 y archivos SITE_URL (CODE_ONLY)
 
 **Fecha:** 12-NOV-2026 ART (13-NOV UTC). **Issue:** #417. **Estado:**
 `CODE_ONLY / DEPLOY NO_GO`; ningún despacho físico forma parte de este PR.

@@ -1,4 +1,4 @@
-# ADR 0274 — SITE_URL vacía hasta la configuración del titular
+# ADR 0283 — SITE_URL vacía hasta la configuración del titular
 
 **Fecha:** 12-NOV-2026 ART / 13-NOV UTC. **Issue:** #417, R259.
 **Estado:** propuesta CODE_ONLY; instalación y aceptación física NO_GO.

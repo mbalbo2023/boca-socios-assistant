@@ -1,4 +1,4 @@
-# ADR 0277 — R259: alternativas para atestación de aceptación WebAuthn del propietario
+# ADR 0285 — R259: alternativas para atestación de aceptación WebAuthn del propietario
 
 **Fecha:** 2026-11-12 ART / 2026-11-13 UTC. **Issue:** #417.
 **Estado:** PROPUESTA DE DISEÑO; requiere decisión específica del titular.

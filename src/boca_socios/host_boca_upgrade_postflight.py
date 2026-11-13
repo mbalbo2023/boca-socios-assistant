@@ -109,7 +109,9 @@ class PostflightExpected:
     worker_image_id: str
     retained: adapters.ResourcePins
     storage_before: PostflightStorage
-    site_url_fingerprint: str
+    # None is genuine physical absence, never a fabricated SHA-256.
+    # Only technical schema2 may attest this state; legacy remains NO_GO.
+    site_url_fingerprint: str | None
     cleanup_receipt: bytes
 
 
@@ -128,8 +130,8 @@ class PostflightSnapshot:
     rootless_gid: int
     storage_after: PostflightStorage
     retained: adapters.ResourcePins
-    site_url_saved_fingerprint: str
-    site_url_worker_mirror_fingerprint: str
+    site_url_saved_fingerprint: str | None
+    site_url_worker_mirror_fingerprint: str | None
     worker_site_url_startup: str
     monitor_source: str
     monitor_observation_count: int
@@ -217,10 +219,12 @@ def _validate_expected(expected: PostflightExpected) -> None:
                 expected.release.paired_manifest_sha256,
             )
         )
-        or type(expected.site_url_fingerprint) is not str
         or (
-            expected.site_url_fingerprint != _SITE_UNCONFIGURED
-            and _HEX.fullmatch(expected.site_url_fingerprint) is None
+            expected.site_url_fingerprint is not None
+            and (
+                type(expected.site_url_fingerprint) is not str
+                or _HEX.fullmatch(expected.site_url_fingerprint) is None
+            )
         )
         or any(
             type(value) is not str or _IMAGE.fullmatch(value) is None
@@ -318,7 +322,7 @@ def _validate_snapshot(
         or snapshot.site_url_saved_fingerprint != expected.site_url_fingerprint
         or snapshot.site_url_worker_mirror_fingerprint != expected.site_url_fingerprint
         or not technical_only
-        and expected.site_url_fingerprint == _SITE_UNCONFIGURED
+        and expected.site_url_fingerprint is None
         or snapshot.worker_site_url_startup != _STARTUP
         or snapshot.monitor_source not in _SAFE_MONITOR
         or type(snapshot.monitor_observation_count) is not int
@@ -352,10 +356,10 @@ def _receipt(
         "mirror": snapshot.site_url_worker_mirror_fingerprint,
         "startup": snapshot.worker_site_url_startup,
     }
-    if technical_only and expected.site_url_fingerprint == _SITE_UNCONFIGURED:
+    if technical_only and expected.site_url_fingerprint is None:
         # Only two independently verified absent files qualify. Never create
         # a synthetic SHA-256 for a URL the owner has not supplied.
-        site_info.update(state=_SITE_UNCONFIGURED, fingerprint=None, mirror=None)
+        site_info.update(state=_SITE_UNCONFIGURED)
     body = {
         "schema": 2 if technical_only else 1,
         "state": "TECHNICAL_PROOF_ONLY" if technical_only else "TECHNICAL_ACCEPT",
@@ -451,10 +455,11 @@ def _capture_postflight(
             or verify_lease is None
             or not callable(read_snapshot)
             or not callable(verify_lease)
+            or (not technical_only and expected.site_url_fingerprint is None)
         ):
             raise _fail()
         _validate_expected(expected)
-        if not technical_only and expected.site_url_fingerprint == _SITE_UNCONFIGURED:
+        if not technical_only and expected.site_url_fingerprint is None:
             raise _fail()
         verify_lease(lease, expected.plan.attempt_id)
         first = read_snapshot(lease)
@@ -495,7 +500,7 @@ def verify_technical_postflight(raw: bytes, expected: PostflightExpected) -> byt
 def _verify_postflight(raw: bytes, expected: PostflightExpected, *, technical_only: bool) -> bytes:
     try:
         _validate_expected(expected)
-        if not technical_only and expected.site_url_fingerprint == _SITE_UNCONFIGURED:
+        if not technical_only and expected.site_url_fingerprint is None:
             raise _fail()
         prefix = _TECHNICAL_PREFIX if technical_only else _PREFIX
         if (
@@ -525,14 +530,13 @@ def _verify_postflight(raw: bytes, expected: PostflightExpected, *, technical_on
             raise _fail()
         site_saved = site["fingerprint"]
         site_mirror = site["mirror"]
-        if technical_only and expected.site_url_fingerprint == _SITE_UNCONFIGURED:
+        if technical_only and expected.site_url_fingerprint is None:
             if (
                 site.get("state") != _SITE_UNCONFIGURED
                 or site_saved is not None
                 or site_mirror is not None
             ):
                 raise _fail()
-            site_saved = site_mirror = _SITE_UNCONFIGURED
         pair_body = value["pair"]
         snapshot = PostflightSnapshot(
             pair_receipt=_PAIR_PREFIX + _canonical_pair(pair_body) + b"\n",

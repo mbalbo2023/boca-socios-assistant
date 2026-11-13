@@ -247,7 +247,7 @@ def site_url_configuration(csrf: str, operation_id: str, site_url: str | None) -
         + f'<input type="hidden" name="operation_id" value="{escape(operation_id, quote=True)}">'
         + '<label for="site-url">SITE_URL · sitio de pruebas</label>'
         + f'<input id="site-url" name="SITE_URL" type="url" value="{value}" '
-        + 'placeholder="https://ensayo.boca.internal" inputmode="url" '
+        + 'inputmode="url" '
         + 'autocomplete="off" spellcheck="false" maxlength="512" required>'
         + '<p><button type="submit">Guardar SITE_URL</button></p></form>'
         + "<p>Guardar no inicia ni detiene el worker. En la simulación local, "

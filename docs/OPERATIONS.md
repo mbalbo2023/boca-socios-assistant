@@ -18,7 +18,7 @@ CREATED/PID0 no puede iniciar hasta aplicar una URL válida. El recibo
 `OBSERVED_NO_GO` nunca habilita upgrade, salida a Internet, navegación ni
 aceptación BETA. Mapeo subuid efectivo, procedencia de volúmenes, binding,
 passkey y monitor requieren recibos protegidos independientes. Ver
-[ADR0275](ADR/0275-r259-exact-origin-and-site-metadata-readonly.md).
+[ADR0284](ADR/0284-r259-exact-origin-and-site-metadata-readonly.md).
 
 ## 12/11/2026 — R186: finalización postcommit sin segundo upgrade
 
