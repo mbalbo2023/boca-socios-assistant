@@ -37,18 +37,20 @@ _FILES = (
     ("boca-socios_boca_key", "boca_master_key"),
     ("boca-socios_boca_owner", "boca_owner_session.sqlite3"),
 )
-_SITE_FRAME = re.compile(r"BOCA_SITE_URL_SHA256 ([a-f0-9]{64})\n\Z")
+_SITE_FRAME = re.compile(r"BOCA_SITE_URL_(?:SHA256 ([a-f0-9]{64})|NOT_CONFIGURED)\n\Z")
 _SAVED_URL_PROBE = (
     "from pathlib import Path;"
     "from boca_socios.panel.site_url_settings import SiteUrlSettingsStore;"
     "from boca_socios.browser.site_url_runtime import site_url_fingerprint;"
     "url=SiteUrlSettingsStore.for_database(Path('/data/boca.sqlite3')).read();"
     "print('BOCA_SITE_URL_SHA256 '+site_url_fingerprint(url) "
-    "if url is not None else 'BOCA_SITE_URL_UNVERIFIED')"
+    "if url is not None else 'BOCA_SITE_URL_NOT_CONFIGURED')"
 )
 _MIRRORED_URL_PROBE = (
-    "from boca_socios.browser.site_url_runtime import read_site_url,site_url_fingerprint;"
-    "print('BOCA_SITE_URL_SHA256 '+site_url_fingerprint(read_site_url()))"
+    "from boca_socios.browser.site_url_runtime import read_optional_site_url,site_url_fingerprint;"
+    "url=read_optional_site_url();"
+    "print('BOCA_SITE_URL_SHA256 '+site_url_fingerprint(url) "
+    "if url is not None else 'BOCA_SITE_URL_NOT_CONFIGURED')"
 )
 _WORKER_COMMAND = ["python", "-m", "boca_socios.browser.ipc_server"]
 _MONITOR_FIELDS = frozenset(
@@ -116,14 +118,15 @@ class ProductionSiteUrlWitness:
                 script,
             )
             match = _SITE_FRAME.fullmatch(observed)
-            if match is None or match.group(1) != self.expected.site_url_fingerprint:
+            fingerprint = (match.group(1) or postflight._SITE_UNCONFIGURED) if match else None
+            if fingerprint is None or fingerprint != self.expected.site_url_fingerprint:
                 raise _fail()
             # A separate owner lifecycle request may start the worker outside
             # the deployment lease; never attest a stopped worker from the
             # pre-command observation alone.
             self._pair()
             cleanup.verify_protected_boca_job_lease(self.lease, self.expected.plan.attempt_id)
-            return match.group(1)
+            return fingerprint
         except Exception:
             raise _fail() from None
 

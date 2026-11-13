@@ -1,5 +1,25 @@
 # Safe operations — verified evidence and gated procedures
 
+## R259 — origen 8443 exacto y SITE_URL aún vacío (CODE_ONLY)
+
+El nuevo selector de lectura `boca-panel-exact-origin-observe` queda previsto
+**dentro de la Action protegida existente** `Boca first deploy`, no como un
+segundo canal de SSH. Sólo después de revisión, merge y CI del SHA exacto,
+despacharlo desde `main` con `service=controller`,
+`resource_budget=1.5cpu-1024m-192pids` y **todos los demás campos vacíos**.
+No se ha ejecutado aquí ningún despacho ni obtenido evidencia física R259.
+
+El observador compara dos GET internos de `/healthz` con el Host verdadero
+`localhost:8443` (no `127.0.0.1:8443`), y observa *únicamente metadatos*
+de presencia de los dos archivos SITE_URL y propiedad de inodes Boca.
+`BOTH_FILES_ABSENT` **no requiere completar SITE_URL** para usar el panel;
+ésta se configura más adelante por la sesión privada con passkey. Un worker
+CREATED/PID0 no puede iniciar hasta aplicar una URL válida. El recibo
+`OBSERVED_NO_GO` nunca habilita upgrade, salida a Internet, navegación ni
+aceptación BETA. Mapeo subuid efectivo, procedencia de volúmenes, binding,
+passkey y monitor requieren recibos protegidos independientes. Ver
+[ADR0275](ADR/0275-r259-exact-origin-and-site-metadata-readonly.md).
+
 ## 12/11/2026 — R186: finalización postcommit sin segundo upgrade
 
 Los observadores [#43229793525](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43229793525),

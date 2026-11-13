@@ -12,8 +12,10 @@ from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_pair_observe as pair
 from boca_socios import host_boca_upgrade_postflight as postflight
 from boca_socios import host_boca_upgrade_postflight_runtime as runtime
+from boca_socios.browser import site_url_runtime
 from boca_socios.host_lifecycle_rootless_adapter import ReviewedInstalledPair
 from boca_socios.host_on_demand_lifecycle import OnDemandInstallation
+from boca_socios.panel.site_url_settings import SiteUrlSettingsStore, SiteUrlSettingsUnavailable
 from test_host_boca_upgrade_postflight import _expected, _pair_bytes
 
 
@@ -295,6 +297,79 @@ def test_production_site_url_witness_rejects_bad_worker_command_and_leaked_stdou
     monkeypatch.setattr(cleanup, "_docker", lambda *_: '["python","-m","foreign.module"]\n')
     with pytest.raises(runtime.PostflightRuntimeNoGo):
         witness.worker_startup()
+
+
+def test_production_site_url_witness_reports_exact_missing_files_without_digest(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = _expected(site_url_fingerprint="NOT_CONFIGURED")
+    lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
+    monkeypatch.setattr(cleanup, "verify_protected_boca_job_lease", lambda *_: None)
+    monkeypatch.setattr(pair, "observe", lambda _: _pair_bytes())
+    monkeypatch.setattr(
+        runtime.service, "read_installed_binding", lambda _: _installed_binding(expected)
+    )
+    calls: list[tuple[str, ...]] = []
+
+    def docker(*args: str) -> str:
+        calls.append(args)
+        assert args[:4] == ("exec", "--user", "10001:10001", expected.controller_id)
+        return "BOCA_SITE_URL_NOT_CONFIGURED\n"
+
+    monkeypatch.setattr(cleanup, "_docker", docker)
+    witness = runtime.ProductionSiteUrlWitness(expected, lease)
+    assert witness.saved_fingerprint() == "NOT_CONFIGURED"
+    assert witness.mirror_fingerprint() == "NOT_CONFIGURED"
+    assert len(calls) == 2
+    assert all("https://" not in " ".join(call) for call in calls)
+    # Missing, malformed and configured responses must remain distinct.
+    for stdout in ("BOCA_SITE_URL_UNVERIFIED\n", "BOCA_SITE_URL_SHA256 " + "a" * 64 + "\n", ""):
+        monkeypatch.setattr(cleanup, "_docker", lambda *_, result=stdout: result)
+        with pytest.raises(runtime.PostflightRuntimeNoGo):
+            witness.saved_fingerprint()
+
+
+def test_fixed_controller_site_probes_print_absence_and_digest_without_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Execute the exact Python -c payloads locally. A malformed stored file
+    # fails, never masquerading as a genuinely absent destination.
+    settings = SiteUrlSettingsStore(tmp_path / "boca-site-url.json")
+    monkeypatch.setattr(
+        SiteUrlSettingsStore,
+        "for_database",
+        classmethod(lambda cls, _db: settings),
+    )
+
+    def run_reviewed_probe(script: str) -> None:
+        assert script in (runtime._SAVED_URL_PROBE, runtime._MIRRORED_URL_PROBE)
+        exec(script, {})  # noqa: S102 - test execution of two fixed reviewed Python -c probes
+
+    run_reviewed_probe(runtime._SAVED_URL_PROBE)
+    assert capsys.readouterr().out == "BOCA_SITE_URL_NOT_CONFIGURED\n"
+    settings.save("https://owner-test.example/")
+    run_reviewed_probe(runtime._SAVED_URL_PROBE)
+    assert capsys.readouterr().out == (
+        "BOCA_SITE_URL_SHA256 "
+        + site_url_runtime.site_url_fingerprint("https://owner-test.example/")
+        + "\n"
+    )
+    settings.path.write_text("corrupted", encoding="utf-8")
+    with pytest.raises(SiteUrlSettingsUnavailable):
+        run_reviewed_probe(runtime._SAVED_URL_PROBE)
+
+    monkeypatch.setattr(site_url_runtime, "read_optional_site_url", lambda: None)
+    run_reviewed_probe(runtime._MIRRORED_URL_PROBE)
+    assert capsys.readouterr().out == "BOCA_SITE_URL_NOT_CONFIGURED\n"
+    monkeypatch.setattr(
+        site_url_runtime, "read_optional_site_url", lambda: "https://owner-test.example/"
+    )
+    run_reviewed_probe(runtime._MIRRORED_URL_PROBE)
+    assert capsys.readouterr().out == (
+        "BOCA_SITE_URL_SHA256 "
+        + site_url_runtime.site_url_fingerprint("https://owner-test.example/")
+        + "\n"
+    )
 
 
 def test_private_8443_readonly_health_probe_is_not_a_passkey_login(

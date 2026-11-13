@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from dataclasses import replace
 from pathlib import Path
@@ -90,10 +91,11 @@ def test_full_postflight_refuses_missing_actual_chrome_login_before_reading_host
         runtime.ProductionPostflightSnapshotReader(expected, result)(lease)
 
 
+@pytest.mark.parametrize("site_fingerprint", ("a" * 64, "NOT_CONFIGURED"))
 def test_r252_technical_builder_and_reader_capture_only_health_without_owner_or_monitor(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, site_fingerprint: str
 ) -> None:
-    expected, receipt = _expected(), _cleanup_receipt()
+    expected, receipt = _expected(site_url_fingerprint=site_fingerprint), _cleanup_receipt()
     lease = cleanup.BocaJobLease(expected.plan.attempt_id, -1, os.getpid(), True)
     events: list[object] = []
     monkeypatch.setattr(runtime, "_attest_live_pair", lambda *_: events.append("pair"))
@@ -159,6 +161,14 @@ def test_r252_technical_builder_and_reader_capture_only_health_without_owner_or_
         verify_lease=cleanup.verify_protected_boca_job_lease,
     )
     assert postflight.verify_technical_postflight(raw, expected) == raw
+    site = json.loads(raw.split(b" ", 1)[1])["site_url"]
+    if site_fingerprint == "NOT_CONFIGURED":
+        assert site["state"] == "NOT_CONFIGURED"
+        assert site["fingerprint"] is None and site["mirror"] is None
+    else:
+        assert site["fingerprint"] == site_fingerprint
+        assert site["mirror"] == site_fingerprint
+        assert "state" not in site
     methods_and_paths = [event[:2] for event in events if isinstance(event, tuple)]
     assert methods_and_paths.count(("GET", "/healthz")) == 2
     assert not any(path in ("/ingresar", "/monitor/tokens.json") for _, path in methods_and_paths)

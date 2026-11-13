@@ -126,6 +126,40 @@ def test_existing_apply_selector_cannot_reenter_historical_r179_migration(
     assert value["cleanup"] == "INDETERMINATE"
 
 
+def test_unexpected_preflight_error_cannot_claim_irreversible_commit_before_lease(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No authenticated preflight means no lease, commit marker or installed pair."""
+    from boca_socios import host_boca_pair_upgrade as transaction
+
+    def reject_preflight(*_args: object) -> None:
+        raise RuntimeError("unexpected local preflight exception")
+
+    monkeypatch.setattr(cli, "_successor_preflight", reject_preflight)
+    monkeypatch.setattr(
+        transaction,
+        "run_pair_upgrade",
+        lambda *_args, **_kwargs: pytest.fail("transaction after failed preflight"),
+    )
+    args = [
+        "apply",
+        RUN,
+        "a" * 40,
+        "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "1" * 64,
+        "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:" + "2" * 64,
+        "44000000002",
+    ]
+    assert cli.main(args) == 3
+    raw = capsys.readouterr().out.encode("ascii")
+    cli.verify_upgrade(raw, RUN)
+    result = json.loads(raw.removeprefix(b"BOCA_PAIR_UPGRADE "))
+    assert result["state"] == "NO_GO"
+    assert result["cleanup"] == "INDETERMINATE"
+    assert result["old_restored"] is False
+    assert result["commit_started"] is False
+    assert result["failed_phase"] == "ATTEST"
+
+
 def test_r251_successor_preflight_returns_inert_typed_sources_and_bound_current_pair(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
