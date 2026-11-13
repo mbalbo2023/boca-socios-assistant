@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -125,10 +126,13 @@ def test_existing_apply_selector_cannot_reenter_historical_r179_migration(
     assert value["cleanup"] == "INDETERMINATE"
 
 
-def test_r247_successor_preflight_requires_current_pair_v2_and_retains_no_go(
-    monkeypatch: pytest.MonkeyPatch,
+def test_r251_successor_preflight_returns_inert_typed_sources_and_bound_current_pair(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A valid GH-bound V2 must be checked, never treated as APPLY authority."""
+    """Return only sealed transport, never an effect/host authorization."""
+    from dataclasses import replace
+
+    from boca_socios import host_boca_pair_upgrade as transaction
     from test_host_boca_successor_integrations import _inputs_with_proofs
     from test_host_boca_upgrade_adapters import WITNESS_RUN
 
@@ -142,6 +146,9 @@ def test_r247_successor_preflight_requires_current_pair_v2_and_retains_no_go(
         "boca-retained-observation.receipt": value["retained_receipt"],
         "current-pair-v2.receipt": value["current_pair_v2"],
         "retained-proof.json": b'{"state":"NO_GO"}\n',
+        "compose.beta.yaml": b"services:\n  controller: {}\n",
+        "compose.beta.browser.yaml": b"services:\n  browser-worker: {}\n",
+        "docker/seccomp_profile.json": b'{"defaultAction":"SCMP_ACT_ERRNO"}\n',
     }
 
     class Archive:
@@ -167,11 +174,100 @@ def test_r247_successor_preflight_requires_current_pair_v2_and_retains_no_go(
             "observation_run_id",
         )
     )
-    with pytest.raises(cli.SuccessorPreflightIneligible, match="transaction remains ineligible"):
-        cli._successor_preflight(*args, WITNESS_RUN)
+    result = cli._successor_preflight(*args, WITNESS_RUN)
+    assert isinstance(result, cli.BoundSuccessorPreflight)
+    assert result.inputs.plan.new_source_sha == value["source_sha"]
+    assert result.inputs.custody.observation_run_id == WITNESS_RUN
+    assert result.apply_authorized is False
+    assert result.base == mappings["compose.beta.yaml"]
+    assert result.overlay == mappings["compose.beta.browser.yaml"]
+    assert result.seccomp == mappings["docker/seccomp_profile.json"]
+    assert result.base_sha == hashlib.sha256(result.base).hexdigest()
+    assert result.overlay_sha == hashlib.sha256(result.overlay).hexdigest()
+    assert result.seccomp_sha == hashlib.sha256(result.seccomp).hexdigest()
+    assert len({result.base_sha, result.overlay_sha, result.seccomp_sha}) == 3
+    with pytest.raises(cli.SuccessorPreflightIneligible):
+        replace(result, base_sha="0" * 64)
+
+    # This is a genuine typed preflight, not a mocked optimistic value.
+    # The public apply selector still refuses before any host actor/lease.
+    monkeypatch.setattr(
+        transaction,
+        "run_pair_upgrade",
+        lambda *_args, **_kwargs: pytest.fail("inert R251 cannot acquire a Boca lease"),
+    )
+    assert cli.main(["apply", *args, WITNESS_RUN]) == 3
+    raw = capsys.readouterr().out.encode("ascii")
+    assert cli.verify_upgrade(raw, value["attempt_id"]) == raw
+    assert b'"commit_started":false' in raw
+    assert b'"state":"NO_GO"' in raw
 
     del mappings["current-pair-v2.receipt"]
     with pytest.raises(cli.SuccessorPreflightIneligible, match="transport unverified"):
+        cli._successor_preflight(*args, WITNESS_RUN)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "same", "empty", "oversize", "bad_memfd"])
+def test_r251_preflight_rejects_unsafe_source_transport_before_any_host_effect(
+    mutation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from test_host_boca_successor_integrations import _inputs_with_proofs
+    from test_host_boca_upgrade_adapters import WITNESS_RUN
+
+    value = _inputs_with_proofs()
+    sources = {
+        "compose.beta.yaml": b"new base compose\n",
+        "compose.beta.browser.yaml": b"new worker compose\n",
+        "docker/seccomp_profile.json": b"new seccomp\n",
+    }
+    proof = {
+        "release/runner-proof.json": value["release_proof"],
+        "release/boca-release-manifest.json": value["controller_manifest"],
+        "release/boca-browser-release-manifest.json": value["paired_manifest"],
+        "release/observation-proof.json": value["observation_proof"],
+        "release/boca-pair-observation.receipt": value["observation_receipt"],
+        "release/boca-retained-observation.receipt": value["retained_receipt"],
+        "release/current-pair-v2.receipt": value["current_pair_v2"],
+        "release/retained-proof.json": b'{"state":"NO_GO"}\n',
+        **sources,
+    }
+    if mutation == "missing":
+        del proof["compose.beta.browser.yaml"]
+    elif mutation == "same":
+        proof["compose.beta.browser.yaml"] = proof["compose.beta.yaml"]
+    elif mutation == "empty":
+        proof["compose.beta.browser.yaml"] = b""
+    elif mutation == "oversize":
+        from boca_socios import host_cutover_stage as stage
+
+        proof["compose.beta.browser.yaml"] = b"x" * (stage.MAX_FILE + 1)
+
+    class Archive:
+        def __enter__(self) -> Archive:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self, member: str) -> bytes:
+            return proof[member]
+
+    monkeypatch.setattr(
+        cli.sys, "argv", ["/home/not-memfd.pyz" if mutation == "bad_memfd" else "/proc/self/fd/19"]
+    )
+    monkeypatch.setattr(cli.zipfile, "ZipFile", lambda *_args: Archive())
+    args = tuple(
+        value[key]
+        for key in (
+            "attempt_id",
+            "source_sha",
+            "controller_ref",
+            "worker_ref",
+            "release_run_id",
+            "observation_run_id",
+        )
+    )
+    with pytest.raises(cli.SuccessorPreflightIneligible):
         cli._successor_preflight(*args, WITNESS_RUN)
 
 

@@ -8,16 +8,18 @@ main, release and role-specific GHCR immutable image manifests before APPLY.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sys
 import zipfile
 from collections.abc import Sequence
-from dataclasses import asdict
-from typing import TYPE_CHECKING, get_args
+from dataclasses import asdict, dataclass
+from typing import TYPE_CHECKING, Literal, get_args
 
 if TYPE_CHECKING:
     from boca_socios import host_boca_pair_upgrade as upgrade
+    from boca_socios.host_boca_successor_integrations import BoundSuccessorInputs
 
 _RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
 _HEX = re.compile(r"[0-9a-f]{64}\Z")
@@ -57,6 +59,50 @@ class SuccessorPreflightIneligible(PairUpgradeCliError):
     """No host operation has begun; successor adapter remains interlocked."""
 
 
+@dataclass(frozen=True, slots=True)
+class BoundSuccessorPreflight:
+    """Validated runner-bound coordinates and inert reviewed stage bytes.
+
+    The protected memfd/bootstrap independently pins these bytes to main.
+    This object has no original installed Compose digest, lease, journal,
+    Docker interface or authority to install a successor pair.
+    """
+
+    inputs: BoundSuccessorInputs
+    base: bytes
+    overlay: bytes
+    seccomp: bytes
+    base_sha: str
+    overlay_sha: str
+    seccomp_sha: str
+
+    def __post_init__(self) -> None:
+        # The result is a public Python value, not a capability. Revalidate
+        # its frozen local digests even if constructed outside the CLI.
+        from boca_socios import host_cutover_stage as guarded
+        from boca_socios.host_boca_successor_integrations import BoundSuccessorInputs
+
+        values = (self.base, self.overlay, self.seccomp)
+        hashes = (self.base_sha, self.overlay_sha, self.seccomp_sha)
+        if (
+            type(self.inputs) is not BoundSuccessorInputs
+            or self.inputs.apply_authorized is not False
+            or any(
+                type(data) is not bytes or not 0 < len(data) <= guarded.MAX_FILE for data in values
+            )
+            or any(
+                type(digest) is not str or hashlib.sha256(data).hexdigest() != digest
+                for data, digest in zip(values, hashes, strict=True)
+            )
+            or len(set(hashes)) != 3
+        ):
+            raise SuccessorPreflightIneligible("Boca successor stage transport unverified")
+
+    @property
+    def apply_authorized(self) -> Literal[False]:
+        return False
+
+
 def _successor_preflight(
     run: str,
     source: str,
@@ -65,12 +111,12 @@ def _successor_preflight(
     release_run: str,
     observation_run: str | None,
     retained_observation_run: str | None,
-) -> None:
-    """Validate the protected runner payload, never retry historical R179.
+) -> BoundSuccessorPreflight:
+    """Bind the protected runner payload, never retry historical R179.
 
-    Activation requires a future reviewed wiring of protected same-lease
-    witness/cleanup V2. This route is intentionally PRE-EFFECT NO_GO even with
-    genuine release manifests, until those contracts can be proven end to end.
+    Returning inert proof and exact stage bytes is not APPLY eligibility.
+    The caller remains PRE-EFFECT NO_GO until reviewed same-lease witness,
+    cleanup V2 and owner-independent technical postflight are fully wired.
     """
     from boca_socios.host_boca_successor_integrations import verify_runner_bound_host_inputs
     from boca_socios.host_boca_upgrade_retained_bridge import verify_bundled_retained
@@ -94,6 +140,12 @@ def _successor_preflight(
             retained_proof = archive.read("release/retained-proof.json")
             retained_receipt = archive.read("release/boca-retained-observation.receipt")
             current_v2 = archive.read("release/current-pair-v2.receipt")
+            base = archive.read("compose.beta.yaml")
+            overlay = archive.read("compose.beta.browser.yaml")
+            seccomp = archive.read("docker/seccomp_profile.json")
+        base_sha, overlay_sha, seccomp_sha = (
+            hashlib.sha256(data).hexdigest() for data in (base, overlay, seccomp)
+        )
         bound = verify_runner_bound_host_inputs(
             attempt_id=run,
             source_sha=source,
@@ -129,12 +181,11 @@ def _successor_preflight(
         historical_run = bound.custody.observation_run_id
         if historical_run != retained_observation_run:
             raise SuccessorPreflightIneligible("Boca successor R188 seed run mismatched")
+        return BoundSuccessorPreflight(
+            bound, base, overlay, seccomp, base_sha, overlay_sha, seccomp_sha
+        )
     except Exception:
         raise SuccessorPreflightIneligible("Boca successor release transport unverified") from None
-    # Neither a verified release nor a historical R189 summary supplies
-    # an installed-pair graph, an authenticated observation run, or an
-    # effectful stage/archive/R108 cleanup with same-lease durable receipt.
-    raise SuccessorPreflightIneligible("Boca successor transaction remains ineligible")
 
 
 def _run_id(value: object) -> bool:

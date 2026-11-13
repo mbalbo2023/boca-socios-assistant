@@ -1,5 +1,32 @@
 # Boca Socios Assistant
 
+## R251 — preflight tipado, sin autorización de instalación (13/11/2026)
+
+El `main` **verificado al iniciar R251** es
+`0007d8c4100c8d9e37103f0a2bac149cfb6edf29`: PR
+[#496](https://github.com/mbalbo2023/boca-socios-assistant/pull/496)
+fusionado, ningún PR abierto en ese instante, CI
+[#43336041508](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43336041508)
+y escaneos
+[#43336041506](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43336041506)
+**SUCCESS** exactos. Incluye la caché BuildKit y la corrección P1 de
+limpieza selectiva, pero no una nueva instalación. La última pareja física
+observada sigue en `b61ca3e58d4f8ce69cd6d7575f2a8e1ce59bda72` mediante
+las Actions READ_ONLY R188 y par actual; no se ha acreditado un postflight
+BETA completo.
+
+Esta rama **R251 CODE_ONLY aún no integrada** hace que el preflight entregue
+las coordenadas del par y los tres archivos de etapa, tipados y con huellas
+comprobadas, para una integración posterior. La ruta CLI `apply` **continúa
+NO_GO antes de la lease y de Docker**, sin permiso para repetir el APPLY R186.
+El bloqueo decisivo es R252: único actor same-lease, SUCCESS/FAILURE cleanup
+V2, journal y postflight físico auténtico. La aceptación técnica de salud
+8443/SQLite/SITE_URL/worker preparado no sustituye la prueba posterior del
+propietario con passkey, START/STOP, monitor y sesión persistente. Véanse
+[ADR 0256](docs/ADR/0256-r251-typed-successor-preflight-without-effects.md)
+y [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6839929267).
+**DEPLOY NO_GO** hasta evidencia real en el droplet; Porota intocable.
+
 ## R245 — consolidación BETA, release y aceleración CI (12/11/2026)
 
 El candidato R245 reúne las pruebas de aceptación del panel privado, la
