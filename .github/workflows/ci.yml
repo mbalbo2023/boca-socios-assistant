@@ -285,12 +285,6 @@ jobs:
             --tag "boca-browser-ci:$SOURCE_SHA" \
             --tag "boca-browser-release-validation:$SOURCE_SHA" --tag "boca-observer:$SOURCE_SHA" .
           echo 'BOCA_CACHE_FALLBACK role=browser cache=FAILED source=EXACT' >> "$GITHUB_STEP_SUMMARY"
-      - name: Capture an immediate fixture exit before removal on runner Docker
-        if: steps.docs_pr_scope.outputs.docs_only != 'true'
-        timeout-minutes: 2
-        env:
-          PYTHONPATH: src
-        run: python3 -m scripts.check_worker_start_capture
       - name: Prove healthless worker inspect formats on disposable runner Docker
         if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
@@ -385,13 +379,44 @@ jobs:
           PYTHONPATH: src
           BOCA_LAB_RUNNER: ${{ runner.environment }}
         run: uv run --no-sync python -m scripts.lab_image_recovery_916
-      - name: Measure panel stop acknowledgements and cold restart on runner Docker
+      - name: Prove independent capture and panel restart labs in parallel
         if: steps.docs_pr_scope.outputs.docs_only != 'true'
-        timeout-minutes: 3
+        # The browser capture is network-none and uses only attempt-owned CIDs;
+        # the separate controller fixture owns runner loopback 8443. Neither
+        # script depends on the other's result or touches the deployment host.
+        # Wait for BOTH, even on an early failure. Later image consumers and
+        # the existing always-run cleanup start only after this barrier.
+        timeout-minutes: 4
         env:
           PYTHONPATH: src
           BOCA_LAB_RUNNER: ${{ runner.environment }}
-        run: uv run --no-sync python -m scripts.lab_panel_restart_921
+        run: |
+          set -euo pipefail
+          capture_log="$(mktemp "${RUNNER_TEMP}/boca-ci-capture.XXXXXXXX")"
+          panel_log="$(mktemp "${RUNNER_TEMP}/boca-ci-panel.XXXXXXXX")"
+          started_at="$(date +%s)"
+          timeout --signal=TERM --kill-after=10s 120s \
+            python3 -m scripts.check_worker_start_capture > "$capture_log" 2>&1 &
+          capture_pid=$!
+          timeout --signal=TERM --kill-after=10s 180s \
+            uv run --no-sync python -m scripts.lab_panel_restart_921 > "$panel_log" 2>&1 &
+          panel_pid=$!
+          capture_rc=0
+          panel_rc=0
+          if wait "$capture_pid"; then :; else capture_rc=$?; fi
+          if wait "$panel_pid"; then :; else panel_rc=$?; fi
+          printf '::group::Boca network-none browser capture lab\n'
+          cat "$capture_log"
+          printf '::endgroup::\n::group::Boca isolated controller panel restart lab\n'
+          cat "$panel_log"
+          printf '::endgroup::\n'
+          result=PASS
+          if (( capture_rc != 0 || panel_rc != 0 )); then result=FAIL; fi
+          elapsed=$(( $(date +%s) - started_at ))
+          printf 'BOCA_CI_PARALLEL_LABS result=%s capture_rc=%s panel_rc=%s wall_seconds=%s source_sha=%s\n' \
+            "$result" "$capture_rc" "$panel_rc" "$elapsed" "$GITHUB_SHA" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          [[ "$result" == PASS ]]
       - name: Measure one offline Chromium startup under resource caps
         if: steps.docs_pr_scope.outputs.docs_only != 'true'
         run: >-

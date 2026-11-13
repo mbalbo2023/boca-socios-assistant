@@ -198,12 +198,14 @@ class PairUpgradeBackend(Protocol):
 TerminalPreflight = Callable[[PairCoordinates, BocaJobLease], None]
 CommitMarker = Callable[[PairCoordinates, BocaJobLease], None]
 TerminalSink = Callable[[PairCoordinates, PairUpgradeReceipt, BocaJobLease], None]
+BackendFactory = Callable[[PairCoordinates, BocaJobLease], PairUpgradeBackend]
 
 
 def run_pair_upgrade(
     plan: PairCoordinates,
     *,
-    backend: PairUpgradeBackend,
+    backend: PairUpgradeBackend | None = None,
+    backend_factory: BackendFactory | None = None,
     terminal_preflight: TerminalPreflight | None = None,
     commit_marker: CommitMarker | None = None,
     terminal_sink: TerminalSink | None = None,
@@ -212,14 +214,21 @@ def run_pair_upgrade(
 
     This function alone can never authenticate runner provenance or provide
     permission; production host adapter plus preflight/marker/terminal sink are
-    mandatory. Unverified finalization fails closed. Post-marker rollback is
-    forbidden even if marker fsync failed with an indeterminate outcome.
+    mandatory. A backend factory is invoked under the held lease only AFTER
+    durable intent, so its potential host effects cannot precede the record.
+    Unverified finalization fails closed. Post-marker rollback is forbidden
+    even if marker fsync failed with an indeterminate outcome.
     """
     if type(plan) is not PairCoordinates:
         raise PairUpgradeError("Boca pair upgrade coordinates missing")
     plan.validate()
     if (
-        getattr(type(backend), "requires_persistent_receipt", False) is not True
+        (backend is None) == (backend_factory is None)
+        or (backend_factory is not None and not callable(backend_factory))
+        or (
+            backend is not None
+            and getattr(type(backend), "requires_persistent_receipt", False) is not True
+        )
         or terminal_preflight is None
         or commit_marker is None
         or terminal_sink is None
@@ -227,6 +236,28 @@ def run_pair_upgrade(
         raise PairUpgradeError("Boca dual upgrade requires protected terminal intent/receipt")
     with protected_boca_job_lease(plan.attempt_id) as lease:
         terminal_preflight(plan, lease)  # Must durable O_EXCL/fsync before first host effect.
+        if backend_factory is not None:
+            try:
+                backend = backend_factory(plan, lease)
+                if getattr(type(backend), "requires_persistent_receipt", False) is not True:
+                    raise PairUpgradeError("Boca dual backend factory untrusted")
+            except BaseException:
+                # Factory callbacks may have unknown effects. Do not invent
+                # restoration/finalization or allow a missing durable terminal.
+                receipt = PairUpgradeReceipt(
+                    attempt_id=plan.attempt_id,
+                    state="NO_GO",
+                    cleanup="INDETERMINATE",
+                    old_restored=False,
+                    commit_started=False,
+                    controller_id=None,
+                    worker_id=None,
+                    failed_phase="ATTEST",
+                )
+                terminal_sink(plan, receipt, lease)
+                return receipt
+        if backend is None:
+            raise PairUpgradeError("Boca dual backend unavailable")
         started = False
         commit_started = False
         restored = False

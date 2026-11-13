@@ -167,6 +167,7 @@ jobs:
             printf 'Actions run: `%s`\n' "$GITHUB_RUN_ID"
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve exact published digest for the guarded install
+        timeout-minutes: 5
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boca-release-manifest
@@ -175,6 +176,7 @@ jobs:
           overwrite: false
           retention-days: 30
       - name: Preserve paired browser release evidence for a future guarded install
+        timeout-minutes: 5
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boca-browser-release-manifest

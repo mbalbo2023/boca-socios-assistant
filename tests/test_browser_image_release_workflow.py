@@ -204,6 +204,34 @@ def test_controller_v1_manifest_preserved_and_browser_companion_uploaded_only_af
     assert "set -euo pipefail" in publish[pushed:legacy_writer]
 
 
+def test_both_release_manifest_uploads_are_bounded_and_fail_closed() -> None:
+    """An artifact-service stall must fail the release without bypassing either manifest."""
+    publish = WORKFLOW.read_text(encoding="utf-8").split("  publish:\n", 1)[1]
+    validated = publish.index("python -m boca_socios.browser_release_manifest verify")
+    for name, artifact in (
+        ("Preserve exact published digest for the guarded install", "boca-release-manifest"),
+        (
+            "Preserve paired browser release evidence for a future guarded install",
+            "boca-browser-release-manifest",
+        ),
+    ):
+        marker = f"      - name: {name}\n"
+        assert publish.count(marker) == 1
+        assert validated < publish.index(marker)
+        step = publish.split(marker, 1)[1].split("      - name:", 1)[0]
+        assert step.count("        timeout-minutes: 5\n") == 1
+        assert "continue-on-error" not in step
+        assert "uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" in step
+        for required in (
+            f"name: {artifact}",
+            f"path: ${{{{ runner.temp }}}}/{artifact}.json",
+            "if-no-files-found: error",
+            "overwrite: false",
+            "retention-days: 30",
+        ):
+            assert required in step
+
+
 def test_every_release_image_scan_blocks_high_critical_vulnerabilities() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     preview = CI.read_text(encoding="utf-8").split("  image:\n", 1)[1]
