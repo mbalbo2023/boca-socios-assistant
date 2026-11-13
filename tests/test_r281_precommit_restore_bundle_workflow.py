@@ -9,7 +9,6 @@ import zipfile
 from pathlib import Path
 
 import pytest
-import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -59,8 +58,17 @@ def test_isolated_bundle_import_receipt_roundtrip(tmp_path: Path) -> None:
 
 def test_manual_recovery_is_distinct_single_fixed_incident_operation() -> None:
     workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text(encoding="utf-8")
-    body = yaml.safe_load(workflow)
-    options = body[True]["workflow_dispatch"]["inputs"]["operation"]["options"]
+    # This repository's pinned development graph intentionally does not ship
+    # PyYAML. The dispatch choices are a single literal inline YAML list;
+    # inspect that bounded declaration without introducing a new dependency.
+    choices = [
+        line.strip()
+        for line in workflow.splitlines()
+        if line.strip().startswith("options: [") and "boca-precommit-restore-one-shot" in line
+    ]
+    assert len(choices) == 1
+    assert choices[0].endswith("]")
+    options = [part.strip() for part in choices[0][len("options: [") : -1].split(",")]
     assert options.count("boca-precommit-restore-one-shot") == 1
     assert "if: inputs.operation == 'boca-precommit-restore-one-shot'" in workflow
     assert "--precommit-restore" in workflow
