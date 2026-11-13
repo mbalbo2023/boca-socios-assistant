@@ -160,6 +160,53 @@ def _request(kind: str, gh: FakeGitHub) -> Request:
     return Request(kind, payload_sha256=hashlib.sha256(gh.payloads[kind]).hexdigest())
 
 
+def _historical_release_with_skipped_pr_validation() -> FakeGitHub:
+    """The actual #851 release has a successful publish and a skipped PR job."""
+    gh = FakeGitHub()
+    gh.jobs["jobs"].append(
+        {
+            "id": 512,
+            "name": "release-image-pr-validation",
+            "run_id": int(RUN),
+            "head_sha": SOURCE,
+            "status": "completed",
+            "conclusion": "skipped",
+            "steps": [],
+        }
+    )
+    gh.jobs["total_count"] = 2
+    return gh
+
+
+def test_authenticates_historical_release_with_exact_skipped_pr_validation_job() -> None:
+    gh = _historical_release_with_skipped_pr_validation()
+    release_auth._verify_release_job(gh, RUN, SOURCE)
+    assert (
+        release_auth.download_authenticated_release(gh, RUN, SOURCE, "paired-release")
+        == gh.payloads["paired-release"]
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda gh: gh.jobs["jobs"][1].update(conclusion="success"),
+        lambda gh: gh.jobs["jobs"][1].update(name="unreviewed-job"),
+        lambda gh: gh.jobs["jobs"][1].update(head_sha="f" * 40),
+        lambda gh: gh.jobs["jobs"][1].update(run_id=1),
+        lambda gh: gh.jobs["jobs"][1].update(status="queued"),
+        lambda gh: gh.jobs["jobs"][1].update(steps=[{"name": "unreviewed"}]),
+        lambda gh: gh.jobs.update(total_count=1),
+        lambda gh: gh.jobs["jobs"].append(dict(gh.jobs["jobs"][1])),
+    ],
+)
+def test_historical_release_rejects_unreviewed_or_active_extra_job(mutation) -> None:
+    gh = _historical_release_with_skipped_pr_validation()
+    mutation(gh)
+    with pytest.raises(ReleaseAuthenticationNoGo):
+        release_auth._verify_release_job(gh, RUN, SOURCE)
+
+
 @pytest.mark.parametrize("kind", ["controller-release", "paired-release"])
 def test_authenticates_exact_release_archive_and_current_main(kind: str) -> None:
     gh = FakeGitHub()
