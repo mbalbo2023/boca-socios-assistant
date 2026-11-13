@@ -1,35 +1,72 @@
 # Boca Socios Assistant
 
-## R261 — diagnóstico de 8443 y preflight fiel, sólo código (13/11/2026)
+## R261 — reconciliación de PR #502 sobre el nuevo main (13/11/2026; CODE_ONLY)
 
-El selector manual `boca-panel-exact-origin-observe` incorpora una lectura
-acotada de `/healthz` en `127.0.0.1:8443`, con `Host: localhost:8443`, y
-metadatos sin contenido de los dos archivos SITE_URL y tres archivos Boca.
-Se ejecutará sólo desde un checkout del SHA auténtico de `main`, como usuario
-Boca; su transporte por SSH de fuente fija es **READ_ONLY y de menor
-confianza** que el paquete memfd protegido. No demuestra mapeo subuid,
-procedencia Docker, passkey ni BETA: siempre produce `OBSERVED_NO_GO` y
-`DEPLOY NO_GO`. Además, los errores de preflight del CLI anteriores a lease
-ya no se atribuyen falsamente a un commit irreversible. No se incorporan
-las variantes alternativas de SITE_URL ni los ADR en conflicto de PR #502.
-[ADR0283](docs/ADR/0283-r261-exact-origin-8443-readonly-and-prelease-classification.md).
+El PR #503 se fusionó mientras #502 completaba su CI. Ambos alteran el
+postflight, los controles de GitHub Actions y la documentación, por lo que
+se integran en **el mismo PR #502**, conservando los cambios de #503 en
+`main 32bb9546f0962b3615f2b9cb84c9c84d4a72d758`. La representación
+interna de `SITE_URL` ausente es `None`, y la única salida técnica pública
+es `NOT_CONFIGURED` con digests JSON `null`: nunca se escribe una URL
+predeterminada, ni se permite arrancar el worker sin configuración del
+titular. Los observadores exact-origin y rootless quedan READ_ONLY, y las
+pruebas y el bundle protegido deben aprobar el **nuevo SHA exacto**.
+**APPLY, despliegue y BETA permanecen NO_GO** mientras falten evidencias
+físicas. No repetir el incidente R186.
 
-## R261 — RCA del observador rootless, propuesta CODE_ONLY (13/11/2026 UTC)
+## R261 — clasificación rootless y RCA físico pendiente (13/11/2026 UTC)
 
-El primer `boca-rootless-mapping-observe` de `main=32bb9546f0962b3615f2b9cb84c9c84d4a72d758`,
-[Actions #43360372904](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43360372904),
-terminó **FAILURE** después de `BOCA_MAIN_REF_PASS`: el paso host/recibo
-devolvió un rechazo genérico y no acreditó `PRELIMINARY_PREDEPLOY`.
-Como el workflow antiguo descarta stderr, código SSH y subfase del CLI,
-**la causa física concreta permanece UNKNOWN**; no se infiere que sea
-la lease, subuid, SQLite, una ruta o la conexión. No hubo instalación.
-Este candidato conserva idéntico el recibo de éxito y propone una categoría
-de fallo enumerada, validada por su forma canónica y publicada sólo tras
-un rechazo remoto canónico. Un recibo malformado no se reescribe como
-evidencia. La próxima comprobación exige PR, CI exacto y nuevo dispatch
-READ_ONLY, sin repetir el intento anterior ni ejecutar APPLY. **DEPLOY NO_GO**.
-[ADR0285](docs/ADR/0285-r261-rootless-readonly-failure-boundary.md).
+La Action READ_ONLY [#43360372904](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43360372904)
+falló después de `BOCA_MAIN_REF_PASS` con recibo no verificado. La causa física
+concreta continúa **UNKNOWN**. La corrección candidata conserva idéntico el
+recibo positivo schema1; sólo los rechazos usan schema2 y categoría de fase
+fija, verificada por el runner antes de mostrarla. No publica rutas, datos
+privados ni excepciones. Debe fusionarse, pasar CI y repetirse como nueva
+observación READ_ONLY antes de cualquier APPLY. **DEPLOY NO_GO**.
+[ADR0286](docs/ADR/0286-r261-rootless-readonly-failure-boundary.md).
 
+## R259 — consolidación CODE_ONLY y diagnósticos (12/11/2026 ART; 13/11 UTC)
+
+Base verificada: `main c2b84429fe4c34140f784e3ba78c8b303f0e45af`;
+[#501](https://github.com/mbalbo2023/boca-socios-assistant/pull/501) ya
+fusionado, sin otros PR abiertos al iniciar R259. Su CI exacto
+[#43353616060](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43353616060)
+aprobó **8016 tests y 34 subtests**; el CI de `main`
+[#43354400245](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43354400245)
+y su escaneo [#43354400279](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43354400279)
+también fueron SUCCESS. Los dos labs solapados tardaron 23 s en el CI de
+`main`, pero el job de imágenes aún tardó aproximadamente seis minutos.
+
+R259 mantiene cuatro frentes de alcance exclusivo: SITE_URL sin valor
+predeterminado ([ADR 0283](docs/ADR/0283-r259-unconfigured-site-url-technical-proof.md));
+diagnóstico 8443 exact-origin **sólo lectura** dentro de la Action Boca
+existente, sin certificar subuid/volumen ni iniciar worker
+([ADR 0284](docs/ADR/0284-r259-exact-origin-and-site-metadata-readonly.md));
+recibo terminal persistido y releído, más clasificación correcta de fallos
+**anteriores** a commit ([ADR 0276](docs/ADR/0276-r259-terminal-readback-and-prelease-classification.md));
+y alternativas de aceptación con passkey ligada al par físico, **diseño
+solamente pendiente de decisión del titular**
+([ADR 0285](docs/ADR/0285-r259-owner-passkey-host-binding-options.md)).
+Ninguno de estos candidatos está desplegado. El CLI mantiene APPLY NO_GO;
+el postflight técnico NO autoriza BETA, la release dual final sigue pendiente,
+y R186 es irrepetible. Porota, reservas reales, fila y TLS están fuera de alcance.
+
+## R259 — SITE_URL vacía hasta configuración del titular (12/11/2026 ART; CODE_ONLY)
+
+Por decisión expresa de Tincho, un panel BETA recién instalado **no** trae
+`SITE_URL` precargada. El formulario privado 8443 ya muestra el campo vacío
+y permite guardarlo bajo passkey; el worker sigue impedido de iniciar hasta
+que exista una URL válida, sincronizada en su volumen y consumida en el
+próximo START explícito. Si el titular ya guardó una URL válida, se conserva
+sin borrarla ni sustituirla.
+
+R259 corrige el contrato de **postflight técnico schema 2** para permitir
+probar controlador, volumen, worker inactivo y `/healthz` cuando ambos
+archivos URL se encuentran genuinamente ausentes: evidencia
+`NOT_CONFIGURED`, huellas `null`, nunca SHA ficticio. Archivo alterado,
+symlink o divergencia continúan NO_GO; el postflight legacy y la aceptación
+Chrome/passkey siguen sin permitir ausencia. Es un cambio de código y tests,
+**no prueba física ni autorización de deploy**. Véase [ADR 0283](docs/ADR/0283-r259-unconfigured-site-url-technical-proof.md).
 ## R260 — estado consolidado de integración (13/11/2026; CODE_ONLY)
 
 La rama candidata reúne el pre-PARK R255, el terminal técnico R257, el
@@ -109,11 +146,13 @@ está incluido en el ZIP protegido y enlazado al backend técnico, pero
 el postflight físico y la passkey real requieren evidencia aparte.
 **DEPLOY NO_GO**. [ADR0271](docs/ADR/0271-r255-two-phase-prepark-postflight-expected.md).
 
+
 ## R258 — reconciliación de #501 con #500 (12/11/2026 ART; 13/11 UTC; CODE_ONLY)
 
-El candidato [PR #501](https://github.com/mbalbo2023/boca-socios-assistant/pull/501)
-se reconcilia sobre `main=7b19924aea1a25b195da733f95b8f7147df43f1e`
-tras el merge de [#500](https://github.com/mbalbo2023/boca-socios-assistant/pull/500).
+El [PR #501](https://github.com/mbalbo2023/boca-socios-assistant/pull/501)
+fue reconciliado sobre `main=7b19924aea1a25b195da733f95b8f7147df43f1e`
+tras el merge de [#500](https://github.com/mbalbo2023/boca-socios-assistant/pull/500)
+y luego fusionado como CODE_ONLY en `main c2b8442`.
 Conserva el único par BuildKit del CI y solapa dos laboratorios descartables;
 acota a cinco minutos cada carga de manifiesto de la release protegida;
 y añade al motor una `backend_factory` invocada **después** del intent durable
@@ -127,8 +166,7 @@ Validación local del árbol reconciliado: **8015 PASS, 34 subtests PASS y
 1 SKIP AF_UNIX EPERM del sandbox**; Ruff, formato, mypy y política PASS.
 El ZIP `PAIR_UPGRADE` conserva exactamente 78 entradas y mide 361.206 B
 comprimidos / 1.397.022 B descomprimidos (límite 1.400.000 B).
-Las Actions del SHA final, la revisión y la decisión de merge deben quedar
-registradas por separado en #417. Este código **no conecta el CLI APPLY**,
+Las Actions del SHA final, revisión y merge constan en [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6842311375). Este código **no conecta el CLI APPLY**,
 no publica un nuevo release ni certifica el droplet: **DEPLOY NO_GO**.
 El único upgrade R186 fallido no se repite, y Porota permanece fuera de alcance.
 

@@ -70,7 +70,7 @@ def _old_site_custody(plan: transaction.PairCoordinates) -> tuple[SiteUrlState, 
         # The reviewed inline script prints this ONE exact sentinel only when
         # SiteUrlSettingsStore.read() genuinely returned None. Any unsafe
         # volume/file/URL raises inside Docker and is a hard NO_GO instead.
-        if raw == "BOCA_SITE_URL_UNVERIFIED\n":
+        if raw == "BOCA_SITE_URL_NOT_CONFIGURED\n":
             return "NOT_CONFIGURED", None
         found = runtime._SITE_FRAME.fullmatch(raw)
         if found is None:
@@ -346,7 +346,7 @@ def attest_precommit_candidate_site_state(
                 script,
             )
             if seed.site_url_state == "NOT_CONFIGURED":
-                if raw != "BOCA_SITE_URL_UNVERIFIED\n":
+                if raw != "BOCA_SITE_URL_NOT_CONFIGURED\n":
                     raise _fail()
             else:
                 matched = runtime._SITE_FRAME.fullmatch(raw)

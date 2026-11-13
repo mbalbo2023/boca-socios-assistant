@@ -1,4 +1,4 @@
-# ADR0285 — R261: diagnóstico acotado del rechazo PREDEPLOY rootless
+# ADR0286 — R261: diagnóstico acotado del rechazo PREDEPLOY rootless
 
 **Fecha:** 13-NOV-2026 UTC. **Issue:** #417. **Estado:** CODE_ONLY;
 **DEPLOY NO_GO**. Owner: observador rootless y su paso existente de Actions.

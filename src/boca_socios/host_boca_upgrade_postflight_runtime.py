@@ -37,24 +37,20 @@ _FILES = (
     ("boca-socios_boca_key", "boca_master_key"),
     ("boca-socios_boca_owner", "boca_owner_session.sqlite3"),
 )
-_SITE_FRAME = re.compile(r"BOCA_SITE_URL_SHA256 ([a-f0-9]{64})\n\Z")
+_SITE_FRAME = re.compile(r"BOCA_SITE_URL_(?:SHA256 ([a-f0-9]{64})|NOT_CONFIGURED)\n\Z")
 _SAVED_URL_PROBE = (
     "from pathlib import Path;"
     "from boca_socios.panel.site_url_settings import SiteUrlSettingsStore;"
     "from boca_socios.browser.site_url_runtime import site_url_fingerprint;"
     "url=SiteUrlSettingsStore.for_database(Path('/data/boca.sqlite3')).read();"
     "print('BOCA_SITE_URL_SHA256 '+site_url_fingerprint(url) "
-    "if url is not None else 'BOCA_SITE_URL_UNVERIFIED')"
+    "if url is not None else 'BOCA_SITE_URL_NOT_CONFIGURED')"
 )
 _MIRRORED_URL_PROBE = (
-    "import os;"
-    "from boca_socios.browser.site_url_runtime import "
-    "RUNTIME_SITE_URL_PATH,_directory,_read_from,site_url_fingerprint;"
-    "fd=_directory(RUNTIME_SITE_URL_PATH,owner_uid=10001,owner_gid=10001,readonly=True);"
-    "url=_read_from(fd,owner_uid=10001,owner_gid=10001);"
-    "os.close(fd);"
+    "from boca_socios.browser.site_url_runtime import read_optional_site_url,site_url_fingerprint;"
+    "url=read_optional_site_url();"
     "print('BOCA_SITE_URL_SHA256 '+site_url_fingerprint(url) "
-    "if url is not None else 'BOCA_SITE_URL_UNVERIFIED')"
+    "if url is not None else 'BOCA_SITE_URL_NOT_CONFIGURED')"
 )
 _WORKER_COMMAND = ["python", "-m", "boca_socios.browser.ipc_server"]
 _MONITOR_FIELDS = frozenset(
@@ -121,18 +117,14 @@ class ProductionSiteUrlWitness:
                 "-c",
                 script,
             )
-            if self.expected.site_url_fingerprint is None:
-                # The fixed saved/mirror probes emit this sentinel ONLY when
-                # their own safe read returned a genuinely missing file.
-                # Never reinterpret a read error as missing configuration.
-                if observed != "BOCA_SITE_URL_UNVERIFIED\n":
-                    raise _fail()
-                fingerprint = None
-            else:
-                match = _SITE_FRAME.fullmatch(observed)
-                if match is None or match.group(1) != self.expected.site_url_fingerprint:
-                    raise _fail()
-                fingerprint = match.group(1)
+            match = _SITE_FRAME.fullmatch(observed)
+            if match is None:
+                raise _fail()
+            # The precise NOT_CONFIGURED frame has a null group; only a safe
+            # absent-file read may produce it, never a forged digest.
+            fingerprint = match.group(1)
+            if fingerprint != self.expected.site_url_fingerprint:
+                raise _fail()
             # A separate owner lifecycle request may start the worker outside
             # the deployment lease; never attest a stopped worker from the
             # pre-command observation alone.

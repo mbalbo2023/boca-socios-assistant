@@ -2633,9 +2633,8 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
             > "$RUNNER_TEMP/boca-panel-origin-main.json"
           python3 scripts/check_main_ref.py "$RUNNER_TEMP/boca-panel-origin-main.json" "$BOCA_SOURCE_SHA"
-          # Stream only reviewed source bytes from this exact authenticated
-          # main checkout. This READ_ONLY diagnostic is lower assurance than
-          # the protected SHA-pinned memfd ZIP and never replaces its gates.
+          # The source stream must come only from authenticated exact main;
+          # remote interpreter is fixed, isolated and cannot write pycache.
           test "$(git rev-parse HEAD)" = "$BOCA_SOURCE_SHA"
           test -f src/boca_socios/host_boca_panel_exact_origin_readonly.py
           remote_command="$(python3 - "$GITHUB_RUN_ID" "$BOCA_SOURCE_SHA" <<'PY'

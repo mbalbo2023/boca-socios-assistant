@@ -1,15 +1,7 @@
-"""Durable witness-bound journal for a subsequent Boca-only pair upgrade.
+"""Durable Boca successor evidence/intent/commit/terminal under one lease.
 
-This is a CODE_ONLY adapter, not a deploy entrypoint and not an authority.
-The protected runner must authenticate both release manifests independently;
-the host bridge must capture the exact old pair, binding and retained graph
-under the SAME job lease. Parsing these typed values is not authentication.
-The existing R179 effectful upgrade transaction remains interlocked NO_GO.
-
-On a journal interruption, intentionally leave immutable O_EXCL files in
-place: an attempt is never reusable. No secret bytes or user profile data are
-written here. The commit still hashes the exact intent; intent hashes the
-fresh witness evidence, so every boundary is cryptographically linked.
+CODE_ONLY, never an authorization. O_EXCL residue consumes an attempt.
+Trust boundaries and original full rationale: ADR0276 and ADR0259.
 """
 
 from __future__ import annotations
@@ -46,13 +38,7 @@ def _fail() -> SuccessorJournalNoGo:
 
 @dataclass(frozen=True, slots=True)
 class FreshPairWitness:
-    """Exactly two installed pair CIDs plus inodes, observed under the job lease.
-
-    The protected bridge MUST independently read actual Docker and binding,
-    use the double inventory census in `observe_retained`, and read the
-    no-follow control directory inode. Never construct from a form or from
-    an unauthenticated historical Actions Step Summary.
-    """
+    """Host-read CID, binding, retained graph and inode; never runner-form data."""
 
     observation_run_id: str
     old_attempt_id: str
@@ -105,12 +91,7 @@ SameLeaseCapture = Callable[[transaction.PairCoordinates, cleanup.BocaJobLease],
 
 
 class SuccessorPairJournal(historical.PairUpgradeJournal):
-    """Preflight witness -> immutable evidence -> intent -> commit -> terminal.
-
-    `capture` is an injected read-only trust boundary, not implemented here.
-    It MUST check actual old pair, binding, rootless identity, retained graph
-    and control directory inode. Calling it twice detects evidence drift.
-    """
+    """Immutable witness/intent journal; `capture` is a real host read-side gate."""
 
     def __init__(
         self,
@@ -169,12 +150,7 @@ class SuccessorPairJournal(historical.PairUpgradeJournal):
     def attest_active_intent(
         self, plan: transaction.PairCoordinates, lease: cleanup.BocaJobLease
     ) -> None:
-        """Read back the SAME journal's durable intent before terminal effects.
-
-        Having an object with the right class or an in-memory intent is not
-        proof that this attempt successfully persisted its original intent.
-        Its evidence member must also still match the anchored digest.
-        """
+        """Reopen same-lease intent and witness evidence before terminal effects."""
         try:
             cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
             if (
@@ -263,8 +239,7 @@ class SuccessorPairJournal(historical.PairUpgradeJournal):
         ).encode("ascii")
         if len(statement) > 1024:
             raise _fail()
-        # O_EXCL, fsync file+dir, no-follow readback. If any stage fails the
-        # attempt remains consumed: later invocations require a new attempt.
+        # O_EXCL + readback: failures preserve attempt-specific residue.
         fd = stage._root_fd()
         try:
             name = f"{_PREFIX}{plan.attempt_id}.evidence"
@@ -277,3 +252,33 @@ class SuccessorPairJournal(historical.PairUpgradeJournal):
         self._lease = lease
         self._intent = statement
         self._write(plan, "intent", statement)
+
+    def terminal(
+        self,
+        plan: transaction.PairCoordinates,
+        receipt: transaction.PairUpgradeReceipt,
+        lease: cleanup.BocaJobLease,
+    ) -> None:
+        """Persist once, then prove the exact terminal inode and bytes before returning."""
+        from boca_socios.host_boca_pair_upgrade_cli import encode_upgrade
+
+        try:
+            if self._lease is not lease or self._intent is None:
+                raise _fail()
+            raw = encode_upgrade(receipt)
+            self._write(plan, "terminal", raw)
+            root = stage._root_fd()
+            try:
+                readback, _ = stage._read_file(
+                    root,
+                    f"{_PREFIX}{plan.attempt_id}.terminal",
+                    hashlib.sha256(raw).hexdigest(),
+                    limit=1024,
+                )
+                if readback != raw:
+                    raise _fail()
+            finally:
+                os.close(root)
+            cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+        except Exception:
+            raise _fail() from None

@@ -47,6 +47,18 @@ def test_site_url_configuration_is_owner_only_and_discoverable(tmp_path: Path) -
     assert "form-action 'self'" in headers["Content-Security-Policy"]
 
 
+def test_unconfigured_site_url_field_is_visibly_blank_without_sample_url(
+    tmp_path: Path,
+) -> None:
+    app, cookie, _ = _owner(tmp_path)
+    status, _, page = _request(app, "/configuracion", cookie=cookie)
+    assert status == 200
+    assert b'id="site-url" name="SITE_URL" type="url" value=""' in page
+    assert b"ensayo.boca.internal" not in page
+    assert b'placeholder="https://' not in page
+    assert b"SITE_URL no configurada" in page
+
+
 @pytest.mark.parametrize("path", ["/", "/control", "/configuracion"])
 def test_private_owner_form_page_preserves_same_origin_for_native_post(
     tmp_path: Path, path: str

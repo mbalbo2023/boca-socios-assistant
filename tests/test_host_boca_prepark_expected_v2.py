@@ -158,7 +158,7 @@ def test_missing_saved_url_is_distinct_and_does_not_block_prepark_readonly_custo
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bound, lease, events = context
-    monkeypatch.setattr(cleanup, "_docker", lambda *_: "BOCA_SITE_URL_UNVERIFIED\n")
+    monkeypatch.setattr(cleanup, "_docker", lambda *_: "BOCA_SITE_URL_NOT_CONFIGURED\n")
     seed = prepark.capture_prepark_expected_seed(bound, lease)
     assert seed.site_url_state == "NOT_CONFIGURED"
     assert seed.site_url_fingerprint is None
@@ -176,7 +176,7 @@ def test_prepark_rejects_site_state_drift_between_two_readonly_snapshots(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bound, lease, _ = context
-    replies = iter(("BOCA_SITE_URL_UNVERIFIED\n", "BOCA_SITE_URL_SHA256 " + "a" * 64 + "\n"))
+    replies = iter(("BOCA_SITE_URL_NOT_CONFIGURED\n", "BOCA_SITE_URL_SHA256 " + "a" * 64 + "\n"))
     monkeypatch.setattr(cleanup, "_docker", lambda *_: next(replies))
     with pytest.raises(prepark.PreParkExpectedNoGo):
         prepark.capture_prepark_expected_seed(bound, lease)
@@ -214,7 +214,7 @@ def test_finish_expected_preserves_genuinely_missing_old_site_url_without_fabric
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     bound, lease, _ = context
-    monkeypatch.setattr(cleanup, "_docker", lambda *_: "BOCA_SITE_URL_UNVERIFIED\n")
+    monkeypatch.setattr(cleanup, "_docker", lambda *_: "BOCA_SITE_URL_NOT_CONFIGURED\n")
     seed = prepark.capture_prepark_expected_seed(bound, lease)
     assert seed.site_url_state == "NOT_CONFIGURED"
     assert seed.site_url_fingerprint is None
@@ -245,7 +245,7 @@ def test_precommit_candidate_site_requires_stable_real_saved_and_mirror_probes(
     bound, lease, events = context
     genuine = _expected()
     if missing:
-        monkeypatch.setattr(cleanup, "_docker", lambda *_: "BOCA_SITE_URL_UNVERIFIED\n")
+        monkeypatch.setattr(cleanup, "_docker", lambda *_: "BOCA_SITE_URL_NOT_CONFIGURED\n")
     seed = prepark.capture_prepark_expected_seed(bound, lease)
     observed: list[str] = []
 
@@ -254,7 +254,7 @@ def test_precommit_candidate_site_requires_stable_real_saved_and_mirror_probes(
         assert args[-2] == "-c"
         observed.append("saved" if "SiteUrlSettingsStore" in args[-1] else "mirror")
         return (
-            "BOCA_SITE_URL_UNVERIFIED\n"
+            "BOCA_SITE_URL_NOT_CONFIGURED\n"
             if missing
             else "BOCA_SITE_URL_SHA256 " + genuine.site_url_fingerprint + "\n"
         )
@@ -298,7 +298,7 @@ def test_precommit_candidate_site_fails_closed_before_marker_on_ambiguity(
     genuine = _expected()
     outputs = ["BOCA_SITE_URL_SHA256 " + genuine.site_url_fingerprint + "\n"] * 4
     if fault == "different_mirror":
-        outputs[1] = "BOCA_SITE_URL_UNVERIFIED\n"
+        outputs[1] = "BOCA_SITE_URL_NOT_CONFIGURED\n"
     elif fault == "drift":
         outputs[3] = "BOCA_SITE_URL_SHA256 " + "f" * 64 + "\n"
     replies = iter(outputs)
