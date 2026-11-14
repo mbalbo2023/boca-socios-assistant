@@ -171,6 +171,25 @@ Se reemplaza el texto “al finalizar la simulación” por “al finalizar el c
 en la detención automática. El motivo concreto sigue en Monitor/Actividad.
 No se añadió una prueba que sólo replique ese texto trivial.
 
+### RCA de CI #1247 antes de actualizar el candidato
+
+El primer SHA publicado, `ac8945e947ddb5202bd6a8cb8aef4ae491ad253a`, tuvo
+un fallo de integración: 1 failed, 8745 passed y 34 subtests passed en 149,64 s.
+`test_current_cutover_zip_is_pinned_and_excludes_preflight`, dentro del archivo
+histórico `test_r82_recovery_bundle.py`, seguía exigiendo el pin ACTUAL R294
+`40adeea75b470478e6c39bec217cb92477cfc5647fb946d4b2752c286edd5b1d`.
+El nuevo status produce el paquete
+`96b0797f71e853b5a3761b2dbcc592c96c9423776d771fb2fd47ccc08b13b1ac`,
+idéntico al medido localmente y al registrado por Actions.
+
+La selección focal omitió ese consumidor al validar caps, imports y digest.
+Se reprodujo el fallo localmente antes de corregir: conservar el pin R294 y
+todos los históricos, añadir el pin R295 revisado y mantener la aserción exacta,
+bootstrap, límites y exclusión de recovery/preflight. La política ahora señala
+este consumidor explícitamente. No es flakiness, fallo del proveedor ni incidente
+del host. El run fallido permanece como evidencia; no se rerunnea sin cambio.
+[RCA canónico](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6878431475).
+
 ## Estado y continuación
 
 | Alcance | Estado al corte |

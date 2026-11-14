@@ -23,6 +23,14 @@ El observer Telegram compatible no autoriza activar su selector: backend,
 custodia V2, sender y recepción humana conservan evidencias independientes.
 ADR0300 documenta las regresiones, la closure real de los paquetes y límites.
 
+Antes de publicar un cambio de una fuente incluida en el full host ZIP, la
+selección focal debe incluir
+`tests/test_r82_recovery_bundle.py::test_current_cutover_zip_is_pinned_and_excludes_preflight`.
+Su ubicación histórica no hace histórico su pin ACTUAL. Medir caps/imports no
+sustituye comprobar ese digest revisado. Conservar los pins anteriores y añadir
+uno nuevo sólo tras contrastar los bytes del paquete y su diff autorizado;
+nunca quitar la aserción o aceptar cualquier hash calculado por el builder.
+
 ## 2026-11-14 — R294, continuidad funcional autorizada
 
 R293 cerró la prioridad CI/CD por PR #515. El titular autoriza completar el

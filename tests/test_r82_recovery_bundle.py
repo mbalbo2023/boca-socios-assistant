@@ -170,6 +170,11 @@ R252_SUCCESS_IMAGE_PREDELETE_GUARD_FULL_CUTOVER_SHA = (
 R294_AUTHENTICATED_PROFILE_FULL_CUTOVER_SHA = (
     "40adeea75b470478e6c39bec217cb92477cfc5647fb946d4b2752c286edd5b1d"
 )
+# R295 changes only the installed-status diagnostic in this full closure.
+# The observed local/CI digest is reviewed; every historical pin remains intact.
+R295_CURRENT_LEDGER_STATUS_FULL_CUTOVER_SHA = (
+    "96b0797f71e853b5a3761b2dbcc592c96c9423776d771fb2fd47ccc08b13b1ac"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -323,11 +328,12 @@ def test_both_recovery_modes_reject_modified_bytes_and_injected_entries(
 
 
 def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) -> None:
-    """R294 source evolution does not modify the isolated R83 recovery modes."""
+    """R295 source evolution does not modify the isolated R83 recovery modes."""
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R294_AUTHENTICATED_PROFILE_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R295_CURRENT_LEDGER_STATUS_FULL_CUTOVER_SHA
+    assert digest != R294_AUTHENTICATED_PROFILE_FULL_CUTOVER_SHA
     assert digest != R252_SUCCESS_IMAGE_PREDELETE_GUARD_FULL_CUTOVER_SHA
     assert digest != R245_GUARDED_CLEANUP_FULL_CUTOVER_SHA
     assert digest != R244_SAME_LEASE_CLEANUP_FULL_CUTOVER_SHA
