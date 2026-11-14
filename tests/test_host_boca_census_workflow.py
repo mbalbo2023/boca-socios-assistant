@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 FLOW = (Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml").read_text()
 
 
@@ -105,14 +107,11 @@ def test_current_census_uses_reviewed_minimal_memfd_no_host_effects_or_leases():
 
 
 def test_current_census_pr_workflow_runs_local_regressions_without_host_access():
-    step = _step("Validate Boca rootless current census offline only")
-    assert "if: inputs.operation" not in step
-    for test in (
-        "test_host_boca_census.py",
-        "test_host_boca_census_bundle.py",
-        "test_host_boca_census_workflow.py",
-    ):
-        assert test in step
+    assert_required_ci_covers(
+        "tests/test_host_boca_census.py",
+        "tests/test_host_boca_census_bundle.py",
+        "tests/test_host_boca_census_workflow.py",
+    )
 
 
 def test_current_census_rechecks_main_immediately_before_host_access():

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 FLOW = (Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml").read_text()
 
 
@@ -113,12 +115,10 @@ def test_r179_dual_apply_requires_verified_release_and_bounded_memfd():
 
 
 def test_r179_qa_in_workflow_before_any_ssh():
-    body = _step("Validate Boca installed pair observer offline only")
-    for name in (
-        "test_r179_protected_bundles.py",
-        "test_r179_protected_workflow.py",
-        "test_host_boca_sqlite_identity.py",
-        "test_host_boca_pair_upgrade.py",
-        "test_host_on_demand_replace.py",
-    ):
-        assert name in body
+    assert_required_ci_covers(
+        "tests/test_r179_protected_bundles.py",
+        "tests/test_r179_protected_workflow.py",
+        "tests/test_host_boca_sqlite_identity.py",
+        "tests/test_host_boca_pair_upgrade.py",
+        "tests/test_host_on_demand_replace.py",
+    )

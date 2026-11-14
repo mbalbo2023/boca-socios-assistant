@@ -6,17 +6,18 @@ from pathlib import Path
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
 from test_r83_preflight_workflow import WORKFLOW, _failed_receipt, _verify_receipt
 
 
 def test_r92_targeted_protected_pr_gate_runs_stop_and_receipt_cases() -> None:
+    assert_required_ci_covers(
+        "tests/test_r92_stop_ack_evidence.py",
+        "tests/test_r92_preflight_receipt.py",
+    )
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    step = workflow.split(
-        "      - name: Validate protected Cutover A, Option B ZIP and cleanup offline only\n", 1
-    )[1].split("\n      - name:", 1)[0]
-    assert step.count("tests/test_r92_stop_ack_evidence.py") == 1
-    assert step.count("tests/test_r92_preflight_receipt.py") == 1
-    assert "scripts/build_protected_boca_bundle.py" in step
+    pr = workflow.split("  pr-validation:\n", 1)[1].split("  deploy:\n", 1)[0]
+    assert "uv run python scripts/build_protected_boca_bundle.py" in pr
 
 
 @pytest.mark.parametrize(

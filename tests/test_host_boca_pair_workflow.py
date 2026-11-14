@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 FLOW = (Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml").read_text()
 
 
@@ -86,10 +88,8 @@ def test_pair_observe_uses_standalone_readonly_memfd_and_strict_runner_verificat
 
 
 def test_pair_observe_has_local_regressions_without_host_dispatch():
-    step = _step("Validate Boca installed pair observer offline only")
-    for testcase in (
-        "test_host_boca_pair_observe.py",
-        "test_host_boca_pair_bundle.py",
-        "test_host_boca_pair_workflow.py",
-    ):
-        assert testcase in step
+    assert_required_ci_covers(
+        "tests/test_host_boca_pair_observe.py",
+        "tests/test_host_boca_pair_bundle.py",
+        "tests/test_host_boca_pair_workflow.py",
+    )

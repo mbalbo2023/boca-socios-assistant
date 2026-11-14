@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
 HOST_HELPER = (
     Path(__file__).resolve().parents[1] / "src/boca_socios/host_official_notice_actions.py"
@@ -95,6 +97,6 @@ def test_pr_validation_is_offline_and_manual_job_is_never_reached_on_pr() -> Non
     assert "github.event_name == 'workflow_dispatch'" in workflow
     assert "github.ref == 'refs/heads/main'" in workflow
     assert "github.actor == 'mbalbo2023'" in workflow
-    pr = workflow.split("  pr-validation:", 1)[1].split("  pr-runtime-smoke:", 1)[0]
-    assert "tests/test_official_import_actions_r24.py" in pr
+    pr = workflow.split("  pr-validation:", 1)[1].split("  deploy:", 1)[0]
+    assert_required_ci_covers("tests/test_official_import_actions_r24.py")
     assert "ssh boca-target" not in pr

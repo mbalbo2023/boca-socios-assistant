@@ -22,14 +22,14 @@ def _build_steps(job: str) -> list[str]:
     return [block for block in job.split("      - name: ")[1:] if f"uses: {BUILD}" in block]
 
 
-def test_ci_uses_two_distinct_main_trust_scopes_without_pr_cache_exports() -> None:
+def test_ci_keeps_controller_cache_and_one_native_browser_build() -> None:
     image = _job("ci.yml", "image")
     assert image.count(f"uses: {SETUP}") == 1
     assert "id: setup_buildx" in image
     builds = _build_steps(image)
-    assert len(builds) == 2
+    assert len(builds) == 1
     assert all("load: true" in step and "push: false" in step for step in builds)
-    for step, role in zip(builds, ("controller", "browser"), strict=True):
+    for step, role in zip(builds, ("controller",), strict=True):
         assert "context: ." in step
         assert f"cache-from: type=gha,scope=boca-main-{role}-r247" in step
         assert "github.event_name == 'push'" in step.split("cache-to:", 1)[1]
@@ -46,12 +46,26 @@ def test_ci_uses_two_distinct_main_trust_scopes_without_pr_cache_exports() -> No
             in step
         )
         assert "${{ github.sha }}" in step
-    assert "boca-observer:${{ github.sha }}" in builds[1]
-    assert "org.boca.public-image=${{ github.run_id }}-${{ github.run_attempt }}" in builds[1]
+    browser = image.split("      - name: Build isolated Chromium worker without deploying\n", 1)[
+        1
+    ].split("      - name:", 1)[0]
+    assert "if: steps.docs_pr_scope.outputs.docs_only != 'true'\n" in browser
+    assert "continue-on-error" not in browser
+    assert "SOURCE_SHA: ${{ github.sha }}" in browser
+    assert "docker build --builder default --file Dockerfile.browser" in browser
+    assert 'org.opencontainers.image.revision=$SOURCE_SHA"' in browser
+    assert (
+        "org.opencontainers.image.source=https://github.com/mbalbo2023/boca-socios-assistant"
+        in browser
+    )
+    for tag in ("boca-browser-ci", "boca-browser-release-validation", "boca-observer"):
+        assert f'--tag "{tag}:$SOURCE_SHA"' in browser
+    assert 'org.boca.public-image=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in browser
+    assert "boca-main-browser-r247" not in image
     assert "steps.setup_buildx.outcome == 'failure'" in image
     assert "steps.cached_controller_build.outcome == 'failure'" in image
-    assert "steps.cached_browser_build.outcome == 'failure'" in image
-    assert image.count("docker build ") == 2  # only if cache path failed
+    assert "cached_browser_build" not in image
+    assert image.count("docker build ") == 2  # controller fallback + primary browser
 
 
 def test_independent_main_security_still_builds_and_scans_both_images_from_read_only_cache() -> (

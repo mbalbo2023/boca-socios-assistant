@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 FLOW = (Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml").read_text()
 
 
@@ -88,10 +90,8 @@ def test_binding_observe_memfd_transport_is_read_only_and_runner_verifies():
 
 
 def test_binding_observe_qa_in_existing_preflight_job():
-    step = _step("Validate Boca installed pair observer offline only")
-    for case in (
-        "test_host_boca_binding_observe.py",
-        "test_host_boca_binding_bundle.py",
-        "test_host_boca_binding_workflow.py",
-    ):
-        assert case in step
+    assert_required_ci_covers(
+        "tests/test_host_boca_binding_observe.py",
+        "tests/test_host_boca_binding_bundle.py",
+        "tests/test_host_boca_binding_workflow.py",
+    )

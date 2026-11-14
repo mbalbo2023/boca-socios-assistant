@@ -8,6 +8,8 @@ from typing import Any
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
@@ -74,13 +76,6 @@ def test_r95_multiline_ambiguity_remains_no_go_even_with_short_alias(
 
 
 def test_r95_stop_short_alias_is_selected_by_protected_first_deploy_ci() -> None:
-    """Changes to the physical cleanup command must run in the protected PR gate."""
-    workflow = (ROOT / ".github" / "workflows" / "boca-first-deploy.yml").read_text(
-        encoding="utf-8"
-    )
-    marker = "      - name: Validate protected Cutover A, Option B ZIP and cleanup offline only\n"
-    assert workflow.count(marker) == 1
-    gate = workflow.split(marker, 1)[1].split("\n      - name:", 1)[0]
-    assert gate.count("tests/test_r95_stop_short_alias.py") == 1, (
-        "R95 STOP portability regression must run in the protected PR gate"
+    assert_required_ci_covers(
+        "tests/test_r95_stop_short_alias.py",
     )

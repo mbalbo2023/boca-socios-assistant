@@ -1,5 +1,29 @@
 # Boca Socios Assistant
 
+## Estado vigente R291–R293: instalación preservada, prioridad CI/CD
+
+La [certificación R291](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6868819579)
+confirma el par de fuente `0ebecb69a6bc35b72a8c4ceda46119d601ca2dbe`,
+release #864 y APPLY #1102 `SUCCESS/ACCEPTED`: controller healthy, worker
+creado y detenido bajo demanda, SQLite estable, puerto privado 8443 HTTP 200.
+Las secciones siguientes son cortes históricos; sus instalaciones pendientes
+no reemplazan este resultado. El observador #1108 seguía fijado al par R186.
+
+El alcance actual es [R293: medir y simplificar CI/CD](docs/ADR/0297-r282-exact-docs-ci-and-postpark-cicd-lessons.md),
+recuperando R282, preservando los checks requeridos y evitando pruebas
+duplicadas. Los resultados de cada SHA se registran en
+[#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+Este cambio no genera release ni despliegue. Las publicaciones reales de la
+ventana de 48 h fueron cinco; las validaciones de PR se cuentan aparte.
+
+La aceptación funcional de la BETA continúa pendiente. Según
+[R292](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6869176533),
+el monitor no tiene productores inyectados; START/STOP necesitan recibos
+posteriores; actividad, detección de eventos/cola y auto-stop requieren
+completar el diseño; Telegram necesita diagnóstico de configuración y
+visibilidad, y los horarios deben ser inequívocos de 24 h. `SITE_URL` lista
+no certifica navegación. Todo permanece SIMULATION_ONLY.
+
 ## R280 — guard del inode de control por fase (13/11/2026; CODE_ONLY)
 
 La causa del fallo post-PARK del APPLY #1085 fue la verificación invariante

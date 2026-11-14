@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import shlex
 import subprocess
 import sys
 import zipfile
@@ -11,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
 from test_host_boca_retained_resources import RUN, module, snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -46,18 +46,16 @@ def test_retained_resource_bundle_is_small_inert_and_imports_in_isolated_python(
 
 
 def test_protected_validation_collects_retained_failure_regressions():
-    workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
-    step = workflow.split("      - name: Validate Boca installed pair observer offline only\n", 1)[
-        1
-    ].split("      - name:", 1)[0]
-    command = next(
-        shlex.split(line.strip())
-        for line in step.splitlines()
-        if "tests/test_host_boca_retained_resources.py" in line
+    modules = (
+        "tests/test_host_boca_pair_upgrade_plan.py",
+        "tests/test_host_boca_pair_upgrade_workflow.py",
+        "tests/test_host_boca_retained_resources.py",
+        "tests/test_host_boca_retained_resource_transport.py",
+        "tests/test_host_boca_retained_resource_failures.py",
     )
-    assert command[:4] == ["uv", "run", "pytest", "-q"]
-    result = subprocess.run(  # noqa: S603 - collect the reviewed workflow's test catalog only
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", *command[4:]],
+    assert_required_ci_covers(*modules)
+    result = subprocess.run(  # noqa: S603 - collect the protected CI regression modules only
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", *modules],
         cwd=ROOT,
         capture_output=True,
         text=True,

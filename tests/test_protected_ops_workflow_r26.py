@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "boca-first-deploy.yml"
 ADR = ROOT / "docs" / "ADR" / "0159-protected-ops-postcutover-workflow.md"
@@ -158,7 +160,7 @@ def test_pr_validation_cannot_emit_lifecycle_host_or_prepare_receipts() -> None:
     assert "boca-lifecycle-host.receipt" in section
     assert "boca-lifecycle-prepare.receipt.json" in section
     assert "NO_GO" in section
-    assert "tests/test_protected_go_prepare_r26.py" in _workflow()
+    assert_required_ci_covers("tests/test_protected_go_prepare_r26.py")
 
 
 def test_adr_explicitly_records_four_go_deadlocks_and_no_real_host_run() -> None:

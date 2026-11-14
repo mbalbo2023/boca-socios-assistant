@@ -135,10 +135,8 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check uv==0.13.4
           uv sync --frozen
-      - name: Check dispatch and first-install boundaries offline
+      - name: Check repository isolation policy offline
         run: |
-          uv run pytest -q tests/test_host_beta_resume.py tests/test_host_cutover_adapter.py tests/test_effective_unit_shape.py tests/test_infrastructure_diagnostics.py tests/test_kernel_netfilter_readonly.py tests/test_owner_enrollment_argv.py tests/test_host_cpu_capacity.py tests/test_infrastructure_preflight.py tests/test_deploy_inputs.py tests/test_deploy_contract.py tests/test_beta_deploy_contract.py tests/test_beta_browser_deploy_contract.py tests/test_browser_ipc_workflow.py tests/test_host_browser_lifecycle.py tests/test_host_browser_ipc_file_stage.py tests/test_host_browser_ipc_install.py tests/test_host_browser_ipc_cleanup.py tests/test_host_browser_ipc_cross_contract.py tests/test_host_first_deploy.py tests/test_host_loopback_port.py tests/test_host_beta_install.py tests/test_host_beta_cleanup.py tests/test_host_beta_acceptance.py tests/test_host_site_bootstrap.py tests/test_owner_bootstrap.py tests/test_host_owner_enroll_lifecycle.py tests/test_host_owner_enroll_cleanup.py tests/test_host_operation_gate.py tests/test_main_ref_gate.py tests/test_host_cleanup.py tests/test_host_stop_test.py tests/test_host_start_existing.py tests/test_telegram_storage_gate.py tests/test_telegram_one_shot.py tests/test_host_telegram.py tests/test_key_custody.py tests/test_release_run.py
-          uv run pytest -q tests/test_r124_linger_readonly.py tests/test_r124_linger_receipt_verify.py
           uv run python scripts/check_repo_policy.py
       - name: Validate optional served BETA Compose model without host access
         env:
@@ -162,49 +160,12 @@ jobs:
         run: |
           docker compose -p boca-socios -f compose.beta.yaml -f compose.beta.browser.yaml config --format json > "$RUNNER_TEMP/boca-browser-model.json"
           uv run python scripts/check_beta_deploy_contract.py "$RUNNER_TEMP/boca-browser-model.json" "$BOCA_IMAGE" --topology=browser-ipc-v2
-      - name: Validate protected Cutover A, Option B ZIP and cleanup offline only
+      - name: Build protected Boca review bundle offline only
         run: |
-          uv run pytest -q tests/test_host_boca_cleanup.py tests/test_host_boca_attempt.py tests/test_host_boca_transaction.py tests/test_host_boca_cutover.py tests/test_host_boca_cutover_backend.py tests/test_host_boca_cutover_receipt.py tests/test_host_boca_cutover_cli.py tests/test_host_cutover_postapply_reconcile.py tests/test_host_cutover_stage.py tests/test_protected_boca_bundle.py tests/test_cutover_worker_preflight.py tests/test_cutover_a_go.py tests/test_cutover_candidate_receipt.py tests/test_boca_deploy_finalizer_r23.py tests/test_protected_action_context_r26.py tests/test_protected_go_prepare_r26.py tests/test_protected_ops_workflow_r26.py tests/test_protected_mobile_go_r28.py tests/test_lifecycle_mobile_workflow_r28.py tests/test_cutover_worker_recovery.py tests/test_protected_boca_bundle_recovery.py tests/test_r79_workflow_contract.py tests/test_r80_recovery_gate.py tests/test_r82_exact_worker_807_recovery.py tests/test_r82_recovery_bundle.py tests/test_r82_recovery_dispatch.py tests/test_r82_recovery_workflow.py tests/test_r83_primary_phase.py tests/test_r83_cleanup_stages.py tests/test_r83_preflight_workflow.py tests/test_r83_bundle_caps.py tests/test_r84_worker_storage_admission.py tests/test_r84_worker_preflight_dispatch.py tests/test_r85_cutover_observe_provenance.py tests/test_r87_exact_worker_819_recovery.py tests/test_r87_recovery_bundle.py tests/test_r87_recovery_dispatch.py tests/test_r87_recovery_workflow.py tests/test_r88_preflight_capture.py tests/test_r88_stop_diagnostics.py tests/test_r89_preflight_input_descriptions.py
-          uv run pytest -q tests/test_r86_exact_worker_819_observer.py tests/test_r90_exact_worker_827_observer.py tests/test_r93_exact_worker_834_observer.py
-          uv run pytest -q tests/test_r91_worker_827_recovery.py tests/test_r91_worker_827_dispatch.py tests/test_r91_worker_827_workflow.py tests/test_r92_stop_ack_evidence.py tests/test_r92_preflight_receipt.py tests/test_r95_stop_short_alias.py
-          uv run pytest -q tests/test_r94_worker_834_recovery.py tests/test_r94_worker_834_dispatch.py tests/test_r94_worker_834_workflow.py
-          uv run pytest -q tests/test_r96_stage844_one_shot_workflow.py tests/test_r96_stage844_evidence_gate.py tests/test_r96_stage844_dispatch_gate.py tests/test_v3_stage_github_gate.py tests/test_host_cutover_stage_recovery.py
-          uv run pytest -q tests/test_boca_deploy_dispatch_v3.py tests/test_cutover_dispatch_protocol_v3.py
-          uv run pytest -q tests/test_r128_893_readonly_reconcile.py
           uv run python scripts/build_protected_boca_bundle.py . "$RUNNER_TEMP/boca-cutover-a-review.pyz"
-      - name: Validate Boca rootless current census offline only
+      - name: Type-check protected physical worker dispatch script offline only
         run: |
-          uv run pytest -q tests/test_host_boca_census.py tests/test_host_boca_census_bundle.py tests/test_host_boca_census_workflow.py
-      - name: Validate Boca installed pair observer offline only
-        run: |
-          uv run pytest -q tests/test_host_boca_pair_observe.py tests/test_host_boca_pair_bundle.py tests/test_host_boca_pair_workflow.py
-          uv run pytest -q tests/test_host_boca_upgrade_observation_artifact.py tests/test_host_boca_upgrade_observation_bridge.py tests/test_host_boca_upgrade_release_bridge.py tests/test_host_boca_upgrade_release_bundle.py tests/test_host_boca_upgrade_release_workflow.py
-          uv run pytest -q tests/test_r247_runner_current_pair_v2.py tests/test_r247_protected_current_pair_bundle.py tests/test_r247_protected_current_pair_workflow.py
-          uv run pytest -q tests/test_host_boca_pair_postcommit_readonly.py
-          uv run pytest -q tests/test_host_boca_pair_upgrade_plan.py tests/test_host_boca_pair_upgrade_workflow.py tests/test_host_boca_retained_resources.py tests/test_host_boca_retained_resource_transport.py tests/test_host_boca_retained_resource_failures.py
-          uv run mypy src/boca_socios/host_boca_pair_observe.py
-          uv run mypy src/boca_socios/host_boca_pair_postcommit.py
-          uv run mypy src/boca_socios/host_boca_pair_upgrade_plan.py
-          uv run pytest -q tests/test_host_boca_binding_observe.py tests/test_host_boca_binding_bundle.py tests/test_host_boca_binding_workflow.py
-          uv run mypy src/boca_socios/host_boca_binding_observe.py
-          uv run pytest -q tests/test_host_boca_sqlite_identity.py tests/test_host_boca_pair_upgrade.py tests/test_host_on_demand_replace.py
-          uv run pytest -q tests/test_r179_protected_bundles.py tests/test_r179_protected_workflow.py
-          uv run mypy src/boca_socios/host_boca_sqlite_identity.py src/boca_socios/host_boca_pair_upgrade.py src/boca_socios/host_on_demand_replace.py
-          uv run pytest -q tests/test_host_boca_pair_postcommit_finalize.py tests/test_host_boca_postcommit_finalize_bundle.py tests/test_host_boca_postcommit_finalize_workflow.py
-          uv run mypy src/boca_socios/host_boca_pair_postcommit_finalize.py
-          uv run pytest -q tests/test_host_boca_rootless_mapped_custody.py tests/test_r258_rootless_mapping_workflow.py
-      - name: Validate W1 one-start evidence and isolated bounded ZIP offline only
-        run: |
-          uv run pytest -q tests/test_host_worker_w1.py tests/test_worker_w1_dispatch.py tests/test_worker_w1_bundle.py tests/test_worker_w1_workflow.py
-          uv run mypy src/boca_socios/host_worker_w1.py
-      - name: Validate physical worker isolated ZIP and one-start guards offline only
-        run: |
-          uv run pytest -q tests/test_host_worker_physical.py tests/test_worker_physical_bundle.py tests/test_worker_physical_workflow.py tests/test_worker_physical_dispatch.py
-          uv run mypy src/boca_socios/host_worker_physical.py
           uv run mypy --follow-imports=skip scripts/check_worker_physical_dispatch.py
-      - name: Validate protected official notice artifact import offline only
-        run: |
-          uv run pytest -q tests/test_host_official_notice_actions_r24.py tests/test_official_import_actions_r24.py tests/test_host_official_notice_import.py
       - name: Assert PR cannot produce host cutover or cleanup receipt
         if: ${{ always() }}
         run: |

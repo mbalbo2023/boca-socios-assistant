@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 FLOW = (Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml").read_text()
 
 
@@ -46,12 +48,11 @@ def test_physical_step_uses_exact_ssh_and_sanitized_receipt() -> None:
 
 
 def test_physical_tests_participate_in_pr_gate() -> None:
-    step = _step("Validate physical worker isolated ZIP and one-start guards offline only")
-    for test in (
-        "test_host_worker_physical.py",
-        "test_worker_physical_bundle.py",
-        "test_worker_physical_workflow.py",
-        "test_worker_physical_dispatch.py",
-    ):
-        assert test in step
-    assert "host_worker_physical.py" in step
+    assert_required_ci_covers(
+        "tests/test_host_worker_physical.py",
+        "tests/test_worker_physical_bundle.py",
+        "tests/test_worker_physical_workflow.py",
+        "tests/test_worker_physical_dispatch.py",
+    )
+    step = _step("Type-check protected physical worker dispatch script offline only")
+    assert "uv run mypy --follow-imports=skip scripts/check_worker_physical_dispatch.py" in step
