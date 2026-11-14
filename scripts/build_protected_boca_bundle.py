@@ -467,10 +467,9 @@ MAIN = (
 # Bound the full payload separately from the two reduced worker archives.
 # R178 adds only the source-pinned, run-bound Boca worker egress attestor.
 # +4 KiB preserves independent smaller bundles and the exact file allowlist.
-# R244 protected same-lease cleanup API adds 2,767 source bytes. The already
-# reviewed full-Cutover comment-token compaction now yields 1,157,003 bytes;
-# this 1,158,144 cap leaves only 1,141 bytes' headroom. Other mode limits and
-# each entry allowlist remain unchanged (no new host capability or import).
+# Keep the R244 full-Cutover ceiling fixed. Oversized reviewed full/preflight
+# closures use checked comment-token compaction; independent mode limits and
+# entry allowlists remain unchanged (no new host capability or import).
 MAX_SOURCE_BYTES = 1_158_144
 MAX_ARCHIVE_BYTES = 512_000
 RECOVERY_MAX_SOURCE_BYTES = 256_000
@@ -513,9 +512,9 @@ _FULL_ONLY_COMPACT_SOURCE = "src/boca_socios/host_first_deploy.py"
 def _compact_comment_tokens(source: bytes, *, filename: str = _FULL_ONLY_COMPACT_SOURCE) -> bytes:
     """Keep executable Python bytes/line numbers, omit only comment tokens.
 
-    The full Cutover and an oversized successor pair can use this identical
-    transport-only transform. The repository retains the original comments;
-    the SHA-pinned ZIP changes only after checked code-object equivalence.
+    Full Cutover, preflight and oversized successor transports use the same
+    transform. The repository retains the original comments; the SHA-pinned
+    ZIP changes only after checked code-object equivalence.
     """
     decoded = source.decode("utf-8")
     lines = decoded.splitlines(keepends=True)
@@ -813,6 +812,7 @@ def build(
             pair_upgrade,
             rootless_mapped_observe,
             postcommit_finalize,
+            precommit_restore,
         )
     )
     for rel in sources:
@@ -835,7 +835,7 @@ def build(
     # Preserve exact test-fixture bytes and future small source sets. Compact
     # only when a reviewed complete source set actually exceeds its bounded
     # total; never raise that cap to compensate for unused comment bytes.
-    if full_cutover and sum(map(len, files.values())) > max_source:
+    if (full_cutover or worker_preflight) and sum(map(len, files.values())) > max_source:
         # Apply the existing semantic/line-preserving comment transform to
         # the complete reviewed closure before any fixed transport limit.
         for rel in sources:

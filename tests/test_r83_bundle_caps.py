@@ -6,6 +6,7 @@ host operations, or BLACKBOX code.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import io
 import os
@@ -154,6 +155,29 @@ def test_worker_archive_has_exactly_seven_allowlisted_entries_and_no_other_dispa
     assert b"lifecycle-apply" not in main
     assert b"cutover-worker-recover" not in main
     assert b"host_boca_transaction" not in main
+
+
+def test_worker_compaction_preserves_code_lines_and_non_python_bytes(tmp_path: Path) -> None:
+    original_total = len(builder.PREFLIGHT_MAIN) + sum(
+        (ROOT / relative).stat().st_size for relative in WORKER_SOURCES
+    )
+    assert original_total > WORKER_SOURCE_CAP
+    target = tmp_path / "worker-compacted.pyz"
+    digest = builder.build(ROOT, target, worker_preflight=True)
+    bootstrap.verify(target.read_bytes(), digest, worker_preflight=True)
+    with zipfile.ZipFile(target) as archive:
+        assert archive.read("__main__.py") == builder.PREFLIGHT_MAIN
+        assert sum(entry.file_size for entry in archive.infolist()) < WORKER_SOURCE_CAP
+        for relative in WORKER_SOURCES:
+            original = (ROOT / relative).read_bytes()
+            packaged = archive.read(relative.removeprefix("src/"))
+            if relative.endswith(".py"):
+                assert len(packaged) <= len(original)
+                assert ast.dump(ast.parse(packaged)) == ast.dump(ast.parse(original))
+                assert compile(packaged, relative, "exec") == compile(original, relative, "exec")
+                assert packaged.count(b"\n") == original.count(b"\n")
+            else:
+                assert packaged == original
 
 
 @pytest.mark.parametrize(

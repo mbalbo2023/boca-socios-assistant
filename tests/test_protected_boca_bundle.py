@@ -53,8 +53,8 @@ def test_bounded_source_growth_keeps_archive_digest_and_archive_limit_independen
 ) -> None:
     sources = (*builder.SOURCES, *builder.OPTION_B_SOURCES)
     total = sum((ROOT / item).stat().st_size for item in sources)
-    # R173: reviewed source is larger than the immutable transport limit;
-    # only comment-token compaction of the full host module earns the space.
+    # Reviewed source is larger than the immutable transport limit. R294
+    # compacts only comments across the allowlisted Python source closure.
     assert 1_150_000 < total < 1_200_000
     assert builder.MAX_SOURCE_BYTES == 1_158_144
     assert builder.MAX_ARCHIVE_BYTES == 512_000
@@ -67,9 +67,10 @@ def test_bounded_source_growth_keeps_archive_digest_and_archive_limit_independen
     assert bootstrap.MAX_UNCOMPRESSED == builder.MAX_SOURCE_BYTES
     with zipfile.ZipFile(io.BytesIO(raw)) as package:
         total_uncompressed = sum(item.file_size for item in package.infolist())
-    # R244 exact source delta is budgeted narrowly; a future large module
-    # addition must get its own reviewed cap rather than inheriting slack.
-    assert 0 < builder.MAX_SOURCE_BYTES - total_uncompressed <= 2_048
+    # Compaction can earn more headroom without changing either hard cap.
+    # The exact post-compaction size remains subject to the one-byte boundary
+    # checks below; no assumption about incidental unused space replaces it.
+    assert 0 < total_uncompressed < builder.MAX_SOURCE_BYTES
     assert builder.MAX_SOURCE_BYTES < total
     monkeypatch.setattr(bootstrap, "MAX_UNCOMPRESSED", total_uncompressed - 1)
     with pytest.raises(ValueError, match="entry allowlist mismatch"):
@@ -85,21 +86,34 @@ def test_bounded_source_growth_keeps_archive_digest_and_archive_limit_independen
     assert not rejected.exists()
 
 
-def test_bounded_host_source_compaction_preserves_ast_without_repacking_other_sources(
+def test_bounded_source_compaction_preserves_code_lines_and_non_python_bytes(
     tmp_path: Path,
 ) -> None:
     output, digest = _build(tmp_path)
     with zipfile.ZipFile(output) as archive:
-        host_source = (ROOT / "src/boca_socios/host_first_deploy.py").read_bytes()
-        packaged_host = archive.read("boca_socios/host_first_deploy.py")
-        assert len(host_source) - len(packaged_host) > 7_000
-        assert ast.dump(ast.parse(host_source), include_attributes=False) == ast.dump(
-            ast.parse(packaged_host), include_attributes=False
-        )
-        assert (
-            archive.read("boca_socios/host_boca_cleanup.py")
-            == (ROOT / "src/boca_socios/host_boca_cleanup.py").read_bytes()
-        )
+        assert archive.read("__main__.py") == builder.MAIN
+        for name, original in builder.HOST_ONLY_INIT.items():
+            assert archive.read(name) == original
+        for relative in (*builder.SOURCES, *builder.OPTION_B_SOURCES):
+            original = (ROOT / relative).read_bytes()
+            name = (
+                builder.OPTION_B_STDLIB_BUNDLE_NAME
+                if relative == builder.OPTION_B_SOURCES[0]
+                else relative.removeprefix("src/")
+            )
+            packaged = archive.read(name)
+            if relative.endswith(".py"):
+                assert len(packaged) <= len(original)
+                assert ast.dump(ast.parse(packaged)) == ast.dump(ast.parse(original))
+                assert compile(packaged, relative, "exec") == compile(original, relative, "exec")
+                assert packaged.count(b"\n") == original.count(b"\n")
+            else:
+                assert packaged == original
+        for relative in ("host_first_deploy.py", "host_boca_cleanup.py"):
+            assert (
+                archive.read(f"boca_socios/{relative}")
+                != (ROOT / "src/boca_socios" / relative).read_bytes()
+            )
     assert hashlib.sha256(output.read_bytes()).hexdigest() == digest
 
 
