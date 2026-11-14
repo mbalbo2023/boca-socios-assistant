@@ -482,7 +482,7 @@ def _bot_controls(
         component = "bot" if intent.component == "bot" else "Chromium"
         action = ("Inicio" if intent.target == "start" else "Detención") + " de " + component
         if intent.work_start_id is not None:
-            action = "Detención automática del bot al finalizar la simulación"
+            action = "Detención automática del bot al finalizar el ciclo"
         states = {
             "REQUESTED": "Pendiente de ejecución. Puede reenviar el aviso con el mismo botón.",
             "CLAIMED": "En proceso. El ejecutor tomó la solicitud.",

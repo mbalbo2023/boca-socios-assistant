@@ -24,6 +24,7 @@ from boca_socios.host_lifecycle_rootless_adapter import (
     ReviewedInstalledPair,
     RootlessLifecycleProbe,
     _mounts,
+    panel_control_mount,
 )
 from boca_socios.host_telegram_production_reader import TelegramProductionDockerIO
 
@@ -194,11 +195,13 @@ def _service(
         raise TelegramHostNoGo("boca_telegram_installed_release_unverified")
 
 
-def _stopped_controller_boundary(reader: LifecycleDockerIO, pins: TelegramHostPins) -> None:
+def _stopped_controller_boundary(reader: LifecycleDockerIO, pins: TelegramHostPins) -> bool:
     """Stopped Docker releases lose runtime NetworkSettings.Ports.
 
     Verify the persistent approved loopback PortBindings instead. All other
-    service invariants are the same as the running-only lifecycle probe.
+    service invariants follow the lifecycle probe's legacy or on-demand
+    profile. The approved control bind and persistent restart policy must
+    occur together; neither independently authorizes a different topology.
     """
     cid = pins.controller_id
     expected_mounts = frozenset(
@@ -210,25 +213,49 @@ def _stopped_controller_boundary(reader: LifecycleDockerIO, pins: TelegramHostPi
             (_SITE_CONFIG, "/run/boca-site-config", True),
         }
     )
+    restart = reader.field("container", cid, "HostConfig.RestartPolicy")
+    on_demand = restart == {"Name": "unless-stopped", "MaximumRetryCount": 0}
+    source = panel_control_mount() if on_demand else None
+    if source is not None:
+        expected_mounts |= {(source, "/run/boca-bot-control", False)}
+    mounts = reader.field("container", cid, "Mounts")
+    if source is not None and (
+        not isinstance(mounts, list)
+        or not any(
+            isinstance(mount, dict)
+            and mount.get("Type") == "bind"
+            and mount.get("Source") == source
+            and mount.get("Destination") == "/run/boca-bot-control"
+            and mount.get("RW") is False
+            for mount in mounts
+        )
+    ):
+        # Normalization retains source/destination/RW, not the mount kind.
+        raise TelegramHostNoGo("boca_telegram_stopped_controller_boundary_unverified")
+    restart_count = reader.field("container", cid, "RestartCount")
     if (
         reader.field("container", cid, "Config.Image") != pins.controller_image
         or reader.field("container", cid, "Config.User") != "10001:10001"
         or reader.field("container", cid, "Config.Cmd")
         != ["python", "-m", "boca_socios.runtime", "serve-beta"]
-        or reader.field("container", cid, "HostConfig.RestartPolicy")
-        != {"Name": "no", "MaximumRetryCount": 0}
+        or restart != {"Name": "unless-stopped" if on_demand else "no", "MaximumRetryCount": 0}
         or reader.field("container", cid, "HostConfig.ReadonlyRootfs") is not True
         or reader.field("container", cid, "HostConfig.Privileged") is not False
         or reader.field("container", cid, "HostConfig.Init") is not True
         or reader.field("container", cid, "HostConfig.PublishAllPorts") is not False
-        or reader.field("container", cid, "RestartCount") != 0
+        or type(restart_count) is not int
+        or restart_count < 0
+        or not on_demand
+        and restart_count != 0
         or reader.field("container", cid, "HostConfig.NetworkMode") != _PRIVATE
         or reader.field("container", cid, "HostConfig.PortBindings")
         != {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}
-        or _mounts(reader.field("container", cid, "Mounts")) != expected_mounts
+        or _mounts(mounts, control_source=source) != expected_mounts
+        or reader.field("container", cid, "State.Running") is not False
         or reader.field("container", cid, "State.Restarting") is not False
     ):
         raise TelegramHostNoGo("boca_telegram_stopped_controller_boundary_unverified")
+    return on_demand
 
 
 def observe_telegram_host(
@@ -353,11 +380,18 @@ def observe_telegram_host(
             sender_attempt_id=pins.sender_attempt,
             sender_running=False,
         )
-        probe = RootlessLifecycleProbe(binding, reader)
-        _stopped_controller_boundary(reader, pins)
-        probe._service_boundary(pins.worker_id, "browser-worker", pins.worker_image)
+        on_demand = _stopped_controller_boundary(reader, pins)
+        probe = RootlessLifecycleProbe(binding, reader, on_demand=on_demand)
+        services = [(pins.worker_id, "browser-worker", pins.worker_image)]
         if pins.sender_expected_state == "stopped":
-            probe._service_boundary(pins.sender_id, "telegram", pins.sender_image)
+            services.append((pins.sender_id, "telegram", pins.sender_image))
+        for ident, service, reference in services:
+            if (
+                reader.field("container", ident, "State.Running") is not False
+                or reader.field("container", ident, "State.Restarting") is not False
+            ):
+                raise TelegramHostNoGo("boca_telegram_stopped_service_state_unverified")
+            probe._service_boundary(ident, service, reference)
         for volume_name in (_DATA, _TELEGRAM):
             mountpoint = reader.field("volume", volume_name, "Mountpoint")
             if not isinstance(mountpoint, str) or not mountpoint.startswith("/"):

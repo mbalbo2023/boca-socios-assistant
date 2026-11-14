@@ -14,17 +14,25 @@ host effect. No such authority can be inferred from this builder or self-test.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import os
 import stat
 import zipfile
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING or __package__:
+    from .build_protected_boca_bundle import _compact_comment_tokens
+else:
+    from build_protected_boca_bundle import _compact_comment_tokens
 
 SOURCES = (
     "src/boca_socios/__init__.py",
     "src/boca_socios/host_boca_cleanup.py",
     "src/boca_socios/host_boca_lifecycle.py",
     "src/boca_socios/host_lifecycle_rootless_adapter.py",
+    "src/boca_socios/host_on_demand_service.py",
     "src/boca_socios/host_telegram_active_helper_topology.py",
     "src/boca_socios/host_telegram_egress_helper.py",
     "src/boca_socios/host_telegram_owner_stage.py",
@@ -82,6 +90,59 @@ MAIN = (
 ).encode("ascii")
 MAX_SOURCE_BYTES = 450_000
 MAX_ARCHIVE_BYTES = 300_000
+NETWORK_PROJECTION_NAME = "boca_socios/host_first_deploy.py"
+
+
+def _network_projection(root: Path) -> bytes:
+    """Ship the canonical read-only network predicate, not a deploy dispatcher.
+
+    The standalone deploy source remains unchanged. Select its existing AST
+    nodes without rewriting or maintaining a second implementation. Missing or
+    duplicated definitions fail the build instead of creating a guessed helper.
+    """
+    path = root / "src" / NETWORK_PROJECTION_NAME
+    if path.is_symlink():
+        raise ValueError("Telegram network source is a symlink")
+    metadata = path.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or not 0 < metadata.st_size <= MAX_SOURCE_BYTES:
+        raise ValueError("Telegram network source missing or oversized")
+    source = path.read_bytes()
+    if len(source) != metadata.st_size:
+        raise ValueError("Telegram network source changed during reading")
+    decoded = source.decode("utf-8")
+    nodes: dict[str, ast.stmt] = {}
+    expected = {
+        "ipaddress",
+        "BROWSER_EGRESS_BRIDGE",
+        "PreflightError",
+        "_browser_worker_egress_network",
+    }
+    for node in ast.parse(source).body:
+        name: str | None = None
+        if isinstance(node, ast.Import) and len(node.names) == 1:
+            name = node.names[0].name
+        elif isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            name = target.id if isinstance(target, ast.Name) else None
+        elif isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            name = node.name
+        if name in expected:
+            if name in nodes:
+                raise ValueError("Telegram network source has duplicate definitions")
+            nodes[name] = node
+    if set(nodes) != expected:
+        raise ValueError("Telegram network source closure incomplete")
+    segments = [ast.get_source_segment(decoded, node) for node in nodes.values()]
+    if any(segment is None for segment in segments):
+        raise ValueError("Telegram network source selection unavailable")
+    projected = (
+        "\n\n".join(segment for segment in segments if segment is not None) + "\n"
+    ).encode()
+    if [ast.dump(node) for node in ast.parse(projected).body] != [
+        ast.dump(node) for node in nodes.values()
+    ]:
+        raise ValueError("Telegram network source selection changed executable nodes")
+    return projected
 
 
 def build(root: Path, target: Path) -> str:
@@ -101,6 +162,18 @@ def build(root: Path, target: Path) -> str:
         if bundle_name in files:
             raise ValueError("duplicate Boca Telegram archive entry")
         files[bundle_name] = content
+    if NETWORK_PROJECTION_NAME in files:
+        raise ValueError("duplicate Telegram network projection")
+    files[NETWORK_PROJECTION_NAME] = _network_projection(root)
+    if sum(map(len, files.values())) > MAX_SOURCE_BYTES:
+        # Reuse the existing AST/bytecode/line-preserving transform; caps stay
+        # unchanged and repository comments remain in the canonical source.
+        files = {
+            name: _compact_comment_tokens(content, filename=name)
+            if name.endswith(".py")
+            else content
+            for name, content in files.items()
+        }
     if not 0 < sum(len(data) for data in files.values()) <= MAX_SOURCE_BYTES:
         raise ValueError("Boca Telegram reviewed source closure exceeds bound")
     if target.is_symlink() or target.exists():

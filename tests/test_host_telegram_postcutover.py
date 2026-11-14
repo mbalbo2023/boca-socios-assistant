@@ -131,6 +131,35 @@ def _fake(tmp_path: Path, *, stopped_sender: bool = False) -> FakeIO:
     return io
 
 
+def _on_demand_fake(tmp_path: Path, *, stopped_sender: bool = False) -> FakeIO:
+    io = _fake(tmp_path, stopped_sender=stopped_sender)
+    mounts = io.fields[("container", CONTROLLER, "Mounts")]
+    assert isinstance(mounts, list)
+    mounts.append(
+        {
+            "Type": "bind",
+            "Source": "/home/boca-deploy/.boca-on-demand/socket",
+            "Destination": "/run/boca-bot-control",
+            "RW": False,
+            "Propagation": "rprivate",
+        }
+    )
+    io.fields[("container", CONTROLLER, "HostConfig.RestartPolicy")] = {
+        "Name": "unless-stopped",
+        "MaximumRetryCount": 0,
+    }
+    io.fields[("container", CONTROLLER, "RestartCount")] = 2
+    # The R294 worker is created and never started; Docker serializes no ports
+    # as null and retains only its unassigned dedicated network configuration.
+    io.fields[("container", CONTROLLER, "NetworkSettings.Ports")] = {}
+    io.fields[("container", WORKER, "HostConfig.PortBindings")] = {}
+    io.fields[("container", WORKER, "NetworkSettings.Ports")] = None
+    io.fields[("container", WORKER, "NetworkSettings.Networks")] = {
+        "boca-socios_boca_browser_egress": {"IPAddress": "", "GlobalIPv6Address": ""}
+    }
+    return io
+
+
 @pytest.fixture(autouse=True)
 def _lease_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     def _verify(lease: BocaJobLease, attempt: str) -> None:
@@ -193,6 +222,173 @@ def test_observes_boca_topology_but_never_authorizes(tmp_path: Path, stopped_sen
     assert result.sender_state == "OFF"
     assert result.human_receipt == "UNVERIFIED"
     assert io.effects == []
+
+
+@pytest.mark.parametrize("stopped_sender", [False, True])
+@pytest.mark.parametrize("restart_count", [0, 2])
+def test_stopped_r294_controller_uses_coherent_on_demand_topology_without_authority(
+    tmp_path: Path, stopped_sender: bool, restart_count: int
+) -> None:
+    io = _on_demand_fake(tmp_path, stopped_sender=stopped_sender)
+    io.fields[("container", CONTROLLER, "RestartCount")] = restart_count
+    result = host.observe_telegram_host(_pins(stopped_sender=stopped_sender), lease=_lease(), io=io)
+    assert result.phase == "TOPOLOGY_OBSERVED_NOT_AUTHORIZED"
+    assert result.authorized is False
+    assert result.host_effects is False
+    assert result.sender_state == "OFF"
+    assert result.human_receipt == "UNVERIFIED"
+    assert io.effects == []
+
+
+@pytest.mark.parametrize("on_demand", [False, True])
+def test_running_controller_inspection_cannot_hide_behind_stopped_inventory(
+    tmp_path: Path, on_demand: bool
+) -> None:
+    io = _on_demand_fake(tmp_path) if on_demand else _fake(tmp_path)
+    io.fields[("container", CONTROLLER, "State.Running")] = True
+    with pytest.raises(host.TelegramHostNoGo):
+        host.observe_telegram_host(_pins(), lease=_lease(), io=io)
+
+
+@pytest.mark.parametrize("on_demand", [False, True])
+@pytest.mark.parametrize("ident", [WORKER, SENDER], ids=["worker", "sender"])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("State.Running", True),
+        ("State.Running", 0),
+        ("State.Running", None),
+        ("State.Running", "false"),
+        ("State.Restarting", True),
+        ("State.Restarting", 0),
+        ("State.Restarting", None),
+        ("State.Restarting", "false"),
+    ],
+)
+def test_worker_or_sender_inspection_must_confirm_exact_stopped_boolean_state(
+    tmp_path: Path, on_demand: bool, ident: str, field: str, value: object
+) -> None:
+    io = (
+        _on_demand_fake(tmp_path, stopped_sender=True)
+        if on_demand
+        else _fake(tmp_path, stopped_sender=True)
+    )
+    io.fields[("container", ident, field)] = value
+    if ident == WORKER and field == "State.Running" and value is True:
+        # A live Docker inspection can contradict the earlier stopped inventory
+        # even when the endpoint agrees with that live running state.
+        io.fields[("container", WORKER, "NetworkSettings.Networks")] = {
+            "boca-socios_boca_browser_egress": {
+                "IPAddress": "172.28.0.2",
+                "GlobalIPv6Address": "",
+            }
+        }
+    with pytest.raises(host.TelegramHostNoGo):
+        host.observe_telegram_host(_pins(stopped_sender=True), lease=_lease(), io=io)
+    assert io.effects == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "legacy_restart_with_bind",
+        "persistent_restart_without_bind",
+        "other_source",
+        "other_destination",
+        "control_rw",
+        "shared_propagation",
+        "duplicate_bind",
+        "extra_volume",
+        "extra_bind",
+        "volume_instead_of_bind",
+    ],
+)
+def test_on_demand_controller_rejects_mixed_profiles_and_mount_drift(
+    tmp_path: Path, mutation: str
+) -> None:
+    io = _on_demand_fake(tmp_path)
+    mounts = io.fields[("container", CONTROLLER, "Mounts")]
+    assert isinstance(mounts, list)
+    control = mounts[-1]
+    if mutation == "legacy_restart_with_bind":
+        io.fields[("container", CONTROLLER, "HostConfig.RestartPolicy")] = {
+            "Name": "no",
+            "MaximumRetryCount": 0,
+        }
+        io.fields[("container", CONTROLLER, "RestartCount")] = 0
+    elif mutation == "persistent_restart_without_bind":
+        mounts.pop()
+    elif mutation == "other_source":
+        control["Source"] = "/other/socket"
+    elif mutation == "other_destination":
+        control["Destination"] = "/run/other-control"
+    elif mutation == "control_rw":
+        control["RW"] = True
+    elif mutation == "shared_propagation":
+        control["Propagation"] = "rshared"
+    elif mutation == "duplicate_bind":
+        mounts.append(dict(control))
+    elif mutation == "extra_volume":
+        mounts.append(
+            {
+                "Type": "volume",
+                "Driver": "local",
+                "Name": "foreign",
+                "Destination": "/extra",
+                "RW": False,
+            }
+        )
+    elif mutation == "extra_bind":
+        mounts.append({**control, "Source": "/other/socket", "Destination": "/extra"})
+    elif mutation == "volume_instead_of_bind":
+        control.update({"Type": "volume", "Driver": "local", "Name": control["Source"]})
+    with pytest.raises(host.TelegramHostNoGo):
+        host.observe_telegram_host(_pins(), lease=_lease(), io=io)
+    assert io.effects == []
+
+
+@pytest.mark.parametrize("restart_count", [-1, False, 0.0, "0"])
+def test_on_demand_controller_restart_history_must_be_a_nonnegative_integer(
+    tmp_path: Path, restart_count: object
+) -> None:
+    io = _on_demand_fake(tmp_path)
+    io.fields[("container", CONTROLLER, "RestartCount")] = restart_count
+    with pytest.raises(host.TelegramHostNoGo):
+        host.observe_telegram_host(_pins(), lease=_lease(), io=io)
+
+
+@pytest.mark.parametrize(
+    "restart",
+    [
+        {"Name": "always", "MaximumRetryCount": 0},
+        {"Name": "on-failure", "MaximumRetryCount": 0},
+        {"Name": "unless-stopped", "MaximumRetryCount": 1},
+        {"Name": "unless-stopped", "MaximumRetryCount": 0, "extra": True},
+    ],
+)
+def test_on_demand_controller_cannot_choose_another_restart_policy(
+    tmp_path: Path, restart: dict[str, object]
+) -> None:
+    io = _on_demand_fake(tmp_path)
+    io.fields[("container", CONTROLLER, "HostConfig.RestartPolicy")] = restart
+    with pytest.raises(host.TelegramHostNoGo):
+        host.observe_telegram_host(_pins(), lease=_lease(), io=io)
+
+
+@pytest.mark.parametrize(
+    "label", ["org.opencontainers.image.revision", "com.docker.compose.config-hash"]
+)
+def test_on_demand_profile_cannot_override_pinned_installed_release(
+    tmp_path: Path, label: str
+) -> None:
+    io = _on_demand_fake(tmp_path)
+    containers = list(io.inventory_value.containers)
+    labels = dict(containers[0].labels)
+    labels[label] = "0" * 64
+    containers[0] = replace(containers[0], labels=tuple(sorted(labels.items())))
+    io.inventory_value = replace(io.inventory_value, containers=tuple(containers))
+    with pytest.raises(host.TelegramHostNoGo, match="installed_release_unverified"):
+        host.observe_telegram_host(_pins(), lease=_lease(), io=io)
 
 
 def test_controller_must_be_physically_stopped(tmp_path: Path) -> None:

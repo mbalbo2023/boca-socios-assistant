@@ -1,6 +1,32 @@
 # Binding instructions for every coding agent
 
-## Estado vigente R294 — worker automático y promoción consolidada (14-NOV-2026 UTC)
+## Estado vigente R295 — desarrollo paralelo durante aceptación Samsung
+
+La instalación R294 está completada: main/instalada
+`c5a143541ccfcaf26f29cf252a4cb33fd7c540f7`, PR #516, release #865,
+APPLY #1117 ACCEPTED, administración #1118 PROVISIONED y par #1120 OBSERVED.
+El controller quedó RUNNING/HEALTHY y el worker CREATED/PID0; esto no certifica
+un START/STOP posterior del titular. [Handoff físico](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6871954660).
+No repetir ese deploy. STATUS #1119 sigue registrado como NO_GO del observador.
+
+El titular autorizó desarrollar pendientes mientras prueba desde Samsung.
+[Decisión y responsables R295](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6878044872)
+y [ADR0300](docs/ADR/0300-r295-postdeploy-status-auth-and-telegram.md)
+separan implementación, verificación offline, instalación y aceptación.
+R295 corrige el diagnóstico de ledger preservado y la topología Telegram,
+y desarrolla el transporte de login Boca a partir de fuentes pinneadas de #12.
+Ese transporte todavía no es un productor conectado: falta el wiring de sesión,
+IPC, START/STOP y monitor. Telegram tampoco está activado por esta rama.
+
+Durante la prueba del titular: sin releases, APPLY, operaciones de host,
+START/STOP ni mensajes Telegram. Trabajo exclusivo en rama, pruebas focales,
+revisión independiente y checks requeridos del SHA exacto. No repetir la suite
+local certificada del árbol base. No ampliar caps/reservas, duplicar módulos ni
+modificar `synthetic.py`/`ipc_worker.py`. Sólo Actions protegidas y serializadas
+cuando vuelva a corresponder una operación física. Los cortes siguientes son
+históricos y no reemplazan este estado.
+
+## Corte histórico R294 — diseño previo a la promoción (14-NOV-2026 UTC)
 
 R293 terminó por PR #515 en `959a0be9e776329f99a29e65c2c75195700d5596`;
 CI #1242 e Image Security #1080 SUCCESS, sin release ni host por CI/CD.

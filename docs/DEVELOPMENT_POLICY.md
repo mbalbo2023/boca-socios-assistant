@@ -1,5 +1,28 @@
 # Development and merge policy
 
+## 2026-11-14 — R295, desarrollo paralelo sin perturbar aceptación
+
+R294 fue instalada y certificada físicamente por release #865 / APPLY #1117;
+main/instalada `c5a143541ccfcaf26f29cf252a4cb33fd7c540f7`. El titular autoriza
+desarrollar pendientes mientras prueba desde Samsung. La decisión R295 de
+[#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6878044872)
+asigna archivos exclusivos y exige reutilización antes de escribir.
+
+Conservar estable el host durante esa aceptación: sin nueva release, APPLY,
+START/STOP, preparación Telegram ni mensajes. El código R295 se revisa en rama
+y no se describe como instalado. Mantener controles de main y checks del SHA
+exacto; ejecutar localmente sólo regresiones pertinentes y dependencias reales.
+No repetir el despliegue R294, suites locales sin cambios ni algoritmos validados.
+
+El lector diagnóstico puede separar un STOP terminal sin binding actual sólo
+con worker CREATED/PID0 y motor STOPPED; nunca usar esa proyección como permiso
+de recuperación/admisión. El lector estricto y CURRENT_RETAINED no se relajan.
+El transporte Boca histórico habilita desarrollo offline, no certifica conexión.
+La sesión, deadline global y fences START/STOP son dependencias de su wiring.
+El observer Telegram compatible no autoriza activar su selector: backend,
+custodia V2, sender y recepción humana conservan evidencias independientes.
+ADR0300 documenta las regresiones, la closure real de los paquetes y límites.
+
 ## 2026-11-14 — R294, continuidad funcional autorizada
 
 R293 cerró la prioridad CI/CD por PR #515. El titular autoriza completar el

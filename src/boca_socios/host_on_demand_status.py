@@ -55,6 +55,62 @@ _FIELDS = frozenset(
     }
 )
 _OP_FIELDS = frozenset(field.name for field in fields(PanelStatus))
+# This program uses only helpers already present in the installed R294 controller.
+# It travels with the observer: changing a host reader must not require a new image.
+# Keep request, binding and note reads in the same attested, query-only snapshot.
+_CURRENT_LEDGER_PROGRAM = """\
+import json
+import sys
+from dataclasses import asdict
+from pathlib import Path
+try:
+    from boca_socios.host_on_demand_lifecycle import (
+        _AUDIT, _FINGERPRINT, _NO_DETAIL, _detail, _marker_id, _uuid,
+        PanelStatus, validate_panel_status,
+    )
+    from boca_socios.host_boca_lifecycle import _controller_ledger
+    from boca_socios.panel.lifecycle_intents import LifecycleIntentStore
+    fingerprint, path = sys.argv[1:]
+    if not _FINGERPRINT.fullmatch(fingerprint):
+        raise ValueError()
+    scope, operation = 'NONE', None
+    with _controller_ledger(Path(path), readonly=True) as db:
+        item = LifecycleIntentStore._current(db)
+        if item is not None:
+            if item.status in ('REQUESTED', 'CLAIMED', 'UNCERTAIN'):
+                raise ValueError()
+            if item.on_demand:
+                if item.component != 'bot' or not _uuid(item.operation_id):
+                    raise ValueError()
+                key = _marker_id(item.operation_id, fingerprint, 'binding')
+                bound = db.execute(
+                    'SELECT action FROM audit_events WHERE audit_id=?', (key,)
+                ).fetchone()
+                note = db.execute(
+                    'SELECT action FROM audit_events WHERE audit_id=?',
+                    (_marker_id(item.operation_id, fingerprint, 'note'),),
+                ).fetchone()
+                if bound is not None and bound != (_AUDIT + 'bound',):
+                    raise ValueError()
+                if bound is None:
+                    if note is not None or (item.target, item.status) != ('stop', 'APPLIED'):
+                        raise ValueError()
+                    scope = 'NOT_BOUND_TO_CURRENT_INSTALLATION'
+                    operation = PanelStatus(item.operation_id, 'stop', 'APPLIED',
+                                            'NONE', None, None, None)
+                else:
+                    scope = 'CURRENT_INSTALLATION'
+                    detail = _detail(note[0].removeprefix(_AUDIT + 'note_')
+                                     if note else _NO_DETAIL)
+                    operation = PanelStatus(item.operation_id, item.target, item.status,
+                        detail.cause, detail.exit_code, detail.oom, detail.exit_signature)
+                validate_panel_status(operation)
+    print(json.dumps({'schema': 1, 'scope': scope,
+        'operation': asdict(operation) if operation is not None else None},
+        separators=(',', ':'), sort_keys=True))
+except Exception:
+    raise SystemExit(3)
+"""
 
 
 class StatusUnavailable(ValueError):
@@ -178,9 +234,9 @@ def _current_checked(document: object, workflow_sha: str, run: str) -> str:
         not _matches(workflow_sha, host._SHA)
         or not _matches(run, host._ATTEMPT)
         or type(document) is not dict
-        or document.keys() != {"schema", "workflow_source_sha", "installed"}
+        or document.keys() != {"schema", "workflow_source_sha", "installed", "ledger"}
         or type(document["schema"]) is not int
-        or document["schema"] != 2
+        or document["schema"] != 3
         or document["workflow_source_sha"] != workflow_sha
         or type(document["installed"]) is not dict
     ):
@@ -191,7 +247,70 @@ def _current_checked(document: object, workflow_sha: str, run: str) -> str:
     )
     pins.validate()
     _checked(installed, pins)
+    scope, operation = _ledger_checked(document["ledger"])
+    if installed["operation"] != (
+        asdict(operation) if operation is not None and scope == "CURRENT_INSTALLATION" else None
+    ):
+        raise StatusUnavailable
+    if scope == "NOT_BOUND_TO_CURRENT_INSTALLATION" and (
+        installed["worker_state"] != "created"
+        or installed["worker_pid"] != 0
+        or installed["worker_healthy"] is not False
+        or installed["engine"] != "STOPPED"
+    ):
+        raise StatusUnavailable
     return CURRENT_PREFIX + json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n"
+
+
+def _ledger_checked(document: object) -> tuple[str, PanelStatus | None]:
+    if (
+        type(document) is not dict
+        or document.keys() != {"schema", "scope", "operation"}
+        or type(document["schema"]) is not int
+        or document["schema"] != 1
+        or document["scope"]
+        not in ("NONE", "CURRENT_INSTALLATION", "NOT_BOUND_TO_CURRENT_INSTALLATION")
+    ):
+        raise StatusUnavailable
+    scope, raw = document["scope"], document["operation"]
+    if scope == "NONE":
+        if raw is not None:
+            raise StatusUnavailable
+        return scope, None
+    if type(raw) is not dict or raw.keys() != _OP_FIELDS:
+        raise StatusUnavailable
+    operation = PanelStatus(**raw)
+    validate_panel_status(operation)
+    if operation.status not in ("APPLIED", "REFUSED", "FAILED") or (
+        scope == "NOT_BOUND_TO_CURRENT_INSTALLATION"
+        and (operation.target, operation.status) != ("stop", "APPLIED")
+    ):
+        raise StatusUnavailable
+    return scope, operation
+
+
+def _read_current_ledger(installation: OnDemandInstallation) -> dict[str, object]:
+    installation.coordinates(_PROBE_ID)
+    raw = cleanup._docker(
+        "exec",
+        "--user",
+        "10001:10001",
+        installation.controller_id,
+        "/app/.venv/bin/python",
+        "-I",
+        "-B",
+        "-c",
+        _CURRENT_LEDGER_PROGRAM,
+        installation.fingerprint(),
+        str(installation.database_path),
+    )
+    if type(raw) is not str or len(raw) > 512:
+        raise StatusUnavailable
+    document = json.loads(raw)
+    _ledger_checked(document)
+    if raw != json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n":
+        raise StatusUnavailable
+    return dict(document)
 
 
 def _observe_current(workflow_sha: str, run: str) -> dict[str, object]:
@@ -203,17 +322,19 @@ def _observe_current(workflow_sha: str, run: str) -> dict[str, object]:
         pins.validate()
         coordinates = replace(installed.coordinates(_PROBE_ID), attempt_id=run)
         live = _physical(installed, coordinates, lease)
-        operation = read_panel_status(installed)
+        ledger = _read_current_ledger(installed)
+        scope, operation = _ledger_checked(ledger)
         if (
             _physical(installed, coordinates, lease) != live
-            or read_panel_status(installed) != operation
+            or _read_current_ledger(installed) != ledger
             or read_installed_binding(lease) != installed
         ):
             raise StatusUnavailable
         phase, pid, healthy, engine = live
         return {
-            "schema": 2,
+            "schema": 3,
             "workflow_source_sha": workflow_sha,
+            "ledger": ledger,
             "installed": {
                 "schema": 1,
                 **asdict(pins),
@@ -225,7 +346,11 @@ def _observe_current(workflow_sha: str, run: str) -> dict[str, object]:
                 "worker_state": phase,
                 "worker_pid": pid,
                 "worker_healthy": healthy,
-                "operation": asdict(operation) if operation is not None else None,
+                "operation": (
+                    asdict(operation)
+                    if operation is not None and scope == "CURRENT_INSTALLATION"
+                    else None
+                ),
             },
         }
 

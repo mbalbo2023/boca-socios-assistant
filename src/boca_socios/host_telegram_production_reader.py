@@ -46,6 +46,7 @@ _CONTAINER_FIELDS = frozenset(
         "HostConfig.CgroupnsMode",
         "Config.Labels",
         "Mounts",
+        "NetworkSettings.Ports",
         "NetworkSettings.Networks",
     }
 )

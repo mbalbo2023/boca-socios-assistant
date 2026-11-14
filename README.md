@@ -1,6 +1,30 @@
 # Boca Socios Assistant
 
-## R294 — detección automática y BETA consolidada en preparación
+## R295 — pendientes en desarrollo; R294 instalada y en aceptación
+
+La BETA R294 de `c5a143541ccfcaf26f29cf252a4cb33fd7c540f7` ya fue instalada
+por una única promoción: release #865, APPLY #1117 ACCEPTED, administración
+#1118 y observación del par #1120. El controller está certificado healthy;
+el worker quedó creado y detenido para START del titular.
+[Evidencia física y handoff](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6871954660).
+La aceptación desde Samsung verifica el comportamiento posterior y sigue
+separada de CI y del despliegue.
+
+Mientras el titular prueba, R295 desarrolla pendientes sin operar el servidor:
+un diagnóstico que distingue STOP preservado de la instalación actual,
+compatibilidad del observer Telegram con el par on-demand, y un transporte
+de login Boca verificado offline. Se reutilizan el ledger, servicio de
+credenciales, monitor y módulos Telegram existentes.
+[Diseño, pruebas y pendientes exactos](docs/ADR/0300-r295-postdeploy-status-auth-and-telegram.md).
+
+El worker automático de R294 ya inicia la comprobación de evento/cola desde
+START, conserva una sesión y registra el motivo de la detención. R295 aún no
+conecta el login Boca a ese ciclo ni activa Telegram: ambos necesitan su
+integración restante y aceptación propia. No se generó otra release ni se
+repitió el deploy por estos cambios. Todo ticket permanece SIMULATION_ONLY.
+Los encabezados siguientes conservan cortes históricos.
+
+## Corte histórico R294 — BETA consolidada antes de la promoción
 
 La optimización CI/CD R293 ya se integró por PR #515, con CI y seguridad de
 `959a0be9e776329f99a29e65c2c75195700d5596` aprobados. El siguiente candidato
