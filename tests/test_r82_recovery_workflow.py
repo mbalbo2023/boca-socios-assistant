@@ -16,6 +16,8 @@ from typing import Any
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tests"))
 from test_r82_recovery_dispatch import _evidence  # noqa: E402
@@ -394,12 +396,10 @@ def test_pull_request_cannot_enter_protected_deploy_or_issue_host_receipt() -> N
 
 
 def test_protected_pr_validation_keeps_r80_and_runs_r82_code_only_regressions() -> None:
-    block = _step_block("Validate protected Cutover A, Option B ZIP and cleanup offline only")
-    for test_file in (
+    assert_required_ci_covers(
         "tests/test_r80_recovery_gate.py",
         "tests/test_r82_exact_worker_807_recovery.py",
         "tests/test_r82_recovery_bundle.py",
         "tests/test_r82_recovery_dispatch.py",
         "tests/test_r82_recovery_workflow.py",
-    ):
-        assert block.count(test_file) == 1, f"missing or duplicated CODE_ONLY PR gate: {test_file}"
+    )

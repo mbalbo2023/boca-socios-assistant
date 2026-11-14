@@ -1,5 +1,34 @@
 # Binding instructions for every coding agent
 
+## Estado vigente R291–R293 — CI/CD antes de nuevas funciones (13-NOV-2026 ART)
+
+Este encabezado actualiza los cortes operativos históricos que siguen. Leer
+[R291](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6868819579),
+[R292](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6869176533)
+y la [decisión R293](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6869386141).
+El par de `0ebecb69a6bc35b72a8c4ceda46119d601ca2dbe` ya fue instalado:
+release #864, APPLY #1102 `SUCCESS/ACCEPTED`, controller `RUNNING/HEALTHY`,
+worker `CREATED/PID0`, SQLite estable y 8443 HTTP 200. El fallo #1108 compara
+CIDs históricos R186; no invalida ese despliegue. No repetir instalación,
+R186, APPLY #1085 ni recuperaciones cerradas.
+
+El titular prioriza optimizar y medir CI/CD: reutilizar R282, revisión y PR
+independiente, checks del SHA exacto al día con main y protecciones intactas.
+No publicar ni desplegar por cambios de pipeline/documentación. ADR 0297
+concentra diseño, métricas y límites; #417 conserva resultados por candidato.
+La ventana de 272 runs contiene **5 publicaciones**, además de 11 validaciones
+PR de release exitosas; no fueron 16 publicaciones. CI GREEN no es aceptación
+física ni funcional. Mantener estados implementado/verificado, sin prueba
+física, en rama, pendiente, bloqueado y reemplazado por separado.
+
+Después de CI/CD: reconciliar #12 y código existente, diseño funcional único,
+PRs focalizados y una promoción consolidada. Productores Queue-it/Boca,
+recibos posteriores START/STOP, actividad completa, eventos/cola/auto-stop,
+Telegram y formato 24 h siguen pendientes según R292. `SITE_URL` consistente
+no prueba navegación. SIMULATION_ONLY; sin navegación real Boca/Queue-it,
+reservas, compras ni recursos ajenos. Sólo Actions protegidas para el droplet,
+una operación a la vez; ninguna operación de host forma parte de R293.
+
 ## RCA R275 — una sola cronología de los recibos físicos (13-NOV-2026)
 
 El APPLY protegido [#1081](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43473805164)

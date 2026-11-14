@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.check_release_dispatch import DispatchError  # noqa: E402
@@ -104,15 +106,11 @@ def test_r96_admission_gates_exact_identity_and_three_runs() -> None:
 
 
 def test_r96_protected_pr_job_executes_the_new_incident_contract() -> None:
-    """A broken input gate must be caught before merge, never first on the host."""
-    flow = WORKFLOW.read_text(encoding="utf-8")
-    pr_only, _ = flow.split("  deploy:\n", 1)
-    step = pr_only.split(
-        "- name: Validate protected Cutover A, Option B ZIP and cleanup offline only", 1
-    )[1].split("- name: Validate protected official notice artifact import offline only", 1)[0]
-    assert "tests/test_r96_stage844_one_shot_workflow.py" in step
-    assert "tests/test_r96_stage844_evidence_gate.py" in step
-    assert "tests/test_r96_stage844_dispatch_gate.py" in step
+    assert_required_ci_covers(
+        "tests/test_r96_stage844_one_shot_workflow.py",
+        "tests/test_r96_stage844_evidence_gate.py",
+        "tests/test_r96_stage844_dispatch_gate.py",
+    )
 
 
 def test_r96_unique_marker_and_gate_precede_any_recovery_ssh() -> None:

@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 SCRIPT = ROOT / "scripts/check_cutover_observe_diagnostic.py"
@@ -179,12 +181,9 @@ def _step() -> str:
 
 
 def test_protected_cutover_review_executes_r85_observer_regressions() -> None:
-    """The deployment workflow must exercise its own changed Bash before SSH."""
-    workflow = WORKFLOW.read_text(encoding="utf-8")
-    heading = "      - name: Validate protected Cutover A, Option B ZIP and cleanup offline only\n"
-    assert workflow.count(heading) == 1
-    command = workflow.split(heading, 1)[1].split("\n      - name:", 1)[0]
-    assert "tests/test_r85_cutover_observe_provenance.py" in command
+    assert_required_ci_covers(
+        "tests/test_r85_cutover_observe_provenance.py",
+    )
 
 
 def _fake_ssh_env(tmp_path: Path, *, code: int, stdout: bytes = b"", stderr: bytes = b""):

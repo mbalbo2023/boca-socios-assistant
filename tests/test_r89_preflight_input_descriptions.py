@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/boca-first-deploy.yml"
 OPERATIONS = ROOT / "docs/OPERATIONS.md"
@@ -137,11 +139,9 @@ def test_one_shot_anti_replay_remains_before_ssh() -> None:
 
 
 def test_r89_guidance_regression_is_selected_by_protected_pr_validation() -> None:
-    workflow = _workflow()
-    marker = "      - name: Validate protected Cutover A, Option B ZIP and cleanup offline only\n"
-    assert workflow.count(marker) == 1
-    step = workflow.split(marker, 1)[1].split("\n      - name:", 1)[0]
-    assert step.count("tests/test_r89_preflight_input_descriptions.py") == 1
+    assert_required_ci_covers(
+        "tests/test_r89_preflight_input_descriptions.py",
+    )
 
 
 def _current_worker_guide() -> str:

@@ -1,4 +1,4 @@
-"""R245: an exact internal PR docs change may bypass disposable image probes only."""
+"""R245/R282: only an authenticated internal docs change may reduce CI scope."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ def _merged_pr(
     symlink: bool = False,
     executable: bool = False,
     empty: bool = False,
+    include_classifier: bool = True,
 ) -> tuple[Path, dict[str, str]]:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -36,10 +37,15 @@ def _merged_pr(
         "src/fixture.py": "VERSION = 1\n",
         "docs/ADR/baseline.md": "base\n",
         "docs/handoffs/old.md": "historical\n",
+        "docs/ADR/0159-protected-ops-postcutover-workflow.md": "contractual ADR\n",
     }.items():
         path = repo / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(value, encoding="utf-8")
+    if include_classifier:
+        helper = repo / "scripts/classify_exact_internal_pr_docs.py"
+        helper.parent.mkdir()
+        helper.write_bytes((ROOT / "scripts/classify_exact_internal_pr_docs.py").read_bytes())
     _git(repo, "add", "--all")
     _git(repo, "commit", "-qm", "base")
     base = _git(repo, "rev-parse", "HEAD")
@@ -78,7 +84,7 @@ def _merged_pr(
 
 
 def _classifier_body() -> str:
-    workflow = WORKFLOW.read_text(encoding="utf-8")
+    workflow = WORKFLOW.read_text(encoding="utf-8").split("  image:\n", 1)[1]
     marker = "      - name: Classify exact internal PR Markdown-only changes\n"
     assert marker in workflow, "Missing fail-closed image-build path classifier"
     step = workflow.split(marker, 1)[1].split("      - name:", 1)[0]
@@ -87,6 +93,7 @@ def _classifier_body() -> str:
 
 
 def _classify(repo: Path, context: dict[str, str]) -> tuple[bool, str]:
+    # Execute the real workflow shell against distinct committed base/head trees.
     output = repo / "output.txt"
     env = os.environ | context | {"GITHUB_OUTPUT": str(output)}
     result = subprocess.run(  # noqa: S603 - checked-in CI shell, synthetic Git repo
@@ -185,6 +192,45 @@ def test_empty_pr_diff_forces_full_ci(tmp_path: Path) -> None:
     assert not fast
 
 
+@pytest.mark.parametrize("with_code", [False, True])
+def test_candidate_classifier_cannot_exempt_its_own_change(tmp_path: Path, with_code: bool) -> None:
+    changed = {"scripts/classify_exact_internal_pr_docs.py": "print('true')\n"}
+    if with_code:
+        changed["src/fixture.py"] = "VERSION = 2\n"
+    repo, event = _merged_pr(tmp_path, changed)
+    fast, _ = _classify(repo, event)
+    assert not fast
+
+
+def test_missing_base_classifier_forces_full_ci(tmp_path: Path) -> None:
+    repo, event = _merged_pr(
+        tmp_path,
+        {
+            "docs/handoffs/next.md": "doc\n",
+            "scripts/classify_exact_internal_pr_docs.py": "print('true')\n",
+        },
+        include_classifier=False,
+    )
+    fast, _ = _classify(repo, event)
+    assert not fast
+
+
+def test_base_classifier_imports_ignore_candidate_python_paths(tmp_path: Path) -> None:
+    repo, event = _merged_pr(tmp_path, {"docs/handoffs/next.md": "doc\n"})
+    (repo / "scripts/re.py").write_text("raise AssertionError('candidate import')\n")
+    fast, _ = _classify(repo, event | {"PYTHONPATH": str(repo / "scripts")})
+    assert fast
+
+
+@pytest.mark.parametrize("content", ["changed contract\n", None])
+def test_test_consumed_adr_change_requires_full_ci(tmp_path: Path, content: str | None) -> None:
+    repo, event = _merged_pr(
+        tmp_path, {"docs/ADR/0159-protected-ops-postcutover-workflow.md": content}
+    )
+    fast, _ = _classify(repo, event)
+    assert not fast
+
+
 def test_missing_git_history_or_nonmerge_head_forces_full_ci(tmp_path: Path) -> None:
     repo, event = _merged_pr(tmp_path, {"docs/ADR/next.md": "doc\n"})
     _git(repo, "checkout", "-q", event["PR_HEAD_SHA"])
@@ -192,11 +238,33 @@ def test_missing_git_history_or_nonmerge_head_forces_full_ci(tmp_path: Path) -> 
     assert not fast
 
 
+@pytest.mark.parametrize("depth,expected_fast", [(2, True), (1, False)])
+def test_real_shallow_checkout_requires_exact_merge_parents(
+    tmp_path: Path, depth: int, expected_fast: bool
+) -> None:
+    repo, event = _merged_pr(tmp_path, {"docs/ADR/next.md": "doc\n"})
+    checkout = tmp_path / "shallow"
+    _git(
+        tmp_path,
+        "clone",
+        "--quiet",
+        "--no-local",
+        "--depth",
+        str(depth),
+        str(repo),
+        str(checkout),
+    )
+    assert _git(checkout, "rev-parse", "--is-shallow-repository") == "true"
+    fast, _ = _classify(checkout, event)
+    assert fast is expected_fast
+
+
 def test_required_image_context_and_all_real_probes_are_preserved_on_full_path() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     assert "  pull_request:" in workflow and "  push:\n    branches: [main]" in workflow
     assert "    name: image-build" in workflow
-    assert workflow.count("docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83") == 2
+    assert workflow.count("docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83") == 1
+    assert workflow.count("docker build --builder default --file Dockerfile.browser") == 1
     assert workflow.count("run: bash scripts/trivy_scan_image.sh") == 2
     image = workflow.split("  image:\n", 1)[1]
     steps = image.split("      - name: ")[1:]

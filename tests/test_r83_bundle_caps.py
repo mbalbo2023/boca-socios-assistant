@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import boca_protected_memfd_bootstrap as bootstrap  # noqa: E402
@@ -128,12 +130,9 @@ def test_transport_caps_are_separate_from_full_cutover_and_recovery() -> None:
 
 
 def test_protected_pr_gate_actually_runs_the_new_bundle_boundary_matrix() -> None:
-    workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text(encoding="utf-8")
-    header = "      - name: Validate protected Cutover A, Option B ZIP and cleanup offline only"
-    assert workflow.count(header) == 1
-    gate = workflow.split(header, 1)[1].split("\n      - name:", 1)[0]
-    assert "tests/test_r83_bundle_caps.py" in gate
-    assert "uv run pytest -q" in gate
+    assert_required_ci_covers(
+        "tests/test_r83_bundle_caps.py",
+    )
 
 
 def test_worker_archive_has_exactly_seven_allowlisted_entries_and_no_other_dispatch(

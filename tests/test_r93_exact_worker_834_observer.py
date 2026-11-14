@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -118,9 +120,10 @@ def test_r93_834_identity_closed_and_recovery_not_enabled() -> None:
 
 def test_r93_834_workflow_gate_cannot_dispatch_unrelated_mutation() -> None:
     workflow = (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
-    assert (
-        "uv run pytest -q tests/test_r86_exact_worker_819_observer.py tests/test_r90_exact_worker_827_observer.py tests/test_r93_exact_worker_834_observer.py"
-        in workflow
+    assert_required_ci_covers(
+        "tests/test_r86_exact_worker_819_observer.py",
+        "tests/test_r90_exact_worker_827_observer.py",
+        "tests/test_r93_exact_worker_834_observer.py",
     )
     case = workflow.split("            cutover-a-worker-inspect)\n", 1)[1].split(
         "              ;;", 1

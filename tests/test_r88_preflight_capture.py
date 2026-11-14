@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "boca-first-deploy.yml"
 HOST_STEP = "Preflight exact dual GHCR image and rootless worker boundary without PREPARE"
@@ -273,12 +275,7 @@ def test_r88_denied_dispatch_stays_pre_ssh_and_without_host_claim(tmp_path: Path
 
 
 def test_r88_preflight_contract_test_is_required_by_protected_pr_validation() -> None:
-    workflow = WORKFLOW.read_text(encoding="utf-8")
-    heading = "      - name: Validate protected Cutover A, Option B ZIP and cleanup offline only\n"
-    assert workflow.count(heading) == 1
-    fragment = workflow.split(heading, 1)[1].split("\n      - name:", 1)[0]
-    for selector in (
+    assert_required_ci_covers(
         "tests/test_r88_preflight_capture.py",
         "tests/test_r88_stop_diagnostics.py",
-    ):
-        assert fragment.count(selector) == 1, f"missing protected R88 regression: {selector}"
+    )

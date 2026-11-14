@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/boca-first-deploy.yml"
 
@@ -49,7 +51,8 @@ def test_one_upgrade_reuses_existing_obs_and_release_and_runner_only_v2() -> Non
 
 
 def test_pr_validation_includes_new_provenance_contract_tests() -> None:
-    text = WORKFLOW.read_text(encoding="utf-8")
-    assert "tests/test_r247_runner_current_pair_v2.py" in text
-    assert "tests/test_r247_protected_current_pair_bundle.py" in text
-    assert "tests/test_r247_protected_current_pair_workflow.py" in text
+    assert_required_ci_covers(
+        "tests/test_r247_runner_current_pair_v2.py",
+        "tests/test_r247_protected_current_pair_bundle.py",
+        "tests/test_r247_protected_current_pair_workflow.py",
+    )

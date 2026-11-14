@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
@@ -188,10 +190,7 @@ def test_r86_workflow_reuses_bounded_readonly_path_and_rejects_other_modes() -> 
     assert 'test -z "$BOCA_RELEASE_RUN_ID"' in case
     assert 'test -z "$BOCA_SOURCE_SHA_SUBMITTED"' in case
     assert "BOCA-R86-WORKER-819-READONLY" in workflow
-    validation = workflow.split(
-        "      - name: Validate protected Cutover A, Option B ZIP and cleanup offline only", 1
-    )[1].split("\n      - name:", 1)[0]
-    assert "tests/test_r86_exact_worker_819_observer.py" in validation
+    assert_required_ci_covers("tests/test_r86_exact_worker_819_observer.py")
     inspect = workflow.split(
         "      - name: Inspect one failed Boca worker probe READ_ONLY by exact identity", 1
     )[1]

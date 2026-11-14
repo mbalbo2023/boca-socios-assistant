@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 WORKFLOW = (
     Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
 ).read_text(encoding="utf-8")
@@ -60,11 +62,9 @@ def test_w1_can_only_run_bounded_host_only_payload_and_sanitize_receipt() -> Non
 
 
 def test_w1_new_tests_are_part_of_pr_validation() -> None:
-    validation = _step("Validate W1 one-start evidence and isolated bounded ZIP offline only")
-    for name in (
-        "test_host_worker_w1.py",
-        "test_worker_w1_dispatch.py",
-        "test_worker_w1_bundle.py",
-        "test_worker_w1_workflow.py",
-    ):
-        assert name in validation
+    assert_required_ci_covers(
+        "tests/test_host_worker_w1.py",
+        "tests/test_worker_w1_dispatch.py",
+        "tests/test_worker_w1_bundle.py",
+        "tests/test_worker_w1_workflow.py",
+    )

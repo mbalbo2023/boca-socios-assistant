@@ -16,6 +16,8 @@ from typing import Any
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
@@ -411,11 +413,9 @@ def test_r87_actual_host_bash_uses_private_file_limit_and_one_fake_ssh(
 
 
 def test_r87_pr_validation_exercises_all_code_only_paths() -> None:
-    block = _step_block("Validate protected Cutover A, Option B ZIP and cleanup offline only")
-    for target in (
+    assert_required_ci_covers(
         "tests/test_r87_exact_worker_819_recovery.py",
         "tests/test_r87_recovery_bundle.py",
         "tests/test_r87_recovery_dispatch.py",
         "tests/test_r87_recovery_workflow.py",
-    ):
-        assert block.count(target) == 1
+    )

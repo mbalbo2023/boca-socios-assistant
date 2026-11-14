@@ -8,6 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts import boca_linger_readonly as probe  # noqa: E402 - source-layout script
 
@@ -453,9 +455,9 @@ def test_workflow_uses_only_existing_readonly_selector() -> None:
     inspector = inspector.split("      - name:", 1)[0]
     assert "steps.boca_linger_metadata.outcome == 'success'" in inspector
     assert "steps.boca_linger_metadata.outputs.candidate" in workflow
-    assert (
-        "uv run pytest -q tests/test_r124_linger_readonly.py tests/test_r124_linger_receipt_verify.py"
-        in workflow
+    assert_required_ci_covers(
+        "tests/test_r124_linger_readonly.py",
+        "tests/test_r124_linger_receipt_verify.py",
     )
     assert not any(
         word in step

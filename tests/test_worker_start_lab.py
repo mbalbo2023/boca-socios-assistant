@@ -20,7 +20,9 @@ def test_image_job_executes_capture_lab_after_build() -> None:
     image_job = workflow.split("  image:\n", 1)[1]
     command = "python3 -m scripts.check_worker_start_capture"
     assert command in image_job
-    assert image_job.index("docker build --file Dockerfile.browser") < image_job.index(command)
+    assert image_job.index("docker build --builder default --file Dockerfile.browser") < (
+        image_job.index(command)
+    )
     assert "runs-on: ubuntu-24.04" in image_job[: image_job.index(command)]
     assert command not in (ROOT / ".github/workflows/boca-first-deploy.yml").read_text()
 

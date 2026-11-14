@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "boca-first-deploy.yml"
 VERIFY_STEP = "Require exact Boca rootless worker preflight receipt and bounded cleanup"
@@ -413,10 +415,8 @@ def test_r83_verifier_is_hostless_and_remains_one_protected_operation() -> None:
 
 
 def test_r83_preflight_receipt_regressions_run_in_existing_pr_validation_gate() -> None:
-    workflow = WORKFLOW.read_text(encoding="utf-8")
-    marker = "      - name: Validate protected Cutover A, Option B ZIP and cleanup offline only\n"
-    assert workflow.count(marker) == 1
-    step = workflow.split(marker, 1)[1].split("\n      - name:", 1)[0]
-    assert step.count("tests/test_r83_preflight_workflow.py") == 1
-    assert "tests/test_r82_recovery_workflow.py" in step
-    assert "tests/test_r80_recovery_gate.py" in step
+    assert_required_ci_covers(
+        "tests/test_r83_preflight_workflow.py",
+        "tests/test_r82_recovery_workflow.py",
+        "tests/test_r80_recovery_gate.py",
+    )

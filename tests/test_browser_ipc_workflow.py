@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/boca-first-deploy.yml"
 
@@ -356,13 +358,15 @@ def test_failed_browser_cleanup_script_attempts_one_bounded_ssh_only(
 def test_browser_ci_covers_new_gate_and_legacy_contract_separately() -> None:
     workflow = _workflow()
     validation = workflow.split("  pr-validation:\n", 1)[1].split("  deploy:\n", 1)[0]
-    assert "tests/test_browser_ipc_workflow.py" in validation
-    assert "tests/test_beta_browser_deploy_contract.py" in validation
-    assert "tests/test_host_browser_ipc_file_stage.py" in validation
-    assert "tests/test_host_browser_ipc_install.py" in validation
-    assert "tests/test_host_browser_ipc_cleanup.py" in validation
-    assert "tests/test_host_browser_ipc_cross_contract.py" in validation
-    assert "tests/test_beta_deploy_contract.py" in validation
+    assert_required_ci_covers(
+        "tests/test_browser_ipc_workflow.py",
+        "tests/test_beta_browser_deploy_contract.py",
+        "tests/test_host_browser_ipc_file_stage.py",
+        "tests/test_host_browser_ipc_install.py",
+        "tests/test_host_browser_ipc_cleanup.py",
+        "tests/test_host_browser_ipc_cross_contract.py",
+        "tests/test_beta_deploy_contract.py",
+    )
     assert "scripts/check_repo_policy.py" in validation
     assert "Validate optional served BETA Compose model" in validation
     assert "Validate opt-in dual-service browser IPC Compose model offline" in validation

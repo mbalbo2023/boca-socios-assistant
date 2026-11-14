@@ -1,5 +1,33 @@
 # Development and merge policy
 
+## 2026-11-13 — prioridad CI/CD R293 y certificación física vigente R291
+
+La continuación autorizada por el titular en
+[#417/R293](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6869386141)
+prioriza medir y simplificar CI/CD antes de nuevas funciones o promociones.
+Reutilizar R282 existente; no recrear módulos, pruebas, imágenes ni
+recuperaciones ya certificadas. La instalación de `0ebecb69a6bc35b72a8c4ceda46119d601ca2dbe`
+fue aceptada por APPLY #1102 y R291; R186 y #1085 son historia cerrada.
+Una mejora de pipeline/documentación no requiere otra release ni despliegue.
+
+Cada alcance tiene un escritor; paralelizar auditorías independientes y
+serializar operaciones de host mediante la Action protegida existente.
+Antes de crear o modificar: buscar implementación, SHA, validación previa,
+dependencias y trabajo faltante; registrar decisión y evidencia en GitHub.
+Usar pruebas focalizadas localmente y la suite requerida del candidato exacto
+en Actions. Mantener `quality-and-tests` e `image-build`, ruleset estricto,
+checks GitHub Actions y revisión técnica; nunca bypass ni verde por omisión
+de un precheck fallido. Clasificador documental desde base confiable,
+historia insuficiente => FULL; documentos consumidos por tests => FULL.
+
+Las métricas separan PR, push, lectura, publicación y APPLY, así como duración
+de pared y tiempo agregado de jobs. Medir también el coste secuencial de R282;
+no atribuir aceleración al gate sin datos. ADR 0297 concentra el plan y la
+línea base; #417 registra resultados de Actions sin otro commit sólo para
+anotar tiempos. SIMULATION_ONLY, sin navegación real Boca/Queue-it ni
+operaciones sobre aplicaciones ajenas. La aceptación Samsung es posterior
+y distinta de CI y certificación física.
+
 ## 2026-11-12 — compatibilidad de formularios móviles en el panel 8443
 
 Por autorización específica del titular para resolver `Origen no autorizado`

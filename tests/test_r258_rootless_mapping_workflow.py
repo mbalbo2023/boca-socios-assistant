@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 WORKFLOW = (
     Path(__file__).resolve().parents[1] / ".github/workflows/boca-first-deploy.yml"
 ).read_text(encoding="utf-8")
@@ -116,10 +118,10 @@ def test_rootless_mapping_uses_exact_single_readonly_ssh_and_verified_receipt() 
 
 
 def test_rootless_mapping_workflow_offline_qa_is_pr_readonly() -> None:
-    step = _step("Validate Boca installed pair observer offline only")
-    assert "tests/test_r258_rootless_mapping_workflow.py" in step
-    assert "test_host_boca_rootless_mapped_custody.py" in step
-    assert "if: inputs.operation" not in step
+    assert_required_ci_covers(
+        "tests/test_r258_rootless_mapping_workflow.py",
+        "tests/test_host_boca_rootless_mapped_custody.py",
+    )
 
 
 def test_rootless_mapping_failure_reports_only_authenticated_fixed_category() -> None:

@@ -16,6 +16,8 @@ from typing import Any
 
 import pytest
 
+from test_ci_parallel_pytest_contract import assert_required_ci_covers
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
@@ -277,10 +279,8 @@ def test_r94_historical_recovery_zip_modes_and_prod_pin_remain(tmp_path: Path) -
 
 
 def test_r94_protected_pr_validation_includes_all_three_new_suites() -> None:
-    block = _step_block("Validate protected Cutover A, Option B ZIP and cleanup offline only")
-    for path in (
+    assert_required_ci_covers(
         "tests/test_r94_worker_834_recovery.py",
         "tests/test_r94_worker_834_dispatch.py",
         "tests/test_r94_worker_834_workflow.py",
-    ):
-        assert block.count(path) == 1
+    )
