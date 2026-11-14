@@ -80,7 +80,7 @@ def test_child_uses_root_owned_readonly_whitelisted_fixture(tmp_path: Path) -> N
     assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o755
     assert fixture_script == tmp_path / "scripts/check_worker_ipc_linux.py"
     assert fixture_script.read_bytes() == (ROOT / "scripts/check_worker_ipc_linux.py").read_bytes()
-    assert len(smoke._FIXTURE_FILES) == 11
+    assert len(smoke._FIXTURE_FILES) == 13
     assert all(
         "synthetic.py" not in path and "ipc_worker.py" not in path for path in smoke._FIXTURE_FILES
     )
@@ -112,6 +112,47 @@ def test_exited_worker_reports_fixed_bind_substage_without_private_stderr(
     monkeypatch.setattr(smoke.subprocess, "Popen", lambda *_, **__: ExitedChild())
     with pytest.raises(smoke.SmokeFailure, match="^WORKER_BIND_CHILD_EXIT$"):
         smoke._run_harness()
+
+
+def test_staged_child_imports_with_stdlib_only_without_socket_or_browser(tmp_path: Path) -> None:
+    """Catch missing transport dependencies before the dropped-UID process exits."""
+    fixture_script = smoke._stage_fixture(tmp_path)
+    code = """
+import runpy
+import sys
+
+def deny_effects(event, arguments):
+    if event in {"socket.__new__", "subprocess.Popen", "os.system"}:
+        raise AssertionError("IPC fixture import attempted an external effect")
+
+sys.addaudithook(deny_effects)
+sys.path.insert(0, sys.argv[1])
+namespace = runpy.run_path(sys.argv[2], run_name="ipc_fixture_import_only")
+assert namespace["UnixSyntheticWorker"].__module__ == "boca_socios.browser.ipc_server"
+assert namespace["UnixSyntheticBrowser"].__module__ == "boca_socios.browser.ipc_client"
+assert not any(
+    name == "playwright" or name.startswith("playwright.")
+    or name in {
+        "boca_socios.browser.synthetic",
+        "boca_socios.browser.ipc_worker",
+        "boca_socios.browser.automatic_observer",
+    }
+    for name in sys.modules
+)
+print("BOCA_WORKER_IPC_IMPORT state=PASS scope=STDLIB_ONLY")
+"""
+    result = subprocess.run(  # noqa: S603 - isolated Python with only staged, reviewed sources
+        [sys.executable, "-I", "-S", "-B", "-c", code, str(tmp_path / "src"), str(fixture_script)],
+        cwd=tmp_path,
+        env=smoke._child_env(tmp_path / "src"),
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    assert result.stdout == "BOCA_WORKER_IPC_IMPORT state=PASS scope=STDLIB_ONLY\n"
 
 
 def test_hosted_runner_uses_root_owned_ubuntu_python_without_toolcache_loader_env() -> None:
