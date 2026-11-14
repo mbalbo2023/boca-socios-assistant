@@ -1,9 +1,9 @@
-"""Strict Boca-only read-side adapter for a successor's post-cleanup receipt.
+"""Strict Boca-only read-side adapter for a successor's post-cleanup receipt."""
 
-This module never promotes a synthetically built snapshot to physical proof.
-All missing host producers remain NO_GO. No secret, database, browser process,
-or third-party endpoint is opened; file custody uses O_PATH metadata only.
-"""
+# This module never promotes a synthetically built snapshot to physical proof.
+# All missing host producers remain NO_GO. No secret, database, browser process,
+# or third-party endpoint is opened; file custody uses O_PATH metadata only.
+#
 
 from __future__ import annotations
 
@@ -86,16 +86,16 @@ def _attest_live_pair(expected: postflight.PostflightExpected, lease: cleanup.Bo
 
 @dataclass(frozen=True, slots=True)
 class ProductionSiteUrlWitness:
-    """Read the real controller's saved URL and worker mirror as digests only.
+    """Read the real controller's saved URL and worker mirror as digests only."""
 
-    Rootless volume files may be owned by remapped subuids and are not safe to
-    infer from the host user's filesystem. After fresh pair/binding attestation
-    we run two fixed, bounded, **read-only** commands as the controller's
-    already-configured UID10001. Neither the URL nor credentials cross Docker
-    stdout; any extra output or changed digest refuses the witness. No worker
-    START, browser, Internet or ticket operation occurs. This is still not a
-    physical passkey login or proof the CREATED worker has run the URL.
-    """
+    # Rootless volume files may be owned by remapped subuids and are not safe to
+    # infer from the host user's filesystem. After fresh pair/binding attestation
+    # we run two fixed, bounded, **read-only** commands as the controller's
+    # already-configured UID10001. Neither the URL nor credentials cross Docker
+    # stdout; any extra output or changed digest refuses the witness. No worker
+    # START, browser, Internet or ticket operation occurs. This is still not a
+    # physical passkey login or proof the CREATED worker has run the URL.
+    #
 
     expected: postflight.PostflightExpected
     lease: cleanup.BocaJobLease
@@ -165,14 +165,14 @@ class ProductionSiteUrlWitness:
 
 @dataclass(frozen=True, slots=True)
 class ProductionPrivatePanelHealthWitness:
-    """Bounded 8443 GET-only HEALTH, never a fabricated passkey login.
+    """Bounded 8443 GET-only HEALTH, never a fabricated passkey login."""
 
-    `/healthz` verifies the running controller, the synthetic SQLite event
-    and owner-session schema. `/ingresar` creates an owner challenge, so this
-    read-only probe deliberately never opens that path and cannot satisfy
-    `PostflightSnapshot.panel_loopback_probe=LOGIN_HTTP_200`. Actual owner
-    passkey acceptance must be recorded by a separate authenticated action.
-    """
+    # `/healthz` verifies the running controller, the synthetic SQLite event
+    # and owner-session schema. `/ingresar` creates an owner challenge, so this
+    # read-only probe deliberately never opens that path and cannot satisfy
+    # `PostflightSnapshot.panel_loopback_probe=LOGIN_HTTP_200`. Actual owner
+    # passkey acceptance must be recorded by a separate authenticated action.
+    #
 
     expected: postflight.PostflightExpected
     lease: cleanup.BocaJobLease
@@ -269,13 +269,13 @@ def _file_inode_sha256(root: Path, volume: str, name: str) -> str:
 def capture_storage_fingerprints(
     rootless_docker_root: Path = _ROOT, *, trusted_root: Path = _ROOT
 ) -> PostflightStorage:
-    """Read only three exact file inodes; never inspect DB/key/session bytes.
+    """Read only three exact file inodes; never inspect DB/key/session bytes."""
 
-    The protected host caller MUST first attest Boca-only rootless DockerRootDir,
-    each named volume label/mount, and controller-only data/key/owner mounts.
-    Production default refuses any alternative root. Tests may inject a private
-    scratch trusted root to exercise no-follow OS behavior without Docker.
-    """
+    # The protected host caller MUST first attest Boca-only rootless DockerRootDir,
+    # each named volume label/mount, and controller-only data/key/owner mounts.
+    # Production default refuses any alternative root. Tests may inject a private
+    # scratch trusted root to exercise no-follow OS behavior without Docker.
+    #
     try:
         if (
             not isinstance(rootless_docker_root, Path)
@@ -299,13 +299,13 @@ def _read_rootless_identity() -> tuple[int, int]:
 
 @dataclass(frozen=True, slots=True)
 class ProductionPrivateStorageReader:
-    """Keep the existing Boca volume attestor injected, not duplicated.
+    """Keep the existing Boca volume attestor injected, not duplicated."""
 
-    The protected caller must inject its already-reviewed immutable-root,
-    mount and volume-label check under the same lease. The huge initial host
-    installer is deliberately NOT imported into the bounded successor ZIP.
-    This class fails closed if the trusted attestor is unavailable.
-    """
+    # The protected caller must inject its already-reviewed immutable-root,
+    # mount and volume-label check under the same lease. The huge initial host
+    # installer is deliberately NOT imported into the bounded successor ZIP.
+    # This class fails closed if the trusted attestor is unavailable.
+    #
 
     volume_attestor: Callable[[], None] | None = None
     expected: postflight.PostflightExpected | None = None
@@ -357,13 +357,13 @@ def _monitor_time(value: object) -> datetime:
 
 
 def parse_private_monitor_metadata(raw: bytes) -> tuple[str, int]:
-    """Project only safe owner-authenticated, read-only *metadata*.
+    """Project only safe owner-authenticated, read-only *metadata*."""
 
-    Accept exactly the existing private `/monitor/tokens.json` schema; never
-    deserialize an extra token, URL, member ID, bearer or cookie field. This
-    parser DOES NOT authenticate the owner or create an HTTP session, and is
-    not an independent production witness without its protected producer.
-    """
+    # Accept exactly the existing private `/monitor/tokens.json` schema; never
+    # deserialize an extra token, URL, member ID, bearer or cookie field. This
+    # parser DOES NOT authenticate the owner or create an HTTP session, and is
+    # not an independent production witness without its protected producer.
+    #
     try:
         if type(raw) is not bytes or not 0 < len(raw) <= 1024:
             raise _fail()
@@ -397,15 +397,15 @@ def parse_private_monitor_metadata(raw: bytes) -> tuple[str, int]:
 
 @dataclass(frozen=True, slots=True)
 class ProductionPrivateMonitorMetadataWitness:
-    """Fail-closed projection of separately authenticated owner metadata.
+    """Fail-closed projection of separately authenticated owner metadata."""
 
-    No unauthenticated GET, passkey bypass, Chrome cookie or fabricated empty
-    monitor is available here. The protected caller must supply a genuinely
-    owner-authenticated, independently witnessed snapshot producer. A normal
-    `/monitor/tokens.json` GET may renew a session cookie, so IT CANNOT be
-    characterized as wholly mutation-free by this module. This never proves
-    passkey LOGIN_HTTP_200 or token extraction.
-    """
+    # No unauthenticated GET, passkey bypass, Chrome cookie or fabricated empty
+    # monitor is available here. The protected caller must supply a genuinely
+    # owner-authenticated, independently witnessed snapshot producer. A normal
+    # `/monitor/tokens.json` GET may renew a session cookie, so IT CANNOT be
+    # characterized as wholly mutation-free by this module. This never proves
+    # passkey LOGIN_HTTP_200 or token extraction.
+    #
 
     expected: postflight.PostflightExpected
     lease: cleanup.BocaJobLease
@@ -441,15 +441,15 @@ def _read_retained_graph(
 
 @dataclass(frozen=True, slots=True)
 class PostflightReadSources:
-    """Host boundary; missing required producers fail closed per profile.
+    """Host boundary; missing required producers fail closed per profile."""
 
-    These producers are not empty-value defaults. They must come from the
-    protected Boca-only run, with independently attested read-only I/O.
-    Default legacy postflight needs owner login and monitor readers; explicit
-    technical-only postflight needs genuine health but never calls either.
-    GET `/ingresar` creates a passkey challenge and does not count as a
-    mutation-free login probe. No API here supplies that false witness.
-    """
+    # These producers are not empty-value defaults. They must come from the
+    # protected Boca-only run, with independently attested read-only I/O.
+    # Default legacy postflight needs owner login and monitor readers; explicit
+    # technical-only postflight needs genuine health but never calls either.
+    # GET `/ingresar` creates a passkey challenge and does not count as a
+    # mutation-free login probe. No API here supplies that false witness.
+    #
 
     pair_reader: Callable[[str], bytes] = pair.observe
     binding_reader: Callable[[cleanup.BocaJobLease], OnDemandInstallation] = (
@@ -472,16 +472,16 @@ class PostflightReadSources:
 
 @dataclass(frozen=True, slots=True)
 class ProductionPostflightSnapshotReader:
-    """One fresh, physical Boca postflight snapshot under the existing lease.
+    """One fresh, physical Boca postflight snapshot under the existing lease."""
 
-    `postflight.capture_postflight` calls this reader twice and compares all
-    values; do not independently acquire or release the lease. The default
-    legacy profile still requires independently authenticated owner login and
-    monitor sources. Explicit `technical_only=True` selects the distinct
-    non-promoting health profile for `capture_technical_postflight`: no owner
-    session is opened and zero monitor observations describe this observer's
-    lack of monitoring, not live provider state.
-    """
+    # `postflight.capture_postflight` calls this reader twice and compares all
+    # values; do not independently acquire or release the lease. The default
+    # legacy profile still requires independently authenticated owner login and
+    # monitor sources. Explicit `technical_only=True` selects the distinct
+    # non-promoting health profile for `capture_technical_postflight`: no owner
+    # session is opened and zero monitor observations describe this observer's
+    # lack of monitoring, not live provider state.
+    #
 
     expected: postflight.PostflightExpected
     sources: PostflightReadSources

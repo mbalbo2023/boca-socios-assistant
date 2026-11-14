@@ -311,6 +311,24 @@ async def deliver_once(
     return "API_ACCEPTED"
 
 
+def require_legacy_custody(directory: Path) -> None:
+    """Keep legacy argv exclusive to a verified V1 pair, without a V2 downgrade."""
+    from boca_socios import telegram_bootstrap as bootstrap
+
+    parent = bootstrap._directory(directory, bootstrap.UID)
+    try:
+        if set(os.listdir(parent)) != {
+            bootstrap.PRIVATE_KEY,
+            bootstrap.TOKEN_FILE,
+            bootstrap.CHAT_FILE,
+        }:
+            # Includes incomplete commits and broken symlinks: no exists()
+            # fallback can turn V2 evidence into an apparently legacy pair.
+            raise OneShotError("legacy_custody_required")
+    finally:
+        os.close(parent)
+
+
 def verified_v2_assertion(directory: Path, *, expected_source_sha: str) -> tuple[int, str]:
     """Derive private sender pins only after exact-source V2 custody verification."""
     from boca_socios import telegram_bootstrap as bootstrap
@@ -359,13 +377,13 @@ def main(argv: tuple[str, ...] | None = None) -> int:
             raise OneShotError("simulation_boundary_unavailable")
         require_effective_limits()
         verify_custody()
-        verified_bot, verified_hmac = verified_v2_assertion(
-            TOKEN.parent, expected_source_sha=source_sha
-        )
         if v2_mode:
+            verified_bot, verified_hmac = verified_v2_assertion(
+                TOKEN.parent, expected_source_sha=source_sha
+            )
             bot_id, chat_hmac = str(verified_bot), verified_hmac
-        elif (verified_bot, verified_hmac) != (int(bot_id), chat_hmac):
-            raise OneShotError("v2_owner_assertion_mismatch")
+        else:
+            require_legacy_custody(TOKEN.parent)
         transport = TelegramTransport(TOKEN, CHAT)
         if phase == "verify-ready":
             if attempt_id is None:

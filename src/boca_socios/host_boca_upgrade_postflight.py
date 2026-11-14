@@ -1,25 +1,25 @@
-"""Pure post-cleanup attestation for a *successor* Boca dual-pair upgrade.
+"""Pure post-cleanup attestation for a *successor* Boca dual-pair upgrade."""
 
-The caller obtains the already-finalized cleanup V2 receipt and independent
-read-only host snapshots *after* cleanup, under the SAME still-held Boca job
-lease. No production reader, lease acquisition, Docker, browser, SQLite read,
-network request, secret access, journal write, or deploy entrypoint lives here.
+# The caller obtains the already-finalized cleanup V2 receipt and independent
+# read-only host snapshots *after* cleanup, under the SAME still-held Boca job
+# lease. No production reader, lease acquisition, Docker, browser, SQLite read,
+# network request, secret access, journal write, or deploy entrypoint lives here.
 
-Neither legacy `TECHNICAL_ACCEPT` nor the isolated R252 schema-2
-`TECHNICAL_PROOF_ONLY` is owner/passkey acceptance: the worker must remain
-CREATED/PID0/Exit0, so its URL mirror is armed for its NEXT explicit start,
-not proven consumed. Real Chrome passkey verification and live monitor producer
-connectivity cannot be inferred from either receipt; BETA remains NO_GO.
+# Neither legacy `TECHNICAL_ACCEPT` nor the isolated R252 schema-2
+# `TECHNICAL_PROOF_ONLY` is owner/passkey acceptance: the worker must remain
+# CREATED/PID0/Exit0, so its URL mirror is armed for its NEXT explicit start,
+# not proven consumed. Real Chrome passkey verification and live monitor producer
+# connectivity cannot be inferred from either receipt; BETA remains NO_GO.
 
-Trust boundaries: `release` must come from the authenticated dual R242 runner;
-`read_snapshot` must reuse the existing Boca-only R177/R188/SQLite/control
-attestors rather than constructing fields from a workflow form; `verify_lease`
-must be `host_boca_cleanup.verify_protected_boca_job_lease` in the protected
-host runner. Host must persist/read back these returned canonical bytes via
-O_EXCL/fsync before releasing that same lease. Merely calling this function or
-constructing its dataclasses never authorizes a deploy or proves a physical
-host operation.
-"""
+# Trust boundaries: `release` must come from the authenticated dual R242 runner;
+# `read_snapshot` must reuse the existing Boca-only R177/R188/SQLite/control
+# attestors rather than constructing fields from a workflow form; `verify_lease`
+# must be `host_boca_cleanup.verify_protected_boca_job_lease` in the protected
+# host runner. Host must persist/read back these returned canonical bytes via
+# O_EXCL/fsync before releasing that same lease. Merely calling this function or
+# constructing its dataclasses never authorizes a deploy or proves a physical
+# host operation.
+#
 
 from __future__ import annotations
 
@@ -95,11 +95,11 @@ class PostflightBinding:
 
 @dataclass(frozen=True, slots=True)
 class PostflightExpected:
-    """Authenticated target coordinates and PRE-UPGRADE permanent file inodes.
+    """Authenticated target coordinates and PRE-UPGRADE permanent file inodes."""
 
-    `cleanup_receipt` must be created by the FINAL cleanup V2 operation, not a
-    precommit prediction or a receipt from an earlier workflow attempt.
-    """
+    # `cleanup_receipt` must be created by the FINAL cleanup V2 operation, not a
+    # precommit prediction or a receipt from an earlier workflow attempt.
+    #
 
     plan: PairCoordinates
     release: adapters.ReleaseEvidence
@@ -117,12 +117,12 @@ class PostflightExpected:
 
 @dataclass(frozen=True, slots=True)
 class PostflightSnapshot:
-    """Injectable post-cleanup host witness; never raw URLs, secrets, or PII.
+    """Injectable post-cleanup host witness; never raw URLs, secrets, or PII."""
 
-    A protected producer must check owner/rootless, exact binding & mounts,
-    read only inode metadata and SITE_URL fingerprints, then give R177's strict
-    already-verified pair receipt and the durable cleanup-file readback digest.
-    """
+    # A protected producer must check owner/rootless, exact binding & mounts,
+    # read only inode metadata and SITE_URL fingerprints, then give R177's strict
+    # already-verified pair receipt and the durable cleanup-file readback digest.
+    #
 
     pair_receipt: bytes
     binding: PostflightBinding
@@ -403,12 +403,12 @@ def capture_postflight(
     read_snapshot: SnapshotReader | None,
     verify_lease: LeaseVerifier | None,
 ) -> bytes:
-    """Double-capture post-CLEANUP state under the SAME externally held lease.
+    """Double-capture post-CLEANUP state under the SAME externally held lease."""
 
-    Only the protected run may inject the actual lease verifier and read-only
-    observer. No callbacks default to host commands. This function does not
-    persist; the protected caller must durable-fsync/readback returned bytes.
-    """
+    # Only the protected run may inject the actual lease verifier and read-only
+    # observer. No callbacks default to host commands. This function does not
+    # persist; the protected caller must durable-fsync/readback returned bytes.
+    #
     return _capture_postflight(
         expected,
         lease,
@@ -425,12 +425,12 @@ def capture_technical_postflight(
     read_snapshot: SnapshotReader | None,
     verify_lease: LeaseVerifier | None,
 ) -> bytes:
-    """Versioned technical health proof; never owner/BETA acceptance.
+    """Versioned technical health proof; never owner/BETA acceptance."""
 
-    The read-only producer must supply true loopback /healthz evidence and
-    intentionally must not open a monitor or owner authentication session.
-    Protected caller remains responsible for durable, same-lease persistence.
-    """
+    # The read-only producer must supply true loopback /healthz evidence and
+    # intentionally must not open a monitor or owner authentication session.
+    # Protected caller remains responsible for durable, same-lease persistence.
+    #
     return _capture_postflight(
         expected,
         lease,
@@ -483,12 +483,12 @@ def _capture_postflight(
 
 
 def verify_postflight(raw: bytes, expected: PostflightExpected) -> bytes:
-    """Independent exact-schema verifier; never upgrades BETA to GREEN.
+    """Independent exact-schema verifier; never upgrades BETA to GREEN."""
 
-    Offline verification consumes the previously authenticated target and
-    durable final CLEANUP receipt supplied by the protected workflow. It is
-    integrity validation, NOT independent evidence of a real host capture.
-    """
+    # Offline verification consumes the previously authenticated target and
+    # durable final CLEANUP receipt supplied by the protected workflow. It is
+    # integrity validation, NOT independent evidence of a real host capture.
+    #
     return _verify_postflight(raw, expected, technical_only=False)
 
 

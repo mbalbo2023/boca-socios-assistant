@@ -28,6 +28,7 @@ from boca_socios.notify.telegram_transport import TelegramSender, TelegramTransp
 from boca_socios.telegram_bootstrap import verify as verify_custody
 from boca_socios.telegram_one_shot import (
     require_effective_limits,
+    require_legacy_custody,
     verified_v2_assertion,
     verify_ready,
 )
@@ -101,13 +102,13 @@ def main(
         validate_worker_environment(env)
         require_effective_limits()
         verify_custody()
-        verified_bot, verified_hmac = verified_v2_assertion(
-            _TOKEN.parent, expected_source_sha=source_sha
-        )
         if v2_mode:
+            verified_bot, verified_hmac = verified_v2_assertion(
+                _TOKEN.parent, expected_source_sha=source_sha
+            )
             bot_id, chat_hmac = str(verified_bot), verified_hmac
-        elif (verified_bot, verified_hmac) != (int(bot_id), chat_hmac):
-            raise ValueError("Telegram V2 custody mismatch")
+        else:
+            require_legacy_custody(_TOKEN.parent)
         transport = TelegramTransport(_TOKEN, _DESTINATION)
         if attempt_id is None:
             verify_ready(_DATABASE, transport, source_sha, int(bot_id), chat_hmac)

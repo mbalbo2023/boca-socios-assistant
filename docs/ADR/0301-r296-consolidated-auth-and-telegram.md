@@ -193,6 +193,65 @@ observó el binding. La prueba aislada de lease denegada demuestra cero lecturas
 del binding; otra prueba SIGTERM ejercita la restauración por la fase conocida.
 Una pérdida abrupta no sustituye el procedimiento explícito de recuperación.
 
+### RCA del primer SHA publicado y corrección focal
+
+[CI #1249](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43629118663)
+del SHA `10aa095358af2ea849d31a438673e18ff2824a89` terminó FAILURE:
+7 failed, 8945 passed y 34 subtests en 141.67 s; también falló el laboratorio
+aislado final del sender. Sus 285 s totales no acreditan una mejora de tiempos.
+El [RCA](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6882625452)
+y su [ampliación de compatibilidad](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6882639076)
+se registraron antes de corregir.
+
+1. La cifra pair anterior correspondía a placeholders de 144 bytes. Los ocho
+   recibos autenticados R247 suman 8240 bytes: el paquete real alcanzaba
+   1456353, superando por 6353 el umbral que preserva la reserva. La medición
+   anterior de variantes no reemplazaba este caso real ni la prueba de estrés.
+2. La allowlist del harness IPC copió el cliente actualizado sin su nueva hoja
+   stdlib `boca_auth_protocol.py`. El subprocess aislado detectó la omisión
+   antes de crear sockets. La lista exacta ahora incluye 14 archivos y mantiene
+   las prohibiciones de importar navegación, Playwright o código BLACKBOX.
+3. Los entrypoints históricos Telegram exigían V2 incondicionalmente, aunque
+   el laboratorio usa la custodia V1 canónica. Los tests anteriores sustituían
+   el verificador y ocultaban la incompatibilidad. Un único helper compartido
+   admite exclusivamente el directorio V1 exacto en el CLI histórico; cualquier
+   entrada adicional, commit/pending V2 o enlace roto lo bloquea. Las rutas
+   explícitas V2 conservan su verificación original de source e intento.
+
+Para reducir el transporte se conservaron los resúmenes de 27 docstrings y
+se movió su explicación íntegra a comentarios adyacentes en cuatro módulos
+exclusivos del cierre pair. El compactor existente omite esos comentarios.
+La igualdad del AST normalizado quitando sólo docstrings, incluidos los
+atributos de los demás nodos, la igualdad del código normalizado y las líneas
+por archivo demuestran que no cambió el algoritmo. La revisión independiente
+confirmó un ahorro real de 10710 bytes. No cambian builder, allowlist, topes,
+reserva ni guardas de equivalencia. Full y Telegram no incluyen esos módulos.
+
+| Variante corregida | Fuente | ZIP | Margen adicional a la reserva |
+| --- | ---: | ---: | ---: |
+| Pair con placeholders | 1437547 | 357356 | 12453 sobre los 50000. |
+| Pair con ocho evidencias R247 | 1445643 | 359872 | 4357 sobre los 50000. |
+| Pair con evidencia vigente R294 | 1446723 | 361507 | 3277 sobre los 50000. |
+| Pair con reserva estresada a 55000 | 1437547 | 357356 | 7453 sobre los 55000. |
+| Rootless observer | 1384427 | 341107 | Tope propio 1400000. |
+
+Los builds anteriores pasaron el verificador memfd existente. Full conserva
+exactamente el digest `ef06f5a8c8e941b1a1a61defc4f4bbe4aa52a252d85e8533871d6ea2e3d98267`;
+no se modifica su pin ni los históricos por esta corrección.
+
+Verificación focal, en conjuntos disjuntos: 35 pruebas de paquetes/evidencias
+reales y límites; 17 del harness IPC; 72 de los dos entrypoints Telegram,
+incluidos 29 casos nuevos con custodia criptográfica y SQLite reales locales.
+Se reprodujeron seis casos RED del CLI antes del fix: V1 legítimo rechazado y
+V2 admitido por argv legado. El GREEN confirma ambos límites sin cambiar el
+laboratorio ni contactar al proveedor. Ruff/formato y tipos pertinentes pasan.
+No se repitió la suite completa local ni se reintentó el SHA fallido.
+
+Las tareas 1 a 5 del plan quedaron implementadas y revisadas en este candidato.
+Los checkboxes del plan inicial describen pasos, no un backlog que deba
+reiniciarse: el ledger de ejecución y los checks del SHA correctivo en #417
+son la continuidad. El QA del titular y la certificación física siguen pendientes.
+
 ## Estado y aceptación
 R294 sigue siendo la última instalación certificada. R295 y R296 comparten
 PR517; el código nuevo no está instalado. Las pruebas focales y revisiones por

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import os
 import sqlite3
 from importlib.resources import files
 from pathlib import Path
@@ -457,7 +458,7 @@ def test_verify_ready_cli_never_calls_identity_or_delivery_api(
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(shot, "require_effective_limits", lambda: calls.append("limits"))
     monkeypatch.setattr(shot, "verify_custody", lambda: calls.append("custody"))
-    monkeypatch.setattr(shot, "verified_v2_assertion", lambda *_a, **_k: (12345, _assertion(CHAT)))
+    monkeypatch.setattr(shot, "require_legacy_custody", lambda _path: None)
     monkeypatch.setattr(shot, "verify_ready", lambda *_args: calls.append("ready"))
     monkeypatch.setattr(shot, "check_identity", lambda *_args: pytest.fail("network forbidden"))
     monkeypatch.setattr(shot, "deliver_once", lambda *_args: pytest.fail("send forbidden"))
@@ -478,7 +479,7 @@ def test_one_shot_cli_records_the_identity_bound_acceptance_and_cannot_replay(
     monkeypatch.setattr(shot, "DATABASE", path)
     monkeypatch.setattr(shot, "verify_storage", lambda _path: None)
     monkeypatch.setattr(shot, "verify_custody", lambda: None)
-    monkeypatch.setattr(shot, "verified_v2_assertion", lambda *_a, **_k: (12345, _assertion(CHAT)))
+    monkeypatch.setattr(shot, "require_legacy_custody", lambda _path: None)
     monkeypatch.setattr(shot, "require_effective_limits", lambda: None)
     monkeypatch.setattr(shot, "TelegramTransport", lambda *_args: transport)
     monkeypatch.setattr(transport, "send", sender.send)
@@ -503,3 +504,198 @@ def test_one_shot_cli_records_the_identity_bound_acceptance_and_cannot_replay(
         f"BOCA_TELEGRAM_TEST state=API_ACCEPTED source_sha={SHA} synthetic=1 human_receipt=unverified\n"
     )
     assert output.err == "BOCA_TELEGRAM_TEST state=NO_GO\n"
+
+
+def _real_cli_custody(tmp_path, monkeypatch, *, version):
+    """Real local custody/ledger; adapt only UID, fixed paths and external I/O."""
+    from boca_socios import telegram_bootstrap as bootstrap
+    from boca_socios import telegram_pairing_install as custody
+    from boca_socios import telegram_storage_gate
+    from boca_socios.notify import telegram_worker as worker
+    from boca_socios.telegram_pairing_resolver import PairingInstallPlan, PairingInstallReceipt
+
+    directory = tmp_path / "telegram"
+    directory.mkdir(mode=0o700)
+    original_directory, original_read, original_write = (
+        bootstrap._directory,
+        bootstrap._read,
+        bootstrap._write_new,
+    )
+    monkeypatch.setattr(bootstrap, "_identity", lambda _uid: None)
+    monkeypatch.setattr(
+        bootstrap, "_directory", lambda path, uid: original_directory(path, os.geteuid())
+    )
+    monkeypatch.setattr(
+        bootstrap, "_read", lambda fd, name, uid, **kw: original_read(fd, name, os.geteuid(), **kw)
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "_write_new",
+        lambda fd, name, content, uid: original_write(fd, name, content, os.geteuid()),
+    )
+    prepared = bootstrap.prepare(directory)
+    envelope = bootstrap.seal_for_recipient(prepared, TOKEN, CHAT)
+    if version == "v2":
+        plan = PairingInstallPlan(
+            PairingInstallReceipt(
+                SHA,
+                prepared.fingerprint,
+                12345,
+                7,
+                100,
+                expected_chat_hmac=_assertion(CHAT),
+                one_time_fence="c" * 64,
+            ),
+            envelope,
+        )
+        custody.install_v2_plan(directory, plan, expected_source_sha=SHA, now=101)
+    else:
+        bootstrap.install(directory, envelope)
+    database = tmp_path / "boca.sqlite3"
+    _database(database)
+    monkeypatch.setattr(
+        telegram_storage_gate, "_identity", lambda path: (path.stat().st_dev, path.stat().st_ino)
+    )
+    for module, names in (
+        (shot, ("DATABASE", "TOKEN", "CHAT")),
+        (worker, ("_DATABASE", "_TOKEN", "_DESTINATION")),
+    ):
+        for name, value in zip(
+            names,
+            (database, directory / bootstrap.TOKEN_FILE, directory / bootstrap.CHAT_FILE),
+            strict=True,
+        ):
+            monkeypatch.setattr(module, name, value)
+        monkeypatch.setattr(module, "verify_custody", lambda: bootstrap.verify(directory))
+        monkeypatch.setattr(module, "require_effective_limits", lambda: None)
+    from test_telegram_worker import valid_environment
+
+    for key, value in valid_environment().items():
+        monkeypatch.setenv(key, value)
+    sender = _Sender()
+
+    async def offline_send(transport, notice):
+        transport.preflight()
+        return await sender.send(notice)
+
+    monkeypatch.setattr(TelegramTransport, "send", offline_send)
+    original_identity = shot.check_identity
+
+    def offline_identity(transport, bot, chat_hmac):
+        responses = iter(
+            [
+                _Response({"ok": True, "result": {"id": 12345, "is_bot": True}}),
+                _Response({"ok": True, "result": {"id": int(CHAT), "type": "private"}}),
+            ]
+        )
+        original_identity(
+            transport,
+            bot,
+            chat_hmac,
+            connection_factory=lambda **_kw: _Connection(next(responses), []),
+        )
+
+    monkeypatch.setattr(shot, "check_identity", offline_identity)
+    original_worker = worker.run_worker
+
+    async def stop_after_readiness(coordinator, stopping):
+        stopping.set()
+        await original_worker(coordinator, stopping)
+
+    monkeypatch.setattr(worker, "run_worker", stop_after_readiness)
+    transport = TelegramTransport(directory / bootstrap.TOKEN_FILE, directory / bootstrap.CHAT_FILE)
+    return directory, database, transport, sender
+
+
+def _invoke_real_cli(command, *, v2=False, source=SHA, attempt="111"):
+    from boca_socios.notify import telegram_worker as worker
+
+    args = (
+        (command + "-v2", source, attempt) if v2 else (command, source, "12345", _assertion(CHAT))
+    )
+    return worker.main(args) if command == "serve" else shot.main(args)
+
+
+@pytest.mark.parametrize("command", ["test", "verify-ready", "serve"])
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_real_cli_preserves_valid_v1_and_explicit_v2_custody(
+    tmp_path, monkeypatch, capsys, command, version
+):
+    _directory, database, transport, sender = _real_cli_custody(
+        tmp_path, monkeypatch, version=version
+    )
+    attempt = "111" if version == "v2" else None
+    notice = shot.acceptance_notice_id(transport, SHA, 12345, _assertion(CHAT), attempt_id=attempt)
+    if command != "test":
+        asyncio.run(shot.deliver_once(database, _Sender(), SHA, notice_id=notice))
+    assert _invoke_real_cli(command, v2=version == "v2") == 0
+    shot.verify_ready(database, transport, SHA, 12345, _assertion(CHAT), attempt_id=attempt)
+    assert len(sender.calls) == (1 if command == "test" else 0)
+    output = capsys.readouterr()
+    assert not output.err
+    assert TOKEN not in output.out and CHAT not in output.out
+
+
+@pytest.mark.parametrize("command", ["test", "verify-ready", "serve"])
+@pytest.mark.parametrize("state", ["committed", "partial", "commit_symlink", "pending_symlink"])
+def test_real_legacy_cli_cannot_downgrade_v2_custody(tmp_path, monkeypatch, capsys, command, state):
+    from boca_socios.telegram_pairing_install import MARKER, STAGING
+
+    directory, database, transport, sender = _real_cli_custody(
+        tmp_path, monkeypatch, version="v2" if state == "committed" else "v1"
+    )
+    if state == "partial":
+        (directory / STAGING).write_bytes(b"partial")
+    elif state.endswith("symlink"):
+        (directory / (MARKER if state == "commit_symlink" else STAGING)).symlink_to(
+            directory / "missing"
+        )
+    if command != "test":
+        notice = shot.acceptance_notice_id(transport, SHA, 12345, _assertion(CHAT))
+        asyncio.run(shot.deliver_once(database, _Sender(), SHA, notice_id=notice))
+    before = database.read_bytes()
+    assert _invoke_real_cli(command) == (2 if command == "serve" else 1)
+    assert database.read_bytes() == before and not sender.calls
+    output = capsys.readouterr()
+    assert "NO_GO" in output.err and not output.out
+    assert TOKEN not in output.err and CHAT not in output.err
+
+
+@pytest.mark.parametrize(
+    "command,state",
+    [
+        (command, state)
+        for command in ("test", "verify-ready", "serve")
+        for state in ("v1", "corrupt_commit", "wrong_source", "other_attempt")
+        if (command, state) != ("test", "other_attempt")
+    ],
+)
+def test_real_v2_cli_refuses_unverified_custody_and_other_acceptance_attempt(
+    tmp_path, monkeypatch, capsys, command, state
+):
+    from boca_socios.telegram_pairing_install import MARKER
+
+    directory, database, transport, sender = _real_cli_custody(
+        tmp_path, monkeypatch, version="v1" if state == "v1" else "v2"
+    )
+    if state == "corrupt_commit":
+        marker = directory / MARKER
+        marker.chmod(0o600)
+        marker.write_bytes(b"{")
+        marker.chmod(0o400)
+    if command != "test":
+        notice = shot.acceptance_notice_id(
+            transport,
+            SHA,
+            12345,
+            _assertion(CHAT),
+            attempt_id="222" if state == "other_attempt" else "111",
+        )
+        asyncio.run(shot.deliver_once(database, _Sender(), SHA, notice_id=notice))
+    before = database.read_bytes()
+    assert _invoke_real_cli(
+        command, v2=True, source="b" * 40 if state == "wrong_source" else SHA
+    ) == (2 if command == "serve" else 1)
+    assert database.read_bytes() == before and not sender.calls
+    output = capsys.readouterr()
+    assert "NO_GO" in output.err and not output.out
