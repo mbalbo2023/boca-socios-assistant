@@ -33,7 +33,7 @@ from datetime import UTC, datetime
 from fractions import Fraction
 from pathlib import Path
 from time import monotonic, sleep
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
 ROOT = Path("/srv/boca-socios")
@@ -80,6 +80,8 @@ BROWSER_IMAGE_PATTERN = re.compile(
 BROWSER_ATTEMPT_PATTERN = re.compile(r"[1-9][0-9]{0,19}\Z")
 BROWSER_MARKER_VERSION = "browser-ipc-new-only-v2"
 BROWSER_ATTEMPT_LABEL = "boca.socios.browser-ipc-attempt"
+_HISTORICAL_BROWSER_OVERLAY_SHA = "f9a2c1b43a279778ed4517b0daeb68b17396511119f0ffb0dd35e876ab7b9a08"
+_AUTOMATIC_BROWSER_OVERLAY_SHA = "a2bf5bbdc9f203e06d880c23a7dc9550604103f47b70bdce4d88693d183a990f"
 _WORKER_HEALTH_PROGRAM = (
     "from boca_socios.browser.worker_health import check_worker_health; check_worker_health()"
 )
@@ -4318,8 +4320,13 @@ def _browser_compose_model(
     overlay_file: Path | None = None,
     seccomp_file: Path | None = None,
     control_directory: Path | None = None,
+    staged_overlay: bytes | None = None,
+    overlay_sha: str | None = None,
 ) -> str:
     """Host-side essential boundary, in addition to runner's full C1 validator."""
+    profile = _browser_worker_profile(staged_overlay=staged_overlay, overlay_sha=overlay_sha)
+    if profile == "automatic-observation" and control_directory is None:
+        raise PreflightError("automatic browser Compose requires the installed on-demand binding")
     if any(path is not None for path in (base_file, overlay_file, seccomp_file)):
         stage = ROOT / f"cutover-a-{attempt_id}"
         if not BROWSER_ATTEMPT_PATTERN.fullmatch(attempt_id) or (
@@ -4433,6 +4440,10 @@ def _browser_compose_model(
             "BOCA_ENGINE_MODE": "off",
         },
     }
+    if profile == "automatic-observation":
+        expected_worker["environment"].update(  # type: ignore[attr-defined]
+            BOCA_BROWSER_EXECUTOR="automatic-observation", BOCA_BROWSER_OBSERVE_MODE="off"
+        )
     if (
         any(
             type(worker.get(key)) is not type(value) or worker.get(key) != value
@@ -5086,6 +5097,41 @@ def _browser_worker_egress_network(attached: object, *, running: bool = True) ->
         raise PreflightError("stopped worker unexpectedly retains egress IPv4")
 
 
+def _browser_worker_profile(
+    *, staged_overlay: bytes | None = None, overlay_sha: str | None = None
+) -> Literal["off", "automatic-observation"]:
+    """Select an expectation from reviewed bytes, never from observed Env.
+
+    Callers authenticate the release/source and pair before passing their stage
+    bytes. Omission retains the historical off contract; it cannot opt in to
+    automatic work. The new profile additionally requires the owner's APPLIED
+    START and the fixed IPC command. BOCA_OBSERVER_STOP remains 1 because it
+    guards the separate historical public-observation script.
+    """
+    if staged_overlay is None and overlay_sha is None:
+        return "off"
+    if (
+        type(staged_overlay) is not bytes
+        or not 0 < len(staged_overlay) <= 65_536
+        or type(overlay_sha) is not str
+        or overlay_sha not in {_HISTORICAL_BROWSER_OVERLAY_SHA, _AUTOMATIC_BROWSER_OVERLAY_SHA}
+        or hashlib.sha256(staged_overlay).hexdigest() != overlay_sha
+    ):
+        raise PreflightError("browser worker overlay profile unverified")
+    return "automatic-observation" if overlay_sha == _AUTOMATIC_BROWSER_OVERLAY_SHA else "off"
+
+
+def _browser_profile_options(
+    staged_overlay: bytes | None, overlay_sha: str | None
+) -> dict[str, Any]:
+    _browser_worker_profile(staged_overlay=staged_overlay, overlay_sha=overlay_sha)
+    return (
+        {}
+        if staged_overlay is None
+        else {"staged_overlay": staged_overlay, "overlay_sha": overlay_sha}
+    )
+
+
 def _browser_worker_postflight(
     container: str,
     browser_image: str,
@@ -5096,7 +5142,10 @@ def _browser_worker_postflight(
     running: bool = True,
     verify_runtime: bool = True,
     staged_seccomp: bytes | None = None,
+    staged_overlay: bytes | None = None,
+    overlay_sha: str | None = None,
 ) -> None:
+    profile = _browser_worker_profile(staged_overlay=staged_overlay, overlay_sha=overlay_sha)
     record = _browser_inspect_record(container)
     config, host = _browser_check_service_labels(
         record,
@@ -5126,6 +5175,8 @@ def _browser_worker_postflight(
         "BOCA_ENGINE_MODE": "off",
         "BOCA_OBSERVER_STOP": "1",
     }
+    if profile == "automatic-observation":
+        expected.update(BOCA_BROWSER_EXECUTOR=profile, BOCA_BROWSER_OBSERVE_MODE="off")
     if (
         {name: value for name, value in variables.items() if name.startswith("BOCA_")} != expected
         or config.get("Cmd") != ["python", "-m", "boca_socios.browser.ipc_server"]
@@ -5491,6 +5542,8 @@ def _cutover_worker_create_argv(
     config_hash: str,
     *,
     on_demand: bool = False,
+    staged_overlay: bytes | None = None,
+    overlay_sha: str | None = None,
 ) -> tuple[str, ...]:
     """Plan a worker without Compose reconciling/stopping the live singleton.
 
@@ -5506,6 +5559,19 @@ def _cutover_worker_create_argv(
         or not DIGEST_PATTERN.fullmatch(config_hash)
     ):
         raise PreflightError("cutover A worker image or attempt unreviewed")
+    profile = _browser_worker_profile(staged_overlay=staged_overlay, overlay_sha=overlay_sha)
+    if profile == "automatic-observation" and on_demand is not True:
+        raise PreflightError("automatic worker requires the on-demand owner activation")
+    profile_environment = (
+        (
+            "--env",
+            "BOCA_BROWSER_EXECUTOR=automatic-observation",
+            "--env",
+            "BOCA_BROWSER_OBSERVE_MODE=off",
+        )
+        if profile == "automatic-observation"
+        else ()
+    )
     return (
         "docker",
         "create",
@@ -5567,6 +5633,7 @@ def _cutover_worker_create_argv(
         "BOCA_ENGINE_MODE=off",
         "--env",
         "BOCA_OBSERVER_STOP=1",
+        *profile_environment,
         "--mount",
         f"type=volume,source={BROWSER_IPC_VOLUME},target=/run/boca-browser-ipc,volume-nocopy",
         "--mount",
@@ -5615,6 +5682,7 @@ def _cutover_candidate_create_argv(
         "BOCA_ENVIRONMENT": "staging",
         "BOCA_RUNTIME_MODE": "simulation",
         "BOCA_ENGINE_MODE": "off",
+        "BOCA_SOURCE_SHA": source_sha,
         "BOCA_BROWSER_BACKEND": "ipc",
         "BOCA_TELEGRAM_PAIRING_STAGE_MODE": "encrypted-only",
         "BOCA_DB_PATH": "/data/boca.sqlite3",
@@ -5823,6 +5891,9 @@ def _cutover_idle_worker(
     seccomp_sha: str,
     staged_seccomp: bytes,
     worker_config_hash: str,
+    *,
+    staged_overlay: bytes | None = None,
+    overlay_sha: str | None = None,
 ) -> None:
     """Attest the new worker's static limits and created/PID=0 without running any command in it."""
     if _cutover_worker_name_id() != worker_id:
@@ -5836,6 +5907,7 @@ def _cutover_idle_worker(
         running=False,
         verify_runtime=False,
         staged_seccomp=staged_seccomp,
+        **_browser_profile_options(staged_overlay, overlay_sha),
     )
     _cutover_capture_preflight(
         worker_id, image, source_sha, attempt_id, worker_config_hash, on_demand=True
@@ -5852,6 +5924,8 @@ def _cutover_verify_worker_for_profile(
     *,
     control_directory: Path | None,
     worker_config_hash: str | None,
+    staged_overlay: bytes | None = None,
+    overlay_sha: str | None = None,
 ) -> None:
     if control_directory is not None:
         if worker_config_hash is None:
@@ -5864,10 +5938,17 @@ def _cutover_verify_worker_for_profile(
             seccomp_sha,
             staged_seccomp,
             worker_config_hash,
+            **_browser_profile_options(staged_overlay, overlay_sha),
         )
     else:
         _browser_worker_postflight(
-            worker_id, image, source_sha, attempt_id, seccomp_sha, staged_seccomp=staged_seccomp
+            worker_id,
+            image,
+            source_sha,
+            attempt_id,
+            seccomp_sha,
+            staged_seccomp=staged_seccomp,
+            **_browser_profile_options(staged_overlay, overlay_sha),
         )
 
 
@@ -5991,6 +6072,8 @@ def _cutover_compensate_worker(
     expected_worker: str | None = None,
     *,
     idle_config_hash: str | None = None,
+    staged_overlay: bytes | None = None,
+    overlay_sha: str | None = None,
 ) -> None:
     """No broad prune. Remove only positively authenticated attempt resources."""
     worker = _cutover_worker_name_id()
@@ -6019,6 +6102,7 @@ def _cutover_compensate_worker(
             running=running,
             verify_runtime=False,
             staged_seccomp=staged_seccomp,
+            **_browser_profile_options(staged_overlay, overlay_sha),
         )
         if running:
             if _run("docker", "stop", "-t", "8", worker, timeout=30) != worker:
@@ -6032,6 +6116,7 @@ def _cutover_compensate_worker(
                 running=False,
                 verify_runtime=False,
                 staged_seccomp=staged_seccomp,
+                **_browser_profile_options(staged_overlay, overlay_sha),
             )
         if idle_config_hash is not None:
             _cutover_worker_never_started(worker)
@@ -6092,6 +6177,8 @@ def _cutover_prepare_worker(
     persist_capture: Callable[[str, str], object],
     *,
     on_demand: bool = False,
+    staged_overlay: bytes | None = None,
+    overlay_sha: str | None = None,
 ) -> str:
     """Prepare the attested worker while the original stays running."""
     from boca_socios.worker_start_capture import CaptureFailure, CaptureResult, attach_output
@@ -6108,7 +6195,12 @@ def _cutover_prepare_worker(
         original_id, legacy_image, legacy_sha, name=CUTOVER_LEGACY_NAME, running=True
     )
     worker_create = _cutover_worker_create_argv(
-        browser_image, target_sha, attempt_id, worker_config_hash, on_demand=on_demand
+        browser_image,
+        target_sha,
+        attempt_id,
+        worker_config_hash,
+        on_demand=on_demand,
+        **_browser_profile_options(staged_overlay, overlay_sha),
     )
     if _cutover_worker_name_id() is not None:
         raise PreflightError("cutover A worker already exists before attempt")
@@ -6144,6 +6236,7 @@ def _cutover_prepare_worker(
                 seccomp_sha,
                 staged_seccomp,
                 worker_config_hash,
+                **_browser_profile_options(staged_overlay, overlay_sha),
             )
             _cutover_browser_egress(attempt_id, expect_empty=True)
             _cutover_legacy_record(
@@ -6161,6 +6254,7 @@ def _cutover_prepare_worker(
             running=False,
             verify_runtime=False,
             staged_seccomp=staged_seccomp,
+            **_browser_profile_options(staged_overlay, overlay_sha),
         )
         phase = "CAPTURE_PREPARE"
         _cutover_capture_preflight(
@@ -6201,6 +6295,7 @@ def _cutover_prepare_worker(
             attempt_id,
             seccomp_sha,
             staged_seccomp=staged_seccomp,
+            **_browser_profile_options(staged_overlay, overlay_sha),
         )
         _cutover_browser_egress(attempt_id, expect_empty=False, expected_peer=created)
         _cutover_legacy_record(
@@ -6211,7 +6306,13 @@ def _cutover_prepare_worker(
         compensation = "VERIFIED"
         try:
             _cutover_compensate_worker(
-                browser_image, target_sha, attempt_id, seccomp_sha, staged_seccomp, worker_id
+                browser_image,
+                target_sha,
+                attempt_id,
+                seccomp_sha,
+                staged_seccomp,
+                worker_id,
+                **_browser_profile_options(staged_overlay, overlay_sha),
             )
             _cutover_legacy_record(
                 original_id, legacy_image, legacy_sha, name=CUTOVER_LEGACY_NAME, running=True
@@ -6242,6 +6343,8 @@ def _cutover_candidate_postflight(
     verify_runtime: bool = True,
     control_directory: Path | None = None,
     compensating: bool = False,
+    staged_overlay: bytes | None = None,
+    overlay_sha: str | None = None,
 ) -> bool:
     """Authenticate candidate's exact ID including reviewed Compose hash."""
     if re.fullmatch(r"[0-9a-f]{64}", container_id) is None or not DIGEST_PATTERN.fullmatch(
@@ -6272,6 +6375,7 @@ def _cutover_candidate_postflight(
         verify_runtime=running and verify_runtime,
         control_directory=control_directory,
         compensating=compensating,
+        **_browser_profile_options(staged_overlay, overlay_sha),
     )
     return running
 
@@ -6289,6 +6393,8 @@ def _cutover_compensate_candidate(
     *,
     control_directory: Path | None = None,
     expected_candidate: str | None = None,
+    staged_overlay: bytes | None = None,
+    overlay_sha: str | None = None,
 ) -> None:
     """Only remove a positively identified new attempt, then revive old ID."""
     candidate_id = _cutover_candidate_name_id()
@@ -6310,6 +6416,7 @@ def _cutover_compensate_candidate(
             verify_runtime=False,
             control_directory=control_directory,
             compensating=control_directory is not None,
+            **_browser_profile_options(staged_overlay, overlay_sha),
         ):
             if _run("docker", "stop", "-t", "8", candidate_id, timeout=30) != candidate_id:
                 raise PreflightError("cutover A candidate stop receipt uncertain")
@@ -6324,6 +6431,7 @@ def _cutover_compensate_candidate(
                 verify_runtime=False,
                 control_directory=control_directory,
                 compensating=control_directory is not None,
+                **_browser_profile_options(staged_overlay, overlay_sha),
             ):
                 raise PreflightError("cutover A candidate still running after stop")
         if _run("docker", "rm", candidate_id, timeout=20) != candidate_id:
@@ -6365,6 +6473,8 @@ def _cutover_activate_candidate(
     *,
     control_directory: Path | None = None,
     worker_config_hash: str | None = None,
+    staged_overlay: bytes | None = None,
+    overlay_sha: str | None = None,
 ) -> str:
     """Start the candidate after positively parking the original.
 
@@ -6398,6 +6508,7 @@ def _cutover_activate_candidate(
             staged_seccomp,
             control_directory=control_directory,
             worker_config_hash=worker_config_hash,
+            **_browser_profile_options(staged_overlay, overlay_sha),
         )
         _browser_port_free()
         if _cutover_candidate_name_id() is not None:
@@ -6427,6 +6538,7 @@ def _cutover_activate_candidate(
             owner,
             config_hash,
             control_directory=control_directory,
+            **_browser_profile_options(staged_overlay, overlay_sha),
         ):
             raise PreflightError("cutover A candidate unexpectedly started at create")
         if _run("docker", "start", created, timeout=30) != created:
@@ -6441,6 +6553,7 @@ def _cutover_activate_candidate(
             owner,
             config_hash,
             control_directory=control_directory,
+            **_browser_profile_options(staged_overlay, overlay_sha),
         ):
             raise PreflightError("cutover A candidate failed to become running")
         _beta_loopback_health(created, origin)
@@ -6467,6 +6580,7 @@ def _cutover_activate_candidate(
                 config_hash,
                 control_directory=control_directory,
                 expected_candidate=created if control_directory is not None else None,
+                **_browser_profile_options(staged_overlay, overlay_sha),
             )
             # A failed candidate must not strand the attempt-only worker/IPC
             # after the original exact ID has been restored. Reuse the
@@ -6475,7 +6589,13 @@ def _cutover_activate_candidate(
             if _cutover_worker_name_id() != worker_id:
                 raise PreflightError("cutover A worker identity changed during compensation")
             _cutover_compensate_worker(
-                browser_image, target_sha, attempt_id, seccomp_sha, staged_seccomp, worker_id
+                browser_image,
+                target_sha,
+                attempt_id,
+                seccomp_sha,
+                staged_seccomp,
+                worker_id,
+                **_browser_profile_options(staged_overlay, overlay_sha),
             )
         except (PreflightError, OSError, ValueError, KeyError, TypeError) as exc:
             raise PreflightError(
@@ -6547,6 +6667,8 @@ def _cutover_retire_accepted_original(
     *,
     control_directory: Path | None = None,
     worker_config_hash: str | None = None,
+    staged_overlay: bytes | None = None,
+    overlay_sha: str | None = None,
 ) -> None:
     """Retire the exact old ID only after positive candidate acceptance.
 
@@ -6581,6 +6703,7 @@ def _cutover_retire_accepted_original(
         owner,
         config_hash,
         control_directory=control_directory,
+        **_browser_profile_options(staged_overlay, overlay_sha),
     ):
         raise PreflightError("cutover A accepted candidate identity/health changed")
     _cutover_verify_worker_for_profile(
@@ -6592,6 +6715,7 @@ def _cutover_retire_accepted_original(
         staged_seccomp,
         control_directory=control_directory,
         worker_config_hash=worker_config_hash,
+        **_browser_profile_options(staged_overlay, overlay_sha),
     )
     _beta_loopback_health(candidate_id, origin)
     try:
@@ -6731,7 +6855,10 @@ def _browser_controller_postflight(
     verify_runtime: bool = True,
     control_directory: Path | None = None,
     compensating: bool = False,
+    staged_overlay: bytes | None = None,
+    overlay_sha: str | None = None,
 ) -> None:
+    profile = _browser_worker_profile(staged_overlay=staged_overlay, overlay_sha=overlay_sha)
     record = _browser_inspect_record(container)
     expected_restart_count = 0
     if compensating:
@@ -6778,6 +6905,10 @@ def _browser_controller_postflight(
         if name in variables:
             raise PreflightError("browser IPC controller environment duplicates")
         variables[name] = value
+    if (profile == "automatic-observation" or "BOCA_SOURCE_SHA" in variables) and variables.get(
+        "BOCA_SOURCE_SHA"
+    ) != source_sha:
+        raise PreflightError("browser IPC controller source environment unverified")
     for name, expected in {
         "BOCA_ENVIRONMENT": "staging",
         "BOCA_RUNTIME_MODE": "simulation",

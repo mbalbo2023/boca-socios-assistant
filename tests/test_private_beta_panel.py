@@ -45,6 +45,74 @@ PERMISSIONS = frozenset(
 )
 
 
+def test_telegram_main_route_reuses_private_session_and_local_history(tmp_path: Path) -> None:
+    provider, key, credential = _passkey([0.0])
+    app, db = _app(tmp_path / "boca.sqlite3", provider, FakeHost())
+    assert _request(app, "/telegram")[0] == 401
+    cookie = _login(app, key, credential)
+    before = db.path.read_bytes()
+    status, headers, body = _request(app, "/telegram", cookie=cookie)
+    assert status == 200
+    assert headers["Cache-Control"] == "no-store"
+    assert b'href="/telegram/configurar"' in body
+    assert b'href="/telegram/emparejar"' in body
+    assert b'href="/avisos"' in body
+    assert "No confirmada" in body.decode()
+    assert not db.path.with_name("boca_telegram_admin_status_v1.json").exists()
+    assert db.path.read_bytes() == before
+    assert (
+        _request(app, "/telegram", cookie=cookie, extra={"QUERY_STRING": "token=private"})[0] == 400
+    )
+
+
+def test_telegram_main_route_requires_status_permission(tmp_path: Path) -> None:
+    provider, key, credential = _passkey([0.0], permissions=PERMISSIONS - {"local-status:read"})
+    app, _ = _app(tmp_path / "boca.sqlite3", provider, FakeHost())
+    assert _request(app, "/telegram", cookie=_login(app, key, credential))[0] == 403
+
+
+def test_member_event_preferences_reuse_profile_and_keep_other_defaults(tmp_path: Path) -> None:
+    from html import unescape
+
+    provider, key, credential = _passkey([0.0])
+    app, db = _app(tmp_path / "boca.sqlite3", provider, FakeHost())
+    member = str(uuid4())
+    db.create_member(member, "fixture@example.invalid", "2026-11-14")
+    store = MemberSectorStore.for_database(db.path)
+    store.migrate()
+    store.save(member, SectorMode.ORDERED_ALLOWLIST, ("sector_sur",), datetime.now(UTC))
+    cookie = _login(app, key, credential)
+    path = f"/socios/{member}/sectores/{EVENT_ID}"
+    assert path.encode() in _request(app, f"/socios/{member}", cookie=cookie)[2]
+    code, headers, page = _request(app, path, cookie=cookie)
+    assert code == 200 and headers["Cache-Control"] == "no-store"
+    assert b"sector_sur" in page
+    fields = {
+        name.decode(): unescape(value.decode())
+        for name, value in re.findall(rb'name="(csrf|operation_id)" value="([^"]*)"', page)
+    }
+    fields.update(mode="ORDERED_ALLOWLIST", sector_ids="sector_norte,sector_sur")
+    assert (
+        _request(
+            app,
+            path,
+            cookie=cookie,
+            method="POST",
+            payload=fields,
+            origin="https://foreign.invalid",
+        )[0]
+        == 403
+    )
+    assert _request(app, path, cookie=cookie, method="POST", payload=fields)[0] == 303
+    assert store.load_for_event(member, EVENT_ID, at=datetime.now(UTC)).sector_ids == (
+        "sector_norte",
+        "sector_sur",
+    )
+    assert store.load(member).sector_ids == ("sector_sur",)
+    assert b"sector_norte,sector_sur" in _request(app, path, cookie=cookie)[2]
+    assert _request(app, f"/socios/{member}/sectores/{uuid4()}", cookie=cookie)[0] == 404
+
+
 def _b64(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
 
@@ -153,6 +221,7 @@ def _app(
     bot_control: Callable[[str], None] | None = None,
     queue_monitor: object | None = None,
     auth_monitor: object | None = None,
+    automatic_monitor: object | None = None,
 ) -> tuple[PrivatePanelApplication, Database]:
     db = Database(path)
     db.migrate()
@@ -173,6 +242,7 @@ def _app(
         bot_control=bot_control,
         queue_monitor=queue_monitor,
         auth_monitor=auth_monitor,
+        automatic_monitor=automatic_monitor,
     )
     return app, db
 

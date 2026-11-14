@@ -1,16 +1,15 @@
-"""Read-only same-lease physical capture for a later Boca pair upgrade.
-
-This is an injectable witness for :class:`SuccessorPairJournal`, NOT an
-upgrade entrypoint or authority. The protected caller must separately
-authenticate the previous pair observation artifact and R188 retained-resource
-custody. A valid-looking dataclass or Actions step summary is not proof of
-either origin. In particular, absent authenticated custody fails closed.
-
-The current pair, systemd binding, resource graph, and no-follow control
-directory inode are independently re-read while the *upgrade* lease remains
-held. No Env, contents of protected mounts, secrets, Docker mutations or
-network requests are used. The effectful reusable actor remains interlocked.
-"""
+"""Read-only same-lease physical capture for a later Boca pair upgrade."""
+#
+# This is an injectable witness for :class:`SuccessorPairJournal`, NOT an
+# upgrade entrypoint or authority. The protected caller must separately
+# authenticate the previous pair observation artifact and R188 retained-resource
+# custody. A valid-looking dataclass or Actions step summary is not proof of
+# either origin. In particular, absent authenticated custody fails closed.
+#
+# The current pair, systemd binding, resource graph, and no-follow control
+# directory inode are independently re-read while the *upgrade* lease remains
+# held. No Env, contents of protected mounts, secrets, Docker mutations or
+# network requests are used. The effectful reusable actor remains interlocked.
 
 from __future__ import annotations
 
@@ -23,6 +22,7 @@ from typing import cast
 
 from boca_socios import host_boca_binding_observe as binding
 from boca_socios import host_boca_cleanup as cleanup
+from boca_socios import host_boca_current_retained as current_resources
 from boca_socios import host_boca_pair_observe as pair
 from boca_socios import host_boca_pair_upgrade as transaction
 from boca_socios import host_boca_repeatable_journal as journal
@@ -60,12 +60,17 @@ def _fail() -> SameLeaseCaptureNoGo:
 
 
 class ProductionRetainedResourceIO:
-    """Exact read-only production implementation of the R188 resource IO.
+    """Exact read-only production implementation of the R188 resource IO."""
 
-    The existing adapters perform the complete dual inventory, labels,
-    topology, mounts, worker state, OCI and pinned inode checks. This class
-    only supplies their already-reviewed narrow host field readers.
-    """
+    #
+    # The existing adapters perform the complete dual inventory, labels,
+    # topology, mounts, worker state, OCI and pinned inode checks. This class
+    # only supplies their already-reviewed narrow host field readers.
+
+    def __init__(self, current_retained: bytes | None = None) -> None:
+        if current_retained is not None:
+            current_resources.decode(current_retained)
+        self.current_retained = current_retained
 
     def rootless_identity(self) -> tuple[int, int, str]:
         cleanup._rootless_docker_disk_inodes()
@@ -92,15 +97,9 @@ class ProductionRetainedResourceIO:
             "Pid": pair._fields_from_proven_boca(ident, "State.Pid"),
             "ExitCode": pair._fields_from_proven_boca(ident, "State.ExitCode"),
         }
-        if (
-            observed["Status"] != "created"
-            or observed["Running"] is not False
-            or type(observed["Pid"]) is not int
-            or observed["Pid"] != 0
-            or type(observed["ExitCode"]) is not int
-            or observed["ExitCode"] != 0
-        ):
-            raise _fail()
+        current_resources.require_worker(
+            current_resources.docker_worker(observed), ident, self.current_retained
+        )
         return observed
 
     def mounts(self, ident: str) -> object:
@@ -181,6 +180,8 @@ def _current_pair_matches(
     plan: transaction.PairCoordinates,
     current: dict[str, object],
     previous: dict[str, object],
+    *,
+    current_retained: bytes | None = None,
 ) -> tuple[dict[str, object], dict[str, object]]:
     if _fixed_coordinates(current) != _fixed_coordinates(previous):
         raise _fail()
@@ -198,11 +199,11 @@ def _current_pair_matches(
         or type(controller["pid"]) is not int
         or controller["pid"] <= 0
         or worker["running"] is not False
-        or worker["status"] != "created"
         or worker["pid"] != 0
         or worker["exit_code"] != 0
     ):
         raise _fail()
+    current_resources.require_worker(worker, plan.old_worker_id, current_retained)
     return controller, worker
 
 
@@ -225,18 +226,18 @@ def _custody_matches(custody: adapters.CustodyEvidence, plan: transaction.PairCo
 
 @dataclass(frozen=True, slots=True)
 class ProductionSameLeaseCapture:
-    """Callable bridge, expected historical provenance must be trusted upstream.
+    """Callable bridge, expected historical provenance must be trusted upstream."""
 
-    `observation_receipt` MUST be byte-for-byte from a protected Actions
-    artifact authenticated by the runner for `plan.observation_run_id`.
-    `custody` MUST come from the independently authenticated R188 receipt,
-    not a guessed label, form, or R189 Step Summary. This class cannot create
-    that missing artifact and never treats its absence as a successful proof.
-
-    Physical pair observations use the **current lease attempt** as their
-    observation ID; the old run ID in FreshPairWitness remains the provenance
-    of the authenticated historical receipt, not a fabricated new run.
-    """
+    #
+    # `observation_receipt` MUST be byte-for-byte from a protected Actions
+    # artifact authenticated by the runner for `plan.observation_run_id`.
+    # `custody` MUST come from the independently authenticated R188 receipt,
+    # not a guessed label, form, or R189 Step Summary. This class cannot create
+    # that missing artifact and never treats its absence as a successful proof.
+    #
+    # Physical pair observations use the **current lease attempt** as their
+    # observation ID; the old run ID in FreshPairWitness remains the provenance
+    # of the authenticated historical receipt, not a fabricated new run.
 
     observation_receipt: bytes
     custody: adapters.CustodyEvidence | None
@@ -266,12 +267,15 @@ class ProductionSameLeaseCapture:
                 raise _fail()
 
             current = _decode_pair(self.pair_reader(plan.attempt_id), plan.attempt_id)
-            controller, worker = _current_pair_matches(plan, current, previous)
+            controller, worker = _current_pair_matches(
+                plan, current, previous, current_retained=self.custody.current_receipt
+            )
             installed_first = self.binding_reader(lease)
             installed_second = self.binding_reader(lease)
             if installed_first != installed_second:
                 raise _fail()
             binding._attest(plan.attempt_id, pair._canonical(current), installed_first)
+            current_resources.reprove_binding(self.custody.current_receipt, installed_first)
 
             graph = adapters.GraphExpectation(
                 (
@@ -289,10 +293,13 @@ class ProductionSameLeaseCapture:
                         plan.old_attempt_id,
                         cast(str, worker["image_ref"]),
                     ),
-                )
+                ),
+                current_retained=self.custody.current_receipt,
             )
             base_io: adapters.RetainedResourceIO = (
-                self.retained_io if self.retained_io is not None else ProductionRetainedResourceIO()
+                self.retained_io
+                if self.retained_io is not None
+                else ProductionRetainedResourceIO(self.custody.current_receipt)
             )
             observed_pins = adapters.observe_retained(
                 self.custody.resources,
@@ -315,7 +322,9 @@ class ProductionSameLeaseCapture:
             ):
                 raise _fail()
             after = _decode_pair(self.pair_reader(plan.attempt_id), plan.attempt_id)
-            _current_pair_matches(plan, after, previous)
+            _current_pair_matches(
+                plan, after, previous, current_retained=self.custody.current_receipt
+            )
             if _fixed_coordinates(after) != _fixed_coordinates(current):
                 raise _fail()
             cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
@@ -338,15 +347,15 @@ class ProductionSameLeaseCapture:
 
 @dataclass(frozen=True, slots=True)
 class AuthenticatedProductionSameLeaseCapture:
-    """Protected-bundle entry to the physical witness, with no caller I/O.
+    """Protected-bundle entry to the physical witness, with no caller I/O."""
 
-    The runner has independently verified each GitHub artifact archive and
-    published these exact bytes through the SHA-checked memfd bundle. Here
-    both proofs are rechecked *before* any Docker or filesystem read. Unlike
-    the testable low-level bridge, the production entry cannot substitute
-    fake pair, binding, retained-resource or inode callbacks. The SHA-pinned
-    bundle and protected Actions caller remain mandatory trust boundaries.
-    """
+    #
+    # The runner has independently verified each GitHub artifact archive and
+    # published these exact bytes through the SHA-checked memfd bundle. Here
+    # both proofs are rechecked *before* any Docker or filesystem read. Unlike
+    # the testable low-level bridge, the production entry cannot substitute
+    # fake pair, binding, retained-resource or inode callbacks. The SHA-pinned
+    # bundle and protected Actions caller remain mandatory trust boundaries.
 
     observer_main_sha: str
     retained_observation_run_id: str

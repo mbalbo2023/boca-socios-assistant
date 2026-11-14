@@ -1,8 +1,9 @@
-"""Fixed, bounded AF_UNIX framing for *synthetic-only* browser commands.
+"""Fixed commands and a separate bounded private observation on existing AF_UNIX.
 
-No field accepts a URL, identity, account, cookie, token, or arbitrary text.
-Neither side opens an IP socket. The eventual shared Docker volume and exact
-user-namespace mapping require a separately approved deployment gate.
+Requests accept no URL, identity, account, cookie, token or arbitrary text.
+Only an explicit observation response can carry the typed, received Queue-it
+projection. Kernel peer credentials and socket custody protect that channel.
+Neither IPC side opens an IP socket.
 """
 
 from __future__ import annotations
@@ -13,6 +14,11 @@ import socket
 import stat
 import struct
 from pathlib import Path
+
+from boca_socios.browser.queue_page_observation import (
+    MAX_OBSERVATION_PAYLOAD,
+    QueuePageObservation,
+)
 
 CONTROLLER_UID = 10001
 WORKER_UID = 10002
@@ -28,6 +34,7 @@ FIXTURE_OBSERVED = b"BOCA_SYNTHETIC_V1_FIXTURE_OBSERVED"
 # A separately opted-in single-document HTTP(S) observation is not a
 # transaction.  No status, URL, identity or response body crosses this frame.
 PROBE_SITE = b"BOCA_SYNTHETIC_V1_PROBE_SITE"
+OBSERVE_QUEUE = b"BOCA_SYNTHETIC_V1_OBSERVE_QUEUE"
 SITE_HTTP_OK = b"BOCA_SYNTHETIC_V1_SITE_HTTP_OK"
 SITE_HTTP_NON_OK = b"BOCA_SYNTHETIC_V1_SITE_HTTP_NON_OK"
 SUCCESS = b"BOCA_SYNTHETIC_V1_RESERVED_IN_SIMULATOR"
@@ -108,6 +115,7 @@ def framed(payload: bytes) -> bytes:
             PROBE_FIXTURE,
             FIXTURE_OBSERVED,
             PROBE_SITE,
+            OBSERVE_QUEUE,
             SITE_HTTP_OK,
             SITE_HTTP_NON_OK,
             SUCCESS,
@@ -120,11 +128,28 @@ def framed(payload: bytes) -> bytes:
     return len(payload).to_bytes(2, "big") + payload
 
 
-async def read_frame(reader: asyncio.StreamReader) -> bytes:
+def framed_private_observation(payload: bytes) -> bytes:
+    """Typed private response only; never use this for controller requests."""
+    try:
+        QueuePageObservation.from_payload(payload)
+    except (ValueError, TypeError):
+        raise SyntheticIPCError("ipc_observation_unverified") from None
+    return len(payload).to_bytes(2, "big") + payload
+
+
+async def _read_bounded_frame(reader: asyncio.StreamReader, maximum: int) -> bytes:
     try:
         length = int.from_bytes(await reader.readexactly(2), "big")
-        if not 0 < length <= MAX_FRAME_BYTES:
+        if not 0 < length <= maximum:
             raise SyntheticIPCError("ipc_frame_unverified")
         return await reader.readexactly(length)
     except asyncio.IncompleteReadError:
         raise SyntheticIPCError("ipc_frame_unverified") from None
+
+
+async def read_frame(reader: asyncio.StreamReader) -> bytes:
+    return await _read_bounded_frame(reader, MAX_FRAME_BYTES)
+
+
+async def read_private_observation_frame(reader: asyncio.StreamReader) -> bytes:
+    return await _read_bounded_frame(reader, MAX_OBSERVATION_PAYLOAD)

@@ -18,8 +18,10 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from boca_socios import host_boca_binding_observe as binding
 from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_cleanup_v2 as counted
+from boca_socios import host_boca_current_retained as current_resources
 from boca_socios import host_boca_pair_observe as pair
 from boca_socios import host_boca_upgrade_adapters as adapters
 from boca_socios import host_cutover_stage as stage
@@ -276,6 +278,8 @@ def _restored_snapshot(
     lease: cleanup.BocaJobLease,
     pins: adapters.ResourcePins,
     retained_io: adapters.RetainedResourceIO,
+    *,
+    current_retained: bytes | None = None,
 ) -> cleanup.Inventory:
     """Check the restored pair and immutable owner volumes before each effect."""
     snapshot = _probe_r108(lease, plan)
@@ -297,13 +301,14 @@ def _restored_snapshot(
             plan.old_source_sha,
             plan.old_controller_id,
             plan.old_worker_id,
-            Path("/data/boca.sqlite3"),
+            binding.CANONICAL_DATABASE,
         )
         or not _CONTROL_MOUNTS <= {item.name for item in snapshot.volumes}
         or len(containers) != len(snapshot.containers)
     ):
         raise _fail()
     installed.pair.require()
+    current_resources.reprove_binding(current_retained, installed)
     for role, cid, image_id, image_ref, running, mounts, config_hash in (
         (
             "controller",
@@ -353,16 +358,11 @@ def _restored_snapshot(
             raise _fail()
         if role == "browser-worker":
             state = retained_io.worker_state(cid)
-            if (
-                not isinstance(state, dict)
-                or state.get("Status") != "created"
-                or state.get("Running") is not False
-                or type(state.get("Pid")) is not int
-                or state["Pid"] != 0
-                or type(state.get("ExitCode")) is not int
-                or state["ExitCode"] != 0
-            ):
+            if not isinstance(state, dict):
                 raise _fail()
+            current_resources.require_worker(
+                current_resources.docker_worker(state), cid, current_retained
+            )
     by_network = {item.name: item for item in snapshot.networks}
     private = by_network.get(_PRIVATE_NETWORK)
     egress = by_network.get(_EGRESS_NETWORK)
@@ -471,9 +471,14 @@ def _restored_failure_receipt(
     verify_journal: Any,
     retained_pins: adapters.ResourcePins,
     retained_io: adapters.RetainedResourceIO,
+    current_retained: bytes | None = None,
 ) -> tuple[bytes, str]:
-    initial = _restored_snapshot(plan, lease, retained_pins, retained_io)
-    second = _restored_snapshot(plan, lease, retained_pins, retained_io)
+    initial = _restored_snapshot(
+        plan, lease, retained_pins, retained_io, current_retained=current_retained
+    )
+    second = _restored_snapshot(
+        plan, lease, retained_pins, retained_io, current_retained=current_retained
+    )
     if initial != second:
         raise _fail()
     allow, retire_containers, preserve_images = _allowed_failure_targets(plan, initial)
@@ -487,7 +492,9 @@ def _restored_failure_receipt(
     def protected_probe() -> cleanup.Inventory:
         nonlocal first, last
         verify_journal()
-        snapshot = _restored_snapshot(plan, lease, retained_pins, retained_io)
+        snapshot = _restored_snapshot(
+            plan, lease, retained_pins, retained_io, current_retained=current_retained
+        )
         if first is None:
             first = snapshot
         last = snapshot
@@ -497,7 +504,9 @@ def _restored_failure_receipt(
         if target not in allow:
             raise cleanup.CleanupError("Boca FAILURE resource outside exact attempt allowlist")
         verify_journal()
-        snapshot = _restored_snapshot(plan, lease, retained_pins, retained_io)
+        snapshot = _restored_snapshot(
+            plan, lease, retained_pins, retained_io, current_retained=current_retained
+        )
         ids = {
             "container": {c.ident for c in snapshot.containers},
             "image": {i.ident for i in snapshot.images},
@@ -588,6 +597,7 @@ def execute_durable_failure_cleanup(
     receipt_dir: Path,
     historical_retained: cleanup.HistoricalRetainedImageProof,
     retained_io: adapters.RetainedResourceIO | None = None,
+    current_retained: bytes | None = None,
 ) -> DurableFailureCleanupReceipt:
     """One immutable failure receipt, never a retry or accepted deployment.
 
@@ -654,6 +664,7 @@ def execute_durable_failure_cleanup(
                 verify_journal=verify_journal,
                 retained_pins=retained_pins,
                 retained_io=retained_io,
+                current_retained=current_retained,
             )
         else:
             raw, status = _unrestored_failure_receipt(plan, lease)

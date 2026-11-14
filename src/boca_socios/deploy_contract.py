@@ -311,6 +311,9 @@ def validate_beta_browser_contract(
     expected_owner: str,
     expected_seccomp_path: str,
     expected_attempt_id: str,
+    *,
+    staged_overlay: bytes | None = None,
+    overlay_sha: str | None = None,
 ) -> None:
     """Opt-in browser-ipc-v2 only; prove additions, then invoke legacy v1.
 
@@ -318,6 +321,14 @@ def validate_beta_browser_contract(
     must still reject an extra service when no explicit v2 topology is chosen.
     A resolved Compose model is **not** Docker or host attestation.
     """
+    from boca_socios.host_first_deploy import PreflightError, _browser_worker_profile
+
+    try:
+        worker_profile = _browser_worker_profile(
+            staged_overlay=staged_overlay, overlay_sha=overlay_sha
+        )
+    except PreflightError:
+        raise ContractError("invalid reviewed browser overlay profile") from None
     if not _IMAGE.fullmatch(expected_image):
         raise ContractError("invalid controller release image digest")
     if not _BROWSER_IMAGE.fullmatch(expected_browser_image):
@@ -342,6 +353,8 @@ def validate_beta_browser_contract(
     environment = _mapping(controller["environment"], "browser-ipc-v2 controller environment")
     _equal(environment.get("BOCA_BROWSER_BACKEND"), "ipc", "explicit IPC backend")
     on_demand = "BOCA_BOT_CONTROL" in environment
+    if worker_profile == "automatic-observation" and not on_demand:
+        raise ContractError("invalid automatic worker owner activation")
     if on_demand:
         _equal(environment["BOCA_BOT_CONTROL"], "on-demand", "Boca bot activation")
     _equal(controller["restart"], "unless-stopped" if on_demand else "no", "controller restart")
@@ -450,6 +463,14 @@ def validate_beta_browser_contract(
             "BOCA_ENVIRONMENT": "staging",
             "BOCA_RUNTIME_MODE": "simulation",
             "BOCA_ENGINE_MODE": "off",
+            **(
+                {
+                    "BOCA_BROWSER_EXECUTOR": "automatic-observation",
+                    "BOCA_BROWSER_OBSERVE_MODE": "off",
+                }
+                if worker_profile == "automatic-observation"
+                else {}
+            ),
         },
         "browser-ipc-v2 worker environment",
     )

@@ -519,6 +519,7 @@ def main() -> None:
         for image, record in images.items()
     }
     seccomp = Path("docker/seccomp_profile.json").read_bytes()
+    reviewed_overlay = Path("compose.beta.browser.yaml").read_bytes()
 
     def production_run(*args: str, timeout: int = 60) -> str:
         assert args[0] == "docker"
@@ -601,6 +602,8 @@ def main() -> None:
             attempt,
             hashlib.sha256(seccomp).hexdigest(),
             running=running,
+            staged_overlay=reviewed_overlay,
+            overlay_sha=hashlib.sha256(reviewed_overlay).hexdigest(),
         )
         deploy._browser_controller_postflight(
             controller,

@@ -10,6 +10,7 @@ import asyncio
 import os
 import struct
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import ModuleType
 from typing import cast
@@ -643,3 +644,80 @@ def test_unknown_observation_mode_refuses_cold_start_without_executor(
         assert not started
 
     asyncio.run(exercise())
+
+
+def test_explicit_simulation_runs_real_offline_executor_and_keeps_probe_distinct(
+    monkeypatch: pytest.MonkeyPatch,
+    controller_uid: int,
+) -> None:
+    from boca_socios.browser import offline_fixture
+    from test_offline_fixture import FakePage
+
+    page = FakePage()
+    closed = []
+
+    @asynccontextmanager
+    async def pages():
+        try:
+            yield page
+        finally:
+            closed.append(True)
+
+    # Only Chromium is substituted. Exercise the production executor, DOM,
+    # cancellation boundary and IPC handler through the actual mode selector.
+    executor = offline_fixture.OfflineFixtureExecutor(pages=pages, boundary_check=lambda: None)
+    monkeypatch.setattr(offline_fixture, "OfflineFixtureExecutor", lambda: executor)
+    monkeypatch.setenv("BOCA_BROWSER_EXECUTOR", "offline-simulation")
+    monkeypatch.setenv("BOCA_RUNTIME_MODE", "simulation")
+    monkeypatch.setattr(
+        server_module, "_read_worker_site_url", lambda: "https://never-open.invalid/"
+    )
+
+    async def serve(self, stop):
+        self._boundary_check = lambda: None
+        probe, writer = wire_writer(controller_uid)
+        await self._handle(request_reader(framed(PROBE_FIXTURE)), writer)
+        assert bytes(probe.data) == framed(NO_GO)
+        assert page.goto_calls == []
+        run, writer = wire_writer(controller_uid)
+        await self._handle(request_reader(), writer)
+        assert bytes(run.data) == framed(SUCCESS)
+        assert page.goto_calls == ["about:blank"]
+        assert page.clicked and closed == [True]
+        await self.close()
+
+    monkeypatch.setattr(server_module.UnixSyntheticWorker, "serve_until", serve)
+    asyncio.run(server_module._run_server())
+    assert "boca_socios.browser.synthetic" not in sys.modules
+    assert "boca_socios.browser.ipc_worker" not in sys.modules
+
+
+@pytest.mark.parametrize(
+    ("executor", "runtime", "observe"),
+    [
+        ("live", "simulation", "off"),
+        ("offline-simulation", "live", "off"),
+        ("offline-simulation", "", "off"),
+        ("offline-simulation", "simulation", "offline-fixture"),
+        ("offline-simulation", "simulation", "site-readonly"),
+    ],
+)
+def test_simulation_executor_refuses_unknown_or_mixed_activation_before_listener(
+    monkeypatch: pytest.MonkeyPatch,
+    executor: str,
+    runtime: str,
+    observe: str,
+) -> None:
+    monkeypatch.setenv("BOCA_BROWSER_EXECUTOR", executor)
+    monkeypatch.setenv("BOCA_RUNTIME_MODE", runtime)
+    monkeypatch.setenv("BOCA_BROWSER_OBSERVE_MODE", observe)
+    monkeypatch.setattr(
+        server_module, "_read_worker_site_url", lambda: "https://never-open.invalid/"
+    )
+
+    async def forbidden(*_args):
+        pytest.fail("invalid mode must not start a listener")
+
+    monkeypatch.setattr(server_module.UnixSyntheticWorker, "serve_until", forbidden)
+    with pytest.raises(SyntheticIPCError, match="worker_executor_mode_unverified"):
+        asyncio.run(server_module._run_server())

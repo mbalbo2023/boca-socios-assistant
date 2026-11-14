@@ -12,14 +12,20 @@ import json
 import os
 import sqlite3
 import stat
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
-from boca_socios.domain.sector_preferences import SectorMode, SectorPreference
+from boca_socios.domain.policy import TicketIntent
+from boca_socios.domain.sector_preferences import (
+    SectorEvaluation,
+    SectorMode,
+    SectorPreference,
+    evaluate_sector_preference,
+)
 
 _BASENAME = "boca_sector_preferences.sqlite3"
 _DDL = (
@@ -37,6 +43,16 @@ _DDL = (
 )
 _STATEMENTS = tuple(part.strip() for part in _DDL.split(";") if part.strip())
 _DIGEST = hashlib.sha256(_DDL.encode("utf-8")).hexdigest()
+_EVENT_DDL = (
+    "CREATE TABLE event_sector_preferences (\n"
+    "  member_id TEXT NOT NULL, event_id TEXT NOT NULL,\n"
+    "  mode TEXT NOT NULL CHECK(mode IN ('ALL','ORDERED_ALLOWLIST')),\n"
+    "  sector_ids_json TEXT NOT NULL, version INTEGER NOT NULL CHECK(version >= 1),\n"
+    "  updated_at TEXT NOT NULL, PRIMARY KEY(member_id,event_id)\n"
+    ");\n"
+)
+_EVENT_STATEMENTS = tuple(part.strip() for part in _EVENT_DDL.split(";") if part.strip())
+_EVENT_DIGEST = hashlib.sha256(_EVENT_DDL.encode("utf-8")).hexdigest()
 
 
 class MemberSectorStorageUnavailable(RuntimeError):
@@ -147,10 +163,10 @@ class MemberSectorStore:
             raise MemberSectorStorageUnavailable("canonical member directory unavailable") from None
 
     @staticmethod
-    def _require_schema(connection: sqlite3.Connection) -> None:
+    def _require_schema(connection: sqlite3.Connection) -> int:
         try:
             ledger = connection.execute(
-                "SELECT version,checksum FROM member_sector_schema"
+                "SELECT version,checksum FROM member_sector_schema ORDER BY version"
             ).fetchall()
             objects = connection.execute(
                 "SELECT type,name,sql FROM sqlite_master "
@@ -162,13 +178,27 @@ class MemberSectorStore:
                     ("member_sector_preferences", "member_sector_schema"), _STATEMENTS, strict=True
                 )
             )
+            version = connection.execute("PRAGMA user_version").fetchone()
+            if version == (2,):
+                expected = sorted(
+                    expected
+                    + [
+                        ("table", name, statement)
+                        for name, statement in zip(
+                            ("event_sector_preferences",),
+                            _EVENT_STATEMENTS,
+                            strict=True,
+                        )
+                    ]
+                )
             if (
-                ledger != [(1, _DIGEST)]
+                version not in {(1,), (2,)}
+                or ledger != ([(1, _DIGEST)] + ([(2, _EVENT_DIGEST)] if version == (2,) else []))
                 or objects != expected
-                or connection.execute("PRAGMA user_version").fetchone() != (1,)
                 or connection.execute("PRAGMA quick_check(1)").fetchone() != ("ok",)
             ):
                 raise MemberSectorStorageUnavailable("member sector schema invalid")
+            return int(version[0])
         except sqlite3.Error:
             raise MemberSectorStorageUnavailable("member sector schema unavailable") from None
 
@@ -188,7 +218,7 @@ class MemberSectorStore:
                 existed = False
             with _connect(self.path, write=True) as connection:
                 if existed:
-                    self._require_schema(connection)
+                    version = self._require_schema(connection)
                 else:
                     if connection.execute("SELECT count(*) FROM sqlite_master").fetchone() != (0,):
                         raise MemberSectorStorageUnavailable(
@@ -203,6 +233,18 @@ class MemberSectorStore:
                             (_DIGEST,),
                         )
                         connection.execute("PRAGMA user_version=1")
+                        self._require_schema(connection)
+                    version = 1
+                if version == 1:
+                    connection.execute("BEGIN IMMEDIATE")
+                    with connection:
+                        for statement in _EVENT_STATEMENTS:
+                            connection.execute(statement)
+                        connection.execute(
+                            "INSERT INTO member_sector_schema(version,checksum) VALUES (2,?)",
+                            (_EVENT_DIGEST,),
+                        )
+                        connection.execute("PRAGMA user_version=2")
                         self._require_schema(connection)
         except (OSError, sqlite3.Error):
             raise MemberSectorStorageUnavailable("member sector bootstrap unavailable") from None
@@ -271,3 +313,112 @@ class MemberSectorStore:
                     ),
                 )
         return result
+
+    def _require_event_member(self, member_id: str, event_id: str) -> None:
+        TicketIntent(member_id, event_id).validate()
+        if not self._member_exists(member_id):
+            raise LookupError("registered member not found")
+        uri = f"file:{quote(str(self._controller_path), safe='/')}?mode=ro"
+        try:
+            with closing(sqlite3.connect(uri, uri=True, timeout=1.0)) as connection:
+                connection.execute("PRAGMA trusted_schema=OFF")
+                connection.execute("PRAGMA query_only=ON")
+                row = connection.execute(
+                    "SELECT 1 FROM events WHERE event_id=?", (event_id,)
+                ).fetchone()
+        except sqlite3.Error:
+            raise MemberSectorStorageUnavailable("canonical event directory unavailable") from None
+        if row is None:
+            raise LookupError("registered event not found")
+
+    def load_for_event(self, member_id: str, event_id: str, *, at: datetime) -> SectorPreference:
+        """Use the event override or derive the existing profile; no implicit migration."""
+        self._require_event_member(member_id, event_id)
+        defaults = self.load(member_id)
+        fallback = (
+            defaults.for_event(event_id)
+            if defaults is not None
+            else SectorPreference(member_id, event_id, SectorMode.ALL, (), 1, at)
+        )
+        if not self.path.exists() and not self.path.is_symlink():
+            return fallback
+        with _connect(self.path, write=False) as connection:
+            if self._require_schema(connection) == 1:
+                return fallback
+            row = connection.execute(
+                "SELECT mode,sector_ids_json,version,updated_at FROM event_sector_preferences "
+                "WHERE member_id=? AND event_id=?",
+                (member_id, event_id),
+            ).fetchone()
+        if row is None:
+            return fallback
+        try:
+            mode, serialized, version, timestamp = row
+            sectors = json.loads(serialized)
+            if not isinstance(sectors, list) or not all(isinstance(x, str) for x in sectors):
+                raise ValueError("invalid event sector IDs")
+            return MemberSectorDefaults(
+                member_id,
+                SectorMode(mode),
+                tuple(sectors),
+                version,
+                datetime.fromisoformat(timestamp),
+            ).for_event(event_id)
+        except (ValueError, TypeError, OverflowError):
+            raise MemberSectorStorageUnavailable("event sector preference invalid") from None
+
+    def save_for_event(
+        self,
+        member_id: str,
+        event_id: str,
+        mode: SectorMode,
+        sector_ids: tuple[str, ...],
+        updated_at: datetime,
+    ) -> SectorPreference:
+        MemberSectorDefaults(member_id, mode, sector_ids, 1, updated_at)
+        self._require_event_member(member_id, event_id)
+        with _connect(self.path, write=True) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            with connection:
+                if self._require_schema(connection) != 2:
+                    raise MemberSectorStorageUnavailable("event sector migration required")
+                current = connection.execute(
+                    "SELECT version FROM event_sector_preferences WHERE member_id=? AND event_id=?",
+                    (member_id, event_id),
+                ).fetchone()
+                version = 1 if current is None else int(current[0]) + 1
+                result = MemberSectorDefaults(
+                    member_id, mode, sector_ids, version, updated_at
+                ).for_event(event_id)
+                connection.execute(
+                    "INSERT INTO event_sector_preferences "
+                    "(member_id,event_id,mode,sector_ids_json,version,updated_at) VALUES (?,?,?,?,?,?) "
+                    "ON CONFLICT(member_id,event_id) DO UPDATE SET mode=excluded.mode,"
+                    "sector_ids_json=excluded.sector_ids_json,version=excluded.version,"
+                    "updated_at=excluded.updated_at",
+                    (
+                        member_id,
+                        event_id,
+                        mode.value,
+                        json.dumps(sector_ids),
+                        version,
+                        updated_at.isoformat(),
+                    ),
+                )
+        return result
+
+    def evaluate_for_event(
+        self,
+        member_id: str,
+        event_id: str,
+        catalog: Sequence[str],
+        availability: Mapping[str, bool],
+        *,
+        at: datetime,
+    ) -> SectorEvaluation:
+        """Evaluate read-only; the command ledger freezes the result atomically at admission."""
+        preference = self.load_for_event(member_id, event_id, at=at)
+        with _connect(self.path, write=False) as connection:
+            if self._require_schema(connection) != 2:
+                raise MemberSectorStorageUnavailable("event sector migration required")
+        return evaluate_sector_preference(preference, catalog, availability)

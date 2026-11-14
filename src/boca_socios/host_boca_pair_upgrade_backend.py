@@ -487,6 +487,8 @@ class RootlessPairUpgradeBackend:
                 plan.attempt_id,
                 self.worker_hash,
                 on_demand=True,
+                staged_overlay=self.sources.overlay,
+                overlay_sha=self.sources.overlay_sha,
             ),
             timeout=40,
         )
@@ -508,6 +510,8 @@ class RootlessPairUpgradeBackend:
             self.sources.seccomp_sha,
             self.sources.seccomp,
             self.worker_hash,
+            staged_overlay=self.sources.overlay,
+            overlay_sha=self.sources.overlay_sha,
         )
         self.state = "WORKER"
         return worker
@@ -574,6 +578,8 @@ class RootlessPairUpgradeBackend:
             self.owner,
             self.controller_hash,
             control_directory=service.control_directory(),
+            staged_overlay=self.sources.overlay,
+            overlay_sha=self.sources.overlay_sha,
         ):
             raise _fail()
         host._cutover_idle_worker(
@@ -584,6 +590,8 @@ class RootlessPairUpgradeBackend:
             self.sources.seccomp_sha,
             self.sources.seccomp,
             self.worker_hash,
+            staged_overlay=self.sources.overlay,
+            overlay_sha=self.sources.overlay_sha,
         )
         host._beta_loopback_health(controller_id, _BASE_ORIGIN)
         engine = ProductionRootlessDockerIO().engine_request(controller_id, "status")
@@ -728,6 +736,8 @@ class RootlessPairUpgradeBackend:
                 self.sources.seccomp_sha,
                 self.sources.seccomp,
                 config_hash,
+                staged_overlay=self.sources.overlay,
+                overlay_sha=self.sources.overlay_sha,
             )
         if host._run("docker", "rm", cid, timeout=30) != cid:
             raise _fail()

@@ -203,6 +203,33 @@ BINDING_MAIN = (
     "from boca_socios.host_boca_binding_observe import main as binding\n"
     "raise SystemExit(binding(['host',sys.argv[2]]))\n"
 ).encode("ascii")
+CURRENT_RETAINED_SOURCES = tuple(
+    dict.fromkeys(
+        (*BINDING_SOURCES, *RETAINED_SOURCES, "src/boca_socios/host_boca_current_retained.py")
+    )
+)
+CURRENT_RETAINED_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 3 or sys.argv[1] != 'boca-current-retained-resource-observe':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_boca_current_retained import main\n"
+    "raise SystemExit(main(['host',sys.argv[2]]))\n"
+).encode("ascii")
+INSTALLED_ADMIN_SOURCES = (
+    *CURRENT_RETAINED_SOURCES,
+    "src/boca_socios/host_boca_installed_admin.py",
+    "src/boca_socios/host_on_demand_status.py",
+)
+INSTALLED_ADMIN_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) == 4 and sys.argv[1] == 'boca-installed-status-observe':\n"
+    "    from boca_socios.host_on_demand_status import main\n"
+    "    raise SystemExit(main(['host-current', *sys.argv[2:]]))\n"
+    "if len(sys.argv) == 5 and sys.argv[1] == 'boca-installed-admin-provision':\n"
+    "    from boca_socios.host_boca_installed_admin import main\n"
+    "    raise SystemExit(main(['host', *sys.argv[2:]]))\n"
+    "raise SystemExit(3)\n"
+).encode("ascii")
 # R179: separate no-effect SQLite witness and effectful two-CID upgrade.
 # Neither is permitted to reinterpret an R178 bundle or execute browser code.
 SQLITE_OBSERVE_SOURCES = tuple(
@@ -268,6 +295,7 @@ PAIR_UPGRADE_SOURCES = tuple(
             "src/boca_socios/host_boca_upgrade_observation_bridge.py",
             "src/boca_socios/host_boca_upgrade_retained_bridge.py",
             "src/boca_socios/host_boca_current_pair_v2.py",
+            "src/boca_socios/host_boca_current_retained.py",
             "src/boca_socios/host_boca_successor_integrations.py",
             "src/boca_socios/host_boca_retained_resources.py",
             "src/boca_socios/release_manifest.py",
@@ -346,6 +374,7 @@ PRECOMMIT_RESTORE_SOURCES = tuple(
             "src/boca_socios/host_boca_pair_upgrade_plan.py",
             "src/boca_socios/host_boca_retained_resources.py",
             "src/boca_socios/host_boca_upgrade_adapters.py",
+            "src/boca_socios/host_boca_current_retained.py",
             "src/boca_socios/host_boca_park_incident_readonly.py",
             "src/boca_socios/host_boca_pair_precommit_restore.py",
             "src/boca_socios/browser_release_manifest.py",
@@ -438,10 +467,9 @@ MAIN = (
 # Bound the full payload separately from the two reduced worker archives.
 # R178 adds only the source-pinned, run-bound Boca worker egress attestor.
 # +4 KiB preserves independent smaller bundles and the exact file allowlist.
-# R244 protected same-lease cleanup API adds 2,767 source bytes. The already
-# reviewed full-Cutover comment-token compaction now yields 1,157,003 bytes;
-# this 1,158,144 cap leaves only 1,141 bytes' headroom. Other mode limits and
-# each entry allowlist remain unchanged (no new host capability or import).
+# Keep the R244 full-Cutover ceiling fixed. Oversized reviewed full/preflight
+# closures use checked comment-token compaction; independent mode limits and
+# entry allowlists remain unchanged (no new host capability or import).
 MAX_SOURCE_BYTES = 1_158_144
 MAX_ARCHIVE_BYTES = 512_000
 RECOVERY_MAX_SOURCE_BYTES = 256_000
@@ -484,9 +512,9 @@ _FULL_ONLY_COMPACT_SOURCE = "src/boca_socios/host_first_deploy.py"
 def _compact_comment_tokens(source: bytes, *, filename: str = _FULL_ONLY_COMPACT_SOURCE) -> bytes:
     """Keep executable Python bytes/line numbers, omit only comment tokens.
 
-    The full Cutover and an oversized successor pair can use this identical
-    transport-only transform. The repository retains the original comments;
-    the SHA-pinned ZIP changes only after checked code-object equivalence.
+    Full Cutover, preflight and oversized successor transports use the same
+    transform. The repository retains the original comments; the SHA-pinned
+    ZIP changes only after checked code-object equivalence.
     """
     decoded = source.decode("utf-8")
     lines = decoded.splitlines(keepends=True)
@@ -520,6 +548,8 @@ def build(
     pair_observe: bool = False,
     postcommit_observe: bool = False,
     retained_observe: bool = False,
+    current_retained_observe: bool = False,
+    installed_admin: bool = False,
     binding_observe: bool = False,
     sqlite_observe: bool = False,
     pair_upgrade: bool = False,
@@ -540,6 +570,8 @@ def build(
                 pair_observe,
                 postcommit_observe,
                 retained_observe,
+                current_retained_observe,
+                installed_admin,
                 binding_observe,
                 sqlite_observe,
                 pair_upgrade,
@@ -634,14 +666,6 @@ def build(
                     candidate,
                 )
                 observation = json.loads(release_files["observation-proof.json"])
-                verify_bundled_observation(
-                    release_files["observation-proof.json"],
-                    release_files["boca-pair-observation.receipt"],
-                    candidate.source_sha,
-                    observation["observer_run_id"],
-                    observation["apply_attempt_id"],
-                    candidate.release_run_id,
-                )
                 # R188 V1 is an immutable *creator* observation, not a live
                 # source/attempt proof after B→C. V2 was GH-authenticated by
                 # the runner and remains read-only, never same-lease GO.
@@ -654,6 +678,15 @@ def build(
                 custody = adapters.parse_custody_integrity(
                     release_files["boca-retained-observation.receipt"],
                     observation_run_id=history["original_observation_run"],
+                )
+                verify_bundled_observation(
+                    release_files["observation-proof.json"],
+                    release_files["boca-pair-observation.receipt"],
+                    candidate.source_sha,
+                    observation["observer_run_id"],
+                    observation["apply_attempt_id"],
+                    candidate.release_run_id,
+                    current_retained=custody.current_receipt,
                 )
                 if (
                     history != current._history(custody)
@@ -699,6 +732,16 @@ def build(
     elif binding_observe:
         files = {"__main__.py": BINDING_MAIN, **HOST_ONLY_INIT}
         sources = BINDING_SOURCES
+        max_source = BINDING_MAX_SOURCE_BYTES
+        max_archive = BINDING_MAX_ARCHIVE_BYTES
+    elif current_retained_observe:
+        files = {"__main__.py": CURRENT_RETAINED_MAIN, **HOST_ONLY_INIT}
+        sources = CURRENT_RETAINED_SOURCES
+        max_source = BINDING_MAX_SOURCE_BYTES
+        max_archive = BINDING_MAX_ARCHIVE_BYTES
+    elif installed_admin:
+        files = {"__main__.py": INSTALLED_ADMIN_MAIN, **HOST_ONLY_INIT}
+        sources = INSTALLED_ADMIN_SOURCES
         max_source = BINDING_MAX_SOURCE_BYTES
         max_archive = BINDING_MAX_ARCHIVE_BYTES
     elif retained_observe:
@@ -762,11 +805,14 @@ def build(
             pair_observe,
             postcommit_observe,
             retained_observe,
+            current_retained_observe,
+            installed_admin,
             binding_observe,
             sqlite_observe,
             pair_upgrade,
             rootless_mapped_observe,
             postcommit_finalize,
+            precommit_restore,
         )
     )
     for rel in sources:
@@ -789,9 +835,17 @@ def build(
     # Preserve exact test-fixture bytes and future small source sets. Compact
     # only when a reviewed complete source set actually exceeds its bounded
     # total; never raise that cap to compensate for unused comment bytes.
-    if full_cutover and sum(map(len, files.values())) > max_source:
-        host_entry = _FULL_ONLY_COMPACT_SOURCE.removeprefix("src/")
-        files[host_entry] = _compact_comment_tokens(files[host_entry])
+    if (full_cutover or worker_preflight) and sum(map(len, files.values())) > max_source:
+        # Apply the existing semantic/line-preserving comment transform to
+        # the complete reviewed closure before any fixed transport limit.
+        for rel in sources:
+            if rel.endswith(".py"):
+                bundle_name = (
+                    OPTION_B_STDLIB_BUNDLE_NAME
+                    if rel == OPTION_B_SOURCES[0]
+                    else rel.removeprefix("src/")
+                )
+                files[bundle_name] = _compact_comment_tokens(files[bundle_name], filename=rel)
     if (pair_upgrade or rootless_mapped_observe) and sum(map(len, files.values())) > (
         max_source - PAIR_UPGRADE_MIN_SOURCE_RESERVE if pair_upgrade else max_source
     ):
@@ -864,6 +918,8 @@ def main() -> int:
     variant.add_argument("--pair-observe", action="store_true")
     variant.add_argument("--postcommit-observe", action="store_true")
     variant.add_argument("--retained-observe", action="store_true")
+    variant.add_argument("--current-retained-observe", action="store_true")
+    variant.add_argument("--installed-admin", action="store_true")
     variant.add_argument("--binding-observe", action="store_true")
     variant.add_argument("--sqlite-observe", action="store_true")
     variant.add_argument("--pair-upgrade", action="store_true")
@@ -876,7 +932,7 @@ def main() -> int:
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, retained_observe=args.retained_observe, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, rootless_mapped_observe=args.rootless_mapped_observe, pair_upgrade_release_dir=args.pair_upgrade_release_dir, postcommit_finalize=args.postcommit_finalize, precommit_restore=args.precommit_restore)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, retained_observe=args.retained_observe, current_retained_observe=args.current_retained_observe, installed_admin=args.installed_admin, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, rootless_mapped_observe=args.rootless_mapped_observe, pair_upgrade_release_dir=args.pair_upgrade_release_dir, postcommit_finalize=args.postcommit_finalize, precommit_restore=args.precommit_restore)}"
     )
     return 0
 

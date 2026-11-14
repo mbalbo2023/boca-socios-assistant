@@ -1,4 +1,4 @@
-"""Inert UID10001 client adapter for fixed offline Chromium IPC commands.
+"""Inert UID10001 client adapter for fixed Chromium IPC commands.
 
 Inject ``UnixSyntheticBrowser`` explicitly as the existing SyntheticBrowserPort.
 Importing it opens no socket, starts no worker and changes no BETA defaults.
@@ -20,6 +20,7 @@ from boca_socios.browser.ipc_protocol import (
     FIXTURE_OBSERVED,
     MAX_FRAME_BYTES,
     NO_GO,
+    OBSERVE_QUEUE,
     PROBE_FIXTURE,
     PROBE_SITE,
     REQUEST,
@@ -31,8 +32,13 @@ from boca_socios.browser.ipc_protocol import (
     SyntheticIPCError,
     framed,
     read_frame,
+    read_private_observation_frame,
     socket_identity,
     verify_peer,
+)
+from boca_socios.browser.queue_page_observation import (
+    MAX_OBSERVATION_PAYLOAD,
+    QueuePageObservation,
 )
 
 
@@ -90,7 +96,19 @@ class UnixSyntheticBrowser:
         result = await self._exchange(PROBE_SITE, frozenset({SITE_HTTP_OK, SITE_HTTP_NON_OK}))
         return "site_http_ok" if result == SITE_HTTP_OK else "site_http_non_ok"
 
-    async def _exchange(self, request: bytes, expected: bytes | frozenset[bytes]) -> bytes:
+    async def observe_queue(self) -> QueuePageObservation:
+        """Read the owner-started worker's same page through private peer-checked IPC.
+
+        The observation is global to its owner and cannot authorize a ticket
+        action, assign a member or claim a Boca login. Raw payload is not logged.
+        """
+        payload = await self._exchange(OBSERVE_QUEUE, None)
+        try:
+            return QueuePageObservation.from_payload(payload)
+        except (ValueError, TypeError):
+            raise SyntheticIPCError("ipc_observation_unverified") from None
+
+    async def _exchange(self, request: bytes, expected: bytes | frozenset[bytes] | None) -> bytes:
         active = asyncio.current_task()
         if active is None:
             raise SyntheticIPCError("client_loop_unavailable")
@@ -109,7 +127,10 @@ class UnixSyntheticBrowser:
             try:
                 async with asyncio.timeout(self._timeout):
                     reader, writer = await asyncio.open_unix_connection(
-                        path=str(self._path), limit=MAX_FRAME_BYTES
+                        path=str(self._path),
+                        limit=MAX_OBSERVATION_PAYLOAD
+                        if request == OBSERVE_QUEUE
+                        else MAX_FRAME_BYTES,
                     )
                     verify_peer(writer, uid=WORKER_UID, gid=WORKER_UID)
                     if socket_identity(self._path, uid=WORKER_UID) != original:
@@ -119,18 +140,28 @@ class UnixSyntheticBrowser:
                     if not writer.can_write_eof():
                         raise SyntheticIPCError("ipc_half_close_unavailable")
                     writer.write_eof()
-                    reply = await read_frame(reader)
+                    reply = (
+                        await read_private_observation_frame(reader)
+                        if request == OBSERVE_QUEUE
+                        else await read_frame(reader)
+                    )
                     if await reader.read(1) != b"":
                         raise SyntheticIPCError("ipc_response_unverified")
-                    allowed = frozenset({expected}) if isinstance(expected, bytes) else expected
-                    if reply in allowed:
-                        accepted = reply
-                    elif reply == BUSY:
+                    if reply == BUSY:
                         raise SyntheticIPCError("worker_busy")
                     elif reply == NO_GO:
                         raise SyntheticIPCError("worker_no_go")
+                    elif request == OBSERVE_QUEUE and expected is None:
+                        try:
+                            QueuePageObservation.from_payload(reply)
+                        except (ValueError, TypeError):
+                            raise SyntheticIPCError("ipc_observation_unverified") from None
+                        accepted = reply
                     else:
-                        raise SyntheticIPCError("ipc_response_unverified")
+                        allowed = frozenset({expected}) if isinstance(expected, bytes) else expected
+                        if allowed is None or reply not in allowed:
+                            raise SyntheticIPCError("ipc_response_unverified")
+                        accepted = reply
                     # Close is part of acceptance, before inspecting lifecycle
                     # fences. A slow or cancellation-suppressing close may NOT
                     # turn a stopped/expired call into a late success.

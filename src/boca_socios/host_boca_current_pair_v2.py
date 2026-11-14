@@ -1,14 +1,13 @@
-"""R246: runner-authenticated *current* pair proof for successive Boca upgrades.
-
-R188 V1 remains an immutable witness to the initial Boca resource *creators*;
-its pinned R186 service identities are never reused as a current-pair proof.
-The current pair is dynamically observed by a separate protected READ_ONLY
-run, then bound to the genuinely published *previous* dual-image release.
-
-This module is unwired evidence code: no CLI, defaults, host IO, credentials,
-Docker effects, or deploy authorization. It deliberately cannot turn its own
-canonical JSON into proof of GitHub origin or into a same-lease host witness.
-"""
+"""R246: runner-authenticated *current* pair proof for successive Boca upgrades."""
+#
+# R188 V1 remains an immutable witness to the initial Boca resource *creators*;
+# its pinned R186 service identities are never reused as a current-pair proof.
+# The current pair is dynamically observed by a separate protected READ_ONLY
+# run, then bound to the genuinely published *previous* dual-image release.
+#
+# This module is unwired evidence code: no CLI, defaults, host IO, credentials,
+# Docker effects, or deploy authorization. It deliberately cannot turn its own
+# canonical JSON into proof of GitHub origin or into a same-lease host witness.
 
 from __future__ import annotations
 
@@ -119,13 +118,12 @@ def _previous_release(
     controller_ref: str,
     worker_ref: str,
 ) -> dict[str, str]:
-    """Authenticate past main's original run, not past SHA == *today's* main.
-
-    ``download_authenticated_release`` correctly insists on the current main
-    for a *target* release but is unsuitable for a previous release after a
-    later merge. Its existing verified run/job/ZIP primitives are reused here
-    with no fork of their allowlists, checksum, or first-attempt validation.
-    """
+    """Authenticate past main's original run, not past SHA == *today's* main."""
+    #
+    # ``download_authenticated_release`` correctly insists on the current main
+    # for a *target* release but is unsuitable for a previous release after a
+    # later merge. Its existing verified run/job/ZIP primitives are reused here
+    # with no fork of their allowlists, checksum, or first-attempt validation.
     if not _is(source_sha, _SHA) or not _is(release_run, _RUN):
         raise _fail()
     validate_release_run(github.get_json(f"actions/runs/{release_run}"), source_sha, release_run)
@@ -178,19 +176,18 @@ def authenticate_current_pair_v2(
     github: releases.GitHubEvidenceTransport | None,
     now: datetime | None = None,
 ) -> bytes:
-    """Runner-only: authenticate old pair, separate old dual release and R188.
-
-    ``github`` MUST be the genuine protected authenticated REST transport;
-    ``historical_authenticator`` MUST verify the independent, exact R188
-    artifact transport. No default or permissive fallback exists. R188 source,
-    attempt and CIDs are historical creator coordinates and may differ from
-    the newly observed, presently installed pair after multiple upgrades.
-    ``now`` is solely a deterministic offline-test seam; a future production
-    runner MUST leave it unset so freshness uses the trusted runtime clock.
-
-    Even genuine results carry ``apply_authorized=false`` and need a fresh
-    lease-bound host/binding/journal/resource reproof before any real upgrade.
-    """
+    """Runner-only: authenticate old pair, separate old dual release and R188."""
+    #
+    # ``github`` MUST be the genuine protected authenticated REST transport;
+    # ``historical_authenticator`` MUST verify the independent, exact R188
+    # artifact transport. No default or permissive fallback exists. R188 source,
+    # attempt and CIDs are historical creator coordinates and may differ from
+    # the newly observed, presently installed pair after multiple upgrades.
+    # ``now`` is solely a deterministic offline-test seam; a future production
+    # runner MUST leave it unset so freshness uses the trusted runtime clock.
+    #
+    # Even genuine results carry ``apply_authorized=false`` and need a fresh
+    # lease-bound host/binding/journal/resource reproof before any real upgrade.
     try:
         if (
             type(plan) is not PairCoordinates
@@ -226,6 +223,13 @@ def authenticate_current_pair_v2(
             observer_source_sha=historical_observer_source_sha,
             authenticator=historical_authenticator,
         )
+        if custody.current_receipt is not None and (
+            historical_observer_source_sha != current_main_sha
+            or not int(plan.observation_run_id)
+            < int(custody.observation_run_id)
+            < int(plan.attempt_id)
+        ):
+            raise _fail()
         authenticated_observation = observation.authenticate_runner_observation(
             current_main_sha,
             plan.observation_run_id,
@@ -234,6 +238,7 @@ def authenticate_current_pair_v2(
             pair_receipt,
             github,
             now=now,
+            current_retained=custody.current_receipt,
         )
         observed = observation.verify_bundled_observation(
             authenticated_observation,
@@ -242,6 +247,7 @@ def authenticate_current_pair_v2(
             plan.observation_run_id,
             plan.attempt_id,
             plan.release_run_id,
+            current_retained=custody.current_receipt,
         )
         if any(
             observed[key] != expected
@@ -300,12 +306,11 @@ def authenticate_current_pair_v2(
 
 
 def verify_current_pair_v2(raw: bytes) -> dict[str, object]:
-    """Check canonical V2 *integrity/schema*, NOT artifact-origin authentication.
-
-    Caller-supplied canonical JSON can be fabricated. Only the protected
-    ``authenticate_current_pair_v2`` runner call performs independent GitHub
-    authentication; this parser grants no host authority.
-    """
+    """Check canonical V2 *integrity/schema*, NOT artifact-origin authentication."""
+    #
+    # Caller-supplied canonical JSON can be fabricated. Only the protected
+    # ``authenticate_current_pair_v2`` runner call performs independent GitHub
+    # authentication; this parser grants no host authority.
     try:
         if (
             type(raw) is not bytes

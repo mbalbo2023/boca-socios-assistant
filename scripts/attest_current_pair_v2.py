@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Protocol
 
 from boca_socios import host_boca_current_pair_v2 as current
+from boca_socios import host_boca_current_retained as current_retained
 from boca_socios import host_boca_upgrade_adapters as adapters
 from boca_socios import host_boca_upgrade_observation_bridge as observed
 from boca_socios import host_boca_upgrade_release_bridge as release_bridge
@@ -34,6 +35,13 @@ _RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _API = "https://api.github.com/repos/mbalbo2023/boca-socios-assistant/"
 _SENTINEL = b'{"state":"NO_GO"}\n'
+_CURRENT_STEPS = frozenset(
+    {
+        "Require verified protected environment and matching main commit",
+        "Observe current Boca retained resources READ_ONLY",
+        "Upload authenticated candidate for retained Boca resources READ_ONLY",
+    }
+)
 
 
 class RunnerCurrentPairNoGo(ValueError):
@@ -84,9 +92,13 @@ class GitHubRestReleaseCatalog(GitHubRestTransport):
 
 
 def _historical_seed(
-    client: GitHubEvidenceTransport, historical_run: str, stamp: datetime
+    client: GitHubEvidenceTransport, historical_run: str, stamp: datetime, main_sha: str
 ) -> tuple[bytes, str]:
-    """Authenticate independently, without forcing original R186 SHA=current main."""
+    """Authenticate current custody separately from immutable legacy custody.
+
+    Only current-main observer code may attest CURRENT_PAIR. Original R188
+    provenance keeps its original source and exact legacy step names.
+    """
     if type(historical_run) is not str or _RUN.fullmatch(historical_run) is None:
         raise _fail()
     record = client.get_json(f"actions/runs/{historical_run}")
@@ -96,7 +108,6 @@ def _historical_seed(
     if type(historical_sha) is not str or _SHA.fullmatch(historical_sha) is None:
         raise _fail()
     observed._verify_run(client, historical_sha, historical_run, stamp)
-    observed._verify_job(client, historical_sha, historical_run, retained_bridge._STEPS)
     raw = observed._download_artifact(
         client,
         historical_sha,
@@ -106,6 +117,12 @@ def _historical_seed(
         member_limit=48_000,
         archive_limit=65_536,
     )
+    steps = retained_bridge._STEPS
+    if raw.startswith(current_retained.PREFIX):
+        if historical_sha != main_sha:
+            raise _fail()
+        steps = _CURRENT_STEPS
+    observed._verify_job(client, historical_sha, historical_run, steps)
     authenticator = retained_bridge._LiveGitHubCustodyAuthenticator(
         client, historical_sha, historical_run, raw
     )
@@ -116,7 +133,7 @@ def _historical_seed(
         authenticator=authenticator,
     )
     observed._verify_run(client, historical_sha, historical_run, stamp)
-    observed._verify_job(client, historical_sha, historical_run, retained_bridge._STEPS)
+    observed._verify_job(client, historical_sha, historical_run, steps)
     return raw, historical_sha
 
 
@@ -134,7 +151,7 @@ def attest_runner(
     release_catalog: ReleaseCatalog,
     now: datetime | None = None,
 ) -> None:
-    """Materialize three files only after complete authenticated provenance."""
+    """Materialize custody and pair only after complete authenticated provenance."""
     try:
         folder = Path(folder_arg)
         stamp = datetime.now(timezone.utc) if now is None else now  # noqa: UP017
@@ -177,10 +194,43 @@ def attest_runner(
         )
         target_proof = release_bridge._runner_input(str(folder / "runner-proof.json"))
         release_bridge.verify_bundled_release(target_proof, target_ctrl, target_worker, candidate)
-        pair_raw = observed._runner_input(str(folder / "boca-pair-observation.receipt"))
-        pair_proof = observed._runner_input(str(folder / "observation-proof.json"))
+        historical_raw, historical_source = _historical_seed(
+            github, historical_run, stamp, main_sha
+        )
+        current_custody = (
+            historical_raw if historical_raw.startswith(current_retained.PREFIX) else None
+        )
+        existing_pair = tuple(
+            os.path.lexists(folder / name)
+            for name in ("boca-pair-observation.receipt", "observation-proof.json")
+        )
+        if any(existing_pair) and not all(existing_pair):
+            raise _fail()
+        if all(existing_pair):
+            pair_raw = observed._runner_input(str(folder / "boca-pair-observation.receipt"))
+            pair_proof = observed._runner_input(str(folder / "observation-proof.json"))
+        else:
+            # STOP may legitimately leave the exact old worker EXITED/0.
+            # Authenticate its current binding and terminal STOP evidence
+            # before deriving the pair projection; no premature files exist.
+            pair_proof, pair_raw = observed._authenticate_and_download(
+                main_sha,
+                pair_run,
+                apply_run,
+                target_release_run,
+                None,
+                github,
+                now=stamp,
+                current_retained=current_custody,
+            )
         past = observed.verify_bundled_observation(
-            pair_proof, pair_raw, main_sha, pair_run, apply_run, target_release_run
+            pair_proof,
+            pair_raw,
+            main_sha,
+            pair_run,
+            apply_run,
+            target_release_run,
+            current_retained=current_custody,
         )
         coordinates = PairCoordinates(
             attempt_id=apply_run,
@@ -200,7 +250,6 @@ def attest_runner(
         previous_release = release_catalog.unique_previous_release(coordinates.old_source_sha)
         if previous_release in (historical_run, pair_run, apply_run, target_release_run):
             raise _fail()
-        historical_raw, historical_source = _historical_seed(github, historical_run, stamp)
         historical_authenticator = retained_bridge._LiveGitHubCustodyAuthenticator(
             github, historical_source, historical_run, historical_raw
         )
@@ -223,6 +272,11 @@ def attest_runner(
         current.verify_current_pair_v2(proof_v2)
         # No output files exist before all GH provenance is authenticated.
         # O_EXCL/0600/fsync protects against path/symlink race or replacement.
+        if not any(existing_pair):
+            release_bridge._runner_write_proof(
+                str(folder / "boca-pair-observation.receipt"), pair_raw
+            )
+            release_bridge._runner_write_proof(str(folder / "observation-proof.json"), pair_proof)
         release_bridge._runner_write_proof(
             str(folder / "boca-retained-observation.receipt"), historical_raw
         )

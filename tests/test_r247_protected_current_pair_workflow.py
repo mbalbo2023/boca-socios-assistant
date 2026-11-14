@@ -33,9 +33,12 @@ def test_existing_dispatch_keeps_exactly_25_fields_and_one_upgrade_operation() -
 
 def test_one_upgrade_reuses_existing_obs_and_release_and_runner_only_v2() -> None:
     block = _upgrade_block()
-    assert "python3 -m boca_socios.host_boca_upgrade_observation_bridge" in block
+    assert "python3 -m boca_socios.host_boca_upgrade_observation_bridge" not in block
     assert "python3 -m boca_socios.host_boca_upgrade_release_bridge" in block
     assert "python3 scripts/attest_current_pair_v2.py" in block
+    assert block.index("host_boca_upgrade_release_bridge") < block.index(
+        "attest_current_pair_v2.py"
+    )
     assert "python3 -m boca_socios.host_boca_upgrade_retained_bridge" not in block
     assert "BOCA_RETAINED_OBSERVATION_RUN_ID" in block
     assert "BOCA_PROTECTED_ACTION_CONTEXT" in block

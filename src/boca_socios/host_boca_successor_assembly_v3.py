@@ -76,6 +76,8 @@ class InertSameLeaseAssembly:
                 or self.failure.journal is not self.journal
                 or self.failure.plan is not self.plan
                 or type(self.failure.retained_io) is not same_lease.ProductionRetainedResourceIO
+                or self.failure.current_retained is not inputs.custody.current_receipt
+                or self.failure.retained_io.current_retained is not inputs.custody.current_receipt
                 or self.success.backend.integrations is not self.success.final_cleanup
                 or self.success.final_cleanup._delegate is not self.success.integrations
                 or type(self.success.final_cleanup._read_coordinates)
@@ -91,6 +93,7 @@ class InertSameLeaseAssembly:
                 or actors.retained_io is not None
                 or actors.control_identity_reader is not retained._identity
                 or self.success.backend.retained is not inputs.retained
+                or self.success.backend.current_retained is not inputs.custody.current_receipt
                 or self.success.backend.successor_postflight_gate is not None
                 or type(self.success.backend).requires_persistent_receipt is not False
                 or self.success.backend.sources != self.stage.sources()
@@ -134,7 +137,8 @@ def prepare_inert_same_lease(preflight: cli.BoundSuccessorPreflight) -> InertSam
         failed = integration.OneShotFailureTerminalSink(
             bound.plan,
             durable,
-            retained_io=same_lease.ProductionRetainedResourceIO(),
+            retained_io=same_lease.ProductionRetainedResourceIO(bound.custody.current_receipt),
+            current_retained=bound.custody.current_receipt,
         )
         return InertSameLeaseAssembly(bound.plan, preflight, durable, custody, successful, failed)
     except Exception:

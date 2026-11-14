@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -28,6 +29,9 @@ def main() -> int:
         if legacy_v1:
             validate_beta_contract(model, sys.argv[2], origin, owner)
         else:
+            overlay = (
+                Path(__file__).resolve().parents[1] / "compose.beta.browser.yaml"
+            ).read_bytes()
             validate_beta_browser_contract(
                 model,
                 sys.argv[2],
@@ -36,6 +40,8 @@ def main() -> int:
                 owner,
                 os.environ.get("BOCA_BROWSER_SECCOMP_PATH", ""),
                 os.environ.get("BOCA_BROWSER_ATTEMPT_ID", ""),
+                staged_overlay=overlay,
+                overlay_sha=hashlib.sha256(overlay).hexdigest(),
             )
     except ContractError as exc:
         # Only a fixed field label may reach Actions. Never print Compose values,

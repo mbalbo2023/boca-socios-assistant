@@ -1,5 +1,29 @@
 # Binding instructions for every coding agent
 
+## Estado vigente R294 — worker automático y promoción consolidada (14-NOV-2026 UTC)
+
+R293 terminó por PR #515 en `959a0be9e776329f99a29e65c2c75195700d5596`;
+CI #1242 e Image Security #1080 SUCCESS, sin release ni host por CI/CD.
+El titular exige continuar hasta deploy y validación y aclaró expresamente
+que el worker debe conectarse automáticamente, detectar evento/cola y observar
+los tokens recibidos. La carga manual fue descartada. Véase
+[ADR0299](docs/ADR/0299-r294-automatic-worker-and-consolidated-beta.md) y
+[decisión canónica](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6870816882).
+
+R294 es candidato funcional, todavía sin certificación física. Preservar el
+par instalado de #864/#1102 hasta completar checks/revisión exactos y una única
+promoción protegida. START del titular activa una sola sesión ordinaria; el
+agente no navega Boca/Queue-it durante desarrollo/pruebas. SIMULATION_ONLY
+para tickets; sin reservas/compras, bypass, multisesión ni cambios a los
+algoritmos de `synthetic.py`/`ipc_worker.py`. Error de conexión nunca equivale
+a ausencia. Token de cola no equivale a token/refreshToken de login Boca.
+
+La provisión lateral de sectores y recibo Telegram es una operación explícita
+posterior a APPLY, con resultado separado y requerida para aceptación funcional;
+fallar allí no autoriza otro deploy. Sólo Actions protegidas, una operación de
+host a la vez. No bajar checks, caps, reserva del bundle ni guardas para pasar.
+Las secciones siguientes conservan cortes históricos, no reinician trabajo.
+
 ## Estado vigente R291–R293 — CI/CD antes de nuevas funciones (13-NOV-2026 ART)
 
 Este encabezado actualiza los cortes operativos históricos que siguen. Leer

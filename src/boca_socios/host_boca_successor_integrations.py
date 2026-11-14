@@ -1,17 +1,16 @@
-"""Bound, fail-closed Boca successor inputs for one future protected host lease.
-
-The ONLY trusted provenance is the reviewed GitHub runner: it must first
-authenticate the live current-pair V2 envelope, previous dual release, R188
-historical custody and the target dual release. This host-side validator
-rechecks canonical *integrity and coordinates*, never invents a GitHub
-signature or elevates an Actions Step Summary into a physical witness.
-
-The R186 migration remains excluded. A syntactically valid bundle is not
-permission to mutate Docker. R248 now binds the changing 2/3/4-CID graph
-while preserving historical R188 resource creators. The effectful successor
-stays NO_GO until FAILURE cleanup, durable postflight, bundle space and
-owner/passkey acceptance are connected and independently reviewed.
-"""
+"""Bound, fail-closed Boca successor inputs for one future protected host lease."""
+#
+# The ONLY trusted provenance is the reviewed GitHub runner: it must first
+# authenticate the live current-pair V2 envelope, previous dual release, R188
+# historical custody and the target dual release. This host-side validator
+# rechecks canonical *integrity and coordinates*, never invents a GitHub
+# signature or elevates an Actions Step Summary into a physical witness.
+#
+# The R186 migration remains excluded. A syntactically valid bundle is not
+# permission to mutate Docker. R248 now binds the changing 2/3/4-CID graph
+# while preserving historical R188 resource creators. The effectful successor
+# stays NO_GO until FAILURE cleanup, durable postflight, bundle space and
+# owner/passkey acceptance are connected and independently reviewed.
 
 from __future__ import annotations
 
@@ -24,6 +23,7 @@ from typing import TYPE_CHECKING, Literal, cast
 from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_cleanup_v2 as counted
 from boca_socios import host_boca_current_pair_v2 as current
+from boca_socios import host_boca_current_retained as current_resources
 from boca_socios import host_boca_pair_upgrade as transaction
 from boca_socios import host_boca_pair_upgrade_reusable as reusable
 from boca_socios import host_boca_repeatable_journal as journal
@@ -71,13 +71,13 @@ class BoundSuccessorInputs:
 
 @dataclass(frozen=True, slots=True)
 class CurrentBaseOnlyStageCustody:
-    """Read actual unchanged root Compose twice in the journal's SAME lease.
+    """Read actual unchanged root Compose twice in the journal's SAME lease."""
 
-    This intentionally supports only the current no-base-Compose-change
-    upgrade. A future changed-base upgrade requires a separately authenticated
-    historical source digest, not the old R186 singleton constant.
-    No Docker effect, lease acquisition or journal write during assembly.
-    """
+    #
+    # This intentionally supports only the current no-base-Compose-change
+    # upgrade. A future changed-base upgrade requires a separately authenticated
+    # historical source digest, not the old R186 singleton constant.
+    # No Docker effect, lease acquisition or journal write during assembly.
 
     preflight: BoundSuccessorPreflight
     journal: journal.SuccessorPairJournal
@@ -95,11 +95,10 @@ class CurrentBaseOnlyStageCustody:
         self.sources().validate()
 
     def sources(self) -> PairSources:
-        """Freeze target bytes; original digest becomes a strict equality gate.
-
-        Only `intent` can attest that the physical old root actually has this
-        SHA. Mere construction does NOT prove the old Compose identity.
-        """
+        """Freeze target bytes; original digest becomes a strict equality gate."""
+        #
+        # Only `intent` can attest that the physical old root actually has this
+        # SHA. Mere construction does NOT prove the old Compose identity.
         try:
             proof = self.preflight
             sources = PairSources(
@@ -158,14 +157,14 @@ class CurrentBaseOnlyStageCustody:
 
 
 class OneShotFailureTerminalSink:
-    """Compose official FAILURE V2 and the original journal terminal once.
+    """Compose official FAILURE V2 and the original journal terminal once."""
 
-    This is an inert, unwired future terminal callback. It does not acquire a
-    lease, dispatch Docker, retry an effect or grant an installed-pair GO.
-    A failed precommit attempt may clean exact Boca resources only through
-    the existing durable V2 executor. After a possible commit, never restore
-    or perform FAILURE cleanup; retain the original uncertainty.
-    """
+    #
+    # This is an inert, unwired future terminal callback. It does not acquire a
+    # lease, dispatch Docker, retry an effect or grant an installed-pair GO.
+    # A failed precommit attempt may clean exact Boca resources only through
+    # the existing durable V2 executor. After a possible commit, never restore
+    # or perform FAILURE cleanup; retain the original uncertainty.
 
     def __init__(
         self,
@@ -173,6 +172,7 @@ class OneShotFailureTerminalSink:
         durable: journal.SuccessorPairJournal,
         *,
         retained_io: adapters.RetainedResourceIO | None = None,
+        current_retained: bytes | None = None,
     ) -> None:
         if (
             type(plan) is not transaction.PairCoordinates
@@ -184,9 +184,12 @@ class OneShotFailureTerminalSink:
         ):
             raise _fail()
         plan.validate()
+        if current_retained is not None:
+            current_resources.decode(current_retained)
         self.plan = plan
         self.journal = durable
         self.retained_io = retained_io
+        self.current_retained = current_retained
         self._started = False
 
     def __call__(
@@ -246,6 +249,7 @@ class OneShotFailureTerminalSink:
                 receipt_dir=stage.ROOT,
                 historical_retained=failure_cleanup._EXPECTED_R108,
                 retained_io=self.retained_io if receipt.old_restored else None,
+                current_retained=self.current_retained,
             )
             if (
                 type(proof) is not failure_cleanup.DurableFailureCleanupReceipt
@@ -290,13 +294,12 @@ def verify_runner_bound_host_inputs(
     retained_receipt: bytes,
     current_pair_v2: bytes,
 ) -> BoundSuccessorInputs:
-    """Validate physical coordinates after runner-authenticated GH transport.
-
-    No arguments here may come from an unverified host/form payload. A V2
-    checksum is only internal integrity; authenticating its GitHub origin
-    remains the protected runner's responsibility. Historical R188 source and
-    attempt deliberately differ from the current installed pair on B -> C.
-    """
+    """Validate physical coordinates after runner-authenticated GH transport."""
+    #
+    # No arguments here may come from an unverified host/form payload. A V2
+    # checksum is only internal integrity; authenticating its GitHub origin
+    # remains the protected runner's responsibility. Historical R188 source and
+    # attempt deliberately differ from the current installed pair on B -> C.
     try:
         if (
             any(
@@ -323,14 +326,6 @@ def verify_runner_bound_host_inputs(
         release_bridge.verify_bundled_release(
             release_proof, controller_manifest, paired_manifest, candidate
         )
-        pair_data = observation.verify_bundled_observation(
-            observation_proof,
-            observation_receipt,
-            source_sha,
-            observation_run_id,
-            attempt_id,
-            release_run_id,
-        )
         v2 = current.verify_current_pair_v2(current_pair_v2)
         history = v2["historical_resource_custody"]
         if type(history) is not dict:
@@ -344,8 +339,19 @@ def verify_runner_bound_host_inputs(
         if (
             current._history(custody) != history
             or hashlib.sha256(retained_receipt).hexdigest() != history["historical_receipt_sha256"]
+            or custody.current_receipt is not None
+            and not int(observation_run_id) < int(historical_run) < int(attempt_id)
         ):
             raise _fail()
+        pair_data = observation.verify_bundled_observation(
+            observation_proof,
+            observation_receipt,
+            source_sha,
+            observation_run_id,
+            attempt_id,
+            release_run_id,
+            current_retained=custody.current_receipt,
+        )
         for key, expected in (
             ("target_main_sha", source_sha),
             ("target_release_run", release_run_id),
@@ -407,12 +413,12 @@ def verify_runner_bound_host_inputs(
 
 @dataclass(frozen=True, slots=True)
 class PreparedSuccessorTransaction:
-    """Reuse the ONLY one-lease engine and its journal; still ineligible.
+    """Reuse the ONLY one-lease engine and its journal; still ineligible."""
 
-    Explicitly retain two independent interlocks: the backend class guard
-    and this entrypoint's guard. A future reviewed activation must change
-    both after completing all failure/postflight source dependencies.
-    """
+    #
+    # Explicitly retain two independent interlocks: the backend class guard
+    # and this entrypoint's guard. A future reviewed activation must change
+    # both after completing all failure/postflight source dependencies.
 
     plan: transaction.PairCoordinates
     backend: successor_runtime.PostflightGatedSuccessorBackend
@@ -435,15 +441,14 @@ def prepare_effectful_successor(
     *,
     sources: PairSources | None = None,
 ) -> PreparedSuccessorTransaction:
-    """Assemble exact Boca actors and read-side dynamic graph, still NO_GO.
-
-    The existing journal implements exclusive durable intent/evidence,
-    commit and terminal receipts under `run_pair_upgrade`'s sole lease. The
-    current B->C witness uses original R188 *resource* pins separately from
-    the authenticated current pair, and rechecks all 2/3/4 exact CIDs.
-    FAILURE cleanup and the full physical owner/postflight remain unwired;
-    the actor stays type-interlocked. No Docker read/write during assembly.
-    """
+    """Assemble exact Boca actors and read-side dynamic graph, still NO_GO."""
+    #
+    # The existing journal implements exclusive durable intent/evidence,
+    # commit and terminal receipts under `run_pair_upgrade`'s sole lease. The
+    # current B->C witness uses original R188 *resource* pins separately from
+    # the authenticated current pair, and rechecks all 2/3/4 exact CIDs.
+    # FAILURE cleanup and the full physical owner/postflight remain unwired;
+    # the actor stays type-interlocked. No Docker read/write during assembly.
     try:
         if type(inputs) is not BoundSuccessorInputs or type(sources) is not PairSources:
             raise _fail()
@@ -468,6 +473,7 @@ def prepare_effectful_successor(
             inputs.retained,
             integrations=integrations,
             gate=None,
+            current_retained=inputs.custody.current_receipt,
         )
         integrations.bind_backend(backend)
         if type(backend).requires_persistent_receipt is not False:

@@ -85,7 +85,9 @@ def _canonical(value: dict[str, object]) -> bytes:
     ).encode("ascii")
 
 
-def _pair_projection(raw: bytes, observation_run: str, main_sha: str) -> dict[str, object]:
+def _pair_projection(
+    raw: bytes, observation_run: str, main_sha: str, *, current_retained: bytes | None = None
+) -> dict[str, object]:
     if not _RUN.fullmatch(observation_run) or not _SHA.fullmatch(main_sha):
         raise _fail()
     pair.verify(raw, observation_run)
@@ -93,12 +95,22 @@ def _pair_projection(raw: bytes, observation_run: str, main_sha: str) -> dict[st
     if not isinstance(parsed, dict) or not isinstance(parsed.get("services"), list):
         raise _fail()
     controller, worker = parsed["services"]
+    from boca_socios import host_boca_current_retained as custody
+
+    if current_retained is not None:
+        current_value = custody.decode(current_retained)
+        custody.require_pair(
+            current_retained, current_value["observation_run_id"], raw, observation_run
+        )
+    try:
+        custody.require_worker(worker, worker["container_id"], current_retained)
+    except ValueError:
+        raise _fail() from None
     if (
         controller["running"] is not True
         or controller["status"] != "running"
         or controller["health"] != "healthy"
         or worker["running"] is not False
-        or worker["status"] != "created"
         or worker["pid"] != 0
         or worker["exit_code"] != 0
         or parsed["source_sha"] == main_sha
@@ -141,12 +153,16 @@ def verify_bundled_observation(
     observation_run: str,
     apply_run: str,
     release_run: str,
+    *,
+    current_retained: bytes | None = None,
 ) -> dict[str, object]:
     """Host checks *integrity*, never independently authorizes GitHub origin."""
     try:
         if type(proof) is not bytes or not 0 < len(proof) <= 2048:
             raise _fail()
-        expected = _pair_projection(raw, observation_run, main_sha)
+        expected = _pair_projection(
+            raw, observation_run, main_sha, current_retained=current_retained
+        )
         _runs_are_distinct(expected, apply_run, release_run)
         expected.update({"apply_attempt_id": apply_run, "release_run_id": release_run})
         parsed = json.loads(proof, object_pairs_hook=_unique)
@@ -335,6 +351,7 @@ def _authenticate_and_download(
     client: GitHubEvidenceTransport,
     *,
     now: datetime | None = None,
+    current_retained: bytes | None = None,
 ) -> tuple[bytes, bytes]:
     observed_now = datetime.now(timezone.utc) if now is None else now  # noqa: UP017 - host py3.10
     if observed_now.tzinfo is None or client is None:
@@ -345,14 +362,22 @@ def _authenticate_and_download(
     raw = _download_artifact(client, main_sha, observation_run)
     if supplied is not None and raw != supplied:
         raise _fail()
-    expected = _pair_projection(raw, observation_run, main_sha)
+    expected = _pair_projection(raw, observation_run, main_sha, current_retained=current_retained)
     _runs_are_distinct(expected, apply_run, release_run)
     expected.update({"apply_attempt_id": apply_run, "release_run_id": release_run})
     # Recheck attempt after job/artifact listing to detect Action rerun races.
     _verify_run(client, main_sha, observation_run, observed_now)
     _main_is_exact(client, main_sha)
     proof = _canonical(expected)
-    verify_bundled_observation(proof, raw, main_sha, observation_run, apply_run, release_run)
+    verify_bundled_observation(
+        proof,
+        raw,
+        main_sha,
+        observation_run,
+        apply_run,
+        release_run,
+        current_retained=current_retained,
+    )
     return proof, raw
 
 
@@ -365,11 +390,19 @@ def authenticate_runner_observation(
     client: GitHubEvidenceTransport,
     *,
     now: datetime | None = None,
+    current_retained: bytes | None = None,
 ) -> bytes:
     """Runner-only real Actions artifact authentication; never host capability."""
     try:
         return _authenticate_and_download(
-            main_sha, observation_run, apply_run, release_run, raw, client, now=now
+            main_sha,
+            observation_run,
+            apply_run,
+            release_run,
+            raw,
+            client,
+            now=now,
+            current_retained=current_retained,
         )[0]
     except Exception:
         raise _fail() from None

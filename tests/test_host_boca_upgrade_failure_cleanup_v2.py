@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from boca_socios import host_boca_binding_observe as binding
 from boca_socios import host_boca_cleanup as gc
 from boca_socios import host_boca_cleanup_v2 as counted
 from boca_socios import host_boca_upgrade_adapters as adapters
@@ -59,7 +60,7 @@ def _installed() -> OnDemandInstallation:
         OLD_CONTROLLER_REF,
         plan.old_worker_id,
         OLD_WORKER_REF,
-        Path("/data/boca.sqlite3"),
+        binding.CANONICAL_DATABASE,
         ReviewedInstalledPair(plan.old_attempt_id, "5" * 64, "8" * 64),
     )
 

@@ -44,6 +44,8 @@ _FIXTURE_FILES = (
     "src/boca_socios/browser/ipc_client.py",
     "src/boca_socios/browser/ipc_protocol.py",
     "src/boca_socios/browser/ipc_server.py",
+    "src/boca_socios/browser/queue_page_observation.py",
+    "src/boca_socios/browser/site_url_runtime.py",
     "src/boca_socios/browser/activity_events.py",
     "src/boca_socios/browser/contracts.py",
     "src/boca_socios/browser/worker_health.py",

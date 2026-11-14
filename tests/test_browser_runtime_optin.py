@@ -117,12 +117,14 @@ def test_valid_explicit_ipc_preflight_selects_only_fixed_unix_path_and_longer_bu
     assert checked == [SOCKET_PATH]
 
 
+@pytest.mark.parametrize("on_demand", [False, True])
 def test_served_beta_wires_ipc_port_and_thirty_second_command_deadline(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, on_demand: bool
 ) -> None:
-    settings = _settings(tmp_path, "ipc")
+    settings = replace(_settings(tmp_path, "ipc"), bot_control="on-demand" if on_demand else "off")
     selected = UnixSyntheticBrowser()
     calls: list[dict[str, object]] = []
+    panel_calls: list[dict[str, object]] = []
 
     class FakeRuntime:
         members = object()
@@ -156,14 +158,23 @@ def test_served_beta_wires_ipc_port_and_thirty_second_command_deadline(
     monkeypatch.setattr(runtime_module, "PasskeyOwnerAuthentication", lambda **_k: object())
     monkeypatch.setattr(runtime_module, "_configured_event", lambda _path: {})
     monkeypatch.setattr(runtime_module.LocalBetaRuntime, "start", start_runtime)
-    monkeypatch.setattr(runtime_module, "PrivatePanelApplication", lambda **_k: object())
+    monkeypatch.setattr(
+        runtime_module, "PrivatePanelApplication", lambda **kw: panel_calls.append(kw) or object()
+    )
     monkeypatch.setattr(runtime_module, "_LoopbackHTTPWSGIServer", FakeServer)
     served = runtime_module.build_beta_server(settings)
     try:
         assert isinstance(served.server, FakeServer)
         assert served.server.app is not None
-        assert calls[0]["browser"] is selected
+        if on_demand:
+            assert isinstance(calls[0]["browser"], runtime_module._LocalSyntheticBrowser)
+            assert calls[0]["bot_session"].on_start is not None
+            assert served.observation_session is not None
+            assert panel_calls[0]["automatic_monitor"].snapshot()["latest"] is None
+        else:
+            assert calls[0]["browser"] is selected
         assert calls[0]["command_timeout_seconds"] == 30.0
+        assert panel_calls[0]["source_sha"] == settings.source_sha
     finally:
         served.close()
 

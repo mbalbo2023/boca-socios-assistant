@@ -1,5 +1,25 @@
 # Development and merge policy
 
+## 2026-11-14 — R294, continuidad funcional autorizada
+
+R293 cerró la prioridad CI/CD por PR #515. El titular autoriza completar el
+trabajo funcional, promover un único SHA definitivo y validar físicamente.
+Su aclaración exige detección automática por el worker: no sustituir el
+productor por carga manual o un estado desconocido permanente. ADR0299 fija
+el diseño único, reutilización, estados y criterios de aceptación.
+
+La sesión ordinaria se activa por START del titular; nuestras pruebas continúan
+sin navegación real Boca/Queue-it. Tickets SIMULATION_ONLY, sin reservas,
+compras, evasión ni modificaciones de algoritmos protegidos. Revisión independiente,
+checks exactos, ruleset main, identidad de release, lease y recuperación por
+fase siguen obligatorios. Operaciones de host únicamente por Actions serializadas.
+
+APPLY técnico y provisión administrativa posterior tienen resultados separados:
+no usar continue-on-error ni repetir instalación por un fallo de preferencias
+o del recibo Telegram. La aceptación funcional exige ambos resultados y la
+evidencia del titular; CI GREEN no los sustituye. Fuente main/release/instalada,
+productor Queue-it y transporte de login Boca se informan por separado.
+
 ## 2026-11-13 — prioridad CI/CD R293 y certificación física vigente R291
 
 La continuación autorizada por el titular en

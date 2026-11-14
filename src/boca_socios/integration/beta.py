@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from boca_socios.browser.contracts import SimulationNotice, SimulationOutcome, SyntheticBrowserPort
 from boca_socios.domain.policy import TicketIntent
+from boca_socios.domain.sector_preferences import SectorEvaluation
 from boca_socios.integration.command_store import (
     CommandCapacityError,
     CommandConflict,
@@ -25,6 +26,7 @@ from boca_socios.integration.durable import DurableOfflineSimulation
 from boca_socios.integration.offline import StaticOutboxAdapter
 from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
 from boca_socios.panel.lifecycle_intents import LifecycleIntentStore
+from boca_socios.panel.worker_activity import record_simulation_queue_stage
 from boca_socios.queue import OfflineQueueSimulator, SimulatorConfig
 from boca_socios.reservation_guard import ReservationAttemptGuard, ReservationState
 from boca_socios.storage.database import Database
@@ -44,6 +46,7 @@ class OnDemandBotSession:
     ledger: LifecycleIntentStore
     check_worker: Callable[[], None]
     wake: Callable[[str], None]
+    on_start: Callable[[str], None] | None = None
 
     def require_start(self, status: Literal["CLAIMED", "APPLIED"]) -> str:
         state = self.ledger.current()
@@ -61,9 +64,11 @@ class OnDemandBotSession:
     def before_engine_start(self) -> None:
         # Only the host's live claim can start this engine. An old APPLIED
         # START on disk can never reopen it after a controller restart.
-        self.require_start("CLAIMED")
+        start_id = self.require_start("CLAIMED")
+        if self.on_start is not None:
+            self.on_start(start_id)
 
-    def finish(self, start_operation_id: str) -> None:
+    def finish(self, start_operation_id: str) -> bool:
         stop = self.ledger.request_work_stop(start_operation_id)
         if stop is not None and stop.status == "REQUESTED":
             try:
@@ -71,7 +76,8 @@ class OnDemandBotSession:
             except OSError:
                 # The correlated STOP is durable. Its same UUID can be
                 # delivered again; no new work may enter this engine.
-                return
+                pass
+        return stop is not None
 
 
 class BetaCoordinator:
@@ -91,6 +97,7 @@ class BetaCoordinator:
         max_pending: int = 16,
         timeout_seconds: float = 5,
         bot_session: OnDemandBotSession | None = None,
+        sector_policy: Callable[[TicketIntent], SectorEvaluation] | None = None,
     ) -> None:
         if outbox.database is not database:
             raise ValueError("coordinator and outbox must share the same Database instance")
@@ -109,6 +116,7 @@ class BetaCoordinator:
         self._max_pending = max_pending
         self._timeout = timeout_seconds
         self._bot_session = bot_session
+        self._sector_policy = sector_policy
         self._work_start_id: str | None = None
         self._store = CommandStore(database)
         self._guard = ReservationAttemptGuard(database)
@@ -151,7 +159,12 @@ class BetaCoordinator:
                 ledger.bind_work(connection, confirmed_start, key)
 
         snapshot = self._store.enqueue(
-            command_id, intent, now=self._now(), max_pending=self._max_pending, bind_work=bind_work
+            command_id,
+            intent,
+            now=self._now(),
+            max_pending=self._max_pending,
+            bind_work=bind_work,
+            sector_policy=self._sector_policy,
         )
         if snapshot.state is CommandState.ACCEPTED:
             self._work_start_id = start_id
@@ -183,16 +196,23 @@ class BetaCoordinator:
         if not self._closed and not self._failed and (self._worker is None or self._worker.done()):
             self._worker = asyncio.create_task(self._drain())
 
-    async def _simulate(self, intent: TicketIntent) -> None:
+    async def _simulate(self, intent: TicketIntent, *, command_id: str) -> None:
         # This is a local one-entry queue exercise, never a Queue-it admission.
         instant = datetime.fromtimestamp(self._now(), UTC)
         queue = OfflineQueueSimulator(
             SimulatorConfig(intent.event_id, instant, instant + timedelta(minutes=1))
         )
         session_id = str(uuid4())
-        queue.create_session(intent.member_id, session_id, instant)
-        queue.join(session_id, instant)
-        queue.admit_next(instant)
+        created = queue.create_session(intent.member_id, session_id, instant)
+        record_simulation_queue_stage(self._db, command_id=command_id, snapshot=created, at=instant)
+        waiting = queue.join(session_id, instant)
+        record_simulation_queue_stage(self._db, command_id=command_id, snapshot=waiting, at=instant)
+        admitted = queue.admit_next(instant)
+        if admitted is None:
+            raise RuntimeError("local queue admission unavailable")
+        record_simulation_queue_stage(
+            self._db, command_id=command_id, snapshot=admitted, at=instant
+        )
         simulation = DurableOfflineSimulation(
             database=self._db,
             queue=queue,
@@ -200,8 +220,33 @@ class BetaCoordinator:
             browser=self._browser,
             clock=self._clock,
         )
-        await simulation.run_admitted(
-            intent, session_id=session_id, at=instant, notification_at_seconds=self._now()
+        try:
+            await simulation.run_admitted(
+                intent, session_id=session_id, at=instant, notification_at_seconds=self._now()
+            )
+        except asyncio.CancelledError:
+            ended = queue.cancel(session_id, instant)
+            record_simulation_queue_stage(
+                self._db,
+                command_id=command_id,
+                snapshot=ended,
+                at=datetime.fromtimestamp(self._now(), UTC),
+            )
+            raise
+        except Exception:
+            ended = queue.fail(session_id, instant)
+            record_simulation_queue_stage(
+                self._db,
+                command_id=command_id,
+                snapshot=ended,
+                at=datetime.fromtimestamp(self._now(), UTC),
+            )
+            raise
+        record_simulation_queue_stage(
+            self._db,
+            command_id=command_id,
+            snapshot=queue.snapshot(session_id),
+            at=datetime.fromtimestamp(self._now(), UTC),
         )
 
     def _reconcile(self, snapshot: CommandSnapshot) -> None:
@@ -241,8 +286,11 @@ class BetaCoordinator:
                 claimed = self._store.claim_next(now=self._now(), may_run=may_run)
                 if claimed is None:
                     if self._bot_session is not None and self._work_start_id is not None:
-                        self._closed = True
-                        self._bot_session.finish(self._work_start_id)
+                        # An active automatic queue may outlive this local
+                        # simulation. Admit later commands until the ledger
+                        # actually derives STOP; admission also rechecks START
+                        # inside its transaction to fence a concurrent stop.
+                        self._closed = self._bot_session.finish(self._work_start_id)
                     break
                 record, intent = claimed
                 self._active_key, self._active_member = record.command_id, intent.member_id
@@ -251,7 +299,9 @@ class BetaCoordinator:
                     raise RuntimeError("claimed local command disappeared")
                 if current.state is not CommandState.STOP_REQUESTED:
                     self._active = asyncio.create_task(
-                        asyncio.wait_for(self._simulate(intent), self._timeout)
+                        asyncio.wait_for(
+                            self._simulate(intent, command_id=record.command_id), self._timeout
+                        )
                     )
                     try:
                         await self._active

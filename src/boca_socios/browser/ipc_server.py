@@ -1,9 +1,9 @@
 """Bounded AF_UNIX adapter for a disposable Boca *simulation* worker.
 
-This integration boundary never imports the two owner-controlled navigation
-modules and cannot navigate a website by default. A reviewed offline executor
-can be injected to prove the controller's fixed IPC contract. The default
-entrypoint serves the health/peer transport but rejects all work with NO_GO.
+The default cannot navigate a website and rejects work with NO_GO. Explicit
+offline simulation and automatic observation are separate operations: an
+observed Queue-it payload never becomes a simulated reservation. The latter
+uses a reviewed facade outside the unmodified owner navigation modules.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from boca_socios.browser.ipc_protocol import (
     FIXTURE_OBSERVED,
     MAX_FRAME_BYTES,
     NO_GO,
+    OBSERVE_QUEUE,
     PROBE_FIXTURE,
     PROBE_SITE,
     REQUEST,
@@ -39,11 +40,13 @@ from boca_socios.browser.ipc_protocol import (
     WORKER_UID,
     SyntheticIPCError,
     framed,
+    framed_private_observation,
     read_frame,
     socket_identity,
     validate_socket_directory,
     verify_peer,
 )
+from boca_socios.browser.queue_page_observation import QueuePageObservation
 from boca_socios.browser.worker_health import WorkerBoundaryError, validate_worker_boundary
 
 
@@ -79,6 +82,14 @@ class SyntheticExecutor(Protocol):
     """Small dependency-injection boundary; no URL or ticket data cross IPC."""
 
     async def simulate_general_reservation(self) -> SimulationOutcome | ObservationStatus: ...
+
+    async def close(self) -> None: ...
+
+
+class QueueObservationExecutor(Protocol):
+    """A private observation from the single owner-started browser session."""
+
+    async def observe_queue(self) -> QueuePageObservation: ...
 
     async def close(self) -> None: ...
 
@@ -133,14 +144,21 @@ class UnixSyntheticWorker:
         on_observation: Callable[[ObservationStatus], None] | None = None,
         fixture_only: bool = False,
         site_observer: SiteObservationExecutor | None = None,
+        queue_observer: QueueObservationExecutor | None = None,
     ) -> None:
-        if type(fixture_only) is not bool or (
-            site_observer is not None and (fixture_only or executor is not None)
+        if (
+            type(fixture_only) is not bool
+            or (site_observer is not None and (fixture_only or executor is not None))
+            or (
+                queue_observer is not None
+                and (fixture_only or executor is not None or site_observer is not None)
+            )
         ):
             raise ValueError("browser observer modes must be exclusive")
         self._executor = OfflineNoGoExecutor() if executor is None else executor
         self._fixture_only = fixture_only
         self._site_observer = site_observer
+        self._queue_observer = queue_observer
         self._on_observation = on_observation
         self._path = socket_path
         self._boundary_check = boundary_check
@@ -201,14 +219,23 @@ class UnixSyntheticWorker:
             raise
 
     @staticmethod
-    async def _respond(writer: asyncio.StreamWriter, payload: bytes) -> None:
-        writer.write(framed(payload))
+    async def _respond(
+        writer: asyncio.StreamWriter, payload: bytes, *, queue_reply: bool = False
+    ) -> None:
+        writer.write(
+            framed_private_observation(payload)
+            if queue_reply and payload not in {NO_GO, BUSY}
+            else framed(payload)
+        )
         await asyncio.wait_for(writer.drain(), timeout=1.0)
 
     async def _read_request(self, reader: asyncio.StreamReader) -> bytes:
         async with asyncio.timeout(self._request_seconds):
             request = await read_frame(reader)
-            if request not in {REQUEST, PROBE_FIXTURE, PROBE_SITE} or await reader.read(1) != b"":
+            if (
+                request not in {REQUEST, PROBE_FIXTURE, PROBE_SITE, OBSERVE_QUEUE}
+                or await reader.read(1) != b""
+            ):
                 raise SyntheticIPCError("ipc_request_unverified")
             return request
 
@@ -221,13 +248,17 @@ class UnixSyntheticWorker:
             return
 
     async def _run_synthetic(
-        self, *, fixture_probe: bool = False, site_probe: bool = False
+        self, *, fixture_probe: bool = False, site_probe: bool = False, queue_probe: bool = False
     ) -> bytes:
         self._boundary_check()
-        if site_probe:
+        if queue_probe:
+            if self._queue_observer is None:
+                return NO_GO
+            active: asyncio.Task[object] = asyncio.create_task(self._queue_observer.observe_queue())
+        elif site_probe:
             if self._site_observer is None:
                 return NO_GO
-            active: asyncio.Task[object] = asyncio.create_task(self._site_observer.observe_site())
+            active = asyncio.create_task(self._site_observer.observe_site())
         else:
             active = asyncio.create_task(self._executor.simulate_general_reservation())
         self._active = active
@@ -245,6 +276,8 @@ class UnixSyntheticWorker:
             result = active.result()
             if self._stopping() or active.cancelling():
                 return NO_GO
+            if queue_probe:
+                return result.to_payload() if isinstance(result, QueuePageObservation) else NO_GO
             if site_probe:
                 if result is SiteObservationStatus.HTTP_OK:
                     return SITE_HTTP_OK
@@ -263,6 +296,7 @@ class UnixSyntheticWorker:
             if str(exc) in {
                 "offline_fixture_teardown_unverified",
                 "site_observer_teardown_unverified",
+                "automatic_observer_teardown_unverified",
             }:
                 # The executor could not prove that Chromium was closed. The
                 # disposable process must stop accepting work and exit through
@@ -277,6 +311,7 @@ class UnixSyntheticWorker:
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         accepted = False
+        queue_reply = False
         try:
             verify_peer(writer, uid=CONTROLLER_UID, gid=CONTROLLER_UID)
             if self._closed or self._poisoned.is_set():
@@ -300,7 +335,12 @@ class UnixSyntheticWorker:
                 if self._stopping():
                     raise SyntheticIPCError("worker_closed")
                 deadline = monotonic() + self._operation_seconds
-                if request == PROBE_SITE and self._site_observer is not None:
+                queue_reply = request == OBSERVE_QUEUE
+                if request == OBSERVE_QUEUE and self._queue_observer is not None:
+                    response = await self._run_synthetic(queue_probe=True)
+                elif request == OBSERVE_QUEUE or self._queue_observer is not None:
+                    response = NO_GO
+                elif request == PROBE_SITE and self._site_observer is not None:
                     response = await self._run_synthetic(site_probe=True)
                 elif (
                     request == PROBE_SITE
@@ -311,13 +351,13 @@ class UnixSyntheticWorker:
                 else:
                     response = await self._run_synthetic(fixture_probe=request == PROBE_FIXTURE)
                 task = asyncio.current_task()
-                if response in {SUCCESS, FIXTURE_OBSERVED} and (
+                if response not in {NO_GO, BUSY} and (
                     self._stopping() or monotonic() >= deadline or task is None or task.cancelling()
                 ):
                     response = NO_GO
             except (SyntheticIPCError, WorkerBoundaryError, OSError, TimeoutError, ValueError):
                 response = NO_GO
-            await self._respond(writer, response)
+            await self._respond(writer, response, queue_reply=queue_reply)
         except (SyntheticIPCError, OSError, TimeoutError, ConnectionError):
             return
         finally:
@@ -356,7 +396,9 @@ class UnixSyntheticWorker:
             closed_server.result()
             self._server = None
         closing = asyncio.create_task(
-            self._site_observer.close()
+            self._queue_observer.close()
+            if self._queue_observer is not None
+            else self._site_observer.close()
             if self._site_observer is not None
             else self._executor.close()
         )
@@ -419,6 +461,16 @@ async def _run_server(
 ) -> None:
     site_url = _read_worker_site_url()
     observe_mode = os.environ.get("BOCA_BROWSER_OBSERVE_MODE", "off")
+    executor_mode = os.environ.get("BOCA_BROWSER_EXECUTOR", "off")
+    if executor_mode not in {"off", "offline-simulation", "automatic-observation"} or (
+        executor_mode in {"offline-simulation", "automatic-observation"}
+        and (
+            os.environ.get("BOCA_RUNTIME_MODE") != "simulation"
+            or observe_mode != "off"
+            or executor_factory is not None
+        )
+    ):
+        raise SyntheticIPCError("worker_executor_mode_unverified")
     if observe_mode not in {"off", "offline-fixture", "site-readonly"} or (
         executor_factory is not None and observe_mode != "off"
     ):
@@ -427,17 +479,24 @@ async def _run_server(
     loop = asyncio.get_running_loop()
     loop.add_signal_handler(signal.SIGTERM, stopping.set)
     loop.add_signal_handler(signal.SIGINT, stopping.set)
-    # The default remains transport-only. A reviewed offline factory may be
-    # injected for simulation tests; the legacy browser orchestrator is not
-    # silently treated as a reservation simulator.
+    # The default remains transport-only. A distinct explicit simulation mode
+    # reuses the inert local DOM executor, with every external request denied.
+    # SITE_URL is configuration custody, never a destination for this executor.
+    # Fixture observations retain their separate PROBE_FIXTURE acknowledgement.
     fixture_only = observe_mode == "offline-fixture"
     site_observer: SiteObservationExecutor | None = None
-    if fixture_only:
+    queue_observer: QueueObservationExecutor | None = None
+    if fixture_only or executor_mode == "offline-simulation":
         # Never import the owner-controlled navigation modules: this opt-in
         # drives only literal HTML with every external request aborted.
         from boca_socios.browser.offline_fixture import OfflineFixtureExecutor
 
         executor: SyntheticExecutor = OfflineFixtureExecutor()
+    elif executor_mode == "automatic-observation":
+        from boca_socios.browser.automatic_observer import AutomaticQueueObserver
+
+        queue_observer = AutomaticQueueObserver(site_url)
+        executor = OfflineNoGoExecutor()
     elif observe_mode == "site-readonly":
         from boca_socios.browser.site_observer import SiteReadOnlyExecutor
 
@@ -446,9 +505,10 @@ async def _run_server(
     else:
         executor = OfflineNoGoExecutor() if executor_factory is None else executor_factory(site_url)
     worker = UnixSyntheticWorker(
-        None if site_observer is not None else executor,
+        None if site_observer is not None or queue_observer is not None else executor,
         fixture_only=fixture_only,
         site_observer=site_observer,
+        queue_observer=queue_observer,
     )
     try:
         await worker.serve_until(stopping)

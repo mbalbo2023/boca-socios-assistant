@@ -40,6 +40,8 @@ services:
       BOCA_ENVIRONMENT: staging
       BOCA_RUNTIME_MODE: simulation
       BOCA_ENGINE_MODE: "off"
+      BOCA_BROWSER_EXECUTOR: automatic-observation
+      BOCA_BROWSER_OBSERVE_MODE: "off"
     labels:
       boca.socios.browser-ipc-attempt: ${BOCA_BROWSER_ATTEMPT_ID:?single_reviewed_GitHub_run_required}
     volumes:

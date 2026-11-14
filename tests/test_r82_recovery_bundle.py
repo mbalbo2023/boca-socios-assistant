@@ -164,6 +164,12 @@ R245_GUARDED_CLEANUP_FULL_CUTOVER_SHA = (
 R252_SUCCESS_IMAGE_PREDELETE_GUARD_FULL_CUTOVER_SHA = (
     "976e703b51f454a084394cd8877bad5c8c0da8ea46b183f797cea789b854393c"
 )
+# R294 carries the authenticated browser profile and compacts comment tokens
+# across the full reviewed Python closure. All historical pins remain intact;
+# this deterministic transport pin does not authorize a historical Cutover.
+R294_AUTHENTICATED_PROFILE_FULL_CUTOVER_SHA = (
+    "40adeea75b470478e6c39bec217cb92477cfc5647fb946d4b2752c286edd5b1d"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -317,15 +323,12 @@ def test_both_recovery_modes_reject_modified_bytes_and_injected_entries(
 
 
 def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) -> None:
-    """R252 source evolution does not modify the isolated R83 recovery modes."""
+    """R294 source evolution does not modify the isolated R83 recovery modes."""
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert (
-        digest
-        == hashlib.sha256(raw).hexdigest()
-        == R252_SUCCESS_IMAGE_PREDELETE_GUARD_FULL_CUTOVER_SHA
-    )
+    assert digest == hashlib.sha256(raw).hexdigest() == R294_AUTHENTICATED_PROFILE_FULL_CUTOVER_SHA
+    assert digest != R252_SUCCESS_IMAGE_PREDELETE_GUARD_FULL_CUTOVER_SHA
     assert digest != R245_GUARDED_CLEANUP_FULL_CUTOVER_SHA
     assert digest != R244_SAME_LEASE_CLEANUP_FULL_CUTOVER_SHA
     assert digest != R178_WORKER_EGRESS_READONLY_FULL_CUTOVER_SHA
