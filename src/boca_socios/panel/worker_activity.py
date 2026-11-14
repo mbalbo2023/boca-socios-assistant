@@ -109,6 +109,15 @@ _OBSERVATION_LABELS: dict[str, tuple[Level, str]] = {
     ),
 }
 _AUTOMATIC_LABELS: dict[str, tuple[Level, str]] = {
+    "AUTHENTICATING": ("progress", "Boca: autenticación del socio seleccionado en curso."),
+    "AUTH_OBSERVED": (
+        "success",
+        "Boca: respuesta recibida; tokens en el monitor privado, sin validar compra.",
+    ),
+    "AUTH_FAILED": (
+        "warning",
+        "Boca: autenticación no disponible o no verificable; ciclo finalizado.",
+    ),
     "CHECKING": ("progress", "Worker: comprobando evento y cola virtual de la sesión del titular."),
     "QUEUE_ACTIVE": (
         "progress",

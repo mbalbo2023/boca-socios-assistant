@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import stat
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -30,9 +31,10 @@ _PREFIX = "owner_lifecycle_v1_"
 _NAMESPACE = UUID("7a5e4b3a-2781-4f2d-978c-98bd64391508")
 _ON_DEMAND = "boca_bot_on_demand_v1:"
 _WORK_BINDING = "boca_bot_work_v1:"
+_AUTH_MEMBER = "boca_auth_member_v1:"
 _WORK_STOP = "boca_bot_work_stop_v1:"
 AUTOMATIC_CHECK_PREFIX = "boca_automatic_check_v1:"
-AUTOMATIC_CHECK_WAITING = frozenset({"CHECKING", "QUEUE_ACTIVE", "PREQUEUE"})
+AUTOMATIC_CHECK_WAITING = frozenset({"CHECKING", "QUEUE_ACTIVE", "PREQUEUE", "AUTHENTICATING"})
 AUTOMATIC_CHECK_TERMINAL = frozenset(
     {
         "QUEUE_INACTIVE",
@@ -41,6 +43,8 @@ AUTOMATIC_CHECK_TERMINAL = frozenset(
         "CHALLENGE",
         "UNKNOWN",
         "CHECK_FAILED",
+        "AUTH_OBSERVED",
+        "AUTH_FAILED",
     }
 )
 _REQUEST_ACTIONS = {
@@ -209,16 +213,25 @@ class LifecycleIntentStore:
         operation_id: str,
         *,
         on_demand: bool = False,
+        auth_member_id: str | None = None,
     ) -> LifecycleIntent:
         """Persist one intent. Never start, stop, signal, dispatch or contact host."""
         action = _action(component, target)
         canonical_operation_id(operation_id)
         if on_demand and component != "bot":
             raise ValueError("on-demand control requires the bot")
+        if auth_member_id is not None:
+            canonical_operation_id(auth_member_id)
+            if not on_demand or (component, target) != ("bot", "start"):
+                raise ValueError("authentication requires an on-demand start")
         before = _db_identity(self._database.path)
         try:
             with self._database.connection() as connection, connection:
                 connection.execute("BEGIN IMMEDIATE")
+                if auth_member_id is not None and not self._active_member(
+                    connection, auth_member_id
+                ):
+                    raise LifecycleConflict("active member credential required")
                 # A repeated operation ID is idempotent across restarts.
                 existing = connection.execute(
                     "SELECT action FROM audit_events WHERE audit_id=?", (operation_id,)
@@ -233,6 +246,8 @@ class LifecycleIntentStore:
                         raise LifecycleConflict(
                             "lifecycle request belongs to another control profile"
                         )
+                    if self._auth_member(connection, state.operation_id) != auth_member_id:
+                        raise LifecycleConflict("activation member cannot change")
                     result = state
                 elif (
                     on_demand
@@ -244,6 +259,8 @@ class LifecycleIntentStore:
                 ):
                     # Preserve the activation that owns in-flight work. Only
                     # REQUESTED needs another wake after loss of the first.
+                    if self._auth_member(connection, state.operation_id) != auth_member_id:
+                        raise LifecycleConflict("activation member cannot change")
                     result = state
                 else:
                     if (
@@ -261,6 +278,14 @@ class LifecycleIntentStore:
                     ):
                         raise LifecycleConflict("protected host operation remains unconfirmed")
                     _insert_request(connection, operation_id, action, on_demand=on_demand)
+                    if auth_member_id is not None:
+                        connection.execute(
+                            "INSERT INTO audit_events(audit_id,action) VALUES (?,?)",
+                            (
+                                str(uuid5(_NAMESPACE, _AUTH_MEMBER + operation_id)),
+                                _AUTH_MEMBER + auth_member_id,
+                            ),
+                        )
                     fresh = self._current(connection)
                     if fresh is None or fresh.operation_id != operation_id:
                         raise LifecycleStorageUnavailable("Boca lifecycle request did not persist")
@@ -270,6 +295,61 @@ class LifecycleIntentStore:
             return result
         except (sqlite3.Error, OSError, ValueError, TypeError):
             raise LifecycleStorageUnavailable("Boca lifecycle ledger unavailable") from None
+
+    @staticmethod
+    def _active_member(connection: sqlite3.Connection, member_id: str) -> bool:
+        return bool(
+            connection.execute(
+                "SELECT 1 FROM members m JOIN credentials c ON c.member_id=m.member_id "
+                "WHERE m.member_id=?",
+                (member_id,),
+            ).fetchone()
+            == (1,)
+        )
+
+    @staticmethod
+    def _auth_member(connection: sqlite3.Connection, start_id: str) -> str | None:
+        canonical_operation_id(start_id)
+        row = connection.execute(
+            "SELECT action FROM audit_events WHERE audit_id=?",
+            (str(uuid5(_NAMESPACE, _AUTH_MEMBER + start_id)),),
+        ).fetchone()
+        if row is None:
+            return None  # Historical activations are observation-only.
+        if not isinstance(row[0], str) or not row[0].startswith(_AUTH_MEMBER):
+            raise LifecycleStorageUnavailable("invalid authentication selection")
+        return canonical_operation_id(row[0][len(_AUTH_MEMBER) :])
+
+    def auth_member_for_start(self, start_id: str) -> str | None:
+        with self._database.connection() as connection:
+            return self._auth_member(connection, start_id)
+
+    def publish_auth_if_current(
+        self, start_id: str, member_id: str, publish: Callable[[], None]
+    ) -> bool:
+        """Publish under the same SQLite writer lock as STOP and credential deletion.
+
+        The callback only updates the private in-memory monitor; never perform
+        IPC, network requests or another DB transaction while holding this fence.
+        """
+        before = _db_identity(self._database.path)
+        with self._database.connection() as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = self._current(connection)
+            if (
+                current is None
+                or current.operation_id != start_id
+                or not current.on_demand
+                or (current.component, current.target, current.status)
+                != ("bot", "start", "APPLIED")
+                or self._auth_member(connection, start_id) != member_id
+                or not self._active_member(connection, member_id)
+            ):
+                return False
+            if _db_identity(self._database.path) != before:
+                raise LifecycleStorageUnavailable("authentication storage changed")
+            publish()
+            return True
 
     @staticmethod
     def _accepted_binding(
@@ -323,7 +403,7 @@ class LifecycleIntentStore:
         elif existing != (action,):
             raise LifecycleConflict("simulation already bound to another start")
 
-    def record_automatic_check(self, start_operation_id: str, outcome: str) -> None:
+    def record_automatic_check(self, start_operation_id: str, outcome: str) -> bool:
         """Record one received category for the exact confirmed owner activation.
 
         These records contain no provider payload or token, and never create a
@@ -356,6 +436,7 @@ class LifecycleIntentStore:
                     raise LifecycleStorageUnavailable("automatic check receipt conflicts")
                 if _db_identity(self._database.path) != before:
                     raise LifecycleStorageUnavailable("automatic check storage changed")
+                return existing is None
         except (sqlite3.Error, OSError):
             raise LifecycleStorageUnavailable("automatic check ledger unavailable") from None
 

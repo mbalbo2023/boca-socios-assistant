@@ -170,6 +170,7 @@ def test_served_beta_wires_ipc_port_and_thirty_second_command_deadline(
             assert isinstance(calls[0]["browser"], runtime_module._LocalSyntheticBrowser)
             assert calls[0]["bot_session"].on_start is not None
             assert served.observation_session is not None
+            assert served.observation_session._auth_monitor is panel_calls[0]["auth_monitor"]
             assert panel_calls[0]["automatic_monitor"].snapshot()["latest"] is None
         else:
             assert calls[0]["browser"] is selected

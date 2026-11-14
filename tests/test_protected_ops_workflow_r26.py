@@ -127,10 +127,17 @@ def test_exact_id_host_effect_is_single_ssh_with_terminal_ack_guard() -> None:
     )
 
 
-def test_telegram_activation_explicitly_no_go_and_excluded_from_legacy_steps() -> None:
+def test_installed_telegram_has_one_lease_route_and_no_legacy_daemon_steps() -> None:
     workflow = _workflow()
-    assert "telegram-activate)" in workflow
-    assert "state=NO_GO reason=host_same_lease_backend_unverified" in workflow
+    assert (
+        "telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender)"
+        in workflow
+    )
+    installed = _step("Execute installed Telegram transaction under one protected lease")
+    assert "boca_protected_memfd_bootstrap.py" in installed
+    assert "verify-receipt" in installed
+    assert "check_main_ref.py" in installed
+    assert "no_automatic_retry=1" in installed
     for name in (
         "Recheck current main before Telegram post-install custody",
         "Mark Telegram host attempt before starting existing Boca daemon",
@@ -138,7 +145,8 @@ def test_telegram_activation_explicitly_no_go_and_excluded_from_legacy_steps() -
         "Execute protected Telegram schema, custody or one-shot test",
         "Stop positively identified Boca services after Telegram custody",
     ):
-        assert "inputs.operation != 'telegram-activate'" in _step(name)
+        for operation in ("telegram-activate", "telegram-prepare", "telegram-sender-recover"):
+            assert f"inputs.operation != '{operation}'" in _step(name)
 
 
 def test_existing_import_cutover_and_legacy_six_install_no_go_preserved() -> None:

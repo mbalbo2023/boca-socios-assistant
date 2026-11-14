@@ -267,11 +267,19 @@ def home(
     bot: tuple[LifecycleIntent | None, str, str] | None = None,
     bot_unavailable: bool = False,
     site_url_ready: bool | None = None,
+    auth_members: tuple[MemberView, ...] = (),
+    selected_auth_member: str | None = None,
 ) -> bytes:
     if bot is not None:
         intent, start_id, stop_id = bot
         controls = "<h2>Control del bot</h2>" + _bot_controls(
-            intent, csrf, start_id, stop_id, site_url_ready=site_url_ready
+            intent,
+            csrf,
+            start_id,
+            stop_id,
+            site_url_ready=site_url_ready,
+            auth_members=auth_members,
+            selected_auth_member=selected_auth_member,
         )
     elif bot_unavailable:
         controls = '<p role="status">Control del bot no disponible. <a href="/control">Consultar estado</a></p>'
@@ -411,11 +419,21 @@ def bot_control(
     stop_id: str,
     *,
     site_url_ready: bool | None = None,
+    auth_members: tuple[MemberView, ...] = (),
+    selected_auth_member: str | None = None,
 ) -> bytes:
     return _page(
         "Control del bot",
         "<h1>Control del bot</h1>"
-        + _bot_controls(intent, csrf, start_id, stop_id, site_url_ready=site_url_ready),
+        + _bot_controls(
+            intent,
+            csrf,
+            start_id,
+            stop_id,
+            site_url_ready=site_url_ready,
+            auth_members=auth_members,
+            selected_auth_member=selected_auth_member,
+        ),
     )
 
 
@@ -468,6 +486,8 @@ def _bot_controls(
     stop_id: str,
     *,
     site_url_ready: bool | None = None,
+    auth_members: tuple[MemberView, ...] = (),
+    selected_auth_member: str | None = None,
 ) -> str:
     """Voice-friendly simulation controls. Only a protected receipt establishes outcome."""
     observed = "Todavía no hay un recibo de inicio o detención del bot."
@@ -524,6 +544,34 @@ def _bot_controls(
             'Revisá <a href="/configuracion">Configuración</a> antes de volver a intentar. '
             "No acredita actividad del worker ni acceso a un sitio.</p>"
         )
+    active = tuple(member for member in auth_members if member.credential_active)
+    selected = selected_auth_member
+    if (
+        selected is None
+        and len(active) == 1
+        and not (
+            intent is not None
+            and intent.target == "start"
+            and intent.status in ("REQUESTED", "CLAIMED", "APPLIED", "UNCERTAIN")
+        )
+    ):
+        selected = active[0].member_id
+    options = (
+        '<option value=""'
+        + (" selected" if selected is None else "")
+        + ">Sólo observar evento y cola (sin login Boca)</option>"
+    )
+    for member in active:
+        chosen = " selected" if member.member_id == selected else ""
+        options += (
+            f'<option value="{escape(member.member_id, quote=True)}"{chosen}>'
+            + escape(member.display_name or member.masked_email)
+            + "</option>"
+        )
+    selector = (
+        '<label for="auth-member">Socio para iniciar sesión en Boca</label>'
+        '<select id="auth-member" name="auth_member_id">' + options + "</select>"
+    )
     buttons = []
     for target, path, title, operation_id in (
         ("start", "iniciar", "Iniciar bot", start_id),
@@ -534,7 +582,8 @@ def _bot_controls(
             f'<form method="post" action="/control/bot/{path}">'
             f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
             f'<input type="hidden" name="operation_id" value="{escape(operation_id, quote=True)}">'
-            f'<button type="submit"{disabled}>{title}</button></form>'
+            + (selector if target == "start" else "")
+            + f'<button type="submit"{disabled}>{title}</button></form>'
         )
     return (
         '<p role="status" aria-live="polite">'

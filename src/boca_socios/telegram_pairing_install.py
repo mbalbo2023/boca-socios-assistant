@@ -154,8 +154,8 @@ def install_v2_plan(
 ) -> PairingCustodyReceipt:
     """Consume one V2 fence as a last-published marker after V1 pair writes.
 
-    This method has genuine local filesystem effects. It is **not called by
-    any deployed route, CLI, workflow or startup path**. Synthetic tests run
+    This method has genuine local filesystem effects. The protected installed backend invokes it through fixed image maintenance
+    operations. Synthetic tests run
     only against temporary local directories with fake credentials.
     """
     if (

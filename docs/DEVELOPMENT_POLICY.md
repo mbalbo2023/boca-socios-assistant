@@ -1,5 +1,38 @@
 # Development and merge policy
 
+## 2026-11-14 — R296, consolidación antes del QA y de la promoción
+
+El titular pidió preparar un único candidato mientras aún no realizó su QA.
+Continuar PR517, integrar correcciones verificadas y preservar la instalación
+R294. No merge/release/host/START/STOP/proveedor/mensaje durante esta preparación.
+Las decisiones [R296](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6881603931)
+y [recuperación por fase](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6882197549)
+autorizan el desarrollo, no inventan evidencia física. No volver a pedir permiso
+para este trabajo ni duplicar los módulos, ramas, tests o incidentes cerrados.
+
+El paso físico futuro usa únicamente los selectores protegidos y una lease Boca:
+`telegram-prepare`, `telegram-activate`, `telegram-renew-stage`,
+`telegram-complete-sender` y `telegram-sender-recover`. Son fases administrativas,
+no nuevas releases. Prepare/activate no reutilizan el camino histórico que
+iniciaba/detenía el daemon. La renovación explícita conserva ciphertext y nonces;
+la continuación conserva la identidad ORIGINAL de aceptación y nunca reenvía un
+intento ambiguo. Recover no envía. Ningún éxito de la custodia equivale a sender
+incorporado ni a recepción humana.
+
+La evidencia del estado Telegram se publica sólo después de verificar/restaurar
+el par y se vuelve histórica al vencer su ventana. Un downgrade de custodia se
+conserva como diagnóstico e impide certificar PREPARED/READY. No migrar SQLite
+durante preparación o publicación de estado. El cambio compatible de binding
+se limita al sender y conserva el archivo ejecutable, controller, worker y datos;
+su secuencia no es una transacción atómica entre archivos y requiere journal,
+fence de socket, compensación exacta y recuperación explícita.
+
+Probar el cierre real de imágenes/ZIP, incluidas importaciones diferidas. Las
+proyecciones del paquete dedicado seleccionan nodos canónicos sin cambiar sus
+guardas; verificar igualdad AST, allowlist/digest y límites existentes. No elevar
+caps/reservas. Revisión independiente por alcance y final, pruebas focales y
+checks requeridos del SHA exacto preceden la promoción consolidada posterior al QA.
+
 ## 2026-11-14 — R295, desarrollo paralelo sin perturbar aceptación
 
 R294 fue instalada y certificada físicamente por release #865 / APPLY #1117;

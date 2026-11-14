@@ -19,17 +19,26 @@ from importlib import import_module
 from math import isfinite
 from pathlib import Path
 from time import monotonic
-from typing import Protocol
+from typing import Protocol, cast
 
 from boca_socios.browser.activity_events import reset_chromium_activity
+from boca_socios.browser.boca_auth_protocol import (
+    BocaAuthReadiness,
+    BocaAuthReply,
+    BocaAuthRequest,
+    decode,
+    operation_id,
+)
 from boca_socios.browser.contracts import SimulationOutcome
 from boca_socios.browser.ipc_protocol import (
     BUSY,
     CONTROLLER_UID,
     FIXTURE_OBSERVED,
+    LOGIN_BOCA,
     MAX_FRAME_BYTES,
     NO_GO,
     OBSERVE_QUEUE,
+    PREPARE_BOCA_LOGIN,
     PROBE_FIXTURE,
     PROBE_SITE,
     REQUEST,
@@ -40,8 +49,10 @@ from boca_socios.browser.ipc_protocol import (
     WORKER_UID,
     SyntheticIPCError,
     framed,
+    framed_private_auth,
     framed_private_observation,
     read_frame,
+    read_private_auth_frame,
     socket_identity,
     validate_socket_directory,
     verify_peer,
@@ -92,6 +103,12 @@ class QueueObservationExecutor(Protocol):
     async def observe_queue(self) -> QueuePageObservation: ...
 
     async def close(self) -> None: ...
+
+
+class BocaAuthExecutor(Protocol):
+    async def prepare_boca_login(self, operation: str) -> BocaAuthReadiness: ...
+
+    async def login_boca(self, request: BocaAuthRequest) -> BocaAuthReply: ...
 
 
 class OfflineNoGoExecutor:
@@ -220,18 +237,29 @@ class UnixSyntheticWorker:
 
     @staticmethod
     async def _respond(
-        writer: asyncio.StreamWriter, payload: bytes, *, queue_reply: bool = False
+        writer: asyncio.StreamWriter,
+        payload: bytes,
+        *,
+        queue_reply: bool = False,
+        auth_reply: bool = False,
     ) -> None:
         writer.write(
-            framed_private_observation(payload)
+            framed_private_auth(payload)
+            if auth_reply
+            else framed_private_observation(payload)
             if queue_reply and payload not in {NO_GO, BUSY}
             else framed(payload)
         )
         await asyncio.wait_for(writer.drain(), timeout=1.0)
 
-    async def _read_request(self, reader: asyncio.StreamReader) -> bytes:
+    async def _read_request(self, reader: asyncio.StreamReader) -> bytes | tuple[bytes, bytes]:
         async with asyncio.timeout(self._request_seconds):
             request = await read_frame(reader)
+            if request in {PREPARE_BOCA_LOGIN, LOGIN_BOCA}:
+                payload = await read_private_auth_frame(reader, maximum=32768)
+                if await reader.read(1) != b"":
+                    raise SyntheticIPCError("ipc_request_unverified")
+                return request, payload
             if (
                 request not in {REQUEST, PROBE_FIXTURE, PROBE_SITE, OBSERVE_QUEUE}
                 or await reader.read(1) != b""
@@ -248,13 +276,27 @@ class UnixSyntheticWorker:
             return
 
     async def _run_synthetic(
-        self, *, fixture_probe: bool = False, site_probe: bool = False, queue_probe: bool = False
+        self,
+        *,
+        fixture_probe: bool = False,
+        site_probe: bool = False,
+        queue_probe: bool = False,
+        auth_request: str | BocaAuthRequest | None = None,
     ) -> bytes:
         self._boundary_check()
-        if queue_probe:
+        if auth_request is not None:
             if self._queue_observer is None:
                 return NO_GO
-            active: asyncio.Task[object] = asyncio.create_task(self._queue_observer.observe_queue())
+            auth = cast(BocaAuthExecutor, self._queue_observer)
+            active: asyncio.Task[object] = asyncio.create_task(
+                auth.prepare_boca_login(auth_request)
+                if isinstance(auth_request, str)
+                else auth.login_boca(auth_request)
+            )
+        elif queue_probe:
+            if self._queue_observer is None:
+                return NO_GO
+            active = asyncio.create_task(self._queue_observer.observe_queue())
         elif site_probe:
             if self._site_observer is None:
                 return NO_GO
@@ -276,6 +318,12 @@ class UnixSyntheticWorker:
             result = active.result()
             if self._stopping() or active.cancelling():
                 return NO_GO
+            if auth_request is not None:
+                return (
+                    result.to_payload()
+                    if isinstance(result, (BocaAuthReadiness, BocaAuthReply))
+                    else NO_GO
+                )
             if queue_probe:
                 return result.to_payload() if isinstance(result, QueuePageObservation) else NO_GO
             if site_probe:
@@ -297,6 +345,7 @@ class UnixSyntheticWorker:
                 "offline_fixture_teardown_unverified",
                 "site_observer_teardown_unverified",
                 "automatic_observer_teardown_unverified",
+                "boca_login_teardown_unverified",
             }:
                 # The executor could not prove that Chromium was closed. The
                 # disposable process must stop accepting work and exit through
@@ -312,19 +361,25 @@ class UnixSyntheticWorker:
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         accepted = False
         queue_reply = False
+        auth_reply = False
         try:
             verify_peer(writer, uid=CONTROLLER_UID, gid=CONTROLLER_UID)
+            if (
+                self._owned_socket is not None
+                and socket_identity(self._path, uid=WORKER_UID) != self._owned_socket
+            ):
+                raise SyntheticIPCError("ipc_socket_changed")
             if self._closed or self._poisoned.is_set():
                 return
             if self._busy:
                 # Drain one bounded request before replying; unread stream data
                 # can reset the Unix peer before BUSY is delivered.
                 try:
-                    await self._read_request(reader)
+                    busy_request = await self._read_request(reader)
                 except (SyntheticIPCError, OSError, TimeoutError):
                     await self._respond(writer, NO_GO)
                 else:
-                    await self._respond(writer, BUSY)
+                    await self._respond(writer, BUSY, auth_reply=isinstance(busy_request, tuple))
                 return
             self._busy = True
             accepted = True
@@ -336,7 +391,16 @@ class UnixSyntheticWorker:
                     raise SyntheticIPCError("worker_closed")
                 deadline = monotonic() + self._operation_seconds
                 queue_reply = request == OBSERVE_QUEUE
-                if request == OBSERVE_QUEUE and self._queue_observer is not None:
+                if isinstance(request, tuple):
+                    auth_reply = True
+                    command, payload = request
+                    auth_request = (
+                        operation_id(decode(payload, {"operation_id"}, 32768)["operation_id"])
+                        if command == PREPARE_BOCA_LOGIN
+                        else BocaAuthRequest.from_payload(payload)
+                    )
+                    response = await self._run_synthetic(auth_request=auth_request)
+                elif request == OBSERVE_QUEUE and self._queue_observer is not None:
                     response = await self._run_synthetic(queue_probe=True)
                 elif request == OBSERVE_QUEUE or self._queue_observer is not None:
                     response = NO_GO
@@ -357,7 +421,7 @@ class UnixSyntheticWorker:
                     response = NO_GO
             except (SyntheticIPCError, WorkerBoundaryError, OSError, TimeoutError, ValueError):
                 response = NO_GO
-            await self._respond(writer, response, queue_reply=queue_reply)
+            await self._respond(writer, response, queue_reply=queue_reply, auth_reply=auth_reply)
         except (SyntheticIPCError, OSError, TimeoutError, ConnectionError):
             return
         finally:

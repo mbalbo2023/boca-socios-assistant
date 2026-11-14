@@ -81,6 +81,7 @@ def test_worker_requires_identity_bound_acceptance_before_build_or_claim(
     calls: list[str] = []
     monkeypatch.setattr(worker, "require_effective_limits", lambda: calls.append("limits"))
     monkeypatch.setattr(worker, "verify_custody", lambda: calls.append("custody"))
+    monkeypatch.setattr(worker, "verified_v2_assertion", lambda *_a, **_k: (12345, "b" * 64))
 
     def reject(*_args):
         calls.append("ready")
@@ -104,6 +105,7 @@ def test_worker_only_runs_after_offline_gate_with_same_transport(
     marker = object()
     monkeypatch.setattr(worker, "require_effective_limits", lambda: calls.append("limits"))
     monkeypatch.setattr(worker, "verify_custody", lambda: calls.append("custody"))
+    monkeypatch.setattr(worker, "verified_v2_assertion", lambda *_a, **_k: (12345, "b" * 64))
     monkeypatch.setattr(worker, "TelegramTransport", lambda *_args: marker)
     monkeypatch.setattr(worker, "verify_ready", lambda *args: calls.append(("ready", args)))
     monkeypatch.setattr(

@@ -26,7 +26,11 @@ from boca_socios.notify.telegram_delivery import (
 )
 from boca_socios.notify.telegram_transport import TelegramSender, TelegramTransport
 from boca_socios.telegram_bootstrap import verify as verify_custody
-from boca_socios.telegram_one_shot import require_effective_limits, verify_ready
+from boca_socios.telegram_one_shot import (
+    require_effective_limits,
+    verified_v2_assertion,
+    verify_ready,
+)
 
 _DATABASE = Path("/data/boca.sqlite3")
 _TOKEN = Path("/run/telegram/bot_token")
@@ -84,16 +88,33 @@ def main(
     env = os.environ if environment is None else environment
     previous_handlers: dict[signal.Signals, signal.Handlers] = {}
     try:
-        if len(args) != 4 or args[0] != "serve":
-            raise ValueError("Telegram worker requires explicit serve")
-        _, source_sha, bot_id, chat_hmac = args
-        if re.fullmatch(r"[1-9][0-9]{0,15}", bot_id) is None:
-            raise ValueError("Telegram worker requires owner assertion")
+        attempt_id = args[2] if len(args) == 3 and args[0] == "serve-v2" else None
+        v2_mode = len(args) in (2, 3) and args[0] == "serve-v2"
+        if v2_mode:
+            source_sha, bot_id, chat_hmac = args[1], "", ""
+        else:
+            if len(args) != 4 or args[0] != "serve":
+                raise ValueError("Telegram worker requires explicit serve")
+            _, source_sha, bot_id, chat_hmac = args
+            if re.fullmatch(r"[1-9][0-9]{0,15}", bot_id) is None:
+                raise ValueError("Telegram worker requires owner assertion")
         validate_worker_environment(env)
         require_effective_limits()
         verify_custody()
+        verified_bot, verified_hmac = verified_v2_assertion(
+            _TOKEN.parent, expected_source_sha=source_sha
+        )
+        if v2_mode:
+            bot_id, chat_hmac = str(verified_bot), verified_hmac
+        elif (verified_bot, verified_hmac) != (int(bot_id), chat_hmac):
+            raise ValueError("Telegram V2 custody mismatch")
         transport = TelegramTransport(_TOKEN, _DESTINATION)
-        verify_ready(_DATABASE, transport, source_sha, int(bot_id), chat_hmac)
+        if attempt_id is None:
+            verify_ready(_DATABASE, transport, source_sha, int(bot_id), chat_hmac)
+        else:
+            verify_ready(
+                _DATABASE, transport, source_sha, int(bot_id), chat_hmac, attempt_id=attempt_id
+            )
         coordinator = build_coordinator(_DATABASE, transport)
         stopping = Event()
         for sig in (signal.SIGINT, signal.SIGTERM):

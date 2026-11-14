@@ -70,12 +70,13 @@ def test_host_import_closure_is_available_but_activation_has_no_dispatch(tmp_pat
         assert forbidden.stderr == ""
 
 
-def test_on_demand_profile_executes_from_isolated_archive(tmp_path: Path) -> None:
+@pytest.mark.parametrize("installed", [False, True])
+def test_on_demand_profile_executes_from_isolated_archive(tmp_path: Path, installed: bool) -> None:
     """Exercise lazy imports using the actual shipped ZIP, without the checkout."""
     from test_host_telegram_postcutover import _on_demand_fake, _pins
 
     archive = tmp_path / "telegram.pyz"
-    telegram_bundle.build(ROOT, archive)
+    telegram_bundle.build(ROOT, archive, installed=installed)
     pins = _pins()
     observed = _on_demand_fake(tmp_path)
     payload = json.dumps(

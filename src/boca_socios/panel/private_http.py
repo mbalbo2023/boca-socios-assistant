@@ -53,7 +53,7 @@ from boca_socios.panel.member_sector_store import (
     MemberSectorStorageUnavailable,
     MemberSectorStore,
 )
-from boca_socios.panel.members import MemberDirectory
+from boca_socios.panel.members import MemberDirectory, MemberListUnavailable
 from boca_socios.panel.owner_session_store import (
     OwnerBrowserSessionStore,
     OwnerSessionStorageUnavailable,
@@ -224,6 +224,7 @@ class PrivatePanelApplication:
         observed_official_notices: Iterable[OfficialNotice] = (),
         official_notices_loader: Callable[[], Iterable[OfficialNotice]] | None = None,
         telegram_pairing_stager: Callable[[PairingStageRequest], PairingStageReceipt] | None = None,
+        telegram_recipient_loader: Callable[[], telegram_bootstrap.RecipientReceipt] | None = None,
         bot_control: Callable[[str], None] | None = None,
         queue_monitor: PrivateQueuePassMonitor | None = None,
         auth_monitor: PrivateBocaAuthMonitor | None = None,
@@ -272,6 +273,9 @@ class PrivatePanelApplication:
         if telegram_pairing_stager is not None and not callable(telegram_pairing_stager):
             raise ValueError("Telegram pairing stager must be an explicit local callback")
         self._telegram_pairing_stager = telegram_pairing_stager
+        if telegram_recipient_loader is not None and not callable(telegram_recipient_loader):
+            raise ValueError("Telegram recipient requires an explicit local reader")
+        self._telegram_recipient_loader = telegram_recipient_loader
         if bot_control is not None and not callable(bot_control):
             raise ValueError("bot control requires a local wake callback")
         self._bot_control = bot_control
@@ -414,6 +418,15 @@ class PrivatePanelApplication:
             if path == "/monitor/tokens.json":
                 return self._token_monitor_snapshot(start)
             if path == "/telegram/emparejar":
+                prepared_recipient = None
+                if self._telegram_recipient_loader is not None:
+                    try:
+                        loaded = self._telegram_recipient_loader()
+                        if isinstance(loaded, telegram_bootstrap.RecipientReceipt):
+                            prepared_recipient = loaded
+                    except (OSError, ValueError):
+                        # A stale or absent public receipt never enables sealing.
+                        pass
                 if self._telegram_pairing_stager is not None:
                     operation_id = self._sessions.new_operation(session)
                     if operation_id is None:
@@ -422,7 +435,10 @@ class PrivatePanelApplication:
                         start,
                         200,
                         telegram_setup_ui.pairing_page(
-                            csrf=session.csrf, operation_id=operation_id
+                            csrf=session.csrf,
+                            operation_id=operation_id,
+                            prepared_recipient=prepared_recipient,
+                            recipient_required=self._telegram_recipient_loader is not None,
                         ),
                         csp=telegram_setup_ui.PAIRING_STAGING_CSP,
                         referrer_policy="no-referrer",
@@ -430,7 +446,10 @@ class PrivatePanelApplication:
                 return _response(
                     start,
                     200,
-                    telegram_setup_ui.pairing_page(),
+                    telegram_setup_ui.pairing_page(
+                        prepared_recipient=prepared_recipient,
+                        recipient_required=self._telegram_recipient_loader is not None,
+                    ),
                     csp=telegram_setup_ui.PAIRING_CSP,
                     referrer_policy="no-referrer",
                 )
@@ -946,7 +965,13 @@ class PrivatePanelApplication:
             "HTTP_ORIGIN", ""
         ) in ("", self._origin)
 
-    def _form(self, environ: Mapping[str, object], *, expected: set[str]) -> dict[str, str] | None:
+    def _form(
+        self,
+        environ: Mapping[str, object],
+        *,
+        expected: set[str],
+        optional: frozenset[str] = frozenset(),
+    ) -> dict[str, str] | None:
         length = environ.get("CONTENT_LENGTH")
         if (
             not isinstance(length, str)
@@ -967,13 +992,21 @@ class PrivatePanelApplication:
                 body.decode("utf-8"),
                 keep_blank_values=True,
                 strict_parsing=True,
-                max_num_fields=len(expected),
+                max_num_fields=len(expected) + len(optional),
                 errors="strict",
             )
         except (ValueError, UnicodeError):
             return None
         fields = dict(pairs)
-        return fields if len(fields) == len(pairs) and set(fields) == expected else None
+        return (
+            fields
+            if (
+                len(fields) == len(pairs)
+                and expected <= set(fields)
+                and set(fields) <= expected | optional
+            )
+            else None
+        )
 
     def _login(self, environ: Mapping[str, object], start: StartResponse) -> list[bytes]:
         if (
@@ -1188,11 +1221,24 @@ class PrivatePanelApplication:
             )
             if start_id is not None and stop_id is not None:
                 site_url_ready = self._site_url_ready()
+                try:
+                    auth_members = tuple(
+                        m for m in self._directory.list_members() if m.credential_active
+                    )
+                except MemberListUnavailable:
+                    auth_members = ()
+                selected_auth_member = (
+                    self._lifecycle.auth_member_for_start(lifecycle.operation_id)
+                    if lifecycle is not None and lifecycle.target == "start"
+                    else None
+                )
                 if home:
                     body = private_ui.home(
                         session.csrf,
                         bot=(lifecycle, start_id, stop_id),
                         site_url_ready=site_url_ready,
+                        auth_members=auth_members,
+                        selected_auth_member=selected_auth_member,
                     )
                 else:
                     body = private_ui.bot_control(
@@ -1201,6 +1247,8 @@ class PrivatePanelApplication:
                         start_id,
                         stop_id,
                         site_url_ready=site_url_ready,
+                        auth_members=auth_members,
+                        selected_auth_member=selected_auth_member,
                     )
                 return _response(start, 200, body)
             status, reason = 429, "Demasiados formularios abiertos. Vuelva a ingresar."
@@ -1252,15 +1300,25 @@ class PrivatePanelApplication:
         """Authenticate the form, commit the intent, then optionally wake its executor."""
         if self._bot_control is not None and component != "bot":
             return _error(start, 404, "Ruta no disponible.")
-        fields = self._form(environ, expected={"csrf", "operation_id"})
+        fields = self._form(
+            environ,
+            expected={"csrf", "operation_id"},
+            optional=frozenset({"auth_member_id"})
+            if self._bot_control is not None and (component, target) == ("bot", "start")
+            else frozenset(),
+        )
         if fields is None or _canonical_uuid(fields["operation_id"]) is None:
             return _error(start, 400, "Solicitud de ciclo inválida.")
+        auth_member_id = fields.get("auth_member_id") or None
+        if auth_member_id is not None and _canonical_uuid(auth_member_id) is None:
+            return _error(start, 400, "Socio inválido.")
         fingerprint = f"owner-lifecycle-v1:{component}:{target}".encode("ascii")
         result, operation = self._sessions.reserve(
             session,
             fields["operation_id"],
             fields["csrf"],
             fingerprint,
+            request_body=fingerprint + b":" + (auth_member_id or "").encode("ascii"),
             pending_start=self._start_pending
             if self._bot_control is not None and target == "stop"
             else None,
@@ -1282,6 +1340,8 @@ class PrivatePanelApplication:
                 return _error(start, 503, "URL del worker no verificable. Revise Configuración.")
         try:
             if operation.lifecycle_id is not None:
+                if self._lifecycle.auth_member_for_start(operation.lifecycle_id) != auth_member_id:
+                    raise LifecycleConflict("activation member cannot change")
                 intent = self._lifecycle.current()
                 if intent is None or intent.operation_id != operation.lifecycle_id:
                     self._sessions.finish(operation, 303)
@@ -1292,6 +1352,7 @@ class PrivatePanelApplication:
                     target,
                     fields["operation_id"],
                     on_demand=self._bot_control is not None,
+                    auth_member_id=auth_member_id,
                 )
         except LifecycleConflict:
             self._sessions.finish(operation, 409)

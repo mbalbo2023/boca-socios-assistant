@@ -28,6 +28,7 @@ from boca_socios.domain.sector_preferences import SectorEvaluation
 from boca_socios.events.official_snapshot import OFFICIAL_SNAPSHOT_NAME, load_official_snapshot
 from boca_socios.integration.automatic_observation import AutomaticObservationSession
 from boca_socios.integration.beta import OnDemandBotSession
+from boca_socios.integration.boca_login import authenticate_member
 from boca_socios.integration.bridge_client import SiteBridgeTransport, SiteBridgeWorker
 from boca_socios.integration.engine_socket import LocalEngineSocket
 from boca_socios.integration.operational import (
@@ -52,6 +53,7 @@ from boca_socios.panel.telegram_pairing_staging import (
 )
 from boca_socios.queue.private_pass_monitor import PrivateAutomaticObservationMonitor
 from boca_socios.security.credential_vault import CredentialVault
+from boca_socios.security.member_auth_contract import PrivateBocaAuthMonitor
 from boca_socios.storage.database import Database
 
 SIMULATION_EVENT_ID = "00000000-0000-4000-8000-000000000001"
@@ -337,6 +339,7 @@ def build_beta_server(
     settings.validate_beta()
     observation_session: AutomaticObservationSession | None = None
     automatic_monitor = PrivateAutomaticObservationMonitor(configured=settings.bot_on_demand)
+    auth_monitor = PrivateBocaAuthMonitor()
 
     def start_observation(start_id: str) -> None:
         if observation_session is None:
@@ -366,6 +369,17 @@ def build_beta_server(
         bot_control = None
         bot_session = None
     telegram_pairing_stager = _configured_telegram_pairing_stager(settings)
+    from boca_socios.panel.telegram_recipient import read_prepared_recipient
+
+    telegram_recipient_loader = (
+        partial(
+            read_prepared_recipient,
+            settings.db_path.parent,
+            expected_source_sha=settings.source_sha,
+        )
+        if telegram_pairing_stager is not None
+        else None
+    )
     selected_browser, command_timeout = _browser_for_beta(settings, browser)
     if settings.bot_on_demand:
         if (
@@ -379,6 +393,11 @@ def build_beta_server(
             observe=selected_browser.observe_queue,
             monitor=automatic_monitor,
             wake=bot_control,
+            prepare_auth=selected_browser.prepare_boca_login,
+            authenticate=lambda member, readiness: authenticate_member(
+                runtime.database, runtime.vault, selected_browser, member, readiness
+            ),
+            auth_monitor=auth_monitor,
         )
     bridge_enabled = settings.validate_bridge()
     transport = None
@@ -459,8 +478,10 @@ def build_beta_server(
                 settings.db_path.with_name(OFFICIAL_SNAPSHOT_NAME)
             ),
             telegram_pairing_stager=telegram_pairing_stager,
+            telegram_recipient_loader=telegram_recipient_loader,
             bot_control=bot_control,
             automatic_monitor=automatic_monitor,
+            auth_monitor=auth_monitor,
             source_sha=settings.source_sha,
         )
 

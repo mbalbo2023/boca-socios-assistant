@@ -422,7 +422,7 @@ def test_readiness_rejects_incomplete_or_inconsistent_api_receipt(
         shot.verify_ready(path, transport, SHA, 12345, _assertion(CHAT))
 
 
-def test_readiness_refuses_unresolved_attempt_without_claiming_pending_notice(
+def test_readiness_preserves_unrelated_unresolved_attempt_without_claiming_notice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "boca.sqlite3"
@@ -440,8 +440,7 @@ def test_readiness_refuses_unresolved_attempt_without_claiming_pending_notice(
             "(idempotency_key,attempt_number,state,prepared_at) VALUES (?,1,'prepared',1001)",
             (str(pending),),
         )
-    with pytest.raises(shot.OneShotError, match="api_acceptance_unverified"):
-        shot.verify_ready(path, transport, SHA, 12345, _assertion(CHAT))
+    shot.verify_ready(path, transport, SHA, 12345, _assertion(CHAT))
     assert outbox.get(pending).attempts == 0
 
 
@@ -458,6 +457,7 @@ def test_verify_ready_cli_never_calls_identity_or_delivery_api(
         monkeypatch.setenv(key, value)
     monkeypatch.setattr(shot, "require_effective_limits", lambda: calls.append("limits"))
     monkeypatch.setattr(shot, "verify_custody", lambda: calls.append("custody"))
+    monkeypatch.setattr(shot, "verified_v2_assertion", lambda *_a, **_k: (12345, _assertion(CHAT)))
     monkeypatch.setattr(shot, "verify_ready", lambda *_args: calls.append("ready"))
     monkeypatch.setattr(shot, "check_identity", lambda *_args: pytest.fail("network forbidden"))
     monkeypatch.setattr(shot, "deliver_once", lambda *_args: pytest.fail("send forbidden"))
@@ -478,6 +478,7 @@ def test_one_shot_cli_records_the_identity_bound_acceptance_and_cannot_replay(
     monkeypatch.setattr(shot, "DATABASE", path)
     monkeypatch.setattr(shot, "verify_storage", lambda _path: None)
     monkeypatch.setattr(shot, "verify_custody", lambda: None)
+    monkeypatch.setattr(shot, "verified_v2_assertion", lambda *_a, **_k: (12345, _assertion(CHAT)))
     monkeypatch.setattr(shot, "require_effective_limits", lambda: None)
     monkeypatch.setattr(shot, "TelegramTransport", lambda *_args: transport)
     monkeypatch.setattr(transport, "send", sender.send)

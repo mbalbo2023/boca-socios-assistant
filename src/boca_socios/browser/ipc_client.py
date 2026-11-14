@@ -13,14 +13,24 @@ from pathlib import Path
 from threading import Lock
 from time import monotonic
 
+from boca_socios.browser.boca_auth_protocol import (
+    MAX_AUTH_RESPONSE,
+    BocaAuthReadiness,
+    BocaAuthReply,
+    BocaAuthRequest,
+    encode,
+    operation_id,
+)
 from boca_socios.browser.contracts import SimulationOutcome
 from boca_socios.browser.ipc_protocol import (
     BUSY,
     CONTROLLER_UID,
     FIXTURE_OBSERVED,
+    LOGIN_BOCA,
     MAX_FRAME_BYTES,
     NO_GO,
     OBSERVE_QUEUE,
+    PREPARE_BOCA_LOGIN,
     PROBE_FIXTURE,
     PROBE_SITE,
     REQUEST,
@@ -31,7 +41,9 @@ from boca_socios.browser.ipc_protocol import (
     WORKER_UID,
     SyntheticIPCError,
     framed,
+    framed_private_auth,
     read_frame,
+    read_private_auth_frame,
     read_private_observation_frame,
     socket_identity,
     verify_peer,
@@ -50,7 +62,8 @@ def _check_controller_identity() -> None:
 class UnixSyntheticBrowser:
     """One local synthetic call at a time; the coordinator retains durable ownership.
 
-    Commands are fixed constants without member/event identifiers or URLs.
+    Commands are fixed constants; the separate private login envelope binds its
+    single-use capability to the START operation and transient credentials.
     Fixture observation is an explicit, separate opt-in from reservations.
     SO_PEERCRED and socket metadata are checked before trusting the response.
     An interrupted invocation is never turned into simulated success.
@@ -108,7 +121,28 @@ class UnixSyntheticBrowser:
         except (ValueError, TypeError):
             raise SyntheticIPCError("ipc_observation_unverified") from None
 
-    async def _exchange(self, request: bytes, expected: bytes | frozenset[bytes] | None) -> bytes:
+    async def prepare_boca_login(self, operation: str) -> BocaAuthReadiness:
+        payload = encode({"operation_id": operation_id(operation)}, 32768)
+        raw = await self._exchange(PREPARE_BOCA_LOGIN, None, private_payload=payload)
+        result = BocaAuthReadiness.from_payload(raw)
+        if result.operation_id != operation:
+            raise SyntheticIPCError("ipc_auth_correlation_unverified")
+        return result
+
+    async def login_boca(self, request: BocaAuthRequest) -> BocaAuthReply:
+        raw = await self._exchange(LOGIN_BOCA, None, private_payload=request.to_payload())
+        result = BocaAuthReply.from_payload(raw)
+        if result.operation_id != request.operation_id or result.nonce != request.nonce:
+            raise SyntheticIPCError("ipc_auth_correlation_unverified")
+        return result
+
+    async def _exchange(
+        self,
+        request: bytes,
+        expected: bytes | frozenset[bytes] | None,
+        *,
+        private_payload: bytes | None = None,
+    ) -> bytes:
         active = asyncio.current_task()
         if active is None:
             raise SyntheticIPCError("client_loop_unavailable")
@@ -128,7 +162,9 @@ class UnixSyntheticBrowser:
                 async with asyncio.timeout(self._timeout):
                     reader, writer = await asyncio.open_unix_connection(
                         path=str(self._path),
-                        limit=MAX_OBSERVATION_PAYLOAD
+                        limit=MAX_AUTH_RESPONSE
+                        if private_payload is not None
+                        else MAX_OBSERVATION_PAYLOAD
                         if request == OBSERVE_QUEUE
                         else MAX_FRAME_BYTES,
                     )
@@ -136,12 +172,16 @@ class UnixSyntheticBrowser:
                     if socket_identity(self._path, uid=WORKER_UID) != original:
                         raise SyntheticIPCError("ipc_socket_changed")
                     writer.write(framed(request))
+                    if private_payload is not None:
+                        writer.write(framed_private_auth(private_payload, maximum=32768))
                     await writer.drain()
                     if not writer.can_write_eof():
                         raise SyntheticIPCError("ipc_half_close_unavailable")
                     writer.write_eof()
                     reply = (
-                        await read_private_observation_frame(reader)
+                        await read_private_auth_frame(reader)
+                        if private_payload is not None
+                        else await read_private_observation_frame(reader)
                         if request == OBSERVE_QUEUE
                         else await read_frame(reader)
                     )
@@ -151,6 +191,8 @@ class UnixSyntheticBrowser:
                         raise SyntheticIPCError("worker_busy")
                     elif reply == NO_GO:
                         raise SyntheticIPCError("worker_no_go")
+                    elif private_payload is not None:
+                        accepted = reply
                     elif request == OBSERVE_QUEUE and expected is None:
                         try:
                             QueuePageObservation.from_payload(reply)

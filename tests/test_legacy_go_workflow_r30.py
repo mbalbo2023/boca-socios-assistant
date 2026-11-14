@@ -124,16 +124,15 @@ def test_effect_and_ack_routes_are_apply_only_and_same_reviewed_host() -> None:
     assert "docker system prune" not in cleanup
 
 
-def test_telegram_and_six_legacy_installs_remain_explicit_no_go() -> None:
+def test_six_legacy_installs_stay_no_go_and_telegram_uses_dedicated_proof() -> None:
     preflight = _step("Reject legacy install routes without same-lease Boca-only postflight")
     assert "NO_GO" in preflight
     check = _step("Require verified protected environment and matching main commit")
-    telegram_review = _step(
-        "Prove Telegram dual-source release ancestry CODE_ONLY then reject physical activation"
-    )
-    assert "BOCA_TELEGRAM_POSTCUTOVER state=NO_GO" in telegram_review
-    assert "exit 1" in telegram_review
-    assert _YAML.index("      - name: Prove Telegram dual-source") < _YAML.index(
+    telegram_review = _step("Prove Telegram release ancestry and build installed transaction")
+    assert "check_telegram_release_lineage.py" in telegram_review
+    assert "--installed" in telegram_review
+    assert "ssh " not in telegram_review
+    assert _YAML.index("      - name: Prove Telegram release ancestry") < _YAML.index(
         "      - name: Configure pinned SSH host key and dedicated identity"
     )
     assert "cutover-a-apply" in check

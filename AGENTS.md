@@ -1,6 +1,41 @@
 # Binding instructions for every coding agent
 
-## Estado vigente R295 — desarrollo paralelo durante aceptación Samsung
+## Estado vigente R296 — un candidato, pendiente del QA del titular
+
+El titular todavía no realizó su QA y pidió dejar un único candidato preparado
+para incorporar sus correcciones antes de promover. Se conserva PR #517 y la
+rama `feature/417-r295-beta-followups`; no crear otro PR para duplicar estas
+integraciones. [Decisión R296](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6881603931),
+[cierre de fases](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6882197549)
+y [ADR0301](docs/ADR/0301-r296-consolidated-auth-and-telegram.md) son la continuidad.
+
+R294 sigue siendo la última instalación certificada: main/instalada
+`c5a143541ccfcaf26f29cf252a4cb33fd7c540f7`, release #865 / APPLY #1117.
+No hay nueva observación física en R296. Sin merge, release, host, START/STOP,
+navegación del agente a proveedores ni mensajes mientras se consolidan el QA
+y este candidato. Sólo Actions protegidas y serializadas para operaciones futuras.
+
+R296 conecta la selección visible de socio en START, la sesión Chromium única,
+readiness/nonce/IPC privados, el transporte R295 y la publicación cercada por
+STOP/revocación en el monitor existente. El monitor distingue autenticación
+activa de evidencia de cola UNKNOWN. No alterar `synthetic.py`/`ipc_worker.py`,
+SIMULATION_ONLY, sin reservas/compras, bypass ni sesiones adicionales.
+
+Telegram reutiliza stage/passkey/custodia/outbox/sender y añade backend instalado,
+perfil de mantenimiento exacto, adopción recuperable del binding y proyección
+pública real. Guardar el stage precede a mostrar/copiar `/start`. Renovación
+explícita archiva sin borrar historia/nonce; continuación conserva el UUID de
+aceptación ORIGINAL y rechaza ambigüedad. Recuperación no envía. Ninguna de estas
+rutas está certificada físicamente por pruebas offline o por CI.
+
+Reutilizar las pruebas focales y revisiones registradas, no repetir la suite
+local del árbol base. Los checks requeridos pertenecen al SHA publicado exacto.
+Mantener caps, reservas, reglas de main, aislamiento Boca y datos. Cambios a una
+fuente del full ZIP requieren revisar su pin ACTUAL en test_r82_recovery_bundle,
+conservar los históricos y medir el cierre de todos los paquetes afectados.
+Los encabezados siguientes son históricos y no reinician trabajo pendiente.
+
+## Corte histórico R295 — desarrollo paralelo durante aceptación Samsung
 
 La instalación R294 está completada: main/instalada
 `c5a143541ccfcaf26f29cf252a4cb33fd7c540f7`, PR #516, release #865,

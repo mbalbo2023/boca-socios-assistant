@@ -175,7 +175,12 @@ class SqliteNotificationOutbox:
             ).fetchone()
             return None if row is None else self._record(row)
 
-    def claim_ready(self, *, now: float, limit: int = 100) -> tuple[SqliteDeliveryClaim, ...]:
+    def claim_ready(
+        self, *, now: float, limit: int = 100, notice_id: UUID | None = None
+    ) -> tuple[SqliteDeliveryClaim, ...]:
+        if notice_id is not None and type(notice_id) is not UUID:
+            raise ValueError("exact notice UUID required")
+        selected = None if notice_id is None else str(notice_id)
         now = self._time(now)
         if type(limit) is not int or limit <= 0:
             raise ValueError("claim limit must be a positive integer")
@@ -186,13 +191,15 @@ class SqliteNotificationOutbox:
             connection.execute(
                 """UPDATE notification_outbox SET state='exhausted', next_attempt_at=NULL,
                    lease_token=NULL, claimed_at=NULL, lease_until=NULL
-                   WHERE state IN ('pending', 'claimed') AND expires_at <= ?""",
-                (now,),
+                   WHERE state IN ('pending', 'claimed') AND expires_at <= ?
+                     AND (? IS NULL OR idempotency_key=?)""",
+                (now, selected, selected),
             )
             expired_claims = connection.execute(
                 """SELECT idempotency_key, attempts, expires_at FROM notification_outbox
-                   WHERE state='claimed' AND lease_until <= ?""",
-                (now,),
+                   WHERE state='claimed' AND lease_until <= ?
+                     AND (? IS NULL OR idempotency_key=?)""",
+                (now, selected, selected),
             ).fetchall()
             for key, attempts, expires in expired_claims:
                 self._schedule_failure(connection, str(key), int(attempts), float(expires), now)
@@ -219,20 +226,22 @@ class SqliteNotificationOutbox:
                     """SELECT idempotency_key, kind, priority, attempts
                        FROM notification_outbox
                        WHERE state='pending' AND next_attempt_at <= ? AND expires_at > ?
+                         AND (? IS NULL OR idempotency_key=?)
                          AND NOT EXISTS (
                            SELECT 1 FROM telegram_delivery_attempts AS t
                            WHERE t.idempotency_key = notification_outbox.idempotency_key
                          )
                        ORDER BY priority DESC, sequence ASC LIMIT ?""",
-                    (now, now, budget),
+                    (now, now, selected, selected, budget),
                 ).fetchall()
             else:
                 due = connection.execute(
                     """SELECT idempotency_key, kind, priority, attempts
                        FROM notification_outbox
                        WHERE state='pending' AND next_attempt_at <= ? AND expires_at > ?
+                         AND (? IS NULL OR idempotency_key=?)
                        ORDER BY priority DESC, sequence ASC LIMIT ?""",
-                    (now, now, budget),
+                    (now, now, selected, selected, budget),
                 ).fetchall()
             claims: list[SqliteDeliveryClaim] = []
             for key, kind_raw, priority_raw, attempts in due:

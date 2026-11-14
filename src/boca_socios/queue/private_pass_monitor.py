@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from threading import Lock
 from typing import Literal
+from uuid import UUID
 
 from boca_socios.browser.queue_page_observation import QueuePageObservation
 from boca_socios.queue.pass_observation import (
@@ -100,6 +101,8 @@ class PrivateAutomaticObservationMonitor:
         self._configured = configured
         self._now = now
         self._lock = Lock()
+        self._operation_id: str | None = None
+        self._auth_phase: str | None = None
         self._latest: QueuePageObservation | None = None
         self._last_observed_at: datetime | None = None
         self._status = "AUTOMATIC_CONFIGURED" if configured else "NOT_CONFIGURED"
@@ -118,32 +121,74 @@ class PrivateAutomaticObservationMonitor:
         with self._lock:
             # A new check never displays a prior activation's bearer as current.
             self._latest = None
+            self._auth_phase = None
             self._status = "AUTOMATIC_CHECKING"
             self._activity.append(TokenObservationActivity(now, "automatic_checking"))
 
+    def begin_activation(self, operation_id: str) -> None:
+        """Bind progress to one START without exposing its identity in metadata."""
+        if (
+            not self._configured
+            or str(UUID(operation_id)) != operation_id
+            or UUID(operation_id).int == 0
+        ):
+            raise ValueError("configured activation UUID required")
+        with self._lock:
+            self._operation_id = operation_id
+            self._auth_phase = None
+            self._latest = None
+            self._status = "AUTOMATIC_CHECKING"
+
+    def observe_auth(
+        self, operation_id: str, phase: str, *, observation: QueuePageObservation | None = None
+    ) -> bool:
+        """Overlay fixed auth progress while retaining the received queue evidence.
+
+        A late completion cannot overwrite another activation or an already
+        terminal auth phase. Tokens and member identity never enter this view.
+        """
+        if phase not in {"AUTHENTICATING", "AUTH_OBSERVED", "AUTH_FAILED", "AUTH_CANCELLED"}:
+            raise ValueError("unknown authentication phase")
+        with self._lock:
+            if self._operation_id != operation_id or self._auth_phase in {
+                "AUTH_OBSERVED",
+                "AUTH_FAILED",
+                "AUTH_CANCELLED",
+            }:
+                return False
+            if observation is not None:
+                # The same lock covers raw UNKNOWN and the progress overlay:
+                # readers cannot observe a spurious failed/finished login.
+                self._observe(observation, report_activity=False)
+            self._auth_phase = phase
+            return True
+
     def observe_global(self, observation: QueuePageObservation) -> None:
+        with self._lock:
+            self._observe(observation, report_activity=True)
+
+    def _observe(self, observation: QueuePageObservation, *, report_activity: bool) -> None:
         if not self._configured:
             raise RuntimeError("automatic source is not configured")
         if not isinstance(observation, QueuePageObservation):
             raise TypeError("only a received queue page observation can be recorded")
         now = self._instant()
-        with self._lock:
-            if observation.observed_at > now or (
-                self._last_observed_at is not None
-                and observation.observed_at < self._last_observed_at
-            ):
-                raise ValueError("observation time unavailable")
-            code: ObservationCode
-            if observation.outcome == "NO_EVENT_OBSERVED":
-                self._status, code = "AUTOMATIC_NO_EVENT", "automatic_no_event"
-            elif observation.outcome == "QUEUE_INACTIVE":
-                self._status, code = "AUTOMATIC_NO_QUEUE", "automatic_no_queue"
-            elif observation.outcome in {"CHECK_FAILED", "CHALLENGE", "UNKNOWN"}:
-                self._status, code = "AUTOMATIC_FAILED", "automatic_failed"
-            else:
-                self._status, code = "AUTOMATIC_OBSERVED", "automatic_observed"
-            self._latest = observation
-            self._last_observed_at = observation.observed_at
+        if observation.observed_at > now or (
+            self._last_observed_at is not None and observation.observed_at < self._last_observed_at
+        ):
+            raise ValueError("observation time unavailable")
+        code: ObservationCode
+        if observation.outcome == "NO_EVENT_OBSERVED":
+            self._status, code = "AUTOMATIC_NO_EVENT", "automatic_no_event"
+        elif observation.outcome == "QUEUE_INACTIVE":
+            self._status, code = "AUTOMATIC_NO_QUEUE", "automatic_no_queue"
+        elif observation.outcome in {"CHECK_FAILED", "CHALLENGE", "UNKNOWN"}:
+            self._status, code = "AUTOMATIC_FAILED", "automatic_failed"
+        else:
+            self._status, code = "AUTOMATIC_OBSERVED", "automatic_observed"
+        self._latest = observation
+        self._last_observed_at = observation.observed_at
+        if report_activity:
             self._activity.append(TokenObservationActivity(observation.observed_at, code))
 
     def activity_events(self) -> tuple[TokenObservationActivity, ...]:
@@ -158,7 +203,7 @@ class PrivateAutomaticObservationMonitor:
                 "version": 1,
                 "scope": "OWNER_GLOBAL",
                 "source": "AUTOMATIC_QUEUE",
-                "status": self._status,
+                "status": self._auth_phase or self._status,
                 "configured": self._configured,
                 "latest": self._latest.metadata() if self._latest is not None else None,
                 "has_target_url": self._latest is not None and self._latest.target_url is not None,

@@ -175,6 +175,12 @@ R294_AUTHENTICATED_PROFILE_FULL_CUTOVER_SHA = (
 R295_CURRENT_LEDGER_STATUS_FULL_CUTOVER_SHA = (
     "96b0797f71e853b5a3761b2dbcc592c96c9423776d771fb2fd47ccc08b13b1ac"
 )
+# R296 updates the shared auth ledger, sender profile and compatible binding
+# guards. Dedicated Telegram coordination stays in its separate archive. The
+# reviewed deterministic full ZIP preserves all historical recovery pins.
+R296_AUTH_AND_TELEGRAM_BINDING_FULL_CUTOVER_SHA = (
+    "ef06f5a8c8e941b1a1a61defc4f4bbe4aa52a252d85e8533871d6ea2e3d98267"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -328,11 +334,13 @@ def test_both_recovery_modes_reject_modified_bytes_and_injected_entries(
 
 
 def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) -> None:
-    """R295 source evolution does not modify the isolated R83 recovery modes."""
+    """R296 source evolution does not authorize historical recovery modes."""
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R295_CURRENT_LEDGER_STATUS_FULL_CUTOVER_SHA
+    assert (
+        digest == hashlib.sha256(raw).hexdigest() == R296_AUTH_AND_TELEGRAM_BINDING_FULL_CUTOVER_SHA
+    )
     assert digest != R294_AUTHENTICATED_PROFILE_FULL_CUTOVER_SHA
     assert digest != R252_SUCCESS_IMAGE_PREDELETE_GUARD_FULL_CUTOVER_SHA
     assert digest != R245_GUARDED_CLEANUP_FULL_CUTOVER_SHA

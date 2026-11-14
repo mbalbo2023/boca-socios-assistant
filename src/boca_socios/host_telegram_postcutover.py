@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from boca_socios.host_boca_cleanup import (
     BocaJobLease,
@@ -27,6 +27,9 @@ from boca_socios.host_lifecycle_rootless_adapter import (
     panel_control_mount,
 )
 from boca_socios.host_telegram_production_reader import TelegramProductionDockerIO
+
+if TYPE_CHECKING:
+    from boca_socios.host_on_demand_lifecycle import OnDemandInstallation
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _ID = re.compile(r"[0-9a-f]{64}\Z")
@@ -195,7 +198,9 @@ def _service(
         raise TelegramHostNoGo("boca_telegram_installed_release_unverified")
 
 
-def _stopped_controller_boundary(reader: LifecycleDockerIO, pins: TelegramHostPins) -> bool:
+def _stopped_controller_boundary(
+    reader: LifecycleDockerIO, pins: TelegramHostPins | OnDemandInstallation
+) -> bool:
     """Stopped Docker releases lose runtime NetworkSettings.Ports.
 
     Verify the persistent approved loopback PortBindings instead. All other

@@ -285,11 +285,14 @@ class OwnerSessions:
         body: bytes,
         *,
         pending_start: Callable[[], bool] | None = None,
+        request_body: bytes | None = None,
     ) -> tuple[int, EnrollmentOperation | None]:
         """Reserve once, or allow a bounded retry of a previously committed wake."""
         if not hmac.compare_digest(session.csrf.encode("ascii"), csrf.encode("utf-8")):
             return 403, None
-        fingerprint = hmac.digest(session.fingerprint_key, body, "sha256")
+        fingerprint = hmac.digest(
+            session.fingerprint_key, body if request_body is None else request_body, "sha256"
+        )
         with self._lock:
             now = self._clock()
             if self._member_key(session, now) is None:

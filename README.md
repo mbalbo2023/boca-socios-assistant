@@ -1,6 +1,36 @@
 # Boca Socios Assistant
 
-## R295 — pendientes en desarrollo; R294 instalada y en aceptación
+## R296 — candidato único antes de las correcciones Samsung
+
+El candidato continúa en [PR #517](https://github.com/mbalbo2023/boca-socios-assistant/pull/517).
+El titular todavía no hizo el control de calidad: sus correcciones se incorporan
+al mismo candidato antes de una única promoción. La última instalación certificada
+permanece en R294, `c5a143541ccfcaf26f29cf252a4cb33fd7c540f7`, release #865 /
+APPLY #1117; este desarrollo no ejecuta otro despliegue ni observa de nuevo el host.
+
+El código R296 conecta el login Boca al socio elegido en START y al worker de
+sesión única. Reutiliza el vault, transporte y monitores existentes; publica sólo
+si el START sigue vigente y el socio conserva su credencial. STOP, revocación,
+replay, plazos y resultados tardíos tienen pruebas focales. La actividad muestra
+la autenticación en curso sin transformar una observación UNKNOWN en ausencia
+comprobada de evento o cola.
+
+Telegram incorpora preparación, emparejamiento, aceptación y sender al contexto
+instalado protegido. El panel recibe automáticamente la clave pública y muestra
+el comando `/start` después de guardar el sobre con passkey. Las recuperaciones
+conservan stage, nonce e historial; una continuación usa el intento original y
+no repite un envío ambiguo. La página Telegram muestra la última observación
+protegida con su antigüedad y distingue aceptación API de recepción humana.
+
+Las funcionalidades están desarrolladas en rama; las pruebas offline y las
+revisiones no certifican proveedor, Docker/systemd físico ni aceptación Samsung.
+Los resultados del SHA exacto se publican en PR517 e
+[#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+[Diseño, RCA, límites y próximos pasos](docs/ADR/0301-r296-consolidated-auth-and-telegram.md).
+Se mantienen SIMULATION_ONLY, protecciones de main y separación entre CI,
+release, despliegue y aceptación. Los cortes siguientes son históricos.
+
+## Corte histórico R295 — pendientes en desarrollo; R294 instalada y en aceptación
 
 La BETA R294 de `c5a143541ccfcaf26f29cf252a4cb33fd7c540f7` ya fue instalada
 por una única promoción: release #865, APPLY #1117 ACCEPTED, administración

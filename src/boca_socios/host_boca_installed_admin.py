@@ -260,15 +260,16 @@ def _existing(directory: int) -> tuple[int, int, int, int, int] | None:
         os.close(descriptor)
 
 
-def provision_local(database: Path, raw: bytes, *, expected_source_sha: str, now: datetime) -> str:
-    """Controller-only implementation; production CLI fixes /data/boca.sqlite3.
-
-    The one test seam is the database directory. Existing legacy SQLite is
-    inspected for identity only by MemberSectorStore.migrate(), never opened
-    for writes. The panel's own strict parser validates the exact receipt.
-    """
+def _publish_local(
+    database: Path,
+    raw: bytes,
+    *,
+    expected_source_sha: str,
+    now: datetime,
+    provision_sectors: bool,
+) -> None:
+    """Reuse one guarded receipt writer; optional existing sector provision."""
     from boca_socios.notify.projection import parse_telegram_admin_receipt
-    from boca_socios.panel.member_sector_store import MemberSectorStore
 
     parse_telegram_admin_receipt(raw, expected_source_sha=expected_source_sha, now=now)
     if raw != _canonical(json.loads(raw)) or not database.is_absolute():
@@ -283,7 +284,10 @@ def provision_local(database: Path, raw: bytes, *, expected_source_sha: str, now
         if (meta.st_uid, meta.st_gid) != (os.geteuid(), os.getegid()) or meta.st_mode & 0o022:
             raise _fail()
         before = _existing(directory)
-        MemberSectorStore.for_database(database).migrate()
+        if provision_sectors:
+            from boca_socios.panel.member_sector_store import MemberSectorStore
+
+            MemberSectorStore.for_database(database).migrate()
         if _existing(directory) != before:
             raise _fail()
         descriptor = os.open(
@@ -313,7 +317,28 @@ def provision_local(database: Path, raw: bytes, *, expected_source_sha: str, now
         raise _fail() from None
     finally:
         os.close(directory)
+
+
+def provision_local(database: Path, raw: bytes, *, expected_source_sha: str, now: datetime) -> str:
+    """Explicit sector setup plus receipt; legacy SQLite is never opened for writes."""
+    _publish_local(
+        database, raw, expected_source_sha=expected_source_sha, now=now, provision_sectors=True
+    )
     return _controller_receipt(raw)
+
+
+def publish_telegram_observation(
+    database: Path,
+    raw: bytes,
+    *,
+    expected_source_sha: str,
+    now: datetime,
+) -> str:
+    """Publish only a verified observation; do not open or migrate either database."""
+    _publish_local(
+        database, raw, expected_source_sha=expected_source_sha, now=now, provision_sectors=False
+    )
+    return hashlib.sha256(raw).hexdigest()
 
 
 def main(argv: Sequence[str] | None = None) -> int:

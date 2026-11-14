@@ -107,6 +107,9 @@ RUN groupadd --gid 10002 boca-browser && \
 COPY src/boca_socios/__init__.py ./src/boca_socios/__init__.py
 COPY src/boca_socios/browser/ ./src/boca_socios/browser/
 COPY src/boca_socios/domain/__init__.py src/boca_socios/domain/policy.py ./src/boca_socios/domain/
+# Login uses only the reviewed stdlib transport with the current browser's cookies.
+# Credential storage and response parsing remain in the controller image.
+COPY src/boca_socios/security/__init__.py src/boca_socios/security/boca_login_transport.py ./src/boca_socios/security/
 # The externally owned blackbox is never imported by this image-build check.
 # W1 #934: a bare `synthetic` lookup must resolve inside the sealed browser copy.
 RUN /app/.venv/bin/python -c 'import importlib.util; spec = importlib.util.find_spec("synthetic"); assert spec is not None and spec.origin == "/app/src/boca_socios/browser/synthetic.py"'

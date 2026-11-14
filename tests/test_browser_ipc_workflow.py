@@ -52,21 +52,23 @@ def test_browser_option_is_separately_gated_without_weakening_legacy_operations(
         assert proof in gate
     # Only reviewed browser/GO_B operations may carry a browser digest;
     # official import requires same-run controller/worker manifests, while
-    # Telegram phase2 remains explicitly NO_GO.
+    # Telegram proves release lineage before its separate one-lease backend.
     assert "protected-go-prepare|lifecycle-apply)" in gate
-    assert "telegram-activate)" in gate
-    telegram_review = _step(
-        "Prove Telegram dual-source release ancestry CODE_ONLY then reject physical activation"
+    assert (
+        "telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender)"
+        in gate
     )
-    assert "state=NO_GO reason=host_same_lease_backend_unverified" in telegram_review
-    assert "exit 1" in telegram_review
-    assert _workflow().index("      - name: Prove Telegram dual-source") < _workflow().index(
+    telegram_review = _step("Prove Telegram release ancestry and build installed transaction")
+    assert "check_telegram_release_lineage.py" in telegram_review
+    assert "--installed" in telegram_review
+    assert "ssh " not in telegram_review
+    assert _workflow().index("      - name: Prove Telegram release ancestry") < _workflow().index(
         "      - name: Configure pinned SSH host key and dedicated identity"
     )
     for legacy in (
         "owner-enroll)",
         "beta-install|beta-start|beta-acceptance)",
-        "telegram-migrate|telegram-prepare|telegram-install|telegram-verify|telegram-test)",
+        "telegram-migrate|telegram-install|telegram-verify|telegram-test)",
         'if [[ "$BOCA_OPERATION" = owner-enroll ]]',
     ):
         assert legacy in gate

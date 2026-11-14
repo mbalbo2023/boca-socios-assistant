@@ -103,19 +103,20 @@ def test_telegram_staging_and_synthetic_outbox_reuse_existing_wiring() -> None:
     assert "boca_socios.notify.telegram_worker" not in _read("src/boca_socios/runtime.py")
 
 
-def test_telegram_activation_stays_explicitly_no_go_and_token_requires_rotation() -> None:
+def test_telegram_activation_is_protected_and_token_still_requires_rotation() -> None:
     workflow = _read(".github/workflows/boca-first-deploy.yml")
     step = re.search(
-        r"(?ms)^      - name: Prove Telegram dual-source release ancestry CODE_ONLY then reject physical activation\n"
+        r"(?ms)^      - name: Prove Telegram release ancestry and build installed transaction\n"
         r"(.*?)(?=^      - name:|\Z)",
         workflow,
     )
     assert step is not None
     body = step.group(1)
-    assert "if: inputs.operation == 'telegram-activate'" in body
-    assert "BOCA_TELEGRAM_POSTCUTOVER state=NO_GO" in body
-    assert "host=untouched sender=OFF" in body
-    assert re.search(r"(?m)^\s+exit 1\s*$", body)
+    assert "inputs.operation == 'telegram-activate'" in body
+    assert "check_telegram_release_lineage.py" in body
+    assert "--installed" in body
+    assert "ssh " not in body
+    assert "Execute installed Telegram transaction under one protected lease" in workflow
 
     # A source gate cannot establish secret rotation. Preserve the documented
     # requirement instead of treating ciphertext staging as sender activation.
