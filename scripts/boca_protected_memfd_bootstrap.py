@@ -156,8 +156,20 @@ BINDING_ENTRIES = (
         "boca_socios/host_boca_binding_observe.py",
     }
 )
+CURRENT_RETAINED_ENTRIES = (
+    BINDING_ENTRIES
+    | POSTCOMMIT_ENTRIES
+    | {
+        "boca_socios/host_boca_retained_resources.py",
+        "boca_socios/host_boca_current_retained.py",
+    }
+)
 # R179 requires *different* SHA-pinned transports: a read-only SQLite witness
 # and a separately admitted transaction. Neither inherits browser code.
+INSTALLED_ADMIN_ENTRIES = CURRENT_RETAINED_ENTRIES | {
+    "boca_socios/host_boca_installed_admin.py",
+    "boca_socios/host_on_demand_status.py",
+}
 SQLITE_OBSERVE_ENTRIES = BINDING_ENTRIES | {
     "boca_socios/host_boca_sqlite_identity.py",
     "boca_socios/host_boca_pair_upgrade_cli.py",
@@ -204,6 +216,7 @@ PAIR_UPGRADE_ENTRIES = SQLITE_OBSERVE_ENTRIES | {
     "boca_socios/host_boca_upgrade_observation_bridge.py",
     "boca_socios/host_boca_upgrade_retained_bridge.py",
     "boca_socios/host_boca_current_pair_v2.py",
+    "boca_socios/host_boca_current_retained.py",
     "boca_socios/host_boca_successor_integrations.py",
     "boca_socios/host_boca_retained_resources.py",
     "boca_socios/release_manifest.py",
@@ -246,6 +259,7 @@ PRECOMMIT_RESTORE_ENTRIES = BINDING_ENTRIES | {
     "boca_socios/host_boca_pair_upgrade_plan.py",
     "boca_socios/host_boca_retained_resources.py",
     "boca_socios/host_boca_upgrade_adapters.py",
+    "boca_socios/host_boca_current_retained.py",
     "boca_socios/host_boca_park_incident_readonly.py",
     "boca_socios/host_boca_pair_precommit_restore.py",
     "boca_socios/browser_release_manifest.py",
@@ -300,6 +314,8 @@ def verify(
     pair_observe: bool = False,
     postcommit_observe: bool = False,
     retained_observe: bool = False,
+    current_retained_observe: bool = False,
+    installed_admin: bool = False,
     binding_observe: bool = False,
     sqlite_observe: bool = False,
     pair_upgrade: bool = False,
@@ -319,6 +335,8 @@ def verify(
                 pair_observe,
                 postcommit_observe,
                 retained_observe,
+                current_retained_observe,
+                installed_admin,
                 binding_observe,
                 sqlite_observe,
                 pair_upgrade,
@@ -331,7 +349,9 @@ def verify(
     ):
         raise ValueError("protected Boca bundle modes must be exclusive")
     max_zip = (
-        RETAINED_MAX_ZIP
+        BINDING_MAX_ZIP
+        if current_retained_observe or installed_admin
+        else RETAINED_MAX_ZIP
         if retained_observe
         else POSTCOMMIT_FINALIZE_MAX_ZIP
         if precommit_restore
@@ -362,7 +382,9 @@ def verify(
         else MAX_ZIP
     )
     max_uncompressed = (
-        RETAINED_MAX_UNCOMPRESSED
+        BINDING_MAX_UNCOMPRESSED
+        if current_retained_observe or installed_admin
+        else RETAINED_MAX_UNCOMPRESSED
         if retained_observe
         else POSTCOMMIT_FINALIZE_MAX_UNCOMPRESSED
         if precommit_restore
@@ -400,7 +422,11 @@ def verify(
         entries = package.infolist()
         names = [entry.filename for entry in entries]
         allowlisted = (
-            (RETAINED_ENTRIES,)
+            (INSTALLED_ADMIN_ENTRIES,)
+            if installed_admin
+            else (CURRENT_RETAINED_ENTRIES,)
+            if current_retained_observe
+            else (RETAINED_ENTRIES,)
             if retained_observe
             else (PRECOMMIT_RESTORE_ENTRIES,)
             if precommit_restore
@@ -478,6 +504,11 @@ def main() -> int:
         pair_observe = sys.argv[2] == "boca-pair-observe"
         postcommit_observe = sys.argv[2] == "boca-postcommit-observe"
         retained_observe = sys.argv[2] == "boca-retained-resource-observe"
+        current_retained_observe = sys.argv[2] == "boca-current-retained-resource-observe"
+        installed_admin = sys.argv[2] in (
+            "boca-installed-status-observe",
+            "boca-installed-admin-provision",
+        )
         binding_observe = sys.argv[2] == "boca-binding-observe"
         sqlite_observe = sys.argv[2] == "boca-sqlite-inode-observe"
         pair_upgrade = sys.argv[2] == "boca-pair-upgrade-apply"
@@ -507,6 +538,12 @@ def main() -> int:
             raise ValueError("Boca postcommit observer requires one GitHub run ID only")
         if retained_observe and len(sys.argv) != 4:
             raise ValueError("Boca retained observer requires one GitHub run ID only")
+        if current_retained_observe and len(sys.argv) != 4:
+            raise ValueError("Boca current retained observer requires one GitHub run ID only")
+        if installed_admin and len(sys.argv) != (
+            5 if sys.argv[2] == "boca-installed-status-observe" else 6
+        ):
+            raise ValueError("installed Boca administration requires exact observer coordinates")
         if binding_observe and len(sys.argv) != 4:
             raise ValueError("Boca binding observer requires one GitHub run ID only")
         if sqlite_observe and len(sys.argv) != 4:
@@ -522,7 +559,9 @@ def main() -> int:
         if precommit_restore and len(sys.argv) != 4:
             raise ValueError("precommit recovery requires only fresh authenticated run ID")
         bound = (
-            RETAINED_MAX_ZIP
+            BINDING_MAX_ZIP
+            if current_retained_observe or installed_admin
+            else RETAINED_MAX_ZIP
             if retained_observe
             else POSTCOMMIT_FINALIZE_MAX_ZIP
             if precommit_restore
@@ -564,6 +603,8 @@ def main() -> int:
             pair_observe=pair_observe,
             postcommit_observe=postcommit_observe,
             retained_observe=retained_observe,
+            current_retained_observe=current_retained_observe,
+            installed_admin=installed_admin,
             binding_observe=binding_observe,
             sqlite_observe=sqlite_observe,
             pair_upgrade=pair_upgrade,

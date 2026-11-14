@@ -63,6 +63,15 @@ def _canonical(value: dict[str, object]) -> bytes:
     ).encode("ascii")
 
 
+def _legacy_custody(custody: adapters.CustodyEvidence) -> dict[str, object]:
+    """Keep the original V1 envelope; current-pair custody uses the V2 route."""
+    if custody.current_receipt is not None:
+        raise _fail()
+    value = asdict(custody)
+    del value["current_receipt"]
+    return value
+
+
 class _LiveGitHubCustodyAuthenticator:
     """Runner-only: actual authenticated run metadata, never a host source."""
 
@@ -162,7 +171,7 @@ def verify_bundled_retained(
             "pair_observation_run_id": paired_run,
             "apply_attempt_id": apply_run,
             "release_run_id": release_run,
-            "custody": asdict(custody),
+            "custody": _legacy_custody(custody),
         }
         parsed = json.loads(proof, object_pairs_hook=observed._unique)
         if (
@@ -227,7 +236,7 @@ def _authenticate_and_download(
             "pair_observation_run_id": paired_run,
             "apply_attempt_id": apply_run,
             "release_run_id": release_run,
-            "custody": asdict(custody),
+            "custody": _legacy_custody(custody),
         }
     )
     verify_bundled_retained(

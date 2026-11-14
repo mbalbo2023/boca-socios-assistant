@@ -12,6 +12,8 @@ from pathlib import Path
 from urllib.parse import quote
 
 from boca_socios.browser.contracts import SyntheticBrowserPort
+from boca_socios.domain.policy import TicketIntent
+from boca_socios.domain.sector_preferences import SectorEvaluation
 from boca_socios.integration.beta import BetaCoordinator, OnDemandBotSession
 from boca_socios.integration.command_host import BetaCommandHost
 from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
@@ -123,6 +125,7 @@ class LocalBetaRuntime:
         initial_engine_stopped: bool | Callable[[], bool] = False,
         command_timeout_seconds: float = 5.0,
         bot_session: OnDemandBotSession | None = None,
+        sector_policy: Callable[[TicketIntent], SectorEvaluation] | None = None,
     ) -> LocalBetaRuntime:
         if (
             type(initialize_new) is not bool
@@ -152,6 +155,7 @@ class LocalBetaRuntime:
                 browser=browser,
                 timeout_seconds=command_timeout_seconds,
                 bot_session=bot_session,
+                sector_policy=sector_policy,
             )
 
         coordinator = new_coordinator()

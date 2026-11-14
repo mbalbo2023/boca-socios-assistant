@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from html import escape
+from zoneinfo import ZoneInfo
 
+from boca_socios.domain.sector_preferences import SectorPreference
 from boca_socios.events.official_catalog import OfficialNotice
 from boca_socios.events.official_presentation import render_observed_catalog_html
-from boca_socios.notify.projection import LocalNoticeView
+from boca_socios.notify.projection import LocalNoticeView, TelegramAdminSnapshot
 from boca_socios.panel import private_token_view
 from boca_socios.panel.enrollment_form import STYLE
 from boca_socios.panel.lifecycle_intents import LifecycleIntent
@@ -58,7 +61,9 @@ button.addEventListener('click', async () => {
 });
 """
 
-_ACTIVITY_SCRIPT = """
+_ACTIVITY_SCRIPT = (
+    private_token_view.ART_TIME_SCRIPT
+    + """
 const list = document.getElementById('worker-events');
 const summary = document.getElementById('worker-activity-status');
 const telemetry = document.getElementById('chromium-telemetry-status');
@@ -83,9 +88,7 @@ async function updateActivity() {
     if (lastEvents !== signature) {
       const children = data.events.map((event) => {
         const item = document.createElement('li');
-        const time = new Date(event.at);
-        const when = Number.isNaN(time.getTime()) ? 'Hora no disponible' :
-          time.toLocaleString('es-AR', {timeZone: 'America/Argentina/Buenos_Aires'});
+        const when = formatPrivateTime(event.at);
         item.textContent = when + ' · ' + (labels[event.source] || 'Evento') +
           ' · ' + event.message;
         return item;
@@ -107,8 +110,7 @@ async function updateActivity() {
       'Chromium todavía no emitió etapas de actividad.' :
       'Telemetría de Chromium no verificable; consultar estado protegido.';
     refreshed.textContent = 'Última consulta: ' +
-      new Date(data.observed_at).toLocaleString('es-AR',
-        {timeZone: 'America/Argentina/Buenos_Aires'});
+      formatPrivateTime(data.observed_at);
   } catch (_) {
     telemetry.textContent = 'No se pudo consultar la actividad. Revise su sesión.';
     summary.textContent = 'Estado actual no verificable; los eventos anteriores son históricos.';
@@ -132,6 +134,7 @@ setInterval(() => {
 }, 5000);
 updateActivity();
 """
+)
 
 
 def _hash(value: str) -> str:
@@ -158,6 +161,7 @@ def _page(title: str, content: str, *, body_attributes: str = "", script: str = 
 <a href="/control/actividad">Actividad del worker</a> ·
 <a href="/monitor/tokens">Monitor de tokens</a> ·
 <a href="/configuracion">Configuración</a> ·
+<a href="/telegram">Telegram</a> ·
 <a href="/estado">Estado</a> · <a href="/avisos">Avisos</a> ·
 <a href="/avisos-oficiales">Eventos oficiales</a></nav>
 <main>{content}</main>{script}</body></html>""".encode()
@@ -188,6 +192,7 @@ def token_monitor(
     can_reveal: bool,
     queue_connected: bool,
     boca_connected: bool,
+    automatic: dict[str, object] | None = None,
 ) -> bytes:
     return _page(
         "Monitor de tokens",
@@ -199,6 +204,7 @@ def token_monitor(
             can_reveal=can_reveal,
             queue_connected=queue_connected,
             boca_connected=boca_connected,
+            automatic=automatic,
         ),
         script=f"<script>{private_token_view.LIVE_SCRIPT}</script>",
     )
@@ -281,6 +287,7 @@ def home(
         '<p><a href="/estado">Consultar estado local</a></p>'
         '<p><a href="/avisos">Consultar avisos locales y estado Telegram</a></p>'
         '<p><a href="/avisos-oficiales">Consultar avisos públicos oficiales observados</a></p>'
+        '<p><a href="/telegram">Administrar Telegram y consultar su estado</a></p>'
         '<p><a href="/telegram/configurar">Configurar Telegram con un recibo aprobado</a></p>'
         '<section aria-labelledby="pending"><h2 id="pending">Funciones no habilitadas</h2><ul>'
         "<li>Los avisos oficiales son informativos y requieren observaciones cargadas; "
@@ -577,6 +584,7 @@ def member_detail(
     sector_defaults: MemberSectorDefaults | None,
     *,
     sector_storage_ready: bool,
+    events: Mapping[str, str] | None = None,
 ) -> bytes:
     identifier = escape(item.member_id, quote=True)
     all_selected = sector_defaults is None or sector_defaults.mode.value == "ALL"
@@ -612,6 +620,17 @@ def member_detail(
         '<button type="submit">Guardar preferencias de este socio</button>'
         "</fieldset></form></section>"
     )
+    if events:
+        sector_form += (
+            "<h2>Preferencias para un evento</h2><ul>"
+            + "".join(
+                f'<li><a href="/socios/{identifier}/sectores/{escape(event_id, quote=True)}">'
+                + escape(label)
+                + " · configurar sectores</a></li>"
+                for event_id, label in events.items()
+            )
+            + "</ul>"
+        )
     return _page(
         "Socio local",
         "<h1>Socio local</h1><p>"
@@ -632,6 +651,44 @@ def member_detail(
         f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
         f'<input type="hidden" name="operation_id" value="{escape(revoke_id, quote=True)}">'
         '<button type="submit">Revocar credencial local</button></form>' + sector_form,
+    )
+
+
+def member_event_sectors(
+    preference: SectorPreference,
+    label: str,
+    csrf: str,
+    operation_id: str,
+    *,
+    ready: bool,
+) -> bytes:
+    identifier = escape(preference.member_id, quote=True)
+    event = escape(preference.event_id, quote=True)
+    all_selected = preference.mode.value == "ALL"
+    disabled = "" if ready else " disabled"
+    return _page(
+        "Sectores del evento",
+        "<h1>Preferencias del evento</h1><h2>" + escape(label) + "</h2>"
+        "<p>Esta selección se aplica únicamente a este socio y evento de simulación. "
+        "Conserva las preferencias generales y la cantidad máxima de una entrada. "
+        "No modifica un comando ya admitido ni realiza reservas reales.</p>"
+        f'<form method="post" action="/socios/{identifier}/sectores/{event}">'
+        f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
+        f'<input type="hidden" name="operation_id" value="{escape(operation_id, quote=True)}">'
+        f"<fieldset{disabled}><legend>Sectores para este evento</legend>"
+        '<label><input type="radio" name="mode" value="ALL"'
+        + (" checked" if all_selected else "")
+        + ">Todos los sectores ficticios disponibles</label>"
+        '<label><input type="radio" name="mode" value="ORDERED_ALLOWLIST"'
+        + ("" if all_selected else " checked")
+        + ">Mis sectores, en este orden</label>"
+        '<label for="event-sectors">Prioridad de sectores ficticios</label>'
+        '<textarea id="event-sectors" name="sector_ids" rows="3" maxlength="2000">'
+        + escape(",".join(preference.sector_ids))
+        + "</textarea>"
+        "<p>Catálogo de prueba: sector_sur, sector_norte. Separe los IDs con una coma.</p>"
+        '<button type="submit">Guardar sectores para este evento</button></fieldset></form>'
+        f'<p><a href="/socios/{identifier}">Volver al perfil del socio</a></p>',
     )
 
 
@@ -688,14 +745,21 @@ def commands(
     )
 
 
-def command_detail(command_id: str, state: str, updated_at: float, csrf: str) -> bytes:
+def command_detail(
+    command_id: str, state: str, updated_at: float, csrf: str, *, selected_sector: str | None = None
+) -> bytes:
     timestamp = datetime.fromtimestamp(updated_at, UTC).isoformat()
     return _page(
         "Comando local",
         "<h1>Comando local</h1><p>Estado: " + escape(state) + "</p>"
         "<p>Actualizado: " + escape(timestamp) + " (UTC). "
         "Sin confirmación externa de Boca.</p>"
-        f'<form method="post" action="/comandos/{escape(command_id, quote=True)}/detener">'
+        + (
+            "<p>Sector fijado para este comando local: " + escape(selected_sector) + ".</p>"
+            if selected_sector is not None
+            else ""
+        )
+        + f'<form method="post" action="/comandos/{escape(command_id, quote=True)}/detener">'
         f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
         '<button type="submit">Detener simulación local</button></form>'
         '<p><a href="/comandos">Volver a consultar estado</a></p>',
@@ -742,6 +806,108 @@ def notices(items: tuple[LocalNoticeView, ...]) -> bytes:
         "<h1>Avisos de simulación</h1><p>Estado local; nunca confirma una entrada Boca. "
         "La aceptación de Telegram por su API no prueba lectura o entrega al destinatario.</p>"
         "<ul>" + "".join(rows or ["<li>Sin avisos locales.</li>"]) + "</ul>",
+    )
+
+
+def telegram_admin(snapshot: TelegramAdminSnapshot) -> bytes:
+    """Voice-friendly status with host evidence and local history kept separate."""
+    observation = snapshot.host_observation
+    if observation is None:
+        heading = "Estado físico sin comprobación"
+        explanation = (
+            "El recibo local no es verificable. No se confirma la configuración, "
+            "el emparejamiento ni el estado del emisor."
+            if snapshot.receipt_state == "INVALID"
+            else "Todavía no hay una comprobación protegida disponible de esta instalación."
+        )
+        configured = paired = sender = "Sin comprobación"
+        observed = ""
+    else:
+        heading = (
+            "Última observación histórica"
+            if snapshot.receipt_state == "STALE"
+            else "Estado físico reciente"
+        )
+        explanation = (
+            "El estado actual no está comprobado. Los datos siguientes describen "
+            "únicamente la última observación protegida."
+            if snapshot.receipt_state == "STALE"
+            else "Datos de la última observación protegida. No habilitan envíos "
+            "ni prueban recepción humana."
+        )
+        configured = {
+            "ABSENT": "Configuración no instalada",
+            "VERIFIED": "Configuración instalada y verificada",
+            "UNVERIFIED": "Configuración sin comprobar",
+        }[observation.configured]
+        paired = {
+            "NOT_PAIRED": "Chat sin emparejar",
+            "VERIFIED": "Chat emparejado y verificado",
+            "UNVERIFIED": "Emparejamiento sin comprobar",
+        }[observation.paired]
+        sender = {
+            "ABSENT": "Emisor no instalado",
+            "STOPPED": "Emisor detenido",
+            "RUNNING": "Emisor en ejecución",
+            "UNVERIFIED": "Emisor sin comprobar",
+        }[observation.sender]
+        stamp = observation.observed_at.astimezone(ZoneInfo("America/Argentina/Buenos_Aires"))
+        observed = (
+            '<p>Comprobación del host: <time datetime="'
+            + escape(observation.observed_at.isoformat(), quote=True)
+            + '">'
+            + stamp.strftime("%Y-%m-%d %H:%M:%S ART")
+            + "</time>.</p>"
+        )
+    preparation = (
+        "Preparación cifrada disponible en este panel. Guardar un sobre no "
+        "instala la configuración, no empareja el chat y no inicia el emisor."
+        if snapshot.staging_available
+        else "La preparación cifrada con guardado en este panel no está habilitada. "
+        "Puede consultar las instrucciones de configuración."
+    )
+    latest = next((item for item in snapshot.notices if item.telegram_state is not None), None)
+    if not snapshot.history_available:
+        history = "Historial local no disponible. No se confirma ningún intento de envío."
+    elif latest is None:
+        history = "No hay intentos de Telegram registrados en los últimos 20 avisos locales."
+    elif latest.telegram_state == "api_accepted":
+        history = (
+            "API aceptó el último intento registrado. No confirma recepción ni lectura humana."
+        )
+    elif latest.telegram_state in ("ambiguous", "needs_review"):
+        history = "El último intento registrado es incierto y requiere revisión. No se reenvía automáticamente."
+    else:
+        history = "El último intento registrado sigue pendiente de confirmación."
+    return _page(
+        "Telegram",
+        "<h1>Administrar Telegram</h1>"
+        '<section aria-labelledby="telegram-physical"><h2 id="telegram-physical">'
+        + escape(heading)
+        + '</h2><p role="status">'
+        + escape(explanation)
+        + "</p>"
+        + observed
+        + "<dl><dt>Configuración</dt><dd>"
+        + escape(configured)
+        + "</dd><dt>Emparejamiento</dt><dd>"
+        + escape(paired)
+        + "</dd><dt>Emisor</dt><dd>"
+        + escape(sender)
+        + "</dd><dt>Recepción humana</dt><dd>No confirmada</dd></dl></section>"
+        '<section aria-labelledby="telegram-preparation">'
+        '<h2 id="telegram-preparation">Preparar Telegram</h2><p>'
+        + escape(preparation)
+        + '</p><p><a href="/telegram/configurar">Configurar bot de Telegram</a></p>'
+        '<p><a href="/telegram/emparejar">Emparejar chat privado</a></p></section>'
+        '<section aria-labelledby="telegram-delivery">'
+        '<h2 id="telegram-delivery">Último intento de envío</h2><p>'
+        + escape(history)
+        + "</p><p>Este historial local puede pertenecer a una configuración anterior. "
+        "No prueba que el emisor siga activo.</p>"
+        '<p><a href="/avisos">Consultar avisos enviados</a></p></section>'
+        '<p><a href="/telegram">Actualizar estado de Telegram</a></p>'
+        "<p>Actualizar vuelve a leer la evidencia local. No contacta Telegram.</p>",
     )
 
 

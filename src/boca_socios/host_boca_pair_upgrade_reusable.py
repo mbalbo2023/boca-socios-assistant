@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
+from boca_socios import host_boca_current_retained as current_resources
 from boca_socios import host_boca_pair_observe as observer
 from boca_socios import host_boca_pair_stage as staging
 from boca_socios import host_boca_pair_upgrade as transaction
@@ -115,13 +116,18 @@ class ReusablePairUpgradeBackend(historical.RootlessPairUpgradeBackend):
         sources: staging.PairSources,
         retained: RetainedResourcePins,
         integrations: RepeatableUpgradeIntegrations | None = None,
+        *,
+        current_retained: bytes | None = None,
     ) -> None:
         super().__init__(sources)
         if type(retained) is not RetainedResourcePins:
             raise _fail()
         retained.validate()
+        if current_retained is not None:
+            current_resources.decode(current_retained)
         self.retained = retained
         self.integrations = integrations
+        self.current_retained = current_retained
 
     def _integrations(self) -> RepeatableUpgradeIntegrations:
         if self.integrations is None:
@@ -180,12 +186,12 @@ class ReusablePairUpgradeBackend(historical.RootlessPairUpgradeBackend):
             if config.get("RestartPolicy") != {"Name": restart, "MaximumRetryCount": 0}:
                 raise _fail()
             if role == "browser-worker":
-                if (
-                    state.get("Status") != "created"
-                    or state.get("Pid") != 0
-                    or state.get("ExitCode") != 0
-                ):
-                    raise _fail()
+                try:
+                    current_resources.require_worker(
+                        current_resources.docker_worker(state), cid, self.current_retained
+                    )
+                except ValueError:
+                    raise _fail() from None
             elif parked and (state.get("Status") != "exited" or state.get("Pid") != 0):
                 raise _fail()
 
@@ -211,7 +217,6 @@ class ReusablePairUpgradeBackend(historical.RootlessPairUpgradeBackend):
             or worker["image_id"] != plan.old_worker_image_id
             or controller["running"] is not True
             or controller["health"] != "healthy"
-            or worker["status"] != "created"
             or worker["pid"] != 0
             or worker["exit_code"] != 0
             or old.installation_run_id != plan.old_attempt_id
@@ -223,6 +228,8 @@ class ReusablePairUpgradeBackend(historical.RootlessPairUpgradeBackend):
             or old.pair.sender_id
         ):
             raise _fail()
+        current_resources.require_worker(worker, plan.old_worker_id, self.current_retained)
+        current_resources.reprove_binding(self.current_retained, old)
         self.old = old
         self._old_exact(plan, parked=False)
         self.owner = historical._reviewed_owner(plan.old_controller_id)
@@ -257,6 +264,8 @@ class ReusablePairUpgradeBackend(historical.RootlessPairUpgradeBackend):
             overlay_file=self.stage_dir / "compose.beta.browser.yaml",
             seccomp_file=self.stage_dir / "seccomp_profile.json",
             control_directory=service.control_directory(),
+            staged_overlay=self.sources.overlay,
+            overlay_sha=self.sources.overlay_sha,
         )
         self.worker_hash = self._compose_hash(plan, "browser-worker")
         self.controller_hash = self._compose_hash(plan, "controller")

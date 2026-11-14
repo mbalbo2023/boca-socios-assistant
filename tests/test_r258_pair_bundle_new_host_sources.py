@@ -179,15 +179,16 @@ def test_r258_pair_preserves_50000_source_bytes_for_variable_authenticated_recei
 def test_r258_pair_compacts_comments_before_exhausting_authenticated_receipt_reserve(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    # Stress the mandatory 50k reserve by another 5k after the R294 closure.
     # Force the reserve path with otherwise-valid source; no executable text
     # may change to make a physical evidence receipt fit.
-    monkeypatch.setattr(builder, "PAIR_UPGRADE_MIN_SOURCE_RESERVE", 80_000, raising=False)
+    monkeypatch.setattr(builder, "PAIR_UPGRADE_MIN_SOURCE_RESERVE", 55_000, raising=False)
     target = tmp_path / "reserve-compacted.pyz"
     digest = builder.build(ROOT, target, pair_upgrade=True)
     raw = target.read_bytes()
     bootstrap.verify(raw, digest, pair_upgrade=True)
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-        assert sum(info.file_size for info in archive.infolist()) <= 1_500_000 - 80_000
+        assert sum(info.file_size for info in archive.infolist()) <= 1_500_000 - 55_000
         assert any(
             archive.read(path.removeprefix("src/")) != (ROOT / path).read_bytes()
             for path in builder.PAIR_UPGRADE_SOURCES

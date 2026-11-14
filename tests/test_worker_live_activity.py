@@ -149,6 +149,34 @@ def test_panel_merges_only_allowlisted_chromium_and_command_states(
     assert command_id.encode() not in data
 
 
+def test_received_observation_activity_has_provenance_without_private_payload(
+    tmp_path: Path,
+) -> None:
+    from boca_socios.browser.queue_page_observation import parse_queue_page_observation
+    from boca_socios.panel.worker_activity import read_worker_activity
+    from boca_socios.queue.private_pass_monitor import PrivateAutomaticObservationMonitor
+
+    _app_instance, db, _cookie = _private_app(tmp_path)
+    now = datetime.now(UTC)
+    source = PrivateAutomaticObservationMonitor(configured=True, now=lambda: now)
+    source.mark_checking()
+    source.observe_global(
+        parse_queue_page_observation(
+            final_url="https://private.invalid/?queueittoken=private-bearing-value",
+            queue_model=None,
+            markers=frozenset(),
+            observed_at=now,
+        )
+    )
+    snapshot = read_worker_activity(
+        db.path, observed_at=now, observation_events=source.activity_events()
+    )
+    assert any("observación automática recibida" in event.message for event in snapshot.events)
+    assert any("detección automática en curso" in event.message for event in snapshot.events)
+    assert "private" not in repr(snapshot)
+    assert "https" not in repr(snapshot)
+
+
 def test_chromium_events_emit_fixed_codes_only_and_read_on_shared_directory(
     isolated_ipc_directory: Path,
 ) -> None:

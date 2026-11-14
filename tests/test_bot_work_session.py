@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -16,6 +17,7 @@ from boca_socios.integration.command_store import CommandState, CommandStore
 from boca_socios.integration.operational import LocalBetaRuntime
 from boca_socios.notify.sqlite_outbox import SqliteNotificationOutbox
 from boca_socios.panel.lifecycle_intents import LifecycleIntentStore, host_marker
+from boca_socios.panel.worker_activity import read_worker_activity
 from boca_socios.storage.database import Database
 
 
@@ -51,6 +53,94 @@ def confirm_start(database: Database, operation_id: str) -> None:
                 "INSERT INTO audit_events(audit_id,action) VALUES (?,?)",
                 host_marker(operation_id, "bot", "start", status),
             )
+
+
+@pytest.mark.parametrize(
+    "outcome", ["NO_EVENT_OBSERVED", "QUEUE_INACTIVE", "CHECK_FAILED", "TARGET_OBSERVED"]
+)
+def test_automatic_observation_terminal_derives_one_stop_without_faking_work(prepared, outcome):
+    database, _, _ = prepared
+    ledger = LifecycleIntentStore(database)
+    start = str(uuid4())
+    ledger.request("bot", "start", start, on_demand=True)
+    confirm_start(database, start)
+    ledger.record_automatic_check(start, outcome)
+    stopped = ledger.request_work_stop(start)
+    assert stopped is not None and stopped.work_start_id == start
+    assert stopped.target == "stop" and stopped.status == "REQUESTED"
+    assert ledger.request_work_stop(start) == stopped
+    if outcome == "NO_EVENT_OBSERVED":
+        activity = read_worker_activity(database.path, observed_at=datetime.now(UTC))
+        assert any("no hay eventos" in item.message for item in activity.events)
+        assert any("comprobación finalizada" in item.message for item in activity.events)
+    with database.connection() as connection:
+        assert connection.execute("SELECT count(*) FROM beta_commands").fetchone() == (0,)
+        assert connection.execute("SELECT count(*) FROM ticket_requests").fetchone() == (0,)
+
+
+@pytest.mark.parametrize("outcome", ["QUEUE_ACTIVE", "PREQUEUE"])
+def test_waiting_queue_is_not_a_terminal_or_absence_receipt(prepared, outcome):
+    database, _, _ = prepared
+    ledger = LifecycleIntentStore(database)
+    start = str(uuid4())
+    ledger.request("bot", "start", start, on_demand=True)
+    confirm_start(database, start)
+    ledger.record_automatic_check(start, outcome)
+    assert ledger.request_work_stop(start) is None
+
+
+def test_completed_simulation_does_not_stop_an_active_automatic_queue(prepared):
+    database, _, browser = prepared
+    database.create_member("second-member", "second@example.invalid", "synthetic")
+    ledger = LifecycleIntentStore(database)
+    start = str(uuid4())
+    ledger.request("bot", "start", start, on_demand=True)
+    confirm_start(database, start)
+    ledger.record_automatic_check(start, "QUEUE_ACTIVE")
+    wakes = []
+    coordinator = beta.BetaCoordinator(
+        database=database,
+        outbox=SqliteNotificationOutbox(database),
+        browser=browser,
+        bot_session=beta.OnDemandBotSession(ledger, lambda: None, wakes.append),
+    )
+
+    async def run():
+        try:
+            await coordinator.begin(str(uuid4()), TicketIntent("member", "event"))
+            await coordinator.wait_idle()
+            assert ledger.current().target == "start"
+            assert wakes == []
+            second = str(uuid4())
+            await coordinator.begin(second, TicketIntent("second-member", "event"))
+            await coordinator.wait_idle()
+            assert (
+                coordinator.status(second, member_id="second-member").state
+                is CommandState.COMPLETED
+            )
+            assert browser.calls == 2 and wakes == []
+            ledger.record_automatic_check(start, "TARGET_OBSERVED")
+            assert ledger.request_work_stop(start) is not None
+            with pytest.raises(RuntimeError):
+                await coordinator.begin(str(uuid4()), TicketIntent("member", "event"))
+        finally:
+            await coordinator.close()
+
+    asyncio.run(run())
+
+
+def test_automatic_observation_cannot_complete_other_or_unconfirmed_start(prepared):
+    database, _, _ = prepared
+    ledger = LifecycleIntentStore(database)
+    start = str(uuid4())
+    ledger.request("bot", "start", start, on_demand=True)
+    with pytest.raises(RuntimeError):
+        ledger.record_automatic_check(start, "NO_EVENT_OBSERVED")
+    confirm_start(database, start)
+    with pytest.raises(RuntimeError):
+        ledger.record_automatic_check(str(uuid4()), "NO_EVENT_OBSERVED")
+    with pytest.raises(ValueError):
+        ledger.record_automatic_check(start, "fake-provider-success")
 
 
 def test_start_requires_worker_before_creating_thread_and_retry_can_succeed(prepared):
@@ -163,6 +253,79 @@ def test_real_work_closes_only_its_session_after_durable_result_and_blocks_late_
         await coordinator.close()
 
     asyncio.run(exercise())
+
+
+def test_completed_work_activity_contains_actual_queue_steps_and_correlated_automatic_stop(
+    prepared,
+):
+    database, _key, browser = prepared
+    ledger = LifecycleIntentStore(database)
+    start_id = str(uuid4())
+    ledger.request("bot", "start", start_id, on_demand=True)
+    confirm_start(database, start_id)
+    coordinator = beta.BetaCoordinator(
+        database=database,
+        outbox=SqliteNotificationOutbox(database),
+        browser=browser,
+        bot_session=beta.OnDemandBotSession(ledger, lambda: None, lambda _operation: None),
+    )
+
+    async def exercise():
+        await coordinator.begin(str(uuid4()), TicketIntent("member", "event"))
+        await coordinator.wait_idle()
+        await coordinator.close()
+
+    asyncio.run(exercise())
+    snapshot = read_worker_activity(database.path, observed_at=datetime.now(UTC))
+    messages = [event.message for event in snapshot.events]
+    queue = [message for message in messages if message.startswith("Cola simulada:")]
+    assert queue == [
+        "Cola simulada: solicitud creada.",
+        "Cola simulada: solicitud en espera.",
+        "Cola simulada: admisión local registrada.",
+        "Cola simulada: solicitud cerrada.",
+    ]
+    assert any(
+        "detención automática" in event.message and event.source == "simulation"
+        for event in snapshot.events
+    )
+    assert any(event.message == "Solicitado: inicio del bot." for event in snapshot.events)
+    assert start_id not in repr(snapshot)
+    assert "member" not in repr(snapshot)
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+def test_interrupted_work_activity_never_claims_a_closed_successful_queue(prepared, cancel):
+    database, _key, _browser = prepared
+
+    class InterruptedBrowser:
+        async def simulate_general_reservation(self):
+            if cancel:
+                raise asyncio.CancelledError
+            raise RuntimeError("private-provider-detail")
+
+    coordinator = beta.BetaCoordinator(
+        database=database,
+        outbox=SqliteNotificationOutbox(database),
+        browser=InterruptedBrowser(),
+    )
+
+    async def exercise():
+        await coordinator.begin(str(uuid4()), TicketIntent("member", "event"))
+        await coordinator.wait_idle()
+        await coordinator.close()
+
+    asyncio.run(exercise())
+    snapshot = read_worker_activity(database.path, observed_at=datetime.now(UTC))
+    messages = [event.message for event in snapshot.events]
+    assert "Cola simulada: solicitud cerrada." not in messages
+    expected = (
+        "Cola simulada: solicitud cancelada."
+        if cancel
+        else "Cola simulada: ejecución interrumpida."
+    )
+    assert expected in messages
+    assert "private-provider-detail" not in repr(snapshot)
 
 
 def test_new_explicit_session_reconciles_uncertain_history_without_replaying(prepared):

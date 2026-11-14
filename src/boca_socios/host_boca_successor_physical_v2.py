@@ -19,6 +19,7 @@ from typing import cast
 
 from boca_socios import host_boca_binding_observe as binding
 from boca_socios import host_boca_cleanup as cleanup
+from boca_socios import host_boca_current_retained as current_resources
 from boca_socios import host_boca_pair_observe as pair
 from boca_socios import host_boca_pair_upgrade as transaction
 from boca_socios import host_boca_pair_upgrade_reusable as reusable
@@ -116,6 +117,7 @@ def expected_transition_graph(
     worker_id: str | None = None,
     controller_id: str | None = None,
     previous_observation: bytes | None = None,
+    current_retained: bytes | None = None,
 ) -> adapters.GraphExpectation:
     """Only actor-recorded exact IDs; never discover candidates by Docker name.
 
@@ -132,7 +134,9 @@ def expected_transition_graph(
             raise _fail()
         plan.validate()
         observed = prior._decode_pair(previous_observation, plan.observation_run_id)
-        old_controller, old_worker = prior._current_pair_matches(plan, observed, observed)
+        old_controller, old_worker = prior._current_pair_matches(
+            plan, observed, observed, current_retained=current_retained
+        )
         old = (
             adapters.ExpectedService(
                 plan.old_controller_id,
@@ -190,7 +194,7 @@ def expected_transition_graph(
                     plan.controller_ref,
                 ),
             )
-        graph = adapters.GraphExpectation((old if with_old else ()) + candidates)
+        graph = adapters.GraphExpectation((old if with_old else ()) + candidates, current_retained)
         graph.validate()
         return graph
     except Exception:
@@ -267,6 +271,8 @@ def observe_transition_resources(
             raise _fail()
         plan.validate()
         cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
+        if graph.current_retained != custody.current_receipt:
+            raise _fail()
         graph.validate()
         return adapters.observe_retained(
             custody.resources,
@@ -306,22 +312,29 @@ class SuccessorCurrentPairCapture:
             plan.validate()
             cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
             _historical_seed(self.historical_custody)
+            current_retained = self.historical_custody.current_receipt
             previous = prior._decode_pair(self.current_pair_observation, plan.observation_run_id)
-            prior._current_pair_matches(plan, previous, previous)
+            prior._current_pair_matches(plan, previous, previous, current_retained=current_retained)
             live = prior._decode_pair(self.pair_reader(plan.attempt_id), plan.attempt_id)
-            controller, worker = prior._current_pair_matches(plan, live, previous)
+            controller, worker = prior._current_pair_matches(
+                plan, live, previous, current_retained=current_retained
+            )
             first_binding = self.binding_reader(lease)
             second_binding = self.binding_reader(lease)
             if first_binding != second_binding:
                 raise _fail()
             binding._attest(plan.attempt_id, pair._canonical(live), first_binding)
+            current_resources.reprove_binding(current_retained, first_binding)
             graph = expected_transition_graph(
-                plan, "NEW", previous_observation=self.current_pair_observation
+                plan,
+                "NEW",
+                previous_observation=self.current_pair_observation,
+                current_retained=current_retained,
             )
             base_io = (
                 self.retained_io
                 if self.retained_io is not None
-                else prior.ProductionRetainedResourceIO()
+                else prior.ProductionRetainedResourceIO(current_retained)
             )
             pins = observe_transition_resources(
                 plan, self.historical_custody, lease, graph=graph, retained_io=base_io
@@ -331,7 +344,7 @@ class SuccessorCurrentPairCapture:
             if before != after or before != self.historical_custody.control_directory_inode_sha256:
                 raise _fail()
             repeated = prior._decode_pair(self.pair_reader(plan.attempt_id), plan.attempt_id)
-            prior._current_pair_matches(plan, repeated, previous)
+            prior._current_pair_matches(plan, repeated, previous, current_retained=current_retained)
             if prior._fixed_coordinates(repeated) != prior._fixed_coordinates(live):
                 raise _fail()
             cleanup.verify_protected_boca_job_lease(lease, plan.attempt_id)
@@ -444,11 +457,12 @@ class PhysicalSuccessorIntegrations:
                 worker_id=None if backend.state == "RESTORED" else backend.worker_id,
                 controller_id=None if backend.state == "RESTORED" else backend.controller_id,
                 previous_observation=self.previous_observation,
+                current_retained=self.custody.current_receipt,
             )
             io: adapters.RetainedResourceIO = (
                 self.retained_io
                 if self.retained_io is not None
-                else prior.ProductionRetainedResourceIO()
+                else prior.ProductionRetainedResourceIO(self.custody.current_receipt)
             )
             pins = observe_transition_resources(
                 plan, self.custody, lease, graph=graph, retained_io=io

@@ -165,7 +165,12 @@ def test_stage_reuses_resources_without_create_relabel_or_remove(
     monkeypatch.setattr(actor, "_sqlite", lambda: None)
     monkeypatch.setattr(host, "_browser_docker_ids", lambda: {"c" * 64, "d" * 64})
     monkeypatch.setattr(pair_stage, "prepare", lambda *_: tmp_path)
-    monkeypatch.setattr(host, "_browser_compose_model", lambda *_a, **_k: None)
+
+    def model(*_args, **kwargs):
+        assert kwargs["staged_overlay"] == actor.sources.overlay
+        assert kwargs["overlay_sha"] == actor.sources.overlay_sha
+
+    monkeypatch.setattr(host, "_browser_compose_model", model)
     monkeypatch.setattr(
         actor, "_compose_hash", lambda _p, role: "6" * 64 if role == "controller" else "7" * 64
     )

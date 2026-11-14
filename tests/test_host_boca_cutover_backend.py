@@ -209,7 +209,8 @@ def fake_host(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[list[str
 
     monkeypatch.setattr(adapter.host, "_cutover_compensate_candidate", recover)
 
-    def recover_worker(*_args: object) -> None:
+    def recover_worker(*_args: object, **proof: object) -> None:
+        assert proof == {"staged_overlay": OVERLAY, "overlay_sha": SHA(OVERLAY)}
         assert worker_state[0] == "present"
         worker_state[0] = "absent"
         events.append("recover-worker")
@@ -891,7 +892,7 @@ def test_idle_install_service_tied_to_verified_cids_before_retirement(fake_host,
         lambda attempt, lease: events.append("directory") or path,
     )
     monkeypatch.setattr(
-        adapter.host, "_cutover_idle_worker", lambda *_: events.append("created-pid-zero")
+        adapter.host, "_cutover_idle_worker", lambda *_, **_proof: events.append("created-pid-zero")
     )
 
     def database(cid):

@@ -1,5 +1,25 @@
 # Boca Socios Assistant
 
+## R294 — detección automática y BETA consolidada en preparación
+
+La optimización CI/CD R293 ya se integró por PR #515, con CI y seguridad de
+`959a0be9e776329f99a29e65c2c75195700d5596` aprobados. El siguiente candidato
+conecta el worker automático con la detección de evento/cola, monitor privado,
+actividad y detención correlacionada; añade preferencias por evento, página
+principal Telegram y horarios de 24 horas. [Diseño y límites R294](docs/ADR/0299-r294-automatic-worker-and-consolidated-beta.md).
+
+El titular inicia el bot desde el panel: una sesión ordinaria comprueba SITE_URL,
+espera en la cola si existe y muestra el token recibido íntegro sólo mediante
+revelación privada. Ausencia comprobada, fallo de conexión y bloqueo tienen
+resultados distintos. Las reservas siguen siendo simuladas. La autenticación
+Boca que produciría token/refreshToken es un transporte separado pendiente.
+
+**Este encabezado describe código candidato, no una instalación nueva.** El
+par certificado continúa en release #864 / APPLY #1102 hasta la promoción
+consolidada. Checks, release, instalación y aceptación Samsung se registran
+por separado en [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+No repetir despliegues o recuperaciones de las secciones históricas siguientes.
+
 ## Estado vigente R291–R293: instalación preservada, prioridad CI/CD
 
 La [certificación R291](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6868819579)

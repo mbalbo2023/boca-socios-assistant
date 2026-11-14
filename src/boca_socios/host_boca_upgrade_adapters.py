@@ -1,9 +1,8 @@
-"""Unwired evidence adapters, never a host-operation or authorization route.
-
-No CLI, credentials, network client, default host IO, Docker mutation or
-upgrade-actor import. Authentication must come from a separately reviewed
-protected transport; successfully parsing supplied JSON cannot replace it.
-"""
+"""Unwired evidence adapters, never a host-operation or authorization route."""
+#
+# No CLI, credentials, network client, default host IO, Docker mutation or
+# upgrade-actor import. Authentication must come from a separately reviewed
+# protected transport; successfully parsing supplied JSON cannot replace it.
 
 from __future__ import annotations
 
@@ -62,14 +61,14 @@ def _json(raw: bytes, bound: int) -> object:
 
 @dataclass(frozen=True, slots=True)
 class AuthenticationRequest:
-    """Bind authentication to the exact payload and workflow, not a boolean.
+    """Bind authentication to the exact payload and workflow, not a boolean."""
 
-    payload_sha256 hashes extracted receipt/manifest bytes, NOT the Actions
-    artifact archive. The provider must independently verify the genuine
-    archive digest, member allowlist and extraction before authenticating it.
-    Witnesses instead need the actual protected receipt transport; do not
-    invent an artifact for a workflow which publishes only a step summary.
-    """
+    #
+    # payload_sha256 hashes extracted receipt/manifest bytes, NOT the Actions
+    # artifact archive. The provider must independently verify the genuine
+    # archive digest, member allowlist and extraction before authenticating it.
+    # Witnesses instead need the actual protected receipt transport; do not
+    # invent an artifact for a workflow which publishes only a step summary.
 
     kind: Literal["controller-release", "paired-release", "retained-resource-observe"]
     run_id: str
@@ -79,14 +78,14 @@ class AuthenticationRequest:
 
 
 class EvidenceAuthenticator(Protocol):
-    """Trusted boundary, deliberately no production implementation or default.
+    """Trusted boundary, deliberately no production implementation or default."""
 
-    Return metadata obtained from authenticated Actions and authenticate the
-    exact request payload, workflow/operation, protected actor/environment,
-    run/source/first-attempt and freshness. Caller-provided JSON is not enough.
-    Failure MUST raise; returning a plausible metadata dict without proving
-    the payload's origin does not implement this protocol's security contract.
-    """
+    #
+    # Return metadata obtained from authenticated Actions and authenticate the
+    # exact request payload, workflow/operation, protected actor/environment,
+    # run/source/first-attempt and freshness. Caller-provided JSON is not enough.
+    # Failure MUST raise; returning a plausible metadata dict without proving
+    # the payload's origin does not implement this protocol's security contract.
 
     def authenticate(self, request: AuthenticationRequest) -> object: ...
 
@@ -201,6 +200,8 @@ class CustodyEvidence:
     receipt_sha256: str
     resources: ResourcePins
     control_directory_inode_sha256: str
+    # Distinct current-generation schema. V1 remains immutable history.
+    current_receipt: bytes | None = None
 
     @property
     def apply_authorized(self) -> Literal[False]:
@@ -214,15 +215,14 @@ def verify_custody_seed(
     observer_source_sha: str,
     authenticator: EvidenceAuthenticator | None = None,
 ) -> CustodyEvidence:
-    """Authenticate unchanged success-frame V1; reject R189 NO_GO frames.
-
-    This seed is historical resource custody, not a live pair receipt and
-    not release provenance for a later installed pair or target image.
-    """
+    """Authenticate a strict V1 or current-pair V2 receipt; reject NO_GO frames."""
+    #
+    # Original creator provenance remains distinct from current-pair custody.
+    # Neither schema supplies target release provenance or effect authority.
     try:
         if authenticator is None or not _SHA.fullmatch(observer_source_sha):
             raise _fail()
-        retained.verify(raw, observation_run_id)
+        parse_custody_integrity(raw, observation_run_id=observation_run_id)
         request = AuthenticationRequest(
             "retained-resource-observe",
             observation_run_id,
@@ -264,18 +264,28 @@ def verify_custody_seed(
 
 
 def parse_custody_integrity(raw: bytes, *, observation_run_id: str) -> CustodyEvidence:
-    """Check R188 canonical bytes without claiming GitHub authentication.
-
-    Use only *after* a trusted runner has verified the actual Actions ZIP and
-    transported its canonical proof through the SHA-pinned protected bundle.
-    In contrast, ``verify_custody_seed`` independently authenticates GitHub
-    metadata on the runner. This parser never invents an Action run record.
-    """
+    """Check V1 or V2 canonical bytes without claiming GitHub authentication."""
+    #
+    # Use only *after* a trusted runner has verified the actual Actions ZIP and
+    # transported its canonical proof through the SHA-pinned protected bundle.
+    # In contrast, ``verify_custody_seed`` independently authenticates GitHub
+    # metadata on the runner. This parser never invents an Action run record.
     try:
-        retained.verify(raw, observation_run_id)
-        value = _json(raw.removeprefix(b"BOCA_RETAINED_RESOURCES "), 48_000)
-        if not isinstance(value, dict) or value["expected_resource_provenance"] is not True:
-            raise _fail()
+        current_receipt = None
+        if raw.startswith(b"BOCA_CURRENT_RETAINED_V2 "):
+            from boca_socios import host_boca_current_retained as current
+
+            value = current.verify(raw, observation_run_id)
+            current_receipt = raw
+        else:
+            retained.verify(raw, observation_run_id)
+            legacy_value = _json(raw.removeprefix(b"BOCA_RETAINED_RESOURCES "), 48_000)
+            if (
+                not isinstance(legacy_value, dict)
+                or legacy_value["expected_resource_provenance"] is not True
+            ):
+                raise _fail()
+            value = legacy_value
         volumes, network = value["volumes"], value["egress"]
         if not isinstance(volumes, list) or not isinstance(network, dict):
             raise _fail()
@@ -295,6 +305,7 @@ def parse_custody_integrity(raw: bytes, *, observation_run_id: str) -> CustodyEv
             hashlib.sha256(raw).hexdigest(),
             pins,
             value["control_socket_directory_inode_sha256"],
+            current_receipt,
         )
     except Exception:
         raise _fail() from None
@@ -314,8 +325,13 @@ class GraphExpectation:
     """Only exact binding/journal IDs; never workflow-form name/glob inputs."""
 
     services: tuple[ExpectedService, ...]
+    current_retained: bytes | None = None
 
     def validate(self) -> None:
+        if self.current_retained is not None:
+            from boca_socios import host_boca_current_retained
+
+            host_boca_current_retained.decode(self.current_retained)
         if not 2 <= len(self.services) <= 4 or len({s.ident for s in self.services}) != len(
             self.services
         ):
@@ -341,12 +357,12 @@ class GraphExpectation:
 
 
 class RetainedResourceIO(Protocol):
-    """Read-only boundary with no default production implementation.
+    """Read-only boundary with no default production implementation."""
 
-    inventory must perform the existing global exclusivity census before
-    detail reads. identity must use no-follow per-ancestor fstat, checking
-    the exact Docker volume mountpoint as R189; never read volume contents.
-    """
+    #
+    # inventory must perform the existing global exclusivity census before
+    # detail reads. identity must use no-follow per-ancestor fstat, checking
+    # the exact Docker volume mountpoint as R189; never read volume contents.
 
     def rootless_identity(self) -> tuple[int, int, str]: ...
     def inventory(self) -> cleanup.Inventory: ...
@@ -404,18 +420,16 @@ def _retained_snapshot(
         ):
             raise _fail()
         if expected.role == "browser-worker":
+            from boca_socios import host_boca_current_retained
+
             state = io.worker_state(expected.ident)
-            if (
-                current.running
-                or not isinstance(state, dict)
-                or state.get("Status") != "created"
-                or state.get("Running") is not False
-                or type(state.get("Pid")) is not int
-                or state["Pid"] != 0
-                or type(state.get("ExitCode")) is not int
-                or state["ExitCode"] != 0
-            ):
+            if current.running or not isinstance(state, dict):
                 raise _fail()
+            host_boca_current_retained.require_worker(
+                host_boca_current_retained.docker_worker(state),
+                expected.ident,
+                graph.current_retained,
+            )
     for name, role, creator in (
         (_IPC, "boca_browser_ipc", pins.ipc_creator_attempt),
         (_SITE, "boca_site_config", pins.site_creator_attempt),
@@ -531,12 +545,11 @@ def verify_cleanup(
     after: cleanup.Inventory,
     expected_removed: tuple[cleanup.Target, ...],
 ) -> CleanupEvidence:
-    """Certify recorded image cleanup, not execute it or authorize an upgrade.
-
-    Both inventories must be freshly captured by the protected caller. V2
-    forensic quarantine is intentionally refused until its genuine historical
-    release/physical-proof adapter is integrated; no guessed exception here.
-    """
+    """Certify recorded image cleanup, not execute it or authorize an upgrade."""
+    #
+    # Both inventories must be freshly captured by the protected caller. V2
+    # forensic quarantine is intentionally refused until its genuine historical
+    # release/physical-proof adapter is integrated; no guessed exception here.
     try:
         if not _RUN.fullmatch(attempt_id):
             raise _fail()
@@ -623,12 +636,11 @@ def persist_cleanup(
     after: cleanup.Inventory,
     expected_removed: tuple[cleanup.Target, ...],
 ) -> CleanupEvidence:
-    """O_EXCL/fsync/readback of one exact receipt; no deletion or overwrite.
-
-    There is no workflow/CLI route to this function. Tests substitute only a
-    private temporary stage. A failed fsync/ACK preserves the file and NO_GO;
-    it cannot be retried under the same or a renamed attempt automatically.
-    """
+    """O_EXCL/fsync/readback of one exact receipt; no deletion or overwrite."""
+    #
+    # There is no workflow/CLI route to this function. Tests substitute only a
+    # private temporary stage. A failed fsync/ACK preserves the file and NO_GO;
+    # it cannot be retried under the same or a renamed attempt automatically.
     try:
         cleanup.verify_protected_boca_job_lease(lease, attempt_id)
         evidence = verify_cleanup(

@@ -220,6 +220,7 @@ def prepare_success_cleanup(
             inputs.retained,
             integrations=final,
             gate=None,
+            current_retained=inputs.custody.current_receipt,
         )
         integrations.bind_backend(backend)
         if type(backend).requires_persistent_receipt is not False:

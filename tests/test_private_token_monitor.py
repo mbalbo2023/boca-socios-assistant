@@ -32,6 +32,80 @@ SESSION = "00000000-0000-0000-0000-000000000103"
 QUEUE_URL = "https://sandbox.invalid/queue?e=local&queueittoken=private%2Fpass%3D&next=%2Fhome"
 
 
+def test_automatic_worker_observation_is_redacted_then_revealed_without_fake_member(tmp_path):
+    from boca_socios.browser.queue_page_observation import parse_queue_page_observation
+    from boca_socios.queue.private_pass_monitor import PrivateAutomaticObservationMonitor
+
+    monitor = PrivateAutomaticObservationMonitor(configured=True, now=lambda: AT)
+    monitor.observe_global(
+        parse_queue_page_observation(
+            final_url=QUEUE_URL, queue_model=None, markers=frozenset(), observed_at=AT
+        )
+    )
+    provider, key, credential = _passkey([0.0])
+    host = FakeHost()
+    app, _ = _app(tmp_path / "boca.sqlite3", provider, host, automatic_monitor=monitor)
+    cookie = _login(app, key, credential)
+    code, _, page = _request(app, "/monitor/tokens", cookie=cookie)
+    assert code == 200 and "Detección automática" in page.decode()
+    assert b"Fuente Queue-it no conectada" not in page
+    assert b"private%2Fpass" not in page
+    data = json.loads(_request(app, "/monitor/tokens.json", cookie=cookie)[2])
+    assert data["automatic"]["scope"] == "OWNER_GLOBAL"
+    assert data["automatic"]["has_target_url"] is True
+    assert data["queue_source"] == "AUTOMATIC"
+    assert data["queue_observations"] == 1
+    assert data["last_observed_at"] == AT.isoformat()
+    assert "private" not in json.dumps(data)
+    fields = _form(page, "automatic")
+    assert fields["member_id"] == fields["event_id"] == fields["session_id"] == ""
+    status, _, revealed = _request(
+        app, "/monitor/tokens/revelar", cookie=cookie, method="POST", payload=fields
+    )
+    assert status == 200 and QUEUE_URL.replace("&", "&amp;").encode() in revealed
+    assert (
+        _request(app, "/monitor/tokens/revelar", cookie=cookie, method="POST", payload=fields)[0]
+        == 409
+    )
+    assert host.calls == []
+
+
+def test_automatic_absence_and_connection_failure_have_different_visible_reasons(tmp_path):
+    from boca_socios.browser.queue_page_observation import parse_queue_page_observation
+    from boca_socios.queue.private_pass_monitor import PrivateAutomaticObservationMonitor
+
+    monitor = PrivateAutomaticObservationMonitor(configured=True, now=lambda: AT)
+    provider, key, credential = _passkey([0.0])
+    app, _ = _app(tmp_path / "boca.sqlite3", provider, FakeHost(), automatic_monitor=monitor)
+    cookie = _login(app, key, credential)
+    initial = json.loads(_request(app, "/monitor/tokens.json", cookie=cookie)[2])
+    assert initial["automatic"]["latest"] is None and initial["queue_observations"] == 0
+    assert initial["queue_source"] == "AUTOMATIC"
+    assert initial["last_observed_at"] is None
+    monitor.observe_global(
+        parse_queue_page_observation(
+            final_url="https://sandbox.invalid/",
+            queue_model=None,
+            markers=frozenset(),
+            observed_at=AT,
+            visible_text="No hay eventos disponibles",
+            http_status=200,
+        )
+    )
+    assert "no hay eventos" in _request(app, "/monitor/tokens", cookie=cookie)[2].decode().lower()
+    monitor.observe_global(
+        parse_queue_page_observation(
+            final_url="",
+            queue_model=None,
+            markers=frozenset(),
+            observed_at=AT,
+            check_failed=True,
+        )
+    )
+    page = _request(app, "/monitor/tokens", cookie=cookie)[2].decode()
+    assert "No se pudo completar" in page and "No hay eventos disponibles" not in page
+
+
 def _observations() -> tuple[PrivateQueuePassMonitor, PrivateBocaAuthMonitor]:
     queue = PrivateQueuePassMonitor()
     queue.observe(

@@ -334,7 +334,7 @@ def test_versioned_pairing_route_requires_owner_and_keeps_v1_separate(tmp_path: 
     assert "'unsafe-inline'" not in ui.PAIRING_CSP
     assert headers["Cache-Control"] == "no-store"
     assert headers["Referrer-Policy"] == "no-referrer"
-    assert b"todav\xc3\xada sin instalar ni habilitar" in body
+    assert b"esta pantalla no instala ni activa el emisor" in body
     assert b'<input id="pairing-token" type="password"' in body
     assert b"enlace" in body and b"recibo" in body
     assert _request(app, "/telegram/configurar", cookie=cookie)[2] == ui.page()

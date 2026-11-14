@@ -431,6 +431,11 @@ def test_cli_is_explicit_v2_without_relaxing_existing_legacy_mode(
         "argv",
         ["check_beta_deploy_contract.py", str(document), IMAGE, "--topology=browser-ipc-v2"],
     )
+    candidate = on_demand_model()
+    candidate["services"]["browser-worker"]["environment"].update(
+        BOCA_BROWSER_EXECUTOR="automatic-observation", BOCA_BROWSER_OBSERVE_MODE="off"
+    )
+    document.write_text(json.dumps(candidate))
     assert checker() == 0
     assert "BETA_BROWSER_COMPOSE_PASS" in capsys.readouterr().out
     monkeypatch.setattr(

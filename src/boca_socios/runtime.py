@@ -13,6 +13,7 @@ import stat
 import sys
 from collections.abc import Callable
 from contextlib import closing
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from threading import Event
@@ -20,8 +21,12 @@ from urllib.parse import quote, urlsplit
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer
 
 from boca_socios.browser.contracts import SimulationOutcome, SyntheticBrowserPort
+from boca_socios.browser.ipc_client import UnixSyntheticBrowser
 from boca_socios.config import Settings
+from boca_socios.domain.policy import TicketIntent
+from boca_socios.domain.sector_preferences import SectorEvaluation
 from boca_socios.events.official_snapshot import OFFICIAL_SNAPSHOT_NAME, load_official_snapshot
+from boca_socios.integration.automatic_observation import AutomaticObservationSession
 from boca_socios.integration.beta import OnDemandBotSession
 from boca_socios.integration.bridge_client import SiteBridgeTransport, SiteBridgeWorker
 from boca_socios.integration.engine_socket import LocalEngineSocket
@@ -35,6 +40,7 @@ from boca_socios.panel.lifecycle_intents import (
     LifecycleIntentStore,
     LifecycleStorageUnavailable,
 )
+from boca_socios.panel.member_sector_store import MemberSectorStore
 from boca_socios.panel.owner_session_store import OwnerBrowserSessionStore
 from boca_socios.panel.passkey import PasskeyOwnerAuthentication
 from boca_socios.panel.private_http import PrivatePanelApplication
@@ -44,6 +50,7 @@ from boca_socios.panel.telegram_pairing_staging import (
     PairingStageRequest,
     stage_private_telegram_pairing,
 )
+from boca_socios.queue.private_pass_monitor import PrivateAutomaticObservationMonitor
 from boca_socios.security.credential_vault import CredentialVault
 from boca_socios.storage.database import Database
 
@@ -229,6 +236,7 @@ class ServedBeta:
         bridge: SiteBridgeWorker | None = None,
         engine_socket: LocalEngineSocket | None = None,
         enable_engine_socket: bool = False,
+        observation_session: AutomaticObservationSession | None = None,
     ) -> None:
         self.server = server
         self.runtime = runtime
@@ -236,6 +244,7 @@ class ServedBeta:
         self.engine_socket = engine_socket
         self._enable_engine_socket = enable_engine_socket
         self._closed = False
+        self.observation_session = observation_session
 
     def serve_until(self, stopping: Event) -> None:
         try:
@@ -256,14 +265,18 @@ class ServedBeta:
         self._closed = True
         self.server.server_close()
         try:
-            if self.engine_socket is not None:
-                self.engine_socket.close()
+            if self.observation_session is not None:
+                self.observation_session.close()
         finally:
             try:
-                if self.bridge is not None:
-                    self.bridge.close()
+                if self.engine_socket is not None:
+                    self.engine_socket.close()
             finally:
-                self.runtime.close()
+                try:
+                    if self.bridge is not None:
+                        self.bridge.close()
+                finally:
+                    self.runtime.close()
 
 
 def _require_worker_socket() -> None:
@@ -322,6 +335,14 @@ def build_beta_server(
     parameter or an implicit host-side Chromium activation.
     """
     settings.validate_beta()
+    observation_session: AutomaticObservationSession | None = None
+    automatic_monitor = PrivateAutomaticObservationMonitor(configured=settings.bot_on_demand)
+
+    def start_observation(start_id: str) -> None:
+        if observation_session is None:
+            raise RuntimeError("automatic observer unavailable")
+        observation_session.start(start_id)
+
     # The on-demand panel always starts cold. A prior START receipt records
     # history and cannot authorize a new command loop after a restart.
     initial_engine_stopped: bool | Callable[[], bool]
@@ -334,6 +355,7 @@ def build_beta_server(
             ledger=LifecycleIntentStore(Database(settings.db_path)),
             check_worker=_require_worker_socket,
             wake=bot_control,
+            on_start=start_observation,
         )
     else:
         initial_engine_stopped = partial(
@@ -345,6 +367,19 @@ def build_beta_server(
         bot_session = None
     telegram_pairing_stager = _configured_telegram_pairing_stager(settings)
     selected_browser, command_timeout = _browser_for_beta(settings, browser)
+    if settings.bot_on_demand:
+        if (
+            not isinstance(selected_browser, UnixSyntheticBrowser)
+            or bot_session is None
+            or bot_control is None
+        ):
+            raise ValueError("automatic observation requires the authenticated IPC worker")
+        observation_session = AutomaticObservationSession(
+            ledger=bot_session.ledger,
+            observe=selected_browser.observe_queue,
+            monitor=automatic_monitor,
+            wake=bot_control,
+        )
     bridge_enabled = settings.validate_bridge()
     transport = None
     if bridge_enabled:
@@ -374,13 +409,30 @@ def build_beta_server(
         assert settings.tls_cert_file is not None and settings.tls_key_file is not None
         context.load_cert_chain(str(settings.tls_cert_file), str(settings.tls_key_file))
     events = _configured_event(settings.db_path)
+    sector_store = MemberSectorStore.for_database(settings.db_path)
+
+    def sector_policy(intent: TicketIntent) -> SectorEvaluation:
+        if intent.event_id not in events:
+            raise ValueError("configured fictional event required")
+        return sector_store.evaluate_for_event(
+            intent.member_id,
+            intent.event_id,
+            ("sector_sur", "sector_norte"),
+            {"sector_sur": True, "sector_norte": True},
+            at=datetime.now(UTC),
+        )
+
     runtime = LocalBetaRuntime.start(
         database_path=settings.db_path,
         key_file=settings.master_key_file,
-        browser=selected_browser,
+        # An observed provider token is never a simulated reservation result.
+        # On-demand IPC is dedicated to the queue observer; explicit local
+        # simulations retain the established inert browser port.
+        browser=_LocalSyntheticBrowser() if settings.bot_on_demand else selected_browser,
         initial_engine_stopped=initial_engine_stopped,
         command_timeout_seconds=command_timeout,
         bot_session=bot_session,
+        sector_policy=sector_policy if settings.bot_on_demand else None,
     )
     bridge: SiteBridgeWorker | None = None
     server: _TLSWSGIServer | _LoopbackHTTPWSGIServer | None = None
@@ -408,6 +460,8 @@ def build_beta_server(
             ),
             telegram_pairing_stager=telegram_pairing_stager,
             bot_control=bot_control,
+            automatic_monitor=automatic_monitor,
+            source_sha=settings.source_sha,
         )
 
         def app(environ: dict[str, object], start: Callable[..., object]) -> list[bytes]:
@@ -455,7 +509,11 @@ def build_beta_server(
         # The new UDS is installed solely with the separately reviewed IPC
         # cutover candidate, using its private container /tmp namespace.
         return ServedBeta(
-            server, runtime, bridge, enable_engine_socket=settings.browser_backend == "ipc"
+            server,
+            runtime,
+            bridge,
+            enable_engine_socket=settings.browser_backend == "ipc",
+            observation_session=observation_session,
         )
     except Exception:
         if server is not None:

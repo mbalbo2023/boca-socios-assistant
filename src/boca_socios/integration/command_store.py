@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
@@ -10,9 +11,10 @@ from dataclasses import dataclass
 from enum import StrEnum
 from importlib.resources import files
 from typing import Literal
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from boca_socios.domain.policy import TicketIntent
+from boca_socios.domain.sector_preferences import SectorEvaluation
 from boca_socios.storage.database import Database
 
 
@@ -53,6 +55,33 @@ _LOOKUP = _SELECT + " JOIN beta_command_keys k ON k.command_id=c.command_id WHER
 _STOP_UNCLAIMED = (
     "UPDATE beta_commands SET state='stopped',updated_at=max(updated_at,?) WHERE state='accepted'"
 )
+_SECTOR_PREFIX = "boca_sector_choice_v1:"
+
+
+def _sector_receipt_key(key: str) -> str:
+    return str(uuid5(NAMESPACE_URL, _SECTOR_PREFIX + command_key(key)))
+
+
+def _require_sector_choice(choice: SectorEvaluation, intent: TicketIntent) -> None:
+    if (
+        not isinstance(choice, SectorEvaluation)
+        or choice.ticket_intent != intent
+        or not isinstance(choice.considered_sector_ids, tuple)
+        or not isinstance(choice.unavailable_sector_ids, tuple)
+        or not 1 <= len(choice.considered_sector_ids) <= 20
+        or any(
+            not isinstance(item, str) or not 1 <= len(item) <= 80
+            for item in choice.considered_sector_ids
+        )
+        or len(set(choice.considered_sector_ids)) != len(choice.considered_sector_ids)
+        or not isinstance(choice.selected_sector_id, str)
+        or choice.selected_sector_id not in choice.considered_sector_ids
+        or choice.unavailable_sector_ids
+        != choice.considered_sector_ids[
+            : choice.considered_sector_ids.index(choice.selected_sector_id)
+        ]
+    ):
+        raise ValueError("no verified fictional sector is available for this intent")
 
 
 def command_key(value: str) -> str:
@@ -110,6 +139,7 @@ class CommandStore:
         now: float,
         max_pending: int,
         bind_work: Callable[[sqlite3.Connection, str], None] | None = None,
+        sector_policy: Callable[[TicketIntent], SectorEvaluation] | None = None,
     ) -> CommandSnapshot:
         command_key(key)
         intent.validate()
@@ -140,6 +170,11 @@ class CommandStore:
             ).fetchone()
             if count is None or count[0] >= max_pending:
                 raise CommandCapacityError("pending local command capacity reached")
+            choice = sector_policy(intent) if sector_policy is not None else None
+            if sector_policy is not None and choice is None:
+                raise ValueError("sector policy returned no result")
+            if choice is not None:
+                _require_sector_choice(choice, intent)
             connection.execute(
                 """INSERT INTO ticket_requests(request_id,member_id,event_id,quantity)
                    VALUES (?,?,?,1) ON CONFLICT(member_id,event_id) DO NOTHING""",
@@ -163,6 +198,24 @@ class CommandStore:
                 # Only a freshly inserted command belongs to this run. Both
                 # the command and its START association commit or roll back.
                 bind_work(connection, key)
+            if choice is not None:
+                connection.execute(
+                    "INSERT INTO audit_events(audit_id,action,member_id,event_id) VALUES (?,?,?,?)",
+                    (
+                        _sector_receipt_key(key),
+                        _SECTOR_PREFIX
+                        + json.dumps(
+                            {
+                                "considered": choice.considered_sector_ids,
+                                "unavailable": choice.unavailable_sector_ids,
+                                "selected": choice.selected_sector_id,
+                            },
+                            separators=(",", ":"),
+                        ),
+                        intent.member_id,
+                        intent.event_id,
+                    ),
+                )
             row = connection.execute(_SELECT + " WHERE c.command_id=?", (key,)).fetchone()
             if row is None:
                 raise RuntimeError("local command was not persisted")
@@ -175,6 +228,37 @@ class CommandStore:
             if row is None or (member_id is not None and row[6] != member_id):
                 return None
             return _snapshot(row)
+
+    def sector_selection(self, key: str, *, member_id: str) -> SectorEvaluation | None:
+        command_key(key)
+        with closing(sqlite3.connect(self._db.path.as_uri() + "?mode=ro", uri=True)) as connection:
+            row = connection.execute(_LOOKUP, (key,)).fetchone()
+            if row is None or row[6] != member_id:
+                return None
+            receipt = connection.execute(
+                "SELECT action,member_id,event_id FROM audit_events WHERE audit_id=?",
+                (_sector_receipt_key(row[0]),),
+            ).fetchone()
+        if receipt is None:
+            return None
+        try:
+            if receipt[1:] != (row[6], row[7]) or not receipt[0].startswith(_SECTOR_PREFIX):
+                raise ValueError("invalid sector receipt")
+            data = json.loads(receipt[0][len(_SECTOR_PREFIX) :])
+            if not isinstance(data, dict) or set(data) != {"considered", "unavailable", "selected"}:
+                raise ValueError("invalid sector receipt")
+            if not isinstance(data["considered"], list) or not isinstance(
+                data["unavailable"], list
+            ):
+                raise ValueError("invalid sector receipt")
+            intent = TicketIntent(row[6], row[7])
+            result = SectorEvaluation(
+                intent, tuple(data["considered"]), tuple(data["unavailable"]), data["selected"]
+            )
+            _require_sector_choice(result, intent)
+            return result
+        except (ValueError, TypeError, KeyError):
+            raise ValueError("sector selection receipt unavailable") from None
 
     def claim_next(
         self, *, now: float, may_run: Callable[[sqlite3.Connection, str], bool] | None = None

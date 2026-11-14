@@ -264,11 +264,13 @@ def page() -> bytes:
     return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Configurar Telegram · Boca Socios Assistant</title><style>{_SETUP_STYLE}</style></head>
-<body><nav aria-label="Secciones"><a href="/">Inicio</a> · <a href="/avisos">Avisos</a></nav>
+<body><nav aria-label="Secciones"><a href="/">Inicio</a> ·
+<a href="/telegram">Telegram</a> · <a href="/avisos">Avisos</a></nav>
 <main><h1>Configurar Telegram</h1>
 <p>Abra el enlace del recibo preparado para esta instalación, después de ingresar con su passkey.
 El token y el destino se cifran en esta pestaña. El panel no los recibe.</p>
-<p>Complete la instalación y la prueba de Telegram antes de iniciar la primera simulación.</p>
+<p>Crear el texto cifrado prepara la configuración. La instalación y la prueba de envío
+se realizan mediante la operación protegida; consulte su estado en Telegram.</p>
 <p>Huella del destinatario: <output id="fingerprint">Sin recibo</output></p>
 <label for="telegram-token">Token del bot dedicado a Boca</label>
 <input id="telegram-token" type="password" autocomplete="off" autocapitalize="none"
@@ -617,15 +619,17 @@ def pairing_page(*, csrf: str | None = None, operation_id: str | None = None) ->
             "Confirmar con passkey y guardar sobre cifrado</button>"
             "<p>Chrome solicitará una verificación passkey reciente vinculada al "
             "sobre cifrado. Se guarda solo el sobre y la prueba pública de firma; "
-            "la instalación física requiere otro GO protegido.</p>"
+            "la instalación física se realiza mediante la operación protegida.</p>"
         )
     return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Emparejar Telegram · Boca Socios Assistant</title><style>{_SETUP_STYLE}</style></head>
-<body><nav aria-label="Secciones"><a href="/">Inicio</a> · <a href="/avisos">Avisos</a></nav>
+<body><nav aria-label="Secciones"><a href="/">Inicio</a> ·
+<a href="/telegram">Telegram</a> · <a href="/avisos">Avisos</a></nav>
 <main><h1>Emparejar bot de Telegram</h1>
-<p>Este es el diseño V2, todavía sin instalar ni habilitar. Abra únicamente el enlace
-del recibo público aprobado dentro de Chrome con Termius activo y la sesión iniciada.</p>
+<p>Esta pantalla prepara un emparejamiento cifrado. Consulte el estado de la instalación
+en Telegram. Abra el enlace del recibo público preparado dentro de Chrome con Termius
+activo y la sesión iniciada.</p>
 <p>Huella pública del destinatario: <output id="pairing-fingerprint">Sin recibo</output></p>
 <label for="pairing-token">Token de su bot dedicado a Boca (no lo comparta)</label>
 <input id="pairing-token" type="password" autocomplete="off" autocapitalize="none"
@@ -641,8 +645,8 @@ spellcheck="false" maxlength="149" disabled>
 <textarea id="pairing-sealed" readonly autocomplete="off" spellcheck="false" hidden></textarea>
 <button id="pairing-copy-envelope" type="button" disabled>Copiar texto cifrado V2</button>
 {controls}
-<p>Nada se transmite al panel: el token sólo se cifra localmente en esta pestaña.
-El chat ID únicamente podrá descubrirlo un workflow protegido futuro que verifique
-un único mensaje privado reciente y una confirmación de identidad.</p>
+<p>El token se cifra localmente en esta pestaña. Al confirmar con passkey, sólo el sobre
+cifrado y la prueba pública de firma se guardan en el panel. El chat privado se verifica
+mediante la operación protegida; esta pantalla no instala ni activa el emisor.</p>
 <noscript>Active JavaScript en Chrome para cifrar sin enviar datos al panel.</noscript>
 </main><script>{PAIRING_SCRIPT}</script></body></html>""".encode()

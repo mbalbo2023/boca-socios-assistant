@@ -31,6 +31,18 @@ _NAMESPACE = UUID("7a5e4b3a-2781-4f2d-978c-98bd64391508")
 _ON_DEMAND = "boca_bot_on_demand_v1:"
 _WORK_BINDING = "boca_bot_work_v1:"
 _WORK_STOP = "boca_bot_work_stop_v1:"
+AUTOMATIC_CHECK_PREFIX = "boca_automatic_check_v1:"
+AUTOMATIC_CHECK_WAITING = frozenset({"CHECKING", "QUEUE_ACTIVE", "PREQUEUE"})
+AUTOMATIC_CHECK_TERMINAL = frozenset(
+    {
+        "QUEUE_INACTIVE",
+        "NO_EVENT_OBSERVED",
+        "TARGET_OBSERVED",
+        "CHALLENGE",
+        "UNKNOWN",
+        "CHECK_FAILED",
+    }
+)
 _REQUEST_ACTIONS = {
     (component, target): f"{_PREFIX}request_{component}_{target}"
     for component in _COMPONENTS
@@ -77,6 +89,14 @@ def canonical_operation_id(value: str) -> str:
     if parsed.int == 0 or str(parsed) != value:
         raise ValueError("canonical lifecycle request UUID required")
     return value
+
+
+def automatic_check_marker(start_operation_id: str, outcome: str) -> tuple[str, str]:
+    canonical_operation_id(start_operation_id)
+    if outcome not in AUTOMATIC_CHECK_WAITING | AUTOMATIC_CHECK_TERMINAL:
+        raise ValueError("unknown automatic observation outcome")
+    action = AUTOMATIC_CHECK_PREFIX + start_operation_id + ":" + outcome
+    return str(uuid5(_NAMESPACE, action)), action
 
 
 def _action(component: str, target: str) -> str:
@@ -303,6 +323,42 @@ class LifecycleIntentStore:
         elif existing != (action,):
             raise LifecycleConflict("simulation already bound to another start")
 
+    def record_automatic_check(self, start_operation_id: str, outcome: str) -> None:
+        """Record one received category for the exact confirmed owner activation.
+
+        These records contain no provider payload or token, and never create a
+        synthetic command or claim a physical STOP. Repeated passive samples
+        of the same category do not grow the durable ledger.
+        """
+        marker, action = automatic_check_marker(start_operation_id, outcome)
+        before = _db_identity(self._database.path)
+        try:
+            with self._database.connection() as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                current = self._current(connection)
+                if (
+                    current is None
+                    or not current.on_demand
+                    or current.operation_id != start_operation_id
+                    or (current.component, current.target) != ("bot", "start")
+                    or current.status
+                    not in (("CLAIMED", "APPLIED") if outcome == "CHECKING" else ("APPLIED",))
+                ):
+                    raise LifecycleConflict("automatic check requires the current confirmed start")
+                existing = connection.execute(
+                    "SELECT action FROM audit_events WHERE audit_id=?", (marker,)
+                ).fetchone()
+                if existing is None:
+                    connection.execute(
+                        "INSERT INTO audit_events(audit_id,action) VALUES (?,?)", (marker, action)
+                    )
+                elif existing != (action,):
+                    raise LifecycleStorageUnavailable("automatic check receipt conflicts")
+                if _db_identity(self._database.path) != before:
+                    raise LifecycleStorageUnavailable("automatic check storage changed")
+        except (sqlite3.Error, OSError):
+            raise LifecycleStorageUnavailable("automatic check ledger unavailable") from None
+
     def request_work_stop(self, start_operation_id: str) -> LifecycleIntent | None:
         """Derive one STOP from this run's terminal work, with no human request implied."""
         canonical_operation_id(start_operation_id)
@@ -377,7 +433,21 @@ class LifecycleIntentStore:
                 continue
             if state not in ("stopped", "failed", "needs_review"):
                 return False
-        return any_bound
+        prefix = AUTOMATIC_CHECK_PREFIX + start_operation_id + ":"
+        terminal = False
+        automatic = False
+        for key, action in connection.execute(
+            "SELECT audit_id,action FROM audit_events WHERE substr(action,1,?)=?",
+            (len(prefix), prefix),
+        ):
+            outcome = action[len(prefix) :]
+            if outcome not in AUTOMATIC_CHECK_WAITING | AUTOMATIC_CHECK_TERMINAL or key != str(
+                uuid5(_NAMESPACE, action)
+            ):
+                raise LifecycleStorageUnavailable("automatic check receipt invalid")
+            terminal = terminal or outcome in AUTOMATIC_CHECK_TERMINAL
+            automatic = True
+        return terminal if automatic else any_bound
 
     @staticmethod
     def for_operation(connection: sqlite3.Connection, operation_id: str) -> LifecycleIntent | None:

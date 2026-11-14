@@ -38,9 +38,10 @@ from boca_socios.events.official_catalog import (
     build_observed_catalog,
 )
 from boca_socios.events.official_presentation import export_observed_catalog_json
-from boca_socios.notify.projection import list_local_notices
+from boca_socios.integration.command_store import CommandStore
+from boca_socios.notify.projection import list_local_notices, load_telegram_admin
 from boca_socios.owner_origin import owner_rp_host
-from boca_socios.panel import private_ui, telegram_setup_ui
+from boca_socios.panel import private_token_view, private_ui, telegram_setup_ui
 from boca_socios.panel.enrollment_http import EnrollmentApplication
 from boca_socios.panel.lifecycle_intents import (
     LifecycleConflict,
@@ -70,7 +71,10 @@ from boca_socios.panel.telegram_pairing_staging import (
     PairingStageUnavailable,
 )
 from boca_socios.panel.worker_activity import WorkerActivityUnavailable, read_worker_activity
-from boca_socios.queue.private_pass_monitor import PrivateQueuePassMonitor
+from boca_socios.queue.private_pass_monitor import (
+    PrivateAutomaticObservationMonitor,
+    PrivateQueuePassMonitor,
+)
 from boca_socios.security.enrollment import (
     CredentialUnavailable,
     MemberNotFound,
@@ -223,6 +227,8 @@ class PrivatePanelApplication:
         bot_control: Callable[[str], None] | None = None,
         queue_monitor: PrivateQueuePassMonitor | None = None,
         auth_monitor: PrivateBocaAuthMonitor | None = None,
+        automatic_monitor: PrivateAutomaticObservationMonitor | None = None,
+        source_sha: str = "",
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         parsed = urlsplit(origin)
@@ -271,6 +277,8 @@ class PrivatePanelApplication:
         self._bot_control = bot_control
         self._queue_monitor = queue_monitor
         self._auth_monitor = auth_monitor
+        self._automatic_monitor = automatic_monitor
+        self._source_sha = source_sha
         self._passkey = passkey
         self._owner_browser_store = OwnerBrowserSessionStore(
             self._database, owner_subject=owner_subject
@@ -363,9 +371,13 @@ class PrivatePanelApplication:
             "local-status:read" not in session.permissions
         ):
             return _error(start, 403, "Permiso insuficiente.")
-        if path in ("/estado", "/avisos", "/avisos-oficiales", "/avisos-oficiales.json") and (
-            "local-status:read" not in session.permissions
-        ):
+        if path in (
+            "/telegram",
+            "/estado",
+            "/avisos",
+            "/avisos-oficiales",
+            "/avisos-oficiales.json",
+        ) and ("local-status:read" not in session.permissions):
             return _error(start, 403, "Permiso insuficiente.")
         if method == "GET":
             if not self._empty_get(environ):
@@ -381,6 +393,19 @@ class PrivatePanelApplication:
                     telegram_setup_ui.page(),
                     csp=telegram_setup_ui.CSP,
                     referrer_policy="no-referrer",
+                )
+            if path == "/telegram":
+                return _response(
+                    start,
+                    200,
+                    private_ui.telegram_admin(
+                        load_telegram_admin(
+                            self._database_path,
+                            staging_available=self._telegram_pairing_stager is not None,
+                            expected_source_sha=self._source_sha,
+                            now=self._now(),
+                        )
+                    ),
                 )
             if path == "/configuracion":
                 return self._site_url_page(start, session)
@@ -420,7 +445,11 @@ class PrivatePanelApplication:
             if path in ("/control/actividad", "/control/actividad.json"):
                 try:
                     activity_snapshot = read_worker_activity(
-                        self._database_path, observed_at=self._now()
+                        self._database_path,
+                        observed_at=self._now(),
+                        observation_events=self._automatic_monitor.activity_events()
+                        if self._automatic_monitor
+                        else (),
                     )
                 except WorkerActivityUnavailable:
                     if path.endswith(".json"):
@@ -479,6 +508,13 @@ class PrivatePanelApplication:
                 document = export_observed_catalog_json(notices, at=self._now())
                 return _response(start, 200, document.encode("utf-8"), html=False)
             if isinstance(path, str) and path.startswith("/socios/"):
+                event_match = re.fullmatch(
+                    r"/socios/([0-9a-f-]{36})/sectores/([0-9a-f-]{36})", path
+                )
+                if event_match is not None:
+                    return self._member_event_sectors(
+                        event_match.group(1), event_match.group(2), session, start
+                    )
                 return self._member_detail(path.removeprefix("/socios/"), session, start)
             if isinstance(path, str) and path.startswith("/comandos/"):
                 return self._command_detail(path.removeprefix("/comandos/"), session, start)
@@ -540,7 +576,7 @@ class PrivatePanelApplication:
         if isinstance(path, str) and path.startswith("/socios/"):
             if "members:write" not in session.permissions:
                 return _error(start, 403, "Permiso insuficiente.")
-            if re.fullmatch(r"/socios/[0-9a-f-]{36}/sectores", path):
+            if re.fullmatch(r"/socios/[0-9a-f-]{36}/sectores(?:/[0-9a-f-]{36})?", path):
                 return self._save_member_sectors(environ, path, session, start)
             return self._credential_action(environ, path, session, start)
         return _error(start, 404, "Ruta no disponible.")
@@ -552,13 +588,15 @@ class PrivatePanelApplication:
             else ()
         )
         auth = self._auth_monitor.list_summaries() if self._auth_monitor is not None else ()
+        automatic = self._automatic_snapshot()
+        has_global = automatic is not None and automatic.get("has_target_url") is True
         can_reveal = "simulation:write" in session.permissions
         operation_id = (
             self._sessions.new_operation(session, form_scope=_TOKEN_REVEAL_SCOPE)
-            if can_reveal and (queue or auth)
+            if can_reveal and (queue or auth or has_global)
             else None
         )
-        if can_reveal and (queue or auth) and operation_id is None:
+        if can_reveal and (queue or auth or has_global) and operation_id is None:
             return _error(start, 429, "Espere antes de revelar otra observación privada.")
         return _response(
             start,
@@ -571,8 +609,16 @@ class PrivatePanelApplication:
                 can_reveal=can_reveal,
                 queue_connected=self._queue_monitor is not None,
                 boca_connected=self._auth_monitor is not None,
+                automatic=automatic,
             ),
         )
+
+    def _automatic_snapshot(self) -> dict[str, object] | None:
+        if self._automatic_monitor is None:
+            return None
+        data = self._automatic_monitor.snapshot()
+        data["message"] = private_token_view.automatic_message(data)
+        return data
 
     def _token_monitor_snapshot(self, start: StartResponse) -> list[bytes]:
         """Owner-only live *metadata*, never a bearer token or target URL.
@@ -583,14 +629,26 @@ class PrivatePanelApplication:
         now = self._now()
         queue = self._queue_monitor.list_summaries(at=now) if self._queue_monitor else ()
         auth = self._auth_monitor.list_summaries() if self._auth_monitor else ()
+        automatic = self._automatic_snapshot()
         timestamps = tuple(
             value for item in queue for value in (item.observed_at,) if value is not None
         ) + tuple(item.observed_at for item in auth)
-        data = {
+        automatic_ready = automatic is not None and automatic.get("configured") is True
+        latest = automatic.get("latest") if automatic is not None else None
+        if isinstance(latest, dict) and isinstance(latest.get("observed_at"), str):
+            timestamps += (datetime.fromisoformat(latest["observed_at"]),)
+        data: dict[str, object] = {
             "version": 1,
-            "queue_source": "IN_MEMORY" if self._queue_monitor is not None else "NOT_CONNECTED",
+            "queue_source": (
+                "AUTOMATIC"
+                if automatic_ready
+                else "IN_MEMORY"
+                if self._queue_monitor is not None
+                else "NOT_CONNECTED"
+            ),
             "boca_source": "IN_MEMORY" if self._auth_monitor is not None else "NOT_CONNECTED",
-            "queue_observations": len(queue),
+            "queue_observations": len(queue)
+            + int(automatic is not None and automatic.get("has_target_url") is True),
             "boca_observations": len(auth),
             "last_observed_at": (
                 max(value.astimezone(UTC) for value in timestamps).isoformat()
@@ -599,6 +657,8 @@ class PrivatePanelApplication:
             ),
             "observed_at": now.astimezone(UTC).isoformat(),
         }
+        if automatic is not None:
+            data["automatic"] = automatic
         return _response(
             start, 200, json.dumps(data, separators=(",", ":")).encode("utf-8"), html=False
         )
@@ -613,8 +673,12 @@ class PrivatePanelApplication:
         if (
             fields is None
             or _canonical_uuid(fields["operation_id"]) is None
-            or _canonical_uuid(fields["member_id"]) is None
-            or fields["kind"] not in ("queue", "boca")
+            or (fields["kind"] != "automatic" and _canonical_uuid(fields["member_id"]) is None)
+            or fields["kind"] not in ("queue", "boca", "automatic")
+            or (
+                fields["kind"] == "automatic"
+                and any(fields[k] for k in ("member_id", "event_id", "session_id"))
+            )
             or (
                 fields["kind"] == "queue"
                 and (
@@ -641,6 +705,20 @@ class PrivatePanelApplication:
             )
         assert operation is not None
         body: bytes | None = None
+        if fields["kind"] == "automatic" and self._automatic_monitor is not None:
+            observed = self._automatic_monitor.owner_global_details(owner_authenticated=True)
+            if observed is not None and observed.target_url is not None:
+                tokens = [
+                    value
+                    for key, value in parse_qsl(
+                        urlsplit(observed.target_url).query,
+                        keep_blank_values=True,
+                        max_num_fields=64,
+                    )
+                    if key == "queueittoken"
+                ]
+                if len(tokens) == 1 and tokens[0].strip():
+                    body = private_ui.queue_token_reveal(tokens[0], observed.target_url)
         if fields["kind"] == "queue" and self._queue_monitor is not None:
             details = self._queue_monitor.owner_details(
                 fields["member_id"],
@@ -958,16 +1036,47 @@ class PrivatePanelApplication:
                 revoke_id,  # Reuse the existing one-time nonce; owner refreshes after POST.
                 defaults,
                 sector_storage_ready=self._sector_store.path.exists(),
+                events=self._events,
+            ),
+        )
+
+    def _member_event_sectors(
+        self, member_id: str, event_id: str, session: OwnerSession, start: StartResponse
+    ) -> list[bytes]:
+        if _canonical_uuid(member_id) is None or event_id not in self._events:
+            return _error(start, 404, "Socio o evento no encontrado.")
+        try:
+            preference = self._sector_store.load_for_event(member_id, event_id, at=self._now())
+        except LookupError:
+            return _error(start, 404, "Socio o evento no encontrado.")
+        except MemberSectorStorageUnavailable:
+            return _error(start, 503, "Preferencias locales no disponibles.")
+        operation_id = self._sessions.new_operation(session)
+        if operation_id is None:
+            return _error(start, 429, "Espere antes de abrir otro formulario.")
+        return _response(
+            start,
+            200,
+            private_ui.member_event_sectors(
+                preference,
+                self._events[event_id],
+                session.csrf,
+                operation_id,
+                ready=self._sector_store.path.exists(),
             ),
         )
 
     def _save_member_sectors(
         self, environ: Mapping[str, object], path: str, session: OwnerSession, start: StartResponse
     ) -> list[bytes]:
-        match = re.fullmatch(r"/socios/([0-9a-f-]{36})/sectores", path)
+        match = re.fullmatch(r"/socios/([0-9a-f-]{36})/sectores(?:/([0-9a-f-]{36}))?", path)
         if match is None or _canonical_uuid(match.group(1)) is None:
             return _error(start, 404, "Socio no encontrado.")
         member_id = match.group(1)
+        event_id = match.group(2)
+        if event_id is not None and event_id not in self._events:
+            return _error(start, 404, "Evento no encontrado.")
+        redirect = path if event_id is not None else f"/socios/{member_id}"
         fields = self._form(environ, expected={"csrf", "operation_id", "mode", "sector_ids"})
         if fields is None or _canonical_uuid(fields["operation_id"]) is None:
             return _error(start, 400, "Formulario de sectores inválido.")
@@ -987,11 +1096,14 @@ class PrivatePanelApplication:
         )
         if replay:
             if replay == 200 and operation is not None:
-                return self._redirect(start, f"/socios/{member_id}")
+                return self._redirect(start, redirect)
             return _error(start, replay, "Operación ya utilizada o no autorizada.")
         assert operation is not None
         try:
-            self._sector_store.save(member_id, mode, sectors, self._now())
+            if event_id is None:
+                self._sector_store.save(member_id, mode, sectors, self._now())
+            else:
+                self._sector_store.save_for_event(member_id, event_id, mode, sectors, self._now())
         except ValueError:
             self._sessions.finish(operation, 422)
             return _error(start, 422, "Prioridades inválidas o duplicadas.")
@@ -1002,7 +1114,7 @@ class PrivatePanelApplication:
             self._sessions.finish(operation, 503)
             return _error(start, 503, "Preferencias locales no disponibles.")
         self._sessions.finish(operation, 200)
-        return self._redirect(start, f"/socios/{member_id}")
+        return self._redirect(start, redirect)
 
     def _credential_action(
         self, environ: Mapping[str, object], path: str, session: OwnerSession, start: StartResponse
@@ -1356,7 +1468,22 @@ class PrivatePanelApplication:
         return _response(
             start,
             200,
-            private_ui.command_detail(command_id, str(state), float(updated_at), session.csrf),
+            private_ui.command_detail(
+                command_id,
+                str(state),
+                float(updated_at),
+                session.csrf,
+                selected_sector=(
+                    choice.selected_sector_id
+                    if (
+                        choice := CommandStore(self._database).sector_selection(
+                            command_id, member_id=member_id
+                        )
+                    )
+                    is not None
+                    else None
+                ),
+            ),
         )
 
     def _stop(

@@ -512,6 +512,8 @@ class RootlessCutoverBackend:
                 seccomp,
                 lambda cid, result: persist_before_cleanup(plan, lease, cid, result),
                 on_demand=self.on_demand,
+                staged_overlay=self.sources.overlay,
+                overlay_sha=plan.overlay_sha,
             )
         except host.CutoverWorkerPhaseError:
             raise
@@ -593,6 +595,8 @@ class RootlessCutoverBackend:
             seccomp,
             control_directory=self.control_directory,
             worker_config_hash=self.worker_hash,
+            staged_overlay=self.sources.overlay,
+            overlay_sha=plan.overlay_sha,
         )
         if not _HEX.fullmatch(candidate) or candidate in (plan.legacy_id, worker_id):
             raise CutoverError("cutover candidate exact ID untrusted")
@@ -659,6 +663,8 @@ class RootlessCutoverBackend:
                 plan.origin,
                 plan.owner_subject,
                 self.controller_hash,
+                staged_overlay=self.sources.overlay,
+                overlay_sha=plan.overlay_sha,
             ):
                 raise CutoverError("cutover candidate not healthy/running by exact ID")
             verify_controller_peer(candidate_id)
@@ -669,6 +675,8 @@ class RootlessCutoverBackend:
                 plan.attempt_id,
                 plan.seccomp_sha,
                 staged_seccomp=self.sources.seccomp,
+                staged_overlay=self.sources.overlay,
+                overlay_sha=plan.overlay_sha,
             )
             host._beta_loopback_health(candidate_id, plan.origin)
         with candidate_check("PARKED_AFTER") if self.on_demand else nullcontext():
@@ -712,6 +720,8 @@ class RootlessCutoverBackend:
                     plan.owner_subject,
                     self.controller_hash,
                     control_directory=self.control_directory,
+                    staged_overlay=self.sources.overlay,
+                    overlay_sha=plan.overlay_sha,
                 )
             ):
                 raise CandidateMismatch("on-demand controller identity or health unverified")
@@ -724,6 +734,8 @@ class RootlessCutoverBackend:
                 plan.seccomp_sha,
                 self.sources.seccomp,
                 self.worker_hash,
+                staged_overlay=self.sources.overlay,
+                overlay_sha=plan.overlay_sha,
             )
         with candidate_check(visit + "_LOOPBACK"):
             host._beta_loopback_health(candidate, plan.origin)
@@ -862,6 +874,8 @@ class RootlessCutoverBackend:
             _stage_path(plan),
             control_directory=self.control_directory,
             worker_config_hash=self.worker_hash,
+            staged_overlay=self.sources.overlay,
+            overlay_sha=plan.overlay_sha,
         )
         self.state = "COMMITTED"
 
@@ -900,6 +914,8 @@ class RootlessCutoverBackend:
                 self.controller_hash,
                 control_directory=self.control_directory,
                 expected_candidate=self.candidate_id,
+                staged_overlay=self.sources.overlay,
+                overlay_sha=plan.overlay_sha,
             )
         else:
             raise CutoverError("cutover original exact-ID name drifted during recovery")
@@ -911,6 +927,8 @@ class RootlessCutoverBackend:
                 plan.seccomp_sha,
                 self.sources.seccomp,
                 self.worker_id,
+                staged_overlay=self.sources.overlay,
+                overlay_sha=plan.overlay_sha,
             )
         host._cutover_legacy_record(
             plan.legacy_id,

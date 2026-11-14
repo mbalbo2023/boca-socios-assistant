@@ -9,7 +9,7 @@ on:
         description: cutover-a-apply is ONE simulation deploy dispatch; leave all pins and protected_action_context blank. No login/tickets.
         required: true
         type: choice
-        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-egress-readonly, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, worker-diagnose-once, worker-physical-once, cutover-a-reconcile, cutover-a-stage-recover, cutover-a-stage-recover-844, cutover-a-image-retire, cutover-a-observe, cutover-a-census, boca-pair-observe, boca-retained-resource-observe, boca-postcommit-observe, boca-binding-observe, boca-sqlite-inode-observe, boca-rootless-mapping-observe, boca-panel-exact-origin-observe, boca-park-incident-observe, boca-precommit-restore-one-shot, boca-postcommit-finalize, boca-pair-upgrade-apply, cutover-a-worker-inspect, cutover-a-worker-events-r112, cutover-a-worker-recover, cutover-a-worker-recover-807, cutover-a-worker-recover-819, cutover-a-worker-recover-827, cutover-a-worker-recover-834, cutover-a-worker-preflight, cutover-a-apply, official-notice-import, protected-go-prepare, lifecycle-apply, telegram-activate, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
+        options: [inspect-prerequisites, chrome-host-inspect, chrome-host-public-smoke, port-check, network-probe, network-probe-icc-true, network-probe-icc-true-cleanup-only, prepare-rootless, preflight, infrastructure-preflight, infrastructure-inspect, first-install, diagnostic, stop-test, site-prepare, site-install, site-verify, owner-prepare, owner-install, owner-verify, owner-enroll, beta-install, beta-start, beta-browser-install, beta-browser-start, beta-browser-restart, beta-browser-status, beta-browser-egress-readonly, beta-browser-acceptance, beta-browser-telegram-start, beta-browser-telegram-recover, worker-diagnose-once, worker-physical-once, cutover-a-reconcile, cutover-a-stage-recover, cutover-a-stage-recover-844, cutover-a-image-retire, cutover-a-observe, cutover-a-census, boca-pair-observe, boca-retained-resource-observe, boca-current-retained-resource-observe, boca-installed-status-observe, boca-installed-admin-provision, boca-postcommit-observe, boca-binding-observe, boca-sqlite-inode-observe, boca-rootless-mapping-observe, boca-panel-exact-origin-observe, boca-park-incident-observe, boca-precommit-restore-one-shot, boca-postcommit-finalize, boca-pair-upgrade-apply, cutover-a-worker-inspect, cutover-a-worker-events-r112, cutover-a-worker-recover, cutover-a-worker-recover-807, cutover-a-worker-recover-819, cutover-a-worker-recover-827, cutover-a-worker-recover-834, cutover-a-worker-preflight, cutover-a-apply, official-notice-import, protected-go-prepare, lifecycle-apply, telegram-activate, beta-acceptance, telegram-migrate, telegram-prepare, telegram-install, telegram-verify, telegram-test]
       source_sha:
         description: REQUIRED cutover-a-worker-preflight - exact current main SHA for the new dual release; Cutover APPLY/PREPARE derives github.sha
         required: false
@@ -67,7 +67,7 @@ on:
         required: false
         type: string
       official_news_run_id:
-        description: Official notice - reviewed PR-only news run ID; pair-upgrade APPLY - independent R188 retained-resource READ_ONLY run ID. Both require exact provenance.
+        description: Official notice - reviewed PR-only news run ID; pair-upgrade APPLY - current-pair retained-resource READ_ONLY run ID after the pair observation. Both require exact provenance.
         required: false
         type: string
       official_news_source_sha:
@@ -202,7 +202,7 @@ jobs:
       BOCA_INCIDENT_PREPARE_RUN_ID: ${{ inputs.legacy_release_run_id }}
       BOCA_IMAGE_REF: ${{ inputs.image_ref }}
       BOCA_BROWSER_IMAGE_REF: ${{ inputs.browser_image_ref }}
-      BOCA_SOURCE_SHA: ${{ (inputs.operation == 'worker-diagnose-once' || inputs.operation == 'worker-physical-once' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'cutover-a-reconcile' || inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-stage-recover-844' || inputs.operation == 'cutover-a-image-retire' || inputs.operation == 'cutover-a-census' || inputs.operation == 'boca-pair-observe' || inputs.operation == 'boca-retained-resource-observe' || inputs.operation == 'boca-postcommit-observe' || inputs.operation == 'boca-binding-observe' || inputs.operation == 'boca-sqlite-inode-observe' || inputs.operation == 'boca-rootless-mapping-observe' || inputs.operation == 'boca-panel-exact-origin-observe' || inputs.operation == 'boca-park-incident-observe' || inputs.operation == 'boca-precommit-restore-one-shot' || inputs.operation == 'boca-postcommit-finalize' || inputs.operation == 'cutover-a-worker-inspect' || inputs.operation == 'cutover-a-worker-events-r112' || inputs.operation == 'cutover-a-worker-recover' || inputs.operation == 'cutover-a-worker-recover-807' || inputs.operation == 'cutover-a-worker-recover-819' || inputs.operation == 'cutover-a-worker-recover-827' || inputs.operation == 'cutover-a-worker-recover-834') && github.sha || inputs.source_sha }}
+      BOCA_SOURCE_SHA: ${{ (inputs.operation == 'worker-diagnose-once' || inputs.operation == 'worker-physical-once' || inputs.operation == 'cutover-a-apply' || inputs.operation == 'official-notice-import' || inputs.operation == 'cutover-a-reconcile' || inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-stage-recover-844' || inputs.operation == 'cutover-a-image-retire' || inputs.operation == 'cutover-a-census' || inputs.operation == 'boca-pair-observe' || inputs.operation == 'boca-retained-resource-observe' || inputs.operation == 'boca-current-retained-resource-observe' || inputs.operation == 'boca-installed-status-observe' || inputs.operation == 'boca-installed-admin-provision' || inputs.operation == 'boca-postcommit-observe' || inputs.operation == 'boca-binding-observe' || inputs.operation == 'boca-sqlite-inode-observe' || inputs.operation == 'boca-rootless-mapping-observe' || inputs.operation == 'boca-panel-exact-origin-observe' || inputs.operation == 'boca-park-incident-observe' || inputs.operation == 'boca-precommit-restore-one-shot' || inputs.operation == 'boca-postcommit-finalize' || inputs.operation == 'cutover-a-worker-inspect' || inputs.operation == 'cutover-a-worker-events-r112' || inputs.operation == 'cutover-a-worker-recover' || inputs.operation == 'cutover-a-worker-recover-807' || inputs.operation == 'cutover-a-worker-recover-819' || inputs.operation == 'cutover-a-worker-recover-827' || inputs.operation == 'cutover-a-worker-recover-834') && github.sha || inputs.source_sha }}
       BOCA_SOURCE_SHA_SUBMITTED: ${{ inputs.source_sha }}
       BOCA_SERVICE: ${{ inputs.service }}
       BOCA_BUDGET: ${{ (inputs.operation == 'boca-rootless-mapping-observe' || inputs.operation == 'boca-panel-exact-origin-observe' || inputs.operation == 'boca-park-incident-observe' || inputs.operation == 'boca-precommit-restore-one-shot' || inputs.operation == 'boca-postcommit-finalize' || inputs.operation == 'cutover-a-apply' || ((inputs.operation == 'cutover-a-stage-recover' || inputs.operation == 'cutover-a-reconcile') && (inputs.protected_action_context == '42742150879' || inputs.protected_action_context == '42750940352'))) && '1.5cpu-1024m-192pids' || inputs.resource_budget }}
@@ -333,7 +333,7 @@ jobs:
             [[ "$BOCA_BUDGET" = 1.5cpu-1024m-192pids || "$BOCA_BUDGET" = 1.75cpu-1152m-224pids ]]
           elif [[ "$BOCA_OPERATION" = beta-browser-install ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
-          elif [[ "$BOCA_OPERATION" = worker-diagnose-once || "$BOCA_OPERATION" = worker-physical-once || "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-stage-recover-844 || "$BOCA_OPERATION" = cutover-a-image-retire || "$BOCA_OPERATION" = cutover-a-census || "$BOCA_OPERATION" = boca-pair-observe || "$BOCA_OPERATION" = boca-retained-resource-observe || "$BOCA_OPERATION" = boca-postcommit-observe || "$BOCA_OPERATION" = boca-binding-observe || "$BOCA_OPERATION" = boca-sqlite-inode-observe || "$BOCA_OPERATION" = boca-rootless-mapping-observe || "$BOCA_OPERATION" = boca-panel-exact-origin-observe || "$BOCA_OPERATION" = boca-park-incident-observe || "$BOCA_OPERATION" = boca-precommit-restore-one-shot || "$BOCA_OPERATION" = boca-postcommit-finalize || "$BOCA_OPERATION" = boca-pair-upgrade-apply || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-worker-inspect || "$BOCA_OPERATION" = cutover-a-worker-events-r112 || "$BOCA_OPERATION" = cutover-a-worker-recover || "$BOCA_OPERATION" = cutover-a-worker-recover-807 || "$BOCA_OPERATION" = cutover-a-worker-recover-819 || "$BOCA_OPERATION" = cutover-a-worker-recover-827 || "$BOCA_OPERATION" = cutover-a-worker-recover-834 || "$BOCA_OPERATION" = cutover-a-worker-preflight || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-activate ]]; then
+          elif [[ "$BOCA_OPERATION" = worker-diagnose-once || "$BOCA_OPERATION" = worker-physical-once || "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-stage-recover-844 || "$BOCA_OPERATION" = cutover-a-image-retire || "$BOCA_OPERATION" = cutover-a-census || "$BOCA_OPERATION" = boca-pair-observe || "$BOCA_OPERATION" = boca-retained-resource-observe || "$BOCA_OPERATION" = boca-current-retained-resource-observe || "$BOCA_OPERATION" = boca-installed-status-observe || "$BOCA_OPERATION" = boca-installed-admin-provision || "$BOCA_OPERATION" = boca-postcommit-observe || "$BOCA_OPERATION" = boca-binding-observe || "$BOCA_OPERATION" = boca-sqlite-inode-observe || "$BOCA_OPERATION" = boca-rootless-mapping-observe || "$BOCA_OPERATION" = boca-panel-exact-origin-observe || "$BOCA_OPERATION" = boca-park-incident-observe || "$BOCA_OPERATION" = boca-precommit-restore-one-shot || "$BOCA_OPERATION" = boca-postcommit-finalize || "$BOCA_OPERATION" = boca-pair-upgrade-apply || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-worker-inspect || "$BOCA_OPERATION" = cutover-a-worker-events-r112 || "$BOCA_OPERATION" = cutover-a-worker-recover || "$BOCA_OPERATION" = cutover-a-worker-recover-807 || "$BOCA_OPERATION" = cutover-a-worker-recover-819 || "$BOCA_OPERATION" = cutover-a-worker-recover-827 || "$BOCA_OPERATION" = cutover-a-worker-recover-834 || "$BOCA_OPERATION" = cutover-a-worker-preflight || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-activate ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
           elif [[ "$BOCA_OPERATION" = beta-browser-telegram-start || ( "$BOCA_TELEGRAM_OWNER_READY" = ready && ( "$BOCA_OPERATION" = beta-browser-* || ( "$BOCA_OPERATION" = telegram-* && -n "$BOCA_BROWSER_IMAGE_REF" ) ) ) ]]; then
             test "$BOCA_BUDGET" = 1.75cpu-1152m-224pids
@@ -460,6 +460,73 @@ jobs:
                 test -z "$unexpected"
               done
 
+              ;;
+            boca-current-retained-resource-observe)
+              # Source here authenticates observer code on main. The installed
+              # source, CIDs and control inode come only from the current binding.
+              test "$BOCA_HOST_READONLY_ENV_READY" = ready
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"
+              test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
+              for unexpected in \
+                "$BOCA_SOURCE_SHA_SUBMITTED" "$BOCA_PROTECTED_ACTION_CONTEXT" \
+                "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" "$BOCA_RELEASE_RUN_ID" \
+                "$BOCA_LEGACY_SOURCE_SHA" "$BOCA_LEGACY_IMAGE_REF" \
+                "$BOCA_LEGACY_RELEASE_RUN_ID" "$BOCA_LEGACY_CONTROLLER_ID" \
+                "$BOCA_SITE_ENVELOPE" "$BOCA_TELEGRAM_ENVELOPE" \
+                "$BOCA_OWNER_ENVELOPE" "$BOCA_OWNER_CAPABILITY_SHA256" \
+                "$BOCA_FAILED_TELEGRAM_RUN_ID" "$BOCA_OFFICIAL_CONTROLLER_ID" \
+                "$BOCA_OFFICIAL_NEWS_RUN_ID" "$BOCA_OFFICIAL_NEWS_SOURCE_SHA" \
+                "$BOCA_OFFICIAL_NEWS_ARTIFACT_ID" "$BOCA_OFFICIAL_NEWS_ZIP_SHA256" \
+                "$BOCA_OFFICIAL_NEWS_JSONL_SHA256" "$BOCA_OFFICIAL_NEWS_HTML_SHA256" \
+                "$BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC"; do
+                test -z "$unexpected"
+              done
+              ;;
+            boca-installed-status-observe)
+              # Source here authenticates observer code on main. The installed
+              # source, CIDs and control inode come only from the current binding.
+              test "$BOCA_HOST_READONLY_ENV_READY" = ready
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"
+              test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
+              for unexpected in \
+                "$BOCA_SOURCE_SHA_SUBMITTED" "$BOCA_PROTECTED_ACTION_CONTEXT" \
+                "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" "$BOCA_RELEASE_RUN_ID" \
+                "$BOCA_LEGACY_SOURCE_SHA" "$BOCA_LEGACY_IMAGE_REF" \
+                "$BOCA_LEGACY_RELEASE_RUN_ID" "$BOCA_LEGACY_CONTROLLER_ID" \
+                "$BOCA_SITE_ENVELOPE" "$BOCA_TELEGRAM_ENVELOPE" \
+                "$BOCA_OWNER_ENVELOPE" "$BOCA_OWNER_CAPABILITY_SHA256" \
+                "$BOCA_FAILED_TELEGRAM_RUN_ID" "$BOCA_OFFICIAL_CONTROLLER_ID" \
+                "$BOCA_OFFICIAL_NEWS_RUN_ID" "$BOCA_OFFICIAL_NEWS_SOURCE_SHA" \
+                "$BOCA_OFFICIAL_NEWS_ARTIFACT_ID" "$BOCA_OFFICIAL_NEWS_ZIP_SHA256" \
+                "$BOCA_OFFICIAL_NEWS_JSONL_SHA256" "$BOCA_OFFICIAL_NEWS_HTML_SHA256" \
+                "$BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC"; do
+                test -z "$unexpected"
+              done
+              ;;
+            boca-installed-admin-provision)
+              # Explicit writes only to the sector sidecar and redacted admin
+              # receipt; installed source/CIDs come from the verified binding.
+              test "$BOCA_BETA_ENV_READY" = ready
+              test "$BOCA_BROWSER_ENV_READY" = ready
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"
+              test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
+              for unexpected in \
+                "$BOCA_SOURCE_SHA_SUBMITTED" "$BOCA_PROTECTED_ACTION_CONTEXT" \
+                "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" "$BOCA_RELEASE_RUN_ID" \
+                "$BOCA_LEGACY_SOURCE_SHA" "$BOCA_LEGACY_IMAGE_REF" \
+                "$BOCA_LEGACY_RELEASE_RUN_ID" "$BOCA_LEGACY_CONTROLLER_ID" \
+                "$BOCA_SITE_ENVELOPE" "$BOCA_TELEGRAM_ENVELOPE" \
+                "$BOCA_OWNER_ENVELOPE" "$BOCA_OWNER_CAPABILITY_SHA256" \
+                "$BOCA_FAILED_TELEGRAM_RUN_ID" "$BOCA_OFFICIAL_CONTROLLER_ID" \
+                "$BOCA_OFFICIAL_NEWS_RUN_ID" "$BOCA_OFFICIAL_NEWS_SOURCE_SHA" \
+                "$BOCA_OFFICIAL_NEWS_ARTIFACT_ID" "$BOCA_OFFICIAL_NEWS_ZIP_SHA256" \
+                "$BOCA_OFFICIAL_NEWS_JSONL_SHA256" "$BOCA_OFFICIAL_NEWS_HTML_SHA256" \
+                "$BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC"; do
+                test -z "$unexpected"
+              done
               ;;
             boca-pair-observe)
               # Installed V3 controller+worker observation only. No caller
@@ -2372,8 +2439,88 @@ jobs:
           finally:
               os.close(parent)
           PY
+      - name: Observe current Boca retained resources READ_ONLY
+        if: inputs.operation == 'boca-current-retained-resource-observe'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          python3 scripts/build_protected_boca_bundle.py --current-retained-observe \
+            . "$RUNNER_TEMP/boca-current-retained.pyz" > /dev/null
+          digest="$(sha256sum "$RUNNER_TEMP/boca-current-retained.pyz" | cut -d' ' -f1)"
+          [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
+          remote_command="$(python3 - "$digest" "$GITHUB_RUN_ID" <<'PY'
+          import shlex
+          import sys
+          from pathlib import Path
+
+          bootstrap = Path("scripts/boca_protected_memfd_bootstrap.py").read_text(encoding="utf-8")
+          print(shlex.join(["python3", "-c", bootstrap, sys.argv[1], "boca-current-retained-resource-observe", sys.argv[2]]))
+          PY
+          )"
+          umask 077
+          receipt_dir="$(mktemp -d "$RUNNER_TEMP/boca-current-retained.XXXXXXXX")"
+          trap 'rm -f -- "$receipt_dir/receipt" "$receipt_dir/stderr"; rmdir -- "$receipt_dir"' EXIT
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" \
+            > "$RUNNER_TEMP/boca-current-retained-main.json"
+          python3 scripts/check_main_ref.py "$RUNNER_TEMP/boca-current-retained-main.json" "$BOCA_SOURCE_SHA"
+          remote_rc=0
+          (
+            ulimit -f 16 || exit 99
+            timeout --signal=TERM --kill-after=5s 180s ssh \
+              -F "$RUNNER_TEMP/boca-ssh/config" \
+              -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+              boca-target "$remote_command" \
+              < "$RUNNER_TEMP/boca-current-retained.pyz" \
+              > "$receipt_dir/receipt" 2> "$receipt_dir/stderr"
+          ) || remote_rc=$?
+          verification_rc=0
+          verified="$(python3 -m boca_socios.host_boca_current_retained verify "$GITHUB_RUN_ID" \
+            < "$receipt_dir/receipt" 2>/dev/null)" || verification_rc=$?
+          if [[ "$remote_rc" -ne 0 || "$verification_rc" -ne 0 || ! "$verified" =~ ^BOCA_CURRENT_RETAINED_V2\  ]]; then
+            printf 'BOCA_CURRENT_RETAINED_V2 state=NO_GO reason=HOST_OR_RECEIPT_UNVERIFIED observer_writes=0\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          # Export only the validated bounded frame, using a new private file.
+          # Neither raw host stdout nor stderr is copied to the summary.
+          python3 - "$receipt_dir/receipt" "$RUNNER_TEMP/boca-retained-observation.receipt" "$GITHUB_RUN_ID" <<'PY'
+          import os
+          import stat
+          import sys
+
+          from boca_socios import host_boca_current_retained as retained
+
+          fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+          try:
+              item = os.fstat(fd)
+              if not (stat.S_ISREG(item.st_mode) and item.st_uid == os.geteuid()
+                      and item.st_nlink == 1 and 0 < item.st_size <= retained.LIMIT):
+                  raise SystemExit(3)
+              raw = os.read(fd, retained.LIMIT + 1)
+              if len(raw) != item.st_size:
+                  raise SystemExit(3)
+              retained.verify(raw, sys.argv[3])
+          finally:
+              os.close(fd)
+          fd = os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                       | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+          try:
+              if os.write(fd, raw) != len(raw):
+                  raise SystemExit(3)
+              os.fsync(fd)
+          finally:
+              os.close(fd)
+          parent = os.open(os.path.dirname(sys.argv[2]), os.O_DIRECTORY | os.O_RDONLY)
+          try:
+              os.fsync(parent)
+          finally:
+              os.close(parent)
+          PY
+          printf '%s\n' "$verified" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload authenticated candidate for retained Boca resources READ_ONLY
-        if: inputs.operation == 'boca-retained-resource-observe'
+        if: inputs.operation == 'boca-retained-resource-observe' || inputs.operation == 'boca-current-retained-resource-observe'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: boca-retained-resources-observation
@@ -2959,25 +3106,16 @@ jobs:
           umask 077
           release_dir="$(mktemp -d "$RUNNER_TEMP/boca-upgrade-release.XXXXXXXX")"
           trap 'rm -f -- "$release_dir/boca-release-manifest.json" "$release_dir/boca-browser-release-manifest.json" "$release_dir/runner-proof.json" "$release_dir/boca-pair-observation.receipt" "$release_dir/observation-proof.json" "$release_dir/boca-retained-observation.receipt" "$release_dir/retained-proof.json" "$release_dir/current-pair-v2.receipt"; rmdir -- "$release_dir"' EXIT
-          # Earlier, independently protected READ_ONLY dispatch: exact run,
-          # current main, deploy job/steps, ZIP archive digest and sole receipt.
-          # No gh extraction of observer ZIPs before REST run/job/digest trust.
-          # The Python verifier reads ZIP in memory, validates one member and
-          # writes only verified canonical bytes O_EXCL+fsync.
-          observation_state="$(python3 -m boca_socios.host_boca_upgrade_observation_bridge \
-            "$BOCA_SOURCE_SHA" "$BOCA_PROTECTED_ACTION_CONTEXT" \
-            "$GITHUB_RUN_ID" "$BOCA_RELEASE_RUN_ID" \
-            "$release_dir/boca-pair-observation.receipt" \
-            "$release_dir/observation-proof.json")"
-          test "$observation_state" = 'BOCA_OBSERVATION_AUTH state=VERIFIED host_authorized=false'
           auth_state="$(python3 -m boca_socios.host_boca_upgrade_release_bridge \
             "$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID" \
             "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" \
             "$release_dir")"
           test "$auth_state" = 'BOCA_RELEASE_AUTH state=VERIFIED host_authorized=false'
-          # R247: R188's fixed R186 identities are historical resource creators,
-          # not proof of today's installed pair after a successor upgrade.
-          # The runner authenticates R188's independent REST ZIP and current
+          # Historical resource creators stay pinned; source, current control
+          # inode, CIDs and a clean STOP come from CURRENT_PAIR custody.
+          # Authenticate that receipt before projecting the paired observation,
+          # so only the exact old worker may use STOP_APPLIED/EXITED/0.
+          # The same runner authenticates both observer ZIPs and the current
           # pair's prior dual-image release. The old release run is discovered
           # by exact observed SHA; zero/multiple candidates => NO_GO.
           # Only a V2 READ_ONLY proof and an explicit legacy NO_GO sentinel
@@ -3034,6 +3172,89 @@ jobs:
           if [[ "$remote_rc" -ne 0 || "$verified" != *'"state":"ACCEPTED"'* ]]; then
             exit 1
           fi
+          printf 'BOCA_INSTALLED_ADMIN state=PENDING action=EXPLICIT_PROVISION_REQUIRED deploy=ACCEPTED\n' >> "$GITHUB_STEP_SUMMARY"
+      - name: Provision installed Boca sidecars and publish redacted Telegram status
+        if: inputs.operation == 'boca-installed-admin-provision'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          umask 077
+          # This is an explicit administrative operation after the successful
+          # technical APPLY. It never starts another installation transaction.
+          bundle="$RUNNER_TEMP/boca-installed-admin.pyz"
+          python3 scripts/build_protected_boca_bundle.py --installed-admin . "$bundle"
+          digest="$(sha256sum "$bundle" | cut -d' ' -f1)"
+          remote_command="$(python3 - "$digest" "$GITHUB_SHA" "$GITHUB_RUN_ID" <<'PY_ADMIN'
+          import shlex
+          import sys
+          from pathlib import Path
+          bootstrap = Path("scripts/boca_protected_memfd_bootstrap.py").read_text(encoding="utf-8")
+          print(shlex.join(["python3", "-c", bootstrap, sys.argv[1], "boca-installed-admin-provision", sys.argv[2], sys.argv[3], "current"]))
+          PY_ADMIN
+          )"
+          receipt_dir="$(mktemp -d "$RUNNER_TEMP/boca-installed-admin.XXXXXXXX")"
+          trap 'rm -f -- "$receipt_dir/receipt"; rmdir -- "$receipt_dir"' EXIT
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-admin-main.json"
+          python3 scripts/check_main_ref.py "$RUNNER_TEMP/boca-admin-main.json" "$GITHUB_SHA"
+          remote_rc=0
+          (
+            ulimit -f 8
+            timeout --signal=TERM --kill-after=5s 180s ssh \
+              -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+              boca-target "$remote_command" < "$bundle" > "$receipt_dir/receipt" 2>/dev/null
+          ) || remote_rc=$?
+          verification_rc=0
+          # Reuse the exact stdlib-only ZIP namespace on the runner; do not
+          # depend on incidental application packages installed in its image.
+          verified="$(python3 -I -S -B -c 'import sys; sys.path.insert(0,sys.argv.pop(1)); from boca_socios.host_boca_installed_admin import main; raise SystemExit(main())' \
+            "$bundle" verify "$GITHUB_SHA" "$GITHUB_RUN_ID" current \
+            < "$receipt_dir/receipt" 2>/dev/null)" || verification_rc=$?
+          if [[ "$remote_rc" -ne 0 || "$verification_rc" -ne 0 || ! "$verified" =~ ^BOCA_INSTALLED_ADMIN\  ]]; then
+            printf 'BOCA_INSTALLED_ADMIN state=NO_GO action=EXPLICIT_ADMIN_REFRESH_NO_DEPLOY\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf '%s\n' "$verified" >> "$GITHUB_STEP_SUMMARY"
+      - name: Observe installed Boca status from its current binding
+        if: inputs.operation == 'boca-installed-status-observe'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          umask 077
+          bundle="$RUNNER_TEMP/boca-installed-status.pyz"
+          python3 scripts/build_protected_boca_bundle.py --installed-admin . "$bundle"
+          digest="$(sha256sum "$bundle" | cut -d' ' -f1)"
+          remote_command="$(python3 - "$digest" "$GITHUB_SHA" "$GITHUB_RUN_ID" <<'PY_CURRENT_STATUS'
+          import shlex
+          import sys
+          from pathlib import Path
+          bootstrap = Path("scripts/boca_protected_memfd_bootstrap.py").read_text(encoding="utf-8")
+          print(shlex.join(["python3", "-c", bootstrap, sys.argv[1], "boca-installed-status-observe", sys.argv[2], sys.argv[3]]))
+          PY_CURRENT_STATUS
+          )"
+          receipt_dir="$(mktemp -d "$RUNNER_TEMP/boca-installed-status.XXXXXXXX")"
+          trap 'rm -f -- "$receipt_dir/receipt"; rmdir -- "$receipt_dir"' EXIT
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-status-main.json"
+          python3 scripts/check_main_ref.py "$RUNNER_TEMP/boca-status-main.json" "$GITHUB_SHA"
+          remote_rc=0
+          (
+            ulimit -f 4
+            timeout --signal=TERM --kill-after=5s 180s ssh \
+              -F "$RUNNER_TEMP/boca-ssh/config" -o ServerAliveInterval=10 -o ServerAliveCountMax=2 \
+              boca-target "$remote_command" < "$bundle" > "$receipt_dir/receipt" 2>/dev/null
+          ) || remote_rc=$?
+          verification_rc=0
+          verified="$(python3 -I -S -B -c 'import sys; sys.path.insert(0,sys.argv.pop(1)); from boca_socios.host_on_demand_status import main; raise SystemExit(main())' \
+            "$bundle" verify-current "$GITHUB_SHA" "$GITHUB_RUN_ID" \
+            < "$receipt_dir/receipt" 2>/dev/null)" || verification_rc=$?
+          if [[ "$remote_rc" -ne 0 || "$verification_rc" -ne 0 || ! "$verified" =~ ^BOCA_CURRENT_STATUS\  ]]; then
+            printf 'BOCA_CURRENT_STATUS state=NO_GO observer_writes=0\n' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          printf '%s\n' "$verified" >> "$GITHUB_STEP_SUMMARY"
       - name: Inspect one failed Boca worker probe READ_ONLY by exact identity
         if: inputs.operation == 'cutover-a-worker-inspect'
         run: |

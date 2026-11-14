@@ -11,6 +11,44 @@ from html import escape
 from boca_socios.queue.pass_observation import QueuePassSummary
 from boca_socios.security.member_auth_contract import BocaAuthSummary
 
+_AUTOMATIC_MESSAGES = {
+    "QUEUE_ACTIVE": "Evento detectado y cola virtual activa. Observando una sola sesión hasta recibir acceso.",
+    "PREQUEUE": "Evento anunciado y prefila observada. Esperando la apertura en la misma sesión.",
+    "QUEUE_INACTIVE": "La página informa que la cola virtual no está activa. Ciclo finalizado.",
+    "NO_EVENT_OBSERVED": "La página informa que no hay eventos disponibles. Ciclo finalizado.",
+    "TARGET_OBSERVED": "Token y enlace de acceso recibidos automáticamente. Puede revelarlos; su vigencia no está validada.",
+    "CHALLENGE": "La página requiere intervención del titular. Ciclo finalizado sin eludir el bloqueo.",
+    "UNKNOWN": "No se reconocieron señales suficientes de evento o cola. Ciclo finalizado sin declarar ausencia.",
+    "CHECK_FAILED": "No se pudo completar la comprobación de evento y cola. Ciclo finalizado; no confirma ausencia.",
+}
+
+
+def automatic_message(snapshot: dict[str, object]) -> str:
+    if snapshot.get("status") == "AUTOMATIC_CHECKING":
+        return "El worker está comprobando el evento y la cola virtual."
+    latest = snapshot.get("latest")
+    if isinstance(latest, dict):
+        return _AUTOMATIC_MESSAGES.get(str(latest.get("outcome")), _AUTOMATIC_MESSAGES["UNKNOWN"])
+    if snapshot.get("configured") is True:
+        return "Detección automática preparada. Inicie el bot para comprobar el evento y la cola."
+    return "Detección automática no configurada."
+
+
+ART_TIME_SCRIPT = """
+function formatPrivateTime(value) {
+  const time = new Date(value);
+  if (Number.isNaN(time.getTime())) return 'Hora no disponible';
+  const parts = new Intl.DateTimeFormat('es-AR', {
+    timeZone: 'America/Argentina/Buenos_Aires', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  }).formatToParts(time);
+  const fields = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return fields.year + '-' + fields.month + '-' + fields.day + ' ' +
+    fields.hour + ':' + fields.minute + ':' + fields.second + ' ART';
+}
+"""
+
 COPY_SCRIPT = """
 for (const button of document.querySelectorAll('[data-copy-target]')) {
   button.addEventListener('click', async () => {
@@ -28,7 +66,9 @@ for (const button of document.querySelectorAll('[data-copy-target]')) {
 }
 """
 
-LIVE_SCRIPT = """
+LIVE_SCRIPT = (
+    ART_TIME_SCRIPT
+    + """
 const state = document.getElementById('token-monitor-live');
 const checked = document.getElementById('token-monitor-checked');
 const refresh = document.getElementById('token-monitor-refresh');
@@ -42,8 +82,12 @@ async function updateTokenMonitor() {
       credentials: 'same-origin', cache: 'no-store', redirect: 'error'});
     if (!response.ok) throw new Error('snapshot unavailable');
     const data = await response.json();
+    const automatic = document.getElementById('automatic-observation-live');
+    if (automatic && data.automatic && typeof data.automatic.message === 'string') {
+      automatic.textContent = data.automatic.message;
+    }
     if (data.version !== 1 ||
-        !['IN_MEMORY', 'NOT_CONNECTED'].includes(data.queue_source) ||
+        !['AUTOMATIC', 'IN_MEMORY', 'NOT_CONNECTED'].includes(data.queue_source) ||
         !['IN_MEMORY', 'NOT_CONNECTED'].includes(data.boca_source) ||
         !Number.isInteger(data.queue_observations) || data.queue_observations < 0 ||
         !Number.isInteger(data.boca_observations) || data.boca_observations < 0 ||
@@ -56,7 +100,9 @@ async function updateTokenMonitor() {
     if (signature !== lastSignature) {
       state.textContent =
         'Queue-it: ' + data.queue_observations + ' observaciones (' +
-        (data.queue_source === 'IN_MEMORY' ?
+        (data.queue_source === 'AUTOMATIC' ?
+          'fuente automática del worker; consulte el resultado de detección' :
+        data.queue_source === 'IN_MEMORY' ?
           'vista local disponible; conexión externa no acreditada' :
           'fuente no conectada') +
         '). Boca: ' + data.boca_observations + ' observaciones (' +
@@ -69,8 +115,7 @@ async function updateTokenMonitor() {
     const when = new Date(data.observed_at);
     checked.textContent = Number.isNaN(when.getTime()) ?
       'Última consulta: hora no verificable.' :
-      'Última consulta: ' + when.toLocaleString('es-AR',
-        {timeZone: 'America/Argentina/Buenos_Aires'});
+      'Última consulta: ' + formatPrivateTime(data.observed_at);
   } catch (_) {
     state.textContent = 'Monitor temporalmente no verificable. No confirma tokens nuevos.';
     checked.textContent = 'Última consulta fallida.';
@@ -83,6 +128,7 @@ refresh.addEventListener('click', updateTokenMonitor);
 setInterval(() => { if (!document.hidden) updateTokenMonitor(); }, 5000);
 updateTokenMonitor();
 """
+)
 
 
 def _hidden(name: str, value: str) -> str:
@@ -120,6 +166,7 @@ def overview(
     can_reveal: bool,
     queue_connected: bool,
     boca_connected: bool,
+    automatic: dict[str, object] | None = None,
 ) -> str:
     """Safe overview: only IDs, time and state, never bearer values or URL."""
     queue_rows = []
@@ -177,15 +224,37 @@ def overview(
             + fields
             + "</li>"
         )
+    automatic_section = ""
+    if automatic is not None:
+        automatic_section = (
+            '<section aria-labelledby="automatic-observation-title"><h2 id="automatic-observation-title">'
+            'Detección automática del worker</h2><p id="automatic-observation-live" role="status" aria-live="polite">'
+            + escape(automatic_message(automatic))
+            + "</p><p>Observación de la sesión del titular. No se atribuye a un socio ni a un evento de simulación.</p>"
+        )
+        if can_reveal and operation_id is not None and automatic.get("has_target_url") is True:
+            automatic_section += _reveal_form(
+                label="Mostrar completo: token automático",
+                kind="automatic",
+                member_id="",
+                event_id="",
+                session_id="",
+                csrf=csrf,
+                operation_id=operation_id,
+            )
+        automatic_section += "</section>"
     return (
         "<h1>Monitor privado de tokens</h1>"
         "<p>Observaciones independientes. No se valida ninguna URL ni token; "
         "nunca se inicia el navegador o una reserva desde este monitor.</p>"
-        '<section aria-labelledby="monitor-live-title"><h2 id="monitor-live-title">'
+        + automatic_section
+        + '<section aria-labelledby="monitor-live-title"><h2 id="monitor-live-title">'
         "Estado en tiempo real</h2>"
         '<p id="token-monitor-live" role="status" aria-live="polite">'
         + (
-            "Vista Queue-it en memoria disponible; origen externo no acreditado. "
+            "Queue-it: detección automática habilitada; consulte el resultado del worker. "
+            if automatic is not None and automatic.get("configured") is True
+            else "Vista Queue-it en memoria disponible; origen externo no acreditado. "
             if queue_connected
             else "Fuente Queue-it no conectada. "
         )

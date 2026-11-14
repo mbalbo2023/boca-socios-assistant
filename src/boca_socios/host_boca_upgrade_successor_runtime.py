@@ -476,10 +476,11 @@ class PostflightGatedSuccessorBackend(reusable.ReusablePairUpgradeBackend):
         integrations: reusable.RepeatableUpgradeIntegrations | None,
         *,
         gate: SuccessorPostflightGate | None,
+        current_retained: bytes | None = None,
     ) -> None:
         if type(sources) is not staging.PairSources:
             raise _fail()
-        super().__init__(sources, retained, integrations)
+        super().__init__(sources, retained, integrations, current_retained=current_retained)
         self.successor_postflight_gate = gate
         self._successor_finalization_started = False
 

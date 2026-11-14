@@ -25,6 +25,7 @@ from boca_socios.host_on_demand_lifecycle import (
 from boca_socios.host_on_demand_service import read_installed_binding
 
 PREFIX = "BOCA_ON_DEMAND_STATUS "
+CURRENT_PREFIX = "BOCA_CURRENT_STATUS "
 NO_GO = PREFIX + "result=NO_GO"
 EGRESS_PREFIX = "BOCA_ON_DEMAND_EGRESS "
 _LIMIT = 2048
@@ -171,6 +172,64 @@ def _checked(document: object, pins: _Pins) -> str:
     return PREFIX + json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n"
 
 
+def _current_checked(document: object, workflow_sha: str, run: str) -> str:
+    """Runner source authenticates the observer; installed source is its result."""
+    if (
+        not _matches(workflow_sha, host._SHA)
+        or not _matches(run, host._ATTEMPT)
+        or type(document) is not dict
+        or document.keys() != {"schema", "workflow_source_sha", "installed"}
+        or type(document["schema"]) is not int
+        or document["schema"] != 2
+        or document["workflow_source_sha"] != workflow_sha
+        or type(document["installed"]) is not dict
+    ):
+        raise StatusUnavailable
+    installed = document["installed"]
+    pins = _Pins(
+        installed["source_sha"], installed["controller_image"], installed["worker_image"], run
+    )
+    pins.validate()
+    _checked(installed, pins)
+    return CURRENT_PREFIX + json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n"
+
+
+def _observe_current(workflow_sha: str, run: str) -> dict[str, object]:
+    if not _matches(workflow_sha, host._SHA) or not _matches(run, host._ATTEMPT):
+        raise StatusUnavailable
+    with protected_boca_job_lease(run) as lease:
+        installed = read_installed_binding(lease)
+        pins = _Pins(installed.source_sha, installed.controller_image, installed.worker_image, run)
+        pins.validate()
+        coordinates = replace(installed.coordinates(_PROBE_ID), attempt_id=run)
+        live = _physical(installed, coordinates, lease)
+        operation = read_panel_status(installed)
+        if (
+            _physical(installed, coordinates, lease) != live
+            or read_panel_status(installed) != operation
+            or read_installed_binding(lease) != installed
+        ):
+            raise StatusUnavailable
+        phase, pid, healthy, engine = live
+        return {
+            "schema": 2,
+            "workflow_source_sha": workflow_sha,
+            "installed": {
+                "schema": 1,
+                **asdict(pins),
+                "installation_run_id": installed.installation_run_id,
+                "controller_id": installed.controller_id,
+                "worker_id": installed.worker_id,
+                "panel": "HEALTHY",
+                "engine": "RUNNING" if engine else "STOPPED",
+                "worker_state": phase,
+                "worker_pid": pid,
+                "worker_healthy": healthy,
+                "operation": asdict(operation) if operation is not None else None,
+            },
+        }
+
+
 def _egress_line(pins: _Pins, stage: str) -> str:
     """One category-only, run-bound attestation; no remote output forwarded."""
     prefix = EGRESS_PREFIX + f"run={pins.observation_run_id} source={pins.source_sha} "
@@ -248,6 +307,20 @@ def _egress_checked(raw: bytes, pins: _Pins) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     try:
+        if len(args) == 3 and args[0] in ("host-current", "verify-current"):
+            if args[0] == "host-current":
+                line = _current_checked(_observe_current(args[1], args[2]), args[1], args[2])
+            else:
+                raw = sys.stdin.buffer.read(_LIMIT + 1)
+                if len(raw) > _LIMIT or not raw.startswith(CURRENT_PREFIX.encode("ascii")):
+                    raise StatusUnavailable
+                line = _current_checked(
+                    json.loads(raw[len(CURRENT_PREFIX) :].decode("ascii")), args[1], args[2]
+                )
+                if line.encode("ascii") != raw:
+                    raise StatusUnavailable
+            sys.stdout.write(line)
+            return 0
         if len(args) != 5 or args[0] not in ("host", "verify", "host-egress", "verify-egress"):
             raise StatusUnavailable
         pins = _Pins(*args[1:])
