@@ -106,7 +106,8 @@ def test_parallel_labs_wait_for_both_and_propagate_every_failure(
 def test_parallel_labs_preserve_builds_scans_and_aggregate_before_consumers() -> None:
     source = CI.read_text(encoding="utf-8")
     image = source.split("  image:\n", 1)[1]
-    assert image.count("uses: docker/build-push-action@") == 2
+    assert image.count("uses: docker/build-push-action@") == 1
+    assert image.count("docker build --builder default --file Dockerfile.browser") == 1
     assert image.count('run: bash scripts/trivy_scan_image.sh "') == 2
     assert image.index("Install locked runtime dependencies for the Docker labs") < image.index(
         STEP

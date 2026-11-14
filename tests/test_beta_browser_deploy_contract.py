@@ -463,8 +463,12 @@ def test_ci_resolves_real_compose_overlay_and_validates_it_before_merge() -> Non
         "BOCA_OWNER_SUBJECT: synthetic-ci-owner",
     ):
         assert required in workflow
-    assert workflow.index("Validate optional dual-service IPC Compose resolution") < workflow.index(
-        "Lint"
+    fast = workflow.split("  fast_quality:\n", 1)[1].split("  quality:\n", 1)[0]
+    quality = workflow.split("  quality:\n", 1)[1].split("  image:\n", 1)[0]
+    assert "      - name: Lint\n" in fast
+    assert "    needs: fast_quality\n" in quality
+    assert quality.index("Validate optional dual-service IPC Compose resolution") < quality.index(
+        "      - name: Test\n"
     )
 
 

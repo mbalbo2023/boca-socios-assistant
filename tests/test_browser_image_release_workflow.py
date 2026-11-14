@@ -26,13 +26,17 @@ def test_browser_pr_validation_builds_scans_but_never_publishes() -> None:
     assert "Build isolated Chromium worker without deploying" in preview
     assert preview.count("docker build") == 2
     assert "boca-release-validation:${{ github.sha }}" in preview
-    assert "boca-browser-release-validation:${{ github.sha }}" in preview
+    browser = preview.split("      - name: Build isolated Chromium worker without deploying\n", 1)[
+        1
+    ].split("      - name:", 1)[0]
+    assert "SOURCE_SHA: ${{ github.sha }}" in browser
+    assert '--tag "boca-browser-release-validation:$SOURCE_SHA"' in browser
     assert (
         '--tag "boca-socios-ci:$SOURCE_SHA" --tag "boca-release-validation:$SOURCE_SHA"' in preview
     )
     assert '--tag "boca-browser-release-validation:$SOURCE_SHA"' in preview
     assert '--tag "boca-observer:$SOURCE_SHA"' in preview
-    assert "docker build --file Dockerfile.browser" in preview
+    assert "docker build --builder default --file Dockerfile.browser" in browser
     assert "Verify browser source revision label" in preview
     assert "org.opencontainers.image.revision=$SOURCE_SHA" in preview
     assert "Require the reviewed browser IPC worker command" in preview
