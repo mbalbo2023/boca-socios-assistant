@@ -1,6 +1,32 @@
 # Development and merge policy
 
-## R303 — main Q aceptado; esquema Telegram pendiente en M
+## R304 — R instalada; diagnóstico de Telegram pendiente
+
+La BETA R `845f31abfb1762dff27e6fc3274fcc40507f3f18` fue publicada en
+[release867](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43704139794)
+e instalada por [APPLY1153](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43704768556),
+ACCEPTED con cleanup ACCEPT. ADMIN1154 y STATUS1155 fueron favorables antes
+del incidente; no certifican el estado posterior.
+
+[PREPARE1156](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43705714873)
+falló con restauración INDETERMINATE y sender OFF. PAIR1157 no obtuvo inventario;
+origin1158 acreditó HTTP200 de loopback, sin identidad del proceso ni causa.
+La aceptación técnica y funcional permanece abierta. No repetir prepare,
+release, APPLY, migración o limpieza para buscar una causa.
+
+[Issue525 y cuatro GO de diseño](https://github.com/mbalbo2023/boca-socios-assistant/issues/525#issuecomment-6893438522)
+delimitan un observador READ_ONLY de coordenadas fijas, doble lectura y razones
+finitas. El [plan R304](superpowers/plans/2026-11-15-r304-telegram-incident-observe.md) conserva guardas, datos, custodia y paquetes
+anteriores. El diagnóstico viaja por la Action protegida; no requiere imágenes
+nuevas. Cuatro revisiones finales y gates del nuevo main preceden un único
+intento; su resultado no autoriza recuperación o borrado automáticamente.
+
+SIMULATION_ONLY, BLACKBOX y Porota/PPI permanecen protegidos. Las capturas de
+CI son sintéticas; no prueban la sesión privada instalada ni capacidad física50.
+El detalle físico y los pendientes funcionales están en la
+[matriz de integración](BETA_INTEGRATION_STATUS.md).
+
+## Histórico R303 — main Q aceptado; esquema Telegram pendiente en M
 
 [PR521](https://github.com/mbalbo2023/boca-socios-assistant/pull/521) está integrado
 en Q `7112a4878097bc1696a60a7b1056cd1e7b559ce5`, con CI1268/Security1088
