@@ -1,6 +1,19 @@
 # Estado de integración BETA
 
-## R297 — candidato único con QA incorporado, 15-NOV-2026 UTC
+## R298 — instalado R297; observador de estado en reparación
+
+Main del producto instalado: `5281efae7dafe89be047073796b3e0a7e19785ed`.
+PR #517 fusionado, release 866, [APPLY 1134](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43681576798) ACCEPTED/cleanup ACCEPT;
+[ADMIN 1135](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682305029) PROVISIONED con cero escrituras legado.
+[STATUS 1136](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682391989) conserva NO_GO/observer_writes=0. La diferencia de
+ruta host/container está reproducida offline; su arreglo #518 aún necesita
+revisión, CI y una nueva lectura real. [RCA y alcance](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889977546).
+
+Telegram no fue despachado y sigue ABSENT/NOT_PAIRED/sender ABSENT en ADMIN 1135.
+Mantener pendiente la preparación y aceptación privada; no deducirlas del
+postflight ni de los PNG ficticios de CI. No nueva release/APPLY por este lector.
+
+## Histórico — R297 — candidato único con QA incorporado, 15-NOV-2026 UTC
 
 PR517 reúne R295/R296 y las correcciones del titular. Main/última instalación
 certificada sigue en R294/c5a1435; no confundir el candidato con lo instalado.

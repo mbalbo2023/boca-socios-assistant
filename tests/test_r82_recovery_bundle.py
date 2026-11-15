@@ -187,6 +187,11 @@ R296_AUTH_AND_TELEGRAM_BINDING_FULL_CUTOVER_SHA = (
 R297_DUAL_ENGINE_LIFECYCLE_FULL_CUTOVER_SHA = (
     "708dfc01b81dc2f967588088c590ba317c58af2026f338291531de8ea5ad2342"
 )
+# R298 corrects only the installed-status reader's container path. The host
+# binding and historical pins stay unchanged; this pin authorizes no redeploy.
+R298_STATUS_CONTAINER_PATH_FULL_CUTOVER_SHA = (
+    "066214cb4ae6a84f9e88973e38e58f7780dccf9556d1beb75cfb7c3b3a500c0e"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -340,11 +345,12 @@ def test_both_recovery_modes_reject_modified_bytes_and_injected_entries(
 
 
 def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) -> None:
-    """R297 source evolution does not authorize historical recovery modes."""
+    """R298 source evolution does not authorize historical recovery modes."""
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert digest == hashlib.sha256(raw).hexdigest() == R297_DUAL_ENGINE_LIFECYCLE_FULL_CUTOVER_SHA
+    assert digest == hashlib.sha256(raw).hexdigest() == R298_STATUS_CONTAINER_PATH_FULL_CUTOVER_SHA
+    assert digest != R297_DUAL_ENGINE_LIFECYCLE_FULL_CUTOVER_SHA
     assert digest != R296_AUTH_AND_TELEGRAM_BINDING_FULL_CUTOVER_SHA
     assert digest != R294_AUTHENTICATED_PROFILE_FULL_CUTOVER_SHA
     assert digest != R252_SUCCESS_IMAGE_PREDELETE_GUARD_FULL_CUTOVER_SHA

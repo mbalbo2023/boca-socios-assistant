@@ -2,9 +2,10 @@
 
 import io
 import json
-import subprocess
 import sys
+from contextlib import redirect_stdout
 from dataclasses import asdict, replace
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -15,6 +16,29 @@ from boca_socios import host_on_demand_status as status
 from test_host_on_demand_status import PINS, host  # noqa: F401 - shared offline host fixture
 
 WORKFLOW = "f" * 40
+
+
+def _controller_program(path, args, monkeypatch):
+    """Map only the controller filesystem boundary; use the real ledger reader."""
+    original = demand.lifecycle._controller_ledger
+    opened = []
+    output = io.StringIO()
+    code = 0
+
+    def controller_ledger(visible_path, *, readonly=False):
+        opened.append((visible_path, readonly))
+        assert visible_path == Path("/data/boca.sqlite3")
+        assert readonly is True
+        return original(path, readonly=readonly)
+
+    with monkeypatch.context() as boundary, redirect_stdout(output):
+        boundary.setattr(demand.lifecycle, "_controller_ledger", controller_ledger)
+        boundary.setattr(sys, "argv", ["-c", *args])
+        try:
+            exec(status._CURRENT_LEDGER_PROGRAM, {})  # noqa: S102 - exact reviewed program
+        except SystemExit as stopped:
+            code = stopped.code
+    return code, output.getvalue(), opened
 
 
 def test_current_status_reports_installed_binding_when_main_has_advanced(bound_current, capsys):
@@ -67,7 +91,11 @@ def test_current_status_does_not_publish_binding_drift(bound_current, monkeypatc
 def preserved_stop(request, tmp_path, monkeypatch):
     """Only Docker/host sampling is inert; controller program and ledger are real."""
     request.getfixturevalue("host")
-    path = tmp_path / "boca.sqlite3"
+    path = tmp_path / "controller" / "data" / "boca.sqlite3"
+    path.parent.mkdir(parents=True)
+    host_path = (
+        tmp_path / "host" / ".local/share/docker/volumes/boca-socios_boca_data/_data/boca.sqlite3"
+    )
     _, ledger = fixture._request_with_real_ledger(path, "bot", "stop")
     operation = str(uuid4())
     ledger.request("bot", "stop", operation, on_demand=True)
@@ -78,13 +106,19 @@ def preserved_stop(request, tmp_path, monkeypatch):
         fixture.CONTROLLER_REF,
         fixture.WORKER,
         fixture.WORKER_REF,
-        path,
+        host_path,
         fixture._binding(),
     )
     previous = replace(current, source_sha="8" * 40, controller_id="7" * 64)
     demand._transact(path, operation, previous.fingerprint(), "claim")
     demand._transact(path, operation, previous.fingerprint(), "APPLIED")
-    live = {"sample": ("created", 0, False, False), "calls": 0, "after_read": lambda: None}
+    live = {
+        "sample": ("created", 0, False, False),
+        "calls": 0,
+        "after_read": lambda: None,
+        "program_argv": [],
+        "ledger_paths": [],
+    }
 
     def controller(*args):
         assert args[:6] == (
@@ -102,19 +136,13 @@ def preserved_stop(request, tmp_path, monkeypatch):
             return demand._status_wire(path, args[10]) + "\n"
         assert args[7] == "-c"
         assert args[8] == status._CURRENT_LEDGER_PROGRAM
-        assert args[9:] == (current.fingerprint(), str(path))
-        result = subprocess.run(  # noqa: S603 - fixed production program, fixture pins only
-            [sys.executable, "-I", "-B", *args[7:]],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=10,
-        )
-        if result.returncode:
+        live["program_argv"].append(args[9:])
+        code, output, opened = _controller_program(path, args[9:], monkeypatch)
+        live["ledger_paths"].extend(opened)
+        if code:
             raise demand.OnDemandUnavailable("controller diagnostic refused")
-        assert not result.stderr
         live["after_read"]()
-        return result.stdout
+        return output
 
     monkeypatch.setattr(status, "read_installed_binding", lambda lease: current)
     monkeypatch.setattr(status, "_physical", lambda *args: live["sample"])
@@ -132,6 +160,67 @@ def bound_current(preserved_stop):
     demand._transact(path, operation, current.fingerprint(), "APPLIED")
     live["sample"] = ("exited", 0, False, False)
     return preserved_stop
+
+
+def test_current_program_uses_canonical_path_and_host_fingerprint(bound_current, monkeypatch):
+    path, _, _, current, _, _ = bound_current
+    assert current.database_path != path and not current.database_path.exists()
+    identity, before = path.stat().st_ino, path.read_bytes()
+
+    code, output, opened = _controller_program(path, [current.fingerprint()], monkeypatch)
+
+    assert code == 0
+    assert opened == [(Path("/data/boca.sqlite3"), True)]
+    scope, operation = status._ledger_checked(json.loads(output))
+    assert scope == "CURRENT_INSTALLATION" and operation.target == "start"
+    assert path.stat().st_ino == identity and path.read_bytes() == before
+    assert not current.database_path.exists()
+
+
+def test_current_observer_does_not_send_host_database_path(bound_current, capsys):
+    path, _, _, current, _, live = bound_current
+    identity, before = path.stat().st_ino, path.read_bytes()
+
+    assert status.main(["host-current", WORKFLOW, PINS[3]]) == 0
+
+    document = json.loads(capsys.readouterr().out.removeprefix(status.CURRENT_PREFIX))
+    assert document["ledger"]["scope"] == "CURRENT_INSTALLATION"
+    assert live["program_argv"] == [(current.fingerprint(),)] * 2
+    assert live["ledger_paths"] == [(Path("/data/boca.sqlite3"), True)] * 2
+    assert path.stat().st_ino == identity and path.read_bytes() == before
+    assert not current.database_path.exists()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [],
+        [""],
+        ["PRIVATE"],
+        ["A" * 64],
+        ["a" * 64, "/host/PRIVATE/boca.sqlite3"],
+        ["a" * 64, "/data/boca.sqlite3"],
+    ],
+    ids=[
+        "missing_fingerprint",
+        "empty_fingerprint",
+        "malformed_fingerprint",
+        "uppercase_fingerprint",
+        "extra_host_path",
+        "extra_controller_path",
+    ],
+)
+def test_current_program_rejects_invalid_argv_before_opening_ledger(
+    preserved_stop, monkeypatch, args
+):
+    path, _, _, _, _, _ = preserved_stop
+    identity, before = path.stat().st_ino, path.read_bytes()
+
+    code, output, opened = _controller_program(path, args, monkeypatch)
+
+    assert code == 3 and output == ""
+    assert opened == []
+    assert path.stat().st_ino == identity and path.read_bytes() == before
 
 
 def test_preserved_stop_is_not_a_receipt_for_the_new_installation(preserved_stop, capsys):

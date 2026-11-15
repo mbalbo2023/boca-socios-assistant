@@ -1,6 +1,20 @@
 # Plan de entrega y aceptación de la BETA funcional
 
-## R297 — una promoción del candidato consolidado, 15-NOV-2026 UTC
+## R298 — completar el postflight sin repetir la promoción
+
+PR #517/R297 se instaló una vez desde 5281efa por
+[APPLY 1134](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43681576798), ACCEPTED/cleanup ACCEPT, y
+[ADMIN 1135](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682305029) PROVISIONED. [STATUS 1136](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682391989) falló en una
+lectura sin escrituras. El [RCA #518](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889977546) corrige la ruta del ledger
+vista desde el controller; el binding del host conserva su identidad.
+
+Completar revisión/CI, integrar el mantenimiento y obtener un único estado
+corregido. Después preparar Telegram con las mismas imágenes/release 866,
+sin activar ni enviar. Mantener abierta la aceptación legítima de Chrome,
+Telegram y capacidad física; el presupuesto de 50 y las capturas ficticias no
+son pruebas del droplet. No se vuelve a publicar o desplegar el producto.
+
+## Histórico — R297 — una promoción del candidato consolidado, 15-NOV-2026 UTC
 
 La entrega autorizada continúa en PR517 sobre la última instalación R294/
 c5a1435. El titular aportó QA y amplió el alcance a dos motores independientes

@@ -1,6 +1,26 @@
 # Safe operations — verified evidence and gated procedures
 
-## R297 — promoción consolidada y validación pendiente, 15-NOV-2026 UTC
+## R298 — postflight de la promoción aceptada, 2026-11-15
+
+Instalado: `5281efae7dafe89be047073796b3e0a7e19785ed`, release 866.
+[APPLY 1134](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43681576798) ACCEPTED/cleanup ACCEPT, sin restauración/fase fallida;
+[ADMIN 1135](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682305029) PROVISIONED/sector_schema=2/legacy_writes=0.
+[STATUS 1136](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682391989) NO_GO/observer_writes=0 no autoriza repetirlos.
+
+La [corrección #518](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889977546) cambia sólo el lector portable: la ruta
+host permanece en el binding, y la lectura interna usa `/data/boca.sqlite3`.
+Tras revisión, merge y CI exactos, ejecutar una única
+`boca-installed-status-observe` desde main, service controller, presupuesto
+`1.5cpu-1024m-192pids` y todos los demás inputs vacíos. Registrar fuente del
+workflow e imagen instalada por separado. Un nuevo NO_GO exige RCA, no retry.
+
+Sólo después del estado verificable continuar `telegram-prepare` con source
+instalado 5281efa, ambas referencias inmutables y release_run_id 43680526402.
+El contrato existente acredita su ascendencia respecto del workflow nuevo.
+No publicar otra imagen ni repetir APPLY/admin; no activate, test ni envíos.
+Los recibos actuales no certifican capacidad de 50 ni acceso privado Samsung.
+
+## Histórico — R297 — promoción consolidada y validación pendiente, 15-NOV-2026 UTC
 
 El candidato sigue en PR517. Última instalación certificada: R294,
 `c5a143541ccfcaf26f29cf252a4cb33fd7c540f7`, release865/APPLY1117 ACCEPTED.

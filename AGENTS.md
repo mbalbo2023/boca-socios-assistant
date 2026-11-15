@@ -1,6 +1,25 @@
 # Binding instructions for every coding agent
 
-## Estado vigente R297 — correcciones QA y dos motores independientes
+## Estado vigente R298 — postflight de R297, sin segundo despliegue
+
+PR #517 ya está fusionado y su producto R297 está instalado desde
+`5281efae7dafe89be047073796b3e0a7e19785ed`, release 866/APPLY 1134
+ACCEPTED con cleanup ACCEPT. ADMIN 1135 terminó PROVISIONED. STATUS 1136
+permanece NO_GO de sólo lectura; Telegram no fue despachado.
+
+El [RCA y cuatro votos previos](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889977546) delimitan el mantenimiento #518:
+corregir exclusivamente la ruta del lector portátil de estado dentro del
+controller y su regresión de frontera. La ruta host del binding/fingerprint
+se conserva; el programa interno usa `/data/boca.sqlite3` y sólo recibe el
+fingerprint. Mantener lease, atestación, readonly, doble lectura y recibo.
+La corrección viaja con el observador; no repetir release, APPLY ni admin.
+Revisión del delta y CI exactos preceden una única lectura corregida.
+Después, preparar Telegram sobre las imágenes instaladas sólo con estado
+verificable y sin mensajes. SIMULATION_ONLY, caps, datos, BLACKBOX y
+separación Porota/PPI siguen vigentes. Aceptación privada/capacidad de 50 pendientes.
+Los encabezados siguientes describen sus respectivos cortes históricos.
+
+## Histórico — Estado vigente R297 — correcciones QA y dos motores independientes
 
 El titular ya aportó QA/capturas y autorizó desarrollar dos motores funcionales:
 colas/tokens y navegadores/socios, independientes y bajo demanda. El

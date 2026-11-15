@@ -606,6 +606,18 @@
         "tests/test_cutover_candidate_receipt.py::test_failed_cold_acceptance_survives_compensation_and_lost_first_stdout",
         "tests/test_cutover_candidate_compensation.py::test_compensate_restarted_pinned_candidate_after_stable_inspect"
       ]
+    },
+    {
+      "id": "RCA-518",
+      "issue": 518,
+      "fix_pr": 518,
+      "root_cause": "The installed-status reader passed a host-volume SQLite path to a program executed inside the controller. A test ran both namespaces on the same filesystem and therefore accepted the invalid path.",
+      "prevention": "Use only the canonical controller path and the host-derived fingerprint. Test the real program with distinct host and container paths, reject extra argv before ledger access, and verify readonly inode and bytes.",
+      "regression_tests": [
+        "tests/test_r294_installed_status.py::test_current_program_uses_canonical_path_and_host_fingerprint",
+        "tests/test_r294_installed_status.py::test_current_observer_does_not_send_host_database_path",
+        "tests/test_r294_installed_status.py::test_current_program_rejects_invalid_argv_before_opening_ledger"
+      ]
     }
   ]
 }

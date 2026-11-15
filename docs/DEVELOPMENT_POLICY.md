@@ -1,6 +1,18 @@
 # Development and merge policy
 
-## 2026-11-15 — R297, implementación del QA en el mismo candidato
+## 2026-11-15 — R298, mantenimiento del lector posterior al despliegue
+
+[APPLY 1134](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43681576798) y [ADMIN 1135](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682305029) certifican instalación y
+provisión de R297/5281efa. [STATUS 1136](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682391989) conserva su NO_GO.
+El [diseño previo unánime](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889977546) limita #518 a la frontera de ruta
+host/controller del lector portable y su regresión. No se cambian los
+controles de acceso, esquema, fingerprint, lease, doble lectura ni formato.
+Pruebas focales y pin de los paquetes afectados, revisión independiente y
+checks del SHA exacto. La reparación viaja con Actions; no otra release/APPLY.
+La lectura nueva debe acreditar su resultado antes de proseguir Telegram.
+Los siguientes cortes no reabren instalaciones ni gates ya completados.
+
+## Histórico — 2026-11-15 — R297, implementación del QA en el mismo candidato
 
 El [titular autorizó dos motores funcionales independientes](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6886406162)
 y un objetivo global de 50 contextos. ADR0302 y el plan R297 fijan responsabilidades
