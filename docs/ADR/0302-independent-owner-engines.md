@@ -466,3 +466,49 @@ identidad/límite/contador coherentes; un delta positivo sigue visible y no
 acredita holgura. UNKNOWN no certifica el experimento aunque el recorrido
 funcional termine en PASS. Se publican los siete archivos juntos; los gates
 alojados del sucesor, capturas y promoción física siguen pendientes.
+
+## Controles accesibles antes de los historiales
+
+La [evidencia de 2c35d22](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889286186)
+cierra CI1256: 9386 pruebas y 34 subtests PASS, builds y ambos scans estrictos
+sin HIGH/CRITICAL, recorrido visual y cleanup PASS. Los dos PNG reales del
+artefacto14146554703 fueron descargados con integridad verificada e
+inspeccionados. Son fixtures offline, no una captura del panel instalado.
+Firefox192/256 completó el recorrido mínimo con picos144/143 tareas y sin
+eventos pids.max/OOM; no certifica 50 contextos ni recursos del droplet.
+
+La inspección encontró que el historial de A aleja los controles de B en
+proporción al número de sesiones. Los diez checks visuales existentes siguen
+siendo PASS; este hallazgo añade un criterio concreto de uso por voz.
+El [diseño mínimo](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889343476)
+y sus [cuatro votos previos](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889346780)
+autorizan separar únicamente el historial del renderer. Ambos bloques de
+estado/formularios preceden a cualquier historial; H2 común, H3 por motor y
+H4 por sesión. Se conservan los cuatro POST, IDs, etiquetas, fences y campos.
+El polling localiza las listas por ID global, sin depender de su ascendencia.
+
+Los campos outcome y queue_state reutilizan el catálogo de fases en HTML y
+JavaScript. ACCESS_OBSERVED usa la etiqueta existente TARGET_OBSERVED.
+Sólo strings reconocidos admiten traducción; ausencia, tipos inesperados y
+códigos desconocidos muestran «Sin dato». El comportamiento de phase no cambia.
+Autor separado del comité final, dos rutas de producto/pruebas: engine_view.py
+y test_engine_view.py. Las pruebas nuevas cubren orden con 0/2/50 sesiones,
+identidades/enlaces y traducción inicial/dinámica. La revisión final y las
+capturas del sucesor siguen pendientes. Recursos/runtime se revisan por
+separado; este acuerdo no cambia caps ni autoriza un experimento o host.
+
+El [cierre de revisión](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889461596)
+registra cuatro votos finales independientes del autor de código. Los 26
+casos afectados pasaron; arquitectura verificó cuatro focales, QA dos y
+operación un caso inerte adicional con 50 sesiones sólo en A. Los recuentos
+se solapan. La revisión documental corrigió PR0 después de integrar y cerró
+su NO_GO puntual. Se publican juntos dos archivos de código/pruebas y siete
+documentos; los checks y capturas del sucesor siguen siendo necesarios.
+
+Los cuatro roles acuerdan conservar los caps y continuar la promoción con
+las capacidades físicas no acreditadas declaradas. ADR0112 exige medir el
+host después, no crear un gate preventivo de pool3 o50. Par, retenidos y
+estado instalado prueban custodia/salud/identidades; no emiten hoy un benchmark
+del pool. Los lectores de contadores reutilizables están integrados en CI;
+una medición numérica instalada adicional requerirá adaptar y revisar esa
+observación dentro de la Action protegida. No se afirma que ya esté disponible.

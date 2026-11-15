@@ -248,3 +248,35 @@ Firefox-only comparison once and inspect hosted UI evidence on the new SHA.
 pids_budget_verified is attribution only: UNKNOWN cannot certify a budget,
 and a positive event delta remains evidence of pressure even with functional
 PASS. No host operation or new dimensioning decision follows from this vote.
+
+## Controls before histories after actual CI1256 screenshot inspection
+
+Evidence6889286186 closes CI1256 on2c35d22:9386 tests+34subtests, both builds
+and strict scans, UI and cleanup PASS. Both artifact14146554703 PNGs were
+integrity-verified and inspected; they are synthetic, not installed-panel proof.
+Firefox192/256 minimum probes PASS with peak144/143 tasks and zero pids/OOM
+events. Runtime128 versus that measurement is a separate design question.
+
+Proposal6889343476 and four actual design votes6889346780 authorize only
+engine_view.py/test_engine_view.py plus these documents. A separate author
+extracts session histories from _section; page emits both controls first,
+then H2 common/H3 by engine/H4 rows. Preserve forms, IDs, fences, entered
+values and the current ID-based polling. Reuse _PHASES for outcome/queue_state,
+adding only ACCESS_OBSERVED as the existing TARGET_OBSERVED label. Accept
+recognized strings only; all other types/codes use Sin dato. phase unchanged.
+Focused RED/GREEN regressions cover order0/2/50, identities/private links and
+SSR/real-JS translations. Four independent final code votes, affected package
+intersection and exact-SHA hosted visual proof remain required. No new runtime
+budget, benchmark, host operation or repeated certified baseline tests.
+
+Final review6889461596 records four independent GO votes, excluding the code
+author. Author26 affected PASS; architecture4 focal PASS, QA2 focal PASS,
+operation an inert50-only-in-A counterexample PASS. Counts overlap. Seven
+documents passed factual review after fixing PR0 to follow integration.
+Publish nine scoped paths together; no source intersects FULL47/PAIR83.
+All roles keep existing caps and reject a new pool3/50 predeploy gate.
+Existing installed observers prove health/custody, not pool consumption;
+the counter readers are currently CI-integrated. An additional installed
+numeric measurement needs a reviewed protected-Action adaptation, not a
+claim that the current status receipt already supplies it. Exact-SHA hosted
+UI/gates, promotion/postflight and physical acceptance remain separate.

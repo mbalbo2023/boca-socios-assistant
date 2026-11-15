@@ -1,6 +1,23 @@
 # Backlog y dependencias de la BETA
 
-## Prioridad física vigente — 07/11/2026, R92 diagnóstico CODE_ONLY
+## Prioridad vigente — R297, 15-NOV-2026 UTC
+
+Continuar el único candidato PR517 con el QA aportado, sin duplicar R295/R296
+ni repetir la instalación R294. El ajuste final de controles/historial y
+traducciones necesita revisión independiente y CI/capturas del SHA exacto.
+Después: reconciliar los PRs, integrar, comprobar PR0 y los gates de main,
+publicar una release dual y ejecutar una promoción Boca protegida con postflight
+y limpieza selectiva. Luego, provisión administrativa y estado instalado.
+[Evidencia vigente](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889286186).
+
+Conservar caps y medir el runtime físico posdespliegue conforme a ADR0112.
+50 es el límite lógico global, no una capacidad medida; las cifras Firefox
+del runner no certifican al droplet. Aceptación Chrome/Samsung, capacidad
+concurrente y Telegram real se registran por separado. SIMULATION_ONLY,
+datos y aislamiento Porota/PPI siguen vigentes. Los incidentes históricos
+siguientes no autorizan repetir sus pruebas, releases o recuperaciones.
+
+## Histórico — 07/11/2026, R92 diagnóstico CODE_ONLY
 
 R91 [#831](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42372284155)
 informó `CLEANED/VERIFIED` del probe detenido #827; la causa exacta de su

@@ -270,6 +270,107 @@ def test_inspection_links_use_only_valid_private_session_identities() -> None:
     assert b"https://queue.example.invalid/path" in body
 
 
+@pytest.mark.parametrize("session_count", [0, 2, 50])
+def test_both_engine_controls_precede_all_session_histories(session_count: int) -> None:
+    engines = ("queues_tokens", "browsers_members")
+    identities = {engine: [str(uuid4()) for _ in range(session_count // 2)] for engine in engines}
+    page, body, _ = render(
+        snapshot={
+            "version": 1,
+            "engines": [
+                {
+                    "engine": engine,
+                    "state": "RUNNING",
+                    "sessions": [
+                        {"session_id": identity, "browser": "chromium"}
+                        for identity in identities[engine]
+                    ],
+                }
+                for engine in engines
+            ],
+        }
+    )
+
+    controls = [
+        body.index(f'id="{engine}-{suffix}"'.encode())
+        for engine in engines
+        for suffix in ("state", "start", "stop")
+    ]
+    histories = [
+        body.index(f'id="{engine}-{suffix}"'.encode())
+        for engine in engines
+        for suffix in ("sessions", "no-sessions")
+    ]
+    assert max(controls) < min(histories)
+    common_heading = b"<h2>Sesiones observadas</h2>"
+    assert body.count(common_heading) == 1
+    assert max(controls) < body.index(common_heading) < min(histories)
+    for engine, label in zip(engines, ("colas y tokens", "navegadores de socios"), strict=True):
+        heading = f"<h3>Sesiones de {label}</h3>".encode()
+        assert body.index(common_heading) < body.index(heading)
+        assert body.index(heading) < body.index(f'id="{engine}-sessions"'.encode())
+    rows = [attrs["data-session-id"] for tag, attrs in page.elements if tag == "li"]
+    assert rows == [identity for engine in engines for identity in identities[engine]]
+    links = [
+        attrs["href"]
+        for tag, attrs in page.elements
+        if tag == "a" and attrs.get("data-field") == "inspect"
+    ]
+    assert links == [f"/control/sesiones/{identity}" for identity in rows]
+    assert sum(tag == "h4" for tag, _ in page.elements) == session_count
+    assert len(page.forms) == 4
+
+
+_OBSERVATION_TEXT_CASES = (
+    ("QUEUE_ACTIVE", "Cola activa observada"),
+    ("PREQUEUE", "Prefila observada"),
+    ("QUEUE_INACTIVE", "La página informa que la cola no está activa"),
+    ("NO_EVENT_OBSERVED", "La página informa que no hay eventos disponibles"),
+    ("TARGET_OBSERVED", "Enlace de acceso recibido"),
+    ("ACCESS_OBSERVED", "Enlace de acceso recibido"),
+    ("CHALLENGE", "La página requiere intervención del titular"),
+    ("UNKNOWN", "Sin señales suficientes para determinar evento o cola"),
+    ("CHECK_FAILED", "No se pudo completar la comprobación"),
+    (None, "Sin dato"),
+    (0, "Sin dato"),
+    (False, "Sin dato"),
+    ([], "Sin dato"),
+    (["QUEUE_ACTIVE"], "Sin dato"),
+    ({}, "Sin dato"),
+    ({"toString": "QUEUE_ACTIVE"}, "Sin dato"),
+    ("UNRECOGNIZED_FROM_PAGE", "Sin dato"),
+    ("", "Sin dato"),
+    ("__proto__", "Sin dato"),
+    ("constructor", "Sin dato"),
+)
+
+
+@pytest.mark.parametrize(("value", "expected"), _OBSERVATION_TEXT_CASES)
+def test_initial_observation_labels_accept_only_recognized_strings(value, expected) -> None:
+    _, body, _ = render(
+        snapshot={
+            "version": 1,
+            "engines": [
+                {
+                    "engine": "queues_tokens",
+                    "sessions": [
+                        {
+                            "session_id": str(uuid4()),
+                            "outcome": value,
+                            "queue_state": value,
+                            "phase": "UNLISTED_PHASE",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    for field in ("outcome", "queue_state"):
+        assert f'data-field="{field}">{expected}</dd>'.encode() in body
+    assert b'data-field="phase">UNLISTED_PHASE</dd>' in body
+
+
 @pytest.mark.parametrize(
     ("state", "hidden", "disabled"),
     [
@@ -331,8 +432,7 @@ def test_received_queue_size_and_service_estimate_are_present_without_computatio
     )
 
 
-@pytest.mark.parametrize("present", [True, False])
-def test_actual_poll_script_updates_optional_recovery_without_replacing_its_operation(present):
+def _run_poll_script(snapshots, *, present=True, session_id=None):
     from boca_socios.panel import engine_view
 
     node = shutil.which("node")
@@ -355,6 +455,17 @@ function element(id) {
   });
   return elements.get(id);
 }
+let row = null;
+if (input.session_id) {
+  row = {dataset: {sessionId: input.session_id}, fields: new Map(),
+    querySelector(selector) {
+      if (!this.fields.has(selector)) this.fields.set(selector, {textContent: ''});
+      return this.fields.get(selector);
+    },
+    remove() { throw new Error('existing observation row removed'); }
+  };
+  element('queues_tokens-sessions').children = [row];
+}
 const operation = element('legacy-worker-recovery-form').elements.namedItem('operation_id');
 const context = {
   document: {hidden: true, getElementById: element, addEventListener() {}},
@@ -364,13 +475,16 @@ const context = {
 vm.runInNewContext(input.script, context, {timeout: 1000});
 (async () => {
   const results = [];
-  for (const state of ['NONE', 'REQUIRED', 'REQUESTED', 'CLAIMED', 'NONE']) {
-    snapshot = {version: 1, observed_at: '2020-01-01T12:00:00Z', context_limit: 50,
-      engines: [], legacy_recovery_state: state};
+  for (snapshot of input.snapshots) {
     await element('engines-refresh').click();
     const section = element('legacy-worker-recovery');
-    results.push(section ? {hidden: section.hidden,
-      disabled: element('legacy-worker-recovery-button').disabled} : null);
+    const result = {recovery: section ? {hidden: section.hidden,
+      disabled: element('legacy-worker-recovery-button').disabled} : null,
+      status: element('engines-live').textContent};
+    if (row) for (const field of ['outcome', 'queue_state', 'phase']) {
+      result[field] = row.querySelector('[data-field="' + field + '"]').textContent;
+    }
+    results.push(result);
   }
   process.stdout.write(JSON.stringify({results, operation: operation.value,
     status: element('engines-live').textContent}));
@@ -378,13 +492,35 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
 """
     completed = subprocess.run(  # noqa: S603 - actual static UI script, fixed offline DOM only
         [node, "-e", harness],
-        input=json.dumps({"script": engine_view._SCRIPT, "present": present}),
+        input=json.dumps(
+            {
+                "script": engine_view._SCRIPT,
+                "present": present,
+                "session_id": session_id,
+                "snapshots": snapshots,
+            }
+        ),
         capture_output=True,
         text=True,
         check=True,
         timeout=10,
     )
-    result = json.loads(completed.stdout)
+    return json.loads(completed.stdout)
+
+
+@pytest.mark.parametrize("present", [True, False])
+def test_actual_poll_script_updates_optional_recovery_without_replacing_its_operation(present):
+    snapshots = [
+        {
+            "version": 1,
+            "observed_at": "2020-01-01T12:00:00Z",
+            "context_limit": 50,
+            "engines": [],
+            "legacy_recovery_state": state,
+        }
+        for state in ("NONE", "REQUIRED", "REQUESTED", "CLAIMED", "NONE")
+    ]
+    result = _run_poll_script(snapshots, present=present)
     expected = [
         {"hidden": True, "disabled": True},
         {"hidden": False, "disabled": False},
@@ -392,6 +528,44 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
         {"hidden": False, "disabled": False},
         {"hidden": True, "disabled": True},
     ]
-    assert result["results"] == (expected if present else [None] * 5)
+    assert [item["recovery"] for item in result["results"]] == (expected if present else [None] * 5)
     assert result["operation"] == "original-operation_id"
     assert "históricos" not in result["status"]
+
+
+def test_actual_poll_script_translates_observations_without_value_coercion() -> None:
+    session_id = str(uuid4())
+    snapshots = [
+        {
+            "version": 1,
+            "observed_at": "2020-01-01T12:00:00Z",
+            "context_limit": 50,
+            "engines": [
+                {
+                    "engine": "queues_tokens",
+                    "state": "RUNNING",
+                    "requested_contexts": 1,
+                    "created": 1,
+                    "active": 1,
+                    "closed": 0,
+                    "failed": 0,
+                    "sessions": [
+                        {
+                            "session_id": session_id,
+                            "outcome": value,
+                            "queue_state": value,
+                            "phase": "UNLISTED_PHASE",
+                        }
+                    ],
+                }
+            ],
+        }
+        for value, _ in _OBSERVATION_TEXT_CASES
+    ]
+    result = _run_poll_script(snapshots, session_id=session_id)
+
+    for actual, (_, expected) in zip(result["results"], _OBSERVATION_TEXT_CASES, strict=True):
+        assert actual["status"] == "Estados y sesiones actualizados."
+        assert actual["outcome"] == expected
+        assert actual["queue_state"] == expected
+        assert actual["phase"] == "UNLISTED_PHASE"

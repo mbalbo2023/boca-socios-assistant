@@ -11,6 +11,11 @@ El panel distingue **motor de colas y tokens** y **motor de navegadores de socio
 Cada uno tiene inicio/detención, activación, estado y contextos propios. Comparten
 el worker existente: detener uno conserva el otro; la última liberación permite
 detener la infraestructura. Reiniciar el controller no reabre trabajos históricos.
+Ambos bloques de estado y controles preceden a los historiales de sesiones;
+abrir más sesiones no desplaza el segundo botón Detener detrás del historial
+del primer motor.
+Los resultados y estados de cola usan las mismas etiquetas comprensibles en
+la carga inicial y en las actualizaciones de la página.
 
 El presupuesto lógico total es de 50 contextos. La propuesta inicial del formulario
 es de 25 por motor: 15 Chromium, 5 Firefox y 5 WebKit, ajustables al límite compartido.
@@ -42,6 +47,14 @@ se incorpora al CI existente con fixtures ficticias y capturas del renderer real
 La observación protegida del droplet que existe hoy comprueba salud e identidades;
 no incluye un navegador autenticado en el panel privado. Las capturas del candidato,
 el postflight instalado y la aceptación del titular se registran por separado.
+
+La [evidencia de CI1256 y sus capturas](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889286186)
+corresponde a 2c35d22. El ajuste posterior de orden y traducciones requiere sus
+propios checks y capturas. Firefox alcanzó 144/143 tareas en dos pruebas del
+runner con límites 192/256; no es una medición del droplet. Se conservan los
+límites instalados y la política de [medición posdespliegue](docs/ADR/0112-postdeploy-resource-observation.md).
+La admisión simultánea de los tres tipos y de 50 contextos permanece sin
+certificación física; el panel informa lo que se logra crear y mantener.
 
 [Diseño y límites](docs/ADR/0302-independent-owner-engines.md),
 [plan de integración](docs/superpowers/plans/2026-11-15-r297-independent-engines.md).

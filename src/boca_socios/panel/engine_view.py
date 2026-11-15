@@ -61,6 +61,7 @@ _PHASES = {
     "COLD": "Sin activación en este arranque",
     "PHYSICAL_STOP_CONFIRMED_PENDING_RECONCILIATION": "Worker detenido; listo para iniciar una activación nueva",
 }
+_PHASES["ACCESS_OBSERVED"] = _PHASES["TARGET_OBSERVED"]
 _METRICS = {
     "requested_contexts": "Solicitados",
     "created": "Creados",
@@ -176,6 +177,11 @@ _SCRIPT = (
   function fieldValue(item, field) {
     if (field === 'state') return state(item.state);
     if (field === 'phase') return phase(item.phase);
+    if (field === 'outcome' || field === 'queue_state') {
+      const value = item[field];
+      return typeof value === 'string' && Object.hasOwn(phaseNames, value) ?
+        phaseNames[value] : 'Sin dato';
+    }
     if (field === 'observed_at') {
       return item.observed_at ? formatPrivateTime(item.observed_at) : 'Sin observación';
     }
@@ -444,6 +450,8 @@ def _session_value(session: Mapping[str, object], field: str) -> str:
         return _STATES.get(str(value), "Estado desconocido")
     if field == "phase":
         return _PHASES.get(str(value), _text(value))
+    if field in {"outcome", "queue_state"}:
+        return _PHASES.get(value, "Sin dato") if isinstance(value, str) else "Sin dato"
     if field == "observed_at":
         return _time(value)
     if field == "display_url":
@@ -571,7 +579,6 @@ def _section(
         and value.strip()
         and value != "UNKNOWN"
     }
-    rows = _session_rows(engine, sessions)
     current_member = ""
     if engine == "browsers_members":
         identifier = _uuid(item.get("member_id"))
@@ -600,11 +607,18 @@ def _section(
         f'<dd id="{engine}-queues">{len(queue_ids)}</dd></dl>'
         f'<p>Distribución solicitada: <span id="{engine}-counts">{distribution}</span></p>'
         + _forms(engine, item, csrf, operations, members, site_url_ready)
-        + "<h3>Sesiones observadas</h3>"
+        + "</section>"
+    )
+
+
+def _history(engine: str, item: Mapping[str, object]) -> str:
+    rows = _session_rows(engine, _entries(item.get("sessions")))
+    return (
+        f"<h3>Sesiones de {_ENGINES[engine]}</h3>"
         f'<p id="{engine}-no-sessions"'
         + (" hidden" if rows else "")
         + ">Sin sesiones observadas.</p>"
-        f'<ol id="{engine}-sessions">{rows}</ol></section>'
+        f'<ol id="{engine}-sessions">{rows}</ol>'
     )
 
 
@@ -652,6 +666,8 @@ def page(
         _section(name, item, csrf, operations, members, site_url_ready)
         for name, item in engines.items()
     )
+    content += "<h2>Sesiones observadas</h2>"
+    content += "".join(_history(name, item) for name, item in engines.items())
     content += (
         '<p><a href="/monitor/tokens">Abrir monitor privado de tokens</a></p>'
         "<noscript>La página conserva el estado de la última consulta. "

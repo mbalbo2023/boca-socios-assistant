@@ -1,6 +1,28 @@
 # Estado de integración BETA
 
-## Worker y evidencia R132
+## R297 — candidato único con QA incorporado, 15-NOV-2026 UTC
+
+PR517 reúne R295/R296 y las correcciones del titular. Main/última instalación
+certificada sigue en R294/c5a1435; no confundir el candidato con lo instalado.
+La [evidencia2c35d22](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889286186)
+cierra CI1256, scans y capturas offline tablet/móvil. El sucesor que ordena
+controles antes de historiales y traduce resultados requiere sus propios gates.
+
+| Alcance | Estado de evidencia |
+|---|---|
+| Dos motores bajo demanda, STOP independiente, sesiones y monitor | Implementados y verificados en el candidato; pendientes de promoción física |
+| Tres tipos de navegador y50 contextos globales | Presupuesto lógico implementado; capacidad simultánea del droplet sin medir |
+| Firefox con192/256 tareas | Recorrido mínimo PASS en runner, picos144/143; no modifica caps de producción |
+| Login Boca y Telegram recuperable | Código R295/R296 integrado en el mismo PR; aceptación externa/física separada |
+| Entrada y aviso al socio | SIMULATION_ONLY; un token o una captura no confirma una entrada |
+| Instalación y datos | Último par certificado R294; nueva release/APPLY/postflight aún pendientes |
+
+La promoción usa el [procedimiento vigente](OPERATIONS.md) y ADR0302. ADR0112
+impide usar márgenes no medidos como veto preventivo: conservar caps, medir
+después del despliegue y declarar capacidades aún no acreditadas. Los cortes
+siguientes son históricos y no reinician incidentes o instalaciones cerradas.
+
+## Histórico — worker y evidencia R132
 
 El [inventario #895](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/42664858124) encontró el controlador original sano y cero workers. La CI de R131 verificó siete escenarios en Docker. El titular autorizó la captura de R132 sólo en el worker Boca y un nuevo Cutover condicionado a la release exacta. La aceptación integral requiere el recibo físico de esa ejecución y las pruebas de producto aplicables. [Decisión y evidencia](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6754980250) · [ADR0222](ADR/0222-r132-worker-start-custody.md).
 

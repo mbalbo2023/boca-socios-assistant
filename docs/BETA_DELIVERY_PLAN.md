@@ -1,6 +1,29 @@
 # Plan de entrega y aceptación de la BETA funcional
 
-## Corte A45-R95 — cleanup R94 acreditado, preflight nuevo NO_GO (07/11/2026 ART)
+## R297 — una promoción del candidato consolidado, 15-NOV-2026 UTC
+
+La entrega autorizada continúa en PR517 sobre la última instalación R294/
+c5a1435. El titular aportó QA y amplió el alcance a dos motores independientes
+y50 contextos globales; se conservan los límites finitos y SIMULATION_ONLY.
+ADR0302 describe implementación y pruebas; ADR0112 exige dimensionamiento
+con medidas físicas posdespliegue. [Resultados actuales](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889286186).
+
+Cerrar el ajuste focal de pantalla con cuatro revisiones reales y checks
+del SHA exacto. Reconciliar los PRs en #45, integrar y exigir PR0/gates main.
+Publicar una release dual y ejecutar una única promoción por la Action Boca
+protegida: par observado, recursos retenidos observados después, APPLY,
+postflight y limpieza selectiva. Completar provisión administrativa y estado
+instalado sin abrir otra transacción de despliegue.
+
+Registrar por separado instalación, funcionamiento sintético, salud y custodia,
+capacidad física y aceptación del titular en Chrome/Telegram. Los PNG de CI
+no prueban una sesión privada instalada; los picos Firefox del runner no
+prueban50 contextos del host. Una operación incierta exige RCA y recuperación
+acotada, nunca repetirla a ciegas. Preservar todos los datos y no operar Porota
+ni PPI Watch. Los cortes siguientes son historia, no gates nuevos ni permiso
+para repetir incidentes cerrados.
+
+## Histórico Corte A45-R95 — cleanup R94 acreditado, preflight nuevo NO_GO (07/11/2026 ART)
 
 El PR [#436](https://github.com/mbalbo2023/boca-socios-assistant/pull/436)
 fue fusionado en `main=24417e457a93887a1def955aa2a283eff64c170a`:
