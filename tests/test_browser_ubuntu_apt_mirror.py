@@ -1,10 +1,11 @@
-"""APT mirror fallback must preserve signed Noble sources or refuse to rewrite."""
+"""APT mirror fallback preserves a selected signed suite or refuses to rewrite."""
 
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from scripts.browser_ubuntu_apt_mirror import MirrorSchemaError, rewrite_sources
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -14,9 +15,10 @@ MIRROR = "https://mirrors.edge.kernel.org/ubuntu/"
 KEY = "/usr/share/keyrings/ubuntu-archive-keyring.gpg"
 
 
-def _run_tool(root: Path) -> subprocess.CompletedProcess[str]:
+def _run_tool(root: Path, *, suite: str | None = None) -> subprocess.CompletedProcess[str]:
+    selection = [] if suite is None else ["--suite", suite]
     return subprocess.run(  # noqa: S603 - fixed script and isolated tmp_path, no shell
-        [sys.executable, str(ROOT / "scripts/browser_ubuntu_apt_mirror.py"), str(root)],
+        [sys.executable, str(ROOT / "scripts/browser_ubuntu_apt_mirror.py"), *selection, str(root)],
         text=True,
         capture_output=True,
         timeout=5,
@@ -244,3 +246,106 @@ def test_rejects_additional_enabled_apt_source_before_mutating(tmp_path: Path) -
     assert result.returncode != 0
     assert "BOCA_APT_FALLBACK state=NO_GO reason=SOURCES_SCHEMA" in result.stderr
     assert ubuntu.read_text(encoding="utf-8") == _deb822()
+
+
+def _resolute_source(source_format: str) -> str:
+    if source_format == "deb822":
+        return _deb822().replace("noble", "resolute")
+    return "".join(
+        f"deb [signed-by={KEY}] {uri} {suite} main universe\n"
+        for uri, suite in (
+            (ARCHIVE, "resolute"),
+            (ARCHIVE, "resolute-updates"),
+            (ARCHIVE, "resolute-backports"),
+            (SECURITY, "resolute-security"),
+        )
+    )
+
+
+def _write_source(tmp_path: Path, source_format: str, contents: str) -> Path:
+    source = (
+        tmp_path / "sources.list.d" / "ubuntu.sources"
+        if source_format == "deb822"
+        else tmp_path / "sources.list"
+    )
+    source.parent.mkdir(exist_ok=True)
+    source.write_text(contents, encoding="utf-8")
+    return source
+
+
+@pytest.mark.parametrize("source_format", ["deb822", "legacy"])
+def test_explicit_resolute_preserves_suite_keys_and_components(
+    tmp_path: Path, source_format: str
+) -> None:
+    original = _resolute_source(source_format)
+    source = _write_source(tmp_path, source_format, original)
+
+    rewrite_sources(tmp_path, suite="resolute")
+
+    assert source.read_text(encoding="utf-8") == original.replace(ARCHIVE, MIRROR).replace(
+        SECURITY, MIRROR
+    )
+
+
+@pytest.mark.parametrize("source_format", ["deb822", "legacy"])
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("resolute-security", "noble-security"),
+        ("resolute-updates", "noble-updates"),
+        ("resolute-backports", "resolute-proposed"),
+        (KEY, "/untrusted-keyring.gpg"),
+        ("main universe", "main outsider"),
+    ],
+)
+def test_resolute_refuses_mixed_pockets_or_changed_trust_without_mutating(
+    tmp_path: Path, source_format: str, old: str, new: str
+) -> None:
+    original = _resolute_source(source_format)
+    if old == "main universe" and source_format == "deb822":
+        old = "main restricted universe multiverse"
+    original = original.replace(old, new, 1)
+    source = _write_source(tmp_path, source_format, original)
+
+    with pytest.raises(MirrorSchemaError):
+        rewrite_sources(tmp_path, suite="resolute")
+
+    assert source.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize("suite", ["noble", "plucky", "resolute-updates", ""])
+def test_resolute_source_requires_exact_reviewed_suite_selection(
+    tmp_path: Path, suite: str
+) -> None:
+    original = _resolute_source("deb822")
+    source = _write_source(tmp_path, "deb822", original)
+
+    with pytest.raises(MirrorSchemaError):
+        rewrite_sources(tmp_path, suite=suite)
+
+    assert source.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize("suite", ["noble", "resolute"])
+def test_cli_selects_only_requested_suite(tmp_path: Path, suite: str) -> None:
+    original = _deb822().replace("noble", suite)
+    source = _write_source(tmp_path, "deb822", original)
+
+    result = _run_tool(tmp_path, suite=suite)
+
+    assert result.returncode == 0, result.stderr
+    assert source.read_text(encoding="utf-8") == original.replace(ARCHIVE, MIRROR).replace(
+        SECURITY, MIRROR
+    )
+
+
+def test_cli_rejects_unknown_suite_before_source_io(tmp_path: Path) -> None:
+    original = _deb822()
+    source = _write_source(tmp_path, "deb822", original)
+
+    result = _run_tool(tmp_path, suite="unreviewed-example")
+
+    assert result.returncode == 1
+    assert "detail=UNRECOGNIZED_UBUNTU_SUITE" in result.stderr
+    assert "unreviewed-example" not in result.stderr
+    assert source.read_text(encoding="utf-8") == original

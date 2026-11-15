@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import struct
 import zlib
@@ -132,6 +134,52 @@ def test_native_post_requires_exact_origin_fields_and_engine_fence():
         module.verify_post(
             module.post_url("browsers_members:start"), module.ORIGIN, urlencode(fields)
         )
+
+
+def test_page_error_callback_accepts_playwright_wrapper_cache_before_navigation():
+    """Playwright 1.64.1 caches its wrapper on non-method callback objects."""
+    module = _module()
+
+    class StopBeforeNavigation(Exception):
+        pass
+
+    class Page:
+        def on(self, event, callback):
+            assert event == "pageerror"
+            assert not inspect.ismethod(callback)
+            # The pinned mapper caches its wrapper on functions and built-ins.
+            # list.append is a built-in and cannot hold this attribute.
+            callback._pw_impl_instance_ = object()
+            self.callback = callback
+
+        async def goto(self, *args, **kwargs):
+            self.callback(RuntimeError("fixed offline page error"))
+            raise StopBeforeNavigation
+
+    class Context:
+        closed = False
+
+        def set_default_timeout(self, timeout):
+            assert timeout == 5000
+
+        async def route(self, *_args):
+            pass
+
+        async def new_page(self):
+            return Page()
+
+        async def close(self):
+            self.closed = True
+
+    context = Context()
+
+    class Browser:
+        async def new_context(self, **_kwargs):
+            return context
+
+    with pytest.raises(StopBeforeNavigation):
+        asyncio.run(module._viewport(Browser(), module.make_fixture(SOURCE_SHA), 800, 1280))
+    assert context.closed
 
 
 def test_verified_capture_writes_only_bounded_named_pngs_and_public_report(tmp_path):

@@ -134,3 +134,26 @@ invent user/device/provider evidence.
   holds. Preserve history, reuse an existing pending STOP, and require the real
   STOP/APPLIED receipt before engine START. A stale recovery form cannot stop a
   newly admitted engine. The recovered state does not manufacture an activation.
+
+## Required image correction after exact-candidate CI
+
+Design and four real pre-implementation GO votes are recorded in issue417
+comments6887845873 and6887901648. Current Firefox SIGSEGV/WebKit missing codec
+library block promotion; do not weaken CHECK_FAILED, STOP or custody semantics.
+
+- Image implementer owns Dockerfile.browser, closed two-architecture Python
+  download JSON, test_browser_apt_cve_2026_109518.py and browser packaging tests.
+  Use pinned official Playwright1.64.1-resolute digest with explicitly verified
+  CPython3.12.16/build20261110 under root-owned /opt/boca-python. Preserve uv0.13.4
+  and lock; absolute interpreter selection and no later Python downloads.
+  Pin same-suite corrected APT/Brotli/GStreamer before and after all3 dependency
+  installation. Remove whole build tools/ensurepip for system and managed Python.
+- Root owns only the existing APT mirror helper and its tests, adding closed
+  --suite resolute selection while preserving default Noble behavior and all
+  signature, recognized-source and mixed-pocket rejection requirements.
+- Consolidate the independently reviewed visual callback correction into this
+  follow-up. Architecture and QA independently review final changes before one
+  publication to the same PR. Verify untouched FULL/PAIR package membership.
+- Require exact-source build, unchanged strict scans, actual full3 launch/goto/
+  close and real Chromium visual artifact inspection. No host operation or
+  promotion is justified by the design vote alone.

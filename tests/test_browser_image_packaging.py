@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import json
 import os
 import re
 import subprocess
@@ -12,7 +14,10 @@ from pathlib import Path
 def test_browser_image_installs_pinned_package_and_fixed_worker_entrypoint() -> None:
     dockerfile = Path(__file__).resolve().parents[1] / "Dockerfile.browser"
     text = dockerfile.read_text(encoding="utf-8")
-    assert "mcr.microsoft.com/playwright/python:v1.64.1-noble@sha256:" in text
+    assert (
+        "mcr.microsoft.com/playwright/python:v1.64.1-resolute@sha256:"
+        "e0006b47eb8c8eb548acebc35ece5968a331051c8f33ae5cd45e9cafd65fdc83"
+    ) in text
     assert "PYTHONPATH=/app/src" in text
     assert "COPY src/boca_socios/browser/ ./src/boca_socios/browser/" in text
     assert "COPY src/boca_socios/domain/__init__.py src/boca_socios/domain/policy.py" in text
@@ -55,18 +60,17 @@ def test_browser_image_pythonpath_resolves_bare_synthetic_without_importing_blac
     assert result.stdout.strip() == str(root / "src/boca_socios/browser/synthetic.py")
 
 
-def test_browser_image_explicitly_installs_chromium_and_system_dependencies() -> None:
-    """Only the isolated worker image may install pinned Playwright Chromium OS libs."""
+def test_browser_image_explicitly_installs_all_three_locked_browsers_and_dependencies() -> None:
+    """The isolated worker must retain each requested browser's actual OS libraries."""
     browser = (Path(__file__).resolve().parents[1] / "Dockerfile.browser").read_text(
         encoding="utf-8"
     )
-    command = "/app/.venv/bin/python -m playwright install --with-deps chromium"
+    command = "/app/.venv/bin/python -m playwright install --with-deps chromium firefox webkit"
     assert command in browser
     assert browser.index("uv sync --locked --only-group browser") < browser.index(command)
     assert browser.index(command) < browser.index("-m pip uninstall --yes setuptools")
     assert browser.index(command) < browser.index("USER 10002:10002")
-    assert "playwright install --with-deps firefox" not in browser
-    assert "playwright install --with-deps webkit" not in browser
+    assert "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright" in browser
     install_step = browser.split(command, 1)[1].split("\n\n", 1)[0]
     assert "dpkg-query -W -f='${Version}' libbrotli1" in install_step
     assert "for pkg in gstreamer1.0-plugins-bad libgstreamer-plugins-bad1.0-0" in install_step
@@ -79,15 +83,17 @@ def test_controller_image_does_not_gain_browser_dependency_or_entrypoint() -> No
     assert "boca_socios.browser.ipc_worker" not in controller
 
 
-def test_browser_image_removes_unfixed_optional_multimedia_and_pins_python_fixes() -> None:
+def test_browser_image_keeps_exact_fixed_resolute_multimedia_and_python_fixes() -> None:
     dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile.browser").read_text(
         encoding="utf-8"
     )
+    for package in ("gstreamer1.0-plugins-bad", "libgstreamer-plugins-bad1.0-0"):
+        assert f"{package}=1.28.2-1ubuntu1.2" in dockerfile
     assert (
-        "apt-get purge --yes gstreamer1.0-plugins-bad libgstreamer-plugins-bad1.0-0" in dockerfile
+        dockerfile.count("for pkg in gstreamer1.0-plugins-bad libgstreamer-plugins-bad1.0-0") == 2
     )
-    assert "for pkg in gstreamer1.0-plugins-bad libgstreamer-plugins-bad1.0-0" in dockerfile
-    assert "dpkg-query -W" in dockerfile  # Positive post-removal image gate.
+    assert dockerfile.count('"1.28.2-1ubuntu1.2"') == 2
+    assert "apt-get purge" not in dockerfile
     assert "apt-get autoremove" not in dockerfile
     for name, fixed in {
         "certifi": "2026.10.18",
@@ -110,7 +116,7 @@ def test_browser_image_removes_unfixed_optional_multimedia_and_pins_python_fixes
 def test_browser_image_fixes_brotli_and_removes_build_only_vendored_python() -> None:
     text = (Path(__file__).resolve().parents[1] / "Dockerfile.browser").read_text(encoding="utf-8")
     assert "apt-get update" in text
-    assert "apt-get install --yes --no-install-recommends libbrotli1=1.1.0-2ubuntu0.1" in text
+    assert "libbrotli1=1.2.0-3ubuntu0.1" in text
     assert "dpkg-query -W -f='${Version}' libbrotli1" in text
     assert "-m pip uninstall --yes setuptools virtualenv uv" in text
     assert "-m pip uninstall --yes pip" in text
@@ -122,6 +128,90 @@ def test_browser_image_fixes_brotli_and_removes_build_only_vendored_python() -> 
     assert "root/.cache/virtualenv" in text
     assert text.index("uv sync --locked --only-group browser") < text.index("-m pip uninstall")
     assert "rm -f" not in text  # Never conceal only a vulnerable BOM or METADATA.
+
+
+def test_managed_python_downloads_are_closed_to_two_immutable_reviewed_archives() -> None:
+    """The uv override cannot select a floating runtime or an unreviewed origin."""
+    path = Path(__file__).resolve().parents[1] / "scripts/browser_python_downloads.json"
+    downloads = json.loads(path.read_text(encoding="utf-8"))
+    hashes = {
+        "x86_64": "6a9e62dad033790aef722dbd370e0ce76ce17b73627ba3ae679f537049350b39",
+        "aarch64": "b6a41defec4975d94b4ff1950236e7383e5c02ba40ea48c9ec33c66087a35aab",
+    }
+    expected = {
+        f"cpython-3.12.16-linux-{arch}-gnu": {
+            "name": "cpython",
+            "arch": {"family": arch, "variant": None},
+            "os": "linux",
+            "libc": "gnu",
+            "major": 3,
+            "minor": 12,
+            "patch": 16,
+            "prerelease": "",
+            "url": (
+                "https://github.com/astral-sh/python-build-standalone/releases/download/"
+                f"20261110/cpython-3.12.16%2B20261110-{arch}-unknown-linux-gnu-"
+                "install_only_stripped.tar.gz"
+            ),
+            "sha256": digest,
+            "variant": None,
+            "build": "20261110",
+        }
+        for arch, digest in hashes.items()
+    }
+    assert downloads == expected
+
+
+def test_browser_venv_uses_the_verified_managed_runtime_without_implicit_downloads() -> None:
+    text = (Path(__file__).resolve().parents[1] / "Dockerfile.browser").read_text(encoding="utf-8")
+    assert "uv==0.13.4" in text
+    assert (
+        "--mount=type=bind,source=scripts/browser_python_downloads.json,"
+        "target=/tmp/boca_python_downloads.json,readonly"
+    ) in text
+    assert "UV_PYTHON_CPYTHON_BUILD=20261110" in text
+    assert "--python-downloads-json-url=/tmp/boca_python_downloads.json" in text
+    assert "--install-dir=/opt/boca-python --no-bin 3.12.16" in text
+    assert (
+        'managed_python="$(uv python find --managed-python --no-python-downloads 3.12.16)"' in text
+    )
+    assert 'ln -s "$managed_python" /opt/boca-python/python3.12' in text
+    sync = next(
+        line for line in text.replace("\\\n", "").splitlines() if line.startswith("RUN uv sync ")
+    )
+    assert "--python /opt/boca-python/python3.12 --no-python-downloads" in sync
+    assert text.index("uv python install") < text.index("ENV UV_PYTHON_DOWNLOADS=never")
+    assert text.index("ENV UV_PYTHON_DOWNLOADS=never") < text.index("RUN uv sync ")
+    assert "COPY scripts/browser_python_downloads.json" not in text
+    assert "sys.version_info[:3] == (3, 12, 16)" in text
+    assert 'is_relative_to("/opt/boca-python")' in text
+    final_check = text.split("USER 10002:10002", 1)[1]
+    assert "RUN python -c " in final_check
+    assert "sys.version_info[:3] == (3, 12, 16)" in final_check
+
+
+def test_build_cleanup_covers_system_managed_and_venv_without_hiding_metadata() -> None:
+    text = (Path(__file__).resolve().parents[1] / "Dockerfile.browser").read_text(encoding="utf-8")
+    assert "/usr/bin/python3 -m pip uninstall --yes setuptools virtualenv uv" in text
+    assert (
+        "/opt/boca-python/python3.12 -m pip uninstall --yes --break-system-packages pip"
+    ) in text
+    assert (
+        "for interpreter in /usr/bin/python3 /opt/boca-python/python3.12 /app/.venv/bin/python"
+    ) in text
+    assert 'sysconfig.get_path("stdlib")' in text
+    assert 'sysconfig.get_path("purelib")' in text
+    assert 'sysconfig.get_path("platlib")' in text
+    assert "shutil.rmtree(bootstrap)" in text
+    assert '"ensurepip"' in text
+    assert "chmod -R a+rX,go-w /opt/boca-python /app/.venv" in text
+    assert "st_uid == 0" in text and "st_gid == 0" in text
+    assert "st_mode & 0o022" in text
+    # Compile the actual embedded Python checks, without importing any app/browser code.
+    checks = re.findall(r" -c '([^']*)'", text)
+    assert len(checks) >= 6
+    for check in checks:
+        ast.parse(check)
 
 
 def test_existing_security_workflow_scans_browser_as_strictly_as_controller() -> None:

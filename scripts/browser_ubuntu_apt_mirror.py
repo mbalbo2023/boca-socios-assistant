@@ -1,7 +1,8 @@
-"""Switch a recognized, Ubuntu-signed Noble archive to an independent mirror.
+"""Switch a recognized, signed Noble or Resolute archive to another mirror.
 
 Build-time only: invoked after a failed apt update in Dockerfile.browser.
 Only archive URIs change; signatures, suites and package pins remain enforced.
+The default is Noble; Resolute requires the explicit ``--suite resolute`` flag.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ ARCHIVE_URIS = {
 }
 SECURITY_URIS = {SECURITY, SECURITY[:-1]}
 COMPONENT_SET = set(COMPONENTS.split())
+REVIEWED_SUITES = frozenset({"noble", "resolute"})
 
 
 class MirrorSchemaError(ValueError):
@@ -49,7 +51,7 @@ def _components_verified(value: str) -> bool:
     )
 
 
-def _rewrite_deb822(source: str) -> str:
+def _rewrite_deb822(source: str, suite: str) -> str:
     # Ubuntu source files may contain comments from the image publisher.
     # Ignore them for schema verification but preserve their original bytes.
     chunks: list[list[str]] = []
@@ -102,9 +104,13 @@ def _rewrite_deb822(source: str) -> str:
             or fields["Signed-By"] != KEY
             or not _components_verified(fields["Components"])
             or fields["Suites"]
-            != ("noble-security" if kind == "security" else "noble noble-updates noble-backports")
+            != (
+                f"{suite}-security"
+                if kind == "security"
+                else f"{suite} {suite}-updates {suite}-backports"
+            )
         ):
-            raise MirrorSchemaError("unrecognized signed Noble pocket")
+            raise MirrorSchemaError("unrecognized signed Ubuntu pocket")
         if component_set is not None and current_components != component_set:
             raise MirrorSchemaError("unequal Ubuntu component pockets")
         component_set = current_components
@@ -117,12 +123,12 @@ def _rewrite_deb822(source: str) -> str:
     )
 
 
-def _rewrite_legacy(source: str) -> str:
+def _rewrite_legacy(source: str, suite: str) -> str:
     expected = {
-        ("archive", "noble"),
-        ("archive", "noble-updates"),
-        ("archive", "noble-backports"),
-        ("security", "noble-security"),
+        ("archive", suite),
+        ("archive", f"{suite}-updates"),
+        ("archive", f"{suite}-backports"),
+        ("security", f"{suite}-security"),
     }
     observed: set[tuple[str, str]] = set()
     component_set: set[str] | None = None
@@ -160,7 +166,9 @@ def _has_enabled_lines(path: Path) -> bool:
     )
 
 
-def rewrite_sources(apt_etc: Path) -> None:
+def rewrite_sources(apt_etc: Path, *, suite: str = "noble") -> None:
+    if suite not in REVIEWED_SUITES:
+        raise MirrorSchemaError("unrecognized Ubuntu suite")
     deb822 = apt_etc / "sources.list.d" / "ubuntu.sources"
     legacy = apt_etc / "sources.list"
     active_legacy = legacy.exists() and _has_enabled_lines(legacy)
@@ -187,16 +195,24 @@ def rewrite_sources(apt_etc: Path) -> None:
         raise MirrorSchemaError("missing Ubuntu APT source")
 
     original = source.read_text(encoding="utf-8")
-    revised = transform(original)
+    revised = transform(original, suite)
     if revised == original:
         raise MirrorSchemaError("no archive URI change")
     source.write_text(revised, encoding="utf-8")
 
 
 def main() -> int:
-    apt_etc = Path(sys.argv[1]) if len(sys.argv) == 2 else Path("/etc/apt")
     try:
-        rewrite_sources(apt_etc)
+        arguments = sys.argv[1:]
+        suite = "noble"
+        if arguments[:1] == ["--suite"]:
+            if len(arguments) < 2:
+                raise MirrorSchemaError("missing Ubuntu suite selector")
+            suite, arguments = arguments[1], arguments[2:]
+        if len(arguments) > 1 or (arguments and arguments[0].startswith("-")):
+            raise MirrorSchemaError("unrecognized source arguments")
+        apt_etc = Path(arguments[0]) if arguments else Path("/etc/apt")
+        rewrite_sources(apt_etc, suite=suite)
     except MirrorSchemaError as exc:
         # Diagnostic detail is selected from our fixed parser errors only.
         # It cannot include source URIs, tokens, keys, or file contents.

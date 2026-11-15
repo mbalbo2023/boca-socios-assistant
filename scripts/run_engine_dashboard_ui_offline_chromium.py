@@ -415,7 +415,11 @@ async def _viewport(
 
         await context.route("**/*", route_document)
         page = await context.new_page()
-        page.on("pageerror", errors.append)
+
+        def record_page_error(error: object) -> None:
+            errors.append(error)
+
+        page.on("pageerror", record_page_error)
         await page.goto(PAGE_URL, wait_until="load", timeout=10_000)
         await page.wait_for_function(
             "document.getElementById('engines-checked').textContent.includes('2020-01-01')"

@@ -259,3 +259,56 @@ técnicas y bibliotecas de una lista cerrada, sin publicar stderr ni alterar
 caps, sandbox, red o dependencias. No se restauran paquetes GStreamer
 vulnerables. Los resultados nuevos deben registrarse antes de afirmar
 disponibilidad de los tres motores de navegador.
+
+## Corrección de imagen full3 aprobada antes de implementar
+
+[CI1252](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43666031375)
+aprueba 9162 tests, 34 subtests y los laboratorios reales de IPC/UID/systemd.
+El recorrido visual falla al registrar un método builtin como callback: el
+mapper del wheel Playwright 1.64.1 verificado necesita guardar un atributo en
+el callable. Una función Python normal conserva la colección de errores;
+la regresión reproduce RED→GREEN sin navegador y tiene revisión independiente.
+
+[Full3 #2](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43666093130)
+confirma Chromium PASS, Firefox SIGSEGV durante goto y WebKit sin
+libgstcodecparsers-1.0.so.0. Es un bloqueo funcional de los defaults; se conserva
+CHECK_FAILED y la retención de custodia, sin declarar disponibles los tres tipos.
+
+El [diseño previo](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6887845873)
+y la [unanimidad real de los cuatro revisores](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6887901648)
+aprueban una corrección acotada en PR517: base oficial Playwright
+v1.64.1-resolute por digest e0006b47eb8c8eb548acebc35ece5968a331051c8f33ae5cd45e9cafd65fdc83,
+con CPython 3.12.16/build20261110 explícito y verificado bajo /opt/boca-python.
+El contrato Python3.12/uv0.13.4/uv.lock no cambia. Metadatos cerrados por dos
+arquitecturas fijan URL y SHA256 de la release Astral inmutable; la venv usa
+el intérprete absoluto y prohíbe descargas posteriores. La base trae Python3.14,
+que no puede seleccionarse implícitamente para la aplicación.
+
+APT y libapt-pkg7.0 quedan en 3.2.1ubuntu0.1, Brotli en 1.2.0-3ubuntu0.1
+y ambos paquetes GStreamer Bad en 1.28.2-1ubuntu1.2. Las fichas oficiales de
+[APT](https://packages.ubuntu.com/resolute/apt),
+[Brotli](https://packages.ubuntu.com/resolute/libbrotli1) y
+[GStreamer](https://packages.ubuntu.com/resolute/libgstreamer-plugins-bad1.0-0)
+publican esas versiones de seguridad para amd64/arm64; el build debe comprobar
+su disponibilidad firmada efectiva. El helper de mirror
+admite sólo Noble o Resolute explícito, preservando firmas y pockets coherentes.
+Playwright instala las dependencias de los tres tipos y se reafirman los pins.
+Se retiran herramientas de build completas, vendorizadas y ensurepip de ambos
+intérpretes, conservando runtime y licencias. No se repite el experimento Debian
+de PR332, ya rechazado por sus hallazgos OS.
+
+Se mantienen UID10002, sandbox, seccomp, sólo lectura, caps y controles de
+custodia. Los dos escaneos HIGH/CRITICAL, full3 real, CI/IPC y capturas del SHA
+resultante son gates; el GO de diseño no acredita que el cambio resuelva Firefox,
+capacidad física de 50 contextos, funcionamiento instalado ni aceptación humana.
+
+La [revisión posterior unánime del código](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6888068255)
+aprueba la corrección de imagen/helper/callback en sus alcances independientes.
+El autor verifica 26 contratos afectados, el helper 41 y el runner visual 21;
+arquitectura y QA comprueban nueve casos de imagen cada uno. QA verifica además
+los cuatro caminos reales del comando shell de APT con fronteras inertes, sin
+añadir errexit: los fallos de helper o segundo update impiden instalaciones.
+Los recuentos se solapan. Los diez archivos quedan fuera del cierre FULL/PAIR.
+El metadata JSON conserva 1104 bytes y SHA256
+01ae08bf7eb4ccb517766aa73526ec0e9a660581eff6fb34f44939528c5185b6.
+Build, scans, full3 y capturas del nuevo SHA siguen siendo evidencia pendiente.
