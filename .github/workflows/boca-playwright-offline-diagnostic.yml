@@ -84,6 +84,8 @@ jobs:
                   "memory": ("out of memory", "cannot allocate memory", "oom"),
                   "process": ("resource temporarily unavailable", "pthread_create", "fork failed"),
                   "signal": ("sigsys", "sigsegv", "sigabrt", "sigkill"),
+                  "protocol": ("protocol error (",),
+                  "xpcom": ("ns_error_",),
               }
               # Public browser/GStreamer SONAMEs only; arbitrary loader text
               # or a path can never become a field in the public receipt.
@@ -120,49 +122,180 @@ jobs:
                   "sigsegv": ("sigsegv",),
                   "sigabrt": ("sigabrt",),
                   "sigkill": ("sigkill",),
+                  "page_closed": ("page has been closed.", "target page, context or browser has been closed"),
+                  "unexpected_tabs": ("unexpected number of tabs in the new window:",),
+                  "blank_url_mismatch": ("internal_blank_url_mismatch",),
+                  "connection_unverified": ("browser_connection_unverified",),
               }
-              exit_match = re.search(r"(?:exitcode|exit code|code)[=:] ?(-?[0-9]{1,3})(?![0-9])", observed)
+              # The complete process-exit envelope excludes XPCOM hex codes
+              # and unrelated numbers. A first failure excludes later cleanup.
+              exit_match = re.search(
+                  r"<process did exit: exitcode=(-?[0-9]{1,3}), signal=(?:null|sig[a-z]{1,10})>",
+                  observed,
+              )
+              methods = {
+                  method.lower(): method for method in (
+                      "Browser.createBrowserContext", "Browser.setDownloadOptions",
+                      "Browser.setDefaultViewport", "Browser.setInitScripts",
+                      "Browser.setColorScheme", "Browser.setReducedMotion",
+                      "Browser.setForcedColors", "Browser.setContrast", "Browser.addBinding",
+                      "Browser.newPage", "Page.setInitScripts",
+                      "Browser.removeBrowserContext", "Browser.close",
+                  )
+              }
+              protocol_match = re.search(r"protocol error \(([^)\r\n]{1,80})\)", observed)
+              protocol = "none"
+              if "protocol error (" in observed:
+                  protocol = methods.get(protocol_match.group(1), "unlisted") if protocol_match else "unlisted"
+              xpcom_codes = {
+                  "ns_error_failure": "failure",
+                  "ns_error_not_available": "not_available",
+                  "ns_error_out_of_memory": "oom",
+                  "ns_error_file_no_device_space": "file_no_space",
+                  "ns_error_file_read_only": "file_read_only",
+                  "ns_error_file_access_denied": "file_access_denied",
+              }
+              xpcom = ",".join(
+                  label for code, label in xpcom_codes.items()
+                  if re.search(r"(?<![a-z0-9_])" + code + r"(?![a-z0-9_])", observed)
+              ) or ("unlisted" if "ns_error_" in observed else "none")
               return {
                   "categories": ",".join(k for k, tokens in flags.items() if any(t in observed for t in tokens)) or "unclassified",
                   "exit_code": exit_match.group(1) if exit_match else "unknown",
                   "missing_library": missing,
                   "markers": ",".join(k for k, tokens in markers.items() if any(t in observed for t in tokens)) or "none",
+                  "protocol": protocol,
+                  "xpcom": xpcom,
               }
+
+          def probe_engine(name, read_stderr):
+              browser = context = page = None
+              context_close = browser_close = "not_created"
+              driver_close = "not_entered"
+              connected_before_close = None
+              failure = None
+              phase = "driver_start"
+
+              def connection_state():
+                  if browser is None:
+                      return "false"
+                  try:
+                      value = browser.is_connected()
+                      return "true" if value is True else "false" if value is False else "unknown"
+                  except Exception:
+                      return "unknown"
+
+              def failure_snapshot(error):
+                  try:
+                      stderr = read_stderr()[:65536]
+                      stderr_read = "observed"
+                  except Exception:
+                      stderr = ""
+                      stderr_read = "unavailable"
+                  error_type = type(error).__name__
+                  reason = error_type if error_type in (
+                      "Error", "TimeoutError", "TargetClosedError", "RuntimeError",
+                      "OSError", "ValueError", "TypeError", "AttributeError",
+                  ) else "UnexpectedError"
+                  return {
+                      "state": "NO_GO", "phase": phase, "reason": reason,
+                      "stderr_read": stderr_read,
+                      **failure_details(str(error)[:16384] + "\n" + stderr),
+                  }
+
+              try:
+                  with sync_playwright() as api:
+                      driver_close = "pending"
+                      try:
+                          phase = "launch"
+                          browser_type = getattr(api, name)
+                          options = {"chromium_sandbox": True, "args": ["--disable-background-networking"]} if name == "chromium" else {}
+                          browser = browser_type.launch(headless=True, timeout=20000, **options)
+                          browser_close = "pending"
+                          phase = "new_context"
+                          context = browser.new_context(
+                              java_script_enabled=True, service_workers="block",
+                              accept_downloads=False, ignore_https_errors=False,
+                          )
+                          context_close = "pending"
+                          phase = "new_page"
+                          page = context.new_page()
+                          phase = "goto"
+                          page.goto("about:blank", timeout=10000)
+                          if page.url != "about:blank":
+                              raise RuntimeError("internal_blank_url_mismatch")
+                          phase = "connection_check"
+                          connected_before_close = connection_state()
+                          if connected_before_close != "true":
+                              raise RuntimeError("browser_connection_unverified")
+                          phase = "context_close"
+                          context_close = "failed"
+                          context.close()
+                          context_close = "closed"
+                          phase = "browser_close"
+                          browser_close = "failed"
+                          browser.close()
+                          browser_close = "closed"
+                      except Exception as error:
+                          if connected_before_close is None:
+                              connected_before_close = connection_state()
+                          # Preserve this failure before any fallback close can
+                          # append a normal process exit or a second exception.
+                          failure = failure_snapshot(error)
+                      finally:
+                          if context_close == "pending":
+                              try:
+                                  context.close()
+                                  context_close = "closed"
+                              except Exception:
+                                  context_close = "failed"
+                          if browser_close == "pending":
+                              try:
+                                  browser.close()
+                                  browser_close = "closed"
+                              except Exception:
+                                  browser_close = "failed"
+                      phase = "driver_close"
+              except Exception as error:
+                  if failure is None:
+                      if connected_before_close is None:
+                          connected_before_close = connection_state()
+                      failure = failure_snapshot(error)
+                  if driver_close == "pending":
+                      driver_close = "failed"
+              else:
+                  driver_close = "closed"
+              if failure is None and (
+                  context_close != "closed" or browser_close != "closed" or driver_close != "closed"
+              ):
+                  failure = {"state": "NO_GO", "phase": "cleanup", "reason": "CloseUnconfirmed"}
+              result = failure or {"state": "PASS", "phase": "complete", "reason": "none"}
+              result.update({
+                  "connected_before_close": connected_before_close or "unknown",
+                  "context_created": "true" if context is not None else "false",
+                  "page_created": "true" if page is not None else "false",
+                  "context_close": context_close, "browser_close": browser_close,
+                  "driver_close": driver_close,
+              })
+              return result
 
           name = os.environ["BOCA_PLAYWRIGHT_ENGINE"]
           if name not in ("chromium", "firefox", "webkit"):
               raise SystemExit("BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO reason=invalid_engine")
-          phase = "launch"
           with tempfile.TemporaryFile() as probe:
               saved_stderr = os.dup(2)
               try:
                   os.dup2(probe.fileno(), 2)
-                  try:
-                      with sync_playwright() as api:
-                          browser_type = getattr(api, name)
-                          options = {"chromium_sandbox": True, "args": ["--disable-background-networking"]} if name == "chromium" else {}
-                          browser = browser_type.launch(headless=True, timeout=20000, **options)
-                          try:
-                              phase = "new_page"
-                              page = browser.new_page()
-                              phase = "goto"
-                              page.goto("about:blank", timeout=10000)
-                              if page.url != "about:blank":
-                                  raise RuntimeError("internal_blank_url_mismatch")
-                          finally:
-                              try:
-                                  browser.close()
-                              except Exception:
-                                  pass
-                  except Exception as error:
-                      os.lseek(probe.fileno(), 0, os.SEEK_SET)
-                      observed = (str(error)[:16384] + "\n" + os.read(probe.fileno(), 65536).decode("utf-8", "replace")).lower()
-                      details = " ".join(f"{key}={value}" for key, value in failure_details(observed).items())
-                      raise SystemExit(f"BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO engine={name} phase={phase} reason={type(error).__name__} {details}") from None
+                  result = probe_engine(
+                      name, lambda: os.pread(probe.fileno(), 65536, 0).decode("utf-8", "replace")
+                  )
               finally:
                   os.dup2(saved_stderr, 2)
                   os.close(saved_stderr)
-          print(f"BOCA_FULL_PLAYWRIGHT_LAUNCH engine={name} state=PASS offline=true blackbox=UNTOUCHED")
+          details = " ".join(f"{key}={value}" for key, value in result.items() if key != "state")
+          if result["state"] != "PASS":
+              raise SystemExit(f"BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO engine={name} {details}")
+          print(f"BOCA_FULL_PLAYWRIGHT_LAUNCH engine={name} state=PASS offline=true blackbox=UNTOUCHED {details}")
           ' ; then
               printf 'BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO engine=%s phase=container reason=NONZERO_OR_TIMEOUT\n' "$engine" >&2
               failures=$((failures + 1))

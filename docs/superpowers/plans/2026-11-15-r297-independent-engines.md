@@ -157,3 +157,24 @@ library block promotion; do not weaken CHECK_FAILED, STOP or custody semantics.
 - Require exact-source build, unchanged strict scans, actual full3 launch/goto/
   close and real Chromium visual artifact inspection. No host operation or
   promotion is justified by the design vote alone.
+
+## Bounded diagnostic follow-up after CI1253
+
+Issue417 comments6888166845/6888180796 register the observed failures and four
+actual design GO votes before code. Keep the built Resolute image unchanged.
+The full3 implementer owns only the manual diagnostic workflow and its tests:
+separate explicit context/page phases, retain original evidence before cleanup,
+close protocol/XPCOM categories, reject hexadecimal codes as process exits and
+require successful cleanup for PASS. The visual implementer owns only its runner
+and tests: fixed step/viewport and bounded counts, preserving every timeout and
+proof check. Root owns documentation. QA/root and cross-reviewers independently
+review the resulting changes before publication. A subsequent hosted run may
+diagnose the failures; do not relabel this instrumentation as a runtime fix.
+
+Final cross-review is recorded in issue417 comment6888353010: architecture,
+operation/visual, QA and root delivered actual GO votes with authors excluded
+from independent approval of their own files. Full3 author39+5 and visual
+author34 PASS; independent focal counts4/13/18/13 overlap. Lint/format/diff-check
+PASS and the six paths do not alter FULL/PAIR. Publish only this diagnostic delta
+and require its hosted evidence. Image security1082 on parentab3f189 is a separate
+first scan of the new image; it cannot certify a future candidate SHA.

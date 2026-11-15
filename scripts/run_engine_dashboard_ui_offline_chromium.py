@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl
 
 if TYPE_CHECKING:
-    from playwright.async_api import Browser, Page, Route
+    from playwright.async_api import Browser, BrowserContext, Page, Route
 
 ORIGIN = "http://localhost:8443"
 PAGE_URL = ORIGIN + "/control"
@@ -118,6 +118,95 @@ _FAILURE_REASONS = frozenset(
         "screenshot_unverified",
     }
 )
+_PROBE_STEPS = frozenset(
+    {
+        "playwright_start",
+        "browser_launch",
+        "context_create",
+        "context_setup",
+        "route_install",
+        "page_create",
+        "page_error_hook",
+        "document_load",
+        "initial_timestamp",
+        "initial_live_poll",
+        "initial_start",
+        "required_member",
+        "initial_inputs",
+        "queues_start",
+        "members_start",
+        "running_refresh",
+        "running_rows",
+        "initial_session",
+        "running_controls",
+        "preserved_inputs_prepare",
+        "live_rows_poll",
+        "session_preserved",
+        "live_projection",
+        "stop_fences",
+        "private_metadata",
+        "queues_stop",
+        "queues_stopped_refresh",
+        "queues_stopped_poll",
+        "independent_stop",
+        "layout",
+        "screenshot",
+        "screenshot_verify",
+        "members_stop",
+        "members_stopped_refresh",
+        "members_stopped_poll",
+        "final_evidence",
+        "viewport_capture_encode",
+        "context_close",
+        "browser_close",
+        "playwright_close",
+    }
+)
+_PROBE_COUNTER_LIMITS = {
+    "snapshot_phase": 4,
+    "documents": 1,
+    "snapshots": 24,
+    "native_posts": 4,
+    "rejected": 24,
+    "page_errors": 24,
+}
+
+
+def _probe_failure_report(
+    step: object,
+    error: BaseException,
+    *,
+    width: object = None,
+    height: object = None,
+    counts: object = None,
+    cleanup: object = "NOT_CREATED",
+) -> str:
+    """Bound proof metadata without serializing exceptions, URLs or page data."""
+    safe_step = step if type(step) is str and step in _PROBE_STEPS else "UNKNOWN"
+    viewport = "UNKNOWN"
+    if type(width) is int and type(height) is int:
+        for known_width, known_height, _ in VIEWPORTS:
+            if (width, height) == (known_width, known_height):
+                viewport = f"{known_width}x{known_height}"
+    fields = []
+    for key, maximum in _PROBE_COUNTER_LIMITS.items():
+        value = counts.get(key) if type(counts) is dict else None
+        bounded = "UNKNOWN"
+        if type(value) is int and value >= 0:
+            bounded = str(value) if value <= maximum else "OVER_LIMIT"
+        fields.append(f"{key}={bounded}")
+    error_type = type(error).__name__
+    safe_type = error_type if error_type in _FAILURE_TYPES else "UNKNOWN"
+    safe_cleanup = (
+        cleanup
+        if type(cleanup) is str and cleanup in {"NOT_CREATED", "CLOSED", "FAILED"}
+        else "UNKNOWN"
+    )
+    return (
+        f"BOCA_ENGINE_UI_PROBE state=NO_GO step={safe_step} viewport={viewport} "
+        + " ".join(fields)
+        + f" error_type={safe_type} cleanup={safe_cleanup}"
+    )
 
 
 def _failure_report(phase: str, error: Exception) -> str:
@@ -361,11 +450,29 @@ async def _viewport(
     documents = snapshots = rejected = 0
     posts: list[str] = []
     errors: list[object] = []
-    context = await browser.new_context(
-        accept_downloads=False, service_workers="block", viewport={"width": width, "height": height}
-    )
-    context.set_default_timeout(5000)
+    context: BrowserContext | None = None
+    failure: BaseException | None = None
+    failure_counts: dict[str, int] | None = None
+    step = "context_create"
+
+    def counters() -> dict[str, int]:
+        return {
+            "snapshot_phase": phase,
+            "documents": documents,
+            "snapshots": snapshots,
+            "native_posts": len(posts),
+            "rejected": rejected,
+            "page_errors": len(errors),
+        }
+
     try:
+        context = await browser.new_context(
+            accept_downloads=False,
+            service_workers="block",
+            viewport={"width": width, "height": height},
+        )
+        step = "context_setup"
+        context.set_default_timeout(5000)
 
         async def route_document(route: Route) -> None:
             nonlocal documents, snapshots, rejected
@@ -413,57 +520,76 @@ async def _viewport(
             rejected += 1
             await route.abort()
 
+        step = "route_install"
         await context.route("**/*", route_document)
+        step = "page_create"
         page = await context.new_page()
 
         def record_page_error(error: object) -> None:
             errors.append(error)
 
+        step = "page_error_hook"
         page.on("pageerror", record_page_error)
+        step = "document_load"
         await page.goto(PAGE_URL, wait_until="load", timeout=10_000)
+        step = "initial_timestamp"
         await page.wait_for_function(
             "document.getElementById('engines-checked').textContent.includes('2020-01-01')"
         )
+        step = "initial_live_poll"
         await page.wait_for_function(
             "document.getElementById('engines-live').textContent !== 'Último estado disponible.'"
         )
+        step = "initial_start"
         for engine in ENGINES:
             if await page.locator(f"#{engine}-start-button").is_disabled():
                 raise RuntimeError("initial_start_unverified")
+        step = "required_member"
         await page.locator("#browsers_members-start-button").click()
         if posts or not await page.locator("#browsers_members-member").evaluate(
             "node => node.matches(':invalid')"
         ):
             raise RuntimeError("required_member_unverified")
+        step = "initial_inputs"
         for engine in ENGINES:
             fields = expected_post_fields(engine + ":start")
             for browser_name in ("chromium", "firefox", "webkit"):
                 await page.locator(f"#{engine}-{browser_name}").fill(fields[browser_name])
         await page.locator("#browsers_members-member").select_option(_MEMBERS[1])
+        step = "queues_start"
         await _submit(page, POST_ORDER[0])
+        step = "members_start"
         await _submit(page, POST_ORDER[1])
 
         phase = 1
+        step = "running_refresh"
         await page.locator("#engines-refresh").click()
+        step = "running_rows"
         await page.wait_for_function("document.querySelectorAll('[data-session-id]').length === 2")
+        step = "initial_session"
         original_row = await page.locator(f'[data-session-id="{_identity(301)}"]').element_handle()
         if original_row is None:
             raise RuntimeError("initial_session_unverified")
+        step = "running_controls"
         for engine in ENGINES:
             if not await page.locator(f"#{engine}-start-button").is_disabled():
                 raise RuntimeError("running_start_unverified")
             if await page.locator(f"#{engine}-stop-button").is_disabled():
                 raise RuntimeError("running_stop_unverified")
         # Edits for the next activation must survive the genuine 5-second poll.
+        step = "preserved_inputs_prepare"
         await page.locator("#queues_tokens-chromium").fill("19")
         await page.locator("#browsers_members-chromium").fill("11")
         await page.locator("#browsers_members-member").select_option(_MEMBERS[0])
         phase = 2
+        step = "live_rows_poll"
         await page.wait_for_function(
             "document.querySelectorAll('[data-session-id]').length === 3", timeout=7000
         )
+        step = "session_preserved"
         if not await original_row.evaluate("node => node.isConnected"):
             raise RuntimeError("existing_session_replaced")
+        step = "live_projection"
         if (
             await page.locator("#queues_tokens-chromium").input_value() != "19"
             or await page.locator("#browsers_members-chromium").input_value() != "11"
@@ -478,11 +604,13 @@ async def _viewport(
             or await page.locator("#queues_tokens-queues").inner_text() != "1"
         ):
             raise RuntimeError("live_snapshot_projection_unverified")
+        step = "stop_fences"
         for engine in ENGINES:
             for name in ("activation_id", "generation"):
                 actual = await page.locator(f'#{engine}-stop input[name="{name}"]').input_value()
                 if actual != expected_post_fields(engine + ":stop")[name]:
                     raise RuntimeError("independent_stop_fence_unverified")
+        step = "private_metadata"
         if (
             not await page.locator("[data-field=inspect]").evaluate_all(
                 "nodes => nodes.length === 3 && nodes.every(node => /^\\/control\\/sesiones\\/[0-9a-f-]{36}$/.test(node.getAttribute('href')))"
@@ -491,12 +619,16 @@ async def _viewport(
         ):
             raise RuntimeError("private_metadata_projection_unverified")
 
+        step = "queues_stop"
         await _submit(page, POST_ORDER[2])
         phase = 3
+        step = "queues_stopped_refresh"
         await page.locator("#engines-refresh").click()
+        step = "queues_stopped_poll"
         await page.wait_for_function(
             "document.getElementById('queues_tokens-stop-button').disabled"
         )
+        step = "independent_stop"
         if (
             await page.locator("#browsers_members-stop-button").is_disabled()
             or await page.locator("#queues_tokens-start-button").is_disabled()
@@ -505,6 +637,7 @@ async def _viewport(
             or await page.locator("#engines-total-active").inner_text() != "1"
         ):
             raise RuntimeError("independent_stop_projection_unverified")
+        step = "layout"
         layout = await page.evaluate("""() => {
           const controls = Array.from(document.querySelectorAll('button, input:not([type=hidden]), select, a'));
           return {targets: controls.length > 12 && controls.every(node => {
@@ -515,14 +648,20 @@ async def _viewport(
         }""")
         if not layout["targets"] or layout["overflow"] or layout["height"] > _MAX_HEIGHT:
             raise RuntimeError("accessible_layout_unverified")
+        step = "screenshot"
         screenshot = await page.screenshot(type="png", full_page=True, animations="disabled")
+        step = "screenshot_verify"
         _png_dimensions(screenshot, width, height)
+        step = "members_stop"
         await _submit(page, POST_ORDER[3])
         phase = 4
+        step = "members_stopped_refresh"
         await page.locator("#engines-refresh").click()
+        step = "members_stopped_poll"
         await page.wait_for_function(
             "document.getElementById('browsers_members-stop-button').disabled"
         )
+        step = "final_evidence"
         if (
             documents != 1
             or not 4 <= snapshots <= 24
@@ -531,6 +670,7 @@ async def _viewport(
             or errors
         ):
             raise RuntimeError("offline_browser_evidence_unverified")
+        step = "viewport_capture_encode"
         return {
             "width": width,
             "height": height,
@@ -542,8 +682,36 @@ async def _viewport(
             "checks": dict.fromkeys(CHECKS, True),
             "png_base64": base64.b64encode(screenshot).decode("ascii"),
         }
+    except BaseException as error:
+        failure = error
+        failure_counts = counters()
+        raise
     finally:
-        await context.close()
+        cleanup = "NOT_CREATED"
+        try:
+            if context is not None:
+                await context.close()
+                cleanup = "CLOSED"
+        except BaseException as error:
+            cleanup = "FAILED"
+            if failure is None:
+                failure = error
+                failure_counts = counters()
+                step = "context_close"
+                raise
+        finally:
+            if failure is not None:
+                print(
+                    _probe_failure_report(
+                        step,
+                        failure,
+                        width=width,
+                        height=height,
+                        counts=failure_counts,
+                        cleanup=cleanup,
+                    ),
+                    file=sys.stderr,
+                )
 
 
 async def run_offline(fixture: dict[str, Any], source_sha: str) -> dict[str, Any]:
@@ -551,19 +719,60 @@ async def run_offline(fixture: dict[str, Any], source_sha: str) -> dict[str, Any
     validate_fixture(fixture, source_sha)
     from playwright.async_api import async_playwright
 
-    async with async_playwright() as api:
-        browser = await api.chromium.launch(
-            headless=True,
-            chromium_sandbox=True,
-            timeout=10_000,
-            args=["--disable-background-networking"],
-        )
-        try:
-            viewports = [
-                await _viewport(browser, fixture, width, height) for width, height, _ in VIEWPORTS
-            ]
-        finally:
-            await browser.close()
+    failure: BaseException | None = None
+    step = "playwright_start"
+    try:
+        async with async_playwright() as api:
+            browser = None
+            try:
+                step = "browser_launch"
+                browser = await api.chromium.launch(
+                    headless=True,
+                    chromium_sandbox=True,
+                    timeout=10_000,
+                    args=["--disable-background-networking"],
+                )
+                step = "browser_proof"
+                viewports = [
+                    await _viewport(browser, fixture, width, height)
+                    for width, height, _ in VIEWPORTS
+                ]
+            except BaseException as error:
+                failure = error
+                if step == "browser_launch":
+                    print(_probe_failure_report(step, error), file=sys.stderr)
+                raise
+            finally:
+                try:
+                    if browser is not None:
+                        await browser.close()
+                except BaseException as error:
+                    print(
+                        _probe_failure_report("browser_close", error, cleanup="FAILED"),
+                        file=sys.stderr,
+                    )
+                    if failure is None:
+                        failure = error
+                        raise
+                finally:
+                    step = "playwright_close"
+    except BaseException as error:
+        if failure is not None and error is not failure:
+            print(
+                _probe_failure_report("playwright_close", error, cleanup="FAILED"),
+                file=sys.stderr,
+            )
+            raise failure from None
+        if failure is None:
+            print(
+                _probe_failure_report(
+                    step,
+                    error,
+                    cleanup="FAILED" if step == "playwright_close" else "NOT_CREATED",
+                ),
+                file=sys.stderr,
+            )
+        raise
     return {
         "schema": 1,
         "mode": "OFFLINE_SYNTHETIC_ENGINE_UI",

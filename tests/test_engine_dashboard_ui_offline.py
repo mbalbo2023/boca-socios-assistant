@@ -8,6 +8,8 @@ import hashlib
 import inspect
 import json
 import struct
+import sys
+import types
 import zlib
 from urllib.parse import urlencode
 
@@ -180,6 +182,271 @@ def test_page_error_callback_accepts_playwright_wrapper_cache_before_navigation(
     with pytest.raises(StopBeforeNavigation):
         asyncio.run(module._viewport(Browser(), module.make_fixture(SOURCE_SHA), 800, 1280))
     assert context.closed
+
+
+class _InertViewportBrowser:
+    """Only the browser boundary is inert; routing and proof steps stay real."""
+
+    def __init__(self, module, fault, error, close_error=None):
+        self.module = module
+        self.fault = fault
+        self.error = error
+        self.close_error = close_error
+        self.closed = False
+        self.waits = 0
+        self.pending_post = False
+        self.url = module.PAGE_URL
+
+    async def new_context(self, **kwargs):
+        assert kwargs == {
+            "accept_downloads": False,
+            "service_workers": "block",
+            "viewport": {"width": 800, "height": 1280},
+        }
+        if self.fault == "context_create":
+            raise self.error
+        return self
+
+    def set_default_timeout(self, timeout):
+        assert timeout == 5000
+
+    async def route(self, pattern, handler):
+        assert pattern == "**/*"
+        self.handler = handler
+
+    async def new_page(self):
+        return self
+
+    def on(self, event, callback):
+        assert event == "pageerror"
+        self.page_error = callback
+
+    async def dispatch(self, url, *, method="GET", headers=None, body=None):
+        async def all_headers():
+            return headers or {}
+
+        async def fulfill(**_kwargs):
+            pass
+
+        async def abort():
+            pass
+
+        request = types.SimpleNamespace(
+            url=url,
+            method=method,
+            resource_type="document",
+            is_navigation_request=lambda: True,
+            all_headers=all_headers,
+            post_data=body,
+        )
+        await self.handler(types.SimpleNamespace(request=request, fulfill=fulfill, abort=abort))
+
+    async def goto(self, url, **kwargs):
+        assert url == self.module.PAGE_URL
+        assert kwargs == {"wait_until": "load", "timeout": 10_000}
+        await self.dispatch(url)
+        if self.fault == "document_load":
+            raise self.error
+        await self.dispatch(self.module.SNAPSHOT_URL)
+        self.page_error(RuntimeError("private-page-error-must-not-be-logged"))
+
+    async def wait_for_function(self, _expression):
+        self.waits += 1
+        if (self.fault, self.waits) in {("initial_timestamp", 1), ("initial_live_poll", 2)}:
+            raise self.error
+
+    def locator(self, selector):
+        browser = self
+
+        class Locator:
+            async def is_disabled(self):
+                return False
+
+            async def click(self):
+                if browser.pending_post:
+                    assert selector == "#queues_tokens-start-button"
+                    await browser.dispatch(
+                        browser.module.post_url("queues_tokens:start"),
+                        method="POST",
+                        headers={
+                            "content-type": "application/x-www-form-urlencoded",
+                            "origin": "https://private-invalid-origin.invalid",
+                        },
+                        body=urlencode(browser.module.expected_post_fields("queues_tokens:start")),
+                    )
+
+            async def evaluate(self, expression):
+                assert selector == "#browsers_members-member"
+                assert expression == "node => node.matches(':invalid')"
+                return True
+
+            async def fill(self, _value):
+                pass
+
+            async def select_option(self, _value):
+                pass
+
+        return Locator()
+
+    def expect_response(self, _predicate):
+        browser = self
+
+        class ResponseWait:
+            async def __aenter__(self):
+                browser.pending_post = True
+
+            async def __aexit__(self, kind, _error, _traceback):
+                if kind is None:
+                    raise browser.error
+
+        return ResponseWait()
+
+    async def close(self):
+        self.closed = True
+        if self.close_error is not None:
+            # Teardown observations must not replace the failure-time counts.
+            await self.dispatch(self.module.SNAPSHOT_URL)
+            self.page_error(RuntimeError("private-cleanup-page-error"))
+            raise self.close_error
+
+
+@pytest.mark.parametrize(
+    ("fault", "documents", "snapshots", "rejected", "page_errors", "cleanup"),
+    [
+        ("context_create", "0", "0", "0", "0", "NOT_CREATED"),
+        ("document_load", "1", "0", "0", "0", "CLOSED"),
+        ("initial_timestamp", "1", "1", "0", "1", "CLOSED"),
+        ("initial_live_poll", "1", "1", "0", "1", "CLOSED"),
+        ("queues_start", "1", "1", "1", "1", "CLOSED"),
+    ],
+)
+def test_viewport_failure_reports_actual_step_and_route_counts_without_payloads(
+    capsys, fault, documents, snapshots, rejected, page_errors, cleanup
+):
+    module = _module()
+    error = TimeoutError("private-url-token-dom-fixture-must-not-be-logged")
+    browser = _InertViewportBrowser(module, fault, error)
+    with pytest.raises(TimeoutError) as caught:
+        asyncio.run(module._viewport(browser, module.make_fixture(SOURCE_SHA), 800, 1280))
+    assert caught.value is error
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        f"BOCA_ENGINE_UI_PROBE state=NO_GO step={fault} viewport=800x1280 "
+        f"snapshot_phase=0 documents={documents} snapshots={snapshots} native_posts=0 "
+        f"rejected={rejected} page_errors={page_errors} error_type=TimeoutError "
+        f"cleanup={cleanup}\n"
+    )
+
+
+def test_viewport_cleanup_cannot_mask_primary_error_or_change_failure_time_counts(capsys):
+    module = _module()
+    primary = TimeoutError("private-primary-error")
+    browser = _InertViewportBrowser(
+        module, "initial_live_poll", primary, RuntimeError("private-cleanup-error")
+    )
+    with pytest.raises(TimeoutError) as caught:
+        asyncio.run(module._viewport(browser, module.make_fixture(SOURCE_SHA), 800, 1280))
+    assert caught.value is primary
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "BOCA_ENGINE_UI_PROBE state=NO_GO step=initial_live_poll viewport=800x1280 "
+        "snapshot_phase=0 documents=1 snapshots=1 native_posts=0 rejected=0 "
+        "page_errors=1 error_type=TimeoutError cleanup=FAILED\n"
+    )
+
+
+def test_probe_formatter_bounds_counts_and_rejects_untrusted_categories():
+    module = _module()
+
+    class PrivateDiagnosticObject:
+        def __str__(self):
+            raise AssertionError("untrusted diagnostic content was stringified")
+
+    error_type = type("PrivateBrowserExceptionName", (Exception,), {})
+    result = module._probe_failure_report(
+        ["private-step"],
+        error_type("private-exception-content"),
+        width=True,
+        height=1280,
+        counts={
+            "snapshot_phase": 5,
+            "documents": 2,
+            "snapshots": 10**1000,
+            "native_posts": True,
+            "rejected": -1,
+            "page_errors": PrivateDiagnosticObject(),
+            "private_extra": "private-url-token",
+        },
+        cleanup=["private-cleanup"],
+    )
+    assert result == (
+        "BOCA_ENGINE_UI_PROBE state=NO_GO step=UNKNOWN viewport=UNKNOWN "
+        "snapshot_phase=OVER_LIMIT documents=OVER_LIMIT snapshots=OVER_LIMIT "
+        "native_posts=UNKNOWN rejected=UNKNOWN page_errors=UNKNOWN "
+        "error_type=UNKNOWN cleanup=UNKNOWN"
+    )
+    assert len(result) < 512
+
+
+@pytest.mark.parametrize(
+    ("body_fails", "browser_close_fails", "driver_close_fails", "steps"),
+    [
+        (True, True, False, ["browser_close"]),
+        (True, False, True, ["playwright_close"]),
+        (True, True, True, ["browser_close", "playwright_close"]),
+        (False, True, False, ["browser_close"]),
+        (False, False, True, ["playwright_close"]),
+        (False, True, True, ["browser_close", "playwright_close"]),
+    ],
+)
+def test_offline_cleanup_preserves_first_fault_and_never_passes_failed_cleanup(
+    monkeypatch, capsys, body_fails, browser_close_fails, driver_close_fails, steps
+):
+    module = _module()
+    primary = TimeoutError("private-browser-proof-content")
+    browser_error = RuntimeError("private-browser-close-content")
+    driver_error = RuntimeError("private-driver-close-content")
+
+    async def close():
+        if browser_close_fails:
+            raise browser_error
+
+    async def launch(**_kwargs):
+        return types.SimpleNamespace(close=close)
+
+    class Manager:
+        async def __aenter__(self):
+            return types.SimpleNamespace(chromium=types.SimpleNamespace(launch=launch))
+
+        async def __aexit__(self, *_args):
+            if driver_close_fails:
+                raise driver_error
+
+    async def viewport(*_args):
+        if body_fails:
+            raise primary
+        return {}
+
+    playwright = types.ModuleType("playwright.async_api")
+    playwright.async_playwright = Manager
+    monkeypatch.setitem(sys.modules, "playwright.async_api", playwright)
+    monkeypatch.setattr(module, "_offline_identity", lambda: None)
+    monkeypatch.setattr(module, "_viewport", viewport)
+    expected = primary if body_fails else browser_error if browser_close_fails else driver_error
+    with pytest.raises(type(expected)) as caught:
+        asyncio.run(module.run_offline(module.make_fixture(SOURCE_SHA), SOURCE_SHA))
+    assert caught.value is expected
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "private" not in captured.err
+    assert captured.err.splitlines() == [
+        f"BOCA_ENGINE_UI_PROBE state=NO_GO step={step} viewport=UNKNOWN "
+        "snapshot_phase=UNKNOWN documents=UNKNOWN snapshots=UNKNOWN native_posts=UNKNOWN "
+        "rejected=UNKNOWN page_errors=UNKNOWN error_type=RuntimeError cleanup=FAILED"
+        for step in steps
+    ]
 
 
 def test_verified_capture_writes_only_bounded_named_pngs_and_public_report(tmp_path):

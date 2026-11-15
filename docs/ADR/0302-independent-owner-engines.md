@@ -312,3 +312,37 @@ Los recuentos se solapan. Los diez archivos quedan fuera del cierre FULL/PAIR.
 El metadata JSON conserva 1104 bytes y SHA256
 01ae08bf7eb4ccb517766aa73526ec0e9a660581eff6fb34f44939528c5185b6.
 Build, scans, full3 y capturas del nuevo SHA siguen siendo evidencia pendiente.
+
+## Diagnóstico posterior al build Resolute
+
+CI1253 construye ambas imágenes y aprueba quality-and-tests; el recorrido visual
+termina con TimeoutError y no llega a los scans. Full3#3 observa Chromium y WebKit
+PASS; Firefox falla en new_page sin una causa clasificada. No se repite el mismo
+SHA ni se considera resuelto el bloqueo.
+
+La [corrección diagnóstica previa al código](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6888166845)
+separa new_context de new_page con las opciones del runtime. El parser anterior
+podía leer un código XPCOM hexadecimal como exit0 y mezclar stderr del fallo con
+el cierre deliberado; además, ignoraba errores de cierre. Se conservan fases,
+códigos y métodos en listas cerradas, se observa antes de cleanup y el cierre
+correcto pasa a ser obligatorio para PASS. Esto no identifica la causa real del
+error previo ni cambia la aplicación o sus guardas.
+
+El runner visual conserva todas sus verificaciones y timeouts; añade sólo la
+etapa, viewport y contadores acotados para localizar el fallo. Una ejecución Node
+inerte del script exacto del renderer con el HTML y cinco snapshots verificó sus
+referencias y proyecciones, sin reproducir un navegador ni atribuirle una causa.
+Los cuatro roles aprobaron este alcance diagnóstico antes de implementarlo;
+la revisión cruzada y la evidencia alojada siguen siendo obligatorias.
+
+La [revisión cruzada final](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6888353010)
+obtuvo cuatro votos GO reales para integrar el instrumento: arquitectura revisó
+el delta visual (13 casos nuevos PASS), operación/visual revisó full3 (4 focales
+PASS), QA revisó ambos (18 y 13 focales PASS) y root revisó la integración.
+Cada autor excluyó su propia implementación de su voto independiente. Los
+recuentos se solapan. La autoría full3 verificó 39 casos y cinco contratos;
+la visual, 34 casos tras 13 RED. Ruff/formato y diff-check PASS. Las seis rutas
+modificadas no pertenecen al cierre FULL/PAIR y sus paquetes permanecen intactos.
+El análisis de seguridad independiente #1082 sobre ab3f189 permite observar los
+scans que CI1253 omitió; su resultado y los nuevos probes siguen pendientes.
+Este acuerdo no acredita la causa de Firefox, captura aceptada o promoción.
