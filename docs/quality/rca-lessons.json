@@ -719,6 +719,23 @@
         "tests/test_r304_telegram_incident_bundle.py::test_incident_bundle_exclusive_bounds_and_exact_closure",
         "tests/test_r304_telegram_incident_workflow.py::test_incident_workflow_fixed_admission_and_isolated_verifier"
       ]
+    },
+    {
+      "id": "RCA-526",
+      "issue": 526,
+      "fix_pr": 526,
+      "root_cause": "Docker reports CAP_CHOWN, but the installed-helper attestor accepted only CHOWN. Its check occurs after create and before start, preserving the helper on rejection. The volume also survives, and ordinary provision skips initialization when it already exists.",
+      "prevention": "Accept only the two singleton spellings. Recover the fixed initializer under lease with stable identity, profile and exclusive mounts; require exact proof before retirement. Preserve partial outcomes; test post-exit health, physical aliases, real validators and bounded pipes.",
+      "regression_tests": [
+        "tests/test_r296_telegram_maintenance.py::test_r305_cap_chown_reaches_real_initialize_and_cleanup",
+        "tests/test_r305_telegram_initializer_recovery.py::test_r305_preflight_refuses_uncertain_identity_without_effect",
+        "tests/test_r305_telegram_initializer_recovery.py::test_r305_uncertain_initialization_preserves_helper_and_bounds_private_pipes",
+        "tests/test_r305_telegram_initializer_recovery.py::test_r305_partial_receipt_preserves_accepted_initialization_without_retry",
+        "tests/test_r305_telegram_initializer_recovery.py::test_r305_exited_helper_health_does_not_override_initialized_proof",
+        "tests/test_r305_telegram_initializer_recovery.py::test_r305_telegram_physical_alias_refuses_before_start",
+        "tests/test_r305_telegram_initializer_transport.py::test_actual_admission_rejects_each_of_22_text_inputs",
+        "tests/test_r305_telegram_initializer_transport.py::test_actual_summary_shell_uses_same_zip_and_strict_rc_pair"
+      ]
     }
   ]
 }

@@ -67,7 +67,7 @@ def _attest(
         or host["LogConfig"]["Type"] != "none"
         or host["CapDrop"] != ["ALL"]
         or host.get("CapAdd")
-        not in ((["CHOWN"],) if operation == "initialize-volume" else (None, []))
+        not in ((["CHOWN"], ["CAP_CHOWN"]) if operation == "initialize-volume" else (None, []))
         or host["PidsLimit"] != 16
         or host["Memory"] != 67108864
         or host["NanoCpus"] != 250000000
