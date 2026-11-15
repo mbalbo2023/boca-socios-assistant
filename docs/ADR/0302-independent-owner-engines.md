@@ -409,3 +409,60 @@ Las revisiones independientes fueron focales y se solapan con esos recuentos.
 Ruff, formato y diff-check PASS. Las nueve rutas no pertenecen a FULL/PAIR;
 sus 47/83 miembros permanecen intactos. La publicación requiere evidencia
 alojada nueva: estos votos no certifican el scan, Firefox, capturas ni droplet.
+
+
+## Polling visual y diagnóstico de tareas tras 18724f8
+
+La [reconciliación del SHA](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889022274)
+registra CI1255: 9331 pruebas y 34 subtests PASS, ambas imágenes construidas y
+fallo visual en live_rows_poll tras dos POST303 y tres documentos; no hay
+capturas. La causa primaria sigue UNKNOWN. Image Security1083 del mismo SHA
+aprobó ambos scans estrictos sin HIGH/CRITICAL; cierra el hallazgo Pebble de
+ese candidato. Full3#5 mantiene Chromium/WebKit PASS y Firefox NO_GO en
+new_page: pids.peak128 y delta pids.events.max1 con identidad conservada;
+memoria336003072B del límite805306368B y deltas OOM0. Acredita aplicación del
+límite de tareas; no demuestra OOM, causalidad exacta, capacidad para 50
+contextos ni disponibilidad del dashboard instalado.
+
+La [propuesta](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889045401)
+y los [cuatro votos previos reales](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889058150)
+autorizan dos alcances disjuntos. El visual expresa condiciones DOM como
+funciones conservando RAF y plazos, y espera response.body para evitar la tarea
+huérfana de Response.finished verificada en Python Playwright1.64.1. Añade sólo
+clasificación cerrada del primer error y página/conexión bool/UNKNOWN,
+congelados antes de cleanup; nunca mensaje, URL, stack o datos. No cambia CSP
+ni aplicación y no declara demostrada la hipótesis CSP del fallo anterior.
+
+El workflow diagnóstico añade choice full3/default o firefox-pids. Default
+conserva los tres motores y 128 tareas. El modo experimental ejecuta sólo
+Firefox192 y Firefox256 una vez cada uno, secuenciales y sobre la misma imagen;
+ningún PASS posterior borra un fallo. Antes del driver exige pids.max entero
+exacto del presupuesto solicitado; UNKNOWN o discrepancia produce NO_GO.
+Mide también preclose tras goto/conexión y antes de cerrar; PASS exige los
+tres cierres. Se conservan el primer fallo, deltas con continuidad y stderr
+tardío separado. Identidad o límite no verificable no acredita atribución.
+No se cambian memoria, CPU, tmpfs, permisos, sandbox, plazos ni recursos de
+la instalación.
+
+Autores: operación/visual, dos archivos runner/tests; QA, workflow y dos
+contratos afectados; root, ADR y plan. La intersección de las siete rutas con
+FULL47/PAIR83 es vacía, sin rebuild ni modificación de pins/caps. La revisión
+cruzada final del código y la evidencia alojada nueva siguen pendientes;
+los votos de diseño no autorizan por sí mismos merge, release, host ni
+aceptación física.
+
+La [revisión final](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889186686)
+cerró cuatro votos técnicos reales sobre los hashes definitivos. Arquitectura
+revisó ambos deltas; QA y operación realizaron el cruce, excluyendo sus propios
+archivos de aprobación independiente; root verificó la integración. Sin
+hallazgos bloqueantes. Autor visual: 18 RED y 45 afectados PASS. Autor del
+diagnóstico: 37 RED y 58 afectados PASS en el cierre focal. Arquitectura
+verificó cuatro casos por alcance y contraejemplos adicionales en memoria;
+QA verificó cuatro visuales. Los recuentos se solapan. Ruff, formato, YAML,
+Bash, AST y diff-check PASS; no se repitió la suite base.
+
+La metadata pids_budget_verified separa atribución de suficiencia: true exige
+identidad/límite/contador coherentes; un delta positivo sigue visible y no
+acredita holgura. UNKNOWN no certifica el experimento aunque el recorrido
+funcional termine en PASS. Se publican los siete archivos juntos; los gates
+alojados del sucesor, capturas y promoción física siguen pendientes.

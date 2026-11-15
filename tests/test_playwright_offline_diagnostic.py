@@ -6,6 +6,7 @@ import ast
 import json
 import os
 import re
+import subprocess
 import tempfile
 import textwrap
 from collections.abc import Callable
@@ -39,6 +40,123 @@ def _definitions(*names: str) -> dict[str, object]:
     # No Playwright import or workflow main body is executed.
     exec(compile(module, str(WORKFLOW), "exec"), namespace)  # noqa: S102
     return namespace
+
+
+def _workflow_shell_step(name: str) -> str:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    step = workflow.split(f"      - name: {name}\n", 1)[1].split("      - name:", 1)[0]
+    return textwrap.dedent(step.split("        run: |\n", 1)[1])
+
+
+def _inert_shell(script: str, mode: str, *, failing_limit: str = ""):
+    # Actual workflow Bash; all Docker/timeout calls terminate at inert functions.
+    boundaries = r"""
+docker() {
+  local engine='' limit='' mode='' requested=''
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --pids-limit) shift; limit="$1" ;;
+      BOCA_PLAYWRIGHT_ENGINE=*) engine="${1#*=}" ;;
+      BOCA_DIAGNOSTIC_MODE=*) mode="${1#*=}" ;;
+      BOCA_DIAGNOSTIC_PIDS_LIMIT=*) requested="${1#*=}" ;;
+    esac
+    shift
+  done
+  if test -n "$engine"; then test "$requested" = "$limit" || return 1; fi
+  printf 'INERT_DOCKER engine=%s limit=%s mode=%s\n' "$engine" "$limit" "$mode"
+  test -z "$FAIL_LIMIT" || test "$limit" != "$FAIL_LIMIT"
+}
+timeout() {
+  test "$1" = 50s
+  shift
+  "$@"
+}
+"""
+    return subprocess.run(  # noqa: S603 - reviewed workflow; Docker/timeout are inert above.
+        ["/bin/bash", "-euo", "pipefail", "-c", boundaries + script],
+        env={
+            "DIAGNOSTIC_MODE": mode,
+            "FAIL_LIMIT": failing_limit,
+            "IMAGE": "inert-image-only",
+            "GITHUB_WORKSPACE": "/inert-no-files-read",
+        },
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize("mode", ["full3", "firefox-pids", "", "firefox-pids; PRIVATE"])
+def test_closed_mode_is_validated_before_the_first_docker(mode):
+    script = _workflow_shell_step("Validate closed diagnostic mode before Docker")
+    result = _inert_shell(script + "\ndocker build\n", mode)
+    if mode in {"full3", "firefox-pids"}:
+        assert result.returncode == 0
+        assert result.stdout.count("INERT_DOCKER") == 1
+    else:
+        assert result.returncode != 0
+        assert "INERT_DOCKER" not in result.stdout
+        assert "PRIVATE" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("full3", [("chromium", "128"), ("firefox", "128"), ("webkit", "128")]),
+        ("firefox-pids", [("firefox", "192"), ("firefox", "256")]),
+    ],
+)
+def test_actual_shell_selects_only_the_closed_profiles_once_in_order(mode, expected):
+    script = _workflow_shell_step("Probe each Playwright engine in a separate offline process")
+    result = _inert_shell(script, mode)
+    assert result.returncode == 0, result.stderr
+    assert re.findall(r"INERT_DOCKER engine=(\w+) limit=(\d+) mode=", result.stdout) == expected
+    assert result.stdout.count(f"mode={mode}") == len(expected)
+
+
+def test_later_experimental_success_never_erases_the_first_failure():
+    script = _workflow_shell_step("Probe each Playwright engine in a separate offline process")
+    result = _inert_shell(script, "firefox-pids", failing_limit="192")
+    assert result.returncode != 0
+    assert re.findall(r"INERT_DOCKER engine=(\w+) limit=(\d+) mode=", result.stdout) == [
+        ("firefox", "192"),
+        ("firefox", "256"),
+    ]
+    assert "state=NO_GO engine=firefox requested_pids_limit=192 phase=container" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("mode", "engine", "limit", "expected"),
+    [
+        ("full3", "chromium", "128", None),
+        ("full3", "firefox", "128", None),
+        ("full3", "webkit", "128", None),
+        ("firefox-pids", "firefox", "192", 192),
+        ("firefox-pids", "firefox", "256", 256),
+    ],
+)
+def test_child_accepts_only_joint_closed_mode_engine_and_budget(mode, engine, limit, expected):
+    namespace = _definitions("diagnostic_profile")
+    assert namespace["diagnostic_profile"](mode, engine, limit) == expected
+
+
+@pytest.mark.parametrize(
+    ("mode", "engine", "limit"),
+    [
+        ("full3", "firefox", "192"),
+        ("firefox-pids", "chromium", "192"),
+        ("firefox-pids", "webkit", "256"),
+        ("firefox-pids", "firefox", "128"),
+        ("firefox-pids", "firefox", "0192"),
+        ("firefox-pids", "firefox", "256\nPRIVATE"),
+        ("PRIVATE", "firefox", "256"),
+    ],
+)
+def test_child_rejects_unregistered_combinations_without_reflecting_them(mode, engine, limit):
+    namespace = _definitions("diagnostic_profile")
+    with pytest.raises(ValueError, match="^invalid_diagnostic_profile$"):
+        namespace["diagnostic_profile"](mode, engine, limit)
 
 
 def _passive_namespace(root: Path) -> dict[str, object]:
@@ -447,6 +565,7 @@ class _BrowserBoundary:
         self.stderr_stream = None
         self.on_step = None
         self.connected = False
+        self.driver_factory_calls = 0
         self.context_options: dict[str, object] = {}
         self.launch_options: dict[str, object] = {}
         boundary = self
@@ -518,8 +637,12 @@ class _BrowserBoundary:
             )
 
 
-def _run_probe(namespace, boundary, name="firefox"):
-    namespace["sync_playwright"] = lambda: boundary.driver
+def _run_probe(namespace, boundary, name="firefox", *, expected_pids=None):
+    def driver_factory():
+        boundary.driver_factory_calls += 1
+        return boundary.driver
+
+    namespace["sync_playwright"] = driver_factory
     with tempfile.TemporaryFile() as stream:
         boundary.stderr_stream = stream
         stream.write(boundary.stderr.encode())
@@ -533,7 +656,8 @@ def _run_probe(namespace, boundary, name="firefox"):
             boundary.events.append("read_late_stderr")
             return namespace["late_stderr_details"](stream.fileno(), offset)
 
-        return namespace["probe_engine"](name, read_stderr, read_late_stderr)
+        options = {} if expected_pids is None else {"expected_pids": expected_pids}
+        return namespace["probe_engine"](name, read_stderr, read_late_stderr, **options)
 
 
 @pytest.fixture
@@ -550,6 +674,18 @@ def probe(tmp_path):
         return _run_probe(namespace, boundary, name)
 
     return run
+
+
+@pytest.fixture
+def budget_namespace(tmp_path):
+    namespace = _passive_namespace(tmp_path)
+    _cgroup_fixture(tmp_path)
+    namespace["os"] = SimpleNamespace(
+        fstat=os.fstat,
+        pread=os.pread,
+        statvfs=lambda _path: SimpleNamespace(f_frsize=1024, f_blocks=8, f_bavail=3, f_favail=7),
+    )
+    return namespace
 
 
 @pytest.mark.parametrize("engine", ["chromium", "firefox", "webkit"])
@@ -569,7 +705,9 @@ def test_probe_requires_explicit_runtime_context_and_every_close_before_pass(pro
     }
     assert {key: result[key] for key in expected} == expected
     assert result["before_memory_max_bytes"] == 805306368
-    assert not any(key.startswith(("failure_", "delta_", "late_")) for key in result)
+    assert result["preclose_memory_max_bytes"] == 805306368
+    assert result["delta_pids_events_max"] == 0
+    assert not any(key.startswith(("failure_", "late_")) for key in result)
     assert boundary.context_options == {
         "java_script_enabled": True,
         "service_workers": "block",
@@ -751,3 +889,151 @@ def test_failed_stderr_metadata_cannot_replace_primary_failure_or_invent_late_ex
     assert set(value for key, value in result.items() if key.startswith("late_")) == {"UNKNOWN"}
     assert result["context_close"] == result["browser_close"] == result["driver_close"] == "closed"
     assert "private" not in json.dumps(result).lower()
+
+
+@pytest.mark.parametrize("observed", [128, "UNKNOWN", True, 192.0, "192"])
+def test_experimental_budget_rejects_unproven_limit_before_driver(budget_namespace, observed):
+    actual_snapshot = budget_namespace["resource_snapshot"]
+
+    def resources():
+        return {**actual_snapshot(), "pids_max": observed}
+
+    budget_namespace["resource_snapshot"] = resources
+    boundary = _BrowserBoundary()
+    result = _run_probe(budget_namespace, boundary, expected_pids=192)
+    assert result["state"] == "NO_GO"
+    assert result["phase"] == "resource_preflight"
+    assert result["reason"] == "PidsLimitUnverified"
+    assert result["pids_budget_verified"] == "UNKNOWN"
+    assert result["driver_close"] == "not_entered"
+    assert result["context_created"] == result["page_created"] == "false"
+    assert boundary.driver_factory_calls == 0
+    assert boundary.events == []
+
+
+@pytest.mark.parametrize("limit", [192, 256])
+def test_experimental_budget_launches_only_after_observed_limit_matches(
+    budget_namespace, tmp_path, limit
+):
+    (tmp_path / "pids.max").write_text(str(limit), encoding="ascii")
+    result = _run_probe(budget_namespace, _BrowserBoundary(), expected_pids=limit)
+    assert result["state"] == "PASS"
+    assert result["before_pids_max"] == result["preclose_pids_max"] == limit
+    assert result["pids_budget_verified"] == "true"
+    assert result["delta_pids_events_max"] == 0
+    assert result["context_close"] == result["browser_close"] == result["driver_close"] == "closed"
+
+
+def test_pass_resources_are_frozen_after_connection_and_before_any_close(
+    budget_namespace, tmp_path
+):
+    (tmp_path / "pids.max").write_text("192", encoding="ascii")
+    boundary = _BrowserBoundary()
+
+    def change_resources(phase):
+        if phase == "goto":
+            (tmp_path / "pids.peak").write_text("171", encoding="ascii")
+            (tmp_path / "pids.events").write_text("max 7\n", encoding="ascii")
+        elif phase == "context_close":
+            (tmp_path / "pids.peak").write_text("192", encoding="ascii")
+            (tmp_path / "pids.events").write_text("max 99\n", encoding="ascii")
+
+    boundary.on_step = change_resources
+    actual_snapshot = budget_namespace["resource_snapshot"]
+
+    def capture_resources():
+        boundary.events.append("resources")
+        return actual_snapshot()
+
+    budget_namespace["resource_snapshot"] = capture_resources
+    result = _run_probe(budget_namespace, boundary, expected_pids=192)
+    assert result["state"] == "PASS"
+    assert result["before_pids_peak"] == 3
+    assert result["preclose_pids_peak"] == 171
+    assert result["preclose_pids_events_max"] == 7
+    assert result["delta_pids_events_max"] == 2
+    assert result["pids_budget_verified"] == "true"
+    assert boundary.events.count("resources") == 2
+    assert boundary.events[0] == "resources"
+    assert (
+        boundary.events.index("connection_observation")
+        < boundary.events.index("resources", 1)
+        < boundary.events.index("context_close")
+    )
+    assert not any(key.startswith(("failure_", "late_")) for key in result)
+    assert "cgroup_identity" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("change", ["identity", "missing_identity", "limit", "missing_limit"])
+def test_experimental_pass_cannot_attribute_changed_identity_or_budget(
+    budget_namespace, tmp_path, change
+):
+    (tmp_path / "pids.max").write_text("192", encoding="ascii")
+    actual_snapshot = budget_namespace["resource_snapshot"]
+    calls = 0
+
+    def resources():
+        nonlocal calls
+        calls += 1
+        observed = actual_snapshot()
+        if calls == 2:
+            if change == "identity":
+                device, inode = observed["_cgroup_identity"]
+                observed["_cgroup_identity"] = (device, inode + 1)
+            elif change == "missing_identity":
+                observed.pop("_cgroup_identity")
+            elif change == "limit":
+                observed["pids_max"] = 256
+            else:
+                observed["pids_max"] = "UNKNOWN"
+        return observed
+
+    budget_namespace["resource_snapshot"] = resources
+    result = _run_probe(budget_namespace, _BrowserBoundary(), expected_pids=192)
+    assert result["state"] == "PASS"
+    assert result["pids_budget_verified"] == "UNKNOWN"
+    assert {value for key, value in result.items() if key.startswith("delta_")} == {"UNKNOWN"}
+    assert "cgroup_identity" not in json.dumps(result)
+
+
+def test_preclose_measurement_failure_is_unknown_without_changing_functional_result(
+    budget_namespace, tmp_path
+):
+    (tmp_path / "pids.max").write_text("192", encoding="ascii")
+    actual_snapshot = budget_namespace["resource_snapshot"]
+    calls = 0
+
+    def resources():
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("PRIVATE_FIXTURE_SECRET")
+        return actual_snapshot()
+
+    budget_namespace["resource_snapshot"] = resources
+    result = _run_probe(budget_namespace, _BrowserBoundary(), expected_pids=192)
+    assert result["state"] == "PASS"
+    assert result["preclose_pids_max"] == result["delta_pids_events_max"] == "UNKNOWN"
+    assert result["pids_budget_verified"] == "UNKNOWN"
+    assert "private" not in json.dumps(result).lower()
+
+
+def test_preclose_snapshot_never_replaces_a_later_primary_close_failure(budget_namespace, tmp_path):
+    (tmp_path / "pids.max").write_text("192", encoding="ascii")
+    boundary = _BrowserBoundary({"context_close"})
+
+    def change_events(phase):
+        if phase == "goto":
+            (tmp_path / "pids.events").write_text("max 7\n", encoding="ascii")
+        elif phase == "context_close":
+            (tmp_path / "pids.events").write_text("max 9\n", encoding="ascii")
+
+    boundary.on_step = change_events
+    result = _run_probe(budget_namespace, boundary, expected_pids=192)
+    assert result["state"] == "NO_GO" and result["phase"] == "context_close"
+    assert result["reason"] == "Error"
+    assert result["preclose_pids_events_max"] == 7
+    assert result["failure_pids_events_max"] == 9
+    assert result["delta_pids_events_max"] == 4
+    assert result["context_close"] == "failed"
+    assert result["browser_close"] == result["driver_close"] == "closed"

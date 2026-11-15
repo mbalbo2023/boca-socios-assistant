@@ -74,6 +74,10 @@ def test_full_browser_image_proves_chromium_firefox_webkit_without_blackbox() ->
 def test_three_engine_launches_are_independent_opt_in_offline_containers() -> None:
     workflow = DIAGNOSTIC.read_text(encoding="utf-8")
     assert "  workflow_dispatch:\n" in workflow
+    assert "        type: choice\n" in workflow
+    assert "        default: full3\n" in workflow
+    assert "          - full3\n          - firefox-pids\n" in workflow
+    assert "DIAGNOSTIC_MODE: ${{ inputs.diagnostic_mode }}" in workflow
     assert "  pull_request:\n" not in workflow
     assert "  contents: read\n" in workflow
     assert "packages: write" not in workflow
@@ -85,11 +89,16 @@ def test_three_engine_launches_are_independent_opt_in_offline_containers() -> No
     assert workflow.index("Build one disposable full Playwright worker image") < workflow.index(
         marker
     )
+    assert workflow.index("Validate closed diagnostic mode before Docker") < workflow.index(
+        "Build one disposable full Playwright worker image"
+    )
     step = workflow.split(marker, 1)[1].split("      - name:", 1)[0]
 
     # The #402 failure followed Chromium in a shared Python/PID1 process.
     # One reviewed image but a fresh, bounded, disposable process per engine.
-    assert "for engine in chromium firefox webkit; do" in step
+    assert 'full3) profiles=("chromium:128" "firefox:128" "webkit:128") ;;' in step
+    assert 'firefox-pids) profiles=("firefox:192" "firefox:256") ;;' in step
+    assert 'for profile in "${profiles[@]}"; do' in step
     assert '--env BOCA_PLAYWRIGHT_ENGINE="$engine"' in step
     assert 'name = os.environ["BOCA_PLAYWRIGHT_ENGINE"]' in step
     assert 'for name in ("chromium", "firefox", "webkit"):' not in step
@@ -103,7 +112,7 @@ def test_three_engine_launches_are_independent_opt_in_offline_containers() -> No
         "--security-opt no-new-privileges:true",
         '"seccomp=$GITHUB_WORKSPACE/docker/seccomp_profile.json"',
         "--cgroupns private --ipc private",
-        "--pids-limit 128 --memory 768m --cpus 1.0 --shm-size 64m",
+        '--pids-limit "$pids_limit" --memory 768m --cpus 1.0 --shm-size 64m',
         "--tmpfs /tmp:rw,noexec,nosuid,size=32m",
         "--tmpfs /home/boca-browser:rw,noexec,nosuid,size=16m,uid=10002,gid=10002,mode=0700",
         "browser_type.launch(headless=True, timeout=20000, **options)",

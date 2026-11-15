@@ -177,6 +177,54 @@ _PROBE_COUNTER_LIMITS = {
     "rejected": 1,
     "page_errors": 24,
 }
+_ERROR_KINDS = frozenset(
+    {"CSP_EVAL_BLOCKED", "TARGET_CLOSED", "EXECUTION_CONTEXT_DESTROYED", "UNKNOWN"}
+)
+
+
+def _primary_error_kind(error: BaseException) -> str:
+    """Classify only a bounded first line; never stringify an exception."""
+    try:
+        arguments = error.args
+        if type(arguments) is not tuple or len(arguments) != 1 or type(arguments[0]) is not str:
+            return "UNKNOWN"
+        first_line = arguments[0][:16384].split("\n", 1)[0].lower()
+    except BaseException:
+        return "UNKNOWN"
+    matches = {
+        "CSP_EVAL_BLOCKED": all(
+            marker in first_line
+            for marker in (
+                "refused to evaluate a string as javascript",
+                "content security policy",
+                "unsafe-eval",
+            )
+        ),
+        "TARGET_CLOSED": any(
+            marker in first_line
+            for marker in ("target page, context or browser has been closed", "target closed")
+        ),
+        "EXECUTION_CONTEXT_DESTROYED": "execution context was destroyed" in first_line,
+    }
+    observed = [kind for kind, matched in matches.items() if matched]
+    return observed[0] if len(observed) == 1 else "UNKNOWN"
+
+
+def _failure_state(
+    error: BaseException, browser: object = None, page: object = None
+) -> dict[str, object]:
+    def boolean(target: object, method: str) -> bool | str:
+        try:
+            value = getattr(target, method)()
+        except BaseException:
+            return "UNKNOWN"
+        return value if type(value) is bool else "UNKNOWN"
+
+    return {
+        "error_kind": _primary_error_kind(error),
+        "page_closed": boolean(page, "is_closed"),
+        "browser_connected": boolean(browser, "is_connected"),
+    }
 
 
 def _probe_failure_report(
@@ -186,6 +234,7 @@ def _probe_failure_report(
     width: object = None,
     height: object = None,
     counts: object = None,
+    failure_state: object = None,
     cleanup: object = "NOT_CREATED",
 ) -> str:
     """Bound proof metadata without serializing exceptions, URLs or page data."""
@@ -204,6 +253,12 @@ def _probe_failure_report(
         fields.append(f"{key}={bounded}")
     error_type = type(error).__name__
     safe_type = error_type if error_type in _FAILURE_TYPES else "UNKNOWN"
+    kind = failure_state.get("error_kind") if type(failure_state) is dict else None
+    safe_kind = kind if type(kind) is str and kind in _ERROR_KINDS else "UNKNOWN"
+    observations = []
+    for name in ("page_closed", "browser_connected"):
+        value = failure_state.get(name) if type(failure_state) is dict else None
+        observations.append(f"{name}={str(value).lower() if type(value) is bool else 'UNKNOWN'}")
     safe_cleanup = (
         cleanup
         if type(cleanup) is str and cleanup in {"NOT_CREATED", "CLOSED", "FAILED"}
@@ -212,7 +267,9 @@ def _probe_failure_report(
     return (
         f"BOCA_ENGINE_UI_PROBE state=NO_GO step={safe_step} viewport={viewport} "
         + " ".join(fields)
-        + f" error_type={safe_type} cleanup={safe_cleanup}"
+        + f" error_type={safe_type} error_kind={safe_kind} "
+        + " ".join(observations)
+        + f" cleanup={safe_cleanup}"
     )
 
 
@@ -862,7 +919,7 @@ async def _submit(page: Page, operation: str) -> None:
         raise RuntimeError("native_form_unverified")
     await page.wait_for_load_state("load")
     await page.wait_for_function(
-        "document.getElementById('engines-live').textContent !== 'Último estado disponible.'"
+        "() => document.getElementById('engines-live').textContent !== 'Último estado disponible.'"
     )
     if page.url != PAGE_URL:
         raise RuntimeError("offline_document_changed")
@@ -876,7 +933,9 @@ async def _refresh(page: Page) -> None:
     response = await refreshed.value
     if response.status != 200:
         raise RuntimeError("live_snapshot_projection_unverified")
-    await response.finished()
+    # Response.body() waits for completion without Response.finished()'s
+    # uncancelled target-close task in the pinned Python Playwright 1.64.1.
+    await response.body()
 
 
 async def _viewport(
@@ -886,8 +945,10 @@ async def _viewport(
     service = _FixtureService(fixture)
     errors: list[object] = []
     context: BrowserContext | None = None
+    page: Page | None = None
     failure: BaseException | None = None
     failure_counts: dict[str, int] | None = None
+    failure_state: dict[str, object] | None = None
     step = "context_create"
 
     def counters() -> dict[str, int]:
@@ -936,11 +997,11 @@ async def _viewport(
         await page.goto(PAGE_URL, wait_until="load", timeout=10_000)
         step = "initial_timestamp"
         await page.wait_for_function(
-            "document.getElementById('engines-checked').textContent.includes('2020-01-01')"
+            "() => document.getElementById('engines-checked').textContent.includes('2020-01-01')"
         )
         step = "initial_live_poll"
         await page.wait_for_function(
-            "document.getElementById('engines-live').textContent !== 'Último estado disponible.'"
+            "() => document.getElementById('engines-live').textContent !== 'Último estado disponible.'"
         )
         step = "initial_start"
         for engine in ENGINES:
@@ -974,7 +1035,9 @@ async def _viewport(
         step = "running_refresh"
         await _refresh(page)
         step = "running_rows"
-        await page.wait_for_function("document.querySelectorAll('[data-session-id]').length === 2")
+        await page.wait_for_function(
+            "() => document.querySelectorAll('[data-session-id]').length === 2"
+        )
         step = "initial_session"
         original_row = await page.locator(f'[data-session-id="{_identity(301)}"]').element_handle()
         if original_row is None:
@@ -993,7 +1056,7 @@ async def _viewport(
         service.advance_poll()
         step = "live_rows_poll"
         await page.wait_for_function(
-            "document.querySelectorAll('[data-session-id]').length === 3", timeout=7000
+            "() => document.querySelectorAll('[data-session-id]').length === 3", timeout=7000
         )
         step = "session_preserved"
         if (
@@ -1037,7 +1100,7 @@ async def _viewport(
         await _refresh(page)
         step = "queues_stopped_poll"
         await page.wait_for_function(
-            "document.getElementById('queues_tokens-stop-button').disabled"
+            "() => document.getElementById('queues_tokens-stop-button').disabled"
         )
         step = "independent_stop"
         if (
@@ -1069,7 +1132,7 @@ async def _viewport(
         await _refresh(page)
         step = "members_stopped_poll"
         await page.wait_for_function(
-            "document.getElementById('browsers_members-stop-button').disabled"
+            "() => document.getElementById('browsers_members-stop-button').disabled"
         )
         step = "final_evidence"
         evidence = service.counters()
@@ -1097,6 +1160,7 @@ async def _viewport(
     except BaseException as error:
         failure = error
         failure_counts = counters()
+        failure_state = _failure_state(error, browser, page)
         raise
     finally:
         cleanup = "NOT_CREATED"
@@ -1110,6 +1174,7 @@ async def _viewport(
             if failure is None:
                 failure = error
                 failure_counts = counters()
+                failure_state = _failure_state(error, browser, page)
                 step = "context_close"
                 cleanup_error = error
         try:
@@ -1119,6 +1184,7 @@ async def _viewport(
             if failure is None:
                 failure = error
                 failure_counts = counters()
+                failure_state = _failure_state(error, browser, page)
                 step = "fixture_close"
                 cleanup_error = error
         if failure is not None:
@@ -1129,6 +1195,7 @@ async def _viewport(
                     width=width,
                     height=height,
                     counts=failure_counts,
+                    failure_state=failure_state,
                     cleanup=cleanup,
                 ),
                 file=sys.stderr,

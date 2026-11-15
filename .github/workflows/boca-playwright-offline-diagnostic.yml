@@ -2,6 +2,15 @@ name: Boca Playwright full3 diagnostic (manual, offline)
 
 on:
   workflow_dispatch:
+    inputs:
+      diagnostic_mode:
+        description: Existing full3 baseline or the two fixed Firefox PID budgets
+        type: choice
+        required: true
+        default: full3
+        options:
+          - full3
+          - firefox-pids
 
 permissions:
   contents: read
@@ -15,11 +24,20 @@ jobs:
     if: github.repository == 'mbalbo2023/boca-socios-assistant'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      DIAGNOSTIC_MODE: ${{ inputs.diagnostic_mode }}
     steps:
       - name: Checkout exact diagnostic source without persisted credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Validate closed diagnostic mode before Docker
+        run: |
+          set -euo pipefail
+          case "$DIAGNOSTIC_MODE" in
+            full3|firefox-pids) ;;
+            *) printf 'BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO phase=configuration reason=invalid_mode\n' >&2; exit 1 ;;
+          esac
       - name: Build one disposable full Playwright worker image
         env:
           IMAGE: boca-browser-full3-diagnostic:${{ github.sha }}
@@ -57,18 +75,27 @@ jobs:
           # #402: old shared Python/PID1 process failed at Firefox new_page;
           # isolate children and use Docker init as recommended by Playwright.
           # This opt-in diagnosis is NOT a release/cutover gate or host check.
+          case "$DIAGNOSTIC_MODE" in
+            full3) profiles=("chromium:128" "firefox:128" "webkit:128") ;;
+            firefox-pids) profiles=("firefox:192" "firefox:256") ;;
+            *) printf 'BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO phase=configuration reason=invalid_mode\n' >&2; exit 1 ;;
+          esac
           failures=0
-          for engine in chromium firefox webkit; do
+          for profile in "${profiles[@]}"; do
+            engine="${profile%%:*}"
+            pids_limit="${profile#*:}"
             if ! timeout 50s docker run --rm --init --network none \
               --user 10002:10002 --read-only \
               --cap-drop ALL --cap-add SYS_CHROOT \
               --security-opt no-new-privileges:true \
               --security-opt "seccomp=$GITHUB_WORKSPACE/docker/seccomp_profile.json" \
               --cgroupns private --ipc private \
-              --pids-limit 128 --memory 768m --cpus 1.0 --shm-size 64m \
+              --pids-limit "$pids_limit" --memory 768m --cpus 1.0 --shm-size 64m \
               --tmpfs /tmp:rw,noexec,nosuid,size=32m \
               --tmpfs /home/boca-browser:rw,noexec,nosuid,size=16m,uid=10002,gid=10002,mode=0700 \
               --env BOCA_PLAYWRIGHT_ENGINE="$engine" --env DEBUG=pw:browser \
+              --env BOCA_DIAGNOSTIC_MODE="$DIAGNOSTIC_MODE" \
+              --env BOCA_DIAGNOSTIC_PIDS_LIMIT="$pids_limit" \
               --entrypoint python "$IMAGE" -c '
           import os
           import re
@@ -132,7 +159,7 @@ jobs:
                   values.update({f"{prefix}_{key}": value for key, value in fields.items()})
               return values
 
-          def resource_deltas(before, after):
+          def resource_deltas(before, after, expected_pids=None):
               # Current usage may fall; only cumulative event counters have deltas.
               result = {}
               identities = (before.get("_cgroup_identity"), after.get("_cgroup_identity"))
@@ -141,6 +168,12 @@ jobs:
                   and all(type(value) is int and 0 <= value <= budget.MAX_COUNTER for value in identity)
                   for identity in identities
               ) and identities[0] == identities[1]
+              if expected_pids is not None:
+                  same_cgroup = same_cgroup and (
+                      type(expected_pids) is int and expected_pids in (192, 256)
+                      and all(type(values.get("pids_max")) is int
+                              and values["pids_max"] == expected_pids for values in (before, after))
+                  )
               for key in ("memory_events_max", "memory_events_oom", "memory_events_oom_kill",
                           "memory_events_oom_group_kill", "pids_events_max"):
                   first, last = before.get(key), after.get(key)
@@ -294,7 +327,15 @@ jobs:
                   "xpcom": xpcom,
               }
 
-          def probe_engine(name, read_stderr, read_late_stderr):
+          def diagnostic_profile(mode, name, pids_limit):
+              if all(type(value) is str for value in (mode, name, pids_limit)):
+                  if mode == "full3" and name in ("chromium", "firefox", "webkit") and pids_limit == "128":
+                      return None
+                  if mode == "firefox-pids" and name == "firefox" and pids_limit in ("192", "256"):
+                      return int(pids_limit)
+              raise ValueError("invalid_diagnostic_profile")
+
+          def probe_engine(name, read_stderr, read_late_stderr, *, expected_pids=None):
               browser = context = page = None
               context_close = browser_close = "not_created"
               driver_close = "not_entered"
@@ -302,8 +343,23 @@ jobs:
               failure = None
               phase = "driver_start"
               before_resources = resource_snapshot()
+              preclose_resources = None
               failure_resources = None
               failure_offset = budget.UNKNOWN
+              if expected_pids is not None and (
+                  name != "firefox" or type(expected_pids) is not int or expected_pids not in (192, 256)
+                  or type(before_resources.get("pids_max")) is not int
+                  or before_resources["pids_max"] != expected_pids
+              ):
+                  # No driver or browser starts under an unproven experimental
+                  # budget. The unchanged full3 baseline has no new preflight.
+                  return {
+                      "state": "NO_GO", "phase": "resource_preflight", "reason": "PidsLimitUnverified",
+                      "pids_budget_verified": budget.UNKNOWN,
+                      "connected_before_close": "unknown", "context_created": "false", "page_created": "false",
+                      "context_close": "not_created", "browser_close": "not_created", "driver_close": "not_entered",
+                      **{f"before_{key}": value for key, value in before_resources.items() if key != "_cgroup_identity"},
+                  }
 
               def connection_state():
                   if browser is None:
@@ -359,6 +415,13 @@ jobs:
                           connected_before_close = connection_state()
                           if connected_before_close != "true":
                               raise RuntimeError("browser_connection_unverified")
+                          # This is successful navigation, not yet PASS: all
+                          # three closes must still complete. Never measure the
+                          # successful resource peak only after teardown.
+                          try:
+                              preclose_resources = resource_snapshot()
+                          except Exception:
+                              preclose_resources = {key: budget.UNKNOWN for key in before_resources}
                           phase = "context_close"
                           context_close = "failed"
                           context.close()
@@ -409,10 +472,21 @@ jobs:
                   "driver_close": driver_close,
               })
               result.update({f"before_{key}": value for key, value in before_resources.items() if key != "_cgroup_identity"})
+              if preclose_resources is not None:
+                  result.update({f"preclose_{key}": value for key, value in preclose_resources.items() if key != "_cgroup_identity"})
+              observed = (failure_resources if failure is not None else preclose_resources) or {
+                  key: budget.UNKNOWN for key in before_resources
+              }
+              deltas = resource_deltas(before_resources, observed, expected_pids)
+              result.update({f"delta_{key}": value for key, value in deltas.items()})
+              if expected_pids is not None:
+                  # Functional PASS and budget attribution are separate: missing
+                  # identity/limit/events can never certify this experiment.
+                  result["pids_budget_verified"] = (
+                      "true" if type(deltas["pids_events_max"]) is int else budget.UNKNOWN
+                  )
               if failure is not None:
-                  observed = failure_resources or {key: budget.UNKNOWN for key in before_resources}
                   result.update({f"failure_{key}": value for key, value in observed.items() if key != "_cgroup_identity"})
-                  result.update({f"delta_{key}": value for key, value in resource_deltas(before_resources, observed).items()})
                   # These describe output after the frozen first-failure offset,
                   # including cleanup; they never replace the primary failure.
                   try:
@@ -425,6 +499,12 @@ jobs:
           name = os.environ["BOCA_PLAYWRIGHT_ENGINE"]
           if name not in ("chromium", "firefox", "webkit"):
               raise SystemExit("BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO reason=invalid_engine")
+          mode = os.environ.get("BOCA_DIAGNOSTIC_MODE", "")
+          pids_limit = os.environ.get("BOCA_DIAGNOSTIC_PIDS_LIMIT", "")
+          try:
+              expected_pids = diagnostic_profile(mode, name, pids_limit)
+          except ValueError:
+              raise SystemExit("BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO phase=configuration reason=invalid_profile") from None
           with tempfile.TemporaryFile() as probe:
               saved_stderr = os.dup(2)
               try:
@@ -432,16 +512,19 @@ jobs:
                   result = probe_engine(
                       name, lambda: stderr_snapshot(probe.fileno()),
                       lambda offset: late_stderr_details(probe.fileno(), offset),
+                      expected_pids=expected_pids,
                   )
               finally:
                   os.dup2(saved_stderr, 2)
                   os.close(saved_stderr)
-          details = " ".join(f"{key}={value}" for key, value in result.items() if key != "state")
+          details = f"mode={mode} requested_pids_limit={pids_limit} " + " ".join(
+              f"{key}={value}" for key, value in result.items() if key != "state"
+          )
           if result["state"] != "PASS":
               raise SystemExit(f"BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO engine={name} {details}")
           print(f"BOCA_FULL_PLAYWRIGHT_LAUNCH engine={name} state=PASS offline=true blackbox=UNTOUCHED {details}")
           ' ; then
-              printf 'BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO engine=%s phase=container reason=NONZERO_OR_TIMEOUT\n' "$engine" >&2
+              printf 'BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO engine=%s requested_pids_limit=%s phase=container reason=NONZERO_OR_TIMEOUT\n' "$engine" "$pids_limit" >&2
               failures=$((failures + 1))
             fi
           done

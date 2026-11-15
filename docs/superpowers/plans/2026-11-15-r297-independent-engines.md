@@ -208,3 +208,43 @@ PASS after its correction. Independent focal results overlap. Lint, formatting,
 diff-check and the empty FULL47/PAIR83 source intersection are verified. Publish
 the nine scoped paths together in PR517, then obtain hosted evidence before any
 promotion. Do not infer Firefox availability or physical acceptance from votes.
+
+
+## Polling and bounded Firefox task-budget diagnosis after 18724f8
+
+Evidence6889022274: CI1255 reports 9331 tests and 34 subtests PASS, with a UI
+live_rows_poll NO_GO and no PNG. Image Security1083 passed both strict scans.
+Full3#5 reports Firefox new_page NO_GO with pids.peak128/max128 and an
+identity-guarded event delta of 1; memory OOM deltas are zero.
+Proposal6889045401 and four actual pre-code GO votes6889058150 authorize only
+two visual files and three diagnostic/contract files; root owns documents.
+
+Visual author: replace boolean DOM expressions with the same conditions in
+functions, retaining RAF and timeouts. response.body avoids the verified
+Python orphan task. Capture a closed primary-error category and exact
+bool/UNKNOWN states before cleanup without payloads; do not attribute CI1255
+to CSP without direct proof.
+
+QA author: closed full3/default or firefox-pids input through environment/case;
+default128 unchanged. The experimental mode runs only Firefox192/256,
+sequentially and once each. Require observed pids.max as the exact integer
+before driver/launch; UNKNOWN or mismatch is NO_GO. Capture preclose after
+goto/connection; all three closes remain required. Keep the primary failure,
+late suffix and accumulated NO_GO. No runtime, resource, sandbox or timeout
+changes; no claim of physical capacity for 50 contexts.
+
+Use focused meaningful regressions and independent cross-review before a
+single consolidated publication in PR517. Seven proposed paths do not belong
+to FULL47/PAIR83; no package rebuild. New hosted proof and promotion remain
+pending, with no server operation during this correction.
+
+Final code review6889186686 records actual GO votes from all four roles, with
+authors excluded from independent approval of their files. Visual18 RED then
+45 affected PASS; diagnostic37 RED then58 affected PASS at final verification.
+Architecture ran four focal cases per scope plus independent inert attacks;
+QA ran four visual cases. Counts overlap. Lint, formatting, YAML, Bash, AST
+and diff-check pass. Publish the seven paths together, then request the
+Firefox-only comparison once and inspect hosted UI evidence on the new SHA.
+pids_budget_verified is attribution only: UNKNOWN cannot certify a budget,
+and a positive event delta remains evidence of pressure even with functional
+PASS. No host operation or new dimensioning decision follows from this vote.

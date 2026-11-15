@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import base64
 import errno
@@ -9,7 +10,9 @@ import hashlib
 import inspect
 import io
 import json
+import shutil
 import struct
+import subprocess
 import sys
 import types
 import zlib
@@ -148,6 +151,257 @@ def test_native_post_requires_exact_origin_fields_and_engine_fence():
         module.verify_post(
             module.post_url("browsers_members:start"), module.ORIGIN, urlencode(fields)
         )
+
+
+def test_dom_waits_keep_conditions_when_later_eval_is_blocked():
+    module = _module()
+    calls = [
+        item
+        for item in ast.walk(ast.parse(inspect.getsource(module)))
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Attribute)
+        and item.func.attr == "wait_for_function"
+    ]
+    expressions = [ast.literal_eval(call.args[0]) for call in calls]
+    assert len(expressions) == 7
+    node = shutil.which("node")
+    assert node is not None
+    harness = r"""
+const vm = require('node:vm');
+const expressions = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+const results = expressions.map(expression => {
+  let ready = false;
+  let evaluations = 0;
+  const count = Number((expression.match(/length === ([23])/) || [])[1]);
+  const document = {
+    getElementById(id) {
+      if (id === 'engines-checked') return {textContent: ready ? '2020-01-01' : ''};
+      if (id === 'engines-live') return {textContent: ready ? 'Actualizado.' : 'Último estado disponible.'};
+      if (['queues_tokens-stop-button', 'browsers_members-stop-button'].includes(id))
+        return {disabled: ready};
+      throw new Error('unexpected fixed DOM lookup');
+    },
+    querySelectorAll(selector) {
+      if (selector !== '[data-session-id]' || ![2, 3].includes(count))
+        throw new Error('unexpected fixed DOM selector');
+      return {length: ready ? count : 0};
+    }
+  };
+  const context = vm.createContext({document, expression}, {codeGeneration: {strings: false, wasm: false}});
+  // Pinned Playwright 1.64.1 frames.ts1619-1638 caches functions, while a
+  // boolean expression is evaluated again by later RAF callbacks. The first
+  // invocation uses the driver boundary; deferred eval has no such privilege.
+  let cached;
+  function predicate() {
+    let result = cached;
+    if (result === undefined) {
+      evaluations++;
+      result = evaluations === 1 ? vm.runInContext(expression, context) : vm.runInContext('eval(expression)', context);
+    }
+    if (typeof result === 'function') {
+      cached = result;
+      result = result();
+    }
+    return result;
+  }
+  try {
+    const before = [predicate(), predicate()];
+    ready = true;
+    return {before, after: predicate(), evaluations};
+  } catch (error) {
+    return {error: error.name};
+  }
+});
+process.stdout.write(JSON.stringify(results));
+"""
+    completed = subprocess.run(  # noqa: S603 - fixed runner expressions in an inert VM, no browser
+        [node, "-e", harness],
+        input=json.dumps(expressions),
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=10,
+    )
+    assert completed.stderr == ""
+    assert json.loads(completed.stdout) == [
+        {"before": [False, False], "after": True, "evaluations": 1} for _expression in expressions
+    ]
+
+
+@pytest.mark.parametrize("body_fails", [False, True])
+def test_refresh_waits_for_body_without_orphaned_finished_task(body_fails):
+    module = _module()
+
+    async def exercise():
+        body_ready = asyncio.get_running_loop().create_future()
+        events = []
+        primary = RuntimeError("PRIVATE_BODY_FAILURE")
+
+        class Response:
+            status = 200
+            url = module.SNAPSHOT_URL
+            request = types.SimpleNamespace(method="GET")
+
+            async def body(self):
+                events.append("body")
+                return await body_ready
+
+            async def finished(self):
+                raise AssertionError("Response.finished can leave a target-close task pending")
+
+        response = Response()
+
+        class Expectation:
+            async def __aenter__(self):
+                self.value = asyncio.get_running_loop().create_future()
+                self.value.set_result(response)
+                events.append("listen")
+                return self
+
+            async def __aexit__(self, *_args):
+                return False
+
+        class Page:
+            def expect_response(self, predicate):
+                assert predicate(response)
+                return Expectation()
+
+            def locator(self, selector):
+                assert selector == "#engines-refresh"
+                return self
+
+            async def click(self):
+                events.append("click")
+
+        task = asyncio.create_task(module._refresh(Page()))
+        try:
+            await asyncio.sleep(0)
+            if task.done():
+                await task
+            assert events == ["listen", "click", "body"]
+            assert not task.done(), "response headers alone must not finish the refresh proof"
+            if body_fails:
+                body_ready.set_exception(primary)
+                with pytest.raises(RuntimeError) as caught:
+                    await task
+                assert caught.value is primary
+            else:
+                body_ready.set_result(b"{}")
+                await task
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (
+            "Page.wait_for_function: EvalError: Refused to evaluate a string as JavaScript "
+            "because unsafe-eval is not allowed by Content Security Policy PRIVATE_CONTENT",
+            "CSP_EVAL_BLOCKED",
+        ),
+        (
+            "Page.wait_for_function: Target page, context or browser has been closed",
+            "TARGET_CLOSED",
+        ),
+        ("Page.wait_for_function: Target closed PRIVATE_CONTENT", "TARGET_CLOSED"),
+        ("Page.wait_for_function: Execution context was destroyed", "EXECUTION_CONTEXT_DESTROYED"),
+        ("Refused to evaluate a string as JavaScript; Content Security Policy", "UNKNOWN"),
+        ("Target closed; execution context was destroyed", "UNKNOWN"),
+        ("Unclassified PRIVATE_CONTENT\nTarget closed", "UNKNOWN"),
+        ("x" * 16384 + "Target closed", "UNKNOWN"),
+        ("PRIVATE_CONTENT", "UNKNOWN"),
+    ],
+)
+def test_primary_failure_classification_is_closed_bounded_and_unambiguous(message, expected):
+    module = _module()
+    error = RuntimeError(message)
+    state = module._failure_state(error)
+    assert state == {
+        "error_kind": expected,
+        "page_closed": "UNKNOWN",
+        "browser_connected": "UNKNOWN",
+    }
+    receipt = module._probe_failure_report("live_rows_poll", error, failure_state=state)
+    assert f"error_kind={expected}" in receipt
+    assert "PRIVATE_CONTENT" not in receipt and "Refused" not in receipt
+
+
+@pytest.mark.parametrize(
+    "failure", ["args", "page_getter", "browser_method", "nonbool", "argument_object"]
+)
+def test_failure_observations_handle_untrusted_access_without_replacing_primary(failure):
+    module = _module()
+
+    class PrivateObject:
+        def __str__(self):
+            raise AssertionError("private diagnostic content was stringified")
+
+        def __bool__(self):
+            raise AssertionError("untrusted state was coerced to bool")
+
+    class PrivateError(Exception):
+        @property
+        def args(self):
+            raise RuntimeError("PRIVATE_ARGS_FAILURE")
+
+    class Page:
+        @property
+        def is_closed(self):
+            raise RuntimeError("PRIVATE_PAGE_FAILURE")
+
+    def broken():
+        raise RuntimeError("PRIVATE_BROWSER_FAILURE")
+
+    error = (
+        PrivateError()
+        if failure == "args"
+        else RuntimeError(
+            PrivateObject() if failure == "argument_object" else "PRIVATE_PRIMARY_CONTENT"
+        )
+    )
+    page = (
+        Page()
+        if failure == "page_getter"
+        else types.SimpleNamespace(is_closed=lambda: PrivateObject())
+    )
+    browser = types.SimpleNamespace(
+        is_connected=broken if failure == "browser_method" else lambda: 1
+    )
+    state = module._failure_state(error, browser, page)
+    assert state == {
+        "error_kind": "UNKNOWN",
+        "page_closed": "UNKNOWN",
+        "browser_connected": "UNKNOWN",
+    }
+    receipt = module._probe_failure_report("live_rows_poll", error, failure_state=state)
+    assert "PRIVATE" not in receipt
+
+
+@pytest.mark.parametrize("shape", ["empty", "multiple", "list", "string_subclass"])
+def test_primary_failure_classification_requires_exact_single_string_arguments(shape):
+    module = _module()
+
+    class PrivateString(str):
+        def lower(self):
+            raise AssertionError("untrusted argument method was invoked")
+
+    arguments = {
+        "empty": (),
+        "multiple": ("Target closed", "PRIVATE_CONTENT"),
+        "list": ["Target closed"],
+        "string_subclass": (PrivateString("Target closed"),),
+    }[shape]
+
+    class Error(Exception):
+        @property
+        def args(self):
+            return arguments
+
+    assert module._failure_state(Error())["error_kind"] == "UNKNOWN"
 
 
 def _http_exchange(module, service, raw):
@@ -824,6 +1078,7 @@ def test_viewport_failure_reports_actual_step_and_route_counts_without_payloads(
         f"BOCA_ENGINE_UI_PROBE state=NO_GO step={fault} viewport=800x1280 "
         f"snapshot_phase=0 documents={documents} snapshots={snapshots} native_posts=0 "
         f"rejected={rejected} page_errors={page_errors} error_type=TimeoutError "
+        "error_kind=UNKNOWN page_closed=UNKNOWN browser_connected=UNKNOWN "
         f"cleanup={cleanup}\n"
     )
 
@@ -847,8 +1102,41 @@ def test_viewport_cleanup_cannot_mask_primary_error_or_change_failure_time_count
     assert captured.err == (
         "BOCA_ENGINE_UI_PROBE state=NO_GO step=initial_live_poll viewport=800x1280 "
         "snapshot_phase=0 documents=1 snapshots=1 native_posts=0 rejected=0 "
-        "page_errors=1 error_type=TimeoutError cleanup=FAILED\n"
+        "page_errors=1 error_type=TimeoutError error_kind=UNKNOWN "
+        "page_closed=UNKNOWN browser_connected=UNKNOWN cleanup=FAILED\n"
     )
+
+
+def test_viewport_freezes_primary_category_and_boolean_state_before_cleanup(monkeypatch, capsys):
+    module = _module()
+    primary = RuntimeError("Target closed PRIVATE_PRIMARY_CONTENT")
+    reads = []
+
+    class Browser(_InertViewportBrowser):
+        def is_closed(self):
+            reads.append("page_closed")
+            return self.closed
+
+        def is_connected(self):
+            reads.append("browser_connected")
+            return not self.closed
+
+        async def close(self):
+            primary.args = ("Execution context was destroyed PRIVATE_CLEANUP_CONTENT",)
+            await super().close()
+
+    browser = Browser(module, "initial_timestamp", primary)
+    monkeypatch.setattr(
+        module._FixtureService, "start", lambda service: setattr(browser, "service", service)
+    )
+    with pytest.raises(RuntimeError) as caught:
+        asyncio.run(module._viewport(browser, module.make_fixture(SOURCE_SHA), 800, 1280))
+    assert caught.value is primary
+    assert browser.closed
+    assert reads == ["page_closed", "browser_connected"]
+    receipt = capsys.readouterr().err
+    assert "error_kind=TARGET_CLOSED page_closed=false browser_connected=true" in receipt
+    assert "EXECUTION_CONTEXT_DESTROYED" not in receipt and "PRIVATE" not in receipt
 
 
 @pytest.mark.parametrize("context_close_fails", [False, True])
@@ -934,13 +1222,19 @@ def test_probe_formatter_bounds_counts_and_rejects_untrusted_categories():
             "page_errors": PrivateDiagnosticObject(),
             "private_extra": "private-url-token",
         },
+        failure_state={
+            "error_kind": PrivateDiagnosticObject(),
+            "page_closed": 1,
+            "browser_connected": "true",
+        },
         cleanup=["private-cleanup"],
     )
     assert result == (
         "BOCA_ENGINE_UI_PROBE state=NO_GO step=UNKNOWN viewport=UNKNOWN "
         "snapshot_phase=OVER_LIMIT documents=OVER_LIMIT snapshots=OVER_LIMIT "
         "native_posts=UNKNOWN rejected=UNKNOWN page_errors=UNKNOWN "
-        "error_type=UNKNOWN cleanup=UNKNOWN"
+        "error_type=UNKNOWN error_kind=UNKNOWN "
+        "page_closed=UNKNOWN browser_connected=UNKNOWN cleanup=UNKNOWN"
     )
     assert len(result) < 512
 
@@ -999,7 +1293,8 @@ def test_offline_cleanup_preserves_first_fault_and_never_passes_failed_cleanup(
     assert captured.err.splitlines() == [
         f"BOCA_ENGINE_UI_PROBE state=NO_GO step={step} viewport=UNKNOWN "
         "snapshot_phase=UNKNOWN documents=UNKNOWN snapshots=UNKNOWN native_posts=UNKNOWN "
-        "rejected=UNKNOWN page_errors=UNKNOWN error_type=RuntimeError cleanup=FAILED"
+        "rejected=UNKNOWN page_errors=UNKNOWN error_type=RuntimeError "
+        "error_kind=UNKNOWN page_closed=UNKNOWN browser_connected=UNKNOWN cleanup=FAILED"
         for step in steps
     ]
 
