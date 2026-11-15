@@ -1,6 +1,17 @@
 # Backlog y dependencias de la BETA
 
-## Prioridad vigente — R298, postflight del despliegue aceptado
+## Prioridad vigente — R299, preparación Telegram sin repetir deploy
+
+R297/release866 está instalado; ADMIN1135 y [STATUS1138](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43684726506)
+están aceptados. PR518 cerró el defecto del lector. No reabrir esas fases.
+TG1139/1140 conservan fallos antes de SSH; el marcador de entorno ya quedó
+configurado. [RCA519](https://github.com/mbalbo2023/boca-socios-assistant/issues/519)
+resuelve sólo el import del checker del runner. Completar regresión/revisión,
+CI/merge y una nueva preparación protegida sobre las imágenes existentes.
+Sin activar sender ni mensajes. Aceptación privada, Telegram humano y capacidad
+física de 50 contextos permanecen pendientes; CI no los certifica.
+
+## Histórico — Prioridad vigente R298, postflight del despliegue aceptado
 
 R297/PR #517 quedó instalado por [APPLY 1134](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43681576798) y provisionado por
 [ADMIN 1135](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682305029). [STATUS 1136](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682391989) es el bloqueo actual de lectura.

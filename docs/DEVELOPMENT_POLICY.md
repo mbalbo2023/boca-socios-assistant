@@ -1,6 +1,23 @@
 # Development and merge policy
 
-## 2026-11-15 — R298, mantenimiento del lector posterior al despliegue
+## 2026-11-15 — R299, import del guard anterior a SSH
+
+R297 está instalado y [STATUS1138](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43684726506)
+ya aceptó el estado tras PR518. TG1139/1140 fallaron antes de SSH y no deben
+reescribirse ni reintentarse a ciegas. El marcador de entorno faltante quedó
+configurado por su vía normal; TG1140 demuestra el siguiente defecto local.
+
+[RCA519 y consenso](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6890476164)
+autorizan sólo `PYTHONPATH: src` en el env del paso Telegram. Conservar checker,
+shell, controles y verificador ZIP aislado. Probar el comando y env reales en
+un subprocess limpio: W vigente distinto de M instalado pasa; stale/invalid
+rechazan semánticamente antes del marcador de efectos. No aceptar ImportError
+como resultado negativo válido ni depender del paquete importado por pytest.
+
+Revisión independiente y gates del SHA exacto preceden merge y nuevo prepare.
+Sin nuevas imágenes, paquetes de host, release/APPLY/admin/STATUS ni mensajes.
+
+## Histórico — 2026-11-15 — R298, mantenimiento del lector posterior al despliegue
 
 [APPLY 1134](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43681576798) y [ADMIN 1135](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682305029) certifican instalación y
 provisión de R297/5281efa. [STATUS 1136](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682391989) conserva su NO_GO.

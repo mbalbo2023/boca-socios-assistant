@@ -1,6 +1,21 @@
 # Estado de integración BETA
 
-## R298 — instalado R297; observador de estado en reparación
+## R299 — estado instalado aceptado; guard Telegram en corrección
+
+Instalado M: `5281efae7dafe89be047073796b3e0a7e19785ed`, PR517/release866.
+Main base del mantenimiento: `2581e23bbbb8b4a05fb2470a23b3c71866378151`, PR518.
+APPLY1134 ACCEPTED/cleanup ACCEPT y ADMIN1135 PROVISIONED se conservan.
+[STATUS1138](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43684726506)
+aceptó panel HEALTHY, worker CREATED/PID0 y motores STOPPED; no cambió el par.
+
+TG1139 falló antes de SSH por ENV_READY ausente. Su corrección administrativa
+tuvo [readback](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6890407300).
+TG1140 pasó entorno/procedencia y falló en el checker local antes de SSH.
+RCA519 aporta una línea de env y regresión; revisión final/CI/merge pendientes.
+No hay recibo PREPARED, pairing o recepción humana. Sender sin activar;
+aceptación privada y capacidad física de 50 siguen pendientes. No otro deploy.
+
+## Histórico — R298 — instalado R297; observador de estado en reparación
 
 Main del producto instalado: `5281efae7dafe89be047073796b3e0a7e19785ed`.
 PR #517 fusionado, release 866, [APPLY 1134](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43681576798) ACCEPTED/cleanup ACCEPT;

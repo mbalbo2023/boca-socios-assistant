@@ -1,6 +1,21 @@
 # Plan de entrega y aceptación de la BETA funcional
 
-## R298 — completar el postflight sin repetir la promoción
+## R299 — terminar la preparación de Telegram sobre la BETA instalada
+
+La promoción única R297/release866 y ADMIN1135 están aceptados. R298/PR518
+resolvió el lector; [STATUS1138](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43684726506)
+acreditó panel HEALTHY/motores STOPPED con las identidades instaladas intactas.
+No repetir publicación, APPLY, admin ni ese estado ya certificado.
+
+TG1139 y TG1140 conservan sus fallos anteriores a SSH: primero configuración
+de entorno, después import del checker. El marcador ya tiene readback; el
+[plan R299](superpowers/plans/2026-11-15-r299-telegram-runner-import.md)
+limita la corrección a una línea de env local y regresión del proceso real.
+Tras revisión/CI/merge exactos, nuevo prepare con M/release866/digests existentes.
+Aceptar sólo PREPARED/restauración HEALTHY_ENGINE_OFF/emisor OFF; no activar
+ni enviar. Continúan pendientes aceptación privada y medición física de 50.
+
+## Histórico — R298 — completar el postflight sin repetir la promoción
 
 PR #517/R297 se instaló una vez desde 5281efa por
 [APPLY 1134](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43681576798), ACCEPTED/cleanup ACCEPT, y

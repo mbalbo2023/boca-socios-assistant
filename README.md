@@ -1,6 +1,22 @@
 # Boca Socios Assistant
 
-## R298 — R297 desplegada; corrección del postflight pendiente
+## R299 — BETA instalada y estado verificado; preparación Telegram pendiente
+
+PR517/R297 está instalado desde `5281efae7dafe89be047073796b3e0a7e19785ed`,
+release866: APPLY1134 ACCEPTED/cleanup ACCEPT y ADMIN1135 PROVISIONED.
+El mantenimiento PR518 se integró en `2581e23bbbb8b4a05fb2470a23b3c71866378151`.
+[STATUS1138](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43684726506)
+verificó el mismo par: panel HEALTHY y motores STOPPED, sin otro despliegue.
+
+Telegram aún no está preparado ni emparejado. TG1139 se detuvo por una variable
+ausente ya configurada y verificada; TG1140 se detuvo en un import del runner,
+antes de SSH. [RCA519](https://github.com/mbalbo2023/boca-socios-assistant/issues/519)
+añade sólo la ruta del checkout al paso existente, conservando el control de
+main. Revisión final, CI/merge y un prepare protegido nuevo siguen pendientes.
+No se enviaron mensajes ni se activó el sender. La aceptación privada Samsung
+y la capacidad física de 50 contextos no se deducen de CI o del estado saludable.
+
+## Histórico — R298 — R297 desplegada; corrección del postflight pendiente
 
 La BETA de PR #517 está instalada desde
 `5281efae7dafe89be047073796b3e0a7e19785ed`, release 866.
