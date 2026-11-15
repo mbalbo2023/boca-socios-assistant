@@ -1,6 +1,9 @@
 """A manual host run must use the current main ref, not a queued stale SHA."""
 
+import json
 import runpy
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -39,6 +42,87 @@ def test_main_ref_cli_rejects_malformed_or_oversized_response(
     script = Path(__file__).resolve().parents[1] / "scripts/check_main_ref.py"
     monkeypatch.setattr(sys, "argv", [str(script), str(response), SHA])
     assert runpy.run_path(str(script))["main"]() == 1
+
+
+@pytest.mark.parametrize(
+    ("payload", "accepted"),
+    [
+        pytest.param(
+            json.dumps({"ref": "refs/heads/main", "object": {"type": "commit", "sha": SHA}}),
+            True,
+            id="current_main",
+        ),
+        pytest.param(
+            json.dumps({"ref": "refs/heads/main", "object": {"type": "commit", "sha": "b" * 40}}),
+            False,
+            id="stale_main",
+        ),
+        pytest.param("{", False, id="invalid_json"),
+        pytest.param(
+            json.dumps({"ref": "refs/heads/main", "object": []}),
+            False,
+            id="invalid_object",
+        ),
+    ],
+)
+def test_installed_telegram_main_guard_uses_clean_step_environment(
+    tmp_path: Path, payload: str, accepted: bool
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+    workflow = (root / ".github/workflows/boca-first-deploy.yml").read_text()
+    sections = {
+        section.splitlines()[0]: section for section in workflow.split("      - name: ")[1:]
+    }
+    header, body = sections[
+        "Execute installed Telegram transaction under one protected lease"
+    ].split("        run: |\n", 1)
+    # Start from an empty runner environment, not pytest's PYTHONPATH or editable install.
+    environment = {
+        "PATH": "/usr/bin:/bin",
+        "RUNNER_TEMP": str(tmp_path),
+        "GITHUB_SHA": SHA,
+        "BOCA_SOURCE_SHA": "b" * 40,
+        "BOCA_TEST_PYTHON": sys.executable,
+    }
+    for line in header.split("        env:\n", 1)[1].splitlines():
+        key, value = line.strip().split(": ", 1)
+        if key == "GH_TOKEN":
+            environment[key] = "inert-test-token"
+        else:
+            (scalar,) = shlex.split(value)
+            environment[key] = scalar
+    (tmp_path / "boca-telegram-main.json").write_text(payload)
+    set_options = body.splitlines()[0].strip()
+    (checker,) = (line.strip() for line in body.splitlines() if "scripts/check_main_ref.py" in line)
+    marker = "BOCA_TEST_AFTER_MAIN_GUARD"
+    # Execute only the actual guard, never gh/SSH. -S disables incidental site packages;
+    # the unchanged checker must import its package from the step's checkout environment.
+    probe = "\n".join(
+        (
+            set_options,
+            'python3() { "$BOCA_TEST_PYTHON" -S -B "$@"; }',
+            checker,
+            f"printf '%s\\n' '{marker}'",
+        )
+    )
+    result = subprocess.run(  # noqa: S603 - local workflow guard, fictional inputs, no host access
+        ["/bin/bash", "--noprofile", "--norc", "-c", probe],
+        cwd=root,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=10,
+    )
+    assert "ModuleNotFoundError" not in result.stderr
+    assert result.returncode == (0 if accepted else 1)
+    if accepted:
+        assert result.stdout == f"BOCA_MAIN_REF_PASS\n{marker}\n"
+        assert result.stderr == ""
+    else:
+        assert result.stderr.startswith("BOCA_NO_GO: ")
+        assert result.stdout == ""
+        assert marker not in result.stderr
 
 
 def test_current_main_and_first_attempt_are_checked_before_ssh_and_apply() -> None:

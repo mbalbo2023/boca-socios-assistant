@@ -1,6 +1,28 @@
 # Binding instructions for every coding agent
 
-## Estado vigente R298 — postflight de R297, sin segundo despliegue
+## Estado vigente R299 — estado físico aceptado; guard del runner Telegram
+
+R297/PR517 permanece instalado desde `5281efae7dafe89be047073796b3e0a7e19785ed`,
+release866/APPLY1134 ACCEPTED y cleanup ACCEPT; ADMIN1135 PROVISIONED.
+R298/PR518 se fusionó en `2581e23bbbb8b4a05fb2470a23b3c71866378151`.
+[STATUS1138](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43684726506)
+aceptó el par exacto, panel HEALTHY y motores STOPPED. No repetir esa lectura.
+
+TG1139 falló antes de SSH por ENV_READY ausente; el marcador se configuró
+tras revisión y readback del entorno main-only, sin cambiar secretos/protecciones.
+[TG1140](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43685974310)
+pasó ese gate y falló antes de SSH en el import del checker de main.
+[RCA519 y cuatro votos](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6890476164)
+limitan el arreglo a `PYTHONPATH: src` del paso Telegram y su regresión real
+en un proceso limpio. No cambiar checker, cuerpo del paso ni entorno global.
+
+Conservar W del workflow separado de M instalado, ZIP aislado, gates y datos.
+Revisión/CI/merge exactos preceden un nuevo prepare con M/release866/digests.
+Sin otra release/APPLY/admin/STATUS, activate o mensajes. Telegram PREPARED,
+aceptación privada y capacidad física de 50 siguen pendientes. SIMULATION_ONLY,
+BLACKBOX y aislamiento Porota/PPI intactos. Los cortes siguientes son históricos.
+
+## Histórico — Estado vigente R298 — postflight de R297, sin segundo despliegue
 
 PR #517 ya está fusionado y su producto R297 está instalado desde
 `5281efae7dafe89be047073796b3e0a7e19785ed`, release 866/APPLY 1134

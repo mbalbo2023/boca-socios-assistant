@@ -1,6 +1,29 @@
 # Safe operations — verified evidence and gated procedures
 
-## R298 — postflight de la promoción aceptada, 2026-11-15
+## R299 — continuidad Telegram, 2026-11-15
+
+Instalado M `5281efae7dafe89be047073796b3e0a7e19785ed`, release866
+`43680526402`; APPLY1134 ACCEPTED/cleanup ACCEPT y ADMIN1135 PROVISIONED.
+Main N/PR518 `2581e23bbbb8b4a05fb2470a23b3c71866378151` corrigió el lector.
+[STATUS1138](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43684726506)
+aceptó las mismas identidades, panel HEALTHY y motores STOPPED.
+
+TG1139 falló antes de SSH por ENV_READY ausente; se agregó sólo ese marcador
+tras verificar main-only, identidad existente y readback. TG1140 pasó el gate,
+pero el checker de main no importó `boca_socios`. `set -e` impidió el SSH.
+La configuración de archivos SSH en el runner no es un efecto sobre el host.
+[RCA519](https://github.com/mbalbo2023/boca-socios-assistant/issues/519) corrige el
+env local; no altera el checker, SHA comparado, ZIP, permisos ni límites.
+
+Después de revisión, CI y merge exactos: un nuevo `telegram-prepare` desde
+main vigente W, con source M, ambos digests de release866, release_run_id
+43680526402, service controller y `1.5cpu-1024m-192pids`; otros inputs vacíos.
+Validar el recibo real PREPARED/CONTROLLER_HEALTHY_ENGINE_OFF/sender OFF y
+human_receipt UNVERIFIED. Fallo nuevo exige RCA; no Re-run jobs. No otra
+release/APPLY/admin/STATUS, activate, test ni envío. La aceptación privada
+y el dimensionamiento físico siguen separados de estos resultados.
+
+## Histórico — R298 — postflight de la promoción aceptada, 2026-11-15
 
 Instalado: `5281efae7dafe89be047073796b3e0a7e19785ed`, release 866.
 [APPLY 1134](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43681576798) ACCEPTED/cleanup ACCEPT, sin restauración/fase fallida;

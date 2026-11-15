@@ -618,6 +618,16 @@
         "tests/test_r294_installed_status.py::test_current_observer_does_not_send_host_database_path",
         "tests/test_r294_installed_status.py::test_current_program_rejects_invalid_argv_before_opening_ledger"
       ]
+    },
+    {
+      "id": "RCA-519",
+      "issue": 519,
+      "fix_pr": 519,
+      "root_cause": "The installed Telegram workflow step invoked the main-ref checker without the checkout source path. Earlier step environments did not propagate, while runpy tests inside pytest masked the missing import. TG1140 failed before SSH.",
+      "prevention": "Declare PYTHONPATH only in the affected step. Execute its real environment, shell guard and checker in a clean subprocess: current workflow main passes independently of installed source, and stale or invalid responses reject before the effect marker.",
+      "regression_tests": [
+        "tests/test_main_ref_gate.py::test_installed_telegram_main_guard_uses_clean_step_environment"
+      ]
     }
   ]
 }
