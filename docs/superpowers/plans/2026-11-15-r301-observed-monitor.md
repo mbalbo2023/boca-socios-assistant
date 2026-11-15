@@ -64,6 +64,7 @@ Interfaces propuestas en `browser/engine_protocol.py`:
 NavigationPurpose = Literal["SITE_URL", "QUEUE_BRIDGE", "RECEIVED_TARGET"]
 NavigationResult = Literal["STARTED", "RETURNED", "FAILED", "CANCELLED"]
 
+
 @dataclass(frozen=True, slots=True, repr=False)
 class NavigationAttempt:
     sequence: int
@@ -76,6 +77,7 @@ class NavigationAttempt:
     def to_value(self) -> dict[str, object]: ...
     @classmethod
     def from_value(cls, value: object) -> NavigationAttempt: ...
+
 
 # Campos adicionales de SessionInspection, al final y con defaults:
 configured_url: str | None = None
@@ -98,9 +100,7 @@ El agregado privado de motores incorpora `configured_url` y `navigation_attempt`
 Agregar en `AutomaticQueueObserver` un único helper privado:
 
 ```python
-async def _navigate(
-    self, page: _Page, url: str, *, purpose: NavigationPurpose
-) -> int | None: ...
+async def _navigate(self, page: _Page, url: str, *, purpose: NavigationPurpose) -> int | None: ...
 ```
 
 El helper se llama sólo después de las guardas actuales. Incrementa la secuencia y guarda `STARTED` inmediatamente antes del único `await page.goto(url, wait_until="domcontentloaded", timeout=12000)`. Retorna el status recibido o `None`. Actualiza la misma marca a `RETURNED`, `FAILED` o `CANCELLED`; excepciones y cancelación se relanzan preservando la causa original, sin texto de excepción ni nuevo cleanup.
