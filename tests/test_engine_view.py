@@ -7,6 +7,7 @@ import json
 import shutil
 import subprocess
 from collections.abc import Mapping
+from html import escape
 from html.parser import HTMLParser
 from uuid import uuid4
 
@@ -449,7 +450,8 @@ function element(id) {
     dataset: {ready: 'true'}, fields: new Map(),
     addEventListener(name, callback) { this[name] = callback; },
     get elements() { return {namedItem: name => {
-      if (!this.fields.has(name)) this.fields.set(name, {value: 'original-' + name});
+      if (!this.fields.has(name)) this.fields.set(name, {value: 'original-' + name,
+        select() { selects++; }, focus() { context.document.activeElement = this; }});
       return this.fields.get(name);
     }}; }
   });
@@ -467,10 +469,26 @@ if (input.session_id) {
   element('queues_tokens-sessions').children = [row];
 }
 const operation = element('legacy-worker-recovery-form').elements.namedItem('operation_id');
+const form = element('queues_tokens-start');
+const count = form.elements.namedItem('chromium');
+const engineOperation = form.elements.namedItem('operation_id');
+const member = element('browsers_members-member');
+member.value = 'owner-member-selection';
+const sessionLink = row ? row.querySelector('[data-field="inspect"]') : null;
+if (sessionLink) sessionLink.href = '/control/sesiones/' + input.session_id;
+const requests = [];
+let clipboard = 0;
+let selects = 0;
 const context = {
-  document: {hidden: true, getElementById: element, addEventListener() {}},
+  document: {hidden: true, activeElement: count, getElementById: element, addEventListener() {},
+    createElement() { throw new Error('existing row replaced'); }},
+  navigator: {clipboard: {writeText() { clipboard++; }}},
+  select() { selects++; },
   setInterval() {}, URL,
-  fetch: async () => ({ok: true, json: async () => snapshot})
+  fetch: async (url, options) => {
+    requests.push({url, options});
+    return {ok: true, json: async () => snapshot};
+  }
 };
 vm.runInNewContext(input.script, context, {timeout: 1000});
 (async () => {
@@ -481,13 +499,20 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
     const result = {recovery: section ? {hidden: section.hidden,
       disabled: element('legacy-worker-recovery-button').disabled} : null,
       status: element('engines-live').textContent};
-    if (row) for (const field of ['outcome', 'queue_state', 'phase']) {
+    if (row) for (const field of ['outcome', 'queue_state', 'phase', 'event_state', 'event_id',
+      'reason', 'configured_url', 'navigation_attempt', 'display_url', 'inspect']) {
       result[field] = row.querySelector('[data-field="' + field + '"]').textContent;
     }
     results.push(result);
   }
   process.stdout.write(JSON.stringify({results, operation: operation.value,
-    status: element('engines-live').textContent}));
+    status: element('engines-live').textContent, requests, clipboard, selects,
+    retained: {row: element('queues_tokens-sessions').children[0] === row,
+      form: element('queues_tokens-start') === form,
+      engineOperation: form.elements.namedItem('operation_id') === engineOperation,
+      operationValue: engineOperation.value,
+      focus: context.document.activeElement === count, count: count.value,
+      member: member.value, href: sessionLink && sessionLink.href}}));
 })().catch(() => {process.exitCode = 1;});
 """
     completed = subprocess.run(  # noqa: S603 - actual static UI script, fixed offline DOM only
@@ -569,3 +594,229 @@ def test_actual_poll_script_translates_observations_without_value_coercion() -> 
         assert actual["outcome"] == expected
         assert actual["queue_state"] == expected
         assert actual["phase"] == "UNLISTED_PHASE"
+
+
+_EVENT_CASES = (
+    ("EVENT_ANNOUNCED", "Identificador de evento recibido; faltan señales de cola o acceso"),
+    ("EVENT_VERIFIED", "Evento identificado en la observación de la página"),
+    ("NO_EVENT_CONFIRMED", "La página informa explícitamente que no hay eventos"),
+    ("UNRECOGNIZED", "No se pudo identificar un evento con esta muestra"),
+)
+_REASON_CASES = (
+    ("VISIBLE_CHALLENGE", "Intervención requerida"),
+    ("CHECK_FAILED", "Comprobación fallida"),
+    ("HTTP_FAILURE", "Respuesta HTTP de error"),
+    ("INVALID_OBSERVATION", "Muestra no interpretable"),
+    ("CONTRADICTORY_EVIDENCE", "Señales contradictorias"),
+    ("RECEIVED_TARGET", "Enlace de acceso recibido"),
+    ("OBSERVED_IDLE", "Cola inactiva observada"),
+    ("OBSERVED_PREQUEUE", "Prefila observada"),
+    ("OBSERVED_QUEUE", "Cola observada"),
+    ("EXPLICIT_NO_EVENTS", "Ausencia declarada por la página"),
+    ("EVENT_ID_OBSERVED", "ID recibido sin otras señales"),
+    ("NO_RECOGNIZED_EVIDENCE", "Sin señales reconocidas"),
+)
+
+
+def _evidence_snapshot(session):
+    return {
+        "version": 1,
+        "context_limit": 50,
+        "observed_at": "2026-11-15T16:00:00Z",
+        "engines": [
+            {
+                "engine": "queues_tokens",
+                "state": "RUNNING",
+                "requested_contexts": 1,
+                "created": 1,
+                "active": 1,
+                "closed": 0,
+                "failed": 0,
+                "sessions": [session],
+            }
+        ],
+    }
+
+
+def test_event_and_navigation_labels_remain_closed_and_private():
+    from boca_socios.panel import engine_view
+
+    session_id = str(uuid4())
+    base = {
+        "session_id": session_id,
+        "state": "FAILED",
+        "phase": "SESSION_FAILED",
+        "event_id": "campaign:page-42",
+        "observed_at": "2026-11-15T16:00:00Z",
+        "configured_url": "https://site.example.invalid/start?configured-secret#private",
+        "display_url": "https://final.example.invalid/prior?final-secret#private",
+        "final_url_observed_at": "2026-11-15T15:00:00Z",
+        "navigation_attempt": {
+            "sequence": 2,
+            "purpose": "QUEUE_BRIDGE",
+            "display_url": "https://queue.example.invalid/next?attempt-secret#private",
+            "started_at": "2026-11-15T16:00:00Z",
+            "result": "RETURNED",
+            "http_status": 503,
+        },
+    }
+    sessions = [{**base, "event_state": code} for code, _ in _EVENT_CASES]
+    sessions += [{**base, "reason": code} for code, _ in _REASON_CASES]
+    for value in (None, [], {}, False, "constructor", "__proto__", "private-provider-error"):
+        sessions.append({**base, "event_state": value, "reason": value, "event_id": "<invalid-id>"})
+    sessions.append({"session_id": session_id})
+    attack = '</script><img src=x onerror="bad()">'
+    sessions.append({**base, "event_id": attack, "navigation_attempt": {"purpose": attack}})
+    actual = _run_poll_script(
+        [_evidence_snapshot(item) for item in sessions], session_id=session_id
+    )
+    for session, result in zip(sessions, actual["results"], strict=True):
+        page, body, _ = render(snapshot=_evidence_snapshot(session))
+        for field in (
+            "event_state",
+            "event_id",
+            "reason",
+            "configured_url",
+            "navigation_attempt",
+            "display_url",
+        ):
+            expected = engine_view._session_value(session, field)
+            assert result[field] == expected
+            assert f'data-field="{field}">{escape(expected)}</dd>'.encode() in body
+        assert not any(tag == "img" for tag, _ in page.elements)
+        for secret in (
+            b"configured-secret",
+            b"final-secret",
+            b"attempt-secret",
+            b"private-provider-error",
+        ):
+            assert secret not in body
+    for index, (_, expected) in enumerate(_EVENT_CASES):
+        assert actual["results"][index]["event_state"] == expected
+    for index, (_, expected) in enumerate(_REASON_CASES, len(_EVENT_CASES)):
+        assert actual["results"][index]["reason"] == expected
+    for item in actual["results"][len(_EVENT_CASES) + len(_REASON_CASES) :]:
+        assert item["event_state"] == "Dato no recibido o no reconocido"
+        assert item["reason"] == "Dato no recibido o no reconocido"
+        assert item["event_id"] == "Dato no recibido"
+    first = actual["results"][0]
+    assert first["event_id"] == "campaign:page-42"
+    assert first["configured_url"] == "https://site.example.invalid/start"
+    assert first["display_url"] == "https://final.example.invalid/prior · 2026-11-15 12:00:00 ART"
+    assert first["navigation_attempt"] == (
+        "Enlace de cola recibido · https://queue.example.invalid/next · 2026-11-15 13:00:00 ART"
+        " · La llamada de navegación retornó · HTTP 503"
+    )
+    missing = actual["results"][-2]
+    assert missing["configured_url"] == "Dato no recibido"
+    assert missing["display_url"] == "Dato no recibido"
+    assert missing["navigation_attempt"] == "Dato no recibido"
+    _, body, _ = render(snapshot=_evidence_snapshot(base))
+    assert "ID de evento observado en la página".encode() in body
+    assert "Última URL final recibida".encode() in body
+    assert (
+        "Cada fila conserva la última muestra recibida. Si la sesión falla o se cierra, esos datos son históricos.".encode()
+        in body
+    )
+
+
+def test_actual_poll_relabels_received_tokens_without_replacing_controls():
+    session_id = str(uuid4())
+    cases = (
+        (False, False, "Inspeccionar sesión 1 de colas y tokens"),
+        (True, False, "Ver token de cola de la sesión 1 de colas y tokens"),
+        (False, True, "Ver tokens de autenticación de la sesión 1 de colas y tokens"),
+        (True, True, "Ver tokens de cola y autenticación de la sesión 1 de colas y tokens"),
+    )
+    snapshots = [
+        _evidence_snapshot({"session_id": session_id, "has_target_url": queue, "has_auth": auth})
+        for queue, auth, _ in cases
+    ]
+    actual = _run_poll_script(snapshots, session_id=session_id)
+    for snapshot, result, (_, _, label) in zip(snapshots, actual["results"], cases, strict=True):
+        assert result["status"] == "Estados y sesiones actualizados."
+        assert result["inspect"] == label
+        _, body, _ = render(snapshot=snapshot)
+        assert f'href="/control/sesiones/{session_id}">{label}</a>'.encode() in body
+    assert actual["retained"] == {
+        "row": True,
+        "form": True,
+        "engineOperation": True,
+        "operationValue": "original-operation_id",
+        "focus": True,
+        "count": "original-chromium",
+        "member": "owner-member-selection",
+        "href": f"/control/sesiones/{session_id}",
+    }
+    assert actual["operation"] == "original-operation_id"
+    assert actual["clipboard"] == actual["selects"] == 0
+    assert len(actual["requests"]) == 4
+    assert all(request["url"] == "/control/motores.json" for request in actual["requests"])
+    assert all(request["options"].get("method", "GET") == "GET" for request in actual["requests"])
+
+
+def test_event_identifier_requires_the_same_whole_value_in_initial_and_poll_render():
+    session_id = str(uuid4())
+    values = ("campaign-42\n", "campaign-42 ", "<img src=x>", "x" * 129, "a" * 128)
+    result = _run_poll_script(
+        [_evidence_snapshot({"session_id": session_id, "event_id": value}) for value in values],
+        session_id=session_id,
+    )
+    for value, actual in zip(values, result["results"], strict=True):
+        expected = value if value == "a" * 128 else "Dato no recibido"
+        assert actual["event_id"] == expected
+        _, body, _ = render(
+            snapshot=_evidence_snapshot({"session_id": session_id, "event_id": value})
+        )
+        assert f'data-field="event_id">{expected}</dd>'.encode() in body
+
+
+def test_navigation_purpose_and_result_labels_are_shared_without_claiming_success():
+    session_id = str(uuid4())
+    purposes = (
+        ("SITE_URL", "Carga de SITE_URL"),
+        ("QUEUE_BRIDGE", "Enlace de cola recibido"),
+        ("RECEIVED_TARGET", "Enlace de acceso recibido"),
+        ("constructor", "Dato no recibido o no reconocido"),
+    )
+    results = (
+        ("STARTED", "Inicio del intento registrado"),
+        ("RETURNED", "La llamada de navegación retornó"),
+        ("FAILED", "El intento falló"),
+        ("CANCELLED", "El intento fue cancelado"),
+        ([], "Dato no recibido o no reconocido"),
+    )
+    sessions, expected = [], []
+    for purpose, purpose_label in purposes:
+        for result, result_label in results:
+            sessions.append(
+                {
+                    "session_id": session_id,
+                    "navigation_attempt": {
+                        "sequence": 1,
+                        "purpose": purpose,
+                        "result": result,
+                        "http_status": 503,
+                        "display_url": "https://example.invalid/path",
+                        "started_at": "2026-11-15T16:00:00Z",
+                    },
+                }
+            )
+            expected.append(
+                f"{purpose_label} · https://example.invalid/path · "
+                f"2026-11-15 13:00:00 ART · {result_label}"
+                + (" · HTTP 503" if result == "RETURNED" else "")
+            )
+    actual = _run_poll_script(
+        [_evidence_snapshot(item) for item in sessions], session_id=session_id
+    )
+    for session, received, label in zip(sessions, actual["results"], expected, strict=True):
+        assert received["navigation_attempt"] == label
+        page, body, _ = render(snapshot=_evidence_snapshot(session))
+        assert f'data-field="navigation_attempt">{escape(label)}</dd>'.encode() in body
+        assert not any(tag == "path" for tag, _ in page.elements)
+    snapshot = _evidence_snapshot({"session_id": session_id, "has_auth": True})
+    snapshot["engines"][0]["engine"] = "browsers_members"
+    _, body, _ = render(snapshot=snapshot)
+    assert b"Ver tokens de autenticaci" in body
+    assert b"de la sesi" in body and b"1 de navegadores de socios</a>" in body

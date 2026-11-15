@@ -494,7 +494,8 @@ def test_queue_write_requires_the_owned_main_frame(frame_kind):
     page = Page([])
     page.url = queue_url
     page.main_frame = SimpleNamespace(url=queue_url)
-    facade = module()._BrowserFacade(Browser(Context(page)), queue_url)
+    observer, *_ = observer_for([])
+    facade = module()._BrowserFacade(Browser(Context(page)), queue_url, navigate=observer._navigate)
     facade.page = page
 
     class Request:
@@ -612,5 +613,146 @@ def test_ordinary_factory_keeps_sandbox_without_legacy_stealth_flags():
                 "args": ["--disable-background-networking"],
             }
         ]
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("status", [None, 200, 503])
+def test_goto_records_real_attempt_before_await(status):
+    async def exercise():
+        observer, page, context, _, _, _ = observer_for(
+            [snapshot(model={"eventId": "observed", "ticket": {"progress": 0}})]
+        )
+        initial = await observer.inspect()
+        assert getattr(initial, "configured_url", None) == SITE, (
+            "configured destination not received"
+        )
+        assert initial.navigation_attempt is None and initial.final_url is None
+        entered = []
+        original = page.goto
+
+        async def goto(url, **options):
+            entered.append(await observer.inspect())
+            await original(url, **options)
+            page.url = "https://queue.example.invalid/redirected?secret=received#private"
+            return None if status is None else SimpleNamespace(status=status)
+
+        page.goto = goto
+        await observer.observe_queue()
+        started = entered[0].navigation_attempt
+        assert (started.sequence, started.purpose, started.display_url) == (1, "SITE_URL", SITE)
+        assert (
+            started.result == "STARTED"
+            and started.http_status is None
+            and started.started_at == NOW
+        )
+        received = await observer.inspect()
+        assert received.navigation_attempt.result == "RETURNED"
+        assert received.navigation_attempt.http_status == status
+        assert received.navigation_attempt.started_at == NOW
+        assert (
+            received.final_url == "https://queue.example.invalid/redirected?secret=received#private"
+        )
+        assert len(page.navigations) == context.pages == 1
+        await observer.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("first", [True, False])
+def test_failed_navigation_preserves_attempt_and_prior_final_sample(first):
+    async def exercise():
+        link = "https://bocajuniors.queue-it.net/received?private=query#private"
+        observer, page, context, browser, _, _ = observer_for([snapshot(links=(link,))])
+        original = page.goto
+        error = ValueError("private-navigation-error")
+        attempts = []
+
+        async def goto(url, **options):
+            attempts.append((url, options, await observer.inspect()))
+            if first or url == link:
+                raise error
+            return await original(url, **options)
+
+        page.goto = goto
+        observed = await observer.observe_queue()
+        assert observed.outcome == "CHECK_FAILED"
+        inspected = await observer.inspect()
+        attempt = getattr(inspected, "navigation_attempt", None)
+        assert attempt is not None, "failed goto evidence was lost"
+        assert (attempt.sequence, attempt.purpose, attempt.result, attempt.http_status) == (
+            1 if first else 2,
+            "SITE_URL" if first else "QUEUE_BRIDGE",
+            "FAILED",
+            None,
+        )
+        assert attempt.display_url == (
+            SITE if first else "https://bocajuniors.queue-it.net/received"
+        )
+        assert inspected.final_url == (None if first else SITE)
+        assert inspected.observed_at == (None if first else NOW)
+        assert all(item[2].navigation_attempt.result == "STARTED" for item in attempts)
+        assert all(item[2].navigation_attempt.http_status is None for item in attempts)
+        assert context.closed and browser.closed and not inspected.context_open
+        counts = (len(attempts), len(page.evaluations), context.cookies_read, context.pages)
+        assert await observer.inspect() == inspected
+        assert counts == (len(attempts), len(page.evaluations), context.cookies_read, context.pages)
+        assert "private-navigation-error" not in repr(inspected) + repr(attempt)
+
+    asyncio.run(exercise())
+
+
+def test_navigation_cancellation_preserves_identity_and_started_time():
+    async def exercise():
+        observer, page, context, _, _, _ = observer_for([snapshot()])
+        cancellation = asyncio.CancelledError("private-cancellation")
+
+        async def goto(url, **options):
+            raise cancellation
+
+        page.goto = goto
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await observer.observe_queue()
+        assert caught.value is cancellation
+        inspected = await observer.inspect()
+        attempt = getattr(inspected, "navigation_attempt", None)
+        assert attempt is not None, "cancelled goto evidence was lost"
+        assert attempt.result == "CANCELLED" and attempt.http_status is None
+        assert attempt.started_at == NOW and inspected.final_url is None
+        assert context.closed
+
+    asyncio.run(exercise())
+
+
+def test_inspect_keeps_navigation_evidence_without_new_io():
+    async def exercise():
+        link = "https://bocajuniors.queue-it.net/received?secret=query#private"
+        observer, page, context, _, _, _ = observer_for(
+            [snapshot(links=(link,)), snapshot(model={"ticket": {"progress": 0}})]
+        )
+        await observer.observe_queue()
+        inspected = await observer.inspect()
+        attempt = getattr(inspected, "navigation_attempt", None)
+        assert attempt is not None, "bridge goto evidence was not received"
+        assert (attempt.sequence, attempt.purpose, attempt.result, attempt.http_status) == (
+            2,
+            "QUEUE_BRIDGE",
+            "RETURNED",
+            200,
+        )
+        assert attempt.display_url == "https://bocajuniors.queue-it.net/received"
+        assert inspected.final_url == link
+        counts = (len(page.navigations), len(page.evaluations), context.cookies_read, context.pages)
+        assert await observer.inspect() == inspected
+        await observer.close()
+        closed = await observer.inspect()
+        assert closed.navigation_attempt == attempt and closed.final_url == link
+        assert closed.configured_url == SITE and not closed.context_open
+        assert counts == (
+            len(page.navigations),
+            len(page.evaluations),
+            context.cookies_read,
+            context.pages,
+        )
 
     asyncio.run(exercise())

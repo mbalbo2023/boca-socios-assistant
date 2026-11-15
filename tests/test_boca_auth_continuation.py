@@ -154,6 +154,17 @@ def test_queue_completion_follows_only_received_target_in_same_page():
         )
         assert context.pages == 1 and len(page.navigations) == 2
         assert page.navigations[-1][0] == TARGET
+        inspected = await observer.inspect()
+        attempt = getattr(inspected, "navigation_attempt", None)
+        assert attempt is not None, "received target goto evidence was not received"
+        assert (attempt.sequence, attempt.purpose, attempt.result, attempt.http_status) == (
+            2,
+            "RECEIVED_TARGET",
+            "RETURNED",
+            200,
+        )
+        assert attempt.display_url == PORTAL and inspected.final_url == TARGET
+        assert context.cookies_read == 0
         await observer.login_boca(
             BocaAuthRequest(OPERATION, ready.nonce, "fixture@example.invalid", "fixture")
         )
@@ -312,5 +323,44 @@ def test_page_drift_during_private_await_never_yields_authentication(phase):
             )
         assert context.closed
         assert len(calls) == (0 if phase == "cookies" else 1)
+
+    asyncio.run(exercise())
+
+
+def test_failed_received_target_preserves_primary_and_previous_final_sample():
+    async def exercise():
+        observer, page, context, browser, calls = auth_observer(
+            [snapshot(model={"eventId": "observed", "targetUrl": TARGET})]
+        )
+        origin = "https://bocajuniors.queue-it.net/received"
+        observer._destination = origin
+        original = page.goto
+        error = ValueError("private-target-error")
+        started = []
+
+        async def goto(url, **options):
+            if url == TARGET:
+                started.append(await observer.inspect())
+                raise error
+            return await original(url, **options)
+
+        page.goto = goto
+        with pytest.raises(ValueError) as caught:
+            await observer.prepare_boca_login(OPERATION)
+        assert caught.value is error
+        inspected = await observer.inspect()  # local retained state, no IPC recovery
+        attempt = getattr(inspected, "navigation_attempt", None)
+        assert attempt is not None, "failed target goto evidence was lost locally"
+        assert (attempt.sequence, attempt.purpose, attempt.result, attempt.http_status) == (
+            2,
+            "RECEIVED_TARGET",
+            "FAILED",
+            None,
+        )
+        assert attempt.display_url == PORTAL
+        assert started[0].navigation_attempt.result == "STARTED"
+        assert inspected.final_url == origin
+        assert inspected.observed_at == started[0].observed_at
+        assert context.closed and browser.closed and calls == [] and context.cookies_read == 0
 
     asyncio.run(exercise())

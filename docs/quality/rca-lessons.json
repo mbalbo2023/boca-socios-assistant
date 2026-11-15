@@ -644,6 +644,39 @@
         "tests/test_r296_telegram_backend.py::test_migration_receipt_requires_schema_ready_restored_sender_off",
         "tests/test_r296_telegram_installed_bundle.py::test_isolated_archive_executes_migration_with_distinct_workflow_source"
       ]
+    },
+    {
+      "id": "RCA-521",
+      "issue": 521,
+      "fix_pr": 521,
+      "root_cause": "The live session inventory and private reveal already existed, but its projection omitted observed event fields and conflated current status with the last received final URL. Actual navigation attempts were not separately represented.",
+      "prevention": "Reuse existing rows and polling; project received event evidence and a bounded typed trace around the three existing goto calls, with separate final-sample time. Preserve null/historical states, fixed caps, controls and explicit private reveal; RETURNED never proves entry or DOM authentication.",
+      "regression_tests": [
+        "tests/test_automatic_observer.py::test_failed_navigation_preserves_attempt_and_prior_final_sample",
+        "tests/test_boca_auth_continuation.py::test_failed_received_target_preserves_primary_and_previous_final_sample",
+        "tests/test_engine_sessions.py::test_navigation_attempt_round_trip_and_legacy_inspection",
+        "tests/test_engine_sessions.py::test_inspection_maximum_encoded_payload_remains_bounded",
+        "tests/test_engine_session_coordinator.py::test_metadata_projects_observed_event_without_local_identity_inference",
+        "tests/test_engine_session_coordinator.py::test_target_failure_without_inspection_keeps_metadata_unreceived",
+        "tests/test_engine_view.py::test_actual_poll_relabels_received_tokens_without_replacing_controls",
+        "tests/test_private_engine_controls.py::test_private_session_detail_separates_configuration_attempt_and_final_sample"
+      ]
+    },
+    {
+      "id": "RCA-522",
+      "issue": 522,
+      "fix_pr": 521,
+      "root_cause": "The 1144 receipt reported failure and healthy restoration without proving whether schema 0007 committed. The canonical readonly verifier existed, but no exposed installed selector performed only that observation. The migration failure cause remains unknown.",
+      "prevention": "Expose the existing readonly verifier under installed lease and W/M gates. Return before owner/stop/provision; require post-health and strict observe receipts, keeping missing schema NO_GO. Test cleanup/no-effects, isolated ZIP and actual workflow gates without retrying migration.",
+      "regression_tests": [
+        "tests/test_browser_ipc_workflow.py::test_schema_observe_routes_only_through_installed_transaction",
+        "tests/test_browser_ipc_workflow.py::test_schema_observe_actual_workflow_terminal_gate_blocks_missing_or_failed",
+        "tests/test_browser_ipc_workflow.py::test_schema_observe_bootstrap_uses_installed_validation_before_memfd",
+        "tests/test_r296_telegram_backend.py::test_schema_observation_reads_real_storage_without_preparing_or_stopping",
+        "tests/test_r296_telegram_backend.py::test_schema_observation_receipt_cannot_claim_restore_or_sender",
+        "tests/test_r296_telegram_backend.py::test_schema_observation_does_not_relax_other_success_restoration",
+        "tests/test_r296_telegram_installed_bundle.py::test_isolated_archive_observes_schema_with_readonly_helper_and_one_lease"
+      ]
     }
   ]
 }

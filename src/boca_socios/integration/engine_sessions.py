@@ -658,10 +658,24 @@ class EngineSessionCoordinator:
             "phase": item.phase,
             "observed_at": item.observed_at.isoformat() if item.observed_at else None,
             "outcome": observed.outcome if observed else None,
+            "event_state": observed.event_state if observed else None,
+            "event_id": observed.event_id if observed else None,
+            "reason": observed.reason if observed else None,
             "queue_state": observed.queue_state if observed else "UNKNOWN",
             "has_target_url": observed is not None and observed.target_url is not None,
             "has_auth": item.auth is not None,
             "display_url": _display_url(inspected.final_url if inspected else None),
+            "final_url_observed_at": (
+                inspected.observed_at.isoformat()
+                if inspected and inspected.final_url and inspected.observed_at
+                else None
+            ),
+            "configured_url": inspected.configured_url if inspected else None,
+            "navigation_attempt": (
+                inspected.navigation_attempt.to_value()
+                if inspected and inspected.navigation_attempt
+                else None
+            ),
             "queue_id": inspected.queue_id if inspected else None,
             "position": inspected.queue_number if inspected else None,
             "ahead": inspected.users_ahead if inspected else None,

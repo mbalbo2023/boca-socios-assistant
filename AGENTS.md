@@ -1,6 +1,38 @@
 # Binding instructions for every coding agent
 
-## Estado vigente R300 — migración Telegram instalada, sin repetir promoción
+## Estado vigente R301/R302 — monitor y observación de esquema, un candidato521
+
+R301 conserva sus tres tareas congeladas/revisadas. R302/#522 está registrado
+antes del código con cuatro GO de diseño en #417/comment6891704268. Reutilizar
+únicamente verify-schema readonly, lease y backend instalados, con selector
+telegram-schema-observe; no repetir migrate1144 ni pasar a prepare sin
+SCHEMA_READY físico. Plan R302 gobierna el delta de mantenimiento. MainP
+c14f98d6adf4c4042f29e11f23f8a76545a1b0f9 está GREEN; instaladoM permanece
+5281efae7dafe89be047073796b3e0a7e19785ed. 1144 restauró HEALTHY/engineOFF;
+esquema0007UNKNOWN. No afirmar causa ni rollback. ZIP47 entradas/caps450000
+fuente300000ZIP: cierre R302449973B,27B de margen; revisar si no cabe. El autor
+sólo edita sus ocho archivos asignados; raíz controla docs/RCA/GitHub/host.
+SIMULATION_ONLY, BLACKBOX, datos, passkey y Porota/PPI protegidos. Sólo Actions
+serializadas por raíz. R301 no autoriza reserva, ganador, foto o mensajes.
+
+## Histórico — instrucciones del delta de monitor R301
+
+## Estado vigente R301 — monitor observado, con contrato registrado
+
+El delta autorizado está registrado en #521 antes del código y descrito en
+`docs/superpowers/plans/2026-11-15-r301-observed-monitor.md`, con cuatro GO
+de diseño. Reutilizar filas/polling/reveal ya instalados; sólo completar
+evento/motivo, configuración/último goto/última URL final y texto del enlace.
+Task1: engine_protocol/automatic_observer; Task2: engine_sessions; Task3:
+engine_view/private_ui. No ampliar caps, permisos, navegación ni sesiones.
+SIMULATION_ONLY, BLACKBOX, datos y Porota/PPI protegidos. No proveedor/host
+por autores, no envíos, reservas o capturas de entrada supuestas.
+R300/PR520 sigue sus gates y mantenimiento físico por raíz; su árbol es la
+base candidata de este worktree. Reconciliar main antes de publicar.
+Plan, RCA y documentación son de raíz; revisores separados de autores.
+Los cortes siguientes se conservan como historia y no amplían este delta.
+
+## Histórico — Estado vigente R300 — migración Telegram instalada, sin repetir promoción
 
 Main base O `f16db1008418889ffdd9b35a57bf77f1238ec659` integra PR519;
 CI1262/Security1086 SUCCESS. El producto M sigue instalado desde

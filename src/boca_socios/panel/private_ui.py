@@ -262,12 +262,37 @@ def engine_session_details(details: PrivateSessionDetails, csrf: str, operation_
         f'<button type="submit">{label}</button></form>'
         for kind, label in kinds
     )
+    session_evidence = {
+        "observed_at": observation.observed_at.isoformat() if observation else None,
+        "event_state": observation.event_state if observation else None,
+        "event_id": observation.event_id if observation else None,
+        "reason": observation.reason if observation else None,
+        "configured_url": inspection.configured_url if inspection else None,
+        "navigation_attempt": (
+            inspection.navigation_attempt.to_value()
+            if inspection and inspection.navigation_attempt
+            else None
+        ),
+        "display_url": inspection.final_url if inspection else None,
+        "final_url_observed_at": (
+            inspection.observed_at.isoformat()
+            if inspection and inspection.final_url and inspection.observed_at
+            else None
+        ),
+    }
     labels = [
         ("Motor", engine_view._ENGINES[identity.engine]),
         ("Navegador", engine_view._BROWSERS[identity.browser]),
         ("Estado", engine_view._STATES.get(details.state, "Estado no verificado")),
         ("Etapa", engine_view._PHASES.get(details.phase, "Sin observación")),
-        ("URL observada", engine_view._url(inspection.final_url if inspection else None)),
+        *[
+            (
+                engine_view._SESSION_LABELS[field],
+                engine_view._session_value(session_evidence, field),
+            )
+            for field in session_evidence
+            if field != "final_url_observed_at"
+        ],
         ("Queue ID recibido", inspection.queue_id if inspection else None),
         ("Número de cola recibido", inspection.queue_number if inspection else None),
         ("Personas delante", inspection.users_ahead if inspection else None),
@@ -284,7 +309,7 @@ def engine_session_details(details: PrivateSessionDetails, csrf: str, operation_
         "Sesión de navegador",
         "<h1>Sesión de navegador</h1><p>Esta consulta muestra la sesión existente. "
         "No abre otra página ni reinicia la cola.</p>"
-        f"<dl>{rows}</dl>"
+        f"<p>{engine_view._SAMPLE_NOTICE}</p><dl>{rows}</dl>"
         + forms
         + ("" if kinds else "<p>Todavía no hay URL ni tokens observados para copiar.</p>")
         + "<p>Los tokens observados no acreditan una entrada. La autenticación en la página "

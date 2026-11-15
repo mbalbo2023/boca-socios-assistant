@@ -1,4 +1,4 @@
-"""Bounded entry for the protected installed Telegram archive and its receipt."""
+"""Protected Telegram CLI."""
 
 from __future__ import annotations
 
@@ -6,8 +6,10 @@ import re
 import signal
 import sys
 from collections.abc import Sequence
+from functools import partial
 
 OPERATIONS = {
+    "telegram-schema-observe": "observe",
     "telegram-migrate": "migrate",
     "telegram-prepare": "prepare",
     "telegram-activate": "activate",
@@ -19,8 +21,7 @@ _NO_GO = b"BOCA_TELEGRAM_HOST state=NO_GO reason=arguments_or_receipt_unverified
 
 
 def _interrupted(_number: int, _frame: object) -> None:
-    # Let the in-process phase finally blocks restore the exact controller.
-    # A forced kill still needs the explicit no-send recovery operation.
+    # Interrupt through finally; forced kill needs explicit no-send recovery.
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
     raise RuntimeError("telegram_protected_transport_interrupted")
@@ -70,6 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         from boca_socios.host_telegram_backend import (
             TelegramBackendError,
             TelegramBackendReceipt,
+            _execute,
             activate_installed_telegram,
             migrate_installed_telegram,
             prepare_installed_telegram,
@@ -123,6 +125,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                 else:
                     execute = {
+                        "telegram-schema-observe": partial(
+                            _execute, "observe", reader=None
+                        ).__call__,
                         "telegram-migrate": migrate_installed_telegram,
                         "telegram-prepare": prepare_installed_telegram,
                         "telegram-activate": activate_installed_telegram,
