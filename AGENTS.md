@@ -1,6 +1,102 @@
 # Binding instructions for every coding agent
 
-## Estado vigente R294 — worker automático y promoción consolidada (14-NOV-2026 UTC)
+## Estado vigente R297 — correcciones QA y dos motores independientes
+
+El titular ya aportó QA/capturas y autorizó desarrollar dos motores funcionales:
+colas/tokens y navegadores/socios, independientes y bajo demanda. El
+[contrato DUAL-01..12 y consenso previo](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6886406162)
+y [ADR0302](docs/ADR/0302-independent-owner-engines.md) gobiernan este delta.
+Continúa el mismo PR517 / `feature/417-r295-beta-followups`, sobre b23dc20.
+No repetir R294 instalada ni pruebas certificadas del árbol base.
+
+Se amplía expresamente el alcance anterior de sesión única a un presupuesto
+lógico global de 50 contextos entre ambos motores, con Chromium/Firefox/WebKit.
+No son 50 por motor ni evidencia de capacidad física/posiciones de cola.
+Reutilizar observer, parser, vault, monitores y supervisor; un worker físico,
+dos activaciones lógicas, STOP aislado y holds/releases durables en audit_events.
+El worker sólo puede detenerse al liberar todos los trabajos o por recuperación
+explícita de una activación perdida; un contador RAM no autoriza Docker.
+
+SIMULATION_ONLY, BLACKBOX unread/unmodified, cantidad 1 y el guard socio/evento
+siguen vigentes. No inventar DOM autenticado o entrada a partir de tokens;
+conservar la sesión y declarar evidencia faltante. La revisión previa unánime
+autoriza desarrollo; la revisión final requiere votos nuevos sobre el código.
+No elevar caps/reservas ni añadir listeners, otro vault, DB o despliegue.
+
+Mientras se consolida este QA: desarrollo, pruebas focales, revisión y CI del
+SHA exacto en PR517. Sin merge/release/host/proveedor/mensajes del agente.
+La promoción final y aceptación física siguen pendientes; únicamente Actions
+protegidas serializadas, postflight y limpieza selectiva Boca, sin Porota/PPI.
+El pedido posterior de prueba visual por Actions queda registrado en
+[este checkpoint](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6886936337).
+Reutilizar CI para navegador real con fixtures y artifacts ficticios. El
+observador instalado actual sólo prueba salud/identidades; no fabricar una
+sesión WebAuthn ni afirmar que una captura offline prueba el panel instalado.
+Los encabezados anteriores se conservan como historia, no como prohibición
+de la ampliación de sesiones autorizada por el titular.
+
+## Corte histórico R296 — un candidato, pendiente del QA del titular
+
+El titular todavía no realizó su QA y pidió dejar un único candidato preparado
+para incorporar sus correcciones antes de promover. Se conserva PR #517 y la
+rama `feature/417-r295-beta-followups`; no crear otro PR para duplicar estas
+integraciones. [Decisión R296](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6881603931),
+[cierre de fases](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6882197549)
+y [ADR0301](docs/ADR/0301-r296-consolidated-auth-and-telegram.md) son la continuidad.
+
+R294 sigue siendo la última instalación certificada: main/instalada
+`c5a143541ccfcaf26f29cf252a4cb33fd7c540f7`, release #865 / APPLY #1117.
+No hay nueva observación física en R296. Sin merge, release, host, START/STOP,
+navegación del agente a proveedores ni mensajes mientras se consolidan el QA
+y este candidato. Sólo Actions protegidas y serializadas para operaciones futuras.
+
+R296 conecta la selección visible de socio en START, la sesión Chromium única,
+readiness/nonce/IPC privados, el transporte R295 y la publicación cercada por
+STOP/revocación en el monitor existente. El monitor distingue autenticación
+activa de evidencia de cola UNKNOWN. No alterar `synthetic.py`/`ipc_worker.py`,
+SIMULATION_ONLY, sin reservas/compras, bypass ni sesiones adicionales.
+
+Telegram reutiliza stage/passkey/custodia/outbox/sender y añade backend instalado,
+perfil de mantenimiento exacto, adopción recuperable del binding y proyección
+pública real. Guardar el stage precede a mostrar/copiar `/start`. Renovación
+explícita archiva sin borrar historia/nonce; continuación conserva el UUID de
+aceptación ORIGINAL y rechaza ambigüedad. Recuperación no envía. Ninguna de estas
+rutas está certificada físicamente por pruebas offline o por CI.
+
+Reutilizar las pruebas focales y revisiones registradas, no repetir la suite
+local del árbol base. Los checks requeridos pertenecen al SHA publicado exacto.
+Mantener caps, reservas, reglas de main, aislamiento Boca y datos. Cambios a una
+fuente del full ZIP requieren revisar su pin ACTUAL en test_r82_recovery_bundle,
+conservar los históricos y medir el cierre de todos los paquetes afectados.
+Los encabezados siguientes son históricos y no reinician trabajo pendiente.
+
+## Corte histórico R295 — desarrollo paralelo durante aceptación Samsung
+
+La instalación R294 está completada: main/instalada
+`c5a143541ccfcaf26f29cf252a4cb33fd7c540f7`, PR #516, release #865,
+APPLY #1117 ACCEPTED, administración #1118 PROVISIONED y par #1120 OBSERVED.
+El controller quedó RUNNING/HEALTHY y el worker CREATED/PID0; esto no certifica
+un START/STOP posterior del titular. [Handoff físico](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6871954660).
+No repetir ese deploy. STATUS #1119 sigue registrado como NO_GO del observador.
+
+El titular autorizó desarrollar pendientes mientras prueba desde Samsung.
+[Decisión y responsables R295](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6878044872)
+y [ADR0300](docs/ADR/0300-r295-postdeploy-status-auth-and-telegram.md)
+separan implementación, verificación offline, instalación y aceptación.
+R295 corrige el diagnóstico de ledger preservado y la topología Telegram,
+y desarrolla el transporte de login Boca a partir de fuentes pinneadas de #12.
+Ese transporte todavía no es un productor conectado: falta el wiring de sesión,
+IPC, START/STOP y monitor. Telegram tampoco está activado por esta rama.
+
+Durante la prueba del titular: sin releases, APPLY, operaciones de host,
+START/STOP ni mensajes Telegram. Trabajo exclusivo en rama, pruebas focales,
+revisión independiente y checks requeridos del SHA exacto. No repetir la suite
+local certificada del árbol base. No ampliar caps/reservas, duplicar módulos ni
+modificar `synthetic.py`/`ipc_worker.py`. Sólo Actions protegidas y serializadas
+cuando vuelva a corresponder una operación física. Los cortes siguientes son
+históricos y no reemplazan este estado.
+
+## Corte histórico R294 — diseño previo a la promoción (14-NOV-2026 UTC)
 
 R293 terminó por PR #515 en `959a0be9e776329f99a29e65c2c75195700d5596`;
 CI #1242 e Image Security #1080 SUCCESS, sin release ni host por CI/CD.

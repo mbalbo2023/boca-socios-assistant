@@ -430,3 +430,49 @@ def test_refresh_and_duplicate_start_preserve_the_single_active_run(tmp_path: Pa
         assert conn.execute(
             "SELECT audit_id FROM audit_events WHERE action='owner_lifecycle_v1_request_bot_start'"
         ).fetchall() == [(operations[0],)]
+
+
+@pytest.mark.parametrize("wake_fails", [False, True])
+def test_selected_member_cannot_change_on_cached_success_or_failed_wake(tmp_path, wake_fails):
+    from datetime import UTC, datetime
+
+    from boca_socios.panel.lifecycle_intents import LifecycleIntentStore
+    from boca_socios.security.credential_vault import CredentialVault
+    from boca_socios.security.enrollment import MemberEnrollmentService
+
+    wakes = []
+
+    def notify(operation):
+        wakes.append(operation)
+        if wake_fails:
+            raise OSError("offline wake unavailable")
+
+    provider, key, credential_id = _passkey([0.0])
+    app, db = _app(tmp_path / "boca.sqlite3", provider, FakeHost(), bot_control=notify)
+    service = MemberEnrollmentService(db, CredentialVault(b"d" * 32))
+    members = [
+        service.enroll(
+            email=f"member{i}@example.invalid",
+            password="fixture-password",
+            consent_recorded_at=datetime.now(UTC),
+        )
+        for i in range(2)
+    ]
+    cookie = _login(app, key, credential_id)
+    _, _, page = _request(app, "/control", cookie=cookie)
+    fields = _bot_fields(page, "iniciar") | {"auth_member_id": members[0]}
+
+    def submit(payload):
+        return _request(app, "/control/bot/iniciar", cookie=cookie, method="POST", payload=payload)[
+            0
+        ]
+
+    assert submit(fields) == (503 if wake_fails else 303)
+    assert submit(fields | {"auth_member_id": members[1]}) == 409
+    assert submit(fields | {"auth_member_id": ""}) == 409
+    # Same-operation redelivery after the throttle interval must preserve binding too.
+    sleep(1.05)
+    assert submit(fields | {"auth_member_id": members[1]}) == 409
+    assert LifecycleIntentStore(db).auth_member_for_start(wakes[0]) == members[0]
+    assert submit(fields) == (503 if wake_fails else 303)
+    assert len(wakes) == (2 if wake_fails else 1)

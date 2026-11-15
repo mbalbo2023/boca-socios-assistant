@@ -1,6 +1,42 @@
 # Safe operations — verified evidence and gated procedures
 
-## R259 — origen 8443 exacto y SITE_URL aún vacío (CODE_ONLY)
+## R297 — promoción consolidada y validación pendiente, 15-NOV-2026 UTC
+
+El candidato sigue en PR517. Última instalación certificada: R294,
+`c5a143541ccfcaf26f29cf252a4cb33fd7c540f7`, release865/APPLY1117 ACCEPTED.
+Las instrucciones R259/R186 y siguientes conservan historia; no autorizan
+repetir instalaciones o recuperaciones cerradas. El [checkpoint del candidato](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889286186)
+separa CI/capturas ficticias de observación del host.
+
+Tras revisión final, checks del SHA exacto y reconciliación individual de PRs
+en #45, integrar el único candidato y comprobar main. Con PR0 y gates de main,
+publicar una sola release dual inmutable. Todas las operaciones del droplet
+se ejecutan secuencialmente por la Action Boca protegida existente.
+El orden del upgrade es observación actual del par, observación de recursos
+retenidos posterior, y un único `boca-pair-upgrade-apply` con las dos imágenes
+de esa release. Conservar el presupuesto `1.5cpu-1024m-192pids`; no sustituir
+recibos históricos ni invertir su cronología.
+
+Exigir terminal ACCEPTED, postflight y limpieza selectiva ACCEPT. Después
+ejecutar la provisión administrativa y observación instalada existentes;
+registrar controller, worker, identidades, loopback8443 y custodia SQLite.
+Un resultado incierto exige RCA según su fase, sin retry automático. Preservar
+datos, claves, socios y configuración; ningún recurso Porota/PPI está incluido.
+
+Los límites siguen siendo worker768MiB/128 tareas/1CPU y controller256MiB/
+64 tareas/0,5CPU. Firefox144/143 tareas es evidencia del runner, no del host.
+ADR0112 mantiene los límites y exige observación física posdespliegue antes
+de dimensionar. Los observadores actuales acreditan salud/identidades, no
+capacidad para tres tipos simultáneos o50 contextos ni una sesión WebAuthn
+autenticada. Esos alcances se declaran pendientes hasta evidencia propia;
+no añadir un benchmark preventivo como gate de despliegue.
+
+SIMULATION_ONLY permanece. Cola, pase, autenticación y entrada son evidencias
+distintas. No emitir aviso de entrada por tokens ni usar una captura ficticia
+como comprobante real. Telegram conserva su preparación/custodia protegidas
+y la recepción del titular se certifica por separado.
+
+## Histórico R259 — origen 8443 exacto y SITE_URL aún vacío (CODE_ONLY)
 
 El nuevo selector de lectura `boca-panel-exact-origin-observe` queda previsto
 **dentro de la Action protegida existente** `Boca first deploy`, no como un

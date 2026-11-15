@@ -43,6 +43,7 @@ from boca_socios.telegram_pairing_cutover import (
     execute_protected_pairing,
 )
 from boca_socios.telegram_pairing_resolver import TelegramApiFetch
+from boca_socios.telegram_pairing_storage import PairingStorage
 
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _STAGE_PURPOSE = "boca-telegram-private-encrypted-stage-v2"
@@ -101,9 +102,15 @@ def _open_volume(directory: Path) -> int:
 
 
 def _read_staged_bytes(folder_fd: int) -> tuple[bytes, tuple[int, int, int, int]]:
+    return _read_private_bytes(folder_fd, STAGING_FILENAME, _MAX_STAGE_BYTES)
+
+
+def _read_private_bytes(
+    folder_fd: int, name: str, maximum: int
+) -> tuple[bytes, tuple[int, int, int, int]]:
     try:
         fd = os.open(
-            STAGING_FILENAME,
+            name,
             os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
             dir_fd=folder_fd,
         )
@@ -117,12 +124,12 @@ def _read_staged_bytes(folder_fd: int) -> tuple[bytes, tuple[int, int, int, int]
             or before.st_gid != os.getegid()
             or before.st_nlink != 1
             or stat.S_IMODE(before.st_mode) != 0o600
-            or not 0 < before.st_size <= _MAX_STAGE_BYTES
+            or not 0 < before.st_size <= maximum
         ):
             raise ValueError("stage_inode")
-        data = os.read(fd, _MAX_STAGE_BYTES + 1)
+        data = os.read(fd, maximum + 1)
         after = os.fstat(fd)
-        named = os.stat(STAGING_FILENAME, dir_fd=folder_fd, follow_symlinks=False)
+        named = os.stat(name, dir_fd=folder_fd, follow_symlinks=False)
         identity = (before.st_dev, before.st_ino, before.st_ctime_ns, before.st_mtime_ns)
         if (
             len(data) != before.st_size
@@ -144,12 +151,23 @@ def read_encrypted_telegram_stage(
     lease: BocaJobLease,
     trusted_now: int | None = None,
 ) -> EncryptedPairingStage:
+    _require_lease(lease, coordinates)
+    result = read_stage_storage(directory, coordinates=coordinates, trusted_now=trusted_now)
+    _require_lease(lease, coordinates)
+    return result
+
+
+def read_stage_storage(
+    directory: Path,
+    *,
+    coordinates: CutoverCoordinates,
+    trusted_now: int | None = None,
+) -> EncryptedPairingStage:
     """Read one immutable ciphertext without exposing/consuming its stage ID.
 
     The stage is a non-authorizing Chrome handoff. Before any provider read a
     separately HMAC-signed owner receipt and durable protected nonce are needed.
     """
-    _require_lease(lease, coordinates)
     folder = _open_volume(directory)
     try:
         raw, identity = _read_staged_bytes(folder)
@@ -235,18 +253,24 @@ def read_encrypted_telegram_stage(
             envelope=envelope,
             owner_witness=witness,
         )
-        _require_lease(lease, coordinates)
         return result
     finally:
         os.close(folder)
 
 
 def consume_telegram_owner_nonce(
+    directory: Path, nonce: str, coordinates: CutoverCoordinates, *, lease: BocaJobLease
+) -> bool:
+    _require_lease(lease, coordinates)
+    result = consume_nonce_storage(directory, nonce, coordinates)
+    _require_lease(lease, coordinates)
+    return result
+
+
+def consume_nonce_storage(
     directory: Path,
     nonce: str,
     coordinates: CutoverCoordinates,
-    *,
-    lease: BocaJobLease,
 ) -> bool:
     """Durably spend HMAC nonce once, inside the *held* canonical Boca flock.
 
@@ -254,7 +278,6 @@ def consume_telegram_owner_nonce(
     phase fails, the marker is never removed: ambiguous is terminal and a
     fresh owner-signed nonce is required. It is NOT a Telegram send receipt.
     """
-    _require_lease(lease, coordinates)
     if type(nonce) is not str or _DIGEST.fullmatch(nonce) is None:
         raise SameLeasePairingError("telegram_nonce_invalid")
     digest = hashlib.sha256(bytes.fromhex(nonce)).hexdigest()
@@ -277,7 +300,6 @@ def consume_telegram_owner_nonce(
         raise SameLeasePairingError("telegram_nonce_unverified")
     folder = _open_volume(directory)
     try:
-        _require_lease(lease, coordinates)
         try:
             fd = os.open(
                 marker,
@@ -296,7 +318,6 @@ def consume_telegram_owner_nonce(
                 output.flush()
                 os.fsync(output.fileno())
             os.fsync(folder)
-            _require_lease(lease, coordinates)
         except (OSError, ValueError, SameLeasePairingError):
             # Never unlink: a partial O_EXCL file must permanently block replay.
             raise SameLeasePairingError("telegram_nonce_uncertain") from None
@@ -313,16 +334,17 @@ def execute_staged_pairing_under_lease(
     owner_receipt: OwnerPairingReceipt,
     owner_receipt_key: bytes,
     recipient: bootstrap.RecipientReceipt,
-    private_key: bytes,
+    private_key: bytes | None,
     lease: BocaJobLease,
     trusted_clock: Callable[[], int],
     inspect_host: Callable[[str, CutoverCoordinates], HostRecheckReceipt],
     api_fetch: TelegramApiFetch,
+    storage: PairingStorage | None = None,
 ) -> ProtectedPairingReceipt:
     """Bridge ciphertext+held lease to existing V2 custody, leaving sender OFF.
 
-    No production caller is wired. Only the single protected Cutover A backend
-    may supply the real owner/passkey proof, lease, Docker reinspection and
+    Only the protected installed backend may supply the real owner/passkey
+    proof, lease, Docker reinspection and
     dedicated Telegram egress; fakes remain strictly offline test fixtures.
     """
     _require_lease(lease, coordinates)
@@ -330,7 +352,7 @@ def execute_staged_pairing_under_lease(
         now = trusted_clock()
     except Exception:
         raise SameLeasePairingError("telegram_clock_unverified") from None
-    stage = read_encrypted_telegram_stage(
+    stage = (read_encrypted_telegram_stage if storage is None else storage.read_stage)(
         stage_directory, coordinates=coordinates, lease=lease, trusted_now=now
     )
     if (
@@ -348,7 +370,7 @@ def execute_staged_pairing_under_lease(
 
     def assert_stage_and_lease() -> None:
         _require_lease(lease, coordinates)
-        latest = read_encrypted_telegram_stage(
+        latest = (read_encrypted_telegram_stage if storage is None else storage.read_stage)(
             stage_directory, coordinates=coordinates, lease=lease, trusted_now=trusted_clock()
         )
         if latest != stage:
@@ -362,7 +384,9 @@ def execute_staged_pairing_under_lease(
 
     def guarded_consume(nonce: str, checked: CutoverCoordinates) -> bool:
         assert_stage_and_lease()
-        return consume_telegram_owner_nonce(stage_directory, nonce, checked, lease=lease)
+        return (consume_telegram_owner_nonce if storage is None else storage.consume_nonce)(
+            stage_directory, nonce, checked, lease=lease
+        )
 
     return execute_protected_pairing(
         coordinates=coordinates,
@@ -376,4 +400,119 @@ def execute_staged_pairing_under_lease(
         recheck_host=guarded_recheck,
         consume_owner_nonce=guarded_consume,
         api_fetch=api_fetch,
+        storage=storage,
     )
+
+
+_HISTORY_PREFIX = "boca_telegram_stage_history_v2_"
+
+
+def stage_nonce_snapshot(
+    folder: int, stage: EncryptedPairingStage, coordinates: CutoverCoordinates
+) -> tuple[str, bytes | None, tuple[int, int, int, int] | None, str | None]:
+    """Read the existing deterministic stage nonce without consuming or changing it."""
+    marker_identity = None
+    original_attempt = None
+    nonce = hashlib.sha256(("stage-v2:" + stage.stage_id).encode("ascii")).hexdigest()
+    digest = hashlib.sha256(bytes.fromhex(nonce)).hexdigest()
+    marker = _NONCE_PREFIX + digest + ".json"
+    marker_raw = None
+    try:
+        os.stat(marker, dir_fd=folder, follow_symlinks=False)
+    except FileNotFoundError:
+        pass  # Explicit owner-authorized renewal also repairs a lost HTTP 202.
+    else:
+        marker_raw, marker_identity = _read_private_bytes(folder, marker, _MAX_NONCE_BYTES)
+        value = json.loads(marker_raw, object_pairs_hook=bootstrap._unique)
+        required = {
+            "version": 2,
+            "purpose": _NONCE_PURPOSE,
+            "target_sha": coordinates.target_sha,
+            "image_digest": coordinates.image_digest,
+            "owner_digest": coordinates.owner_digest,
+            "controller_id": coordinates.controller_id,
+            "recipient_fingerprint": coordinates.recipient_fingerprint,
+            "nonce_sha256": digest,
+        }
+        if (
+            type(value) is not dict
+            or set(value) != set(required) | {"attempt_id", "lease_digest"}
+            or bootstrap._canonical(value) != marker_raw
+            or type(value["version"]) is not int
+            or any(value[k] != v for k, v in required.items())
+            or not isinstance(value["attempt_id"], str)
+            or re.fullmatch(r"[1-9][0-9]{0,19}", value["attempt_id"]) is None
+            or not isinstance(value["lease_digest"], str)
+            or _DIGEST.fullmatch(value["lease_digest"]) is None
+        ):
+            raise SameLeasePairingError("telegram_renew_nonce_unverified")
+        original_attempt = value["attempt_id"]
+    return marker, marker_raw, marker_identity, original_attempt
+
+
+def archive_stage_storage(
+    directory: Path, *, coordinates: CutoverCoordinates, stage: EncryptedPairingStage, now: int
+) -> None:
+    """Explicit protected renewal only; preserve nonce and exact old ciphertext.
+
+    A new exclusively created directory reserves the destination. With the
+    controller stopped and the same host lease held, rename into that empty
+    private directory is atomic and never overwrites an existing archive.
+    An interrupted reservation/rename remains evidence, never an auto-retry.
+    """
+    if type(now) is not int or now < stage.staged_at or stage.owner_witness is None:
+        raise SameLeasePairingError("telegram_renew_stage_unverified")
+    folder = _open_volume(directory)
+    history = None
+    try:
+        original, identity = _read_staged_bytes(folder)
+        if identity != stage.file_identity:
+            raise SameLeasePairingError("telegram_stage_changed")
+        marker, marker_raw, marker_identity, _ = stage_nonce_snapshot(folder, stage, coordinates)
+        entries = [name for name in os.listdir(folder) if name.startswith(_HISTORY_PREFIX)]
+        if len(entries) >= 8:
+            raise SameLeasePairingError("telegram_stage_history_full")
+        for name in entries:
+            meta = os.stat(name, dir_fd=folder, follow_symlinks=False)
+            if (
+                _DIGEST.fullmatch(name.removeprefix(_HISTORY_PREFIX)) is None
+                or not stat.S_ISDIR(meta.st_mode)
+                or meta.st_uid != os.geteuid()
+                or meta.st_gid != os.getegid()
+                or stat.S_IMODE(meta.st_mode) != 0o700
+            ):
+                raise SameLeasePairingError("telegram_stage_history_unverified")
+        target = _HISTORY_PREFIX + stage.stage_id
+        os.mkdir(target, mode=0o700, dir_fd=folder)  # Existing target is always NO_GO.
+        history = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=folder)
+        os.fsync(folder)
+        if _read_staged_bytes(folder) != (original, identity):
+            raise SameLeasePairingError("telegram_stage_changed")
+        if marker_raw is not None and _read_private_bytes(folder, marker, _MAX_NONCE_BYTES) != (
+            marker_raw,
+            marker_identity,
+        ):
+            raise SameLeasePairingError("telegram_nonce_changed")
+        if marker_raw is None:
+            try:
+                os.stat(marker, dir_fd=folder, follow_symlinks=False)
+            except FileNotFoundError:
+                pass
+            else:
+                raise SameLeasePairingError("telegram_nonce_changed")
+        named = os.stat(target, dir_fd=folder, follow_symlinks=False)
+        opened = os.fstat(history)
+        if (named.st_dev, named.st_ino) != (opened.st_dev, opened.st_ino) or os.listdir(history):
+            raise SameLeasePairingError("telegram_stage_history_unverified")
+        os.rename(STAGING_FILENAME, STAGING_FILENAME, src_dir_fd=folder, dst_dir_fd=history)
+        os.fsync(history)
+        os.fsync(folder)
+        archived, archived_identity = _read_staged_bytes(history)
+        if archived != original or archived_identity[:2] != identity[:2]:
+            raise SameLeasePairingError("telegram_stage_archive_unverified")
+    except (OSError, ValueError, TypeError, KeyError):
+        raise SameLeasePairingError("telegram_stage_archive_state_preserved") from None
+    finally:
+        if history is not None:
+            os.close(history)
+        os.close(folder)

@@ -20,6 +20,7 @@ from uuid import uuid4
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from boca_socios import telegram_bootstrap
 from boca_socios.domain.policy import TicketIntent
 from boca_socios.domain.sector_preferences import SectorMode
 from boca_socios.events.official_catalog import (
@@ -69,6 +70,44 @@ def test_telegram_main_route_requires_status_permission(tmp_path: Path) -> None:
     provider, key, credential = _passkey([0.0], permissions=PERMISSIONS - {"local-status:read"})
     app, _ = _app(tmp_path / "boca.sqlite3", provider, FakeHost())
     assert _request(app, "/telegram", cookie=_login(app, key, credential))[0] == 403
+
+
+def test_pairing_reads_public_recipient_only_in_authenticated_private_page(tmp_path: Path) -> None:
+    provider, key, credential = _passkey([0.0])
+    recipient = telegram_bootstrap._receipt(os.urandom(32), "PREPARED")
+    reads: list[bool] = []
+
+    def load() -> telegram_bootstrap.RecipientReceipt:
+        reads.append(True)
+        return recipient
+
+    app, _ = _app(tmp_path / "boca.sqlite3", provider, recipient_loader=load)
+    assert _request(app, "/telegram/emparejar")[0] == 401
+    assert not reads
+    status, headers, body = _request(
+        app, "/telegram/emparejar", cookie=_login(app, key, credential)
+    )
+    assert status == 200 and headers["Cache-Control"] == "no-store"
+    assert reads == [True]
+    encoded = telegram_bootstrap._b64(telegram_bootstrap._canonical(asdict(recipient)))
+    assert f'id="pairing-recipient" type="hidden" value="{encoded}"'.encode() in body
+    assert b'id="pairing-recipient-required" type="hidden" value="1"' in body
+
+
+def test_invalid_public_recipient_disables_pairing_without_leaking_reader_error(
+    tmp_path: Path,
+) -> None:
+    provider, key, credential = _passkey([0.0])
+
+    def unavailable() -> telegram_bootstrap.RecipientReceipt:
+        raise ValueError("private-invalid-data-never-render")
+
+    app, _ = _app(tmp_path / "boca.sqlite3", provider, recipient_loader=unavailable)
+    status, _, body = _request(app, "/telegram/emparejar", cookie=_login(app, key, credential))
+    assert status == 200
+    assert b'id="pairing-recipient" type="hidden" value=""' in body
+    assert b'id="pairing-recipient-required" type="hidden" value="1"' in body
+    assert b"private-invalid-data" not in body
 
 
 def test_member_event_preferences_reuse_profile_and_keep_other_defaults(tmp_path: Path) -> None:
@@ -222,6 +261,7 @@ def _app(
     queue_monitor: object | None = None,
     auth_monitor: object | None = None,
     automatic_monitor: object | None = None,
+    recipient_loader: Callable[[], telegram_bootstrap.RecipientReceipt] | None = None,
 ) -> tuple[PrivatePanelApplication, Database]:
     db = Database(path)
     db.migrate()
@@ -243,6 +283,7 @@ def _app(
         queue_monitor=queue_monitor,
         auth_monitor=auth_monitor,
         automatic_monitor=automatic_monitor,
+        telegram_recipient_loader=recipient_loader,
     )
     return app, db
 

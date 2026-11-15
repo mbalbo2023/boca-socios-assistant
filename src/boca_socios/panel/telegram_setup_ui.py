@@ -10,7 +10,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
+from dataclasses import asdict
 
+from boca_socios import telegram_bootstrap
 from boca_socios.panel.enrollment_form import STYLE
 
 _SETUP_STYLE = (
@@ -306,6 +308,8 @@ PAIRING_SCRIPT = r"""
 'use strict';
 (() => {
   const fragment = location.hash;
+  const prepared = document.getElementById('pairing-recipient').value;
+  const preparedRequired = document.getElementById('pairing-recipient-required').value === '1';
   let cleared = false;
   try {
     history.replaceState(null, '', '/telegram/emparejar');
@@ -323,6 +327,8 @@ PAIRING_SCRIPT = r"""
   const stageButton = document.getElementById('pairing-stage');
   const csrfField = document.getElementById('pairing-csrf');
   const operationField = document.getElementById('pairing-operation');
+  const stagingFlow = !!(stageButton && csrfField && operationField
+    && csrfField.value && operationField.value);
   const encoder = new TextEncoder();
   let active = true;
   let recipient = null;
@@ -378,7 +384,11 @@ PAIRING_SCRIPT = r"""
       if (!cleared || location.origin !== 'http://localhost:8443'
           || !isSecureContext || !globalThis.crypto || !crypto.subtle)
         throw Error('private crypto unavailable');
-      recipient = readReceipt(fragment);
+      if (preparedRequired && !prepared) throw Error('prepared recipient unavailable');
+      const selectedReceipt = prepared ? '#recipient=' + prepared : fragment;
+      if (prepared && fragment && fragment !== selectedReceipt)
+        throw Error('public receipt changed');
+      recipient = readReceipt(selectedReceipt);
       const publicBytes = bytes(recipient.public_key, 32, 32);
       const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', publicBytes));
       const fingerprint = Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
@@ -392,8 +402,10 @@ PAIRING_SCRIPT = r"""
       fingerprintOutput.textContent = fingerprint;
       tokenInput.disabled = false;
       generateButton.disabled = false;
-      result.textContent = 'Recibo válido. Genere un código, cópielo al bot privado y '
-        + 'luego selle el token y el código. La instalación protegida sigue pendiente.';
+      result.textContent = stagingFlow
+        ? 'Recibo válido. Genere el código, selle el token y confirme con passkey. '
+          + 'Después del resguardo podrá copiar el comando para su bot privado.'
+        : 'Vista sin resguardo: no hay emisor activado. Genere un código y selle el token.';
     } catch (_) {
       clean();
       disable();
@@ -404,17 +416,19 @@ PAIRING_SCRIPT = r"""
   generateButton.addEventListener('click', () => {
     if (!active || generateButton.disabled || !recipientKey) return;
     pairingCode = base64url(crypto.getRandomValues(new Uint8Array(24)));
-    codeInput.value = '/start ' + pairingCode;
-    codeInput.hidden = false;
-    copyCode.disabled = false;
+    codeInput.value = stagingFlow ? '' : '/start ' + pairingCode;
+    codeInput.hidden = stagingFlow;
+    copyCode.disabled = stagingFlow;
     sealButton.disabled = false;
     output.value = '';
     output.hidden = true;
     copyEnvelope.disabled = true;
     if (stageButton) stageButton.disabled = true;
-    result.textContent = 'Abra el chat PRIVADO con su propio bot en Telegram, '
-      + 'envíe el comando indicado y recién después cree el texto cifrado. '
-      + 'Nunca envíe el token a Telegram, chats de soporte ni GitHub.';
+    result.textContent = stagingFlow
+      ? 'Código generado y oculto. Cree el texto cifrado y confirme el resguardo con passkey. '
+        + 'El comando aparecerá únicamente después de guardar el sobre.'
+      : 'Vista sin resguardo ni emisor activado. El comando es sólo para su bot privado. '
+        + 'Nunca envíe el token a Telegram, chats de soporte ni GitHub.';
   });
   sealButton.addEventListener('click', async () => {
     if (!active || sealButton.disabled || !recipient || !recipientKey || !pairingCode) return;
@@ -558,10 +572,13 @@ PAIRING_SCRIPT = r"""
       output.value = '';
       output.hidden = true;
       copyEnvelope.disabled = true;
-      codeInput.value = '';
+      codeInput.value = '/start ' + pairingCode;
+      codeInput.hidden = false;
+      copyCode.disabled = false;
       pairingCode = '';
-      result.textContent = 'Sobre CIFRADO resguardado en Boca. El bot sigue detenido. '
-        + 'Telegram NO está conectado: falta validación y autorización del workflow protegido.';
+      result.textContent = 'Sobre CIFRADO resguardado en Boca. Ahora copie el comando /start '
+        + 'y envíelo al chat PRIVADO de su bot en Telegram. Después solicite la activación '
+        + 'protegida. El emisor sigue detenido; todavía no hay entrega verificada.';
     } catch (_) {
       if (active) result.textContent = 'No se confirmó el resguardo cifrado. '
         + 'El bot sigue detenido. Reabra un enlace aprobado antes de reintentar.';
@@ -597,10 +614,36 @@ PAIRING_CSP = (
 PAIRING_STAGING_CSP = PAIRING_CSP.replace("connect-src 'none'", "connect-src 'self'")
 
 
-def pairing_page(*, csrf: str | None = None, operation_id: str | None = None) -> bytes:
+def pairing_page(
+    *,
+    csrf: str | None = None,
+    operation_id: str | None = None,
+    prepared_recipient: telegram_bootstrap.RecipientReceipt | None = None,
+    recipient_required: bool = False,
+) -> bytes:
     """V2 owner UI, optional one-use private encrypted staging (never install)."""
     if (csrf is None) != (operation_id is None):
         raise ValueError("private pairing handoff requires both operation bindings")
+    encoded_recipient = ""
+    if prepared_recipient is not None:
+        public = telegram_bootstrap._unb64(prepared_recipient.public_key, 32)
+        if (
+            prepared_recipient.state != "PREPARED"
+            or hashlib.sha256(public).hexdigest() != prepared_recipient.fingerprint
+        ):
+            raise ValueError("invalid prepared public recipient")
+        encoded_recipient = telegram_bootstrap._b64(
+            telegram_bootstrap._canonical(asdict(prepared_recipient))
+        )
+    recipient_help = (
+        "El destinatario público preparado se cargó automáticamente para esta instalación."
+        if prepared_recipient is not None
+        else "Falta preparar el destinatario público mediante la operación protegida. "
+        "Los controles permanecerán deshabilitados hasta que esté verificado."
+        if recipient_required
+        else "Abra el enlace del recibo público preparado dentro de Chrome con Termius "
+        "activo y la sesión iniciada."
+    )
     controls = ""
     if csrf is not None and operation_id is not None:
         if (
@@ -616,11 +659,16 @@ def pairing_page(*, csrf: str | None = None, operation_id: str | None = None) ->
             f'<input id="pairing-csrf" type="hidden" value="{csrf}">'
             f'<input id="pairing-operation" type="hidden" value="{operation_id}">'
             '<button id="pairing-stage" type="button" disabled>'
-            "Confirmar con passkey y guardar sobre cifrado</button>"
+            "3. Confirmar con passkey y guardar sobre cifrado</button>"
             "<p>Chrome solicitará una verificación passkey reciente vinculada al "
             "sobre cifrado. Se guarda solo el sobre y la prueba pública de firma; "
             "la instalación física se realiza mediante la operación protegida.</p>"
         )
+    sequence_help = (
+        "El código permanece oculto hasta confirmar el resguardo con passkey."
+        if controls
+        else "Vista sin resguardo privado: no hay emisor activado."
+    )
     return f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Emparejar Telegram · Boca Socios Assistant</title><style>{_SETUP_STYLE}</style></head>
@@ -628,23 +676,27 @@ def pairing_page(*, csrf: str | None = None, operation_id: str | None = None) ->
 <a href="/telegram">Telegram</a> · <a href="/avisos">Avisos</a></nav>
 <main><h1>Emparejar bot de Telegram</h1>
 <p>Esta pantalla prepara un emparejamiento cifrado. Consulte el estado de la instalación
-en Telegram. Abra el enlace del recibo público preparado dentro de Chrome con Termius
-activo y la sesión iniciada.</p>
+en Telegram. {recipient_help}</p>
+<input id="pairing-recipient" type="hidden" value="{encoded_recipient}">
+<input id="pairing-recipient-required" type="hidden" value="{int(recipient_required)}">
 <p>Huella pública del destinatario: <output id="pairing-fingerprint">Sin recibo</output></p>
 <label for="pairing-token">Token de su bot dedicado a Boca (no lo comparta)</label>
 <input id="pairing-token" type="password" autocomplete="off" autocapitalize="none"
 spellcheck="false" maxlength="149" disabled>
 <button id="pairing-generate" type="button" disabled>1. Generar código privado</button>
-<label for="pairing-command">2. Envíe este comando al chat privado de su bot en Telegram</label>
-<input id="pairing-command" type="text" readonly autocomplete="off" spellcheck="false" hidden>
-<button id="pairing-copy-command" type="button" disabled>Copiar comando /start</button>
-<p>3. Tras enviarlo, selle su token y el código. No necesita conocer el número de chat.</p>
-<button id="pairing-seal" type="button" disabled>Crear texto cifrado V2</button>
+<p>{sequence_help}
+No necesita conocer el número de chat.</p>
+<button id="pairing-seal" type="button" disabled>2. Crear texto cifrado V2</button>
 <p id="pairing-result" role="status" aria-live="polite">Comprobando recibo público…</p>
 <label for="pairing-sealed">Texto cifrado V2 (no compatible con instalador V1)</label>
 <textarea id="pairing-sealed" readonly autocomplete="off" spellcheck="false" hidden></textarea>
 <button id="pairing-copy-envelope" type="button" disabled>Copiar texto cifrado V2</button>
 {controls}
+<label for="pairing-command">4. Tras guardar el sobre, envíe este comando al chat privado de su bot</label>
+<input id="pairing-command" type="text" readonly autocomplete="off" spellcheck="false" hidden>
+<button id="pairing-copy-command" type="button" disabled>Copiar comando /start</button>
+<p>Después de enviarlo, solicite la activación mediante la operación protegida.
+Esta pantalla no confirma entrega de avisos.</p>
 <p>El token se cifra localmente en esta pestaña. Al confirmar con passkey, sólo el sobre
 cifrado y la prueba pública de firma se guardan en el panel. El chat privado se verifica
 mediante la operación protegida; esta pantalla no instala ni activa el emisor.</p>

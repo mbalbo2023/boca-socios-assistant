@@ -20,12 +20,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from cryptography.exceptions import InvalidTag
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-
 UID = 10001
 TELEGRAM_DIR = Path("/run/telegram")
 REPOSITORY = "mbalbo2023/boca-socios-assistant"
@@ -176,6 +170,9 @@ def _write_new(directory: int, name: str, content: bytes, uid: int) -> None:
 
 
 def _receipt(private_bytes: bytes, state: str) -> RecipientReceipt:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
     try:
         public = (
             X25519PrivateKey.from_private_bytes(private_bytes)
@@ -189,6 +186,9 @@ def _receipt(private_bytes: bytes, state: str) -> RecipientReceipt:
 
 def prepare(directory: Path = TELEGRAM_DIR, *, uid: int = UID) -> RecipientReceipt:
     """Create only a new recipient key, or verify a previously prepared key."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+
     _identity(uid)
     parent = _directory(directory, uid)
     try:
@@ -242,6 +242,9 @@ def _header(
 
 
 def _key(shared: bytes, salt: bytes, aad: bytes) -> bytes:
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
     return HKDF(
         algorithm=hashes.SHA256(),
         length=32,
@@ -252,6 +255,10 @@ def _key(shared: bytes, salt: bytes, aad: bytes) -> bytes:
 
 def seal_for_recipient(receipt: RecipientReceipt, bot_token: str, chat_id: str) -> bytes:
     """Pure offline sender API; output is ciphertext and public recipient data."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
     token, chat = _token(bot_token), _chat(chat_id)
     if not isinstance(receipt, RecipientReceipt):
         raise BootstrapError("recipient_key_unsafe")
@@ -285,6 +292,10 @@ def seal_for_recipient(receipt: RecipientReceipt, bot_token: str, chat_id: str) 
 
 
 def _decrypt(envelope: bytes, private: bytes, receipt: RecipientReceipt) -> tuple[bytes, bytes]:
+    from cryptography.exceptions import InvalidTag
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
     if not 0 < len(envelope) <= MAX_ENVELOPE:
         raise BootstrapError("invalid_envelope")
     try:

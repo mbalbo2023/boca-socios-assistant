@@ -1,9 +1,9 @@
 """Fixed commands and a separate bounded private observation on existing AF_UNIX.
 
-Requests accept no URL, identity, account, cookie, token or arbitrary text.
-Only an explicit observation response can carry the typed, received Queue-it
-projection. Kernel peer credentials and socket custody protect that channel.
-Neither IPC side opens an IP socket.
+Legacy requests remain fixed commands. Explicit private authentication commands
+add a separately bounded typed payload after kernel peer and socket checks;
+credentials and received responses cross only that channel, never telemetry.
+The IPC adapters open only AF_UNIX sockets.
 """
 
 from __future__ import annotations
@@ -35,6 +35,9 @@ FIXTURE_OBSERVED = b"BOCA_SYNTHETIC_V1_FIXTURE_OBSERVED"
 # transaction.  No status, URL, identity or response body crosses this frame.
 PROBE_SITE = b"BOCA_SYNTHETIC_V1_PROBE_SITE"
 OBSERVE_QUEUE = b"BOCA_SYNTHETIC_V1_OBSERVE_QUEUE"
+PREPARE_BOCA_LOGIN = b"BOCA_PRIVATE_V1_PREPARE_LOGIN"
+LOGIN_BOCA = b"BOCA_PRIVATE_V1_LOGIN"
+ENGINE_SESSION = b"BOCA_PRIVATE_V2_ENGINE_SESSION"
 SITE_HTTP_OK = b"BOCA_SYNTHETIC_V1_SITE_HTTP_OK"
 SITE_HTTP_NON_OK = b"BOCA_SYNTHETIC_V1_SITE_HTTP_NON_OK"
 SUCCESS = b"BOCA_SYNTHETIC_V1_RESERVED_IN_SIMULATOR"
@@ -116,6 +119,9 @@ def framed(payload: bytes) -> bytes:
             FIXTURE_OBSERVED,
             PROBE_SITE,
             OBSERVE_QUEUE,
+            PREPARE_BOCA_LOGIN,
+            LOGIN_BOCA,
+            ENGINE_SESSION,
             SITE_HTTP_OK,
             SITE_HTTP_NON_OK,
             SUCCESS,
@@ -153,3 +159,20 @@ async def read_frame(reader: asyncio.StreamReader) -> bytes:
 
 async def read_private_observation_frame(reader: asyncio.StreamReader) -> bytes:
     return await _read_bounded_frame(reader, MAX_OBSERVATION_PAYLOAD)
+
+
+def framed_private_auth(payload: bytes, *, maximum: int = 90112) -> bytes:
+    """Only the explicit authentication commands use this larger private frame."""
+    if type(payload) is not bytes or not 0 < len(payload) <= maximum:
+        raise SyntheticIPCError("ipc_auth_frame_unverified")
+    return len(payload).to_bytes(4, "big") + payload
+
+
+async def read_private_auth_frame(reader: asyncio.StreamReader, *, maximum: int = 90112) -> bytes:
+    try:
+        length = int.from_bytes(await reader.readexactly(4), "big")
+        if not 0 < length <= maximum:
+            raise SyntheticIPCError("ipc_auth_frame_unverified")
+        return await reader.readexactly(length)
+    except asyncio.IncompleteReadError:
+        raise SyntheticIPCError("ipc_auth_frame_unverified") from None

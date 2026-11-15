@@ -7,6 +7,7 @@ import hashlib
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from html import escape
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from boca_socios.domain.sector_preferences import SectorPreference
@@ -21,6 +22,9 @@ from boca_socios.panel.members import CommandView, MemberView
 from boca_socios.panel.worker_activity import WorkerActivitySnapshot
 from boca_socios.queue.pass_observation import QueuePassSummary
 from boca_socios.security.member_auth_contract import BocaAuthSummary
+
+if TYPE_CHECKING:
+    from boca_socios.integration.engine_sessions import PrivateSessionDetails
 
 _LOGIN_SCRIPT = """
 const button = document.getElementById('passkey');
@@ -226,6 +230,69 @@ def boca_token_reveal(token: str, refresh_token: str) -> bytes:
     )
 
 
+def observed_url_reveal(url: str) -> bytes:
+    return _page(
+        "URL observada",
+        "<h1>URL observada completa</h1><p>Es el destino recibido de esta sesión. "
+        "Copiarlo no verifica su vigencia ni obtiene una entrada.</p>"
+        + private_token_view._copy_field("observed-url-full", "URL completa", url)
+        + '<p id="copy-status" role="status" aria-live="polite"></p>'
+        '<p><a href="/control">Volver a los motores</a></p>',
+        script=f"<script>{private_token_view.COPY_SCRIPT}</script>",
+    )
+
+
+def engine_session_details(details: PrivateSessionDetails, csrf: str, operation_id: str) -> bytes:
+    from boca_socios.panel import engine_view
+
+    identity, observation, inspection = details.identity, details.observation, details.inspection
+    kinds = []
+    if inspection is not None and inspection.final_url:
+        kinds.append(("url", "Revelar URL completa para copiar"))
+    if observation is not None and observation.target_url:
+        kinds.append(("queue", "Revelar token de cola para copiar"))
+    if details.auth is not None:
+        kinds.append(("boca", "Revelar tokens de autenticación para copiar"))
+    forms = "".join(
+        '<form method="post" action="/control/sesiones/revelar">'
+        f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
+        f'<input type="hidden" name="operation_id" value="{escape(operation_id, quote=True)}">'
+        f'<input type="hidden" name="session_id" value="{identity.session_id}">'
+        f'<input type="hidden" name="kind" value="{kind}">'
+        f'<button type="submit">{label}</button></form>'
+        for kind, label in kinds
+    )
+    labels = [
+        ("Motor", engine_view._ENGINES[identity.engine]),
+        ("Navegador", engine_view._BROWSERS[identity.browser]),
+        ("Estado", engine_view._STATES.get(details.state, "Estado no verificado")),
+        ("Etapa", engine_view._PHASES.get(details.phase, "Sin observación")),
+        ("URL observada", engine_view._url(inspection.final_url if inspection else None)),
+        ("Queue ID recibido", inspection.queue_id if inspection else None),
+        ("Número de cola recibido", inspection.queue_number if inspection else None),
+        ("Personas delante", inspection.users_ahead if inspection else None),
+        (
+            "Tiempo informado por la página",
+            inspection.expected_service_time if inspection else None,
+        ),
+    ]
+    rows = "".join(
+        f"<dt>{escape(label)}</dt><dd>{escape(str(value)) if value is not None else 'No informado por la página'}</dd>"
+        for label, value in labels
+    )
+    return _page(
+        "Sesión de navegador",
+        "<h1>Sesión de navegador</h1><p>Esta consulta muestra la sesión existente. "
+        "No abre otra página ni reinicia la cola.</p>"
+        f"<dl>{rows}</dl>"
+        + forms
+        + ("" if kinds else "<p>Todavía no hay URL ni tokens observados para copiar.</p>")
+        + "<p>Los tokens observados no acreditan una entrada. La autenticación en la página "
+        "permanece sin confirmar mientras falte esa evidencia.</p>"
+        '<p><a href="/control">Ver las sesiones en vivo</a></p>',
+    )
+
+
 def site_url_configuration(csrf: str, operation_id: str, site_url: str | None) -> bytes:
     """Owner-only navigation target; never display tokens, arbitrary env or URLs from logs."""
     if site_url is None:
@@ -267,11 +334,19 @@ def home(
     bot: tuple[LifecycleIntent | None, str, str] | None = None,
     bot_unavailable: bool = False,
     site_url_ready: bool | None = None,
+    auth_members: tuple[MemberView, ...] = (),
+    selected_auth_member: str | None = None,
 ) -> bytes:
     if bot is not None:
         intent, start_id, stop_id = bot
         controls = "<h2>Control del bot</h2>" + _bot_controls(
-            intent, csrf, start_id, stop_id, site_url_ready=site_url_ready
+            intent,
+            csrf,
+            start_id,
+            stop_id,
+            site_url_ready=site_url_ready,
+            auth_members=auth_members,
+            selected_auth_member=selected_auth_member,
         )
     elif bot_unavailable:
         controls = '<p role="status">Control del bot no disponible. <a href="/control">Consultar estado</a></p>'
@@ -411,11 +486,21 @@ def bot_control(
     stop_id: str,
     *,
     site_url_ready: bool | None = None,
+    auth_members: tuple[MemberView, ...] = (),
+    selected_auth_member: str | None = None,
 ) -> bytes:
     return _page(
         "Control del bot",
         "<h1>Control del bot</h1>"
-        + _bot_controls(intent, csrf, start_id, stop_id, site_url_ready=site_url_ready),
+        + _bot_controls(
+            intent,
+            csrf,
+            start_id,
+            stop_id,
+            site_url_ready=site_url_ready,
+            auth_members=auth_members,
+            selected_auth_member=selected_auth_member,
+        ),
     )
 
 
@@ -468,6 +553,8 @@ def _bot_controls(
     stop_id: str,
     *,
     site_url_ready: bool | None = None,
+    auth_members: tuple[MemberView, ...] = (),
+    selected_auth_member: str | None = None,
 ) -> str:
     """Voice-friendly simulation controls. Only a protected receipt establishes outcome."""
     observed = "Todavía no hay un recibo de inicio o detención del bot."
@@ -482,7 +569,7 @@ def _bot_controls(
         component = "bot" if intent.component == "bot" else "Chromium"
         action = ("Inicio" if intent.target == "start" else "Detención") + " de " + component
         if intent.work_start_id is not None:
-            action = "Detención automática del bot al finalizar la simulación"
+            action = "Detención automática del bot al finalizar el ciclo"
         states = {
             "REQUESTED": "Pendiente de ejecución. Puede reenviar el aviso con el mismo botón.",
             "CLAIMED": "En proceso. El ejecutor tomó la solicitud.",
@@ -524,6 +611,34 @@ def _bot_controls(
             'Revisá <a href="/configuracion">Configuración</a> antes de volver a intentar. '
             "No acredita actividad del worker ni acceso a un sitio.</p>"
         )
+    active = tuple(member for member in auth_members if member.credential_active)
+    selected = selected_auth_member
+    if (
+        selected is None
+        and len(active) == 1
+        and not (
+            intent is not None
+            and intent.target == "start"
+            and intent.status in ("REQUESTED", "CLAIMED", "APPLIED", "UNCERTAIN")
+        )
+    ):
+        selected = active[0].member_id
+    options = (
+        '<option value=""'
+        + (" selected" if selected is None else "")
+        + ">Sólo observar evento y cola (sin login Boca)</option>"
+    )
+    for member in active:
+        chosen = " selected" if member.member_id == selected else ""
+        options += (
+            f'<option value="{escape(member.member_id, quote=True)}"{chosen}>'
+            + escape(member.display_name or member.masked_email)
+            + "</option>"
+        )
+    selector = (
+        '<label for="auth-member">Socio para iniciar sesión en Boca</label>'
+        '<select id="auth-member" name="auth_member_id">' + options + "</select>"
+    )
     buttons = []
     for target, path, title, operation_id in (
         ("start", "iniciar", "Iniciar bot", start_id),
@@ -534,7 +649,8 @@ def _bot_controls(
             f'<form method="post" action="/control/bot/{path}">'
             f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
             f'<input type="hidden" name="operation_id" value="{escape(operation_id, quote=True)}">'
-            f'<button type="submit"{disabled}>{title}</button></form>'
+            + (selector if target == "start" else "")
+            + f'<button type="submit"{disabled}>{title}</button></form>'
         )
     return (
         '<p role="status" aria-live="polite">'
@@ -643,7 +759,7 @@ def member_detail(
         f'<form method="post" action="/socios/{identifier}/credencial">'
         f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
         f'<input type="hidden" name="operation_id" value="{escape(rotate_id, quote=True)}">'
-        '<label for="new-password">Nueva contraseña sintética</label>'
+        '<label for="new-password">Contraseña del socio para guardar en la bóveda local</label>'
         '<input id="new-password" name="password" type="password" '
         'autocomplete="new-password" required><button type="submit">Rotar credencial local</button>'
         "</form>"

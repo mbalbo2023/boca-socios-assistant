@@ -15,8 +15,6 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
 
 @dataclass(frozen=True, slots=True)
 class SealedCredential:
@@ -86,6 +84,8 @@ class CredentialVault:
         return f"boca-socios:credential:v1:{member_id}".encode()
 
     def seal(self, password: str, *, member_id: str) -> SealedCredential:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
         if not password:
             raise ValueError("empty password not allowed")
         nonce = os.urandom(12)
@@ -95,6 +95,8 @@ class CredentialVault:
         return SealedCredential(self._key_id, nonce, ciphertext)
 
     def open(self, sealed: SealedCredential, *, member_id: str) -> str:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
         if sealed.key_id != self._key_id:
             raise ValueError("credential encrypted with unavailable key version")
         return (

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
+import json
 import subprocess
 import sys
 import zipfile
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -29,7 +32,7 @@ def test_exact_allowlisted_closure_is_deterministic_and_separate_from_cutover(
         expected = (
             {source.removeprefix("src/") for source in telegram_bundle.SOURCES}
             | set(telegram_bundle.PRIVATE_INITIALIZERS)
-            | {"__main__.py"}
+            | {"__main__.py", telegram_bundle.NETWORK_PROJECTION_NAME}
         )
         assert set(archive.namelist()) == expected
         assert not any("browser/" in entry for entry in expected)
@@ -65,6 +68,96 @@ def test_host_import_closure_is_available_but_activation_has_no_dispatch(tmp_pat
             "BOCA_TELEGRAM_HOST state=NO_GO reason=protected_activation_not_wired sender=OFF"
         )
         assert forbidden.stderr == ""
+
+
+@pytest.mark.parametrize("installed", [False, True])
+def test_on_demand_profile_executes_from_isolated_archive(tmp_path: Path, installed: bool) -> None:
+    """Exercise lazy imports using the actual shipped ZIP, without the checkout."""
+    from test_host_telegram_postcutover import _on_demand_fake, _pins
+
+    archive = tmp_path / "telegram.pyz"
+    telegram_bundle.build(ROOT, archive, installed=installed)
+    pins = _pins()
+    observed = _on_demand_fake(tmp_path)
+    payload = json.dumps(
+        {"pins": asdict(pins), "fields": [[list(k), v] for k, v in observed.fields.items()]}
+    )
+    program = """
+import json, sys
+from types import SimpleNamespace
+sys.path.insert(0, sys.argv[1])
+from boca_socios.host_telegram_postcutover import _stopped_controller_boundary
+from boca_socios.host_lifecycle_rootless_adapter import (
+    RootlessLifecycleProbe, ReviewedInstalledPair,
+)
+from boca_socios.host_first_deploy import _browser_worker_egress_network, PreflightError
+data = json.load(sys.stdin)
+pins = SimpleNamespace(**data['pins'])
+values = {tuple(k): v for k, v in data['fields']}
+class Reader:
+    def field(self, kind, ident, name):
+        return values[kind, ident, name]
+reader = Reader()
+assert _stopped_controller_boundary(reader, pins) is True
+pair = ReviewedInstalledPair(pins.browser_attempt, pins.controller_config_hash,
+                             pins.worker_config_hash)
+probe = RootlessLifecycleProbe(pair, reader, on_demand=True)
+probe._service_boundary(pins.worker_id, 'browser-worker', pins.worker_image)
+for invalid in ({}, {'foreign': {}},
+                {'boca-socios_boca_browser_egress': {'IPAddress': '127.0.0.1'}},
+                {'boca-socios_boca_browser_egress': {'IPAddress': ''}}):
+    try:
+        _browser_worker_egress_network(invalid)
+    except PreflightError:
+        pass
+    else:
+        raise AssertionError('unsafe egress accepted')
+assert 'boca_socios.host_boca_transaction' not in sys.modules
+assert 'boca_socios.host_boca_cutover' not in sys.modules
+print('R295_TELEGRAM_PROFILE_IMPORT_READY')
+"""
+    result = subprocess.run(  # noqa: S603 - fixed offline program and generated archive
+        [sys.executable, "-I", "-S", "-B", "-c", program, str(archive)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "R295_TELEGRAM_PROFILE_IMPORT_READY\n"
+    assert result.stderr == ""
+
+
+def test_network_projection_keeps_canonical_nodes_without_deploy_entrypoints(
+    tmp_path: Path,
+) -> None:
+    archive = tmp_path / "telegram.pyz"
+    telegram_bundle.build(ROOT, archive)
+    with zipfile.ZipFile(archive) as packed:
+        projected = ast.parse(packed.read("boca_socios/host_first_deploy.py"))
+        assert sum(entry.file_size for entry in packed.infolist()) <= 450_000
+    original = ast.parse((ROOT / "src/boca_socios/host_first_deploy.py").read_bytes())
+
+    def key(node: ast.stmt) -> str | None:
+        if isinstance(node, ast.Import) and len(node.names) == 1:
+            return node.names[0].name
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            return target.id if isinstance(target, ast.Name) else None
+        return node.name if isinstance(node, (ast.ClassDef, ast.FunctionDef)) else None
+
+    expected = {
+        "ipaddress",
+        "BROWSER_EGRESS_BRIDGE",
+        "PreflightError",
+        "_browser_worker_egress_network",
+    }
+    assert len(projected.body) == len(expected)
+    assert {key(node) for node in projected.body} == expected
+    canonical = {key(node): ast.dump(node) for node in original.body if key(node) in expected}
+    assert {key(node): ast.dump(node) for node in projected.body} == canonical
 
 
 def test_existing_target_never_overwritten(tmp_path: Path) -> None:

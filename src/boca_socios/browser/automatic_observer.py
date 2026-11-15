@@ -2,14 +2,17 @@
 
 The legacy navigation modules stay byte-for-byte intact. Only their one-job
 entry point is reused, behind an ordinary sandboxed browser and a facade that
-owns the lifetime of the page. There is no swarm, stealth launch, cookie
-collection, login, form submission, ticket action or challenge interaction.
-Import and construction are inert; the explicit IPC observation starts work.
+owns the lifetime of the page. The ordinary observation does not collect cookies.
+An explicit correlated login continuation uses that same context and the fixed
+supervised authentication transport. No form is submitted, challenge interacted
+with, additional queue session created, or ticket action performed.
+Import and construction are inert; the explicit private IPC starts work.
 """
 
 from __future__ import annotations
 
 import asyncio
+import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import (
     AbstractAsyncContextManager,
@@ -17,6 +20,7 @@ from contextlib import (
     redirect_stderr,
     redirect_stdout,
 )
+from dataclasses import replace
 from datetime import UTC, datetime
 from importlib import import_module
 from math import isfinite
@@ -25,10 +29,19 @@ from typing import Protocol, cast
 from urllib.parse import urlsplit, urlunsplit
 
 from boca_socios.browser.activity_events import emit_chromium_event
+from boca_socios.browser.boca_auth_protocol import (
+    BocaAuthReadiness,
+    BocaAuthReply,
+    BocaAuthRequest,
+    operation_id,
+)
+from boca_socios.browser.boca_login_process import LOGIN_URL, normalize_cookies, run_login
+from boca_socios.browser.engine_protocol import Scalar, SessionInspection
 from boca_socios.browser.ipc_protocol import SyntheticIPCError
 from boca_socios.browser.offline_fixture import _bounded_close
 from boca_socios.browser.queue_page_observation import (
     QueuePageObservation,
+    _model_is_valid,
     parse_queue_page_observation,
 )
 from boca_socios.browser.site_url_runtime import require_site_url
@@ -36,6 +49,51 @@ from boca_socios.browser.worker_health import validate_worker_boundary
 
 _QUEUE_BRIDGE_HOST = "bocajuniors.queue-it.net"
 _WAITING = {"QUEUE_ACTIVE", "PREQUEUE"}
+
+_LOGIN_READY_SCRIPT = r"""() => {
+  // boca_login_ready: structural evidence only, never read input values.
+  const visible = e => !!e && !!e.getClientRects().length &&
+    getComputedStyle(e).visibility !== 'hidden' && getComputedStyle(e).display !== 'none';
+  const enabled = e => visible(e) && !e.disabled && e.getAttribute('aria-disabled') !== 'true';
+  const blocked = '[id*="captcha" i], iframe[src*="recaptcha"], iframe[src*="hcaptcha"], ' +
+    '#challenge-form, #challenge-running, iframe[src*="challenges.cloudflare.com"], ' +
+    '#MainPart_divPreQueue, #MainPart_divProgressbar, #queueId, #MainPart_lbQueueNumber';
+  if ([...document.querySelectorAll(blocked)].some(visible) || window.queueViewModel) return [];
+  const forms = [...document.querySelectorAll('form')].filter(visible).filter(form =>
+    [...form.querySelectorAll('input[type="password"]')].some(enabled));
+  if (forms.length !== 1) return [];
+  return forms.map(form => {
+    const emails = [...form.querySelectorAll('input[type="email"]')].filter(enabled);
+    const passwords = [...form.querySelectorAll('input[type="password"]')].filter(enabled);
+    const submits = [...form.querySelectorAll('button, input[type="submit"]')].filter(enabled);
+    const login = submits.filter(e => /^(ingresar|iniciar sesión|iniciar sesion|acceder|entrar|login|log in|sign in)$/i
+      .test((e.innerText || e.value || e.getAttribute('aria-label') || '').trim()));
+    const headings = [...form.querySelectorAll('h1, h2, h3, legend')].filter(visible);
+    const ambiguous = [...submits, ...headings].some(e =>
+      /registr|crear cuenta|restablecer|reset|recuperar contraseña|cambiar contraseña/i
+      .test(e.innerText || e.value || ''));
+    return {emails: emails.length, passwords: passwords.length, login_buttons: login.length,
+      ambiguous, new_password: passwords.some(e => e.autocomplete === 'new-password')};
+  });
+}"""
+
+
+def _login_form_ready(value: object) -> bool:
+    """Require one visible form with an unambiguous existing-account login action."""
+    if type(value) is not list or len(value) != 1 or type(value[0]) is not dict:
+        return False
+    form = value[0]
+    if set(form) != {"emails", "passwords", "login_buttons", "ambiguous", "new_password"}:
+        return False
+    return (
+        all(
+            type(form[key]) is int and form[key] == 1
+            for key in ("emails", "passwords", "login_buttons")
+        )
+        and form["ambiguous"] is False
+        and form["new_password"] is False
+    )
+
 
 # Read only the established Queue-it view-model fields and visible evidence.
 # Never return cookies, storage, HTML, arbitrary page properties or credentials.
@@ -130,6 +188,8 @@ class _Page(Protocol):
 
 
 class _Context(Protocol):
+    async def cookies(self, urls: str) -> object: ...
+
     async def route(self, pattern: str, handler: Callable[[_Route], Awaitable[None]]) -> None: ...
 
     async def route_web_socket(
@@ -153,6 +213,8 @@ class _Chromium(Protocol):
 
 class _Playwright(Protocol):
     chromium: _Chromium
+    firefox: _Chromium
+    webkit: _Chromium
 
 
 class _Engine(Protocol):
@@ -286,7 +348,7 @@ class _PageFacade:
 
     async def goto(self, url: str, *, wait_until: str) -> None:
         owner = self._owner
-        if owner.navigated or url != owner.destination or owner.page is None:
+        if owner.closing or owner.navigated or url != owner.destination or owner.page is None:
             raise SyntheticIPCError("automatic_navigation_unverified")
         owner.navigated = True
         # A queue may continuously poll; waiting for networkidle can time out
@@ -303,9 +365,11 @@ class _ContextFacade:
 
     async def new_page(self) -> _PageFacade:
         owner = self._owner
-        if owner.context is None or owner.page is not None:
+        if owner.closing or owner.context is None or owner.page is not None:
             raise SyntheticIPCError("automatic_page_unverified")
         owner.page = await owner.context.new_page()
+        if owner.closing:
+            raise SyntheticIPCError("automatic_observer_stopped")
         return _PageFacade(owner)
 
     async def cookies(self) -> list[dict[str, str]]:
@@ -320,10 +384,15 @@ class _ContextFacade:
 
 
 class _BrowserFacade:
-    def __init__(self, browser: _Browser, destination: str) -> None:
+    def __init__(
+        self, browser: _Browser, destination: str, *, chromium_activity: bool = True
+    ) -> None:
         self._browser = browser
+        self._chromium_activity = chromium_activity
         self.destination = destination
         self.context: _Context | None = None
+        self.context_creation: asyncio.Task[_Context] | None = None
+        self.closing = False
         self.page: _Page | None = None
         self.http_status: int | None = None
         self.navigated = False
@@ -347,20 +416,35 @@ class _BrowserFacade:
         await route.close()
 
     async def new_context(self, **options: object) -> _ContextFacade:
-        if self.context is not None:
+        if self.closing or self.context is not None or self.context_creation is not None:
             raise SyntheticIPCError("automatic_context_unverified")
         # Do not carry forward the legacy spoofed user agent. Preserve only
         # the one-session integration, with normal browser identity and TLS.
-        self.context = await self._browser.new_context(
-            java_script_enabled=True,
-            service_workers="block",
-            accept_downloads=False,
-            ignore_https_errors=False,
+        self.context_creation = asyncio.create_task(
+            self._browser.new_context(
+                java_script_enabled=True,
+                service_workers="block",
+                accept_downloads=False,
+                ignore_https_errors=False,
+            )
         )
+        self.context_creation.add_done_callback(self._remember_context)
+        # Remote allocation may happen before its response. Caller cancellation
+        # must not erase the only task capable of receiving that handle.
+        self.context = await asyncio.shield(self.context_creation)
+        if self.closing:
+            raise SyntheticIPCError("automatic_observer_stopped")
         await self.context.route("**/*", self._guard)
         await self.context.route_web_socket("**/*", self._deny_websocket)
-        emit_chromium_event("context_ready")
+        if self._chromium_activity:
+            emit_chromium_event("context_ready")
         return _ContextFacade(self)
+
+    def _remember_context(self, task: asyncio.Task[_Context]) -> None:
+        try:
+            self.context = task.result()
+        except (Exception, asyncio.CancelledError):
+            return
 
 
 class AutomaticQueueObserver:
@@ -377,6 +461,10 @@ class AutomaticQueueObserver:
         timeout_seconds: float = 15.0,
         teardown_seconds: float = 4.0,
         settle_seconds: float = 3.0,
+        initialization_lock: asyncio.Lock | None = None,
+        retain_until_closed: bool = False,
+        retain_after_auth: bool = False,
+        chromium_activity: bool = True,
     ) -> None:
         for value, maximum in (
             (timeout_seconds, 15.0),
@@ -385,6 +473,12 @@ class AutomaticQueueObserver:
         ):
             if type(value) not in (int, float) or not isfinite(value) or not 0 < value <= maximum:
                 raise ValueError("automatic observer timeout unverified")
+        if (
+            type(retain_until_closed) is not bool
+            or type(retain_after_auth) is not bool
+            or type(chromium_activity) is not bool
+        ):
+            raise ValueError("automatic observer retention unverified")
         self._destination = require_site_url(site_url)
         self._browsers = browsers
         self._engine_factory = engine_factory
@@ -393,6 +487,12 @@ class AutomaticQueueObserver:
         self._timeout = float(timeout_seconds)
         self._teardown = float(teardown_seconds)
         self._settle = float(settle_seconds)
+        self._initialization_lock = initialization_lock or asyncio.Lock()
+        self._retain_until_closed = retain_until_closed
+        self._retain_after_auth = retain_after_auth
+        self._chromium_activity = chromium_activity
+        self._auth_response_received = False
+        self._inspection = SessionInspection()
         self._manager: AbstractAsyncContextManager[_Browser] | None = None
         self._facade: _BrowserFacade | None = None
         self._active: asyncio.Task[object] | None = None
@@ -401,19 +501,36 @@ class AutomaticQueueObserver:
         self._stopped = False
         self._poisoned = False
         self._bridge_followed = False
+        self._auth_operation: str | None = None
+        self._auth_preparing = False
+        self._auth_nonce: str | None = None
+        self._auth_deadline = 0.0
+        self._auth_used = False
+        self._auth_page_url: str | None = None
+        self._auth_context: _Context | None = None
+        self._auth_page: _Page | None = None
+        self._target_followed = False
+        self._last_received: dict[str, object] = {}
+        self._ready_observation: QueuePageObservation | None = None
+        self._login_runner = run_login
 
     async def _start_session(self) -> None:
         manager = self._browsers()
         browser = await manager.__aenter__()
         self._manager = manager
-        self._facade = _BrowserFacade(browser, self._destination)
+        self._facade = _BrowserFacade(
+            browser, self._destination, chromium_activity=self._chromium_activity
+        )
         engine = self._engine_factory()
         engine.browser = self._facade
         discarded = _DiscardOutput()
         # Legacy prints can contain the URL or exception. Do not log, buffer
         # or replay them, and never treat its cookie/status return as access.
-        with redirect_stdout(discarded), redirect_stderr(discarded):
-            await engine.run_isolated_task(0, self._destination)
+        async with self._initialization_lock:
+            if self._closed or self._stopped:
+                raise SyntheticIPCError("automatic_observer_stopped")
+            with redirect_stdout(discarded), redirect_stderr(discarded):
+                await engine.run_isolated_task(0, self._destination)
         if not self._facade.navigation_completed:
             raise SyntheticIPCError("automatic_navigation_unverified")
 
@@ -433,6 +550,7 @@ class AutomaticQueueObserver:
         received = await facade.page.evaluate(_SNAPSHOT_SCRIPT)
         if not isinstance(received, dict) or received.get("invalid") is True:
             return self._failed()
+        self._last_received = received
         text = received.get("visible_text")
         markers = received.get("markers")
         model = received.get("queue_model")
@@ -460,6 +578,27 @@ class AutomaticQueueObserver:
             observed_at=self._now(),
             check_failed=facade.blocked_write,
         )
+        # Project only the last received model already checked by the canonical
+        # parser; inspection itself does not evaluate, reload or navigate.
+        valid_model = model if isinstance(model, dict) and _model_is_valid(model) else {}
+        ticket = valid_model.get("ticket")
+        fields = ticket if isinstance(ticket, dict) else {}
+        final_url = facade.page.url if _received_http_url(facade.page.url) else None
+        try:
+            self._inspection = SessionInspection(
+                final_url=final_url,
+                queue_id=cast(str | None, valid_model.get("queueId")) or None,
+                queue_number=cast(Scalar, fields.get("queueNumber")),
+                users_ahead=cast(Scalar, fields.get("usersInLineAheadOfYou")),
+                users_in_queue=cast(Scalar, fields.get("usersInQueue")),
+                expected_service_time=cast(Scalar, fields.get("expectedServiceTime")),
+                observed_at=observation.observed_at,
+                context_open=True,
+            )
+        except SyntheticIPCError:
+            self._inspection = SessionInspection(
+                final_url=final_url, observed_at=observation.observed_at, context_open=True
+            )
         links = received.get("queue_links", [])
         valid_links = (
             tuple(
@@ -507,17 +646,51 @@ class AutomaticQueueObserver:
         except (Exception, asyncio.CancelledError):
             return
 
-    async def _close_session(self) -> None:
+    def _close_late_context(self, task: asyncio.Task[_Context]) -> None:
+        """Reclaim a late handle without reopening its retired observer identity."""
+        try:
+            context = task.result()
+        except (Exception, asyncio.CancelledError):
+            return
+        closing = asyncio.create_task(_bounded_close(context, self._teardown))
+        closing.add_done_callback(self._consume)
+
+    async def _close_session(self, *, deadline: float | None = None) -> None:
         async with self._cleanup_lock:
-            deadline = monotonic() + self._teardown
+            deadline = (
+                min(deadline, monotonic() + self._teardown)
+                if deadline is not None
+                else monotonic() + self._teardown
+            )
             facade, manager = self._facade, self._manager
             self._facade = None
             self._manager = None
             failed = False
+            if facade is not None:
+                facade.closing = True
+                creation = facade.context_creation
+                if creation is not None:
+                    try:
+                        _, pending_creation = await asyncio.wait(
+                            {creation}, timeout=max(0.001, deadline - monotonic())
+                        )
+                        if pending_creation:
+                            # Keep the in-flight allocation alive to recover a
+                            # late handle. Its slot stays held and the worker is
+                            # poisoned; returning the browser loan proves no
+                            # remote context was released.
+                            creation.add_done_callback(self._close_late_context)
+                            failed = True
+                        else:
+                            creation.result()
+                    except (Exception, asyncio.CancelledError):
+                        creation.add_done_callback(self._close_late_context)
+                        failed = True
             if facade is not None and facade.context is not None:
                 try:
                     await _bounded_close(facade.context, max(0.001, deadline - monotonic()))
-                    emit_chromium_event("context_closed")
+                    if self._chromium_activity:
+                        emit_chromium_event("context_closed")
                 except (Exception, asyncio.CancelledError):
                     failed = True
             if manager is not None:
@@ -577,9 +750,31 @@ class AutomaticQueueObserver:
             except asyncio.CancelledError:
                 self._closed = True
                 raise
+            except SyntheticIPCError as exc:
+                if str(exc) in {
+                    "engine_browser_unavailable",
+                    "engine_launch_unverified",
+                    "engine_pool_closed",
+                }:
+                    self._closed = True
+                    raise
+                accepted = self._failed()
             except Exception:
                 accepted = self._failed()
-            if accepted.outcome not in _WAITING or self._stopped or active.cancelling():
+            retained_for_auth = self._auth_preparing and accepted.outcome in {
+                "UNKNOWN",
+                "TARGET_OBSERVED",
+            }
+            if (
+                (
+                    accepted.outcome not in _WAITING
+                    and not retained_for_auth
+                    and not self._retain_until_closed
+                    and not (self._retain_after_auth and self._auth_response_received)
+                )
+                or self._stopped
+                or active.cancelling()
+            ):
                 self._closed = True
         finally:
             try:
@@ -591,12 +786,211 @@ class AutomaticQueueObserver:
             raise SyntheticIPCError("automatic_observer_stopped")
         return accepted
 
+    async def _login_ready(self) -> bool:
+        facade = self._facade
+        if facade is None or facade.page is None or facade.context is None:
+            return False
+        url = facade.page.url
+        if (
+            not _received_http_url(url)
+            or _origin(url) != ("https", "bocasocios.bocajuniors.com.ar", 443)
+            or facade.http_status != 200
+            or facade.blocked_write
+        ):
+            return False
+        received = self._last_received
+        if received.get("markers") or received.get("queue_links"):
+            return False
+        # A token query may remain on the portal URL. A live queue model may not.
+        if received.get("queue_model") is not None:
+            return False
+        ready = await facade.page.evaluate(_LOGIN_READY_SCRIPT)
+        return (
+            _login_form_ready(ready)
+            and facade is self._facade
+            and facade.page.url == url
+            and not self._stopped
+            and not self._closed
+        )
+
+    async def prepare_boca_login(self, operation: str) -> BocaAuthReadiness:
+        operation_id(operation)
+        if (
+            self._auth_used
+            or self._stopped
+            or self._closed
+            or self._poisoned
+            or self._auth_preparing
+            or self._active is not None
+            or self._auth_operation not in {None, operation}
+        ):
+            raise SyntheticIPCError("boca_auth_session_unverified")
+        self._auth_operation = operation
+        if self._auth_nonce is not None:
+            remaining = self._auth_deadline - monotonic()
+            if remaining <= 0 or self._ready_observation is None:
+                await self.close()
+                raise SyntheticIPCError("boca_auth_readiness_expired")
+            return BocaAuthReadiness(
+                operation, self._ready_observation, self._auth_nonce, remaining
+            )
+        self._auth_preparing = True
+        try:
+            observed = await self.observe_queue()
+            self._active = asyncio.current_task()
+            async with asyncio.timeout(self._timeout):
+                facade = self._facade
+                if (
+                    observed.outcome == "TARGET_OBSERVED"
+                    and facade is not None
+                    and facade.page is not None
+                    and observed.target_url is not None
+                    and facade.page.url != observed.target_url
+                    and not self._target_followed
+                    and _origin(observed.target_url)
+                    == ("https", "bocasocios.bocajuniors.com.ar", 443)
+                ):
+                    self._target_followed = True
+                    response = await facade.page.goto(
+                        observed.target_url, wait_until="domcontentloaded", timeout=12000
+                    )
+                    facade.http_status = response.status if response is not None else None
+                    current = await self._snapshot()
+                else:
+                    current = observed
+                if (
+                    current.outcome not in {"CHALLENGE", "CHECK_FAILED", *_WAITING}
+                    and current.reason not in {"INVALID_OBSERVATION", "CONTRADICTORY_EVIDENCE"}
+                    and await self._login_ready()
+                ):
+                    assert facade is not None and facade.page is not None
+                    self._auth_nonce = secrets.token_hex(32)
+                    self._auth_deadline = monotonic() + 15.0
+                    self._auth_page_url = facade.page.url
+                    self._auth_context = facade.context
+                    self._auth_page = facade.page
+                    self._ready_observation = observed
+                    self._bridge_followed = True
+                    return BocaAuthReadiness(operation, observed, self._auth_nonce, 15.0)
+            if observed.outcome not in _WAITING:
+                self._closed = True
+                await self._close_session()
+            return BocaAuthReadiness(operation, observed, None, 0)
+        except BaseException:
+            self._closed = True
+            await self._close_session()
+            raise
+        finally:
+            self._auth_preparing = False
+            self._active = None
+
+    async def login_boca(self, request: BocaAuthRequest) -> BocaAuthReply:
+        facade = self._facade
+        if (
+            self._auth_used
+            or self._closed
+            or self._stopped
+            or self._poisoned
+            or self._active is not None
+            or request.operation_id != self._auth_operation
+            or request.nonce != self._auth_nonce
+            or self._auth_nonce is None
+            or monotonic() >= self._auth_deadline
+            or facade is None
+            or facade.page is None
+            or facade.context is not self._auth_context
+            or facade.page is not self._auth_page
+            or facade.page.url != self._auth_page_url
+        ):
+            raise SyntheticIPCError("boca_auth_readiness_unverified")
+        # Single use is consumed before any await, including revalidation.
+        self._auth_used = True
+        self._auth_nonce = None
+        active = asyncio.current_task()
+        self._active = active
+        raw: bytes | None = None
+        try:
+            async with asyncio.timeout_at(self._auth_deadline):
+                self._check()
+                current = await self._snapshot()
+                if (
+                    current.outcome in {"CHALLENGE", "CHECK_FAILED", *_WAITING}
+                    or current.reason in {"INVALID_OBSERVATION", "CONTRADICTORY_EVIDENCE"}
+                    or not await self._login_ready()
+                ):
+                    raise SyntheticIPCError("boca_auth_page_changed")
+                assert facade.context is not None
+                cookies = normalize_cookies(await facade.context.cookies(LOGIN_URL))
+                if (
+                    facade is not self._facade
+                    or facade.context is not self._auth_context
+                    or facade.page is not self._auth_page
+                    or facade.page.url != self._auth_page_url
+                    or self._stopped
+                    or not await self._login_ready()
+                ):
+                    raise SyntheticIPCError("boca_auth_session_changed")
+                raw = await self._login_runner(request, cookies, deadline=self._auth_deadline)
+                if (
+                    facade is not self._facade
+                    or facade.context is not self._auth_context
+                    or facade.page is not self._auth_page
+                    or facade.page.url != self._auth_page_url
+                    or self._stopped
+                ):
+                    raise SyntheticIPCError("boca_auth_session_changed")
+        finally:
+            self._auth_response_received = raw is not None
+            self._closed = not (
+                self._retain_after_auth
+                and raw is not None
+                and not self._stopped
+                and active is not None
+                and not active.cancelling()
+                and monotonic() < self._auth_deadline
+            )
+            try:
+                if self._closed:
+                    await self._close_session(deadline=self._auth_deadline)
+            finally:
+                self._active = None
+        if (
+            raw is None
+            or self._stopped
+            or self._poisoned
+            or active is None
+            or active.cancelling()
+            or monotonic() >= self._auth_deadline
+        ):
+            raise SyntheticIPCError("boca_auth_result_expired")
+        return BocaAuthReply(request.operation_id, request.nonce, raw)
+
+    async def inspect(self) -> SessionInspection:
+        """Return cached private evidence; an HTTP auth response never proves DOM login."""
+        facade = self._facade
+        return replace(
+            self._inspection,
+            context_open=(
+                facade is not None
+                and facade.context is not None
+                and not self._closed
+                and not self._stopped
+            ),
+            auth_response_received=self._auth_response_received,
+        )
+
     async def close(self) -> None:
+        self._auth_nonce = None
         self._stopped = True
         self._closed = True
+        if self._facade is not None:
+            self._facade.closing = True
         active = self._active
         if active is not None and not active.done() and active is not asyncio.current_task():
-            active.cancel()
+            # A registry STOP may already have cancelled this task. Repeated
+            # cancellation would interrupt its bounded context cleanup.
+            if not active.cancelling():
+                active.cancel()
             _, pending = await asyncio.wait({active}, timeout=self._teardown)
             if pending:
                 self._poisoned = True

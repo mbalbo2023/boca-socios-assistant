@@ -146,6 +146,7 @@ BROWSER_MARKER_KEYS = frozenset(
 )
 TELEGRAM_VOLUME = "boca-socios_boca_telegram"
 TELEGRAM_NETWORK = "boca-socios_telegram_egress"
+TELEGRAM_V2_NETWORK = "boca-socios_boca_telegram_egress"
 TELEGRAM_TEST_NAME = "boca-socios-telegram-test-1"
 TELEGRAM_WORKER_NAME = "boca-socios-telegram-1"
 ROOTLESS_SOCKET = Path("/run/user/10001/docker.sock")
@@ -7850,7 +7851,55 @@ def _telegram_volume() -> None:
         raise PreflightError("Boca Telegram volume mountpoint unavailable") from exc
 
 
-def _telegram_container(image: str, module: str, action: str, *, writable: bool) -> tuple[str, ...]:
+def _telegram_container(
+    image: str, module: str, action: str, *, writable: bool, maintenance_name: str = ""
+) -> tuple[str, ...]:
+    if module == "telegram_maintenance":
+        from boca_socios.telegram_maintenance_contract import MOUNTS
+
+        if (
+            action not in MOUNTS
+            or re.fullmatch(
+                r"boca-socios-telegram-maint-[1-9][0-9]{0,19}-[a-f0-9]{16}", maintenance_name
+            )
+            is None
+        ):
+            raise PreflightError("unknown Telegram maintenance operation")
+        base = _telegram_container(image, "telegram_bootstrap", "verify", writable=False)
+        if action == "initialize-volume":
+            values = list(base)
+            values[values.index("--user") + 1] = "0:0"
+            mount = values.index("--mount")
+            values[mount:mount] = ["--cap-add", "CHOWN"]
+            base = tuple(values)
+        mount_index = base.index("--mount")
+        mounts = tuple(
+            value
+            for volume, target, rw in MOUNTS[action]
+            for value in (
+                "--mount",
+                f"type=volume,source=boca-socios_{volume},target={target},volume-nocopy"
+                + ("" if rw else ",readonly"),
+            )
+        )
+        return (
+            "docker",
+            "create",
+            "--interactive",
+            "--log-driver",
+            "none",
+            "--name",
+            maintenance_name,
+            "--label",
+            "com.docker.compose.project=boca-socios",
+            *base[3:mount_index],
+            *mounts,
+            image,
+            "python",
+            "-m",
+            "boca_socios.telegram_maintenance",
+            action,
+        )
     if module not in {"telegram_bootstrap", "telegram_storage_gate"} or action not in {
         "prepare",
         "install",
@@ -8046,14 +8095,15 @@ def _telegram_installed(
     return TELEGRAM_VOLUME in volumes
 
 
-def _telegram_egress(container: str = "") -> None:
+def _telegram_egress(container: str = "", *, v2: bool = False) -> None:
+    network_name = TELEGRAM_V2_NETWORK if v2 else TELEGRAM_NETWORK
     network = _json_object(
-        _run("docker", "network", "inspect", "--format", "{{json .}}", TELEGRAM_NETWORK),
+        _run("docker", "network", "inspect", "--format", "{{json .}}", network_name),
         "Telegram egress network",
     )
     labels = network.get("Labels")
     if (
-        network.get("Name") != TELEGRAM_NETWORK
+        network.get("Name") != network_name
         or network.get("Driver") != "bridge"
         or network.get("Scope") != "local"
         or network.get("Internal") is not False
@@ -8070,11 +8120,18 @@ def _telegram_egress(container: str = "") -> None:
 
 
 def _telegram_test_container(
-    image: str, source_sha: str, expected_bot_id: str, expected_chat_hmac: str
+    image: str,
+    source_sha: str,
+    expected_bot_id: str,
+    expected_chat_hmac: str,
+    *,
+    v2_attempt: str = "",
 ) -> tuple[str, ...]:
+    if v2_attempt and not BROWSER_ATTEMPT_PATTERN.fullmatch(v2_attempt):
+        raise PreflightError("Telegram acceptance attempt unavailable")
     return (
         "docker",
-        "run",
+        "create" if v2_attempt else "run",
         "--pull",
         "never",
         "--name",
@@ -8088,7 +8145,7 @@ def _telegram_test_container(
         "--user",
         "10001:10001",
         "--network",
-        TELEGRAM_NETWORK,
+        TELEGRAM_V2_NETWORK if v2_attempt else TELEGRAM_NETWORK,
         "--read-only",
         "--no-healthcheck",
         "--cap-drop",
@@ -8119,27 +8176,53 @@ def _telegram_test_container(
         "python",
         "-m",
         "boca_socios.telegram_one_shot",
-        "test",
-        source_sha,
-        expected_bot_id,
-        expected_chat_hmac,
+        *(
+            ("test-v2", source_sha, v2_attempt)
+            if v2_attempt
+            else ("test", source_sha, expected_bot_id, expected_chat_hmac)
+        ),
     )
 
 
+def _telegram_sender_hash(source_sha: str, attempt: str) -> str:
+    return hashlib.sha256(
+        ("telegram-sender-v2:" + source_sha + ":" + attempt).encode("ascii")
+    ).hexdigest()
+
+
 def _telegram_worker_container(
-    image: str, source_sha: str, bot_id: str, chat_hmac: str, attempt_id: str, runtime_attempt: str
+    image: str,
+    source_sha: str,
+    bot_id: str,
+    chat_hmac: str,
+    attempt_id: str,
+    runtime_attempt: str,
+    *,
+    v2: bool = False,
 ) -> tuple[str, ...]:
-    command = list(_telegram_test_container(image, source_sha, bot_id, chat_hmac))
+    command = list(
+        _telegram_test_container(
+            image, source_sha, bot_id, chat_hmac, v2_attempt=runtime_attempt if v2 else ""
+        )
+    )
     command[command.index(TELEGRAM_TEST_NAME)] = TELEGRAM_WORKER_NAME
     command[command.index("com.docker.compose.service=telegram-test")] = (
         "com.docker.compose.service=telegram"
     )
-    command[-5] = "boca_socios.notify.telegram_worker"
-    command[-4] = "serve"
+    command[-4 if v2 else -5] = "boca_socios.notify.telegram_worker"
+    command[-3 if v2 else -4] = "serve-v2" if v2 else "serve"
     command[command.index("no-new-privileges")] = "no-new-privileges:true"
     return (
         *command[:2],
-        "--detach",
+        *(
+            (
+                "--label",
+                "com.docker.compose.config-hash="
+                + _telegram_sender_hash(source_sha, runtime_attempt),
+            )
+            if v2
+            else ("--detach",)
+        ),
         "--init",
         "--restart",
         "no",
@@ -8165,9 +8248,13 @@ def _telegram_worker_inspect(
     *,
     running: bool,
     runtime_attempt: str = "",
+    v2: bool = False,
 ) -> str:
-    if re.fullmatch(r"[1-9][0-9]{0,15}", bot_id) is None or not DIGEST_PATTERN.fullmatch(chat_hmac):
+    if not v2 and (
+        re.fullmatch(r"[1-9][0-9]{0,15}", bot_id) is None or not DIGEST_PATTERN.fullmatch(chat_hmac)
+    ):
         raise PreflightError("Telegram runtime owner assertion unavailable")
+    network_name = TELEGRAM_V2_NETWORK if v2 else TELEGRAM_NETWORK
     record = _browser_inspect_record(container)
     config, host = _browser_config_and_host(record)
     state = record.get("State")
@@ -8181,6 +8268,17 @@ def _telegram_worker_inspect(
         bot_id,
         chat_hmac,
     ]
+    if v2:
+        if not BROWSER_ATTEMPT_PATTERN.fullmatch(runtime_attempt):
+            raise PreflightError("Telegram runtime attempt unavailable")
+        expected_command = [
+            "python",
+            "-m",
+            "boca_socios.notify.telegram_worker",
+            "serve-v2",
+            source_sha,
+            runtime_attempt,
+        ]
     image_record = _json_object(
         _run("docker", "image", "inspect", "--format", "{{json .}}", image), "Telegram worker image"
     )
@@ -8230,6 +8328,11 @@ def _telegram_worker_inspect(
         or not isinstance(labels.get(TELEGRAM_ATTEMPT_LABEL), str)
         or not BROWSER_ATTEMPT_PATTERN.fullmatch(labels[TELEGRAM_ATTEMPT_LABEL])
         or (runtime_attempt and labels.get(TELEGRAM_ATTEMPT_LABEL) != runtime_attempt)
+        or (
+            v2
+            and labels.get("com.docker.compose.config-hash")
+            != _telegram_sender_hash(source_sha, runtime_attempt)
+        )
         or labels.get("org.opencontainers.image.revision") != source_sha
         or not isinstance(state, dict)
         or state.get("Running") is not running
@@ -8245,7 +8348,7 @@ def _telegram_worker_inspect(
         or host.get("Init") is not True
         or host.get("IpcMode") != "private"
         or host.get("CgroupnsMode") != "private"
-        or host.get("NetworkMode") != TELEGRAM_NETWORK
+        or host.get("NetworkMode") != network_name
         or host.get("PortBindings") not in ({}, None)
         or host.get("CapDrop") != ["ALL"]
         or host.get("CapAdd") not in ([], None)
@@ -8280,7 +8383,7 @@ def _telegram_worker_inspect(
         not isinstance(network, dict)
         or network.get("Ports") not in ({}, None)
         or not isinstance(network.get("Networks"), dict)
-        or set(network["Networks"]) != {TELEGRAM_NETWORK}
+        or set(network["Networks"]) != {network_name}
     ):
         raise PreflightError("Telegram worker network changed")
     return cast(str, cast(dict[str, object], labels)[TELEGRAM_ATTEMPT_LABEL])
@@ -8526,7 +8629,13 @@ def _telegram_test_finished(
     expected_chat_hmac: str,
     controller_id: str,
     baseline_ids: set[str] | None = None,
+    *,
+    v2_attempt: str = "",
+    created_id: str = "",
+    running: bool = False,
+    allow_failed: bool = False,
 ) -> str:
+    network_name = TELEGRAM_V2_NETWORK if v2_attempt else TELEGRAM_NETWORK
     ids = _run("docker", "ps", "-a", "-q", "--no-trunc").splitlines()
     baseline = {controller_id} if baseline_ids is None else baseline_ids
     if (
@@ -8546,6 +8655,8 @@ def _telegram_test_finished(
     if len(candidates) != 1:
         raise PreflightError("Telegram test container unavailable")
     container_id, record = candidates[0]
+    if created_id and container_id != created_id:
+        raise PreflightError("Telegram acceptance identity changed")
     config, state, host = record.get("Config"), record.get("State"), record.get("HostConfig")
     mounts = record.get("Mounts")
     network_settings = record.get("NetworkSettings")
@@ -8582,10 +8693,11 @@ def _telegram_test_finished(
             "python",
             "-m",
             "boca_socios.telegram_one_shot",
-            "test",
-            source_sha,
-            expected_bot_id,
-            expected_chat_hmac,
+            *(
+                ("test-v2", source_sha, v2_attempt)
+                if v2_attempt
+                else ("test", source_sha, expected_bot_id, expected_chat_hmac)
+            ),
         ]
         or not isinstance(labels, dict)
         or labels.get("com.docker.compose.project") != PROJECT
@@ -8593,8 +8705,9 @@ def _telegram_test_finished(
         or labels.get("com.docker.compose.container-number") != "1"
         or labels.get("org.opencontainers.image.revision") != source_sha
         or not isinstance(state, dict)
-        or state.get("Running") is not False
-        or state.get("ExitCode") != 0
+        or state.get("Running") is not running
+        or (not allow_failed and state.get("ExitCode") != 0)
+        or (bool(created_id) and state.get("Status") != "created")
         or not isinstance(host, dict)
         or host.get("NanoCpus") != 250_000_000
         or host.get("Memory") != 134_217_728
@@ -8603,7 +8716,7 @@ def _telegram_test_finished(
         or host.get("Privileged") is not False
         or host.get("PortBindings") != {}
         or host.get("PublishAllPorts") is not False
-        or host.get("NetworkMode") != TELEGRAM_NETWORK
+        or host.get("NetworkMode") != network_name
         or host.get("CapDrop") != ["ALL"]
         or host.get("CapAdd") not in (None, [])
         or host.get("SecurityOpt") != ["no-new-privileges"]
@@ -8628,7 +8741,7 @@ def _telegram_test_finished(
         or not isinstance(network_settings, dict)
         or network_settings.get("Ports") != {}
         or not isinstance(network_settings.get("Networks"), dict)
-        or set(network_settings["Networks"]) not in (set(), {TELEGRAM_NETWORK})
+        or set(network_settings["Networks"]) not in (set(), {network_name})
     ):
         raise PreflightError("Telegram test container provenance changed")
     return container_id

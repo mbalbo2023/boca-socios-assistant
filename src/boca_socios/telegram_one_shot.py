@@ -154,6 +154,8 @@ def acceptance_notice_id(
     source_sha: str,
     expected_bot_id: int,
     expected_chat_hmac: str,
+    *,
+    attempt_id: str | None = None,
 ) -> UUID:
     """Bind the single acceptance fence to the exact release and private pair.
 
@@ -163,11 +165,14 @@ def acceptance_notice_id(
     if re.fullmatch(r"[0-9a-f]{40}", source_sha) is None:
         raise OneShotError("source_unverified")
     token, _destination = _pin_owner_configuration(transport, expected_bot_id, expected_chat_hmac)
+    if attempt_id is not None and re.fullmatch(r"[1-9][0-9]{0,19}", attempt_id) is None:
+        raise OneShotError("attempt_unverified")
+    identity = f"boca-telegram-ready-v1:{source_sha}:{expected_bot_id}:{expected_chat_hmac}"
+    if attempt_id is not None:
+        identity = f"boca-telegram-ready-v2:{source_sha}:{expected_bot_id}:{expected_chat_hmac}:{attempt_id}"
     binding = hmac.new(
         token.encode("ascii"),
-        f"boca-telegram-ready-v1:{source_sha}:{expected_bot_id}:{expected_chat_hmac}".encode(
-            "ascii"
-        ),
+        identity.encode("ascii"),
         hashlib.sha256,
     ).hexdigest()
     return uuid5(NOTICE_ID, binding)
@@ -205,9 +210,13 @@ def verify_ready(
     source_sha: str,
     expected_bot_id: int,
     expected_chat_hmac: str,
+    *,
+    attempt_id: str | None = None,
 ) -> None:
     """Read a prior bound API acceptance without migration, claim or HTTP."""
-    notice_id = acceptance_notice_id(transport, source_sha, expected_bot_id, expected_chat_hmac)
+    notice_id = acceptance_notice_id(
+        transport, source_sha, expected_bot_id, expected_chat_hmac, attempt_id=attempt_id
+    )
     verify_storage(database)
     try:
         with closing(
@@ -222,9 +231,6 @@ def verify_ready(
                    ON n.idempotency_key=a.idempotency_key WHERE n.idempotency_key=?""",
                 (str(notice_id),),
             ).fetchone()
-            uncertain = connection.execute(
-                "SELECT 1 FROM telegram_delivery_attempts WHERE state!='api_accepted' LIMIT 1"
-            ).fetchone()
         if (
             row is None
             or row[:5] != ("heartbeat", "accepted", 1, "api_accepted", 1)
@@ -234,7 +240,6 @@ def verify_ready(
             or not isfinite(row[6])
             or row[6] < 0
             or row[6] != row[7]
-            or uncertain is not None
         ):
             raise OneShotError("api_acceptance_unverified")
     except (OSError, sqlite3.DatabaseError):
@@ -257,9 +262,13 @@ async def deliver_once(
     verify_storage(database)
     try:
         with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:
-            outbox_count = connection.execute("SELECT COUNT(*) FROM notification_outbox").fetchone()
+            outbox_count = connection.execute(
+                "SELECT COUNT(*) FROM notification_outbox WHERE idempotency_key=?",
+                (str(notice_id),),
+            ).fetchone()
             attempts_count = connection.execute(
-                "SELECT COUNT(*) FROM telegram_delivery_attempts"
+                "SELECT COUNT(*) FROM telegram_delivery_attempts WHERE idempotency_key=?",
+                (str(notice_id),),
             ).fetchone()
         if outbox_count != (0,) or attempts_count != (0,):
             raise OneShotError("existing_notice_or_attempt_preserved")
@@ -271,14 +280,17 @@ async def deliver_once(
             raise OneShotError("synthetic_notice_unverified")
         report = await TelegramDeliveryCoordinator(
             outbox, sender, clock, max_per_tick=1, timeout_seconds=5
-        ).tick()
+        ).tick(notice_id=notice_id)
         record = outbox.get(notice_id)
         with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:
             marker = connection.execute(
                 "SELECT state, provider_message_id FROM telegram_delivery_attempts WHERE idempotency_key=?",
                 (str(notice_id),),
             ).fetchone()
-            total = connection.execute("SELECT COUNT(*) FROM telegram_delivery_attempts").fetchone()
+            total = connection.execute(
+                "SELECT COUNT(*) FROM telegram_delivery_attempts WHERE idempotency_key=?",
+                (str(notice_id),),
+            ).fetchone()
         if (
             (report.attempted, report.api_accepted, report.ambiguous) != (1, 1, 0)
             or record is None
@@ -299,15 +311,60 @@ async def deliver_once(
     return "API_ACCEPTED"
 
 
+def require_legacy_custody(directory: Path) -> None:
+    """Keep legacy argv exclusive to a verified V1 pair, without a V2 downgrade."""
+    from boca_socios import telegram_bootstrap as bootstrap
+
+    parent = bootstrap._directory(directory, bootstrap.UID)
+    try:
+        if set(os.listdir(parent)) != {
+            bootstrap.PRIVATE_KEY,
+            bootstrap.TOKEN_FILE,
+            bootstrap.CHAT_FILE,
+        }:
+            # Includes incomplete commits and broken symlinks: no exists()
+            # fallback can turn V2 evidence into an apparently legacy pair.
+            raise OneShotError("legacy_custody_required")
+    finally:
+        os.close(parent)
+
+
+def verified_v2_assertion(directory: Path, *, expected_source_sha: str) -> tuple[int, str]:
+    """Derive private sender pins only after exact-source V2 custody verification."""
+    from boca_socios import telegram_bootstrap as bootstrap
+    from boca_socios.telegram_pairing_install import verify_v2_custody
+
+    before = verify_v2_custody(directory, expected_source_sha=expected_source_sha)
+    parent = bootstrap._directory(directory, bootstrap.UID)
+    try:
+        token = bootstrap._read(parent, bootstrap.TOKEN_FILE, bootstrap.UID, maximum=150)
+        chat = bootstrap._read(parent, bootstrap.CHAT_FILE, bootstrap.UID, maximum=21)
+        assertion = hmac.new(token, chat, hashlib.sha256).hexdigest()
+    finally:
+        os.close(parent)
+    if verify_v2_custody(directory, expected_source_sha=expected_source_sha) != before:
+        raise OneShotError("v2_custody_changed")
+    return before.bot_id, assertion
+
+
 def main(argv: tuple[str, ...] | None = None) -> int:
     args = tuple(sys.argv[1:]) if argv is None else argv
-    label = "READY" if args and args[0] == "verify-ready" else "TEST"
+    label = "READY" if args and args[0] in {"verify-ready", "verify-ready-v2"} else "TEST"
     try:
-        if len(args) != 4 or args[0] not in {"test", "verify-ready"}:
-            raise OneShotError("invalid_phase")
-        _, source_sha, bot_id, chat_hmac = args
-        if re.fullmatch(r"[1-9][0-9]{0,15}", bot_id) is None:
-            raise OneShotError("owner_assertion_unavailable")
+        attempt_id = (
+            args[2] if len(args) == 3 and args[0] in {"test-v2", "verify-ready-v2"} else None
+        )
+        v2_mode = len(args) in (2, 3) and args[0] in {"test-v2", "verify-ready-v2"}
+        if v2_mode:
+            phase, source_sha = args[:2]
+            phase = phase.removesuffix("-v2")
+            bot_id, chat_hmac = "", ""
+        else:
+            if len(args) != 4 or args[0] not in {"test", "verify-ready"}:
+                raise OneShotError("invalid_phase")
+            phase, source_sha, bot_id, chat_hmac = args
+            if re.fullmatch(r"[1-9][0-9]{0,15}", bot_id) is None:
+                raise OneShotError("owner_assertion_unavailable")
         if any(
             os.environ.get(key) != value
             for key, value in {
@@ -320,15 +377,29 @@ def main(argv: tuple[str, ...] | None = None) -> int:
             raise OneShotError("simulation_boundary_unavailable")
         require_effective_limits()
         verify_custody()
+        if v2_mode:
+            verified_bot, verified_hmac = verified_v2_assertion(
+                TOKEN.parent, expected_source_sha=source_sha
+            )
+            bot_id, chat_hmac = str(verified_bot), verified_hmac
+        else:
+            require_legacy_custody(TOKEN.parent)
         transport = TelegramTransport(TOKEN, CHAT)
-        if args[0] == "verify-ready":
-            verify_ready(DATABASE, transport, source_sha, int(bot_id), chat_hmac)
+        if phase == "verify-ready":
+            if attempt_id is None:
+                verify_ready(DATABASE, transport, source_sha, int(bot_id), chat_hmac)
+            else:
+                verify_ready(
+                    DATABASE, transport, source_sha, int(bot_id), chat_hmac, attempt_id=attempt_id
+                )
             print(
                 f"BOCA_TELEGRAM_READY state=VERIFIED source_sha={source_sha}"
                 " api_accepted=1 identity=pinned"
             )
             return 0
-        notice_id = acceptance_notice_id(transport, source_sha, int(bot_id), chat_hmac)
+        notice_id = acceptance_notice_id(
+            transport, source_sha, int(bot_id), chat_hmac, attempt_id=attempt_id
+        )
         check_identity(transport, int(bot_id), chat_hmac)
         result = asyncio.run(deliver_once(DATABASE, transport, source_sha, notice_id=notice_id))
     except Exception:

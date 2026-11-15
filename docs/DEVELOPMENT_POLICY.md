@@ -1,5 +1,97 @@
 # Development and merge policy
 
+## 2026-11-15 — R297, implementación del QA en el mismo candidato
+
+El [titular autorizó dos motores funcionales independientes](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6886406162)
+y un objetivo global de 50 contextos. ADR0302 y el plan R297 fijan responsabilidades
+y consenso antes del código; sustituyen el alcance de sesión única para este
+delta. Conservar PR517, módulos ya implementados, SIMULATION_ONLY, BLACKBOX,
+datos y aislamiento. La ejecución lógica puede ser concurrente; las operaciones
+físicas conservan una autoridad y el workflow protegido serializado existentes.
+
+No migrar al abrir 8443. La autoridad por motor se registra en audit_events con
+namespace separado y holds/releases compatibles con el ledger físico. Revisar
+atomicidad, frío/reinicio, STOP, credencial reemplazada/revocada y publicación
+tardía. El pool comparte procesos por tipo y limita contextos realmente vivos;
+50 solicitados no equivalen a 50 creados o 50 lugares de cola.
+
+Verificar el delta local y cierres de paquetes afectados sin repetir la suite
+base certificada. Mantener los caps y añadir el nuevo pin fullZIP conservando
+los históricos. Revisión independiente final y checks del SHA publicado exacto.
+Durante la consolidación QA no se opera host/proveedores ni se envían mensajes;
+la aceptación física posterior no puede sustituirse por mocks, Chromium local
+o CI. No pedir otra autorización rutinaria para el desarrollo ya encargado.
+
+La QA visual por Actions pedida durante R297 usa la imagen exacta del candidato
+y fixtures ficticias en el CI existente. Toda captura del panel instalado
+necesita su acceso legítimo y una extensión revisada del recorrido protegido;
+el observador de salud no es un navegador autenticado. Conservar esta distinción
+en artifacts, recibos y comunicación al titular.
+
+## Histórico 2026-11-14 — R296, consolidación antes del QA y de la promoción
+
+El titular pidió preparar un único candidato mientras aún no realizó su QA.
+Continuar PR517, integrar correcciones verificadas y preservar la instalación
+R294. No merge/release/host/START/STOP/proveedor/mensaje durante esta preparación.
+Las decisiones [R296](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6881603931)
+y [recuperación por fase](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6882197549)
+autorizan el desarrollo, no inventan evidencia física. No volver a pedir permiso
+para este trabajo ni duplicar los módulos, ramas, tests o incidentes cerrados.
+
+El paso físico futuro usa únicamente los selectores protegidos y una lease Boca:
+`telegram-prepare`, `telegram-activate`, `telegram-renew-stage`,
+`telegram-complete-sender` y `telegram-sender-recover`. Son fases administrativas,
+no nuevas releases. Prepare/activate no reutilizan el camino histórico que
+iniciaba/detenía el daemon. La renovación explícita conserva ciphertext y nonces;
+la continuación conserva la identidad ORIGINAL de aceptación y nunca reenvía un
+intento ambiguo. Recover no envía. Ningún éxito de la custodia equivale a sender
+incorporado ni a recepción humana.
+
+La evidencia del estado Telegram se publica sólo después de verificar/restaurar
+el par y se vuelve histórica al vencer su ventana. Un downgrade de custodia se
+conserva como diagnóstico e impide certificar PREPARED/READY. No migrar SQLite
+durante preparación o publicación de estado. El cambio compatible de binding
+se limita al sender y conserva el archivo ejecutable, controller, worker y datos;
+su secuencia no es una transacción atómica entre archivos y requiere journal,
+fence de socket, compensación exacta y recuperación explícita.
+
+Probar el cierre real de imágenes/ZIP, incluidas importaciones diferidas. Las
+proyecciones del paquete dedicado seleccionan nodos canónicos sin cambiar sus
+guardas; verificar igualdad AST, allowlist/digest y límites existentes. No elevar
+caps/reservas. Revisión independiente por alcance y final, pruebas focales y
+checks requeridos del SHA exacto preceden la promoción consolidada posterior al QA.
+
+## 2026-11-14 — R295, desarrollo paralelo sin perturbar aceptación
+
+R294 fue instalada y certificada físicamente por release #865 / APPLY #1117;
+main/instalada `c5a143541ccfcaf26f29cf252a4cb33fd7c540f7`. El titular autoriza
+desarrollar pendientes mientras prueba desde Samsung. La decisión R295 de
+[#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6878044872)
+asigna archivos exclusivos y exige reutilización antes de escribir.
+
+Conservar estable el host durante esa aceptación: sin nueva release, APPLY,
+START/STOP, preparación Telegram ni mensajes. El código R295 se revisa en rama
+y no se describe como instalado. Mantener controles de main y checks del SHA
+exacto; ejecutar localmente sólo regresiones pertinentes y dependencias reales.
+No repetir el despliegue R294, suites locales sin cambios ni algoritmos validados.
+
+El lector diagnóstico puede separar un STOP terminal sin binding actual sólo
+con worker CREATED/PID0 y motor STOPPED; nunca usar esa proyección como permiso
+de recuperación/admisión. El lector estricto y CURRENT_RETAINED no se relajan.
+El transporte Boca histórico habilita desarrollo offline, no certifica conexión.
+La sesión, deadline global y fences START/STOP son dependencias de su wiring.
+El observer Telegram compatible no autoriza activar su selector: backend,
+custodia V2, sender y recepción humana conservan evidencias independientes.
+ADR0300 documenta las regresiones, la closure real de los paquetes y límites.
+
+Antes de publicar un cambio de una fuente incluida en el full host ZIP, la
+selección focal debe incluir
+`tests/test_r82_recovery_bundle.py::test_current_cutover_zip_is_pinned_and_excludes_preflight`.
+Su ubicación histórica no hace histórico su pin ACTUAL. Medir caps/imports no
+sustituye comprobar ese digest revisado. Conservar los pins anteriores y añadir
+uno nuevo sólo tras contrastar los bytes del paquete y su diff autorizado;
+nunca quitar la aserción o aceptar cualquier hash calculado por el builder.
+
 ## 2026-11-14 — R294, continuidad funcional autorizada
 
 R293 cerró la prioridad CI/CD por PR #515. El titular autoriza completar el

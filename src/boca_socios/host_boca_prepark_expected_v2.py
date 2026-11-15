@@ -1,15 +1,15 @@
-"""R255 two-phase production-read-only postflight expectation, CODE_ONLY.
+"""R255 two-phase production-read-only postflight expectation, CODE_ONLY."""
 
-Capture a stable old pair, three Boca-only volume identities, storage metadata
-and the saved SITE_URL state/digest *while the old controller still runs*, before
-PARK. After a separately completed, official SUCCESS cleanup, derive new CIDs
-and image IDs from the actual R177 pair and systemd binding. No user/form CID
-is accepted. This module cannot invoke APPLY, park a pair, create a container,
-write an owner receipt or attest a passkey/monitor. Inclusion in the protected
-pair ZIP does not authorize APPLY. The structural V2 reader requires a live
-pidfd/namespace-bound mapped-owner proof and fails closed without one; actual
-rootless custody still requires independent physical evidence.
-"""
+# Capture a stable old pair, three Boca-only volume identities, storage metadata
+# and the saved SITE_URL state/digest *while the old controller still runs*, before
+# PARK. After a separately completed, official SUCCESS cleanup, derive new CIDs
+# and image IDs from the actual R177 pair and systemd binding. No user/form CID
+# is accepted. This module cannot invoke APPLY, park a pair, create a container,
+# write an owner receipt or attest a passkey/monitor. Inclusion in the protected
+# pair ZIP does not authorize APPLY. The structural V2 reader requires a live
+# pidfd/namespace-bound mapped-owner proof and fails closed without one; actual
+# rootless custody still requires independent physical evidence.
+#
 
 from __future__ import annotations
 
@@ -49,14 +49,14 @@ _CID = re.compile(r"[a-f0-9]{64}\Z")
 
 
 def _old_site_custody(plan: transaction.PairCoordinates) -> tuple[SiteUrlState, str | None]:
-    """Distinguish a saved digest from genuinely absent old-controller URL.
+    """Distinguish a saved digest from genuinely absent old-controller URL."""
 
-    This is the reviewed R247 fixed `-I -B` read-only source, never a browser
-    navigation, HTTP probe or a user-supplied address. Missing configuration
-    is explicitly `NOT_CONFIGURED`, never a synthesized digest. That allows
-    future *technical* cold-worker installation of the broken-form fix,
-    but by construction cannot produce URL-dependent BETA acceptance.
-    """
+    # This is the reviewed R247 fixed `-I -B` read-only source, never a browser
+    # navigation, HTTP probe or a user-supplied address. Missing configuration
+    # is explicitly `NOT_CONFIGURED`, never a synthesized digest. That allows
+    # future *technical* cold-worker installation of the broken-form fix,
+    # but by construction cannot produce URL-dependent BETA acceptance.
+    #
     try:
         raw = cleanup._docker(
             "exec",
@@ -87,14 +87,14 @@ def _storage_for_live_controller(
     controller_id: str,
     lease: cleanup.BocaJobLease,
 ) -> postflight.PostflightStorage:
-    """Read structural Boca inodes under a live controller's kernel owner map.
+    """Read structural Boca inodes under a live controller's kernel owner map."""
 
-    The structural V2 reader excludes mutable SQLite size/times to permit
-    ordinary transactions while requiring exact device/inode/owner/mode.
-    The owner is derived from the live container's kernel uid_map/gid_map,
-    never assumed to be host UID 10001. A positive physical mapping proof
-    remains mandatory before a protected operation may be enabled.
-    """
+    # The structural V2 reader excludes mutable SQLite size/times to permit
+    # ordinary transactions while requiring exact device/inode/owner/mode.
+    # The owner is derived from the live container's kernel uid_map/gid_map,
+    # never assumed to be host UID 10001. A positive physical mapping proof
+    # remains mandatory before a protected operation may be enabled.
+    #
     try:
         if (
             type(controller_id) is not str
@@ -137,12 +137,12 @@ def _candidate_storage(
     new_worker_id: str,
     lease: cleanup.BocaJobLease,
 ) -> postflight.PostflightStorage:
-    """After PARK, bind the structural read to the *new* live controller.
+    """After PARK, bind the structural read to the *new* live controller."""
 
-    Only a controller already installed by the same held lease and immutable
-    release coordinates may attest these retained Boca volumes. The old PID
-    was deliberately stopped and can no longer provide a pidfd witness.
-    """
+    # Only a controller already installed by the same held lease and immutable
+    # release coordinates may attest these retained Boca volumes. The old PID
+    # was deliberately stopped and can no longer provide a pidfd witness.
+    #
     try:
         if (
             type(plan) is not transaction.PairCoordinates
@@ -180,12 +180,12 @@ def _candidate_storage(
 
 @dataclass(frozen=True, slots=True)
 class PreParkExpectedSeed:
-    """Held-lease old-pair evidence; only a future protected actor can use it.
+    """Held-lease old-pair evidence; only a future protected actor can use it."""
 
-    The two phase dependency is essential: new IDs do not exist before PARK,
-    whereas storage and saved SITE_URL need the still-running original pair.
-    A Python object is never a release/authentication capability on its own.
-    """
+    # The two phase dependency is essential: new IDs do not exist before PARK,
+    # whereas storage and saved SITE_URL need the still-running original pair.
+    # A Python object is never a release/authentication capability on its own.
+    #
 
     inputs: integration.BoundSuccessorInputs
     lease: cleanup.BocaJobLease
@@ -211,12 +211,12 @@ class PreParkExpectedSeed:
         official_final_cleanup: successor.OneShotFinalCleanupBridge,
         lease: cleanup.BocaJobLease,
     ) -> postflight.PostflightExpected:
-        """Bind new pair from physical observer + official SUCCESS V2 only.
+        """Bind new pair from physical observer + official SUCCESS V2 only."""
 
-        Called after cleanup inside the original lease, never before PARK.
-        The actual technical receipt still needs two independent snapshots,
-        strict volume/subuid proof, O_EXCL/fsync/readback and owner acceptance.
-        """
+        # Called after cleanup inside the original lease, never before PARK.
+        # The actual technical receipt still needs two independent snapshots,
+        # strict volume/subuid proof, O_EXCL/fsync/readback and owner acceptance.
+        #
         try:
             plan = self.plan
             if (
@@ -290,14 +290,14 @@ def capture_prepark_expected_seed(
     inputs: integration.BoundSuccessorInputs,
     lease: cleanup.BocaJobLease,
 ) -> PreParkExpectedSeed:
-    """Capture twice under same lease, before any old-pair PARK/effect.
+    """Capture twice under same lease, before any old-pair PARK/effect."""
 
-    Strict production readers are used directly; there is no injected
-    function returning an optimistic fingerprint or spoofed Docker identity.
-    Current runner provenance must already have been GH-authenticated by the
-    separately reviewed `_successor_preflight` bridge. No later method here
-    grants APPLY, SUCCESS terminal or BETA acceptance.
-    """
+    # Strict production readers are used directly; there is no injected
+    # function returning an optimistic fingerprint or spoofed Docker identity.
+    # Current runner provenance must already have been GH-authenticated by the
+    # separately reviewed `_successor_preflight` bridge. No later method here
+    # grants APPLY, SUCCESS terminal or BETA acceptance.
+    #
     try:
         if (
             type(inputs) is not integration.BoundSuccessorInputs
@@ -343,14 +343,14 @@ def attest_precommit_candidate_site_state(
     lease: cleanup.BocaJobLease,
     seed: PreParkExpectedSeed,
 ) -> None:
-    """Additional PRE-MARKER veto: two true candidate saved/mirror URL reads.
+    """Additional PRE-MARKER veto: two true candidate saved/mirror URL reads."""
 
-    This is called only after the backend's full candidate topology/binding
-    validation and before the irreversible commit marker. It observes the
-    temporary FOUR-CID graph, not R177's final two-CID postflight. It does
-    not replace either backend custody checks or the later official SUCCESS
-    cleanup and technical postflight. No candidate start/network/write/GO.
-    """
+    # This is called only after the backend's full candidate topology/binding
+    # validation and before the irreversible commit marker. It observes the
+    # temporary FOUR-CID graph, not R177's final two-CID postflight. It does
+    # not replace either backend custody checks or the later official SUCCESS
+    # cleanup and technical postflight. No candidate start/network/write/GO.
+    #
     try:
         if (
             type(plan) is not transaction.PairCoordinates

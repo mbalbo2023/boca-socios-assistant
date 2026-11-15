@@ -24,6 +24,14 @@ _AUTOMATIC_MESSAGES = {
 
 
 def automatic_message(snapshot: dict[str, object]) -> str:
+    auth = {
+        "AUTHENTICATING": "Boca: autenticación en curso en la misma sesión. La observación de cola se conserva sin inferir evento ni acceso.",
+        "AUTH_OBSERVED": "Boca: respuesta de autenticación recibida; tokens disponibles en el monitor privado. No acredita una reserva ni valida su vigencia.",
+        "AUTH_FAILED": "Boca: autenticación no disponible o no verificable. Ciclo finalizado sin declarar ausencia de evento o cola.",
+        "AUTH_CANCELLED": "Boca: autenticación cancelada o activación detenida. No se publicó una respuesta tardía.",
+    }.get(str(snapshot.get("status")))
+    if auth is not None:
+        return auth
     if snapshot.get("status") == "AUTOMATIC_CHECKING":
         return "El worker está comprobando el evento y la cola virtual."
     latest = snapshot.get("latest")

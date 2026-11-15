@@ -34,6 +34,7 @@ from boca_socios.telegram_pairing_cutover import (
     _coordinates_valid,
     _verify_owner_receipt,
 )
+from boca_socios.telegram_pairing_storage import PairingStorage
 from boca_socios.telegram_same_lease_stage import (
     execute_staged_pairing_under_lease,
     read_encrypted_telegram_stage,
@@ -57,9 +58,10 @@ def _preflight(
     owner_receipt: OwnerPairingReceipt,
     owner_receipt_key: bytes,
     recipient: RecipientReceipt,
-    private_key: bytes,
+    private_key: bytes | None,
     trusted_clock: Callable[[], int],
     phase_host_attestor: HostPhaseAttestor,
+    storage: PairingStorage | None = None,
 ) -> None:
     """Fail before helper creation when stage/authority is already invalid."""
     try:
@@ -74,8 +76,7 @@ def _preflight(
             or pins.recipient_fingerprint != coords.recipient_fingerprint
             or type(recipient) is not RecipientReceipt
             or recipient.fingerprint != coords.recipient_fingerprint
-            or type(private_key) is not bytes
-            or len(private_key) != 32
+            or (storage is None and (type(private_key) is not bytes or len(private_key) != 32))
             or type(owner_receipt) is not OwnerPairingReceipt
             or type(owner_receipt_key) is not bytes
             or len(owner_receipt_key) != 32
@@ -85,7 +86,7 @@ def _preflight(
             raise ValueError("coordinates")
         verify_protected_boca_job_lease(lease, pins.attempt_id)
         now = trusted_clock()
-        stage = read_encrypted_telegram_stage(
+        stage = (read_encrypted_telegram_stage if storage is None else storage.read_stage)(
             stage_directory, coordinates=coords, lease=lease, trusted_now=now
         )
         if (
@@ -113,10 +114,11 @@ def run_bound_telegram_staged_custody(
     owner_receipt: OwnerPairingReceipt,
     owner_receipt_key: bytes,
     recipient: RecipientReceipt,
-    private_key: bytes,
+    private_key: bytes | None,
     trusted_clock: Callable[[], int],
     phase_host_attestor: HostPhaseAttestor,
     reader: LifecycleDockerIO | None = None,
+    storage: PairingStorage | None = None,
 ) -> ProtectedPairingReceipt:
     """Perform one staged pairing while the sole approved GET helper is open.
 
@@ -134,6 +136,7 @@ def run_bound_telegram_staged_custody(
         private_key=private_key,
         trusted_clock=trusted_clock,
         phase_host_attestor=phase_host_attestor,
+        storage=storage,
     )
     probe = TelegramProductionDockerIO() if reader is None else reader
     try:
@@ -168,6 +171,9 @@ def run_bound_telegram_staged_custody(
                 actual = phase_host_attestor(phase, helper_proof, checked)
                 if type(actual) is not HostRecheckReceipt:
                     raise TelegramProtectedCustodyNoGo("telegram_custody_host_recheck_unverified")
+                if storage is not None:
+                    private_get.attest_phase(phase)
+                    private_get.attest_topology(phase)
                 return actual
 
             result = execute_staged_pairing_under_lease(
@@ -182,6 +188,7 @@ def run_bound_telegram_staged_custody(
                 trusted_clock=trusted_clock,
                 inspect_host=verified_host_phase,
                 api_fetch=private_get,
+                storage=storage,
             )
         if (
             type(result) is not ProtectedPairingReceipt

@@ -314,13 +314,19 @@ def _transact(path: Path, operation: str, installation: str, phase: str, arg: st
                     # execution timestamps. A stopped/failed container alone grants nothing.
                     cert = str(uuid5(_STOP_NAMESPACE, installation + ":stop:" + arg))
                     consumed = str(uuid5(_STOP_NAMESPACE, installation + ":spend:" + arg))
-                    origin = db.execute(
-                        "SELECT action FROM audit_events WHERE audit_id=?", (cert,)
-                    ).fetchone()
-                    if not origin or not origin[0].startswith(_AUDIT + "stopped_"):
-                        allowed = False
-                    else:
-                        owner = origin[0].removeprefix(_AUDIT + "stopped_")
+                    origins = db.execute(
+                        "SELECT audit_id,action FROM audit_events WHERE action GLOB ? "
+                        "ORDER BY rowid DESC",
+                        (_AUDIT + "stopped_*",),
+                    )
+                    allowed = False
+                    for certificate_id, action in origins:
+                        owner = action.removeprefix(_AUDIT + "stopped_")
+                        if not _uuid(owner) or certificate_id not in (
+                            cert,
+                            _marker_id(owner, installation, "stopped:" + arg),
+                        ):
+                            continue
                         proof = LifecycleIntentStore.for_operation(db, owner)
                         match = db.execute(
                             "SELECT action FROM audit_events WHERE audit_id=?",
@@ -331,18 +337,29 @@ def _transact(path: Path, operation: str, installation: str, phase: str, arg: st
                             and proof.component == "bot"
                             and proof.on_demand
                             and proof.status in ("APPLIED", "FAILED")
+                            and (certificate_id == cert or proof.target == "stop")
                             and match == (_AUDIT + "bound",)
                             and not db.execute(
                                 "SELECT 1 FROM audit_events WHERE audit_id=?", (consumed,)
                             ).fetchone()
                         )
+                        if allowed:
+                            break
                     if allowed and phase == "arm":
                         append(consumed, _AUDIT + "resumed_" + operation)
                 if phase == "arm" and allowed:
                     append(key("armed"), _AUDIT + "armed")
             elif phase == "stopped":
                 cert = str(uuid5(_STOP_NAMESPACE, installation + ":stop:" + arg))
-                append(cert, _AUDIT + "stopped_" + operation)
+                # Preserve the original proof. Only explicit STOP adds its own
+                # exact-execution confirmation; the shared spend never resets.
+                certificates = (cert, key("stopped:" + arg)) if item.target == "stop" else (cert,)
+                for certificate_id in certificates:
+                    db.execute(
+                        "INSERT INTO audit_events(audit_id,action) VALUES (?,?) "
+                        "ON CONFLICT(audit_id) DO NOTHING",
+                        (certificate_id, _AUDIT + "stopped_" + operation),
+                    )
             elif phase in ("note", "witness"):
                 append(key(phase), _AUDIT + phase + "_" + arg)
             elif phase in _TERMINAL:
@@ -666,13 +683,14 @@ class _Transaction:
         ):
             raise WorkerStartFailure(self.phase)
 
-    def off(self) -> None:
+    def off(self, *, certify_exited: bool = False) -> None:
         before = self.observe()
         if before.bot_engine_running:
             self.engine("stop")
             before = self.observe()
         if before.bot_engine_running is not False:
             raise WorkerStartFailure("ENGINE_UNVERIFIED")
+        confirm_token: str | None = None
         if before.worker_running:
             self.phase = "WORKER_STOP"
             self.attempted = True
@@ -681,10 +699,22 @@ class _Transaction:
             if stopped.worker_running or stopped.bot_engine_running is not False:
                 raise WorkerStartFailure("POSTSTATE")
             self.transact("stopped", self.io.stopped_token(self.coords.worker_id))
+        elif certify_exited:
+            # Only an explicit owner STOP can certify an execution that exited
+            # on its own. START compensation must not create this permission.
+            state = self.io.worker_state(self.coords.worker_id)
+            if state not in ("created", "exited"):
+                raise WorkerStartFailure("POSTSTATE")
+            if state == "exited":
+                confirm_token = self.io.stopped_token(self.coords.worker_id)
         # A successful no-op STOP also needs a live panel and BOTH components off.
         after = self.observe()
         if after.bot_engine_running is not False or after.worker_running:
             raise WorkerStartFailure("POSTSTATE")
+        if confirm_token is not None:
+            if self.io.stopped_token(self.coords.worker_id) != confirm_token:
+                raise WorkerStartFailure("POSTSTATE")
+            self.transact("stopped", confirm_token)
 
     def on(self, before: lifecycle.LifecycleHostSnapshot) -> None:
         if before.bot_engine_running is not False or before.worker_running:
@@ -746,7 +776,7 @@ class _Transaction:
             if state.target == "start":
                 self.on(before)
             else:
-                self.off()
+                self.off(certify_exited=True)
         except Exception as exc:
             failure = exc if isinstance(exc, WorkerStartFailure) else WorkerStartFailure(self.phase)
         else:

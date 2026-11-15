@@ -32,6 +32,7 @@ from boca_socios.telegram_pairing_resolver import (
     TelegramApiFetch,
     plan_private_telegram_pairing,
 )
+from boca_socios.telegram_pairing_storage import PairingStorage
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
@@ -255,17 +256,18 @@ def execute_protected_pairing(
     owner_receipt_key: bytes,
     sealed_v2_envelope: bytes,
     recipient: bootstrap.RecipientReceipt,
-    private_key: bytes,
+    private_key: bytes | None,
     directory: Path,
     trusted_clock: Callable[[], int],
     recheck_host: Callable[[str, CutoverCoordinates], HostRecheckReceipt],
     consume_owner_nonce: Callable[[str, CutoverCoordinates], bool],
     api_fetch: TelegramApiFetch,
+    storage: PairingStorage | None = None,
 ) -> ProtectedPairingReceipt:
     """Owner HMAC → same-lease host → durable nonce → Bot API → V2 commit.
 
-    No production caller exists. Host #227 must implement genuine, fresh,
-    same-lock rechecks and an atomic durable one-use nonce ledger. A forged
+    The protected installed backend supplies fresh same-lock rechecks and
+    the existing atomic durable one-use nonce ledger. A forged
     callback with truthy claims is **not** authorization; this adapter never
     accepts a standalone CLI, JSON flag or environment variable as a grant.
     """
@@ -280,8 +282,7 @@ def execute_protected_pairing(
         or type(recipient.fingerprint) is not str
         or not _DIGEST.fullmatch(recipient.fingerprint)
         or recipient.fingerprint != coordinates.recipient_fingerprint
-        or type(private_key) is not bytes
-        or len(private_key) != 32
+        or (storage is None and (type(private_key) is not bytes or len(private_key) != 32))
         or not isinstance(directory, Path)
         or not directory.is_absolute()
     ):
@@ -329,6 +330,8 @@ def execute_protected_pairing(
             ),
             now=trusted_clock(),
             api_fetch=checked_fetch,
+            unseal=None if storage is None else storage.unseal,
+            seal=None if storage is None else storage.seal,
         )
     except (PairingResolutionError, TelegramCutoverError):
         raise TelegramCutoverError("telegram_private_discovery_unverified") from None
@@ -345,13 +348,15 @@ def execute_protected_pairing(
     )
     _recheck(recheck_host, "BEFORE_COMMIT", coordinates, trusted_clock)
     try:
-        commit = install_v2_plan(
+        commit = (install_v2_plan if storage is None else storage.install)(
             directory,
             plan,
             expected_source_sha=coordinates.target_sha,
             now=trusted_clock(),
         )
-        verified = verify_v2_custody(directory, expected_source_sha=coordinates.target_sha)
+        verified = (verify_v2_custody if storage is None else storage.verify)(
+            directory, expected_source_sha=coordinates.target_sha
+        )
     except PairingCustodyError:
         raise TelegramCutoverError("telegram_custody_unverified") from None
     except Exception:

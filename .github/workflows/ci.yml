@@ -520,6 +520,72 @@ jobs:
             --mount "type=bind,source=$GITHUB_WORKSPACE/scripts/run_telegram_setup_ui_offline_chromium.py,target=/tmp/verify.py,readonly" \
             "$BOCA_CONTROLLER_TAG" python /tmp/verify.py --verify-receipt \
             < "$RUNNER_TEMP/boca-telegram-ui.receipt"
+      - name: Verify independent engine dashboard in offline Chromium
+        id: engine_ui
+        if: steps.docs_pr_scope.outputs.docs_only != 'true'
+        env:
+          BOCA_BROWSER_TAG: boca-browser-ci:${{ github.sha }}
+          BOCA_CONTROLLER_TAG: boca-socios-ci:${{ github.sha }}
+          BOCA_ENGINE_FIXTURE_NAME: boca-engine-ui-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+          BOCA_ENGINE_UI_NAME: boca-engine-ui-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          for image in "$BOCA_CONTROLLER_TAG" "$BOCA_BROWSER_TAG"; do
+            test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")" = "$GITHUB_SHA"
+          done
+          # The actual candidate renderer receives only fixed fictional data.
+          # Neither container mounts runtime data, a socket, or runner secrets.
+          timeout --signal=TERM --kill-after=5s 20s \
+            docker run --rm --init --name "$BOCA_ENGINE_FIXTURE_NAME" --network none \
+            --cgroupns=private --read-only --no-healthcheck \
+            --pids-limit=32 --memory=128m --cpus=0.25 \
+            --security-opt no-new-privileges --cap-drop ALL --user 10001:10001 \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/scripts/run_engine_dashboard_ui_offline_chromium.py,target=/tmp/engine-ui.py,readonly" \
+            "$BOCA_CONTROLLER_TAG" python /tmp/engine-ui.py --make-fixture "$GITHUB_SHA" \
+            > "$RUNNER_TEMP/boca-engine-ui.fixture.json"
+          # PNG bytes stay in one bounded temporary receipt until verified.
+          # The browser has no writable bind mount and no network interface.
+          (
+            ulimit -f 8192
+            timeout --signal=TERM --kill-after=10s 90s \
+              docker run --rm --init --name "$BOCA_ENGINE_UI_NAME" --network none \
+              --cgroupns=private --read-only --no-healthcheck \
+              --tmpfs /tmp:rw,nosuid,nodev,size=128m,mode=1777 \
+              --tmpfs /home/boca-browser:rw,nosuid,nodev,noexec,size=32m,uid=10002,gid=10002,mode=700 \
+              --shm-size=128m --pids-limit=128 --memory=768m --cpus=1 \
+              --security-opt seccomp=docker/seccomp_profile.json \
+              --security-opt no-new-privileges --cap-drop ALL --cap-add SYS_CHROOT \
+              --mount "type=bind,source=$GITHUB_WORKSPACE/scripts/run_engine_dashboard_ui_offline_chromium.py,target=/app/scripts/run_engine_dashboard_ui_offline_chromium.py,readonly" \
+              --mount "type=bind,source=$RUNNER_TEMP/boca-engine-ui.fixture.json,target=/tmp/engine-ui.fixture.json,readonly" \
+              --user 10002:10002 "$BOCA_BROWSER_TAG" \
+              python -m scripts.run_engine_dashboard_ui_offline_chromium --run-offline-fixture /tmp/engine-ui.fixture.json "$GITHUB_SHA" \
+              > "$RUNNER_TEMP/boca-engine-ui.capture.json"
+          )
+          python3 scripts/run_engine_dashboard_ui_offline_chromium.py \
+            --verify-capture "$RUNNER_TEMP/boca-engine-ui.capture.json" \
+            "$RUNNER_TEMP/boca-engine-ui.fixture.json" "$GITHUB_SHA" \
+            "$RUNNER_TEMP/boca-engine-ui-artifacts" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload verified synthetic engine dashboard screenshots
+        id: engine_ui_upload
+        if: steps.docs_pr_scope.outputs.docs_only != 'true' && steps.engine_ui.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: boca-engine-ui-synthetic-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/boca-engine-ui-artifacts/engines-tablet-800x1280.png
+            ${{ runner.temp }}/boca-engine-ui-artifacts/engines-mobile-412x915.png
+            ${{ runner.temp }}/boca-engine-ui-artifacts/report.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Link candidate dashboard evidence
+        if: steps.docs_pr_scope.outputs.docs_only != 'true' && steps.engine_ui_upload.outcome == 'success'
+        env:
+          BOCA_ENGINE_UI_ARTIFACT_URL: ${{ steps.engine_ui_upload.outputs.artifact-url }}
+        run: |
+          printf 'QA visual del candidato `%s`: [capturas y reporte](%s). Chromium offline con datos ficticios; no comprueba el droplet ni un dispositivo Samsung/iPhone.\n' \
+            "$GITHUB_SHA" "$BOCA_ENGINE_UI_ARTIFACT_URL" >> "$GITHUB_STEP_SUMMARY"
       - name: Verify source revision label
         if: steps.docs_pr_scope.outputs.docs_only != 'true'
         env:
@@ -1218,13 +1284,15 @@ jobs:
           BOCA_PUBLIC_BROWSER_NAME: boca-browser-public-dom-${{ github.run_id }}-${{ github.run_attempt }}
           BOCA_TELEGRAM_UI_NAME: boca-browser-telegram-ui-${{ github.run_id }}-${{ github.run_attempt }}
           BOCA_TELEGRAM_VERIFY_NAME: boca-telegram-ui-verify-${{ github.run_id }}-${{ github.run_attempt }}
+          BOCA_ENGINE_FIXTURE_NAME: boca-engine-ui-fixture-${{ github.run_id }}-${{ github.run_attempt }}
+          BOCA_ENGINE_UI_NAME: boca-engine-ui-${{ github.run_id }}-${{ github.run_attempt }}
           BOCA_BROWSER_TAG: boca-browser-ci:${{ github.sha }}
           BOCA_CONTROLLER_TAG: boca-socios-ci:${{ github.sha }}
         run: |
           set -euo pipefail
           # Hosted disposable runner only. Never operate a droplet or prune a daemon.
           docker info > /dev/null
-          for name in "$BOCA_PUBLIC_BROWSER_NAME" "$BOCA_TELEGRAM_UI_NAME" "$BOCA_TELEGRAM_VERIFY_NAME"; do
+          for name in "$BOCA_PUBLIC_BROWSER_NAME" "$BOCA_TELEGRAM_UI_NAME" "$BOCA_TELEGRAM_VERIFY_NAME" "$BOCA_ENGINE_FIXTURE_NAME" "$BOCA_ENGINE_UI_NAME"; do
             if docker container inspect "$name" > /dev/null 2>&1; then
               docker container stop --time 5 "$name" > /dev/null 2>&1 || true
               docker container rm --force "$name" > /dev/null

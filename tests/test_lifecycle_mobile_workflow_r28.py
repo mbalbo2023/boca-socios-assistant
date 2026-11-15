@@ -110,8 +110,14 @@ def test_mobile_prepare_artifact_is_not_itself_approval_or_telegram_access() -> 
     assert "boca-lifecycle-apply-context.txt" in artifact
     assert "retention-days: 2" in artifact
     assert "BOCA_LIFECYCLE_GO_BINDING_SHA256" in w
-    assert "telegram-activate)" in w
-    assert "state=NO_GO reason=host_same_lease_backend_unverified" in w
+    assert (
+        "telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender)"
+        in w
+    )
+    telegram = _step("Execute installed Telegram transaction under one protected lease")
+    assert "boca_protected_memfd_bootstrap.py" in telegram
+    assert "verify-receipt" in telegram
+    assert "boca-lifecycle-prepare.receipt.json" not in telegram
     assert "BOCA_CUTOVER_A_DISPATCH_BINDING_SHA256" in w
     assert "BOCA_OFFICIAL_IMPORT_GO_BINDING_SHA256" in w
     assert "docker system prune" not in w

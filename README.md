@@ -1,6 +1,121 @@
 # Boca Socios Assistant
 
-## R294 — detección automática y BETA consolidada en preparación
+## R297 — QA: dos motores y seguimiento de sesiones en 8443
+
+El desarrollo continúa en [PR517](https://github.com/mbalbo2023/boca-socios-assistant/pull/517),
+con las [correcciones aportadas por el titular](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6886406162).
+La última instalación certificada sigue siendo R294/c5a1435; estos cambios
+todavía no se presentan como desplegados ni aceptados desde Samsung.
+
+El panel distingue **motor de colas y tokens** y **motor de navegadores de socios**.
+Cada uno tiene inicio/detención, activación, estado y contextos propios. Comparten
+el worker existente: detener uno conserva el otro; la última liberación permite
+detener la infraestructura. Reiniciar el controller no reabre trabajos históricos.
+Ambos bloques de estado y controles preceden a los historiales de sesiones;
+abrir más sesiones no desplaza el segundo botón Detener detrás del historial
+del primer motor.
+Los resultados y estados de cola usan las mismas etiquetas comprensibles en
+la carga inicial y en las actualizaciones de la página.
+
+El presupuesto lógico total es de 50 contextos. La propuesta inicial del formulario
+es de 25 por motor: 15 Chromium, 5 Firefox y 5 WebKit, ajustables al límite compartido.
+El monitor diferencia solicitado, creado, activo, cerrado, fallido y Queue IDs
+únicos. Las aperturas se escalonan; no se afirma que el droplet pueda sostener 50
+ni que los contextos equivalgan a posiciones distintas aceptadas por el proveedor.
+
+Las sesiones y sus estados se actualizan en vivo. La inspección conserva la misma
+página y permite revelar/copiar URLs y tokens realmente recibidos. Posición y
+tiempo se muestran sólo si la página los informó; fallar una consulta no equivale
+a no tener evento. La respuesta del login y la autenticación del DOM se distinguen:
+conservar un contexto y obtener un token no prueba que su página esté autenticada.
+SIMULATION_ONLY permanece; no se anuncia una entrada por observar cola o tokens.
+
+Se reutilizan vault, parsers, monitores, IPC y supervisor. El registro durable
+frena respuestas posteriores a STOP, revocación o reemplazo de credencial.
+El enlace legado de configuración Telegram lleva al emparejamiento instalado
+cuando éste está disponible; su preparación/aceptación física conserva el flujo
+protegido anterior, sin nuevas notificaciones durante el QA.
+
+La revisión cruzada corrigió cierres durante apertura, respuestas de login tardías,
+cambios de contraseña durante la lectura y recuperación de cierres inciertos.
+Reintentar STOP conserva el otro motor; si todos los trabajos están detenidos o
+cercados, el ejecutor protegido puede confirmar el cierre físico y habilitar
+un inicio nuevo. La interfaz distingue esa disponibilidad del estado histórico.
+
+El [pedido de QA visual por Actions](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6886936337)
+se incorpora al CI existente con fixtures ficticias y capturas del renderer real.
+La observación protegida del droplet que existe hoy comprueba salud e identidades;
+no incluye un navegador autenticado en el panel privado. Las capturas del candidato,
+el postflight instalado y la aceptación del titular se registran por separado.
+
+La [evidencia de CI1256 y sus capturas](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889286186)
+corresponde a 2c35d22. El ajuste posterior de orden y traducciones requiere sus
+propios checks y capturas. Firefox alcanzó 144/143 tareas en dos pruebas del
+runner con límites 192/256; no es una medición del droplet. Se conservan los
+límites instalados y la política de [medición posdespliegue](docs/ADR/0112-postdeploy-resource-observation.md).
+La admisión simultánea de los tres tipos y de 50 contextos permanece sin
+certificación física; el panel informa lo que se logra crear y mantener.
+
+[Diseño y límites](docs/ADR/0302-independent-owner-engines.md),
+[plan de integración](docs/superpowers/plans/2026-11-15-r297-independent-engines.md).
+La revisión del código, el CI del SHA definitivo, la promoción consolidada,
+postflight y aceptación física son evidencias diferentes y se registran en GitHub.
+
+## Histórico R296 — candidato único antes de las correcciones Samsung
+
+El candidato continúa en [PR #517](https://github.com/mbalbo2023/boca-socios-assistant/pull/517).
+El titular todavía no hizo el control de calidad: sus correcciones se incorporan
+al mismo candidato antes de una única promoción. La última instalación certificada
+permanece en R294, `c5a143541ccfcaf26f29cf252a4cb33fd7c540f7`, release #865 /
+APPLY #1117; este desarrollo no ejecuta otro despliegue ni observa de nuevo el host.
+
+El código R296 conecta el login Boca al socio elegido en START y al worker de
+sesión única. Reutiliza el vault, transporte y monitores existentes; publica sólo
+si el START sigue vigente y el socio conserva su credencial. STOP, revocación,
+replay, plazos y resultados tardíos tienen pruebas focales. La actividad muestra
+la autenticación en curso sin transformar una observación UNKNOWN en ausencia
+comprobada de evento o cola.
+
+Telegram incorpora preparación, emparejamiento, aceptación y sender al contexto
+instalado protegido. El panel recibe automáticamente la clave pública y muestra
+el comando `/start` después de guardar el sobre con passkey. Las recuperaciones
+conservan stage, nonce e historial; una continuación usa el intento original y
+no repite un envío ambiguo. La página Telegram muestra la última observación
+protegida con su antigüedad y distingue aceptación API de recepción humana.
+
+Las funcionalidades están desarrolladas en rama; las pruebas offline y las
+revisiones no certifican proveedor, Docker/systemd físico ni aceptación Samsung.
+Los resultados del SHA exacto se publican en PR517 e
+[#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417).
+[Diseño, RCA, límites y próximos pasos](docs/ADR/0301-r296-consolidated-auth-and-telegram.md).
+Se mantienen SIMULATION_ONLY, protecciones de main y separación entre CI,
+release, despliegue y aceptación. Los cortes siguientes son históricos.
+
+## Corte histórico R295 — pendientes en desarrollo; R294 instalada y en aceptación
+
+La BETA R294 de `c5a143541ccfcaf26f29cf252a4cb33fd7c540f7` ya fue instalada
+por una única promoción: release #865, APPLY #1117 ACCEPTED, administración
+#1118 y observación del par #1120. El controller está certificado healthy;
+el worker quedó creado y detenido para START del titular.
+[Evidencia física y handoff](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6871954660).
+La aceptación desde Samsung verifica el comportamiento posterior y sigue
+separada de CI y del despliegue.
+
+Mientras el titular prueba, R295 desarrolla pendientes sin operar el servidor:
+un diagnóstico que distingue STOP preservado de la instalación actual,
+compatibilidad del observer Telegram con el par on-demand, y un transporte
+de login Boca verificado offline. Se reutilizan el ledger, servicio de
+credenciales, monitor y módulos Telegram existentes.
+[Diseño, pruebas y pendientes exactos](docs/ADR/0300-r295-postdeploy-status-auth-and-telegram.md).
+
+El worker automático de R294 ya inicia la comprobación de evento/cola desde
+START, conserva una sesión y registra el motivo de la detención. R295 aún no
+conecta el login Boca a ese ciclo ni activa Telegram: ambos necesitan su
+integración restante y aceptación propia. No se generó otra release ni se
+repitió el deploy por estos cambios. Todo ticket permanece SIMULATION_ONLY.
+Los encabezados siguientes conservan cortes históricos.
+
+## Corte histórico R294 — BETA consolidada antes de la promoción
 
 La optimización CI/CD R293 ya se integró por PR #515, con CI y seguridad de
 `959a0be9e776329f99a29e65c2c75195700d5596` aprobados. El siguiente candidato

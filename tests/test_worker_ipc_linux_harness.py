@@ -80,7 +80,9 @@ def test_child_uses_root_owned_readonly_whitelisted_fixture(tmp_path: Path) -> N
     assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o755
     assert fixture_script == tmp_path / "scripts/check_worker_ipc_linux.py"
     assert fixture_script.read_bytes() == (ROOT / "scripts/check_worker_ipc_linux.py").read_bytes()
-    assert len(smoke._FIXTURE_FILES) == 13
+    assert len(smoke._FIXTURE_FILES) == 15
+    assert "src/boca_socios/browser/boca_auth_protocol.py" in smoke._FIXTURE_FILES
+    assert "src/boca_socios/browser/engine_protocol.py" in smoke._FIXTURE_FILES
     assert all(
         "synthetic.py" not in path and "ipc_worker.py" not in path for path in smoke._FIXTURE_FILES
     )
@@ -130,6 +132,8 @@ sys.path.insert(0, sys.argv[1])
 namespace = runpy.run_path(sys.argv[2], run_name="ipc_fixture_import_only")
 assert namespace["UnixSyntheticWorker"].__module__ == "boca_socios.browser.ipc_server"
 assert namespace["UnixSyntheticBrowser"].__module__ == "boca_socios.browser.ipc_client"
+assert "boca_socios.browser.boca_auth_protocol" in sys.modules
+assert "boca_socios.browser.engine_protocol" in sys.modules
 assert not any(
     name == "playwright" or name.startswith("playwright.")
     or name in {

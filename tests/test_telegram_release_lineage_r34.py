@@ -167,30 +167,34 @@ def test_protected_workflow_keeps_telegram_two_sha_review_before_any_host_transp
         1
     ].split("      - name:", 1)[0]
     source = workflow.split(
-        "      - name: Prove Telegram dual-source release ancestry CODE_ONLY then reject physical activation\n",
+        "      - name: Prove Telegram release ancestry and build installed transaction\n",
         1,
     )[1].split("      - name:", 1)[0]
-    assert 'if [[ "$BOCA_OPERATION" = telegram-activate ]]; then' in gate
+    condition = '"$BOCA_OPERATION" = telegram-activate || "$BOCA_OPERATION" = telegram-prepare || "$BOCA_OPERATION" = telegram-sender-recover || "$BOCA_OPERATION" = telegram-renew-stage || "$BOCA_OPERATION" = telegram-complete-sender'
+    assert f"if [[ {condition} ]]; then" in gate
     assert 'test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"' in gate
-    assert "telegram-activate)" in gate
-    assert "host_same_lease_backend_unverified" not in gate
     assert (
-        'if [[ "$BOCA_OPERATION" = telegram-activate ]]; then verified_main="$GITHUB_SHA"; fi'
-        in (main_check)
+        "telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender)"
+        in gate
     )
-    assert "if: inputs.operation == 'telegram-activate'" in source
+    assert "host_same_lease_backend_unverified" not in gate
+    assert f'if [[ {condition} ]]; then verified_main="$GITHUB_SHA"; fi' in (main_check)
+    assert "inputs.operation == 'telegram-activate'" in source
+    assert "inputs.operation == 'telegram-prepare'" in source
+    assert "inputs.operation == 'telegram-sender-recover'" in source
     assert "compare/$BOCA_SOURCE_SHA...$GITHUB_SHA" in source
     assert "jq -cS" in source
     assert "check_telegram_release_lineage.py" in source
     assert "build_protected_telegram_bundle.py" in source
-    assert "state=NO_GO reason=host_same_lease_backend_unverified host=untouched sender=OFF" in (
-        source
-    )
-    assert "exit 1" in source
+    assert "--installed" in source
+    assert "-I -S -B" in source and " selftest" in source
     assert "ssh " not in source and "docker " not in source
     assert workflow.index(
-        "      - name: Prove Telegram dual-source release ancestry CODE_ONLY"
+        "      - name: Prove Telegram release ancestry and build installed transaction"
     ) < workflow.index("      - name: Configure pinned SSH host key and dedicated identity")
     assert (
-        workflow.count("      - name: Prove Telegram dual-source release ancestry CODE_ONLY") == 1
+        workflow.count(
+            "      - name: Prove Telegram release ancestry and build installed transaction"
+        )
+        == 1
     )

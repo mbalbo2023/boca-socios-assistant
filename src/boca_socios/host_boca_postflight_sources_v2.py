@@ -1,18 +1,18 @@
-"""Boca-only R247 postflight source assembly, intentionally not a GO switch.
+"""Boca-only R247 postflight source assembly, intentionally not a GO switch."""
 
-This adapter binds the existing R245/R246 read-side mechanisms to one exact
-protected lease and one *durable, on-disk* final cleanup V2 receipt. It makes
-no Docker mutation, HTTP request, browser login, token collection or SQLite
-content query. The real Boca rootless host and exact CIDs are reattested by
-the underlying R177 pair/binding witness at observation time.
+# This adapter binds the existing R245/R246 read-side mechanisms to one exact
+# protected lease and one *durable, on-disk* final cleanup V2 receipt. It makes
+# no Docker mutation, HTTP request, browser login, token collection or SQLite
+# content query. The real Boca rootless host and exact CIDs are reattested by
+# the underlying R177 pair/binding witness at observation time.
 
-Missing independent owner passkey and truly mutation-free authenticated
-monitor producers stay None, so the legacy login-required postflight
-refuses the snapshot. Explicit R252 technical capture may use genuine
-local GET /healthz (not LOGIN_HTTP_200), while making NO claim about an
-authenticated monitor or live tokens. No fabricated owner or authenticated
-monitor results are admissible here.
-"""
+# Missing independent owner passkey and truly mutation-free authenticated
+# monitor producers stay None, so the legacy login-required postflight
+# refuses the snapshot. Explicit R252 technical capture may use genuine
+# local GET /healthz (not LOGIN_HTTP_200), while making NO claim about an
+# authenticated monitor or live tokens. No fabricated owner or authenticated
+# monitor results are admissible here.
+#
 
 from __future__ import annotations
 
@@ -56,13 +56,13 @@ def _structural_file_inode_sha256(
     *,
     strict_key: bool = False,
 ) -> str:
-    """Hash stable inode custody, not SQLite/session content or write times.
+    """Hash stable inode custody, not SQLite/session content or write times."""
 
-    Descriptor-relative O_PATH/O_NOFOLLOW is used for every ancestor and the
-    file. This is intentionally a different v2 hash domain from R245's
-    size/mtime-sensitive snapshot. A reviewer must use V2 for BOTH before and
-    after references; never compare an old v1 digest as if it were V2.
-    """
+    # Descriptor-relative O_PATH/O_NOFOLLOW is used for every ancestor and the
+    # file. This is intentionally a different v2 hash domain from R245's
+    # size/mtime-sensitive snapshot. A reviewer must use V2 for BOTH before and
+    # after references; never compare an old v1 digest as if it were V2.
+    #
     directory_fd = -1
     try:
         directory_fd = os.open("/", runtime._DIR_FLAGS)
@@ -133,14 +133,14 @@ def capture_structural_storage_fingerprints(
     trusted_root: Path = runtime._ROOT,
     mapped_owner: mapped.MappedOwner | None = None,
 ) -> postflight.PostflightStorage:
-    """Stable SQLite/session inode identities and strict key metadata custody.
+    """Stable SQLite/session inode identities and strict key metadata custody."""
 
-    Normal SQLite transactions may change file size and mtime/ctime without
-    changing the underlying inode. Keep inode, device, owner, mode, hardlink
-    count and no-follow mount identity pinned. The master key should not be
-    rewritten by routine SQLite activity and retains R245's stronger
-    size/mtime-sensitive metadata fingerprint.
-    """
+    # Normal SQLite transactions may change file size and mtime/ctime without
+    # changing the underlying inode. Keep inode, device, owner, mode, hardlink
+    # count and no-follow mount identity pinned. The master key should not be
+    # rewritten by routine SQLite activity and retains R245's stronger
+    # size/mtime-sensitive metadata fingerprint.
+    #
     try:
         if (
             not isinstance(rootless_docker_root, Path)
@@ -245,20 +245,20 @@ def build_protected_postflight_sources(
     owner_acceptance: Callable[[], str] | None = None,
     monitor_metadata: Callable[[], bytes] | None = None,
 ) -> runtime.PostflightReadSources:
-    """Bind real Boca-only *readers* for the one ongoing protected attempt.
+    """Bind real Boca-only *readers* for the one ongoing protected attempt."""
 
-    The caller must obtain `receipt_directory` from the attested same-lease
-    cleanup coordinates and supply its pre-reviewed Boca data/key/owner volume
-    + mount attestor. The function itself does not touch the host; invocation
-    of the returned callbacks rechecks the exact pair, rootless identity,
-    lease, saved SITE_URL, cold worker entrypoint, and durable cleanup receipt.
+    # The caller must obtain `receipt_directory` from the attested same-lease
+    # cleanup coordinates and supply its pre-reviewed Boca data/key/owner volume
+    # + mount attestor. The function itself does not touch the host; invocation
+    # of the returned callbacks rechecks the exact pair, rootless identity,
+    # lease, saved SITE_URL, cold worker entrypoint, and durable cleanup receipt.
 
-    No available code can authenticate an owner's actual Chrome/passkey login
-    merely by visiting /healthz. Likewise, no read-only production monitor
-    source exists that avoids the owner-session renewal. Until independently
-    reviewed producers exist, non-None callbacks for these two sources are
-    rejected instead of interpreted as optimistic status strings.
-    """
+    # No available code can authenticate an owner's actual Chrome/passkey login
+    # merely by visiting /healthz. Likewise, no read-only production monitor
+    # source exists that avoids the owner-session renewal. Until independently
+    # reviewed producers exist, non-None callbacks for these two sources are
+    # rejected instead of interpreted as optimistic status strings.
+    #
     try:
         _validated_source_inputs(expected, lease, cleanup_receipt, receipt_directory)
         if owner_acceptance is not None or monitor_metadata is not None:

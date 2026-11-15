@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING
 from boca_socios import host_boca_cleanup as cleanup
 from boca_socios import host_boca_lifecycle as lifecycle
 from boca_socios.host_boca_cleanup import BocaJobLease
-from boca_socios.host_boca_cleanup import verify_protected_boca_job_lease as _verify_lease
 from boca_socios.host_lifecycle_rootless_adapter import ReviewedInstalledPair
 from boca_socios.panel.lifecycle_intents import canonical_operation_id
 
@@ -54,8 +53,12 @@ _MARKER = "attempt"
 _BINDING = "binding.json"
 _ARCHIVE = "handler.pyz"
 _REMOVING = "removing"
+_UPDATING = "sender-update.json"
+_NEXT = "sender-next"
 _PROPERTIES = ("LoadState", "FragmentPath", "DropInPaths", "ActiveState", "SubState")
-_DATA = frozenset({_MARKER, _BINDING, _ARCHIVE, _SOCKET, _SERVICE, _REMOVING, "socket"})
+_DATA = frozenset(
+    {_MARKER, _BINDING, _ARCHIVE, _SOCKET, _SERVICE, _REMOVING, _UPDATING, _NEXT, "socket"}
+)
 # Only named source bytes from the already-verified Cutover ZIP may become durable.
 # Never persist the transaction dispatcher, incident recovery scripts or deployment files.
 _RUNTIME_FILES = (
@@ -108,6 +111,10 @@ class ControlRefused(ValueError):
 
 def _refuse() -> ControlRefused:
     return ControlRefused("Boca on-demand activation identity or state unavailable")
+
+
+def _verify_lease(lease: BocaJobLease, attempt: str) -> None:
+    cleanup.verify_protected_boca_job_lease(lease, attempt)
 
 
 def _sha(data: bytes) -> str:
@@ -242,7 +249,7 @@ def prepare_control_directory(attempt: str, lease: BocaJobLease) -> Path:
             if not any(root.iterdir()):
                 root.rmdir()
             raise
-    if _present(root / _REMOVING):
+    if any(_present(root / name) for name in (_REMOVING, _UPDATING, _NEXT)):
         raise _refuse()
     folder = root / "socket"
     if not _present(folder):
@@ -529,7 +536,7 @@ def install_control(
         home = _home()
         root = _owned(home, run)
         _directory(root / "socket", mode=0o711)
-        if _present(root / _REMOVING):
+        if any(_present(root / name) for name in (_REMOVING, _UPDATING, _NEXT)):
             raise _refuse()
         directory = _unit_dir(home)
     with candidate_check("CONTROL_ARCHIVE_BINDING"):
@@ -576,16 +583,32 @@ def verify_control(installation: OnDemandInstallation, lease: BocaJobLease) -> N
         raise _refuse()
 
 
+def adopt_sender_binding(
+    old: OnDemandInstallation,
+    new: OnDemandInstallation,
+    lease: BocaJobLease,
+    *,
+    stopped: Callable[[], None],
+    original_sender_attempt: str | None = None,
+) -> str:
+    """Adopt only the sender through the recoverable protected update leaf."""
+    from boca_socios.host_on_demand_sender_update import adopt
+
+    return adopt(old, new, lease, stopped=stopped, original_sender_attempt=original_sender_attempt)
+
+
 def read_installed_binding(lease: BocaJobLease) -> OnDemandInstallation:
     """Read the pinned installation under an independent protected status lease."""
     _verify_lease(lease, lease.attempt_id)
     return _verified_installation(_home())
 
 
-def _verified_installation(home: Path) -> OnDemandInstallation:
+def _verified_installation(home: Path, *, sender_update: bool = False) -> OnDemandInstallation:
     root = home / _ROOT
     _directory(root, mode=0o700)
-    if _present(root / _REMOVING):
+    if any(_present(root / name) for name in (_REMOVING, _NEXT)) or (
+        not sender_update and _present(root / _UPDATING)
+    ):
         # The handler rejects every new connection after this durable boundary,
         # even if interruption left the manager reporting an active listener.
         raise _refuse()
@@ -606,6 +629,8 @@ def remove_control(attempt: str, lease: BocaJobLease) -> None:
     if not _present(home / _ROOT):
         return
     root = _owned(home, attempt)
+    if any(_present(root / name) for name in (_UPDATING, _NEXT)):
+        raise _refuse()
     folder = root / "socket"
     if _present(folder):
         _directory(folder, mode=0o711)
@@ -793,7 +818,9 @@ def handle_connection(
         return False
 
 
-def _pinned_activation(binding_sha256: str) -> tuple[Path, OnDemandInstallation, str]:
+def _pinned_activation(
+    binding_sha256: str, *, socket_mode: bool = False
+) -> tuple[Path, OnDemandInstallation, str]:
     if not _DIGEST.fullmatch(binding_sha256):
         raise _refuse()
     home = _home()
@@ -809,7 +836,9 @@ def _pinned_activation(binding_sha256: str) -> tuple[Path, OnDemandInstallation,
         if _sha(archive.read(_MAX_ZIP + 1)) != digest:
             raise _refuse()
     _owned(home, installation.installation_run_id)
-    if _present(root / _REMOVING):
+    if any(_present(root / name) for name in (_REMOVING, _NEXT)) or (
+        not socket_mode and _present(root / _UPDATING)
+    ):
         raise _refuse()
     return root, installation, digest
 
@@ -817,7 +846,7 @@ def _pinned_activation(binding_sha256: str) -> tuple[Path, OnDemandInstallation,
 def socket_mode_main(binding_sha256: str) -> int:
     """Socket ExecStartPost; applies to every manager start, including boot."""
     try:
-        root, _, digest = _pinned_activation(binding_sha256)
+        root, _, digest = _pinned_activation(binding_sha256, socket_mode=True)
         directory = _unit_dir(root.parent)
         for name, data in _units(digest, binding_sha256).items():
             if not _unit_link(root, directory, name, data):

@@ -173,13 +173,16 @@ def _result(raw: bytes) -> dict[str, object]:
 
 def plan_private_telegram_pairing(
     v2_envelope: bytes,
-    private_key: bytes,
+    private_key: bytes | None,
     recipient: bootstrap.RecipientReceipt,
     source_sha: str,
     *,
     not_before: int,
     now: int,
     api_fetch: TelegramApiFetch,
+    unseal: Callable[[bytes, bytes | None, bootstrap.RecipientReceipt], tuple[bytes, str]]
+    | None = None,
+    seal: Callable[[bootstrap.RecipientReceipt, str, str], bytes] | None = None,
 ) -> PairingInstallPlan:
     """Resolve uniquely paired private chat; return sealed V1 install plan.
 
@@ -200,7 +203,12 @@ def plan_private_telegram_pairing(
     ):
         raise PairingResolutionError("telegram_source_unverified")
     try:
-        token_bytes, code = unseal_pairing(v2_envelope, private_key, recipient)
+        if unseal is None:
+            if private_key is None:
+                raise PairingEnvelopeError("private_key_required")
+            token_bytes, code = unseal_pairing(v2_envelope, private_key, recipient)
+        else:
+            token_bytes, code = unseal(v2_envelope, private_key, recipient)
     except PairingEnvelopeError:
         raise PairingResolutionError("telegram_v2_envelope_unverified") from None
     token = token_bytes.decode("ascii")
@@ -243,14 +251,10 @@ def plan_private_telegram_pairing(
     chat_hmac = hmac.new(
         token_bytes, str(found.chat_id).encode("ascii"), hashlib.sha256
     ).hexdigest()
-    fence = hmac.new(
-        token_bytes,
-        (f"boca-telegram-pairing-consumed-v2:{source_sha}:{found.update_id}:{code}").encode(
-            "ascii"
-        ),
-        hashlib.sha256,
-    ).hexdigest()
-    legacy_envelope = bootstrap.seal_for_recipient(recipient, token, str(found.chat_id))
+    fence = pairing_consumption_fence(token_bytes, source_sha, found.update_id, code)
+    legacy_envelope = (bootstrap.seal_for_recipient if seal is None else seal)(
+        recipient, token, str(found.chat_id)
+    )
     return PairingInstallPlan(
         receipt=PairingInstallReceipt(
             source_sha=source_sha,
@@ -263,3 +267,12 @@ def plan_private_telegram_pairing(
         ),
         sealed_v1_envelope=legacy_envelope,
     )
+
+
+def pairing_consumption_fence(token: bytes, source_sha: str, update_id: int, code: str) -> str:
+    """Canonical commitment linking the verified discovery to its encrypted stage."""
+    return hmac.new(
+        token,
+        f"boca-telegram-pairing-consumed-v2:{source_sha}:{update_id}:{code}".encode("ascii"),
+        hashlib.sha256,
+    ).hexdigest()

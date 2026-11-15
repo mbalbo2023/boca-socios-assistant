@@ -1,15 +1,16 @@
-"""Append-only lifecycle intents, command bindings and physical receipts.
+# Append-only lifecycle intents, command bindings and physical receipts.
 
-The panel records owner intent in the existing audit ledger. The coordinator
-can also derive a stop from the terminal simulations bound to that activation.
-Only the protected host executor claims an intent and records its result.
-"""
+# The panel records owner intent in the existing audit ledger. The coordinator
+# can also derive a stop from the terminal simulations bound to that activation.
+# Only the protected host executor claims an intent and records its result.
+#
 
 from __future__ import annotations
 
 import os
 import sqlite3
 import stat
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -30,9 +31,15 @@ _PREFIX = "owner_lifecycle_v1_"
 _NAMESPACE = UUID("7a5e4b3a-2781-4f2d-978c-98bd64391508")
 _ON_DEMAND = "boca_bot_on_demand_v1:"
 _WORK_BINDING = "boca_bot_work_v1:"
+_AUTH_MEMBER = "boca_auth_member_v1:"
 _WORK_STOP = "boca_bot_work_stop_v1:"
+# These stdlib-only markers are also read by the protected host bundle. Keep
+# the physical reader independent of the controller's engine coordinator.
+ENGINE_NAMESPACE = UUID("d9bd9349-24f1-486e-9d99-7fd2830c8bec")
+ENGINE_HOLD_PREFIX = "boca_engine_v1:hold:"
+ENGINE_RELEASE_PREFIX = "boca_engine_v1:release:"
 AUTOMATIC_CHECK_PREFIX = "boca_automatic_check_v1:"
-AUTOMATIC_CHECK_WAITING = frozenset({"CHECKING", "QUEUE_ACTIVE", "PREQUEUE"})
+AUTOMATIC_CHECK_WAITING = frozenset({"CHECKING", "QUEUE_ACTIVE", "PREQUEUE", "AUTHENTICATING"})
 AUTOMATIC_CHECK_TERMINAL = frozenset(
     {
         "QUEUE_INACTIVE",
@@ -41,6 +48,8 @@ AUTOMATIC_CHECK_TERMINAL = frozenset(
         "CHALLENGE",
         "UNKNOWN",
         "CHECK_FAILED",
+        "AUTH_OBSERVED",
+        "AUTH_FAILED",
     }
 )
 _REQUEST_ACTIONS = {
@@ -125,13 +134,13 @@ def host_marker(
     target: str,
     status: LifecycleStatus,
 ) -> tuple[str, str]:
-    """Pure canonical ACK coordinates for the future *trusted* host executor.
+    # Pure canonical ACK coordinates for the future *trusted* host executor.
 
-    A marker tuple is not authority to perform an action; the protected
-    workflow must hold the Boca host lease, attest exact container IDs, claim
-    this request atomically and verify the physical result before appending an
-    ACK. There is intentionally no HTTP endpoint that writes these markers.
-    """
+    # A marker tuple is not authority to perform an action; the protected
+    # workflow must hold the Boca host lease, attest exact container IDs, claim
+    # this request atomically and verify the physical result before appending an
+    # ACK. There is intentionally no HTTP endpoint that writes these markers.
+    #
     canonical_operation_id(operation_id)
     _action(component, target)
     if status == "CLAIMED":
@@ -175,6 +184,30 @@ def _db_identity(path: Path) -> tuple[int, int]:
     return metadata.st_dev, metadata.st_ino
 
 
+def engine_holds(connection: sqlite3.Connection, start_operation_id: str) -> bool:
+    """An unclosed logical job prevents automatic physical work completion."""
+    canonical_operation_id(start_operation_id)
+    prefix = ENGINE_HOLD_PREFIX + start_operation_id + ":"
+    held = False
+    for rowid, key, action in connection.execute(
+        "SELECT rowid,audit_id,action FROM audit_events WHERE substr(action,1,?)=?",
+        (len(prefix), prefix),
+    ):
+        activation_id = canonical_operation_id(action[len(prefix) :])
+        if key != str(uuid5(ENGINE_NAMESPACE, action)):
+            raise LifecycleStorageUnavailable("invalid engine hold")
+        release = ENGINE_RELEASE_PREFIX + start_operation_id + ":" + activation_id
+        receipt = connection.execute(
+            "SELECT rowid,action FROM audit_events WHERE audit_id=?",
+            (str(uuid5(ENGINE_NAMESPACE, release)),),
+        ).fetchone()
+        if receipt is None:
+            held = True
+        elif receipt[0] <= rowid or receipt[1] != release:
+            raise LifecycleStorageUnavailable("invalid engine release")
+    return held
+
+
 class LifecycleIntentStore:
     """Serialize owner controls and simulation completion in the existing Boca audit log."""
 
@@ -209,16 +242,25 @@ class LifecycleIntentStore:
         operation_id: str,
         *,
         on_demand: bool = False,
+        auth_member_id: str | None = None,
     ) -> LifecycleIntent:
         """Persist one intent. Never start, stop, signal, dispatch or contact host."""
         action = _action(component, target)
         canonical_operation_id(operation_id)
         if on_demand and component != "bot":
             raise ValueError("on-demand control requires the bot")
+        if auth_member_id is not None:
+            canonical_operation_id(auth_member_id)
+            if not on_demand or (component, target) != ("bot", "start"):
+                raise ValueError("authentication requires an on-demand start")
         before = _db_identity(self._database.path)
         try:
             with self._database.connection() as connection, connection:
                 connection.execute("BEGIN IMMEDIATE")
+                if auth_member_id is not None and not self._active_member(
+                    connection, auth_member_id
+                ):
+                    raise LifecycleConflict("active member credential required")
                 # A repeated operation ID is idempotent across restarts.
                 existing = connection.execute(
                     "SELECT action FROM audit_events WHERE audit_id=?", (operation_id,)
@@ -233,6 +275,8 @@ class LifecycleIntentStore:
                         raise LifecycleConflict(
                             "lifecycle request belongs to another control profile"
                         )
+                    if self._auth_member(connection, state.operation_id) != auth_member_id:
+                        raise LifecycleConflict("activation member cannot change")
                     result = state
                 elif (
                     on_demand
@@ -244,6 +288,8 @@ class LifecycleIntentStore:
                 ):
                     # Preserve the activation that owns in-flight work. Only
                     # REQUESTED needs another wake after loss of the first.
+                    if self._auth_member(connection, state.operation_id) != auth_member_id:
+                        raise LifecycleConflict("activation member cannot change")
                     result = state
                 else:
                     if (
@@ -261,6 +307,14 @@ class LifecycleIntentStore:
                     ):
                         raise LifecycleConflict("protected host operation remains unconfirmed")
                     _insert_request(connection, operation_id, action, on_demand=on_demand)
+                    if auth_member_id is not None:
+                        connection.execute(
+                            "INSERT INTO audit_events(audit_id,action) VALUES (?,?)",
+                            (
+                                str(uuid5(_NAMESPACE, _AUTH_MEMBER + operation_id)),
+                                _AUTH_MEMBER + auth_member_id,
+                            ),
+                        )
                     fresh = self._current(connection)
                     if fresh is None or fresh.operation_id != operation_id:
                         raise LifecycleStorageUnavailable("Boca lifecycle request did not persist")
@@ -270,6 +324,61 @@ class LifecycleIntentStore:
             return result
         except (sqlite3.Error, OSError, ValueError, TypeError):
             raise LifecycleStorageUnavailable("Boca lifecycle ledger unavailable") from None
+
+    @staticmethod
+    def _active_member(connection: sqlite3.Connection, member_id: str) -> bool:
+        return bool(
+            connection.execute(
+                "SELECT 1 FROM members m JOIN credentials c ON c.member_id=m.member_id "
+                "WHERE m.member_id=?",
+                (member_id,),
+            ).fetchone()
+            == (1,)
+        )
+
+    @staticmethod
+    def _auth_member(connection: sqlite3.Connection, start_id: str) -> str | None:
+        canonical_operation_id(start_id)
+        row = connection.execute(
+            "SELECT action FROM audit_events WHERE audit_id=?",
+            (str(uuid5(_NAMESPACE, _AUTH_MEMBER + start_id)),),
+        ).fetchone()
+        if row is None:
+            return None  # Historical activations are observation-only.
+        if not isinstance(row[0], str) or not row[0].startswith(_AUTH_MEMBER):
+            raise LifecycleStorageUnavailable("invalid authentication selection")
+        return canonical_operation_id(row[0][len(_AUTH_MEMBER) :])
+
+    def auth_member_for_start(self, start_id: str) -> str | None:
+        with self._database.connection() as connection:
+            return self._auth_member(connection, start_id)
+
+    def publish_auth_if_current(
+        self, start_id: str, member_id: str, publish: Callable[[], None]
+    ) -> bool:
+        # Publish under the same SQLite writer lock as STOP and credential deletion.
+
+        # The callback only updates the private in-memory monitor; never perform
+        # IPC, network requests or another DB transaction while holding this fence.
+        #
+        before = _db_identity(self._database.path)
+        with self._database.connection() as connection, connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = self._current(connection)
+            if (
+                current is None
+                or current.operation_id != start_id
+                or not current.on_demand
+                or (current.component, current.target, current.status)
+                != ("bot", "start", "APPLIED")
+                or self._auth_member(connection, start_id) != member_id
+                or not self._active_member(connection, member_id)
+            ):
+                return False
+            if _db_identity(self._database.path) != before:
+                raise LifecycleStorageUnavailable("authentication storage changed")
+            publish()
+            return True
 
     @staticmethod
     def _accepted_binding(
@@ -323,13 +432,13 @@ class LifecycleIntentStore:
         elif existing != (action,):
             raise LifecycleConflict("simulation already bound to another start")
 
-    def record_automatic_check(self, start_operation_id: str, outcome: str) -> None:
-        """Record one received category for the exact confirmed owner activation.
+    def record_automatic_check(self, start_operation_id: str, outcome: str) -> bool:
+        # Record one received category for the exact confirmed owner activation.
 
-        These records contain no provider payload or token, and never create a
-        synthetic command or claim a physical STOP. Repeated passive samples
-        of the same category do not grow the durable ledger.
-        """
+        # These records contain no provider payload or token, and never create a
+        # synthetic command or claim a physical STOP. Repeated passive samples
+        # of the same category do not grow the durable ledger.
+        #
         marker, action = automatic_check_marker(start_operation_id, outcome)
         before = _db_identity(self._database.path)
         try:
@@ -356,6 +465,7 @@ class LifecycleIntentStore:
                     raise LifecycleStorageUnavailable("automatic check receipt conflicts")
                 if _db_identity(self._database.path) != before:
                     raise LifecycleStorageUnavailable("automatic check storage changed")
+                return existing is None
         except (sqlite3.Error, OSError):
             raise LifecycleStorageUnavailable("automatic check ledger unavailable") from None
 
@@ -378,24 +488,7 @@ class LifecycleIntentStore:
                     == ("bot", "start", "APPLIED")
                     and self._work_finished(connection, start_operation_id)
                 ):
-                    stop_id = str(uuid4())
-                    _insert_request(
-                        connection, stop_id, _REQUEST_ACTIONS[("bot", "stop")], on_demand=True
-                    )
-                    connection.execute(
-                        "INSERT INTO audit_events(audit_id,action) VALUES (?,?)",
-                        (
-                            str(uuid5(_NAMESPACE, _WORK_STOP + stop_id)),
-                            _WORK_STOP + start_operation_id,
-                        ),
-                    )
-                    result = self._current(connection)
-                    if (
-                        result is None
-                        or result.operation_id != stop_id
-                        or result.work_start_id != start_operation_id
-                    ):
-                        raise LifecycleStorageUnavailable("work-stop correlation unavailable")
+                    result = self._insert_work_stop(connection, start_operation_id)
             if _db_identity(self._database.path) != before:
                 raise LifecycleStorageUnavailable("Boca controller storage identity changed")
             return result
@@ -403,7 +496,34 @@ class LifecycleIntentStore:
             raise LifecycleStorageUnavailable("Boca work completion ledger unavailable") from None
 
     @staticmethod
-    def _work_finished(connection: sqlite3.Connection, start_operation_id: str) -> bool:
+    def _insert_work_stop(
+        connection: sqlite3.Connection, start_operation_id: str
+    ) -> LifecycleIntent:
+        """Caller owns admission and the SQLite writer lock; no physical I/O."""
+        if not connection.in_transaction:
+            raise LifecycleStorageUnavailable("work-stop transaction required")
+        canonical_operation_id(start_operation_id)
+        stop_id = str(uuid4())
+        _insert_request(connection, stop_id, _REQUEST_ACTIONS[("bot", "stop")], on_demand=True)
+        connection.execute(
+            "INSERT INTO audit_events(audit_id,action) VALUES (?,?)",
+            (str(uuid5(_NAMESPACE, _WORK_STOP + stop_id)), _WORK_STOP + start_operation_id),
+        )
+        result = LifecycleIntentStore._current(connection)
+        if (
+            result is None
+            or result.operation_id != stop_id
+            or result.work_start_id != start_operation_id
+        ):
+            raise LifecycleStorageUnavailable("work-stop correlation unavailable")
+        return result
+
+    @staticmethod
+    def _work_finished(
+        connection: sqlite3.Connection, start_operation_id: str, *, allow_idle: bool = False
+    ) -> bool:
+        if engine_holds(connection, start_operation_id):
+            return False
         if connection.execute(
             "SELECT 1 FROM beta_commands WHERE state IN "
             "('accepted','running','stop_requested') LIMIT 1"
@@ -447,7 +567,15 @@ class LifecycleIntentStore:
                 raise LifecycleStorageUnavailable("automatic check receipt invalid")
             terminal = terminal or outcome in AUTOMATIC_CHECK_TERMINAL
             automatic = True
-        return terminal if automatic else any_bound
+        # A completed engine activation also supplies durable proof of work.
+        # This lets legacy completion deliver a delayed STOP after the last
+        # engine release waited for an older, unbound local command.
+        engine_prefix = ENGINE_HOLD_PREFIX + start_operation_id + ":"
+        engine_work = connection.execute(
+            "SELECT 1 FROM audit_events WHERE substr(action,1,?)=? LIMIT 1",
+            (len(engine_prefix), engine_prefix),
+        ).fetchone()
+        return terminal if automatic else any_bound or allow_idle or engine_work is not None
 
     @staticmethod
     def for_operation(connection: sqlite3.Connection, operation_id: str) -> LifecycleIntent | None:

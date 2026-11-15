@@ -18,10 +18,6 @@ from time import monotonic
 from typing import Any
 from urllib.parse import urlsplit
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
-
 from boca_socios.owner_origin import owner_rp_host
 from boca_socios.panel.owner_sessions import OwnerIdentity
 
@@ -79,6 +75,9 @@ class PasskeyOwnerAuthentication:
         permissions: frozenset[str],
         clock: Callable[[], float] = monotonic,
     ) -> None:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+
         parsed = urlsplit(origin)
         if (
             parsed.hostname != rp_id
@@ -163,6 +162,10 @@ class PasskeyOwnerAuthentication:
             return _encode(challenge)
 
     def verify(self, proof: object) -> OwnerIdentity | None:
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+
         if not isinstance(proof, PasskeyAssertion):
             return None
         try:
@@ -248,6 +251,10 @@ class PasskeyOwnerAuthentication:
         This does NOT check the controller's one-shot challenge registry and
         does NOT assert lease, owner/session cookie, or Telegram authorization.
         """
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+
         if (
             not isinstance(proof, PasskeyAssertion)
             or type(signed_transcript) is not bytes

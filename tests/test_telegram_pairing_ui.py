@@ -29,12 +29,15 @@ const elements = {};
 for (const id of ['pairing-token', 'pairing-command', 'pairing-generate',
                   'pairing-copy-command', 'pairing-seal', 'pairing-sealed',
                   'pairing-copy-envelope', 'pairing-result', 'pairing-fingerprint',
-                  'pairing-stage', 'pairing-csrf', 'pairing-operation']) {
+                  'pairing-stage', 'pairing-csrf', 'pairing-operation',
+                  'pairing-recipient', 'pairing-recipient-required']) {
   elements[id] = {value: '', disabled: true, hidden: true, textContent: '',
     addEventListener(name, fn) { this[name] = fn; },
     focus() { events.push('focus:' + id); },
     select() { events.push('select:' + id); }};
 }
+elements['pairing-recipient'].value = input.prepared || '';
+elements['pairing-recipient-required'].value = input.preparedRequired ? '1' : '0';
 if (input.stage) {
   elements['pairing-csrf'].value = 'x'.repeat(43);
   elements['pairing-operation'].value = '123e4567-e89b-42d3-a456-426614174000';
@@ -68,6 +71,7 @@ const context = {
     clipboard: {async writeText(value) {
       if (input.mode === 'clipboard-denied') throw Error('clipboard denied');
       copies.push(value);
+      events.push(value.startsWith('/start ') ? 'copy-command' : 'copy-envelope');
     }},
     credentials: {async get(options) {
       if (!input.stage || !options.publicKey
@@ -125,11 +129,12 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
   const enabled = !elements['pairing-generate'].disabled;
   let generatedCommand = '';
   let sealedBeforeStage = '';
+  let commandBeforeStage = null;
   if (enabled && input.token !== null) {
     elements['pairing-generate'].click();
     generatedCommand = elements['pairing-command'].value;
     if (input.mode === 'pagehide-after-generate') handlers.pagehide();
-    if (!elements['pairing-copy-command'].disabled)
+    if (!input.stage && !elements['pairing-copy-command'].disabled)
       await elements['pairing-copy-command'].click();
     if (input.mode !== 'pagehide-after-generate')
       elements['pairing-token'].value = input.token;
@@ -141,11 +146,19 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
     if (!elements['pairing-copy-envelope'].disabled)
       await elements['pairing-copy-envelope'].click();
     sealedBeforeStage = elements['pairing-sealed'].value;
+    commandBeforeStage = {value: elements['pairing-command'].value,
+      hidden: elements['pairing-command'].hidden, disabled: elements['pairing-copy-command'].disabled};
     if (input.stage && !elements['pairing-stage'].disabled)
       await elements['pairing-stage'].click();
+    if (input.stage && !elements['pairing-copy-command'].disabled) {
+      generatedCommand = elements['pairing-command'].value;
+      await elements['pairing-copy-command'].click();
+    }
     if (input.mode === 'pagehide-after-seal') handlers.pagehide();
   }
   process.stdout.write(JSON.stringify({enabled, hash: location.hash, events, copies,
+    commandBeforeStage, commandDisabled: elements['pairing-copy-command'].disabled,
+    commandHidden: elements['pairing-command'].hidden,
     command: generatedCommand, currentCommand: elements['pairing-command'].value,
     output: elements['pairing-sealed'].value,
     status: elements['pairing-result'].textContent,
@@ -175,6 +188,8 @@ def _run(
     secure: bool = True,
     stage: bool = False,
     stage_status: int = 202,
+    prepared: str = "",
+    prepared_required: bool = False,
 ) -> dict[str, Any]:
     node = shutil.which("node")
     assert node is not None, "Node with native X25519 WebCrypto is required"
@@ -190,6 +205,8 @@ def _run(
                 "secure": secure,
                 "stage": stage,
                 "stageStatus": stage_status,
+                "prepared": prepared,
+                "preparedRequired": prepared_required,
             }
         ),
         capture_output=True,
@@ -204,6 +221,29 @@ def _run(
     assert "FORBIDDEN" not in result["events"]
     assert result["events"][0] == "replace"
     return result
+
+
+def test_installed_recipient_needs_no_fragment_and_cannot_be_replaced() -> None:
+    _, receipt, fragment = _recipient()
+    encoded = fragment.removeprefix("#recipient=")
+    result = _run("", token=None, prepared=encoded, prepared_required=True)
+    assert result["enabled"] is True
+    assert result["fingerprint"] == receipt.fingerprint
+    html = ui.pairing_page(prepared_recipient=receipt, recipient_required=True).decode()
+    assert f'id="pairing-recipient" type="hidden" value="{encoded}"' in html
+    assert "se cargó automáticamente" in html
+    _, _, unrelated = _recipient()
+    rejected = _run(unrelated, token=None, prepared=encoded, prepared_required=True)
+    assert rejected["enabled"] is False
+    assert rejected["copies"] == []
+
+
+def test_required_recipient_cannot_fall_back_to_an_old_fragment() -> None:
+    _, _, fragment = _recipient()
+    result = _run(fragment, token=None, prepared_required=True)
+    assert result["enabled"] is False
+    assert result["copies"] == []
+    assert "Falta preparar" in ui.pairing_page(recipient_required=True).decode()
 
 
 def test_actual_browser_stages_only_encrypted_v2_to_same_origin_without_sender_ack() -> None:
@@ -221,15 +261,23 @@ def test_actual_browser_stages_only_encrypted_v2_to_same_origin_without_sender_a
     sealed = bootstrap._unb64(staged["envelope"], maximum=4096)
     code = result["command"].removeprefix("/start ")
     assert pairing.unseal_pairing(sealed, private, receipt) == (TOKEN.encode(), code)
-    assert result["output"] == result["token"] == result["currentCommand"] == ""
+    assert result["output"] == result["token"] == ""
+    assert result["commandBeforeStage"] == {"value": "", "hidden": True, "disabled": True}
+    assert result["currentCommand"] == result["command"]
+    assert not result["commandDisabled"] and not result["commandHidden"]
+    assert result["events"].index("private-stage") < result["events"].index("copy-command")
     assert result["stageDisabled"] and result["copyDisabled"]
-    assert "NO está conectado" in result["status"]
+    assert "Comando" in result["status"]
 
 
 def test_browser_private_staging_failure_keeps_ciphertext_without_claiming_install() -> None:
     _, _, fragment = _recipient()
     result = _run(fragment, stage=True, stage_status=503)
     assert result["stagedPayload"] is not None
+    assert result["commandBeforeStage"] == {"value": "", "hidden": True, "disabled": True}
+    assert result["commandDisabled"] and result["commandHidden"]
+    assert result["currentCommand"] == ""
+    assert "copy-command" not in result["events"]
     assert result["output"] == result["sealedBeforeStage"]
     assert "No se confirmó" in result["status"]
     assert "sigue detenido" in result["status"]
@@ -401,3 +449,21 @@ def test_separate_unrouted_v2_page_has_hash_csp_no_transport_and_v1_is_preserved
     assert b'<input id="telegram-chat"' in ui.page()
     assert "boca-telegram-bot-v1" in ui.SCRIPT
     assert "boca-telegram-pairing-v2" not in ui.SCRIPT
+
+
+def test_served_pairing_dom_follows_voice_access_stage_then_send_order() -> None:
+    page = ui.pairing_page(
+        csrf="x" * 43, operation_id="123e4567-e89b-42d3-a456-426614174000"
+    ).decode()
+    controls = [
+        "pairing-generate",
+        "pairing-seal",
+        "pairing-stage",
+        "pairing-command",
+        "pairing-copy-command",
+    ]
+    positions = [page.index('id="' + control + '"') for control in controls]
+    assert positions == sorted(positions)
+    assert "Tras enviarlo, selle" not in page
+    assert "3. Confirmar con passkey" in page
+    assert "4. Tras guardar el sobre" in page

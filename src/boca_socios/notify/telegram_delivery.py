@@ -16,6 +16,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from importlib.resources import files
 from math import isfinite
+from uuid import UUID
 
 from boca_socios.notify.sqlite_outbox import SqliteDeliveryClaim, SqliteNotificationOutbox
 from boca_socios.notify.telegram_transport import TelegramAck, TelegramNotice, TelegramSender
@@ -162,7 +163,7 @@ class TelegramDeliveryCoordinator:
             # The prepared marker remains durable even when settlement fails.
             raise TelegramDeliveryStopped("Telegram settlement failed; review required") from None
 
-    async def tick(self) -> TelegramDeliveryReport:
+    async def tick(self, *, notice_id: UUID | None = None) -> TelegramDeliveryReport:
         self._require_storage()
         try:
             self._transport.preflight()
@@ -171,7 +172,7 @@ class TelegramDeliveryCoordinator:
         accepted = ambiguous = 0
         for _ in range(self._max_per_tick):
             try:
-                claims = self._outbox.claim_ready(now=self._now(), limit=1)
+                claims = self._outbox.claim_ready(now=self._now(), limit=1, notice_id=notice_id)
             except Exception:
                 raise TelegramDeliveryStopped("Telegram claim failed") from None
             if not claims:

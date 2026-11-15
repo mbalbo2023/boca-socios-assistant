@@ -16,12 +16,6 @@ import hmac
 import json
 import re
 
-from cryptography.exceptions import InvalidTag
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-
 from boca_socios import telegram_bootstrap as bootstrap
 
 VERSION = 2
@@ -51,6 +45,9 @@ def _header(
 
 
 def _key(shared: bytes, salt: bytes, aad: bytes) -> bytes:
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
     return HKDF(
         algorithm=hashes.SHA256(),
         length=32,
@@ -105,6 +102,10 @@ def unseal_pairing(
     No writes or network calls. Caller must later verify one unique recent
     private ``/start <code>`` update before allowing an install transaction.
     """
+    from cryptography.exceptions import InvalidTag
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
     if (
         not isinstance(envelope, bytes)
         or not 0 < len(envelope) <= bootstrap.MAX_ENVELOPE

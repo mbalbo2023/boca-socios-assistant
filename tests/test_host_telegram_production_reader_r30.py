@@ -54,11 +54,30 @@ def test_dedicated_reader_supports_existing_telegram_stopped_boundary(
 
 
 @pytest.mark.parametrize(
+    "ports",
+    [None, {}, {"8443/tcp": [{"HostIp": "127.0.0.1", "HostPort": "8443"}]}],
+)
+def test_dedicated_reader_reads_only_the_ports_field_required_by_lifecycle(
+    monkeypatch: pytest.MonkeyPatch, ports: object
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def docker(*args: str) -> str:
+        calls.append(args)
+        return json.dumps(ports)
+
+    monkeypatch.setattr(cleanup, "_docker", docker)
+    assert _Owned().field("container", CONTAINER, "NetworkSettings.Ports") == ports
+    assert calls == [("inspect", "--format", "{{json .NetworkSettings.Ports}}", CONTAINER)]
+
+
+@pytest.mark.parametrize(
     ("kind", "ident", "field"),
     [
         ("container", "foreign", "Config.Env"),
         ("container", CONTAINER, "Config.Secrets"),
         ("container", CONTAINER, "HostConfig.Binds"),
+        ("container", CONTAINER, "NetworkSettings"),
         ("volume", "foreign_project_data", "Mountpoint"),
         ("network", CONTAINER, "Containers"),
     ],

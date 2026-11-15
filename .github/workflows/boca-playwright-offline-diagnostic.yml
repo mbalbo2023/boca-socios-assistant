@@ -2,6 +2,15 @@ name: Boca Playwright full3 diagnostic (manual, offline)
 
 on:
   workflow_dispatch:
+    inputs:
+      diagnostic_mode:
+        description: Existing full3 baseline or the two fixed Firefox PID budgets
+        type: choice
+        required: true
+        default: full3
+        options:
+          - full3
+          - firefox-pids
 
 permissions:
   contents: read
@@ -15,11 +24,20 @@ jobs:
     if: github.repository == 'mbalbo2023/boca-socios-assistant'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      DIAGNOSTIC_MODE: ${{ inputs.diagnostic_mode }}
     steps:
       - name: Checkout exact diagnostic source without persisted credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Validate closed diagnostic mode before Docker
+        run: |
+          set -euo pipefail
+          case "$DIAGNOSTIC_MODE" in
+            full3|firefox-pids) ;;
+            *) printf 'BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO phase=configuration reason=invalid_mode\n' >&2; exit 1 ;;
+          esac
       - name: Build one disposable full Playwright worker image
         env:
           IMAGE: boca-browser-full3-diagnostic:${{ github.sha }}
@@ -57,70 +75,456 @@ jobs:
           # #402: old shared Python/PID1 process failed at Firefox new_page;
           # isolate children and use Docker init as recommended by Playwright.
           # This opt-in diagnosis is NOT a release/cutover gate or host check.
+          case "$DIAGNOSTIC_MODE" in
+            full3) profiles=("chromium:128" "firefox:128" "webkit:128") ;;
+            firefox-pids) profiles=("firefox:192" "firefox:256") ;;
+            *) printf 'BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO phase=configuration reason=invalid_mode\n' >&2; exit 1 ;;
+          esac
           failures=0
-          for engine in chromium firefox webkit; do
+          for profile in "${profiles[@]}"; do
+            engine="${profile%%:*}"
+            pids_limit="${profile#*:}"
             if ! timeout 50s docker run --rm --init --network none \
               --user 10002:10002 --read-only \
               --cap-drop ALL --cap-add SYS_CHROOT \
               --security-opt no-new-privileges:true \
               --security-opt "seccomp=$GITHUB_WORKSPACE/docker/seccomp_profile.json" \
               --cgroupns private --ipc private \
-              --pids-limit 128 --memory 768m --cpus 1.0 --shm-size 64m \
+              --pids-limit "$pids_limit" --memory 768m --cpus 1.0 --shm-size 64m \
               --tmpfs /tmp:rw,noexec,nosuid,size=32m \
               --tmpfs /home/boca-browser:rw,noexec,nosuid,size=16m,uid=10002,gid=10002,mode=0700 \
               --env BOCA_PLAYWRIGHT_ENGINE="$engine" --env DEBUG=pw:browser \
+              --env BOCA_DIAGNOSTIC_MODE="$DIAGNOSTIC_MODE" \
+              --env BOCA_DIAGNOSTIC_PIDS_LIMIT="$pids_limit" \
               --entrypoint python "$IMAGE" -c '
           import os
           import re
           import tempfile
           from playwright.sync_api import sync_playwright
+          from scripts import measure_browser_budget as budget
+
+          def resource_snapshot():
+              # Fixed, read-only observations of this private container cgroup.
+              # Reuse the existing bounded parser; UNKNOWN never means zero.
+              values = {key: budget.UNKNOWN for key in (*budget.COUNTER_FILES, *budget.CPU_FIELDS)}
+              try:
+                  observed = budget.read_counters(budget.CGROUP)
+                  values.update({key: observed.get(key, budget.UNKNOWN) for key in values})
+              except Exception:
+                  pass
+              # Private continuity only: never publish host device/inode values.
+              values["_cgroup_identity"] = budget.UNKNOWN
+              try:
+                  metadata = budget.CGROUP.stat()
+                  identity = (metadata.st_dev, metadata.st_ino)
+                  if all(type(value) is int and 0 <= value <= budget.MAX_COUNTER for value in identity):
+                      values["_cgroup_identity"] = identity
+              except Exception:
+                  pass
+              for key, filename in (("memory_max_bytes", "memory.max"), ("pids_max", "pids.max")):
+                  try:
+                      values[key] = budget._counter(budget._bounded_text(budget.CGROUP / filename))
+                  except Exception:
+                      values[key] = budget.UNKNOWN
+              try:
+                  cpu = budget._bounded_text(budget.CGROUP / "cpu.max").split()
+              except Exception:
+                  cpu = []
+              for index, key in enumerate(("cpu_quota_usec", "cpu_period_usec")):
+                  values[key] = budget._counter(cpu[index]) if len(cpu) == 2 else budget.UNKNOWN
+              for filename, prefix, fields in (
+                  ("memory.events", "memory_events", ("max", "oom", "oom_kill", "oom_group_kill")),
+                  ("pids.events", "pids_events", ("max",)),
+              ):
+                  try:
+                      lines = budget._bounded_text(budget.CGROUP / filename).splitlines()
+                  except Exception:
+                      lines = []
+                  for field in fields:
+                      matches = [line.split() for line in lines if line.split()[:1] == [field]]
+                      values[f"{prefix}_{field}"] = (
+                          budget._counter(matches[0][1])
+                          if len(matches) == 1 and len(matches[0]) == 2 else budget.UNKNOWN
+                      )
+              for prefix, path in (("tmp", "/tmp"), ("shm", "/dev/shm"), ("home", "/home/boca-browser")):
+                  fields = {key: budget.UNKNOWN for key in ("capacity_bytes", "available_bytes", "available_inodes")}
+                  try:
+                      stats = os.statvfs(path)
+                      if stats.f_frsize > 0:
+                          fields["capacity_bytes"] = budget._counter(str(stats.f_frsize * stats.f_blocks))
+                          fields["available_bytes"] = budget._counter(str(stats.f_frsize * stats.f_bavail))
+                      fields["available_inodes"] = budget._counter(str(stats.f_favail))
+                  except Exception:
+                      pass
+                  values.update({f"{prefix}_{key}": value for key, value in fields.items()})
+              return values
+
+          def resource_deltas(before, after, expected_pids=None):
+              # Current usage may fall; only cumulative event counters have deltas.
+              result = {}
+              identities = (before.get("_cgroup_identity"), after.get("_cgroup_identity"))
+              same_cgroup = all(
+                  type(identity) is tuple and len(identity) == 2
+                  and all(type(value) is int and 0 <= value <= budget.MAX_COUNTER for value in identity)
+                  for identity in identities
+              ) and identities[0] == identities[1]
+              if expected_pids is not None:
+                  same_cgroup = same_cgroup and (
+                      type(expected_pids) is int and expected_pids in (192, 256)
+                      and all(type(values.get("pids_max")) is int
+                              and values["pids_max"] == expected_pids for values in (before, after))
+                  )
+              for key in ("memory_events_max", "memory_events_oom", "memory_events_oom_kill",
+                          "memory_events_oom_group_kill", "pids_events_max"):
+                  first, last = before.get(key), after.get(key)
+                  result[key] = (
+                      last - first if same_cgroup and type(first) is int and type(last) is int
+                      and 0 <= first <= last <= budget.MAX_COUNTER else budget.UNKNOWN
+                  )
+              return result
+
+          def stderr_snapshot(fd):
+              try:
+                  size = budget._counter(str(os.fstat(fd).st_size))
+                  if type(size) is not int:
+                      raise ValueError("stderr_size_unavailable")
+                  # Freeze the actual file offset, including an omitted prefix tail,
+                  # before any cleanup. Concurrent later writes belong to late_*.
+                  length = min(size, 65536)
+                  raw = os.pread(fd, length, 0)
+                  if len(raw) != length:
+                      raise ValueError("stderr_read_incomplete")
+                  return raw.decode("utf-8", "replace"), size, {
+                      "stderr_read": "observed", "stderr_bytes": size,
+                      "stderr_truncated": "true" if size > 65536 else "false",
+                  }
+              except Exception:
+                  return "", budget.UNKNOWN, {
+                      "stderr_read": "unavailable", "stderr_bytes": budget.UNKNOWN,
+                      "stderr_truncated": budget.UNKNOWN,
+                  }
+
+          def late_stderr_details(fd, offset):
+              result = {f"late_{key}": budget.UNKNOWN for key in (
+                  "stderr_read", "stderr_bytes", "stderr_truncated", "categories", "exit_code",
+                  "missing_library", "markers", "protocol", "xpcom",
+              )}
+              try:
+                  if type(offset) is not int or not 0 <= offset <= budget.MAX_COUNTER:
+                      return result
+                  size = budget._counter(str(os.fstat(fd).st_size))
+                  if type(size) is not int or size < offset:
+                      return result
+                  length = min(size - offset, 65536)
+                  raw = os.pread(fd, length, size - length)
+                  if len(raw) != length:
+                      return result
+                  truncated = size - offset > 65536
+                  details = failure_details(raw.decode("utf-8", "replace"))
+                  # An incomplete suffix cannot establish absence of a signal.
+                  result.update({f"late_{key}": (
+                      budget.UNKNOWN if truncated and value in ("none", "unknown", "unclassified")
+                      else value
+                  ) for key, value in details.items()})
+                  result.update({
+                      "late_stderr_read": "observed", "late_stderr_bytes": size - offset,
+                      "late_stderr_truncated": "true" if truncated else "false",
+                  })
+              except Exception:
+                  pass
+              return result
+
+          def failure_details(observed):
+              observed = observed[:81920].lower()
+              flags = {
+                  "sandbox": ("sandbox", "user namespace", "unshare"),
+                  "permission": ("permission denied", "operation not permitted", "eperm"),
+                  "library": ("shared object", "shared librar", "xpcomglue"),
+                  "memory": ("out of memory", "cannot allocate memory", "oom"),
+                  "process": ("resource temporarily unavailable", "pthread_create", "fork failed"),
+                  "signal": ("sigsys", "sigsegv", "sigabrt", "sigkill"),
+                  "protocol": ("protocol error (",),
+                  "xpcom": ("ns_error_",),
+              }
+              # Public browser/GStreamer SONAMEs only; arbitrary loader text
+              # or a path can never become a field in the public receipt.
+              libraries = {
+                  "libgstcodecparsers-1.0.so.0", "libgstwebrtc-1.0.so.0",
+                  "libgstplay-1.0.so.0", "libgstplayer-1.0.so.0",
+                  "libgstcodecs-1.0.so.0", "libgstmpegts-1.0.so.0",
+                  "libgsttranscoder-1.0.so.0", "libgstwayland-1.0.so.0",
+                  "libgstsctp-1.0.so.0", "libgstgl-1.0.so.0",
+                  "libgstapp-1.0.so.0", "libgstpbutils-1.0.so.0",
+                  "libgstreamer-1.0.so.0", "libgtk-3.so.0", "libgtk-4.so.1",
+                  "libgdk-3.so.0", "libavcodec.so.60", "libavif.so.16",
+                  "libicuuc.so.74", "libicui18n.so.74", "libharfbuzz-icu.so.0",
+                  "libvpx.so.9", "libsoup-3.0.so.0",
+                  "libwpe-1.0.so.1", "libwpebackend-fdo-1.0.so.1",
+              }
+              loader = re.search(r"error while loading shared libraries: ([^:\r\n]{1,128}):", observed)
+              missing = "none"
+              if "error while loading shared libraries:" in observed:
+                  missing = loader.group(1) if loader and loader.group(1) in libraries else "unlisted"
+              # These are observed technical markers, not a root-cause claim.
+              markers = {
+                  "glxtest": ("glxtest",),
+                  "swgl": ("rendercompositorswgl", "swgl"),
+                  "channel_error": ("exiting due to channel error",),
+                  "no_space": ("no space left on device", "enospc"),
+                  "readonly_fs": ("read-only file system", "erofs"),
+                  "namespace": ("cancreateusernamespace", "failed to create user namespace"),
+                  "dbus": ("failed to connect to the bus",),
+                  "crash_reporter": ("crash annotation", "minidump", "crashreporter", "exceptionhandler::"),
+                  "missing_display": ("no display environment variable specified",),
+                  "graphics": ("gfxcriticalerror", "failed to create renderer"),
+                  "sigsys": ("sigsys",),
+                  "sigsegv": ("sigsegv",),
+                  "sigabrt": ("sigabrt",),
+                  "sigkill": ("sigkill",),
+                  "page_closed": ("page has been closed.", "target page, context or browser has been closed"),
+                  "unexpected_tabs": ("unexpected number of tabs in the new window:",),
+                  "blank_url_mismatch": ("internal_blank_url_mismatch",),
+                  "connection_unverified": ("browser_connection_unverified",),
+              }
+              # The complete process-exit envelope excludes XPCOM hex codes
+              # and unrelated numbers. A first failure excludes later cleanup.
+              exit_match = re.search(
+                  r"<process did exit: exitcode=(-?[0-9]{1,3}), signal=(?:null|sig[a-z]{1,10})>",
+                  observed,
+              )
+              methods = {
+                  method.lower(): method for method in (
+                      "Browser.createBrowserContext", "Browser.setDownloadOptions",
+                      "Browser.setDefaultViewport", "Browser.setInitScripts",
+                      "Browser.setColorScheme", "Browser.setReducedMotion",
+                      "Browser.setForcedColors", "Browser.setContrast", "Browser.addBinding",
+                      "Browser.newPage", "Page.setInitScripts",
+                      "Browser.removeBrowserContext", "Browser.close",
+                  )
+              }
+              protocol_match = re.search(r"protocol error \(([^)\r\n]{1,80})\)", observed)
+              protocol = "none"
+              if "protocol error (" in observed:
+                  protocol = methods.get(protocol_match.group(1), "unlisted") if protocol_match else "unlisted"
+              xpcom_codes = {
+                  "ns_error_failure": "failure",
+                  "ns_error_not_available": "not_available",
+                  "ns_error_out_of_memory": "oom",
+                  "ns_error_file_no_device_space": "file_no_space",
+                  "ns_error_file_read_only": "file_read_only",
+                  "ns_error_file_access_denied": "file_access_denied",
+              }
+              xpcom = ",".join(
+                  label for code, label in xpcom_codes.items()
+                  if re.search(r"(?<![a-z0-9_])" + code + r"(?![a-z0-9_])", observed)
+              ) or ("unlisted" if "ns_error_" in observed else "none")
+              return {
+                  "categories": ",".join(k for k, tokens in flags.items() if any(t in observed for t in tokens)) or "unclassified",
+                  "exit_code": exit_match.group(1) if exit_match else "unknown",
+                  "missing_library": missing,
+                  "markers": ",".join(k for k, tokens in markers.items() if any(t in observed for t in tokens)) or "none",
+                  "protocol": protocol,
+                  "xpcom": xpcom,
+              }
+
+          def diagnostic_profile(mode, name, pids_limit):
+              if all(type(value) is str for value in (mode, name, pids_limit)):
+                  if mode == "full3" and name in ("chromium", "firefox", "webkit") and pids_limit == "128":
+                      return None
+                  if mode == "firefox-pids" and name == "firefox" and pids_limit in ("192", "256"):
+                      return int(pids_limit)
+              raise ValueError("invalid_diagnostic_profile")
+
+          def probe_engine(name, read_stderr, read_late_stderr, *, expected_pids=None):
+              browser = context = page = None
+              context_close = browser_close = "not_created"
+              driver_close = "not_entered"
+              connected_before_close = None
+              failure = None
+              phase = "driver_start"
+              before_resources = resource_snapshot()
+              preclose_resources = None
+              failure_resources = None
+              failure_offset = budget.UNKNOWN
+              if expected_pids is not None and (
+                  name != "firefox" or type(expected_pids) is not int or expected_pids not in (192, 256)
+                  or type(before_resources.get("pids_max")) is not int
+                  or before_resources["pids_max"] != expected_pids
+              ):
+                  # No driver or browser starts under an unproven experimental
+                  # budget. The unchanged full3 baseline has no new preflight.
+                  return {
+                      "state": "NO_GO", "phase": "resource_preflight", "reason": "PidsLimitUnverified",
+                      "pids_budget_verified": budget.UNKNOWN,
+                      "connected_before_close": "unknown", "context_created": "false", "page_created": "false",
+                      "context_close": "not_created", "browser_close": "not_created", "driver_close": "not_entered",
+                      **{f"before_{key}": value for key, value in before_resources.items() if key != "_cgroup_identity"},
+                  }
+
+              def connection_state():
+                  if browser is None:
+                      return "false"
+                  try:
+                      value = browser.is_connected()
+                      return "true" if value is True else "false" if value is False else "unknown"
+                  except Exception:
+                      return "unknown"
+
+              def failure_snapshot(error):
+                  nonlocal failure_resources, failure_offset
+                  try:
+                      stderr, failure_offset, metadata = read_stderr()
+                  except Exception:
+                      stderr = ""
+                      metadata = {"stderr_read": "unavailable", "stderr_bytes": budget.UNKNOWN,
+                                  "stderr_truncated": budget.UNKNOWN}
+                  failure_resources = resource_snapshot()
+                  error_type = type(error).__name__
+                  reason = error_type if error_type in (
+                      "Error", "TimeoutError", "TargetClosedError", "RuntimeError",
+                      "OSError", "ValueError", "TypeError", "AttributeError",
+                  ) else "UnexpectedError"
+                  return {
+                      "state": "NO_GO", "phase": phase, "reason": reason,
+                      **metadata,
+                      **failure_details(str(error)[:16384] + "\n" + stderr),
+                  }
+
+              try:
+                  with sync_playwright() as api:
+                      driver_close = "pending"
+                      try:
+                          phase = "launch"
+                          browser_type = getattr(api, name)
+                          options = {"chromium_sandbox": True, "args": ["--disable-background-networking"]} if name == "chromium" else {}
+                          browser = browser_type.launch(headless=True, timeout=20000, **options)
+                          browser_close = "pending"
+                          phase = "new_context"
+                          context = browser.new_context(
+                              java_script_enabled=True, service_workers="block",
+                              accept_downloads=False, ignore_https_errors=False,
+                          )
+                          context_close = "pending"
+                          phase = "new_page"
+                          page = context.new_page()
+                          phase = "goto"
+                          page.goto("about:blank", timeout=10000)
+                          if page.url != "about:blank":
+                              raise RuntimeError("internal_blank_url_mismatch")
+                          phase = "connection_check"
+                          connected_before_close = connection_state()
+                          if connected_before_close != "true":
+                              raise RuntimeError("browser_connection_unverified")
+                          # This is successful navigation, not yet PASS: all
+                          # three closes must still complete. Never measure the
+                          # successful resource peak only after teardown.
+                          try:
+                              preclose_resources = resource_snapshot()
+                          except Exception:
+                              preclose_resources = {key: budget.UNKNOWN for key in before_resources}
+                          phase = "context_close"
+                          context_close = "failed"
+                          context.close()
+                          context_close = "closed"
+                          phase = "browser_close"
+                          browser_close = "failed"
+                          browser.close()
+                          browser_close = "closed"
+                      except Exception as error:
+                          if connected_before_close is None:
+                              connected_before_close = connection_state()
+                          # Preserve this failure before any fallback close can
+                          # append a normal process exit or a second exception.
+                          failure = failure_snapshot(error)
+                      finally:
+                          if context_close == "pending":
+                              try:
+                                  context.close()
+                                  context_close = "closed"
+                              except Exception:
+                                  context_close = "failed"
+                          if browser_close == "pending":
+                              try:
+                                  browser.close()
+                                  browser_close = "closed"
+                              except Exception:
+                                  browser_close = "failed"
+                      phase = "driver_close"
+              except Exception as error:
+                  if failure is None:
+                      if connected_before_close is None:
+                          connected_before_close = connection_state()
+                      failure = failure_snapshot(error)
+                  if driver_close == "pending":
+                      driver_close = "failed"
+              else:
+                  driver_close = "closed"
+              if failure is None and (
+                  context_close != "closed" or browser_close != "closed" or driver_close != "closed"
+              ):
+                  failure = {"state": "NO_GO", "phase": "cleanup", "reason": "CloseUnconfirmed"}
+              result = failure or {"state": "PASS", "phase": "complete", "reason": "none"}
+              result.update({
+                  "connected_before_close": connected_before_close or "unknown",
+                  "context_created": "true" if context is not None else "false",
+                  "page_created": "true" if page is not None else "false",
+                  "context_close": context_close, "browser_close": browser_close,
+                  "driver_close": driver_close,
+              })
+              result.update({f"before_{key}": value for key, value in before_resources.items() if key != "_cgroup_identity"})
+              if preclose_resources is not None:
+                  result.update({f"preclose_{key}": value for key, value in preclose_resources.items() if key != "_cgroup_identity"})
+              observed = (failure_resources if failure is not None else preclose_resources) or {
+                  key: budget.UNKNOWN for key in before_resources
+              }
+              deltas = resource_deltas(before_resources, observed, expected_pids)
+              result.update({f"delta_{key}": value for key, value in deltas.items()})
+              if expected_pids is not None:
+                  # Functional PASS and budget attribution are separate: missing
+                  # identity/limit/events can never certify this experiment.
+                  result["pids_budget_verified"] = (
+                      "true" if type(deltas["pids_events_max"]) is int else budget.UNKNOWN
+                  )
+              if failure is not None:
+                  result.update({f"failure_{key}": value for key, value in observed.items() if key != "_cgroup_identity"})
+                  # These describe output after the frozen first-failure offset,
+                  # including cleanup; they never replace the primary failure.
+                  try:
+                      late = read_late_stderr(failure_offset)
+                  except Exception:
+                      late = late_stderr_details(-1, budget.UNKNOWN)
+                  result.update(late)
+              return result
 
           name = os.environ["BOCA_PLAYWRIGHT_ENGINE"]
           if name not in ("chromium", "firefox", "webkit"):
               raise SystemExit("BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO reason=invalid_engine")
-          phase = "launch"
+          mode = os.environ.get("BOCA_DIAGNOSTIC_MODE", "")
+          pids_limit = os.environ.get("BOCA_DIAGNOSTIC_PIDS_LIMIT", "")
+          try:
+              expected_pids = diagnostic_profile(mode, name, pids_limit)
+          except ValueError:
+              raise SystemExit("BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO phase=configuration reason=invalid_profile") from None
           with tempfile.TemporaryFile() as probe:
               saved_stderr = os.dup(2)
               try:
                   os.dup2(probe.fileno(), 2)
-                  try:
-                      with sync_playwright() as api:
-                          browser_type = getattr(api, name)
-                          options = {"chromium_sandbox": True, "args": ["--disable-background-networking"]} if name == "chromium" else {}
-                          browser = browser_type.launch(headless=True, timeout=20000, **options)
-                          try:
-                              phase = "new_page"
-                              page = browser.new_page()
-                              phase = "goto"
-                              page.goto("about:blank", timeout=10000)
-                              if page.url != "about:blank":
-                                  raise RuntimeError("internal_blank_url_mismatch")
-                          finally:
-                              try:
-                                  browser.close()
-                              except Exception:
-                                  pass
-                  except Exception as error:
-                      os.lseek(probe.fileno(), 0, os.SEEK_SET)
-                      observed = (str(error)[:16384] + "\n" + os.read(probe.fileno(), 65536).decode("utf-8", "replace")).lower()
-                      flags = {
-                          "sandbox": ("sandbox", "user namespace", "unshare"),
-                          "permission": ("permission denied", "operation not permitted", "eperm"),
-                          "library": ("shared object", "shared librar", "xpcomglue"),
-                          "memory": ("out of memory", "cannot allocate memory", "oom"),
-                          "process": ("resource temporarily unavailable", "pthread_create", "fork failed"),
-                          "signal": ("sigsys", "sigsegv", "sigabrt", "sigkill"),
-                      }
-                      categories = ",".join(k for k, tokens in flags.items() if any(t in observed for t in tokens)) or "unclassified"
-                      exit_match = re.search(r"(?:exitcode|exit code|code)[=:] ?(-?[0-9]{1,3})", observed)
-                      code = exit_match.group(1) if exit_match else "unknown"
-                      raise SystemExit(f"BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO engine={name} phase={phase} reason={type(error).__name__} categories={categories} exit_code={code}") from None
+                  result = probe_engine(
+                      name, lambda: stderr_snapshot(probe.fileno()),
+                      lambda offset: late_stderr_details(probe.fileno(), offset),
+                      expected_pids=expected_pids,
+                  )
               finally:
                   os.dup2(saved_stderr, 2)
                   os.close(saved_stderr)
-          print(f"BOCA_FULL_PLAYWRIGHT_LAUNCH engine={name} state=PASS offline=true blackbox=UNTOUCHED")
+          details = f"mode={mode} requested_pids_limit={pids_limit} " + " ".join(
+              f"{key}={value}" for key, value in result.items() if key != "state"
+          )
+          if result["state"] != "PASS":
+              raise SystemExit(f"BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO engine={name} {details}")
+          print(f"BOCA_FULL_PLAYWRIGHT_LAUNCH engine={name} state=PASS offline=true blackbox=UNTOUCHED {details}")
           ' ; then
-              printf 'BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO engine=%s phase=container reason=NONZERO_OR_TIMEOUT\n' "$engine" >&2
+              printf 'BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO engine=%s requested_pids_limit=%s phase=container reason=NONZERO_OR_TIMEOUT\n' "$engine" "$pids_limit" >&2
               failures=$((failures + 1))
             fi
           done

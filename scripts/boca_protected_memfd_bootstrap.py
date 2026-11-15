@@ -302,6 +302,61 @@ PHYSICAL_MAX_ZIP = 320_000
 PHYSICAL_MAX_UNCOMPRESSED = 900_000
 
 
+TELEGRAM_INSTALLED_ENTRIES = frozenset(
+    {
+        "__main__.py",
+        "boca_socios/__init__.py",
+        "boca_socios/domain/__init__.py",
+        "boca_socios/domain/policy.py",
+        "boca_socios/host_boca_cleanup.py",
+        "boca_socios/host_boca_lifecycle.py",
+        "boca_socios/host_first_deploy.py",
+        "boca_socios/host_lifecycle_rootless_adapter.py",
+        "boca_socios/host_on_demand_lifecycle.py",
+        "boca_socios/host_on_demand_sender_update.py",
+        "boca_socios/host_on_demand_service.py",
+        "boca_socios/host_telegram_active_helper_topology.py",
+        "boca_socios/host_telegram_backend.py",
+        "boca_socios/host_telegram_cli.py",
+        "boca_socios/host_telegram_egress_helper.py",
+        "boca_socios/host_telegram_installed_context.py",
+        "boca_socios/host_telegram_maintenance.py",
+        "boca_socios/host_telegram_owner_stage.py",
+        "boca_socios/host_telegram_postcutover.py",
+        "boca_socios/host_telegram_production_reader.py",
+        "boca_socios/host_telegram_protected_custody_caller.py",
+        "boca_socios/host_telegram_sender.py",
+        "boca_socios/host_telegram_status.py",
+        "boca_socios/integration/__init__.py",
+        "boca_socios/integration/engine_socket.py",
+        "boca_socios/owner_origin.py",
+        "boca_socios/panel/__init__.py",
+        "boca_socios/panel/lifecycle_intents.py",
+        "boca_socios/panel/owner_session_store.py",
+        "boca_socios/panel/owner_sessions.py",
+        "boca_socios/panel/passkey.py",
+        "boca_socios/panel/telegram_pairing_staging.py",
+        "boca_socios/security/__init__.py",
+        "boca_socios/security/credential_vault.py",
+        "boca_socios/storage/__init__.py",
+        "boca_socios/storage/database.py",
+        "boca_socios/telegram_bootstrap.py",
+        "boca_socios/telegram_maintenance_contract.py",
+        "boca_socios/telegram_owner_webauthn.py",
+        "boca_socios/telegram_pairing_bootstrap.py",
+        "boca_socios/telegram_pairing_cutover.py",
+        "boca_socios/telegram_pairing_install.py",
+        "boca_socios/telegram_pairing_issuer.py",
+        "boca_socios/telegram_pairing_resolver.py",
+        "boca_socios/telegram_pairing_storage.py",
+        "boca_socios/telegram_private_chat_discovery.py",
+        "boca_socios/telegram_same_lease_stage.py",
+    }
+)
+TELEGRAM_MAX_ZIP = 300_000
+TELEGRAM_MAX_UNCOMPRESSED = 450_000
+
+
 def verify(
     raw: bytes,
     expected_sha: str,
@@ -322,6 +377,7 @@ def verify(
     rootless_mapped_observe: bool = False,
     postcommit_finalize: bool = False,
     precommit_restore: bool = False,
+    telegram_installed: bool = False,
 ) -> None:
     """Verify digest, exact transport variant, file types and separate bounds."""
     if (
@@ -343,13 +399,16 @@ def verify(
                 rootless_mapped_observe,
                 postcommit_finalize,
                 precommit_restore,
+                telegram_installed,
             )
         )
         > 1
     ):
         raise ValueError("protected Boca bundle modes must be exclusive")
     max_zip = (
-        BINDING_MAX_ZIP
+        TELEGRAM_MAX_ZIP
+        if telegram_installed
+        else BINDING_MAX_ZIP
         if current_retained_observe or installed_admin
         else RETAINED_MAX_ZIP
         if retained_observe
@@ -382,7 +441,9 @@ def verify(
         else MAX_ZIP
     )
     max_uncompressed = (
-        BINDING_MAX_UNCOMPRESSED
+        TELEGRAM_MAX_UNCOMPRESSED
+        if telegram_installed
+        else BINDING_MAX_UNCOMPRESSED
         if current_retained_observe or installed_admin
         else RETAINED_MAX_UNCOMPRESSED
         if retained_observe
@@ -422,7 +483,9 @@ def verify(
         entries = package.infolist()
         names = [entry.filename for entry in entries]
         allowlisted = (
-            (INSTALLED_ADMIN_ENTRIES,)
+            (TELEGRAM_INSTALLED_ENTRIES,)
+            if telegram_installed
+            else (INSTALLED_ADMIN_ENTRIES,)
             if installed_admin
             else (CURRENT_RETAINED_ENTRIES,)
             if current_retained_observe
@@ -497,6 +560,13 @@ def main() -> int:
             "cutover-worker-827-recover",
             "cutover-worker-834-recover",
         }
+        telegram_installed = sys.argv[2] in {
+            "telegram-prepare",
+            "telegram-activate",
+            "telegram-sender-recover",
+            "telegram-renew-stage",
+            "telegram-complete-sender",
+        }
         worker_preflight = sys.argv[2] == "cutover-worker-preflight"
         worker_w1 = sys.argv[2] == "worker-diagnose-once"
         worker_physical = sys.argv[2] == "worker-physical-once"
@@ -522,6 +592,13 @@ def main() -> int:
             raise ValueError("incident operation requires five exact coordinates")
         if sys.argv[2] == "cutover-image-finish-916" and len(sys.argv) != 10:
             raise ValueError("image finish requires the observed run and plan digest")
+        if telegram_installed and (
+            len(sys.argv) != 6
+            or re.fullmatch(r"[a-f0-9]{40}", sys.argv[3]) is None
+            or re.fullmatch(r"[a-f0-9]{40}", sys.argv[4]) is None
+            or re.fullmatch(r"[1-9][0-9]{0,19}", sys.argv[5]) is None
+        ):
+            raise ValueError("installed Telegram requires exact source, workflow and run")
         if recovery and len(sys.argv) != 3:
             raise ValueError("stopped worker recovery accepts no user coordinates")
         if worker_preflight and len(sys.argv) != 10:
@@ -559,7 +636,9 @@ def main() -> int:
         if precommit_restore and len(sys.argv) != 4:
             raise ValueError("precommit recovery requires only fresh authenticated run ID")
         bound = (
-            BINDING_MAX_ZIP
+            TELEGRAM_MAX_ZIP
+            if telegram_installed
+            else BINDING_MAX_ZIP
             if current_retained_observe or installed_admin
             else RETAINED_MAX_ZIP
             if retained_observe
@@ -611,6 +690,7 @@ def main() -> int:
             rootless_mapped_observe=rootless_mapped_observe,
             postcommit_finalize=postcommit_finalize,
             precommit_restore=precommit_restore,
+            telegram_installed=telegram_installed,
         )
         # The memfd is passed to the *same* process via exec. No temporary
         # container, host file or broader Docker resource is ever created.
