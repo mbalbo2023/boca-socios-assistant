@@ -1,6 +1,23 @@
 # Boca Socios Assistant
 
-## R297 — QA: dos motores y seguimiento de sesiones en 8443
+## R298 — R297 desplegada; corrección del postflight pendiente
+
+La BETA de PR #517 está instalada desde
+`5281efae7dafe89be047073796b3e0a7e19785ed`, release 866.
+[APPLY 1134](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43681576798) terminó ACCEPTED y cleanup ACCEPT;
+[ADMIN 1135](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682305029) terminó PROVISIONED, sector_schema=2 y legacy_writes=0.
+Las dos activaciones independientes y el cupo lógico global de 50 pertenecen
+a esa versión; la capacidad física y la aceptación privada no se deducen del deploy.
+
+[STATUS 1136](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682391989) devolvió NO_GO sin escrituras. La revisión encontró
+que el lector pasaba al controller una ruta SQLite del host. El
+[RCA y consenso](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889977546) de mantenimiento #518 corrige esa frontera
+sin nueva imagen ni despliegue. La prueba física del lector corregido y la
+preparación Telegram siguen pendientes en este corte. No se enviaron mensajes.
+La configuración Telegram aún no está emparejada; tampoco se declara
+aceptación Samsung ni una entrada real. [Detalle](docs/ADR/0303-installed-status-container-path.md).
+
+## Histórico — R297 — QA: dos motores y seguimiento de sesiones en 8443
 
 El desarrollo continúa en [PR517](https://github.com/mbalbo2023/boca-socios-assistant/pull/517),
 con las [correcciones aportadas por el titular](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6886406162).

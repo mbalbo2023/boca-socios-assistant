@@ -70,11 +70,11 @@ try:
     )
     from boca_socios.host_boca_lifecycle import _controller_ledger
     from boca_socios.panel.lifecycle_intents import LifecycleIntentStore
-    fingerprint, path = sys.argv[1:]
+    fingerprint, = sys.argv[1:]
     if not _FINGERPRINT.fullmatch(fingerprint):
         raise ValueError()
     scope, operation = 'NONE', None
-    with _controller_ledger(Path(path), readonly=True) as db:
+    with _controller_ledger(Path('/data/boca.sqlite3'), readonly=True) as db:
         item = LifecycleIntentStore._current(db)
         if item is not None:
             if item.status in ('REQUESTED', 'CLAIMED', 'UNCERTAIN'):
@@ -302,7 +302,6 @@ def _read_current_ledger(installation: OnDemandInstallation) -> dict[str, object
         "-c",
         _CURRENT_LEDGER_PROGRAM,
         installation.fingerprint(),
-        str(installation.database_path),
     )
     if type(raw) is not str or len(raw) > 512:
         raise StatusUnavailable

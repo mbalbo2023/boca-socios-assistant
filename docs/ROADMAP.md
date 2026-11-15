@@ -1,6 +1,15 @@
 # Backlog y dependencias de la BETA
 
-## Prioridad vigente — R297, 15-NOV-2026 UTC
+## Prioridad vigente — R298, postflight del despliegue aceptado
+
+R297/PR #517 quedó instalado por [APPLY 1134](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43681576798) y provisionado por
+[ADMIN 1135](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682305029). [STATUS 1136](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43682391989) es el bloqueo actual de lectura.
+Resolver [#518 y su diseño unánime](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6889977546) mediante la corrección mínima
+de la ruta interna, revisión y CI exactos; después una lectura protegida nueva,
+sin release/deploy repetidos. Telegram preparado y aceptación privada siguen
+pendientes; 50 contextos son el presupuesto lógico, no capacidad certificada.
+
+## Histórico — Prioridad vigente — R297, 15-NOV-2026 UTC
 
 Continuar el único candidato PR517 con el QA aportado, sin duplicar R295/R296
 ni repetir la instalación R294. El ajuste final de controles/historial y
