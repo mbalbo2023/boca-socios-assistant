@@ -30,3 +30,24 @@ No declara PREPARED, no atribuye causa1167 y no autoriza automáticamente la
 continuación. La configuración por socio sigue pendiente del contrato global
 completo; no construir scaffolding mientras esa dependencia esté abierta.
 
+## Adenda D9 — agregado instalado medido, aprobada4/4 antes del cambio
+
+La medición de la implementación detectó488426 bytes en47 entradas después
+del compactador existente:38426 por encima de450000. El builder real rechazó
+ese cierre. La construcción sólo en memoria midió ZIP135063<300000; no se
+presentó como aceptación del builder. Default real:40 entradas,394660 bytes
+fuente y117451 ZIP. Evidencia en issue530 y registro de autor.
+
+Arquitectura, QA, Operaciones y root aprobaron elevar exclusivamente el
+AGREGADO installed a500000 en builder y memfd. Conservar450000 para default,
+disparador del compactador existente, fuente individual y entrada individual.
+Memfd usa actualmente max_uncompressed para suma y entrada: la separación
+de la guarda individual es obligatoria, sin cambiar otras ramas. Preservar
+ZIP300000,47 entradas y CPU/RAM/PID; ninguna nueva minificación.
+
+Scope adicional del autor: scripts/build_protected_telegram_bundle.py y
+únicamente la aserción agregada de tests/test_r296_telegram_installed_bundle.py.
+Memfd y los dos tests R309 ya pertenecen al plan. Verificar500000/500001,
+entrada450001 rechazada con agregado<=500000, default/individual450000 y
+medida final. Este voto previo no acredita implementación ni operación física.
+

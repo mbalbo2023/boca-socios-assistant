@@ -45,7 +45,7 @@ def test_installed_transport_has_exact_independent_bounds_and_modes(
     memfd.verify(raw, digest, telegram_installed=True)
     with zipfile.ZipFile(packed) as archive:
         assert set(archive.namelist()) == memfd.TELEGRAM_INSTALLED_ENTRIES
-        assert sum(item.file_size for item in archive.infolist()) <= 450_000
+        assert sum(item.file_size for item in archive.infolist()) <= 500_000
         assert len(raw) <= 300_000
         assert "boca_socios/telegram_maintenance.py" not in archive.namelist()
         assert not any(

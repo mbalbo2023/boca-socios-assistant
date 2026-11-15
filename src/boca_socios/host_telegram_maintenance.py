@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
+import selectors
 import subprocess
 import time
 from dataclasses import asdict
@@ -20,6 +22,105 @@ from boca_socios.telegram_pairing_cutover import CutoverCoordinates
 from boca_socios.telegram_pairing_install import PairingCustodyReceipt
 from boca_socios.telegram_pairing_resolver import PairingInstallPlan
 from boca_socios.telegram_same_lease_stage import EncryptedPairingStage
+
+# Host-supplied literal: R already provides _read and _receipt. Never import
+# a new image module, open token/chat/markers, or export a directory entry name.
+RECIPIENT_OBSERVE_PROGRAM = r"""
+import errno, hashlib, json, os, stat, sys
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+
+def witness(meta):
+    return (meta.st_dev, meta.st_ino, meta.st_mode, meta.st_uid, meta.st_gid,
+            meta.st_nlink, meta.st_size, meta.st_mtime_ns, meta.st_ctime_ns)
+
+def empty(state, entries="NOT_READ"):
+    return {"state": state, "entries": entries, "fingerprint": None, "witness": None}
+
+def snapshot():
+    result = empty("NOT_READ")
+    descriptors = []
+    before = None
+    leaf = None
+    try:
+        if (os.getuid(), os.geteuid(), os.getgid(), os.getegid()) != (10001,) * 4:
+            return result
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        root = os.open("/", flags)
+        descriptors.append(root)
+        run = os.open("run", flags, dir_fd=root)
+        descriptors.append(run)
+        parent = os.open("telegram", flags, dir_fd=run)
+        descriptors.append(parent)
+        metadata = os.fstat(parent)
+        before = witness(metadata)
+        if (not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o700
+                or (metadata.st_uid, metadata.st_gid) != (10001, 10001)):
+            if (witness(os.fstat(parent)) != before
+                    or witness(os.stat("telegram", dir_fd=run, follow_symlinks=False)) != before):
+                return empty("CHANGED", "CHANGED")
+            return {**empty("INVALID"), "witness": hashlib.sha256(canonical([before, None])).hexdigest()}
+        with os.scandir(parent) as scan:
+            names = [entry.name for entry in (next(scan, None), next(scan, None)) if entry is not None]
+        entries = "EMPTY" if not names else "KEY_ONLY" if names == ["telegram_recipient_x25519.key"] else "EXTRA_ENTRIES_PRESENT"
+        result["entries"] = entries
+        if entries == "EMPTY":
+            # Absence must also be an ENOENT leaf under the same valid parent.
+            try:
+                os.stat("telegram_recipient_x25519.key", dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                result["state"] = "ABSENT"
+            else:
+                return empty("CHANGED", entries)
+        elif entries == "KEY_ONLY":
+            metadata = os.stat("telegram_recipient_x25519.key", dir_fd=parent, follow_symlinks=False)
+            leaf = witness(metadata)
+            if (not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o400
+                    or (metadata.st_uid, metadata.st_gid) != (10001, 10001)
+                    or metadata.st_nlink != 1 or metadata.st_size != 32):
+                result["state"] = "INVALID"
+            else:
+                try:
+                    from boca_socios import telegram_bootstrap as bootstrap
+                    private = bootstrap._read(parent, bootstrap.PRIVATE_KEY, 10001, maximum=32)
+                except Exception:
+                    result["state"] = "NOT_READ"
+                else:
+                    if (witness(os.stat(bootstrap.PRIVATE_KEY, dir_fd=parent, follow_symlinks=False)) != leaf
+                            or witness(os.fstat(parent)) != before):
+                        return empty("CHANGED", entries)
+                    try:
+                        derived = bootstrap._receipt(private, "PREPARED")
+                    except Exception:
+                        result["state"] = "NOT_READ"
+                    else:
+                        result.update(state="VALID", fingerprint=derived.fingerprint)
+        if entries == "KEY_ONLY" and witness(os.stat("telegram_recipient_x25519.key", dir_fd=parent, follow_symlinks=False)) != leaf:
+            return empty("CHANGED", entries)
+        if (witness(os.fstat(parent)) != before
+                or witness(os.stat("telegram", dir_fd=run, follow_symlinks=False)) != before):
+            return empty("CHANGED", entries)
+        result["witness"] = hashlib.sha256(canonical([before, leaf])).hexdigest()
+        return result
+    except OSError as error:
+        return empty("CHANGED" if error.errno == errno.ENOENT and before is not None
+                     else "INVALID" if error.errno in (errno.ELOOP, errno.ENOTDIR)
+                     else "NOT_READ", result["entries"])
+    except Exception:
+        return empty("NOT_READ", result["entries"])
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+if sys.stdin.buffer.read(3) != b"{}":
+    result = {**empty("NOT_READ"), "samples": 0}
+else:
+    first, second = snapshot(), snapshot()
+    stable = first == second and first["state"] != "CHANGED"
+    result = {**(first if stable else empty("CHANGED", "CHANGED")), "samples": 2}
+sys.stdout.buffer.write(canonical(result))
+"""
 
 
 class MaintenanceError(ValueError):
@@ -48,12 +149,19 @@ def _attest(
     config, host = value["Config"], value["HostConfig"]
     mounts = value["Mounts"]
     migration = operation == "migrate-schema"
-    profile = (("boca_data", "/data", True),) if migration else MOUNTS[operation]
+    observe = operation == "recipient-observe"
+    profile = (
+        (("boca_data", "/data", True),)
+        if migration
+        else MOUNTS["recipient" if observe else operation]
+    )
     command = (
         ["python", "-m", "boca_socios.telegram_storage_gate", "migrate"]
         if migration
         else ["python", "-m", "boca_socios.telegram_maintenance", operation]
     )
+    if observe:
+        command = ["python", "-I", "-B", "-c", RECIPIENT_OBSERVE_PROGRAM]
     expected = {(f"boca-socios_{volume}", target, rw) for volume, target, rw in profile}
     if (
         value["Name"] != "/" + name
@@ -90,12 +198,69 @@ def _attest(
     return value
 
 
+def _diagnostic_pipe(command: tuple[str, ...], payload: bytes = b"") -> bytes:
+    """Bound both pipes while reading; terminate only the local Docker client."""
+    process = subprocess.Popen(  # noqa: S603 - callers supply fixed exec/start commands
+        ("/usr/bin/docker", "--host", cleanup.DOCKER_SOCKET, *command),
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={
+            "DOCKER_HOST": cleanup.DOCKER_SOCKET,
+            "XDG_RUNTIME_DIR": "/run/user/10001",
+            "PATH": "/usr/bin:/bin",
+            "LANG": "C",
+        },
+    )
+    output = bytearray()
+    deadline = time.monotonic() + 30
+    try:
+        assert process.stdin is not None and process.stdout is not None
+        assert process.stderr is not None
+        process.stdin.write(payload)
+        process.stdin.close()
+        with selectors.DefaultSelector() as selector:
+            for stream in (process.stdout, process.stderr):
+                os.set_blocking(stream.fileno(), False)
+                selector.register(stream, selectors.EVENT_READ)
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise MaintenanceError("telegram_diagnostic_transport_unverified")
+                for key, _ in selector.select(remaining):
+                    chunk = os.read(key.fd, 4097 - len(output))
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                    elif key.fileobj is process.stderr or len(output) + len(chunk) > 4096:
+                        raise MaintenanceError("telegram_diagnostic_transport_unverified")
+                    else:
+                        output.extend(chunk)
+        if process.wait(timeout=max(0.001, deadline - time.monotonic())) != 0 or not output:
+            raise MaintenanceError("telegram_diagnostic_transport_unverified")
+        return bytes(output)
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=5)
+        for closing_stream in (process.stdin, process.stdout, process.stderr):
+            if closing_stream is not None:
+                closing_stream.close()
+
+
 class InstalledMaintenance:
     def __init__(self, context: InstalledTelegramContext) -> None:
         self.context = context
         self._created_volume = False
         self._created_network: str | None = None
         self.migration_helper_retired = True
+        self.recipient_observation: dict[str, Any] = {
+            "id": None,
+            "create_attempted": False,
+            "start_attempted": False,
+            "stop_attempted": False,
+            "remove_attempted": False,
+            "retirement": "NOT_ATTEMPTED",
+        }
 
     def call(self, operation: str, request: dict[str, Any]) -> dict[str, Any]:
         if operation == "migrate-schema":
@@ -104,12 +269,19 @@ class InstalledMaintenance:
             return self._migrate_schema()
         from boca_socios.host_first_deploy import _telegram_container, _telegram_volume
 
+        observe = operation == "recipient-observe"
+        profile = "recipient" if observe else operation
+        effects = self.recipient_observation
+        if observe and (type(request) is not dict or request != {} or effects["create_attempted"]):
+            raise MaintenanceError("telegram_recipient_observation_request_unverified")
         if operation == "initialize-volume" and not self._created_volume:
             raise MaintenanceError("telegram_existing_volume_initialization_forbidden")
-        if operation not in MOUNTS:
+        if profile not in MOUNTS:
             raise MaintenanceError("telegram_maintenance_operation_unverified")
         self.context.check_binding()
-        if any(volume == "boca_telegram" for volume, _, _ in MOUNTS[operation]):
+        if any(volume == "boca_telegram" for volume, _, _ in MOUNTS[profile]):
+            if observe and "boca-socios_boca_telegram" not in dict(self.context.volumes):
+                raise MaintenanceError("telegram_recipient_volume_absent")
             _telegram_volume()
         payload = bootstrap._canonical(request)
         if not 0 < len(payload) <= MAX_FRAME:
@@ -118,14 +290,21 @@ class InstalledMaintenance:
         image = self.context.installation.controller_image
         mountpoints = dict(self.context.volumes)
         argv = _telegram_container(
-            image, "telegram_maintenance", operation, writable=False, maintenance_name=name
+            image, "telegram_maintenance", profile, writable=False, maintenance_name=name
         )
+        if observe:
+            argv = (*argv[:-4], "python", "-I", "-B", "-c", RECIPIENT_OBSERVE_PROGRAM)
+            effects.update(create_attempted=True, retirement="INDETERMINATE")
         ident = cleanup._docker(*argv[1:]).strip()
         if re.fullmatch(r"[a-f0-9]{64}", ident) is None:
             raise MaintenanceError("telegram_maintenance_creation_uncertain")
+        if observe:
+            effects["id"] = ident
         verified = False
         try:
-            _attest(ident, name, image, operation, mountpoints)
+            before = _attest(ident, name, image, operation, mountpoints)
+            if observe and before["State"]["Running"] is not False:
+                raise MaintenanceError("telegram_recipient_creation_state_unverified")
             verified = True
             self.context.check_binding()
             env = {
@@ -134,23 +313,33 @@ class InstalledMaintenance:
                 "PATH": "/usr/bin:/bin",
                 "LANG": "C",
             }
-            result = subprocess.run(  # noqa: S603 - fixed exact-ID private pipe
-                [
-                    "/usr/bin/docker",
-                    "--host",
-                    cleanup.DOCKER_SOCKET,
-                    "start",
-                    "--attach",
-                    "--interactive",
-                    ident,
-                ],
-                input=payload,
-                capture_output=True,
-                timeout=30,
-                check=False,
-                env=env,
-            )
-            after = _attest(ident, name, image, operation, mountpoints)
+            if observe:
+                effects["start_attempted"] = True
+                observed = _diagnostic_pipe(("start", "--attach", "--interactive", ident), b"{}")
+                result = subprocess.CompletedProcess([], 0, observed, b"")
+            else:
+                result = subprocess.run(  # noqa: S603 - fixed exact-ID private pipe
+                    [
+                        "/usr/bin/docker",
+                        "--host",
+                        cleanup.DOCKER_SOCKET,
+                        "start",
+                        "--attach",
+                        "--interactive",
+                        ident,
+                    ],
+                    input=payload,
+                    capture_output=True,
+                    timeout=30,
+                    check=False,
+                    env=env,
+                )
+            try:
+                after = _attest(ident, name, image, operation, mountpoints)
+            except Exception:
+                if observe:
+                    verified = False
+                raise
             if (
                 result.returncode
                 or result.stderr
@@ -171,16 +360,21 @@ class InstalledMaintenance:
             if verified:
                 final = _attest(ident, name, image, operation, mountpoints)
                 if final["State"]["Running"]:
+                    if observe:
+                        effects["stop_attempted"] = True
                     if cleanup._docker("stop", "-t", "5", ident).strip() != ident:
                         raise MaintenanceError("telegram_maintenance_stop_uncertain")
                     final = _attest(ident, name, image, operation, mountpoints)
-                if (
-                    final["State"]["Running"] is not False
-                    or cleanup._docker("rm", ident).strip() != ident
-                ):
+                if final["State"]["Running"] is not False:
+                    raise MaintenanceError("telegram_maintenance_cleanup_uncertain")
+                if observe:
+                    effects["remove_attempted"] = True
+                if cleanup._docker("rm", ident).strip() != ident:
                     raise MaintenanceError("telegram_maintenance_cleanup_uncertain")
                 if ident in {item.ident for item in self.context.reader.inventory().containers}:
                     raise MaintenanceError("telegram_maintenance_cleanup_unverified")
+                if observe:
+                    effects["retirement"] = "RETIRED"
             self.context.check_binding()
 
     def _migrate_schema(self) -> dict[str, Any]:
