@@ -122,7 +122,7 @@ class InstalledTelegramContext:
     def stop(self) -> None:
         self.healthy()
         ident = self.installation.controller_id
-        if cleanup._docker("stop", "--time", "10", ident).strip() != ident:
+        if cleanup._docker("stop", "-t", "10", ident).strip() != ident:
             raise TelegramContextError("telegram_controller_stop_uncertain")
         self.stopped()
 

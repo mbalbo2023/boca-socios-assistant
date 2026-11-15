@@ -673,3 +673,105 @@ def test_schema_observation_does_not_relax_other_success_restoration(operation, 
             operation=operation,
             allow_failure=True,
         )
+
+
+def _r303_controller_stop_boundary(monkeypatch, *, acknowledgement="portable"):
+    import subprocess
+
+    from boca_socios.host_telegram_installed_context import TelegramContextError
+
+    cid = "c" * 64
+    events, commands = [], []
+    context = SimpleNamespace(
+        installation=SimpleNamespace(controller_id=cid, pair=SimpleNamespace(sender_running=False)),
+        healthy=lambda: events.append("HEALTHY"),
+        stopped=lambda: events.append("STOPPED"),
+        restore=lambda: events.append("RESTORE"),
+    )
+    context.stop = InstalledTelegramContext.stop.__get__(context)
+    monkeypatch.setattr(cleanup, "EXPECTED_UID", os.geteuid())
+    for name in (
+        "DOCKER_HOST",
+        "DOCKER_CONTEXT",
+        "DOCKER_TLS_VERIFY",
+        "DOCKER_CERT_PATH",
+        "DOCKER_TLS",
+        "DOCKER_CONFIG",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    def run(argv, **kwargs):
+        assert argv[:3] == ["/usr/bin/docker", "--host", cleanup.DOCKER_SOCKET]
+        command = argv[3:]
+        commands.append(command)
+        assert command[0] == "stop" and command[-2:] == ["10", cid]
+        assert kwargs["timeout"] == 45 and kwargs["text"] is True
+        assert kwargs["env"]["DOCKER_HOST"] == cleanup.DOCKER_SOCKET
+        events.append("DOCKER_STOP")
+        outputs = {
+            "portable": ("warning: deprecated --time\n" if "--time" in command else "")
+            + cid
+            + "\n",
+            "warning": "warning even with portable flag\n" + cid + "\n",
+            "empty": "",
+            "foreign": "f" * 64 + "\n",
+            "multiline": cid + "\n" + cid + "\n",
+            "exit": cid + "\n",
+        }
+        return subprocess.CompletedProcess(
+            argv, 1 if acknowledgement == "exit" else 0, outputs[acknowledgement], ""
+        )
+
+    class Storage:
+        migration_helper_retired = True
+
+        def __init__(self, checked):
+            assert checked is context
+
+        def call(self, operation, payload):
+            assert payload == {}
+            events.append(operation)
+            if operation == "migrate-schema":
+                return {"schema": 7}
+            assert operation == "verify-schema"
+            return (
+                {"schema": 7} if "RESTORE" in events else {"prerequisite": "SCHEMA_0007_REQUIRED"}
+            )
+
+    monkeypatch.setattr(cleanup.subprocess, "run", run)
+    monkeypatch.setattr(backend, "resolve_installed_context", lambda *args, **kwargs: context)
+    monkeypatch.setattr(backend, "InstalledMaintenance", Storage)
+    try:
+        receipt = backend.migrate_installed_telegram(
+            "111", lease=object(), expected_source_sha=SOURCE, workflow_sha="b" * 40
+        )
+        error = None
+    except backend.TelegramBackendError as failure:
+        receipt, error = failure.receipt, failure
+    assert events.count("DOCKER_STOP") == events.count("RESTORE") == 1
+    assert len(commands) == 1
+    assert receipt.restoration == "CONTROLLER_HEALTHY_ENGINE_OFF"
+    assert receipt.sender_state == "OFF" and receipt.human_receipt == "UNVERIFIED"
+    if error is not None:
+        assert receipt.state == "FAILED_STATE_PRESERVED"
+        assert "migrate-schema" not in events
+        assert isinstance(error.primary_error, (TelegramContextError, cleanup.CleanupError))
+        assert error.cleanup_error is None
+    return receipt, events, commands
+
+
+def test_r303_portable_stop_reaches_migration_after_exact_docker_ack(monkeypatch):
+    receipt, events, commands = _r303_controller_stop_boundary(monkeypatch)
+    assert receipt.state == "SCHEMA_READY", (receipt, events)
+    assert events.count("migrate-schema") == 1
+    assert events.index("DOCKER_STOP") < events.index("migrate-schema") < events.index("RESTORE")
+    assert commands == [["stop", "-t", "10", "c" * 64]]
+
+
+@pytest.mark.parametrize("acknowledgement", ["warning", "empty", "foreign", "multiline", "exit"])
+def test_r303_portable_controller_stop_preserves_strict_ack_rejection(monkeypatch, acknowledgement):
+    receipt, events, _ = _r303_controller_stop_boundary(
+        monkeypatch, acknowledgement=acknowledgement
+    )
+    assert receipt.state == "FAILED_STATE_PRESERVED"
+    assert "migrate-schema" not in events

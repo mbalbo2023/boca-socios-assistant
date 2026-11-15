@@ -549,3 +549,218 @@ def test_real_installed_writer_controls_backend_restoration(monkeypatch, failure
         assert caught.value.cleanup_error is not None
     else:
         assert not state["exists"]
+
+
+def _r303_retirement_boundary(
+    monkeypatch, *, migration, acknowledgement="portable", identity_uncertain=False
+):
+    import json
+    import os
+    import subprocess
+
+    cid = "d" * 64
+    volume = "boca-socios_boca_data"
+    path = "/home/boca-deploy/.local/share/docker/volumes/" + volume + "/_data"
+    commands = []
+    state = {"exists": False, "started": False}
+    operation = "migrate-schema" if migration else "verify-schema"
+    record = {
+        "Id": cid,
+        "Name": "",
+        "Config": {
+            "Image": IMAGE,
+            "User": "10001:10001",
+            "Cmd": [
+                "python",
+                "-m",
+                "boca_socios.telegram_storage_gate"
+                if migration
+                else "boca_socios.telegram_maintenance",
+                "migrate" if migration else operation,
+            ],
+            "Labels": {"com.docker.compose.project": "boca-socios"},
+        },
+        "HostConfig": {
+            "NetworkMode": "none",
+            "ReadonlyRootfs": True,
+            "Privileged": False,
+            "LogConfig": {"Type": "none"},
+            "CapDrop": ["ALL"],
+            "CapAdd": None,
+            "PidsLimit": 16,
+            "Memory": 67108864,
+            "NanoCpus": 250000000,
+            "PublishAllPorts": False,
+            "PortBindings": {},
+            "RestartPolicy": {"Name": "no"},
+            "SecurityOpt": ["no-new-privileges"],
+        },
+        "Mounts": [
+            {
+                "Type": "volume",
+                "Name": volume,
+                "Source": path,
+                "Destination": "/data",
+                "RW": migration,
+                "Driver": "local",
+            }
+        ],
+        "NetworkSettings": {"Networks": {"none": {}}},
+        "State": {"Restarting": False, "Running": False, "ExitCode": 0},
+    }
+    context = SimpleNamespace(
+        attempt_id="111",
+        installation=SimpleNamespace(controller_image=IMAGE),
+        volumes=((volume, path),),
+        check_binding=lambda: None,
+        stopped=lambda: None,
+        reader=SimpleNamespace(
+            inventory=lambda: SimpleNamespace(
+                containers=[SimpleNamespace(ident=cid)] if state["exists"] else []
+            )
+        ),
+    )
+    monkeypatch.setattr(cleanup, "EXPECTED_UID", os.geteuid())
+    for name in (
+        "DOCKER_HOST",
+        "DOCKER_CONTEXT",
+        "DOCKER_TLS_VERIFY",
+        "DOCKER_CERT_PATH",
+        "DOCKER_TLS",
+        "DOCKER_CONFIG",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    def run(argv, **kwargs):
+        assert argv[:3] == ["/usr/bin/docker", "--host", cleanup.DOCKER_SOCKET]
+        args = argv[3:]
+        commands.append(args)
+        command = args[0]
+        if command == "create":
+            record["Name"] = "/" + args[args.index("--name") + 1]
+            state["exists"] = True
+            output = cid + "\n"
+        elif command == "inspect":
+            assert args[-1] == cid
+            if identity_uncertain and state["started"]:
+                record["Name"] = "/foreign-container"
+            output = json.dumps(record)
+        elif command == "start":
+            assert args[-1] == cid and kwargs["input"] == b"{}"
+            state["started"] = record["State"]["Running"] = True
+            raise subprocess.TimeoutExpired(argv, 30)
+        elif command == "stop":
+            assert args[-2:] == ["5", cid]
+            record["State"]["Running"] = False
+            output = {
+                "portable": ("warning: deprecated --time\n" if "--time" in args else "")
+                + cid
+                + "\n",
+                "warning": "warning even with portable flag\n" + cid + "\n",
+                "empty": "",
+                "foreign": "f" * 64 + "\n",
+                "multiline": cid + "\n" + cid + "\n",
+                "exit": cid + "\n",
+            }[acknowledgement]
+        elif command == "rm":
+            assert args == ["rm", cid]
+            state["exists"] = False
+            output = cid + "\n"
+        else:
+            pytest.fail("unexpected Docker effect")
+        assert kwargs["text"] is True and kwargs["timeout"] == 45
+        return subprocess.CompletedProcess(
+            argv, 1 if command == "stop" and acknowledgement == "exit" else 0, output, ""
+        )
+
+    monkeypatch.setattr(cleanup.subprocess, "run", run)
+    return host.InstalledMaintenance(context), commands, state
+
+
+@pytest.mark.parametrize("migration", [False, True], ids=["ordinary", "writer"])
+def test_r303_portable_stop_retires_exact_helper_after_primary_timeout(monkeypatch, migration):
+    import subprocess
+
+    adapter, commands, state = _r303_retirement_boundary(monkeypatch, migration=migration)
+    with pytest.raises(host.MaintenanceError) as caught:
+        adapter.call("migrate-schema" if migration else "verify-schema", {})
+    if migration:
+        assert isinstance(caught.value.primary_error, subprocess.TimeoutExpired)
+        assert caught.value.cleanup_error is None
+        assert adapter.migration_helper_retired
+    else:
+        assert str(caught.value) == "telegram_maintenance_failed_state_preserved"
+    assert not state["exists"], commands
+    assert [args for args in commands if args[0] == "stop"] == [["stop", "-t", "5", "d" * 64]]
+    assert [args for args in commands if args[0] == "rm"] == [["rm", "d" * 64]]
+
+
+@pytest.mark.parametrize("migration", [False, True], ids=["ordinary", "writer"])
+@pytest.mark.parametrize("acknowledgement", ["warning", "empty", "foreign", "multiline", "exit"])
+def test_r303_portable_helper_ack_uncertainty_forbids_removal(
+    monkeypatch, migration, acknowledgement
+):
+    import subprocess
+
+    adapter, commands, state = _r303_retirement_boundary(
+        monkeypatch, migration=migration, acknowledgement=acknowledgement
+    )
+    with pytest.raises(
+        host.MaintenanceError if migration or acknowledgement != "exit" else cleanup.CleanupError
+    ) as caught:
+        adapter.call("migrate-schema" if migration else "verify-schema", {})
+    assert state["exists"] and not any(args[0] == "rm" for args in commands)
+    assert sum(args[0] == "stop" for args in commands) == 1
+    if migration:
+        assert not adapter.migration_helper_retired
+        assert isinstance(caught.value.primary_error, subprocess.TimeoutExpired)
+        assert caught.value.cleanup_error is not None
+
+
+@pytest.mark.parametrize("migration", [False, True], ids=["ordinary", "writer"])
+def test_r303_uncertain_helper_identity_forbids_stop_and_removal(monkeypatch, migration):
+    adapter, commands, state = _r303_retirement_boundary(
+        monkeypatch, migration=migration, identity_uncertain=True
+    )
+    with pytest.raises(host.MaintenanceError):
+        adapter.call("migrate-schema" if migration else "verify-schema", {})
+    assert state["exists"] and not any(args[0] in {"stop", "rm"} for args in commands)
+    if migration:
+        assert not adapter.migration_helper_retired
+
+
+def test_r303_uncertain_writer_stop_ack_blocks_backend_restore(monkeypatch):
+    import subprocess
+
+    from boca_socios import host_telegram_backend as backend
+
+    adapter, commands, state = _r303_retirement_boundary(
+        monkeypatch, migration=True, acknowledgement="warning"
+    )
+    context, events = adapter.context, []
+    context.installation.pair = SimpleNamespace(sender_running=False)
+    context.healthy = lambda: events.append("HEALTHY")
+    context.stop = lambda: events.append("CONTROLLER_STOP")
+    context.restore = lambda: events.append("RESTORE")
+    original_call = adapter.call
+
+    def call(operation, payload):
+        if operation == "verify-schema":
+            return {"prerequisite": "SCHEMA_0007_REQUIRED"}
+        return original_call(operation, payload)
+
+    monkeypatch.setattr(adapter, "call", call)
+    monkeypatch.setattr(backend, "resolve_installed_context", lambda *args, **kwargs: context)
+    monkeypatch.setattr(backend, "InstalledMaintenance", lambda checked: adapter)
+    with pytest.raises(backend.TelegramBackendError) as caught:
+        backend.migrate_installed_telegram(
+            "111", lease=object(), expected_source_sha="a" * 40, workflow_sha="b" * 40
+        )
+    assert caught.value.receipt.state == "CLEANUP_INDETERMINATE"
+    assert caught.value.receipt.restoration == "INDETERMINATE"
+    assert caught.value.receipt.sender_state == "OFF"
+    assert isinstance(caught.value.primary_error, subprocess.TimeoutExpired)
+    assert caught.value.cleanup_error is not None
+    assert "RESTORE" not in events and state["exists"]
+    assert sum(args[0] == "stop" for args in commands) == 1
+    assert not any(args[0] == "rm" for args in commands)

@@ -687,6 +687,21 @@
       "regression_tests": [
         "tests/test_engine_dashboard_ui_offline.py::test_browser_assertion_reports_only_its_allowlisted_reason"
       ]
+    },
+    {
+      "id": "RCA-524",
+      "issue": 524,
+      "fix_pr": 524,
+      "root_cause": "Installed Telegram STOP paths retained --time while exact-CID ACK checks reject its stdout deprecation warning. Tests replaced context.stop or Docker output, missing the subprocess-to-backend boundary; historical 1144 cause remains unproven.",
+      "prevention": "Use existing portable -t without relaxing ACK; cover controller and both helper retirements through the real subprocess boundary, reject ambiguous identities/output and block restore until the writer is retired. Measure the installed ZIP without changing caps.",
+      "regression_tests": [
+        "tests/test_r296_telegram_backend.py::test_r303_portable_stop_reaches_migration_after_exact_docker_ack",
+        "tests/test_r296_telegram_backend.py::test_r303_portable_controller_stop_preserves_strict_ack_rejection",
+        "tests/test_r296_telegram_maintenance.py::test_r303_portable_stop_retires_exact_helper_after_primary_timeout",
+        "tests/test_r296_telegram_maintenance.py::test_r303_portable_helper_ack_uncertainty_forbids_removal",
+        "tests/test_r296_telegram_maintenance.py::test_r303_uncertain_helper_identity_forbids_stop_and_removal",
+        "tests/test_r296_telegram_maintenance.py::test_r303_uncertain_writer_stop_ack_blocks_backend_restore"
+      ]
     }
   ]
 }

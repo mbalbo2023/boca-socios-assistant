@@ -1,6 +1,39 @@
 # Estado de integración BETA
 
-## R301/R302 — monitor observado y esquema instalado, candidato consolidado521
+## R303 — corrección acotada de STOP, previa a la promoción final
+
+Main Q `7112a4878097bc1696a60a7b1056cd1e7b559ce5` integra PR521; árbol
+`3e328752468895f7c712a9ec9f7630e47e585b91`. [CI1268](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43699456830)
+y [Security1088](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43699456838)
+terminaron SUCCESS. CI ejecutó 9564 pruebas y 34 subtests. Sus capturas de
+tablet/móvil son renders offline sintéticos: no certifican el panel privado
+instalado ni 50 contextos físicos.
+
+El producto instalado permanece en M `5281efae7dafe89be047073796b3e0a7e19785ed`,
+release866/APPLY1134, con limpieza ACCEPT. R301 todavía no llegó a esas imágenes.
+[Observe1148](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43700038712)
+leyó el esquema y devolvió SCHEMA_0007_REQUIRED/NOT_NEEDED/OFF. El baseline
+canónico es válido y falta0007; la causa de migrate1144 sigue sin demostrarse.
+No se reejecuta ninguno de esos intentos ni se afirma rollback o ausencia de
+objetos SQL huérfanos.
+
+[#524](https://github.com/mbalbo2023/boca-socios-assistant/issues/524) registra,
+antes del código, reutilizar el alias portable `-t` en tres llamadas STOP
+Telegram; [cuatro GO de diseño](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6892566944).
+ACK estricto, tiempos, identidad y retiro positivo del escritor se conservan.
+Regresión de frontera, paquete instalado y revisiones finales preceden gates
+del nuevo main y evaluación de una migración corregida. Sólo SCHEMA_READY con
+restauración saludable/OFF habilita una release final pareada y una promoción
+consolidada. Prepare corresponde al nuevo par final, no a M antes del upgrade.
+
+Mantener SIMULATION_ONLY, BLACKBOX, datos, claves, passkeys, volúmenes y caps;
+sólo Actions Boca protegidas y serializadas. Porota/PPI intactos. Sin sender
+activo, mensajes, navegación de proveedores o entrada real. DOM autenticado,
+reserva/ganador/cancelación de hermanos, comprobante/foto/aviso por socio,
+countdown, aceptación privada y capacidad física50 siguen diferenciados de
+esta corrección. El objetivo funcional completo continúa abierto.
+
+## Histórico R301/R302 — monitor observado y esquema instalado, candidato521
 
 Producto M `5281efae7dafe89be047073796b3e0a7e19785ed` sigue instalado desde
 PR517/release866: APPLY1134 y cleanup aceptados; ADMIN1135 provisionado.

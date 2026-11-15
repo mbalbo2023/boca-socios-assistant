@@ -171,7 +171,7 @@ class InstalledMaintenance:
             if verified:
                 final = _attest(ident, name, image, operation, mountpoints)
                 if final["State"]["Running"]:
-                    if cleanup._docker("stop", "--time", "5", ident).strip() != ident:
+                    if cleanup._docker("stop", "-t", "5", ident).strip() != ident:
                         raise MaintenanceError("telegram_maintenance_stop_uncertain")
                     final = _attest(ident, name, image, operation, mountpoints)
                 if (
@@ -262,7 +262,7 @@ class InstalledMaintenance:
                     raise MaintenanceError("telegram_schema_helper_identity_uncertain")
                 final = _attest(ident, name, image, "migrate-schema", dict(self.context.volumes))
                 if final["State"]["Running"]:
-                    if cleanup._docker("stop", "--time", "5", ident).strip() != ident:
+                    if cleanup._docker("stop", "-t", "5", ident).strip() != ident:
                         raise MaintenanceError("telegram_schema_stop_uncertain")
                     final = _attest(
                         ident, name, image, "migrate-schema", dict(self.context.volumes)
