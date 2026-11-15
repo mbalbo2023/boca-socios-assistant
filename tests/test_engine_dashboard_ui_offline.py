@@ -191,3 +191,68 @@ def test_cli_failure_does_not_print_fixture_contents_or_create_an_output(tmp_pat
     assert "private-content" not in captured.err
     assert "NO_GO" in captured.err
     assert not output.exists()
+
+
+def test_renderer_timezone_failure_reports_its_phase_without_exception_contents(
+    monkeypatch, capsys
+):
+    from zoneinfo import ZoneInfoNotFoundError
+
+    from boca_socios.panel import engine_view
+
+    module = _module()
+
+    def missing_zone(_name):
+        raise ZoneInfoNotFoundError("private-zone-data-must-not-be-logged")
+
+    monkeypatch.setattr(engine_view, "ZoneInfo", missing_zone)
+    assert module.main(["--make-fixture", SOURCE_SHA]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "BOCA_ENGINE_UI_OFFLINE state=NO_GO phase=fixture_render "
+        "reason=timezone_unavailable error_type=ZoneInfoNotFoundError\n"
+    )
+
+
+def test_browser_assertion_reports_only_its_allowlisted_reason(monkeypatch, tmp_path, capsys):
+    module = _module()
+    fixture = tmp_path / "fixture.json"
+    fixture.write_text(json.dumps(module.make_fixture(SOURCE_SHA)))
+
+    async def rejected(_fixture, _source):
+        raise RuntimeError("required_member_unverified")
+
+    monkeypatch.setattr(module, "run_offline", rejected)
+    assert module.main(["--run-offline-fixture", str(fixture), SOURCE_SHA]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "BOCA_ENGINE_UI_OFFLINE state=NO_GO phase=browser_proof "
+        "reason=required_member_unverified error_type=RuntimeError\n"
+    )
+
+
+@pytest.mark.parametrize("unknown_type", [False, True])
+def test_failure_diagnostics_never_echo_unrecognized_reason_or_exception_type(
+    monkeypatch, capsys, unknown_type
+):
+    module = _module()
+    error_type = (
+        type("PrivateExceptionNameMustNotBeLogged", (Exception,), {})
+        if unknown_type
+        else RuntimeError
+    )
+
+    def rejected(_source):
+        raise error_type("private-runtime-or-browser-content-must-not-be-logged")
+
+    monkeypatch.setattr(module, "make_fixture", rejected)
+    assert module.main(["--make-fixture", SOURCE_SHA]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    expected_type = "UNKNOWN" if unknown_type else "RuntimeError"
+    assert captured.err == (
+        "BOCA_ENGINE_UI_OFFLINE state=NO_GO phase=fixture_render "
+        f"reason=offline_proof_failed error_type={expected_type}\n"
+    )

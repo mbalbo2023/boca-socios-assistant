@@ -75,6 +75,60 @@ jobs:
           import tempfile
           from playwright.sync_api import sync_playwright
 
+          def failure_details(observed):
+              observed = observed[:81920].lower()
+              flags = {
+                  "sandbox": ("sandbox", "user namespace", "unshare"),
+                  "permission": ("permission denied", "operation not permitted", "eperm"),
+                  "library": ("shared object", "shared librar", "xpcomglue"),
+                  "memory": ("out of memory", "cannot allocate memory", "oom"),
+                  "process": ("resource temporarily unavailable", "pthread_create", "fork failed"),
+                  "signal": ("sigsys", "sigsegv", "sigabrt", "sigkill"),
+              }
+              # Public browser/GStreamer SONAMEs only; arbitrary loader text
+              # or a path can never become a field in the public receipt.
+              libraries = {
+                  "libgstcodecparsers-1.0.so.0", "libgstwebrtc-1.0.so.0",
+                  "libgstplay-1.0.so.0", "libgstplayer-1.0.so.0",
+                  "libgstcodecs-1.0.so.0", "libgstmpegts-1.0.so.0",
+                  "libgsttranscoder-1.0.so.0", "libgstwayland-1.0.so.0",
+                  "libgstsctp-1.0.so.0", "libgstgl-1.0.so.0",
+                  "libgstapp-1.0.so.0", "libgstpbutils-1.0.so.0",
+                  "libgstreamer-1.0.so.0", "libgtk-3.so.0", "libgtk-4.so.1",
+                  "libgdk-3.so.0", "libavcodec.so.60", "libavif.so.16",
+                  "libicuuc.so.74", "libicui18n.so.74", "libharfbuzz-icu.so.0",
+                  "libvpx.so.9", "libsoup-3.0.so.0",
+                  "libwpe-1.0.so.1", "libwpebackend-fdo-1.0.so.1",
+              }
+              loader = re.search(r"error while loading shared libraries: ([^:\r\n]{1,128}):", observed)
+              missing = "none"
+              if "error while loading shared libraries:" in observed:
+                  missing = loader.group(1) if loader and loader.group(1) in libraries else "unlisted"
+              # These are observed technical markers, not a root-cause claim.
+              markers = {
+                  "glxtest": ("glxtest",),
+                  "swgl": ("rendercompositorswgl", "swgl"),
+                  "channel_error": ("exiting due to channel error",),
+                  "no_space": ("no space left on device", "enospc"),
+                  "readonly_fs": ("read-only file system", "erofs"),
+                  "namespace": ("cancreateusernamespace", "failed to create user namespace"),
+                  "dbus": ("failed to connect to the bus",),
+                  "crash_reporter": ("crash annotation", "minidump", "crashreporter", "exceptionhandler::"),
+                  "missing_display": ("no display environment variable specified",),
+                  "graphics": ("gfxcriticalerror", "failed to create renderer"),
+                  "sigsys": ("sigsys",),
+                  "sigsegv": ("sigsegv",),
+                  "sigabrt": ("sigabrt",),
+                  "sigkill": ("sigkill",),
+              }
+              exit_match = re.search(r"(?:exitcode|exit code|code)[=:] ?(-?[0-9]{1,3})(?![0-9])", observed)
+              return {
+                  "categories": ",".join(k for k, tokens in flags.items() if any(t in observed for t in tokens)) or "unclassified",
+                  "exit_code": exit_match.group(1) if exit_match else "unknown",
+                  "missing_library": missing,
+                  "markers": ",".join(k for k, tokens in markers.items() if any(t in observed for t in tokens)) or "none",
+              }
+
           name = os.environ["BOCA_PLAYWRIGHT_ENGINE"]
           if name not in ("chromium", "firefox", "webkit"):
               raise SystemExit("BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO reason=invalid_engine")
@@ -103,18 +157,8 @@ jobs:
                   except Exception as error:
                       os.lseek(probe.fileno(), 0, os.SEEK_SET)
                       observed = (str(error)[:16384] + "\n" + os.read(probe.fileno(), 65536).decode("utf-8", "replace")).lower()
-                      flags = {
-                          "sandbox": ("sandbox", "user namespace", "unshare"),
-                          "permission": ("permission denied", "operation not permitted", "eperm"),
-                          "library": ("shared object", "shared librar", "xpcomglue"),
-                          "memory": ("out of memory", "cannot allocate memory", "oom"),
-                          "process": ("resource temporarily unavailable", "pthread_create", "fork failed"),
-                          "signal": ("sigsys", "sigsegv", "sigabrt", "sigkill"),
-                      }
-                      categories = ",".join(k for k, tokens in flags.items() if any(t in observed for t in tokens)) or "unclassified"
-                      exit_match = re.search(r"(?:exitcode|exit code|code)[=:] ?(-?[0-9]{1,3})", observed)
-                      code = exit_match.group(1) if exit_match else "unknown"
-                      raise SystemExit(f"BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO engine={name} phase={phase} reason={type(error).__name__} categories={categories} exit_code={code}") from None
+                      details = " ".join(f"{key}={value}" for key, value in failure_details(observed).items())
+                      raise SystemExit(f"BOCA_FULL_PLAYWRIGHT_LAUNCH state=NO_GO engine={name} phase={phase} reason={type(error).__name__} {details}") from None
               finally:
                   os.dup2(saved_stderr, 2)
                   os.close(saved_stderr)

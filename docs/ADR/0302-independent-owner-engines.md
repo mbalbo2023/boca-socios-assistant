@@ -214,3 +214,48 @@ La matriz QA final cubre 66 combinaciones de evidencia física, holds y boots;
 la ejecución focal final aprueba 208 pruebas. Ruff, formato, mypy de 233 fuentes,
 política de aislamiento y pin FULL pasan. La unanimidad es sobre este código;
 los artefactos de CI y las pruebas físicas conservan sus gates y límites propios.
+
+## Primer gate publicado: RCA de CI1251
+
+El head `8505db4f4193bec0475e03a18583c93e9772a92e` se publicó en PR517 con
+árbol `6fa010788df3e14978070058ab92f7a91f938f58`, idéntico al merge sintético
+`df076d91a5edf5fcbbe5afce621fe36b3a617bc9`. [CI1251](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43664696086)
+terminó NO_GO: 9143 tests y 34 subtests pasaron, dos tests fallaron y el nuevo
+paso visual no produjo artefactos. [Checkpoint completo](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6887623140).
+
+El harness AF_UNIX preparaba una lista cerrada de 14 archivos que no contenía
+el nuevo `engine_protocol.py`, importado por el servidor. Se añade ese único
+módulo stdlib a la fixture y se verifica su importación en el mismo hijo
+`-I -S -B`, con denegación de sockets/procesos durante el import. Los módulos
+de navegación permanecen excluidos. La imagen de producción ya copiaba ese
+archivo; el fallo era del staging del laboratorio. Su suite focal de 17 casos
+pasa después de reproducir el mismo ModuleNotFoundError de CI.
+
+La aserción de limpieza esperaba tres nombres aunque el workflow ahora limpia
+los cinco contenedores efímeros exactos. Sólo se actualiza la expectativa; no
+se amplía ningún borrado. La comprobación focal pasa.
+
+El renderer usa ZoneInfo de Buenos Aires. El controller Alpine mínimo no
+incluía la base IANA y el entorno local sí: al retirar su TZPATH se reproduce
+ZoneInfoNotFoundError en la creación de la fixture, antes del navegador.
+También existe un uso previo de ZoneInfo en el monitor privado. Se incorpora
+`tzdata=2026f-r0` del [repositorio oficial Alpine v3.24/main](https://pkgs.alpinelinux.org/package/v3.24/main/x86_64/tzdata),
+manteniendo el pin krb5 y la imagen base. Una comprobación como UID10001 exige
+la conversión real a ART durante el build. No se reemplaza la zona IANA por
+una hora fija ni se oculta la excepción. [Contrato de datos de Python](https://docs.python.org/3.12/library/zoneinfo.html#data-sources).
+
+El runner visual ahora publica sólo fase, razón y tipo de error de listas
+cerradas. Nunca registra contenido de excepción, fixture o browser. Sus cuatro
+regresiones diagnósticas pasan y el CLI reproduce `fixture_render` /
+`timezone_unavailable` sin stdout cuando falta la zona. La corrección de la
+imagen aún requiere el build y el recorrido Chromium del nuevo SHA.
+
+El [primer diagnóstico full3](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43665183283)
+observó los tres bundles presentes y Chromium PASS, pero Firefox terminó en
+goto y WebKit falló por una biblioteca en launch. La incidencia histórica #402
+había quedado diferida; presencia de ejecutable no es prueba de arranque.
+El diagnóstico manual existente se amplía sólo para identificar categorías
+técnicas y bibliotecas de una lista cerrada, sin publicar stderr ni alterar
+caps, sandbox, red o dependencias. No se restauran paquetes GStreamer
+vulnerables. Los resultados nuevos deben registrarse antes de afirmar
+disponibilidad de los tres motores de navegador.

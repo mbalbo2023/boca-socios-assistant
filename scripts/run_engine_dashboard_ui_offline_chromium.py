@@ -58,6 +58,84 @@ _MAX_FIXTURE = 160_000
 _MAX_CAPTURE = 6_000_000
 _MAX_PNG = 2_000_000
 _MAX_HEIGHT = 12_000
+_FAILURE_PHASES = frozenset(
+    {
+        "arguments",
+        "fixture_render",
+        "fixture_read",
+        "browser_proof",
+        "capture_encode",
+        "capture_read",
+        "artifact_verify",
+    }
+)
+_FAILURE_TYPES = frozenset(
+    {
+        "AssertionError",
+        "AttributeError",
+        "Error",
+        "FileNotFoundError",
+        "ImportError",
+        "JSONDecodeError",
+        "KeyError",
+        "ModuleNotFoundError",
+        "OSError",
+        "PermissionError",
+        "RuntimeError",
+        "TimeoutError",
+        "TypeError",
+        "ValueError",
+        "ZoneInfoNotFoundError",
+    }
+)
+_FAILURE_REASONS = frozenset(
+    {
+        "accessible_layout_unverified",
+        "candidate_source_unverified",
+        "duplicate_json_field",
+        "existing_session_replaced",
+        "explicit_offline_mode_required",
+        "independent_stop_fence_unverified",
+        "independent_stop_projection_unverified",
+        "initial_session_unverified",
+        "initial_start_unverified",
+        "live_snapshot_projection_unverified",
+        "native_form_unverified",
+        "offline_browser_evidence_unverified",
+        "offline_browser_identity_unverified",
+        "offline_capture_too_large",
+        "offline_capture_unverified",
+        "offline_document_changed",
+        "offline_file_unverified",
+        "offline_fixture_unverified",
+        "offline_network_namespace_unverified",
+        "offline_operation_unverified",
+        "offline_viewport_unverified",
+        "private_metadata_projection_unverified",
+        "required_member_unverified",
+        "running_start_unverified",
+        "running_stop_unverified",
+        "screenshot_unverified",
+    }
+)
+
+
+def _failure_report(phase: str, error: Exception) -> str:
+    """Emit only closed categories, never exception/browser/fixture contents."""
+    safe_phase = phase if phase in _FAILURE_PHASES else "unknown"
+    error_type = type(error).__name__
+    safe_type = error_type if error_type in _FAILURE_TYPES else "UNKNOWN"
+    reason = "offline_proof_failed"
+    if safe_type == "ZoneInfoNotFoundError":
+        reason = "timezone_unavailable"
+    elif type(error) in {ValueError, RuntimeError} and len(error.args) == 1:
+        candidate = error.args[0]
+        if type(candidate) is str and candidate in _FAILURE_REASONS:
+            reason = candidate
+    return (
+        f"BOCA_ENGINE_UI_OFFLINE state=NO_GO phase={safe_phase} "
+        f"reason={reason} error_type={safe_type}"
+    )
 
 
 def _identity(number: int) -> str:
@@ -665,26 +743,35 @@ def _read(path: Path, maximum: int) -> Any:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    phase = "arguments"
     try:
         if len(argv) == 2 and argv[0] == "--make-fixture":
+            phase = "fixture_render"
             sys.stdout.buffer.write(_json(make_fixture(argv[1])) + b"\n")
         elif len(argv) == 3 and argv[0] == "--run-offline-fixture":
+            phase = "fixture_read"
             fixture = validate_fixture(_read(Path(argv[1]), _MAX_FIXTURE), argv[2])
+            phase = "browser_proof"
             capture = asyncio.run(asyncio.wait_for(run_offline(fixture, argv[2]), timeout=75))
+            phase = "capture_encode"
             raw = _json(capture)
             if len(raw) > _MAX_CAPTURE:
                 raise ValueError("offline_capture_too_large")
             sys.stdout.buffer.write(raw + b"\n")
         elif len(argv) == 5 and argv[0] == "--verify-capture":
+            phase = "fixture_read"
             fixture = validate_fixture(_read(Path(argv[2]), _MAX_FIXTURE), argv[3])
-            write_artifacts(_read(Path(argv[1]), _MAX_CAPTURE), fixture, argv[3], Path(argv[4]))
+            phase = "capture_read"
+            capture = _read(Path(argv[1]), _MAX_CAPTURE)
+            phase = "artifact_verify"
+            write_artifacts(capture, fixture, argv[3], Path(argv[4]))
             print(
                 f"BOCA_ENGINE_UI_OFFLINE state=PASS source_sha={argv[3]} viewports=2 network=none host=UNTOUCHED device=UNVERIFIED"
             )
         else:
             raise ValueError("explicit_offline_mode_required")
-    except Exception:
-        print("BOCA_ENGINE_UI_OFFLINE state=NO_GO reason=offline_proof_failed", file=sys.stderr)
+    except Exception as error:
+        print(_failure_report(phase, error), file=sys.stderr)
         return 1
     return 0
 
