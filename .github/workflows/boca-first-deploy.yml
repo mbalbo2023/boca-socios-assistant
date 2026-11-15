@@ -572,9 +572,30 @@ jobs:
                 test -z "$unexpected"
               done
               ;;
-            boca-binding-observe|boca-telegram-incident-observe)
-              if [[ "$BOCA_OPERATION" = boca-telegram-incident-observe ]]; then test "$GITHUB_TRIGGERING_ACTOR" = mbalbo2023; fi
+            boca-binding-observe)
               # Systemd owner binder status only, with no writes or caller CIDs.
+              test "$BOCA_HOST_READONLY_ENV_READY" = ready
+              test "$BOCA_DEPLOY_ENV_READY" = ready
+              test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"
+              test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
+              for unexpected in \
+                "$BOCA_SOURCE_SHA_SUBMITTED" "$BOCA_PROTECTED_ACTION_CONTEXT" \
+                "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" "$BOCA_RELEASE_RUN_ID" \
+                "$BOCA_LEGACY_SOURCE_SHA" "$BOCA_LEGACY_IMAGE_REF" \
+                "$BOCA_LEGACY_RELEASE_RUN_ID" "$BOCA_LEGACY_CONTROLLER_ID" \
+                "$BOCA_SITE_ENVELOPE" "$BOCA_TELEGRAM_ENVELOPE" \
+                "$BOCA_OWNER_ENVELOPE" "$BOCA_OWNER_CAPABILITY_SHA256" \
+                "$BOCA_FAILED_TELEGRAM_RUN_ID" "$BOCA_OFFICIAL_CONTROLLER_ID" \
+                "$BOCA_OFFICIAL_NEWS_RUN_ID" "$BOCA_OFFICIAL_NEWS_SOURCE_SHA" \
+                "$BOCA_OFFICIAL_NEWS_ARTIFACT_ID" "$BOCA_OFFICIAL_NEWS_ZIP_SHA256" \
+                "$BOCA_OFFICIAL_NEWS_JSONL_SHA256" "$BOCA_OFFICIAL_NEWS_HTML_SHA256" \
+                "$BOCA_OFFICIAL_NEWS_OBSERVED_AT_UTC"; do
+                test -z "$unexpected"
+              done
+              ;;
+            boca-telegram-incident-observe)
+              test "$GITHUB_TRIGGERING_ACTOR" = mbalbo2023
+              # Fixed incident observation; no caller coordinates or writes.
               test "$BOCA_HOST_READONLY_ENV_READY" = ready
               test "$BOCA_DEPLOY_ENV_READY" = ready
               test "$BOCA_SOURCE_SHA" = "$GITHUB_SHA"
