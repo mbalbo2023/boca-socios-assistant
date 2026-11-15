@@ -628,6 +628,22 @@
       "regression_tests": [
         "tests/test_main_ref_gate.py::test_installed_telegram_main_guard_uses_clean_step_environment"
       ]
+    },
+    {
+      "id": "RCA-520",
+      "issue": 520,
+      "fix_pr": 520,
+      "root_cause": "The installed Telegram backend required schema 0007, but migration still used legacy source==main and stopped-daemon routing. The primitive existed in the installed image; its maintenance wiring and exact-writer retirement fence were missing.",
+      "prevention": "Route explicit migration through the installed two-SHA lease, attest the existing-image helper by CID and confirm writer removal before restore. Verify schema after healthy restoration; preserve primary and cleanup failures without implicit retry or prepare-time DDL.",
+      "regression_tests": [
+        "tests/test_browser_ipc_workflow.py::test_telegram_migrate_routes_only_through_installed_transaction",
+        "tests/test_r296_telegram_maintenance.py::test_installed_migration_uses_existing_image_cli_and_exact_boundary",
+        "tests/test_r296_telegram_maintenance.py::test_installed_migration_adds_only_seven_and_is_idempotent",
+        "tests/test_r296_telegram_maintenance.py::test_installed_migration_uncertain_helper_blocks_restore",
+        "tests/test_r296_telegram_backend.py::test_installed_migration_backend_fences_and_final_readonly_probe",
+        "tests/test_r296_telegram_backend.py::test_migration_receipt_requires_schema_ready_restored_sender_off",
+        "tests/test_r296_telegram_installed_bundle.py::test_isolated_archive_executes_migration_with_distinct_workflow_source"
+      ]
     }
   ]
 }

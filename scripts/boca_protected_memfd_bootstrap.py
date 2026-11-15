@@ -561,6 +561,7 @@ def main() -> int:
             "cutover-worker-834-recover",
         }
         telegram_installed = sys.argv[2] in {
+            "telegram-migrate",
             "telegram-prepare",
             "telegram-activate",
             "telegram-sender-recover",

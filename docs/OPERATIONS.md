@@ -1,6 +1,31 @@
 # Safe operations — verified evidence and gated procedures
 
-## R299 — continuidad Telegram, 2026-11-15
+## R300 — esquema Telegram del par instalado, 2026-11-15
+
+Producto M `5281efae7dafe89be047073796b3e0a7e19785ed`, release866
+`43680526402`, APPLY1134/cleanup ACCEPT, ADMIN1135 PROVISIONED y STATUS1138
+HEALTHY/STOPPED se conservan. Main base O
+`f16db1008418889ffdd9b35a57bf77f1238ec659` integra PR519; sus gates pasaron.
+
+[TG1142](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43688683723)
+attempt1 emitió SCHEMA_0007_REQUIRED/NOT_NEEDED/OFF. El helper readonly verificó
+baseline exacto sin0007; no se llegó a stop ni provisión. No hay PREPARED.
+El [RCA520](https://github.com/mbalbo2023/boca-socios-assistant/issues/520)
+y [plan R300](superpowers/plans/2026-11-15-r300-installed-telegram-schema.md)
+conectan la migración explícita al backend instalado. El selector legacy previo
+es NO_GO con W distinto de M y daemon activo; no forzar sus precondiciones.
+
+Tras revisión y gates del main definitivo: una acción telegram-migrate con
+M/digests/release866. Helper del CLI instalado, único data RW, red none,
+UID10001, .25CPU/64MiB/16PID; misma lease y CID exacto. Sin retirada confirmada
+del escritor no restaurar. Si se retira, restaurar controller saludable y motor
+OFF aun ante fallo primario, conservando NO_GO. Verificar0007 readonly después.
+Aceptar sólo recibo estricto SCHEMA_READY/CONTROLLER_HEALTHY_ENGINE_OFF/OFF.
+Luego prepare requiere su propio PREPARED válido. Un fallo se clasifica antes
+de otra operación. No repetir release/APPLY/admin/STATUS, no envío/activación,
+no backup anunciado; conservar base, claves, volúmenes y recursos ajenos.
+
+## Histórico — R299, continuidad Telegram, 2026-11-15
 
 Instalado M `5281efae7dafe89be047073796b3e0a7e19785ed`, release866
 `43680526402`; APPLY1134 ACCEPTED/cleanup ACCEPT y ADMIN1135 PROVISIONED.

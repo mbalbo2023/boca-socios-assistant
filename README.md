@@ -1,6 +1,22 @@
 # Boca Socios Assistant
 
-## R299 — BETA instalada y estado verificado; preparación Telegram pendiente
+## R300 — BETA instalada; mantenimiento del esquema de Telegram
+
+La BETA R297/PR517 está instalada desde
+`5281efae7dafe89be047073796b3e0a7e19785ed`, release866: APPLY1134 y limpieza
+aceptados, ADMIN1135 provisionado y STATUS1138 HEALTHY/STOPPED. Main O
+`f16db1008418889ffdd9b35a57bf77f1238ec659` integra el mantenimiento PR519,
+con CI1262 y Security1086 aprobados; no cambió las imágenes instaladas.
+
+[Telegram1142](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43688683723)
+respondió SCHEMA_0007_REQUIRED, con emisor OFF y sin detener el panel.
+[R300](docs/superpowers/plans/2026-11-15-r300-installed-telegram-schema.md)
+conecta la migración ya existente al mantenimiento instalado y su restauración
+verificada. Todavía no acredita PREPARED, emparejamiento ni entrega Telegram.
+No se repite la promoción. El [estado completo](docs/BETA_INTEGRATION_STATUS.md)
+separa funciones instaladas, faltantes de integración y aceptación física.
+
+## Histórico — R299, BETA instalada y estado verificado; preparación Telegram pendiente
 
 PR517/R297 está instalado desde `5281efae7dafe89be047073796b3e0a7e19785ed`,
 release866: APPLY1134 ACCEPTED/cleanup ACCEPT y ADMIN1135 PROVISIONED.

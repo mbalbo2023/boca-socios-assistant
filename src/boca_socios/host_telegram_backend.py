@@ -43,9 +43,85 @@ class TelegramBackendReceipt:
 
 
 class TelegramBackendError(ValueError):
-    def __init__(self, receipt: TelegramBackendReceipt):
+    def __init__(
+        self,
+        receipt: TelegramBackendReceipt,
+        *,
+        primary_error: Exception | None = None,
+        cleanup_error: Exception | None = None,
+    ):
         self.receipt = receipt
+        self.primary_error = primary_error
+        self.cleanup_error = cleanup_error
         super().__init__("telegram_protected_transaction_failed")
+
+
+def migrate_installed_telegram(
+    attempt_id: str,
+    *,
+    lease: BocaJobLease,
+    reader: LifecycleDockerIO | None = None,
+    expected_source_sha: str,
+    workflow_sha: str,
+) -> TelegramBackendReceipt:
+    """Add the installed schema without provisioning or publishing Telegram state."""
+    context = resolve_installed_context(
+        attempt_id,
+        lease=lease,
+        reader=reader,
+        expected_source_sha=expected_source_sha,
+        workflow_sha=workflow_sha,
+    )
+    storage = InstalledMaintenance(context)
+    stopped = False
+    state = "FAILED_STATE_PRESERVED"
+    restoration = "NOT_NEEDED"
+    primary_error: Exception | None = None
+    cleanup_error: Exception | None = None
+    try:
+        schema = storage.call("verify-schema", {})
+        if schema not in ({"schema": 7}, {"prerequisite": "SCHEMA_0007_REQUIRED"}):
+            raise ValueError("schema_unverified")
+        context.healthy()
+        if context.installation.pair.sender_running:
+            raise ValueError("sender_must_be_off")
+        stopped = True  # lost stop ACK still requires exact-controller restoration
+        context.stop()
+        context.stopped()
+        if storage.call("migrate-schema", {}) != {"schema": 7}:
+            raise ValueError("migration_unverified")
+    except Exception as error:
+        primary_error = getattr(error, "primary_error", error)
+        cleanup_error = getattr(error, "cleanup_error", None)
+    finally:
+        if stopped:
+            if not storage.migration_helper_retired:
+                state, restoration = "CLEANUP_INDETERMINATE", "INDETERMINATE"
+            else:
+                try:
+                    context.restore()
+                    restoration = "CONTROLLER_HEALTHY_ENGINE_OFF"
+                except Exception as error:
+                    cleanup_error = error
+                    restoration = "INDETERMINATE"
+    if (
+        primary_error is None
+        and cleanup_error is None
+        and restoration == "CONTROLLER_HEALTHY_ENGINE_OFF"
+    ):
+        try:
+            context.healthy()
+            if storage.call("verify-schema", {}) != {"schema": 7}:
+                raise ValueError("schema_postverify_unverified")
+            state = "SCHEMA_READY"
+        except Exception as error:
+            primary_error = error
+    receipt = TelegramBackendReceipt("migrate", attempt_id, expected_source_sha, state, restoration)
+    if state != "SCHEMA_READY":
+        raise TelegramBackendError(
+            receipt, primary_error=primary_error, cleanup_error=cleanup_error
+        )
+    return receipt
 
 
 def _execute(
@@ -336,7 +412,7 @@ def verify_backend_receipt(
         if (
             type(raw) is not bytes
             or not 0 < len(raw) <= 1024
-            or operation not in {"prepare", "activate", "recover", "renew", "complete"}
+            or operation not in {"prepare", "activate", "recover", "renew", "complete", "migrate"}
         ):
             raise ValueError("frame")
         raw = raw.removesuffix(b"\n")
@@ -374,6 +450,7 @@ def verify_backend_receipt(
                 "recover": "RECOVERED",
                 "renew": "STAGE_ARCHIVED",
                 "complete": "READY",
+                "migrate": "SCHEMA_READY",
             }[operation]
             and value["restoration"] == "CONTROLLER_HEALTHY_ENGINE_OFF"
             and value["sender_state"]
@@ -383,6 +460,7 @@ def verify_backend_receipt(
                 "recover": {"OFF", "VERIFIED"},
                 "renew": {"OFF"},
                 "complete": {"VERIFIED"},
+                "migrate": {"OFF"},
             }[operation]
         )
         failure = (
@@ -394,7 +472,7 @@ def verify_backend_receipt(
             and value["sender_state"]
             in (
                 {"OFF", "UNVERIFIED"}
-                if operation in {"prepare", "renew"}
+                if operation in {"prepare", "renew", "migrate"}
                 else {"OFF", "VERIFIED", "UNVERIFIED"}
             )
         )

@@ -247,3 +247,109 @@ def test_runner_receipt_verification_is_bounded_correlated_and_has_no_host_effec
     ):
         refused = run(packed, *args, payload=invalid)
         assert refused.returncode == 2 and not refused.stderr
+
+
+@pytest.mark.parametrize("interrupt", [False, True])
+def test_isolated_archive_executes_migration_with_distinct_workflow_source(packed, interrupt):
+    program = r"""
+import sys, signal, os, subprocess
+from contextlib import contextmanager
+from types import SimpleNamespace
+sys.path.insert(0, sys.argv[1])
+from boca_socios import host_boca_cleanup as cleanup, host_telegram_backend as backend
+from boca_socios import host_telegram_maintenance as maintenance
+from boca_socios.host_telegram_cli import main
+M, W, CID = 'a' * 40, 'b' * 40, 'c' * 64
+IMAGE = 'ghcr.io/mbalbo2023/boca-socios-assistant@sha256:' + 'd' * 64
+VOLUME = 'boca-socios_boca_data'
+PATH = '/home/boca-deploy/.local/share/docker/volumes/' + VOLUME + '/_data'
+events, exists = [], False
+record = {
+    'Id': CID, 'Name': '',
+    'Config': {'Image': IMAGE, 'User': '10001:10001', 'Cmd': ['python', '-m', 'boca_socios.telegram_storage_gate', 'migrate'], 'Labels': {'com.docker.compose.project': 'boca-socios'}},
+    'HostConfig': {'NetworkMode': 'none', 'ReadonlyRootfs': True, 'Privileged': False, 'LogConfig': {'Type': 'none'}, 'CapDrop': ['ALL'], 'CapAdd': None, 'PidsLimit': 16, 'Memory': 67108864, 'NanoCpus': 250000000, 'PublishAllPorts': False, 'PortBindings': {}, 'RestartPolicy': {'Name': 'no'}, 'SecurityOpt': ['no-new-privileges']},
+    'Mounts': [{'Type': 'volume', 'Name': VOLUME, 'Source': PATH, 'Destination': '/data', 'RW': True, 'Driver': 'local'}],
+    'NetworkSettings': {'Networks': {'none': {}}}, 'State': {'Restarting': False, 'Running': False, 'ExitCode': 0},
+}
+class Context:
+    attempt_id = '123'
+    installation = SimpleNamespace(pair=SimpleNamespace(sender_running=False), controller_image=IMAGE)
+    volumes = ((VOLUME, PATH),)
+    reader = SimpleNamespace(inventory=lambda: SimpleNamespace(containers=[SimpleNamespace(ident=CID)] if exists else []))
+    def check_binding(self): pass
+    def healthy(self): events.append('healthy')
+    def stop(self): events.append('stop')
+    def stopped(self): pass
+    def restore(self):
+        assert not exists, 'writer must be positively removed before restore'
+        events.append('restore')
+class Storage(maintenance.InstalledMaintenance):
+    def call(self, operation, request):
+        if operation == 'verify-schema':
+            events.append('verify-schema')
+            return {'schema': 7} if 'restore' in events else {'prerequisite': 'SCHEMA_0007_REQUIRED'}
+        return super().call(operation, request)
+def docker(*args):
+    global exists
+    if args[0] == 'create':
+        assert args[-5:] == (IMAGE, 'python', '-m', 'boca_socios.telegram_storage_gate', 'migrate')
+        assert '--rm' not in args and args[args.index('--log-driver') + 1] == 'none'
+        record['Name'] = '/' + args[args.index('--name') + 1]
+        events.append('create')
+        exists = True
+    elif args[0] == 'stop':
+        assert args[-1] == CID
+        record['State']['Running'] = False
+        events.append('helper-stop')
+    elif args[0] == 'rm':
+        assert args == ('rm', CID)
+        exists = False
+        events.append('remove')
+    else: raise AssertionError('unexpected Docker effect')
+    return CID
+def start(argv, **kwargs):
+    assert argv[-1] == CID and kwargs['input'] == b'{}'
+    events.append('start')
+    if sys.argv[2] == 'interrupt':
+        record['State']['Running'] = True
+        os.kill(os.getpid(), signal.SIGTERM)
+    return subprocess.CompletedProcess(argv, 0, b'BOCA_TELEGRAM_STORAGE state=MIGRATED schema=0007\n', b'')
+def resolve(attempt, **kwargs):
+    assert attempt == '123' and kwargs['expected_source_sha'] == M and kwargs['workflow_sha'] == W
+    return Context()
+@contextmanager
+def lease(attempt):
+    events.append('lease-enter')
+    yield object()
+    events.append('lease-exit')
+backend.resolve_installed_context = resolve
+backend.InstalledMaintenance = Storage
+cleanup._docker = docker
+maintenance._inspect = lambda ident: record
+maintenance.subprocess.run = start
+cleanup.protected_boca_job_lease = lease
+status = main(['telegram-migrate', M, W, '123'])
+assert status == (3 if sys.argv[2] == 'interrupt' else 0), status
+assert events == (['lease-enter', 'verify-schema', 'healthy', 'stop', 'create', 'start', 'helper-stop', 'remove', 'restore'] if status else ['lease-enter', 'verify-schema', 'healthy', 'stop', 'create', 'start', 'remove', 'restore', 'healthy', 'verify-schema', 'lease-exit']), events
+assert 'cryptography' not in sys.modules
+"""
+    result = subprocess.run(  # noqa: S603 - isolated ZIP and synthetic Docker IO
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-B",
+            "-c",
+            program,
+            str(packed),
+            "interrupt" if interrupt else "normal",
+        ],
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (
+        b'"state":"FAILED_STATE_PRESERVED"' if interrupt else b'"state":"SCHEMA_READY"'
+    ) in result.stdout
+    assert b'"sender_state":"OFF"' in result.stdout and not result.stderr

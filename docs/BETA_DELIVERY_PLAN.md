@@ -1,6 +1,26 @@
 # Plan de entrega y aceptación de la BETA funcional
 
-## R299 — terminar la preparación de Telegram sobre la BETA instalada
+## R300 — completar el esquema de Telegram sobre el par existente
+
+R297/release866/APPLY1134, ADMIN1135 y STATUS1138 permanecen aceptados.
+PR519 se integró en main O `f16db1008418889ffdd9b35a57bf77f1238ec659`,
+con CI1262/Security1086 SUCCESS; el producto instalado sigue siendo M
+`5281efae7dafe89be047073796b3e0a7e19785ed`.
+
+TG1142 superó el defecto del runner y devolvió SCHEMA_0007_REQUIRED: falta la
+migración aditiva explícita. El selector histórico no sirve a W distinto de M
+y al panel en ejecución. El [plan R300](superpowers/plans/2026-11-15-r300-installed-telegram-schema.md)
+reutiliza su CLI instalado mediante el backend de lease única. No se reescribe
+SQL ni se realiza otra release/APPLY. Retirada confirmada del helper escritor,
+restauración HEALTHY_ENGINE_OFF y verificación0007 preceden SCHEMA_READY.
+
+Secuencia pendiente: delta focal, revisión de cuatro disciplinas, CI/merge/main,
+una migración protegida y después prepare. No activar sender ni enviar mensajes.
+El cierre del objetivo completo sigue requiriendo la integración de resultado,
+ganador/captura/aviso y las evidencias de proveedor, destinatario y capacidad50;
+este mantenimiento no las sustituye ni convierte simulaciones en entradas.
+
+## Histórico — R299, terminar la preparación de Telegram sobre la BETA instalada
 
 La promoción única R297/release866 y ADMIN1135 están aceptados. R298/PR518
 resolvió el lector; [STATUS1138](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43684726506)
