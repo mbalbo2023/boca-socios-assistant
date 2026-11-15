@@ -1400,13 +1400,16 @@ def test_renderer_timezone_failure_reports_its_phase_without_exception_contents(
 def test_browser_assertion_reports_only_its_allowlisted_reason(monkeypatch, tmp_path, capsys):
     module = _module()
     fixture = tmp_path / "fixture.json"
-    fixture.write_text(json.dumps(module.make_fixture(SOURCE_SHA)))
+    fixture.write_bytes(module._json(module.make_fixture(SOURCE_SHA)) + b"\n")
+    browser_sources = []
 
     async def rejected(_fixture, _source):
+        browser_sources.append(_source)
         raise RuntimeError("required_member_unverified")
 
     monkeypatch.setattr(module, "run_offline", rejected)
     assert module.main(["--run-offline-fixture", str(fixture), SOURCE_SHA]) == 1
+    assert browser_sources == [SOURCE_SHA]
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == (

@@ -677,6 +677,16 @@
         "tests/test_r296_telegram_backend.py::test_schema_observation_does_not_relax_other_success_restoration",
         "tests/test_r296_telegram_installed_bundle.py::test_isolated_archive_observes_schema_with_readonly_helper_and_one_lease"
       ]
+    },
+    {
+      "id": "RCA-523",
+      "issue": 523,
+      "fix_pr": 521,
+      "root_cause": "A browser-error diagnostic test wrote default JSON instead of the real CLI encoding. Its 163325-byte file exceeded the unchanged 160000-byte cap, so fixture_read failed before the intended browser-proof stub.",
+      "prevention": "Write fixtures with the existing CLI serializer and terminal LF; prove the intended stub is reached exactly once. Preserve the exact sanitized-error assertion, original fixture data and size cap; do not reduce payload or raise limits to satisfy the test.",
+      "regression_tests": [
+        "tests/test_engine_dashboard_ui_offline.py::test_browser_assertion_reports_only_its_allowlisted_reason"
+      ]
     }
   ]
 }

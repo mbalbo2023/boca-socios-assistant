@@ -188,3 +188,29 @@ Usar el entorno congelado autorizado: `PYTHONPATH=$PWD/src /workspace/scratch/0b
 No existe bloqueo de proveedor para implementar esta proyección y el último intento local. Hay límites de evidencia, declarados: último intento y última observación por sesión, no archivo de todos los tokens; una respuesta IPC fallida puede impedir recibir el diagnóstico local; los tokens sólo se revelan deliberadamente; ausencia de datos no significa ausencia de evento. La cuenta regresiva, DOM autenticado, reserva/entrada, cancelación por ganador, fotografía y aviso al socio quedan fuera y pendientes. Tampoco se certifican cincuenta sesiones físicas.
 
 Self-review: los tres requerimientos de monitor tienen tarea; tipos/nombres coinciden entre contrato y tareas; los cinco riesgos de revisión tienen un caso asignado; no se duplica polling/reveal ni se amplían permisos del fallback. Este archivo es el único entregable escrito por Arquitectura. No se ejecutaron pruebas ni se modificó producto, GitHub o host para prepararlo.
+
+## Incidente de validación CI1266 — fixture de diagnóstico
+
+El head `73288d5e2cb0423d433ab6f5bc982b02d7e89d24` pasó formato, tipos,
+contratos y construcción de imágenes. Su suite obtuvo 9563 pruebas y 34
+subtests aprobados, con un único fallo en
+`test_browser_assertion_reports_only_its_allowlisted_reason`. El fallo y el
+alcance de la corrección se registraron en
+[#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6892201591)
+antes de modificar la prueba.
+
+La preparación de ese test escribía `json.dumps` por defecto: 163325 bytes,
+por encima del límite de 160000. El serializer real del CLI produce 159220
+bytes, o 159221 con el salto final emitido por `--make-fixture`; ambos JSON
+representan exactamente los mismos datos. El lector rechazaba el tamaño antes
+de llegar al stub de `run_offline`, por lo que la prueba comprobaba otra fase.
+
+La corrección queda limitada al setup de ese selector en
+`tests/test_engine_dashboard_ui_offline.py`: escribir los bytes del serializer
+real y afirmar que el stub previsto fue alcanzado. Conservar la aserción
+exacta del diagnóstico saneado, los datos, el cap, el producto y el ZIP.
+Reproducir únicamente ese caso RED y luego GREEN; no repetir la suite local
+ni el navegador real. RCA-523 retiene el selector como regresión ejecutable; RCA-521 se conserva
+íntegra con sus ocho selectores anteriores.
+Los tres revisores independientes deben verificar el delta y raíz completar
+el cuarto voto antes de publicar el nuevo head del mismo PR521.
