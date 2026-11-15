@@ -225,3 +225,16 @@ def test_existing_security_workflow_scans_browser_as_strictly_as_controller() ->
     assert workflow.count("run: bash scripts/trivy_scan_image.sh") == 2
     browser_scan = workflow.split("- name: Scan browser OS and library vulnerabilities\n", 1)[1]
     assert 'run: bash scripts/trivy_scan_image.sh "boca-browser-scan:$GITHUB_SHA"' in browser_scan
+
+
+def test_exact_pebble_removal_follows_installs_and_precedes_browser_source() -> None:
+    """Later dependency installation must not restore the inherited supervisor."""
+    text = (Path(__file__).resolve().parents[1] / "Dockerfile.browser").read_text(encoding="utf-8")
+    cleanup = text.index("RUN /usr/bin/python3 -I -c ")
+    for install in ("apt-get install", "-m pip install", "uv sync", "-m playwright install"):
+        assert text.rindex(install) < cleanup
+    assert cleanup < text.index("COPY src/boca_socios/browser/")
+    assert cleanup < text.index("USER 10002:10002")
+    final_check = text.split("USER 10002:10002", 1)[1]
+    assert 'assert shutil.which("pebble") is None' in final_check
+    assert 'Path("/usr/bin/pebble"), Path("/bin/pebble")' in final_check

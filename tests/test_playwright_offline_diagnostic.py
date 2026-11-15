@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
+import tempfile
 import textwrap
 from collections.abc import Callable
 from pathlib import Path
@@ -12,6 +14,7 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from scripts import measure_browser_budget as budget
 
 WORKFLOW = (
     Path(__file__).resolve().parents[1] / ".github/workflows/boca-playwright-offline-diagnostic.yml"
@@ -32,10 +35,256 @@ def _definitions(*names: str) -> dict[str, object]:
     ]
     assert len(definitions) == len(names), "execute only the requested actual probe functions"
     module = ast.Module(body=definitions, type_ignores=[])
-    namespace: dict[str, object] = {"re": re}
+    namespace: dict[str, object] = {"re": re, "os": os, "budget": budget}
     # No Playwright import or workflow main body is executed.
     exec(compile(module, str(WORKFLOW), "exec"), namespace)  # noqa: S102
     return namespace
+
+
+def _passive_namespace(root: Path) -> dict[str, object]:
+    namespace = _definitions(
+        "failure_details",
+        "resource_snapshot",
+        "resource_deltas",
+        "stderr_snapshot",
+        "late_stderr_details",
+        "probe_engine",
+    )
+    namespace["budget"] = SimpleNamespace(
+        CGROUP=root,
+        UNKNOWN=budget.UNKNOWN,
+        MAX_COUNTER=budget.MAX_COUNTER,
+        COUNTER_FILES=budget.COUNTER_FILES,
+        CPU_FIELDS=budget.CPU_FIELDS,
+        read_counters=budget.read_counters,
+        _bounded_text=budget._bounded_text,
+        _counter=budget._counter,
+    )
+    return namespace
+
+
+def _cgroup_fixture(root: Path) -> None:
+    for name, value in {
+        "memory.current": "100",
+        "memory.peak": "150",
+        "memory.max": "805306368",
+        "pids.current": "2",
+        "pids.peak": "3",
+        "pids.max": "128",
+        "cpu.max": "100000 100000",
+        "cpu.stat": "usage_usec 8\nuser_usec 5\nsystem_usec 3\nnr_periods 4\n"
+        "nr_throttled 1\nthrottled_usec 2\n",
+        "memory.events": "max 1\noom 2\noom_kill 3\noom_group_kill 4\n",
+        "pids.events": "max 5\n",
+    }.items():
+        (root / name).write_text(value, encoding="ascii")
+
+
+def test_passive_resources_read_actual_bounded_files_and_only_three_mounts(tmp_path):
+    namespace = _passive_namespace(tmp_path)
+    _cgroup_fixture(tmp_path)
+    paths = []
+
+    def statvfs(path):
+        paths.append(path)
+        return SimpleNamespace(f_frsize=1024, f_blocks=8, f_bavail=3, f_favail=7)
+
+    namespace["os"] = SimpleNamespace(statvfs=statvfs)
+    result = namespace["resource_snapshot"]()
+    assert result["memory_current_bytes"] == 100
+    assert result["memory_peak_bytes"] == 150
+    assert result["pids_current"] == 2
+    assert result["pids_peak"] == 3
+    assert result["cpu_usage_usec"] == 8
+    assert result["memory_max_bytes"] == 805306368
+    assert result["pids_max"] == 128
+    assert result["cpu_quota_usec"] == result["cpu_period_usec"] == 100000
+    assert result["memory_events_max"] == 1
+    assert result["memory_events_oom"] == 2
+    assert result["memory_events_oom_kill"] == 3
+    assert result["memory_events_oom_group_kill"] == 4
+    assert result["pids_events_max"] == 5
+    metadata = tmp_path.stat()
+    assert result["_cgroup_identity"] == (metadata.st_dev, metadata.st_ino)
+    # These fixed paths reach only the inert, read-only statvfs boundary.
+    assert paths == ["/tmp", "/dev/shm", "/home/boca-browser"]  # noqa: S108
+    for mount in ("tmp", "shm", "home"):
+        assert result[f"{mount}_capacity_bytes"] == 8192
+        assert result[f"{mount}_available_bytes"] == 3072
+        assert result[f"{mount}_available_inodes"] == 7
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"oom -1\n",
+        b"oom 9223372036854775808\n",
+        b"oom 2\noom 3\n",
+        b"oom 2 PRIVATE_FIXTURE_SECRET\n",
+        b"oom \xff\n",
+        b"x" * 4097,
+    ],
+)
+def test_passive_event_corruption_is_unknown_and_never_reflects_input(tmp_path, content):
+    namespace = _passive_namespace(tmp_path)
+    _cgroup_fixture(tmp_path)
+    (tmp_path / "memory.events").write_bytes(content)
+    namespace["os"] = SimpleNamespace(
+        statvfs=lambda _path: SimpleNamespace(f_frsize=1024, f_blocks=8, f_bavail=3, f_favail=7)
+    )
+    result = namespace["resource_snapshot"]()
+    assert result["memory_events_oom"] == "UNKNOWN"
+    assert result["pids_events_max"] == 5
+    assert result["memory_current_bytes"] == 100
+    assert "private" not in json.dumps(result).lower()
+
+
+def test_passive_missing_counters_and_statvfs_failure_stay_unknown(tmp_path):
+    namespace = _passive_namespace(tmp_path)
+
+    def unavailable(_path):
+        raise OSError("PRIVATE_FIXTURE_SECRET")
+
+    namespace["os"] = SimpleNamespace(statvfs=unavailable)
+    result = namespace["resource_snapshot"]()
+    assert result and set(value for key, value in result.items() if key != "_cgroup_identity") == {
+        "UNKNOWN"
+    }
+    assert "private" not in json.dumps(result).lower()
+
+
+def test_passive_limits_and_mount_overflow_do_not_invent_zero(tmp_path):
+    namespace = _passive_namespace(tmp_path)
+    _cgroup_fixture(tmp_path)
+    (tmp_path / "memory.max").write_text("max", encoding="ascii")
+    (tmp_path / "cpu.max").write_text("max 100000", encoding="ascii")
+    namespace["os"] = SimpleNamespace(
+        statvfs=lambda _path: SimpleNamespace(
+            f_frsize=4096, f_blocks=2**63 - 1, f_bavail=-1, f_favail=2**63
+        )
+    )
+    result = namespace["resource_snapshot"]()
+    assert result["memory_max_bytes"] == result["cpu_quota_usec"] == "UNKNOWN"
+    assert result["cpu_period_usec"] == 100000
+    assert result["tmp_capacity_bytes"] == "UNKNOWN"
+    assert result["tmp_available_bytes"] == "UNKNOWN"
+    assert result["tmp_available_inodes"] == "UNKNOWN"
+
+
+def test_passive_event_deltas_require_two_monotonic_observations(tmp_path):
+    namespace = _passive_namespace(tmp_path)
+    result = namespace["resource_deltas"](
+        {
+            "_cgroup_identity": (8, 81),
+            "memory_events_max": 2,
+            "memory_events_oom": 0,
+            "memory_events_oom_kill": "UNKNOWN",
+            "memory_events_oom_group_kill": 7,
+            "pids_events_max": 4,
+            "PRIVATE_FIXTURE_SECRET": 0,
+            "memory_current_bytes": 100,
+        },
+        {
+            "_cgroup_identity": (8, 81),
+            "memory_events_max": 5,
+            "memory_events_oom": 0,
+            "memory_events_oom_kill": 1,
+            "memory_events_oom_group_kill": 6,
+            "pids_events_max": 9,
+            "PRIVATE_FIXTURE_SECRET": 1,
+            "memory_current_bytes": 50,
+        },
+    )
+    assert result == {
+        "memory_events_max": 3,
+        "memory_events_oom": 0,
+        "memory_events_oom_kill": "UNKNOWN",
+        "memory_events_oom_group_kill": "UNKNOWN",
+        "pids_events_max": 5,
+    }
+
+
+@pytest.mark.parametrize("identity", [None, (8, 82)])
+def test_passive_event_deltas_reject_missing_or_changed_cgroup_identity(tmp_path, identity):
+    namespace = _passive_namespace(tmp_path)
+    result = namespace["resource_deltas"](
+        {"_cgroup_identity": (8, 81), "memory_events_max": 2},
+        {"_cgroup_identity": identity, "memory_events_max": 5},
+    )
+    assert result and set(result.values()) == {"UNKNOWN"}
+
+
+def test_stderr_snapshot_freezes_real_offset_and_late_reads_only_new_bytes(tmp_path):
+    namespace = _passive_namespace(tmp_path)
+    with tempfile.TemporaryFile() as stream:
+        original = b"Exiting due to channel error. PRIVATE_FIXTURE_SECRET\n"
+        stream.write(original)
+        stream.flush()
+        text, offset, metadata = namespace["stderr_snapshot"](stream.fileno())
+        assert text == original.decode()
+        assert offset == len(original)
+        assert metadata == {
+            "stderr_read": "observed",
+            "stderr_bytes": len(original),
+            "stderr_truncated": "false",
+        }
+        late = b"<process did exit: exitCode=-11, signal=SIGSEGV>\n"
+        stream.write(late)
+        stream.flush()
+        result = namespace["late_stderr_details"](stream.fileno(), offset)
+        assert result["late_stderr_read"] == "observed"
+        assert result["late_stderr_bytes"] == len(late)
+        assert result["late_stderr_truncated"] == "false"
+        assert result["late_exit_code"] == "-11"
+        assert result["late_markers"] == "sigsegv"
+        assert "channel_error" not in result["late_markers"]
+        assert "private" not in json.dumps(result).lower()
+
+
+def test_stderr_windows_are_bounded_and_truncated_absence_remains_unknown(tmp_path):
+    namespace = _passive_namespace(tmp_path)
+    with tempfile.TemporaryFile() as stream:
+        stream.write(b"x" * 65537)
+        stream.flush()
+        text, offset, metadata = namespace["stderr_snapshot"](stream.fileno())
+        assert len(text) == 65536 and offset == 65537
+        assert metadata["stderr_truncated"] == "true"
+        stream.write(b"SIGSEGV " + b"x" * 65537)
+        stream.flush()
+        result = namespace["late_stderr_details"](stream.fileno(), offset)
+        assert result["late_stderr_read"] == "observed"
+        assert result["late_stderr_truncated"] == "true"
+        assert result["late_markers"] == "UNKNOWN"
+        assert result["late_categories"] == "UNKNOWN"
+        assert result["late_exit_code"] == "UNKNOWN"
+        assert result["late_missing_library"] == "UNKNOWN"
+
+
+@pytest.mark.parametrize("offset", ["UNKNOWN", -1, True, 2**63])
+def test_late_stderr_unknown_or_invalid_offset_cannot_report_absence(tmp_path, offset):
+    namespace = _passive_namespace(tmp_path)
+    with tempfile.TemporaryFile() as stream:
+        result = namespace["late_stderr_details"](stream.fileno(), offset)
+    assert set(result.values()) == {"UNKNOWN"}
+
+
+def test_stderr_truncation_or_unavailable_descriptor_is_unknown(tmp_path):
+    namespace = _passive_namespace(tmp_path)
+    with tempfile.TemporaryFile() as stream:
+        stream.write(b"before")
+        stream.flush()
+        _text, offset, _metadata = namespace["stderr_snapshot"](stream.fileno())
+        stream.truncate(0)
+        result = namespace["late_stderr_details"](stream.fileno(), offset)
+        fd = stream.fileno()
+    assert set(result.values()) == {"UNKNOWN"}
+    text, offset, metadata = namespace["stderr_snapshot"](fd)
+    assert text == "" and offset == "UNKNOWN"
+    assert metadata == {
+        "stderr_read": "unavailable",
+        "stderr_bytes": "UNKNOWN",
+        "stderr_truncated": "UNKNOWN",
+    }
 
 
 @pytest.fixture
@@ -195,6 +444,8 @@ class _BrowserBoundary:
         self.disconnect_after_goto = disconnect_after_goto
         self.events: list[str] = []
         self.stderr = ""
+        self.stderr_stream = None
+        self.on_step = None
         self.connected = False
         self.context_options: dict[str, object] = {}
         self.launch_options: dict[str, object] = {}
@@ -252,26 +503,51 @@ class _BrowserBoundary:
 
     def step(self, phase):
         self.events.append(phase)
+        if self.on_step is not None:
+            self.on_step(phase)
         if phase in {"context_close", "browser_close", "driver_close"}:
             # A later cleanup exit or error must never replace the first snapshot.
-            self.stderr += "<process did exit: exitCode=0, signal=null> NS_ERROR_FILE_ACCESS_DENIED"
+            late = "<process did exit: exitCode=0, signal=null> NS_ERROR_FILE_ACCESS_DENIED"
+            self.stderr += late
+            if self.stderr_stream is not None:
+                self.stderr_stream.write(late.encode())
+                self.stderr_stream.flush()
         if phase in self.failures:
             raise self.error_type(
                 "Protocol error (Browser.newPage): NS_ERROR_FAILURE PRIVATE_FIXTURE_SECRET"
             )
 
-    def read_stderr(self):
-        self.events.append("read_stderr")
-        return self.stderr
+
+def _run_probe(namespace, boundary, name="firefox"):
+    namespace["sync_playwright"] = lambda: boundary.driver
+    with tempfile.TemporaryFile() as stream:
+        boundary.stderr_stream = stream
+        stream.write(boundary.stderr.encode())
+        stream.flush()
+
+        def read_stderr():
+            boundary.events.append("read_stderr")
+            return namespace["stderr_snapshot"](stream.fileno())
+
+        def read_late_stderr(offset):
+            boundary.events.append("read_late_stderr")
+            return namespace["late_stderr_details"](stream.fileno(), offset)
+
+        return namespace["probe_engine"](name, read_stderr, read_late_stderr)
 
 
 @pytest.fixture
-def probe():
-    namespace = _definitions("failure_details", "probe_engine")
+def probe(tmp_path):
+    namespace = _passive_namespace(tmp_path)
+    _cgroup_fixture(tmp_path)
+    namespace["os"] = SimpleNamespace(
+        fstat=os.fstat,
+        pread=os.pread,
+        statvfs=lambda _path: SimpleNamespace(f_frsize=1024, f_blocks=8, f_bavail=3, f_favail=7),
+    )
 
     def run(boundary, name="firefox"):
-        namespace["sync_playwright"] = lambda: boundary.driver
-        return namespace["probe_engine"](name, boundary.read_stderr)
+        return _run_probe(namespace, boundary, name)
 
     return run
 
@@ -280,7 +556,7 @@ def probe():
 def test_probe_requires_explicit_runtime_context_and_every_close_before_pass(probe, engine):
     boundary = _BrowserBoundary()
     result = probe(boundary, engine)
-    assert result == {
+    expected = {
         "state": "PASS",
         "phase": "complete",
         "reason": "none",
@@ -291,6 +567,9 @@ def test_probe_requires_explicit_runtime_context_and_every_close_before_pass(pro
         "browser_close": "closed",
         "driver_close": "closed",
     }
+    assert {key: result[key] for key in expected} == expected
+    assert result["before_memory_max_bytes"] == 805306368
+    assert not any(key.startswith(("failure_", "delta_", "late_")) for key in result)
     assert boundary.context_options == {
         "java_script_enabled": True,
         "service_workers": "block",
@@ -360,6 +639,9 @@ def test_first_failure_snapshot_precedes_cleanup_and_survives_every_close_error(
     assert result["context_close"] == result["browser_close"] == result["driver_close"] == "failed"
     assert boundary.events.index("read_stderr") < boundary.events.index("context_close")
     assert boundary.events.count("read_stderr") == 1
+    assert boundary.events.index("read_late_stderr") > boundary.events.index("driver_close")
+    assert result["late_exit_code"] == "0"
+    assert result["late_xpcom"] == "file_access_denied"
 
 
 def test_probe_keeps_unknown_exception_class_and_message_private(probe):
@@ -394,3 +676,78 @@ def test_connection_must_be_confirmed_before_idempotent_close_can_pass(probe, un
     assert result["state"] == "NO_GO" and result["phase"] == "connection_check"
     assert result["connected_before_close"] == ("unknown" if unavailable else "false")
     assert result["context_close"] == result["browser_close"] == result["driver_close"] == "closed"
+
+
+def test_probe_freezes_resource_events_at_first_fault_before_cleanup(tmp_path):
+    namespace = _passive_namespace(tmp_path)
+    _cgroup_fixture(tmp_path)
+    boundary = _BrowserBoundary({"goto"})
+    namespace["os"] = SimpleNamespace(
+        fstat=os.fstat,
+        pread=os.pread,
+        statvfs=lambda _path: SimpleNamespace(f_frsize=1024, f_blocks=8, f_bavail=3, f_favail=7),
+    )
+
+    def change_events(phase):
+        if phase == "goto":
+            (tmp_path / "memory.events").write_text(
+                "max 4\noom 3\noom_kill 4\noom_group_kill 4\n", encoding="ascii"
+            )
+            (tmp_path / "pids.events").write_text("max 7\n", encoding="ascii")
+        elif phase == "context_close":
+            (tmp_path / "memory.events").write_text(
+                "max 99\noom 99\noom_kill 99\noom_group_kill 99\n", encoding="ascii"
+            )
+
+    boundary.on_step = change_events
+    actual_snapshot = namespace["resource_snapshot"]
+
+    def capture_resources():
+        boundary.events.append("resource_snapshot")
+        return actual_snapshot()
+
+    namespace["resource_snapshot"] = capture_resources
+    result = _run_probe(namespace, boundary)
+    assert result["state"] == "NO_GO" and result["phase"] == "goto"
+    assert result["before_memory_events_oom_kill"] == 3
+    assert result["failure_memory_events_oom_kill"] == 4
+    assert result["delta_memory_events_oom_kill"] == 1
+    assert result["delta_memory_events_max"] == 3
+    assert result["delta_pids_events_max"] == 2
+    assert boundary.events.count("resource_snapshot") == 2
+    assert boundary.events[0] == "resource_snapshot"
+    assert boundary.events.index("read_stderr") < boundary.events.index("context_close")
+    assert boundary.events.index("resource_snapshot", 1) < boundary.events.index("context_close")
+    assert boundary.events[-1] == "read_late_stderr"
+    assert result["exit_code"] == "unknown" and result["late_exit_code"] == "0"
+    assert "cgroup_identity" not in json.dumps(result)
+
+
+def test_missing_passive_observations_do_not_change_functional_pass(tmp_path):
+    namespace = _passive_namespace(tmp_path)
+
+    def unavailable(_path):
+        raise OSError("PRIVATE_FIXTURE_SECRET")
+
+    namespace["os"] = SimpleNamespace(statvfs=unavailable, fstat=os.fstat, pread=os.pread)
+    result = _run_probe(namespace, _BrowserBoundary())
+    assert result["state"] == "PASS" and result["phase"] == "complete"
+    assert set(value for key, value in result.items() if key.startswith("before_")) == {"UNKNOWN"}
+    assert "private" not in json.dumps(result).lower()
+
+
+def test_failed_stderr_metadata_cannot_replace_primary_failure_or_invent_late_exit(tmp_path):
+    namespace = _passive_namespace(tmp_path)
+
+    def unavailable(_value):
+        raise OSError("PRIVATE_FIXTURE_SECRET")
+
+    namespace["os"] = SimpleNamespace(statvfs=unavailable, fstat=unavailable, pread=os.pread)
+    result = _run_probe(namespace, _BrowserBoundary({"goto"}))
+    assert result["state"] == "NO_GO" and result["phase"] == "goto"
+    assert result["reason"] == "Error" and result["xpcom"] == "failure"
+    assert result["exit_code"] == "unknown"
+    assert result["stderr_read"] == "unavailable"
+    assert set(value for key, value in result.items() if key.startswith("late_")) == {"UNKNOWN"}
+    assert result["context_close"] == result["browser_close"] == result["driver_close"] == "closed"
+    assert "private" not in json.dumps(result).lower()

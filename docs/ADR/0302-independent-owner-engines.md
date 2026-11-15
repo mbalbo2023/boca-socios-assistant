@@ -346,3 +346,66 @@ modificadas no pertenecen al cierre FULL/PAIR y sus paquetes permanecen intactos
 El análisis de seguridad independiente #1082 sobre ab3f189 permite observar los
 scans que CI1253 omitió; su resultado y los nuevos probes siguen pendientes.
 Este acuerdo no acredita la causa de Firefox, captura aceptada o promoción.
+
+## Cierre propuesto de los bloqueos de 14cd9a0
+
+Los [resultados alojados](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6888453403)
+conservan NO_GO: CI1254 aprueba 9230 pruebas y 34 subtests, pero la UI vence en
+queues_start después de aceptar el primer POST. Full3#4 crea contexto y página
+Firefox, pierde conexión en goto y no identifica la causa; Chromium/WebKit PASS.
+Image security1082 sobre ab3f189 encuentra cuatro HIGH únicamente en el Go1.27.1
+embebido de /usr/bin/pebble. OS, Node y paquetes Python analizados no tienen
+hallazgos. No se interpreta ese scan como certificado del siguiente SHA.
+
+La [propuesta previa](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6888524385)
+separa tres alcances con escritores distintos. Arquitectura retira el binario
+Pebble entero innecesario, sólo tras identidad exacta por arquitectura, tipo,
+propietario y ausencia de dueño dpkg; no borra metadata ni relaja el scanner.
+Las capas/config OCI verificadas no tienen Entrypoint Pebble; Boca usa Python.
+El paquete apt homónimo es un servidor ACME distinto y no autoriza un purge.
+
+Visual reproduce el POST303 y GET/control reales mediante un fixture HTTP
+efímero en loopback dentro del contenedor CI network-none, sin publicación de
+puerto ni listener de aplicación/host. El fixture204 anterior no refleja el
+contrato de producción; Playwright1.64.1 conserva una navegación pendiente
+en esa ruta y sus redirects no pasan otra vez por el handler route del usuario.
+Las cinco navegaciones explícitas se verifican separadamente de la preservación
+de filas e inputs durante el polling real. Datos ficticios, CSP, formularios
+nativos, SHA, presupuestos, tiempos y límites de captura siguen obligatorios.
+
+QA añade exclusivamente evidencia pasiva a full3: recursos del mismo cgroup y
+tres tmpfs antes de launch y al primer fallo, más salida tardía cerrada separada
+después del cleanup. UNKNOWN no significa cero. No se atribuye OOM, PIDs o
+seccomp sin evidencia; no se cambia ningún predicado PASS ni configuración.
+Cada delta requiere votos previos y revisión cruzada de su código antes de
+publicarlo. Los paquetes operativos se revisan por intersección, sin rebuild
+redundante. La promoción y aceptación física permanecen pendientes.
+
+Los [votos por alcance](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6888549299)
+y el [GO QA definitivo del fixture](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6888565397)
+completaron cuatro opiniones previas reales para los tres cambios. El fixture
+debe aislar servidor/estado por viewport, cerrar listener/socket activo y exigir
+hilo muerto tras join acotado. Request-line 2048, headers 8192/64 líneas y cuerpo
+2048 bytes; rechazos terminan admisión e impiden PASS. Cinco documentos y seis
+snapshots miden 140828 bytes en el diseño, dentro del límite existente 160000.
+Esos acuerdos autorizan implementar, no sustituyen revisión de código ni CI.
+
+La [revisión final de los tres deltas](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6888843482)
+cerró cuatro votos técnicos reales. Arquitectura y QA revisaron el fixture;
+operación revisó imagen y full3; root revisó la integración. Cada autor quedó
+excluido de la aprobación independiente de sus propios archivos.
+
+Antes de publicar se corrigieron tres hallazgos: la identidad interna del
+cgroup condiciona los deltas; un shutdown concurrente sólo admite EBADF o
+ENOTCONN si se comprueba el cierre; y la certificación de descriptores ocurre
+después del join acotado, porque socket.makefile retiene referencias hasta que
+termina el handler. El P2 de arquitectura retiró temporalmente el GO visual;
+su contraejemplo pasa en el sucesor y los recursos que permanecen abiertos
+siguen produciendo NO_GO. No se alteró el primer error ni los límites.
+
+La imagen tuvo 42 casos focales PASS; full3, 63 incluyendo dos contratos.
+El visual tuvo 79 PASS antes del P2 y 15 afectados PASS después de corregirlo.
+Las revisiones independientes fueron focales y se solapan con esos recuentos.
+Ruff, formato y diff-check PASS. Las nueve rutas no pertenecen a FULL/PAIR;
+sus 47/83 miembros permanecen intactos. La publicación requiere evidencia
+alojada nueva: estos votos no certifican el scan, Firefox, capturas ni droplet.

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import copy
+import errno
 import hashlib
 import json
 import os
@@ -19,7 +20,9 @@ import stat
 import struct
 import sys
 import zlib
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qsl
 
@@ -108,6 +111,7 @@ _FAILURE_REASONS = frozenset(
         "offline_document_changed",
         "offline_file_unverified",
         "offline_fixture_unverified",
+        "offline_fixture_close_unverified",
         "offline_network_namespace_unverified",
         "offline_operation_unverified",
         "offline_viewport_unverified",
@@ -124,6 +128,7 @@ _PROBE_STEPS = frozenset(
         "browser_launch",
         "context_create",
         "context_setup",
+        "fixture_start",
         "route_install",
         "page_create",
         "page_error_hook",
@@ -134,6 +139,7 @@ _PROBE_STEPS = frozenset(
         "required_member",
         "initial_inputs",
         "queues_start",
+        "members_inputs_after_redirect",
         "members_start",
         "running_refresh",
         "running_rows",
@@ -158,16 +164,17 @@ _PROBE_STEPS = frozenset(
         "final_evidence",
         "viewport_capture_encode",
         "context_close",
+        "fixture_close",
         "browser_close",
         "playwright_close",
     }
 )
 _PROBE_COUNTER_LIMITS = {
-    "snapshot_phase": 4,
-    "documents": 1,
+    "snapshot_phase": 5,
+    "documents": 5,
     "snapshots": 24,
     "native_posts": 4,
-    "rejected": 24,
+    "rejected": 1,
     "page_errors": 24,
 }
 
@@ -333,7 +340,9 @@ def _snapshots() -> list[dict[str, Any]]:
     )
     for session in stopped_both["engines"][1]["sessions"]:
         session.update(state="CLOSED", phase="STOPPED")
-    return [initial, running, added, stopped_a, stopped_both]
+    a_only = copy.deepcopy(initial)
+    a_only["engines"][0] = copy.deepcopy(running["engines"][0])
+    return [initial, a_only, running, added, stopped_a, stopped_both]
 
 
 def make_fixture(source_sha: str) -> dict[str, Any]:
@@ -347,13 +356,26 @@ def make_fixture(source_sha: str) -> dict[str, Any]:
         MemberView(_MEMBERS[1], "Socio ficticio Dos", "d•••@example.invalid", True),
     )
     body = engine_view.page(snapshots[0], FORM_PROOF, _OPERATIONS, members, site_url_ready=True)
+    redirect_documents = []
+    for phase in (1, 2, 4, 5):
+        redirected = engine_view.page(
+            snapshots[phase], FORM_PROOF, _OPERATIONS, members, site_url_ready=True
+        )
+        redirect_documents.append(
+            {
+                "snapshot_phase": phase,
+                "html": redirected.decode(),
+                "html_sha256": hashlib.sha256(redirected).hexdigest(),
+            }
+        )
     fixture = {
-        "schema": 1,
+        "schema": 2,
         "source_sha": source_sha,
         "html": body.decode(),
         "csp": engine_view.csp(),
         "html_sha256": hashlib.sha256(body).hexdigest(),
         "snapshots": snapshots,
+        "redirect_documents": redirect_documents,
     }
     validate_fixture(fixture, source_sha)
     return fixture
@@ -363,9 +385,18 @@ def validate_fixture(value: object, source_sha: str) -> dict[str, Any]:
     _source(source_sha)
     if (
         not isinstance(value, dict)
-        or set(value) != {"schema", "source_sha", "html", "csp", "html_sha256", "snapshots"}
+        or set(value)
+        != {
+            "schema",
+            "source_sha",
+            "html",
+            "csp",
+            "html_sha256",
+            "snapshots",
+            "redirect_documents",
+        }
         or type(value["schema"]) is not int
-        or value["schema"] != 1
+        or value["schema"] != 2
         or value["source_sha"] != source_sha
         or not isinstance(value["html"], str)
         or not 1 <= len(value["html"].encode()) <= 100_000
@@ -384,7 +415,22 @@ def validate_fixture(value: object, source_sha: str) -> dict[str, Any]:
         # Exact fixed snapshots also exclude bearer fields, URL queries and
         # runtime/member/event input. They are never read from the host.
         or value["snapshots"] != _snapshots()
+        or not isinstance(value["redirect_documents"], list)
+        or len(value["redirect_documents"]) != 4
     ):
+        raise ValueError("offline_fixture_unverified")
+    for document, phase in zip(value["redirect_documents"], (1, 2, 4, 5), strict=True):
+        if (
+            not isinstance(document, dict)
+            or set(document) != {"snapshot_phase", "html", "html_sha256"}
+            or type(document["snapshot_phase"]) is not int
+            or document["snapshot_phase"] != phase
+            or not isinstance(document["html"], str)
+            or not 1 <= len(document["html"].encode()) <= 100_000
+            or document["html_sha256"] != hashlib.sha256(document["html"].encode()).hexdigest()
+        ):
+            raise ValueError("offline_fixture_unverified")
+    if len(_json(value)) > _MAX_FIXTURE:
         raise ValueError("offline_fixture_unverified")
     return value
 
@@ -433,22 +479,411 @@ def _offline_identity() -> None:
         raise RuntimeError("offline_network_namespace_unverified")
 
 
+class _FixtureRejected(ValueError):
+    def __init__(self, status: int = 400) -> None:
+        super().__init__("offline_fixture_unverified")
+        self.status = status
+
+
+class _BoundedRequestReader:
+    """Bound the real stdlib parser before it can consume unbounded headers."""
+
+    def __init__(self, reader: Any) -> None:
+        self.reader = reader
+        self.total = 0
+        self.header_lines = 0
+        self.first = True
+
+    def readline(self, _limit: int = -1) -> bytes:
+        line = self.reader.readline(2049)
+        self.total += len(line)
+        if len(line) > 2048 or self.total > 8192:
+            raise _FixtureRejected()
+        if self.first:
+            self.first = False
+            if line and re.fullmatch(rb"[A-Z]+ [^\x00-\x20\x7f]+ HTTP/1\.[01]\r\n", line) is None:
+                raise _FixtureRejected()
+        elif line != b"\r\n":
+            self.header_lines += 1
+            if (
+                self.header_lines > 64
+                or not line.endswith(b"\r\n")
+                or re.fullmatch(rb"[!#$%&'*+\-.^_`|~0-9A-Za-z]+:[^\r\n]*\r\n", line) is None
+            ):
+                raise _FixtureRejected()
+        return line
+
+    def read(self, size: int) -> bytes:
+        if not 0 <= size <= 2048:
+            raise _FixtureRejected()
+        return self.reader.read(size)
+
+    def close(self) -> None:
+        self.reader.close()
+
+
+class _FixtureService:
+    """One disposable loopback fixture, with no application or owner state."""
+
+    def __init__(self, fixture: dict[str, Any]) -> None:
+        self.fixture = fixture
+        self.lock = Lock()
+        self.stopping = Event()
+        self.phase = 0
+        self.documents = self.snapshots = self.rejected = 0
+        self.posts: list[str] = []
+        self.active: socket.socket | None = None
+        self.server: _FixtureHTTPServer | None = None
+        self.thread: Thread | None = None
+
+    def counters(self) -> dict[str, int]:
+        with self.lock:
+            return {
+                "snapshot_phase": self.phase,
+                "documents": self.documents,
+                "snapshots": self.snapshots,
+                "native_posts": len(self.posts),
+                "rejected": self.rejected,
+            }
+
+    def operations(self) -> list[str]:
+        with self.lock:
+            return list(self.posts)
+
+    def reject(self) -> None:
+        with self.lock:
+            if not self.stopping.is_set():
+                self.rejected = 1
+                self.stopping.set()
+
+    def advance_poll(self) -> None:
+        with self.lock:
+            if self.stopping.is_set() or (self.phase, self.documents, len(self.posts)) != (2, 3, 2):
+                raise RuntimeError("offline_fixture_unverified")
+            self.phase = 3
+
+    def respond(
+        self, method: str, path: str, headers: Any, body: bytes
+    ) -> tuple[int, dict[str, str], bytes]:
+        with self.lock:
+            if self.stopping.is_set():
+                raise _FixtureRejected(503)
+            if self.documents + self.snapshots + len(self.posts) >= 33:
+                raise _FixtureRejected(429)
+            if headers.get("origin") not in (None, ORIGIN):
+                raise _FixtureRejected(403)
+            if method == "GET" and path == "/control":
+                if self.documents != len(self.posts) or self.documents >= 5:
+                    raise _FixtureRejected()
+                document = (
+                    self.fixture
+                    if not self.posts
+                    else self.fixture["redirect_documents"][len(self.posts) - 1]
+                )
+                self.documents += 1
+                return (
+                    200,
+                    {
+                        "Content-Type": "text/html; charset=utf-8",
+                        "Content-Security-Policy": self.fixture["csp"],
+                        "Referrer-Policy": "same-origin",
+                    },
+                    document["html"].encode(),
+                )
+            if method == "GET" and path == "/control/motores.json":
+                if self.snapshots >= 24:
+                    raise _FixtureRejected(429)
+                if not self.documents:
+                    raise _FixtureRejected()
+                self.snapshots += 1
+                return (
+                    200,
+                    {"Content-Type": "application/json"},
+                    _json(self.fixture["snapshots"][self.phase]),
+                )
+            if method == "POST":
+                if headers.get("origin") != ORIGIN:
+                    raise _FixtureRejected(403)
+                if headers.get("content-type") != "application/x-www-form-urlencoded":
+                    raise _FixtureRejected()
+                try:
+                    operation = verify_post(
+                        ORIGIN + path, headers.get("origin"), body.decode("ascii")
+                    )
+                except (UnicodeError, ValueError):
+                    raise _FixtureRejected() from None
+                if (
+                    len(self.posts) >= 4
+                    or operation != POST_ORDER[len(self.posts)]
+                    or self.documents != len(self.posts) + 1
+                    or self.phase != (0, 1, 3, 4)[len(self.posts)]
+                ):
+                    raise _FixtureRejected()
+                self.posts.append(operation)
+                self.phase = (1, 2, 4, 5)[len(self.posts) - 1]
+                return 303, {"Location": "/control"}, b""
+            raise _FixtureRejected(405 if method not in {"GET", "POST"} else 400)
+
+    def start(self) -> None:
+        # Never create a listener outside the approved non-root, network-none
+        # CI container. Binding is local to that disposable namespace only.
+        _offline_identity()
+        validate_fixture(self.fixture, self.fixture["source_sha"])
+        if self.server is not None or self.thread is not None or self.stopping.is_set():
+            raise RuntimeError("offline_fixture_unverified")
+        self.server = _FixtureHTTPServer(self)
+        self.server.server_bind()
+        self.server.server_activate()
+        if self.server.socket.getsockname() != ("127.0.0.1", 8443):
+            raise RuntimeError("offline_fixture_unverified")
+        self.thread = Thread(target=self._serve, name="offline-engine-fixture", daemon=True)
+        self.thread.start()
+
+    def _serve(self) -> None:
+        try:
+            while not self.stopping.is_set():
+                assert self.server is not None
+                self.server.handle_request()
+        except Exception:
+            self.reject()
+
+    def close(self) -> None:
+        with self.lock:
+            self.stopping.set()
+            active, server, thread = self.active, self.server, self.thread
+        failed = False
+        if active is not None:
+            try:
+                active.shutdown(socket.SHUT_RDWR)
+            except OSError as error:
+                # shutdown_request() may have just closed this accepted
+                # socket. Only these two shutdown results can be benign;
+                # descriptor closure and a dead thread remain mandatory.
+                if error.errno not in {errno.EBADF, errno.ENOTCONN}:
+                    failed = True
+            except Exception:
+                failed = True
+            try:
+                active.close()
+            except Exception:
+                failed = True
+        if server is not None:
+            try:
+                server.server_close()
+            except Exception:
+                failed = True
+        if thread is not None:
+            try:
+                if thread.ident is not None:
+                    thread.join(timeout=5)
+                if thread.is_alive():
+                    failed = True
+            except Exception:
+                failed = True
+        # socket.makefile() retains a reference after socket.close(). The
+        # handler releases that reference while draining, so certify the final
+        # descriptors only after the bounded join, even if another close failed.
+        if active is not None:
+            try:
+                if active.fileno() != -1:
+                    failed = True
+            except Exception:
+                failed = True
+        if server is not None:
+            try:
+                if server.socket.fileno() != -1:
+                    failed = True
+            except Exception:
+                failed = True
+        if failed:
+            raise RuntimeError("offline_fixture_close_unverified")
+
+
+class _FixtureHTTPServer(HTTPServer):
+    allow_reuse_address = True
+    timeout = 0.05
+
+    def __init__(self, service: _FixtureService) -> None:
+        self.service = service
+        super().__init__(("127.0.0.1", 8443), _FixtureRequestHandler, bind_and_activate=False)
+
+    def get_request(self) -> tuple[socket.socket, Any]:
+        connection, address = super().get_request()
+        try:
+            connection.settimeout(5)
+            with self.service.lock:
+                if self.service.stopping.is_set():
+                    raise OSError("offline_fixture_unverified")
+                self.service.active = connection
+        except Exception:
+            self.service.reject()
+            connection.close()
+            raise
+        return connection, address
+
+    def shutdown_request(self, request: socket.socket) -> None:
+        try:
+            super().shutdown_request(request)
+        finally:
+            with self.service.lock:
+                if self.service.active is request:
+                    self.service.active = None
+
+    def handle_error(self, _request: Any, _address: Any) -> None:
+        # The stdlib default prints the traceback, which could contain a URL.
+        self.service.reject()
+
+
+class _FixtureRequestHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.0"
+    timeout = 5
+
+    def setup(self) -> None:
+        super().setup()
+        self.rfile = _BoundedRequestReader(self.rfile)
+
+    def handle(self) -> None:
+        # Establish a safe response version even when the bounded reader
+        # rejects the request line before stdlib parse_request() is called.
+        self.request_version = "HTTP/1.1"
+        self.command = None
+        if self.server.service.stopping.is_set():
+            self.send_error(503)
+            return
+        try:
+            super().handle()
+        except _FixtureRejected as error:
+            self.send_error(error.status)
+        except Exception:
+            self.send_error(400)
+
+    def log_message(self, _format: str, *_args: Any) -> None:
+        pass
+
+    def log_error(self, _format: str, *_args: Any) -> None:
+        # handle_one_request() catches a socket timeout itself. Its normal
+        # logging path must also close admission, without printing arguments.
+        self.server.service.reject()
+
+    def send_error(self, code: int, _message: Any = None, _explain: Any = None) -> None:
+        status = 405 if code == 501 else code if code in {400, 403, 405, 429, 503} else 400
+        self.server.service.reject()
+        try:
+            self._emit(
+                status,
+                {"Content-Type": "text/plain; charset=utf-8"},
+                b"Fixture request rejected.\n",
+            )
+        except Exception:
+            self.close_connection = True
+
+    def _emit(self, status: int, headers: dict[str, str], body: bytes) -> None:
+        self.close_connection = True
+        self.send_response_only(status)
+        for name, value in headers.items():
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _respond(self) -> None:
+        for name in (
+            "host",
+            "origin",
+            "content-length",
+            "content-type",
+            "transfer-encoding",
+            "expect",
+        ):
+            if len(self.headers.get_all(name, [])) > 1:
+                raise _FixtureRejected()
+        if (
+            self.headers.get("host") != "localhost:8443"
+            or self.headers.get("transfer-encoding") is not None
+            or self.headers.get("expect") is not None
+            or self.requestline.split(" ")[1] != self.path
+        ):
+            raise _FixtureRejected()
+        size = self.headers.get("content-length")
+        if size is None:
+            if self.command == "POST":
+                raise _FixtureRejected()
+            size = "0"
+        if re.fullmatch(r"0|[1-9][0-9]{0,3}", size) is None or int(size) > 2048:
+            raise _FixtureRejected()
+        if self.command == "GET" and size != "0":
+            raise _FixtureRejected()
+        body = self.rfile.read(int(size))
+        if len(body) != int(size):
+            raise _FixtureRejected()
+        status, headers, output = self.server.service.respond(
+            self.command, self.path, self.headers, body
+        )
+        self._emit(status, headers, output)
+
+    def do_GET(self) -> None:
+        self._respond()
+
+    def do_POST(self) -> None:
+        self._respond()
+
+
 async def _submit(page: Page, operation: str) -> None:
-    async with page.expect_response(
-        lambda response: response.url == post_url(operation) and response.request.method == "POST"
+    target = post_url(operation)
+    async with (
+        page.expect_response(
+            lambda response: (
+                response.url == target
+                and response.request.method == "POST"
+                and response.request.is_navigation_request()
+            )
+        ) as posted,
+        page.expect_response(
+            lambda response: (
+                response.url == PAGE_URL
+                and response.request.method == "GET"
+                and response.request.is_navigation_request()
+                and response.request.redirected_from is not None
+                and response.request.redirected_from.url == target
+                and response.request.redirected_from.method == "POST"
+            )
+        ) as redirected,
     ):
         await page.locator("#" + operation.replace(":", "-") + "-button").click()
+    response, landing = await posted.value, await redirected.value
+    if (
+        response.status != 303
+        or response.headers.get("location") != "/control"
+        or landing.status != 200
+        or landing.request.redirected_from is not response.request
+    ):
+        raise RuntimeError("native_form_unverified")
+    await page.wait_for_load_state("load")
+    await page.wait_for_function(
+        "document.getElementById('engines-live').textContent !== 'Último estado disponible.'"
+    )
     if page.url != PAGE_URL:
         raise RuntimeError("offline_document_changed")
+
+
+async def _refresh(page: Page) -> None:
+    async with page.expect_response(
+        lambda response: response.url == SNAPSHOT_URL and response.request.method == "GET"
+    ) as refreshed:
+        await page.locator("#engines-refresh").click()
+    response = await refreshed.value
+    if response.status != 200:
+        raise RuntimeError("live_snapshot_projection_unverified")
+    await response.finished()
 
 
 async def _viewport(
     browser: Browser, fixture: dict[str, Any], width: int, height: int
 ) -> dict[str, Any]:
 
-    phase = 0
-    documents = snapshots = rejected = 0
-    posts: list[str] = []
+    service = _FixtureService(fixture)
     errors: list[object] = []
     context: BrowserContext | None = None
     failure: BaseException | None = None
@@ -456,14 +891,7 @@ async def _viewport(
     step = "context_create"
 
     def counters() -> dict[str, int]:
-        return {
-            "snapshot_phase": phase,
-            "documents": documents,
-            "snapshots": snapshots,
-            "native_posts": len(posts),
-            "rejected": rejected,
-            "page_errors": len(errors),
-        }
+        return {**service.counters(), "page_errors": len(errors)}
 
     try:
         context = await browser.new_context(
@@ -473,52 +901,26 @@ async def _viewport(
         )
         step = "context_setup"
         context.set_default_timeout(5000)
+        step = "fixture_start"
+        service.start()
 
         async def route_document(route: Route) -> None:
-            nonlocal documents, snapshots, rejected
             request = route.request
-            if request.url == PAGE_URL and request.method == "GET" and documents == 0:
-                documents += 1
-                await route.fulfill(
-                    status=200,
-                    body=fixture["html"],
-                    headers={
-                        "Content-Type": "text/html; charset=utf-8",
-                        "Content-Security-Policy": fixture["csp"],
-                        "Cache-Control": "no-store",
-                        "Referrer-Policy": "same-origin",
-                    },
-                )
-                return
-            if request.url == SNAPSHOT_URL and request.method == "GET" and snapshots < 24:
-                snapshots += 1
-                await route.fulfill(
-                    status=200,
-                    content_type="application/json",
-                    body=_json(fixture["snapshots"][phase]),
-                )
-                return
-            if (
-                request.method == "POST"
+            allowed = request.method == "GET" and request.url in {PAGE_URL, SNAPSHOT_URL}
+            allowed |= (
+                request.url in {post_url(operation) for operation in POST_ORDER}
+                and request.method == "POST"
                 and request.is_navigation_request()
                 and request.resource_type == "document"
-            ):
-                try:
-                    headers = await request.all_headers()
-                    if headers.get("content-type") != "application/x-www-form-urlencoded":
-                        raise ValueError("native_content_type_unverified")
-                    operation = verify_post(request.url, headers.get("origin"), request.post_data)
-                    if len(posts) >= len(POST_ORDER) or operation != POST_ORDER[len(posts)]:
-                        raise ValueError("native_operation_order_unverified")
-                    posts.append(operation)
-                    # 204 preserves the current DOM so all four actual native
-                    # forms can be exercised without manufacturing a backend.
-                    await route.fulfill(status=204, body="")
-                    return
-                except ValueError:
-                    pass
-            rejected += 1
-            await route.abort()
+            )
+            if allowed and not service.stopping.is_set():
+                # Native redirects bypass Chromium's route interception. Both
+                # the intercepted request and its redirect reach the same
+                # bounded loopback handler inside the network-none container.
+                await route.continue_()
+            else:
+                service.reject()
+                await route.abort()
 
         step = "route_install"
         await context.route("**/*", route_document)
@@ -546,7 +948,7 @@ async def _viewport(
                 raise RuntimeError("initial_start_unverified")
         step = "required_member"
         await page.locator("#browsers_members-start-button").click()
-        if posts or not await page.locator("#browsers_members-member").evaluate(
+        if service.operations() or not await page.locator("#browsers_members-member").evaluate(
             "node => node.matches(':invalid')"
         ):
             raise RuntimeError("required_member_unverified")
@@ -558,12 +960,19 @@ async def _viewport(
         await page.locator("#browsers_members-member").select_option(_MEMBERS[1])
         step = "queues_start"
         await _submit(page, POST_ORDER[0])
+        # A real POST/303/GET replaces the document, as the controller does.
+        # Enter B's values on that new document before submitting its form.
+        step = "members_inputs_after_redirect"
+        for browser_name in ("chromium", "firefox", "webkit"):
+            await page.locator(f"#browsers_members-{browser_name}").fill(
+                expected_post_fields(POST_ORDER[1])[browser_name]
+            )
+        await page.locator("#browsers_members-member").select_option(_MEMBERS[1])
         step = "members_start"
         await _submit(page, POST_ORDER[1])
 
-        phase = 1
         step = "running_refresh"
-        await page.locator("#engines-refresh").click()
+        await _refresh(page)
         step = "running_rows"
         await page.wait_for_function("document.querySelectorAll('[data-session-id]').length === 2")
         step = "initial_session"
@@ -581,13 +990,16 @@ async def _viewport(
         await page.locator("#queues_tokens-chromium").fill("19")
         await page.locator("#browsers_members-chromium").fill("11")
         await page.locator("#browsers_members-member").select_option(_MEMBERS[0])
-        phase = 2
+        service.advance_poll()
         step = "live_rows_poll"
         await page.wait_for_function(
             "document.querySelectorAll('[data-session-id]').length === 3", timeout=7000
         )
         step = "session_preserved"
-        if not await original_row.evaluate("node => node.isConnected"):
+        if (
+            not await original_row.evaluate("node => node.isConnected")
+            or service.counters()["documents"] != 3
+        ):
             raise RuntimeError("existing_session_replaced")
         step = "live_projection"
         if (
@@ -621,9 +1033,8 @@ async def _viewport(
 
         step = "queues_stop"
         await _submit(page, POST_ORDER[2])
-        phase = 3
         step = "queues_stopped_refresh"
-        await page.locator("#engines-refresh").click()
+        await _refresh(page)
         step = "queues_stopped_poll"
         await page.wait_for_function(
             "document.getElementById('queues_tokens-stop-button').disabled"
@@ -654,19 +1065,20 @@ async def _viewport(
         _png_dimensions(screenshot, width, height)
         step = "members_stop"
         await _submit(page, POST_ORDER[3])
-        phase = 4
         step = "members_stopped_refresh"
-        await page.locator("#engines-refresh").click()
+        await _refresh(page)
         step = "members_stopped_poll"
         await page.wait_for_function(
             "document.getElementById('browsers_members-stop-button').disabled"
         )
         step = "final_evidence"
+        evidence = service.counters()
+        posts = service.operations()
         if (
-            documents != 1
-            or not 4 <= snapshots <= 24
+            evidence["documents"] != 5
+            or not 9 <= evidence["snapshots"] <= 24
             or posts != list(POST_ORDER)
-            or rejected
+            or evidence["rejected"]
             or errors
         ):
             raise RuntimeError("offline_browser_evidence_unverified")
@@ -674,10 +1086,10 @@ async def _viewport(
         return {
             "width": width,
             "height": height,
-            "document_requests": documents,
-            "snapshot_requests": snapshots,
+            "document_requests": evidence["documents"],
+            "snapshot_requests": evidence["snapshots"],
             "native_posts": posts,
-            "other_requests": rejected,
+            "other_requests": evidence["rejected"],
             "page_errors": len(errors),
             "checks": dict.fromkeys(CHECKS, True),
             "png_base64": base64.b64encode(screenshot).decode("ascii"),
@@ -688,6 +1100,7 @@ async def _viewport(
         raise
     finally:
         cleanup = "NOT_CREATED"
+        cleanup_error: BaseException | None = None
         try:
             if context is not None:
                 await context.close()
@@ -698,20 +1111,30 @@ async def _viewport(
                 failure = error
                 failure_counts = counters()
                 step = "context_close"
-                raise
-        finally:
-            if failure is not None:
-                print(
-                    _probe_failure_report(
-                        step,
-                        failure,
-                        width=width,
-                        height=height,
-                        counts=failure_counts,
-                        cleanup=cleanup,
-                    ),
-                    file=sys.stderr,
-                )
+                cleanup_error = error
+        try:
+            service.close()
+        except BaseException as error:
+            cleanup = "FAILED"
+            if failure is None:
+                failure = error
+                failure_counts = counters()
+                step = "fixture_close"
+                cleanup_error = error
+        if failure is not None:
+            print(
+                _probe_failure_report(
+                    step,
+                    failure,
+                    width=width,
+                    height=height,
+                    counts=failure_counts,
+                    cleanup=cleanup,
+                ),
+                file=sys.stderr,
+            )
+        if cleanup_error is not None:
+            raise cleanup_error
 
 
 async def run_offline(fixture: dict[str, Any], source_sha: str) -> dict[str, Any]:
@@ -896,9 +1319,9 @@ def write_artifacts(
             or type(view["height"]) is not int
             or view["height"] != height
             or type(view["document_requests"]) is not int
-            or view["document_requests"] != 1
+            or view["document_requests"] != 5
             or type(view["snapshot_requests"]) is not int
-            or not 4 <= view["snapshot_requests"] <= 24
+            or not 9 <= view["snapshot_requests"] <= 24
             or view["native_posts"] != list(POST_ORDER)
             or any(
                 type(view[key]) is not int or view[key] != 0

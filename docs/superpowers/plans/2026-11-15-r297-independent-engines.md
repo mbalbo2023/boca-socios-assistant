@@ -178,3 +178,33 @@ author34 PASS; independent focal counts4/13/18/13 overlap. Lint/format/diff-chec
 PASS and the six paths do not alter FULL/PAIR. Publish only this diagnostic delta
 and require its hosted evidence. Image security1082 on parentab3f189 is a separate
 first scan of the new image; it cannot certify a future candidate SHA.
+
+## Three disjoint follow-ups after 14cd9a0
+
+Observed results: issue417comment6888453403. Pre-code proposal: comment6888524385.
+Architecture owns only Dockerfile.browser and focused packaging tests for exact
+whole-Pebble removal; visual owns its runner/tests for native303 loopback fixtures
+inside the ephemeral network-none CI container; QA owns full3 workflow/tests
+for passive resource and separately classified late-exit evidence. Root owns
+documents and publication. Do not change production HTTP, Compose, seccomp,
+caps, timeouts, strict scans or BLACKBOX. Confirm every actual design vote,
+cross-review code and publish a consolidated delta in PR517. Hosted success,
+screenshots and physical acceptance cannot be inferred from those reviews.
+
+Actual pre-code votes are recorded in comments6888549299/6888565397. The visual
+fixture uses isolated per-viewport listener/state, bounded headers and body,
+terminal rejection and mandatory bounded thread cleanup. The proposed serialized
+fixture is140828 bytes under the existing160000 cap. All three owners may now
+implement their disjoint scopes; final independent review remains mandatory.
+
+Final code votes are recorded in issue417 comment6888843482. Architecture,
+QA, operation/visual and root delivered actual GO decisions, with each author
+excluded from independent approval of their own changes. Review closed the
+cgroup continuity omission and two concrete socket teardown races. The visual
+P2 temporarily withdrew GO; its corrected successor checks final descriptors
+after bounded thread drain and preserves real errors and the primary fault.
+Author evidence: image42 PASS; full3 63 PASS; visual79 before P2 and15 affected
+PASS after its correction. Independent focal results overlap. Lint, formatting,
+diff-check and the empty FULL47/PAIR83 source intersection are verified. Publish
+the nine scoped paths together in PR517, then obtain hosted evidence before any
+promotion. Do not infer Firefox availability or physical acceptance from votes.

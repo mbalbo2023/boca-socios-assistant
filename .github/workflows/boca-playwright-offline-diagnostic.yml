@@ -74,6 +74,132 @@ jobs:
           import re
           import tempfile
           from playwright.sync_api import sync_playwright
+          from scripts import measure_browser_budget as budget
+
+          def resource_snapshot():
+              # Fixed, read-only observations of this private container cgroup.
+              # Reuse the existing bounded parser; UNKNOWN never means zero.
+              values = {key: budget.UNKNOWN for key in (*budget.COUNTER_FILES, *budget.CPU_FIELDS)}
+              try:
+                  observed = budget.read_counters(budget.CGROUP)
+                  values.update({key: observed.get(key, budget.UNKNOWN) for key in values})
+              except Exception:
+                  pass
+              # Private continuity only: never publish host device/inode values.
+              values["_cgroup_identity"] = budget.UNKNOWN
+              try:
+                  metadata = budget.CGROUP.stat()
+                  identity = (metadata.st_dev, metadata.st_ino)
+                  if all(type(value) is int and 0 <= value <= budget.MAX_COUNTER for value in identity):
+                      values["_cgroup_identity"] = identity
+              except Exception:
+                  pass
+              for key, filename in (("memory_max_bytes", "memory.max"), ("pids_max", "pids.max")):
+                  try:
+                      values[key] = budget._counter(budget._bounded_text(budget.CGROUP / filename))
+                  except Exception:
+                      values[key] = budget.UNKNOWN
+              try:
+                  cpu = budget._bounded_text(budget.CGROUP / "cpu.max").split()
+              except Exception:
+                  cpu = []
+              for index, key in enumerate(("cpu_quota_usec", "cpu_period_usec")):
+                  values[key] = budget._counter(cpu[index]) if len(cpu) == 2 else budget.UNKNOWN
+              for filename, prefix, fields in (
+                  ("memory.events", "memory_events", ("max", "oom", "oom_kill", "oom_group_kill")),
+                  ("pids.events", "pids_events", ("max",)),
+              ):
+                  try:
+                      lines = budget._bounded_text(budget.CGROUP / filename).splitlines()
+                  except Exception:
+                      lines = []
+                  for field in fields:
+                      matches = [line.split() for line in lines if line.split()[:1] == [field]]
+                      values[f"{prefix}_{field}"] = (
+                          budget._counter(matches[0][1])
+                          if len(matches) == 1 and len(matches[0]) == 2 else budget.UNKNOWN
+                      )
+              for prefix, path in (("tmp", "/tmp"), ("shm", "/dev/shm"), ("home", "/home/boca-browser")):
+                  fields = {key: budget.UNKNOWN for key in ("capacity_bytes", "available_bytes", "available_inodes")}
+                  try:
+                      stats = os.statvfs(path)
+                      if stats.f_frsize > 0:
+                          fields["capacity_bytes"] = budget._counter(str(stats.f_frsize * stats.f_blocks))
+                          fields["available_bytes"] = budget._counter(str(stats.f_frsize * stats.f_bavail))
+                      fields["available_inodes"] = budget._counter(str(stats.f_favail))
+                  except Exception:
+                      pass
+                  values.update({f"{prefix}_{key}": value for key, value in fields.items()})
+              return values
+
+          def resource_deltas(before, after):
+              # Current usage may fall; only cumulative event counters have deltas.
+              result = {}
+              identities = (before.get("_cgroup_identity"), after.get("_cgroup_identity"))
+              same_cgroup = all(
+                  type(identity) is tuple and len(identity) == 2
+                  and all(type(value) is int and 0 <= value <= budget.MAX_COUNTER for value in identity)
+                  for identity in identities
+              ) and identities[0] == identities[1]
+              for key in ("memory_events_max", "memory_events_oom", "memory_events_oom_kill",
+                          "memory_events_oom_group_kill", "pids_events_max"):
+                  first, last = before.get(key), after.get(key)
+                  result[key] = (
+                      last - first if same_cgroup and type(first) is int and type(last) is int
+                      and 0 <= first <= last <= budget.MAX_COUNTER else budget.UNKNOWN
+                  )
+              return result
+
+          def stderr_snapshot(fd):
+              try:
+                  size = budget._counter(str(os.fstat(fd).st_size))
+                  if type(size) is not int:
+                      raise ValueError("stderr_size_unavailable")
+                  # Freeze the actual file offset, including an omitted prefix tail,
+                  # before any cleanup. Concurrent later writes belong to late_*.
+                  length = min(size, 65536)
+                  raw = os.pread(fd, length, 0)
+                  if len(raw) != length:
+                      raise ValueError("stderr_read_incomplete")
+                  return raw.decode("utf-8", "replace"), size, {
+                      "stderr_read": "observed", "stderr_bytes": size,
+                      "stderr_truncated": "true" if size > 65536 else "false",
+                  }
+              except Exception:
+                  return "", budget.UNKNOWN, {
+                      "stderr_read": "unavailable", "stderr_bytes": budget.UNKNOWN,
+                      "stderr_truncated": budget.UNKNOWN,
+                  }
+
+          def late_stderr_details(fd, offset):
+              result = {f"late_{key}": budget.UNKNOWN for key in (
+                  "stderr_read", "stderr_bytes", "stderr_truncated", "categories", "exit_code",
+                  "missing_library", "markers", "protocol", "xpcom",
+              )}
+              try:
+                  if type(offset) is not int or not 0 <= offset <= budget.MAX_COUNTER:
+                      return result
+                  size = budget._counter(str(os.fstat(fd).st_size))
+                  if type(size) is not int or size < offset:
+                      return result
+                  length = min(size - offset, 65536)
+                  raw = os.pread(fd, length, size - length)
+                  if len(raw) != length:
+                      return result
+                  truncated = size - offset > 65536
+                  details = failure_details(raw.decode("utf-8", "replace"))
+                  # An incomplete suffix cannot establish absence of a signal.
+                  result.update({f"late_{key}": (
+                      budget.UNKNOWN if truncated and value in ("none", "unknown", "unclassified")
+                      else value
+                  ) for key, value in details.items()})
+                  result.update({
+                      "late_stderr_read": "observed", "late_stderr_bytes": size - offset,
+                      "late_stderr_truncated": "true" if truncated else "false",
+                  })
+              except Exception:
+                  pass
+              return result
 
           def failure_details(observed):
               observed = observed[:81920].lower()
@@ -168,13 +294,16 @@ jobs:
                   "xpcom": xpcom,
               }
 
-          def probe_engine(name, read_stderr):
+          def probe_engine(name, read_stderr, read_late_stderr):
               browser = context = page = None
               context_close = browser_close = "not_created"
               driver_close = "not_entered"
               connected_before_close = None
               failure = None
               phase = "driver_start"
+              before_resources = resource_snapshot()
+              failure_resources = None
+              failure_offset = budget.UNKNOWN
 
               def connection_state():
                   if browser is None:
@@ -186,12 +315,14 @@ jobs:
                       return "unknown"
 
               def failure_snapshot(error):
+                  nonlocal failure_resources, failure_offset
                   try:
-                      stderr = read_stderr()[:65536]
-                      stderr_read = "observed"
+                      stderr, failure_offset, metadata = read_stderr()
                   except Exception:
                       stderr = ""
-                      stderr_read = "unavailable"
+                      metadata = {"stderr_read": "unavailable", "stderr_bytes": budget.UNKNOWN,
+                                  "stderr_truncated": budget.UNKNOWN}
+                  failure_resources = resource_snapshot()
                   error_type = type(error).__name__
                   reason = error_type if error_type in (
                       "Error", "TimeoutError", "TargetClosedError", "RuntimeError",
@@ -199,7 +330,7 @@ jobs:
                   ) else "UnexpectedError"
                   return {
                       "state": "NO_GO", "phase": phase, "reason": reason,
-                      "stderr_read": stderr_read,
+                      **metadata,
                       **failure_details(str(error)[:16384] + "\n" + stderr),
                   }
 
@@ -277,6 +408,18 @@ jobs:
                   "context_close": context_close, "browser_close": browser_close,
                   "driver_close": driver_close,
               })
+              result.update({f"before_{key}": value for key, value in before_resources.items() if key != "_cgroup_identity"})
+              if failure is not None:
+                  observed = failure_resources or {key: budget.UNKNOWN for key in before_resources}
+                  result.update({f"failure_{key}": value for key, value in observed.items() if key != "_cgroup_identity"})
+                  result.update({f"delta_{key}": value for key, value in resource_deltas(before_resources, observed).items()})
+                  # These describe output after the frozen first-failure offset,
+                  # including cleanup; they never replace the primary failure.
+                  try:
+                      late = read_late_stderr(failure_offset)
+                  except Exception:
+                      late = late_stderr_details(-1, budget.UNKNOWN)
+                  result.update(late)
               return result
 
           name = os.environ["BOCA_PLAYWRIGHT_ENGINE"]
@@ -287,7 +430,8 @@ jobs:
               try:
                   os.dup2(probe.fileno(), 2)
                   result = probe_engine(
-                      name, lambda: os.pread(probe.fileno(), 65536, 0).decode("utf-8", "replace")
+                      name, lambda: stderr_snapshot(probe.fileno()),
+                      lambda offset: late_stderr_details(probe.fileno(), offset),
                   )
               finally:
                   os.dup2(saved_stderr, 2)

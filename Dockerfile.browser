@@ -120,6 +120,35 @@ RUN /usr/bin/python3 -c 'import sys; assert sys.prefix == sys.base_prefix; asser
     chmod -R a+rX,go-w /opt/boca-python /app/.venv && \
     /app/.venv/bin/python -c 'from pathlib import Path; roots = (Path("/opt/boca-python"), Path("/app/.venv")); paths = [path for root in roots for path in (root, *root.rglob("*"))]; assert all(path.stat().st_uid == 0 and path.stat().st_gid == 0 and not path.stat().st_mode & 0o022 for path in paths)'
 
+# R297 / image-security1082: the immutable Ubuntu base includes an unused
+# Canonical Pebble supervisor built with Go 1.27.1. The inherited entrypoint
+# is empty and Boca starts its Python IPC server. Remove the reviewed file,
+# after every dependency install, with distinct amd64/arm64 identities. The
+# unrelated ACME package also named pebble must never be purged by basename.
+# Any ownership, identity, alias or lookup drift fails the build. Keep all
+# package/rock metadata and licenses; the unchanged strict scanner remains a gate.
+RUN /usr/bin/python3 -I -c 'import hashlib, os, stat, subprocess; from pathlib import Path; \
+    identities = {"amd64": (10563744, "7c893d09a9ecb877dee7ccb3523865c9811ced7b35500e5b3f0e8b11d89f306d"), "arm64": (9765024, "12ea522e4d8b35d4e63b6afb6384d8622e05b9f0d8c0a30408ecfe6ecc19868d")}; \
+    architecture = subprocess.run(["/usr/bin/dpkg", "--print-architecture"], check=True, capture_output=True, text=True, timeout=5, env={"LC_ALL": "C"}).stdout.strip(); \
+    assert architecture in identities, "pebble_architecture_unverified"; \
+    expected_size, expected_digest = identities[architecture]; \
+    pebble = Path("/usr/bin/pebble"); \
+    alias = Path("/bin"); \
+    assert alias.is_symlink() and alias.readlink() == Path("usr/bin"), "pebble_alias_unverified"; \
+    before = pebble.lstat(); \
+    assert stat.S_ISREG(before.st_mode) and stat.S_IMODE(before.st_mode) == 0o755 and before.st_uid == before.st_gid == 0 and before.st_nlink == 1, "pebble_file_unverified"; \
+    assert before.st_size == expected_size, "pebble_identity_unverified"; \
+    stream = pebble.open("rb"); payload = stream.read(expected_size + 1); stream.close(); \
+    assert len(payload) == expected_size and hashlib.sha256(payload).hexdigest() == expected_digest, "pebble_identity_unverified"; \
+    names = ("/usr/bin/pebble", "/bin/pebble"); \
+    owners = [subprocess.run(["/usr/bin/dpkg-query", "--search", name], capture_output=True, text=True, timeout=5, env={"LC_ALL": "C"}) for name in names]; \
+    assert all(result.returncode == 1 and result.stdout == "" and result.stderr == f"dpkg-query: no path found matching pattern {name}\n" for name, result in zip(names, owners, strict=True)), "pebble_ownership_unverified"; \
+    after = pebble.lstat(); \
+    assert all(getattr(before, field) == getattr(after, field) for field in ("st_dev", "st_ino", "st_mode", "st_uid", "st_gid", "st_nlink", "st_size", "st_mtime_ns", "st_ctime_ns")), "pebble_identity_changed"; \
+    pebble.unlink(); \
+    lookup = [*(Path(name) for name in names), *(Path(directory) / "pebble" for directory in os.get_exec_path())]; \
+    assert all(not path.exists() and not path.is_symlink() for path in lookup), "pebble_absence_unverified"'
+
 RUN groupadd --gid 10002 boca-browser && \
     useradd --uid 10002 --gid 10002 --create-home --shell /usr/sbin/nologin boca-browser
 # Copy only fixed synthetic browser contracts and one-ticket policy. Do not
@@ -139,7 +168,7 @@ ENV HOME=/home/boca-browser \
     XDG_CACHE_HOME=/tmp/browser-cache \
     XDG_CONFIG_HOME=/tmp/browser-config
 USER 10002:10002
-RUN python -c 'import os, sys; from importlib.metadata import version; from pathlib import Path; assert os.getuid() == os.getgid() == 10002; assert sys.version_info[:3] == (3, 12, 16); assert sys.prefix == "/app/.venv"; assert Path(sys.base_prefix).resolve().is_relative_to("/opt/boca-python"); assert version("playwright") == "1.64.1"; assert not os.access("/opt/boca-python", os.W_OK); assert not os.access("/app/.venv", os.W_OK)'
+RUN python -c 'import os, shutil, sys; from importlib.metadata import version; from pathlib import Path; assert os.getuid() == os.getgid() == 10002; assert sys.version_info[:3] == (3, 12, 16); assert sys.prefix == "/app/.venv"; assert Path(sys.base_prefix).resolve().is_relative_to("/opt/boca-python"); assert version("playwright") == "1.64.1"; assert not os.access("/opt/boca-python", os.W_OK); assert not os.access("/app/.venv", os.W_OK); assert shutil.which("pebble") is None; assert all(not path.exists() and not path.is_symlink() for path in (Path("/usr/bin/pebble"), Path("/bin/pebble")))'
 
 # The worker must prove cgroups, UID10002 and Boca-only network/IPC before activation.
 # With no specifically prepared IPC mount it refuses startup; no IP listener.

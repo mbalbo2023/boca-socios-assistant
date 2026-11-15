@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import errno
 import hashlib
 import inspect
+import io
 import json
 import struct
 import sys
@@ -55,8 +57,8 @@ def _capture(module, fixture):
             {
                 "width": width,
                 "height": height,
-                "document_requests": 1,
-                "snapshot_requests": 4,
+                "document_requests": 5,
+                "snapshot_requests": 9,
                 "native_posts": list(module.POST_ORDER),
                 "other_requests": 0,
                 "page_errors": 0,
@@ -93,7 +95,10 @@ def test_fixed_fixture_uses_actual_renderer_and_ignores_runtime_environment(monk
     module.validate_fixture(fixture, SOURCE_SHA)
 
 
-@pytest.mark.parametrize("change", ["source", "token", "url", "html", "extra"])
+@pytest.mark.parametrize(
+    "change",
+    ["source", "token", "url", "html", "redirect_html", "redirect_phase", "fixture_size", "extra"],
+)
 def test_fixture_rejects_source_drift_private_metadata_and_unreviewed_inputs(change):
     module = _module()
     fixture = module.make_fixture(SOURCE_SHA)
@@ -105,6 +110,13 @@ def test_fixture_rejects_source_drift_private_metadata_and_unreviewed_inputs(cha
         fixture["snapshots"][1]["engines"][0]["sessions"][0]["display_url"] += "?pass=forbidden"
     elif change == "html":
         fixture["html"] += "<p>unexpected</p>"
+    elif change == "redirect_html":
+        fixture["redirect_documents"][0]["html"] += "<p>unexpected</p>"
+    elif change == "redirect_phase":
+        fixture["redirect_documents"][0]["snapshot_phase"] = 3
+    elif change == "fixture_size":
+        fixture["html"] += " " * 20_000
+        fixture["html_sha256"] = hashlib.sha256(fixture["html"].encode()).hexdigest()
     else:
         fixture["database"] = "/runtime.sqlite3"
     with pytest.raises(ValueError):
@@ -138,9 +150,470 @@ def test_native_post_requires_exact_origin_fields_and_engine_fence():
         )
 
 
-def test_page_error_callback_accepts_playwright_wrapper_cache_before_navigation():
+def _http_exchange(module, service, raw):
+    """Run the real stdlib request handler over streams, without a socket."""
+    output = bytearray()
+
+    class Connection:
+        def settimeout(self, timeout):
+            assert timeout == 5
+
+        def makefile(self, mode, _buffering):
+            assert mode == "rb"
+            return io.BytesIO(raw) if isinstance(raw, bytes) else raw
+
+        def sendall(self, value):
+            output.extend(value)
+
+    server = types.SimpleNamespace(service=service)
+    module._FixtureRequestHandler(Connection(), ("127.0.0.1", 12345), server)
+    return bytes(output)
+
+
+def _request(method="GET", path="/control", *, headers=(), body=b""):
+    lines = [f"{method} {path} HTTP/1.1", "Host: localhost:8443", *headers]
+    return ("\r\n".join(lines) + "\r\n\r\n").encode() + body
+
+
+def test_http_fixture_models_all_native_redirects_and_preserves_poll_document():
+    module = _module()
+    fixture = module.make_fixture(SOURCE_SHA)
+    service = module._FixtureService(fixture)
+    initial = _http_exchange(module, service, _request())
+    assert initial.startswith(b"HTTP/1.0 200 ")
+    assert fixture["html"].encode() in initial
+    assert fixture["csp"].encode() in initial
+    assert b"Referrer-Policy: same-origin\r\n" in initial
+    for number, operation in enumerate(module.POST_ORDER, 1):
+        if number == 3:
+            service.advance_poll()
+            before = service.counters()
+            snapshot = _http_exchange(module, service, _request(path="/control/motores.json"))
+            assert b'"session_id":"00000000-0000-4000-8000-000000000302"' in snapshot
+            assert service.counters()["documents"] == before["documents"] == 3
+        body = urlencode(module.expected_post_fields(operation)).encode()
+        response = _http_exchange(
+            module,
+            service,
+            _request(
+                "POST",
+                module.post_url(operation).removeprefix(module.ORIGIN),
+                headers=(
+                    "Origin: http://localhost:8443",
+                    "Content-Type: application/x-www-form-urlencoded",
+                    f"Content-Length: {len(body)}",
+                ),
+                body=body,
+            ),
+        )
+        assert response.startswith(b"HTTP/1.0 303 ")
+        assert b"Location: /control\r\n" in response
+        assert response.endswith(b"\r\n\r\n")
+        document = _http_exchange(module, service, _request())
+        assert document.startswith(b"HTTP/1.0 200 ")
+        assert fixture["redirect_documents"][number - 1]["html"].encode() in document
+        assert service.counters()["documents"] == number + 1
+    assert service.counters() == {
+        "snapshot_phase": 5,
+        "documents": 5,
+        "snapshots": 1,
+        "native_posts": 4,
+        "rejected": 0,
+    }
+    assert len(module._json(fixture)) <= 160_000
+    assert len(fixture["snapshots"]) == 6
+    assert fixture["snapshots"][1]["engines"][0]["state"] == "RUNNING"
+    assert fixture["snapshots"][1]["engines"][1]["state"] == "STOPPED"
+
+
+@pytest.mark.parametrize(
+    ("change", "status"),
+    [
+        ("origin", 403),
+        ("fields", 400),
+        ("order", 400),
+        ("query", 400),
+        ("host", 400),
+        ("duplicate", 400),
+        ("transfer", 400),
+        ("length", 400),
+        ("short_body", 400),
+        ("line", 400),
+        ("header_bytes", 400),
+        ("header_lines", 400),
+        ("method", 405),
+    ],
+)
+def test_http_fixture_rejects_malformed_or_untrusted_requests_without_echo(capsys, change, status):
+    module = _module()
+    service = module._FixtureService(module.make_fixture(SOURCE_SHA))
+    _http_exchange(module, service, _request())
+    operation = "browsers_members:start" if change == "order" else "queues_tokens:start"
+    fields = module.expected_post_fields(operation)
+    if change == "fields":
+        fields["operation_id"] = "PRIVATE_FIXTURE_SECRET"
+    body = urlencode(fields).encode()
+    path = module.post_url(operation).removeprefix(module.ORIGIN)
+    origin = "https://PRIVATE_FIXTURE_SECRET.invalid" if change == "origin" else module.ORIGIN
+    headers = [
+        f"Origin: {origin}",
+        "Content-Type: application/x-www-form-urlencoded",
+        f"Content-Length: {len(body)}",
+    ]
+    if change == "query":
+        path += "?PRIVATE_FIXTURE_SECRET=1"
+    elif change in {"host", "duplicate"}:
+        headers.append(
+            "Host: PRIVATE_FIXTURE_SECRET.invalid" if change == "host" else "Origin: " + origin
+        )
+    elif change == "transfer":
+        headers.append("Transfer-Encoding: chunked")
+    elif change == "length":
+        headers[-1] = "Content-Length: 2049"
+    elif change == "short_body":
+        body = body[:-1]
+    elif change == "line":
+        headers.append("X-Private: " + "x" * 2048)
+    elif change == "header_bytes":
+        headers.extend("X-Private: " + "x" * 1000 for _ in range(9))
+    elif change == "header_lines":
+        headers.extend(f"X-Private-{i}: x" for i in range(65))
+    raw = _request("DELETE" if change == "method" else "POST", path, headers=headers, body=body)
+    response = _http_exchange(module, service, raw)
+    assert response.startswith(f"HTTP/1.0 {status} ".encode())
+    assert b"PRIVATE_FIXTURE_SECRET" not in response
+    assert service.counters()["rejected"] == 1
+    assert service.stopping.is_set()
+    assert service.counters()["native_posts"] == 0
+    assert capsys.readouterr().err == ""
+
+
+def test_http_fixture_caps_admission_and_rejected_counts():
+    module = _module()
+    service = module._FixtureService(module.make_fixture(SOURCE_SHA))
+    _http_exchange(module, service, _request())
+    for _ in range(24):
+        assert _http_exchange(module, service, _request(path="/control/motores.json")).startswith(
+            b"HTTP/1.0 200 "
+        )
+    assert _http_exchange(module, service, _request(path="/control/motores.json")).startswith(
+        b"HTTP/1.0 429 "
+    )
+    for _ in range(3):
+        assert _http_exchange(module, service, _request()).startswith(b"HTTP/1.0 503 ")
+    assert service.counters()["snapshots"] == 24
+    assert service.counters()["documents"] == 1
+    assert service.counters()["rejected"] == 1
+
+
+def test_http_fixture_refuses_extra_document_without_an_accepted_post():
+    module = _module()
+    service = module._FixtureService(module.make_fixture(SOURCE_SHA))
+    _http_exchange(module, service, _request())
+    response = _http_exchange(module, service, _request())
+    assert response.startswith(b"HTTP/1.0 400 ")
+    assert service.counters()["documents"] == 1
+    assert service.counters()["rejected"] == 1
+
+
+def test_http_handler_suppresses_private_exception_tracebacks(monkeypatch, capsys):
+    module = _module()
+    service = module._FixtureService(module.make_fixture(SOURCE_SHA))
+
+    def broken(*_args):
+        raise RuntimeError("PRIVATE_FIXTURE_SECRET")
+
+    monkeypatch.setattr(service, "respond", broken)
+    _http_exchange(module, service, _request())
+    assert service.counters()["rejected"] == 1
+    module._FixtureHTTPServer.handle_error(types.SimpleNamespace(service=service), None, None)
+    assert capsys.readouterr().err == ""
+
+
+def test_http_socket_timeout_stops_admission_without_stdlib_logging(capsys):
+    module = _module()
+    service = module._FixtureService(module.make_fixture(SOURCE_SHA))
+
+    class Stream:
+        def readline(self, _limit):
+            raise TimeoutError("PRIVATE_TIMEOUT_CONTENT")
+
+        def close(self):
+            pass
+
+    assert _http_exchange(module, service, Stream()) == b""
+    assert service.counters()["rejected"] == 1
+    assert service.stopping.is_set()
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.parametrize("already_stopping", [False, True])
+def test_accepted_socket_is_registered_or_closed_under_the_stop_guard(
+    monkeypatch, already_stopping
+):
+    module = _module()
+    service = module._FixtureService(module.make_fixture(SOURCE_SHA))
+    closed = []
+    connection = types.SimpleNamespace(
+        settimeout=lambda value: None if value == 5 else pytest.fail("socket timeout changed"),
+        close=lambda: closed.append(True),
+    )
+    server = object.__new__(module._FixtureHTTPServer)
+    server.service = service
+    monkeypatch.setattr(
+        module.HTTPServer, "get_request", lambda _self: (connection, ("127.0.0.1", 12345))
+    )
+    if already_stopping:
+        service.stopping.set()
+        with pytest.raises(OSError):
+            server.get_request()
+        assert service.active is None
+        assert closed == [True]
+    else:
+        assert server.get_request()[0] is connection
+        assert service.active is connection
+        assert closed == []
+
+
+@pytest.mark.parametrize("failure", [None, "socket", "server", "thread"])
+def test_fixture_close_attempts_every_resource_and_requires_stopped_thread(failure):
+    module = _module()
+    service = module._FixtureService(module.make_fixture(SOURCE_SHA))
+    events = []
+
+    class Connection:
+        closed = False
+
+        def shutdown(self, _how):
+            events.append("shutdown")
+            if failure == "socket":
+                raise RuntimeError("private-cleanup-failure")
+
+        def close(self):
+            events.append("socket_close")
+            self.closed = True
+
+        def fileno(self):
+            return -1 if self.closed else 42
+
+    class Server:
+        socket = Connection()
+
+        def server_close(self):
+            events.append("server_close")
+            if failure == "server":
+                raise RuntimeError("private-cleanup-failure")
+            self.socket.closed = True
+
+    class Thread:
+        ident = 1
+
+        def join(self, timeout):
+            assert timeout == 5
+            events.append("join")
+
+        def is_alive(self):
+            return failure == "thread"
+
+    service.active = Connection()
+    service.server = Server()
+    service.thread = Thread()
+    if failure is None:
+        service.close()
+    else:
+        with pytest.raises(RuntimeError, match="^offline_fixture_close_unverified$"):
+            service.close()
+    assert service.stopping.is_set()
+    assert set(events) == {"shutdown", "socket_close", "server_close", "join"}
+
+
+@pytest.mark.parametrize("code", [errno.EBADF, errno.ENOTCONN, errno.EIO])
+@pytest.mark.parametrize("socket_closed", [True, False])
+def test_fixture_close_only_accepts_shutdown_race_when_every_resource_is_closed(
+    code, socket_closed
+):
+    module = _module()
+    service = module._FixtureService(module.make_fixture(SOURCE_SHA))
+    joined = []
+
+    class Connection:
+        def shutdown(self, _how):
+            raise OSError(code, "PRIVATE_CLOSE_CONTENT")
+
+        def close(self):
+            pass
+
+        def fileno(self):
+            return -1 if socket_closed else 42
+
+    service.active = Connection()
+    service.server = types.SimpleNamespace(
+        server_close=lambda: None,
+        socket=types.SimpleNamespace(fileno=lambda: -1),
+    )
+    service.thread = types.SimpleNamespace(
+        ident=1,
+        join=lambda *, timeout: joined.append(timeout),
+        is_alive=lambda: False,
+    )
+    if socket_closed and code in {errno.EBADF, errno.ENOTCONN}:
+        service.close()
+    else:
+        with pytest.raises(RuntimeError, match="^offline_fixture_close_unverified$"):
+            service.close()
+    assert joined == [5]
+
+
+@pytest.mark.parametrize("drained", [True, False])
+def test_fixture_close_certifies_descriptor_after_handler_releases_makefile(drained):
+    module = _module()
+    service = module._FixtureService(module.make_fixture(SOURCE_SHA))
+    events = []
+
+    class Connection:
+        close_requested = False
+        file_reference_open = True
+
+        def shutdown(self, _how):
+            events.append("shutdown")
+
+        def close(self):
+            events.append("socket_close")
+            self.close_requested = True
+
+        def fileno(self):
+            events.append("accepted_descriptor_check")
+            return -1 if self.close_requested and not self.file_reference_open else 42
+
+    active = Connection()
+
+    class Thread:
+        ident = 1
+
+        def join(self, timeout):
+            assert timeout == 5
+            events.append("join")
+            if drained:
+                active.file_reference_open = False
+
+        def is_alive(self):
+            return False
+
+    service.active = active
+    service.server = types.SimpleNamespace(
+        server_close=lambda: events.append("server_close"),
+        socket=types.SimpleNamespace(fileno=lambda: -1),
+    )
+    service.thread = Thread()
+    if drained:
+        service.close()
+    else:
+        with pytest.raises(RuntimeError, match="^offline_fixture_close_unverified$"):
+            service.close()
+    assert active.close_requested
+    assert events.index("socket_close") < events.index("join")
+    assert events.index("join") < events.index("accepted_descriptor_check")
+
+
+def test_fixture_cannot_open_listener_before_offline_identity(monkeypatch):
+    module = _module()
+    events = []
+
+    def denied():
+        raise RuntimeError("offline_browser_identity_unverified")
+
+    monkeypatch.setattr(module, "_offline_identity", denied)
+    monkeypatch.setattr(module, "_FixtureHTTPServer", lambda *_args: events.append("socket"))
+    service = module._FixtureService(module.make_fixture(SOURCE_SHA))
+    with pytest.raises(RuntimeError, match="offline_browser_identity_unverified"):
+        service.start()
+    assert events == []
+
+
+@pytest.mark.parametrize("change", [None, "post_status", "location", "get_status", "chain", "url"])
+def test_native_submit_requires_correlated_303_and_new_document(change):
+    module = _module()
+
+    async def exercise():
+        post = types.SimpleNamespace(
+            url=module.post_url("queues_tokens:start"),
+            method="POST",
+            is_navigation_request=lambda: True,
+        )
+        landing = types.SimpleNamespace(
+            url=module.PAGE_URL,
+            method="GET",
+            is_navigation_request=lambda: True,
+            redirected_from=None if change == "chain" else post,
+        )
+        responses = [
+            types.SimpleNamespace(
+                url=post.url,
+                request=post,
+                status=200 if change == "post_status" else 303,
+                headers={
+                    "location": "https://private.invalid" if change == "location" else "/control"
+                },
+            ),
+            types.SimpleNamespace(
+                url=landing.url, request=landing, status=503 if change == "get_status" else 200
+            ),
+        ]
+        listeners = []
+        loaded = []
+
+        class Expectation:
+            def __init__(self, predicate):
+                self.predicate = predicate
+                self.value = asyncio.get_running_loop().create_future()
+
+            async def __aenter__(self):
+                listeners.append(self)
+                return self
+
+            async def __aexit__(self, kind, _error, _traceback):
+                if kind is None and not self.value.done():
+                    raise TimeoutError("private-unmatched-response")
+
+        class Page:
+            url = module.PAGE_URL if change != "url" else "https://private.invalid"
+
+            def expect_response(self, predicate):
+                return Expectation(predicate)
+
+            def locator(self, selector):
+                assert selector == "#queues_tokens-start-button"
+                return self
+
+            async def click(self, **kwargs):
+                assert kwargs == {}, (
+                    "native click keeps all default actionability/navigation checks"
+                )
+                for response in responses:
+                    for listener in listeners:
+                        if not listener.value.done() and listener.predicate(response):
+                            listener.value.set_result(response)
+
+            async def wait_for_load_state(self, state):
+                loaded.append(state)
+
+            async def wait_for_function(self, _expression):
+                pass
+
+        await module._submit(Page(), "queues_tokens:start")
+        assert loaded == ["load"]
+
+    if change is None:
+        asyncio.run(exercise())
+    else:
+        with pytest.raises(TimeoutError if change == "chain" else RuntimeError):
+            asyncio.run(exercise())
+
+
+def test_page_error_callback_accepts_playwright_wrapper_cache_before_navigation(monkeypatch):
     """Playwright 1.64.1 caches its wrapper on non-method callback objects."""
     module = _module()
+    monkeypatch.setattr(module._FixtureService, "start", lambda _service: None)
 
     class StopBeforeNavigation(Exception):
         pass
@@ -225,8 +698,21 @@ class _InertViewportBrowser:
         async def all_headers():
             return headers or {}
 
-        async def fulfill(**_kwargs):
-            pass
+        async def continue_():
+            request_headers = [f"{name}: {value}" for name, value in (headers or {}).items()]
+            content = body.encode() if body is not None else b""
+            if method == "POST":
+                request_headers.append(f"Content-Length: {len(content)}")
+            _http_exchange(
+                self.module,
+                self.service,
+                _request(
+                    method,
+                    url.removeprefix(self.module.ORIGIN),
+                    headers=request_headers,
+                    body=content,
+                ),
+            )
 
         async def abort():
             pass
@@ -239,7 +725,7 @@ class _InertViewportBrowser:
             all_headers=all_headers,
             post_data=body,
         )
-        await self.handler(types.SimpleNamespace(request=request, fulfill=fulfill, abort=abort))
+        await self.handler(types.SimpleNamespace(request=request, continue_=continue_, abort=abort))
 
     async def goto(self, url, **kwargs):
         assert url == self.module.PAGE_URL
@@ -321,11 +807,14 @@ class _InertViewportBrowser:
     ],
 )
 def test_viewport_failure_reports_actual_step_and_route_counts_without_payloads(
-    capsys, fault, documents, snapshots, rejected, page_errors, cleanup
+    monkeypatch, capsys, fault, documents, snapshots, rejected, page_errors, cleanup
 ):
     module = _module()
     error = TimeoutError("private-url-token-dom-fixture-must-not-be-logged")
     browser = _InertViewportBrowser(module, fault, error)
+    monkeypatch.setattr(
+        module._FixtureService, "start", lambda service: setattr(browser, "service", service)
+    )
     with pytest.raises(TimeoutError) as caught:
         asyncio.run(module._viewport(browser, module.make_fixture(SOURCE_SHA), 800, 1280))
     assert caught.value is error
@@ -339,11 +828,16 @@ def test_viewport_failure_reports_actual_step_and_route_counts_without_payloads(
     )
 
 
-def test_viewport_cleanup_cannot_mask_primary_error_or_change_failure_time_counts(capsys):
+def test_viewport_cleanup_cannot_mask_primary_error_or_change_failure_time_counts(
+    monkeypatch, capsys
+):
     module = _module()
     primary = TimeoutError("private-primary-error")
     browser = _InertViewportBrowser(
         module, "initial_live_poll", primary, RuntimeError("private-cleanup-error")
+    )
+    monkeypatch.setattr(
+        module._FixtureService, "start", lambda service: setattr(browser, "service", service)
     )
     with pytest.raises(TimeoutError) as caught:
         asyncio.run(module._viewport(browser, module.make_fixture(SOURCE_SHA), 800, 1280))
@@ -355,6 +849,67 @@ def test_viewport_cleanup_cannot_mask_primary_error_or_change_failure_time_count
         "snapshot_phase=0 documents=1 snapshots=1 native_posts=0 rejected=0 "
         "page_errors=1 error_type=TimeoutError cleanup=FAILED\n"
     )
+
+
+@pytest.mark.parametrize("context_close_fails", [False, True])
+def test_viewport_always_closes_fixture_and_preserves_first_fault(
+    monkeypatch, capsys, context_close_fails
+):
+    module = _module()
+    primary = TimeoutError("PRIVATE_PRIMARY_CONTENT")
+    browser = _InertViewportBrowser(
+        module,
+        "initial_timestamp",
+        primary,
+        RuntimeError("PRIVATE_CONTEXT_CONTENT") if context_close_fails else None,
+    )
+    closed = []
+
+    def close(service):
+        closed.append(service)
+        raise RuntimeError("offline_fixture_close_unverified")
+
+    monkeypatch.setattr(
+        module._FixtureService, "start", lambda service: setattr(browser, "service", service)
+    )
+    monkeypatch.setattr(module._FixtureService, "close", close)
+    with pytest.raises(TimeoutError) as caught:
+        asyncio.run(module._viewport(browser, module.make_fixture(SOURCE_SHA), 800, 1280))
+    assert caught.value is primary
+    assert browser.closed
+    assert closed == [browser.service]
+    receipt = capsys.readouterr().err
+    assert "step=initial_timestamp" in receipt and "cleanup=FAILED" in receipt
+    assert "snapshots=1" in receipt and "page_errors=1" in receipt
+    assert "PRIVATE" not in receipt
+
+
+def test_failed_fixture_bind_is_closed_and_does_not_mask_startup_fault(monkeypatch, capsys):
+    module = _module()
+    primary = OSError("PRIVATE_BIND_CONTENT")
+    browser = _InertViewportBrowser(module, None, primary)
+    closed = []
+
+    class Server:
+        def __init__(self, _service):
+            self.socket = types.SimpleNamespace(fileno=lambda: -1 if closed else 42)
+
+        def server_bind(self):
+            raise primary
+
+        def server_close(self):
+            closed.append(True)
+
+    monkeypatch.setattr(module, "_offline_identity", lambda: None)
+    monkeypatch.setattr(module, "_FixtureHTTPServer", Server)
+    with pytest.raises(OSError) as caught:
+        asyncio.run(module._viewport(browser, module.make_fixture(SOURCE_SHA), 800, 1280))
+    assert caught.value is primary
+    assert closed == [True]
+    assert browser.closed
+    receipt = capsys.readouterr().err
+    assert "step=fixture_start" in receipt and "cleanup=CLOSED" in receipt
+    assert "documents=0" in receipt and "PRIVATE" not in receipt
 
 
 def test_probe_formatter_bounds_counts_and_rejects_untrusted_categories():
@@ -371,8 +926,8 @@ def test_probe_formatter_bounds_counts_and_rejects_untrusted_categories():
         width=True,
         height=1280,
         counts={
-            "snapshot_phase": 5,
-            "documents": 2,
+            "snapshot_phase": 6,
+            "documents": 6,
             "snapshots": 10**1000,
             "native_posts": True,
             "rejected": -1,
@@ -470,7 +1025,20 @@ def test_verified_capture_writes_only_bounded_named_pngs_and_public_report(tmp_p
         assert len(raw) == view["screenshot_bytes"]
 
 
-@pytest.mark.parametrize("change", ["sha", "fixture", "check", "post", "network", "png", "extra"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "sha",
+        "fixture",
+        "check",
+        "post",
+        "network",
+        "png",
+        "old_documents",
+        "old_snapshots",
+        "extra",
+    ],
+)
 def test_capture_rejects_unproven_or_tampered_evidence_before_creating_artifacts(tmp_path, change):
     module = _module()
     fixture = module.make_fixture(SOURCE_SHA)
@@ -487,6 +1055,10 @@ def test_capture_rejects_unproven_or_tampered_evidence_before_creating_artifacts
         capture["viewports"][0]["other_requests"] = 1
     elif change == "png":
         capture["viewports"][0]["png_base64"] = base64.b64encode(_png(1, 1)).decode()
+    elif change == "old_documents":
+        capture["viewports"][0]["document_requests"] = 1
+    elif change == "old_snapshots":
+        capture["viewports"][0]["snapshot_requests"] = 4
     else:
         capture["viewports"][0]["screenshot"] = "../../escape.png"
     destination = tmp_path / "artifacts"
