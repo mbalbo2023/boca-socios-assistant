@@ -1,6 +1,14 @@
 # Boca Socios Assistant
 
-## R306 — comparación estable de mounts; recuperación física pendiente
+## Continuidad vigente R307
+
+La [matriz de integración](docs/BETA_INTEGRATION_STATUS.md)
+concentra el estado recuperado: Docker instalado, recovery 1166 aceptada y
+prepare 1167 fallido con restauración saludable. [Issue 528](https://github.com/mbalbo2023/boca-socios-assistant/issues/528)
+limita el candidato a reutilizar el diagnóstico existente. El producto y
+la aceptación funcional se registran por separado; no repetir el deploy.
+
+## Histórico R306 — comparación estable de mounts; corte previo al despacho
 
 PR526 está integrada en W1 b96db3a13ad50e663ae3eb8cde82345a72792aaf,
 CI1276/Security1091 SUCCESS. R845f31abfb1762dff27e6fc3274fcc40507f3f18 sigue

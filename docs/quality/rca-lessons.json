@@ -749,6 +749,21 @@
         "tests/test_r306_mount_witness_order.py::test_r306_mount_records_and_identities_preserve_all_evidence",
         "tests/test_r306_mount_witness_order.py::test_r306_duplicate_mounts_refused_before_sort"
       ]
+    },
+    {
+      "id": "RCA-528",
+      "issue": 528,
+      "fix_pr": 528,
+      "root_cause": "The read-only observer fixed acquisition and verification to incident1156, so its current CLI could not inspect prepare1167 helpers or accept their receipts. This observability gap does not establish the physical failure cause.",
+      "prevention": "Select1167 explicitly in both CLI branches; retain1156 API defaults and R305 profiles. Bind receipts to the selected incident and reject mixed helpers before inspection. Preserve exact templates and limits. Helper absence proves current absence only.",
+      "regression_tests": [
+        "tests/test_r307_telegram_incident_continuation.py::test_current_cli_host_acquires_1167_helper_without_caller_selector",
+        "tests/test_r307_telegram_incident_continuation.py::test_current_cli_verifier_accepts_1167_receipt_with_same_three_arguments",
+        "tests/test_r307_telegram_incident_continuation.py::test_receipts_reject_both_cross_incident_directions_with_identical_run_sha",
+        "tests/test_r307_telegram_incident_continuation.py::test_current_inventory_rejects_wrong_or_multiple_helpers_before_field_inspection",
+        "tests/test_r307_telegram_incident_continuation.py::test_current_helper_absence_is_complete_without_causality_or_permissions",
+        "tests/test_r307_telegram_incident_continuation.py::test_fixed_inspect_templates_and_derived_orders_match_immutable_base"
+      ]
     }
   ]
 }

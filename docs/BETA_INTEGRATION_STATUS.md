@@ -1,6 +1,58 @@
 # Estado de integración BETA
 
-## R306 — comparación estable de mounts; recuperación física pendiente
+## R307 — continuidad recuperada; diagnóstico 1167 en revisión
+
+Este corte separa el producto instalado de las herramientas operativas. R
+`845f31abfb1762dff27e6fc3274fcc40507f3f18` sigue instalado por release 867 /
+APPLY 1153 ACCEPTED y cleanup ACCEPT. Main base W2
+`e16bfb78bc16b9f7554c76191c50f354e61fcbbc` integra PR 527, con CI 1278 y
+Security 1092 SUCCESS; no representa otra imagen instalada.
+
+[Recovery 1166](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6898002351)
+terminó COMPLETE/ACCEPTED: inicialización aceptada y auxiliar retirado.
+[Prepare 1167](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6898066194)
+falló con FAILED_STATE_PRESERVED, CONTROLLER_HEALTHY_ENGINE_OFF, sender OFF
+y human UNVERIFIED. Es la última observación física heredada, no una lectura
+nueva. No PREPARED ni causa concreta; no repetir recuperación, prepare,
+release/APPLY/admin/migración por ese fallo.
+
+[Issue 528](https://github.com/mbalbo2023/boca-socios-assistant/issues/528)
+registra cuatro GO anteriores al código para reutilizar el lector R304:
+CLI actual 1167, APIs/defaults 1156 intactos para R305, sin otro módulo ni
+transporte. [Diseño](superpowers/specs/2026-11-15-r307-telegram-incident-continuation-design.md)
+y [plan](superpowers/plans/2026-11-15-r307-telegram-incident-continuation.md).
+El cambio focal debe cerrar revisión y gates antes de una observación
+protegida única. Un helper ausente no demuestra la causa
+histórica ni habilita otro prepare. El resultado se registra en
+[el checkpoint de continuidad](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6899119716).
+
+La auditoría confirmó que motores, monitores y wiring ya existen: no se
+reimplementan. DOM autenticado, countdown, resultado/ganador/cancelación,
+comprobante/foto/destino por socio y aceptación privada siguen diferenciados
+de sus contratos existentes. Capacidad física de 50 no certificada. SIMULATION_ONLY,
+sender OFF, datos/passkeys/BLACKBOX y aislamiento Porota/PPI preservados.
+
+La validación focal del candidato pasó 247 pruebas, más la comprobación final
+del fixture fijo; Ruff, formato y mypy pasaron. El módulo mide 23.961 bytes
+con límite de 24.000; el ZIP de observación conserva 29 entradas. Son pruebas
+offline del candidato, no evidencia física de preparación Telegram.
+
+### Responsables y camino crítico
+
+Root posee la integración, la documentación y cualquier Action serializada.
+El autor R307 sólo modifica el lector y sus dos archivos de pruebas;
+continuidad/arquitectura, funcionalidad/QA y operaciones/RCA revisan por
+separado, además de root. Ningún revisor escribe sobre el trabajo del autor.
+
+El camino inmediato es evidencia de 1167, decisión causal específica y
+preparación Telegram demostrada. Después siguen emparejamiento y aceptación
+privada; el envío permanece desactivado. En paralelo, el cierre funcional
+requiere evidencia del DOM autenticado, cuenta regresiva a apertura,
+resultado confirmado/ganador/cancelación de hermanos y comprobante con
+destino individual por socio. QA Samsung/Voice Access y capacidad física
+medida completan la aceptación. Nada de este corte habilita reservas reales.
+
+## Histórico R306 — comparación estable de mounts; corte previo al despacho
 
 PR526 está integrada en W1 b96db3a13ad50e663ae3eb8cde82345a72792aaf,
 CI1276/Security1091 SUCCESS. R845f31abfb1762dff27e6fc3274fcc40507f3f18 sigue

@@ -12,6 +12,7 @@ import pytest
 
 from test_r304_telegram_incident_readonly import RUN, WORKFLOW, scenario
 from test_r304_telegram_incident_workflow import classification_from_real_step
+from test_r307_telegram_incident_continuation import CURRENT, current_scenario
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -66,10 +67,13 @@ def test_incident_real_zip_cli_and_workflow_classify_complete_and_incomplete(tmp
             bootstrap.verify(raw, digest, **options)
     with pytest.raises(ValueError, match="SHA/size"):
         bootstrap.verify(raw, "0" * 64, telegram_incident_observe=True)
+    observer, _ = current_scenario(monkeypatch)
+    complete = observer.observe(RUN, WORKFLOW, CURRENT)
+    observer, _ = current_scenario(monkeypatch, fault="binding")
+    incomplete = observer.observe(RUN, WORKFLOW, CURRENT)
     observer, _ = scenario(monkeypatch)
-    complete = observer.observe(RUN, WORKFLOW)
-    observer, _ = scenario(monkeypatch, fault="binding")
-    incomplete = observer.observe(RUN, WORKFLOW)
+    historical = observer.observe(RUN, WORKFLOW)
+    assert observer.verify(historical, RUN, WORKFLOW) == historical
     command = [
         sys.executable,
         "-I",
@@ -88,6 +92,10 @@ def test_incident_real_zip_cli_and_workflow_classify_complete_and_incomplete(tmp
             command, input=receipt, cwd=tmp_path, capture_output=True, check=False, timeout=10
         )
         assert result.returncode == expected and result.stdout == receipt and not result.stderr
+    result = subprocess.run(  # noqa: S603 - current CLI rejects historical coordinates
+        command, input=historical, cwd=tmp_path, capture_output=True, check=False, timeout=10
+    )
+    assert result.returncode == 3 and result.stdout != historical and not result.stderr
     for index, (receipt, remote_rc, expected, canonical) in enumerate(
         (
             (complete, 0, 0, True),
@@ -96,6 +104,7 @@ def test_incident_real_zip_cli_and_workflow_classify_complete_and_incomplete(tmp
             (incomplete, 0, 1, False),
             (b"PRIVATE_UNTRUSTED\n", 0, 1, False),
             (complete.replace(WORKFLOW.encode(), b"b" * 40), 0, 1, False),
+            (historical, 0, 1, False),
         )
     ):
         status, summary = classification_from_real_step(

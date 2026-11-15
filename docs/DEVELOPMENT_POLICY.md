@@ -1,6 +1,13 @@
 # Development and merge policy
 
-## R306 — comparación estable de mounts; recuperación física pendiente
+## Continuidad vigente R307
+
+El [contrato R307](superpowers/specs/2026-11-15-r307-telegram-incident-continuation-design.md)
+registra consenso previo, un autor y revisores independientes. El scope es
+el lector existente y sus tests; root posee documentación e integración.
+Se conserva la política permanente y el [estado físico](BETA_INTEGRATION_STATUS.md).
+
+## Histórico R306 — comparación estable de mounts; corte previo al despacho
 
 PR526 está integrada en W1 b96db3a13ad50e663ae3eb8cde82345a72792aaf,
 CI1276/Security1091 SUCCESS. R845f31abfb1762dff27e6fc3274fcc40507f3f18 sigue
