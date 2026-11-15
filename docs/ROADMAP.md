@@ -1,6 +1,16 @@
 # Backlog y dependencias de la BETA
 
-## Continuidad vigente R307
+## Camino crítico vigente
+
+Cerrar revisión de R308 y obtener evidencia específica de clave/recibos de
+Telegram. Resolver preparación/adopción global a partir de ese estado antes
+de la promoción final; después, configuración completa por socio. Para DOM
+autenticado y resultado real faltan contratos acreditados del proveedor,
+identificados en la [matriz vigente](BETA_INTEGRATION_STATUS.md). Motores,
+panel y guardas existentes se reutilizan. Recovery1166 y observación1170
+están concluidas y no vuelven al backlog.
+
+## Histórico R307
 
 Prioridad inmediata: evidencia1167 mediante [el diagnóstico existente](superpowers/plans/2026-11-15-r307-telegram-incident-continuation.md).
 El [estado de integración](BETA_INTEGRATION_STATUS.md) identifica lo instalado,

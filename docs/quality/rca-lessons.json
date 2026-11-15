@@ -764,6 +764,21 @@
         "tests/test_r307_telegram_incident_continuation.py::test_current_helper_absence_is_complete_without_causality_or_permissions",
         "tests/test_r307_telegram_incident_continuation.py::test_fixed_inspect_templates_and_derived_orders_match_immutable_base"
       ]
+    },
+    {
+      "id": "RCA-529",
+      "issue": 529,
+      "fix_pr": 530,
+      "root_cause": "The monitor always exposed countdown=None and did not carry observed opening time. Adding the real presentation increased the canonical offline fixture to165160 bytes, beyond160000; this is distinct from the historical noncanonical serialization error.",
+      "prevention": "Carry opening outside queue_model.ticket with strict UTC and same-event freshness/identity guards. Retire live values on STOP or polling failure. Measure the canonical fixture and change only its reviewed bound; keep legacy codecs and product limits.",
+      "regression_tests": [
+        "tests/test_automatic_observer.py::test_actual_snapshot_keeps_optional_opening_outside_ticket_and_invalid_flag",
+        "tests/test_automatic_observer.py::test_opening_is_optional_same_sample_prequeue_and_replaced",
+        "tests/test_engine_sessions.py::test_opening_codec_round_trip_and_exact_legacy_shapes",
+        "tests/test_engine_session_coordinator.py::test_countdown_retires_on_authority_identity_event_and_sample_drift",
+        "tests/test_engine_view.py::test_failed_poll_removes_live_countdown_and_recovers_without_focus_or_timer_changes",
+        "tests/test_engine_dashboard_ui_offline.py::test_http_fixture_models_all_native_redirects_and_preserves_poll_document"
+      ]
     }
   ]
 }

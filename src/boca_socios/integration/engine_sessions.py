@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from math import isfinite
+from math import ceil, isfinite
 from threading import Event, Lock, RLock, Thread
 from time import monotonic
 from typing import Protocol, cast
@@ -599,6 +599,7 @@ class EngineSessionCoordinator:
             await asyncio.wait_for(asyncio.wrap_future(future), timeout=10)
 
     def snapshot(self) -> dict[str, object]:
+        now = datetime.now(UTC)
         records = {record.engine: record for record in self.store.snapshot()}
         restartable = self.store.restartable_engines()
         engines: list[dict[str, object]] = []
@@ -607,7 +608,10 @@ class EngineSessionCoordinator:
                 record = records.get(engine)
                 run = self._runs.get(record.activation_id) if record is not None else None
                 sessions = tuple(run.sessions.values()) if run is not None else ()
-                rows = [self._session_metadata(item) for item in sessions]
+                rows = [
+                    self._session_metadata(item, now=now, record=record, run=run)
+                    for item in sessions
+                ]
                 engines.append(
                     {
                         "engine": engine,
@@ -644,13 +648,42 @@ class EngineSessionCoordinator:
             "version": 1,
             "context_limit": 50,
             "legacy_recovery_state": self.store.legacy_recovery_state(),
-            "observed_at": datetime.now(UTC).isoformat(),
+            "observed_at": now.isoformat(),
             "engines": engines,
         }
 
     @staticmethod
-    def _session_metadata(item: _Session) -> dict[str, object]:
+    def _session_metadata(
+        item: _Session, *, now: datetime, record: EngineActivation | None, run: _Activation | None
+    ) -> dict[str, object]:
         inspected, observed = item.inspection, item.observation
+        countdown = None
+        if (
+            record is not None
+            and record.state == "RUNNING"
+            and not record.released
+            and run is not None
+            and not run.cancelled.is_set()
+            and not run.closing
+            and not run.scope_closed
+            and run.sessions.get(item.identity.session_id) is item
+            and (item.identity.engine, item.identity.activation_id, item.identity.generation)
+            == (record.engine, record.activation_id, record.generation)
+            == (run.record.engine, run.record.activation_id, run.record.generation)
+            and item.state == "ACTIVE"
+            and not item.closed
+            and not item.failed
+            and inspected is not None
+            and inspected.context_open
+            and inspected.queue_opening_at is not None
+            and observed is not None
+            and observed.outcome == "PREQUEUE"
+            and observed.event_id == inspected.queue_opening_event_id
+            and observed.observed_at == inspected.observed_at == item.observed_at
+            # Presentation freshness only; this never authorizes engine work.
+            and 0 <= (now - observed.observed_at).total_seconds() <= 30
+        ):
+            countdown = max(0, ceil((inspected.queue_opening_at - now).total_seconds()))
         return {
             "session_id": item.identity.session_id,
             "browser": item.identity.browser,
@@ -681,7 +714,12 @@ class EngineSessionCoordinator:
             "ahead": inspected.users_ahead if inspected else None,
             "queue_size": inspected.users_in_queue if inspected else None,
             "expected_service_time": inspected.expected_service_time if inspected else None,
-            "countdown": None,
+            "queue_opening_at": (
+                inspected.queue_opening_at.isoformat()
+                if inspected and inspected.queue_opening_at is not None
+                else None
+            ),
+            "countdown": countdown,
         }
 
     def private_details(

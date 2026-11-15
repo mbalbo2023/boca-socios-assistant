@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import importlib
 import importlib.util
+import json
+import shutil
+import subprocess
 import sys
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -153,6 +156,110 @@ def observer_for(snapshots, **kwargs):
         **kwargs,
     )
     return observer, page, context, browser, engine, launches
+
+
+@pytest.mark.parametrize("value", ["2026-11-14T19:00:00Z", "bad", "x" * 65, True, None])
+def test_opening_is_optional_same_sample_prequeue_and_replaced(value):
+    async def exercise():
+        received = snapshot(
+            model={
+                "eventId": "event-308",
+                "isBeforeOrIdle": True,
+                "ticket": {"expectedServiceTime": "ETA unchanged"},
+            }
+        )
+        received["queue_opening_time_utc"] = value
+        observer, page, *_ = observer_for(
+            [received, snapshot(model={"eventId": "event-308", "isBeforeOrIdle": True})]
+        )
+        first = await observer.observe_queue()
+        inspected = await observer.inspect()
+        assert first.outcome == "PREQUEUE"
+        assert hasattr(inspected, "queue_opening_at"), "observed opening inspection missing"
+        assert inspected.expected_service_time == "ETA unchanged"
+        assert inspected.observed_at == first.observed_at == NOW
+        if value == "2026-11-14T19:00:00Z":
+            assert inspected.queue_opening_at == datetime(2026, 11, 14, 19, tzinfo=UTC)
+            assert inspected.queue_opening_event_id == first.event_id == "event-308"
+        else:
+            assert inspected.queue_opening_at is inspected.queue_opening_event_id is None
+        evaluations = len(page.evaluations)
+        assert await observer.inspect() == inspected
+        assert len(page.evaluations) == evaluations
+        await observer.observe_queue()
+        assert (await observer.inspect()).queue_opening_at is None
+        await observer.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize(
+    "model,markers",
+    [
+        ({}, ()),
+        ({"eventId": "event-308"}, ()),
+        ({"eventId": "event-308", "ticket": {"progress": 0}}, ()),
+        ({}, ("prequeue",)),
+    ],
+)
+def test_opening_without_same_sample_prequeue_event_is_not_accepted(model, markers):
+    async def exercise():
+        received = snapshot(model=model, markers=markers)
+        received["queue_opening_time_utc"] = "2026-11-14T19:00:00Z"
+        observer, *_ = observer_for([received])
+        observed = await observer.observe_queue()
+        inspected = await observer.inspect()
+        assert hasattr(inspected, "queue_opening_at"), "observed opening inspection missing"
+        assert inspected.queue_opening_at is inspected.queue_opening_event_id is None
+        if model == {} and not markers:
+            assert observed.outcome == "UNKNOWN"
+        await observer.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("mode", ["date_only", "valid", "long", "wrong_type", "throws"])
+def test_actual_snapshot_keeps_optional_opening_outside_ticket_and_invalid_flag(mode):
+    node = shutil.which("node")
+    assert node is not None
+    harness = r"""
+const vm = require('node:vm');
+const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+const ticket = {};
+Object.defineProperty(ticket, 'eventStartTimeUTC', {get() {
+  if (input.mode === 'throws') throw new Error('optional field unavailable');
+  return () => input.mode === 'long' ? 'x'.repeat(65) :
+    input.mode === 'wrong_type' ? 1 : '2026-11-14T19:00:00Z';
+}});
+const queueViewModel = {ticket};
+if (input.mode !== 'date_only') {
+  queueViewModel.eventId = 'event-308'; queueViewModel.isBeforeOrIdle = true;
+}
+const result = vm.runInNewContext('(' + input.script + ')()', {
+  window: {queueViewModel}, document: {querySelectorAll: () => [], body: {innerText: ''}}});
+process.stdout.write(JSON.stringify(result));
+"""
+    completed = subprocess.run(  # noqa: S603 - offline fixed snapshot script only
+        [node, "-e", harness],
+        input=json.dumps({"script": module()._SNAPSHOT_SCRIPT, "mode": mode}),
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=10,
+    )
+    received = json.loads(completed.stdout)
+    assert "queue_opening_time_utc" in received, "snapshot opening channel missing"
+    assert received["invalid"] is False
+    assert received["queue_model"]["ticket"] == {}
+    assert received["queue_opening_time_utc"] == (
+        "2026-11-14T19:00:00Z" if mode in {"date_only", "valid"} else None
+    )
+    from boca_socios.browser.queue_page_observation import parse_queue_page_observation
+
+    observed = parse_queue_page_observation(
+        final_url=SITE, queue_model=received["queue_model"], markers=frozenset(), observed_at=NOW
+    )
+    assert observed.outcome == ("UNKNOWN" if mode == "date_only" else "PREQUEUE")
 
 
 @pytest.mark.parametrize("already_cut", [False, True])

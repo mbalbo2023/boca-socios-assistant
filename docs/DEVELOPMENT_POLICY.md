@@ -1,6 +1,15 @@
 # Development and merge policy
 
-## Continuidad vigente R307
+## Cierre técnico vigente
+
+El [diseño R308](superpowers/specs/2026-11-15-r308-observed-opening-design.md)
+y su adenda tienen cuatro GO anteriores al código correspondiente. Autor
+separado y revisores independientes; sólo regresiones del delta y límites
+afectados en local, con gates completos del candidato exacto en CI. La
+[matriz vigente](BETA_INTEGRATION_STATUS.md) distingue implementación,
+revisión, instalación y aceptación, y conserva las dependencias de Telegram.
+
+## Histórico R307
 
 El [contrato R307](superpowers/specs/2026-11-15-r307-telegram-incident-continuation-design.md)
 registra consenso previo, un autor y revisores independientes. El scope es

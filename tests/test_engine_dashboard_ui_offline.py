@@ -474,7 +474,7 @@ def test_http_fixture_models_all_native_redirects_and_preserves_poll_document():
         "native_posts": 4,
         "rejected": 0,
     }
-    assert len(module._json(fixture)) <= 160_000
+    assert len(module._json(fixture)) <= 170_000
     assert len(fixture["snapshots"]) == 6
     assert fixture["snapshots"][1]["engines"][0]["state"] == "RUNNING"
     assert fixture["snapshots"][1]["engines"][1]["state"] == "STOPPED"

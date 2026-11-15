@@ -1,6 +1,16 @@
 # Safe operations — verified evidence and gated procedures
 
-## Continuidad vigente R307
+## Operación vigente
+
+[Observación1170](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6899708285)
+terminó COMPLETE/OBSERVED_NO_GO: controller healthy, worker created/PID0,
+helper1167 ausente, motor lógico UNVERIFIED y cero escrituras. No repetirla
+ni inferir causa1167, preparación o permiso de retry. Se diseña una lectura
+específica de clave/recibos bajo la Action actual; su eventual helper RO tiene
+efectos Docker acotados declarados, no publicación ni preparación. Root es
+único operador. [Estado vigente](BETA_INTEGRATION_STATUS.md).
+
+## Histórico R307
 
 [Estado y recibos vigentes](BETA_INTEGRATION_STATUS.md): instalación y recovery1166
 aceptadas, prepare1167 fallido con restauración saludable. El próximo alcance

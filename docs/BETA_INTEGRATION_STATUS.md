@@ -1,6 +1,52 @@
 # Estado de integración BETA
 
-## R307 — continuidad recuperada; diagnóstico 1167 en revisión
+## Cierre técnico vigente antes de la prueba integral
+
+Mandato del titular: terminar lo pendiente antes de su prueba integral. Root
+posee integración, evidencia, documentación y Actions serializadas. Cada
+cambio de código necesita necesidad demostrada, cuatro votos previos y
+revisión final independiente; ningún autor se cuenta como revisor.
+
+### Evidencia ya cerrada
+
+- Producto instalado R `845f31abfb1762dff27e6fc3274fcc40507f3f18`, release867,
+  APPLY1153 ACCEPTED y cleanup ACCEPT: sin nueva promoción.
+- Main observado `1ab24a696bf473f57cdae1ee1f01af024ce1b8e8`, árbol
+  `2573cc46656559693b776f24b02164a7c6d7ced2`, integra PR528. CI1280 y
+  Security1093 SUCCESS; la base acreditó9844 tests y34 subtests.
+- Recovery1166 COMPLETE/ACCEPTED e inicializador retirado; no repetir.
+- [Observación1170](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6899708285),
+  a las19:00:27UTC del15-NOV-2026, COMPLETE/NONE/OBSERVED_NO_GO:
+  controller healthy/running e identidad MATCH; worker created/PID0 e
+  identidad MATCH; helper1167 ABSENT; motor lógico UNVERIFIED, escrituras0.
+  Es evidencia del estado observado, no causa histórica de prepare1167.
+
+### Trabajo nuevo y responsables
+
+| Frente | Estado acreditado | Ownership y dependencia |
+|---|---|---|
+| Apertura/countdown R308 | Producto72195d9 y adenda67f932d revisados4/4;235 casos distintos PASS, lint/formato/tipos. Fixture165160 y borde170000/170001 comprobados; dos casos focales PASS. Pendiente CI integrado y despliegue. | Autor R308 terminó; Arquitectura, QA, Operaciones y root aprobaron. Root integra. |
+| Telegram global | Prepare1167 sigue FAILED_STATE_PRESERVED; no PREPARED demostrado. Reader público rechaza un binding diferente y no existe adopción en upgrade. DiagnósticoR309/issue530 aprobado4/4 y en implementación. | AutorR309 posee seis fuentes y dos tests; cuatro revisores independientes. Root opera una Action sólo tras revisión/gates. Estado real precede solución de adopción. |
+| DOM autenticado | Auth HTTP/nonce/IPC/vault existe; `dom_authentication` sólo UNVERIFIED. Referencias revisadas no prueban continuación frontend ni identidad positiva del socio. | Arquitectura; falta contrato o evidencia privada acreditada, no nuevos selectores supuestos. |
+| Resultado/ganador | Guardas, terminalización offline y outbox existen. Runtime de comandos usa adaptador local, sin vínculo al contexto real observado. | QA/Arquitectura; falta productor de confirmación real, correlación socio/evento/intento y comprobante. |
+| Destino por socio | Propuesta de circuito completo, sin implementación nueva. Reutiliza custodia/passkey y exige identidad durable ajena al SHA del producto. | QA diseña; depende de custodia global verificada, configuración sin envío y adopción explícita. No agregar sólo formularios o referencias sin productor. |
+| Capacidad50 y QA accesible | Límite lógico existente; no medida física de50 contextos reales ni aceptación Samsung/Voice Access en este corte. | Root prepara prueba técnica pertinente; titular realiza aceptación privada al cerrar pendientes. |
+
+R308 conserva ETA, phase, dos motores, límite lógico50, IPC y control de foco;
+la fecha no crea actividad de cola ni confirma apertura. El fallo del fixture
+se debe al crecimiento real del HTML, no al error histórico de serialización
+RCA523. El import IPC aislado pasó; no repetir suites ya acreditadas.
+
+El camino crítico es diagnóstico útil de Telegram → decisión de preparación/
+adopción → candidato integrado con gates exactos → promoción consolidada y
+comprobaciones pertinentes. DOM/resultado requieren su contrato acreditado
+en paralelo. Un stage global inexistente o inválido requeriría entrada privada
+del titular; aún no se afirma que falte. No enviar mensajes ni activar sender.
+
+[Checkpoint canónico](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6899119716).
+SIMULATION_ONLY, BLACKBOX, datos/passkeys y recursos ajenos protegidos.
+
+## Histórico R307 — continuidad recuperada; diagnóstico 1167 en revisión
 
 Este corte separa el producto instalado de las herramientas operativas. R
 `845f31abfb1762dff27e6fc3274fcc40507f3f18` sigue instalado por release 867 /

@@ -10,7 +10,7 @@ import json
 import math
 import re
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 from urllib.parse import urlsplit, urlunsplit
 
@@ -46,6 +46,25 @@ def _invalid() -> SyntheticIPCError:
 
 def _one_of(value: object, allowed: tuple[str, ...]) -> bool:
     return type(value) is str and value in allowed
+
+
+def parse_queue_opening_time(value: object) -> datetime | None:
+    """Accept only the explicitly observed UTC timestamp, without inference."""
+    if (
+        type(value) is not str
+        or len(value) > 64
+        or re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+            r"(?:\.[0-9]{1,6})?(?:Z|\+00:00)",
+            value,
+        )
+        is None
+    ):
+        return None
+    try:
+        return datetime.fromisoformat(value).astimezone(UTC)
+    except (ValueError, OverflowError):
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +172,8 @@ class SessionInspection:
     dom_authentication: Literal["UNVERIFIED"] = "UNVERIFIED"
     configured_url: str | None = None
     navigation_attempt: NavigationAttempt | None = None
+    queue_opening_at: datetime | None = None
+    queue_opening_event_id: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -209,6 +230,19 @@ class SessionInspection:
             if not isinstance(self.observed_at, datetime) or self.observed_at.utcoffset() is None:
                 raise _invalid()
             object.__setattr__(self, "observed_at", self.observed_at.astimezone(UTC))
+        if (self.queue_opening_at is None) != (self.queue_opening_event_id is None):
+            raise _invalid()
+        if self.queue_opening_at is not None:
+            if (
+                not isinstance(self.queue_opening_at, datetime)
+                or self.queue_opening_at.utcoffset() != timedelta(0)
+                or type(self.queue_opening_event_id) is not str
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", self.queue_opening_event_id)
+                is None
+                or self.observed_at is None
+            ):
+                raise _invalid()
+            object.__setattr__(self, "queue_opening_at", self.queue_opening_at.astimezone(UTC))
 
     def __repr__(self) -> str:
         return "SessionInspection(<private values omitted>)"
@@ -216,6 +250,9 @@ class SessionInspection:
     def to_payload(self) -> bytes:
         value = asdict(self)
         value["observed_at"] = self.observed_at.isoformat() if self.observed_at else None
+        value["queue_opening_at"] = (
+            self.queue_opening_at.isoformat() if self.queue_opening_at else None
+        )
         value["navigation_attempt"] = (
             self.navigation_attempt.to_value() if self.navigation_attempt else None
         )
@@ -224,18 +261,28 @@ class SessionInspection:
     @classmethod
     def from_payload(cls, payload: bytes) -> SessionInspection:
         keys = set(cls.__dataclass_fields__)
+        r301_keys = keys - {"queue_opening_at", "queue_opening_event_id"}
         try:
             value = decode(payload, keys, 32768)
         except SyntheticIPCError:
-            # Exactly the former complete shape remains readable. Neither
+            # Exactly the two former complete shapes remain readable. Neither
             # partial upgrades nor open dictionaries can cross this boundary.
-            value = decode(payload, keys - {"configured_url", "navigation_attempt"}, 32768)
+            try:
+                value = decode(payload, r301_keys, 32768)
+            except SyntheticIPCError:
+                value = decode(payload, r301_keys - {"configured_url", "navigation_attempt"}, 32768)
         timestamp = value["observed_at"]
         try:
             if timestamp is not None:
                 if type(timestamp) is not str:
                     raise ValueError
                 value["observed_at"] = datetime.fromisoformat(timestamp)
+            opening = value.get("queue_opening_at")
+            if opening is not None:
+                parsed_opening = parse_queue_opening_time(opening)
+                if parsed_opening is None:
+                    raise _invalid()
+                value["queue_opening_at"] = parsed_opening
             if value.get("navigation_attempt") is not None:
                 value["navigation_attempt"] = NavigationAttempt.from_value(
                     value["navigation_attempt"]

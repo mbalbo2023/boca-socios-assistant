@@ -487,6 +487,7 @@ const context = {
   setInterval() {}, URL,
   fetch: async (url, options) => {
     requests.push({url, options});
+    if (snapshot === 'network-error') throw new Error('offline fixture');
     return {ok: true, json: async () => snapshot};
   }
 };
@@ -500,7 +501,8 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
       disabled: element('legacy-worker-recovery-button').disabled} : null,
       status: element('engines-live').textContent};
     if (row) for (const field of ['outcome', 'queue_state', 'phase', 'event_state', 'event_id',
-      'reason', 'configured_url', 'navigation_attempt', 'display_url', 'inspect']) {
+      'reason', 'configured_url', 'navigation_attempt', 'display_url', 'inspect',
+      'queue_opening_at', 'countdown', 'expected_service_time']) {
       result[field] = row.querySelector('[data-field="' + field + '"]').textContent;
     }
     results.push(result);
@@ -531,6 +533,63 @@ vm.runInNewContext(input.script, context, {timeout: 1000});
         timeout=10,
     )
     return json.loads(completed.stdout)
+
+
+@pytest.mark.parametrize(
+    "seconds,expected",
+    [
+        (90061, "25 h 01 min 01 s"),
+        (61, "00 h 01 min 01 s"),
+        (0, "Hora informada alcanzada; pendiente de confirmación de la página"),
+        (None, "Sin fecha de apertura vigente"),
+        (-1, "Sin fecha de apertura vigente"),
+        (True, "Sin fecha de apertura vigente"),
+        (1.1, "Sin fecha de apertura vigente"),
+        ("61", "Sin fecha de apertura vigente"),
+    ],
+)
+def test_opening_initial_and_actual_poll_show_same_art_duration_and_no_phase_change(
+    seconds, expected
+):
+    session_id = str(uuid4())
+    session = {
+        "session_id": session_id,
+        "queue_opening_at": "2026-11-15T18:05:07+00:00",
+        "countdown": seconds,
+        "outcome": "PREQUEUE",
+        "phase": "PREQUEUE",
+        "expected_service_time": "ETA unchanged",
+    }
+    snapshot = _evidence_snapshot(session)
+    _, body, _ = render(snapshot=snapshot)
+    assert b"Tiempo estimado hasta la apertura informada" in body
+    assert ('data-field="countdown">' + expected + "</dd>").encode() in body
+    assert b'data-field="queue_opening_at">2026-11-15 15:05:07 ART</dd>' in body
+    polled = _run_poll_script([snapshot], session_id=session_id)["results"][0]
+    assert polled["countdown"] == expected
+    assert polled["queue_opening_at"] == "2026-11-15 15:05:07 ART"
+    assert polled["expected_service_time"] == "ETA unchanged"
+    assert polled["phase"] == polled["outcome"] == "Prefila observada"
+
+
+@pytest.mark.parametrize("failure", ["network-error", {"version": 999}])
+def test_failed_poll_removes_live_countdown_and_recovers_without_focus_or_timer_changes(failure):
+    from boca_socios.panel import engine_view
+
+    session_id = str(uuid4())
+    snapshot = _evidence_snapshot(
+        {"session_id": session_id, "countdown": 61, "queue_opening_at": "2026-11-15T18:05:07+00:00"}
+    )
+    actual = _run_poll_script([snapshot, failure, snapshot], session_id=session_id)
+    assert [item["countdown"] for item in actual["results"]] == [
+        "00 h 01 min 01 s",
+        "Sin fecha de apertura vigente",
+        "00 h 01 min 01 s",
+    ]
+    assert actual["results"][1]["queue_opening_at"] == "2026-11-15 15:05:07 ART"
+    assert actual["retained"]["focus"] and actual["retained"]["row"]
+    assert actual["clipboard"] == actual["selects"] == 0
+    assert engine_view._SCRIPT.count("setInterval(") == 1
 
 
 @pytest.mark.parametrize("present", [True, False])

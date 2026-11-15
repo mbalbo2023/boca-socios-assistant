@@ -41,6 +41,7 @@ from boca_socios.browser.engine_protocol import (
     NavigationPurpose,
     Scalar,
     SessionInspection,
+    parse_queue_opening_time,
 )
 from boca_socios.browser.ipc_protocol import SyntheticIPCError
 from boca_socios.browser.offline_fixture import _bounded_close
@@ -114,6 +115,7 @@ _SNAPSHOT_SCRIPT = r"""() => {
   };
   const vm = window.queueViewModel;
   let model = null;
+  let queue_opening_time_utc = null;
   if (vm && typeof vm === 'object') {
     model = {};
     for (const key of ['eventId', 'queueId', 'queueState', 'targetUrl', 'isBeforeOrIdle', 'isIdle']) {
@@ -122,6 +124,11 @@ _SNAPSHOT_SCRIPT = r"""() => {
     }
     const ticket = read(vm.ticket);
     if (ticket && typeof ticket === 'object') {
+      // Optional presentation evidence must never poison valid queue evidence.
+      try {
+        const opening = read(ticket.eventStartTimeUTC);
+        if (typeof opening === 'string' && opening.length <= 64) queue_opening_time_utc = opening;
+      } catch (_) {}
       model.ticket = {};
       for (const key of ['queuePaused', 'progress', 'expectedServiceTime', 'whichIsIn',
         'usersInLineAheadOfYou', 'usersInQueue', 'queueNumber']) {
@@ -146,7 +153,7 @@ _SNAPSHOT_SCRIPT = r"""() => {
     catch (_) { return false; }
   }).map(element => element.href);
   const bodyText = document.body?.innerText || '';
-  return {invalid, queue_model: model, markers,
+  return {invalid, queue_model: model, queue_opening_time_utc, markers,
     visible_text: bodyText.slice(0, 16384), visible_text_truncated: bodyText.length > 16384,
     queue_links: [...new Set(links)].slice(0, 2)};
 }"""
@@ -626,6 +633,11 @@ class AutomaticQueueObserver:
         ticket = valid_model.get("ticket")
         fields = ticket if isinstance(ticket, dict) else {}
         final_url = facade.page.url if _received_http_url(facade.page.url) else None
+        opening = (
+            parse_queue_opening_time(received.get("queue_opening_time_utc"))
+            if observation.outcome == "PREQUEUE" and observation.event_id is not None
+            else None
+        )
         try:
             self._inspection = SessionInspection(
                 final_url=final_url,
@@ -634,6 +646,8 @@ class AutomaticQueueObserver:
                 users_ahead=cast(Scalar, fields.get("usersInLineAheadOfYou")),
                 users_in_queue=cast(Scalar, fields.get("usersInQueue")),
                 expected_service_time=cast(Scalar, fields.get("expectedServiceTime")),
+                queue_opening_at=opening,
+                queue_opening_event_id=observation.event_id if opening is not None else None,
                 observed_at=observation.observed_at,
                 context_open=True,
             )

@@ -121,7 +121,8 @@ _SESSION_LABELS = {
     "ahead": "Personas delante, según la página",
     "queue_size": "Personas en cola, según la página",
     "expected_service_time": "Hora de acceso estimada por la página",
-    "countdown": "Cuenta regresiva recibida",
+    "queue_opening_at": "Fecha de apertura informada por la página",
+    "countdown": "Tiempo estimado hasta la apertura informada",
     "event_state": "Estado del evento observado",
     "event_id": "ID de evento observado en la página",
     "reason": "Motivo de la observación",
@@ -247,6 +248,16 @@ _SCRIPT = (
     return prefix + index + ' de ' + engineNames[engine];
   }
   function fieldValue(item, field) {
+    if (field === 'queue_opening_at') return item.queue_opening_at ?
+      formatPrivateTime(item.queue_opening_at) : 'Sin fecha de apertura vigente';
+    if (field === 'countdown') {
+      const value = item.countdown;
+      if (!Number.isInteger(value) || value < 0) return 'Sin fecha de apertura vigente';
+      if (value === 0) return 'Hora informada alcanzada; pendiente de confirmación de la página';
+      return String(Math.floor(value / 3600)).padStart(2, '0') + ' h ' +
+        String(Math.floor(value % 3600 / 60)).padStart(2, '0') + ' min ' +
+        String(value % 60).padStart(2, '0') + ' s';
+    }
     if (field === 'state') return state(item.state);
     if (field === 'phase') return phase(item.phase);
     if (field === 'outcome' || field === 'queue_state') {
@@ -398,6 +409,12 @@ _SCRIPT = (
       setText(live, 'Estados y sesiones actualizados.');
       setText(checked, 'Última consulta: ' + formatPrivateTime(data.observed_at));
     } catch (_) {
+      for (const engine of Object.keys(engineNames)) {
+        const list = document.getElementById(engine + '-sessions');
+        for (const row of list.children) {
+          setText(row.querySelector('[data-field="countdown"]'), 'Sin fecha de apertura vigente');
+        }
+      }
       setText(live, 'No se pudo actualizar. Los estados y sesiones anteriores son históricos; '
         + 'el estado actual no está verificado.');
       setText(checked, 'Última consulta fallida.');
@@ -571,6 +588,16 @@ def _inspection_label(session: Mapping[str, object], index: int, engine: str) ->
 
 def _session_value(session: Mapping[str, object], field: str) -> str:
     value = session.get(field)
+    if field == "queue_opening_at":
+        return _time(value) if value else "Sin fecha de apertura vigente"
+    if field == "countdown":
+        if type(value) is not int or value < 0:
+            return "Sin fecha de apertura vigente"
+        if value == 0:
+            return "Hora informada alcanzada; pendiente de confirmación de la página"
+        hours, remainder = divmod(value, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return f"{hours:02d} h {minutes:02d} min {seconds:02d} s"
     if field == "state":
         return _STATES.get(str(value), "Estado desconocido")
     if field == "phase":

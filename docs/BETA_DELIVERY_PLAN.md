@@ -1,6 +1,15 @@
 # Plan de entrega y aceptación de la BETA funcional
 
-## Continuidad vigente R307
+## Entrega vigente — técnica antes de prueba integral
+
+El titular autorizó terminar los pendientes antes de su prueba integral.
+La [matriz de evidencia y ownership](BETA_INTEGRATION_STATUS.md) gobierna
+la entrega: R308 en revisión, Telegram pendiente de diagnóstico específico
+y adopción, contratos DOM/resultado faltantes. Configuración por socio y
+capacidad física50 no están acreditadas. No presentar una simulación como
+resultado real ni una implementación local como capacidad instalada.
+
+## Histórico R307
 
 El [plan focal R307](superpowers/plans/2026-11-15-r307-telegram-incident-continuation.md)
 reutiliza el observador para1167. La [matriz vigente](BETA_INTEGRATION_STATUS.md)
