@@ -1,6 +1,29 @@
 # Binding instructions for every coding agent
 
-## Estado vigente R304 — diagnóstico readonly de Telegram, issue525
+## Estado vigente R305 — recuperación del inicializador exacto, issue526
+
+Base W0 be788a7dc602f4fce63da1d2a4ce859da73c5b08 integra PR525; CI1273 y
+Security1090 SUCCESS. R845f31abfb1762dff27e6fc3274fcc40507f3f18 ya instalada
+por release867/APPLY1153. Único diagnóstico1161 COMPLETE/OBSERVED_NO_GO:
+par exacto healthy/created; helper1156 initialize-volume created/PID0,
+CAP_CHOWN observado contra CHOWN esperado. No repetir R304 ni release/APPLY.
+
+Issue526/comment6896582424 registra cuatro GO previos sobre spec/plan R305.
+La recuperación se limita a ese único CID,
+con nueva lease/doble lectura/perfil y mount exclusivo. Inicializador R
+comprueba vacío/UID0 antes de efectos; start único y retiro sin force/-v sólo
+tras respuesta íntegra. Parciales se conservan; ningún retry ante incertidumbre.
+No fake _created_volume, nuevo helper, modificación R304/imagen, SQL, borrado
+volumen o stop/start del par. Autor separado posee ocho archivos del plan;
+raíz docs/RCA/GitHub/host. Cuatro votos previos y finales, CI/main exactos
+antes de un despacho. Prepare canónico sólo tras init+retiro aceptados.
+
+Hasta el recibo físico no afirmar recuperación, PREPARED ni motor OFF.
+SIMULATION_ONLY, BLACKBOX unread/unmodified, sender sin activar, datos/passkeys
+preservados y aislamiento Porota/PPI. El encargo del titular autoriza continuar
+sin reiterar permisos rutinarios; no omite guardas ni permite retry ciego.
+
+## Histórico R304 — diagnóstico readonly de Telegram, issue525
 
 R `845f31abfb1762dff27e6fc3274fcc40507f3f18` está instalado por release867 /
 APPLY1153 ACCEPTED y cleanup ACCEPT. ADMIN1154 PROVISIONED y STATUS1155

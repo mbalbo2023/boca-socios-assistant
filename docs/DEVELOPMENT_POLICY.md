@@ -1,6 +1,36 @@
 # Development and merge policy
 
-## R304 — R instalada; diagnóstico de Telegram pendiente
+## R305 — candidato de recuperación; promoción protegida pendiente
+
+R `845f31abfb1762dff27e6fc3274fcc40507f3f18` sigue instalada por release867 /
+APPLY1153 ACCEPTED con cleanup ACCEPT. PR525 integró el observador R304 en
+W0 `be788a7dc602f4fce63da1d2a4ce859da73c5b08`; CI1273 y Security1090 SUCCESS.
+[Diagnóstico1161](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43725809501)
+acreditó controller exacto healthy/running y worker exacto created/PID0, más
+el helper1156 `ba6699b977623135224e0ab6de8a26a882cecda8bfa819458deace75cb282367`.
+Su operación initialize-volume presenta sólo CAPADD_MISMATCH: Docker devuelve
+CAP_CHOWN y el atestador esperaba CHOWN. La reproducción focal confirma el
+rechazo antes de start y la preservación del helper; no certifica por sí sola
+historial de ejecución, permisos/contenido del volumen ni motor lógico.
+
+[Issue526 y cuatro GO previos](https://github.com/mbalbo2023/boca-socios-assistant/issues/526#issuecomment-6896582424) y el
+[plan R305](superpowers/plans/2026-11-15-r305-telegram-initializer-recovery.md) delimitan reanudar sólo ese inicializador una vez bajo
+lease y evidencia nueva de identidad/perfil/mount exclusivo, y retirarlo sólo
+tras respuesta y estado íntegros. El inicializador R exige vacío/UID0 antes
+de escribir. No fingir _created_volume, borrar el volumen ni repetir prepare
+para diagnosticar. El codec separa inicialización, retiro y postflight inciertos.
+Corrección mínima CHOWN/CAP_CHOWN sin ampliar permisos; R304 permanece intacto.
+
+Este es el corte del candidato previo a su despacho. El resultado físico
+vigente se registra en [el checkpoint owner](https://github.com/mbalbo2023/boca-socios-assistant/issues/417)
+y en issue526, con run y recibo reales. Cuatro revisiones, CI y main exactos
+preceden un despacho; prepare canónico sólo tras init+retiro aceptados,
+con recibo separado. No nueva release/APPLY/admin/migración. Sender sin activar,
+SIMULATION_ONLY, BLACKBOX unread/unmodified y datos/passkeys/volúmenes intactos;
+Porota/PPI fuera de alcance. QA privado, DOM/resultados reales y capacidad50
+siguen pendientes; CI offline no certifica esos hechos.
+
+## Histórico R304 — R instalada; diagnóstico de Telegram pendiente
 
 La BETA R `845f31abfb1762dff27e6fc3274fcc40507f3f18` fue publicada en
 [release867](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43704139794)

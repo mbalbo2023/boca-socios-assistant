@@ -764,3 +764,162 @@ def test_r303_uncertain_writer_stop_ack_blocks_backend_restore(monkeypatch):
     assert "RESTORE" not in events and state["exists"]
     assert sum(args[0] == "stop" for args in commands) == 1
     assert not any(args[0] == "rm" for args in commands)
+
+
+def _r305_initializer_boundary(monkeypatch, tmp_path, caps, operation="initialize-volume"):
+    import json
+    import subprocess
+
+    cid = "d" * 64
+    volume = "boca-socios_boca_telegram"
+    path = tmp_path / "volumes" / volume / "_data"
+    path.mkdir(parents=True)
+    effects = []
+    state = {"exists": False, "started": False}
+    record = {
+        "Id": cid,
+        "Name": "/" + NAME,
+        "Config": {
+            "Image": IMAGE,
+            "User": "0:0" if operation == "initialize-volume" else "10001:10001",
+            "Cmd": ["python", "-m", "boca_socios.telegram_maintenance", operation],
+            "Labels": {"com.docker.compose.project": "boca-socios"},
+        },
+        "HostConfig": {
+            "NetworkMode": "none",
+            "ReadonlyRootfs": True,
+            "Privileged": False,
+            "LogConfig": {"Type": "none"},
+            "CapDrop": ["ALL"],
+            "CapAdd": caps,
+            "PidsLimit": 16,
+            "Memory": 67108864,
+            "NanoCpus": 250000000,
+            "PublishAllPorts": False,
+            "PortBindings": {},
+            "RestartPolicy": {"Name": "no"},
+            "SecurityOpt": ["no-new-privileges"],
+        },
+        "Mounts": [
+            {
+                "Type": "volume",
+                "Name": volume,
+                "Driver": "local",
+                "Source": str(path),
+                "Destination": "/run/telegram",
+                "RW": True,
+            }
+        ],
+        "NetworkSettings": {"Networks": {"none": {}}},
+        "State": {"Running": False, "Restarting": False, "ExitCode": 0},
+    }
+
+    def deploy_run(*args):
+        if args == ("docker", "info", "--format", "{{.DockerRootDir}}"):
+            return str(tmp_path)
+        assert args == ("docker", "volume", "inspect", "--format", "{{json .}}", volume)
+        return json.dumps(
+            {
+                "Name": volume,
+                "Driver": "local",
+                "Scope": "local",
+                "Options": None,
+                "Mountpoint": str(path),
+                "Labels": {
+                    "com.docker.compose.project": "boca-socios",
+                    "com.docker.compose.volume": "boca_telegram",
+                },
+            }
+        )
+
+    def docker(*args):
+        if args[0] == "create":
+            assert args[args.index("--name") + 1] == NAME
+            assert args[args.index("--cap-add") + 1] == "CHOWN"
+            assert args[args.index("--user") + 1] == "0:0"
+            effects.append("create")
+            state["exists"] = True
+            return cid
+        if args == ("inspect", "--format", "{{json .}}", cid):
+            return json.dumps(record)
+        assert args == ("rm", cid)
+        assert state["started"]
+        effects.append("rm")
+        state["exists"] = False
+        return cid
+
+    def start(argv, **kwargs):
+        assert argv == [
+            "/usr/bin/docker",
+            "--host",
+            cleanup.DOCKER_SOCKET,
+            "start",
+            "--attach",
+            "--interactive",
+            cid,
+        ]
+        assert kwargs["input"] == b'{"new_empty_volume":"boca-socios_boca_telegram"}'
+        effects.append("start")
+        state["started"] = True
+        return subprocess.CompletedProcess(argv, 0, b'{"initialized":true}', b"")
+
+    monkeypatch.setattr(deploy, "_run", deploy_run)
+    monkeypatch.setattr(cleanup, "_docker", docker)
+    monkeypatch.setattr(host.subprocess, "run", start)
+    monkeypatch.setattr(host.secrets, "token_hex", lambda size: "b" * 16)
+    context = SimpleNamespace(
+        attempt_id="111",
+        installation=SimpleNamespace(controller_image=IMAGE),
+        volumes=((volume, str(path)),),
+        check_binding=lambda: None,
+        reader=SimpleNamespace(
+            inventory=lambda: SimpleNamespace(
+                containers=[SimpleNamespace(ident=cid)] if state["exists"] else [],
+            )
+        ),
+    )
+    adapter = host.InstalledMaintenance(context)
+    # This reproduces the ordinary newly-created-volume call, not recovery adoption.
+    adapter._created_volume = True
+    return adapter, record, effects, state, {volume: str(path)}
+
+
+@pytest.mark.parametrize("caps", [["CHOWN"], ["CAP_CHOWN"]])
+def test_r305_cap_chown_reaches_real_initialize_and_cleanup(monkeypatch, tmp_path, caps):
+    adapter, _, effects, state, _ = _r305_initializer_boundary(monkeypatch, tmp_path, caps)
+    assert adapter.call("initialize-volume", {"new_empty_volume": "boca-socios_boca_telegram"}) == {
+        "initialized": True,
+    }
+    assert effects == ["create", "start", "rm"] and not state["exists"]
+
+
+@pytest.mark.parametrize(
+    "caps",
+    [
+        None,
+        [],
+        ["ALL"],
+        ["CHOWN", "CHOWN"],
+        ["CHOWN", "CAP_CHOWN"],
+        ["CAP_CHOWN", "NET_ADMIN"],
+        "CAP_CHOWN",
+        ["cap_chown"],
+    ],
+)
+def test_r305_initializer_capability_alias_does_not_expand_permissions(
+    monkeypatch,
+    tmp_path,
+    caps,
+):
+    adapter, _, effects, state, _ = _r305_initializer_boundary(monkeypatch, tmp_path, caps)
+    with pytest.raises(host.MaintenanceError, match="failed_state_preserved"):
+        adapter.call("initialize-volume", {"new_empty_volume": "boca-socios_boca_telegram"})
+    assert effects == ["create"] and state["exists"]
+
+
+@pytest.mark.parametrize("caps", [["CHOWN"], ["CAP_CHOWN"]])
+def test_r305_capability_alias_is_forbidden_to_noninitializer(monkeypatch, tmp_path, caps):
+    _, _, effects, _, paths = _r305_initializer_boundary(monkeypatch, tmp_path, caps, "prepare")
+    with pytest.raises(host.MaintenanceError, match="boundary_unverified"):
+        host._attest("d" * 64, NAME, IMAGE, "prepare", paths)
+    assert effects == []
