@@ -1,5 +1,19 @@
 # R301 — Monitor de eventos y navegación observada — Implementation Plan
 
+## Corte posterior: integrado en Q, pendiente de promoción
+
+Las tres tareas y la corrección focal RCA523 se integraron por PR521 en main
+Q `7112a4878097bc1696a60a7b1056cd1e7b559ce5`, árbol
+`3e328752468895f7c712a9ec9f7630e47e585b91`. CI1268/Security1088 SUCCESS;
+9564 pruebas y34 subtests. Las capturas tablet/móvil del artifact14155279204
+son OFFLINE_SYNTHETIC_ENGINE_UI, network none, host_checked=false y
+physical_device_checked=false. El instalado continúa en M/release866.
+R303/#524 corrige el STOP de Telegram antes de evaluar la migración pendiente
+y una promoción consolidada del main final. No se repiten estas pruebas ni
+se convierten las capturas en aceptación del panel privado instalado.
+Las tareas y gates escritos abajo conservan su formulación previa al código;
+este corte registra su resultado posterior.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. La raíz asigna autores y revisión; este documento no autoriza al autor a aprobar su propio código ni a operar el host.
 
 **Goal:** Mostrar en el monitor privado el evento y motivo que ya recibe el sistema, distinguir configuración, último intento real y última URL final recibida, y hacer visible la llegada de tokens por sesión usando el polling y el reveal existentes.

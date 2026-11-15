@@ -1,5 +1,19 @@
 ## R302 — observar esquema instalado después del fallo1144, sin otro intento de migración
 
+### Corte posterior: selector integrado y observación1148 consumida
+
+PR521 integró R302 en Q `7112a4878097bc1696a60a7b1056cd1e7b559ce5`,
+con CI1268/Security1088 SUCCESS. El único observe fue
+[1148](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43700038712),
+attempt1: SCHEMA_0007_REQUIRED/NOT_NEEDED/OFF sobre M. El recibo de226 bytes
+se leyó en el Summary real y pasó el verificador estricto de fallo;
+SHA256618b1eeb289b7772f69cef467fdbda3130f080ce04aa22be3eba06eb2bad4c3b.
+Queda acreditado baseline válido sin0007, no causa histórica1144 ni ausencia
+de objeto homónimo. No repetir esta observación ni preparar M. El siguiente
+delta registrado es R303/#524: STOP portable reutilizado, revisiones y gates
+antes de evaluar una migración corregida. Las secciones siguientes conservan
+el diseño y los resultados locales previos a esta operación física.
+
 Continúa #417/#520 y se integra como delta de mantenimiento en el mismo candidato #521, no como otra promoción. El run1144 `43692644776` devolvió FAILED_STATE_PRESERVED/CONTROLLER_HEALTHY_ENGINE_OFF/senderOFF sobre M `5281efae7dafe89be047073796b3e0a7e19785ed`, con workflow P `c14f98d6adf4c4042f29e11f23f8a76545a1b0f9`. El esquema actual es UNKNOWN; no se infiere rollback, OOM, timeout o fallo SQL.
 
 Arquitectura y Operaciones revisaron independientemente la cadena y no encontraron causa demostrada. Existe la primitiva readonly instalada `InstalledMaintenance.call("verify-schema", {})`, pero no un selector público que la ejecute sin continuar hacia efectos. La etapa del fallo no quedó preservada en el recibo v1. Este delta resuelve únicamente la pregunta actual del esquema; no inventa la causa retrospectiva.

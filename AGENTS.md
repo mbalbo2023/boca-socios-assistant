@@ -1,6 +1,24 @@
 # Binding instructions for every coding agent
 
-## Estado vigente R301/R302 — monitor y observación de esquema, un candidato521
+## Estado vigente R303 — ACK de STOP Telegram, issue524
+
+PR521 está merged en Q `7112a4878097bc1696a60a7b1056cd1e7b559ce5`,
+árbol `3e328752468895f7c712a9ec9f7630e47e585b91`, CI1268/Security1088 GREEN.
+El instalado sigue en M; observe1148 acredita baseline sin0007 y senderOFF,
+sin parada/restauración. La causa física de migrate1144 sigue sin demostrar.
+El contrato #524 y cuatro GO de diseño en #417/comment6892566944 autorizan
+sólo reutilizar `-t` en tres llamadas STOP de las dos fuentes Telegram
+instaladas. ACK estricto, tiempos10/5, identidad y writer fence intactos.
+Regresión real de frontera antes de producto; plan R303 gobierna el delta.
+Autor separado, cinco archivos permitidos; raíz posee docs/RCA/GitHub/host.
+No SQL nuevo, parser permisivo, builders/caps/allowlists o pin full-cutover.
+Ningún host durante código. Cuatro GO finales y gates del nuevo main preceden
+evaluar una migración corregida sobre M/release866; fallo vuelve a RCA.
+Sólo éxito físico habilita release final/promoción consolidada; prepare sobre
+el nuevo par, nunca M antes de actualizar. SIMULATION_ONLY/BLACKBOX/datos y
+Porota/PPI intactos. No navegación, mensajes o certificación50 supuesta.
+
+## Histórico R301/R302 — monitor y observación de esquema, candidato521
 
 R301 conserva sus tres tareas congeladas/revisadas. R302/#522 está registrado
 antes del código con cuatro GO de diseño en #417/comment6891704268. Reutilizar

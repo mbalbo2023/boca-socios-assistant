@@ -1,6 +1,24 @@
 # Boca Socios Assistant
 
-## R301/R302 — monitor observado y esquema instalado, candidato consolidado521
+## R303 — main Q aceptado; esquema Telegram pendiente en M
+
+[PR521](https://github.com/mbalbo2023/boca-socios-assistant/pull/521) está integrado
+en Q `7112a4878097bc1696a60a7b1056cd1e7b559ce5`, con CI1268/Security1088
+SUCCESS. El instalado sigue en M/release866/APPLY1134. Observe1148 acredita
+baseline válido sin0007, NOT_NEEDED y senderOFF; no demuestra la causa1144.
+
+[#524 y su diseño aprobado](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6892566944)
+limitan R303 a tres opciones STOP portables, con ACK/identidad/restore intactos.
+El estado detallado, límites y orden condicionado constan en
+[la matriz de integración](docs/BETA_INTEGRATION_STATUS.md) y el
+[plan R303](docs/superpowers/plans/2026-11-15-r303-telegram-stop-ack.md).
+No hay release Q ni nueva promoción. Sólo una migración corregida y aceptada
+después de revisión/gates permite publicar el main final y promoverlo una vez.
+Preparar Telegram únicamente sobre ese nuevo par. SIMULATION_ONLY y Actions
+Boca serializadas; datos/passkeys/BLACKBOX/Porota/PPI protegidos. Las capturas
+offline no acreditan aceptación privada o capacidad física50.
+
+## Histórico R301/R302 — monitor observado y esquema instalado, candidato521
 
 Producto M `5281efae7dafe89be047073796b3e0a7e19785ed` sigue instalado desde
 PR517/release866: APPLY1134 y cleanup aceptados; ADMIN1135 provisionado.
