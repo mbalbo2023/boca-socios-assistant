@@ -1,6 +1,19 @@
 # Binding instructions for every coding agent
 
-## Estado R306 — ordenar testigos, issue527
+## Estado R307 — continuar observación1167, issue528
+
+El titular transfirió la continuidad del chat interrumpido. Diseño/plan R307
+y cuatro GO previos en issue528 limitan el delta al observador existente y
+dos tests: CLI actual1167, APIs/defaults1156 preservados para R305. Sin otro
+observador ni cambios workflow/builder/bootstrap/backend/cotas. Autor separado
+posee sólo esas tres rutas; root docs/RCA/GitHub/única Action. R/release867/
+APPLY1153 y recovery1166 ACCEPTED no se repiten. Prepare1167 falló con
+restauración saludable/motorOFF; causa desconocida. Cuatro revisiones finales
+y CI/main exactas preceden una observación READ_ONLY. Ausencia del helper no
+prueba causa ni autoriza retry. SIMULATION_ONLY, senderOFF, BLACKBOX/datos y
+Porota/PPI protegidos; no volver a pedir permisos rutinarios ya delegados.
+
+## Histórico R306 — ordenar testigos, issue527
 
 W1 b96db3a13ad50e663ae3eb8cde82345a72792aaf está GREEN.1164 es el único
 intento R305: NO_GO/PREFLIGHT, init/retire NOT_ATTEMPTED. No repetirlo ni

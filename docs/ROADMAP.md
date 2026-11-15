@@ -1,6 +1,13 @@
 # Backlog y dependencias de la BETA
 
-## R306 — comparación estable de mounts; recuperación física pendiente
+## Continuidad vigente R307
+
+Prioridad inmediata: evidencia1167 mediante [el diagnóstico existente](superpowers/plans/2026-11-15-r307-telegram-incident-continuation.md).
+El [estado de integración](BETA_INTEGRATION_STATUS.md) identifica lo instalado,
+la recuperación aceptada y las funciones pendientes. No recrear motores ni
+reintroducir operaciones concluidas como bloqueantes.
+
+## Histórico R306 — comparación estable de mounts; corte previo al despacho
 
 PR526 está integrada en W1 b96db3a13ad50e663ae3eb8cde82345a72792aaf,
 CI1276/Security1091 SUCCESS. R845f31abfb1762dff27e6fc3274fcc40507f3f18 sigue

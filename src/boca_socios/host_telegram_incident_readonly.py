@@ -1,4 +1,4 @@
-"""Fixed R304 read-only incident observation."""
+"""Finite read-only Telegram incident observation."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from boca_socios import host_boca_cleanup as cleanup
 from boca_socios.telegram_maintenance_contract import MOUNTS
 
 INCIDENT = "43705714873"
+CURRENT_INCIDENT = "43738415332"
 SOURCE = "845f31abfb1762dff27e6fc3274fcc40507f3f18"
 APPLY = "43704768556"
 CONTROLLER = "b0dd0fed57c55dbdeb9a6e833d913cb86c0868ae1587394a934450342114bfa1"
@@ -26,7 +27,6 @@ MAX_FIELD = 8192
 _HEX = re.compile(r"[a-f0-9]{64}\Z")
 _SHA = re.compile(r"[a-f0-9]{40}\Z")
 _RUN = re.compile(r"[1-9][0-9]{0,19}\Z")
-_HELPER = re.compile(r"/boca-socios-telegram-maint-43705714873-[a-f0-9]{16}\Z")
 _NAMES = {CONTROLLER: "/boca-socios-controller-1", WORKER: "/boca-socios-browser-worker-1"}
 _PREPARE = frozenset(
     {"verify-schema", "owner-identity", "initialize-volume", "prepare", "publish-recipient"}
@@ -64,39 +64,22 @@ _PHASES = {"INPUT", "DAEMON", "BINDING", "INVENTORY", "FIELD", "DRIFT"}
 _FAILURES = {"UNVERIFIED", "AMBIGUOUS", "MALFORMED", "MISSING", "OVERSIZED", "CHANGED"}
 # Literal templates only; no caller fields.
 _TEMPLATES = {
-    "Id": "{{json .Id}}",
-    "Name": "{{json .Name}}",
-    "Image": "{{json .Image}}",
-    "Config.Image": "{{json .Config.Image}}",
-    "Config.User": "{{json .Config.User}}",
-    "Config.Cmd": "{{json .Config.Cmd}}",
+    key: "{{json ." + key + "}}"
+    for key in """
+Id Name Image Config.Image Config.User Config.Cmd project service revision config attempt
+State.Status State.Running State.Restarting State.Pid State.ExitCode State.OOMKilled
+State.Health.Status HostConfig.NetworkMode HostConfig.ReadonlyRootfs HostConfig.Privileged
+HostConfig.LogConfig.Type HostConfig.CapDrop HostConfig.CapAdd HostConfig.PidsLimit
+HostConfig.Memory HostConfig.NanoCpus HostConfig.PublishAllPorts HostConfig.PortBindings
+HostConfig.RestartPolicy.Name HostConfig.SecurityOpt Mounts NetworkSettings.Networks
+""".split()
+} | {
     "project": '{{json (index .Config.Labels "com.docker.compose.project")}}',
     "service": '{{json (index .Config.Labels "com.docker.compose.service")}}',
     "revision": '{{json (index .Config.Labels "org.opencontainers.image.revision")}}',
     "config": '{{json (index .Config.Labels "com.docker.compose.config-hash")}}',
     "attempt": '{{json (index .Config.Labels "boca.socios.browser-ipc-attempt")}}',
-    "State.Status": "{{json .State.Status}}",
-    "State.Running": "{{json .State.Running}}",
-    "State.Restarting": "{{json .State.Restarting}}",
-    "State.Pid": "{{json .State.Pid}}",
-    "State.ExitCode": "{{json .State.ExitCode}}",
-    "State.OOMKilled": "{{json .State.OOMKilled}}",
     "State.Health.Status": "{{if .State.Health}}{{json .State.Health.Status}}{{else}}null{{end}}",
-    "HostConfig.NetworkMode": "{{json .HostConfig.NetworkMode}}",
-    "HostConfig.ReadonlyRootfs": "{{json .HostConfig.ReadonlyRootfs}}",
-    "HostConfig.Privileged": "{{json .HostConfig.Privileged}}",
-    "HostConfig.LogConfig.Type": "{{json .HostConfig.LogConfig.Type}}",
-    "HostConfig.CapDrop": "{{json .HostConfig.CapDrop}}",
-    "HostConfig.CapAdd": "{{json .HostConfig.CapAdd}}",
-    "HostConfig.PidsLimit": "{{json .HostConfig.PidsLimit}}",
-    "HostConfig.Memory": "{{json .HostConfig.Memory}}",
-    "HostConfig.NanoCpus": "{{json .HostConfig.NanoCpus}}",
-    "HostConfig.PublishAllPorts": "{{json .HostConfig.PublishAllPorts}}",
-    "HostConfig.PortBindings": "{{json .HostConfig.PortBindings}}",
-    "HostConfig.RestartPolicy.Name": "{{json .HostConfig.RestartPolicy.Name}}",
-    "HostConfig.SecurityOpt": "{{json .HostConfig.SecurityOpt}}",
-    "Mounts": "{{json .Mounts}}",
-    "NetworkSettings.Networks": "{{json .NetworkSettings.Networks}}",
 }
 _STATE_FIELDS = tuple(key for key in _TEMPLATES if key.startswith("State."))
 _STATE_KEYS = ("status", "running", "restarting", "pid", "exit_code", "oom", "health")
@@ -114,6 +97,14 @@ class NoGo(ValueError):
     def __init__(self, phase: str, reason: str = "UNVERIFIED") -> None:
         self.phase, self.reason = phase, reason
         super().__init__("incident_observation_unverified")
+
+
+def _prepare(incident_id: str) -> frozenset[str]:
+    if type(incident_id) is not str or incident_id not in {INCIDENT, CURRENT_INCIDENT}:
+        raise NoGo("INPUT")
+    if incident_id == CURRENT_INCIDENT:
+        return _PREPARE | {"publish-status", "publish-status-absent"}
+    return _PREPARE
 
 
 def _unique(entries: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -182,7 +173,9 @@ def _binding() -> Any:
         raise NoGo("BINDING") from None
 
 
-def _inventory() -> list[tuple[str, str]]:
+def _inventory(incident_id: str = INCIDENT) -> list[tuple[str, str]]:
+    _prepare(incident_id)
+    helper = re.compile(rf"/boca-socios-telegram-maint-{incident_id}-[a-f0-9]{{16}}\Z")
     raw = cleanup._docker("ps", "-a", "--no-trunc", "--format", "{{.ID}} {{.Names}}")
     if type(raw) is not str or len(raw.encode("utf-8")) > MAX_FIELD:
         raise NoGo("INVENTORY", "OVERSIZED")
@@ -198,7 +191,7 @@ def _inventory() -> list[tuple[str, str]]:
     if (
         len(extra) > 1
         or any(name != _NAMES[cid] for cid, name in pairs if cid in _NAMES)
-        or any(_HELPER.fullmatch(name) is None for _, name in extra)
+        or any(helper.fullmatch(name) is None for _, name in extra)
     ):
         raise NoGo("INVENTORY", "AMBIGUOUS")
     # Admit the whole set before inspection.
@@ -234,7 +227,8 @@ def _strings(value: Any, *, nullable: bool = False) -> bool:
     )
 
 
-def _profile(record: dict[str, Any]) -> dict[str, Any]:
+def _profile(record: dict[str, Any], incident_id: str = INCIDENT) -> dict[str, Any]:
+    prepare = _prepare(incident_id)
     profile: dict[str, list[str]] = {key: [] for key in _REASONS}
     host = {
         key.removeprefix("HostConfig."): value
@@ -291,7 +285,7 @@ def _profile(record: dict[str, Any]) -> dict[str, Any]:
         if len(command) == 4 and command[:3] == ["python", "-m", "boca_socios.telegram_maintenance"]
         else "UNKNOWN"
     )
-    known = operation in _PREPARE
+    known = operation in prepare
     note(
         "command",
         "MODULE_MISMATCH",
@@ -305,11 +299,8 @@ def _profile(record: dict[str, Any]) -> dict[str, Any]:
         root = operation == "initialize-volume"
         note("uid", "UID_MISMATCH", record["Config.User"] != ("0:0" if root else "10001:10001"))
         note("caps", "CAPDROP_MISMATCH", host["CapDrop"] != ["ALL"])
-        note(
-            "caps",
-            "CAPADD_MISMATCH",
-            host["CapAdd"] not in ((["CHOWN"],) if root else (None, [])),
-        )
+        caps = (["CHOWN"], ["CAP_CHOWN"]) if incident_id == CURRENT_INCIDENT else (["CHOWN"],)
+        note("caps", "CAPADD_MISMATCH", host["CapAdd"] not in (caps if root else (None, [])))
         expected = MOUNTS[operation]
         note("mounts", "COUNT_MISMATCH", len(mounts) != len(expected))
         volume_names = cleanup._names(
@@ -387,13 +378,14 @@ def _profile(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _snapshot() -> dict[str, Any]:
+def _snapshot(incident_id: str = INCIDENT) -> dict[str, Any]:
+    _prepare(incident_id)
     try:
         daemon = cleanup._rootless_docker_disk_inodes()
     except Exception:
         raise NoGo("DAEMON") from None
     item = _binding()
-    pairs = _inventory()
+    pairs = _inventory(incident_id)
     services = {cid: {"cid": cid, "presence": "ABSENT"} for cid in _NAMES}
     records = {}
     helper: dict[str, Any] = {"presence": "ABSENT"}
@@ -429,7 +421,7 @@ def _snapshot() -> dict[str, Any]:
                 "presence": "PRESENT",
                 "cid": cid,
                 **_state(record),
-                **_profile(record),
+                **_profile(record, incident_id),
             }
     if _binding() != item:
         raise NoGo("DRIFT", "CHANGED")
@@ -450,12 +442,13 @@ def _canonical(value: dict[str, Any]) -> bytes:
     )
 
 
-def _base(run_id: str, workflow_sha: str) -> dict[str, Any]:
+def _base(run_id: str, workflow_sha: str, incident_id: str = INCIDENT) -> dict[str, Any]:
+    _prepare(incident_id)
     return {
         "version": 1,
         "observation_run_id": run_id,
         "workflow_sha": workflow_sha,
-        "incident_run_id": INCIDENT,
+        "incident_run_id": incident_id,
         "source_sha": SOURCE,
         "installation_run_id": APPLY,
         "observer_writes": 0,
@@ -466,9 +459,9 @@ def _base(run_id: str, workflow_sha: str) -> dict[str, Any]:
     }
 
 
-def observe(run_id: str, workflow_sha: str) -> bytes:
+def observe(run_id: str, workflow_sha: str, incident_id: str = INCIDENT) -> bytes:
     value: dict[str, Any] = {
-        **_base(run_id, workflow_sha),
+        **_base(run_id, workflow_sha, incident_id),
         "state": "INCOMPLETE_NO_GO",
         "phase": "INPUT",
         "reason": "UNVERIFIED",
@@ -482,7 +475,7 @@ def observe(run_id: str, workflow_sha: str) -> bytes:
             or (os.getuid(), os.geteuid(), os.getgid(), os.getegid()) != (10001,) * 4
         ):
             raise NoGo("INPUT")
-        first, second = _snapshot(), _snapshot()
+        first, second = _snapshot(incident_id), _snapshot(incident_id)
         if first != second:
             raise NoGo("DRIFT", "CHANGED")
         value.update(
@@ -497,7 +490,7 @@ def observe(run_id: str, workflow_sha: str) -> bytes:
     except Exception:
         value.update(phase="FIELD", reason="UNVERIFIED")
     raw = _canonical(value)
-    return verify(raw, run_id, workflow_sha)
+    return verify(raw, run_id, workflow_sha, incident_id)
 
 
 def _verify_state(value: dict[str, Any]) -> None:
@@ -513,7 +506,8 @@ def _verify_state(value: dict[str, Any]) -> None:
         raise ValueError("state")
 
 
-def _verify_helper(helper: dict[str, Any]) -> None:
+def _verify_helper(helper: dict[str, Any], incident_id: str = INCIDENT) -> None:
+    prepare = _prepare(incident_id)
     if helper == {"presence": "ABSENT"}:
         return
     if (
@@ -523,7 +517,7 @@ def _verify_helper(helper: dict[str, Any]) -> None:
         or type(helper["cid"]) is not str
         or _HEX.fullmatch(helper["cid"]) is None
         or helper["cid"] in _NAMES
-        or helper["operation"] not in _PREPARE | {"UNKNOWN", "OUTSIDE_PREPARE"}
+        or helper["operation"] not in prepare | {"UNKNOWN", "OUTSIDE_PREPARE"}
         or helper["cap_add_observed"] not in {"ABSENT", "CHOWN", "CAP_CHOWN", "OTHER"}
     ):
         raise ValueError("helper")
@@ -544,7 +538,7 @@ def _verify_helper(helper: dict[str, Any]) -> None:
             and ("MATCH" in reasons or "UNVERIFIED" in reasons)
         ):
             raise ValueError("reasons")
-    known = helper["operation"] in _PREPARE
+    known = helper["operation"] in prepare
     if any(
         "UNVERIFIED" in reasons
         if known or key in {"identity", "command"}
@@ -554,7 +548,7 @@ def _verify_helper(helper: dict[str, Any]) -> None:
         raise ValueError("unrecognized")
 
 
-def verify(raw: bytes, run_id: str, workflow_sha: str) -> bytes:
+def verify(raw: bytes, run_id: str, workflow_sha: str, incident_id: str = INCIDENT) -> bytes:
     try:
         if (
             type(raw) is not bytes
@@ -564,7 +558,7 @@ def verify(raw: bytes, run_id: str, workflow_sha: str) -> bytes:
         ):
             raise ValueError("frame")
         value = json.loads(raw[len(PREFIX) :], object_pairs_hook=_unique)
-        base = _base(run_id, workflow_sha)
+        base = _base(run_id, workflow_sha, incident_id)
         if (
             set(value) != set(base) | {"state", "phase", "reason", "services", "helper"}
             or any(
@@ -603,7 +597,7 @@ def verify(raw: bytes, run_id: str, workflow_sha: str) -> bytes:
                 ):
                     raise ValueError("service")
                 _verify_state(item)
-            _verify_helper(value["helper"])
+            _verify_helper(value["helper"], incident_id)
         else:
             raise ValueError("class")
         return raw
@@ -617,9 +611,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if len(args) != 3 or args[0] not in {"host", "verify"}:
             raise ValueError("arguments")
         if args[0] == "host":
-            raw = observe(args[1], args[2])
+            raw = observe(args[1], args[2], CURRENT_INCIDENT)
         else:
-            raw = verify(sys.stdin.buffer.read(MAX_RECEIPT + 1), args[1], args[2])
+            raw = verify(sys.stdin.buffer.read(MAX_RECEIPT + 1), args[1], args[2], CURRENT_INCIDENT)
         sys.stdout.buffer.write(raw)
         return 0 if json.loads(raw[len(PREFIX) :])["state"] == "OBSERVED_NO_GO" else 3
     except Exception:

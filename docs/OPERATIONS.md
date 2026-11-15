@@ -1,6 +1,13 @@
 # Safe operations — verified evidence and gated procedures
 
-## R306 — comparación estable de mounts; recuperación física pendiente
+## Continuidad vigente R307
+
+[Estado y recibos vigentes](BETA_INTEGRATION_STATUS.md): instalación y recovery1166
+aceptadas, prepare1167 fallido con restauración saludable. El próximo alcance
+es una observación READ_ONLY mediante la Action existente, sólo tras revisar
+el candidato528 y sus checks exactos. No repetir operaciones históricas.
+
+## Histórico R306 — comparación estable de mounts; corte previo al despacho
 
 PR526 está integrada en W1 b96db3a13ad50e663ae3eb8cde82345a72792aaf,
 CI1276/Security1091 SUCCESS. R845f31abfb1762dff27e6fc3274fcc40507f3f18 sigue
