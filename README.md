@@ -1,6 +1,29 @@
 # Boca Socios Assistant
 
-## R305 — candidato de recuperación; promoción protegida pendiente
+## R306 — comparación estable de mounts; recuperación física pendiente
+
+PR526 está integrada en W1 b96db3a13ad50e663ae3eb8cde82345a72792aaf,
+CI1276/Security1091 SUCCESS. R845f31abfb1762dff27e6fc3274fcc40507f3f18 sigue
+instalada por release867/APPLY1153. El único intento1164 devolvió
+NO_GO/PREFLIGHT con init/retire NOT_ATTEMPTED; no se ejecutó prepare.
+
+[Issue527](https://github.com/mbalbo2023/boca-socios-assistant/issues/527) y el
+[plan R306](docs/superpowers/plans/2026-11-15-r306-mount-witness-order.md)
+corrigen un defecto independiente: comparar listas de mounts en orden de
+adquisición confunde permutaciones con deriva. Canonizar sólo después de la
+validación íntegra y conservar todos los campos e identidades físicas. No se
+atribuye retrospectivamente1164 a ese defecto; su subcausa no está observada.
+
+Este es el corte del candidato previo al despacho. El resultado físico vigente
+se registra en [#417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417)
+y #527. Cuatro revisiones, RED/GREEN y gates exactos preceden un único despacho
+corregido con todas las guardas frescas. Otro NO_GO desconocido exige diagnóstico
+sin efectos antes de continuar. Prepare sólo tras init+retiro aceptados, con
+recibo separado. Sin nueva release/APPLY, permisos, pérdida de datos/passkeys,
+BLACKBOX, sender, mensajes o proveedor. SIMULATION_ONLY; Porota/PPI aislados.
+QA privado/DOM/resultados reales y capacidad50 siguen pendientes de aceptación.
+
+## Histórico R305 — candidato de recuperación; promoción protegida pendiente
 
 R `845f31abfb1762dff27e6fc3274fcc40507f3f18` sigue instalada por release867 /
 APPLY1153 ACCEPTED con cleanup ACCEPT. PR525 integró el observador R304 en

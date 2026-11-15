@@ -1,6 +1,27 @@
 # Binding instructions for every coding agent
 
-## Estado vigente R305 — recuperación del inicializador exacto, issue526
+## Estado R306 — ordenar testigos, issue527
+
+W1 b96db3a13ad50e663ae3eb8cde82345a72792aaf está GREEN.1164 es el único
+intento R305: NO_GO/PREFLIGHT, init/retire NOT_ATTEMPTED. No repetirlo ni
+atribuir su causa histórica. R/release867/APPLY1153 permanece instalado.
+
+Diseño/plan R306 gobiernan ordenar una copia de raw por Destination después
+del contrato _mounts exacto y recorrer esa misma lista para identities.
+Conservar todos los campos, Source/RW/duplicados/alias/dev-inode y demás
+validaciones. Autor separado sólo módulo recuperador y test R306 nuevo;
+raíz docs/RCA/GitHub/host. Cuatro opiniones previas/finales y CI exacta.
+No modificar otros tests, codec, workflow, builder, bootstrap ni cotas.
+
+Un único despacho nuevo corregido puede continuar después de RED/GREEN,
+cuatro GO, main GREEN y reconciliación: vuelve a probar todas las guardas
+antes de START. Otro NO_GO desconocido exige diagnóstico sin efectos;
+no encadenar retries. Prepare separado sólo tras init+retiro ACCEPTED.
+SIMULATION_ONLY, BLACKBOX unread/unmodified, datos/passkeys/volúmenes
+preservados, sender sin activar y Porota/PPI fuera de alcance. El encargo
+vigente autoriza esta continuidad sin reiterar permisos rutinarios.
+
+## Histórico R305 — recuperación del inicializador exacto, issue526
 
 Base W0 be788a7dc602f4fce63da1d2a4ce859da73c5b08 integra PR525; CI1273 y
 Security1090 SUCCESS. R845f31abfb1762dff27e6fc3274fcc40507f3f18 ya instalada

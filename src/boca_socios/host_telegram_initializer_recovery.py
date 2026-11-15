@@ -253,6 +253,7 @@ def _mount_witnesses() -> dict[str, Any]:
             expected = expected | {(source, "/run/boca-bot-control", False)}
         if _mounts(raw, control_source=source) != expected:
             raise ValueError("recovery_mount_contract_unverified")
+        raw = sorted(raw, key=lambda item: item["Destination"])
         identities = []
         for item in raw:
             actual = item.get("Source")

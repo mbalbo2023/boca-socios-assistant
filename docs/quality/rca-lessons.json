@@ -736,6 +736,19 @@
         "tests/test_r305_telegram_initializer_transport.py::test_actual_admission_rejects_each_of_22_text_inputs",
         "tests/test_r305_telegram_initializer_transport.py::test_actual_summary_shell_uses_same_zip_and_strict_rc_pair"
       ]
+    },
+    {
+      "id": "RCA-527",
+      "issue": 527,
+      "fix_pr": 527,
+      "root_cause": "The recovery validated mount composition as a set, then compared raw records and physical identities as ordered lists. Equivalent Docker Mounts permutations could cause false drift before or after initialization. Earlier fixtures always kept one order.",
+      "prevention": "Sort a new list by Destination only after the full contract passes, and build identities in that order. Preserve every record field. Exercise real recovery with boundary permutations plus source, mode, identity, alias and duplicate drift negatives.",
+      "regression_tests": [
+        "tests/test_r306_mount_witness_order.py::test_r306_mount_order_is_irrelevant_through_real_recovery",
+        "tests/test_r306_mount_witness_order.py::test_r306_mount_drift_is_rejected_despite_permutation",
+        "tests/test_r306_mount_witness_order.py::test_r306_mount_records_and_identities_preserve_all_evidence",
+        "tests/test_r306_mount_witness_order.py::test_r306_duplicate_mounts_refused_before_sort"
+      ]
     }
   ]
 }
