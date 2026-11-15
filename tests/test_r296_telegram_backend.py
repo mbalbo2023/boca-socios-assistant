@@ -449,3 +449,102 @@ def test_message_before_owner_stage_is_refused_and_nonce_not_replayed(tmp_path, 
         with pytest.raises(backend.TelegramBackendError):
             backend.activate_installed_telegram(ctx.attempt_id, **kwargs)
         assert len(api.calls) == 3
+
+
+def _migration_transaction(monkeypatch, *, failure="", uncertain=False):
+    events = []
+    context = SimpleNamespace(
+        installation=SimpleNamespace(pair=SimpleNamespace(sender_running=False)),
+        healthy=lambda: events.append("HEALTHY"),
+        stop=lambda: events.append("STOP"),
+        stopped=lambda: events.append("STOPPED"),
+        check_binding=lambda: events.append("BINDING"),
+    )
+
+    def restore():
+        events.append("RESTORE")
+        if failure == "restore":
+            raise ValueError("restore")
+
+    context.restore = restore
+
+    def resolve(*args, **kwargs):
+        assert kwargs["expected_source_sha"] == SOURCE
+        assert kwargs["workflow_sha"] == "b" * 40
+        return context
+
+    class Storage:
+        migration_helper_retired = True
+
+        def __init__(self, ctx):
+            assert ctx is context
+
+        def call(self, operation, request):
+            assert request == {}
+            events.append(operation)
+            if operation == "migrate-schema":
+                self.migration_helper_retired = not uncertain
+                if failure == "helper" or uncertain:
+                    raise ValueError("migration failed")
+                return {"schema": 7}
+            assert operation == "verify-schema"
+            if "RESTORE" not in events:
+                return {"prerequisite": "SCHEMA_0007_REQUIRED"}
+            if failure == "postverify":
+                raise ValueError("postverify")
+            return {"schema": 7}
+
+    monkeypatch.setattr(backend, "resolve_installed_context", resolve)
+    monkeypatch.setattr(backend, "InstalledMaintenance", Storage)
+    return context, events
+
+
+@pytest.mark.parametrize(
+    "failure,uncertain",
+    [("", False), ("helper", False), ("helper", True), ("restore", False), ("postverify", False)],
+)
+def test_installed_migration_backend_fences_and_final_readonly_probe(
+    monkeypatch, failure, uncertain
+):
+    _, events = _migration_transaction(monkeypatch, failure=failure, uncertain=uncertain)
+    kwargs = dict(lease=object(), expected_source_sha=SOURCE, workflow_sha="b" * 40)
+    if failure:
+        with pytest.raises(backend.TelegramBackendError) as caught:
+            backend.migrate_installed_telegram("111", **kwargs)
+        receipt = caught.value.receipt
+        assert receipt.state == ("CLEANUP_INDETERMINATE" if uncertain else "FAILED_STATE_PRESERVED")
+    else:
+        receipt = backend.migrate_installed_telegram("111", **kwargs)
+        assert receipt.state == "SCHEMA_READY"
+        assert events[-2:] == ["HEALTHY", "verify-schema"]
+    assert ("RESTORE" in events) is not uncertain
+    assert receipt.restoration == (
+        "INDETERMINATE" if uncertain or failure == "restore" else "CONTROLLER_HEALTHY_ENGINE_OFF"
+    )
+    assert receipt.sender_state == "OFF"
+    assert events.count("verify-schema") == (
+        2 if not uncertain and failure not in {"helper", "restore"} else 1
+    )
+    assert not any(
+        item in events for item in ("publish-status", "owner-identity", "recipient", "PROVISION")
+    )
+
+
+def test_migration_receipt_requires_schema_ready_restored_sender_off():
+    import json
+
+    raw = backend.TelegramBackendReceipt(
+        "migrate", "111", SOURCE, "SCHEMA_READY", "CONTROLLER_HEALTHY_ENGINE_OFF"
+    ).redacted_json()
+    kwargs = dict(attempt_id="111", expected_source_sha=SOURCE, operation="migrate")
+    assert backend.verify_backend_receipt(raw, **kwargs) == raw
+    for key, value in (
+        ("state", "PREPARED"),
+        ("restoration", "INDETERMINATE"),
+        ("sender_state", "VERIFIED"),
+        ("human_receipt", "RECEIVED"),
+    ):
+        changed = json.loads(raw)
+        changed[key] = value
+        with pytest.raises(ValueError):
+            backend.verify_backend_receipt(bootstrap._canonical(changed), **kwargs)

@@ -26,6 +26,13 @@ class MaintenanceError(ValueError):
     """Static reason only; preserve ambiguous objects and durable state."""
 
 
+class MigrationMaintenanceError(MaintenanceError):
+    def __init__(self, primary_error: Exception | None, cleanup_error: Exception | None):
+        self.primary_error = primary_error
+        self.cleanup_error = cleanup_error
+        super().__init__("telegram_schema_migration_failed_state_preserved")
+
+
 def _inspect(ident: str) -> dict[str, Any]:
     raw = cleanup._docker("inspect", "--format", "{{json .}}", ident)
     value = json.loads(raw)
@@ -40,12 +47,19 @@ def _attest(
     value = _inspect(ident)
     config, host = value["Config"], value["HostConfig"]
     mounts = value["Mounts"]
-    expected = {(f"boca-socios_{volume}", target, rw) for volume, target, rw in MOUNTS[operation]}
+    migration = operation == "migrate-schema"
+    profile = (("boca_data", "/data", True),) if migration else MOUNTS[operation]
+    command = (
+        ["python", "-m", "boca_socios.telegram_storage_gate", "migrate"]
+        if migration
+        else ["python", "-m", "boca_socios.telegram_maintenance", operation]
+    )
+    expected = {(f"boca-socios_{volume}", target, rw) for volume, target, rw in profile}
     if (
         value["Name"] != "/" + name
         or config["Image"] != image
         or config["User"] != ("0:0" if operation == "initialize-volume" else "10001:10001")
-        or config["Cmd"] != ["python", "-m", "boca_socios.telegram_maintenance", operation]
+        or config["Cmd"] != command
         or config["Labels"].get("com.docker.compose.project") != "boca-socios"
         or host["NetworkMode"] != "none"
         or host["ReadonlyRootfs"] is not True
@@ -81,8 +95,13 @@ class InstalledMaintenance:
         self.context = context
         self._created_volume = False
         self._created_network: str | None = None
+        self.migration_helper_retired = True
 
     def call(self, operation: str, request: dict[str, Any]) -> dict[str, Any]:
+        if operation == "migrate-schema":
+            if type(request) is not dict or request != {}:
+                raise MaintenanceError("telegram_schema_migration_request_unverified")
+            return self._migrate_schema()
         from boca_socios.host_first_deploy import _telegram_container, _telegram_volume
 
         if operation == "initialize-volume" and not self._created_volume:
@@ -163,6 +182,104 @@ class InstalledMaintenance:
                 if ident in {item.ident for item in self.context.reader.inventory().containers}:
                     raise MaintenanceError("telegram_maintenance_cleanup_unverified")
             self.context.check_binding()
+
+    def _migrate_schema(self) -> dict[str, Any]:
+        """Run the installed fixed CLI; restoration requires proven writer retirement."""
+        from boca_socios.host_first_deploy import _telegram_container
+
+        self.context.stopped()
+        self.context.check_binding()
+        image = self.context.installation.controller_image
+        name = "boca-socios-telegram-maint-" + self.context.attempt_id + "-" + secrets.token_hex(8)
+        base = _telegram_container(image, "telegram_storage_gate", "migrate", writable=True)
+        argv = (
+            "create",
+            "--interactive",
+            "--log-driver",
+            "none",
+            "--name",
+            name,
+            "--label",
+            "com.docker.compose.project=boca-socios",
+            *base[3:],
+        )
+        ident = ""
+        verified = False
+        primary_error: Exception | None = None
+        cleanup_error: Exception | None = None
+        # From here even a lost create acknowledgement can leave a SQLite writer.
+        self.migration_helper_retired = False
+        try:
+            ident = cleanup._docker(*argv).strip()
+            if re.fullmatch(r"[a-f0-9]{64}", ident) is None:
+                raise MaintenanceError("telegram_schema_creation_uncertain")
+            before = _attest(ident, name, image, "migrate-schema", dict(self.context.volumes))
+            if before["State"]["Running"] is not False:
+                raise MaintenanceError("telegram_schema_creation_state_unverified")
+            verified = True
+            self.context.stopped()
+            result = subprocess.run(  # noqa: S603 - fixed installed CLI on exact CID
+                [
+                    "/usr/bin/docker",
+                    "--host",
+                    cleanup.DOCKER_SOCKET,
+                    "start",
+                    "--attach",
+                    "--interactive",
+                    ident,
+                ],
+                input=b"{}",
+                capture_output=True,
+                timeout=30,
+                check=False,
+                env={
+                    "DOCKER_HOST": cleanup.DOCKER_SOCKET,
+                    "XDG_RUNTIME_DIR": "/run/user/10001",
+                    "PATH": "/usr/bin:/bin",
+                    "LANG": "C",
+                },
+            )
+            try:
+                after = _attest(ident, name, image, "migrate-schema", dict(self.context.volumes))
+            except Exception:
+                # A later favorable inspect cannot erase a lost identity witness.
+                verified = False
+                raise
+            if (
+                result.returncode != 0
+                or result.stderr
+                or result.stdout != b"BOCA_TELEGRAM_STORAGE state=MIGRATED schema=0007\n"
+                or after["State"]["Running"] is not False
+                or after["State"]["ExitCode"] != 0
+            ):
+                raise MaintenanceError("telegram_schema_result_unverified")
+        except Exception as error:
+            primary_error = error
+        finally:
+            try:
+                self.context.check_binding()
+                if not verified:
+                    raise MaintenanceError("telegram_schema_helper_identity_uncertain")
+                final = _attest(ident, name, image, "migrate-schema", dict(self.context.volumes))
+                if final["State"]["Running"]:
+                    if cleanup._docker("stop", "--time", "5", ident).strip() != ident:
+                        raise MaintenanceError("telegram_schema_stop_uncertain")
+                    final = _attest(
+                        ident, name, image, "migrate-schema", dict(self.context.volumes)
+                    )
+                if final["State"]["Running"] is not False:
+                    raise MaintenanceError("telegram_schema_stop_unverified")
+                if cleanup._docker("rm", ident).strip() != ident:
+                    raise MaintenanceError("telegram_schema_removal_uncertain")
+                if ident in {item.ident for item in self.context.reader.inventory().containers}:
+                    raise MaintenanceError("telegram_schema_removal_unverified")
+                self.migration_helper_retired = True
+                self.context.check_binding()
+            except Exception as error:
+                cleanup_error = error
+        if primary_error is not None or cleanup_error is not None:
+            raise MigrationMaintenanceError(primary_error, cleanup_error)
+        return {"schema": 7}
 
     def provision(self) -> None:
         """Explicit prepare creates only missing Boca Telegram resources."""

@@ -1,6 +1,30 @@
 # Estado de integración BETA
 
-## R299 — estado instalado aceptado; guard Telegram en corrección
+## R300 — par instalado aceptado; prerrequisito Telegram identificado
+
+| Plano | Estado verificado |
+|---|---|
+| Producto instalado | M `5281efae7dafe89be047073796b3e0a7e19785ed`, PR517/release866 |
+| Promoción | APPLY1134 ACCEPTED, cleanup ACCEPT, ADMIN1135 PROVISIONED |
+| Estado físico | STATUS1138 HEALTHY/STOPPED, worker CREATED/PID0, par exacto |
+| Main base | O `f16db1008418889ffdd9b35a57bf77f1238ec659`, PR519; CI1262/Security1086 SUCCESS |
+| Telegram1142 | SCHEMA_0007_REQUIRED, restoration NOT_NEEDED, sender OFF; no PREPARED |
+| Trabajo R300 | Conectar la migración existente al backend instalado; revisión/CI/operación pendientes |
+
+El [recibo físico1142 y RCA](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6890939744)
+acreditan baseline SQLite válido sin0007. El backend cortó antes de stop y
+provisión; no se convierte ese diagnóstico en aceptación de Telegram.
+El [contrato aprobado](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6891021673)
+reutiliza imagen M, CLI y SQL existentes, conservando W/M, lease, caps y datos.
+No otra imagen/release/APPLY ni migración implícita al abrir el panel.
+
+Dos motores y pool de tres tipos están implementados; 50 es presupuesto lógico.
+DOM autenticado, countdown recibido, resultado durable de entrada conectado
+con ganador/cierre de hermanos, comprobante y foto al chat verificado del socio
+siguen pendientes de integración y evidencia. La preparación de custodia no
+implementa esos requisitos. Aceptación Samsung y capacidad física50 pendientes.
+
+## Histórico — R299, estado instalado aceptado; guard Telegram en corrección
 
 Instalado M: `5281efae7dafe89be047073796b3e0a7e19785ed`, PR517/release866.
 Main base del mantenimiento: `2581e23bbbb8b4a05fb2470a23b3c71866378151`, PR518.

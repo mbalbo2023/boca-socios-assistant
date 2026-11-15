@@ -55,7 +55,7 @@ def test_browser_option_is_separately_gated_without_weakening_legacy_operations(
     # Telegram proves release lineage before its separate one-lease backend.
     assert "protected-go-prepare|lifecycle-apply)" in gate
     assert (
-        "telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender)"
+        "telegram-migrate|telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender)"
         in gate
     )
     telegram_review = _step("Prove Telegram release ancestry and build installed transaction")
@@ -68,7 +68,7 @@ def test_browser_option_is_separately_gated_without_weakening_legacy_operations(
     for legacy in (
         "owner-enroll)",
         "beta-install|beta-start|beta-acceptance)",
-        "telegram-migrate|telegram-install|telegram-verify|telegram-test)",
+        "telegram-install|telegram-verify|telegram-test)",
         'if [[ "$BOCA_OPERATION" = owner-enroll ]]',
     ):
         assert legacy in gate
@@ -402,3 +402,95 @@ def test_pr_runner_disposable_docker_probe_checks_real_inspect_defaults() -> Non
         assert proof in smoke
     assert "--publish" not in smoke and "--privileged" not in smoke
     assert "docker volume" not in smoke and "ssh " not in smoke
+
+
+def test_telegram_migrate_routes_only_through_installed_transaction():
+    workflow = _workflow()
+    gate = _step("Require verified protected environment and matching main commit")
+    assert '"$BOCA_OPERATION" = telegram-migrate || "$BOCA_OPERATION" = telegram-activate' in gate
+    assert (
+        "telegram-migrate|telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender)"
+        in gate
+    )
+    assert "telegram-migrate|telegram-install|telegram-verify|telegram-test)" not in gate
+    for name in (
+        "Prove Telegram release ancestry and build installed transaction",
+        "Execute installed Telegram transaction under one protected lease",
+    ):
+        step = _step(name)
+        assert "inputs.operation == 'telegram-migrate'" in step.split("run: |", 1)[0]
+    assert "telegram-migrate) expected_state=SCHEMA_READY ;;" in _step(
+        "Execute installed Telegram transaction under one protected lease"
+    )
+    for condition in re.findall(r"^        if: (.*)$", workflow, flags=re.MULTILINE):
+        if (
+            "startsWith(inputs.operation, 'telegram-')" in condition
+            and "inputs.browser_image_ref" not in condition
+            and "inputs.operation == 'first-install'" not in condition
+        ):
+            assert "inputs.operation != 'telegram-migrate'" in condition
+
+    bootstrap = (ROOT / "scripts/boca_protected_memfd_bootstrap.py").read_text()
+    installed_modes = bootstrap.split("telegram_installed = sys.argv[2] in {", 1)[1].split("}", 1)[
+        0
+    ]
+    assert '"telegram-migrate"' in installed_modes
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {},
+        {"BOCA_SOURCE_SHA": "bad"},
+        {"BOCA_BUDGET": "0.5cpu-256m-64pids"},
+        {"BOCA_TELEGRAM_ENV_READY": ""},
+        {"BOCA_BROWSER_IMAGE_REF": ""},
+        {"BOCA_TELEGRAM_ENVELOPE": "arbitrary"},
+    ],
+)
+def test_migrate_distinct_workflow_and_image_execute_actual_admission(change):
+    gate = textwrap.dedent(
+        _step("Require verified protected environment and matching main commit").split(
+            "        run: |\n", 1
+        )[1]
+    )
+    environment = {key: "" for key in re.findall(r"\b(?:BOCA|GITHUB)_[A-Z0-9_]+\b", gate)}
+    environment.update(
+        {
+            "PATH": "/usr/bin:/bin",
+            "GITHUB_RUN_ATTEMPT": "1",
+            "GITHUB_RUN_ID": "123",
+            "GITHUB_SHA": "b" * 40,
+            "BOCA_SOURCE_SHA": "a" * 40,
+            "BOCA_OPERATION": "telegram-migrate",
+            "BOCA_SERVICE": "controller",
+            "BOCA_BUDGET": "1.5cpu-1024m-192pids",
+            "BOCA_IMAGE_REF": "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "c" * 64,
+            "BOCA_BROWSER_IMAGE_REF": "ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:"
+            + "d" * 64,
+            "BOCA_RELEASE_RUN_ID": "866",
+            "BOCA_DEPLOY_ENV_READY": "ready",
+            "BOCA_BETA_ENV_READY": "ready",
+            "BOCA_BROWSER_ENV_READY": "ready",
+            "BOCA_TELEGRAM_ENV_READY": "ready",
+            "BOCA_BETA_PANEL_ORIGIN": "http://localhost:8443",
+            "BOCA_BETA_OWNER_SUBJECT": "synthetic-owner",
+        }
+    )
+    environment.update(change)
+    result = subprocess.run(  # noqa: S603 - execute local admission shell only; no host/provider
+        [
+            "/bin/bash",
+            "--noprofile",
+            "--norc",
+            "-c",
+            "set -euo pipefail\n" + gate + "\nprintf 'ADMITTED\\n'",
+        ],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+    assert result.returncode == (1 if change else 0), result.stderr
+    assert result.stdout == ("" if change else "ADMITTED\n")

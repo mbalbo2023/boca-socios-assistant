@@ -1,6 +1,26 @@
 # Development and merge policy
 
-## 2026-11-15 — R299, import del guard anterior a SSH
+## 2026-11-15 — R300, migración explícita con identidad instalada
+
+[RCA520](https://github.com/mbalbo2023/boca-socios-assistant/issues/520)
+parte del recibo1142 real SCHEMA_0007_REQUIRED, sin stop/provisión. PR519
+ya cerró el import; main O y CI1262/Security1086 están aprobados. No repetir
+el defecto anterior ni sus certificaciones como si fueran trabajo nuevo.
+
+El [contrato R300 y unanimidad previa](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6891021673)
+permite conectar el CLI de esquema existente al backend instalado bajo lease.
+W y M permanecen independientes. No retocar SQL, helper de imagen, MOUNTS,
+caps ni source para acomodar la ruta legacy. La solicitud es explícita y fija;
+prepare permanece sin DDL. El autor no cuenta como revisor independiente.
+
+La retirada acreditada del helper escritor precede a restore. Primario y cleanup
+se conservan separados; incertidumbre no permite restart, rm por nombre o retry.
+Éxito exige restore HEALTHY_ENGINE_OFF, verificación0007 readonly y sender OFF.
+Regresión conductual de ruta W/M, frontera ejecutable, preservación y fallos;
+ZIP aislado con entradas/caps actuales, gates del SHA exacto y recibo físico
+posterior. No backup supuesto, permisos nuevos, activación ni mensajes.
+
+## Histórico — 2026-11-15, R299, import del guard anterior a SSH
 
 R297 está instalado y [STATUS1138](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43684726506)
 ya aceptó el estado tras PR518. TG1139/1140 fallaron antes de SSH y no deben

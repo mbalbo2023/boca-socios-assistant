@@ -1,6 +1,25 @@
 # Backlog y dependencias de la BETA
 
-## Prioridad vigente — R299, preparación Telegram sin repetir deploy
+## Prioridad vigente — R300, esquema Telegram instalado
+
+La promoción R297 y su postflight permanecen aceptados. PR519 está integrado
+en O `f16db1008418889ffdd9b35a57bf77f1238ec659`, CI1262/Security1086 SUCCESS.
+TG1142 alcanzó el backend y probó falta0007, con sender OFF y sin detener el
+panel. [RCA520](https://github.com/mbalbo2023/boca-socios-assistant/issues/520)
+reutiliza la migración existente mediante mantenimiento instalado y lease única.
+
+Completar delta focal/revisión/gates y una migración explícita que restaure
+HEALTHY_ENGINE_OFF; sólo entonces prepare. No otra release/APPLY ni rutas
+históricas forzadas. Sin activación/envíos. El
+[plan concreto](superpowers/plans/2026-11-15-r300-installed-telegram-schema.md)
+conserva datos, caps, entradas de ZIP y evidencia previa.
+
+La auditoría del monitor deduplica correcciones contra M antes de otro código.
+Resultado de entrada/ganador/comprobante/foto, autenticación DOM, countdown,
+destinatario por socio, aceptación privada y capacidad física50 siguen abiertos.
+No certificar esas funciones por preparar Telegram ni por CI sintético.
+
+## Histórico — Prioridad vigente R299, preparación Telegram sin repetir deploy
 
 R297/release866 está instalado; ADMIN1135 y [STATUS1138](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43684726506)
 están aceptados. PR518 cerró el defecto del lector. No reabrir esas fases.

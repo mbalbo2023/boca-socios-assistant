@@ -309,7 +309,7 @@ jobs:
           if [[ "$BOCA_OPERATION" != boca-pair-upgrade-apply ]]; then
             test -z "${BOCA_RETAINED_OBSERVATION_RUN_ID:-}"
           fi
-          if [[ "$BOCA_OPERATION" = telegram-activate || "$BOCA_OPERATION" = telegram-prepare || "$BOCA_OPERATION" = telegram-sender-recover || "$BOCA_OPERATION" = telegram-renew-stage || "$BOCA_OPERATION" = telegram-complete-sender ]]; then
+          if [[ "$BOCA_OPERATION" = telegram-migrate || "$BOCA_OPERATION" = telegram-activate || "$BOCA_OPERATION" = telegram-prepare || "$BOCA_OPERATION" = telegram-sender-recover || "$BOCA_OPERATION" = telegram-renew-stage || "$BOCA_OPERATION" = telegram-complete-sender ]]; then
             # Telegram alone may use a previously released, exact OCI pair
             # after a workflow-only fix. GitHub main HEAD and the immutable
             # image source MUST be proved independently before SSH.
@@ -333,7 +333,7 @@ jobs:
             [[ "$BOCA_BUDGET" = 1.5cpu-1024m-192pids || "$BOCA_BUDGET" = 1.75cpu-1152m-224pids ]]
           elif [[ "$BOCA_OPERATION" = beta-browser-install ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
-          elif [[ "$BOCA_OPERATION" = worker-diagnose-once || "$BOCA_OPERATION" = worker-physical-once || "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-stage-recover-844 || "$BOCA_OPERATION" = cutover-a-image-retire || "$BOCA_OPERATION" = cutover-a-census || "$BOCA_OPERATION" = boca-pair-observe || "$BOCA_OPERATION" = boca-retained-resource-observe || "$BOCA_OPERATION" = boca-current-retained-resource-observe || "$BOCA_OPERATION" = boca-installed-status-observe || "$BOCA_OPERATION" = boca-installed-admin-provision || "$BOCA_OPERATION" = boca-postcommit-observe || "$BOCA_OPERATION" = boca-binding-observe || "$BOCA_OPERATION" = boca-sqlite-inode-observe || "$BOCA_OPERATION" = boca-rootless-mapping-observe || "$BOCA_OPERATION" = boca-panel-exact-origin-observe || "$BOCA_OPERATION" = boca-park-incident-observe || "$BOCA_OPERATION" = boca-precommit-restore-one-shot || "$BOCA_OPERATION" = boca-postcommit-finalize || "$BOCA_OPERATION" = boca-pair-upgrade-apply || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-worker-inspect || "$BOCA_OPERATION" = cutover-a-worker-events-r112 || "$BOCA_OPERATION" = cutover-a-worker-recover || "$BOCA_OPERATION" = cutover-a-worker-recover-807 || "$BOCA_OPERATION" = cutover-a-worker-recover-819 || "$BOCA_OPERATION" = cutover-a-worker-recover-827 || "$BOCA_OPERATION" = cutover-a-worker-recover-834 || "$BOCA_OPERATION" = cutover-a-worker-preflight || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-activate || "$BOCA_OPERATION" = telegram-prepare || "$BOCA_OPERATION" = telegram-sender-recover || "$BOCA_OPERATION" = telegram-renew-stage || "$BOCA_OPERATION" = telegram-complete-sender ]]; then
+          elif [[ "$BOCA_OPERATION" = worker-diagnose-once || "$BOCA_OPERATION" = worker-physical-once || "$BOCA_OPERATION" = cutover-a-reconcile || "$BOCA_OPERATION" = cutover-a-stage-recover || "$BOCA_OPERATION" = cutover-a-stage-recover-844 || "$BOCA_OPERATION" = cutover-a-image-retire || "$BOCA_OPERATION" = cutover-a-census || "$BOCA_OPERATION" = boca-pair-observe || "$BOCA_OPERATION" = boca-retained-resource-observe || "$BOCA_OPERATION" = boca-current-retained-resource-observe || "$BOCA_OPERATION" = boca-installed-status-observe || "$BOCA_OPERATION" = boca-installed-admin-provision || "$BOCA_OPERATION" = boca-postcommit-observe || "$BOCA_OPERATION" = boca-binding-observe || "$BOCA_OPERATION" = boca-sqlite-inode-observe || "$BOCA_OPERATION" = boca-rootless-mapping-observe || "$BOCA_OPERATION" = boca-panel-exact-origin-observe || "$BOCA_OPERATION" = boca-park-incident-observe || "$BOCA_OPERATION" = boca-precommit-restore-one-shot || "$BOCA_OPERATION" = boca-postcommit-finalize || "$BOCA_OPERATION" = boca-pair-upgrade-apply || "$BOCA_OPERATION" = cutover-a-observe || "$BOCA_OPERATION" = cutover-a-worker-inspect || "$BOCA_OPERATION" = cutover-a-worker-events-r112 || "$BOCA_OPERATION" = cutover-a-worker-recover || "$BOCA_OPERATION" = cutover-a-worker-recover-807 || "$BOCA_OPERATION" = cutover-a-worker-recover-819 || "$BOCA_OPERATION" = cutover-a-worker-recover-827 || "$BOCA_OPERATION" = cutover-a-worker-recover-834 || "$BOCA_OPERATION" = cutover-a-worker-preflight || "$BOCA_OPERATION" = cutover-a-apply || "$BOCA_OPERATION" = official-notice-import || "$BOCA_OPERATION" = protected-go-prepare || "$BOCA_OPERATION" = lifecycle-apply || "$BOCA_OPERATION" = telegram-migrate || "$BOCA_OPERATION" = telegram-activate || "$BOCA_OPERATION" = telegram-prepare || "$BOCA_OPERATION" = telegram-sender-recover || "$BOCA_OPERATION" = telegram-renew-stage || "$BOCA_OPERATION" = telegram-complete-sender ]]; then
             test "$BOCA_BUDGET" = 1.5cpu-1024m-192pids
           elif [[ "$BOCA_OPERATION" = beta-browser-telegram-start || ( "$BOCA_TELEGRAM_OWNER_READY" = ready && ( "$BOCA_OPERATION" = beta-browser-* || ( "$BOCA_OPERATION" = telegram-* && -n "$BOCA_BROWSER_IMAGE_REF" ) ) ) ]]; then
             test "$BOCA_BUDGET" = 1.75cpu-1152m-224pids
@@ -1091,7 +1091,7 @@ jobs:
               test -z "$BOCA_TELEGRAM_ENVELOPE"
               test -z "$BOCA_OWNER_ENVELOPE"
               ;;
-            telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender)
+            telegram-migrate|telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender)
               # A current installed binding and staged passkey owner proof are
               # verified inside the one-lease backend, never copied GO flags.
               test "$BOCA_DEPLOY_ENV_READY" = ready
@@ -1107,7 +1107,7 @@ jobs:
               test -z "$BOCA_TELEGRAM_ENVELOPE"
               test -z "$BOCA_OWNER_ENVELOPE"
               ;;
-            telegram-migrate|telegram-install|telegram-verify|telegram-test)
+            telegram-install|telegram-verify|telegram-test)
               if [[ -n "$BOCA_BROWSER_IMAGE_REF" ]]; then
                 test "$BOCA_BROWSER_ENV_READY" = ready
                 [[ "$BOCA_BROWSER_IMAGE_REF" =~ ^ghcr[.]io/mbalbo2023/boca-socios-assistant-browser@sha256:[0-9a-f]{64}$ ]]
@@ -1164,7 +1164,7 @@ jobs:
         run: |
           gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" > "$RUNNER_TEMP/boca-main-ref.json"
           verified_main="$BOCA_SOURCE_SHA"
-          if [[ "$BOCA_OPERATION" = telegram-activate || "$BOCA_OPERATION" = telegram-prepare || "$BOCA_OPERATION" = telegram-sender-recover || "$BOCA_OPERATION" = telegram-renew-stage || "$BOCA_OPERATION" = telegram-complete-sender ]]; then verified_main="$GITHUB_SHA"; fi
+          if [[ "$BOCA_OPERATION" = telegram-migrate || "$BOCA_OPERATION" = telegram-activate || "$BOCA_OPERATION" = telegram-prepare || "$BOCA_OPERATION" = telegram-sender-recover || "$BOCA_OPERATION" = telegram-renew-stage || "$BOCA_OPERATION" = telegram-complete-sender ]]; then verified_main="$GITHUB_SHA"; fi
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref.json" "$verified_main"
       - name: Validate image-free infrastructure coordinates before SSH
         if: inputs.operation == 'infrastructure-preflight' || inputs.operation == 'infrastructure-inspect'
@@ -1205,7 +1205,7 @@ jobs:
             "$RUNNER_TEMP/boca-browser-release-manifest/boca-browser-release-manifest.json" \
             "$BOCA_IMAGE_REF" "$BOCA_BROWSER_IMAGE_REF" "$BOCA_SOURCE_SHA" "$BOCA_RELEASE_RUN_ID"
       - name: Prove Telegram release ancestry and build installed transaction
-        if: inputs.operation == 'telegram-prepare' || inputs.operation == 'telegram-activate' || inputs.operation == 'telegram-sender-recover' || inputs.operation == 'telegram-renew-stage' || inputs.operation == 'telegram-complete-sender'
+        if: inputs.operation == 'telegram-migrate' || inputs.operation == 'telegram-prepare' || inputs.operation == 'telegram-activate' || inputs.operation == 'telegram-sender-recover' || inputs.operation == 'telegram-renew-stage' || inputs.operation == 'telegram-complete-sender'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONPATH: src:scripts
@@ -3169,7 +3169,7 @@ jobs:
           fi
           printf 'BOCA_INSTALLED_ADMIN state=PENDING action=EXPLICIT_PROVISION_REQUIRED deploy=ACCEPTED\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Execute installed Telegram transaction under one protected lease
-        if: inputs.operation == 'telegram-prepare' || inputs.operation == 'telegram-activate' || inputs.operation == 'telegram-sender-recover' || inputs.operation == 'telegram-renew-stage' || inputs.operation == 'telegram-complete-sender'
+        if: inputs.operation == 'telegram-migrate' || inputs.operation == 'telegram-prepare' || inputs.operation == 'telegram-activate' || inputs.operation == 'telegram-sender-recover' || inputs.operation == 'telegram-renew-stage' || inputs.operation == 'telegram-complete-sender'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONPATH: src
@@ -3207,6 +3207,7 @@ jobs:
           fi
           printf '%s\n' "$verified" >> "$GITHUB_STEP_SUMMARY"
           case "$BOCA_OPERATION" in
+            telegram-migrate) expected_state=SCHEMA_READY ;;
             telegram-prepare) expected_state=PREPARED ;;
             telegram-activate) expected_state=READY ;;
             telegram-sender-recover) expected_state=RECOVERED ;;
@@ -5705,7 +5706,7 @@ jobs:
           printf 'Boca BETA tests ended: `%s`; data/key/owner retained.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
           if [[ "$main_rc" -ne 0 ]]; then exit 1; fi
       - name: Recheck current main before Telegram post-install custody
-        if: startsWith(inputs.operation, 'telegram-') && inputs.operation != 'telegram-activate' && inputs.operation != 'telegram-prepare' && inputs.operation != 'telegram-sender-recover' && inputs.operation != 'telegram-renew-stage' && inputs.operation != 'telegram-complete-sender'
+        if: startsWith(inputs.operation, 'telegram-') && inputs.operation != 'telegram-migrate' && inputs.operation != 'telegram-activate' && inputs.operation != 'telegram-prepare' && inputs.operation != 'telegram-sender-recover' && inputs.operation != 'telegram-renew-stage' && inputs.operation != 'telegram-complete-sender'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONPATH: src
@@ -5714,10 +5715,10 @@ jobs:
           python scripts/check_main_ref.py "$RUNNER_TEMP/boca-main-ref-telegram.json" "$BOCA_SOURCE_SHA"
       - name: Mark Telegram host attempt before starting existing Boca daemon
         id: boca_telegram_attempt
-        if: startsWith(inputs.operation, 'telegram-') && inputs.operation != 'telegram-activate' && inputs.operation != 'telegram-prepare' && inputs.operation != 'telegram-sender-recover' && inputs.operation != 'telegram-renew-stage' && inputs.operation != 'telegram-complete-sender'
+        if: startsWith(inputs.operation, 'telegram-') && inputs.operation != 'telegram-migrate' && inputs.operation != 'telegram-activate' && inputs.operation != 'telegram-prepare' && inputs.operation != 'telegram-sender-recover' && inputs.operation != 'telegram-renew-stage' && inputs.operation != 'telegram-complete-sender'
         run: printf 'started=true\n' >> "$GITHUB_OUTPUT"
       - name: Start only stopped existing dedicated Boca daemon
-        if: startsWith(inputs.operation, 'telegram-') && inputs.operation != 'telegram-activate' && inputs.operation != 'telegram-prepare' && inputs.operation != 'telegram-sender-recover' && inputs.operation != 'telegram-renew-stage' && inputs.operation != 'telegram-complete-sender'
+        if: startsWith(inputs.operation, 'telegram-') && inputs.operation != 'telegram-migrate' && inputs.operation != 'telegram-activate' && inputs.operation != 'telegram-prepare' && inputs.operation != 'telegram-sender-recover' && inputs.operation != 'telegram-renew-stage' && inputs.operation != 'telegram-complete-sender'
         run: |
           set +e
           remote_command="$(python3 -c 'import shlex,sys; print(shlex.join(sys.argv[1:]))' python3 - start-existing "$BOCA_SOURCE_SHA")"
@@ -5732,7 +5733,7 @@ jobs:
             exit 1
           fi
       - name: Execute protected Telegram schema, custody or one-shot test
-        if: startsWith(inputs.operation, 'telegram-') && inputs.operation != 'telegram-activate' && inputs.operation != 'telegram-prepare' && inputs.operation != 'telegram-sender-recover' && inputs.operation != 'telegram-renew-stage' && inputs.operation != 'telegram-complete-sender'
+        if: startsWith(inputs.operation, 'telegram-') && inputs.operation != 'telegram-migrate' && inputs.operation != 'telegram-activate' && inputs.operation != 'telegram-prepare' && inputs.operation != 'telegram-sender-recover' && inputs.operation != 'telegram-renew-stage' && inputs.operation != 'telegram-complete-sender'
         env:
           BOCA_BETA_PANEL_ORIGIN: ${{ secrets.BOCA_BETA_PANEL_ORIGIN }}
           BOCA_BETA_OWNER_SUBJECT: ${{ secrets.BOCA_BETA_OWNER_SUBJECT }}
@@ -5775,7 +5776,7 @@ jobs:
           fi
           printf 'Boca Telegram protected phase: `%s`. Only telegram-test may report Bot API acceptance; human receipt remains unverified.\n' "$receipt" >> "$GITHUB_STEP_SUMMARY"
       - name: Stop positively identified Boca services after Telegram custody
-        if: always() && startsWith(inputs.operation, 'telegram-') && inputs.operation != 'telegram-activate' && inputs.operation != 'telegram-prepare' && inputs.operation != 'telegram-sender-recover' && inputs.operation != 'telegram-renew-stage' && inputs.operation != 'telegram-complete-sender' && steps.boca_telegram_attempt.outputs.started == 'true'
+        if: always() && startsWith(inputs.operation, 'telegram-') && inputs.operation != 'telegram-migrate' && inputs.operation != 'telegram-activate' && inputs.operation != 'telegram-prepare' && inputs.operation != 'telegram-sender-recover' && inputs.operation != 'telegram-renew-stage' && inputs.operation != 'telegram-complete-sender' && steps.boca_telegram_attempt.outputs.started == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PYTHONPATH: src

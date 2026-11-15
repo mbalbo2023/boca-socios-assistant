@@ -1,6 +1,35 @@
 # Binding instructions for every coding agent
 
-## Estado vigente R299 — estado físico aceptado; guard del runner Telegram
+## Estado vigente R300 — migración Telegram instalada, sin repetir promoción
+
+Main base O `f16db1008418889ffdd9b35a57bf77f1238ec659` integra PR519;
+CI1262/Security1086 SUCCESS. El producto M sigue instalado desde
+`5281efae7dafe89be047073796b3e0a7e19785ed`, release866/APPLY1134 ACCEPTED,
+cleanup ACCEPT, ADMIN1135 PROVISIONED y STATUS1138 HEALTHY/STOPPED.
+No repetir release, APPLY, admin ni STATUS ya aceptados.
+
+[TG1142](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43688683723)
+superó el import y devolvió SCHEMA_0007_REQUIRED/NOT_NEEDED/sender OFF:
+baseline SQLite válido, falta0007, sin detener controller ni provisionar.
+El [contrato R300 y cuatro votos previos](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6891021673)
+gobierna [RCA520](https://github.com/mbalbo2023/boca-socios-assistant/issues/520)
+y el [plan](docs/superpowers/plans/2026-11-15-r300-installed-telegram-schema.md).
+
+Reutilizar telegram_storage_gate migrate ya presente en M mediante backend
+instalado/lease única, W y M independientes y perfil fijo. La ruta legacy es
+incompatible: no despacharla ni falsificar source. No cambiar SQL, MOUNTS,
+imagen o caps. Sólo restaurar controller después de acreditar retirada del
+helper escritor exacto; incertidumbre conserva NO_GO sin retry. Prepare no
+migra implícitamente. Sin custodia, activación, envío ni backup supuesto.
+
+Pruebas focales y revisión independiente del código preceden CI/main y una
+migración protegida; prepare sólo después de SCHEMA_READY físico aceptado.
+SIMULATION_ONLY, datos, BLACKBOX y Porota/PPI permanecen protegidos. DOM
+autenticado, resultado/ganador/captura/aviso por socio, countdown, aceptación
+privada y capacidad física50 siguen diferenciados de esta corrección.
+Los cortes siguientes se conservan como historia.
+
+## Histórico — Estado vigente R299 — estado físico aceptado; guard del runner Telegram
 
 R297/PR517 permanece instalado desde `5281efae7dafe89be047073796b3e0a7e19785ed`,
 release866/APPLY1134 ACCEPTED y cleanup ACCEPT; ADMIN1135 PROVISIONED.

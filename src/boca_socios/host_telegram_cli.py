@@ -8,6 +8,7 @@ import sys
 from collections.abc import Sequence
 
 OPERATIONS = {
+    "telegram-migrate": "migrate",
     "telegram-prepare": "prepare",
     "telegram-activate": "activate",
     "telegram-sender-recover": "recover",
@@ -31,6 +32,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args == ["selftest"]:
             from boca_socios.host_telegram_backend import (
                 activate_installed_telegram,
+                migrate_installed_telegram,
                 prepare_installed_telegram,
                 renew_installed_telegram_stage,
                 verify_backend_receipt,
@@ -42,6 +44,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 for item in (
                     activate_installed_telegram,
                     prepare_installed_telegram,
+                    migrate_installed_telegram,
                     verify_backend_receipt,
                     activate_installed_sender,
                     renew_installed_telegram_stage,
@@ -68,6 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             TelegramBackendError,
             TelegramBackendReceipt,
             activate_installed_telegram,
+            migrate_installed_telegram,
             prepare_installed_telegram,
             renew_installed_telegram_stage,
             verify_backend_receipt,
@@ -119,6 +123,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                 else:
                     execute = {
+                        "telegram-migrate": migrate_installed_telegram,
                         "telegram-prepare": prepare_installed_telegram,
                         "telegram-activate": activate_installed_telegram,
                         "telegram-renew-stage": renew_installed_telegram_stage,
