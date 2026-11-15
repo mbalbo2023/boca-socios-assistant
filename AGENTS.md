@@ -1,6 +1,41 @@
 # Binding instructions for every coding agent
 
-## Estado vigente R296 — un candidato, pendiente del QA del titular
+## Estado vigente R297 — correcciones QA y dos motores independientes
+
+El titular ya aportó QA/capturas y autorizó desarrollar dos motores funcionales:
+colas/tokens y navegadores/socios, independientes y bajo demanda. El
+[contrato DUAL-01..12 y consenso previo](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6886406162)
+y [ADR0302](docs/ADR/0302-independent-owner-engines.md) gobiernan este delta.
+Continúa el mismo PR517 / `feature/417-r295-beta-followups`, sobre b23dc20.
+No repetir R294 instalada ni pruebas certificadas del árbol base.
+
+Se amplía expresamente el alcance anterior de sesión única a un presupuesto
+lógico global de 50 contextos entre ambos motores, con Chromium/Firefox/WebKit.
+No son 50 por motor ni evidencia de capacidad física/posiciones de cola.
+Reutilizar observer, parser, vault, monitores y supervisor; un worker físico,
+dos activaciones lógicas, STOP aislado y holds/releases durables en audit_events.
+El worker sólo puede detenerse al liberar todos los trabajos o por recuperación
+explícita de una activación perdida; un contador RAM no autoriza Docker.
+
+SIMULATION_ONLY, BLACKBOX unread/unmodified, cantidad 1 y el guard socio/evento
+siguen vigentes. No inventar DOM autenticado o entrada a partir de tokens;
+conservar la sesión y declarar evidencia faltante. La revisión previa unánime
+autoriza desarrollo; la revisión final requiere votos nuevos sobre el código.
+No elevar caps/reservas ni añadir listeners, otro vault, DB o despliegue.
+
+Mientras se consolida este QA: desarrollo, pruebas focales, revisión y CI del
+SHA exacto en PR517. Sin merge/release/host/proveedor/mensajes del agente.
+La promoción final y aceptación física siguen pendientes; únicamente Actions
+protegidas serializadas, postflight y limpieza selectiva Boca, sin Porota/PPI.
+El pedido posterior de prueba visual por Actions queda registrado en
+[este checkpoint](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6886936337).
+Reutilizar CI para navegador real con fixtures y artifacts ficticios. El
+observador instalado actual sólo prueba salud/identidades; no fabricar una
+sesión WebAuthn ni afirmar que una captura offline prueba el panel instalado.
+Los encabezados anteriores se conservan como historia, no como prohibición
+de la ampliación de sesiones autorizada por el titular.
+
+## Corte histórico R296 — un candidato, pendiente del QA del titular
 
 El titular todavía no realizó su QA y pidió dejar un único candidato preparado
 para incorporar sus correcciones antes de promover. Se conserva PR #517 y la

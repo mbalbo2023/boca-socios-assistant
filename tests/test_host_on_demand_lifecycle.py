@@ -242,6 +242,208 @@ def test_exited_worker_without_prior_owned_stop_is_refused(setup_demand):
     assert ledger.current().status == "REFUSED" and not io.events
 
 
+def test_explicit_stop_certifies_an_owned_worker_that_already_exited(setup_demand):
+    start, ledger, io, apply = setup_demand
+    assert apply(start).status == "APPLIED"
+    # A worker may terminate itself after reporting uncertain browser teardown.
+    # The controller remains up, and this is a distinct completed execution.
+    io.running = io.healthy = io.engine = False
+    io.state = "exited"
+    io.stop_epoch += 1
+    events = list(io.events)
+    premature = str(uuid4())
+    assert ledger.request("bot", "start", premature, on_demand=True).operation_id == start
+    assert apply(start).status == "APPLIED"  # Historical ACK never replays START.
+    assert io.events == events
+    # Each request is an explicit owner STOP under the same protected lease.
+    # Reconfirming the same execution must not overwrite or duplicate its proof.
+    for _ in range(2):
+        stop = str(uuid4())
+        requested = ledger.request("bot", "stop", stop, on_demand=True)
+        assert apply(requested.operation_id).status == "APPLIED"
+        assert io.events == events
+    restart = str(uuid4())
+    ledger.request("bot", "start", restart, on_demand=True)
+    assert apply(restart).status == "APPLIED"
+    assert io.events[len(events) :] == ["attach", "worker-start", "peer", "motor-start"]
+
+
+def test_explicit_stop_can_reconfirm_same_proof_after_start_preflight_refusal(
+    setup_demand, monkeypatch
+):
+    start, ledger, io, apply = setup_demand
+    assert apply(start).status == "APPLIED"
+    stop = str(uuid4())
+    ledger.request("bot", "stop", stop, on_demand=True)
+    assert apply(stop).status == "APPLIED"
+    original = io.start_worker
+
+    def refused(*_args):
+        raise demand.WorkerStartFailure("SITE_URL_UNVERIFIED")
+
+    monkeypatch.setattr(io, "start_worker", refused)
+    refused_start = str(uuid4())
+    ledger.request("bot", "start", refused_start, on_demand=True)
+    assert apply(refused_start).status == "REFUSED"
+    monkeypatch.setattr(io, "start_worker", original)
+    confirm_stop = str(uuid4())
+    assert ledger.request("bot", "stop", confirm_stop, on_demand=True).operation_id == confirm_stop
+    assert apply(confirm_stop).status == "APPLIED"
+    restart = str(uuid4())
+    ledger.request("bot", "start", restart, on_demand=True)
+    assert apply(restart).status == "APPLIED"
+
+
+@pytest.mark.parametrize("uncertain_confirmations", [1, 2])
+def test_fresh_stop_confirms_same_execution_after_uncertain_receipts(
+    setup_demand, monkeypatch, uncertain_confirmations
+):
+    from boca_socios.panel.engine_intents import EngineIntentStore
+    from boca_socios.storage.database import Database
+
+    start, ledger, io, apply = setup_demand
+    assert apply(start).status == "APPLIED"
+    database = Database(io.path / "boca.sqlite3")
+    recovery = EngineIntentStore(database, boot_id=str(uuid4()))
+    original = demand._transact
+    uncertain = set()
+
+    def lose_final_receipt(path, operation, installation, phase, arg="-"):
+        if operation in uncertain and phase == "APPLIED":
+            raise OSError("offline receipt interruption")
+        return original(path, operation, installation, phase, arg)
+
+    monkeypatch.setattr(demand, "_transact", lose_final_receipt)
+    for _ in range(uncertain_confirmations):
+        stop = str(uuid4())
+        uncertain.add(stop)
+        assert recovery.request_legacy_stop(stop).operation_id == stop
+        assert apply(stop).status == "UNCERTAIN"
+        assert not io.running and not io.engine
+        assert not recovery.restartable_engines()
+    with database.connection() as connection:
+        before = dict(connection.execute("SELECT audit_id,action FROM audit_events"))
+    # The next explicit STOP confirms the same exited execution. None of the
+    # prior uncertain receipts or certificates may be rewritten to authorize it.
+    stop = str(uuid4())
+    assert recovery.request_legacy_stop(stop).operation_id == stop
+    assert apply(stop).status == "APPLIED"
+    with database.connection() as connection:
+        after = dict(connection.execute("SELECT audit_id,action FROM audit_events"))
+        assert all(after[key] == value for key, value in before.items())
+        assert all(
+            demand.LifecycleIntentStore.for_operation(connection, operation).status == "UNCERTAIN"
+            for operation in uncertain
+        )
+    restart = str(uuid4())
+    assert ledger.request("bot", "start", restart, on_demand=True).operation_id == restart
+    assert apply(restart).status == "APPLIED"
+    assert io.events.count("worker-start") == 2 and io.events.count("worker-stop") == 1
+
+
+def test_fresh_stop_confirmation_cannot_renew_a_spent_execution_token(setup_demand):
+    start, ledger, io, apply = setup_demand
+    assert apply(start).status == "APPLIED"
+    stop = str(uuid4())
+    ledger.request("bot", "stop", stop, on_demand=True)
+    assert apply(stop).status == "APPLIED"
+    spent_execution = io.stopped_token(WORKER)
+    restarted = str(uuid4())
+    ledger.request("bot", "start", restarted, on_demand=True)
+    assert apply(restarted).status == "APPLIED"
+    # The OS boundary presents the exact previously consumed witness. A later
+    # explicit STOP receipt must not turn that old execution into fresh credit.
+    io.state = "exited"
+    io.running = io.healthy = io.engine = False
+    assert io.stopped_token(WORKER) == spent_execution
+    reconfirm = str(uuid4())
+    ledger.request("bot", "stop", reconfirm, on_demand=True)
+    assert apply(reconfirm).status == "APPLIED"
+    next_start = str(uuid4())
+    ledger.request("bot", "start", next_start, on_demand=True)
+    result = apply(next_start)
+    assert result.status == "REFUSED" and result.cause == "NO_STOP_PROOF"
+    assert io.events.count("worker-start") == 2
+
+
+def test_start_compensation_keeps_only_the_historical_stop_certificate(setup_demand, monkeypatch):
+    start, ledger, io, apply = setup_demand
+    original_peer = io.verify_peer
+
+    def unavailable(_controller):
+        raise OSError("offline peer unavailable")
+
+    monkeypatch.setattr(io, "verify_peer", unavailable)
+    assert apply(start).status == "FAILED"
+    monkeypatch.setattr(io, "verify_peer", original_peer)
+    with demand.lifecycle._controller_ledger(io.path / "boca.sqlite3", readonly=True) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE action=?",
+            (demand._AUDIT + "stopped_" + start,),
+        ).fetchone() == (1,)
+    restart = str(uuid4())
+    ledger.request("bot", "start", restart, on_demand=True)
+    assert apply(restart).status == "APPLIED"
+
+
+def test_exited_start_failure_needs_explicit_stop_before_fresh_start(setup_demand):
+    start, ledger, io, apply = setup_demand
+    io.failure = demand.WorkerStartFailure("HEALTH_EXITED", exit_code=70, oom=False)
+    assert apply(start).status == "FAILED"
+    io.failure = None
+    premature = str(uuid4())
+    ledger.request("bot", "start", premature, on_demand=True)
+    assert apply(premature).cause == "NO_STOP_PROOF"
+    stop = str(uuid4())
+    ledger.request("bot", "stop", stop, on_demand=True)
+    assert apply(stop).status == "APPLIED"
+    restart = str(uuid4())
+    ledger.request("bot", "start", restart, on_demand=True)
+    assert apply(restart).status == "APPLIED"
+
+
+def test_stop_proof_for_exited_worker_cannot_authorize_a_different_execution(setup_demand):
+    start, ledger, io, apply = setup_demand
+    assert apply(start).status == "APPLIED"
+    io.running = io.healthy = io.engine = False
+    io.state = "exited"
+    io.stop_epoch += 1
+    stop = str(uuid4())
+    ledger.request("bot", "stop", stop, on_demand=True)
+    assert apply(stop).status == "APPLIED"
+    io.stop_epoch += 1
+    restart = str(uuid4())
+    ledger.request("bot", "start", restart, on_demand=True)
+    assert apply(restart).cause == "NO_STOP_PROOF"
+    assert io.events.count("worker-start") == 1
+
+
+def test_explicit_stop_refuses_a_changing_exited_execution_witness(setup_demand, monkeypatch):
+    start, ledger, io, apply = setup_demand
+    assert apply(start).status == "APPLIED"
+    io.running = io.healthy = io.engine = False
+    io.state = "exited"
+    io.stop_epoch += 1
+    original = io.stopped_token
+    reads = 0
+
+    def changed(worker_id):
+        nonlocal reads
+        reads += 1
+        if reads == 2:
+            io.stop_epoch += 1
+        return original(worker_id)
+
+    monkeypatch.setattr(io, "stopped_token", changed)
+    stop = str(uuid4())
+    ledger.request("bot", "stop", stop, on_demand=True)
+    result = apply(stop)
+    assert result.status == "REFUSED" and result.cause == "POSTSTATE"
+    restart = str(uuid4())
+    ledger.request("bot", "start", restart, on_demand=True)
+    assert apply(restart).cause == "NO_STOP_PROOF"
+
+
 def test_capture_category_and_exit_preserved_without_restarting(setup_demand):
     start, ledger, io, apply = setup_demand
     io.failure = demand.WorkerStartFailure("MODULE_NOT_FOUND_ERROR", exit_code=1, oom=False)

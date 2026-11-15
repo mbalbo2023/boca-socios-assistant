@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from time import monotonic
 from typing import Protocol
 
@@ -12,6 +13,7 @@ from boca_socios.security.member_auth_contract import (
     BocaAuthObservation,
     BocaAuthUnavailable,
     BocaMemberAuthService,
+    CredentialReadAuthority,
 )
 from boca_socios.storage.database import Database
 
@@ -48,9 +50,17 @@ async def authenticate_member(
     worker: AuthWorker,
     member_id: str,
     readiness: BocaAuthReadiness,
+    *,
+    credential_read_authority: CredentialReadAuthority | None = None,
+    exchange_authority: Callable[[], bool] | None = None,
 ) -> BocaAuthObservation:
     """Parse received bytes without publishing; the coordinator owns the final fence."""
     service = BocaMemberAuthService(
-        database, vault, transport=_PreparedTransport(worker, readiness), monitor=None
+        database,
+        vault,
+        transport=_PreparedTransport(worker, readiness),
+        monitor=None,
+        credential_read_authority=credential_read_authority,
+        exchange_authority=exchange_authority,
     )
     return await asyncio.to_thread(service.authenticate, member_id)

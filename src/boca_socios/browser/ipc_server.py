@@ -19,7 +19,7 @@ from importlib import import_module
 from math import isfinite
 from pathlib import Path
 from time import monotonic
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from boca_socios.browser.activity_events import reset_chromium_activity
 from boca_socios.browser.boca_auth_protocol import (
@@ -30,9 +30,11 @@ from boca_socios.browser.boca_auth_protocol import (
     operation_id,
 )
 from boca_socios.browser.contracts import SimulationOutcome
+from boca_socios.browser.engine_protocol import MAX_ENGINE_REQUEST, EngineReply, EngineRequest
 from boca_socios.browser.ipc_protocol import (
     BUSY,
     CONTROLLER_UID,
+    ENGINE_SESSION,
     FIXTURE_OBSERVED,
     LOGIN_BOCA,
     MAX_FRAME_BYTES,
@@ -59,6 +61,9 @@ from boca_socios.browser.ipc_protocol import (
 )
 from boca_socios.browser.queue_page_observation import QueuePageObservation
 from boca_socios.browser.worker_health import WorkerBoundaryError, validate_worker_boundary
+
+if TYPE_CHECKING:
+    from boca_socios.browser.engine_sessions import EngineSessionRegistry
 
 
 class ObservationStatus(StrEnum):
@@ -162,6 +167,7 @@ class UnixSyntheticWorker:
         fixture_only: bool = False,
         site_observer: SiteObservationExecutor | None = None,
         queue_observer: QueueObservationExecutor | None = None,
+        engine_sessions: EngineSessionRegistry | None = None,
     ) -> None:
         if (
             type(fixture_only) is not bool
@@ -170,12 +176,18 @@ class UnixSyntheticWorker:
                 queue_observer is not None
                 and (fixture_only or executor is not None or site_observer is not None)
             )
+            or (
+                engine_sessions is not None
+                and (fixture_only or executor is not None or site_observer is not None)
+            )
         ):
             raise ValueError("browser observer modes must be exclusive")
         self._executor = OfflineNoGoExecutor() if executor is None else executor
         self._fixture_only = fixture_only
         self._site_observer = site_observer
         self._queue_observer = queue_observer
+        self._engine_sessions = engine_sessions
+        self._observation_owner: str | None = None
         self._on_observation = on_observation
         self._path = socket_path
         self._boundary_check = boundary_check
@@ -242,9 +254,10 @@ class UnixSyntheticWorker:
         *,
         queue_reply: bool = False,
         auth_reply: bool = False,
+        engine_reply: bool = False,
     ) -> None:
         writer.write(
-            framed_private_auth(payload)
+            framed_private_auth(payload, maximum=98304 if engine_reply else 90112)
             if auth_reply
             else framed_private_observation(payload)
             if queue_reply and payload not in {NO_GO, BUSY}
@@ -255,8 +268,10 @@ class UnixSyntheticWorker:
     async def _read_request(self, reader: asyncio.StreamReader) -> bytes | tuple[bytes, bytes]:
         async with asyncio.timeout(self._request_seconds):
             request = await read_frame(reader)
-            if request in {PREPARE_BOCA_LOGIN, LOGIN_BOCA}:
-                payload = await read_private_auth_frame(reader, maximum=32768)
+            if request in {PREPARE_BOCA_LOGIN, LOGIN_BOCA, ENGINE_SESSION}:
+                payload = await read_private_auth_frame(
+                    reader, maximum=MAX_ENGINE_REQUEST if request == ENGINE_SESSION else 32768
+                )
                 if await reader.read(1) != b"":
                     raise SyntheticIPCError("ipc_request_unverified")
                 return request, payload
@@ -358,10 +373,36 @@ class UnixSyntheticWorker:
             return NO_GO
         return NO_GO
 
+    async def _run_engine(self, payload: bytes) -> bytes:
+        request = EngineRequest.from_payload(payload)
+        if self._engine_sessions is None or self._stopping():
+            return EngineReply(
+                request.identity, request.command, "NO_GO", close_scope=request.close_scope
+            ).to_payload()
+        if self._observation_owner == "legacy" or self._busy:
+            return EngineReply(
+                request.identity, request.command, "BUSY", close_scope=request.close_scope
+            ).to_payload()
+        # Legacy/V2 are mutually exclusive for this worker lifetime. In
+        # particular the legacy context can never become a hidden 51st slot.
+        self._observation_owner = "scoped"
+        self._boundary_check()
+        reply = await self._engine_sessions.execute(request)
+        if self._engine_sessions.poisoned:
+            self._poisoned.set()
+            if self._server is not None:
+                self._server.close()
+        if self._stopping() and reply.status in {"OK", "CLOSED"}:
+            reply = EngineReply(
+                request.identity, request.command, "NO_GO", close_scope=request.close_scope
+            )
+        return reply.to_payload()
+
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         accepted = False
         queue_reply = False
         auth_reply = False
+        engine_reply = False
         try:
             verify_peer(writer, uid=CONTROLLER_UID, gid=CONTROLLER_UID)
             if (
@@ -371,26 +412,33 @@ class UnixSyntheticWorker:
                 raise SyntheticIPCError("ipc_socket_changed")
             if self._closed or self._poisoned.is_set():
                 return
-            if self._busy:
-                # Drain one bounded request before replying; unread stream data
-                # can reset the Unix peer before BUSY is delivered.
+            try:
+                request = await self._read_request(reader)
+            except (SyntheticIPCError, OSError, TimeoutError):
+                await self._respond(writer, NO_GO)
+                return
+            if isinstance(request, tuple) and request[0] == ENGINE_SESSION:
+                auth_reply = engine_reply = True
                 try:
-                    busy_request = await self._read_request(reader)
-                except (SyntheticIPCError, OSError, TimeoutError):
-                    await self._respond(writer, NO_GO)
-                else:
-                    await self._respond(writer, BUSY, auth_reply=isinstance(busy_request, tuple))
+                    response = await self._run_engine(request[1])
+                except (SyntheticIPCError, WorkerBoundaryError, OSError, TimeoutError, ValueError):
+                    response = NO_GO
+                await self._respond(writer, response, auth_reply=True, engine_reply=True)
+                return
+            if self._busy or self._observation_owner == "scoped":
+                await self._respond(writer, BUSY, auth_reply=isinstance(request, tuple))
                 return
             self._busy = True
             accepted = True
             try:
-                request = await self._read_request(reader)
                 # STOP may occur during partial-frame I/O. Never start a job
                 # after that await if this server has already been closed.
                 if self._stopping():
                     raise SyntheticIPCError("worker_closed")
                 deadline = monotonic() + self._operation_seconds
                 queue_reply = request == OBSERVE_QUEUE
+                if self._queue_observer is not None and (queue_reply or isinstance(request, tuple)):
+                    self._observation_owner = "legacy"
                 if isinstance(request, tuple):
                     auth_reply = True
                     command, payload = request
@@ -421,7 +469,13 @@ class UnixSyntheticWorker:
                     response = NO_GO
             except (SyntheticIPCError, WorkerBoundaryError, OSError, TimeoutError, ValueError):
                 response = NO_GO
-            await self._respond(writer, response, queue_reply=queue_reply, auth_reply=auth_reply)
+            await self._respond(
+                writer,
+                response,
+                queue_reply=queue_reply,
+                auth_reply=auth_reply,
+                engine_reply=engine_reply,
+            )
         except (SyntheticIPCError, OSError, TimeoutError, ConnectionError):
             return
         finally:
@@ -448,24 +502,23 @@ class UnixSyntheticWorker:
             if still_running:
                 self._poisoned.set()
                 raise SyntheticIPCError("worker_teardown_unverified")
-        if self._server is not None:
-            closed_server = asyncio.create_task(self._server.wait_closed())
-            _, unfinished_server = await asyncio.wait(
-                {closed_server}, timeout=max(0.0, deadline - monotonic())
-            )
-            if unfinished_server:
-                closed_server.cancel()
-                self._poisoned.set()
+
+        async def close_executors() -> None:
+            calls = [
+                self._queue_observer.close()
+                if self._queue_observer is not None
+                else self._site_observer.close()
+                if self._site_observer is not None
+                else self._executor.close()
+            ]
+            if self._engine_sessions is not None:
+                calls.append(self._engine_sessions.close())
+            results = await asyncio.gather(*calls, return_exceptions=True)
+            if any(isinstance(result, BaseException) for result in results):
                 raise SyntheticIPCError("worker_teardown_unverified")
-            closed_server.result()
-            self._server = None
-        closing = asyncio.create_task(
-            self._queue_observer.close()
-            if self._queue_observer is not None
-            else self._site_observer.close()
-            if self._site_observer is not None
-            else self._executor.close()
-        )
+
+        closing = asyncio.create_task(close_executors())
+        closing.add_done_callback(self._consume)
         completed, unfinished_close = await asyncio.wait(
             {closing}, timeout=max(0.0, deadline - monotonic())
         )
@@ -479,6 +532,20 @@ class UnixSyntheticWorker:
         except (Exception, asyncio.CancelledError):
             self._poisoned.set()
             raise SyntheticIPCError("worker_teardown_unverified") from None
+        # Python 3.12 waits for attached connections as well as the listener.
+        # Scoped jobs are owned by the registry, not legacy self._active; fence
+        # and drain them above before waiting for their connections to detach.
+        if self._server is not None:
+            closed_server = asyncio.create_task(self._server.wait_closed())
+            _, unfinished_server = await asyncio.wait(
+                {closed_server}, timeout=max(0.0, deadline - monotonic())
+            )
+            if unfinished_server:
+                closed_server.cancel()
+                self._poisoned.set()
+                raise SyntheticIPCError("worker_teardown_unverified")
+            closed_server.result()
+            self._server = None
         if self._owned_socket is not None:
             if socket_identity(self._path, uid=WORKER_UID) != self._owned_socket:
                 raise SyntheticIPCError("ipc_socket_changed")
@@ -550,6 +617,7 @@ async def _run_server(
     fixture_only = observe_mode == "offline-fixture"
     site_observer: SiteObservationExecutor | None = None
     queue_observer: QueueObservationExecutor | None = None
+    engine_sessions: EngineSessionRegistry | None = None
     if fixture_only or executor_mode == "offline-simulation":
         # Never import the owner-controlled navigation modules: this opt-in
         # drives only literal HTML with every external request aborted.
@@ -558,8 +626,10 @@ async def _run_server(
         executor: SyntheticExecutor = OfflineFixtureExecutor()
     elif executor_mode == "automatic-observation":
         from boca_socios.browser.automatic_observer import AutomaticQueueObserver
+        from boca_socios.browser.engine_sessions import automatic_engine_registry
 
         queue_observer = AutomaticQueueObserver(site_url)
+        engine_sessions = automatic_engine_registry(site_url)
         executor = OfflineNoGoExecutor()
     elif observe_mode == "site-readonly":
         from boca_socios.browser.site_observer import SiteReadOnlyExecutor
@@ -573,6 +643,7 @@ async def _run_server(
         fixture_only=fixture_only,
         site_observer=site_observer,
         queue_observer=queue_observer,
+        engine_sessions=engine_sessions,
     )
     try:
         await worker.serve_until(stopping)

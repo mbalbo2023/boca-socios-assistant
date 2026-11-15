@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from http import HTTPStatus
 from pathlib import Path
 from threading import Lock
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 from urllib.parse import parse_qsl, urlsplit
 from uuid import UUID, uuid4
 
@@ -87,6 +87,9 @@ from boca_socios.telegram_owner_webauthn import (
     stage_owner_challenge,
     verify_stage_owner_witness,
 )
+
+if TYPE_CHECKING:
+    from boca_socios.integration.engine_sessions import EngineSessionCoordinator
 
 StartResponse = Callable[[str, list[tuple[str, str]]], object]
 _UUID_PATH = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
@@ -229,6 +232,7 @@ class PrivatePanelApplication:
         queue_monitor: PrivateQueuePassMonitor | None = None,
         auth_monitor: PrivateBocaAuthMonitor | None = None,
         automatic_monitor: PrivateAutomaticObservationMonitor | None = None,
+        engine_control: EngineSessionCoordinator | None = None,
         source_sha: str = "",
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -282,6 +286,7 @@ class PrivatePanelApplication:
         self._queue_monitor = queue_monitor
         self._auth_monitor = auth_monitor
         self._automatic_monitor = automatic_monitor
+        self._engine_control = engine_control
         self._source_sha = source_sha
         self._passkey = passkey
         self._owner_browser_store = OwnerBrowserSessionStore(
@@ -387,10 +392,14 @@ class PrivatePanelApplication:
             if not self._empty_get(environ):
                 return _error(start, 400, "Solicitud inválida.")
             if path == "/":
+                if self._engine_control is not None and "simulation:write" in session.permissions:
+                    return self._engine_page(start, session)
                 if self._bot_control is not None and "simulation:write" in session.permissions:
                     return self._bot_page(start, session, home=True)
                 return _response(start, 200, private_ui.home(session.csrf))
             if path == "/telegram/configurar":
+                if self._telegram_pairing_stager is not None:
+                    return self._redirect(start, "/telegram/emparejar")
                 return _response(
                     start,
                     200,
@@ -458,10 +467,23 @@ class PrivatePanelApplication:
             if path == "/comandos":
                 return self._command_list(start, session)
             if path == "/control":
+                if self._engine_control is not None:
+                    return self._engine_page(start, session)
                 if self._bot_control is not None:
                     return self._bot_page(start, session, home=False)
                 return self._control_page(start, session)
+            if path == "/control/motores.json" and self._engine_control is not None:
+                return _response(
+                    start,
+                    200,
+                    json.dumps(self._engine_control.snapshot(), separators=(",", ":")).encode(),
+                    html=False,
+                )
+            if isinstance(path, str) and re.fullmatch(r"/control/sesiones/[0-9a-f-]{36}", path):
+                return self._engine_session_page(path.rsplit("/", 1)[-1], start, session)
             if path in ("/control/actividad", "/control/actividad.json"):
+                if path == "/control/actividad" and self._engine_control is not None:
+                    return self._engine_page(start, session)
                 try:
                     activity_snapshot = read_worker_activity(
                         self._database_path,
@@ -578,6 +600,13 @@ class PrivatePanelApplication:
             if "simulation:write" not in session.permissions:
                 return _error(start, 403, "Permiso insuficiente.")
             return self._reveal_observed_token(environ, session, start)
+        if isinstance(path, str) and re.fullmatch(
+            r"/control/motores/(queues_tokens|browsers_members)/(iniciar|detener)", path
+        ):
+            _root, _control, _motors, engine, action = path.split("/")
+            return self._request_engine(environ, engine, action, session, start)
+        if path == "/control/sesiones/revelar":
+            return self._reveal_engine_session(environ, session, start)
         if path in ("/control/reanudar", "/control/pausar"):
             if self._bot_control is not None:
                 return _error(start, 404, "Ruta no disponible.")
@@ -585,6 +614,8 @@ class PrivatePanelApplication:
         if isinstance(path, str) and re.fullmatch(
             r"/control/(bot|chromium)/(iniciar|detener)", path
         ):
+            if self._engine_control is not None and path != "/control/bot/detener":
+                return _error(start, 409, "Elija el motor de colas o el de navegadores en Control.")
             _prefix, _control, component, label = path.split("/")
             return self._request_lifecycle(
                 environ, component, "start" if label == "iniciar" else "stop", session, start
@@ -601,6 +632,8 @@ class PrivatePanelApplication:
         return _error(start, 404, "Ruta no disponible.")
 
     def _token_monitor_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
+        if self._engine_control is not None and "simulation:write" in session.permissions:
+            return self._engine_page(start, session)
         queue = (
             self._queue_monitor.list_summaries(at=self._now())
             if self._queue_monitor is not None
@@ -769,6 +802,198 @@ class PrivatePanelApplication:
         if body is None:
             return _error(start, 404, "Observación privada no disponible.")
         return _response(start, 200, body)
+
+    def _engine_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
+        from boca_socios.panel import engine_view
+
+        if self._engine_control is None:
+            return _error(start, 404, "Motores no disponibles.")
+        operations: dict[str, str] = {}
+        for engine in ("queues_tokens", "browsers_members"):
+            for action in ("start", "stop"):
+                scope = f"owner-engine-v1:{engine}:{action}"
+                operation = self._sessions.new_operation(session, form_scope=scope.encode())
+                if operation is None:
+                    return _error(start, 429, "Espere antes de abrir más controles.")
+                operations[f"{engine}:{action}"] = operation
+        recovery = self._sessions.new_operation(session, form_scope=b"owner-lifecycle-v1:bot:stop")
+        if recovery is None:
+            return _error(start, 429, "Espere antes de abrir más controles.")
+        operations["legacy:stop"] = recovery
+        return _response(
+            start,
+            200,
+            engine_view.page(
+                self._engine_control.snapshot(),
+                session.csrf,
+                operations,
+                self._directory.list_members(),
+                site_url_ready=self._site_url_ready(),
+            ),
+            csp=engine_view.csp(),
+        )
+
+    def _request_engine(
+        self,
+        environ: Mapping[str, object],
+        engine: str,
+        action: str,
+        session: OwnerSession,
+        start: StartResponse,
+    ) -> list[bytes]:
+        if self._engine_control is None:
+            return _error(start, 404, "Motores no disponibles.")
+        is_start = action == "iniciar"
+        expected = {"csrf", "operation_id"}
+        if is_start:
+            expected |= {"chromium", "firefox", "webkit"}
+            if engine == "browsers_members":
+                expected.add("member_id")
+        else:
+            expected |= {"activation_id", "generation"}
+        fields = self._form(environ, expected=expected)
+        if fields is None or _canonical_uuid(fields["operation_id"]) is None:
+            return _error(start, 400, "Solicitud de motor inválida.")
+        counts: dict[str, int] = {}
+        member_id = fields.get("member_id")
+        if is_start:
+            for browser in ("chromium", "firefox", "webkit"):
+                if re.fullmatch(r"(?:0|[1-9][0-9]?)", fields[browser]) is None:
+                    return _error(start, 400, "Cantidad de sesiones inválida.")
+                counts[browser] = int(fields[browser])
+            if not 1 <= sum(counts.values()) <= 50 or (
+                member_id is not None and _canonical_uuid(member_id) is None
+            ):
+                return _error(start, 400, "Elija un socio y entre una y cincuenta sesiones.")
+        elif (
+            _canonical_uuid(fields["activation_id"]) is None
+            or re.fullmatch(r"[1-9][0-9]{0,9}", fields["generation"]) is None
+        ):
+            return _error(start, 400, "La activación del motor no es válida.")
+        target = "start" if is_start else "stop"
+        scope = f"owner-engine-v1:{engine}:{target}".encode()
+        replay, operation = self._sessions.reserve(
+            session,
+            fields["operation_id"],
+            fields["csrf"],
+            scope,
+            request_body=scope + b":" + json.dumps(fields, sort_keys=True).encode(),
+            pending_start=(lambda: self._engine_start_pending(engine)) if not is_start else None,
+        )
+        if replay:
+            if replay == 303:
+                return self._redirect(start, "/control")
+            return _error(start, replay, "Orden ya procesada o no autorizada.")
+        assert operation is not None
+        if is_start and not self._site_url_ready():
+            self._sessions.finish(operation, 503)
+            return _error(start, 503, "Revise la URL del sitio en Configuración.")
+        try:
+            if is_start:
+                self._engine_control.start(
+                    engine, fields["operation_id"], member_id=member_id, counts=counts
+                )
+            else:
+                self._engine_control.stop(
+                    engine,
+                    fields["operation_id"],
+                    activation_id=fields["activation_id"],
+                    generation=int(fields["generation"]),
+                )
+        except (LifecycleConflict, ValueError):
+            self._sessions.finish(operation, 409)
+            return _error(
+                start,
+                409,
+                "La activación cambió, falta una credencial o no hay capacidad disponible. Consulte Control.",
+            )
+        except (LifecycleStorageUnavailable, OSError, RuntimeError):
+            self._sessions.finish(operation, 503, lifecycle_id=fields["operation_id"])
+            return _error(
+                start,
+                503,
+                "No se pudo confirmar el aviso al ejecutor. El estado durable se conserva; consulte Control.",
+            )
+        self._sessions.finish(operation, 303)
+        return self._redirect(start, "/control")
+
+    def _engine_start_pending(self, engine: str) -> bool:
+        if self._engine_control is None:
+            return False
+        return any(
+            item.engine == engine and item.state in {"REQUESTED", "STARTING"}
+            for item in self._engine_control.store.snapshot()
+        )
+
+    def _engine_session_page(
+        self, session_id: str, start: StartResponse, session: OwnerSession
+    ) -> list[bytes]:
+        if self._engine_control is None or _canonical_uuid(session_id) is None:
+            return _error(start, 404, "Sesión no disponible.")
+        details = self._engine_control.private_details(session_id, owner_authenticated=True)
+        if details is None:
+            return _error(start, 404, "Sesión no disponible en este arranque.")
+        operation = self._sessions.new_operation(session, form_scope=b"owner-engine-reveal-v1")
+        if operation is None:
+            return _error(start, 429, "Espere antes de revelar otra observación.")
+        return _response(
+            start,
+            200,
+            private_ui.engine_session_details(details, session.csrf, operation),
+        )
+
+    def _reveal_engine_session(
+        self, environ: Mapping[str, object], session: OwnerSession, start: StartResponse
+    ) -> list[bytes]:
+        fields = self._form(environ, expected={"csrf", "operation_id", "session_id", "kind"})
+        if (
+            self._engine_control is None
+            or fields is None
+            or any(_canonical_uuid(fields[key]) is None for key in ("operation_id", "session_id"))
+            or fields["kind"] not in {"url", "queue", "boca"}
+        ):
+            return _error(start, 400, "Revelación inválida.")
+        replay, operation = self._sessions.reserve(
+            session, fields["operation_id"], fields["csrf"], b"owner-engine-reveal-v1"
+        )
+        if replay:
+            return _error(
+                start, 409 if replay == 200 else replay, "Revelación ya usada o denegada."
+            )
+        assert operation is not None
+        details = self._engine_control.private_details(
+            fields["session_id"], owner_authenticated=True
+        )
+        body = None
+        if details is not None:
+            if fields["kind"] == "boca" and details.auth is not None:
+                auth = details.auth.private_owner_details(owner_authenticated=True)
+                body = private_ui.boca_token_reveal(
+                    auth.copy_full_token(), auth.copy_full_refresh_token()
+                )
+            elif (
+                fields["kind"] == "url"
+                and details.inspection is not None
+                and details.inspection.final_url
+            ):
+                body = private_ui.observed_url_reveal(details.inspection.final_url)
+            elif (
+                fields["kind"] == "queue"
+                and details.observation is not None
+                and details.observation.target_url
+            ):
+                target = details.observation.target_url
+                values = [
+                    value
+                    for key, value in parse_qsl(urlsplit(target).query, max_num_fields=64)
+                    if key == "queueittoken"
+                ]
+                if len(values) == 1 and values[0]:
+                    body = private_ui.queue_token_reveal(values[0], target)
+        self._sessions.finish(operation, 200 if body is not None else 404)
+        if body is None:
+            return _error(start, 404, "No hay un valor observado disponible para copiar.")
+        return _response(start, 200, body, referrer_policy="no-referrer")
 
     def _site_url_page(self, start: StartResponse, session: OwnerSession) -> list[bytes]:
         operation_id = self._sessions.new_operation(session)
@@ -1346,6 +1571,8 @@ class PrivatePanelApplication:
                 if intent is None or intent.operation_id != operation.lifecycle_id:
                     self._sessions.finish(operation, 303)
                     return self._redirect(start, "/control")
+            elif self._engine_control is not None and (component, target) == ("bot", "stop"):
+                intent = self._engine_control.store.request_legacy_stop(fields["operation_id"])
             else:
                 intent = self._lifecycle.request(
                     component,
@@ -1479,7 +1706,9 @@ class PrivatePanelApplication:
                     return _error(
                         start,
                         409,
-                        "Inicie el bot desde Control y espere la confirmación de arranque.",
+                        "Inicie un motor desde Control y espere la confirmación de arranque."
+                        if self._engine_control is not None
+                        else "Inicie el bot desde Control y espere la confirmación de arranque.",
                     )
                 return _error(start, 409, "Nuevas simulaciones pausadas. Reanude desde Control.")
             fingerprint = json.dumps(fields, sort_keys=True).encode()

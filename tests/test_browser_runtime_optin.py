@@ -16,6 +16,7 @@ from boca_socios.browser.ipc_client import UnixSyntheticBrowser
 from boca_socios.browser.ipc_protocol import SOCKET_PATH, SyntheticIPCError
 from boca_socios.config import Settings
 from boca_socios.integration import operational
+from boca_socios.storage.database import Database
 
 
 def _settings(tmp_path: Path, backend: str = "off") -> Settings:
@@ -129,6 +130,8 @@ def test_served_beta_wires_ipc_port_and_thirty_second_command_deadline(
     class FakeRuntime:
         members = object()
         commands = object()
+        database = Database(settings.db_path)
+        vault = runtime_module.CredentialVault(b"v" * 32)
 
         def close(self) -> None:
             pass
@@ -162,6 +165,9 @@ def test_served_beta_wires_ipc_port_and_thirty_second_command_deadline(
         runtime_module, "PrivatePanelApplication", lambda **kw: panel_calls.append(kw) or object()
     )
     monkeypatch.setattr(runtime_module, "_LoopbackHTTPWSGIServer", FakeServer)
+    # Runtime wiring now reconciles the real engine audit namespace before
+    # serving. Keep storage real while replacing only the server/host boundary.
+    Database(settings.db_path).migrate()
     served = runtime_module.build_beta_server(settings)
     try:
         assert isinstance(served.server, FakeServer)
@@ -170,7 +176,11 @@ def test_served_beta_wires_ipc_port_and_thirty_second_command_deadline(
             assert isinstance(calls[0]["browser"], runtime_module._LocalSyntheticBrowser)
             assert calls[0]["bot_session"].on_start is not None
             assert served.observation_session is not None
-            assert served.observation_session._auth_monitor is panel_calls[0]["auth_monitor"]
+            assert served.observation_session._auth is panel_calls[0]["auth_monitor"]
+            assert panel_calls[0]["engine_control"] is served.observation_session
+            assert all(
+                item["active"] == 0 for item in served.observation_session.snapshot()["engines"]
+            )
             assert panel_calls[0]["automatic_monitor"].snapshot()["latest"] is None
         else:
             assert calls[0]["browser"] is selected

@@ -181,6 +181,12 @@ R295_CURRENT_LEDGER_STATUS_FULL_CUTOVER_SHA = (
 R296_AUTH_AND_TELEGRAM_BINDING_FULL_CUTOVER_SHA = (
     "ef06f5a8c8e941b1a1a61defc4f4bbe4aa52a252d85e8533871d6ea2e3d98267"
 )
+# R297 adds durable logical-engine holds and an exact stopped-execution proof
+# for explicit owner recovery. Members/caps are unchanged; all older pins stay
+# immutable. This source pin grants no permission to repeat historical Cutover.
+R297_DUAL_ENGINE_LIFECYCLE_FULL_CUTOVER_SHA = (
+    "708dfc01b81dc2f967588088c590ba317c58af2026f338291531de8ea5ad2342"
+)
 
 
 def _fixture_root(tmp_path: Path) -> Path:
@@ -334,13 +340,12 @@ def test_both_recovery_modes_reject_modified_bytes_and_injected_entries(
 
 
 def test_current_cutover_zip_is_pinned_and_excludes_preflight(tmp_path: Path) -> None:
-    """R296 source evolution does not authorize historical recovery modes."""
+    """R297 source evolution does not authorize historical recovery modes."""
     target = tmp_path / "full-cutover.pyz"
     digest = builder.build(ROOT, target)
     raw = target.read_bytes()
-    assert (
-        digest == hashlib.sha256(raw).hexdigest() == R296_AUTH_AND_TELEGRAM_BINDING_FULL_CUTOVER_SHA
-    )
+    assert digest == hashlib.sha256(raw).hexdigest() == R297_DUAL_ENGINE_LIFECYCLE_FULL_CUTOVER_SHA
+    assert digest != R296_AUTH_AND_TELEGRAM_BINDING_FULL_CUTOVER_SHA
     assert digest != R294_AUTHENTICATED_PROFILE_FULL_CUTOVER_SHA
     assert digest != R252_SUCCESS_IMAGE_PREDELETE_GUARD_FULL_CUTOVER_SHA
     assert digest != R245_GUARDED_CLEANUP_FULL_CUTOVER_SHA

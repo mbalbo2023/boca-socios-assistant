@@ -25,6 +25,7 @@ from boca_socios.browser.contracts import SimulationOutcome
 from boca_socios.browser.ipc_protocol import (
     BUSY,
     CONTROLLER_UID,
+    ENGINE_SESSION,
     FIXTURE_OBSERVED,
     LOGIN_BOCA,
     MAX_FRAME_BYTES,
@@ -162,7 +163,9 @@ class UnixSyntheticBrowser:
                 async with asyncio.timeout(self._timeout):
                     reader, writer = await asyncio.open_unix_connection(
                         path=str(self._path),
-                        limit=MAX_AUTH_RESPONSE
+                        limit=98304
+                        if request == ENGINE_SESSION
+                        else MAX_AUTH_RESPONSE
                         if private_payload is not None
                         else MAX_OBSERVATION_PAYLOAD
                         if request == OBSERVE_QUEUE
@@ -173,13 +176,21 @@ class UnixSyntheticBrowser:
                         raise SyntheticIPCError("ipc_socket_changed")
                     writer.write(framed(request))
                     if private_payload is not None:
-                        writer.write(framed_private_auth(private_payload, maximum=32768))
+                        writer.write(
+                            framed_private_auth(
+                                private_payload,
+                                maximum=33792 if request == ENGINE_SESSION else 32768,
+                            )
+                        )
                     await writer.drain()
                     if not writer.can_write_eof():
                         raise SyntheticIPCError("ipc_half_close_unavailable")
                     writer.write_eof()
                     reply = (
-                        await read_private_auth_frame(reader)
+                        await read_private_auth_frame(
+                            reader,
+                            maximum=98304 if request == ENGINE_SESSION else MAX_AUTH_RESPONSE,
+                        )
                         if private_payload is not None
                         else await read_private_observation_frame(reader)
                         if request == OBSERVE_QUEUE

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from math import isfinite
@@ -47,6 +47,7 @@ class OnDemandBotSession:
     check_worker: Callable[[], None]
     wake: Callable[[str], None]
     on_start: Callable[[str], None] | None = None
+    on_stop: Callable[[], Awaitable[None]] | None = None
 
     def require_start(self, status: Literal["CLAIMED", "APPLIED"]) -> str:
         state = self.ledger.current()
@@ -354,4 +355,8 @@ class BetaCoordinator:
         finally:
             if self._active is not None:
                 self._active.cancel()
-            await self.wait_idle()
+            try:
+                await self.wait_idle()
+            finally:
+                if self._bot_session is not None and self._bot_session.on_stop is not None:
+                    await self._bot_session.on_stop()

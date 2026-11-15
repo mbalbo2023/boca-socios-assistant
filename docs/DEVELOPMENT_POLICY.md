@@ -1,6 +1,34 @@
 # Development and merge policy
 
-## 2026-11-14 — R296, consolidación antes del QA y de la promoción
+## 2026-11-15 — R297, implementación del QA en el mismo candidato
+
+El [titular autorizó dos motores funcionales independientes](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6886406162)
+y un objetivo global de 50 contextos. ADR0302 y el plan R297 fijan responsabilidades
+y consenso antes del código; sustituyen el alcance de sesión única para este
+delta. Conservar PR517, módulos ya implementados, SIMULATION_ONLY, BLACKBOX,
+datos y aislamiento. La ejecución lógica puede ser concurrente; las operaciones
+físicas conservan una autoridad y el workflow protegido serializado existentes.
+
+No migrar al abrir 8443. La autoridad por motor se registra en audit_events con
+namespace separado y holds/releases compatibles con el ledger físico. Revisar
+atomicidad, frío/reinicio, STOP, credencial reemplazada/revocada y publicación
+tardía. El pool comparte procesos por tipo y limita contextos realmente vivos;
+50 solicitados no equivalen a 50 creados o 50 lugares de cola.
+
+Verificar el delta local y cierres de paquetes afectados sin repetir la suite
+base certificada. Mantener los caps y añadir el nuevo pin fullZIP conservando
+los históricos. Revisión independiente final y checks del SHA publicado exacto.
+Durante la consolidación QA no se opera host/proveedores ni se envían mensajes;
+la aceptación física posterior no puede sustituirse por mocks, Chromium local
+o CI. No pedir otra autorización rutinaria para el desarrollo ya encargado.
+
+La QA visual por Actions pedida durante R297 usa la imagen exacta del candidato
+y fixtures ficticias en el CI existente. Toda captura del panel instalado
+necesita su acceso legítimo y una extensión revisada del recorrido protegido;
+el observador de salud no es un navegador autenticado. Conservar esta distinción
+en artifacts, recibos y comunicación al titular.
+
+## Histórico 2026-11-14 — R296, consolidación antes del QA y de la promoción
 
 El titular pidió preparar un único candidato mientras aún no realizó su QA.
 Continuar PR517, integrar correcciones verificadas y preservar la instalación

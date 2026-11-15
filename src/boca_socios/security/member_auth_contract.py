@@ -24,6 +24,8 @@ from uuid import UUID
 from boca_socios.security.credential_vault import CredentialVault, SealedCredential
 from boca_socios.storage.database import Database
 
+CredentialReadAuthority = Callable[[sqlite3.Connection, str], bool]
+
 
 class BocaAuthUnavailable(RuntimeError):
     """An authenticated Boca response is not demonstrably available."""
@@ -166,12 +168,16 @@ class BocaMemberAuthService:
         transport: BocaLoginTransport | None = None,
         monitor: PrivateBocaAuthMonitor | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        credential_read_authority: CredentialReadAuthority | None = None,
+        exchange_authority: Callable[[], bool] | None = None,
     ) -> None:
         self._database = database
         self._vault = vault
         self._transport = transport
         self._monitor = monitor
         self._now = now
+        self._credential_read_authority = credential_read_authority
+        self._exchange_authority = exchange_authority
 
     def authenticate(self, member_id: str) -> BocaAuthObservation:
         if self._transport is None:
@@ -183,11 +189,18 @@ class BocaMemberAuthService:
                 or UUID(member_id).int == 0
             ):
                 raise ValueError("unknown member")
-            email, sealed = self._read_member(self._database.path, member_id)
+            email, sealed = self._read_member(
+                self._database.path, member_id, authority=self._credential_read_authority
+            )
             password = self._vault.open(sealed, member_id=member_id)
         except Exception:
             raise BocaAuthUnavailable("Boca member credential unavailable") from None
         try:
+            # The read transaction is already closed. Recheck the activation
+            # after decryption immediately before handing secrets to transport;
+            # no SQLite writer or network lock spans this exchange.
+            if self._exchange_authority is not None and self._exchange_authority() is not True:
+                raise BocaAuthUnavailable("Boca exchange authority unavailable")
             response = self._transport.login(email=email, password=password)
             observed = BocaAuthObservation.from_provider_response(
                 member_id=member_id, provider_payload=response, observed_at=self._now()
@@ -199,20 +212,33 @@ class BocaMemberAuthService:
             raise BocaAuthUnavailable("Boca response unavailable or unverified") from None
 
     @staticmethod
-    def _read_member(path: Path, member_id: str) -> tuple[str, SealedCredential]:
-        if path.is_symlink() or not path.is_file():
-            raise BocaAuthUnavailable("Boca member credential unavailable")
+    def _read_member(
+        path: Path, member_id: str, *, authority: CredentialReadAuthority | None = None
+    ) -> tuple[str, SealedCredential]:
+        # Reuse the database's regular-file/non-symlink identity check. This is
+        # only a read guard; no migration or schema mutation is performed.
+        database = Database(path)
+        identity = database._migration_identity()
         with closing(
             sqlite3.connect(f"file:{quote(str(path), safe='/')}?mode=ro", uri=True, timeout=1.0)
         ) as connection:
             connection.execute("PRAGMA query_only=ON")
             connection.execute("PRAGMA trusted_schema=OFF")
+            if database._migration_identity() != identity:
+                raise BocaAuthUnavailable("Boca member credential unavailable")
+            connection.execute("BEGIN")
+            if authority is not None and authority(connection, member_id) is not True:
+                raise BocaAuthUnavailable("Boca member credential unavailable")
             row = connection.execute(
                 "SELECT m.email,c.key_id,c.nonce,c.ciphertext "
                 "FROM members m JOIN credentials c ON c.member_id=m.member_id "
                 "WHERE m.member_id=?",
                 (member_id,),
             ).fetchone()
+            if database._migration_identity() != identity:
+                raise BocaAuthUnavailable("Boca member credential unavailable")
+        if database._migration_identity() != identity:
+            raise BocaAuthUnavailable("Boca member credential unavailable")
         if row is None or not isinstance(row[0], str) or not row[0]:
             raise BocaAuthUnavailable("Boca member credential unavailable")
         return row[0], SealedCredential(str(row[1]), bytes(row[2]), bytes(row[3]))

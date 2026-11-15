@@ -1,0 +1,136 @@
+# R297 — Independent owner engines implementation plan
+
+**Goal:** make queue/token observation and member browser work independently
+startable/stoppable in the existing private panel and worker.
+
+**Architecture:** two durable logical activations, one supervised physical worker,
+bounded correlated IPC and a shared pool of ordinary Playwright browser types.
+Existing observers/parsers/auth/vault/monitors remain the implementation units.
+
+**Tech stack:** Python3.12, SQLite audit_events, asyncio/AF_UNIX, Playwright1.64.1,
+existing WSGI/HTML panel and protected Boca GitHub Actions.
+
+**Spec:** ADR0302 and issue417 comment6886406162 (DUAL-01..12).
+
+## Global constraints
+
+- Same PR517/feature417-r295-beta-followups; base b23dc20. No other candidate.
+- SIMULATION_ONLY; no real ticket request, provider session or notification by
+  the agent. No host action in this implementation phase.
+- BLACKBOX synthetic.py/ipc_worker.py remains unread/unmodified.
+- One physical authority, existing DB/socket/panel/port/outbox/vault. No GET
+  migration, new server or copied parser. No elevated resource/package caps.
+- Source-bearing changes require exact source/bundle pin reconciliation.
+- No duplicate base tests. Focal delta tests first; required CI for final SHA.
+- One writer per file. Full final review is independent of implementation.
+
+## Task1 — Durable engine authority (ledger implementer)
+
+Create `panel/engine_intents.py`, tests `test_engine_intents.py`.
+Own only these files plus the narrow `_work_finished` hold guard in
+`panel/lifecycle_intents.py` (coordinate that edit with root).
+
+Define typed `EngineActivation`: engine, activation_id, generation, boot_id,
+physical_start_id, member_id, counts by browser type, state and timestamps.
+`EngineIntentStore` reuses Database and existing lifecycle insertion/reading
+helpers inside BEGIN IMMEDIATE. Expose start, stop, transition, snapshot,
+publish_if_current, release and recover_cold. No external I/O inside a DB lock.
+Return the existing physical intent that needs waking, rather than waking it.
+New namespace holds/releases fence automatic work STOP; same transaction
+reserves global50, commits intent and binds physicalSTART. Legacy namespace and
+readers retain compatibility. Preserve credentials and historical events.
+
+Verify real SQLite behavior: doubleSTART, changed member/counts conflict,
+both engine orders, release one preserves other, last release issues oneSTOP,
+STOP/restart generation fencing, revocation blocks publish,50global, physical
+receipt failure, cross-engine/replayed UUIDs and cold recovery.
+
+## Task2 — Scoped worker/session execution (browser implementer)
+
+Create `browser/engine_protocol.py`, `browser/engine_sessions.py`,
+`browser/engine_client.py`; extend ipc_protocol/server and automatic_observer.
+Own corresponding new focused tests; do not edit controller/panel/runtime.
+
+Protocol identity fields: engine (`queues_tokens`/`browsers_members`),
+activation_id UUID, generation positive integer, session_id UUID and browser
+(`chromium`/`firefox`/`webkit`). Commands: observe, prepare_login, login, close.
+Outer replies echo the complete identity; nested observations/auth use existing
+strict codecs. Frames remain bounded and authenticate kernel peer/socket/EOF.
+Cancellation uses an independent connection, fences before awaiting teardown,
+and does not queue behind another session. Max50 live contexts and at most two
+engine activations; stale identity/replay cannot create a context after close.
+
+Pool loans one ordinary browser process per type to existing
+AutomaticQueueObserver instances. Launches are paced and bounded. Inject a
+shared async initialization lock around BLACKBOX output suppression. Closing
+one observer releases only its context/loan. Retention after auth is explicit;
+never claim DOM authentication from an HTTP token alone. No handoff/cookie copy.
+Legacy IPC modes/tests remain compatible. No new listener or worker entrypoint.
+
+Verify independent A/B polling, STOP during another blocked poll/login,
+identity mismatch, replay, generation, timeout, bounded uncooperative close,
+three type dispatch,50global, isolated pages and retained-session inspection.
+Mock only browser/OS/network boundaries; exercise actual registry/protocol.
+
+## Task3 — Controller coordination and dashboard (root integration)
+
+Create `integration/engine_sessions.py` to bind the two stores and scoped clients
+to the existing OnDemandBotSession callbacks. Adapt runtime and integration/beta
+only for aggregate activation-start/stop callbacks; preserve engine_socket and
+host runner. Worker physical APPLIED receipt gates every first session.
+
+Control loop owns per-engine cancellation/tasks and per-session private
+observations. Publish only under engine/member/physical activation fence.
+Cold startup reconciles stale jobs without reopening them. Shutdown cancels and
+drains local tasks before the controller engine acknowledges STOPPED. Uncertain
+remote scopes retain holds until scoped ACK or physical STOP/APPLIED. Last release wakes the
+existing physical STOP UUID; second START never resets the first.
+
+Extend private_http/private_ui/monitor surfaces: two sections, four controls,
+member selector for B, counts per browser type, observed phase/time, current
+URL inspection, queue metadata and requested/created/active/closed totals.
+Reuse existing owner session/CSRF/idempotency and private reveal/copy contracts;
+do not send bearer in aggregate polling or logs. Existing controls remain
+compatible or clearly route to the aggregate stop.
+
+Test actual coordinator+SQLite with fake IPC boundary, four combinations and
+cross-stop; HTTP controls with real authorization/form reservation; live
+metadata projection cannot claim receipt success/current physical health.
+
+## Task4 — Qualification, docs and publication (root + independent reviewers)
+
+Confirm all three browser binary/dependency paths from the pinned image; do
+not weaken security checks to enable a missing type. Add offline evidence for
+enabled engines and truthful unavailable states. Reconcile source ZIP closure,
+pins and unchanged resource budgets. Read current exact-head Actions first.
+
+Update current AGENTS/README/DEVELOPMENT_POLICY headers and the requirement
+matrix with implemented, verified and pending physical criteria. Run only
+meaningful focal tests/lint/type checks and required closure checks, then get
+architecture, QA/product and development/operations code votes. Fix objections
+before one consolidated push to the existing branch; no force overwrite of an
+unexpected remote head. Required final-SHA CI and GitHub factual checkpoint.
+
+The final product objective remains consolidated BETA promotion and physical
+acceptance; this implementation phase does not label CI as deployment or
+invent user/device/provider evidence.
+
+## Review-driven additions within the registered contracts
+
+- Same-snapshot credential read authority and final exchange admission reuse
+  BocaMemberAuthService and authenticate_member; no second vault or auth stack.
+- Scoped CLOSE retry preserves the normal-call fence. Completed local tasks,
+  activation ACK and physical STOP proof are distinct evidence.
+- Explicit aggregate STOP recovery can certify a stable already-exited worker
+  execution under the existing protected lease. START compensation cannot mint
+  this authority. The exact changed host closure receives a new immutable pin.
+- The owner's follow-up visual QA request is recorded in issue417 comment6886936337.
+  Reuse the existing network-none real-Chromium CI path with engine_view fixtures,
+  native forms, polling and fixed-data PNG artifacts. This does not create an
+  authenticated droplet screenshot capability or waive physical acceptance.
+- A supported cold upgrade may preserve legacy START/APPLIED, FAILED or UNCERTAIN
+  with no DUAL activations. Reuse the existing owner bot-STOP form and wake for
+  explicit recovery only when an atomic writer-locked check finds no logical
+  holds. Preserve history, reuse an existing pending STOP, and require the real
+  STOP/APPLIED receipt before engine START. A stale recovery form cannot stop a
+  newly admitted engine. The recovered state does not manufacture an activation.

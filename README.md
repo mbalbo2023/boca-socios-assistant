@@ -1,6 +1,54 @@
 # Boca Socios Assistant
 
-## R296 — candidato único antes de las correcciones Samsung
+## R297 — QA: dos motores y seguimiento de sesiones en 8443
+
+El desarrollo continúa en [PR517](https://github.com/mbalbo2023/boca-socios-assistant/pull/517),
+con las [correcciones aportadas por el titular](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6886406162).
+La última instalación certificada sigue siendo R294/c5a1435; estos cambios
+todavía no se presentan como desplegados ni aceptados desde Samsung.
+
+El panel distingue **motor de colas y tokens** y **motor de navegadores de socios**.
+Cada uno tiene inicio/detención, activación, estado y contextos propios. Comparten
+el worker existente: detener uno conserva el otro; la última liberación permite
+detener la infraestructura. Reiniciar el controller no reabre trabajos históricos.
+
+El presupuesto lógico total es de 50 contextos. La propuesta inicial del formulario
+es de 25 por motor: 15 Chromium, 5 Firefox y 5 WebKit, ajustables al límite compartido.
+El monitor diferencia solicitado, creado, activo, cerrado, fallido y Queue IDs
+únicos. Las aperturas se escalonan; no se afirma que el droplet pueda sostener 50
+ni que los contextos equivalgan a posiciones distintas aceptadas por el proveedor.
+
+Las sesiones y sus estados se actualizan en vivo. La inspección conserva la misma
+página y permite revelar/copiar URLs y tokens realmente recibidos. Posición y
+tiempo se muestran sólo si la página los informó; fallar una consulta no equivale
+a no tener evento. La respuesta del login y la autenticación del DOM se distinguen:
+conservar un contexto y obtener un token no prueba que su página esté autenticada.
+SIMULATION_ONLY permanece; no se anuncia una entrada por observar cola o tokens.
+
+Se reutilizan vault, parsers, monitores, IPC y supervisor. El registro durable
+frena respuestas posteriores a STOP, revocación o reemplazo de credencial.
+El enlace legado de configuración Telegram lleva al emparejamiento instalado
+cuando éste está disponible; su preparación/aceptación física conserva el flujo
+protegido anterior, sin nuevas notificaciones durante el QA.
+
+La revisión cruzada corrigió cierres durante apertura, respuestas de login tardías,
+cambios de contraseña durante la lectura y recuperación de cierres inciertos.
+Reintentar STOP conserva el otro motor; si todos los trabajos están detenidos o
+cercados, el ejecutor protegido puede confirmar el cierre físico y habilitar
+un inicio nuevo. La interfaz distingue esa disponibilidad del estado histórico.
+
+El [pedido de QA visual por Actions](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6886936337)
+se incorpora al CI existente con fixtures ficticias y capturas del renderer real.
+La observación protegida del droplet que existe hoy comprueba salud e identidades;
+no incluye un navegador autenticado en el panel privado. Las capturas del candidato,
+el postflight instalado y la aceptación del titular se registran por separado.
+
+[Diseño y límites](docs/ADR/0302-independent-owner-engines.md),
+[plan de integración](docs/superpowers/plans/2026-11-15-r297-independent-engines.md).
+La revisión del código, el CI del SHA definitivo, la promoción consolidada,
+postflight y aceptación física son evidencias diferentes y se registran en GitHub.
+
+## Histórico R296 — candidato único antes de las correcciones Samsung
 
 El candidato continúa en [PR #517](https://github.com/mbalbo2023/boca-socios-assistant/pull/517).
 El titular todavía no hizo el control de calidad: sus correcciones se incorporan

@@ -18,6 +18,7 @@ from functools import partial
 from pathlib import Path
 from threading import Event
 from urllib.parse import quote, urlsplit
+from uuid import uuid4
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer
 
 from boca_socios.browser.contracts import SimulationOutcome, SyntheticBrowserPort
@@ -30,6 +31,7 @@ from boca_socios.integration.automatic_observation import AutomaticObservationSe
 from boca_socios.integration.beta import OnDemandBotSession
 from boca_socios.integration.boca_login import authenticate_member
 from boca_socios.integration.bridge_client import SiteBridgeTransport, SiteBridgeWorker
+from boca_socios.integration.engine_sessions import EngineSessionCoordinator
 from boca_socios.integration.engine_socket import LocalEngineSocket
 from boca_socios.integration.operational import (
     LocalBetaRuntime,
@@ -37,6 +39,7 @@ from boca_socios.integration.operational import (
     validate_existing_beta_storage,
 )
 from boca_socios.owner_origin import SSH_LOOPBACK_ORIGIN
+from boca_socios.panel.engine_intents import EngineIntentStore
 from boca_socios.panel.lifecycle_intents import (
     LifecycleIntentStore,
     LifecycleStorageUnavailable,
@@ -238,7 +241,7 @@ class ServedBeta:
         bridge: SiteBridgeWorker | None = None,
         engine_socket: LocalEngineSocket | None = None,
         enable_engine_socket: bool = False,
-        observation_session: AutomaticObservationSession | None = None,
+        observation_session: AutomaticObservationSession | EngineSessionCoordinator | None = None,
     ) -> None:
         self.server = server
         self.runtime = runtime
@@ -337,14 +340,18 @@ def build_beta_server(
     parameter or an implicit host-side Chromium activation.
     """
     settings.validate_beta()
-    observation_session: AutomaticObservationSession | None = None
+    observation_session: EngineSessionCoordinator | None = None
     automatic_monitor = PrivateAutomaticObservationMonitor(configured=settings.bot_on_demand)
     auth_monitor = PrivateBocaAuthMonitor()
 
     def start_observation(start_id: str) -> None:
         if observation_session is None:
             raise RuntimeError("automatic observer unavailable")
-        observation_session.start(start_id)
+        observation_session.physical_started(start_id)
+
+    async def stop_observation() -> None:
+        if observation_session is not None:
+            await observation_session.shutdown_activation()
 
     # The on-demand panel always starts cold. A prior START receipt records
     # history and cannot authorize a new command loop after a restart.
@@ -359,6 +366,7 @@ def build_beta_server(
             check_worker=_require_worker_socket,
             wake=bot_control,
             on_start=start_observation,
+            on_stop=stop_observation,
         )
     else:
         initial_engine_stopped = partial(
@@ -388,17 +396,6 @@ def build_beta_server(
             or bot_control is None
         ):
             raise ValueError("automatic observation requires the authenticated IPC worker")
-        observation_session = AutomaticObservationSession(
-            ledger=bot_session.ledger,
-            observe=selected_browser.observe_queue,
-            monitor=automatic_monitor,
-            wake=bot_control,
-            prepare_auth=selected_browser.prepare_boca_login,
-            authenticate=lambda member, readiness: authenticate_member(
-                runtime.database, runtime.vault, selected_browser, member, readiness
-            ),
-            auth_monitor=auth_monitor,
-        )
     bridge_enabled = settings.validate_bridge()
     transport = None
     if bridge_enabled:
@@ -456,6 +453,15 @@ def build_beta_server(
     bridge: SiteBridgeWorker | None = None
     server: _TLSWSGIServer | _LoopbackHTTPWSGIServer | None = None
     try:
+        if settings.bot_on_demand:
+            assert bot_control is not None
+            observation_session = EngineSessionCoordinator(
+                store=EngineIntentStore(runtime.database, boot_id=str(uuid4())),
+                wake=bot_control,
+                automatic_monitor=automatic_monitor,
+                authenticate=partial(authenticate_member, runtime.database, runtime.vault),
+                auth_monitor=auth_monitor,
+            )
         if transport is not None:
             bridge = SiteBridgeWorker(
                 transport=transport,
@@ -482,6 +488,7 @@ def build_beta_server(
             bot_control=bot_control,
             automatic_monitor=automatic_monitor,
             auth_monitor=auth_monitor,
+            engine_control=observation_session,
             source_sha=settings.source_sha,
         )
 

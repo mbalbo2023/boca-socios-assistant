@@ -7,6 +7,7 @@ import hashlib
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from html import escape
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from boca_socios.domain.sector_preferences import SectorPreference
@@ -21,6 +22,9 @@ from boca_socios.panel.members import CommandView, MemberView
 from boca_socios.panel.worker_activity import WorkerActivitySnapshot
 from boca_socios.queue.pass_observation import QueuePassSummary
 from boca_socios.security.member_auth_contract import BocaAuthSummary
+
+if TYPE_CHECKING:
+    from boca_socios.integration.engine_sessions import PrivateSessionDetails
 
 _LOGIN_SCRIPT = """
 const button = document.getElementById('passkey');
@@ -223,6 +227,69 @@ def boca_token_reveal(token: str, refresh_token: str) -> bytes:
         "Boca · token privado",
         private_token_view.boca_reveal(token, refresh_token),
         script=f"<script>{private_token_view.COPY_SCRIPT}</script>",
+    )
+
+
+def observed_url_reveal(url: str) -> bytes:
+    return _page(
+        "URL observada",
+        "<h1>URL observada completa</h1><p>Es el destino recibido de esta sesión. "
+        "Copiarlo no verifica su vigencia ni obtiene una entrada.</p>"
+        + private_token_view._copy_field("observed-url-full", "URL completa", url)
+        + '<p id="copy-status" role="status" aria-live="polite"></p>'
+        '<p><a href="/control">Volver a los motores</a></p>',
+        script=f"<script>{private_token_view.COPY_SCRIPT}</script>",
+    )
+
+
+def engine_session_details(details: PrivateSessionDetails, csrf: str, operation_id: str) -> bytes:
+    from boca_socios.panel import engine_view
+
+    identity, observation, inspection = details.identity, details.observation, details.inspection
+    kinds = []
+    if inspection is not None and inspection.final_url:
+        kinds.append(("url", "Revelar URL completa para copiar"))
+    if observation is not None and observation.target_url:
+        kinds.append(("queue", "Revelar token de cola para copiar"))
+    if details.auth is not None:
+        kinds.append(("boca", "Revelar tokens de autenticación para copiar"))
+    forms = "".join(
+        '<form method="post" action="/control/sesiones/revelar">'
+        f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
+        f'<input type="hidden" name="operation_id" value="{escape(operation_id, quote=True)}">'
+        f'<input type="hidden" name="session_id" value="{identity.session_id}">'
+        f'<input type="hidden" name="kind" value="{kind}">'
+        f'<button type="submit">{label}</button></form>'
+        for kind, label in kinds
+    )
+    labels = [
+        ("Motor", engine_view._ENGINES[identity.engine]),
+        ("Navegador", engine_view._BROWSERS[identity.browser]),
+        ("Estado", engine_view._STATES.get(details.state, "Estado no verificado")),
+        ("Etapa", engine_view._PHASES.get(details.phase, "Sin observación")),
+        ("URL observada", engine_view._url(inspection.final_url if inspection else None)),
+        ("Queue ID recibido", inspection.queue_id if inspection else None),
+        ("Número de cola recibido", inspection.queue_number if inspection else None),
+        ("Personas delante", inspection.users_ahead if inspection else None),
+        (
+            "Tiempo informado por la página",
+            inspection.expected_service_time if inspection else None,
+        ),
+    ]
+    rows = "".join(
+        f"<dt>{escape(label)}</dt><dd>{escape(str(value)) if value is not None else 'No informado por la página'}</dd>"
+        for label, value in labels
+    )
+    return _page(
+        "Sesión de navegador",
+        "<h1>Sesión de navegador</h1><p>Esta consulta muestra la sesión existente. "
+        "No abre otra página ni reinicia la cola.</p>"
+        f"<dl>{rows}</dl>"
+        + forms
+        + ("" if kinds else "<p>Todavía no hay URL ni tokens observados para copiar.</p>")
+        + "<p>Los tokens observados no acreditan una entrada. La autenticación en la página "
+        "permanece sin confirmar mientras falte esa evidencia.</p>"
+        '<p><a href="/control">Ver las sesiones en vivo</a></p>',
     )
 
 
@@ -692,7 +759,7 @@ def member_detail(
         f'<form method="post" action="/socios/{identifier}/credencial">'
         f'<input type="hidden" name="csrf" value="{escape(csrf, quote=True)}">'
         f'<input type="hidden" name="operation_id" value="{escape(rotate_id, quote=True)}">'
-        '<label for="new-password">Nueva contraseña sintética</label>'
+        '<label for="new-password">Contraseña del socio para guardar en la bóveda local</label>'
         '<input id="new-password" name="password" type="password" '
         'autocomplete="new-password" required><button type="submit">Rotar credencial local</button>'
         "</form>"
