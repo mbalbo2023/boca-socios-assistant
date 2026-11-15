@@ -11,6 +11,7 @@ from uuid import uuid4
 import pytest
 
 from boca_socios.browser.boca_auth_protocol import BocaAuthReadiness
+from boca_socios.browser.engine_protocol import NavigationAttempt, SessionInspection
 from boca_socios.browser.queue_page_observation import parse_queue_page_observation
 from boca_socios.integration.command_store import CommandStore
 from boca_socios.panel.lifecycle_intents import LifecycleIntentStore
@@ -69,6 +70,8 @@ class WaitingSession:
             context_open=not self.closed.is_set(),
             auth_response_received=False,
             dom_authentication="UNVERIFIED",
+            configured_url=None,
+            navigation_attempt=None,
         )
 
     async def close(self):
@@ -101,6 +104,214 @@ def coordinator(tmp_path, *, session_type=WaitingSession):
         receipt_seconds=2,
     )
     return service, db, store, member, sessions, wakes, opened
+
+
+@pytest.mark.parametrize(
+    "page, expected",
+    [
+        (
+            {"queue_model": {"eventId": "provider-match-301"}, "markers": frozenset({"prequeue"})},
+            ("EVENT_ANNOUNCED", "provider-match-301", "OBSERVED_PREQUEUE"),
+        ),
+        (
+            {"queue_model": {"eventId": "provider-match-301"}, "markers": frozenset({"queueid"})},
+            ("EVENT_VERIFIED", "provider-match-301", "OBSERVED_QUEUE"),
+        ),
+        (
+            {"queue_model": {"eventId": "provider-match-301"}},
+            ("EVENT_VERIFIED", "provider-match-301", "EVENT_ID_OBSERVED"),
+        ),
+        (
+            {"visible_text": "No hay eventos disponibles"},
+            ("NO_EVENT_CONFIRMED", None, "EXPLICIT_NO_EVENTS"),
+        ),
+        ({"check_failed": True}, ("UNRECOGNIZED", None, "CHECK_FAILED")),
+        ({"http_status": 503}, ("UNRECOGNIZED", None, "HTTP_FAILURE")),
+        ({"markers": frozenset({"challenge"})}, ("UNRECOGNIZED", None, "VISIBLE_CHALLENGE")),
+        ({}, ("UNRECOGNIZED", None, "NO_RECOGNIZED_EVIDENCE")),
+    ],
+    ids=["prequeue", "queue", "event-only", "absence", "failure", "http", "challenge", "unknown"],
+)
+def test_metadata_projects_observed_event_without_local_identity_inference(
+    tmp_path, page, expected
+):
+    # Dropping or inferring the provider ID, or flattening error into absence,
+    # must fail at the real coordinator's public metadata boundary.
+    class ObservedPageSession(WaitingSession):
+        async def observe_queue(self):
+            await super().observe_queue()
+            return parse_queue_page_observation(
+                **{
+                    "final_url": "https://offline.example.invalid/",
+                    "queue_model": None,
+                    "markers": frozenset(),
+                    "observed_at": datetime(2026, 11, 15, 12, tzinfo=UTC),
+                    **page,
+                }
+            )
+
+    service, db, _store, member, sessions, _wakes, opened = coordinator(
+        tmp_path, session_type=ObservedPageSession
+    )
+    run = service.start(
+        "browsers_members",
+        str(uuid4()),
+        member_id=member,
+        counts={"chromium": 1, "firefox": 0, "webkit": 0},
+    )
+    service.physical_started(run.physical_start_id)
+    confirm_start(db, run.physical_start_id)
+    try:
+        assert opened[run.engine].wait(3)
+        worker = sessions[run.engine]
+        # A second observation starts after publication; terminal observations
+        # instead close only after the same publication boundary.
+        signal = (
+            worker.again
+            if expected[2] in {"OBSERVED_PREQUEUE", "OBSERVED_QUEUE"}
+            else worker.closed
+        )
+        assert signal.wait(3)
+        engine = next(row for row in service.snapshot()["engines"] if row["engine"] == run.engine)
+        row = engine["sessions"][0]
+        assert engine["member_id"] == member
+        assert (row["event_state"], row["event_id"], row["reason"]) == expected
+        assert row["event_id"] != member
+        assert row["observed_at"] == "2026-11-15T12:00:00+00:00"
+        assert "never-in-metadata" not in repr(row)
+    finally:
+        service.close()
+
+
+@pytest.mark.parametrize(
+    "evidence", ["failed", "missing_attempt", "missing_configuration", "no_final"]
+)
+def test_metadata_keeps_attempt_distinct_from_last_final_sample(tmp_path, evidence):
+    # Using the latest observation's clock for an older final URL, or filling
+    # a missing attempt/configuration from another URL, must fail here.
+    class InspectedPageSession(WaitingSession):
+        async def observe_queue(self):
+            await super().observe_queue()
+            return parse_queue_page_observation(
+                final_url="https://offline.example.invalid/prior-final",
+                queue_model=None,
+                markers=frozenset({"prequeue"}),
+                observed_at=datetime(2026, 11, 15, 12, 2, tzinfo=UTC),
+            )
+
+        async def inspect(self):
+            sample = SessionInspection(
+                final_url=(
+                    None
+                    if evidence == "no_final"
+                    else "https://offline.example.invalid/prior-final?private=hidden#private-fragment"
+                ),
+                observed_at=datetime(2026, 11, 15, 12, tzinfo=UTC),
+                context_open=True,
+                configured_url=(
+                    None
+                    if evidence == "missing_configuration"
+                    else "https://offline.example.invalid/configured"
+                ),
+                navigation_attempt=(
+                    NavigationAttempt(
+                        sequence=2,
+                        purpose="QUEUE_BRIDGE",
+                        display_url="https://queue.example.invalid/attempted",
+                        started_at=datetime(2026, 11, 15, 12, 1, tzinfo=UTC),
+                        result="FAILED",
+                    )
+                    if evidence in {"failed", "no_final"}
+                    else None
+                ),
+            )
+            return SessionInspection.from_payload(sample.to_payload())
+
+    service, db, _store, _member, sessions, _wakes, opened = coordinator(
+        tmp_path, session_type=InspectedPageSession
+    )
+    run = service.start(
+        "queues_tokens", str(uuid4()), counts={"chromium": 1, "firefox": 0, "webkit": 0}
+    )
+    service.physical_started(run.physical_start_id)
+    confirm_start(db, run.physical_start_id)
+    try:
+        assert opened[run.engine].wait(3) and sessions[run.engine].again.wait(3)
+        engine = next(row for row in service.snapshot()["engines"] if row["engine"] == run.engine)
+        row = engine["sessions"][0]
+        assert row["observed_at"] == "2026-11-15T12:02:00+00:00"
+        assert row["display_url"] == (
+            "" if evidence == "no_final" else "https://offline.example.invalid/prior-final"
+        )
+        assert row["final_url_observed_at"] == (
+            None if evidence == "no_final" else "2026-11-15T12:00:00+00:00"
+        )
+        assert row["configured_url"] == (
+            None
+            if evidence == "missing_configuration"
+            else "https://offline.example.invalid/configured"
+        )
+        assert row["navigation_attempt"] == (
+            {
+                "sequence": 2,
+                "purpose": "QUEUE_BRIDGE",
+                "display_url": "https://queue.example.invalid/attempted",
+                "started_at": "2026-11-15T12:01:00+00:00",
+                "result": "FAILED",
+                "http_status": None,
+            }
+            if evidence in {"failed", "no_final"}
+            else None
+        )
+        assert "private=hidden" not in repr(row)
+        assert "private-fragment" not in repr(row)
+    finally:
+        service.close()
+
+
+def test_target_failure_without_inspection_keeps_metadata_unreceived(tmp_path):
+    class FailedTargetSession(WaitingSession):
+        inspect_calls = 0
+
+        async def prepare_boca_login(self, operation):
+            raise OSError("offline private failure text")
+
+        async def inspect(self):
+            self.inspect_calls += 1
+            return await super().inspect()
+
+    service, db, _store, member, sessions, _wakes, opened = coordinator(
+        tmp_path, session_type=FailedTargetSession
+    )
+    run = service.start(
+        "browsers_members",
+        str(uuid4()),
+        member_id=member,
+        counts={"chromium": 1, "firefox": 0, "webkit": 0},
+    )
+    service.physical_started(run.physical_start_id)
+    confirm_start(db, run.physical_start_id)
+    try:
+        assert opened[run.engine].wait(3)
+        service._runs[run.activation_id].future.result(timeout=3)
+        engine = next(row for row in service.snapshot()["engines"] if row["engine"] == run.engine)
+        row = engine["sessions"][0]
+        assert row["state"] == "FAILED" and row["phase"] == "SESSION_FAILED"
+        assert sessions[run.engine].inspect_calls == 0
+        for key in (
+            "event_state",
+            "event_id",
+            "reason",
+            "configured_url",
+            "navigation_attempt",
+            "final_url_observed_at",
+            "observed_at",
+        ):
+            assert row[key] is None
+        assert row["display_url"] == ""
+        assert "offline private failure text" not in repr(row)
+    finally:
+        service.close()
 
 
 @pytest.mark.parametrize("first", ["queues_tokens", "browsers_members"])

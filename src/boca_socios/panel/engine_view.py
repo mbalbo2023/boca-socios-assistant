@@ -7,6 +7,7 @@ uses its existing private view; this module cannot navigate a worker page.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from datetime import datetime
 from html import escape
@@ -62,6 +63,46 @@ _PHASES = {
     "PHYSICAL_STOP_CONFIRMED_PENDING_RECONCILIATION": "Worker detenido; listo para iniciar una activación nueva",
 }
 _PHASES["ACCESS_OBSERVED"] = _PHASES["TARGET_OBSERVED"]
+_EVIDENCE_NAMES = {
+    "event_state": {
+        "EVENT_ANNOUNCED": "Identificador de evento recibido; faltan señales de cola o acceso",
+        "EVENT_VERIFIED": "Evento identificado en la observación de la página",
+        "NO_EVENT_CONFIRMED": "La página informa explícitamente que no hay eventos",
+        "UNRECOGNIZED": "No se pudo identificar un evento con esta muestra",
+    },
+    "reason": {
+        "VISIBLE_CHALLENGE": "Intervención requerida",
+        "CHECK_FAILED": "Comprobación fallida",
+        "HTTP_FAILURE": "Respuesta HTTP de error",
+        "INVALID_OBSERVATION": "Muestra no interpretable",
+        "CONTRADICTORY_EVIDENCE": "Señales contradictorias",
+        "RECEIVED_TARGET": "Enlace de acceso recibido",
+        "OBSERVED_IDLE": "Cola inactiva observada",
+        "OBSERVED_PREQUEUE": "Prefila observada",
+        "OBSERVED_QUEUE": "Cola observada",
+        "EXPLICIT_NO_EVENTS": "Ausencia declarada por la página",
+        "EVENT_ID_OBSERVED": "ID recibido sin otras señales",
+        "NO_RECOGNIZED_EVIDENCE": "Sin señales reconocidas",
+    },
+    "purpose": {
+        "SITE_URL": "Carga de SITE_URL",
+        "QUEUE_BRIDGE": "Enlace de cola recibido",
+        "RECEIVED_TARGET": "Enlace de acceso recibido",
+    },
+    "result": {
+        "STARTED": "Inicio del intento registrado",
+        "RETURNED": "La llamada de navegación retornó",
+        "FAILED": "El intento falló",
+        "CANCELLED": "El intento fue cancelado",
+    },
+}
+_EVIDENCE_MISSING = "Dato no recibido"
+_EVIDENCE_UNKNOWN = "Dato no recibido o no reconocido"
+_EVENT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}")
+_SAMPLE_NOTICE = (
+    "Cada fila conserva la última muestra recibida. "
+    "Si la sesión falla o se cierra, esos datos son históricos."
+)
 _METRICS = {
     "requested_contexts": "Solicitados",
     "created": "Creados",
@@ -81,7 +122,12 @@ _SESSION_LABELS = {
     "queue_size": "Personas en cola, según la página",
     "expected_service_time": "Hora de acceso estimada por la página",
     "countdown": "Cuenta regresiva recibida",
-    "display_url": "URL observada, sin parámetros privados",
+    "event_state": "Estado del evento observado",
+    "event_id": "ID de evento observado en la página",
+    "reason": "Motivo de la observación",
+    "configured_url": "URL configurada",
+    "navigation_attempt": "Última navegación intentada",
+    "display_url": "Última URL final recibida",
     "has_target_url": "Enlace de acceso",
     "has_auth": "Respuesta de autenticación",
 }
@@ -128,6 +174,8 @@ _SCRIPT = (
     + json.dumps(_PHASES, ensure_ascii=False)
     + ";\nconst metricNames = "
     + json.dumps(_METRICS, ensure_ascii=False)
+    + ";\nconst evidenceNames = "
+    + json.dumps(_EVIDENCE_NAMES, ensure_ascii=False)
     + ";\nconst sessionLabels = "
     + json.dumps(_SESSION_LABELS, ensure_ascii=False)
     + ";\nconst legacyRecoveryLabels = "
@@ -174,6 +222,30 @@ _SCRIPT = (
     setText(button, labels.button);
     setText(document.getElementById('legacy-worker-recovery-status'), labels.status);
   }
+  function evidenceName(field, value) {
+    return typeof value === 'string' && Object.hasOwn(evidenceNames[field], value) ?
+      evidenceNames[field][value] : 'Dato no recibido o no reconocido';
+  }
+  function evidenceURL(value) {
+    const url = safeURL(value);
+    return url === 'Sin URL observada' ? 'Dato no recibido' : url;
+  }
+  function navigation(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return 'Dato no recibido';
+    const parts = [evidenceName('purpose', value.purpose), evidenceURL(value.display_url),
+      (typeof value.started_at === 'string' && value.started_at ?
+        formatPrivateTime(value.started_at) : 'Sin observación'), evidenceName('result', value.result)];
+    if (value.result === 'RETURNED' && Number.isInteger(value.http_status) &&
+        value.http_status >= 100 && value.http_status <= 599) parts.push('HTTP ' + value.http_status);
+    return parts.join(' · ');
+  }
+  function inspectionLabel(item, index, engine) {
+    const queue = item.has_target_url === true, auth = item.has_auth === true;
+    const prefix = queue && auth ? 'Ver tokens de cola y autenticación de la sesión ' :
+      queue ? 'Ver token de cola de la sesión ' : auth ?
+      'Ver tokens de autenticación de la sesión ' : 'Inspeccionar sesión ';
+    return prefix + index + ' de ' + engineNames[engine];
+  }
   function fieldValue(item, field) {
     if (field === 'state') return state(item.state);
     if (field === 'phase') return phase(item.phase);
@@ -185,7 +257,16 @@ _SCRIPT = (
     if (field === 'observed_at') {
       return item.observed_at ? formatPrivateTime(item.observed_at) : 'Sin observación';
     }
-    if (field === 'display_url') return safeURL(item.display_url);
+    if (field === 'event_state' || field === 'reason') return evidenceName(field, item[field]);
+    if (field === 'event_id') return typeof item.event_id === 'string' &&
+      /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(item.event_id) ? item.event_id : 'Dato no recibido';
+    if (field === 'configured_url') return evidenceURL(item.configured_url);
+    if (field === 'navigation_attempt') return navigation(item.navigation_attempt);
+    if (field === 'display_url') {
+      const url = evidenceURL(item.display_url);
+      return url === 'Dato no recibido' ? url : url + ' · ' +
+        (item.final_url_observed_at ? formatPrivateTime(item.final_url_observed_at) : 'Sin observación');
+    }
     if (field === 'has_target_url') return item.has_target_url === true ?
       'Recibido; consulte la inspección privada' : 'Sin enlace observado';
     if (field === 'has_auth') return item.has_auth === true ?
@@ -234,7 +315,7 @@ _SCRIPT = (
         setText(row.querySelector('[data-field="' + name + '"]'), fieldValue(session, name));
       }
       setText(row.querySelector('[data-field="inspect"]'),
-        'Inspeccionar sesión ' + (index + 1) + ' de ' + engineNames[engine]);
+        inspectionLabel(session, index + 1, engine));
     });
     for (const [id, row] of existing) { if (!retained.has(id)) row.remove(); }
     document.getElementById(engine + '-no-sessions').hidden = retained.size > 0;
@@ -329,6 +410,8 @@ _SCRIPT = (
 })();
 """
 )
+# Each native redirect includes this script; omit indentation in the emitted bytes.
+_SCRIPT = "\n".join(line.strip() for line in _SCRIPT.splitlines())
 
 
 def csp() -> str:
@@ -444,6 +527,48 @@ def _legacy_recovery(
     )
 
 
+def _evidence_name(field: str, value: object) -> str:
+    return (
+        _EVIDENCE_NAMES[field].get(value, _EVIDENCE_UNKNOWN)
+        if isinstance(value, str)
+        else _EVIDENCE_UNKNOWN
+    )
+
+
+def _evidence_url(value: object) -> str:
+    url = _url(value)
+    return _EVIDENCE_MISSING if url == "Sin URL observada" else url
+
+
+def _navigation(value: object) -> str:
+    if not isinstance(value, Mapping):
+        return _EVIDENCE_MISSING
+    parts = [
+        _evidence_name("purpose", value.get("purpose")),
+        _evidence_url(value.get("display_url")),
+        _time(value.get("started_at")),
+        _evidence_name("result", value.get("result")),
+    ]
+    status = value.get("http_status")
+    if value.get("result") == "RETURNED" and type(status) is int and 100 <= status <= 599:
+        parts.append(f"HTTP {status}")
+    return " · ".join(parts)
+
+
+def _inspection_label(session: Mapping[str, object], index: int, engine: str) -> str:
+    queue, auth = session.get("has_target_url") is True, session.get("has_auth") is True
+    prefix = (
+        "Ver tokens de cola y autenticación de la sesión "
+        if queue and auth
+        else "Ver token de cola de la sesión "
+        if queue
+        else "Ver tokens de autenticación de la sesión "
+        if auth
+        else "Inspeccionar sesión "
+    )
+    return f"{prefix}{index} de {_ENGINES[engine]}"
+
+
 def _session_value(session: Mapping[str, object], field: str) -> str:
     value = session.get(field)
     if field == "state":
@@ -454,8 +579,21 @@ def _session_value(session: Mapping[str, object], field: str) -> str:
         return _PHASES.get(value, "Sin dato") if isinstance(value, str) else "Sin dato"
     if field == "observed_at":
         return _time(value)
+    if field in {"event_state", "reason"}:
+        return _evidence_name(field, value)
+    if field == "event_id":
+        return value if isinstance(value, str) and _EVENT_ID.fullmatch(value) else _EVIDENCE_MISSING
+    if field == "configured_url":
+        return _evidence_url(value)
+    if field == "navigation_attempt":
+        return _navigation(value)
     if field == "display_url":
-        return _url(value)
+        url = _evidence_url(value)
+        return (
+            url + " · " + _time(session.get("final_url_observed_at"))
+            if url != _EVIDENCE_MISSING
+            else url
+        )
     if field == "has_target_url":
         return (
             "Recibido; consulte la inspección privada" if value is True else "Sin enlace observado"
@@ -486,7 +624,7 @@ def _session_rows(engine: str, sessions: tuple[Mapping[str, object], ...]) -> st
             f'<li class="engine-session" data-session-id="{session_id}">'
             f'<h4 data-field="title">Sesión {index} · {browser}</h4><dl>{fields}</dl>'
             f'<a data-field="inspect" href="/control/sesiones/{session_id}">'
-            f"Inspeccionar sesión {index} de {_ENGINES[engine]}</a></li>"
+            f"{_inspection_label(session, index, engine)}</a></li>"
         )
     return "".join(rows)
 
@@ -666,7 +804,7 @@ def page(
         _section(name, item, csrf, operations, members, site_url_ready)
         for name, item in engines.items()
     )
-    content += "<h2>Sesiones observadas</h2>"
+    content += "<h2>Sesiones observadas</h2>" + f"<p>{_SAMPLE_NOTICE}</p>"
     content += "".join(_history(name, item) for name, item in engines.items())
     content += (
         '<p><a href="/monitor/tokens">Abrir monitor privado de tokens</a></p>'

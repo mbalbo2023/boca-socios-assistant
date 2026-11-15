@@ -36,7 +36,12 @@ from boca_socios.browser.boca_auth_protocol import (
     operation_id,
 )
 from boca_socios.browser.boca_login_process import LOGIN_URL, normalize_cookies, run_login
-from boca_socios.browser.engine_protocol import Scalar, SessionInspection
+from boca_socios.browser.engine_protocol import (
+    NavigationAttempt,
+    NavigationPurpose,
+    Scalar,
+    SessionInspection,
+)
 from boca_socios.browser.ipc_protocol import SyntheticIPCError
 from boca_socios.browser.offline_fixture import _bounded_close
 from boca_socios.browser.queue_page_observation import (
@@ -185,6 +190,12 @@ class _Page(Protocol):
     async def goto(self, url: str, *, wait_until: str, timeout: int) -> _Response | None: ...
 
     async def evaluate(self, expression: str) -> object: ...
+
+
+class _Navigate(Protocol):
+    async def __call__(
+        self, page: _Page, url: str, *, purpose: NavigationPurpose
+    ) -> int | None: ...
 
 
 class _Context(Protocol):
@@ -354,8 +365,7 @@ class _PageFacade:
         # A queue may continuously poll; waiting for networkidle can time out
         # despite a fully received page. This integration boundary waits only
         # for DOM readiness and leaves later reads on the same live page.
-        response = await owner.page.goto(url, wait_until="domcontentloaded", timeout=12_000)
-        owner.http_status = response.status if response is not None else None
+        owner.http_status = await owner.navigate(owner.page, url, purpose="SITE_URL")
         owner.navigation_completed = True
 
 
@@ -385,11 +395,17 @@ class _ContextFacade:
 
 class _BrowserFacade:
     def __init__(
-        self, browser: _Browser, destination: str, *, chromium_activity: bool = True
+        self,
+        browser: _Browser,
+        destination: str,
+        *,
+        navigate: _Navigate,
+        chromium_activity: bool = True,
     ) -> None:
         self._browser = browser
         self._chromium_activity = chromium_activity
         self.destination = destination
+        self.navigate = navigate
         self.context: _Context | None = None
         self.context_creation: asyncio.Task[_Context] | None = None
         self.closing = False
@@ -493,6 +509,7 @@ class AutomaticQueueObserver:
         self._chromium_activity = chromium_activity
         self._auth_response_received = False
         self._inspection = SessionInspection()
+        self._navigation_attempt: NavigationAttempt | None = None
         self._manager: AbstractAsyncContextManager[_Browser] | None = None
         self._facade: _BrowserFacade | None = None
         self._active: asyncio.Task[object] | None = None
@@ -514,12 +531,37 @@ class AutomaticQueueObserver:
         self._ready_observation: QueuePageObservation | None = None
         self._login_runner = run_login
 
+    async def _navigate(self, page: _Page, url: str, *, purpose: NavigationPurpose) -> int | None:
+        parts = urlsplit(url)
+        attempt = NavigationAttempt(
+            sequence=self._navigation_attempt.sequence + 1 if self._navigation_attempt else 1,
+            purpose=purpose,
+            display_url=urlunsplit((parts.scheme, parts.netloc, parts.path, "", "")),
+            started_at=self._now(),
+            result="STARTED",
+        )
+        self._navigation_attempt = attempt
+        try:
+            response = await page.goto(url, wait_until="domcontentloaded", timeout=12_000)
+        except asyncio.CancelledError:
+            self._navigation_attempt = replace(attempt, result="CANCELLED")
+            raise
+        except BaseException:
+            self._navigation_attempt = replace(attempt, result="FAILED")
+            raise
+        status = response.status if response is not None else None
+        self._navigation_attempt = replace(attempt, result="RETURNED", http_status=status)
+        return status
+
     async def _start_session(self) -> None:
         manager = self._browsers()
         browser = await manager.__aenter__()
         self._manager = manager
         self._facade = _BrowserFacade(
-            browser, self._destination, chromium_activity=self._chromium_activity
+            browser,
+            self._destination,
+            navigate=self._navigate,
+            chromium_activity=self._chromium_activity,
         )
         engine = self._engine_factory()
         engine.browser = self._facade
@@ -632,10 +674,7 @@ class AutomaticQueueObserver:
             link = valid_links[0]
             if link != facade.page.url:
                 self._bridge_followed = True
-                response = await facade.page.goto(
-                    link, wait_until="domcontentloaded", timeout=12_000
-                )
-                facade.http_status = response.status if response is not None else None
+                facade.http_status = await self._navigate(facade.page, link, purpose="QUEUE_BRIDGE")
                 return await self._snapshot()
         return observation
 
@@ -851,10 +890,9 @@ class AutomaticQueueObserver:
                     == ("https", "bocasocios.bocajuniors.com.ar", 443)
                 ):
                     self._target_followed = True
-                    response = await facade.page.goto(
-                        observed.target_url, wait_until="domcontentloaded", timeout=12000
+                    facade.http_status = await self._navigate(
+                        facade.page, observed.target_url, purpose="RECEIVED_TARGET"
                     )
-                    facade.http_status = response.status if response is not None else None
                     current = await self._snapshot()
                 else:
                     current = observed
@@ -977,6 +1015,8 @@ class AutomaticQueueObserver:
                 and not self._stopped
             ),
             auth_response_received=self._auth_response_received,
+            configured_url=self._destination,
+            navigation_attempt=self._navigation_attempt,
         )
 
     async def close(self) -> None:

@@ -361,3 +361,143 @@ def test_single_session_busy_gate_does_not_create_a_second_observer():
         await reg.close()
 
     asyncio.run(exercise())
+
+
+def navigation_value():
+    return {
+        "sequence": 2,
+        "purpose": "QUEUE_BRIDGE",
+        "display_url": "https://bocajuniors.queue-it.net/received",
+        "started_at": "2026-11-15T12:00:00+03:00",
+        "result": "RETURNED",
+        "http_status": 503,
+    }
+
+
+def test_navigation_attempt_round_trip_and_legacy_inspection():
+    from datetime import UTC, datetime
+
+    protocol, _ = modules()
+    assert hasattr(protocol, "NavigationAttempt"), "private navigation contract is missing"
+    attempt = protocol.NavigationAttempt.from_value(navigation_value())
+    assert attempt.started_at == datetime(2026, 11, 15, 9, tzinfo=UTC)
+    assert attempt.to_value() == {**navigation_value(), "started_at": "2026-11-15T09:00:00+00:00"}
+    inspected = protocol.SessionInspection(
+        final_url="https://example.invalid/final?private=value#fragment",
+        configured_url="https://example.invalid/configured",
+        navigation_attempt=attempt,
+    )
+    payload = inspected.to_payload()
+    assert protocol.SessionInspection.from_payload(payload) == inspected
+    assert b'"configured_url"' in payload and b'"navigation_attempt"' in payload
+    assert "example.invalid" not in repr(inspected) + repr(attempt)
+    old = json.loads(payload)
+    del old["configured_url"], old["navigation_attempt"]
+    legacy = protocol.SessionInspection.from_payload(json.dumps(old).encode())
+    assert legacy.final_url == inspected.final_url
+    assert legacy.configured_url is legacy.navigation_attempt is None
+    ident = identity(protocol)
+    reply = protocol.EngineReply(ident, "inspect", "OK", inspected)
+    assert protocol.EngineReply.from_payload(reply.to_payload()) == reply
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("sequence", True),
+        ("sequence", 1.0),
+        ("sequence", 0),
+        ("sequence", 4),
+        ("purpose", "REDIRECT"),
+        ("purpose", []),
+        ("display_url", "https://user:private@example.invalid/"),
+        ("display_url", "https://example.invalid/?bearer=private"),
+        ("display_url", "https://example.invalid/#private"),
+        ("display_url", "https://example.invalid/" + "x" * 490),
+        ("display_url", "https://example.invalid/\n"),
+        ("display_url", 1),
+        ("started_at", "2026-11-15T12:00:00"),
+        ("started_at", 1),
+        ("result", "SUCCESS"),
+        ("result", []),
+        ("http_status", True),
+        ("http_status", 200.0),
+        ("http_status", 99),
+        ("http_status", 600),
+    ],
+)
+def test_navigation_attempt_rejects_invalid_shape_and_values(field, value):
+    protocol, _ = modules()
+    assert hasattr(protocol, "NavigationAttempt"), "private navigation contract is missing"
+    with pytest.raises(SyntheticIPCError):
+        protocol.NavigationAttempt.from_value({**navigation_value(), field: value})
+
+
+def test_navigation_attempt_rejects_nonexact_inspection_and_nested_duplicates():
+    protocol, _ = modules()
+    assert hasattr(protocol, "NavigationAttempt"), "private navigation contract is missing"
+    for bad in ([], None, {}, {**navigation_value(), "extra": None}):
+        with pytest.raises(SyntheticIPCError):
+            protocol.NavigationAttempt.from_value(bad)
+    for result in ("STARTED", "FAILED", "CANCELLED"):
+        with pytest.raises(SyntheticIPCError):
+            protocol.NavigationAttempt.from_value({**navigation_value(), "result": result})
+    body = json.loads(protocol.SessionInspection().to_payload())
+    for field in ("configured_url", "navigation_attempt"):
+        partial = {key: value for key, value in body.items() if key != field}
+        with pytest.raises(SyntheticIPCError):
+            protocol.SessionInspection.from_payload(json.dumps(partial).encode())
+    for extra in (
+        {"extra": None},
+        {"configured_url": "https://a.invalid/?secret=x"},
+        {"navigation_attempt": []},
+        {"navigation_attempt": navigation_value() | {"extra": 1}},
+    ):
+        with pytest.raises(SyntheticIPCError):
+            protocol.SessionInspection.from_payload(json.dumps(body | extra).encode())
+    body["navigation_attempt"] = navigation_value()
+    duplicate = json.dumps(body).replace('"sequence": 2', '"sequence": 2, "sequence": 2')
+    with pytest.raises(SyntheticIPCError):
+        protocol.SessionInspection.from_payload(duplicate.encode())
+    with pytest.raises(SyntheticIPCError):
+        protocol.SessionInspection.from_payload(b" " * 32769)
+
+
+def test_inspection_maximum_encoded_payload_remains_bounded():
+    from datetime import UTC, datetime
+
+    protocol, _ = modules()
+    assert hasattr(protocol, "NavigationAttempt"), "private navigation contract is missing"
+
+    # U+0080 consumes two UTF-8 bytes but six ASCII JSON bytes; this is the
+    # largest encoding ratio allowed by the preexisting text validators.
+    def padded_url(size, *, query=False):
+        prefix = "https://example.invalid/" + ("?" if query else "")
+        rest = size - len(prefix)
+        return prefix + "\x80" * (rest // 2) + "\\" * (rest % 2)
+
+    attempt = protocol.NavigationAttempt.from_value(
+        navigation_value() | {"display_url": padded_url(512)}
+    )
+    inspected = protocol.SessionInspection(
+        final_url=padded_url(8192, query=True),
+        queue_id="q" * 128,
+        queue_number="\x80" * 128,
+        users_ahead="\x80" * 128,
+        users_in_queue="\x80" * 128,
+        expected_service_time="\x80" * 128,
+        observed_at=datetime(2026, 11, 15, tzinfo=UTC),
+        context_open=True,
+        auth_response_received=True,
+        configured_url=padded_url(512),
+        navigation_attempt=attempt,
+    )
+    payload = inspected.to_payload()
+    assert 31000 < len(payload) <= 32768
+    assert protocol.SessionInspection.from_payload(payload) == inspected
+    ident = identity(protocol)
+    request = protocol.EngineRequest(ident, "inspect")
+    reply = protocol.EngineReply(ident, "inspect", "OK", inspected)
+    assert len(request.to_payload()) <= 33792
+    assert len(reply.to_payload()) <= 98304
+    assert protocol.EngineReply.from_payload(reply.to_payload()) == reply

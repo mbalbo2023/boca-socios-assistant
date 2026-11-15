@@ -1,6 +1,48 @@
 # Development and merge policy
 
-## 2026-11-15 — R300, migración explícita con identidad instalada
+## R301/R302 — monitor observado y esquema instalado, candidato consolidado521
+
+Producto M `5281efae7dafe89be047073796b3e0a7e19785ed` sigue instalado desde
+PR517/release866: APPLY1134 y cleanup aceptados; ADMIN1135 provisionado.
+Main P `c14f98d6adf4c4042f29e11f23f8a76545a1b0f9` integra PR520;
+CI1264/Security1087 SUCCESS, 9473 tests +34 subtests. Estos gates no
+sustituyen la aceptación funcional del producto.
+
+[Telegram1144](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43692644776) terminó
+FAILED_STATE_PRESERVED con restauración CONTROLLER_HEALTHY_ENGINE_OFF y
+senderOFF. El [recibo real y RCA](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6891506843)
+no acreditan0007, rollback ni causa: el esquema actual sigue UNKNOWN. No se
+repiten migrate1144, release866/APPLY1134/admin/STATUS aceptados.
+
+[R301/#521](https://github.com/mbalbo2023/boca-socios-assistant/issues/521) completa el monitor existente con evento,
+ID/motivo recibidos, SITE_URL por sesión, último goto efectivamente iniciado
+y última URL final con su propia hora. Reutiliza filas, polling y reveal/copia
+privada; no inventa dato ausente ni confunde RETURNED con éxito. Tres tareas
+locales y sus revisiones SPEC/QUALITY están terminadas; aún no está instalado.
+
+[R302/#522](https://github.com/mbalbo2023/boca-socios-assistant/issues/522) añade únicamente el selector protegido
+telegram-schema-observe para reutilizar verify-schema readonly. Los
+[cuatro GO de diseño](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6891704268)
+preceden código. No toca SQL, datos o custodia, no detiene servicios ni
+prepara/activa/envía Telegram. SCHEMA_READY exige prueba canónica y health;
+NOT_NEEDED evita afirmar una restauración inexistente. Missing/NO_GO conserva
+RCA abierta, sin retry. No recupera retrospectivamente la fase1144.
+
+Ambos deltas forman el mismo candidato521; revisión final del árbol completo,
+CI/main exactos y evidencia física siguen siendo gates. R301 requiere promover
+controller y worker juntos; no certificar un par mezclado. Mantener IPC, fixture
+160000B y ZIP47 entradas/450000 fuente/300000 comprimido. El fixtureR301 usa
+159220B; el ZIPR302 medido usa449973B de fuentes (27B de margen) y126453B
+comprimidos. Mantener ambos cierres y medir cualquier cambio posterior.
+
+SIMULATION_ONLY, BLACKBOX unread/unmodified, datos/passkey/volúmenes y
+Porota/PPI permanecen protegidos. Sólo raíz opera el servidor mediante Actions
+serializadas. 50 es un presupuesto lógico global, no capacidad física medida.
+DOM autenticado, countdown recibido, reserva/ganador/cierre de hermanos,
+comprobante/foto y aviso exclusivo por entrada confirmada, destinatario por socio
+y aceptación privada Samsung siguen abiertos. Este corte no los declara resueltos.
+
+## Histórico — 2026-11-15 — R300, migración explícita con identidad instalada
 
 [RCA520](https://github.com/mbalbo2023/boca-socios-assistant/issues/520)
 parte del recibo1142 real SCHEMA_0007_REQUIRED, sin stop/provisión. PR519

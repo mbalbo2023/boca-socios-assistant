@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import io
+import json
 import os
 import re
+import runpy
 import subprocess
 import textwrap
 from pathlib import Path
@@ -55,7 +58,7 @@ def test_browser_option_is_separately_gated_without_weakening_legacy_operations(
     # Telegram proves release lineage before its separate one-lease backend.
     assert "protected-go-prepare|lifecycle-apply)" in gate
     assert (
-        "telegram-migrate|telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender)"
+        "telegram-schema-observe|telegram-migrate|telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender)"
         in gate
     )
     telegram_review = _step("Prove Telegram release ancestry and build installed transaction")
@@ -409,7 +412,7 @@ def test_telegram_migrate_routes_only_through_installed_transaction():
     gate = _step("Require verified protected environment and matching main commit")
     assert '"$BOCA_OPERATION" = telegram-migrate || "$BOCA_OPERATION" = telegram-activate' in gate
     assert (
-        "telegram-migrate|telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender)"
+        "telegram-schema-observe|telegram-migrate|telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender)"
         in gate
     )
     assert "telegram-migrate|telegram-install|telegram-verify|telegram-test)" not in gate
@@ -437,6 +440,7 @@ def test_telegram_migrate_routes_only_through_installed_transaction():
     assert '"telegram-migrate"' in installed_modes
 
 
+@pytest.mark.parametrize("operation", ["telegram-migrate", "telegram-schema-observe"])
 @pytest.mark.parametrize(
     "change",
     [
@@ -448,7 +452,7 @@ def test_telegram_migrate_routes_only_through_installed_transaction():
         {"BOCA_TELEGRAM_ENVELOPE": "arbitrary"},
     ],
 )
-def test_migrate_distinct_workflow_and_image_execute_actual_admission(change):
+def test_migrate_distinct_workflow_and_image_execute_actual_admission(change, operation):
     gate = textwrap.dedent(
         _step("Require verified protected environment and matching main commit").split(
             "        run: |\n", 1
@@ -462,7 +466,7 @@ def test_migrate_distinct_workflow_and_image_execute_actual_admission(change):
             "GITHUB_RUN_ID": "123",
             "GITHUB_SHA": "b" * 40,
             "BOCA_SOURCE_SHA": "a" * 40,
-            "BOCA_OPERATION": "telegram-migrate",
+            "BOCA_OPERATION": operation,
             "BOCA_SERVICE": "controller",
             "BOCA_BUDGET": "1.5cpu-1024m-192pids",
             "BOCA_IMAGE_REF": "ghcr.io/mbalbo2023/boca-socios-assistant@sha256:" + "c" * 64,
@@ -494,3 +498,113 @@ def test_migrate_distinct_workflow_and_image_execute_actual_admission(change):
     )
     assert result.returncode == (1 if change else 0), result.stderr
     assert result.stdout == ("" if change else "ADMITTED\n")
+
+
+def test_schema_observe_routes_only_through_installed_transaction():
+    workflow = _workflow()
+    assert "telegram-schema-observe" in workflow.split("options: [", 1)[1].split("]", 1)[0]
+    for name in (
+        "Prove Telegram release ancestry and build installed transaction",
+        "Execute installed Telegram transaction under one protected lease",
+    ):
+        condition = _step(name).split("run: |", 1)[0]
+        assert "inputs.operation == 'telegram-schema-observe'" in condition
+    legacy = []
+    for condition in re.findall(r"^        if: (.*)$", workflow, flags=re.MULTILINE):
+        if (
+            "startsWith(inputs.operation, 'telegram-')" in condition
+            and "inputs.browser_image_ref" not in condition
+            and "inputs.operation == 'first-install'" not in condition
+        ):
+            legacy.append(condition)
+            assert "inputs.operation != 'telegram-schema-observe'" in condition
+    assert len(legacy) == 5
+    assert any("always()" in condition for condition in legacy)
+
+
+@pytest.mark.parametrize(
+    "state,remote_rc,want",
+    [("SCHEMA_READY", "0", 0), ("SCHEMA_0007_REQUIRED", "0", 1), ("SCHEMA_READY", "3", 1)],
+)
+def test_schema_observe_actual_workflow_terminal_gate_blocks_missing_or_failed(
+    tmp_path, state, remote_rc, want
+):
+    step = textwrap.dedent(
+        _step("Execute installed Telegram transaction under one protected lease").split(
+            "        run: |\n", 1
+        )[1]
+    )
+    terminal = 'case "$BOCA_OPERATION" in' + step.split('case "$BOCA_OPERATION" in', 1)[1]
+    summary = tmp_path / "summary"
+    summary.touch()
+    result = subprocess.run(  # noqa: S603 - real terminal gate only; no transport
+        ["/bin/bash", "--noprofile", "--norc", "-c", "set -euo pipefail\n" + terminal],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "BOCA_OPERATION": "telegram-schema-observe",
+            "remote_rc": remote_rc,
+            "verified": "BOCA_TELEGRAM_HOST "
+            + json.dumps(
+                {
+                    "version": 1,
+                    "operation": "observe",
+                    "attempt_id": "123",
+                    "source_sha": "a" * 40,
+                    "state": state,
+                    "restoration": "NOT_NEEDED",
+                    "sender_state": "OFF",
+                    "human_receipt": "UNVERIFIED",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            "GITHUB_STEP_SUMMARY": str(summary),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=5,
+    )
+    assert result.returncode == want, result.stderr
+    assert summary.read_text() == (
+        "BOCA_TELEGRAM_OWNER_ACCEPTANCE state=PENDING human_receipt=UNVERIFIED "
+        "release_or_deploy=NONE\n"
+        if want == 0
+        else ""
+    )
+
+
+@pytest.mark.parametrize(
+    "coordinates,admitted",
+    [
+        (["a" * 40, "b" * 40, "123"], True),
+        (["bad", "b" * 40, "123"], False),
+        (["a" * 40, "bad", "123"], False),
+        (["a" * 40, "b" * 40, "0"], False),
+        (["a" * 40, "b" * 40, "123", "extra"], False),
+    ],
+)
+def test_schema_observe_bootstrap_uses_installed_validation_before_memfd(
+    monkeypatch, capsys, coordinates, admitted
+):
+    namespace = runpy.run_path(str(ROOT / "scripts/boca_protected_memfd_bootstrap.py"))
+    main = namespace["main"]
+    reached = []
+
+    def stop_at_archive_boundary(_raw, _digest, **modes):
+        reached.append(modes)
+        raise ValueError("synthetic archive rejection before any memfd")
+
+    monkeypatch.setitem(main.__globals__, "verify", stop_at_archive_boundary)
+    monkeypatch.setattr(
+        namespace["sys"],
+        "argv",
+        ["bootstrap", "c" * 64, "telegram-schema-observe", *coordinates],
+    )
+    monkeypatch.setattr(namespace["sys"], "stdin", io.TextIOWrapper(io.BytesIO(b"fixture")))
+    assert main() == 1
+    assert len(reached) == int(admitted)
+    if admitted:
+        assert reached[0]["telegram_installed"] is True
+        assert sum(reached[0].values()) == 1
+    assert capsys.readouterr().err == "BOCA_BUNDLE state=NO_GO reason=hash_or_host_runtime\n"

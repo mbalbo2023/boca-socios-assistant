@@ -548,3 +548,128 @@ def test_migration_receipt_requires_schema_ready_restored_sender_off():
         changed[key] = value
         with pytest.raises(ValueError):
             backend.verify_backend_receipt(bootstrap._canonical(changed), **kwargs)
+
+
+@pytest.mark.parametrize("failure", ["", "missing", "invalid", "health"])
+def test_schema_observation_reads_real_storage_without_preparing_or_stopping(
+    tmp_path, monkeypatch, failure
+):
+    import sqlite3
+
+    ctx, events, api, data, custody, _, _ = _transaction(tmp_path, monkeypatch)
+    database = data / "boca.sqlite3"
+    if failure in {"missing", "invalid"}:
+        with sqlite3.connect(database) as connection:
+            if failure == "missing":
+                connection.execute("DELETE FROM schema_migrations WHERE version=7")
+                connection.execute("DROP TABLE telegram_delivery_attempts")
+            else:
+                connection.execute(
+                    "UPDATE schema_migrations SET checksum='invalid' WHERE version=7"
+                )
+    before = database.read_bytes(), database.stat().st_ino
+    custody_before = {item.name: item.read_bytes() for item in custody.iterdir()}
+    cleaned = []
+    local = backend.InstalledMaintenance
+
+    def cleanup_noop(self):
+        assert self._created_network is None
+        current = list(events)
+        InstalledMaintenance.cleanup_failed_provision(self)
+        assert events == current
+        cleaned.append(True)
+
+    def forbidden_docker(*args):
+        pytest.fail("schema observation must not provision or remove networks")
+
+    def healthy():
+        events.append("HEALTHY")
+        if failure == "health":
+            raise ValueError("synthetic health changed")
+
+    monkeypatch.setattr(local, "cleanup_failed_provision", cleanup_noop)
+    monkeypatch.setattr(cleanup, "_docker", forbidden_docker)
+    monkeypatch.setattr(ctx, "healthy", healthy)
+    with cleanup.protected_boca_job_lease(ctx.attempt_id) as lease:
+        kwargs = dict(lease=lease, reader=None, expected_source_sha=SOURCE, workflow_sha="b" * 40)
+        if failure:
+            with pytest.raises(backend.TelegramBackendError) as caught:
+                backend._execute("observe", ctx.attempt_id, **kwargs)
+            receipt = caught.value.receipt
+        else:
+            receipt = backend._execute("observe", ctx.attempt_id, **kwargs)
+    assert receipt.state == (
+        "SCHEMA_READY"
+        if not failure
+        else "SCHEMA_0007_REQUIRED"
+        if failure == "missing"
+        else "FAILED_STATE_PRESERVED"
+    )
+    assert (receipt.restoration, receipt.sender_state, receipt.human_receipt) == (
+        "NOT_NEEDED",
+        "OFF",
+        "UNVERIFIED",
+    )
+    assert events == (
+        ["verify-schema", "HEALTHY"] if failure in {"", "health"} else ["verify-schema"]
+    )
+    assert cleaned == ([True] if failure else [])
+    assert (database.read_bytes(), database.stat().st_ino) == before
+    assert {item.name: item.read_bytes() for item in custody.iterdir()} == custody_before
+    assert api.calls == []
+
+
+@pytest.mark.parametrize(
+    "state,restoration,sender,strict,with_failure",
+    [
+        ("SCHEMA_READY", "NOT_NEEDED", "OFF", True, True),
+        ("SCHEMA_0007_REQUIRED", "NOT_NEEDED", "OFF", False, True),
+        ("FAILED_STATE_PRESERVED", "NOT_NEEDED", "OFF", False, True),
+        ("FAILED_STATE_PRESERVED", "INDETERMINATE", "UNVERIFIED", False, True),
+        ("PREFLIGHT_FAILED", "NOT_NEEDED", "UNVERIFIED", False, True),
+        ("SCHEMA_READY", "CONTROLLER_HEALTHY_ENGINE_OFF", "OFF", False, False),
+        ("SCHEMA_READY", "INDETERMINATE", "OFF", False, False),
+        ("SCHEMA_READY", "NOT_NEEDED", "VERIFIED", False, False),
+        ("SCHEMA_0007_REQUIRED", "CONTROLLER_HEALTHY_ENGINE_OFF", "OFF", False, False),
+        ("SCHEMA_0007_REQUIRED", "INDETERMINATE", "OFF", False, False),
+        ("SCHEMA_0007_REQUIRED", "NOT_NEEDED", "VERIFIED", False, False),
+        ("FAILED_STATE_PRESERVED", "CONTROLLER_HEALTHY_ENGINE_OFF", "OFF", False, False),
+        ("FAILED_STATE_PRESERVED", "INDETERMINATE", "VERIFIED", False, False),
+        ("PREPARED", "NOT_NEEDED", "OFF", False, False),
+        ("READY", "NOT_NEEDED", "VERIFIED", False, False),
+    ],
+)
+def test_schema_observation_receipt_cannot_claim_restore_or_sender(
+    state, restoration, sender, strict, with_failure
+):
+    raw = backend.TelegramBackendReceipt(
+        "observe", "111", SOURCE, state, restoration, sender
+    ).redacted_json()
+    assert len(raw) < 1024
+    for allow_failure, allowed in ((False, strict), (True, with_failure)):
+        kwargs = dict(
+            attempt_id="111",
+            expected_source_sha=SOURCE,
+            operation="observe",
+            allow_failure=allow_failure,
+        )
+        if allowed:
+            assert backend.verify_backend_receipt(raw, **kwargs) == raw
+        else:
+            with pytest.raises(ValueError, match="telegram_backend_receipt_unverified"):
+                backend.verify_backend_receipt(raw, **kwargs)
+
+
+@pytest.mark.parametrize("operation,state", [("migrate", "SCHEMA_READY"), ("prepare", "PREPARED")])
+def test_schema_observation_does_not_relax_other_success_restoration(operation, state):
+    raw = backend.TelegramBackendReceipt(
+        operation, "111", SOURCE, state, "NOT_NEEDED"
+    ).redacted_json()
+    with pytest.raises(ValueError, match="telegram_backend_receipt_unverified"):
+        backend.verify_backend_receipt(
+            raw,
+            attempt_id="111",
+            expected_source_sha=SOURCE,
+            operation=operation,
+            allow_failure=True,
+        )

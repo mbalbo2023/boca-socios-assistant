@@ -1,4 +1,4 @@
-"""Protected installed-context preparation and one staged Telegram custody commit."""
+"""Installed Telegram transactions."""
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ def migrate_installed_telegram(
     expected_source_sha: str,
     workflow_sha: str,
 ) -> TelegramBackendReceipt:
-    """Add the installed schema without provisioning or publishing Telegram state."""
+    """Migrate installed schema."""
     context = resolve_installed_context(
         attempt_id,
         lease=lease,
@@ -154,6 +154,12 @@ def _execute(
             raise ValueError("schema_0007_required")
         if schema != {"schema": 7}:
             raise ValueError("schema_unverified")
+        if operation == "observe":
+            context.healthy()
+            succeeded = True
+            return TelegramBackendReceipt(
+                operation, attempt_id, expected_source_sha, "SCHEMA_READY", restoration
+            )
         owner = storage.call("owner-identity", {})["owner_digest"]
         stopped = True  # even lost stop acknowledgement requires exact-ID restoration
         context.stop()
@@ -407,12 +413,13 @@ def verify_backend_receipt(
     operation: str,
     allow_failure: bool = False,
 ) -> bytes:
-    """Pure strict receipt verifier; failure categories require explicit opt-in."""
+    """Verify strict receipts."""
     try:
         if (
             type(raw) is not bytes
             or not 0 < len(raw) <= 1024
-            or operation not in {"prepare", "activate", "recover", "renew", "complete", "migrate"}
+            or operation
+            not in {"prepare", "activate", "recover", "renew", "complete", "migrate", "observe"}
         ):
             raise ValueError("frame")
         raw = raw.removesuffix(b"\n")
@@ -451,8 +458,10 @@ def verify_backend_receipt(
                 "renew": "STAGE_ARCHIVED",
                 "complete": "READY",
                 "migrate": "SCHEMA_READY",
+                "observe": "SCHEMA_READY",
             }[operation]
-            and value["restoration"] == "CONTROLLER_HEALTHY_ENGINE_OFF"
+            and value["restoration"]
+            == ("NOT_NEEDED" if operation == "observe" else "CONTROLLER_HEALTHY_ENGINE_OFF")
             and value["sender_state"]
             in {
                 "prepare": {"OFF"},
@@ -461,6 +470,7 @@ def verify_backend_receipt(
                 "renew": {"OFF"},
                 "complete": {"VERIFIED"},
                 "migrate": {"OFF"},
+                "observe": {"OFF"},
             }[operation]
         )
         failure = (
@@ -468,11 +478,17 @@ def verify_backend_receipt(
             and value["state"]
             in {"FAILED_STATE_PRESERVED", "CLEANUP_INDETERMINATE", "SCHEMA_0007_REQUIRED"}
             and value["restoration"]
-            in {"NOT_NEEDED", "CONTROLLER_HEALTHY_ENGINE_OFF", "INDETERMINATE"}
+            in (
+                {"NOT_NEEDED"}
+                if operation == "observe" and value["state"] == "SCHEMA_0007_REQUIRED"
+                else {"NOT_NEEDED", "INDETERMINATE"}
+                if operation == "observe"
+                else {"NOT_NEEDED", "CONTROLLER_HEALTHY_ENGINE_OFF", "INDETERMINATE"}
+            )
             and value["sender_state"]
             in (
                 {"OFF", "UNVERIFIED"}
-                if operation in {"prepare", "renew", "migrate"}
+                if operation in {"prepare", "renew", "migrate", "observe"}
                 else {"OFF", "VERIFIED", "UNVERIFIED"}
             )
         )

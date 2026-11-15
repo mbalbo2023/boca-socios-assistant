@@ -31,6 +31,8 @@ BrowserKind = Literal["chromium", "firefox", "webkit"]
 EngineCommand = Literal["observe", "prepare_login", "login", "inspect", "close"]
 CloseScope = Literal["session", "activation"]
 ReplyStatus = Literal["OK", "CLOSED", "BUSY", "NO_GO", "TEARDOWN_UNVERIFIED"]
+NavigationPurpose = Literal["SITE_URL", "QUEUE_BRIDGE", "RECEIVED_TARGET"]
+NavigationResult = Literal["STARTED", "RETURNED", "FAILED", "CANCELLED"]
 Scalar = str | int | float | None
 MAX_ENGINE_REQUEST = 33792
 MAX_ENGINE_RESPONSE = 98304
@@ -73,6 +75,69 @@ class EngineIdentity:
 
 
 @dataclass(frozen=True, slots=True, repr=False)
+class NavigationAttempt:
+    """One actual goto attempt; its display URL never carries query credentials."""
+
+    sequence: int
+    purpose: NavigationPurpose
+    display_url: str
+    started_at: datetime
+    result: NavigationResult
+    http_status: int | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.sequence) is not int
+            or not 1 <= self.sequence <= 3
+            or not _one_of(self.purpose, ("SITE_URL", "QUEUE_BRIDGE", "RECEIVED_TARGET"))
+            or not _one_of(self.result, ("STARTED", "RETURNED", "FAILED", "CANCELLED"))
+            or not isinstance(self.started_at, datetime)
+            or self.started_at.utcoffset() is None
+            or (
+                self.http_status is not None
+                and (
+                    self.result != "RETURNED"
+                    or type(self.http_status) is not int
+                    or not 100 <= self.http_status <= 599
+                )
+            )
+        ):
+            raise _invalid()
+        try:
+            if type(self.display_url) is not str:
+                raise ValueError
+            require_site_url(self.display_url)
+        except (ValueError, UnicodeError):
+            raise _invalid() from None
+        object.__setattr__(self, "started_at", self.started_at.astimezone(UTC))
+
+    def __repr__(self) -> str:
+        return "NavigationAttempt(<private values omitted>)"
+
+    def to_value(self) -> dict[str, object]:
+        return {
+            "sequence": self.sequence,
+            "purpose": self.purpose,
+            "display_url": self.display_url,
+            "started_at": self.started_at.isoformat(),
+            "result": self.result,
+            "http_status": self.http_status,
+        }
+
+    @classmethod
+    def from_value(cls, value: object) -> NavigationAttempt:
+        if type(value) is not dict or set(value) != set(cls.__dataclass_fields__):
+            raise _invalid()
+        timestamp = value["started_at"]
+        try:
+            if type(timestamp) is not str:
+                raise ValueError
+            return cls(**{**value, "started_at": datetime.fromisoformat(timestamp)})
+        except (ValueError, UnicodeError, OverflowError):
+            raise _invalid() from None
+
+
+@dataclass(frozen=True, slots=True, repr=False)
 class SessionInspection:
     """Last received sample, not a fresh navigation or evidence of DOM login."""
 
@@ -86,12 +151,25 @@ class SessionInspection:
     context_open: bool = False
     auth_response_received: bool = False
     dom_authentication: Literal["UNVERIFIED"] = "UNVERIFIED"
+    configured_url: str | None = None
+    navigation_attempt: NavigationAttempt | None = None
 
     def __post_init__(self) -> None:
         if (
             type(self.context_open) is not bool
             or type(self.auth_response_received) is not bool
             or self.dom_authentication != "UNVERIFIED"
+        ):
+            raise _invalid()
+        if self.configured_url is not None:
+            try:
+                if type(self.configured_url) is not str:
+                    raise ValueError
+                require_site_url(self.configured_url)
+            except (ValueError, UnicodeError):
+                raise _invalid() from None
+        if self.navigation_attempt is not None and not isinstance(
+            self.navigation_attempt, NavigationAttempt
         ):
             raise _invalid()
         if self.final_url is not None:
@@ -138,17 +216,30 @@ class SessionInspection:
     def to_payload(self) -> bytes:
         value = asdict(self)
         value["observed_at"] = self.observed_at.isoformat() if self.observed_at else None
+        value["navigation_attempt"] = (
+            self.navigation_attempt.to_value() if self.navigation_attempt else None
+        )
         return encode(value, 32768)
 
     @classmethod
     def from_payload(cls, payload: bytes) -> SessionInspection:
-        value = decode(payload, set(cls.__dataclass_fields__), 32768)
+        keys = set(cls.__dataclass_fields__)
+        try:
+            value = decode(payload, keys, 32768)
+        except SyntheticIPCError:
+            # Exactly the former complete shape remains readable. Neither
+            # partial upgrades nor open dictionaries can cross this boundary.
+            value = decode(payload, keys - {"configured_url", "navigation_attempt"}, 32768)
         timestamp = value["observed_at"]
         try:
             if timestamp is not None:
                 if type(timestamp) is not str:
                     raise ValueError
                 value["observed_at"] = datetime.fromisoformat(timestamp)
+            if value.get("navigation_attempt") is not None:
+                value["navigation_attempt"] = NavigationAttempt.from_value(
+                    value["navigation_attempt"]
+                )
             return cls(**value)  # type: ignore[arg-type]
         except (ValueError, UnicodeError, OverflowError):
             raise _invalid() from None

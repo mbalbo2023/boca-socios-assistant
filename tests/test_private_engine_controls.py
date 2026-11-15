@@ -276,3 +276,77 @@ def test_authenticated_legacy_recovery_reuses_stop_and_requires_real_receipt(
         assert wakes == [physical.operation_id, fresh.operation_id]
     finally:
         engines.close()
+
+
+@pytest.mark.parametrize("received", [True, False])
+def test_private_session_detail_separates_configuration_attempt_and_final_sample(
+    tmp_path, monkeypatch, received
+):
+    from datetime import UTC, datetime
+
+    from boca_socios.browser.engine_protocol import (
+        EngineIdentity,
+        NavigationAttempt,
+        SessionInspection,
+    )
+    from boca_socios.browser.queue_page_observation import QueuePageObservation
+    from boca_socios.integration.engine_sessions import PrivateSessionDetails
+
+    app, engines, cookie = panel(tmp_path, monkeypatch)
+    identity = EngineIdentity("queues_tokens", str(uuid4()), 1, str(uuid4()), "chromium")
+    details = PrivateSessionDetails(
+        identity,
+        QueuePageObservation(
+            "UNKNOWN",
+            "EVENT_VERIFIED",
+            "UNKNOWN",
+            "EVENT_ID_OBSERVED",
+            datetime(2026, 11, 15, 16, tzinfo=UTC),
+            event_id="campaign:page-42",
+        )
+        if received
+        else None,
+        SessionInspection(
+            final_url="https://final.example.invalid/prior?final-secret#private",
+            observed_at=datetime(2026, 11, 15, 15, tzinfo=UTC),
+            context_open=False,
+            configured_url="https://site.example.invalid/start",
+            navigation_attempt=NavigationAttempt(
+                2,
+                "QUEUE_BRIDGE",
+                "https://queue.example.invalid/next",
+                datetime(2026, 11, 15, 16, tzinfo=UTC),
+                "FAILED",
+            ),
+        )
+        if received
+        else None,
+        None,
+        "FAILED",
+        "SESSION_FAILED",
+    )
+    monkeypatch.setattr(engines, "private_details", lambda *a, **k: details)
+    code, _, page = _request(app, "/control/sesiones/" + identity.session_id, cookie=cookie)
+    assert code == 200
+    for label in (
+        "ID de evento observado en la página",
+        "URL configurada",
+        "Última navegación intentada",
+        "Última URL final recibida",
+    ):
+        assert label.encode() in page
+    if received:
+        assert b"campaign:page-42" in page
+        assert "ID recibido sin otras señales".encode() in page
+        assert b"https://site.example.invalid/start" in page
+        assert b"https://final.example.invalid/prior" in page
+        assert b"2026-11-15 12:00:00 ART" in page
+        assert b"2026-11-15 13:00:00 ART" in page
+        assert "El intento falló".encode() in page
+        assert "esos datos son históricos".encode() in page
+    else:
+        assert b"Dato no recibido" in page
+        assert b"no hay eventos" not in page
+    assert b"final-secret" not in page and b"configured-secret" not in page
+    assert b'href="https://' not in page
+    assert engines.calls == []
