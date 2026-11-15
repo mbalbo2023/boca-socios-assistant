@@ -1,6 +1,91 @@
 # Estado de integración BETA
 
-## R303 — corrección acotada de STOP, previa a la promoción final
+## R304 — promoción R aceptada; incidente Telegram aún abierto
+
+Base de este candidato e instalación: R `845f31abfb1762dff27e6fc3274fcc40507f3f18`,
+árbol `f360328ed36e4d738a957ae56f40791728ef5cd9`. Integra PR517, PR521 y PR524.
+[CI1270](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43702817262)
+y [Security1089](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43702817215)
+terminaron SUCCESS: 9585 pruebas, 34 subtests, RCA54 con205 selectores ejecutados
+y11 owner-attested. Es evidencia de R, no del nuevo candidato R304.
+
+| Evidencia física | Resultado observado | Alcance |
+| --- | --- | --- |
+| [Migración1150](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43703377474) | SCHEMA_READY, restauración HEALTHY/engine OFF | Sobre el par anterior M, antes de promover R; no repetir |
+| [Release867](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43704139794) | Dos manifiestos exactos verificados | Publicó las imágenes de R una vez |
+| [PAIR1151](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43704466770) y [retained1152](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43704645752) | Observación y enlace verificados | Inventario anterior a APPLY, ya consumido |
+| [APPLY1153](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43704768556) | ACCEPTED; cleanup ACCEPT | R instalada; sin repetir promoción ni limpieza rutinaria |
+| [ADMIN1154](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43705401224) | PROVISIONED; sector_schema2; legacy_writes0 | Telegram ABSENT/NOT_PAIRED/sender ABSENT en ese momento |
+| [STATUS1155](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43705567550) | HEALTHY/STOPPED; worker CREATED/PID0 | Par exacto R/APPLY1153, antes del incidente siguiente |
+| [PREPARE1156](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43705714873) | FAILED_STATE_PRESERVED; restoration INDETERMINATE; sender OFF | No acredita PREPARED, fase causal ni estado final del par |
+| [PAIR1157](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43705926587) | HOST_UNVERIFIED; observer_writes0 | No obtuvo inventario ni permite identificar residuos |
+| [Origin1158](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43706245769) | HEALTH_HTTP_200; OBSERVED_NO_GO; observer_writes0 | Sólo respuesta de salud en8443; identidad/topología sin verificar |
+
+Imágenes de R:
+
+- Controller: `ghcr.io/mbalbo2023/boca-socios-assistant@sha256:9fc622a3a7165ce03d1113b5f7f334d402a0dad0c6cbfe2da28075843d11bea0`.
+- Worker: `ghcr.io/mbalbo2023/boca-socios-assistant-browser@sha256:1a59e0b0cb5eb3621820aed635364076542b691fa6e9c73c0e344f09dacc3abe`.
+- CIDs aceptados por APPLY1153: controller `b0dd0fed57c55dbdeb9a6e833d913cb86c0868ae1587394a934450342114bfa1`; worker `c9c882ff12666fb6cac130879925879cfc0c5c23173a843434adee96b4339dce`.
+
+### Brecha demostrada y diagnóstico R304
+
+El fallo final de restore sobrescribe el resultado previo de prepare. El
+censo normal exige topología operable y no expone inventario si la rechaza.
+Un helper residual es una posibilidad compatible, no una causa observada.
+HTTP200 no demuestra qué proceso responde; UID_DIFFERS_FROM_HOST tampoco
+prueba permisos defectuosos en un daemon rootless. No cambiar chmod/chown.
+
+[Issue525](https://github.com/mbalbo2023/boca-socios-assistant/issues/525) y
+[cuatro votos previos](https://github.com/mbalbo2023/boca-socios-assistant/issues/525#issuecomment-6893438522)
+registran el [plan R304](superpowers/plans/2026-11-15-r304-telegram-incident-observe.md).
+El observador propio usa binding sin censo saludable, las coordenadas fijas
+R/APPLY1153/incidente1156 y dos lecturas acotadas. Distingue perfil discrepante
+completamente observado de adquisición incompleta. No lee secretos ni ejecuta
+lease, SQL, HTTP, exec, restore, cleanup o modificaciones Docker. Conserva
+engine UNVERIFIED y todas las autorizaciones operativas false.
+
+El paquete usa su propio modo y cotas del binding, sin ampliar ni modificar
+el ZIP Telegram o full-cutover. W del nuevo observador puede diferir de R
+instalado. Autor separado, regresiones reales de fronteras sintéticas y cuatro
+GO finales preceden gates de PR/main y un único despacho protegido. No requiere
+release/APPLY nuevos. La evidencia resultante decidirá si corresponde la
+recuperación existente o una corrección específica posterior; no hay retry
+ni borrado autorizados por este diseño.
+
+La revisión operativa del código existente distingue el paso posterior:
+
+| Diagnóstico nuevo | Decisión todavía condicionada |
+| --- | --- |
+| Par exacto, estable, sin helper | Evaluar `telegram-sender-recover` sólo después de verificar binding, topología, perfiles, estado lógico y seguridad de la publicación posterior |
+| Un helper correlacionado, completamente observado | No hay una ruta existente revisada que retire el helper histórico1156; hace falta una propuesta específica sustentada por identidad y alcance de escritura |
+| Adquisición incompleta, deriva, exceso u objeto extraño | Ninguna mutación; resolver la incertidumbre sin retry orientado a obtener un resultado favorable |
+
+`recover_installed_sender` termina en `publish_installed_status`, que usa
+`InstalledMaintenance.call` y crea otro helper. Aun con helper ABSENT no
+corresponde repetir un posible defecto compartido. RECOVERED/OFF tampoco
+equivale a PREPARED. Un perfil coincidente, exit0 o un contenedor detenido
+no autorizan por sí solos el borrado. La causa1156 sigue sin atribución.
+
+### Requisitos funcionales y aceptación
+
+| Requisito del titular | Estado delimitado por R y la evidencia |
+| --- | --- |
+| Dos motores independientes A/B y controles bajo demanda | Código instalado; un worker físico compartido. Aceptación privada posterior al incidente pendiente |
+| Chromium, Firefox, WebKit y50 sesiones | Presupuesto global lógico50; default A25/B25,30/10/10 por familia en total. No prueba50 procesos, posiciones de cola ni capacidad física |
+| URLs, evento/motivo y actividad | Monitor R301 instalado: configuración, último goto iniciado y última URL final separados; sólo datos recibidos, con hora. Sin inferir éxito de RETURNED |
+| Tokens y números de cola | Polling de metadatos y filas, revelación/copia privada explícita; sin secreto en polling automático. Cola/posición/ETA únicamente recibidos |
+| Telegram configurable | Prepare1156 no aceptado. Emparejamiento/carga del recibo existen en código; campos habilitados y recepción privada sin certificar. Instagram ID no es requisito del flujo Telegram |
+| Inicio autenticado por DOM y reserva confirmada | No certificados ni completados por este diagnóstico. Tokens o detección de evento no equivalen a entrada |
+| Ganador, cancelación de hermanos y comprobante/foto por socio | Integración de resultado real y entrega exclusiva aún pendiente; no afirmar sendPhoto ni destinatario individual implementados |
+| Cuenta regresiva al inicio de la cola | Distinta del ETA recibido; no acreditada |
+| Capturas y prueba visual | Artefactos tablet/móvil CI1270 son OFFLINE_SYNTHETIC_ENGINE_UI, network none, host false. Las capturas de Actions prueban recibos, no la UI privada |
+
+SIMULATION_ONLY y sender OFF; sin navegación de agentes a proveedores,
+reservas, compras o mensajes. Datos, claves, passkeys, volúmenes, caps y BLACKBOX
+se preservan; Porota/PPI quedan fuera. Todo host por Actions Boca serializadas.
+**No hay cierre técnico ni funcional total después de1156.**
+
+## Histórico R303 — corrección acotada de STOP, previa a la promoción final
 
 Main Q `7112a4878097bc1696a60a7b1056cd1e7b559ce5` integra PR521; árbol
 `3e328752468895f7c712a9ec9f7630e47e585b91`. [CI1268](https://github.com/mbalbo2023/boca-socios-assistant/actions/runs/43699456830)

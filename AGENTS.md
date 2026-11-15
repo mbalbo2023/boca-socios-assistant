@@ -1,6 +1,30 @@
 # Binding instructions for every coding agent
 
-## Estado vigente R303 — ACK de STOP Telegram, issue524
+## Estado vigente R304 — diagnóstico readonly de Telegram, issue525
+
+R `845f31abfb1762dff27e6fc3274fcc40507f3f18` está instalado por release867 /
+APPLY1153 ACCEPTED y cleanup ACCEPT. ADMIN1154 PROVISIONED y STATUS1155
+HEALTHY/STOPPED preceden al incidente; no certifican el estado posterior.
+PREPARE1156 devolvió FAILED_STATE_PRESERVED/restoration INDETERMINATE/sender OFF.
+PAIR1157 no obtuvo inventario. Origin1158 sólo confirmó HTTP200 de loopback:
+ni identidad de proceso ni causa; UID distinto no prueba fallo de permisos.
+
+Issue525 y el plan R304 registran antes del código un observador propio,
+sin efectos, con coordenadas fijas R/APPLY1153/incidente1156, doble lectura
+acotada y razones finitas. Cuatro votos de diseño sobre su hash preceden al
+autor separado. Éste sólo edita sus siete archivos; raíz posee docs/RCA/host.
+No cambiar censo, healthy, backend, atestadores, caps ni paquetes históricos.
+No lease, SQL, custodia, HTTP, exec ni mutaciones Docker. Preservar todos los
+datos y helpers inciertos; no atribuir causa histórica sin evidencia.
+
+Cuatro revisiones finales, CI del candidato/main y reconciliación preceden
+un único despacho del observador por la Action protegida. W del diagnóstico
+puede diferir de R instalado. No requiere release ni APPLY; no repetir prepare,
+recuperar o limpiar antes del diagnóstico y decisión específica posterior.
+SIMULATION_ONLY, BLACKBOX unread/unmodified, Telegram sender OFF y aislamiento
+Porota/PPI siguen vigentes. La aceptación funcional y privada sigue abierta.
+
+## Histórico R303 — ACK de STOP Telegram, issue524
 
 PR521 está merged en Q `7112a4878097bc1696a60a7b1056cd1e7b559ce5`,
 árbol `3e328752468895f7c712a9ec9f7630e47e585b91`, CI1268/Security1088 GREEN.

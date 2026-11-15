@@ -702,6 +702,23 @@
         "tests/test_r296_telegram_maintenance.py::test_r303_uncertain_helper_identity_forbids_stop_and_removal",
         "tests/test_r296_telegram_maintenance.py::test_r303_uncertain_writer_stop_ack_blocks_backend_restore"
       ]
+    },
+    {
+      "id": "RCA-525",
+      "issue": 525,
+      "fix_pr": 525,
+      "root_cause": "prepare1156 reported restoration INDETERMINATE and pair1157 exposed no inventory. The normal pair observer requires an operable topology, while backend tests mock restoration. These contracts leave no bounded diagnostic of the current helper/profile state; the physical cause remains unproven.",
+      "prevention": "Use a fixed-incident read-only observer independent of healthy topology. Compare two bounded real snapshots, expose only finite profile reasons, and reject incomplete/drifting acquisition. Exercise selection, command construction and isolated ZIP CLI with only external I/O mocked.",
+      "regression_tests": [
+        "tests/test_r304_telegram_incident_readonly.py::test_incident_distinct_workflow_binding_and_incomplete_boundary",
+        "tests/test_r304_telegram_incident_readonly.py::test_incident_independent_census_and_stable_absence",
+        "tests/test_r304_telegram_incident_readonly.py::test_incident_ambiguity_incomplete_and_drift_never_succeed",
+        "tests/test_r304_telegram_incident_readonly.py::test_incident_complete_mismatch_has_finite_caps_diagnostic",
+        "tests/test_r304_telegram_incident_readonly.py::test_incident_unknown_operation_has_no_assumed_uid_or_mount_profile",
+        "tests/test_r304_telegram_incident_readonly.py::test_incident_commands_and_strict_receipt_exclude_secret_fields",
+        "tests/test_r304_telegram_incident_bundle.py::test_incident_bundle_exclusive_bounds_and_exact_closure",
+        "tests/test_r304_telegram_incident_workflow.py::test_incident_workflow_fixed_admission_and_isolated_verifier"
+      ]
     }
   ]
 }

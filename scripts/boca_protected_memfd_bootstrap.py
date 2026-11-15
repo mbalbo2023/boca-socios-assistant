@@ -156,6 +156,12 @@ BINDING_ENTRIES = (
         "boca_socios/host_boca_binding_observe.py",
     }
 )
+TELEGRAM_INCIDENT_ENTRIES = BINDING_ENTRIES | {
+    "boca_socios/host_telegram_incident_readonly.py",
+    "boca_socios/telegram_maintenance_contract.py",
+}
+TELEGRAM_INCIDENT_MAX_ZIP = 320_000
+TELEGRAM_INCIDENT_MAX_UNCOMPRESSED = 900_000
 CURRENT_RETAINED_ENTRIES = (
     BINDING_ENTRIES
     | POSTCOMMIT_ENTRIES
@@ -378,6 +384,7 @@ def verify(
     postcommit_finalize: bool = False,
     precommit_restore: bool = False,
     telegram_installed: bool = False,
+    telegram_incident_observe: bool = False,
 ) -> None:
     """Verify digest, exact transport variant, file types and separate bounds."""
     if (
@@ -400,13 +407,16 @@ def verify(
                 postcommit_finalize,
                 precommit_restore,
                 telegram_installed,
+                telegram_incident_observe,
             )
         )
         > 1
     ):
         raise ValueError("protected Boca bundle modes must be exclusive")
     max_zip = (
-        TELEGRAM_MAX_ZIP
+        TELEGRAM_INCIDENT_MAX_ZIP
+        if telegram_incident_observe
+        else TELEGRAM_MAX_ZIP
         if telegram_installed
         else BINDING_MAX_ZIP
         if current_retained_observe or installed_admin
@@ -441,7 +451,9 @@ def verify(
         else MAX_ZIP
     )
     max_uncompressed = (
-        TELEGRAM_MAX_UNCOMPRESSED
+        TELEGRAM_INCIDENT_MAX_UNCOMPRESSED
+        if telegram_incident_observe
+        else TELEGRAM_MAX_UNCOMPRESSED
         if telegram_installed
         else BINDING_MAX_UNCOMPRESSED
         if current_retained_observe or installed_admin
@@ -483,7 +495,9 @@ def verify(
         entries = package.infolist()
         names = [entry.filename for entry in entries]
         allowlisted = (
-            (TELEGRAM_INSTALLED_ENTRIES,)
+            (TELEGRAM_INCIDENT_ENTRIES,)
+            if telegram_incident_observe
+            else (TELEGRAM_INSTALLED_ENTRIES,)
             if telegram_installed
             else (INSTALLED_ADMIN_ENTRIES,)
             if installed_admin
@@ -560,6 +574,7 @@ def main() -> int:
             "cutover-worker-827-recover",
             "cutover-worker-834-recover",
         }
+        telegram_incident_observe = sys.argv[2] == "boca-telegram-incident-observe"
         telegram_installed = sys.argv[2] in {
             "telegram-schema-observe",
             "telegram-migrate",
@@ -594,6 +609,12 @@ def main() -> int:
             raise ValueError("incident operation requires five exact coordinates")
         if sys.argv[2] == "cutover-image-finish-916" and len(sys.argv) != 10:
             raise ValueError("image finish requires the observed run and plan digest")
+        if telegram_incident_observe and (
+            len(sys.argv) != 5
+            or re.fullmatch(r"[1-9][0-9]{0,19}", sys.argv[3]) is None
+            or re.fullmatch(r"[a-f0-9]{40}", sys.argv[4]) is None
+        ):
+            raise ValueError("incident observer requires exact observation run and workflow SHA")
         if telegram_installed and (
             len(sys.argv) != 6
             or re.fullmatch(r"[a-f0-9]{40}", sys.argv[3]) is None
@@ -638,7 +659,9 @@ def main() -> int:
         if precommit_restore and len(sys.argv) != 4:
             raise ValueError("precommit recovery requires only fresh authenticated run ID")
         bound = (
-            TELEGRAM_MAX_ZIP
+            TELEGRAM_INCIDENT_MAX_ZIP
+            if telegram_incident_observe
+            else TELEGRAM_MAX_ZIP
             if telegram_installed
             else BINDING_MAX_ZIP
             if current_retained_observe or installed_admin
@@ -693,6 +716,7 @@ def main() -> int:
             postcommit_finalize=postcommit_finalize,
             precommit_restore=precommit_restore,
             telegram_installed=telegram_installed,
+            telegram_incident_observe=telegram_incident_observe,
         )
         # The memfd is passed to the *same* process via exec. No temporary
         # container, host file or broader Docker resource is ever created.

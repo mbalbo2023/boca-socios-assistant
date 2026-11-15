@@ -203,6 +203,20 @@ BINDING_MAIN = (
     "from boca_socios.host_boca_binding_observe import main as binding\n"
     "raise SystemExit(binding(['host',sys.argv[2]]))\n"
 ).encode("ascii")
+TELEGRAM_INCIDENT_SOURCES = (
+    *BINDING_SOURCES,
+    "src/boca_socios/telegram_maintenance_contract.py",
+    "src/boca_socios/host_telegram_incident_readonly.py",
+)
+TELEGRAM_INCIDENT_MAIN = (
+    "import sys\n"
+    "if len(sys.argv) != 4 or sys.argv[1] != 'boca-telegram-incident-observe':\n"
+    "    raise SystemExit(3)\n"
+    "from boca_socios.host_telegram_incident_readonly import main\n"
+    "raise SystemExit(main(['host',sys.argv[2],sys.argv[3]]))\n"
+).encode("ascii")
+TELEGRAM_INCIDENT_MAX_SOURCE_BYTES = 900_000
+TELEGRAM_INCIDENT_MAX_ARCHIVE_BYTES = 320_000
 CURRENT_RETAINED_SOURCES = tuple(
     dict.fromkeys(
         (*BINDING_SOURCES, *RETAINED_SOURCES, "src/boca_socios/host_boca_current_retained.py")
@@ -557,6 +571,7 @@ def build(
     pair_upgrade_release_dir: Path | None = None,
     postcommit_finalize: bool = False,
     precommit_restore: bool = False,
+    telegram_incident_observe: bool = False,
 ) -> str:
     """Write one deterministic, explicitly allowlisted runner-only archive."""
     if (
@@ -578,6 +593,7 @@ def build(
                 rootless_mapped_observe,
                 postcommit_finalize,
                 precommit_restore,
+                telegram_incident_observe,
             )
         )
         > 1
@@ -589,7 +605,14 @@ def build(
     # avoids mypy no-redef errors from annotations repeated in each branch.
     files: dict[str, bytes]
     sources: tuple[str, ...]
-    if precommit_restore:
+    if telegram_incident_observe:
+        files = {"__main__.py": TELEGRAM_INCIDENT_MAIN, **HOST_ONLY_INIT}
+        sources = TELEGRAM_INCIDENT_SOURCES
+        max_source = TELEGRAM_INCIDENT_MAX_SOURCE_BYTES
+        max_archive = TELEGRAM_INCIDENT_MAX_ARCHIVE_BYTES
+        if (root / "src/boca_socios/host_telegram_incident_readonly.py").stat().st_size > 24_000:
+            raise ValueError("incident observer source exceeds reviewed bound")
+    elif precommit_restore:
         files = {"__main__.py": PRECOMMIT_RESTORE_MAIN, **HOST_ONLY_INIT}
         sources = PRECOMMIT_RESTORE_SOURCES
         max_source = POSTCOMMIT_FINALIZE_MAX_SOURCE_BYTES
@@ -813,6 +836,7 @@ def build(
             rootless_mapped_observe,
             postcommit_finalize,
             precommit_restore,
+            telegram_incident_observe,
         )
     )
     for rel in sources:
@@ -921,6 +945,7 @@ def main() -> int:
     variant.add_argument("--current-retained-observe", action="store_true")
     variant.add_argument("--installed-admin", action="store_true")
     variant.add_argument("--binding-observe", action="store_true")
+    variant.add_argument("--telegram-incident-observe", action="store_true")
     variant.add_argument("--sqlite-observe", action="store_true")
     variant.add_argument("--pair-upgrade", action="store_true")
     variant.add_argument("--rootless-mapped-observe", action="store_true")
@@ -932,7 +957,7 @@ def main() -> int:
     args = parser.parse_args()
     print(
         "BOCA_PROTECTED_BUNDLE sha256="
-        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, retained_observe=args.retained_observe, current_retained_observe=args.current_retained_observe, installed_admin=args.installed_admin, binding_observe=args.binding_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, rootless_mapped_observe=args.rootless_mapped_observe, pair_upgrade_release_dir=args.pair_upgrade_release_dir, postcommit_finalize=args.postcommit_finalize, precommit_restore=args.precommit_restore)}"
+        f"{build(args.repository_root, args.runner_target, worker_recovery=args.worker_recovery, worker_preflight=args.worker_preflight, worker_w1=args.worker_w1, worker_physical=args.worker_physical, census=args.census, pair_observe=args.pair_observe, postcommit_observe=args.postcommit_observe, retained_observe=args.retained_observe, current_retained_observe=args.current_retained_observe, installed_admin=args.installed_admin, binding_observe=args.binding_observe, telegram_incident_observe=args.telegram_incident_observe, sqlite_observe=args.sqlite_observe, pair_upgrade=args.pair_upgrade, rootless_mapped_observe=args.rootless_mapped_observe, pair_upgrade_release_dir=args.pair_upgrade_release_dir, postcommit_finalize=args.postcommit_finalize, precommit_restore=args.precommit_restore)}"
     )
     return 0
 
