@@ -87,7 +87,7 @@ MAIN = (
     "print('BOCA_TELEGRAM_HOST state=CODE_ONLY_CLOSURE_READY host=untouched sender=OFF')\n"
 ).encode("ascii")
 MAX_SOURCE_BYTES = 450_000
-MAX_INSTALLED_SOURCE_BYTES = 500_000
+MAX_INSTALLED_SOURCE_BYTES = 512_000
 MAX_ARCHIVE_BYTES = 300_000
 NETWORK_PROJECTION_NAME = "boca_socios/host_first_deploy.py"
 CLEANUP_PROJECTION_NAME = "boca_socios/host_boca_cleanup.py"

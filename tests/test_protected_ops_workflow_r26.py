@@ -130,7 +130,7 @@ def test_exact_id_host_effect_is_single_ssh_with_terminal_ack_guard() -> None:
 def test_installed_telegram_has_one_lease_route_and_no_legacy_daemon_steps() -> None:
     workflow = _workflow()
     assert (
-        "telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender|telegram-prepare-diagnose)"
+        "telegram-prepare|telegram-activate|telegram-sender-recover|telegram-renew-stage|telegram-complete-sender|telegram-prepare-diagnose|telegram-public-boundary-observe)"
         in workflow
     )
     installed = _step("Execute installed Telegram transaction under one protected lease")
