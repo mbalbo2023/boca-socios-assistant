@@ -29,6 +29,7 @@ def test_parent_invalid_never_attempts_either_leaf(tmp_path, monkeypatch):
     value = _sample(fs, monkeypatch)
     assert value["parent"]["state"] == "INVALID"
     assert value["parent"]["checks"]["mode"] == "FAIL"
+    assert value["parent"]["mode_octal"] == "0755"
     assert {value[name]["state"] for name in ("recipient", "admin")} == {"NOT_ATTEMPTED"}
     assert fs.opens == ["/"]
 
@@ -39,6 +40,8 @@ def test_parent_absent_still_skips_leaves_without_false_leaf_absence(tmp_path, m
     value = _sample(fs, monkeypatch)
     assert value["parent"]["state"] == "ABSENT"
     assert value["parent"]["witness"] is None
+    assert value["parent"]["mode_octal"] is None
+    assert value["parent"]["controller_search"] == "NOT_READ"
     assert value["recipient"]["state"] == value["admin"]["state"] == "NOT_ATTEMPTED"
     assert fs.opens == ["/"]
 
@@ -49,6 +52,7 @@ def test_valid_metadata_does_not_claim_valid_parsing(tmp_path, monkeypatch):
     fs.write(ADMIN, b"secret-invalid-json", mode=0o600)
     value = _sample(fs, monkeypatch)
     assert value["parent"]["state"] == "VALID"
+    assert value["parent"]["mode_octal"] == "0700"
     for name in ("recipient", "admin"):
         assert value[name]["state"] == "METADATA_VALID_PARSE_UNVERIFIED"
         assert set(value[name]["checks"].values()) == {"PASS"}
@@ -124,6 +128,8 @@ def test_fd_and_name_parent_mismatch_aborts_leaf(tmp_path, monkeypatch):
     fs.open_fault = mutate_on_directory_open
     value = _sample(fs, monkeypatch)
     assert value["parent"]["state"] == "CHANGED"
+    assert value["parent"]["mode_octal"] is None
+    assert value["parent"]["controller_search"] == "NOT_READ"
     assert value["recipient"]["state"] == "NOT_ATTEMPTED"
 
 
@@ -161,3 +167,101 @@ def test_no_private_io_expressions_in_literal():
     ):
         assert forbidden not in program
     assert "'data'" in program and "follow_symlinks=False" in program
+
+
+@pytest.mark.parametrize(
+    "mode,search_ok,supported,expected",
+    [
+        (0o700, True, True, "PASS"),
+        (0o755, True, True, "PASS"),
+        (0o755, False, True, "FAIL"),
+        (0o755, True, False, "NOT_READ"),
+    ],
+)
+def test_r313_effective_search_is_literal_root_fd_and_supported_only(
+    tmp_path, monkeypatch, mode, search_ok, supported, expected
+):
+    fs = ProgramFS(tmp_path)
+    fs.data.chmod(mode)
+    calls = []
+
+    def access(name, requested, *, dir_fd=None, effective_ids=False, follow_symlinks=True):
+        calls.append((name, requested, dir_fd, effective_ids, follow_symlinks))
+        return search_ok
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(os, "access", access)
+        for marker in ("supports_dir_fd", "supports_effective_ids", "supports_follow_symlinks"):
+            items = set(getattr(os, marker))
+            if supported:
+                items.add(access)
+            scoped.setattr(os, marker, items)
+        value = _sample(fs, scoped)
+    parent = value["parent"]
+    assert parent["mode_octal"] == f"{mode:04o}"
+    assert parent["checks"]["mode"] == ("PASS" if mode == 0o700 else "FAIL")
+    assert parent["controller_search"] == expected
+    if supported:
+        assert len(calls) == 1
+        assert calls[0][0:2] == ("data", os.X_OK)
+        assert isinstance(calls[0][2], int)
+        assert calls[0][3:] == (True, False)
+    else:
+        assert calls == []
+    if mode != 0o700:
+        assert parent["state"] == "INVALID"
+        assert value["recipient"]["state"] == "NOT_ATTEMPTED"
+
+
+def test_r313_symlink_parent_never_tests_search_or_leaves(tmp_path, monkeypatch):
+    fs = ProgramFS(tmp_path)
+    fs.data.rmdir()
+    fs.data.symlink_to("another")
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("ineligible parent must not test search")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(os, "access", forbidden)
+        value = _sample(fs, scoped)
+    assert value["parent"]["checks"]["type"] == "FAIL"
+    assert value["parent"]["controller_search"] == "NOT_READ"
+    assert value["recipient"]["state"] == value["admin"]["state"] == "NOT_ATTEMPTED"
+
+
+@pytest.mark.parametrize(
+    "missing_capability",
+    ["supports_dir_fd", "supports_effective_ids", "supports_follow_symlinks"],
+)
+def test_r313_each_missing_access_capability_is_not_read(tmp_path, monkeypatch, missing_capability):
+    fs = ProgramFS(tmp_path)
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("unsupported access must not be invoked")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(os, "access", forbidden)
+        for name in ("supports_dir_fd", "supports_effective_ids", "supports_follow_symlinks"):
+            supported = set(getattr(os, name))
+            if name != missing_capability:
+                supported.add(forbidden)
+            scoped.setattr(os, name, supported)
+        value = _sample(fs, scoped)
+    assert value["parent"]["mode_octal"] == "0700"
+    assert value["parent"]["controller_search"] == "NOT_READ"
+
+
+def test_r313_access_error_is_not_read_without_leaf_reads(tmp_path, monkeypatch):
+    fs = ProgramFS(tmp_path)
+
+    def broken(*_args, **_kwargs):
+        raise OSError(errno.EACCES, "access denied")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(os, "access", broken)
+        for name in ("supports_dir_fd", "supports_effective_ids", "supports_follow_symlinks"):
+            scoped.setattr(os, name, set(getattr(os, name)) | {broken})
+        value = _sample(fs, scoped)
+    assert value["parent"]["state"] == "VALID"
+    assert value["parent"]["controller_search"] == "NOT_READ"
+    assert PUBLIC not in fs.opens and ADMIN not in fs.opens

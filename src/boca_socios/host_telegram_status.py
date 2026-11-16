@@ -145,7 +145,10 @@ def digest(*values):
 
 def empty(kind,state):
     keys=('type','mode','owner') if kind=='parent' else ('type','mode','owner','nlink','size')
-    return {'state':state,'checks':dict.fromkeys(keys,'NOT_READ'),'witness':None}
+    value={'state':state,'checks':dict.fromkeys(keys,'NOT_READ'),'witness':None}
+    if kind=='parent':
+        value.update(mode_octal=None,controller_search='NOT_READ')
+    return value
 
 def changed(kind):
     return empty(kind,'CHANGED')
@@ -200,8 +203,19 @@ def observe():
             return result
         before=identity(metadata)
         checks=flags(metadata,0o700,'parent')
-        result['parent']={'state':'VALID' if all(v=='PASS' for v in checks.values()) else 'INVALID',
-                          'checks':checks,'witness':digest(before)}
+        result['parent']=empty('parent','VALID' if all(v=='PASS' for v in checks.values()) else 'INVALID')
+        result['parent'].update(checks=checks,witness=digest(before),
+                                mode_octal=f'{stat.S_IMODE(metadata.st_mode):04o}')
+        if checks['type']==checks['owner']=='PASS':
+            try:
+                if (os.access in os.supports_dir_fd and
+                        os.access in os.supports_effective_ids and
+                        os.access in os.supports_follow_symlinks):
+                    permitted=os.access('data',os.X_OK,dir_fd=root,effective_ids=True,
+                                        follow_symlinks=False)
+                    result['parent']['controller_search']='PASS' if permitted else 'FAIL'
+            except (OSError,TypeError,ValueError,NotImplementedError,AttributeError):
+                pass
         if result['parent']['state']!='VALID':
             if identity(os.stat('data',dir_fd=root,follow_symlinks=False))!=before:
                 result['parent']=changed('parent')
@@ -239,24 +253,28 @@ sys.stdout.buffer.write(json.dumps(observe(),sort_keys=True,separators=(',',':')
                                    ensure_ascii=True).encode('ascii'))
 """
 
-BOUNDARY_PREFIX = b"BOCA_TELEGRAM_PUBLIC_BOUNDARY_V1 "
+BOUNDARY_PREFIX_V1 = b"BOCA_TELEGRAM_PUBLIC_BOUNDARY_V1 "
+BOUNDARY_PREFIX = b"BOCA_TELEGRAM_PUBLIC_BOUNDARY_V2 "
 BOUNDARY_OPERATION = "telegram-public-boundary-observe"
 
 
-def _boundary_empty(kind: str, state: str = "NOT_READ") -> dict[str, Any]:
+def _boundary_empty(kind: str, state: str = "NOT_READ", *, version: int = 2) -> dict[str, Any]:
     names = (
         ("type", "mode", "owner")
         if kind == "parent"
         else ("type", "mode", "owner", "nlink", "size")
     )
-    return {"state": state, "checks": dict.fromkeys(names, "NOT_READ"), "witness": None}
+    value = {"state": state, "checks": dict.fromkeys(names, "NOT_READ"), "witness": None}
+    if kind == "parent" and version == 2:
+        value.update(mode_octal=None, controller_search="NOT_READ")
+    return value
 
 
-def _boundary_initial(attempt_id: str, workflow_sha: str) -> dict[str, Any]:
+def _boundary_initial(attempt_id: str, workflow_sha: str, *, version: int = 2) -> dict[str, Any]:
     from boca_socios import host_telegram_backend as prior
 
     return {
-        "version": 1,
+        "version": version,
         "operation": BOUNDARY_OPERATION,
         "source_sha": prior.DIAGNOSIS_SOURCE,
         "workflow_source_sha": workflow_sha,
@@ -270,7 +288,7 @@ def _boundary_initial(attempt_id: str, workflow_sha: str) -> dict[str, Any]:
         "guards": "NOT_READ",
         "samples": 0,
         "binding_fingerprint": None,
-        "parent": _boundary_empty("parent"),
+        "parent": _boundary_empty("parent", version=version),
         "recipient": _boundary_empty("leaf", "NOT_ATTEMPTED"),
         "admin": _boundary_empty("leaf", "NOT_ATTEMPTED"),
         "engine": "NOT_READ",
@@ -292,12 +310,13 @@ def _boundary_initial(attempt_id: str, workflow_sha: str) -> dict[str, Any]:
     }
 
 
-def _boundary_check_sample(sample: Any) -> None:
+def _boundary_check_sample(sample: Any, *, version: int = 2) -> None:
     if type(sample) is not dict or set(sample) != {"parent", "recipient", "admin"}:
         raise ValueError("boundary_sample")
     for name, item in sample.items():
         kind = "parent" if name == "parent" else "leaf"
-        keys = set(_boundary_empty(kind)["checks"])
+        expected = _boundary_empty(kind, version=version)
+        keys = set(expected["checks"])
         states = (
             {"VALID", "INVALID", "ABSENT", "NOT_READ", "CHANGED"}
             if kind == "parent"
@@ -312,7 +331,7 @@ def _boundary_check_sample(sample: Any) -> None:
         )
         if (
             type(item) is not dict
-            or set(item) != {"state", "checks", "witness"}
+            or set(item) != set(expected)
             or item["state"] not in states
             or type(item["checks"]) is not dict
             or set(item["checks"]) != keys
@@ -326,6 +345,23 @@ def _boundary_check_sample(sample: Any) -> None:
             )
         ):
             raise ValueError("boundary_sample")
+        if kind == "parent" and version == 2:
+            octal, search = item["mode_octal"], item["controller_search"]
+            if search not in {"PASS", "FAIL", "NOT_READ"}:
+                raise ValueError("boundary_search")
+            if item["state"] in {"VALID", "INVALID"}:
+                if (
+                    type(octal) is not str
+                    or re.fullmatch(r"[0-7]{4}", octal) is None
+                    or (octal == "0700") != (item["checks"]["mode"] == "PASS")
+                    or (
+                        search != "NOT_READ"
+                        and (item["checks"]["type"] != "PASS" or item["checks"]["owner"] != "PASS")
+                    )
+                ):
+                    raise ValueError("boundary_mode")
+            elif octal is not None or search != "NOT_READ":
+                raise ValueError("boundary_unread")
         checked = list(item["checks"].values())
         if item["state"] in {"VALID", "METADATA_VALID_PARSE_UNVERIFIED"}:
             valid = all(x == "PASS" for x in checked) and item["witness"] is not None
@@ -357,15 +393,19 @@ def verify_public_boundary(
     source_sha: str,
     workflow_sha: str,
     allow_failure: bool = False,
+    version: int = 2,
 ) -> dict[str, Any]:
     """Strictly typed receipt distinct from the R309 diagnostic and V1 backend."""
     try:
         from boca_socios import host_telegram_backend as prior
 
+        prefix = BOUNDARY_PREFIX_V1 if version == 1 else BOUNDARY_PREFIX
         if (
-            type(raw) is not bytes
+            type(version) is not int
+            or version not in {1, 2}
+            or type(raw) is not bytes
             or not 0 < len(raw) <= 4096
-            or not raw.startswith(BOUNDARY_PREFIX)
+            or not raw.startswith(prefix)
             or not raw.endswith(b"\n")
             or source_sha != prior.DIAGNOSIS_SOURCE
             or re.fullmatch(r"[a-f0-9]{40}", workflow_sha) is None
@@ -373,53 +413,28 @@ def verify_public_boundary(
             or type(allow_failure) is not bool
         ):
             raise ValueError("frame")
-        value = json.loads(raw[len(BOUNDARY_PREFIX) : -1], object_pairs_hook=bootstrap._unique)
-        initial = _boundary_initial(attempt_id, workflow_sha)
+        value = json.loads(raw[len(prefix) : -1], object_pairs_hook=bootstrap._unique)
+        initial = _boundary_initial(attempt_id, workflow_sha, version=version)
         if (
             type(value) is not dict
             or set(value) != set(initial)
-            or raw != BOUNDARY_PREFIX + bootstrap._canonical(value) + b"\n"
-            or type(value["version"]) is not int
+            or raw != prefix + bootstrap._canonical(value) + b"\n"
             or any(
-                type(value[key]) is not bool
-                for key in (
-                    "helper_created",
-                    "pair_restarted",
-                    "prepare_authorized",
-                    "adopt_authorized",
-                    "repair_authorized",
-                )
-            )
-            or any(
-                type(value[key]) is not int
-                for key in ("data_writes", "custody_writes", "status_writes")
-            )
-            or any(
-                value[key] != initial[key]
-                for key in (
-                    "version",
-                    "operation",
-                    "source_sha",
-                    "workflow_source_sha",
-                    "attempt_id",
-                    "installation_run_id",
-                    "controller_id",
-                    "worker_id",
-                    "helper_created",
-                    "helper_retirement",
-                    "pair_restarted",
-                    "prepare_authorized",
-                    "adopt_authorized",
-                    "repair_authorized",
-                    "data_writes",
-                    "custody_writes",
-                    "status_writes",
-                    "parse",
-                    "custody",
-                    "stage",
-                    "historical_cause",
-                    "recommendation",
-                )
+                type(value[key]) is not type(initial[key]) or value[key] != initial[key]
+                for key in set(initial)
+                - {
+                    "state",
+                    "phase",
+                    "reason",
+                    "guards",
+                    "samples",
+                    "binding_fingerprint",
+                    "parent",
+                    "recipient",
+                    "admin",
+                    "engine",
+                    "sender",
+                }
             )
             or value["state"] not in {"OBSERVED_NO_GO", "INCOMPLETE_NO_GO"}
             or value["phase"]
@@ -448,7 +463,9 @@ def verify_public_boundary(
             or (value["guards"] == "NOT_READ") != (value["binding_fingerprint"] is None)
         ):
             raise ValueError("fields")
-        _boundary_check_sample({name: value[name] for name in ("parent", "recipient", "admin")})
+        _boundary_check_sample(
+            {name: value[name] for name in ("parent", "recipient", "admin")}, version=version
+        )
         if value["state"] == "OBSERVED_NO_GO":
             if (
                 value["phase"] != "COMPLETE"
@@ -458,6 +475,12 @@ def verify_public_boundary(
                 or value["engine"] != "STOPPED"
                 or value["sender"] != "ABSENT"
                 or value["parent"]["state"] in {"NOT_READ", "CHANGED"}
+                or (
+                    version == 2
+                    and value["parent"]["checks"]["type"] == "PASS"
+                    and value["parent"]["checks"]["owner"] == "PASS"
+                    and value["parent"]["controller_search"] == "NOT_READ"
+                )
                 or any(
                     value[name]["state"] in {"NOT_READ", "CHANGED"}
                     for name in ("recipient", "admin")
@@ -472,13 +495,19 @@ def verify_public_boundary(
 
 
 def _boundary_frame(value: dict[str, Any]) -> bytes:
-    raw = BOUNDARY_PREFIX + bootstrap._canonical(value) + b"\n"
+    version = value["version"]
+    raw = (
+        (BOUNDARY_PREFIX_V1 if version == 1 else BOUNDARY_PREFIX)
+        + bootstrap._canonical(value)
+        + b"\n"
+    )
     verify_public_boundary(
         raw,
         attempt_id=value["attempt_id"],
         source_sha=value["source_sha"],
         workflow_sha=value["workflow_source_sha"],
         allow_failure=True,
+        version=version,
     )
     return raw
 
@@ -559,9 +588,13 @@ def diagnose_public_boundary(
         prior._diagnosis_guard(context)
         value["guards"] = "BEFORE_AFTER"
         states = {value[name]["state"] for name in before}
-        if "CHANGED" in states or any(value[name]["state"] == "CHANGED" for name in before):
+        if "CHANGED" in states:
             value.update(phase="PUBLIC_B", reason="PUBLIC_CHANGED")
-        elif "NOT_READ" in states:
+        elif "NOT_READ" in states or (
+            value["parent"]["checks"]["type"] == "PASS"
+            and value["parent"]["checks"]["owner"] == "PASS"
+            and value["parent"]["controller_search"] == "NOT_READ"
+        ):
             value.update(phase="PUBLIC_B", reason="PUBLIC_UNVERIFIED")
         else:
             value.update(state="OBSERVED_NO_GO", phase="COMPLETE", reason="NONE")
