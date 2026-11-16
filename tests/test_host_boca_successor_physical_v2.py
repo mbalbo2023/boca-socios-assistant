@@ -30,7 +30,7 @@ from boca_socios.host_boca_pair_stage import PairSources
 from boca_socios.host_lifecycle_rootless_adapter import ReviewedInstalledPair
 from boca_socios.host_on_demand_lifecycle import OnDemandInstallation
 from test_host_boca_successor_integrations import _inputs_with_proofs
-from test_host_boca_upgrade_adapters import EGRESS, IPC, SITE, RetainedIO
+from test_host_boca_upgrade_adapters import EGRESS, IPC, SITE, RetainedIO, telegram_volume
 
 _BOUND = bound_bridge.verify_runner_bound_host_inputs(**_inputs_with_proofs(step=2))
 
@@ -180,6 +180,19 @@ def test_successor_current_pair_accepts_b_to_c_without_falsifying_original_r188_
     assert witness.old_source_sha == bound.plan.old_source_sha
     assert witness.retained == bound.custody.resources
     assert witness.observation_run_id == bound.plan.observation_run_id
+
+
+def test_successor_current_pair_capture_accepts_unmounted_installed_telegram_volume(
+    held_lease: cleanup.BocaJobLease,
+) -> None:
+    bound = _bound()
+    capturer = _read_capturer(bound)
+    assert isinstance(capturer.retained_io, RetainedIO)
+    io = capturer.retained_io
+    io.value = replace(io.value, volumes=(*io.value.volumes, telegram_volume()))
+    witness = capturer(bound.plan, held_lease)
+    assert witness.retained == bound.custody.resources
+    assert all("boca-socios_boca_telegram" not in c.volumes for c in io.value.containers)
 
 
 @pytest.mark.parametrize(
