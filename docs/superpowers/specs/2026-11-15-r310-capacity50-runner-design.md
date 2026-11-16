@@ -25,4 +25,3 @@ SIMULATION_ONLY, senderOFF, datos/passkeys y otros proyectos protegidos. La falt
 
 
 [Cuatro votos previos](https://github.com/mbalbo2023/boca-socios-assistant/issues/531#issuecomment-6903879186). Root posee documentos/GitHub/operación; autor separado sólo las tres rutas C10. Ninguna prueba ni operación host queda acreditada por este diseño.
-

@@ -50,4 +50,3 @@ Root: este plan, diseño, progreso, GitHub, CI y cualquier despacho. Ningún otr
 La unidad debe detectar handles repetidos, storage compartido, apertura parcial, B inutilizable, replay que recrea, cierre incierto y transporte/retiro externo fallido. No duplicar la suite lógica de50 ya existente ni presentar mocks como capacidad física. La evidencia positiva sólo llegará de la Action.
 
 Registry/pool mantienen plazos internos. Deben existir50 contextos simultáneos; no sumar contextos ya cerrados. No medir cuota agregada del par como worker. Sin headroom preventivo nuevo. Cualquier necesidad de otra ruta, cota o modificación productiva se detiene para evidencia y nuevos votos previos.
-
