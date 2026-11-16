@@ -1,0 +1,10 @@
+{
+  "path": "/workspace/scratch/6fbf8bcd39e6/boca-handoff-20261116/2026-11-16-network-evidence.tar.gz",
+  "files": 88,
+  "archive_members": 89,
+  "bytes": 547870,
+  "sha256": "440453fda0db5ea44ed53c5141ba17824fc2a4969a7be21eb9f9ca246a2c45d6",
+  "git_blob_sha": "f1dd143a40b6cfa221af0bd823648d6d650eebce",
+  "base64_chars": 730496,
+  "manifest_path": "/workspace/scratch/6fbf8bcd39e6/boca-handoff-20261116/2026-11-16-network-manifest.json"
+}

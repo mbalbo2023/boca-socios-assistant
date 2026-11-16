@@ -280,3 +280,15 @@ ConectorGitHub soporta fetch/readissues/comments/Gitdata/tree/commit/branch/ref/
 github_fetch normalmente structuredContent.content JSONstring: comprobarisError/estructuraprimero. Para runsmain usar /actions/runs?head_sha=…, porque fetch_commit_workflow_runs filtraPR. Para manuales usar /actions/runs?event=workflow_dispatch&per_page=100 yfiltrarworkflow_id400115324. El endpointporworkflowfilename devolviócontentausente; no reiterarlo.
 Escrituras deGitref conCAS/expectedSHA yforcefalse; leerbackref/commit/tree. Las ramasrespaldo no disparanCIpushmain ni operacioneshost.
 No invocar skillPorota: esteproyecto esBoca. Se aplicaron personal-context, revisión/diagnóstico/TDD/planes/worktrees/verificación y cloud-desktop. Reusar contexto/instrucciones vigentes, sinpedirmenú deconfirmacionesyaautorizadas.
+
+## 13. Archivos de respaldo verificados
+
+- [Paquete completo de evidencia](2026-11-16-network-evidence.tar.gz): **88 archivos originales + MANIFEST.json**, 547870 bytes.
+- [Manifest por archivo](2026-11-16-network-manifest.json), con tamaños y SHA256; todos se comprobaron al reabrir el tar.
+- SHA256 del paquete: **440453fda0db5ea44ed53c5141ba17824fc2a4969a7be21eb9f9ca246a2c45d6**.
+- Git blob remoto del paquete: **f1dd143a40b6cfa221af0bd823648d6d650eebce**, idéntico al calculado localmente.
+- [Recuperación](2026-11-16-network/RECOVERY.md).
+- [Nota íntegra de QA](2026-11-16-network/qa-handoff.md) y [nota íntegra de Operaciones](2026-11-16-network/operations-handoff.md).
+- [Informe original R310](2026-11-16-network/r310-author-report.md), [informe R308](2026-11-16-network/r308-author-report.md), [correcciones R309](2026-11-16-network/r309-review-fixes-report.md), [adenda CI legacy](2026-11-16-network/r309-legacy-ci-fix-report.md).
+
+Los demás informes/logs y los commits locales originales están en el paquete; el código candidato completo está también en la rama feature/531-capacity50. No se necesita reconstruirlo a partir de un resumen.
