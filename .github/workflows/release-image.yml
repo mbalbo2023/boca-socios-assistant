@@ -111,6 +111,14 @@ jobs:
           }
           run_offline_browser scripts/verify_chromium_worker.py
           run_offline_browser -m boca_socios.browser.offline_fixture --smoke
+      - name: Record local image identities before scanning
+        env:
+          CONTROLLER_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
+          BROWSER_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}
+          PYTHONPATH: src
+        run: |
+          umask 077
+          python scripts/release_push_guard.py snapshot
       - name: Scan the image that will be published
         run: bash scripts/trivy_scan_image.sh "ghcr.io/mbalbo2023/boca-socios-assistant:sha-$GITHUB_SHA"
       - name: Scan browser image before any publication
@@ -140,16 +148,13 @@ jobs:
           CONTROLLER_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant:sha-${{ github.sha }}
           BROWSER_IMAGE: ghcr.io/mbalbo2023/boca-socios-assistant-browser:sha-${{ github.sha }}
           PYTHONPATH: src
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Publish browser first: a failed controller push cannot leave a
-          # controller-only successful release manifest. Both pushes must pass.
-          docker push "$BROWSER_IMAGE" | tee "$RUNNER_TEMP/boca-browser-push.log"
-          browser_ref="$(python scripts/parse_image_digest.py "$RUNNER_TEMP/boca-browser-push.log" "$GITHUB_SHA" --role browser)"
-          docker push "$CONTROLLER_IMAGE" | tee "$RUNNER_TEMP/boca-push.log"
-          image_ref="$(python scripts/parse_image_digest.py "$RUNNER_TEMP/boca-push.log" "$GITHUB_SHA" --role controller)"
-          printf 'image_ref=%s\n' "$image_ref" >> "$GITHUB_OUTPUT"
-          printf 'browser_image_ref=%s\n' "$browser_ref" >> "$GITHUB_OUTPUT"
+          umask 077
+          python scripts/release_push_guard.py publish > "$RUNNER_TEMP/boca-paired-refs"
+          browser_ref="$(sed -n 's/^browser=//p' "$RUNNER_TEMP/boca-paired-refs")"
+          image_ref="$(sed -n 's/^controller=//p' "$RUNNER_TEMP/boca-paired-refs")"
           python -m boca_socios.release_manifest write "$image_ref" "$GITHUB_SHA" "$GITHUB_RUN_ID" \
             > "$RUNNER_TEMP/boca-release-manifest.json"
           python -m boca_socios.browser_release_manifest write \
@@ -160,6 +165,8 @@ jobs:
           python -m boca_socios.browser_release_manifest verify \
             "$RUNNER_TEMP/boca-browser-release-manifest.json" \
             "$image_ref" "$browser_ref" "$GITHUB_SHA" "$GITHUB_RUN_ID"
+          printf 'image_ref=%s\n' "$image_ref" >> "$GITHUB_OUTPUT"
+          printf 'browser_image_ref=%s\n' "$browser_ref" >> "$GITHUB_OUTPUT"
           {
             printf 'Commit: `%s`\n\n' "$GITHUB_SHA"
             printf 'Controller digest: `%s`\n\n' "$image_ref"

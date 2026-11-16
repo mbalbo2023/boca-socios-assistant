@@ -1,6 +1,16 @@
 # Estado de integración BETA
 
-## Estado vigente G2 — candidato CODE_ONLY, no instalado (2026-11-16 ART)
+## G6 — excepción de publisher, no desplegada (2026-11-16 ART)
+
+Release869/run43922790822 falló en el primer push browser con `unknown blob`;
+su causa concreta no está acreditada. No reintentar ese run ni su SHA. La
+[excepción única y 4/4 PRE_CODE](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6925043732)
+permiten un candidato CODE_ONLY con una única recuperación global en el mismo
+run, sin rebuild. Revisión independiente, CI, integración y autorización
+operativa siguen pendientes; esto no certifica release ni deploy. BETA NO_GO,
+Telegram sender OFF y SIMULATION_ONLY. Root mantiene los gates y operaciones.
+
+## Histórico G2 — candidato CODE_ONLY (2026-11-16 ART)
 
 [Checkpoint canónico #417](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6922744921)
 y [reconciliación de raíz](https://github.com/mbalbo2023/boca-socios-assistant/issues/417#issuecomment-6923058844)

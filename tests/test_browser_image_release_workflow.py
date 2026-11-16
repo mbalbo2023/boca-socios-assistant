@@ -179,10 +179,9 @@ def test_protected_main_release_scans_both_before_any_ghcr_auth_or_push() -> Non
         < publish.index("Require the reviewed browser IPC worker command")
         < controller_scan
     )
-    assert "--role browser" in publish
-    assert "--role controller" in publish
-    assert 'docker push "$BROWSER_IMAGE"' in publish
-    assert 'docker push "$CONTROLLER_IMAGE"' in publish
+    assert "python scripts/release_push_guard.py snapshot" in publish
+    assert "python scripts/release_push_guard.py publish" in publish
+    assert publish.index("Record local image identities before scanning") < controller_scan
     assert ":latest" not in publish
 
 
@@ -201,10 +200,10 @@ def test_controller_v1_manifest_preserved_and_browser_companion_uploaded_only_af
     assert publish.count("overwrite: false") == 2
     assert publish.count("retention-days: 30") == 2
     assert "github.sha" in publish and "GITHUB_RUN_ID" in publish
-    assert publish.index('docker push "$BROWSER_IMAGE"') < publish.index(
-        'docker push "$CONTROLLER_IMAGE"'
+    assert publish.index("python scripts/release_push_guard.py publish") < legacy_writer
+    assert publish.index("python -m boca_socios.browser_release_manifest verify") < publish.index(
+        '>> "$GITHUB_OUTPUT"'
     )
-    assert publish.index('docker push "$CONTROLLER_IMAGE"') < legacy_writer
     assert "set -euo pipefail" in publish[pushed:legacy_writer]
 
 
